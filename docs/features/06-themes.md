@@ -24,7 +24,8 @@ one terminal can be hacker-green while the next is tactical-cyan — no global f
 | **Human-input colour** | Your own turns in an agent TUI get a distinct colour (whole wrapped message) | `Theme::human`, `human_input_rows` | 👤 pip |
 | **Per-pane theme + grade independence** | Theme group and grade group inherit from the outer **independently**; live "follow outer" toggle, non-destructive | `PaneTheme` | per-pane toggles |
 | **Monitor-OSD grade** | 6 sliders — brightness/contrast/colour/text/background/gamma — applied as HSLA at paint time | `Grade`, `GradeKey` | ⛭ DISPLAY tray |
-| **Text-size channel** | One dial scales terminal text *and* chrome together (reflows) | `GradeKey::TextSize` | scrubber / Ctrl+scroll |
+| **Text-size channel** | Scales a pane's terminal grid — font + cell height, so the shell reflows. Per-pane, and sizing one pane detaches no other dial from outer | `GradeKey::TextSize` | DISPLAY tray / **ctrl+wheel over the pane** |
+| **Menu-bar size channel** | Scales the cabinet — outer bar, tabs, pane headers — and never the grid | `GradeKey::Scale` | bezel scrubber / **ctrl+wheel over the chrome** |
 | **Warp / crawl channels** | Per-pane curvature + crawl angle/depth as grade channels | `GradeKey::{Warp,Crawl*}` | DISPLAY tray |
 | **TOML format** | Human-readable: `[colors]` hex, `[effects]` 0..1 floats, `[font]`, optional icon glyph; lenient parse | `ThemeFile` | edit by hand |
 | **Picker UI** | Browse built-ins + custom, glyph icon, hover tooltip, "open in editor" for custom | theme picker | right-click |

@@ -4978,13 +4978,50 @@ impl TerminalView {
         self.scroll_by_wheel(ev, cx);
     }
 
+    /// Step THIS pane's terminal text size by `notches` wheel notches — the
+    /// ctrl+wheel gesture, resolved to the pane the cursor is standing over.
+    ///
+    /// Only the text-size channel becomes the pane's own; every other dial keeps
+    /// tracking outer, which is what makes sizing one pane a local act rather
+    /// than a detachment from the mother theme. The grid font and cell height
+    /// follow it, so the terminal reflows and the shell is told its new size
+    /// (see [`Self::resolved_theme`]).
+    ///
+    /// A notch that changes nothing — the channel is already at its stop —
+    /// leaves the pane exactly as it found it, pin included. Sizing past the end
+    /// must not silently detach a pane from outer: nothing about its size was
+    /// chosen here, and a pane that quietly stopped following would only be
+    /// noticed the next time outer moved and this one did not.
+    pub fn nudge_text_size(&mut self, notches: f32, cx: &mut Context<Self>) {
+        let outer = theme::outer_choice(cx);
+        let mut grade = self.appearance.effective(&outer).grade;
+        let next = theme::GradeKey::TextSize.nudged(grade.text_size, notches);
+        if (next - grade.text_size).abs() < f32::EPSILON {
+            return;
+        }
+        grade.set(theme::GradeKey::TextSize, next);
+        self.appearance
+            .pin_grade(grade, theme::GradePins::only(theme::GradeChannel::TextSize));
+        // Same contract as a paint pick: the pane has already changed, the
+        // workspace just writes the layout down so the size survives a restart.
+        cx.emit(PaintApplied);
+        cx.notify();
+    }
+
     /// Scroll the terminal scrollback from a wheel event. Public so the FOCUS
     /// reading modal (rendered by the Workspace) can route its wheel events here:
     /// the modal's locking scrim `.occlude()`s the pane behind it and would
     /// otherwise swallow the wheel, leaving the mirror un-scrollable.
     pub fn scroll_by_wheel(&mut self, ev: &ScrollWheelEvent, cx: &mut Context<Self>) {
+        // ctrl+wheel is the SIZE gesture, not a scroll — and over a pane the
+        // thing it sizes is that one pane's terminal text. The Workspace binds
+        // the same chord to the outer cabinet; both handlers are bubble-phase,
+        // a pane's is registered deeper, and gpui runs the deepest first — so
+        // halting here is what keeps one flick from doing both jobs at once.
         if ev.modifiers.control {
-            return; // workspace handles ctrl+wheel = text-size scrub
+            self.nudge_text_size(theme::wheel_notches(ev.delta), cx);
+            cx.stop_propagation();
+            return;
         }
         let dy = match ev.delta {
             gpui::ScrollDelta::Lines(l) => l.y * 3.0,
@@ -8216,6 +8253,110 @@ impl Render for TerminalView {
 
 #[cfg(test)]
 mod tests {
+
+    /// This file's shipped code with every comment line removed.
+    ///
+    /// A source-grep gate its own explanation can satisfy is not a gate: one in
+    /// this repository passed on the comment describing the line it was meant to
+    /// find, while the line itself was gone. Scans below run against code only.
+    fn shipped_code() -> String {
+        let here = include_str!("pane.rs");
+        let (code, _tests) = here.split_once("\n#[cfg(test)]").expect("a test module");
+        code.lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// One ctrl+wheel flick is answered once, by the pane under the cursor.
+    ///
+    /// Both the pane and the Workspace bind the chord — the pane sizes its own
+    /// terminal text, the Workspace sizes the cabinet — and gpui hands a wheel
+    /// event to the deepest bubble listener first. Everything therefore rests on
+    /// the pane HALTING the event: without the stop, standing over a pane and
+    /// scrolling would grow that pane's text and the whole menu bar at once, on
+    /// every notch, and the two would drift apart with no way to put them back.
+    ///
+    /// Behaviour a running window is needed to see, so it is guarded at the
+    /// source. Mutation-tested: deleting the halt, deleting the size call, and
+    /// leaving the halt behind as a commented-out line each fail this test.
+    #[test]
+    fn ctrl_wheel_over_a_pane_sizes_that_pane_and_goes_no_further() {
+        let code = shipped_code();
+        let at = code
+            .find("pub fn scroll_by_wheel")
+            .expect("pub fn scroll_by_wheel");
+        let end = code[at..].find("\n    }\n").expect("end of fn");
+        let body = &code[at..at + end];
+
+        let ctrl = body
+            .find("if ev.modifiers.control {")
+            .expect("scroll_by_wheel must still branch on ctrl — it is the size chord");
+        let branch = &body[ctrl..];
+
+        assert!(
+            branch.contains("self.nudge_text_size("),
+            "ctrl+wheel over a pane must size THAT pane's terminal text; the \
+             branch used to bail and let the Workspace size the cabinet instead"
+        );
+        assert!(
+            branch.contains("cx.stop_propagation();"),
+            "the pane must halt the ctrl+wheel it just answered — the \
+             Workspace's handler is bound to the same chord and would size the \
+             menu bar off the very same notch"
+        );
+        assert!(
+            branch.contains("theme::wheel_notches("),
+            "the pane must read the wheel through the shared notch conversion, \
+             so a flick steps the same amount here as it does on the cabinet"
+        );
+    }
+
+    /// Sizing past the end of the range is not a decision, so it must not pin.
+    ///
+    /// `nudge_text_size` compares the nudged value against the one it started
+    /// from and returns early when they match. Drop that and a pane parked at
+    /// the maximum quietly stops following outer the first time somebody keeps
+    /// scrolling — invisible until the cabinet's own size moves and that one
+    /// pane does not (and it writes the layout to disk on every notch besides).
+    ///
+    /// Mutation-tested: deleting the bail, widening the pin to every channel,
+    /// and dropping the persist each fail this test.
+    #[test]
+    fn sizing_a_pane_past_its_stop_leaves_it_following_outer() {
+        let code = shipped_code();
+        let at = code
+            .find("pub fn nudge_text_size")
+            .expect("pub fn nudge_text_size");
+        let end = code[at..].find("\n    }\n").expect("end of fn");
+        let body = &code[at..at + end];
+
+        let guard = body
+            .find("if (next - grade.text_size).abs() < f32::EPSILON")
+            .expect(
+                "nudge_text_size must compare the nudged value against the \
+                 current one and bail when the channel is already at its stop",
+            );
+        let pin = body
+            .find("pin_grade")
+            .expect("nudge_text_size must pin the text-size channel");
+        assert!(
+            guard < pin,
+            "the no-change bail has to come BEFORE the pin, or a notch at the \
+             stop still detaches the pane from outer"
+        );
+        assert!(
+            body.contains("GradePins::only(theme::GradeChannel::TextSize)"),
+            "only the text-size channel becomes the pane's own — every other \
+             dial must keep tracking outer, which is what makes sizing one pane \
+             a local act and not a detachment"
+        );
+        assert!(
+            body.contains("cx.emit(PaintApplied)"),
+            "the new size has to be persisted like any other appearance change, \
+             or it is gone on the next restart"
+        );
+    }
 
     /// The bench does not grow back into this file.
     ///

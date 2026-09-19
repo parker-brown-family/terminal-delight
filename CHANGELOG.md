@@ -7,6 +7,20 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Added
+
+- **ctrl+wheel sizes the pane you are pointing at.** The chord already sized the
+  cabinet — the menu bar, the tabs, the pane headers — from anywhere in the
+  window, which meant the one place a person most wants bigger text, the
+  terminal they are reading, was the one thing it could not touch. It now sizes
+  whatever the cursor is standing on: over a pane it scrubs that single pane's
+  terminal text, so the grid font and cell height move together and the shell
+  reflows to the new size; over the chrome it does what it always did. Only the
+  text-size channel becomes that pane's own, so every other dial on it keeps
+  following the outer theme, and the new size is written into the layout like
+  any other appearance change. The keyboard help has advertised `A──A ·
+  Ctrl+wheel` under "Text size" all along; it is true now.
+
 ### Fixed
 
 - **The model and effort a pane is running stay readable while it is working.**

@@ -382,6 +382,44 @@ impl GradeKey {
         let (min, max, _) = self.range();
         min + (pct.clamp(0.0, 100.0) / 100.0) * (max - min)
     }
+
+    /// How far one wheel notch moves a channel, in stored units.
+    ///
+    /// ONE number for every ctrl+wheel size scrub — the outer cabinet's and each
+    /// pane's — so the gesture steps at the same rate wherever the cursor is
+    /// standing. The two channels it drives have different spans (`Scale`
+    /// `0.7..1.6`, `TextSize` `0.6..2.0`), and a *fraction* of each span would
+    /// make the same flick travel further on one surface than the other.
+    pub const WHEEL_STEP: f32 = 0.05;
+
+    /// This channel `notches` wheel-notches away from `from`, clamped into the
+    /// channel's own range.
+    ///
+    /// Returns `from` itself at the stop, so a caller can compare the two and
+    /// discover it has nothing to do — which is not the same question as
+    /// "did the wheel turn", and is the one a pane has to ask before it pins
+    /// the channel away from outer.
+    pub fn nudged(self, from: f32, notches: f32) -> f32 {
+        let (min, max, _) = self.range();
+        (from + notches * Self::WHEEL_STEP).clamp(min, max)
+    }
+}
+
+/// The signed notch count a wheel event is worth, up-positive.
+///
+/// A line delta already counts notches. A pixel delta — touchpads, and the
+/// high-resolution wheels that report one — is divided by a nominal notch
+/// height so both devices scrub at the same rate; without it a touchpad flick
+/// crosses a whole channel in one gesture. Scrollback has its own conversion
+/// (it divides by the pane's real cell height, because there the unit is a row
+/// of text); this one is for the size channels, whose unit is a detent.
+pub fn wheel_notches(delta: gpui::ScrollDelta) -> f32 {
+    /// A wheel detent is ~20px on the platforms that report pixels.
+    const PIXELS_PER_NOTCH: f32 = 20.0;
+    match delta {
+        gpui::ScrollDelta::Lines(l) => l.y,
+        gpui::ScrollDelta::Pixels(p) => f32::from(p.y) / PIXELS_PER_NOTCH,
+    }
 }
 
 /// Per-scope "monitor controls": real-display grading applied to the pane's
@@ -2927,6 +2965,114 @@ mod tests {
             (p.effective(&outer).grade.brightness - 0.7).abs() < 1e-6,
             "brightness was never set here, so it still follows"
         );
+    }
+
+    /// Both devices that can turn a wheel scrub at the same rate.
+    ///
+    /// A mouse reports detents and a touchpad reports pixels, and the pixel leg
+    /// is the one that goes wrong quietly: an un-divided pixel delta crosses a
+    /// whole channel in one flick, which reads as the dial being broken rather
+    /// than as the units being wrong.
+    #[test]
+    fn a_wheel_notch_is_the_same_size_on_a_mouse_and_a_touchpad() {
+        use gpui::{point, px, ScrollDelta};
+
+        assert!((wheel_notches(ScrollDelta::Lines(point(0., 1.))) - 1.0).abs() < 1e-6);
+        assert!((wheel_notches(ScrollDelta::Lines(point(0., -3.))) + 3.0).abs() < 1e-6);
+
+        // 20px is one detent, so a 60px flick is three of them — the same three
+        // a mouse would report as lines.
+        assert!((wheel_notches(ScrollDelta::Pixels(point(px(0.), px(60.)))) - 3.0).abs() < 1e-6);
+        assert!((wheel_notches(ScrollDelta::Pixels(point(px(0.), px(-20.)))) + 1.0).abs() < 1e-6);
+
+        // Up is positive on both, which is what makes "scroll up = bigger" one
+        // rule rather than two.
+        assert!(wheel_notches(ScrollDelta::Lines(point(0., 1.))) > 0.0);
+        assert!(wheel_notches(ScrollDelta::Pixels(point(px(0.), px(1.)))) > 0.0);
+
+        // The horizontal axis is not a size gesture and must not leak into one.
+        assert_eq!(wheel_notches(ScrollDelta::Lines(point(9., 0.))), 0.0);
+    }
+
+    /// A notch moves a channel by one step and stops at the channel's own ends.
+    ///
+    /// The stop returning the value it was GIVEN is the contract a caller reads
+    /// to decide it has nothing to do — a pane compares the two before it pins
+    /// the channel away from outer, so a nudge that silently returned the
+    /// clamped-but-equal value as "changed" would detach panes at the edge of
+    /// the range for no reason a person could see.
+    #[test]
+    fn a_wheel_notch_steps_one_step_and_stops_at_the_channels_own_ends() {
+        let (ts_min, ts_max, _) = GradeKey::TextSize.range();
+        let (sc_min, sc_max, _) = GradeKey::Scale.range();
+
+        // One notch = one step, in either direction, on either channel.
+        let step = GradeKey::WHEEL_STEP;
+        assert!((GradeKey::TextSize.nudged(1.0, 1.0) - (1.0 + step)).abs() < 1e-6);
+        assert!((GradeKey::TextSize.nudged(1.0, -1.0) - (1.0 - step)).abs() < 1e-6);
+        assert!((GradeKey::Scale.nudged(1.0, 2.0) - (1.0 + 2.0 * step)).abs() < 1e-6);
+
+        // A fractional notch (a touchpad mid-flick) moves a fraction of a step.
+        assert!((GradeKey::TextSize.nudged(1.0, 0.5) - (1.0 + 0.5 * step)).abs() < 1e-6);
+
+        // Each channel stops at its OWN end, not at a shared one — text size
+        // reaches 2.0 where the menu bar stops at 1.6.
+        assert!((GradeKey::TextSize.nudged(ts_max, 5.0) - ts_max).abs() < 1e-6);
+        assert!((GradeKey::TextSize.nudged(ts_min, -5.0) - ts_min).abs() < 1e-6);
+        assert!((GradeKey::Scale.nudged(sc_max, 5.0) - sc_max).abs() < 1e-6);
+        assert!((GradeKey::Scale.nudged(sc_min, -5.0) - sc_min).abs() < 1e-6);
+        assert!(
+            ts_max > sc_max,
+            "the two size channels are different dials with different reach; if \
+             this ever stops being true the per-pane and outer scrubs have been \
+             collapsed into one"
+        );
+
+        // At the stop the answer IS the input — the caller's "nothing changed".
+        assert_eq!(GradeKey::TextSize.nudged(ts_max, 1.0), ts_max);
+        assert_eq!(GradeKey::Scale.nudged(sc_min, -1.0), sc_min);
+
+        // A wheel that did not turn changes nothing anywhere in the range.
+        assert_eq!(GradeKey::TextSize.nudged(1.13, 0.0), 1.13);
+    }
+
+    /// Sizing ONE pane's text leaves every other dial on that pane following
+    /// outer, and leaves the outer menu bar alone entirely.
+    ///
+    /// This is the whole point of the per-pane gesture: the pane the cursor is
+    /// over gets bigger text, and nothing else in the window moves. `Scale` is
+    /// checked by name because it is the channel the same chord drives on the
+    /// cabinet — the one that would be hit if the two scrubs were ever wired to
+    /// the same dial.
+    #[test]
+    fn sizing_one_panes_text_moves_nothing_else() {
+        let mut outer = house_outer();
+        outer.grade.text_size = 1.0;
+        outer.grade.scale = 1.0;
+        let mut p = PaneTheme::house();
+        assert!(p.follows_outer_grade(), "a fresh pane owns no channel");
+
+        // Three notches up, exactly as the pane's handler does it.
+        let mut g = p.effective(&outer).grade;
+        let next = GradeKey::TextSize.nudged(g.text_size, 3.0);
+        g.set(GradeKey::TextSize, next);
+        p.pin_grade(g, GradePins::only(GradeChannel::TextSize));
+
+        let eff = p.effective(&outer);
+        assert!((eff.grade.text_size - (1.0 + 3.0 * GradeKey::WHEEL_STEP)).abs() < 1e-6);
+        assert!(
+            (eff.grade.scale - 1.0).abs() < 1e-6,
+            "the pane's chrome must not have moved — that is the cabinet's dial"
+        );
+        assert_eq!(p.pins, GradePins::only(GradeChannel::TextSize));
+
+        // The cabinet is still free to move, and this pane still follows it
+        // everywhere except the one channel a human sized here.
+        outer.grade.scale = 1.4;
+        outer.grade.text_size = 0.6;
+        let eff = p.effective(&outer);
+        assert!((eff.grade.scale - 1.4).abs() < 1e-6);
+        assert!((eff.grade.text_size - 1.15).abs() < 1e-6);
     }
 
     /// A pane stamped with the old birth theme is released on load; one that

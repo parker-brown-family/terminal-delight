@@ -14785,17 +14785,21 @@ impl Workspace {
         }
     }
 
-    /// ctrl+wheel anywhere = menu-bar size scrub (panes skip scrolling when ctrl).
+    /// ctrl+wheel over the CABINET = menu-bar size scrub.
+    ///
+    /// The chord means "size whatever the cursor is standing on", and this is
+    /// its outer half: the bar, the tabs, the left bar, the gaps between panes.
+    /// It is reached only when no pane claimed the event first — a pane sizes
+    /// its own terminal text and halts propagation
+    /// ([`TerminalView::nudge_text_size`]) — so one flick is never answered
+    /// twice.
     fn on_wheel(&mut self, ev: &ScrollWheelEvent, _w: &mut Window, cx: &mut Context<Self>) {
         if !ev.modifiers.control {
             return;
         }
-        let dy = match ev.delta {
-            gpui::ScrollDelta::Lines(l) => l.y,
-            gpui::ScrollDelta::Pixels(p) => f32::from(p.y) / 20.,
-        };
         let cur = theme::outer_choice(cx).grade.scale;
-        self.set_scale(cur + dy * 0.05, cx);
+        let notches = theme::wheel_notches(ev.delta);
+        self.set_scale(theme::GradeKey::Scale.nudged(cur, notches), cx);
     }
 
     fn on_mouse_move(&mut self, ev: &MouseMoveEvent, _w: &mut Window, cx: &mut Context<Self>) {
@@ -27250,7 +27254,13 @@ impl Render for Workspace {
                             gpui::ScrollDelta::Lines(l) => l.y * ws.focus_line_h,
                             gpui::ScrollDelta::Pixels(p) => f32::from(p.y),
                         };
-                        if ws.focus_overflow > 0.0 {
+                        // ctrl+wheel is the size gesture and never a pan. The
+                        // scrim `.occlude()`s the pane it mirrors, so without
+                        // this the chord panned the reader AND — propagation
+                        // never halted — resized the outer bar behind it. Held
+                        // ctrl falls straight through to the mirrored pane,
+                        // which sizes its own text and stops there.
+                        if !ev.modifiers.control && ws.focus_overflow > 0.0 {
                             let next = (ws.focus_scroll_y - dy).clamp(0.0, ws.focus_overflow);
                             if (next - ws.focus_scroll_y).abs() > f32::EPSILON {
                                 ws.focus_scroll_y = next;
@@ -29127,6 +29137,93 @@ mod tests {
         assert!(
             top.contains(".child(scrubber)") && top.contains(".child(win_controls)"),
             "the top right keeps the menu-bar scale and the window buttons"
+        );
+    }
+
+    /// ctrl+wheel sizes what the cursor is standing on, at one rate.
+    ///
+    /// The chord is bound twice on purpose — a pane sizes its own terminal text
+    /// (`TerminalView::nudge_text_size`), and this handler sizes the cabinet for
+    /// every flick no pane claimed. What keeps that from reading as two
+    /// unrelated features is that both go through the same notch conversion and
+    /// the same per-notch step, so a gesture travels the same distance whichever
+    /// surface it lands on. Open-coding the delta arithmetic here again — which
+    /// is exactly what this handler used to do — is how the two drift.
+    ///
+    /// Mutation-tested: restoring the old open-coded delta, and reducing the
+    /// pane's halt to a commented-out line, each fail this test.
+    #[test]
+    fn the_cabinets_ctrl_wheel_steps_at_the_same_rate_as_a_panes() {
+        let code = shipped_code();
+        let at = code
+            .find("    fn on_wheel(&mut self, ev: &ScrollWheelEvent")
+            .expect("Workspace::on_wheel");
+        let end = code[at..].find("\n    }\n").expect("end of fn");
+        let body = &code[at..at + end];
+
+        assert!(
+            body.contains("theme::wheel_notches(ev.delta)"),
+            "the cabinet must read the wheel through the shared notch \
+             conversion, not its own copy of the pixel divisor"
+        );
+        assert!(
+            body.contains("theme::GradeKey::Scale.nudged("),
+            "and step the menu-bar channel by the shared per-notch step"
+        );
+        assert!(
+            !body.contains("ScrollDelta::Pixels"),
+            "no second copy of the delta arithmetic lives here"
+        );
+
+        // The pane's half of the same chord, asserted from over here too: this
+        // handler's correctness depends on never seeing an event a pane already
+        // answered, and that promise is kept in pane.rs. Comments stripped —
+        // the block being scanned explains the halt in prose that names it.
+        let pane_src: String = include_str!("pane.rs")
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let at = pane_src
+            .find("pub fn scroll_by_wheel")
+            .expect("pub fn scroll_by_wheel");
+        let end = pane_src[at..].find("\n    }\n").expect("end of fn");
+        assert!(
+            pane_src[at..at + end].contains("cx.stop_propagation();"),
+            "a pane that sized itself must halt the wheel, or this handler \
+             sizes the menu bar off the same notch"
+        );
+    }
+
+    /// The FOCUS reader passes the size chord through to the pane it mirrors.
+    ///
+    /// Its scrim `.occlude()`s the window, so the reader's own wheel handler is
+    /// the only one a flick reaches. Panning on ctrl did two wrong things at
+    /// once: it scrolled the reader, and — having never halted the event — let
+    /// the root handler resize the outer bar behind it. ctrl is not a pan
+    /// anywhere else in the window and is not one here.
+    ///
+    /// Mutation-tested: putting the unguarded pan back fails this test.
+    #[test]
+    fn the_focus_reader_does_not_pan_on_the_size_chord() {
+        let code = shipped_code();
+        let at = code
+            .find("gpui::ScrollDelta::Lines(l) => l.y * ws.focus_line_h")
+            .expect("the FOCUS reader's wheel handler");
+        let body = &code[at..];
+        let pan = body
+            .find("ws.focus_overflow > 0.0")
+            .expect("the pan branch");
+        let guarded = &body[..pan + "ws.focus_overflow > 0.0".len()];
+        assert!(
+            guarded.contains("!ev.modifiers.control && ws.focus_overflow > 0.0"),
+            "the reader's pan must stand down while ctrl is held so the chord \
+             reaches the mirrored pane's own text size"
+        );
+        assert!(
+            body[..pan].len() < 400,
+            "the ctrl guard belongs on the pan branch itself, not somewhere \
+             earlier that a later edit can step around"
         );
     }
 
