@@ -212,12 +212,30 @@ impl TerminalView {
     /// change, so ordinary mousing costs nothing; [`Self::pointer_hook`]
     /// paints whatever this last decided.
     pub(super) fn bench_hover(&mut self, at: gpui::Point<gpui::Pixels>, cx: &mut Context<Self>) {
-        let pointer = self
-            .bench_flat(at)
-            .and_then(|(hit, _)| hit)
+        let hit = self.bench_flat(at).and_then(|(hit, _)| hit);
+        let pointer = hit
+            .as_ref()
             .map_or(crate::workbench::Pointer::Arrow, |h| h.pointer());
-        if pointer != self.wb_pointer {
+        // A dragged file crossing the composer, which arrives here as an
+        // ordinary mouse move: gpui turns the drag's motion into one, with
+        // the paths parked on the app until the drop. A target that gives no
+        // sign while you hover over it teaches people it does not work.
+        //
+        // `has_active_drag` says only that SOMETHING is being carried, not
+        // what — and that is exact today, because the only drag this app
+        // takes part in is a file drop (its tab, pane and slider drags are
+        // hand-rolled state machines, not gpui drags). Add a real gpui drag
+        // and this lights for it too while the drop does nothing; the fix
+        // then is `on_drag_move::<ExternalPaths>`, which is scoped to the
+        // type and fires on every pane rather than only the hovered one.
+        let drop = cx.has_active_drag()
+            && matches!(
+                hit,
+                Some(crate::workbench::Hit::Composer | crate::workbench::Hit::Arm)
+            );
+        if pointer != self.wb_pointer || drop != self.wb_drop {
             self.wb_pointer = pointer;
+            self.wb_drop = drop;
             cx.notify();
         }
     }
@@ -243,12 +261,35 @@ impl TerminalView {
             |bounds, window, _cx| window.insert_hitbox(bounds, gpui::HitboxBehavior::Normal),
             move |_bounds, hitbox, window, _cx| {
                 window.set_cursor_style(pointer, &hitbox);
+                let wheel_weak = weak.clone();
                 window.on_mouse_event(move |ev: &ScrollWheelEvent, phase, window, cx| {
                     if phase != gpui::DispatchPhase::Capture || !hitbox.is_hovered(window) {
                         return;
                     }
                     let line_height = window.line_height();
-                    let _ = weak.update(cx, |view, cx| view.bench_wheel(ev, line_height, cx));
+                    let _ = wheel_weak.update(cx, |view, cx| view.bench_wheel(ev, line_height, cx));
+                });
+                // Putting the drag DOWN, and taking it out of the window, are
+                // the two ways the box stops being a target — and neither of
+                // them is a mouse move over this pane, which is the only
+                // event `on_mouse_move` delivers. A drop on a sibling pane
+                // would otherwise leave this one lit, because a pane stops
+                // hearing moves the moment the pointer is over its
+                // neighbour. Deliberately no hitbox test on either: the drag
+                // is over wherever it ended.
+                let up_weak = weak.clone();
+                window.on_mouse_event(move |_: &MouseUpEvent, phase, _window, cx| {
+                    if phase == gpui::DispatchPhase::Bubble {
+                        clear_drop(&up_weak, cx);
+                    }
+                });
+                // Leaving the window is the one event in a drag that arrives
+                // as itself: gpui turns enter, motion and drop into mouse
+                // events and passes this one through.
+                window.on_mouse_event(move |_: &gpui::FileDropEvent, phase, _window, cx| {
+                    if phase == gpui::DispatchPhase::Bubble {
+                        clear_drop(&weak, cx);
+                    }
                 });
             },
         )
@@ -1331,7 +1372,16 @@ impl TerminalView {
                     parts.push(text.text().replace(['\n', '\r'], " "));
                 }
                 ClipboardEntry::ExternalPaths(paths) => {
-                    parts.extend(paths.paths().iter().map(|p| p.display().to_string()));
+                    // The same rule a DROP follows, from the same function: a
+                    // path is one word. This arm used to join the paths raw,
+                    // so copying `Screenshot 2026-09-18.png` pasted two words
+                    // and nothing downstream could put them back together.
+                    let words = crate::workbench::paths_as_words(paths.paths());
+                    // An entry carrying no path at all adds nothing, rather
+                    // than a stray space in the middle of the sentence.
+                    if !words.is_empty() {
+                        parts.push(words);
+                    }
                 }
                 ClipboardEntry::Image(image) => match self.save_pasted_image(image) {
                     Some(path) => parts.push(path),
@@ -1340,6 +1390,66 @@ impl TerminalView {
             }
         }
         let text = parts.join(" ");
+        self.bench_typed(text, cx);
+    }
+
+    /// A file dropped on the pane: its path typed where it landed.
+    ///
+    /// The compositor's half of this is gpui's and costs us nothing — its
+    /// Wayland client asks the drag for `text/uri-list`, turns the URIs into
+    /// paths, and hands them over as an ordinary mouse-up with the value
+    /// attached. It also DESTROYS any drag whose URIs are not local files, so
+    /// an image dragged off a web page never reaches this function and there
+    /// is nothing here that could serve it. Files, and only files.
+    ///
+    /// The listener sits on the pane's root rather than on the composer,
+    /// because the bench is bent by the barrel pass and gpui hit-tests the
+    /// flat tree — a drop target hung on the composer element would catch
+    /// drops beside where the composer appears. So this un-bends the pointer
+    /// through [`Self::bench_hit_at`], the same inverse every bench click goes
+    /// through, and the composer's own zone answers.
+    pub(super) fn bench_drop(
+        &mut self,
+        paths: &gpui::ExternalPaths,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.wb_drop = false;
+        let text = crate::workbench::paths_as_words(paths.paths());
+        if text.is_empty() {
+            return;
+        }
+        // On the TERMINAL face there is no composer to aim at and no mirror to
+        // keep: the path goes to the process as a paste, which is what every
+        // other terminal on this machine does with a dropped file.
+        if self.bench.face() != crate::workbench::Face::Workbench {
+            window.focus(&self.focus_handle, cx);
+            self.paste_text(&text);
+            cx.notify();
+            return;
+        }
+        let Some((hit, flat)) = self.bench_hit_at(window.mouse_position()) else {
+            return;
+        };
+        // The composer and the field around it, which is the gesture people
+        // will actually make — the box is the biggest thing on the bench. A
+        // drop on a card is not a drop on the line and does nothing, on the
+        // same terms as a click there.
+        if !matches!(
+            hit,
+            crate::workbench::Hit::Composer | crate::workbench::Hit::Arm
+        ) {
+            return;
+        }
+        // Arm FIRST. `bench_click` arms a cold line and returns without
+        // moving anything, so calling it on an unarmed composer would place
+        // no caret and the path would land at the end of a line nobody could
+        // see yet.
+        if self.wb_compose.is_none() {
+            self.wb_compose = Some(crate::workbench::Line::new());
+        }
+        self.bench_click(flat, cx);
+        window.focus(&self.focus_handle, cx);
         self.bench_typed(text, cx);
     }
 
@@ -2009,6 +2119,7 @@ impl TerminalView {
             crate::benchdraw::composer(
                 self.wb_compose.as_ref(),
                 focused,
+                self.wb_drop,
                 &shows,
                 &self.wb_slots,
                 sk,
@@ -2369,4 +2480,18 @@ impl TerminalView {
             .child(self.pointer_hook(weak))
             .into_any_element()
     }
+}
+
+/// Put the composer's drop target out.
+///
+/// A free function because the two listeners that call it are window-level
+/// and hold a weak handle rather than a `self`: a pane can be closed with a
+/// drag still in the air, and both listeners outlive the frame that made
+/// them.
+fn clear_drop(weak: &gpui::WeakEntity<TerminalView>, cx: &mut gpui::App) {
+    let _ = weak.update(cx, |view, cx| {
+        if std::mem::take(&mut view.wb_drop) {
+            cx.notify();
+        }
+    });
 }

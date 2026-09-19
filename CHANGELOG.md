@@ -7,7 +7,26 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Added
+
+- **Drag a file onto the bench and its path lands in the line you are
+  writing.** The composer lights up in your own colour while the file is over
+  it, and letting go types the path at the caret — mid-sentence, with the rest
+  of the sentence intact, because placing a caret already sends the agent's
+  line editor the matching arrows. Several files come in as several words, and
+  a name with a space in it arrives quoted, so `Screenshot 2026-09-18.png`
+  stays one filename instead of two arguments nothing downstream can rejoin.
+  A drop on the terminal face pastes the path the way every other terminal
+  does. Files only: the renderer discards a drag whose contents are not local
+  files before the app is told, so an image dragged straight off a web page
+  still does nothing.
+
 ### Fixed
+
+- **Pasting a filename with a space in it no longer breaks it in two.** The
+  clipboard's file arm joined paths raw, so a copied `Screenshot
+  2026-09-18.png` arrived as two words. It now goes through the same quoting a
+  dropped file does.
 
 - **Changing the model or the effort no longer sends your half-written prompt.**
   The bench composer mirrors the agent's own line editor, so a draft is already

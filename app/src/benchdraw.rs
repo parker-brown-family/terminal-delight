@@ -2217,9 +2217,14 @@ pub fn zone(
 /// room, and one line underneath says what the keys do, because the three
 /// things it names (type without clicking first, enter sends, paste takes an
 /// image) are each invisible otherwise.
+/// `hot` is a dragged file hovering over this box, and it is drawn in the
+/// person's own colour at full strength: a drop is the same act as typing,
+/// aimed at the same line, so it would be strange for it to arrive in a
+/// colour that means anything else.
 pub fn composer(
     line: Option<&crate::workbench::Line>,
     focused: bool,
+    hot: bool,
     shows: &crate::workbench::Shows,
     slots: &Slots,
     sk: &Skin,
@@ -2326,8 +2331,21 @@ pub fn composer(
             // Lit whether or not it is armed. The border was the only thing
             // saying "this is an input" and it only said so AFTER the first
             // click, which is the wrong way round: the invitation has to be
-            // legible before anyone has accepted it.
-            .border_color(th.human.alpha(if live { 0.9 } else { 0.5 })),
+            // legible before anyone has accepted it. A file hovering over it
+            // takes the border to full strength and tints the box, because
+            // "let go here" has to beat "you may type here" while a person is
+            // holding something.
+            .border_color(th.human.alpha(if hot {
+                1.0
+            } else if live {
+                0.9
+            } else {
+                0.5
+            }))
+            // Blended rather than laid over: `bg` replaces, so a translucent
+            // wash here would drop the panel's own surface and let the pane
+            // behind it through.
+            .when(hot, |d| d.bg(th.surface.blend(th.human.alpha(0.14)))),
         th.human,
         th,
     )
@@ -2420,8 +2438,11 @@ pub fn composer(
             })
             // Only while it is armed, and then unmissable. This is the answer
             // to the question the surface kept failing: *am I typing to the
-            // agent right now, or do I have to click something first?*
-            .when(live, |d| {
+            // agent right now, or do I have to click something first?* While
+            // a file is over the box it gives up its place: what happens when
+            // you let go is the more urgent question, and two chips side by
+            // side would be competing for the same corner.
+            .when(live && !hot, |d| {
                 d.child(
                     div()
                         .flex_none()
@@ -2430,6 +2451,26 @@ pub fn composer(
                         .rounded(px(3.))
                         .bg(th.human.alpha(0.16))
                         .child(micro("LIVE \u{2192} AGENT", Step::Tag, th.human, sk, th)),
+                )
+            })
+            // No count of files. The drag's value is parked on the app until
+            // the drop and the hover only knows that SOMETHING is being
+            // carried, so saying "1 file" here would be inventing a number.
+            .when(hot, |d| {
+                d.child(
+                    div()
+                        .flex_none()
+                        .px(px(7.))
+                        .py(px(2.))
+                        .rounded(px(3.))
+                        .bg(th.human.alpha(0.24))
+                        .child(micro(
+                            "\u{2913} DROP TO INSERT THE PATH",
+                            Step::Tag,
+                            th.human,
+                            sk,
+                            th,
+                        )),
                 )
             }),
     )
