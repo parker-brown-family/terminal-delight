@@ -1671,17 +1671,30 @@ impl TerminalView {
                 // inside it can. See [`crate::hostproto::session_tag`].
                 let line = report.to_prompt(crate::surfacefeed::tag());
                 self.bench_deliver(crate::workbench::typed_line(&line), cx);
-                // Answering is looking: the person has dealt with this surface,
-                // so the pane turns back to the conversation it just fed,
-                // where the reply to what they said will appear.
+                // AND THE FACE DOES NOT MOVE. Answering used to be read as
+                // "the person has dealt with this surface", and an agent pane
+                // was turned back to face its conversation so the reply would
+                // land in front of them. Parker, having picked an option:
+                // *"when I am in workbench and I make a choice the focus SNAPS
+                // back to TERM ... if I am in workbench I should stay locked
+                // in unless I specifically step out"*.
                 //
-                // Only when there IS one. A shell pane has nothing to turn
-                // back to, and facing it at a prompt that has just printed
-                // "command not found" reads as the bench falling over rather
-                // than as an answer being delivered.
-                if self.mode.is_agent() {
-                    self.bench.set_face(crate::workbench::Face::Terminal);
-                }
+                // It was also the surface disagreeing with itself. The same
+                // click on a question we OBSERVED in the terminal takes the
+                // `Keys` arm below, which has never moved the face — so two
+                // cards that draw identically answered identically and only
+                // one of them threw you out of the room.
+                //
+                // Fourth in a line. Escape's last rung flipped the face and
+                // was deleted ([`crate::workbench::Peel`]); escape over a
+                // waiting question retired it and was floored; sending from
+                // the composer flipped the face and was stopped
+                // ([`Self::bench_send`]). Each was found by Parker, one at a
+                // time, because each call site decided the exit for itself.
+                // Now none of them do: leaving the bench is alt+k, the TERM
+                // chip, or a scripted `bench off`, and
+                // `nothing_in_the_bench_half_flips_the_pane_off_the_bench`
+                // fails the build for the fifth.
             }
             crate::workbench::Dispatch::Keys { bytes, note } => {
                 // Straight into the pane's pseudoterminal, because whatever is
