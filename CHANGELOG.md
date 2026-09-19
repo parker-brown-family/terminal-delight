@@ -36,7 +36,11 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
   *nobody has chosen* apart from *somebody chose exactly what would have
   happened anyway*: an unset row still shows the value in force, drawn with a
   quiet edge and tagged `unset`, against the accent and `chosen` of a decision.
-  Pressing the lit chip again clears it back to the harness's own.
+  Pressing the lit chip again clears it back to the harness's own. The block is
+  one folded line — `LAUNCH AGENT CONFIG`, press to open — because the card's
+  own subject is what each plan has left, and three rows of somebody else's
+  question above the answer is three rows of noise. It stays open for the rest
+  of the window once opened.
 
 ### Fixed
 
