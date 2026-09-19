@@ -70,6 +70,19 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ### Fixed
 
+- **ctrl+wheel sizes the workbench when you are standing on the workbench.** The
+  chord reached the terminal grid, a pane's header and the outer cabinet, and
+  did nothing at all on the one face that had just been given a dial of its own.
+  The bench paints a capture-phase wheel hook — it has to, because under the
+  curved tube gpui hit-tests flat and cannot tell which box a turn is over — and
+  that hook runs ahead of every bubble listener and swallows the turn, so the
+  pane's own handler never saw it. It looked like it worked from the outside:
+  sizing the terminal and flipping back showed a resized bench, because an unset
+  bench dial follows the grid's. The chord is now one method both handlers ask,
+  and a test enumerates every wheel handler on a pane and fails when a new one
+  appears without answering it — which is the shape of this bug rather than this
+  instance of it.
+
 - **A surface presented over MCP now reaches the disk, so the bench survives a
   restart.** `present_surface` handed the document to the live window and
   stopped there, while this module's own header drew all three transports
