@@ -38,17 +38,25 @@ use crate::surface::{
 use crate::theme::Theme;
 use crate::workbench::{Embodiment, Row, Step, Tint};
 
-/// What a response renderer needs to draw folds it cannot decide for itself:
-/// whose sections these are, which of them are open, and where to register
-/// the headers as click targets. Absent, every section is drawn folded with
-/// no target — the summary and compact bodies, and any caller that has no
-/// zone list to offer.
-pub struct Folds<'a> {
+/// What a response renderer needs to draw a card it cannot decide for itself:
+/// whose reply this is, what the reader picked, and where to register the tabs
+/// and chips as click targets.
+///
+/// Absent — the summary and compact bodies, and any caller with no zone list to
+/// offer — the card draws its first tab's first register and nothing is
+/// pressable.
+///
+/// **Both picks are [`Option`] and both mean "the reader has not chosen".** The
+/// renderer collapses that to the first group and the first register in it, at
+/// draw time; the state map behind this may not store the collapse. See
+/// [`crate::workbench::resolve_tab`].
+pub struct Picks<'a> {
     pub id: &'a SurfaceId,
-    pub open: &'a dyn Fn(&crate::surface::Section) -> bool,
-    /// The register the reader last opened — the one row the card lights.
-    /// `None` before they have opened anything, which draws nothing lit.
-    pub lit: Option<&'a str>,
+    pub tab: Option<crate::surface::Group>,
+    /// Which register inside the picked tab, keyed by the group so a reader
+    /// returning to a tab lands where they left it. Resolved by the caller,
+    /// which is the half that holds the map.
+    pub reg: &'a dyn Fn(crate::surface::Group) -> Option<String>,
     pub zones: std::rc::Rc<std::cell::RefCell<Vec<crate::workbench::Zone>>>,
 }
 
@@ -470,7 +478,7 @@ pub fn weights(w: &Weight, sk: &Skin, th: &Theme) -> Div {
 pub fn body(
     surface: &Surface,
     how: Embodiment,
-    folds: Option<&Folds>,
+    picks: Option<&Picks>,
     sk: &Skin,
     th: &Theme,
 ) -> Div {
@@ -509,14 +517,14 @@ pub fn body(
         Embodiment::Summary => frame.child(summary_line(surface, sk, th)),
         Embodiment::Compact => frame
             .child(heading(surface, sk, th))
-            .child(compact(surface, folds, sk, th)),
+            .child(compact(surface, picks, sk, th)),
         Embodiment::Full if asking => frame
             .child(heading(surface, sk, th))
-            .child(full(surface, folds, sk, th)),
+            .child(full(surface, picks, sk, th)),
         Embodiment::Full => frame
             .child(heading(surface, sk, th))
             .child(weights(&surface.weight, sk, th))
-            .child(full(surface, folds, sk, th)),
+            .child(full(surface, picks, sk, th)),
     }
 }
 
@@ -612,7 +620,7 @@ fn heading(surface: &Surface, sk: &Skin, th: &Theme) -> Div {
 }
 
 /// The shape of the thing, for a pane too small to hold the thing.
-fn compact(surface: &Surface, folds: Option<&Folds>, sk: &Skin, th: &Theme) -> Div {
+fn compact(surface: &Surface, picks: Option<&Picks>, sk: &Skin, th: &Theme) -> Div {
     // A panel rather than bare rows: at this size the body and the rail sit
     // close enough together that an unframed list reads as part of the rail.
     let list = sk.panel().flex().flex_col().gap(px(3.));
@@ -672,13 +680,13 @@ fn compact(surface: &Surface, folds: Option<&Folds>, sk: &Skin, th: &Theme) -> D
         // A compact card may legitimately show LESS. It may not show a control
         // that is missing, which is what the reader reads as a broken feature
         // rather than as a small screen.
-        Kind::Response(r) => response(r, folds, sk, th),
+        Kind::Response(r) => response(r, picks, sk, th),
         Kind::Unclassified(u) => list.child(micro(u.reason.clone(), Step::Small, th.faint, sk, th)),
     }
 }
 
 /// The whole thing.
-fn full(surface: &Surface, folds: Option<&Folds>, sk: &Skin, th: &Theme) -> Div {
+fn full(surface: &Surface, picks: Option<&Picks>, sk: &Skin, th: &Theme) -> Div {
     match &surface.kind {
         Kind::Artifact(a) => artifact(a, sk, th),
         Kind::Markdown(m) => paragraph(m.body.clone(), sk, th),
@@ -687,26 +695,16 @@ fn full(surface: &Surface, folds: Option<&Folds>, sk: &Skin, th: &Theme) -> Div 
         Kind::Changeset(c) => changeset(c, sk, th),
         Kind::Decision(d) => decision(d, sk, th),
         Kind::Question(q) => question(q, sk, th),
-        Kind::Response(r) => response(r, folds, sk, th),
+        Kind::Response(r) => response(r, picks, sk, th),
         Kind::Unclassified(u) => unclassified(u, sk, th),
     }
 }
 
-/// The gist, as the first row of the reading shelf.
-///
-/// It used to be a banner — 15-point type on its own raised floor with the
-/// accent down its edge. That made it outrank a technical brief the reader had
-/// deliberately opened, and it spent the accent, which now means one thing only.
-/// It is a [`crate::surface::Register`] like the others, and it earns its place
-/// by being first and open rather than by being loud.
-fn gist_section(tldr: &str) -> crate::surface::Section {
-    crate::surface::Section {
-        key: "tldr".to_string(),
-        label: "tl;dr".to_string(),
-        register: Register::Tldr,
-        body: crate::surface::Body::Prose(tldr.to_string()),
-    }
-}
+// `gist_section()` used to synthesize a `Section` for the tl;dr so the accordion
+// could treat it as a row like any other. The tabbed card has
+// `workbench::Leaf::Gist` instead — a variant rather than a fabricated struct,
+// because the gist has no key on the wire and inventing one made it possible for
+// a real section keyed `tldr` to collide with it.
 
 /// What this response's escalation earns, or `None` for one that draws nothing.
 ///
@@ -842,113 +840,180 @@ fn doubts_measure(r: &Response) -> String {
     s
 }
 
-/// A reply, as registers a person unfolds.
+/// A reply, as a strip of group tabs over one body.
 ///
-/// The gist first and always open. Then one panel per section: a header that
-/// is the click target, carrying a chevron for the fold state, the label,
-/// and how much is behind it, so a folded `Technical brief · 340 words` is a
-/// promise the reader can weigh before spending it. The body draws under the
-/// header when the section is open. The doubts come last, in the complement
-/// colour and never folded — they are the part of a reply prose buries and
-/// the part a person most needs, and hiding them behind a click would be
-/// burying them again with a nicer typeface.
+/// A tab per group, a quieter chip row picking the register inside the open
+/// one, and exactly one body. Both rows disappear when they would carry a
+/// single thing, so the reply most agents send — a gist and nothing else — is
+/// two sentences with no chrome at all.
 ///
-/// Which sections are open is not decided here: `folds.open` answers it, from
-/// the bench's toggles and `workbench::section_default_open`. Without folds
-/// everything is drawn closed and nothing is pressable, which is what a
-/// summary is.
-fn response(r: &Response, folds: Option<&Folds>, sk: &Skin, th: &Theme) -> Div {
+/// **It was an accordion until 2026-09-18**, one framed panel per register open
+/// or shut, and the panels were the complaint: six registers cost six borders,
+/// six pairs of paddings and five gaps before a word of body, and four of those
+/// six are alternative lengths of the same reply that nobody reads twice.
+/// Parker, on a card that had taken four fifths of a pane: *"these occupy too
+/// much space… we want similar to the right bar, folder tabs that go across the
+/// top dividing them into groups"*. The three candidate shapes, the case table
+/// and the four decisions are in the brief —
+/// `~/Work/reports/2026-09-18-response-registers-as-tabs.html`.
+///
+/// What the reader picked is not decided here: [`Picks`] carries it, and absent
+/// means they have not chosen. Without picks the first tab's first register is
+/// drawn and nothing is pressable, which is what a summary is.
+fn response(r: &Response, picks: Option<&Picks>, sk: &Skin, th: &Theme) -> Div {
+    use crate::workbench::Leaf;
     let promoted = escalation_call(r).is_some();
-    // The gist first, then every register — except an `asks` the escalation has
-    // already promoted. Drawing both would print the same questions twice, which
-    // this file has shipped twice before and been told off for twice: *"Again —
-    // repeating ourselves ... just ummm... just the buttons"*.
-    let tldr = gist_section(&r.tldr);
-    let rows: Vec<&crate::surface::Section> = std::iter::once(&tldr)
-        .chain(
-            r.sections
-                .iter()
-                .filter(|s| !(promoted && s.register == Register::Asks)),
-        )
-        .collect();
-    let open: Vec<bool> = rows
-        .iter()
-        .map(|s| folds.is_some_and(|f| (f.open)(s)))
-        .collect();
-    // The tiers, allocated for the whole shelf at once so exactly one row can be
-    // lit. A renderer cannot overspend the budget because it never holds it.
+    // Every readable thing, bucketed into its tabs, by the ONE function that
+    // decides it. The strip, the chip row and the body all read this list, so a
+    // register cannot be drawn under a tab the strip never offered.
     //
-    // The lit row is the one the reader last OPENED, not the first one that
-    // happens to be open — so a card nobody has touched arrives with nothing
-    // lit, and the light moves as they read rather than sitting on the tl;dr
-    // forever.
-    let lit = folds
-        .and_then(|f| f.lit)
-        .and_then(|key| rows.iter().position(|s| s.key == key));
-    let tiers = crate::emphasis::shelf(&open, lit);
+    // An `asks` the escalation has already promoted leaves: drawing both prints
+    // the same questions twice, which this file has shipped twice before and
+    // been told off for twice — *"Again — repeating ourselves ... just ummm...
+    // just the buttons"*.
+    let tabs = crate::workbench::tabbed(r, promoted);
+    let open_group = crate::workbench::resolve_tab(picks.and_then(|p| p.tab), &tabs);
+    let leaves: &[Leaf] = open_group
+        .and_then(|g| tabs.iter().find(|(t, _)| *t == g))
+        .map(|(_, l)| l.as_slice())
+        .unwrap_or(&[]);
+    let picked_key = open_group.and_then(|g| picks.and_then(|p| (p.reg)(g)));
+    let shown = crate::workbench::resolve_leaf(picked_key.as_deref(), leaves);
 
-    let frame = div().flex().flex_col().gap(px(8.));
-    let frame = frame.children(rows.iter().zip(tiers).zip(&open).map(|((s, tier), &open)| {
-        let facet = crate::emphasis::facet(tier, th);
-        let header = div()
-            .flex()
-            .flex_row()
-            .gap(px(8.))
-            .items_baseline()
-            .child(
-                div()
-                    .w(px(sk.tpx(12.)))
-                    .flex_none()
-                    .text_size(px(sk.pt(Step::Note)))
-                    .text_color(if open { facet.tint } else { th.faint })
-                    .child(if open { "\u{25be}" } else { "\u{25b8}" }),
-            )
-            .child(
-                div()
-                    .text_size(px(sk.pt(Step::Body)))
-                    .text_color(facet.ink)
-                    .child(s.label.clone()),
-            );
-        // NO COUNT. `32 words`, `2 items`, `4 facts` used to sit beside every
-        // label, and the justification written here was that a folded section
-        // is "a promise the reader can weigh before spending it". That is not
-        // how anyone reads. Nobody has ever declined to open a technical brief
-        // because it was thirty-two words rather than forty, and the number is
-        // wrong for the only question a reader actually has, which is whether
-        // the thing is worth reading. Parker: *"the number of words or facts —
-        // all those counters are AI trash anti-patterns and die in a fire"*.
-        // The header is the target, and only the header: a click in a long
-        // open body should place nothing and fold nothing.
-        let header = match folds {
-            Some(f) => header.relative().child(zone(
-                f.zones.clone(),
-                crate::workbench::Hit::ToggleSection {
-                    id: f.id.clone(),
-                    key: s.key.clone(),
-                },
-            )),
-            None => header,
-        };
-        // Shape from the Skin, then the tier, then nothing else. Every register
-        // is the same panel; what separates them is which tier they were handed.
-        let panel = facet.clothe(
-            sk.panel()
+    let frame = div().flex().flex_col().gap(px(6.));
+
+    // THE STRIP — one tab per group, and never a strip of one. A single tab
+    // says nothing a reader did not already know and costs a row on the card
+    // that most replies are: a gist and nothing else.
+    let frame = frame.when(crate::workbench::draws_strip(&tabs), |d| {
+        d.child(
+            div()
                 .flex()
-                .flex_col()
-                .gap(px(6.))
-                .px(px(11.))
-                .py(px(8.)),
+                .flex_row()
+                .flex_wrap()
+                .gap(px(3.))
+                .children(tabs.iter().map(|(g, mine)| {
+                    let active = open_group == Some(*g);
+                    // The doubts never leave the strip. They are a click away
+                    // and the count says they are there, which is the one
+                    // treatment that neither buries them nor charges every card
+                    // with a permanent block — see figure 07 of the brief.
+                    let doubts = mine
+                        .iter()
+                        .any(|l| matches!(l, Leaf::Doubts))
+                        .then_some(r.doubts.len());
+                    // The tier vocabulary, not a hand-picked colour: the open
+                    // tab IS the Active thing on this card now, which is what
+                    // `emphasis::shelf()` used to decide for a row of panels.
+                    let facet = crate::emphasis::facet(
+                        if active {
+                            crate::emphasis::Emphasis::Active
+                        } else {
+                            crate::emphasis::Emphasis::Reading
+                        },
+                        th,
+                    );
+                    let tab = sk
+                        .chip(active)
+                        .flex()
+                        .flex_row()
+                        .items_baseline()
+                        .gap(px(4.))
+                        .text_size(px(sk.pt(Step::Note)))
+                        .font_family(th.font_family.clone())
+                        .text_color(if active {
+                            facet.ink
+                        } else {
+                            crate::emphasis::meta(th)
+                        })
+                        .when(active, |x| x.border_b_1().border_color(facet.tint))
+                        .child(sk.caps(g.label()))
+                        .when_some(doubts, |x, n| {
+                            x.child(
+                                div()
+                                    .text_size(px(sk.pt(Step::Tag)))
+                                    .text_color(ink(crate::workbench::Tint::Pending, th))
+                                    .child(format!("\u{b7}{n}")),
+                            )
+                        });
+                    match picks {
+                        Some(p) => tab.cursor_pointer().relative().child(zone(
+                            p.zones.clone(),
+                            crate::workbench::Hit::PickTab {
+                                id: p.id.clone(),
+                                group: *g,
+                            },
+                        )),
+                        None => tab,
+                    }
+                })),
+        )
+    });
+
+    // THE CHIP ROW — quieter than the strip, and absent when the open tab holds
+    // one thing. Two rows of chrome over a single register is the chrome this
+    // change exists to remove.
+    let frame = frame.when(crate::workbench::draws_chips(leaves), |d| {
+        d.child(
+            div()
+                .flex()
+                .flex_row()
+                .flex_wrap()
+                .gap(px(4.))
+                .children(leaves.iter().map(|leaf| {
+                    let active = shown.is_some_and(|s| s.key() == leaf.key());
+                    let facet = crate::emphasis::facet(
+                        if active {
+                            crate::emphasis::Emphasis::Active
+                        } else {
+                            crate::emphasis::Emphasis::Reading
+                        },
+                        th,
+                    );
+                    let chip = div()
+                        .px(px(sk.tpx(5.)))
+                        .text_size(px(sk.pt(Step::Note)))
+                        .font_family(th.font_family.clone())
+                        .text_color(if active {
+                            facet.ink
+                        } else {
+                            crate::emphasis::meta(th)
+                        })
+                        .when(active, |x| {
+                            x.border_b_1().border_color(facet.tint.alpha(0.8))
+                        })
+                        .child(leaf.label().to_string());
+                    match picks {
+                        Some(p) => chip.cursor_pointer().relative().child(zone(
+                            p.zones.clone(),
+                            crate::workbench::Hit::PickRegister {
+                                id: p.id.clone(),
+                                key: leaf.key().to_string(),
+                            },
+                        )),
+                        None => chip,
+                    }
+                })),
+        )
+    });
+
+    // ONE BODY. The shown register IS the lit one now — which is what took
+    // `emphasis::shelf()`'s only caller away: there is no row of things to tier
+    // when only one of them is on screen.
+    let frame = frame.when_some(shown, |d, leaf| match leaf {
+        Leaf::Gist => d.child(section_body(
+            &crate::surface::Body::Prose(r.tldr.clone()),
+            Register::Tldr,
             sk,
             th,
-        );
-        let panel = panel.child(header);
-        if open {
-            panel.child(section_body(&s.body, s.register, sk, th))
-        } else {
-            panel
-        }
-    }));
-    frame.when(!r.doubts.is_empty(), |d| {
+        )),
+        Leaf::Section(s) => d.child(section_body(&s.body, s.register, sk, th)),
+        Leaf::Doubts => d,
+    });
+
+    // The doubts block, drawn when the doubts are what is being read.
+    let showing_doubts = matches!(shown, Some(Leaf::Doubts));
+    frame.when(showing_doubts && !r.doubts.is_empty(), |d| {
         // The doubts are neither reading nor a summons: they are present, and
         // they make no claim on the reader's attention. The only colour in the
         // block is each claim's own confidence, which is the information in it.
