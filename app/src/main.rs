@@ -51,6 +51,7 @@ mod instance;
 mod keylayer;
 mod lang;
 mod launcher;
+mod launchpref;
 mod mcp;
 mod mcp_tail;
 mod mcp_transport;
@@ -3643,6 +3644,17 @@ struct Workspace {
     provider_marks: std::collections::HashMap<String, std::path::PathBuf>,
     /// Which subscription's card is open (index into the drawable records).
     usage_pick: usize,
+    /// What the LAUNCH AGENT panel opens holding — harness, model, effort.
+    ///
+    /// Read off disk once, here, rather than in `open_agent_launcher`: the
+    /// usage card draws the same three rows on every frame it is up, and a
+    /// file read per frame to answer *which chip is lit* is a file read per
+    /// frame. Written straight through to [`launchpref::save`] on every press,
+    /// so a second window opening its launcher gets the new answer.
+    ///
+    /// Each field is an `Option` all the way here: see [`launchpref`] for why
+    /// *nobody chose* must not be stored as the thing that would have happened.
+    launch_defaults: launchpref::Prefs,
     /// What the last refresh said, when it had something to say.
     usage_status: Option<String>,
     /// A collector run is in flight on a pool thread.
@@ -5084,6 +5096,7 @@ impl Workspace {
             usage_pick: 0,
             usage_status: None,
             usage_refreshing: false,
+            launch_defaults: launchpref::load(),
             agent_vitals: std::collections::HashMap::new(),
             vitals_refreshing: false,
             surface_feed: Some(surfacefeed::Feed::new()),
@@ -7596,6 +7609,182 @@ impl Workspace {
         .detach();
     }
 
+    /// The top of the usage card: what a NEW agent starts as.
+    ///
+    /// Three rows — harness, model, effort — and pressing a chip is the whole
+    /// interaction. It sits here, above the subscriptions, because this page
+    /// already answers *what are these agents costing* and choosing the model
+    /// is that same question one step earlier: Parker asked for the defaults
+    /// *"right at the top of that page ... so that when I spin up an agent in
+    /// workbench, its default[s are] configured"*.
+    ///
+    /// **A lit chip is not the same as a chosen one.** A row nobody has
+    /// answered still has a value in force — the shipped fallback — and it is
+    /// drawn lit but with a quiet border and an `unset` tag, against the accent
+    /// border and `chosen` tag of a decision. Storing the fallback instead
+    /// would make the two indistinguishable the moment the file is read back,
+    /// and the harness's own default could then never change under anyone. See
+    /// [`launchpref`].
+    ///
+    /// Pressing the lit chip again clears it — the dial's convention, where a
+    /// second press on what is already open is how you get back out.
+    fn render_launch_defaults(&self, th: &theme::Theme, cx: &mut Context<Self>) -> gpui::Div {
+        let pref = &self.launch_defaults;
+        // What the panel would open on right now. `unwrap_or` is the fallback
+        // and it is deliberately not written anywhere durable.
+        let harness = pref.harness().unwrap_or(launcher::Harness::Claude);
+        let model_at = pref.model_ix(harness).unwrap_or(0);
+        let effort_now = pref
+            .effort(harness)
+            .unwrap_or_else(|| harness.default_effort());
+        let acc = th.accent;
+        let txt = th.text;
+        // The same pill the subscription row below wears, in three states:
+        // chosen (accent, filled), in force but unchosen (quiet edge, no
+        // fill), and neither.
+        let chip = move |word: &str, lit: bool, chosen: bool| {
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_1p5()
+                .px_2()
+                .py_0p5()
+                .rounded_full()
+                .border_1()
+                .border_color(match (lit, chosen) {
+                    (true, true) => acc.alpha(0.85),
+                    (true, false) => txt.alpha(0.40),
+                    _ => txt.alpha(0.16),
+                })
+                .bg(if lit && chosen {
+                    acc.alpha(0.16)
+                } else {
+                    txt.alpha(0.04)
+                })
+                .text_size(px(10.))
+                .text_color(if lit { txt } else { txt.alpha(0.62) })
+                .cursor_pointer()
+                .hover(move |st| st.bg(acc.alpha(0.12)))
+                .child(word.to_string())
+        };
+        let row = move |name: &str, chips: gpui::Div, chosen: bool| {
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_2()
+                .child(
+                    div()
+                        .w(px(44.))
+                        .flex_none()
+                        .text_size(px(9.))
+                        .text_color(txt.alpha(0.45))
+                        .child(name.to_string()),
+                )
+                .child(chips)
+                .child(div().flex_1().min_w(px(0.)))
+                .child(
+                    div()
+                        .flex_none()
+                        .text_size(px(8.5))
+                        .text_color(if chosen {
+                            acc.alpha(0.85)
+                        } else {
+                            txt.alpha(0.40)
+                        })
+                        .child(if chosen { "chosen" } else { "unset" }),
+                )
+        };
+        let pills = || div().flex().flex_row().flex_wrap().items_center().gap_1p5();
+
+        let mut harness_chips = pills();
+        for h in launcher::Harness::ALL {
+            let word = h.label();
+            harness_chips = harness_chips.child(
+                chip(word, h == harness, pref.harness() == Some(h)).on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        ws.launch_defaults.harness = (ws.launch_defaults.harness.as_deref()
+                            != Some(word))
+                        .then(|| word.to_string());
+                        launchpref::save(&ws.launch_defaults);
+                        cx.notify();
+                    }),
+                ),
+            );
+        }
+
+        let mut model_chips = pills();
+        for (i, m) in harness.models().iter().enumerate() {
+            let id = m.id;
+            model_chips = model_chips.child(
+                chip(m.label, i == model_at, pref.model_ix(harness) == Some(i)).on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        ws.launch_defaults.model = (ws.launch_defaults.model.as_deref()
+                            != Some(id))
+                        .then(|| id.to_string());
+                        launchpref::save(&ws.launch_defaults);
+                        cx.notify();
+                    }),
+                ),
+            );
+        }
+
+        let mut effort_chips = pills();
+        for e in harness.efforts() {
+            let e = *e;
+            let id = e.id();
+            effort_chips = effort_chips.child(
+                chip(id, e == effort_now, pref.effort(harness) == Some(e)).on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        ws.launch_defaults.effort = (ws.launch_defaults.effort.as_deref()
+                            != Some(id))
+                        .then(|| id.to_string());
+                        launchpref::save(&ws.launch_defaults);
+                        cx.notify();
+                    }),
+                ),
+            );
+        }
+
+        div()
+            .flex()
+            .flex_col()
+            .gap_1p5()
+            .pb_2()
+            .border_b_1()
+            .border_color(txt.alpha(0.12))
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_baseline()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_size(px(10.))
+                            .font_weight(gpui::FontWeight::EXTRA_BOLD)
+                            .text_color(th.complement)
+                            .child("NEW AGENT"),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(8.5))
+                            .text_color(txt.alpha(0.5))
+                            .child("what LAUNCH AGENT opens holding \u{2014} press again to unset"),
+                    ),
+            )
+            .child(row("harness", harness_chips, pref.harness().is_some()))
+            .child(row("model", model_chips, pref.model_ix(harness).is_some()))
+            .child(row("effort", effort_chips, pref.effort(harness).is_some()))
+    }
+
     /// The usage face of the </> card: every AI coding subscription on the
     /// machine, one tab each — the ceilings and how close they are, today, the
     /// week behind it, and where the tokens actually went.
@@ -7604,7 +7793,15 @@ impl Workspace {
     /// rounded up on this side. Where a vendor cannot answer, its own words go in
     /// the card (`usageStatusText`) with its own remedy under them.
     fn render_usage_body(&self, th: &theme::Theme, cx: &mut Context<Self>) -> gpui::Div {
-        let body = div().flex().flex_col().gap_2p5();
+        // FIRST, and before the early return below. The defaults are a fact
+        // about this machine, not about whether a collector has ever managed to
+        // write a usage record — a box whose whole content vanishes on the
+        // machines that have not run one is a control nobody can find.
+        let body = div()
+            .flex()
+            .flex_col()
+            .gap_2p5()
+            .child(self.render_launch_defaults(th, cx));
         let drawable: Vec<&usage::Record> = self
             .usage_records
             .iter()
@@ -11426,15 +11623,23 @@ impl Workspace {
         // its exact name found nothing. The render caps what is DRAWN; the
         // filter is how a person reaches the rest, and it needs the rest.
         let projects = launcher::scan(&launcher::default_roots(&home), 1000);
-        let harness = launcher::Harness::Claude;
+        // The three chips open on what somebody chose on the usage card, and
+        // on the shipped behaviour where nobody has. The `unwrap_or` is the
+        // whole of the fallback and it lives HERE rather than in the store,
+        // because a default written to disk is indistinguishable from a
+        // decision the next time it is read. See [`launchpref`].
+        let pref = &self.launch_defaults;
+        let harness = pref.harness().unwrap_or(launcher::Harness::Claude);
         let mut lp = AgentLauncher {
             query: EditBuffer::seeded(""),
             projects,
             order: Vec::new(),
             selected: 0,
             harness,
-            model_ix: 0,
-            effort: harness.default_effort(),
+            model_ix: pref.model_ix(harness).unwrap_or(0),
+            effort: pref
+                .effort(harness)
+                .unwrap_or_else(|| harness.default_effort()),
             reach: launcher::Reach::Anywhere,
             from,
         };
@@ -23343,12 +23548,16 @@ impl Render for Workspace {
             let preview = self.mcp_theme_preview;
             let cs = self.card_scale.clamp(0.7, 1.6);
             let card_slider = self.card_scale_slider(th.accent, th.text, cx);
-            // ---- pre-pass: whole-fleet counts (unfiltered) + context-aware
-            // filter domains. Group chips come from tab groups; program chips
-            // come from live pane modes; state chips only come from matching
-            // agents. ----
-            let (mut n_work, mut n_block, mut n_err, mut n_done, mut n_idle, mut n_unknown) =
-                (0u32, 0u32, 0u32, 0u32, 0u32, 0u32);
+            // ---- pre-pass: the whole-fleet token totals (unfiltered) plus the
+            // context-aware filter domains. Group chips come from tab groups;
+            // program chips come from live pane modes; state chips only come
+            // from matching agents.
+            //
+            // There is no longer a second, unfiltered state tally beside the
+            // `v_*` one: the header carried six bare glyph-and-number counters
+            // over the bordered chips that say the same six things with their
+            // words on, and two rows of the same fact disagreeing whenever a
+            // filter was on is worse than either row alone. ----
             let mut turn_tok_total = 0u64;
             let mut sess_tok_total = 0u64;
             let mut total_panes = 0u32;
@@ -23389,14 +23598,6 @@ impl Render for Workspace {
                         .is_none_or(|program| program == mode_lbl.as_str());
                     if p.mode.is_agent() {
                         let st = p.agent_status();
-                        match st.state {
-                            hud::AgentState::Working => n_work += 1,
-                            hud::AgentState::Blocked => n_block += 1,
-                            hud::AgentState::Error => n_err += 1,
-                            hud::AgentState::Finished => n_done += 1,
-                            hud::AgentState::Idle => n_idle += 1,
-                            hud::AgentState::Unknown => n_unknown += 1,
-                        }
                         turn_tok_total += st.turn_tokens.unwrap_or(0);
                         sess_tok_total += p.session_tokens();
                         if show_group && program_matches {
@@ -24699,7 +24900,17 @@ impl Render for Workspace {
                     }
                 )))
                 .child(
-                    // ---- the agent-wall scoreboard rollup ----
+                    // ---- the agent-wall header: the name, the fleet's token
+                    // totals, and the two overlay buttons.
+                    //
+                    // The six state counters that used to sit between the name
+                    // and the totals are gone. They were unbordered glyphs
+                    // (`\u{25b6} 5`, `\u{2713} 6`) and they set the SAME
+                    // `mcp_state_filter` the bordered WORKING/DONE/IDLE chips
+                    // two rows down set — the same control twice, one of them
+                    // unlabelled, and their numbers were fleet-wide while the
+                    // chips' are context-aware, so the two rows contradicted
+                    // each other the moment any filter was on. ----
                     div()
                         .flex()
                         .flex_row()
@@ -24712,157 +24923,6 @@ impl Render for Workspace {
                                 .font_weight(gpui::FontWeight::EXTRA_BOLD)
                                 .text_color(th.complement)
                                 .child("AGENT WALL"),
-                        )
-                        .child(
-                            div()
-                                .text_color(th.accent)
-                                .cursor_pointer()
-                                .px_1()
-                                .rounded(sk.radius())
-                                .when(state_filt == Some(hud::AgentState::Working), |d| {
-                                    d.bg(th.accent.alpha(0.22))
-                                })
-                                .hover(|s| s.bg(th.accent.alpha(0.12)))
-                                .child(format!("\u{25b6} {n_work}"))
-                                .on_mouse_down(
-                                    MouseButton::Left,
-                                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                                        cx.stop_propagation();
-                                        ws.mcp_state_filter = (ws.mcp_state_filter
-                                            != Some(hud::AgentState::Working))
-                                        .then_some(hud::AgentState::Working);
-                                        cx.notify();
-                                    }),
-                                ),
-                        )
-                        .child(
-                            div()
-                                .text_color(hsla(0.11, 0.85, 0.60, 1.))
-                                .cursor_pointer()
-                                .px_1()
-                                .rounded(sk.radius())
-                                .when(state_filt == Some(hud::AgentState::Blocked), |d| {
-                                    d.bg(hsla(0.11, 0.85, 0.60, 1.).alpha(0.22))
-                                })
-                                .hover(|s| s.bg(hsla(0.11, 0.85, 0.60, 1.).alpha(0.12)))
-                                .child(format!("\u{23f8} {n_block}"))
-                                .on_mouse_down(
-                                    MouseButton::Left,
-                                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                                        cx.stop_propagation();
-                                        ws.mcp_state_filter = (ws.mcp_state_filter
-                                            != Some(hud::AgentState::Blocked))
-                                        .then_some(hud::AgentState::Blocked);
-                                        cx.notify();
-                                    }),
-                                ),
-                        )
-                        .child(
-                            div()
-                                .text_color(hsla(0., 0.75, 0.60, 1.))
-                                .cursor_pointer()
-                                .px_1()
-                                .rounded(sk.radius())
-                                .when(state_filt == Some(hud::AgentState::Error), |d| {
-                                    d.bg(hsla(0., 0.75, 0.60, 1.).alpha(0.22))
-                                })
-                                .hover(|s| s.bg(hsla(0., 0.75, 0.60, 1.).alpha(0.12)))
-                                .child(format!("\u{2715} {n_err}"))
-                                .on_mouse_down(
-                                    MouseButton::Left,
-                                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                                        cx.stop_propagation();
-                                        ws.mcp_state_filter = (ws.mcp_state_filter
-                                            != Some(hud::AgentState::Error))
-                                        .then_some(hud::AgentState::Error);
-                                        cx.notify();
-                                    }),
-                                ),
-                        )
-                        .child(
-                            div()
-                                .text_color(agent_state_glow(
-                                    &th,
-                                    th.text.alpha(0.45),
-                                    hud::AgentState::Finished,
-                                ))
-                                .cursor_pointer()
-                                .px_1()
-                                .rounded(sk.radius())
-                                .when(state_filt == Some(hud::AgentState::Finished), |d| {
-                                    d.bg(agent_state_glow(
-                                        &th,
-                                        th.text.alpha(0.45),
-                                        hud::AgentState::Finished,
-                                    )
-                                    .alpha(0.22))
-                                })
-                                .hover(|s| {
-                                    s.bg(agent_state_glow(
-                                        &th,
-                                        th.text.alpha(0.45),
-                                        hud::AgentState::Finished,
-                                    )
-                                    .alpha(0.12))
-                                })
-                                .child(format!("\u{2713} {n_done}"))
-                                .on_mouse_down(
-                                    MouseButton::Left,
-                                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                                        cx.stop_propagation();
-                                        ws.mcp_state_filter = (ws.mcp_state_filter
-                                            != Some(hud::AgentState::Finished))
-                                        .then_some(hud::AgentState::Finished);
-                                        cx.notify();
-                                    }),
-                                ),
-                        )
-                        .child(
-                            div()
-                                .text_color(th.text.alpha(0.45))
-                                .cursor_pointer()
-                                .px_1()
-                                .rounded(sk.radius())
-                                .when(state_filt == Some(hud::AgentState::Idle), |d| {
-                                    d.bg(th.text.alpha(0.45).alpha(0.22))
-                                })
-                                .hover(|s| s.bg(th.text.alpha(0.45).alpha(0.12)))
-                                .child(format!("\u{25cb} {n_idle}"))
-                                .on_mouse_down(
-                                    MouseButton::Left,
-                                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                                        cx.stop_propagation();
-                                        ws.mcp_state_filter = (ws.mcp_state_filter
-                                            != Some(hud::AgentState::Idle))
-                                        .then_some(hud::AgentState::Idle);
-                                        cx.notify();
-                                    }),
-                                ),
-                        )
-                        // Panes whose screen matched no rule. Its own chip, so
-                        // the set can be filtered to and looked at — the first
-                        // thing anyone will want when this number is not zero.
-                        .child(
-                            div()
-                                .text_color(th.text.alpha(0.45))
-                                .cursor_pointer()
-                                .px_1()
-                                .rounded(sk.radius())
-                                .when(state_filt == Some(hud::AgentState::Unknown), |d| {
-                                    d.bg(th.text.alpha(0.45).alpha(0.22))
-                                })
-                                .hover(|s| s.bg(th.text.alpha(0.45).alpha(0.12)))
-                                .child(format!("? {n_unknown}"))
-                                .on_mouse_down(
-                                    MouseButton::Left,
-                                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                                        cx.stop_propagation();
-                                        ws.mcp_state_filter = (ws.mcp_state_filter
-                                            != Some(hud::AgentState::Unknown))
-                                        .then_some(hud::AgentState::Unknown);
-                                        cx.notify();
-                                    }),
-                                ),
                         )
                         .child(div().flex_1().min_w(px(0.)))
                         .child(div().text_color(th.text.alpha(0.7)).child(format!(

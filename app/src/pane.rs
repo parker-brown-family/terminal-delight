@@ -2121,6 +2121,16 @@ pub struct TerminalView {
     /// elements as they paint, read by the root mouse handler. See
     /// [`crate::benchdraw::zone`].
     wb_zones: std::rc::Rc<std::cell::RefCell<Vec<crate::workbench::Zone>>>,
+    /// Where the bench's outermost box is in the window, as of the last frame
+    /// that painted one.
+    ///
+    /// The only thing that turns a window-space rectangle — a dial's, read back
+    /// out of [`Self::wb_zones`] — into the coordinates an absolutely-positioned
+    /// child of that box is placed in. NOT cleared per frame, unlike the zones:
+    /// the tree is BUILT before it is painted, so a frame can only ever be
+    /// placed with what the previous one measured, and clearing it would mean
+    /// every frame drew with nothing. See [`crate::benchdraw::probe`].
+    wb_bench_rect: std::rc::Rc<std::cell::RefCell<Option<crate::workbench::Rect>>>,
     /// What the pointer looks like over the bench, decided from the un-bent
     /// position on every mouse move and painted by the bench's pointer hook.
     wb_pointer: crate::workbench::Pointer,
@@ -3333,6 +3343,7 @@ impl TerminalView {
             wb_delivered_ms: None,
             wb_flash_until_ms: None,
             wb_zones: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
+            wb_bench_rect: std::rc::Rc::new(std::cell::RefCell::new(None)),
             wb_pointer: crate::workbench::Pointer::Arrow,
             wb_drop: false,
             wb_mirror: false,
