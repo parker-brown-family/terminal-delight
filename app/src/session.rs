@@ -142,6 +142,19 @@ fn fg_pgid(master: &File) -> Option<u32> {
     (pgid > 0).then_some(pgid as u32)
 }
 
+/// The foreground process group of `pid`'s terminal — `tpgid`, field 8 of its
+/// stat line, and the pid a keystroke typed into that pane reaches.
+///
+/// `None` when the process has no controlling terminal or its stat cannot be
+/// read. Public because the question "which of these processes is the pane's"
+/// is asked in two places, and the kernel's answer beats both of the guesses
+/// that were being made instead.
+pub fn foreground_pid(pid: u32) -> Option<u32> {
+    let stat = proc_read(pid, "stat");
+    let tpgid = stat_field_after_comm(&stat, 6)?;
+    (tpgid > 0).then_some(tpgid as u32)
+}
+
 fn proc_cwd(pid: u32) -> Option<String> {
     std::fs::read_link(format!("/proc/{pid}/cwd"))
         .ok()
