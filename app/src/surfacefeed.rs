@@ -531,6 +531,25 @@ pub fn demo_surfaces() -> Vec<(&'static str, Value)> {
                 }
             }),
         ),
+        // The comments board, and the demo is the one place it can be seeded
+        // at all: everywhere else a comment is typed by a person, and there is
+        // nobody to type one into a screenshot.
+        //
+        // It arrives through the file transport like the rest of this list,
+        // which means it arrives as a DROP and not as `Origin::Person` — so
+        // the card reads `dropped as a file · writer unknown` and the row
+        // carries its stamp with no `you`. That is not the demo cheating; it is
+        // exactly what a board looks like when it is read back off disk after a
+        // restart, which is the state a screenshot is most likely to catch.
+        (
+            "08-comment",
+            serde_json::json!({
+                "td": TDSP_DEMO_VERSION, "kind": "comment", "id": "demo-comment",
+                "model": {
+                    "body": "check the phosphor bleed on the LIVE chip at 40% contrast\n\nMight be the chip's own background alpha rather than the border. Look at it before touching the skin file — the two corners in the composer are literals, so a square skin would not square them either."
+                }
+            }),
+        ),
     ]
 }
 
@@ -1165,10 +1184,18 @@ mod tests {
 
     #[test]
     fn every_demo_payload_is_one_this_build_actually_renders() {
-        // A demo is a screenshot waiting to happen, and a screenshot of six
-        // `unclassified` blocks would be a protocol bump nobody noticed. Five
-        // of the six must parse strictly; the sixth is the unknown-kind
-        // specimen and must NOT, or it has stopped demonstrating anything.
+        // A demo is a screenshot waiting to happen, and a screenshot full of
+        // `unclassified` blocks would be a protocol bump nobody noticed. Every
+        // payload must parse strictly except one — the unknown-kind specimen,
+        // which must NOT, or it has stopped demonstrating anything.
+        //
+        // Counted against the LIST rather than against a literal. It was `6`
+        // and `1`, which meant adding the comments board's demo failed this
+        // test for the one reason it is not meant to catch: the list got
+        // longer. The property is `all but the specimen`, and written that way
+        // it still fails the moment a payload silently degrades — which is the
+        // regression this exists for.
+        let total = demo_surfaces().len();
         let mut typed = 0;
         let mut unclassified = 0;
         for (name, doc) in demo_surfaces() {
@@ -1184,8 +1211,8 @@ mod tests {
                 }
             }
         }
-        assert_eq!(typed, 6);
-        assert_eq!(unclassified, 1);
+        assert_eq!(unclassified, 1, "exactly one unknown-kind specimen");
+        assert_eq!(typed, total - 1, "every other demo payload must parse");
     }
 
     #[test]
