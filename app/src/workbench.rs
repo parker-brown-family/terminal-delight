@@ -231,27 +231,132 @@ pub fn tint_of(kind: &Kind) -> Tint {
     }
 }
 
-/// Whether a response's register starts unfolded.
+/// One readable thing on a response card: a register, or the doubts.
 ///
-/// The gist, because a reply whose first line is folded is a reply nobody
-/// reads — it is a register now rather than a banner, but it is still the one
-/// the reader lands on. And the asks, for the case where they were NOT
-/// promoted into the card's own escalation (every question already answered,
-/// or a declared level of `none`) and are therefore just another register.
-///
-/// The three registers of the same content stay folded until a register is
-/// chosen: unfolding all three is the transcript again.
-pub fn section_default_open(register: crate::surface::Register) -> bool {
-    matches!(
-        register,
-        crate::surface::Register::Tldr | crate::surface::Register::Asks
-    )
+/// The doubts are not a [`Section`](crate::surface::Section) — they are their
+/// own shape on the wire and their own block on the card — but on a tabbed card
+/// they are one more thing you can be looking at, so they are a leaf like any
+/// other and the renderer switches on which kind it drew.
+#[derive(Clone, Copy, Debug)]
+pub enum Leaf<'a> {
+    /// The gist. Always present: a response without one does not parse.
+    Gist,
+    Section(&'a crate::surface::Section),
+    /// Present only when the reply carries doubts.
+    Doubts,
 }
 
-/// A section's state after the person's toggles: open by default and not
-/// toggled, or closed by default and toggled.
-pub fn section_open(default_open: bool, toggled: bool) -> bool {
-    default_open != toggled
+impl<'a> Leaf<'a> {
+    /// The key a press names it by — the same key the wire used, where there
+    /// was one.
+    ///
+    /// Takes `self` rather than `&self` (the type is [`Copy`]) so the borrow it
+    /// returns belongs to the SECTION rather than to whichever local the leaf
+    /// was sitting in, which is what lets a caller map over a list of them.
+    pub fn key(self) -> &'a str {
+        match self {
+            Leaf::Gist => "tldr",
+            Leaf::Section(s) => &s.key,
+            Leaf::Doubts => "doubts",
+        }
+    }
+
+    /// The word on its chip.
+    pub fn label(self) -> &'a str {
+        match self {
+            Leaf::Gist => "tl;dr",
+            Leaf::Section(s) => &s.label,
+            Leaf::Doubts => "doubts",
+        }
+    }
+
+    pub fn group(self) -> crate::surface::Group {
+        match self {
+            Leaf::Gist => crate::surface::Group::Reading,
+            Leaf::Section(s) => crate::surface::Group::of(s.register),
+            // The doubts are evidence: they are what the agent could not
+            // establish, filed beside what it did.
+            Leaf::Doubts => crate::surface::Group::Evidence,
+        }
+    }
+}
+
+/// Everything a response card can show, bucketed into its tabs.
+///
+/// **One definition, because two would drift.** The strip, the chip row, the
+/// body and the default all read this, so a register cannot appear under a tab
+/// that the strip does not draw — which is the failure mode of computing the
+/// tabs in one place and the contents in another.
+///
+/// Groups come back in [`Group::ALL`](crate::surface::Group::ALL) order and an
+/// empty group is left out, which is what makes "no strip for one group" a
+/// property of the data rather than a special case in the renderer.
+///
+/// `promoted_asks` is the escalation having already drawn the questions above
+/// the card: the asks register then leaves, because printing it twice is a bug
+/// this file has shipped twice and been told off for twice.
+pub fn tabbed(
+    r: &crate::surface::Response,
+    promoted_asks: bool,
+) -> Vec<(crate::surface::Group, Vec<Leaf<'_>>)> {
+    let mut leaves: Vec<Leaf<'_>> = vec![Leaf::Gist];
+    leaves.extend(
+        r.sections
+            .iter()
+            .filter(|s| !(promoted_asks && s.register == crate::surface::Register::Asks))
+            .map(Leaf::Section),
+    );
+    if !r.doubts.is_empty() {
+        leaves.push(Leaf::Doubts);
+    }
+    crate::surface::Group::ALL
+        .into_iter()
+        .filter_map(|g| {
+            let mine: Vec<Leaf<'_>> = leaves.iter().copied().filter(|l| l.group() == g).collect();
+            (!mine.is_empty()).then_some((g, mine))
+        })
+        .collect()
+}
+
+/// Does this card draw a tab strip at all?
+///
+/// **Not when there is one group.** A strip of one tab says nothing the reader
+/// did not already know and costs a row on the card that most replies are — a
+/// gist and nothing else. The rule lives here rather than in the renderer
+/// because it is a rule: `benchdraw`'s own guard test refuses a threshold in
+/// that file, on the argument that a number a renderer compares against is
+/// policy wearing a renderer's clothes.
+pub fn draws_strip(tabs: &[(crate::surface::Group, Vec<Leaf<'_>>)]) -> bool {
+    tabs.len() > 1
+}
+
+/// Does the open tab draw a chip row under the strip?
+///
+/// Same rule one level down: a chip row naming the single thing already on
+/// screen is chrome charging for a choice nobody has.
+pub fn draws_chips(leaves: &[Leaf<'_>]) -> bool {
+    leaves.len() > 1
+}
+
+/// Which tab is open: the one the reader picked, or the first one there is.
+///
+/// A pick for a tab that is not present any more — the reply was updated and
+/// the group went away — falls back rather than drawing an empty card.
+pub fn resolve_tab(
+    picked: Option<crate::surface::Group>,
+    tabs: &[(crate::surface::Group, Vec<Leaf<'_>>)],
+) -> Option<crate::surface::Group> {
+    picked
+        .filter(|g| tabs.iter().any(|(t, _)| t == g))
+        .or_else(|| tabs.first().map(|(g, _)| *g))
+}
+
+/// Which leaf is shown inside the open tab: the one the reader picked, or the
+/// first one in it.
+pub fn resolve_leaf<'a>(picked: Option<&str>, leaves: &'a [Leaf<'a>]) -> Option<Leaf<'a>> {
+    picked
+        .and_then(|k| leaves.iter().find(|l| l.key() == k).copied())
+        .or_else(|| leaves.first().copied())
 }
 
 /// What the title card says about the turn in flight: the agent's own clock,
@@ -775,8 +880,13 @@ pub enum Hit {
     Arm,
     /// The rail's collapse handle, and its collapsed ticks.
     ToggleRail,
-    /// A response section's header: fold it, or unfold it.
-    ToggleSection {
+    /// A response card's group tab: read that group.
+    PickTab {
+        id: SurfaceId,
+        group: crate::surface::Group,
+    },
+    /// A register chip inside the open tab: show that one.
+    PickRegister {
         id: SurfaceId,
         key: String,
     },
@@ -2018,18 +2128,20 @@ pub struct Bench {
     /// The person's own preference for the rail. Physics may still overrule it.
     rail_wanted: bool,
     unseen: HashSet<SurfaceId>,
-    /// Response sections the person has flipped away from their default.
-    /// Toggles rather than states, so a section's default can change under a
-    /// build without every remembered fold inverting.
-    toggled: HashSet<(SurfaceId, String)>,
-    /// The register the person last OPENED, per surface — what the card lights.
+    /// Which tab of a response card the reader picked.
     ///
-    /// Separate from `toggled` because it answers a different question. Which
-    /// sections are open is a set; where the reader last went is a position, and
-    /// a set cannot carry a position. Deriving it from `toggled` was the obvious
-    /// shortcut and it is wrong twice over: a `HashSet` has no order, and the
-    /// default-open registers are open without ever having been touched.
-    touched: std::collections::HashMap<SurfaceId, String>,
+    /// **Absent is not the first one.** Absent means they have not chosen, which
+    /// is a different fact: the renderer may collapse it to the first group at
+    /// draw time, and this map may not store that collapse — otherwise a reply
+    /// updated to carry a new first group would move under a reader who never
+    /// touched it, and nothing would be able to tell that from a choice.
+    tab: std::collections::HashMap<SurfaceId, crate::surface::Group>,
+    /// Which register inside a tab, for the tabs where they picked one.
+    ///
+    /// Keyed by the pair, so reading the technical brief and then going to the
+    /// evidence tab and back brings the technical brief back rather than the
+    /// tl;dr.
+    reg: std::collections::HashMap<(SurfaceId, crate::surface::Group), String>,
 }
 
 /// What a press turns into.
@@ -2261,8 +2373,8 @@ impl Default for Bench {
             selected: None,
             rail_wanted: true,
             unseen: HashSet::new(),
-            toggled: HashSet::new(),
-            touched: std::collections::HashMap::new(),
+            tab: std::collections::HashMap::new(),
+            reg: std::collections::HashMap::new(),
         }
     }
 }
@@ -2433,60 +2545,53 @@ impl Bench {
         })
     }
 
-    /// Flip one response section between folded and unfolded.
-    ///
-    /// Also records where the reader just went, which is what the card lights.
-    /// Opening a register marks it; closing the lit one puts the light out
-    /// rather than moving it somewhere the reader did not choose.
-    pub fn toggle_section(&mut self, id: &SurfaceId, key: &str) {
-        let k = (id.clone(), key.to_string());
-        if !self.toggled.remove(&k) {
-            self.toggled.insert(k.clone());
-        }
-        // Read the RESULT rather than assume the flip opened it: these are
-        // toggles against a per-register default, so the same press opens one
-        // section and closes another.
-        let now_open = section_open(
-            self.section_default_open_for(id, key),
-            self.toggled.contains(&k),
-        );
-        if now_open {
-            self.touched.insert(id.clone(), key.to_string());
-        } else if self.touched.get(id).is_some_and(|t| t == key) {
-            self.touched.remove(id);
-        }
+    /// Read one group of a response card.
+    pub fn pick_tab(&mut self, id: &SurfaceId, group: crate::surface::Group) {
+        self.tab.insert(id.clone(), group);
     }
 
-    /// The default-open answer for one key on one surface, by looking its
-    /// register up rather than guessing from the key's spelling.
-    fn section_default_open_for(&self, id: &SurfaceId, key: &str) -> bool {
+    /// Show one register inside its own group — and open that group, because a
+    /// chip you can press is a chip in the tab you are looking at, and storing
+    /// the tab alongside it is what keeps the two from disagreeing later.
+    pub fn pick_register(&mut self, id: &SurfaceId, key: &str) {
+        let group = self.group_of_key(id, key);
+        self.tab.insert(id.clone(), group);
+        self.reg.insert((id.clone(), group), key.to_string());
+    }
+
+    /// Which tab the reader chose here, if they chose one.
+    pub fn picked_tab(&self, id: &SurfaceId) -> Option<crate::surface::Group> {
+        self.tab.get(id).copied()
+    }
+
+    /// Which register they chose inside that tab, if they chose one.
+    pub fn picked_register(&self, id: &SurfaceId, group: crate::surface::Group) -> Option<&str> {
+        self.reg.get(&(id.clone(), group)).map(String::as_str)
+    }
+
+    /// The group a key belongs to, looked up through the surface rather than
+    /// guessed from the key's spelling — except for the two keys that have no
+    /// section to look up.
+    fn group_of_key(&self, id: &SurfaceId, key: &str) -> crate::surface::Group {
         if crate::surface::Register::is_tldr(key) {
-            return section_default_open(crate::surface::Register::Tldr);
+            return crate::surface::Group::Reading;
+        }
+        if crate::surface::Register::is_doubts(key) {
+            return crate::surface::Group::Evidence;
         }
         self.get(id)
             .and_then(|s| match &s.kind {
                 Kind::Response(r) => r.sections.iter().find(|x| x.key == key),
                 _ => None,
             })
-            .map(|s| section_default_open(s.register))
-            .unwrap_or(false)
+            .map(|s| crate::surface::Group::of(s.register))
+            .unwrap_or(crate::surface::Group::Other)
     }
 
-    /// Which register this surface's card should light, if any.
-    ///
-    /// `None` until the reader opens something — the light marks where they went
-    /// and says nothing before they have gone anywhere.
-    pub fn lit_section(&self, id: &SurfaceId) -> Option<&str> {
-        self.touched.get(id).map(String::as_str)
-    }
-
-    /// Whether a response section is unfolded right now: its register's
-    /// default, flipped if the person toggled it.
-    pub fn section_open(&self, id: &SurfaceId, section: &crate::surface::Section) -> bool {
-        section_open(
-            section_default_open(section.register),
-            self.toggled.contains(&(id.clone(), section.key.clone())),
-        )
+    /// Forget what the reader was reading on a surface that is gone.
+    fn forget_picks(&mut self, id: &SurfaceId) {
+        self.tab.remove(id);
+        self.reg.retain(|(sid, _), _| sid != id);
     }
 
     /// Open one as a card. Marks it seen, because opening is looking.
@@ -2534,7 +2639,7 @@ impl Bench {
                 let before = self.surfaces.len();
                 self.surfaces.retain(|s| s.id != post.id);
                 self.unseen.remove(&post.id);
-                self.toggled.retain(|(id, _)| *id != post.id);
+                self.forget_picks(&post.id);
                 // Closes the card if it was the one open. It does NOT open a
                 // neighbour: a surface appearing under the reader because
                 // another one was retired is the rail choosing for them.
@@ -2569,7 +2674,7 @@ impl Bench {
                         if self.surfaces.len() > crate::surface::PANE_HISTORY_CAP {
                             let dropped = self.surfaces.remove(0);
                             self.unseen.remove(&dropped.id);
-                            self.toggled.retain(|(id, _)| *id != dropped.id);
+                            self.forget_picks(&dropped.id);
                             if self.selected.as_ref() == Some(&dropped.id) {
                                 self.selected = None;
                             }
@@ -2893,44 +2998,197 @@ mod tests {
         );
     }
 
+    /// The card every demo and every screenshot starts from: the seeded reply,
+    /// untouched, opening on its reading group with four registers under it.
+    ///
+    /// Written because a photograph of the live card showed the `next` tab open
+    /// on a window nobody had pressed — which turned out to be a stray click
+    /// from the desk the demo had borrowed, not a wrong default. A picture of a
+    /// surface mid-interaction looks exactly like a picture of a surface with a
+    /// broken default, and only an assertion tells the two apart.
     #[test]
-    fn a_section_starts_at_its_default_and_a_toggle_flips_it_and_only_it() {
+    fn the_seeded_reply_opens_on_its_reading_group_with_nobody_having_pressed() {
+        use crate::surface::Group;
+        let mut b = Bench::new();
+        for (_, doc) in crate::surfacefeed::demo_surfaces() {
+            if let Ok(p) = crate::surface::parse(&doc, NOW) {
+                b.apply(p);
+            }
+        }
+        let showing = b.showing().expect("the demo shows a reply").clone();
+        let Kind::Response(r) = &showing.kind else {
+            panic!("the overview stands in with the newest response");
+        };
+        let tabs = tabbed(r, false);
+        assert_eq!(
+            tabs.iter().map(|(g, l)| (*g, l.len())).collect::<Vec<_>>(),
+            vec![(Group::Reading, 4), (Group::Evidence, 2), (Group::Next, 1)],
+        );
+        assert_eq!(b.picked_tab(&showing.id), None, "nobody has pressed");
+        assert_eq!(
+            resolve_tab(b.picked_tab(&showing.id), &tabs),
+            Some(Group::Reading),
+            "so it opens on the reading group"
+        );
+        assert_eq!(
+            resolve_leaf(None, &tabs[0].1).map(|l| l.key()),
+            Some("tldr"),
+            "…on the gist"
+        );
+    }
+
+    #[test]
+    fn nothing_is_picked_until_the_reader_picks_it_and_a_pick_is_per_tab() {
+        use crate::surface::Group;
         let mut b = Bench::new();
         b.apply(response("r", "Gist."));
         let id = SurfaceId("r".into());
-        let sections = match &b.get(&id).unwrap().kind {
-            Kind::Response(r) => r.sections.clone(),
-            _ => unreachable!(),
-        };
-        let by_key = |k: &str| sections.iter().find(|s| s.key == k).unwrap().clone();
-        assert!(
-            !b.section_open(&id, &by_key("eli5")),
-            "a register starts folded"
+
+        // ABSENT, not "the first one". The renderer collapses absent to the
+        // first group at draw time; the map may not store that collapse, or
+        // nothing downstream could tell a choice from a default.
+        assert_eq!(b.picked_tab(&id), None);
+        assert_eq!(b.picked_register(&id, Group::Reading), None);
+
+        b.pick_register(&id, "technical");
+        assert_eq!(
+            b.picked_register(&id, Group::Reading).as_deref(),
+            Some("technical")
         );
-        assert!(!b.section_open(&id, &by_key("technical")));
-        assert!(
-            b.section_open(&id, &by_key("asks")),
-            "what the agent needs starts open"
+        assert_eq!(
+            b.picked_tab(&id),
+            Some(Group::Reading),
+            "pressing a chip opens the tab it is in, so the two cannot disagree later"
         );
-        b.toggle_section(&id, "eli5");
-        assert!(b.section_open(&id, &by_key("eli5")));
-        assert!(
-            !b.section_open(&id, &by_key("technical")),
-            "only the one pressed"
+
+        // A pick is keyed by the PAIR: going to another tab and back brings
+        // back what you were reading, rather than resetting to its first chip.
+        b.pick_tab(&id, Group::Evidence);
+        assert_eq!(b.picked_tab(&id), Some(Group::Evidence));
+        assert_eq!(
+            b.picked_register(&id, Group::Evidence),
+            None,
+            "a tab nobody has read inside has no register picked"
         );
-        b.toggle_section(&id, "asks");
-        assert!(
-            !b.section_open(&id, &by_key("asks")),
-            "an open-by-default one folds"
+        assert_eq!(
+            b.picked_register(&id, Group::Reading).as_deref(),
+            Some("technical"),
+            "and the reading tab still remembers"
         );
-        b.toggle_section(&id, "eli5");
-        assert!(!b.section_open(&id, &by_key("eli5")), "and back");
-        // Retiring the surface forgets its folds, so an id reused later
-        // starts fresh rather than inheriting a stranger's toggles.
-        b.toggle_section(&id, "technical");
+
+        // The doubts are not a section, and a press on them still lands in
+        // evidence rather than falling through to `other`.
+        b.pick_register(&id, "doubts");
+        assert_eq!(b.picked_tab(&id), Some(Group::Evidence));
+        assert_eq!(
+            b.picked_register(&id, Group::Evidence).as_deref(),
+            Some("doubts")
+        );
+
+        // Retiring forgets both, so an id reused later starts fresh rather than
+        // inheriting a stranger's reading position.
         b.apply(post(json!({ "td": "0.3", "op": "retire", "id": "r" })));
         b.apply(response("r", "Gist again."));
-        assert!(!b.section_open(&id, &by_key("technical")));
+        assert_eq!(b.picked_tab(&id), None);
+        assert_eq!(b.picked_register(&id, Group::Evidence), None);
+    }
+
+    /// The suppression rules, which are the ones that would ship broken: a
+    /// restyle justified by saving space on a six-register card has to be
+    /// checked against the one-register card, which is what most replies are.
+    #[test]
+    fn a_reply_only_gets_the_chrome_it_needs_and_the_commonest_reply_gets_none() {
+        use crate::surface::Group;
+        let mut b = Bench::new();
+        // The commonest reply there is: a gist and nothing else.
+        b.apply(post(json!({
+            "td": "0.3", "kind": "response", "id": "a", "title": "t",
+            "model": { "tldr": "Just the gist." }
+        })));
+        b.apply(response("b", "Gist."));
+        let tabs_of =
+            |b: &Bench, id: &str, promoted: bool| match &b.get(&SurfaceId(id.into())).unwrap().kind
+            {
+                Kind::Response(r) => tabbed(r, promoted)
+                    .into_iter()
+                    .map(|(g, l)| (g, l.iter().map(|x| x.key().to_string()).collect::<Vec<_>>()))
+                    .collect::<Vec<_>>(),
+                _ => unreachable!(),
+            };
+        let only_gist = tabs_of(&b, "a", false);
+        assert_eq!(only_gist.len(), 1, "one group");
+        assert_eq!(only_gist[0].0, Group::Reading);
+        assert_eq!(only_gist[0].1.len(), 1, "holding one leaf");
+        // …and therefore no chrome at all on the commonest reply there is.
+        let raw_gist = match &b.get(&SurfaceId("a".into())).unwrap().kind {
+            Kind::Response(r) => tabbed(r, false),
+            _ => unreachable!(),
+        };
+        assert!(!draws_strip(&raw_gist), "a strip of one tab is not drawn");
+        assert!(
+            !draws_chips(&raw_gist[0].1),
+            "nor a chip row naming the only thing on screen"
+        );
+
+        // The full house: reading, evidence (the doubts), next.
+        let full = tabs_of(&b, "b", false);
+        let groups: Vec<Group> = full.iter().map(|(g, _)| *g).collect();
+        assert_eq!(groups, vec![Group::Reading, Group::Evidence, Group::Next]);
+        assert!(
+            !groups.contains(&Group::Other),
+            "the other tab appears only when it holds something"
+        );
+        assert_eq!(full[0].1[0], "tldr", "the gist leads its group");
+        assert!(full[0].1.iter().any(|k| k == "technical"));
+        assert!(
+            full[1].1.iter().any(|k| k == "doubts"),
+            "the doubts are evidence"
+        );
+
+        // A promoted escalation takes the asks OUT: the summons above the card
+        // already printed them, and printing them twice is the bug this file
+        // has shipped twice.
+        let promoted = tabs_of(&b, "b", true);
+        assert!(
+            !promoted.iter().flat_map(|(_, l)| l).any(|k| k == "asks"),
+            "the asks left with the escalation"
+        );
+
+        // Resolution: absent picks land on the first of each, and a pick for a
+        // group that is not there any more falls back rather than drawing an
+        // empty card.
+        let bench_tabs = match &b.get(&SurfaceId("b".into())).unwrap().kind {
+            Kind::Response(r) => tabbed(r, false),
+            _ => unreachable!(),
+        };
+        let reading = &bench_tabs[0].1;
+        assert!(
+            draws_strip(&bench_tabs) && draws_chips(reading),
+            "a reply with three groups and four readings gets both rows"
+        );
+        assert!(
+            !draws_chips(&bench_tabs[1].1),
+            "…but a tab holding one thing still draws no chip row"
+        );
+        assert_eq!(resolve_tab(None, &bench_tabs), Some(Group::Reading));
+        assert_eq!(
+            resolve_tab(Some(Group::Other), &bench_tabs),
+            Some(Group::Reading)
+        );
+        assert_eq!(
+            resolve_tab(Some(Group::Next), &bench_tabs),
+            Some(Group::Next)
+        );
+        assert_eq!(resolve_leaf(None, reading).map(|l| l.key()), Some("tldr"));
+        assert_eq!(
+            resolve_leaf(Some("technical"), reading).map(|l| l.key()),
+            Some("technical")
+        );
+        assert_eq!(
+            resolve_leaf(Some("gone"), reading).map(|l| l.key()),
+            Some("tldr"),
+            "a key that is not there any more falls back to the first"
+        );
     }
 
     #[test]

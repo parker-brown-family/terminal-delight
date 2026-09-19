@@ -20,6 +20,15 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
   returns to the character you stopped at. A pasted image does not survive that
   erase — see #557. (#556)
 
+- **The model and effort a pane is running stay readable while it is working.**
+  The bench's two dials switched to the faint ink at 0.45 alpha whenever a press
+  would not be read — which is the whole of a turn in flight — so a busy pane
+  carried two outlined boxes with nothing legible in them, on a header lit green
+  because the agent was busy. The value is a fact about the process, and a turn
+  in flight is when a person most wants it: which model is spending this, and at
+  what effort. Pressability is now drawn by the caret and the cursor, and the
+  ink carries one claim only — whether anybody chose the value. (#553)
+
 - **The tab strip opens on the group you are in.** Teaching the strip to obey
   the scope chip left the chip's default on ALL, so a window opened with every
   tab in the session across the top: the branch a person was actually working in

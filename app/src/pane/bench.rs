@@ -123,7 +123,8 @@ impl TerminalView {
                 window.focus(&self.focus_handle, cx);
             }
             Hit::ToggleRail => self.bench.toggle_rail(),
-            Hit::ToggleSection { id, key } => self.bench.toggle_section(&id, &key),
+            Hit::PickTab { id, group } => self.bench.pick_tab(&id, group),
+            Hit::PickRegister { id, key } => self.bench.pick_register(&id, &key),
             Hit::Shelf(shelf) => self.bench.set_shelf(shelf),
             Hit::OpenRow(id) => self.bench_open(&id, cx),
             Hit::GalleryBack => {
@@ -1865,14 +1866,21 @@ impl TerminalView {
             Some(surface) => {
                 let tint = crate::benchdraw::ink(crate::workbench::tint_of(&surface.kind), th);
                 let bench = &self.bench;
-                let open = |s: &crate::surface::Section| bench.section_open(&surface.id, s);
-                let folds = crate::benchdraw::Folds {
+                // The picks the renderer cannot hold: which tab, and which
+                // register inside whichever tab it resolves to. The closure is
+                // what lets the renderer ask AFTER it has worked out the open
+                // group, which is a thing only it can do — it is the half that
+                // knows which groups this reply actually carries.
+                let reg = |g: crate::surface::Group| {
+                    bench.picked_register(&surface.id, g).map(str::to_string)
+                };
+                let picks = crate::benchdraw::Picks {
                     id: &surface.id,
-                    open: &open,
-                    lit: bench.lit_section(&surface.id),
+                    tab: bench.picked_tab(&surface.id),
+                    reg: &reg,
                     zones: self.wb_zones.clone(),
                 };
-                let drawn = crate::benchdraw::body(surface, how, Some(&folds), sk, th);
+                let drawn = crate::benchdraw::body(surface, how, Some(&picks), sk, th);
                 // A question opened from the rail is still a question, so it
                 // gets the chips the inline block gets. Built before the verb
                 // row because both borrow `self`.
