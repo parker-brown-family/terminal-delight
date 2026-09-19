@@ -326,35 +326,27 @@ impl TerminalView {
         }
     }
 
-    /// The bench's own keys, ahead of the terminal's.
+    /// The bench's own keys, and only its own.
     ///
-    /// `true` when the bench took the keystroke — the gallery, the escape
-    /// ladder, the composer in talking mode, and the reading-mode chords —
-    /// and `false` when it is the terminal's after all. Moved out of `on_key`
-    /// whole, so that the one function which decides where a key goes is the
-    /// one function a person opens to find out.
+    /// `true` when the bench took the keystroke — the gallery, the shelf chords,
+    /// the note buffer, the escape ladder, the composer in talking mode, and the
+    /// reading-mode chords — and **`false` when it is the terminal's after all**,
+    /// which [`super::TerminalView::on_key`] answers by handing the key to the
+    /// pseudoterminal underneath.
+    ///
+    /// That `false` is the whole of the fix this function was rewritten for.
+    /// Every path out of it used to end in `cx.stop_propagation()`, so a key the
+    /// bench had no use for died here: `ctrl+c` could not interrupt the agent
+    /// whose turn was on the screen, and nothing below this call in `on_key`
+    /// — the rename box, the note, the pane's own chords — ran at all.
+    ///
+    /// Two things it no longer does, because they are decided before it is
+    /// called. It does not check the face: [`crate::keylayer::Layer::Bench`] is
+    /// claimed only when the workbench is showing. And it does not hand back the
+    /// window's chords: `keylayer` routes those to the workspace without asking.
+    /// Nor does it stop propagation — `on_key` does that in one place, from what
+    /// this returns.
     pub(super) fn bench_key(&mut self, ks: &Keystroke, cx: &mut Context<Self>) -> bool {
-        if self.bench.face() != crate::workbench::Face::Workbench {
-            return false;
-        }
-        // THE WINDOW'S CHORDS LEAVE FIRST, ahead of everything below — the
-        // gallery included.
-        //
-        // Every path out of this function ends in `cx.stop_propagation()`, so
-        // anything not declined here can never reach the workspace. That is
-        // what stranded `alt+w`, `alt+r`, the split chords and the directional
-        // focus keys on the workbench face: not a collision in any table, just
-        // this handler running first and keeping what it could not use (#524).
-        //
-        // Above the gallery rather than below it, because "the gallery takes
-        // every key" was a rule about NAVIGATION — an arrow falling through to
-        // a composer hidden behind the overlay — and the window's chords were
-        // never the gallery's to take. A plain arrow still reaches it:
-        // [`crate::workbench::window_chord`] answers only for the modified
-        // forms.
-        if crate::workbench::window_chord(ks.key.as_str(), ks.modifiers.alt, ks.modifiers.control) {
-            return false;
-        }
         // The GALLERY next, and it takes every key.
         //
         // It is drawn over everything and it was opened by a deliberate
@@ -380,7 +372,6 @@ impl TerminalView {
                 Gallery::Ignore => {}
             }
             cx.notify();
-            cx.stop_propagation();
             return true;
         }
         // ALT+<n> LANDS ON A SHELF, above everything that could swallow a digit.
@@ -395,19 +386,17 @@ impl TerminalView {
         {
             self.bench.set_shelf(shelf);
             cx.notify();
-            cx.stop_propagation();
             return true;
         }
         // A NOTE, on `alt+m`. Never on a bare `m`, which is a character.
         //
-        // `m` is not in [`crate::workbench::window_chord`]'s list, so the chord
+        // `m` is not in [`crate::keylayer::window_chord`]'s list, so the chord
         // reaches this handler rather than leaving for the workspace. It also
         // moves the board into view: asking for a note while looking at the
         // decisions shelf and then typing into a box on a different tab would be
         // writing somewhere the person cannot see.
         if ks.modifiers.alt && !ks.modifiers.control && ks.key.as_str() == "m" {
             self.bench_note_open(cx);
-            cx.stop_propagation();
             return true;
         }
         let talking = self.wb_compose.is_some();
@@ -458,7 +447,6 @@ impl TerminalView {
                 // dismissing overlays with.
                 Peel::Nothing => {}
             }
-            cx.stop_propagation();
             return true;
         }
         if talking {
@@ -467,7 +455,6 @@ impl TerminalView {
             // See [`Self::bench_paste`].
             if crate::workbench::is_paste_chord(&ks.key, ks.modifiers.control, ks.modifiers.shift) {
                 self.bench_paste(cx);
-                cx.stop_propagation();
                 return true;
             }
             // Everything else straight through, byte for byte. The echo
@@ -526,7 +513,6 @@ impl TerminalView {
                 self.composer_follows();
                 self.bench_keystroke(bytes, cx);
             }
-            cx.stop_propagation();
             return true;
         }
         // The rules themselves are a table in `workbench`, so they can be
@@ -623,7 +609,6 @@ impl TerminalView {
                 // down the pseudoterminal, where the shell gathered them into a
                 // command line and the return key ran it (#509).
                 if !self.mode.is_agent() {
-                    cx.stop_propagation();
                     return true;
                 }
                 // Start talking, carrying the character that started it —
@@ -639,9 +624,10 @@ impl TerminalView {
                     self.bench_keystroke(bytes, cx);
                 }
             }
-            crate::workbench::Reading::Ignore => {}
+            // NOT OURS. The terminal underneath gets it — see the note on
+            // `false` at the top of this function.
+            crate::workbench::Reading::Pass => return false,
         }
-        cx.stop_propagation();
         true
     }
 
@@ -1895,7 +1881,6 @@ impl TerminalView {
                 }
             }
         }
-        cx.stop_propagation();
         true
     }
 
