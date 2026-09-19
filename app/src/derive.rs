@@ -450,6 +450,7 @@ fn deliverable_post(label: &str, href: &str, now_ms: u64) -> Post {
         mime: mime_of(&target),
         summary: Some("declared in the agent's own reply".into()),
         href: target.clone(),
+        notes: Vec::new(),
     });
     let actions = kind.default_actions();
     Post {

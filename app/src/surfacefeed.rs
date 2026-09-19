@@ -498,28 +498,47 @@ pub fn demo_surfaces() -> Vec<(&'static str, Value)> {
             }),
         ),
         (
+            // WRITTEN THE WAY AGENTS ACTUALLY WRITE ONE, which this fixture
+            // was not. It said `href` and nothing else, so the demo — the one
+            // screen anybody looks at on purpose — exercised the single
+            // spelling that already worked, while the cards arriving on real
+            // benches (`open` for the file, `served` for the same page over
+            // http, the finding underneath) were landing as `unclassified`
+            // with their JSON on show and no click that could open them. A
+            // fixture that covers only the working case is how a broken one
+            // goes unseen.
             "04-report",
             serde_json::json!({
                 "td": TDSP_DEMO_VERSION, "kind": "artifact", "id": "demo-report",
                 "title": "The Workbench brief",
                 "weight": { "confidence": "measured" },
-                "model": { "href": "/home/parker/Work/reports/2026-09-17-the-workbench.html",
+                "model": { "what": "Why the agent describes meaning and the window owns the pixels",
+                           "open": "/home/parker/Work/reports/2026-09-17-the-workbench.html",
+                           "served": "http://127.0.0.1:8731/2026-09-17-the-workbench.html",
                            "mime": "text/html",
-                           "summary": "Why the agent describes meaning and the window owns the pixels" }
+                           "finding": "Eleven figures — and the only one of three briefs on the same plan that got a reaction." }
             }),
         ),
         (
+            // AS WIDE AS A REAL ONE. The cells here were two words each, so
+            // the demo's table fitted any pane at any width and the fixture
+            // could not show what a table does to a card: four equal columns,
+            // every cell clipped at forty characters, and the last one drawn
+            // off the right edge of the pane.
             "05-table",
             serde_json::json!({
                 "td": TDSP_DEMO_VERSION, "kind": "table", "id": "demo-table",
                 "title": "Transports, compared",
                 "model": {
-                    "columns": ["transport", "needs", "durable", "crosses the split"],
+                    "columns": ["transport", "what it needs", "durable", "how it behaves when the window is not there"],
                     "rows": [
-                        ["MCP verb", "a connection", "no", "yes"],
-                        ["file drop", "a filesystem", "yes", "yes"],
-                        ["```td fence", "nothing", "yes", "yes"],
-                        ["escape sequence", "an encoder change", "no", null]
+                        ["MCP verb", "a live connection to this window", "no",
+                         "The call fails, and the agent finds out immediately."],
+                        ["file drop", "a filesystem and the pane's own directory", "yes",
+                         "The document waits on disk and lands when a window opens."],
+                        ["```td fence", "nothing at all", "yes",
+                         "It stays in the transcript, where a later reader still finds it."],
+                        ["escape sequence", "a change to the encoder on both ends", "no", null]
                     ]
                 }
             }),
@@ -1277,6 +1296,40 @@ mod tests {
         }
         assert_eq!(unclassified, 1, "exactly one unknown-kind specimen");
         assert_eq!(typed, total - 1, "every other demo payload must parse");
+    }
+
+    #[test]
+    fn the_demos_artifact_is_shaped_like_the_ones_that_broke() {
+        // The fixture is the verification. A demo artifact written the one
+        // way that always worked is a screen nobody can learn anything from,
+        // and it is why an artifact card that could not be opened survived on
+        // real benches: the thing people look at was not the thing people
+        // send. Reverting this payload to a bare `href` passes every other
+        // test in this file, so the assertion has to be here.
+        let (_, doc) = demo_surfaces()
+            .into_iter()
+            .find(|(name, _)| name.contains("report"))
+            .expect("the demo artifact");
+        let model = doc
+            .get("model")
+            .and_then(Value::as_object)
+            .expect("a model");
+        assert!(
+            !model.contains_key("href"),
+            "the demo artifact went back to the spelling that never failed"
+        );
+        let s = crate::surface::parse(&doc, NOW)
+            .expect("it still parses")
+            .surface
+            .expect("a surface");
+        let crate::surface::Kind::Artifact(a) = &s.kind else {
+            panic!("the demo artifact is no longer an artifact: {:?}", s.kind);
+        };
+        assert!(a.href.ends_with(".html"), "{}", a.href);
+        assert!(
+            !a.notes.is_empty(),
+            "and it carries the keys that are drawn under it"
+        );
     }
 
     #[test]

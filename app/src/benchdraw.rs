@@ -1536,40 +1536,106 @@ fn question(q: &crate::surface::Question, sk: &Skin, th: &Theme) -> Div {
 }
 
 fn artifact(a: &crate::surface::Artifact, sk: &Skin, th: &Theme) -> Div {
-    field_grid(
-        vec![
-            ("target", Some(a.href.clone())),
-            ("type", a.mime.clone()),
-            ("about", a.summary.clone()),
-        ],
-        sk,
-        th,
-    )
+    // The three that make it an artifact, then everything else the agent sent
+    // about it. The extra keys used to be lost at the parse and are now kept
+    // (see [`crate::surface::Artifact::notes`]) — a `finding`, a `measured`, a
+    // `decide` is the reason the document is worth opening, and a card that
+    // showed only its path made every artifact look identical.
+    let mut fields: Vec<(&str, Option<String>)> = vec![
+        ("target", Some(a.href.clone())),
+        ("type", a.mime.clone()),
+        ("about", a.summary.clone()),
+    ];
+    fields.extend(a.notes.iter().map(|(k, v)| (k.as_str(), Some(v.clone()))));
+    field_grid(fields, sk, th)
+}
+
+/// How wide each column wants to be, as a share of the row.
+///
+/// A table of four columns drawn as four equal columns is four columns of the
+/// wrong width: an issue number needs nine characters and the verdict beside
+/// it needs sixty, and splitting the row evenly gives the short one an acre
+/// and clips the long one. Parker, on a four-column follow-up table: *"not
+/// readable due to overflow... should be formatted smartly"*.
+///
+/// The demand of a column is its widest cell, header included, CLAMPED at both
+/// ends before anything is divided: without the ceiling one essay-length cell
+/// takes the whole row and leaves its neighbours a sliver, and without the
+/// floor a column of one-character cells becomes unreadable at any width.
+/// Shares are what a caller gets, not pixels — the row does not know how wide
+/// it is, and a fraction survives the pane being resized.
+fn column_shares(t: &crate::surface::Table) -> Vec<f32> {
+    /// Below this a column cannot hold a word, whatever its content.
+    const FLOOR: f32 = 10.0;
+    /// Above this a column is wrapping anyway, so more demand buys nothing.
+    const CEILING: f32 = 48.0;
+    let demand: Vec<f32> = t
+        .columns
+        .iter()
+        .enumerate()
+        .map(|(i, head)| {
+            let widest = t
+                .rows
+                .iter()
+                .filter_map(|r| r.get(i))
+                .map(|cell| match cell {
+                    Some(text) => text.chars().count(),
+                    // `unavailable` is what the cell will DRAW, so it is what
+                    // the column has to be wide enough for.
+                    None => "unavailable".len(),
+                })
+                .max()
+                .unwrap_or(0)
+                .max(head.chars().count());
+            (widest as f32).clamp(FLOOR, CEILING)
+        })
+        .collect();
+    let total: f32 = demand.iter().sum();
+    if total <= 0.0 {
+        return vec![1.0; t.columns.len().max(1)];
+    }
+    demand.iter().map(|d| d / total).collect()
 }
 
 fn table(t: &crate::surface::Table, sk: &Skin, th: &Theme) -> Div {
-    let header = div()
-        .flex()
-        .flex_row()
-        .gap(px(10.))
-        .children(t.columns.iter().map(|c| {
-            div().flex_1().child(micro(
-                c.to_uppercase(),
-                Step::Fine,
-                sk.ink.ink_faint,
-                sk,
-                th,
-            ))
-        }));
+    let shares = column_shares(t);
+    // `min_w_0` on every cell and nothing anywhere allowed to grow past its
+    // share. A flex child's floor is its CONTENT by default, so a long cell
+    // pushed the row wider than the card and the last column was drawn off the
+    // right edge of the pane — visible in a photograph and in nothing else.
+    // With the floor removed the share is binding and the text wraps inside
+    // it, which is why no cell is clipped to a character count any more.
+    let cell = |share: f32| div().w(gpui::relative(share)).min_w_0();
+    let header =
+        div()
+            .flex()
+            .flex_row()
+            .w_full()
+            .gap(px(10.))
+            .children(t.columns.iter().enumerate().map(|(i, c)| {
+                cell(shares.get(i).copied().unwrap_or(0.0)).child(micro(
+                    c.to_uppercase(),
+                    Step::Fine,
+                    sk.ink.ink_faint,
+                    sk,
+                    th,
+                ))
+            }));
     let rows = t.rows.iter().map(|row| {
         div()
             .flex()
             .flex_row()
+            .w_full()
+            .items_start()
             .gap(px(10.))
             .py(px(2.))
-            .children(row.iter().map(|cell| {
-                div().flex_1().child(match cell {
-                    Some(text) => micro(clip(text, 40), Step::Small, th.text, sk, th),
+            .children(row.iter().enumerate().map(|(i, c)| {
+                cell(shares.get(i).copied().unwrap_or(0.0)).child(match c {
+                    // Clipped at a budget no pane can show rather than at a
+                    // width: the wrap decides what fits, and the cap is only
+                    // here so one pathological cell cannot make a row taller
+                    // than the window.
+                    Some(text) => micro(clip(text, 600), Step::Small, th.text, sk, th),
                     // A cell nobody filled says so, rather than being blank and
                     // reading as a value of nothing.
                     None => micro("unavailable", Step::Small, sk.ink.ink_faint, sk, th),
@@ -1579,6 +1645,7 @@ fn table(t: &crate::surface::Table, sk: &Skin, th: &Theme) -> Div {
     sk.panel()
         .flex()
         .flex_col()
+        .w_full()
         .gap(px(2.))
         .child(header)
         .child(sk.rule_h())
@@ -2873,6 +2940,15 @@ pub fn note_box(
 /// may simply have scrolled out of the pane's history, and a block that
 /// vanished in that case would say "you asked nothing", which is a different
 /// fact and never the true one.
+///
+/// It is now RARE, and that is the point of the sentence being this specific.
+/// The pane latches every human turn it sees ([`crate::pane::TerminalView`]'s
+/// `wb_asked`), so the only way to reach this line is for the message to have
+/// left the scrollback before the window ever read it — a pane adopted
+/// mid-conversation, or a turn that scrolled past between two sweeps. Parker,
+/// on the old behaviour, which hit it every long turn: *"the user message
+/// prompt... not available because of scrollback limitation... TOTALLY
+/// unacceptable, this is EXACTLY important"*.
 pub fn asked(lines: &[String], sk: &Skin, th: &Theme) -> Div {
     sk.panel()
         .flex()
@@ -2891,9 +2967,15 @@ pub fn asked(lines: &[String], sk: &Skin, th: &Theme) -> Div {
         .child(micro("YOU", Step::Fine, th.human, sk, th))
         .when(lines.is_empty(), |d| {
             d.child(micro(
-                "your message is no longer in this pane\u{2019}s scrollback",
+                "your message left this pane\u{2019}s history before the bench read it",
                 Step::Note,
-                th.faint,
+                // `ink_faint`, not `th.faint`. The palette's `faint` is the
+                // colour a DIVIDER is mixed from — measured at 1.22:1 to
+                // 1.62:1 against the surfaces this block sits on, where 1.0 is
+                // two identical colours — so a sentence painted in it is a
+                // sentence nobody can read. Parker, of this exact line: *"The
+                // text here is very hard to read... get it readable"*.
+                sk.ink.ink_faint,
                 sk,
                 th,
             ))
@@ -3544,6 +3626,62 @@ mod tests {
         assert_eq!(clip("abcdefghij", 5), "abcd…");
         // A multi-byte title must not be cut mid-character.
         assert_eq!(clip("→→→→→→", 3), "→→…");
+    }
+
+    #[test]
+    fn a_tables_columns_are_as_wide_as_what_is_in_them() {
+        // The real one, from a follow-up rollup on Parker's bench: a short
+        // issue number, a sentence, a size and a verdict. Drawn in four equal
+        // columns it gave the number an acre, clipped the verdict at forty
+        // characters and still ran off the right edge of the card.
+        let t = crate::surface::Table {
+            columns: vec![
+                "issue".into(),
+                "what it is".into(),
+                "size".into(),
+                "verdict just now".into(),
+            ],
+            rows: vec![vec![
+                Some("#410".into()),
+                Some("Rust turns a broken-pipe write into a panic, so the CLI dies".into()),
+                Some("One line".into()),
+                Some("STILL REAL — piping it exited 101 on today's build".into()),
+            ]],
+        };
+        let shares = column_shares(&t);
+        assert_eq!(shares.len(), 4);
+        let total: f32 = shares.iter().sum();
+        assert!(
+            (total - 1.0).abs() < 0.001,
+            "shares are a whole row: {total}"
+        );
+        assert!(
+            shares[1] > shares[0] * 2.0,
+            "the sentence gets more of the row than the number: {shares:?}"
+        );
+        assert!(
+            shares[0] >= 0.08,
+            "and the number still gets enough to be read: {shares:?}"
+        );
+        // A column of essays does not take the whole row. Without the
+        // ceiling one long cell leaves its neighbours a sliver each, which is
+        // the same unreadable table wearing different proportions.
+        let long = "x".repeat(4000);
+        let t = crate::surface::Table {
+            columns: vec!["a".into(), "b".into()],
+            rows: vec![vec![Some("short".into()), Some(long)]],
+        };
+        let shares = column_shares(&t);
+        assert!(
+            shares[0] > 0.15,
+            "a four-thousand-character neighbour crushed the short column: {shares:?}"
+        );
+        // And a table with no rows at all is still drawable.
+        let empty = crate::surface::Table {
+            columns: vec!["a".into(), "b".into()],
+            rows: Vec::new(),
+        };
+        assert_eq!(column_shares(&empty), vec![0.5, 0.5]);
     }
 
     #[test]

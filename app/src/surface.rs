@@ -599,6 +599,15 @@ pub struct Artifact {
     pub mime: Option<String>,
     /// One line about what it is.
     pub summary: Option<String>,
+    /// Everything else the payload carried, in the order the document named
+    /// it: `finding`, `measured`, `served`, `decide` — whatever the agent
+    /// thought a person should know about the thing it made.
+    ///
+    /// Kept rather than dropped. Three fields is what an artifact needs to be
+    /// OPENED; it is not what an agent writes, and a struct that silently
+    /// keeps three keys of nine loses the six that say why the document is
+    /// worth opening. The renderer draws them as facts under the target.
+    pub notes: Vec<(String, String)>,
 }
 
 /// Prose with structure — the register most agent output already has.
@@ -1939,14 +1948,35 @@ fn parse_kind(name: &str, model: Option<&Value>) -> Result<Kind, KindError> {
 
     Ok(match name {
         "artifact" => {
-            let href = text("href").ok_or_else(|| {
-                err("an artifact needs a `href` — an absolute path or a full URL".into())
-            })?;
+            // WHERE IT IS, under whichever word the agent used for it.
+            //
+            // `href` is the contract and it is still first. The rest were read
+            // off real benches: an agent handed a document to a person writes
+            // `open` for the local file beside `served` for the same page over
+            // http, because that is the shape the house rules ask it to hand
+            // back, and the strict read turned every one of those into an
+            // `unclassified` card that showed its own JSON and could not be
+            // opened by any click. Parker: *"the artifacts tab seem totally
+            // broken... I cannot single click to open the artifact from the
+            // spine... i cannot open the artifact from the full view"*. Both
+            // halves of that were this line.
+            //
+            // The order is a PREFERENCE, not a fallback chain to be reordered
+            // casually: the local document beats the URL serving it, because a
+            // file on this disk outlives the server that was pointed at it.
+            let (href_key, href) = HREF_KEYS
+                .iter()
+                .find_map(|k| text(k).map(|v| (*k, v)))
+                .ok_or_else(|| {
+                    err("an artifact needs a `href` — an absolute path or a full URL".into())
+                })?;
             check_href(&href).map_err(err)?;
+            let summary_key = SUMMARY_KEYS.iter().copied().find(|k| text(k).is_some());
             Kind::Artifact(Artifact {
                 href,
                 mime: text("mime"),
-                summary: text("summary"),
+                summary: summary_key.and_then(&text),
+                notes: leftover_notes(m, &[href_key, "mime", summary_key.unwrap_or("")]),
             })
         }
         "markdown" => Kind::Markdown(Markdown {
@@ -2541,6 +2571,40 @@ fn parse_option(index: usize, v: &Value) -> Option<Choice> {
     })
 }
 
+/// The words an agent uses for "where the thing is", in preference order.
+///
+/// `href` is the spelled contract; the rest are what arrives. Each one here
+/// has been seen on a bench in this window rather than imagined — widening a
+/// parser on a guess is how a key nobody sends comes to look supported.
+const HREF_KEYS: [&str; 6] = ["href", "open", "path", "file", "url", "link"];
+
+/// The words an agent uses for "what it is", in preference order.
+const SUMMARY_KEYS: [&str; 3] = ["summary", "what", "about"];
+
+/// The keys an artifact carried that its own three fields have no room for.
+///
+/// `taken` is the keys already spoken for — the one the location came from,
+/// the mime, the one the summary came from — so a fact is never drawn twice.
+/// An empty name is impossible in JSON, which is what makes `""` a safe
+/// stand-in for "no summary key was matched".
+///
+/// Order is the DOCUMENT'S — this build of `serde_json` carries
+/// `preserve_order`, measured by the test below rather than assumed, so the
+/// facts read down the card in the order the agent wrote them. That is a
+/// better order than any this could impose: an agent puts the finding before
+/// the footnote.
+fn leftover_notes(m: &Map<String, Value>, taken: &[&str]) -> Vec<(String, String)> {
+    m.iter()
+        .filter(|(k, _)| !taken.contains(&k.as_str()))
+        .filter_map(|(k, v)| {
+            cell_text(v)
+                .map(|t| plain(t.trim()))
+                .filter(|t| !t.is_empty())
+                .map(|t| (k.clone(), t))
+        })
+        .collect()
+}
+
 /// Refuse what would appear to work and be wrong.
 fn check_href(href: &str) -> Result<(), String> {
     if href.starts_with("http://") || href.starts_with("https://") || href.starts_with("file://") {
@@ -2801,6 +2865,80 @@ mod tests {
             "an untitled artifact wears its filename"
         );
         assert!(s.actions.contains(&Action::Open));
+    }
+
+    #[test]
+    fn an_artifact_that_named_its_document_open_is_still_an_artifact() {
+        // Transcribed from a card on Parker's own bench. The agent wrote the
+        // local file under `open` and the served copy under `served`, because
+        // that is the pair the house rules ask it to hand a person — and the
+        // strict read turned it into an `unclassified` card showing its own
+        // JSON, which no click could open from the spine or from the card.
+        let s = surface(json!({
+            "td": "0.4",
+            "kind": "artifact",
+            "title": "Typing into the pane's rename box",
+            "model": {
+                "what": "A drawn decision brief on why the workbench swallows the keystrokes.",
+                "open": "file:///home/parker/Work/terminal-delight/reports/2026-09-19-keys.html",
+                "served": "http://127.0.0.1:8731/2026-09-19-keys.html",
+                "finding": "bench_key runs at pane.rs:4662 and every exit from it stops the event.",
+                "measured": "21 of 27 chords are swallowed on the workbench face.",
+            }
+        }));
+        let Kind::Artifact(a) = &s.kind else {
+            panic!("still not an artifact: {:?}", s.kind);
+        };
+        assert_eq!(
+            a.href, "file:///home/parker/Work/terminal-delight/reports/2026-09-19-keys.html",
+            "the local document is what a click opens"
+        );
+        assert!(s.actions.contains(&Action::Open), "and there is a verb");
+        assert_eq!(
+            a.summary.as_deref(),
+            Some("A drawn decision brief on why the workbench swallows the keystrokes."),
+            "`what` is what it is"
+        );
+        // NOTHING SENT IS DROPPED. Fixing the parse by keeping three keys of
+        // six would trade a card that cannot be opened for a card with
+        // nothing on it.
+        let notes: Vec<&str> = a.notes.iter().map(|(k, _)| k.as_str()).collect();
+        assert_eq!(
+            notes,
+            vec!["served", "finding", "measured"],
+            "the rest of the payload is kept, in the order it was written, and the \
+             three that are spoken for are not repeated"
+        );
+        assert!(a.notes.iter().any(|(_, v)| v.contains("21 of 27")));
+    }
+
+    #[test]
+    fn the_spelled_key_wins_over_every_word_that_arrives() {
+        // The aliases are a widening, not a reordering: a payload carrying
+        // both is still opened at the one the protocol names.
+        let s = surface(json!({
+            "td": "0.4",
+            "kind": "artifact",
+            "model": { "href": "/the/contract.html", "open": "/the/alias.html" }
+        }));
+        let Kind::Artifact(a) = &s.kind else {
+            panic!("not an artifact")
+        };
+        assert_eq!(a.href, "/the/contract.html");
+        assert_eq!(
+            a.notes.iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>(),
+            vec!["open"],
+            "the one that lost is still shown rather than swallowed"
+        );
+        // And a location that cannot be opened is refused under its alias
+        // with the reason, exactly as `href` is — silently ignoring the key
+        // was the old behaviour and it produced the useless complaint.
+        let refused = parse(
+            &json!({ "td": "0.1", "kind": "artifact", "model": { "open": "report.html" } }),
+            NOW,
+        )
+        .expect_err("a relative path cannot be resolved, whatever it is called");
+        assert!(refused.contains("relative"), "{refused}");
     }
 
     #[test]
@@ -3230,6 +3368,7 @@ mod tests {
                 href: "/x".into(),
                 mime: None,
                 summary: None,
+                notes: Vec::new(),
             }),
             Kind::Markdown(Markdown {
                 body: String::new(),

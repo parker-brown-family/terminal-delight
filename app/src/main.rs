@@ -7426,6 +7426,11 @@ impl Workspace {
                 if !view.mode.is_agent() {
                     return;
                 }
+                // The deep half of the asked-latch: a walk of the scrollback
+                // for a turn the fast clock never saw, because this window
+                // was not open when it was sent. See
+                // [`TerminalView::latch_asked`].
+                view.latch_asked(None);
                 for post in view.live_questions(now) {
                     view.present(post, cx);
                 }
