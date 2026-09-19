@@ -7389,7 +7389,6 @@ impl Render for TerminalView {
         } else {
             ps.ph_live.to_string()
         };
-        let grid_label = format!("{}×{}", self.grid.cols, self.grid.rows);
         let glow = th.glow;
 
         // ── Responsive header ────────────────────────────────────────────────
@@ -7846,7 +7845,6 @@ impl Render for TerminalView {
                     .flex_shrink_0()
                     // roomier spacing between the header glyphs — scales with the bar
                     .gap(hpad)
-                    .child(grid_label)
                     .child(face_toggle)
                     // Part 1: only in an agent (claude/codex) pane — jump between
                     // *your own* messages. Coloured like your input (`th.human`).

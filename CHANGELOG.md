@@ -59,6 +59,16 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ### Fixed
 
+- **Two numbers that said nothing are gone.** A pane header carried its own
+  grid size — `194×50` — in among the controls, and a response's group tab
+  carried a doubt count as `·2`. Neither is a number anybody acts on: the grid
+  size is a fact about the window you are already looking at, and the count
+  sits on a tab whose own label is one click from the doubts themselves.
+  Parker, on the pair: *"that -2 shouldn't be there"*, and *"the number 194x50
+  for the pane resolution in the pane header - can go away also"*. The doubts
+  are untouched and still one click away; only the badge in front of them is
+  gone.
+
 - **Pasting a filename with a space in it no longer breaks it in two.** The
   clipboard's file arm joined paths raw, so a copied `Screenshot
   2026-09-18.png` arrived as two words. It now goes through the same quoting a
