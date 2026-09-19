@@ -44,6 +44,20 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ### Fixed
 
+- **Clicking the group you are already in no longer puts the whole session
+  across the top.** Pressing a branch row in the tree a second time backed the
+  strip out to ALL, which on a 31-tab window is 31 tabs over three wrapped
+  rows: *"the outer is tab bombed with ALL our tabs again"*. The gesture was a
+  trap because its first half is invisible — pinning the branch the strip is
+  already resting on draws the same tabs under the same chip label, so the
+  second press is made by somebody who reasonably believes the first did
+  nothing. Backing out now lands on the resting scope, the branch you are in,
+  which is where the person pressing a row twice was trying to stay. The
+  UNFILED heading, which asks for ALL by name, becomes a real toggle in the
+  same change rather than a one-way door, and the chip stops carrying its own
+  copy of the two lines — every control that widens the strip asks one
+  function which way the next press goes. (#546)
+
 - **Return starts the agent on a bench that is offering one.** A workbench with
   no agent in it shows a single LAUNCH AGENT button, and the key that means *do
   the obvious thing* did nothing at all there: return takes the selected
