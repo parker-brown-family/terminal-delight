@@ -18,7 +18,7 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
   appears. The mapping is `Shelf::ALL`'s own order, so there is no second list to
   keep in step with the tab strip, and a test fails if any shelf's chord is ever
   one the window has already claimed. `alt+m` still opens the note box, which
-  moves to the comments board on its way. (#XXX)
+  moves to the comments board on its way. (#574)
 
 - **A pane's rail has a fourth tab, COMMENTS, and the agent has no wire to it.**
   The bench held an agent's replies, its artifacts and what it was asking, and
