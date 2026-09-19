@@ -2124,6 +2124,12 @@ pub struct TerminalView {
     /// What the pointer looks like over the bench, decided from the un-bent
     /// position on every mouse move and painted by the bench's pointer hook.
     wb_pointer: crate::workbench::Pointer,
+    /// Whether a dragged file is over the composer right now, so the box can
+    /// say it will take it. Set from the same un-bent hover that decides the
+    /// pointer, and cleared when the drag leaves the window — which arrives
+    /// as a `FileDropEvent`, not as a mouse move, and so is listened for in
+    /// [`TerminalView::pointer_hook`].
+    wb_drop: bool,
     /// Whether the bench is showing the agent's own scrollback this frame —
     /// `shows.mirror`, kept for the wheel handler that runs between frames.
     wb_mirror: bool,
@@ -3328,6 +3334,7 @@ impl TerminalView {
             wb_flash_until_ms: None,
             wb_zones: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
             wb_pointer: crate::workbench::Pointer::Arrow,
+            wb_drop: false,
             wb_mirror: false,
             wb_live_q: None,
             wb_card_scroll: gpui::ScrollHandle::new(),
@@ -5636,19 +5643,29 @@ impl TerminalView {
     /// Paste the clipboard into the PTY, honouring bracketed-paste mode.
     fn paste_clipboard(&self, cx: &mut Context<Self>) {
         if let Some(text) = cx.read_from_clipboard().and_then(|i| i.text()) {
-            let bracketed = self
-                .session
-                .term
-                .lock()
-                .mode()
-                .contains(TermMode::BRACKETED_PASTE);
-            let bytes = if bracketed {
-                [b"\x1b[200~", text.as_bytes(), b"\x1b[201~"].concat()
-            } else {
-                text.into_bytes()
-            };
-            self.session.notifier.notify(bytes);
+            self.paste_text(&text);
         }
+    }
+
+    /// Paste text that did not come from the clipboard — a dropped file's
+    /// path — into the PTY on the same terms, bracketing included.
+    ///
+    /// Bracketed because the far end asked to be told: an editor that turns
+    /// paste bracketing on is an editor that will treat these bytes as
+    /// content rather than as keys, which is exactly what a dropped path is.
+    fn paste_text(&self, text: &str) {
+        let bracketed = self
+            .session
+            .term
+            .lock()
+            .mode()
+            .contains(TermMode::BRACKETED_PASTE);
+        let bytes = if bracketed {
+            [b"\x1b[200~", text.as_bytes(), b"\x1b[201~"].concat()
+        } else {
+            text.as_bytes().to_vec()
+        };
+        self.session.notifier.notify(bytes);
     }
     fn has_selection(&self) -> bool {
         self.session
@@ -8118,6 +8135,14 @@ impl Render for TerminalView {
             .on_mouse_down(MouseButton::Right, cx.listener(Self::on_mouse_down))
             .on_mouse_move(cx.listener(Self::on_mouse_move))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
+            // A FILE DROPPED ON THIS PANE, and it is registered HERE for the
+            // same reason every other bench gesture is: gpui hit-tests the
+            // flat layout tree, the bench is drawn bent, and a drop target
+            // hung on the composer would catch drops beside where the
+            // composer appears. `bench_drop` un-bends the pointer and asks
+            // the composer's own zone. Guarded by
+            // `the_pane_root_takes_a_file_drop`.
+            .on_drop::<gpui::ExternalPaths>(cx.listener(Self::bench_drop))
             .size_full()
             // Grade the base background too (not just cells): the DISPLAY brightness
             // / contrast / colour sliders dim the whole pane like a dimmer light —
@@ -10494,6 +10519,33 @@ mod tests {
                  register it beside the others in `render`"
             );
         }
+    }
+
+    #[test]
+    fn the_pane_root_takes_a_file_drop() {
+        // gpui delivers a dropped file as a mouse-up carrying the paths, and
+        // only to an element that registered `on_drop` for that exact type.
+        // Nothing about `bench_drop` existing makes it reachable: it would
+        // compile, read as live, and never run — the same hole the pane's
+        // right-click tray sat in for months, asserted two tests above.
+        //
+        // Two things make this gate honest rather than decorative. The source
+        // is cut at the test module, so this assertion cannot satisfy itself
+        // with its own needle; and comment lines are dropped, because the
+        // registration is explained in a comment beside it and a gate its own
+        // explanation can pass is a gate that passes on a deleted line.
+        let src = include_str!("pane.rs");
+        let code: String = src[..src.find("\n#[cfg(test)]").unwrap_or(src.len())]
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            code.contains(".on_drop::<gpui::ExternalPaths>(cx.listener(Self::bench_drop))"),
+            "TerminalView::bench_drop exists but the root div never registers a drop \
+             listener for gpui::ExternalPaths, so a dropped file reaches nothing — \
+             register it beside the mouse listeners in `render`"
+        );
     }
 
     #[test]

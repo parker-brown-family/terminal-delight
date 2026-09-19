@@ -30,9 +30,24 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
   did before they were split and what every session already on disk describes.
   So nothing shrinks on upgrade, and the two only come apart once somebody
   turns one of them.
+- **Drag a file onto the bench and its path lands in the line you are
+  writing.** The composer lights up in your own colour while the file is over
+  it, and letting go types the path at the caret — mid-sentence, with the rest
+  of the sentence intact, because placing a caret already sends the agent's
+  line editor the matching arrows. Several files come in as several words, and
+  a name with a space in it arrives quoted, so `Screenshot 2026-09-18.png`
+  stays one filename instead of two arguments nothing downstream can rejoin.
+  A drop on the terminal face pastes the path the way every other terminal
+  does. Files only: the renderer discards a drag whose contents are not local
+  files before the app is told, so an image dragged straight off a web page
+  still does nothing. (#561)
 
 ### Fixed
 
+- **Pasting a filename with a space in it no longer breaks it in two.** The
+  clipboard's file arm joined paths raw, so a copied `Screenshot
+  2026-09-18.png` arrived as two words. It now goes through the same quoting a
+  dropped file does. (#561)
 - **The small print on a card is small, not invisible.** Every subtitle, cost
   line, consequence, section tag and provenance line on the workbench was drawn
   in the palette's `faint` role. `faint` is furniture — it is what a divider is

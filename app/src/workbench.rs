@@ -1519,6 +1519,52 @@ pub fn ext_of_image_mime(mime: &str) -> Option<&'static str> {
     })
 }
 
+/// The text a set of dropped — or pasted — file paths becomes.
+///
+/// A path is typed rather than the file being read, on the same terms as the
+/// clipboard's image paste: a pseudoterminal carries bytes, and every agent
+/// worth dropping a file into already opens a filename.
+///
+/// **One path is one word.** A path is quoted the moment it holds whitespace
+/// or anything a shell would act on, because the far end is a line editor: an
+/// unquoted `Screenshot 2026-09-18.png` arrives as two arguments and nothing
+/// downstream can put it back together. Quoting is single-quote and an
+/// embedded quote closes, escapes and reopens (`'\''`), which is the one form
+/// every POSIX shell agrees on and which an agent reading the line also
+/// understands.
+///
+/// A newline inside a filename is legal and would SUBMIT the line half-typed,
+/// so control characters become spaces — the same trade
+/// [`crate::pane::TerminalView::bench_paste`] already makes for pasted text.
+/// The path is then wrong, and it was unusable either way; what it no longer
+/// does is send half a sentence to the agent.
+pub fn paths_as_words(paths: &[std::path::PathBuf]) -> String {
+    paths
+        .iter()
+        .map(|p| path_word(&p.to_string_lossy()))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// One path, as one word on the far end's line.
+fn path_word(raw: &str) -> String {
+    let flat: String = raw
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect();
+    // Bare when nothing in it can be misread. The list is what a shell acts
+    // on plus the quotes themselves; `-` and `.` and `/` are left alone, so
+    // an ordinary path still reads as an ordinary path.
+    let plain = !flat.is_empty()
+        && !flat
+            .chars()
+            .any(|c| c.is_whitespace() || "\"'\\$`&|;<>()[]{}*?!#~^".contains(c));
+    if plain {
+        return flat;
+    }
+    format!("'{}'", flat.replace('\'', r"'\''"))
+}
+
 /// What a bench of this size, on a pane of this kind, actually shows.
 ///
 /// Every one of these was a condition written inline in the render, and each
@@ -5278,6 +5324,56 @@ mod tests {
             );
         }
         assert_eq!(ext_of_image_mime("text/plain"), None);
+    }
+
+    #[test]
+    fn a_dropped_path_arrives_as_one_word() {
+        use std::path::PathBuf;
+        let p = |s: &str| PathBuf::from(s);
+
+        // The ordinary case stays bare: a quoted path in the middle of a
+        // sentence to an agent reads as a quotation, so quotes are spent only
+        // where they buy something.
+        assert_eq!(
+            paths_as_words(&[p("/home/parker/notes.md")]),
+            "/home/parker/notes.md"
+        );
+
+        // The case this function exists for. Unquoted, the far end's line
+        // editor sees two words and the file cannot be found.
+        assert_eq!(
+            paths_as_words(&[p("/home/parker/Screenshot 2026-09-18.png")]),
+            "'/home/parker/Screenshot 2026-09-18.png'"
+        );
+
+        // Several files: one word each, separated by one space.
+        assert_eq!(
+            paths_as_words(&[p("/tmp/a.png"), p("/tmp/b c.png")]),
+            "/tmp/a.png '/tmp/b c.png'"
+        );
+
+        // A quote inside the name closes, escapes and reopens.
+        assert_eq!(paths_as_words(&[p("/tmp/it's.txt")]), r"'/tmp/it'\''s.txt'");
+
+        // Anything a shell would act on is quoted even without a space —
+        // `$HOME` in a filename is a real filename, not a variable.
+        for hostile in ["/tmp/$HOME", "/tmp/a;rm -rf b", "/tmp/a|b", "/tmp/*"] {
+            let out = paths_as_words(&[p(hostile)]);
+            assert!(
+                out.starts_with('\'') && out.ends_with('\''),
+                "{hostile} went out unquoted as {out}"
+            );
+        }
+
+        // A newline in a filename would SUBMIT the line half-written. It
+        // becomes a space, inside quotes, which is wrong about the file and
+        // right about the sentence.
+        let out = paths_as_words(&[p("/tmp/two\nlines.txt")]);
+        assert!(!out.contains('\n'), "a newline reached the line: {out}");
+        assert_eq!(out, "'/tmp/two lines.txt'");
+
+        // Nothing dropped is not an empty word; it is nothing typed.
+        assert_eq!(paths_as_words(&[]), "");
     }
 
     #[test]
