@@ -5084,23 +5084,43 @@ impl TerminalView {
         )
     }
 
+    /// Take a wheel turn AS THE SIZE CHORD, if ctrl is held: resolve which of
+    /// this pane's dials the pointer is standing on and turn it. Answers
+    /// whether the turn WAS the chord, so every caller knows to stop there.
+    ///
+    /// The one place that decision lives, because a pane has more than one
+    /// handler that sees a wheel and the chord has to mean the same thing in
+    /// all of them. It did not: the bench paints a CAPTURE-phase hook
+    /// ([`Self::bench_wheel`]) that runs ahead of every bubble listener and
+    /// swallows the turn, so ctrl+wheel over the workbench scrolled the
+    /// composer and never reached the pane root at all. The workbench was the
+    /// one surface in the window whose own size dial could not be turned from
+    /// it — and it still looked like it worked, because sizing the terminal
+    /// and flipping back showed a resized bench.
+    ///
+    /// Sizing nothing is still taking the turn. A pane with no measured rect
+    /// yet resolves no dial, and letting that fall through would size whatever
+    /// happened to be behind it.
+    pub fn size_by_wheel(&mut self, ev: &ScrollWheelEvent, cx: &mut Context<Self>) -> bool {
+        if !ev.modifiers.control {
+            return false;
+        }
+        if let Some(key) = self.size_dial_under(ev.position) {
+            self.nudge_size(key, theme::wheel_notches(ev.delta), cx);
+        }
+        true
+    }
+
     /// Scroll the terminal scrollback from a wheel event. Public so the FOCUS
     /// reading modal (rendered by the Workspace) can route its wheel events here:
     /// the modal's locking scrim `.occlude()`s the pane behind it and would
     /// otherwise swallow the wheel, leaving the mirror un-scrollable.
     pub fn scroll_by_wheel(&mut self, ev: &ScrollWheelEvent, cx: &mut Context<Self>) {
-        // ctrl+wheel is the SIZE gesture, not a scroll, and it sizes the region
-        // of this pane the cursor is actually standing on — header, grid or
-        // bench. The Workspace binds the same chord to the outer cabinet; both
-        // handlers are bubble-phase, a pane's is registered deeper, and gpui
-        // runs the deepest first — so halting here is what keeps one flick from
-        // doing both jobs at once. Halted even when no dial resolves: the
-        // cursor is over this pane either way, and the cabinet is not what the
-        // person was pointing at.
-        if ev.modifiers.control {
-            if let Some(key) = self.size_dial_under(ev.position) {
-                self.nudge_size(key, theme::wheel_notches(ev.delta), cx);
-            }
+        // ctrl+wheel is the SIZE gesture, not a scroll. The Workspace binds the
+        // same chord to the outer cabinet; both handlers are bubble-phase, a
+        // pane's is registered deeper, and gpui runs the deepest first — so
+        // halting here is what keeps one flick from doing both jobs at once.
+        if self.size_by_wheel(ev, cx) {
             cx.stop_propagation();
             return;
         }
@@ -8378,6 +8398,188 @@ mod tests {
             .join("\n")
     }
 
+    /// The bench's source, comments stripped, the same way [`shipped_code`]
+    /// treats this file. A pane's wheel handling lives in two files.
+    fn bench_code() -> String {
+        let there = include_str!("pane/bench.rs");
+        let (code, _tests) = there
+            .split_once("\n#[cfg(test)]")
+            .unwrap_or((there, "no test module yet"));
+        code.lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// EVERY wheel handler on a pane offers the turn to the size chord first.
+    ///
+    /// This is the shape of the bug that shipped, not a restatement of the
+    /// feature. ctrl+wheel was wired at the pane root, which was correct and
+    /// was not enough: the bench paints a CAPTURE-phase hook that runs ahead
+    /// of every bubble listener and consumes the turn, so the workbench became
+    /// the one surface in the window whose own size dial could not be turned
+    /// from it. It looked like it worked, too — sizing the terminal and
+    /// flipping back showed a resized bench, because an unset bench dial
+    /// follows the grid's.
+    ///
+    /// So the invariant is about the SET of handlers, not about any one of
+    /// them: adding a third place that reads a wheel and forgetting the chord
+    /// is the same defect again, and nothing else would notice. The handlers
+    /// are enumerated here on purpose — a new one fails this test by existing,
+    /// which is the moment to decide what the chord means there.
+    #[test]
+    fn every_wheel_handler_on_a_pane_answers_the_size_chord() {
+        // (file, source) for the two files a pane's wheel handling lives in.
+        let files = [("pane.rs", shipped_code()), ("pane/bench.rs", bench_code())];
+
+        let mut found: Vec<(String, String)> = Vec::new();
+        for (name, code) in &files {
+            let lines: Vec<&str> = code.lines().collect();
+            for (i, line) in lines.iter().enumerate() {
+                // A named handler: a `fn` whose parameter list — which may
+                // wrap over several lines — takes a wheel event.
+                if let Some(rest) = line.trim_start().strip_prefix("fn ").or_else(|| {
+                    line.trim_start()
+                        .strip_prefix("pub fn ")
+                        .or_else(|| line.trim_start().strip_prefix("pub(super) fn "))
+                        .or_else(|| line.trim_start().strip_prefix("pub(crate) fn "))
+                }) {
+                    let sig: String = lines[i..(i + 6).min(lines.len())].join("\n");
+                    let sig = &sig[..sig.find(" {\n").map_or(sig.len(), |e| e + 2)];
+                    if sig.contains("&ScrollWheelEvent") {
+                        let fname = rest.split('(').next().unwrap_or(rest).to_string();
+                        found.push((name.to_string(), fname));
+                    }
+                }
+                // An anonymous handler: a closure taking a wheel event.
+                if line.contains("|ev: &ScrollWheelEvent") {
+                    found.push((name.to_string(), format!("<closure L{}>", i + 1)));
+                }
+            }
+        }
+
+        let names: Vec<&str> = found.iter().map(|(_, f)| f.as_str()).collect();
+        assert!(
+            names.contains(&"size_by_wheel"),
+            "the chord itself is gone; every assertion below is vacuous"
+        );
+        assert!(
+            names.contains(&"scroll_by_wheel") && names.contains(&"bench_wheel"),
+            "the two handlers that actually consume a turn are {names:?}"
+        );
+
+        // Four named handlers and one closure. A fifth is not forbidden — it
+        // is unreviewed, and the chord is what it has to be reviewed against.
+        let named: Vec<&str> = names
+            .iter()
+            .copied()
+            .filter(|n| !n.starts_with("<closure"))
+            .collect();
+        assert_eq!(
+            named,
+            vec![
+                "on_wheel",
+                "size_by_wheel",
+                "scroll_by_wheel",
+                "bench_wheel"
+            ],
+            "the set of wheel handlers on a pane changed. Whatever was added \
+             has to decide what ctrl+wheel means where it sits — the bench's \
+             capture hook did not, and the workbench silently lost its size \
+             dial. Wire it through `size_by_wheel` and add it here."
+        );
+
+        // Each of them ASKS THE CHORD BY NAME. "Or forwards to something that
+        // does" was the first draft of this rule and it let the shipped bug
+        // straight back through: `bench_wheel` hands one narrow arm
+        // (`Wheel::Mirror`) to `scroll_by_wheel`, so a scan for "mentions
+        // another wheel handler" passed on a branch that almost never runs
+        // while the chord itself was gone. The only forwarder allowed is a
+        // handler that does nothing else, and it is checked as such below.
+        let body_of = |code: &str, fname: &str, file: &str| -> String {
+            let at = code
+                .find(&format!("fn {fname}("))
+                .unwrap_or_else(|| panic!("{fname} in {file}"));
+            let end = code[at..]
+                .find("\n    }\n")
+                .unwrap_or_else(|| panic!("end of {fname}"));
+            // Past the signature, so a handler cannot satisfy a scan for its
+            // own name with its own declaration — which is exactly how the
+            // first draft of this test missed `scroll_by_wheel` losing the
+            // chord.
+            let sig_end = code[at..at + end].find(" {\n").map_or(0, |e| e + 3);
+            code[at + sig_end..at + end].to_string()
+        };
+
+        for (file, code) in &files {
+            for (_, fname) in found.iter().filter(|(f, _)| f == file) {
+                if fname == "size_by_wheel" || fname.starts_with("<closure") {
+                    continue;
+                }
+                let body = body_of(code, fname, file);
+                // The one exemption: a pure forwarder, which owns no policy
+                // because it does nothing but hand the turn on. Asserted to
+                // BE one rather than assumed — a forwarder that grows a branch
+                // stops being exempt in the same edit.
+                if body.trim().lines().count() == 1 {
+                    assert!(
+                        body.contains("scroll_by_wheel(") || body.contains("bench_wheel("),
+                        "{file}::{fname} is a one-line wheel handler that hands \
+                         the turn nowhere"
+                    );
+                    continue;
+                }
+                assert!(
+                    body.contains("size_by_wheel("),
+                    "{file}::{fname} reads a wheel event and never offers it to \
+                     the size chord, so ctrl+wheel does the wrong thing — or \
+                     nothing — wherever this handler is the one that runs. That \
+                     is not hypothetical: the bench's capture hook shipped \
+                     without it and the workbench lost its own size dial"
+                );
+            }
+        }
+    }
+
+    /// The bench answers the chord BEFORE it can decide it has nothing to do.
+    ///
+    /// `bench_wheel` bails when the un-bent pointer resolves to no bench
+    /// element, and it consumes the turn in the capture phase either way. A
+    /// chord asked after that bail is a chord the bench drops on every part of
+    /// itself that is not a card or a composer — which is most of it.
+    ///
+    /// Mutation-tested: moving the chord below the `bench_flat` bail, and
+    /// removing it, each fail this test.
+    #[test]
+    fn the_bench_takes_the_size_chord_before_it_bails() {
+        let code = bench_code();
+        let at = code.find("fn bench_wheel(").expect("fn bench_wheel");
+        let end = code[at..].find("\n    }\n").expect("end of bench_wheel");
+        let body = &code[at..at + end];
+
+        let chord = body
+            .find("self.size_by_wheel(ev, cx)")
+            .expect("bench_wheel must offer the turn to the size chord");
+        let bail = body
+            .find("self.bench_flat(ev.position)")
+            .expect("bench_wheel still resolves what the pointer is over");
+        assert!(
+            chord < bail,
+            "the chord is asked after the bail, so ctrl+wheel over the bare \
+             bench does nothing at all"
+        );
+        // BETWEEN the chord and the bail, not merely somewhere after it.
+        // `bench_wheel` already ends in a halt for the scrolling arms, so
+        // "contains a halt below the chord" was satisfied by a stop the chord
+        // branch returns before ever reaching — the gate passed while the
+        // pane root and then the cabinet resized off the same notch.
+        assert!(
+            body[chord..bail].contains("cx.stop_propagation();"),
+            "the chord branch returns without halting, so the turn it answered \
+             carries on to the pane root and then the cabinet"
+        );
+    }
+
     /// The four size dials are four dials, and a pane owns three of them.
     ///
     /// ctrl+wheel means "size what is under the pointer", and inside one pane
@@ -8458,64 +8660,85 @@ mod tests {
 
     /// One ctrl+wheel flick is answered once, by the pane under the cursor.
     ///
-    /// Both the pane and the Workspace bind the chord — the pane sizes one of
+    /// The pane and the Workspace bind the same chord — the pane sizes one of
     /// its own three regions, the Workspace sizes the cabinet — and gpui hands
-    /// a wheel event to the deepest bubble listener first. Everything therefore
-    /// rests on the pane HALTING the event: without the stop, standing over a
-    /// pane and scrolling would grow that pane AND the whole menu bar, on every
-    /// notch, and the two would drift apart with no way to put them back.
+    /// a wheel event to the deepest bubble listener first. Everything rests on
+    /// the pane HALTING the turn it answered: without the stop, standing over
+    /// a pane and scrolling would grow that pane AND the whole menu bar, on
+    /// every notch, and the two would drift apart with no way to put them back.
     ///
-    /// The halt is UNCONDITIONAL — outside the `if let` that resolves a dial.
-    /// A pane that has not been painted yet resolves nothing, and letting that
-    /// case fall through to the cabinet would mean the gesture silently resized
-    /// the menu bar on exactly the panes it could not size.
+    /// Halting is the CALLER's job, and both callers do it, because
+    /// `size_by_wheel` answers a question and the two handlers that ask it are
+    /// in different dispatch phases. What it returns is "this turn was the
+    /// chord", not "something was resized" — a pane with no measured rect yet
+    /// resolves no dial and must still swallow the turn, or the gesture
+    /// silently resizes the menu bar on exactly the panes it cannot size.
     ///
     /// Behaviour a running window is needed to see, so it is guarded at the
-    /// source. Mutation-tested: deleting the halt, moving it inside the `if
-    /// let`, deleting the size call, and leaving the halt behind as a
+    /// source. Mutation-tested: making the chord answer `false` when no dial
+    /// resolves, dropping either caller's halt, and leaving a halt behind as a
     /// commented-out line each fail this test.
     #[test]
     fn ctrl_wheel_over_a_pane_sizes_that_pane_and_goes_no_further() {
         let code = shipped_code();
         let at = code
-            .find("pub fn scroll_by_wheel")
-            .expect("pub fn scroll_by_wheel");
+            .find("pub fn size_by_wheel")
+            .expect("pub fn size_by_wheel");
         let end = code[at..].find("\n    }\n").expect("end of fn");
-        let body = &code[at..at + end];
-
-        let ctrl = body
-            .find("if ev.modifiers.control {")
-            .expect("scroll_by_wheel must still branch on ctrl — it is the size chord");
-        let branch = &body[ctrl..];
+        let chord = &code[at..at + end];
 
         assert!(
-            branch.contains("self.size_dial_under(ev.position)"),
-            "ctrl+wheel over a pane must resolve WHICH of the pane's dials the \
-             pointer is on; the branch used to bail outright, and then sized \
-             one dial for the whole pane"
+            chord.contains("if !ev.modifiers.control {"),
+            "the chord is ctrl+wheel and nothing else — a plain turn has to \
+             fall through to the scroll it has always been"
         );
-        assert!(branch.contains("self.nudge_size("), "…and then turn it");
         assert!(
-            branch.contains("theme::wheel_notches("),
-            "the pane must read the wheel through the shared notch conversion, \
-             so a flick steps the same amount here as it does on the cabinet"
+            chord.contains("self.size_dial_under(ev.position)"),
+            "it must resolve WHICH of the pane's dials the pointer is on; one \
+             dial for the whole pane is the bug this replaced"
+        );
+        assert!(
+            chord.contains("self.nudge_size(") && chord.contains("theme::wheel_notches("),
+            "…and turn it, through the shared notch conversion, so a flick \
+             steps the same amount here as it does on the cabinet"
         );
 
-        let halt = branch.find("cx.stop_propagation();").expect(
-            "the pane must halt the ctrl+wheel it just answered — the \
-                 Workspace's handler is bound to the same chord and would size \
-                 the menu bar off the very same notch",
-        );
-        let resolved = branch.find("if let Some(key)").expect("the dial lookup");
-        let lookup_end = branch[resolved..]
-            .find("\n            }")
+        // The `true` that says "taken" sits OUTSIDE the lookup. Inside it, an
+        // unmeasured pane answers `false` and the turn walks to the cabinet.
+        let lookup = chord.find("if let Some(key)").expect("the dial lookup");
+        let taken = chord
+            .rfind("true")
+            .expect("the chord must report it took the turn");
+        let lookup_end = chord[lookup..]
+            .find("\n        }")
             .expect("end of the lookup block")
-            + resolved;
+            + lookup;
         assert!(
-            halt > lookup_end,
-            "the halt sits INSIDE the dial lookup, so a pane with no measured \
-             rect yet would let the flick through to the cabinet"
+            taken > lookup_end,
+            "the chord reports `taken` only when a dial resolved, so a pane \
+             with no measured rect yet leaks the flick to the cabinet"
         );
+
+        // Both callers halt on it. They are in different dispatch phases and
+        // neither can rely on the other having run.
+        for (file, code, caller) in [
+            ("pane.rs", shipped_code(), "pub fn scroll_by_wheel"),
+            ("pane/bench.rs", bench_code(), "fn bench_wheel("),
+        ] {
+            let at = code
+                .find(caller)
+                .unwrap_or_else(|| panic!("{caller} in {file}"));
+            let end = code[at..].find("\n    }\n").expect("end of fn");
+            let body = &code[at..at + end];
+            let ask = body
+                .find("self.size_by_wheel(ev, cx)")
+                .unwrap_or_else(|| panic!("{file}::{caller} must ask the chord"));
+            assert!(
+                body[ask..].contains("cx.stop_propagation();"),
+                "{file}::{caller} answers the chord and does not halt — the \
+                 handler after it sizes something else off the same notch"
+            );
+        }
     }
 
     /// Sizing past the end of a dial is not a decision, so it must not pin.

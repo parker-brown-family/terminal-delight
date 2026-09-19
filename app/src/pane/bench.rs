@@ -153,6 +153,15 @@ impl TerminalView {
     /// whenever the pointer is on the bench, so neither of those ever runs
     /// flat. What it moves is [`crate::workbench::wheel_target`]'s call; how
     /// far, [`crate::workbench::wheel_offset`]'s.
+    ///
+    /// Running first is also why the SIZE chord has to be answered here.
+    /// ctrl+wheel is never a scroll anywhere in this window, and this handler
+    /// consumes every turn on the bench — so until it asked, the workbench was
+    /// the one surface whose own size dial could not be turned from it. The
+    /// question is asked through [`TerminalView::size_by_wheel`] rather than
+    /// answered locally, so the region under the pointer decides the dial here
+    /// exactly as it does at the pane root: the header above the bench is
+    /// still chrome, and still takes the chrome dial.
     pub(super) fn bench_wheel(
         &mut self,
         ev: &ScrollWheelEvent,
@@ -160,6 +169,10 @@ impl TerminalView {
         cx: &mut Context<Self>,
     ) {
         if self.bench.face() != crate::workbench::Face::Workbench {
+            return;
+        }
+        if self.size_by_wheel(ev, cx) {
+            cx.stop_propagation();
             return;
         }
         let Some((hit, _)) = self.bench_flat(ev.position) else {
