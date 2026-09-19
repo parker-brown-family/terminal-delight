@@ -1567,6 +1567,52 @@ where
     // a replacement rather than an addition, and an agent that meant to update
     // should be able to see from the reply which of the two it just did.
     let op = post.op.as_str();
+
+    // PERSIST ON THE WAY PAST, so the bench survives a restart.
+    //
+    // This module used to hand the surface to the live window and stop there,
+    // while `surfacefeed`'s own header drew all three transports converging on
+    // `surfaces/<session>/<pane>/*.json` and promised the directory is re-read
+    // when a window opens. The file drop kept that promise; the verb did not,
+    // so everything an agent sent through MCP died with the window — a pane
+    // that had presented four surfaces had no directory at all. Filed as #567.
+    //
+    // Written before the apply rather than after: the window is the thing that
+    // can fail, and a surface a person can see but that is not on disk is the
+    // failure being fixed here. `drop_surface` names the file by surface id and
+    // writes-then-renames, so a re-send updates the same row instead of
+    // stacking, and the watcher re-reading its own file is a no-op the origin
+    // rule in `Workbench::apply` already absorbs.
+    //
+    // `pane_id: None` is a window-owned pane with no host — it has no
+    // directory, and inventing one would write into a path nothing watches.
+    let pane_dir = snap
+        .panes
+        .iter()
+        .find(|p| p.pid == pid as u32)
+        .and_then(|p| p.pane_id)
+        .zip(snap.instance.as_ref())
+        .map(|(pane, inst)| crate::surfacefeed::pane_dir(&inst.session, pane));
+    if let Some(dir) = pane_dir.as_ref() {
+        match post.op {
+            crate::surface::Op::Retire => {
+                crate::surfacefeed::retire_surface(dir, post.id.as_str());
+            }
+            // A failure here is not worth refusing the call over: the surface
+            // still reaches the bench, and the person sees it. It costs the
+            // restart, which is what the log line is for.
+            _ => {
+                if let Err(err) = crate::surfacefeed::drop_surface(dir, post.id.as_str(), &doc) {
+                    eprintln!(
+                        "terminal-delight mcp: presented {:?} but could not persist it into {}: {err}",
+                        post.id.as_str(),
+                        dir.display()
+                    );
+                }
+            }
+        }
+    }
+
     let patch = ConfigPatch {
         surface: Some(post),
         ..Default::default()

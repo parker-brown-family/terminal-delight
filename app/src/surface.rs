@@ -1494,6 +1494,31 @@ impl Origin {
         }
     }
 
+    /// How much this origin actually knows about who wrote the surface.
+    ///
+    /// Needed because one surface can now arrive twice. `present_surface`
+    /// persists on its way to the window, so the watcher sees the file it just
+    /// wrote and re-delivers the same id moments later — and that second
+    /// arrival is a [`Origin::FileDrop`], which by design cannot name its
+    /// writer at all: any process running as this user can drop a `.json` into
+    /// a pane's directory. Without an order to compare them by, the vaguer of
+    /// the two would win simply for being later, and a card that said *"not
+    /// this pane's agent"* would quietly become *"writer unknown"*.
+    ///
+    /// The order is how much the transport could actually establish, not how
+    /// much anyone trusts it: `Person` is the window watching a human type,
+    /// which is the only one it witnessed itself.
+    pub fn precision(&self) -> u8 {
+        match self {
+            Origin::Unknown => 0,
+            Origin::FileDrop => 1,
+            Origin::Derived => 2,
+            Origin::Mcp { own: None, .. } => 3,
+            Origin::Mcp { own: Some(_), .. } => 4,
+            Origin::Person => 5,
+        }
+    }
+
     /// The origins a person should look at twice.
     pub fn is_unattributed(&self) -> bool {
         matches!(

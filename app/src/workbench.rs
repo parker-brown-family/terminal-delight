@@ -2891,6 +2891,18 @@ impl Bench {
                 match self.surfaces.iter_mut().find(|s| s.id == id) {
                     Some(existing) if post.op == Op::Update => existing.merge(incoming),
                     Some(existing) => {
+                        // A second arrival must not blur who wrote this. Since
+                        // `present_surface` persists on its way past, the
+                        // watcher re-delivers every verb-sent surface as a
+                        // FileDrop seconds later — and FileDrop cannot name a
+                        // writer at all. Keeping the more precise origin means
+                        // the round trip through disk costs the card nothing;
+                        // without it, "presented by this pane's agent" decays
+                        // into "writer unknown" on its own.
+                        let mut incoming = incoming;
+                        if incoming.origin.precision() < existing.origin.precision() {
+                            incoming.origin = existing.origin.clone();
+                        }
                         // The same surface presented again is not a change.
                         // The derived half re-presents every sweep with a
                         // fresh clock, and taking that as new work reset every
@@ -3577,6 +3589,61 @@ mod tests {
         b.apply(doc("same", "Second"));
         assert_eq!(b.all_newest_first().count(), 1);
         assert_eq!(b.rows_for(Shelf::Artifacts)[0].title, "Second");
+    }
+
+    /// A surface presented over MCP is now written to disk on its way past, so
+    /// the watcher reads the file back and re-delivers the same id as a
+    /// `FileDrop` moments later. That second arrival knows strictly less — the
+    /// file transport cannot name a writer at all — and it must not be allowed
+    /// to overwrite what the verb established.
+    ///
+    /// Without the precision rule this passes silently in the wrong direction:
+    /// the card keeps its title and its body and quietly stops saying whose
+    /// agent wrote it, which is the one thing `Origin` exists to carry.
+    #[test]
+    fn a_file_rearrival_does_not_blur_who_presented_it() {
+        let mut b = Bench::new();
+
+        let mut first = doc("carried", "By the verb");
+        let named = crate::surface::Origin::Mcp {
+            pid: 4242,
+            own: Some(false),
+        };
+        first.surface.as_mut().unwrap().origin = named.clone();
+        b.apply(first);
+
+        // the same document, read back off the disk it was just written to
+        let mut echo = doc("carried", "By the verb");
+        echo.surface.as_mut().unwrap().origin = crate::surface::Origin::FileDrop;
+        let changed = b.apply(echo);
+
+        assert!(
+            changed.is_none(),
+            "a round trip through disk is not new work and must not repaint"
+        );
+        let row = b.surfaces.iter().find(|s| s.id.as_str() == "carried");
+        assert_eq!(
+            row.map(|s| s.origin.clone()),
+            Some(named),
+            "the file echo overwrote a more precise origin"
+        );
+
+        // …and the rule is one-way: a genuinely better origin still wins.
+        let mut upgraded = doc("carried", "By the verb");
+        let own = crate::surface::Origin::Mcp {
+            pid: 4242,
+            own: Some(true),
+        };
+        upgraded.surface.as_mut().unwrap().origin = own.clone();
+        b.apply(upgraded);
+        assert_eq!(
+            b.surfaces
+                .iter()
+                .find(|s| s.id.as_str() == "carried")
+                .map(|s| s.origin.clone()),
+            Some(own),
+            "a more precise origin must still be able to replace a weaker one"
+        );
     }
 
     /// The derived half re-presents whatever it read from the transcript on
