@@ -2514,61 +2514,10 @@ pub enum Dispatch {
     Refused(String),
 }
 
-/// What a keystroke means on the bench while it is READING.
-///
-/// Extracted from the pane's key handler so the mode rules are a table rather
-/// than a branch inside a gpui closure. The rules are small and easy to get
-/// subtly wrong — a digit means "answer" only when there is a question to
-/// answer, and any ordinary character has to start talking rather than being
-/// swallowed — and neither of those can be tested through a render.
-/// Chords the WINDOW owns — never a pane's content, on either of its faces.
-///
-/// # Why this is one table and not two
-///
-/// A pane can be showing a terminal or a bench, and both of those are *content
-/// inside a window*. The window's own gestures — close this pane, split it,
-/// open the FOCUS reader, move the highlight — have to survive whichever one is
-/// on top, and the way they survive is that the thing on top declines to take
-/// them.
-///
-/// The terminal face has always done this, in `pane::keystroke_bytes`: a short
-/// list of alt chords it refuses to encode, so they bubble up to the workspace
-/// instead of arriving at somebody's shell as `ESC w`. **The bench never got
-/// one**, and it ends both of its key paths by stopping propagation — so on the
-/// workbench face every chord in that list was dead. `alt+w` did nothing at
-/// all, which is worse than the state it replaced, because the face toggle that
-/// used to sit on `alt+w` was at least handled upstream (#524).
-///
-/// Extracting the list rather than copying it is the point. Two lists drift,
-/// and the drift is invisible: nothing fails to compile, nothing fails a test,
-/// a chord just quietly stops working on one face.
-///
-/// # What is deliberately NOT here
-///
-/// Only chords carrying `alt` (or `control`+`alt`) qualify, and that boundary
-/// is doing real work in both directions:
-///
-/// - `ctrl+c` must reach a running agent. A bench that refused it would take
-///   away the only way to interrupt a turn.
-/// - `alt+b` / `alt+f` are readline's word motion, which the composer mirrors
-///   through [`line_edit`] — so a blanket "the window takes every alt chord"
-///   would break typing.
-/// - A PLAIN arrow walks the bench's rail and a PLAIN escape peels its
-///   overlays. Only the modified forms leave.
-pub fn window_chord(key: &str, alt: bool, control: bool) -> bool {
-    // ctrl+alt+<anything> walks the left bar's tree. Matched on the modifiers
-    // alone, because that pair is not an editing chord anywhere.
-    if control && alt {
-        return true;
-    }
-    if !alt {
-        return false;
-    }
-    matches!(
-        key,
-        "left" | "right" | "up" | "down" | "r" | "v" | "h" | "w" | "k"
-    )
-}
+// Chords the WINDOW owns are `crate::keylayer::window_chord`. They moved there
+// with the rest of the question *who owns this keystroke*, and the window is the
+// top of that ladder. A pointer rather than a re-export: a second name for one
+// table is the shape of the drift the table exists to prevent.
 
 /// `alt+<n>` selects the nth shelf outright, rather than cycling to it.
 ///
@@ -2579,7 +2528,7 @@ pub fn window_chord(key: &str, alt: bool, control: bool) -> bool {
 /// comments. The idea is right and two of those keys are already spoken for:
 ///
 /// - **`alt+v` splits the focused pane**, Tilix-style, alongside `alt+h`. It is
-///   in [`window_chord`], in the module header and on the keybindings sheet.
+///   in [`crate::keylayer::window_chord`], in the module header and on the keybindings sheet.
 /// - **`alt+b` is readline's word-back**, which reaches the agent's own prompt
 ///   from the bench composer — `keystroke_bytes` passes it through deliberately.
 ///
@@ -2631,8 +2580,15 @@ pub enum Reading {
     Choose(usize),
     /// Start talking to the agent, carrying this keystroke through.
     Talk,
-    /// Not ours; swallowed so it cannot reach a working agent.
-    Ignore,
+    /// Not ours. **The terminal underneath gets it** — `ctrl+c` interrupts the
+    /// turn you are watching, a function key reaches the app that binds it.
+    ///
+    /// It used to be called `Ignore` and it was a swallow: `bench_key` ended
+    /// every path in `stop_propagation`, so a key with no meaning here died on
+    /// the workbench face instead of reaching the agent whose conversation was on
+    /// the screen. Renamed rather than re-documented, because the old name is
+    /// what made the swallow look deliberate at the one call site that mattered.
+    Pass,
 }
 
 /// Decide what a key does on a reading bench.
@@ -2658,7 +2614,7 @@ pub fn reading_key(key: &str, printable: bool, answerable: Option<usize>) -> Rea
     if printable {
         Reading::Talk
     } else {
-        Reading::Ignore
+        Reading::Pass
     }
 }
 
@@ -4302,7 +4258,7 @@ mod tests {
                 "alt+{key} should land on {shelf:?}"
             );
             assert!(
-                !window_chord(&key, true, false),
+                !crate::keylayer::window_chord(&key, true, false),
                 "alt+{key} is a WINDOW chord as well as a shelf chord. One of \
                  them will silently stop working — this is exactly what ruled \
                  out alt+v for the overview."
@@ -4327,45 +4283,6 @@ mod tests {
             None,
             "the note box, not a shelf"
         );
-    }
-
-    #[test]
-    fn the_windows_chords_are_never_a_panes_to_take() {
-        // The workspace's own bindings, each read off the handler that binds
-        // it: close (main.rs `if ks.key.as_str() == "w"`), the FOCUS reader
-        // ("r"), the two splits, and directional pane focus.
-        for key in ["w", "r", "v", "h", "left", "right", "up", "down"] {
-            assert!(
-                window_chord(key, true, false),
-                "alt+{key} is the window's and must leave the pane"
-            );
-        }
-        // ctrl+alt+<anything> walks the left bar's tree, on the modifiers alone.
-        assert!(window_chord("up", true, true));
-        assert!(window_chord("q", true, true), "the pair, not the letter");
-
-        // …and the boundary, which is the half that keeps typing working. Each
-        // of these reaching the workspace would break something a person does
-        // constantly.
-        assert!(
-            !window_chord("c", false, true),
-            "ctrl+c interrupts an agent"
-        );
-        assert!(
-            !window_chord("b", true, false),
-            "alt+b is readline's word-back"
-        );
-        assert!(!window_chord("f", true, false), "alt+f is word-forward");
-        assert!(
-            !window_chord("up", false, false),
-            "a plain arrow walks the rail"
-        );
-        assert!(
-            !window_chord("escape", false, false),
-            "plain esc peels overlays"
-        );
-        assert!(!window_chord("a", false, false));
-        assert!(!window_chord("enter", false, false));
     }
 
     /// A modified keystroke is not a character, whatever `key_char` says.
@@ -4416,8 +4333,8 @@ mod tests {
 
     #[test]
     fn a_non_printable_key_is_swallowed_so_it_cannot_reach_a_working_agent() {
-        assert_eq!(reading_key("f5", false, None), Reading::Ignore);
-        assert_eq!(reading_key("home", false, None), Reading::Ignore);
+        assert_eq!(reading_key("f5", false, None), Reading::Pass);
+        assert_eq!(reading_key("home", false, None), Reading::Pass);
     }
 
     #[test]

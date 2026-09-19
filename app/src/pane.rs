@@ -2350,7 +2350,33 @@ enum PaintKey {
     /// it. Bare arrows walk the wall, and only the Workspace knows the geometry.
     Bubble,
     /// Not a paint key at all — fall through to the rest of `on_key`.
+    ///
+    /// Unreachable through [`TerminalView::on_key`]: `keylayer` only routes here
+    /// for the keys this overlay claims, and its claim is written to match.
     Pass,
+}
+
+/// Whether the pane consumed a keystroke, and therefore whether the event may
+/// keep travelling to the Workspace.
+///
+/// **INVARIANT: a key this pane DECLINES must bubble.** Every workspace chord —
+/// alt+arrows (pane nav), alt+v/h and ctrl+alt+r/d (split), ctrl+pgup/pgdn
+/// (tabs) — reaches the Workspace only by bubbling out of a focused pane, so
+/// swallowing the fall-through kills all of them at once with no compile error
+/// and nothing else failing.
+///
+/// Consuming a key is different from swallowing one, and the difference used to
+/// be a rule about where `cx.stop_propagation()` was allowed to appear, enforced
+/// by a source scan counting characters after each call. It is a value now:
+/// [`TerminalView::on_key`] stops in exactly one place, on `Consumed`, and every
+/// handler says which it did in its return type.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Handled {
+    /// The pane acted on it. Nothing above may see this key.
+    Consumed,
+    /// The pane did not, or acted on it in a way the Workspace should still see.
+    /// The event keeps travelling.
+    Declined,
 }
 
 /// The inclusive grid line range a [`RowBudget`] selects: the newest `lines`
@@ -4589,18 +4615,28 @@ impl TerminalView {
         }
     }
 
-    // INVARIANT: a key this handler DECLINES must bubble to the Workspace.
-    // Every workspace chord — alt+arrows (pane nav), alt+v/h and ctrl+alt+r/d
-    // (split), ctrl+pgup/pgdn (tabs) — reaches the Workspace only by bubbling out of
-    // here while a pane holds focus, so swallowing the fall-through kills all
-    // of them at once with no compile error and nothing else failing.
-    //
-    // Consuming a key is different from swallowing one: `cx.stop_propagation()`
-    // is correct where this handler OWNS the key and returns immediately (F1
-    // does exactly that — the workspace root also binds it, and a bubbled F1
-    // toggled the modal twice in one frame). The rule is therefore not "never
-    // stop propagation" but "never stop it without returning".
-    // Guarded by `pane_on_key_only_stops_propagation_when_it_consumes_the_key`.
+    /// Every keystroke this pane receives, routed once.
+    ///
+    /// # One decision, in one place
+    ///
+    /// This function used to be the decision: twenty-odd `if`s in an order that
+    /// nothing observed, each testing a key name and returning. Escape was lifted
+    /// out of it into [`crate::keylayer`] and the rest was left behind with a
+    /// sentence admitting as much — *"Only ESCAPE goes through here. Every other
+    /// key keeps the path it had."*
+    ///
+    /// The path it had ran `bench_key` in the middle, and every exit from that
+    /// function stopped the event, so on the workbench face nothing below it ran
+    /// at all. The inline rename box took no letters; `alt+s` stuck no note;
+    /// `ctrl+shift+b` opened no left bar; `ctrl+c` could not interrupt the agent
+    /// whose conversation was on the screen. Twenty-one of twenty-seven chords
+    /// were dead there, and every one of them was the same bug: a handler that
+    /// runs early and keeps a key it cannot use.
+    ///
+    /// So the whole decision is [`crate::keylayer::route`] now, and this function
+    /// is a `match` over its answer. **It never looks at a key itself** — guarded
+    /// by `on_key_decides_nothing_it_can_decide_in_the_table`, because a single
+    /// `if ks.key.as_str() == …` added here is how the order grows back.
     fn on_key(&mut self, ev: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
         let ks = &ev.keystroke;
         // Typing into the pane is attention too — covers the frozen-badge case
@@ -4613,390 +4649,315 @@ impl TerminalView {
         // re-arms the flag on the very next scan. What it cannot do is keep
         // asserting a question the person has already dealt with.
         self.ack_needs_input(cx);
-        // F1 opens the help modal (handled by the workspace), never the PTY.
-        // STOP the event here: the workspace root also binds F1 (its no-pane-
-        // focused fallback), and a bubbled F1 toggled `help_open` a SECOND time
-        // in the same frame — the modal opened and closed instantly, so F1 read
-        // as dead everywhere except the outer bar's `?` button.
-        if ks.key.as_str() == "f1" {
-            cx.emit(OpenHelp);
-            cx.stop_propagation();
-            return;
-        }
-        // alt+k flips this pane between its two faces, from either side.
-        //
-        // It was alt+w for one day, and alt+w was already taken: it is the
-        // middle rung of the close ladder (ctrl+w the tab, super+w the tile,
-        // alt+w the focused PANE). Because this handler runs before the
-        // workspace's, the bench quietly ate the only chord that closes a pane
-        // — a binding that does not collide in any table, only in the order the
-        // handlers happen to run. The face toggle moves; the close stays where
-        // it was, and `keystroke_bytes` is told about `k` so the letter cannot
-        // reach a shell as ESC k on the way past.
-        if ks.key.as_str() == "k" && ks.modifiers.alt && !ks.modifiers.control {
-            self.toggle_face(cx);
-            cx.stop_propagation();
-            return;
-        }
-        // ── ESCAPE IS RESOLVED ONCE, AGAINST A TABLE ────────────────────────
-        //
-        // Every surface a pane can stack wants this key, and which of them gets
-        // it used to be decided by the order of the branches below. That order
-        // has no runtime signal: swapping two correct blocks compiles and leaves
-        // the whole suite green, and it went wrong exactly that way four times
-        // over. `bench_key` consumes every escape on the workbench face and ends
-        // in `stop_propagation`, and it sat above the paint block, the
-        // right-click tray, the header's ⋯ menu and the rename box — all four of
-        // which are drawn on that face and none of which escape could reach.
-        //
-        // [`crate::keylayer::escape_target`] is now the only thing that decides,
-        // the way every gpui-kit control routes through one `resolve_style` so
-        // the layering cannot drift apart again. The precedence is the
-        // declaration order of [`crate::keylayer::EscTarget`], a new surface is
-        // a new variant the compiler makes this match handle, and the ladder is
-        // table-tested over all 128 combinations in a module that imports
-        // nothing and so tests in about a second.
-        //
-        // Only ESCAPE goes through here. Every other key keeps the path it had.
-        if ks.key.as_str() == "escape" {
-            use crate::keylayer::{escape_target, EscTarget, Up};
-            let up = Up {
-                paint: theme::paint_mode(cx),
-                ctx_menu: self.ctx_menu.is_some(),
-                header_menu: self.hdr_overflow.is_some(),
-                reader: self.being_read,
-                sticky: self.sticky_composing(),
-                rename: self.renaming.is_some(),
-                bench: self.bench.face() == crate::workbench::Face::Workbench,
-            };
-            match escape_target(up) {
-                EscTarget::Paint => {
-                    // `paint_key` folds the overlay and BUBBLES, so the
-                    // workspace sees the same press and can close anything of
-                    // its own underneath.
-                    match self.paint_key(ks, cx) {
-                        PaintKey::Took => {
-                            cx.stop_propagation();
-                            return;
-                        }
-                        PaintKey::Bubble => return,
-                        PaintKey::Pass => {}
-                    }
-                }
-                EscTarget::CtxMenu => {
-                    self.ctx_menu = None;
-                    cx.notify();
-                    return;
-                }
-                EscTarget::HeaderMenu => {
-                    self.hdr_overflow = None;
-                    cx.notify();
-                    return;
-                }
-                EscTarget::Reader => {
-                    // The workspace owns the modal; this is the pane asking it
-                    // to close. Left in place because the workspace's own
-                    // capture-phase handler does not run when no popup is open.
-                    cx.emit(CloseFocusRead);
-                    return;
-                }
-                EscTarget::Sticky => {
-                    // `sticky_key` reads escape as Press::Revert.
-                    if self.sticky_key(ks, cx) {
-                        cx.stop_propagation();
-                    }
-                    return;
-                }
-                EscTarget::Rename => {
-                    // Cancel: the half-typed name is dropped, as the inline box
-                    // has always done.
-                    self.renaming = None;
-                    cx.notify();
-                    return;
-                }
-                EscTarget::Bench => {
-                    // The bench's own ladder — [`crate::workbench::peel`] — which
-                    // decides what escape takes off WITHIN the bench and refuses
-                    // to take the bench itself.
-                    if self.bench_key(ks, cx) {
-                        return;
-                    }
-                }
-                // Nothing is up. Fall through: this escape is the shell's, and
-                // it reaches the PTY as 0x1b at the bottom of this function.
-                EscTarget::Terminal => {}
+
+        let k = keylayer_key(ks);
+        let up = self.layers_up(cx);
+        let handled = match crate::keylayer::route(&k, &up) {
+            // F1 opens the help modal, never the PTY. CONSUMED: the workspace
+            // root also binds F1 (its no-pane-focused fallback), and a bubbled
+            // F1 toggled `help_open` a SECOND time in the same frame — the modal
+            // opened and closed instantly, so F1 read as dead everywhere except
+            // the outer bar's `?` button.
+            crate::keylayer::Layer::Help => {
+                cx.emit(OpenHelp);
+                Handled::Consumed
             }
-        }
-        // PAINT mode owns the keyboard while it is up — it is the topmost
-        // surface across ALL panes at once, so nothing it handles may reach the
-        // PTY underneath (an ESC byte into a running agent kills it; a stray
-        // `w` lands in someone's shell).
-        //
-        // Only the FOCUSED pane runs this handler, which is what makes "the
-        // letter paints the selected terminal" true without any selection state
-        // to keep: the spotlight in the overlay and the focus this handler
-        // rides are the same fact.
-        //
-        // AHEAD OF THE BENCH, and that ordering is the whole of the escape
-        // complaint this branch answers (PR #532). This
-        // block used to sit BELOW `bench_key`, which consumes every escape on
-        // the workbench face and ends in `stop_propagation` — so with the paint
-        // cards up over a pane showing its bench, the first press flipped that
-        // pane to the terminal and left the overlay standing. The comment above
-        // already claimed paint owned the keyboard; only the line order
-        // disagreed. Parker: *"pressing escape a single time should always
-        // target that overlay"*. Same shape as #524, where `bench_key` kept the
-        // window's alt chords for the same reason: a handler that runs early
-        // and keeps a key it cannot use.
-        //
-        // Nothing moves on the terminal face, where `bench_key` declines
-        // immediately — guarded by
-        // `paint_mode_is_consulted_before_the_bench_can_swallow_a_key`.
-        if theme::paint_mode(cx) {
-            match self.paint_key(ks, cx) {
-                PaintKey::Took => {
-                    cx.stop_propagation();
-                    return;
-                }
-                PaintKey::Bubble => return,
-                PaintKey::Pass => {}
+            // alt+k flips this pane between its two faces, from either side. It
+            // was alt+w for one day, and alt+w was already taken: it is the
+            // middle rung of the close ladder (ctrl+w the tab, super+w the tile,
+            // alt+w the focused PANE). `keystroke_bytes` is told about `k` too,
+            // so the letter cannot reach a shell as ESC k on the way past.
+            crate::keylayer::Layer::Face => {
+                self.toggle_face(cx);
+                Handled::Consumed
             }
-        }
-        // ── the WORKBENCH face owns the keyboard, in one of two modes ───────
-        //
-        // READING: arrows walk the rail, digits answer a question, enter takes
-        // the surface's first action. Nothing reaches the agent.
-        //
-        // TALKING: every keystroke goes STRAIGHT to the pseudoterminal, encoded
-        // by [`keystroke_bytes`] — the same function the terminal face uses, so
-        // there is one encoder and the bench cannot drift from it. Slash
-        // commands complete, history works, ctrl+c interrupts, because the
-        // agent's own line editor is doing all of it. This is the difference
-        // between a text box that imitates a terminal and a person typing at
-        // one.
-        //
-        // Typing any ordinary character in reading mode starts talking, with
-        // that character — so there is no "click here first", which is what
-        // made the first version feel like a form rather than a terminal.
-        //
-        // `esc` is the one key talking mode keeps: it returns to reading
-        // rather than travelling, because esc into a working agent kills its
-        // turn and a person leaving a text box does not mean that.
-        if self.bench_key(ks, cx) {
-            return;
-        }
-        // The right-click tray, the ⋯ header menu and the FOCUS modal each used
-        // to test for escape here, in this order, and each is now a row in
-        // [`crate::keylayer::EscTarget`] answered at the top of this function.
-        // Their branches are gone rather than left unreachable: three `if`s that
-        // can never be true read exactly like three that can.
-        //
-        // While this pane is mirrored in the FOCUS modal, every keystroke OTHER
-        // than escape still flows straight to this terminal, so you keep
-        // directing the agent while you read it big.
-        //
-        // Same contract for the paging keys: while the modal is up they drive the
-        // READER's view (page through the mirrored convo, jump to its ends), not
-        // the pane's own scrollback — that's the surface you are actually reading.
-        // Every other keystroke still flows to the PTY below.
-        if self.being_read {
-            if let Some(nav) = read_nav_key(ks.key.as_str(), &ks.modifiers) {
-                cx.emit(FocusReadNav(nav));
-                return;
+            // Not ours on either face. Declining IS the handling.
+            crate::keylayer::Layer::Window => Handled::Declined,
+            crate::keylayer::Layer::Paint => match self.paint_key(ks, cx) {
+                PaintKey::Took => Handled::Consumed,
+                // `paint_key` folds the overlay and BUBBLES, so the workspace
+                // sees the same press and can close anything of its own
+                // underneath.
+                PaintKey::Bubble => Handled::Declined,
+                PaintKey::Pass => {
+                    debug_assert!(
+                        false,
+                        "keylayer routed a key to the paint overlay that paint_key passes on — \
+                         `paints` and `paint_key` have drifted apart"
+                    );
+                    Handled::Declined
+                }
+            },
+            crate::keylayer::Layer::CtxMenu => {
+                self.ctx_menu = None;
+                cx.notify();
+                Handled::Declined
             }
-        }
-        // The note's OWN chords, ahead of the composer that would otherwise eat
-        // them. A composer that swallows the chord for "put the pen down" leaves
-        // Enter as the only way out, which is exactly the bug this ordering
-        // exists to prevent: alt+s reached `EditBuffer::apply`, which drops
-        // alt-modified keys, so pressing it again did nothing at all.
-        //
-        // Alt+S sticks a note to this pane, picks the pen back up on the one
-        // already there, and — pressed again while writing — posts it. Taken in
-        // the pane rather than at the Workspace because the note belongs to the
-        // pane and the pane's handler runs first: routing it through the
-        // Workspace would let `keystroke_bytes` send `ESC s` on the way past. It
-        // costs the shell alt+s, which nothing standard binds.
-        if ks.modifiers.alt
-            && !ks.modifiers.control
-            && !ks.modifiers.shift
-            && ks.key.as_str() == "s"
-        {
-            self.sticky_toggle(cx);
-            cx.stop_propagation();
-            return;
-        }
-        // Alt+Backspace peels it off — but ONLY when a note is actually stuck
-        // here. With no note the chord falls through untouched and readline still
-        // gets its backward-kill-word, so the shell loses the binding exactly
-        // when the pane is visibly carrying a note and not otherwise. Peeling by
-        // accident costs one keystroke: alt+s brings the text straight back.
-        if ks.modifiers.alt
-            && !ks.modifiers.control
-            && ks.key.as_str() == "backspace"
-            && self.sticky_peel(cx)
-        {
-            cx.stop_propagation();
-            return;
-        }
-        // A note holding the cursor owns the keyboard, rename-box style: every
-        // OTHER keystroke writes on the paper instead of reaching the PTY, Enter
-        // posts it, Esc reverts it. This runs ONLY while composing — see
-        // `sticky_key` for why a posted note must never see a key.
-        if self.sticky_composing() && self.sticky_key(ks, cx) {
-            cx.stop_propagation();
-            return;
-        }
-        // The inline rename box owns the keyboard while open — keystrokes edit
-        // the name instead of reaching the PTY. Mirrors the main-tab rename.
-        if let Some(mut buf) = self.renaming.take() {
-            match ks.key.as_str() {
-                "enter" => {
-                    self.renaming = Some(buf);
-                    self.commit_rename(cx);
+            crate::keylayer::Layer::HeaderMenu => {
+                self.hdr_overflow = None;
+                cx.notify();
+                Handled::Declined
+            }
+            crate::keylayer::Layer::Reader => self.reader_key(&k, cx),
+            crate::keylayer::Layer::Sticky => {
+                // A note holding the cursor owns the keyboard, rename-box style:
+                // every keystroke writes on the paper instead of reaching the
+                // PTY, Enter posts it, Esc reverts it. This runs ONLY while
+                // composing — see `sticky_key` for why a posted note must never
+                // see a key.
+                self.sticky_key(ks, cx);
+                Handled::Consumed
+            }
+            crate::keylayer::Layer::Rename => self.rename_key(&k, ks, cx),
+            crate::keylayer::Layer::PaneChord => self.pane_chord_key(&k, ks, cx),
+            // ── the WORKBENCH face, in one of its modes ─────────────────────
+            //
+            // READING: arrows walk the rail, digits answer a question, enter
+            // takes the surface's first action.
+            //
+            // TALKING: every keystroke goes STRAIGHT to the pseudoterminal,
+            // encoded by [`keystroke_bytes`] — the same function the terminal
+            // face uses, so there is one encoder and the bench cannot drift from
+            // it. Slash commands complete, history works, ctrl+c interrupts,
+            // because the agent's own line editor is doing all of it.
+            //
+            // Typing any ordinary character in reading mode starts talking, with
+            // that character — so there is no "click here first".
+            //
+            // AND IT MAY DECLINE. A key the bench has no use for falls to the
+            // terminal underneath it rather than dying here, which is what makes
+            // `ctrl+c` reach a working agent from the face that is showing you
+            // its turn.
+            crate::keylayer::Layer::Bench => {
+                if self.bench_key(ks, cx) {
+                    Handled::Consumed
+                } else {
+                    self.terminal_key(&k, ks, cx)
                 }
-                // Escape is answered at the top of `on_key`, by the escape
-                // table. Kept as an explicit no-op rather than deleted, because
-                // the fall-through arm below would otherwise push the key's
-                // `key_char` into the name — a silent wrong behaviour if any
-                // future path ever reaches here with an escape in hand.
-                "escape" => {}
-                "backspace" => {
-                    buf.pop();
-                    self.renaming = Some(buf);
-                }
-                _ => {
+            }
+            crate::keylayer::Layer::Terminal => self.terminal_key(&k, ks, cx),
+        };
+        if handled == Handled::Consumed {
+            cx.stop_propagation();
+        }
+    }
+
+    /// Which of this pane's surfaces are up, for [`crate::keylayer::route`].
+    ///
+    /// One read per keystroke, so every layer is judged against the same instant
+    /// — the alternative is a ladder whose rungs disagree about what is open.
+    fn layers_up(&self, cx: &mut Context<Self>) -> crate::keylayer::Up {
+        crate::keylayer::Up {
+            paint: theme::paint_mode(cx),
+            ctx_menu: self.ctx_menu.is_some(),
+            header_menu: self.hdr_overflow.is_some(),
+            reader: self.being_read,
+            sticky: self.sticky_composing(),
+            rename: self.renaming.is_some(),
+            note: self.note.is_some(),
+            bench: self.bench.face() == crate::workbench::Face::Workbench,
+        }
+    }
+
+    /// This pane, mirrored large in the FOCUS modal.
+    ///
+    /// The workspace owns the modal; this is the pane asking it to close, and it
+    /// is left in place because the workspace's own capture-phase handler does
+    /// not run when no popup is open. The paging keys drive the READER's view —
+    /// page through the mirrored convo, jump to its ends — rather than the pane's
+    /// own scrollback, because that is the surface you are actually reading.
+    /// Every other keystroke flows past to the terminal, so you keep directing
+    /// the agent while you read it big.
+    fn reader_key(&mut self, k: &crate::keylayer::Key, cx: &mut Context<Self>) -> Handled {
+        match read_nav(k) {
+            Some(nav) => cx.emit(FocusReadNav(nav)),
+            None => cx.emit(CloseFocusRead),
+        }
+        Handled::Declined
+    }
+
+    /// The inline rename box in the header, which owns the keyboard while open.
+    ///
+    /// Mirrors the main-tab rename: ↵ commits, esc drops the half-typed name, and
+    /// a click anywhere outside the box commits too (see `commit_rename`).
+    fn rename_key(
+        &mut self,
+        k: &crate::keylayer::Key,
+        ks: &Keystroke,
+        cx: &mut Context<Self>,
+    ) -> Handled {
+        let Some(mut buf) = self.renaming.take() else {
+            return Handled::Declined;
+        };
+        match k.key {
+            "enter" => {
+                self.renaming = Some(buf);
+                self.commit_rename(cx);
+            }
+            // Cancel: `take` above already dropped it.
+            "escape" => {}
+            "backspace" => {
+                buf.pop();
+                self.renaming = Some(buf);
+            }
+            _ => {
+                // A MODIFIED KEYSTROKE IS NOT A CHARACTER, however gpui fills
+                // its `key_char` — the same rule the bench learned when `alt+r`
+                // opened a composer and typed nothing into it. This arm used to
+                // push `key_char` unconditionally, so every chord that reached
+                // the box put a letter in the name: `ctrl+w` typed a `w`,
+                // `alt+w` typed another. Now the chords have owners above this
+                // one and the guard is here as well, because the arm cannot tell
+                // on its own.
+                if k.types_char {
                     if let Some(ch) = ks.key_char.as_ref() {
                         if buf.chars().count() < 24 {
                             buf.push_str(ch);
                         }
                     }
-                    self.renaming = Some(buf);
+                }
+                self.renaming = Some(buf);
+            }
+        }
+        cx.notify();
+        Handled::Declined
+    }
+
+    /// The pane's own chords, on either of its faces.
+    ///
+    /// These live HERE, not in `Workspace::on_key`, and the difference is the
+    /// whole feature: a focused terminal takes the keystroke first, so the
+    /// workspace handler only ever runs when no pane has focus — which is almost
+    /// never. A chord added there compiles, tests green, and does nothing when
+    /// you press it.
+    ///
+    /// Which chords reach this function is [`crate::keylayer::pane_chord`]'s
+    /// call, and the conditional ones are conditional there: `ctrl+x` only with a
+    /// selection, `alt+backspace` only with a note stuck.
+    fn pane_chord_key(
+        &mut self,
+        k: &crate::keylayer::Key,
+        ks: &Keystroke,
+        cx: &mut Context<Self>,
+    ) -> Handled {
+        if k.alt {
+            match k.key {
+                // Alt+S sticks a note to this pane, picks the pen back up on the
+                // one already there, and — pressed again while writing — posts
+                // it. Taken in the pane because the note belongs to the pane: at
+                // the Workspace, `keystroke_bytes` would send `ESC s` on the way
+                // past. It costs the shell alt+s, which nothing standard binds.
+                "s" => self.sticky_toggle(cx),
+                // Alt+Backspace peels it off. The shell loses the binding exactly
+                // when the pane is visibly carrying a note and not otherwise, and
+                // peeling by accident costs one keystroke: alt+s brings the text
+                // straight back.
+                _ => {
+                    self.sticky_peel(cx);
                 }
             }
-            cx.notify();
-            return;
+            return Handled::Consumed;
         }
-        if self.exited || self.spawned.elapsed() < Duration::from_millis(150) {
-            return;
-        }
-        let m = &ks.modifiers;
-        // Ctrl+W closes the whole tab (always confirmed by the workspace). We
-        // intercept it here so it never reaches the PTY as werase (^W) — the
-        // workspace owns this chord, like new-tab/copy/paste below.
-        if m.control && !m.shift && !m.alt && ks.key.as_str() == "w" {
-            cx.emit(RequestCloseTab);
-            return;
-        }
-        // Ctrl+X = CUT the selection: copy it, and when it's the trailing run on
-        // the live input line, erase it there too (see `cut_selection`). Gated on
-        // an actual selection so a bare Ctrl+X still reaches the shell as the
-        // readline prefix key (C-x C-e, etc.).
-        if m.control && !m.shift && !m.alt && ks.key.as_str() == "x" && self.has_selection() {
-            self.cut_selection(cx);
-            return;
-        }
-        // Ctrl+F = find in THIS pane; Ctrl+Shift+F = find across ALL panes. Both
-        // open a workspace-owned find panel (so it can search siblings and centre
-        // itself); intercepted here so the chord never reaches the PTY.
-        if m.control && !m.alt && ks.key.as_str() == "f" {
-            cx.emit(OpenFind { global: m.shift });
-            return;
-        }
-        if m.control && m.shift {
-            match ks.key.as_str() {
-                // workspace chords: new tab
-                "t" => return,
-                "c" => {
-                    self.copy_selection(cx);
-                    return;
-                }
-                "v" => {
-                    self.paste_clipboard(cx);
-                    return;
-                }
-                "k" => {
-                    self.clear_scrollback(cx);
-                    return;
-                }
-                // Ctrl+Shift+A → agent-watch (MCP) panel; Ctrl+Shift+U → Σ usage;
-                // Ctrl+Shift+D → this pane's DESIGN menu (theme); Ctrl+Shift+G →
-                // this pane's GAUGES tray (display). The Shift guard keeps raw
-                // Ctrl+A/D/G/U (line-start / EOF / BEL / kill-line) reaching the
-                // PTY. The menus anchor at this pane's top-right, under the
-                // header, where the icon click opens them.
-                //
-                // These live HERE, not in `Workspace::on_key`, and the difference
-                // is the whole feature: a focused terminal takes the keystroke
-                // first, so the workspace handler only ever runs when no pane has
-                // focus — which is almost never. A chord added there compiles,
-                // tests green, and does nothing when you press it.
-                "a" => {
-                    cx.emit(OpenAgentPanel);
-                    return;
-                }
-                // Ctrl+Shift+B → the left bar (the session's tree). B for bar,
-                // and the chord an editor user already has in their fingers.
-                // Here rather than in `Workspace::on_key` for the reason the
-                // comment above gives: the focused terminal takes the key
-                // first, so a chord added there would never fire.
-                "b" => {
-                    cx.emit(ToggleLeftBar);
-                    return;
-                }
-                // Ctrl+Shift+N → the attention rail's queue. N for "needs me".
-                // Here for the same reason as the arms above: a focused terminal
-                // takes the chord first, so a workspace-level binding would
-                // compile, test green, and do nothing when pressed.
-                "n" => {
-                    cx.emit(ToggleRail);
-                    return;
-                }
-                // Ctrl+Shift+Z → the most recently closed thing comes back.
-                // Same reason as the arms above for living here: the pane has
-                // the keyboard, so this is the only place the chord is seen.
-                "z" => {
-                    cx.emit(ReopenClosed);
-                    return;
-                }
+        if k.shift {
+            match k.key {
+                // Ctrl+Shift+T is the workspace's new-tab chord: taken from the
+                // PTY here, acted on there.
+                "t" => {}
+                "c" => self.copy_selection(cx),
+                "v" => self.paste_clipboard(cx),
+                "k" => self.clear_scrollback(cx),
+                // Ctrl+Shift+F finds across ALL panes; plain Ctrl+F in this one.
+                // Both open a workspace-owned panel, so it can search siblings
+                // and centre itself.
+                "f" => cx.emit(OpenFind { global: true }),
+                // Ctrl+Shift+A → agent-watch (MCP) panel; Ctrl+Shift+D → this
+                // pane's DESIGN menu (theme); Ctrl+Shift+G → its GAUGES tray. The
+                // Shift guard keeps raw Ctrl+A/D/G/U (line-start / EOF / BEL /
+                // kill-line) reaching the PTY. The menus anchor at this pane's
+                // top-right, under the header, where the icon click opens them.
+                "a" => cx.emit(OpenAgentPanel),
+                // B for bar — the chord an editor user already has in their
+                // fingers.
+                "b" => cx.emit(ToggleLeftBar),
+                // N for "needs me": the attention rail's queue.
+                "n" => cx.emit(ToggleRail),
+                // The most recently closed thing comes back.
+                "z" => cx.emit(ReopenClosed),
                 // Two keys for one panel, and the second is not redundant.
-                //
                 // fcitx5's Unicode addon binds Ctrl+Shift+U — `libunicode.so`
                 // carries both `Control+Shift+U` and `Control+Alt+Shift+U` — and
                 // an input method takes the chord before the compositor hands it
-                // on, so on a box running fcitx or ibus this arm never runs. It
-                // is kept because U is the obvious key for usage and most
-                // machines have nothing claiming it; Y is the one that always
-                // arrives. Verified by logging what the pane actually receives:
-                // Ctrl+Shift+A landed seven times, Ctrl+Shift+U never once.
-                "u" | "y" => {
-                    cx.emit(OpenUsagePanel);
-                    return;
-                }
-                "d" => {
-                    cx.emit(OpenThemeMenu {
-                        at: self.header_anchor(),
-                    });
-                    return;
-                }
-                "g" => {
-                    cx.emit(OpenDisplayMenu {
-                        at: self.header_anchor(),
-                    });
-                    return;
-                }
+                // on, so on a box running fcitx or ibus that arm never runs. U is
+                // the obvious key for usage and most machines have nothing
+                // claiming it; Y is the one that always arrives. Verified by
+                // logging what the pane actually receives: Ctrl+Shift+A landed
+                // seven times, Ctrl+Shift+U never once.
+                "u" | "y" => cx.emit(OpenUsagePanel),
+                "d" => cx.emit(OpenThemeMenu {
+                    at: self.header_anchor(),
+                }),
+                "g" => cx.emit(OpenDisplayMenu {
+                    at: self.header_anchor(),
+                }),
                 _ => {}
             }
+            return Handled::Declined;
+        }
+        match k.key {
+            // Ctrl+W closes the whole tab (always confirmed by the workspace).
+            // Intercepted here so it never reaches the PTY as werase (^W).
+            "w" => cx.emit(RequestCloseTab),
+            "f" => cx.emit(OpenFind { global: false }),
+            // Ctrl+X = CUT the selection: copy it, and when it is the trailing
+            // run on the live input line, erase it there too (see
+            // `cut_selection`).
+            //
+            // THE ONE CHORD THE TABLE CANNOT FINISH DECIDING. With nothing
+            // selected this is readline's prefix key — `C-x C-e` opens your
+            // editor — and asking whether anything is selected means rendering
+            // the selection to a string, which is not a thing to do on every
+            // keystroke of the session to settle one chord. So the claim is
+            // unconditional and the answer is here, one layer down, where it is
+            // paid for only when the chord actually arrives.
+            "x" => {
+                if !self.has_selection() {
+                    return self.terminal_key(k, ks, cx);
+                }
+                self.cut_selection(cx);
+            }
+            _ => {}
+        }
+        Handled::Declined
+    }
+
+    /// The terminal: its own selection and scrollback keys, then the PTY.
+    ///
+    /// The floor of the ladder, and where both surfaces that own an internal
+    /// stack — the paint overlay and the workbench — hand back what they have no
+    /// use for.
+    fn terminal_key(
+        &mut self,
+        k: &crate::keylayer::Key,
+        ks: &Keystroke,
+        cx: &mut Context<Self>,
+    ) -> Handled {
+        // Nothing reaches a dead pseudoterminal, or one that has not finished
+        // being born. Scoped to the terminal rather than the whole handler,
+        // which is where it used to sit: an exited pane still closes its tab and
+        // still opens the left bar, because neither of those is a write.
+        if self.exited || self.spawned.elapsed() < Duration::from_millis(150) {
+            return Handled::Declined;
         }
         // Keyboard-driven visual selection: shift+←/→ extends TD's own selection
         // by a character, shift+ctrl+←/→ by a word — combinative (anchor fixed,
-        // active end moves), seeded from the cursor or an existing mouse selection.
-        // Shells don't bind shift-arrows, so this never steals shell word-nav
-        // (plain ctrl+arrow still reaches the PTY) or ordinary typing. Works in the
-        // FOCUS reader too (the mirror repaints the highlight via the pane notify).
-        if m.shift && !m.alt && matches!(ks.key.as_str(), "left" | "right") {
-            self.extend_kbd_selection(ks.key.as_str() == "right", m.control, cx);
-            return;
+        // active end moves), seeded from the cursor or an existing mouse
+        // selection. Shells don't bind shift-arrows, so this never steals shell
+        // word-nav (plain ctrl+arrow still reaches the PTY) or ordinary typing.
+        // Works in the FOCUS reader too (the mirror repaints the highlight via
+        // the pane notify).
+        if k.shift && !k.alt && matches!(k.key, "left" | "right") {
+            self.extend_kbd_selection(k.key == "right", k.control, cx);
+            return Handled::Declined;
         }
         // Paging the pane itself. PageUp/PageDown page the scrollback in AGENT
         // panes — a Claude/Codex session keeps its whole convo in our history and
@@ -5010,7 +4971,7 @@ impl TerminalView {
         // steps toward older, ctrl+Home is the oldest row — wherever older is
         // painted; the wheel's per-gesture flip is about physical direction,
         // which a named key doesn't have.
-        if let Some(nav) = read_nav_key(ks.key.as_str(), m) {
+        if let Some(nav) = read_nav(k) {
             let paging = matches!(nav, ReadNav::PageUp | ReadNav::PageDown);
             if !paging || self.mode.is_agent() {
                 let tmode = *self.session.term.lock().mode();
@@ -5024,13 +4985,14 @@ impl TerminalView {
                     };
                     self.session.term.lock().scroll_display(scroll);
                     cx.notify();
-                    return;
+                    return Handled::Declined;
                 }
             }
         }
         if let Some(bytes) = keystroke_bytes(ks) {
             self.send(bytes, cx);
         }
+        Handled::Declined
     }
 
     /// Grow TD's visual selection one step from the keyboard. `right` picks the
@@ -6933,21 +6895,44 @@ fn wheel_step_bytes(up: bool, sgr: bool) -> Vec<u8> {
     }
 }
 
-/// Map a paging keystroke to a [`ReadNav`], or `None` for anything else. Plain
-/// PageUp/PageDown page; ctrl+Home / ctrl+End jump to the ends. Any other
-/// modifier combination is someone else's chord (ctrl+PageUp switches tabs,
-/// plain Home/End belong to the shell), so it must NOT match here.
-fn read_nav_key(key: &str, m: &gpui::Modifiers) -> Option<ReadNav> {
-    if m.alt || m.shift || m.platform || m.function {
-        return None;
+/// A `gpui` keystroke in the terms [`crate::keylayer`] decides with.
+///
+/// The one place a `Keystroke` is translated, so that the question *does this
+/// keystroke type a character* is answered once. gpui fills `key_char` for
+/// `alt+r` with `"r"`, which is how a chord came to read as a letter in two
+/// different surfaces before [`crate::workbench::types_a_character`] existed.
+fn keylayer_key(ks: &Keystroke) -> crate::keylayer::Key<'_> {
+    let m = &ks.modifiers;
+    crate::keylayer::Key {
+        key: ks.key.as_str(),
+        alt: m.alt,
+        control: m.control,
+        shift: m.shift,
+        platform: m.platform,
+        function: m.function,
+        types_char: crate::workbench::types_a_character(
+            ks.key_char.as_deref(),
+            m.alt,
+            m.control,
+            m.platform,
+        ),
     }
-    match (key, m.control) {
-        ("pageup", false) => Some(ReadNav::PageUp),
-        ("pagedown", false) => Some(ReadNav::PageDown),
-        ("home", true) => Some(ReadNav::Top),
-        ("end", true) => Some(ReadNav::Bottom),
-        _ => None,
-    }
+}
+
+/// Map a paging keystroke to a [`ReadNav`], or `None` for anything else.
+///
+/// The gesture itself is [`crate::keylayer::paging`]'s table, because the FOCUS
+/// modal's claim on these four keys and the pane's own scrollback binding are the
+/// same four keys — and a second copy is how one of them quietly stops matching.
+/// This is the naming layer over it.
+fn read_nav(k: &crate::keylayer::Key) -> Option<ReadNav> {
+    use crate::keylayer::Paging;
+    Some(match crate::keylayer::paging(k)? {
+        Paging::PageUp => ReadNav::PageUp,
+        Paging::PageDown => ReadNav::PageDown,
+        Paging::Top => ReadNav::Top,
+        Paging::Bottom => ReadNav::Bottom,
+    })
 }
 
 /// gpui Keystroke → PTY bytes.
@@ -6979,8 +6964,8 @@ fn keystroke_bytes(ks: &Keystroke) -> Option<Vec<u8>> {
         // the same one: a terminal and a bench are both content inside a pane,
         // and the window's gestures have to survive whichever is on top. It was
         // written out here and nowhere else, so the bench competed for all of
-        // them and won — see [`crate::workbench::window_chord`] (#524).
-        if crate::workbench::window_chord(ks.key.as_str(), m.alt, m.control) {
+        // them and won — see [`crate::keylayer::window_chord`] (#524).
+        if crate::keylayer::window_chord(ks.key.as_str(), m.alt, m.control) {
             return None;
         }
         // other alt+<char>: ESC prefix for readline (alt+b, alt+f, alt+.)
@@ -8460,6 +8445,23 @@ impl Render for TerminalView {
 
 #[cfg(test)]
 mod tests {
+    /// [`read_nav`], from the parts these tests have to hand.
+    ///
+    /// Inside the test module on purpose: a file-scope `#[cfg(test)]` item above
+    /// `mod tests` truncates every source scan in here that cuts at the first
+    /// `#[cfg(test)]`, and `the_pane_root_takes_a_file_drop` goes red without
+    /// anything being wrong with the drop listener.
+    fn read_nav_key(key: &str, m: &gpui::Modifiers) -> Option<ReadNav> {
+        read_nav(&crate::keylayer::Key {
+            key,
+            alt: m.alt,
+            control: m.control,
+            shift: m.shift,
+            platform: m.platform,
+            function: m.function,
+            types_char: false,
+        })
+    }
 
     /// This file's shipped code with every comment line removed.
     ///
@@ -8968,6 +8970,56 @@ mod tests {
         );
     }
 
+    /// The bench says what it took, and never decides propagation itself.
+    ///
+    /// Two halves of one rule, and the bug was in both. `bench_key` used to end
+    /// every path in `cx.stop_propagation()`, so a key it had no use for died
+    /// there: `ctrl+c` could not interrupt the agent whose turn was on the
+    /// screen, `ctrl+shift+b` opened no left bar, and the inline rename box —
+    /// drawn on that same face — took no letters, because nothing below the call
+    /// in `on_key` ran at all. Twenty-one of twenty-seven chords were dead on the
+    /// workbench face and each one was this.
+    ///
+    /// So the bench reports and `on_key` decides. Scanned rather than trusted,
+    /// because the failure is silent in both directions: a `stop_propagation`
+    /// added back here kills chords with nothing failing, and a not-ours arm that
+    /// stops returning `false` swallows keys with nothing failing.
+    ///
+    /// Mutation-tested: re-adding a `cx.stop_propagation()` to `bench_key` fails
+    /// this, and so does changing the `Reading::Pass` arm to a no-op.
+    #[test]
+    fn the_bench_says_what_it_took_and_never_stops_the_event() {
+        let bench = include_str!("pane/bench.rs");
+        let (code, _tests) = bench
+            .split_once("#[cfg(test)]")
+            .unwrap_or((bench, "no test module yet"));
+        let at = code.find("fn bench_key(").expect("bench_key");
+        let end = code[at..].find("\n    }\n").expect("end of bench_key") + at;
+        // COMMENTS STRIPPED FIRST, like every scan in this file: this function's
+        // doc comment explains the very call it must not contain, and a scan that
+        // cannot tell code from a description of code fails at whatever is best
+        // documented.
+        let body: String = code[at..end]
+            .lines()
+            .map(|l| l.split("//").next().unwrap_or(""))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(
+            !body.contains("stop_propagation"),
+            "bench_key stops the event itself. Propagation is `on_key`'s one \
+             decision, taken from what this returns — a stop in here is a key \
+             nothing below the bench can ever see, which is how the rename box, \
+             alt+s and ctrl+c all went dead on the workbench face"
+        );
+        assert!(
+            body.contains("Reading::Pass => return false"),
+            "the reading table's not-ours arm no longer hands the key back. It has \
+             to `return false`, or a key the bench has no use for is swallowed \
+             instead of reaching the agent underneath it"
+        );
+    }
+
     /// A note never reaches the agent, checked by WHAT it calls and by WHEN.
     ///
     /// Both halves are needed and neither implies the other.
@@ -9091,7 +9143,7 @@ mod tests {
             .expect("the arm that fires on an ordinary character");
         let arm = &stripped[at..];
         let end = arm
-            .find("Reading::Ignore")
+            .find("Reading::Pass")
             .expect("the end of the reading table");
         let arm = &arm[..end];
         for shelf_ish in ["shelf()", "Shelf::", "set_shelf", "bench_note_open"] {
@@ -9258,83 +9310,27 @@ mod tests {
         );
     }
 
-    /// `bench_key` declines the window's chords BEFORE it can swallow one.
+    /// `on_key` decides nothing it could decide in the table.
     ///
-    /// Structural, because the thing that goes wrong is structural. Every path
-    /// out of `bench_key` ends in `cx.stop_propagation()`, so a chord it does
-    /// not explicitly hand back can never reach the workspace — and a new
-    /// branch added at the top of that function inherits the same property
-    /// without anybody noticing. That is how `alt+w`, `alt+r`, the splits and
-    /// the directional focus keys all came to do nothing on the workbench face
-    /// (#524): no table collided, the handler simply ran first.
+    /// Two source scans used to live here, one asserting `paint_mode` was read
+    /// before `bench_key` and one asserting the bench declined a window chord
+    /// before its first `stop_propagation`. Both guarded an ORDER OF BRANCHES,
+    /// which is the thing that has now stopped existing: every one of those
+    /// branches is a rung in [`crate::keylayer`], where the order is a value and
+    /// is table-tested over every combination of state without reading a line of
+    /// source.
     ///
-    /// So the assertion is about ORDER, not about a list: the `window_chord`
-    /// check has to sit above the first `stop_propagation` in the function.
-    /// A list would guard only the chords on it, and the next binding will be
-    /// added by somebody who has not read this.
+    /// What is left to guard is the shape that makes that true. `on_key` looks at
+    /// the keystroke in exactly one place — to build a
+    /// [`crate::keylayer::Key`] — and everything after is a `match` on the
+    /// answer. One `if ks.key.as_str() == …` added back here is a decision the
+    /// table cannot see, cannot test, and cannot order, and that is how twenty
+    /// branches grew the first time.
     ///
-    /// Mutation-tested: moving the check below the gallery block, and deleting
-    /// it outright, each failed this test.
+    /// Mutation-tested: re-inserting the old F1 branch at the top of `on_key`
+    /// fails this, and so does deleting the `route` call.
     #[test]
-    fn the_bench_declines_a_window_chord_before_it_can_swallow_one() {
-        let bench = include_str!("pane/bench.rs");
-        let (code, _tests) = bench
-            .split_once("#[cfg(test)]")
-            .unwrap_or((bench, "no test module yet"));
-        let at = code.find("fn bench_key(").expect("bench_key");
-        // To the end of the function: the first line that is a closing brace at
-        // method indentation.
-        let end = code[at..].find("\n    }\n").expect("end of bench_key") + at;
-        // COMMENTS STRIPPED FIRST, like every other scan in this codebase. The
-        // first draft of this test did not, and failed on its own prose: the
-        // doc comment at the top of `bench_key` explains that every path out of
-        // it ends in `cx.stop_propagation()`, and the scan read that sentence
-        // as the call it was describing. A source scan that cannot tell code
-        // from a description of code fails at whatever is best documented.
-        let body: String = code[at..end]
-            .lines()
-            .map(|l| l.split("//").next().unwrap_or(""))
-            .collect::<Vec<_>>()
-            .join("\n");
-        let body = body.as_str();
-
-        let declines = body
-            .find("window_chord(")
-            .expect("bench_key no longer consults workbench::window_chord at all");
-        let swallows = body
-            .find("stop_propagation()")
-            .expect("bench_key stopped swallowing anything, which would be a bigger change");
-        assert!(
-            declines < swallows,
-            "bench_key can swallow a key before it has asked whether the chord is the \
-             window's — every exit below that point stops propagation, so the workspace \
-             never sees it"
-        );
-        // …and it hands the chord BACK rather than eating it silently.
-        let after = &body[declines..];
-        let ret = after.find("return false").unwrap_or(usize::MAX);
-        assert!(
-            ret < after.find("stop_propagation()").unwrap_or(usize::MAX),
-            "the window_chord branch must `return false` so the event keeps bubbling"
-        );
-    }
-
-    /// PAINT mode is asked BEFORE the bench can swallow a key.
-    ///
-    /// **Narrower than it looks, and deliberately so.** Escape no longer depends
-    /// on this order at all — it is resolved against [`crate::keylayer`]'s table
-    /// before either block runs, and that table is where the precedence argument
-    /// now lives, tested over all 128 combinations without reading any source.
-    /// What is left here is the ordering for every OTHER key: paint's letters
-    /// and digits paint the selected terminal, and the bench's reading mode
-    /// would otherwise take the same letters to start a composer. That is still
-    /// a property of line order and still has no runtime signal, which is why a
-    /// source scan is still the only thing that observes it.
-    ///
-    /// Mutation-tested: swapping the two blocks back fails this test, and
-    /// deleting the paint block fails it on the `expect`.
-    #[test]
-    fn paint_mode_is_consulted_before_the_bench_can_swallow_a_key() {
+    fn on_key_decides_nothing_it_can_decide_in_the_table() {
         let src = include_str!("pane.rs");
         let (code, _tests) = src
             .split_once("#[cfg(test)]")
@@ -9343,25 +9339,42 @@ mod tests {
             .find("fn on_key(&mut self, ev: &KeyDownEvent")
             .expect("TerminalView::on_key");
         let end = code[at..].find("\n    }\n").expect("end of on_key") + at;
-        // Comments stripped, for the reason the test above gives at length:
-        // both blocks are documented in prose that names the other one.
+        // COMMENTS STRIPPED FIRST, as in every source scan here: this function is
+        // documented in prose that names the very keys it must not test for.
         let body: String = code[at..end]
             .lines()
             .map(|l| l.split("//").next().unwrap_or(""))
             .collect::<Vec<_>>()
             .join("\n");
 
-        let paint = body
-            .find("theme::paint_mode(cx)")
-            .expect("on_key no longer consults paint mode at all");
-        let bench = body
-            .find("self.bench_key(ks, cx)")
-            .expect("on_key no longer calls bench_key, which would be a bigger change");
+        assert_eq!(
+            body.matches("keylayer::route(").count(),
+            1,
+            "on_key must route exactly once — every key, through the one table"
+        );
+        for peek in ["ks.key", "key.as_str()", "modifiers.", "key_char"] {
+            assert!(
+                !body.contains(peek),
+                "on_key looks at `{peek}` itself. Whatever it is deciding belongs in \
+                 keylayer::route, where the order is a value and every combination is \
+                 tested — see the module header for the five times a branch order here \
+                 went wrong with nothing failing."
+            );
+        }
+        // …and it consumes in one place, from what the handlers returned.
+        assert_eq!(
+            body.matches("stop_propagation").count(),
+            1,
+            "on_key must stop propagation exactly once, on Handled::Consumed — a key \
+             this pane DECLINES has to bubble, or every workspace chord dies at once \
+             with nothing failing"
+        );
+        let stop = body.find("stop_propagation").expect("the one stop");
+        let before = &body[..stop];
         assert!(
-            paint < bench,
-            "the bench takes escape before paint mode is asked for it — with the paint \
-             cards up over a pane showing its bench, one press flips the face and leaves \
-             the overlay standing (PR #532)"
+            before.ends_with("if handled == Handled::Consumed {\n            cx.")
+                || before.contains("if handled == Handled::Consumed"),
+            "the one stop_propagation must be the one guarded by Handled::Consumed"
         );
     }
 
@@ -10986,51 +10999,6 @@ mod tests {
              ever flips, the short-circuit above is being tested for the wrong \
              thing and the double-grade is reachable again"
         );
-    }
-
-    #[test]
-    fn pane_on_key_only_stops_propagation_when_it_consumes_the_key() {
-        // The bubbling invariant above has no compile-time or runtime signal —
-        // break it and every workspace chord silently dies while all other
-        // tests stay green. The source is the only place it is observable.
-        //
-        // Stopping propagation is legitimate where the handler owns the key and
-        // returns on the spot; it is a bug on the fall-through path, where a
-        // chord this handler declined would never reach the Workspace. So the
-        // assertion is not "no stop_propagation" — that would reject the
-        // correct F1 fix — but "every stop_propagation returns".
-        //
-        // COMMENTS ARE STRIPPED FIRST, as in every other source scan here. This
-        // test did not strip them and failed on prose the moment a comment in
-        // `on_key` explained what another handler does — a sentence naming the
-        // call, with no `return` in the sixty characters after it. Its sibling
-        // `the_bench_declines_a_window_chord_before_it_can_swallow_one` had
-        // already been bitten by exactly this and already carries the fix; the
-        // rule is the one written there, that a scan which cannot tell code
-        // from a description of code fails at whatever is best documented. The
-        // assertion itself is unchanged, and it still fails on a bare
-        // `cx.stop_propagation();` with no return — mutation-tested.
-        let src = include_str!("pane.rs");
-        let at = src
-            .find("fn on_key(&mut self, ev: &KeyDownEvent")
-            .expect("TerminalView::on_key");
-        let body = &src[at..];
-        let end = body.find("\n    }\n").expect("end of on_key");
-        let body: String = body[..end]
-            .lines()
-            .map(|l| l.split("//").next().unwrap_or(""))
-            .collect::<Vec<_>>()
-            .join("\n");
-        let body = body.as_str();
-        for (i, _) in body.match_indices("stop_propagation") {
-            let tail = &body[i..(i + 120).min(body.len())];
-            assert!(
-                tail.contains("return"),
-                "stop_propagation in TerminalView::on_key must belong to a \
-                 branch that returns, or the chords the handler declines never \
-                 reach the Workspace — see the INVARIANT comment above on_key"
-            );
-        }
     }
 
     #[test]
