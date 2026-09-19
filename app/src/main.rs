@@ -3663,6 +3663,20 @@ struct Workspace {
     /// Each field is an `Option` all the way here: see [`launchpref`] for why
     /// *nobody chose* must not be stored as the thing that would have happened.
     launch_defaults: launchpref::Prefs,
+    /// Whether the LAUNCH AGENT CONFIG block on the usage card is unfolded.
+    ///
+    /// Closed on a fresh window, because the card's job is *what has this plan
+    /// got left* and three rows of chips above the answer is three rows of
+    /// somebody else's question. Parker, looking at it open: *"this is
+    /// attentionally noisy — we need a bit of hierarchy and collapsing"*.
+    ///
+    /// Held on the WINDOW rather than written to disk, and never closed by
+    /// anything but a press: a place a person put themselves is theirs until
+    /// they move it, so reopening the card finds the block exactly as it was
+    /// left. It is not a preference, so it does not belong in
+    /// [`launchpref::Prefs`] — nothing about which agent starts next depends
+    /// on whether a person can see the chips.
+    launch_defaults_open: bool,
     /// What the last refresh said, when it had something to say.
     usage_status: Option<String>,
     /// A collector run is in flight on a pool thread.
@@ -5105,6 +5119,7 @@ impl Workspace {
             usage_status: None,
             usage_refreshing: false,
             launch_defaults: launchpref::load(),
+            launch_defaults_open: false,
             agent_vitals: std::collections::HashMap::new(),
             vitals_refreshing: false,
             surface_feed: Some(surfacefeed::Feed::new()),
@@ -7701,7 +7716,15 @@ impl Workspace {
     /// [`launchpref`].
     ///
     /// Pressing the lit chip again clears it — the dial's convention, where a
-    /// second press on what is already open is how you get back out.
+    /// second press on what is already open is how you get back out. That used
+    /// to be spelled out in a caption beside the title; the caption is gone and
+    /// the behaviour is not, because a sentence explaining three rows of chips
+    /// sitting directly under it was the loudest thing on a card about
+    /// something else.
+    ///
+    /// **Folded until it is asked for.** Only the title line draws by default
+    /// — see [`Self::launch_defaults_open`] for why the fold lives on the
+    /// window rather than on disk.
     fn render_launch_defaults(&self, th: &theme::Theme, cx: &mut Context<Self>) -> gpui::Div {
         let pref = &self.launch_defaults;
         // What the panel would open on right now. `unwrap_or` is the fallback
@@ -7827,6 +7850,12 @@ impl Workspace {
             );
         }
 
+        // ONE LINE UNTIL IT IS ASKED FOR. The title carries the whole of the
+        // header now: the sentence under it explained what the block was, in a
+        // place where the block being three labelled rows of chips already
+        // does. A caption that restates its own controls is noise at the top of
+        // a card whose subject is something else.
+        let open = self.launch_defaults_open;
         div()
             .flex()
             .flex_col()
@@ -7838,25 +7867,36 @@ impl Workspace {
                 div()
                     .flex()
                     .flex_row()
-                    .items_baseline()
-                    .gap_2()
+                    .items_center()
+                    .gap_1p5()
+                    .cursor_pointer()
+                    .child(
+                        div()
+                            .text_size(px(8.))
+                            .text_color(th.complement.alpha(0.75))
+                            .child(if open { "\u{25be}" } else { "\u{25b8}" }),
+                    )
                     .child(
                         div()
                             .text_size(px(10.))
                             .font_weight(gpui::FontWeight::EXTRA_BOLD)
                             .text_color(th.complement)
-                            .child("NEW AGENT"),
+                            .child("LAUNCH AGENT CONFIG"),
                     )
-                    .child(
-                        div()
-                            .text_size(px(8.5))
-                            .text_color(txt.alpha(0.5))
-                            .child("what LAUNCH AGENT opens holding \u{2014} press again to unset"),
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            ws.launch_defaults_open = !ws.launch_defaults_open;
+                            cx.notify();
+                        }),
                     ),
             )
-            .child(row("harness", harness_chips, pref.harness().is_some()))
-            .child(row("model", model_chips, pref.model_ix(harness).is_some()))
-            .child(row("effort", effort_chips, pref.effort(harness).is_some()))
+            .when(open, |d| {
+                d.child(row("harness", harness_chips, pref.harness().is_some()))
+                    .child(row("model", model_chips, pref.model_ix(harness).is_some()))
+                    .child(row("effort", effort_chips, pref.effort(harness).is_some()))
+            })
     }
 
     /// The usage face of the </> card: every AI coding subscription on the
