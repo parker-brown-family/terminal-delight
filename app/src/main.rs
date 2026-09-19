@@ -2287,9 +2287,19 @@ struct StateFile {
     /// load, and not the same thing as `false`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     slot_remaining: Option<bool>,
-    /// Which branch the mother bar was scoped to. Restored, then checked
-    /// against the active tab — a scope that would open the window with its own
-    /// active task off the strip is widened rather than honoured.
+    /// Which branch the mother bar was scoped to. **Read by nothing and
+    /// written by nothing since 2026-09-18** — kept so an older file still
+    /// parses, and so this comment is where somebody looks.
+    ///
+    /// The field's own doc used to promise it was "restored, then checked
+    /// against the active tab", and no code ever performed that check. While
+    /// the strip drew the active branch regardless of the scope, the gap was
+    /// invisible. The moment the strip started obeying the chip, a window saved
+    /// on a narrow branch reopened with the wrong tabs on the bar — or none.
+    ///
+    /// A window now opens on the whole session and narrowing lasts as long as
+    /// the window does, because nothing in the interface ever offered it as a
+    /// setting.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     scope: Option<SavedScope>,
     /// Read-only MCP control-surface policy (the mother-bar robot panel). Absent
@@ -5091,7 +5101,10 @@ impl Workspace {
             // default reading rather than the off one.
             slot_remaining: saved.slot_remaining.unwrap_or(SLOT_REMAINING_DEFAULT),
             bar_resize: None,
-            scope: saved.scope.map(tree::Scope::from).unwrap_or_default(),
+            // A WINDOW OPENS ON THE WHOLE SESSION. The scope is not restored,
+            // and since 2026-09-18 it is not written either — see `SavedScope`,
+            // which is now a field the file may carry and this window ignores.
+            scope: tree::Scope::All,
             bar_cursor: None,
             bar_scroll: ScrollHandle::new(),
             bar_rename: None,
@@ -5675,6 +5688,17 @@ impl Workspace {
         // the window is an activation like any other, so reveal it here rather
         // than leaving the first frame disagreeing with the file.
         self.reveal_active_branch();
+        // ...and the SCOPE is part of that activation, for the same reason.
+        //
+        // The saved field has claimed since it was written that it is "restored,
+        // then checked against the active tab", and nothing checked it: the
+        // check lives in `ensure_scope_shows`, which runs on every activation
+        // except the one that opens the window. It cost nothing while the strip
+        // ignored the scope; the moment the strip started obeying it, a window
+        // saved on a narrow branch reopened with its own active tab off the bar
+        // and, if that branch had since been emptied, with no tabs on the bar at
+        // all. That is what a restart looked like this afternoon.
+        self.ensure_scope_shows(self.active);
         self.focus_active(window, cx);
         // Write the layout down now, while what it says is true.
         //
@@ -6316,7 +6340,10 @@ impl Workspace {
             rail_pinned: Some(self.rail_pinned),
             left_bar_w: Some(self.left_bar_w),
             slot_remaining: Some(self.slot_remaining),
-            scope: Some(self.scope.into()),
+            // Not written. A narrowing is a gesture, not a preference: nothing
+            // in the window offers it as one, and a field that nobody reads is
+            // a lie waiting for the next person who greps for it.
+            scope: None,
             mcp: Some(self.mcp.clone()),
             focus_inherit: self.focus_inherit_theme,
             anchor_top: self.anchor_top,
@@ -27592,6 +27619,55 @@ mod tests {
     fn shipped_src() -> &'static str {
         let src = include_str!("main.rs");
         &src[..src.find("\nmod tests {").expect("the test module")]
+    }
+
+    /// The shipped source with every comment line removed.
+    ///
+    /// A source-grep gate that its own explanation can satisfy is not a gate:
+    /// one in this file passed on the comment describing the line it was meant
+    /// to find, while the line itself was gone. Every assertion below runs
+    /// against code only.
+    fn shipped_code() -> String {
+        shipped_src()
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// A window opens on the whole session, and never on a bar that hides the
+    /// tab it just activated.
+    ///
+    /// Both halves are about the same afternoon. The strip began obeying the
+    /// scope chip, and a restored scope — a value the file's own doc claimed
+    /// was "checked against the active tab" by code that did not exist — put a
+    /// window's active tab off its own bar. The narrowing is now a gesture that
+    /// lasts as long as the window, and the restore performs the check.
+    #[test]
+    fn a_window_opens_on_the_whole_session_and_the_strip_holds_the_tab_it_opens() {
+        let src = shipped_code();
+
+        let at = src
+            .find("self.active = saved.active.min(")
+            .expect("the restore path");
+        let region = &src[at..(at + 700).min(src.len())];
+        assert!(
+            region.contains("self.ensure_scope_shows(self.active)"),
+            "restore corrects a scope that would hide the tab it opens on"
+        );
+
+        assert!(
+            src.contains("scope: tree::Scope::All,"),
+            "a restored window starts on the whole session"
+        );
+        assert!(
+            !src.contains("saved.scope.map(tree::Scope::from)"),
+            "and does not take the scope back out of the file"
+        );
+        assert!(
+            !src.contains("scope: Some(self.scope.into())"),
+            "…which means it must not be written there either"
+        );
     }
 
     /// The left bar's rows carry no trailing count, anywhere.
