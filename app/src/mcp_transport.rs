@@ -40,7 +40,7 @@ use std::time::Duration;
 
 use gpui::Context;
 
-use crate::{mcp, mcp_tail, session, Workspace};
+use crate::{mcp, mcp_tail, paneident, session, Workspace};
 
 /// What the reader thread asks the ticker (gpui main thread) to do. Both
 /// variants carry a one-shot channel the ticker answers on, so the reader can
@@ -329,7 +329,13 @@ pub(crate) fn respond_as(line: &str, caller: Option<crate::ctl::Caller>) -> Opti
                 }
                 rx.recv_timeout(SNAPSHOT_BUDGET).unwrap_or_default()
             };
-            mcp::handle_line_with(line, &snap, |p, n| tail_for(p, n, &home), apply, search)
+            mcp::handle_line_with(
+                line,
+                &snap,
+                |p, n| tail_for(p, &snap.panes, n, &home),
+                apply,
+                search,
+            )
         }
         Err(RecvTimeoutError::Disconnected) | Err(RecvTimeoutError::Timeout) => {
             mcp::error_response(line, -32000, "terminal-delight UI not ready")
@@ -371,11 +377,39 @@ fn serve_stdio(out_tx: mpsc::Sender<String>, level: Arc<AtomicU8>, active: Arc<A
 /// Resolve a pane's recent tool events by tailing its own transcript. Shared by
 /// the request path (`pane_events`) and the push feed. Pure IO, off the main
 /// thread; only ever sees panes the policy already marked exposed.
-fn tail_for(p: &mcp::PaneInfo, limit: usize, home: &std::path::Path) -> Vec<mcp::ToolEvent> {
-    match mcp_tail::transcript_for(&p.mode, p.cwd.as_deref(), p.session.as_deref(), home) {
-        Some(path) => mcp_tail::tail_tool_events(&path, limit),
+///
+/// Takes the whole window, not just the pane being asked about: which
+/// conversation a pane holds is a fact about the set — two panes may not hold
+/// one — and asking pane by pane is what returned another agent's tool calls
+/// under the pid you asked for (#564, and the duplicate session ids in
+/// `list_panes` that made it look like a display bug).
+///
+/// A pane whose conversation cannot be evidenced returns no events, which is
+/// the honest answer and a different one from "this agent has run no tools".
+fn tail_for(
+    p: &mcp::PaneInfo,
+    fleet: &[mcp::PaneInfo],
+    limit: usize,
+    home: &std::path::Path,
+) -> Vec<mcp::ToolEvent> {
+    match paneident::certain(&fleet_facts(fleet), home).get(&p.pid) {
+        Some(path) => mcp_tail::tail_tool_events(path, limit),
         None => vec![],
     }
+}
+
+/// Every agent pane in a snapshot, as the resolver wants them.
+fn fleet_facts(panes: &[mcp::PaneInfo]) -> Vec<paneident::PaneFacts> {
+    panes
+        .iter()
+        .filter(|p| p.is_agent)
+        .map(|p| paneident::PaneFacts {
+            shell_pid: p.pid,
+            mode: p.mode.clone(),
+            cwd: p.cwd.clone(),
+            resume: p.session.clone(),
+        })
+        .collect()
 }
 
 /// The push feed: each periodic snapshot is tailed and diffed into
@@ -398,9 +432,17 @@ fn notify_loop(
         {
             continue;
         }
+        // One resolution for the whole snapshot, then a tail per pane: the
+        // binding is a property of the set, and recomputing it per pane would
+        // also re-walk every transcript in every project directory.
+        let bound = paneident::certain(&fleet_facts(&snap.panes), &home);
         let mut tailed: HashMap<u32, Vec<mcp::ToolEvent>> = HashMap::new();
         for p in snap.panes.iter().filter(|p| p.exposed && p.is_agent) {
-            tailed.insert(p.pid, tail_for(p, PUSH_TAIL, &home));
+            let events = match bound.get(&p.pid) {
+                Some(path) => mcp_tail::tail_tool_events(path, PUSH_TAIL),
+                None => vec![],
+            };
+            tailed.insert(p.pid, events);
         }
         for n in watcher.diff(&snap.panes, &tailed) {
             if out_tx.send(mcp::encode_notification(&n)).is_err() {
@@ -465,6 +507,30 @@ mod tests {
         writeln!(f, "{line}").unwrap();
     }
 
+    /// One pushed line, or a failure that says which one never came.
+    ///
+    /// A bare `recv()` here is a HANG rather than a test failure: a change that
+    /// stops the feed leaves the whole suite sitting on a channel with 1327
+    /// green tests above it and no result line, which is exactly how this one
+    /// wedged a run while a resolver change was being written. Waiting has to
+    /// have an end, and the end has to name what it was waiting for.
+    fn next(rx: &mpsc::Receiver<String>, waiting_for: &str) -> String {
+        rx.recv_timeout(Duration::from_secs(10))
+            .unwrap_or_else(|_| panic!("no push arrived; expected {waiting_for}"))
+    }
+
+    /// A pid no process can have.
+    ///
+    /// Linux caps pids at `/proc/sys/kernel/pid_max`, which is at most 2^22 on
+    /// this architecture, so nothing above it ever has a `/proc` entry. The test
+    /// pane below needs that: a pane whose agent CANNOT be read is the one case
+    /// where [`crate::paneident`] falls back to the pane's own resume line, and
+    /// a pid that merely happens to be free on the machine running the suite is
+    /// not the same thing. This test used 4242 and passed here for a year and
+    /// failed in CI the first time it ran there, because a busy runner had a
+    /// process sitting on it.
+    const NO_SUCH_PID: u32 = u32::MAX - 1;
+
     /// End-to-end push feed over a REAL transcript file (no gpui): first sight
     /// announces the agent without replaying history, and a tool call written
     /// afterwards is pushed as a `notifications/message`. The barrier (reading
@@ -489,16 +555,17 @@ mod tests {
         let handle = thread::spawn(move || notify_loop(snap_rx, out_tx, level, active, h));
 
         // 1st poll: first sight ⇒ agent_appeared, history NOT replayed.
-        snap_tx.send(agent_snapshot(4242, cwd)).unwrap();
-        let first: serde_json::Value = serde_json::from_str(&out_rx.recv().unwrap()).unwrap();
+        snap_tx.send(agent_snapshot(NO_SUCH_PID, cwd)).unwrap();
+        let first: serde_json::Value =
+            serde_json::from_str(&next(&out_rx, "agent_appeared")).unwrap();
         assert_eq!(first["method"], "notifications/message");
         assert_eq!(first["params"]["data"]["event"], "agent_appeared");
-        assert_eq!(first["params"]["data"]["pid"], 4242);
+        assert_eq!(first["params"]["data"]["pid"], NO_SUCH_PID);
 
         // A new tool call lands, then the next poll arrives → it is pushed.
         append_tool_use(&transcript, "Edit", "second");
-        snap_tx.send(agent_snapshot(4242, cwd)).unwrap();
-        let second: serde_json::Value = serde_json::from_str(&out_rx.recv().unwrap()).unwrap();
+        snap_tx.send(agent_snapshot(NO_SUCH_PID, cwd)).unwrap();
+        let second: serde_json::Value = serde_json::from_str(&next(&out_rx, "tool_call")).unwrap();
         assert_eq!(second["params"]["data"]["event"], "tool_call");
         assert_eq!(second["params"]["data"]["tool"], "Edit");
         assert_eq!(second["params"]["data"]["summary"], "second");

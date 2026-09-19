@@ -307,12 +307,13 @@ pub struct ToolProbe {
 /// can happen off it.
 pub struct ToolProbeReq {
     pub id: gpui::EntityId,
-    /// The pane's mode label — `CLAUDE` / `CODEX`, as `transcript_for` spells it.
+    /// The pane's shell pid — what [`crate::paneident`] keys a binding by.
+    pub shell_pid: u32,
+    /// The pane's mode label — `CLAUDE` / `CODEX`.
     pub mode: String,
     pub cwd: Option<String>,
-    /// The resume command, which carries the fd-accurate session id. Without it
-    /// two panes in one directory both resolve to the newest transcript, and
-    /// one of them wears the other's tool.
+    /// The resume command, if the pane has one. The resolver reads it only when
+    /// the agent process itself cannot be read.
     pub session: Option<String>,
     /// Whether the agent is actually doing something. A resting pane is probed
     /// anyway — it keeps the cache warm for nothing — but wears no face.
@@ -322,20 +323,28 @@ pub struct ToolProbeReq {
 
 /// The background half of the sweep: resolve each pane's transcript and read
 /// the tool it ended on. Pure I/O — no gpui, no main thread, and never a write.
+///
+/// The whole sweep is bound in one pass, because a glyph is an attribution: a
+/// pane whose conversation cannot be evidenced wears no tool rather than the
+/// tool of whoever in that directory typed last.
 pub fn resolve_probes(reqs: Vec<ToolProbeReq>) -> Vec<(gpui::EntityId, ToolProbe, bool)> {
     let home = crate::session::home_dir();
+    let facts: Vec<crate::paneident::PaneFacts> = reqs
+        .iter()
+        .map(|r| crate::paneident::PaneFacts {
+            shell_pid: r.shell_pid,
+            mode: r.mode.clone(),
+            cwd: r.cwd.clone(),
+            resume: r.session.clone(),
+        })
+        .collect();
+    let bound = crate::paneident::certain(&facts, &home);
     reqs.into_iter()
         .map(|r| {
-            let probe = probe_one(&r, &home);
+            let probe = probe_transcript(bound.get(&r.shell_pid).cloned(), &r.prev);
             (r.id, probe, r.working)
         })
         .collect()
-}
-
-fn probe_one(r: &ToolProbeReq, home: &std::path::Path) -> ToolProbe {
-    let path =
-        crate::mcp_tail::transcript_for(&r.mode, r.cwd.as_deref(), r.session.as_deref(), home);
-    probe_transcript(path, &r.prev)
 }
 
 /// The part worth testing: given a transcript path and what we knew last time,
