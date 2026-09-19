@@ -328,7 +328,31 @@ impl TerminalView {
             cx.stop_propagation();
             return true;
         }
+        // A NOTE, on `alt+m`. Never on a bare `m`, which is a character.
+        //
+        // `m` is not in [`crate::workbench::window_chord`]'s list, so the chord
+        // reaches this handler rather than leaving for the workspace. It also
+        // moves the board into view: asking for a note while looking at the
+        // decisions shelf and then typing into a box on a different tab would be
+        // writing somewhere the person cannot see.
+        if ks.modifiers.alt && !ks.modifiers.control && ks.key.as_str() == "m" {
+            self.bench_note_open(cx);
+            cx.stop_propagation();
+            return true;
+        }
         let talking = self.wb_compose.is_some();
+        // THE NOTE BUFFER TAKES ITS KEYS BEFORE `talking` IS EVEN ASKED.
+        //
+        // Order, not politeness. The branch below this one sends every
+        // keystroke it receives straight down the pseudoterminal before
+        // applying it locally, so a note falling through to it would type the
+        // person's private words into the agent's prompt — the exact failure
+        // this whole shelf is defined against. Both composers can be open at
+        // once (a note started while a reply was half-written), and when they
+        // are, the note is the one in front.
+        if self.wb_note.is_some() {
+            return self.bench_note_key(ks, cx);
+        }
         if ks.key.as_str() == "escape" {
             // One layer at a time, and a question waiting on a person is
             // the floor — see [`crate::workbench::peel`] for why escape is
@@ -487,6 +511,29 @@ impl TerminalView {
             }
             crate::workbench::Reading::Choose(i) => self.bench_choose(i, cx),
             crate::workbench::Reading::Talk => {
+                // ON THE COMMENTS BOARD, TYPING STARTS A NOTE.
+                //
+                // The same gesture the rest of the bench already has — start
+                // typing and the box opens under the character, with no "click
+                // here first" — pointed at the shelf the person is looking at.
+                // Parker, on meeting it in the reply composer: *"the
+                // functionality of JUST TYPE (withough click sleecting the
+                // prompt area) is SUPPPPER nice!"*, which is an argument for
+                // the board having it too rather than for leaving the board's
+                // box to be found with a mouse.
+                //
+                // Ahead of the agent check below, deliberately. A note has
+                // nothing to do with whether an agent is running in this pane,
+                // so this is the one shelf where typing works on a plain shell.
+                if self.bench.shelf() == crate::surface::Shelf::Comments {
+                    self.bench_note_open(cx);
+                    if let (Some(line), Some(c)) = (self.wb_note.as_mut(), ks.key_char.as_deref()) {
+                        line.insert(c);
+                    }
+                    cx.notify();
+                    cx.stop_propagation();
+                    return true;
+                }
                 // Nobody to talk to. The bench keeps the key rather than
                 // starting a sentence into a shell.
                 //
@@ -1606,6 +1653,193 @@ impl TerminalView {
         self.wb_flash_until_ms.is_some_and(|until| now_ms < until)
     }
 
+    /// Open the note buffer, and bring the board it writes to into view.
+    ///
+    /// Moving the shelf is part of the gesture rather than a courtesy. Asking
+    /// for a note while reading the decisions tab and then typing into a box
+    /// whose output lands on a tab you are not looking at is a surface writing
+    /// somewhere the person cannot see it land.
+    pub(super) fn bench_note_open(&mut self, cx: &mut Context<Self>) {
+        if self.wb_note.is_none() {
+            self.wb_note = Some(crate::workbench::Line::new());
+        }
+        self.bench.set_shelf(crate::surface::Shelf::Comments);
+        cx.notify();
+    }
+
+    /// Every keystroke while a note is being written — and not one of them
+    /// leaves this function.
+    ///
+    /// This is the whole difference between the comments board and the rest of
+    /// the bench, so it is written as one function with no call to
+    /// [`Self::bench_keystroke`] or [`Self::bench_deliver`] anywhere inside it.
+    /// The composer twenty lines below does the opposite by design: it puts
+    /// every byte down the pseudoterminal FIRST and applies the edit locally
+    /// afterwards, because it is mirroring an editor that lives in the agent's
+    /// process. Reusing it here would have typed a person's private note into
+    /// their agent's prompt, which is the one outcome this shelf exists to
+    /// prevent.
+    ///
+    /// `escape` discards the draft. That is the same bargain the reply composer
+    /// makes — a composer is a mode you can see you are in — and unlike a posted
+    /// note there is nothing here anybody else has seen yet.
+    fn bench_note_key(&mut self, ks: &Keystroke, cx: &mut Context<Self>) -> bool {
+        match ks.key.as_str() {
+            "escape" => {
+                self.wb_note = None;
+                cx.notify();
+            }
+            // Return posts it; shift+return puts a line break in. A note long
+            // enough to want paragraphs is exactly the note worth keeping, and
+            // the card already draws the first line as its title and the rest
+            // as its body — see [`crate::benchdraw::comment`].
+            "enter" if !ks.modifiers.shift => self.bench_note_post(cx),
+            "enter" => {
+                if let Some(line) = self.wb_note.as_mut() {
+                    line.insert("\n");
+                }
+                cx.notify();
+            }
+            _ => {
+                if crate::workbench::is_paste_chord(
+                    &ks.key,
+                    ks.modifiers.control,
+                    ks.modifiers.shift,
+                ) {
+                    self.bench_note_paste(cx);
+                } else if let Some(line) = self.wb_note.as_mut() {
+                    // The same editing table the reply composer uses, so word
+                    // motion and the kills behave identically in both boxes.
+                    // Only the destination differs, and that is the point.
+                    match crate::workbench::line_edit(
+                        &ks.key,
+                        ks.modifiers.control,
+                        ks.modifiers.alt,
+                    ) {
+                        Some(edit) => line.apply(edit),
+                        None => {
+                            if let Some(c) = ks.key_char.as_deref() {
+                                if !c.is_empty() && !c.chars().any(char::is_control) {
+                                    line.insert(c);
+                                }
+                            }
+                        }
+                    }
+                    cx.notify();
+                }
+            }
+        }
+        cx.stop_propagation();
+        true
+    }
+
+    /// Clipboard text into the note, and text only.
+    ///
+    /// No image branch. The agent composer has one because an agent can be
+    /// handed a picture and do something with it; a note is words a person will
+    /// read later, and saving a PNG into the pane's directory to paste its path
+    /// into a sentence is a feature nobody asked this shelf for. Newlines
+    /// survive here, unlike in the reply composer where a pasted one would
+    /// submit mid-paste — posting is `enter` and a paste is not a keystroke.
+    fn bench_note_paste(&mut self, cx: &mut Context<Self>) {
+        use gpui::ClipboardEntry;
+        let Some(item) = cx.read_from_clipboard() else {
+            return;
+        };
+        let mut parts: Vec<String> = Vec::new();
+        for entry in item.entries() {
+            match entry {
+                ClipboardEntry::String(text) => parts.push(text.text().to_string()),
+                ClipboardEntry::ExternalPaths(paths) => {
+                    parts.extend(paths.paths().iter().map(|p| p.display().to_string()));
+                }
+                // Named rather than ignored: a person who copied a picture and
+                // pasted it into a note should be told nothing happened, not
+                // left wondering whether the paste worked.
+                ClipboardEntry::Image(_) => {
+                    eprintln!(
+                        "terminal-delight: a note holds words; the clipboard image was not pasted"
+                    );
+                }
+            }
+        }
+        let text = parts.join(" ");
+        if text.is_empty() {
+            return;
+        }
+        if let Some(line) = self.wb_note.as_mut() {
+            line.insert(&text);
+        }
+        cx.notify();
+    }
+
+    /// Post the note: onto this bench, and into this pane's directory.
+    ///
+    /// Both, in that order, and the order matters. Putting it on the bench
+    /// first means the row appears under the caret immediately rather than
+    /// whenever the next sweep happens to run; writing the file is what makes
+    /// it still be there on Thursday. The sweep then reads back the file this
+    /// window just wrote and delivers it as an ordinary drop — which is true,
+    /// and which [`crate::surface::Surface::merge`] declines to let overwrite
+    /// the [`crate::surface::Origin::Person`] stamp for the life of the session.
+    ///
+    /// Nothing here touches the pseudoterminal, the action journal, or the
+    /// agent. A note is not an answer to anything.
+    fn bench_note_post(&mut self, cx: &mut Context<Self>) {
+        let Some(text) = self
+            .wb_note
+            .as_ref()
+            .map(|l| l.text().trim().to_string())
+            .filter(|t| !t.is_empty())
+        else {
+            // An empty draft closes rather than posting a blank row. The
+            // buffer is only dropped here, so an accidental return on a note
+            // that had content never loses it.
+            self.wb_note = None;
+            cx.notify();
+            return;
+        };
+        let Some(dir) = self.bench_dir() else {
+            // No pane directory means no durable home, and posting a note that
+            // would vanish at the next restart while looking exactly like one
+            // that would not is worse than refusing. The draft is KEPT so the
+            // words are not lost with the keystroke that tried to save them.
+            eprintln!(
+                "terminal-delight: this pane has no surfaces directory, so the note was not saved"
+            );
+            return;
+        };
+        self.wb_note = None;
+        // Unique by construction, and sortable. `drop_surface` writes
+        // `<id>.json`, so two notes posted in the same millisecond would
+        // otherwise be one note — which is rarer than it sounds and still
+        // possible with a paste and a fast return.
+        let id = crate::surface::SurfaceId(format!(
+            "comment-{}-{}",
+            crate::surfacefeed::now_ms(),
+            self.bench.counts(crate::surface::Shelf::Comments).0
+        ));
+        let value = serde_json::json!({
+            "td": crate::surface::TDSP_VERSION,
+            "kind": "comment",
+            "id": id.0,
+            "model": { "body": text },
+        });
+        let mut post = crate::surface::parse_lenient(&value, crate::surfacefeed::now_ms(), &id.0);
+        if let Some(s) = post.surface.as_mut() {
+            // The one place this origin is ever set. See `surface::Origin::Person`.
+            s.origin = crate::surface::Origin::Person;
+        }
+        self.present(post, cx);
+        if let Err(err) = crate::surfacefeed::drop_surface(&dir, &id.0, &value) {
+            // The note is on the bench either way, so this is a durability
+            // failure and not a loss — and it is said out loud rather than
+            // swallowed, because the row will look identical to one that saved.
+            eprintln!("terminal-delight: the note is on the bench but was not saved: {err}");
+        }
+        cx.notify();
+    }
+
     /// Send whatever is in the composer to the agent, as if typed.
     pub(super) fn bench_send(&mut self, cx: &mut Context<Self>) {
         let Some(text) = self
@@ -1658,6 +1892,13 @@ impl TerminalView {
             .filter(|c| !c.trim().is_empty());
         match self.bench.act(&action, target, comment) {
             crate::workbench::Dispatch::Open(href) => open_with_system(&href),
+            // No journal entry and no line typed anywhere. A copy is a person
+            // moving their own words with their own hands, and the agent has
+            // no business hearing about it — which is the entire reason this
+            // verb exists on a comment instead of an `ask agent` one.
+            crate::workbench::Dispatch::Clipboard(text) => {
+                cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
+            }
             crate::workbench::Dispatch::Tell(report) => {
                 // The journal first: a line typed into a terminal can be eaten
                 // by whatever the program is doing at that instant, and the
@@ -2004,6 +2245,18 @@ impl TerminalView {
                 crate::benchdraw::waiting_block(&q, sk, th).child(chips)
             });
 
+        // ── the note box ────────────────────────────────────────────────────
+        //
+        // Not gated on `shows.composer`, which asks whether there is an agent
+        // worth drawing an input for. A note has nothing to do with an agent,
+        // so this box is drawn on a plain shell pane too, and its absence is
+        // decided by one thing only: whether a note is being written.
+        let durable = self.bench_dir().is_some();
+        let note = self
+            .wb_note
+            .as_ref()
+            .map(|line| crate::benchdraw::note_box(line, focused, durable, sk, th));
+
         // ── the composer ────────────────────────────────────────────────────
         let composer = shows.composer.then(|| {
             crate::benchdraw::composer(
@@ -2065,7 +2318,33 @@ impl TerminalView {
             }
             RailFit::Open(w) => {
                 let shelf_now = self.bench.shelf();
-                let tabs = div().flex().flex_row().gap(px(3.)).children(
+                // THE ROW WRAPS, because a fourth tab does not fit.
+                //
+                // The rail is a SHARE of the pane (`RAIL_SHARE`, clamped into
+                // `RAIL_MIN_W..=RAIL_W`), so the strip gets between 118 and 194
+                // points of room. Four tabs measure about 161 of those —
+                // measured off the running build at the 208-point cap, not
+                // computed from a glyph width — so they fit at a wide rail and
+                // run over it well before the rail reaches its floor. The frame
+                // is `overflow_hidden`, so the overflow would not have shown up
+                // as a squeeze or a scrollbar: the last tab simply stops being
+                // drawn, and a tab nobody can see is a shelf nobody can reach.
+                //
+                // THE THREE-TAB ROW WAS FINE. A plan for this feature claimed
+                // `decisions` was already being clipped on a 500-point pane, on
+                // an estimate of 6.0 points per character that turns out to be
+                // about a third too fat. Three tabs are roughly 121 points and
+                // fitted at every width an open rail can have. This is a
+                // prerequisite for the fourth tab, then, and not a bug fix — and
+                // it is written down here because the more flattering version of
+                // that sentence was already in a document.
+                //
+                // Wrapping rather than shrinking the type, abbreviating the
+                // labels or scrolling the row. Parker: *"Concur on going
+                // 2dimensional"*. Two rows of two costs about sixteen points of
+                // rail height and only when the width demands it; the other
+                // three answers all cost a word or a gesture, permanently.
+                let tabs = div().flex().flex_row().flex_wrap().gap(px(3.)).children(
                     crate::surface::Shelf::ALL.into_iter().map(|shelf| {
                         let (count, unseen) = self.bench.counts(shelf);
                         crate::benchdraw::shelf_tab(
@@ -2355,6 +2634,12 @@ impl TerminalView {
                     // open above it, and a person must not have to scroll back
                     // to a thing that is holding the session up.
                     .children(waiting)
+                    // ABOVE the agent's composer, and both may be open at once.
+                    // A note started while a reply was half-written must not
+                    // discard the reply, and the one being typed into is the one
+                    // nearest the eye — `bench_key` hands keystrokes to the note
+                    // while it exists, so the drawing and the key routing agree.
+                    .children(note)
                     .children(composer),
             )
             .children(handle)

@@ -22,8 +22,15 @@
 //!
 //! No literal `rounded(px(…))`, no `px(9. * s)`, no branching on which skin is
 //! active. A workbench drawn with hand-rolled corners would be the one surface
-//! in this window that stays round under a square skin, and the guard test in
-//! [`crate::skin`] exists because that has happened before.
+//! in this window that stays round under a square skin.
+//!
+//! This paragraph claimed a guard test in `crate::skin` for weeks and there was
+//! none — and two literal corners went in underneath the claim, in the
+//! composer, where they stayed round while the rest of the window squared. The
+//! gate is real now and it is `every_corner_on_the_bench_goes_through_the_skin`,
+//! at the bottom of THIS file beside the three other source scans. A promise
+//! pointing somewhere else is how the first one went unnoticed, so it points
+//! here.
 
 use gpui::prelude::FluentBuilder;
 use gpui::{
@@ -94,6 +101,8 @@ fn role_of(tint: Tint) -> Role {
         // Grey, and deliberately not a hue: an unknown that arrives in a
         // colour looks like a claim, and no claim has been made.
         Tint::Unknown => Role::Faint,
+        // Yours. The one role in the palette that already means "you".
+        Tint::Mine => Role::Human,
     }
 }
 
@@ -269,11 +278,23 @@ pub fn rail_row(row: &Row, sk: &Skin, th: &Theme) -> Div {
     // shelf shapes demanding at most one row claims it — so this can never be
     // the emphasis on two rows at once.
     let on_cursor = row.selected || row.standing.lit();
-    let lane = match row.standing {
-        Standing::Waiting => Some("WAITING ON YOU"),
-        Standing::Queued => Some("ALSO WAITING"),
-        Standing::Current => Some("STANDS NOW"),
-        Standing::Past => match (row.tint, row.kind) {
+    let lane = match (row.standing, row.kind) {
+        // A note does not STAND. The standing vocabulary is about work a person
+        // has to resolve — what is waiting, what the answer currently is, how it
+        // got there — and none of those questions apply to something you wrote
+        // to yourself. `STANDS NOW` on a comment would be the rail claiming an
+        // opinion the comment never held.
+        //
+        // The head of the board still earns a word, because the head of a shelf
+        // is where a reader who has not moved the cursor is meant to start, and
+        // `Standing::lit` already gives it the weight. LATEST is what that word
+        // is on a chronological board. Parker: *"LATEST is nice."*
+        (Standing::Current, "comment") => Some("LATEST"),
+        (_, "comment") => None,
+        (Standing::Waiting, _) => Some("WAITING ON YOU"),
+        (Standing::Queued, _) => Some("ALSO WAITING"),
+        (Standing::Current, _) => Some("STANDS NOW"),
+        (Standing::Past, _) => match (row.tint, row.kind) {
             (Tint::Settled, "question") | (Tint::Settled, "decision") => Some("ANSWERED"),
             (Tint::Settled, _) => Some("DONE"),
             _ => None,
@@ -681,6 +702,11 @@ fn compact(surface: &Surface, picks: Option<&Picks>, sk: &Skin, th: &Theme) -> D
         // that is missing, which is what the reader reads as a broken feature
         // rather than as a small screen.
         Kind::Response(r) => response(r, picks, sk, th),
+        // DELEGATES, and belongs on the list the delegation test walks: a
+        // comment is short by nature, so there is nothing a narrow pane could
+        // usefully show LESS of. A second renderer here would exist only to
+        // drift from the first one.
+        Kind::Comment(_) => comment(surface, sk, th),
         Kind::Unclassified(u) => list.child(micro(u.reason.clone(), Step::Small, th.faint, sk, th)),
     }
 }
@@ -696,6 +722,7 @@ fn full(surface: &Surface, picks: Option<&Picks>, sk: &Skin, th: &Theme) -> Div 
         Kind::Decision(d) => decision(d, sk, th),
         Kind::Question(q) => question(q, sk, th),
         Kind::Response(r) => response(r, picks, sk, th),
+        Kind::Comment(_) => comment(surface, sk, th),
         Kind::Unclassified(u) => unclassified(u, sk, th),
     }
 }
@@ -1661,6 +1688,54 @@ fn decision(d: &crate::surface::Decision, sk: &Skin, th: &Theme) -> Div {
         })
 }
 
+/// A note the person left, drawn as the note and nothing else.
+///
+/// It takes the whole [`Surface`] rather than the payload, which none of its
+/// neighbours do, and the reason is the TITLE. A comment's title is derived
+/// from its own first line, so drawing both would print that line twice — once
+/// large in the heading and once again as the opening of the body, three lines
+/// apart. Comparing the two is the only way to know whether that has happened,
+/// and the payload alone cannot: a dropped file may carry a title that is
+/// nothing to do with its body, and there the first line is real content that
+/// must not be swallowed.
+///
+/// So: show what the heading has not already said. A one-line note draws as a
+/// heading with its provenance and an empty body, which is the whole note; a
+/// note with more draws the rest underneath.
+fn comment(surface: &Surface, sk: &Skin, th: &Theme) -> Div {
+    let body = match &surface.kind {
+        Kind::Comment(c) => c.body.as_str(),
+        // Unreachable through `compact`/`full`, which match the kind before
+        // calling. Drawing nothing beats a panic on a surface.
+        _ => "",
+    };
+    let (first, rest) = match body.split_once('\n') {
+        Some((head, tail)) => (head, tail),
+        None => (body, ""),
+    };
+    // The heading already carries the first line IF it is the title. Where the
+    // two differ the first line is the payload's own, and it stays.
+    let shown = if first.trim() == surface.title.trim() {
+        rest
+    } else {
+        body
+    };
+    let panel = sk.panel().flex().flex_col().gap(px(6.));
+    if shown.trim().is_empty() {
+        // Not an error, and not empty in a way worth apologising for: a
+        // one-line note IS the heading above. The card says what the shelf is
+        // for instead of leaving a blank panel that reads as a failure.
+        return panel.child(micro(
+            "A NOTE TO YOURSELF \u{b7} THE AGENT WAS NOT TOLD",
+            Step::Tag,
+            th.faint,
+            sk,
+            th,
+        ));
+    }
+    panel.child(paragraph(shown.trim().to_string(), sk, th))
+}
+
 /// Something arrived that this build cannot type.
 ///
 /// Drawn plainly and labelled, never guessed at. The reason comes first
@@ -2217,6 +2292,109 @@ pub fn zone(
 /// room, and one line underneath says what the keys do, because the three
 /// things it names (type without clicking first, enter sends, paste takes an
 /// image) are each invisible otherwise.
+/// The box a note is typed into, and a box with no wire to the agent.
+///
+/// A separate renderer rather than a mode on [`composer`], for the same reason
+/// the note is a separate field on the pane: the two boxes do opposite things
+/// and look alike, and the cost of confusing them is a private sentence
+/// arriving in somebody's prompt. Nothing here reads `Shows`, `Slots` or the
+/// scroll handle, because none of them apply — a note is not mirroring a remote
+/// editor, so there is no caret to chase across a wrap that somebody else owns.
+///
+/// It SAYS what it is, in a line above the text. That label is the only thing
+/// standing between the two boxes for a person who has just pressed `alt+m` out
+/// of muscle memory, so it names the destination rather than the feature: not
+/// `NOTE`, but where the words are going and who will not see them.
+pub fn note_box(
+    line: &crate::workbench::Line,
+    focused: bool,
+    durable: bool,
+    sk: &Skin,
+    th: &Theme,
+) -> Div {
+    let mine = ink(Tint::Mine, th);
+    // The caret rides IN the text as a highlight on the character it is on —
+    // the composer's technique, and the reason is the same one written out at
+    // length there: a line wraps, and anything that positions a caret by
+    // arithmetic is computing a column on a single axis that does not exist.
+    let text = format!("{} ", line.text());
+    let at = text
+        .char_indices()
+        .nth(line.caret())
+        .map(|(i, _)| i)
+        .unwrap_or(line.text().len());
+    let next = text[at..]
+        .chars()
+        .next()
+        .map(|c| at + c.len_utf8())
+        .unwrap_or(text.len());
+    let caret = gpui::HighlightStyle {
+        background_color: Some(mine.alpha(if focused { 0.85 } else { 0.35 })),
+        color: Some(if focused { th.bg } else { th.text }),
+        ..Default::default()
+    };
+    let selection = gpui::HighlightStyle {
+        background_color: Some(mine.alpha(if focused { 0.34 } else { 0.18 })),
+        ..Default::default()
+    };
+    let spans = if line.marked() {
+        vec![(0..line.text().len(), selection)]
+    } else {
+        vec![(at..next, caret)]
+    };
+    raised(
+        sk.panel()
+            .flex()
+            .flex_col()
+            .gap(px(7.))
+            .flex_none()
+            .px(px(14.))
+            .py(px(12.))
+            .bg(th.surface)
+            .border_color(mine.alpha(if focused { 0.9 } else { 0.5 })),
+        mine,
+        th,
+    )
+    .child(micro(
+        "A NOTE ON THIS PANE \u{b7} THE AGENT IS NOT TOLD",
+        Step::Tag,
+        mine,
+        sk,
+        th,
+    ))
+    .child(
+        div()
+            .text_size(px(sk.pt(Step::Body)))
+            .text_color(th.text)
+            .child(gpui::StyledText::new(text).with_highlights(spans)),
+    )
+    .child(if durable {
+        micro(
+            "return posts \u{b7} shift+return a new line \u{b7} esc discards",
+            Step::Tag,
+            th.faint,
+            sk,
+            th,
+        )
+    } else {
+        // SAID BEFORE THE NOTE IS WRITTEN, not after return does nothing.
+        //
+        // A pane with no surfaces directory — a scratch window, which has no
+        // pane id to name one with — has nowhere durable to put a note. The
+        // first version of this refused on `return` and reported it to stderr,
+        // where nobody is looking, so the key just appeared to be broken. An
+        // absence a person can act on has to be on the face of the thing while
+        // they still have the choice not to type into it.
+        micro(
+            "THIS PANE CANNOT SAVE NOTES \u{b7} NOTHING HERE WILL SURVIVE",
+            Step::Tag,
+            ink(Tint::Waiting, th),
+            sk,
+            th,
+        )
+    })
+}
+
 pub fn composer(
     line: Option<&crate::workbench::Line>,
     focused: bool,
@@ -2403,7 +2581,7 @@ pub fn composer(
                         .flex_none()
                         .px(px(7.))
                         .py(px(2.))
-                        .rounded(px(3.))
+                        .rounded(sk.rad_raw(3.))
                         .bg(th.accent.alpha(0.18))
                         .child(micro(
                             if n == 1 {
@@ -2427,7 +2605,7 @@ pub fn composer(
                         .flex_none()
                         .px(px(7.))
                         .py(px(2.))
-                        .rounded(px(3.))
+                        .rounded(sk.rad_raw(3.))
                         .bg(th.human.alpha(0.16))
                         .child(micro("LIVE \u{2192} AGENT", Step::Tag, th.human, sk, th)),
                 )
@@ -2870,6 +3048,72 @@ mod tests {
     /// caught at. The unmutated file passes, so this is a guard and not an
     /// alarm; a scan that cries wolf gets switched off, and then nothing is
     /// enforced.
+    /// Every corner on the bench is the skin's to decide.
+    ///
+    /// This file's own header has promised this since it was written — *"the
+    /// guard test in `crate::skin` exists because that has happened before"* —
+    /// and there was no such test in `skin.rs` or anywhere else. Two literal
+    /// corners went in underneath that sentence and sat there: the paste chip
+    /// and the `LIVE -> AGENT` chip in the composer, both `rounded(px(3.))`,
+    /// both of which would have stayed round under a square skin while every
+    /// other corner in the window squared. A comment promising a gate is worse
+    /// than no comment, because it stops the next reader looking.
+    ///
+    /// Two shapes are caught. A `rounded()` whose argument is not a skin verb
+    /// is a radius decided here; and gpui's own `rounded_sm`/`_md`/`_lg`/
+    /// `_full` are fixed numbers wearing names, which is the same bypass with
+    /// better manners.
+    ///
+    /// Comments are stripped first, or this file's header would trip its own
+    /// scan on the word it uses to describe the rule.
+    ///
+    /// Mutation-tested: it FAILED on the two real literals before they were
+    /// fixed, which is the only way to know a scan matches anything; and
+    /// `.gap(px(8.))`, `.w(px(6.))` and `sk.rad_raw(3.)` were checked to pass
+    /// untouched, because a check that fires on innocent lines gets switched
+    /// off and then nothing is enforced.
+    #[test]
+    fn every_corner_on_the_bench_goes_through_the_skin() {
+        let src = include_str!("benchdraw.rs");
+        let (code, _tests) = src.split_once("\n#[cfg(test)]").expect("a test module");
+        let lines: Vec<&str> = code.lines().collect();
+        let mut found = Vec::new();
+        for (n, raw) in lines.iter().enumerate() {
+            let line = raw.split("//").next().unwrap_or("");
+            for fixed in ["rounded_sm(", "rounded_md(", "rounded_lg(", "rounded_full("] {
+                if line.contains(fixed) {
+                    found.push(format!(
+                        "{}: {fixed} is a fixed radius, not the skin's: {}",
+                        n + 1,
+                        raw.trim()
+                    ));
+                }
+            }
+            let Some(at) = line.find(".rounded(") else {
+                continue;
+            };
+            let mut arg = line[at + ".rounded(".len()..].trim_start();
+            // rustfmt may put the argument on the next line. Follow it rather
+            // than flagging a wrap, which is not a decision anybody made.
+            if arg.is_empty() {
+                arg = lines
+                    .get(n + 1)
+                    .map(|l| l.split("//").next().unwrap_or("").trim_start())
+                    .unwrap_or("");
+            }
+            if !arg.starts_with("sk.") {
+                found.push(format!("{}: a hand-rolled corner: {}", n + 1, raw.trim()));
+            }
+        }
+        assert!(
+            found.is_empty(),
+            "corners decided in the renderer instead of by the skin. A square \
+             skin cannot square these, so they stay round while everything \
+             around them changes shape:\n{}",
+            found.join("\n")
+        );
+    }
+
     #[test]
     fn a_renderer_contains_no_decisions() {
         let src = include_str!("benchdraw.rs");
@@ -3004,6 +3248,10 @@ mod tests {
         for (kind, renderer) in [
             ("Kind::Question(q)", "question("),
             ("Kind::Response(r)", "response("),
+            // A comment joins the list for the same reason, one step earlier:
+            // it is short enough that a compact form could only be the same
+            // thing, so a second renderer would exist purely to drift.
+            ("Kind::Comment(_)", "comment("),
         ] {
             for (which, body) in [("compact", compact_body), ("full", full_body)] {
                 let arm = body
