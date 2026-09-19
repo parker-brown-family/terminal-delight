@@ -582,13 +582,27 @@ pub fn reorder(ids: &mut Vec<u32>, moving: u32, neighbour: u32, after: bool) {
 /// Kept beside [`rows`] on purpose: the strip and the tree answer the same
 /// question about the same session and must never disagree about which tasks
 /// exist.
+///
+/// **A scope that shows nothing shows everything instead.** An empty strip is
+/// the one state on that bar with no way out of itself: the chip that would
+/// widen it sits in the tree, and a person whose tabs have all vanished is not
+/// in a mood to go looking for it. The workspace corrects a stranding scope at
+/// every activation ([`Scope::widened_for`]) and refuses one outright on a
+/// click, but a scope can still arrive from a state file written before a
+/// branch was emptied, and that path reaches this function before it reaches
+/// either guard. Parker, on a restarted window whose strip drew nothing: *"I
+/// don't see our tabs across the top"*.
 pub fn shown(places: &[Place], scope: Scope) -> Vec<usize> {
-    places
+    let out: Vec<usize> = places
         .iter()
         .enumerate()
         .filter(|(_, place)| scope.shows(place))
         .map(|(i, _)| i)
-        .collect()
+        .collect();
+    if out.is_empty() {
+        return (0..places.len()).collect();
+    }
+    out
 }
 
 /// Do these two tasks hang from the SAME branch of the tree?
@@ -1163,18 +1177,22 @@ mod tests {
     }
 
     #[test]
-    fn a_scope_with_nothing_under_it_draws_an_empty_strip_not_a_wrong_one() {
-        // The empty answer is a real answer, and the workspace is the layer
-        // that refuses to sit in it: `Scope::widened_for` moves the scope when
-        // an activated tab is outside it, and `Workspace::set_scope` backs out
-        // to `All` when a scope would show nothing. This function's job is to
-        // report the emptiness rather than to paper over it with a fallback
-        // branch nobody asked for.
+    fn a_scope_with_nothing_under_it_draws_every_tab_rather_than_none() {
+        // The strip is the one surface that cannot recover from being empty:
+        // the control that would widen it is in the tree, not on the bar. So a
+        // scope nothing answers to — a project whose tabs have all been closed,
+        // a stale id out of a state file — falls all the way back rather than
+        // stranding the row. The workspace's own guards (`widened_for` on every
+        // activation, `set_scope` on a click) still run; this is the floor
+        // under them, for the paths that reach the renderer first.
         let places: Vec<Place> = [task(Some(1), Some(10)), task(None, None)]
             .iter()
             .map(|t| t.place)
             .collect();
-        assert_eq!(shown(&places, Scope::Project(99)), Vec::<usize>::new());
+        assert_eq!(shown(&places, Scope::Project(99)), vec![0, 1]);
+        // And with no tabs at all the answer is still empty — a fallback that
+        // invented a row would be worse than the hole it filled.
+        assert_eq!(shown(&[], Scope::All), Vec::<usize>::new());
     }
 
     #[test]
