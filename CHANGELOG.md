@@ -9,6 +9,17 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ### Fixed
 
+- **Changing the model or the effort no longer sends your half-written prompt.**
+  The bench composer mirrors the agent's own line editor, so a draft is already
+  sitting on that line — and the dial announced its new value by putting
+  `/model …` into the composer and sending it. One press posted the unsent
+  prompt with a slash command glued to the end, answered at the strength it was
+  being changed away from, and left the box looking as though the prompt had
+  been thrown away. The command now goes in beside the draft: the line is
+  cleared, the command is sent on its own, the draft is typed back and the caret
+  returns to the character you stopped at. A pasted image does not survive that
+  erase — see #557. (#556)
+
 - **The tab strip opens on the group you are in.** Teaching the strip to obey
   the scope chip left the chip's default on ALL, so a window opened with every
   tab in the session across the top: the branch a person was actually working in
