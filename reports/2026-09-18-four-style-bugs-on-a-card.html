@@ -1,0 +1,341 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Four style bugs on one decision card — 2026-09-18</title>
+<style>
+  :root{
+    --ink:#e8eef2; --ink-2:#9fb0ba; --ink-3:#6b7c86;
+    --bg:#0c1114; --card:#141b20; --edge:#26333b;
+    --red:#e5484d;     /* a decision is waiting */
+    --orange:#f76b15;  /* something failed */
+    --green:#30a46c;   /* ready, recommended */
+    --blue:#5b8def;    /* structure */
+    --amber:#f5b544;   /* mine to argue with */
+    --grey:#6b7c86;    /* unknown */
+    --mono:ui-monospace,"JetBrains Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font:16px/1.55 ui-sans-serif,-apple-system,"Segoe UI",Roboto,sans-serif;
+       -webkit-font-smoothing:antialiased}
+  main{max-width:56rem;margin:0 auto;padding:2.5rem 1.25rem 5rem}
+  h1{font-size:1.75rem;line-height:1.2;margin:0 0 .35rem;letter-spacing:-.01em}
+  .sub{color:var(--ink-2);margin:0 0 2rem;font-size:.95rem}
+  h2{font-size:1.1rem;margin:2.75rem 0 .6rem;letter-spacing:-.005em}
+  p{margin:.65rem 0}
+  code,kbd{font-family:var(--mono);font-size:.88em}
+  .lede{font-size:1.05rem;color:var(--ink)}
+  figure{margin:1.4rem 0 0;padding:1rem;background:var(--card);
+         border:1px solid var(--edge);border-radius:10px}
+  figcaption{margin-top:.8rem;color:var(--ink-2);font-size:.88rem;line-height:1.5}
+  figcaption b{color:var(--ink);font-weight:600}
+  .fignum{font-family:var(--mono);font-size:.74rem;letter-spacing:.06em;
+          color:var(--ink-3);text-transform:uppercase}
+  svg{display:block;width:100%;height:auto}
+  table{width:100%;border-collapse:collapse;margin:.9rem 0 0;font-size:.9rem}
+  th,td{text-align:left;padding:.42rem .6rem;border-bottom:1px solid var(--edge)}
+  th{color:var(--ink-3);font-weight:600;font-size:.78rem;text-transform:uppercase;
+     letter-spacing:.05em}
+  td.num{font-family:var(--mono);text-align:right}
+  .bad{color:var(--orange)} .ok{color:var(--green)} .mine{color:var(--amber)}
+  .key{display:flex;gap:1.1rem;flex-wrap:wrap;margin:.9rem 0 0;
+       font-size:.8rem;color:var(--ink-2)}
+  .key span::before{content:"";display:inline-block;width:.62rem;height:.62rem;
+       border-radius:2px;margin-right:.38rem;vertical-align:-1px;background:currentColor}
+
+  /* --- the phosphor mockup: a faithful-enough twin of the card --- */
+  .tube{background:#03100a;border-radius:8px;padding:.9rem;font-family:var(--mono);
+        font-size:11px;line-height:1.45;color:#86efac}
+  .tube .q{font-size:13px;color:#86efac;margin-bottom:.55rem}
+  .opt{border:1px solid #020805;border-radius:10px;margin:0 0 .5rem}
+  .opt.rec{border-color:#22c55e;border-left-width:3px}
+  .opt .nm{color:#86efac;font-size:12px}
+  .opt .tag{color:#22c55e;font-size:9px;margin-left:.5rem}
+  .opt .case{color:rgba(134,239,172,.8)}
+  .bleed{padding:0}                                  /* the bug */
+  .inset{padding:4px 6px}                            /* the fix */
+  .cost-old{color:#14401f}                           /* the palette's faint role */
+  .cost-new{color:rgba(134,239,172,.6)}              /* the skin's meta ink */
+  .verbs{display:flex;gap:8px;align-items:center;margin-top:.7rem}
+  .btn-old{padding:10px 18px;border-radius:4px;border:1px solid rgba(34,197,94,.75);
+           background:rgba(228,159,203,.14);color:#e49fcb;
+           box-shadow:0 0 22px 1px rgba(34,197,94,.38),0 2px 14px rgba(0,0,0,.42)}
+  .btn-new{padding:10px 18px;border-radius:4px;border:1px solid rgba(228,159,203,.85);
+           background:rgba(228,159,203,.14);color:rgba(134,239,172,.92);
+           box-shadow:0 0 5.25px rgba(228,159,203,.11)}
+  .sec-old{color:#14401f;padding:6px 12px}
+  .sec-new{color:rgba(134,239,172,.7);padding:6px 12px;border-radius:4px;
+           border:1px solid rgba(134,239,172,.30);background:rgba(134,239,172,.06)}
+  .pair{display:grid;grid-template-columns:1fr 1fr;gap:1rem}
+  .pair h3{margin:0 0 .5rem;font-size:.76rem;letter-spacing:.07em;
+           text-transform:uppercase;font-family:var(--mono);color:var(--ink-3)}
+  .pair h3.b{color:var(--orange)} .pair h3.a{color:var(--green)}
+  @media (max-width:46rem){.pair{grid-template-columns:1fr}}
+  .note{border-left:3px solid var(--amber);padding:.1rem 0 .1rem .8rem;
+        color:var(--ink-2);font-size:.92rem;margin:1.1rem 0}
+</style>
+</head>
+<body>
+<main>
+
+<h1>Four style bugs on one decision card</h1>
+<p class="sub">terminal-delight · branch <code>chrome/phosphor-legibility</code> · PR&nbsp;#555 ·
+2026-09-18</p>
+
+<p class="lede">Parker photographed one decision card and named four things wrong with it. All
+four turned out to be classes rather than instances, and three of them are measurable. The
+numbers are below; the pictures are the argument.</p>
+
+<div class="note"><b>Two of the four were already fixed and are sitting unmerged.</b> The
+installed build is <code>td-fcfbaa6-main</code>, which does not carry PR&nbsp;#555. The magenta
+APPROVE label and the ghost <span style="font-family:var(--mono)">reject</span> /
+<span style="font-family:var(--mono)">comment</span> words in the photograph are the branch's
+existing work, not new bugs.</div>
+
+<h2>1 · The card, drawn twice</h2>
+
+<figure>
+  <div class="pair">
+    <div>
+      <h3 class="b">before</h3>
+      <div class="tube">
+        <div class="q">Dropping a file into the workbench prompt is a 3/10. Which tier?</div>
+        <div class="opt rec bleed">
+          <div class="nm">A · a file into the prompt<span class="tag">recommended</span></div>
+          <div class="case">Three of the four legs already exist: gpui already turns a drag
+            into a list of paths, and the composer already types.</div>
+          <div class="cost-old">cost · it accepts local files and nothing else.</div>
+        </div>
+        <div class="opt bleed">
+          <div class="nm">B · Terminal Delight's own cards and tabs</div>
+          <div class="cost-old">cost · 6/10. What a card MEANS as text stays wrong quietly.</div>
+        </div>
+        <div class="verbs">
+          <span class="btn-old">approve</span>
+          <span class="sec-old">reject</span>
+          <span class="sec-old">comment</span>
+        </div>
+      </div>
+    </div>
+    <div>
+      <h3 class="a">after</h3>
+      <div class="tube">
+        <div class="q">Dropping a file into the workbench prompt is a 3/10. Which tier?</div>
+        <div class="opt rec inset">
+          <div class="nm">A · a file into the prompt<span class="tag">recommended</span></div>
+          <div class="case">Three of the four legs already exist: gpui already turns a drag
+            into a list of paths, and the composer already types.</div>
+          <div class="cost-new">cost · it accepts local files and nothing else.</div>
+        </div>
+        <div class="opt inset">
+          <div class="nm">B · Terminal Delight's own cards and tabs</div>
+          <div class="cost-new">cost · 6/10. What a card MEANS as text stays wrong quietly.</div>
+        </div>
+        <div class="verbs">
+          <span class="btn-new">approve</span>
+          <span class="sec-new">reject</span>
+          <span class="sec-new">comment</span>
+        </div>
+      </div>
+    </div>
+  </div>
+  <figcaption><span class="fignum">Figure 1</span><br>
+    <b>Every one of the four complaints is visible in a still.</b> Drawn in a browser from the
+    shipped token values — the greens are <code>#86efac</code> and <code>#22c55e</code>, the pink
+    is <code>#e49fcb</code>, the bloom is the literal <code>22px</code> at <code>0.38</code> —
+    so it is a reconstruction, <span class="mine">not a photograph of the build</span>. The one
+    thing it cannot show is the tube's own bloom pass, which multiplies the halo again on the
+    real screen.</figcaption>
+</figure>
+
+<h2>2 · “The sub text is impossible to read” is a number</h2>
+
+<p>The bench drew every subtitle, cost line, consequence, section tag and provenance line in the
+<em>palette's</em> <code>faint</code> role. That role is furniture — it is what a divider is mixed
+from. Forty-two sites reached for it, and on all six palettes we ship a word painted in it
+lands within a rounding error of drawing nothing.</p>
+
+<figure>
+<svg viewBox="0 0 720 220" role="img"
+     aria-label="Contrast ranges for three inks against the card ground, across six palettes, with the 4.5 to 1 small-text floor marked">
+  <defs><style>
+    .ax{stroke:#26333b;stroke-width:1}
+    .tick{fill:#6b7c86;font:11px ui-monospace,monospace}
+    .lbl{fill:#9fb0ba;font:12px ui-sans-serif,sans-serif}
+    .val{fill:#e8eef2;font:11px ui-monospace,monospace}
+    .floor{stroke:#e5484d;stroke-width:1.5;stroke-dasharray:4 3}
+    .floorlbl{fill:#e5484d;font:11px ui-monospace,monospace}
+  </style></defs>
+  <!-- x: ratio 1..7 mapped to 200..690 -->
+  <g>
+    <line class="ax" x1="200" y1="24" x2="200" y2="180"/>
+    <line class="ax" x1="200" y1="180" x2="690" y2="180"/>
+    <g class="tick">
+      <text x="200" y="196" text-anchor="middle">1:1</text>
+      <text x="282" y="196" text-anchor="middle">2</text>
+      <text x="363" y="196" text-anchor="middle">3</text>
+      <text x="445" y="196" text-anchor="middle">4</text>
+      <text x="527" y="196" text-anchor="middle">5</text>
+      <text x="608" y="196" text-anchor="middle">6</text>
+      <text x="690" y="196" text-anchor="middle">7</text>
+    </g>
+    <line class="floor" x1="486" y1="18" x2="486" y2="180"/>
+    <text class="floorlbl" x="490" y="16">4.5:1 — the small-text floor</text>
+
+    <!-- row 1: the palette's faint role, 1.22–1.62 -->
+    <text class="lbl" x="192" y="48" text-anchor="end">palette <tspan style="font-family:ui-monospace,monospace">faint</tspan></text>
+    <rect x="218" y="36" width="33" height="16" rx="3" fill="#f76b15"/>
+    <text class="val" x="259" y="49">1.22 – 1.62</text>
+
+    <!-- row 2: meta ink at 0.45, 2.88–4.22 -->
+    <text class="lbl" x="192" y="92" text-anchor="end">meta ink @ 0.45</text>
+    <rect x="353" y="80" width="109" height="16" rx="3" fill="#f5b544"/>
+    <text class="val" x="470" y="93">2.88 – 4.22</text>
+
+    <!-- row 3: meta ink at 0.60, 4.54–6.46 -->
+    <text class="lbl" x="192" y="136" text-anchor="end">meta ink @ 0.60</text>
+    <rect x="490" y="124" width="157" height="16" rx="3" fill="#30a46c"/>
+    <text class="val" x="655" y="137">4.54 – 6.46</text>
+  </g>
+</svg>
+  <figcaption><span class="fignum">Figure 2</span><br>
+    <b>The ink the bench was using never reached a third of the floor, and the ink it should have
+    been using did not reach it either.</b> Each bar is the range across the six builtin palettes,
+    worst ground to best. Computed from the theme files' own <code>bg</code>, <code>surface</code>
+    and <code>text</code> with the WCAG relative-luminance formula — the same arithmetic the new
+    test runs, read independently. <span class="mine">0.60 is not a taste; it is the first rung on
+    which all six clear 4.5.</span></figcaption>
+</figure>
+
+<table>
+  <tr><th>palette</th><th class="num">palette <code>faint</code></th>
+      <th class="num">meta ink @ 0.45</th><th class="num">meta ink @ 0.60</th></tr>
+  <tr><td>quiet-command</td><td class="num bad">1.22</td><td class="num bad">2.88</td><td class="num ok">4.54</td></tr>
+  <tr><td>field-command</td><td class="num bad">1.40</td><td class="num bad">3.97</td><td class="num ok">5.98</td></tr>
+  <tr><td>tactical-overdrive</td><td class="num bad">1.38</td><td class="num bad">4.22</td><td class="num ok">6.46</td></tr>
+  <tr><td>gamba</td><td class="num bad">1.62</td><td class="num bad">3.88</td><td class="num ok">5.81</td></tr>
+  <tr><td>deco</td><td class="num bad">1.37</td><td class="num bad">3.78</td><td class="num ok">5.70</td></tr>
+  <tr><td>hacker <span style="color:var(--ink-3)">(the one in the photograph)</span></td>
+      <td class="num bad">1.53</td><td class="num bad">3.55</td><td class="num ok">5.33</td></tr>
+</table>
+
+<h2>3 · “About 3× or 4 too much extra” — and the ratio was in the file</h2>
+
+<figure>
+<svg viewBox="0 0 720 200" role="img"
+     aria-label="The region bloom and the control bloom drawn to scale around the same word-sized box">
+  <defs>
+    <filter id="big" x="-120%" y="-260%" width="340%" height="720%">
+      <feGaussianBlur stdDeviation="11"/></filter>
+    <filter id="small" x="-120%" y="-260%" width="340%" height="720%">
+      <feGaussianBlur stdDeviation="2.6"/></filter>
+    <style>
+      .cap{fill:#9fb0ba;font:12px ui-sans-serif,sans-serif}
+      .num{fill:#e8eef2;font:11px ui-monospace,monospace}
+      .word{fill:#86efac;font:13px ui-monospace,monospace}
+    </style>
+  </defs>
+
+  <text class="cap" x="24" y="30">aglow — a REGION's bloom, on a word-sized button</text>
+  <g transform="translate(24,48)">
+    <rect x="0" y="0" width="118" height="40" rx="4" fill="#22c55e" opacity=".38" filter="url(#big)"/>
+    <rect x="0" y="0" width="118" height="40" rx="4" fill="rgba(228,159,203,.14)"
+          stroke="rgba(34,197,94,.75)"/>
+    <text class="word" x="59" y="25" text-anchor="middle" fill="#e49fcb">approve</text>
+  </g>
+  <text class="num" x="164" y="62">blur 22px</text>
+  <text class="num" x="164" y="78">alpha 0.38 &#160;<tspan fill="#6b7c86">(glow 0.85 × 0.45)</tspan></text>
+  <text class="num" x="164" y="94">spread 1px</text>
+
+  <text class="cap" x="400" y="30">Skin::halo — a CONTROL's bloom, the ring's own number</text>
+  <g transform="translate(400,48)">
+    <rect x="0" y="0" width="118" height="40" rx="4" fill="#e49fcb" opacity=".11" filter="url(#small)"/>
+    <rect x="0" y="0" width="118" height="40" rx="4" fill="rgba(228,159,203,.14)"
+          stroke="rgba(228,159,203,.85)"/>
+    <text class="word" x="59" y="25" text-anchor="middle">approve</text>
+  </g>
+  <text class="num" x="540" y="62">blur 5.25px</text>
+  <text class="num" x="540" y="78">alpha 0.11</text>
+  <text class="num" x="540" y="94">spread 0</text>
+
+  <text class="cap" x="24" y="142">4.2× the spread · 3.5× the heat · and then the tube's own bloom pass multiplies both</text>
+  <line x1="24" y1="152" x2="696" y2="152" stroke="#26333b"/>
+  <text class="cap" x="24" y="176" fill="#f5b544">The ring at 0.11 is the number 181bec1 already calibrated for a lit tab. Nothing new was chosen here — the second bloom was simply never told.</text>
+</svg>
+  <figcaption><span class="fignum">Figure 3</span><br>
+    <b>APPROVE arrived as a chip that already had a lit border, a seat and a halo, and then had a
+    second border in a second hue and a card's bloom painted over it.</b> Both numbers are read
+    out of the source: <code>aglow_at</code>'s <code>22.</code> and <code>th.glow * 0.45</code>,
+    and the skin's <code>glow = 5.25</code> / <code>glow_a = 0.11</code>. The blurs are drawn to
+    scale against the same 118×40 box.</figcaption>
+</figure>
+
+<h2>4 · Where each rule now lives</h2>
+
+<figure>
+<svg viewBox="0 0 720 176" role="img"
+     aria-label="Fourteen panel call sites, seven of which padded and seven of which did not, collapsing to one rule in the skin">
+  <defs><style>
+    .h{fill:#9fb0ba;font:12px ui-sans-serif,sans-serif}
+    .m{fill:#e8eef2;font:12px ui-monospace,monospace}
+    .s{fill:#6b7c86;font:11px ui-sans-serif,sans-serif}
+  </style></defs>
+  <text class="h" x="16" y="22">before — the rule lived at the call sites</text>
+  <g>
+    <!-- 7 padded -->
+    <g fill="#30a46c">
+      <rect x="16" y="34" width="26" height="18" rx="3"/><rect x="48" y="34" width="26" height="18" rx="3"/>
+      <rect x="80" y="34" width="26" height="18" rx="3"/><rect x="112" y="34" width="26" height="18" rx="3"/>
+      <rect x="144" y="34" width="26" height="18" rx="3"/><rect x="176" y="34" width="26" height="18" rx="3"/>
+      <rect x="208" y="34" width="26" height="18" rx="3"/>
+    </g>
+    <!-- 7 not -->
+    <g fill="#f76b15">
+      <rect x="248" y="34" width="26" height="18" rx="3"/><rect x="280" y="34" width="26" height="18" rx="3"/>
+      <rect x="312" y="34" width="26" height="18" rx="3"/><rect x="344" y="34" width="26" height="18" rx="3"/>
+      <rect x="376" y="34" width="26" height="18" rx="3"/><rect x="408" y="34" width="26" height="18" rx="3"/>
+      <rect x="440" y="34" width="26" height="18" rx="3"/>
+    </g>
+    <text class="s" x="16" y="70">7 remembered the inset</text>
+    <text class="s" x="248" y="70">7 drew a lit border through their own text</text>
+  </g>
+
+  <line x1="16" y1="92" x2="704" y2="92" stroke="#26333b"/>
+
+  <text class="h" x="16" y="116">after — the rule is the element</text>
+  <rect x="16" y="128" width="200" height="28" rx="5" fill="none" stroke="#5b8def"/>
+  <text class="m" x="30" y="147" fill="#5b8def">Skin::panel()</text>
+  <text class="s" x="232" y="140">carries <tspan style="font-family:ui-monospace,monospace">pad_x</tspan> / <tspan style="font-family:ui-monospace,monospace">pad_y</tspan> itself, so a region has to opt OUT.</text>
+  <text class="s" x="232" y="156">The seven that already padded overwrite it and are untouched.</text>
+</svg>
+  <figcaption><span class="fignum">Figure 4</span><br>
+    <b>Half the call sites missing a rule is not fourteen mistakes, it is one missing default.</b>
+    Counted by grep over <code>benchdraw.rs</code>, not estimated. The seven that forgot are not
+    discoverable from the source — only from a photograph of a border running through the
+    descenders of an eleven-point line.</figcaption>
+</figure>
+
+<h2>What the gates prove</h2>
+
+<table>
+  <tr><th>test</th><th>asserts</th><th>fails today's code</th></tr>
+  <tr><td><code>the_benchs_meta_ink_is_readable_on_every_builtin_palette</code></td>
+      <td>meta ink ≥ 4.5:1 over both grounds, all six palettes</td><td class="ok">yes — at 0.45 and at <code>faint</code></td></tr>
+  <tr><td><code>a_panel_holds_its_contents_off_its_own_border</code></td>
+      <td><code>Skin::panel()</code>'s padding is the skin's own, non-zero, on every skin</td><td class="ok">yes — it was zero</td></tr>
+  <tr><td><code>a_tab_label_is_legible_on_every_builtin_palette</code></td>
+      <td>already on the branch; the lit and resting label floors</td><td class="ok">yes — 1.38:1 and 1.08:1 before</td></tr>
+</table>
+
+<div class="note"><b>What is not gated.</b> The bloom change has no mechanical check: a gpui
+<code>BoxShadow</code> list is not readable back off a built element, and a source-grep test in
+this repo has already been satisfied by the comment explaining the line it was guarding. The
+defence is that there is now exactly one control-scale bloom
+(<code>Skin::halo</code>) and one region-scale bloom (<code>aglow</code>), and each says in its
+doc what the other is for.</div>
+
+</main>
+</body>
+</html>
