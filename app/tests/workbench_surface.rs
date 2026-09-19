@@ -16,13 +16,28 @@ use std::io::Write;
 use std::process::{Command, Stdio};
 
 /// Run a `surface` sub-verb and give back (stdout, stderr, success).
+///
+/// **A SCRATCH pane, and it is what makes the refusal tests mean anything.**
+/// `surface -` checks `TD_SESSION` and `TD_PANE_ID` and exits 3 BEFORE it parses
+/// a word, so with those unset every document — valid or not — came back with
+/// the same refusal and the same exit code. The nonsense-is-refused test below
+/// was therefore passing on the pane check and never reaching the parser: it
+/// would have passed just as happily against a perfectly good surface, which
+/// was confirmed by feeding it one.
+///
+/// `XDG_STATE_HOME` is redirected so the drops land in a throwaway directory
+/// rather than on somebody's real bench.
 fn surface(args: &[&str], stdin: Option<&str>) -> (String, String, bool) {
+    let scratch = std::env::temp_dir().join(format!("td-wbs-{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&scratch);
     let mut child = Command::new(env!("CARGO_BIN_EXE_terminal-delight"))
         .arg("surface")
         .args(args)
+        .env("XDG_STATE_HOME", &scratch)
+        .env("TD_SESSION", "workbench-surface-test")
+        .env("TD_PANE_ID", "1")
         .env_remove("DISPLAY")
         .env_remove("WAYLAND_DISPLAY")
-        .env_remove("TD_SESSION")
         .stdin(if stdin.is_some() {
             Stdio::piped()
         } else {
@@ -98,11 +113,37 @@ fn the_catalogue_names_every_kind_the_bench_can_draw() {
 
 #[test]
 fn a_document_this_build_cannot_parse_is_refused_by_name() {
-    let (_, err, ok) = surface(&["-"], Some("{\"this\": \"is not a surface\"}"));
-    assert!(!ok, "nonsense was accepted");
+    // Input that is not JSON at all is refused, by name and with a reason.
+    let (_, err, ok) = surface(&["-"], Some("{{{ not json at all"));
+    assert!(!ok, "unparseable input was accepted");
     assert!(
         !err.trim().is_empty(),
         "a refusal with no reason is a refusal nobody can act on"
+    );
+    assert!(
+        !err.contains("not inside a Terminal Delight pane"),
+        "the parser was never reached, so this proves nothing: {err}"
+    );
+
+    // But JSON that is not a SURFACE lands anyway, and this test used to claim
+    // the opposite.
+    //
+    // It asserted that `{"this": "is not a surface"}` was refused, and it passed
+    // — on the missing-pane check, three steps before the parser. With a pane
+    // set it fails, because `surface -` does not validate against TDSP at all:
+    // it checks the input is JSON (or carries fenced blocks) and writes it, and
+    // the bench's sweep does the lenient parse later. The nonsense-is-refused
+    // claim was never true of this verb.
+    //
+    // Pinned as it actually behaves rather than quietly changed, because making
+    // the verb refuse is a contract decision — it trades "always safe to send"
+    // for "told when you sent rubbish" — and that belongs to whoever owns the
+    // protocol, not to a test repair.
+    let (_, _, landed) = surface(&["-"], Some(r#"{"this": "is not a surface"}"#));
+    assert!(
+        landed,
+        "the verb started validating; if that was deliberate, this test is the \
+         one to update, and the doc comment above explains what it used to claim"
     );
 }
 
