@@ -1660,10 +1660,30 @@ fn line_ts(line: &str) -> Option<String> {
         .map(str::to_string)
 }
 
-/// The `claude` process under a pane's shell. TD reports the shell's pid; the
-/// agent is a child of it, and it is the child's start time that dates the
-/// conversation.
+/// The agent process behind a pane, given the pane's shell pid.
+///
+/// **The one the terminal is attached to, before the one that happens to be
+/// oldest.** A pane can hold more than one agent at a time: suspend a session
+/// with ctrl+Z and start another, or background one that is wedged, and two
+/// live `claude` processes sit under one shell. The child walk finds the FIRST,
+/// which is the one left behind — so a pane would show the suspended agent's
+/// conversation while its owner typed into the new one. Observed on this
+/// machine: a pane whose foreground group was the live agent and whose bench,
+/// wall and tool glyph all read the stopped one.
+///
+/// The kernel already knows which is which. `tpgid` on the shell's own stat line
+/// is the foreground process group of its terminal — the process a keystroke
+/// reaches — and that is the definition of "this pane's agent" every reader
+/// wants. The child walk stays as the fallback for a pane whose foreground group
+/// is something else entirely (a `git` command, a pager) with an agent still
+/// running behind it.
 pub fn agent_under(shell_pid: u32) -> Option<u32> {
+    fn comm(pid: u32) -> String {
+        std::fs::read_to_string(format!("/proc/{pid}/comm"))
+            .unwrap_or_default()
+            .trim()
+            .to_string()
+    }
     fn kids(pid: u32) -> Vec<u32> {
         let mut out = Vec::new();
         let Ok(tasks) = std::fs::read_dir(format!("/proc/{pid}/task")) else {
@@ -1682,16 +1702,36 @@ pub fn agent_under(shell_pid: u32) -> Option<u32> {
         }
         let children = kids(pid);
         for k in &children {
-            if std::fs::read_to_string(format!("/proc/{k}/comm"))
-                .map(|c| c.trim() == "claude")
-                .unwrap_or(false)
-            {
+            if is_agent(&comm(*k)) {
                 return Some(*k);
             }
         }
         children.iter().find_map(|k| walk(*k, depth + 1))
     }
-    walk(shell_pid, 0)
+    let fg = crate::session::foreground_pid(shell_pid);
+    pick_agent(fg.map(|p| (p, comm(p))), || walk(shell_pid, 0))
+}
+
+/// Is this the command name of an agent we resolve conversations for?
+fn is_agent(comm: &str) -> bool {
+    matches!(comm, "claude" | "codex")
+}
+
+/// Pure: the foreground process when it is an agent, otherwise whatever the
+/// child walk finds.
+///
+/// Split out because the rule is the whole point and `/proc` is not testable:
+/// "the process this terminal is attached to" beats "the first agent I can find
+/// under this shell" whenever the two disagree, and they disagree exactly when a
+/// person has left one agent suspended and started another.
+pub(crate) fn pick_agent(
+    fg: Option<(u32, String)>,
+    walk: impl FnOnce() -> Option<u32>,
+) -> Option<u32> {
+    match fg {
+        Some((pid, comm)) if is_agent(&comm) => Some(pid),
+        _ => walk(),
+    }
 }
 
 // ─── the fleet sweep ───────────────────────────────────────────────────────
