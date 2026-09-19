@@ -2411,6 +2411,37 @@ pub fn window_chord(key: &str, alt: bool, control: bool) -> bool {
     )
 }
 
+/// `alt+<n>` selects the nth shelf outright, rather than cycling to it.
+///
+/// `tab` already walks the shelves and will keep doing so; this is for landing
+/// on one directly. Parker asked for it on the bench's existing `alt+<key>`
+/// pattern after `alt+m` shipped, and proposed the four keys sitting under the
+/// right hand in tab order — `alt+v b n m` for overview, artifacts, decisions,
+/// comments. The idea is right and two of those keys are already spoken for:
+///
+/// - **`alt+v` splits the focused pane**, Tilix-style, alongside `alt+h`. It is
+///   in [`window_chord`], in the module header and on the keybindings sheet.
+/// - **`alt+b` is readline's word-back**, which reaches the agent's own prompt
+///   from the bench composer — `keystroke_bytes` passes it through deliberately.
+///
+/// So the keys are the DIGITS, which are positional in the same way the letter
+/// row would have been, free on both faces, and — unlike four hand-picked
+/// letters — they extend on their own the day a fifth shelf appears. The
+/// mapping is `Shelf::ALL`'s own order, so there is no second list to keep in
+/// step with the tab strip.
+///
+/// Modifiers are checked here rather than at the call site because getting them
+/// wrong is silent: [`reading_key`] reads a bare digit as ANSWERING option `n`
+/// of a waiting question, so a chord that let an unmodified `2` through would
+/// answer somebody's picker instead of changing tab.
+pub fn shelf_chord(key: &str, alt: bool, control: bool) -> Option<Shelf> {
+    if !alt || control {
+        return None;
+    }
+    let n: usize = key.parse().ok()?;
+    Shelf::ALL.get(n.checked_sub(1)?).copied()
+}
+
 /// Does this keystroke put a CHARACTER in front of a person?
 ///
 /// The bench starts talking on any printable key, so that there is no "click
@@ -4019,6 +4050,59 @@ mod tests {
     /// the list was written out inside `keystroke_bytes` and nowhere else, so
     /// the bench — which ends every key path by stopping propagation — took all
     /// of them and `alt+w` did nothing at all on the workbench face (#524).
+    /// Every shelf has a chord, the chord is its place in the strip, and no
+    /// chord is one the WINDOW has already claimed.
+    ///
+    /// The last clause is the one worth having. The obvious keys for this were
+    /// the four sitting under the right hand in tab order — `alt+v b n m` — and
+    /// `alt+v` is the pane split, advertised in the module header and on the
+    /// keybindings sheet. Nothing would have failed if it had been taken: the
+    /// bench would simply have stopped splitting, on one face, and the report
+    /// would have been "the split key broke" weeks later. A collision between
+    /// two chord tables is invisible to a compiler and to every test that does
+    /// not go looking, so this goes looking.
+    ///
+    /// It walks `Shelf::ALL` rather than a list of digits, so a fifth shelf
+    /// arrives already bound — and if its chord ever collides with a window
+    /// chord, this fails on the day the shelf is added rather than on the day
+    /// somebody notices their split is gone.
+    #[test]
+    fn every_shelf_has_a_chord_and_no_chord_belongs_to_the_window() {
+        for (i, shelf) in Shelf::ALL.iter().enumerate() {
+            let key = (i + 1).to_string();
+            assert_eq!(
+                shelf_chord(&key, true, false),
+                Some(*shelf),
+                "alt+{key} should land on {shelf:?}"
+            );
+            assert!(
+                !window_chord(&key, true, false),
+                "alt+{key} is a WINDOW chord as well as a shelf chord. One of \
+                 them will silently stop working — this is exactly what ruled \
+                 out alt+v for the overview."
+            );
+        }
+        // The modifier IS the chord. A bare digit answers a waiting question in
+        // `reading_key`, so letting one through here would change tab instead
+        // of answering somebody's picker — or worse, do both.
+        assert_eq!(shelf_chord("1", false, false), None, "a bare digit answers");
+        assert_eq!(
+            shelf_chord("1", true, true),
+            None,
+            "ctrl+alt walks the tree"
+        );
+        // And nothing outside the strip resolves, including the off-by-one that
+        // an index-from-zero reading would produce.
+        assert_eq!(shelf_chord("0", true, false), None);
+        let past_the_end = (Shelf::ALL.len() + 1).to_string();
+        assert_eq!(shelf_chord(&past_the_end, true, false), None);
+        assert_eq!(
+            shelf_chord("m", true, false),
+            None,
+            "the note box, not a shelf"
+        );
+    }
+
     #[test]
     fn the_windows_chords_are_never_a_panes_to_take() {
         // The workspace's own bindings, each read off the handler that binds

@@ -9,6 +9,17 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ### Added
 
+- **`alt+1` … `alt+4` land on a workbench tab without reaching for the mouse.**
+  `tab` already cycled the shelves and still does; this is for going straight to
+  one. The keys are the digits rather than four hand-picked letters because the
+  obvious letters were taken — `alt+v` splits the focused pane and `alt+b` is
+  readline's word-back, which reaches the agent's own prompt from the bench
+  composer — and because digits extend on their own the day a fifth shelf
+  appears. The mapping is `Shelf::ALL`'s own order, so there is no second list to
+  keep in step with the tab strip, and a test fails if any shelf's chord is ever
+  one the window has already claimed. `alt+m` still opens the note box, which
+  moves to the comments board on its way. (#574)
+
 - **A pane's rail has a fourth tab, COMMENTS, and the agent has no wire to it.**
   The bench held an agent's replies, its artifacts and what it was asking, and
   nowhere to put your own thinking — the only answer was the sticky note on the
