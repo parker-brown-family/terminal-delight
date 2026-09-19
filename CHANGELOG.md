@@ -9,6 +9,21 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ### Added
 
+- **A pane's rail has a fourth tab, COMMENTS, and the agent has no wire to it.**
+  The bench held an agent's replies, its artifacts and what it was asking, and
+  nowhere to put your own thinking — the only answer was the sticky note on the
+  glass, which is one slot in handwriting built to be read across a wall of
+  panes rather than written into. The board is the quiet plural version: notes
+  in the palette's `human` colour, newest first, persisted through the same file
+  transport every surface uses so they survive a restart. `alt+m` opens the box,
+  and on the comments shelf simply typing opens it, the way typing anywhere else
+  on the bench already starts talking. Nothing you write there reaches the agent
+  — no bytes down the pseudoterminal, no line in the action journal, and
+  deliberately no verb that hands a note over. `copy` is the whole escape hatch,
+  so the words move when you decide they should. A comment is a ninth surface
+  kind rather than a store of its own, which is why it arrived with persistence,
+  restore, the history cap and the unseen mark already working. (#566)
+
 - **ctrl+wheel sizes exactly what you are pointing at — four dials, one chord.**
   It used to size the cabinet from anywhere in the window, which meant the
   things a person most wants bigger — the terminal they are reading, the
@@ -32,6 +47,28 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
   turns one of them.
 
 ### Fixed
+
+- **The shelf strip wraps, so a fourth tab does not fall off the rail.** The rail
+  is a share of the pane, clamped between 132 and 208 points, and four tabs
+  measure about 161 of them. The strip sat in an `overflow_hidden` frame, so the
+  overflow would not have read as a layout problem — the last tab would simply
+  have stopped being drawn, and a tab nobody can see is a shelf nobody can
+  reach. The three-tab strip was fine at every width. (#566)
+
+- **Two corners on the bench stopped ignoring the skin.** `benchdraw.rs` has
+  promised since it was written that a guard test caught literal corner radii.
+  There was no such test anywhere, and two `rounded(px(3.))` had gone in
+  underneath the promise — the paste chip and the `LIVE → AGENT` chip in the
+  composer — both of which would have stayed round under a square skin while
+  every other corner squared. The gate is real now, it lives beside the three
+  other source scans in the file it guards, and the module's header points at it
+  instead of at another module. (#566)
+
+- **A note stamped from a broken clock says so instead of inventing a date.**
+  `localtime_r` does not refuse absurd input: handed a garbage millisecond count
+  it answers `3 Apr 584556019` without an error, which is an invented value with
+  the right shape — the kind every later reader takes for a measurement. A year
+  outside 1900–2999 now resolves to `time unavailable`. (#566)
 
 - **The small print on a card is small, not invisible.** Every subtitle, cost
   line, consequence, section tag and provenance line on the workbench was drawn

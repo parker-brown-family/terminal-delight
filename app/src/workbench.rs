@@ -160,6 +160,19 @@ pub enum Tint {
     Settled,
     /// Nothing is claimed about it.
     Unknown,
+    /// YOURS. Not a state of the work at all — a statement about whose voice
+    /// this is.
+    ///
+    /// Every other tint here answers *what should happen to this thing*, and a
+    /// comment has no answer to that question: it is not waiting, not pending,
+    /// not settled, and `Unknown` would be a claim that nobody has looked. What
+    /// distinguishes it is authorship, so that is what it says.
+    ///
+    /// It resolves to the palette's `human` role — the colour your own typing
+    /// is already drawn in inside an agent session, and dialable from the
+    /// wheel's own pip. A comments board is then legible as yours before a word
+    /// of it is read, and it moves with the palette like everything else.
+    Mine,
 }
 
 /// Sort a shelf into waiting, then what stands, then the record.
@@ -228,6 +241,8 @@ pub fn tint_of(kind: &Kind) -> Tint {
         // own colour inside the card rather than tinting the whole row.
         Kind::Response(_) => Tint::Ident,
         Kind::Unclassified(_) => Tint::Unknown,
+        // The person's own voice, in the person's own colour.
+        Kind::Comment(_) => Tint::Mine,
     }
 }
 
@@ -2162,6 +2177,15 @@ pub enum Dispatch {
         /// What it did, for whoever is looking at the surface afterwards.
         note: String,
     },
+    /// Put text on the system clipboard, and do nothing else.
+    ///
+    /// Local like [`Dispatch::Open`], and separate from it because the desktop
+    /// handler is the wrong instrument: `Open` hands a path to whatever the
+    /// machine has registered for it, and this carries the surface's own words
+    /// with no file in the story at all. It exists because a comment has no
+    /// verb that reaches the agent, so lifting the words by hand is the only
+    /// route there is — see [`crate::surface::Action::Copy`].
+    Clipboard(String),
     /// Nothing to do, and a reason worth showing rather than a silent no-op.
     Refused(String),
 }
@@ -2346,6 +2370,12 @@ pub fn verb_preview(
         Action::OpenSource => match surface.source.as_ref().and_then(|s| s.files.first()) {
             Some(f) => format!("opens {f}"),
             None => "opens nothing \u{2014} this surface names no source".to_string(),
+        },
+        Action::Copy => match &surface.kind {
+            Kind::Comment(_) | Kind::Markdown(_) => {
+                "copies the text \u{2014} the agent is not told".to_string()
+            }
+            _ => "copies nothing \u{2014} this surface is not text".to_string(),
         },
         _ => ActionReport {
             surface: surface.id.clone(),
@@ -2820,6 +2850,14 @@ impl Bench {
                 Action::OpenSource => match surface.source.as_ref().and_then(|s| s.files.first()) {
                     Some(f) => Dispatch::Open(f.clone()),
                     None => Dispatch::Refused("this surface names no source".into()),
+                },
+                // Only the kinds that ARE text. A refusal naming what is
+                // missing beats copying a rendering of a diagram that nobody
+                // would recognise when they pasted it.
+                Action::Copy => match &surface.kind {
+                    Kind::Comment(c) => Dispatch::Clipboard(c.body.clone()),
+                    Kind::Markdown(m) => Dispatch::Clipboard(m.body.clone()),
+                    _ => Dispatch::Refused("this surface has no text to copy".into()),
                 },
                 other => Dispatch::Refused(format!(
                     "{} is marked local but nothing here performs it",

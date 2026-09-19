@@ -2076,6 +2076,20 @@ pub struct TerminalView {
     /// same as empty: a composer that is open and holding nothing is a person
     /// who has started answering, and closing it under them loses that.
     wb_compose: Option<crate::workbench::Line>,
+    /// A NOTE being typed for the comments board.
+    ///
+    /// Deliberately a second field rather than a mode on `wb_compose`, because
+    /// the two are opposite things wearing the same shape. `wb_compose` is a
+    /// MIRROR: its bytes have already gone down the pseudoterminal and the local
+    /// copy exists only so the caret can be drawn. This is a BUFFER: nothing
+    /// leaves it until the person presses return, and then it goes to a file and
+    /// never to the agent.
+    ///
+    /// A flag on one field would have made every keystroke path ask which mode
+    /// it was in, and the cost of getting that branch wrong is not a glitch —
+    /// it is a private note typed into somebody's agent. Two fields make the
+    /// wrong path fail to compile instead.
+    wb_note: Option<crate::workbench::Line>,
     /// Where layout actually put the composer, in the three forms different
     /// readers need. See [`crate::benchdraw::Slots`].
     ///
@@ -3318,6 +3332,7 @@ impl TerminalView {
             tok_was_working: false,
             bench: crate::workbench::Bench::new(),
             wb_compose: None,
+            wb_note: None,
             wb_slots: crate::benchdraw::Slots::default(),
             wb_review: None,
             wb_quiet: 0,
@@ -8588,6 +8603,146 @@ mod tests {
         assert!(
             gate.contains("wb_on_screen") && gate.contains("is_agent()"),
             "the bench gate stopped asking one of its two questions: {gate}"
+        );
+    }
+
+    /// A note never reaches the agent, checked by WHAT it calls and by WHEN.
+    ///
+    /// Both halves are needed and neither implies the other.
+    ///
+    /// The first is the obvious one: no function that handles a note may call
+    /// anything that writes to the pseudoterminal. Scanned rather than listed,
+    /// because the write sites are several and the next one will be added by
+    /// somebody who has not read this — the same reasoning as
+    /// [`every_bench_write_goes_through_the_gate`], and stricter, since
+    /// `bench_keystroke` and `bench_deliver` are *allowed* writers there and
+    /// forbidden here.
+    ///
+    /// The second is the one that would actually have bitten. `bench_key` has a
+    /// branch that puts every keystroke it receives down the pseudoterminal
+    /// BEFORE applying it locally, because the reply composer is mirroring an
+    /// editor in the agent's process. A note routed after that branch would be
+    /// clean by inspection — calling nothing forbidden — and would still have
+    /// its every character typed into somebody's prompt on the way past. So the
+    /// order is asserted, not just the contents.
+    ///
+    /// Mutation-tested: deleting the note's routing, and moving it below the
+    /// composer branch, each fail this; so does calling `bench_keystroke` from
+    /// `bench_note_post`.
+    #[test]
+    fn writing_a_note_sends_nothing_to_the_agent() {
+        let bench = include_str!("pane/bench.rs");
+        let (code, _tests) = bench
+            .split_once("#[cfg(test)]")
+            .unwrap_or((bench, "no test module yet"));
+        // Comments stripped first. This file explains at length that a note
+        // must not call `bench_keystroke`, and a scan that its own explanation
+        // can satisfy — or trip — is not a gate.
+        let stripped: String = code
+            .lines()
+            .map(|l| l.split("//").next().unwrap_or(""))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let mut owner = "<file>";
+        let mut strays: Vec<String> = Vec::new();
+        for line in stripped.lines() {
+            let t = line.trim_start();
+            if let Some(rest) = t.split_once("fn ").map(|(_, r)| r) {
+                if t.starts_with("fn ") || t.starts_with("pub fn ") || t.starts_with("pub(") {
+                    owner = rest.split('(').next().unwrap_or(rest);
+                }
+            }
+            if !owner.starts_with("bench_note") {
+                continue;
+            }
+            for writer in [
+                "bench_keystroke(",
+                "bench_deliver(",
+                "bench_typed(",
+                "bench_type(",
+                "self.send(",
+                "journal(",
+            ] {
+                if t.contains(writer) {
+                    strays.push(format!("{owner}: {t}"));
+                }
+            }
+        }
+        assert!(
+            strays.is_empty(),
+            "a note reached the agent. The comments board is defined by the fact \
+             that it does not, so this is the feature failing and not a lint: {strays:?}"
+        );
+
+        let routed = stripped
+            .find("self.wb_note.is_some()")
+            .expect("the note's key routing in bench_key");
+        let composer = stripped
+            .find("if talking {")
+            .expect("the composer's send-first branch");
+        assert!(
+            routed < composer,
+            "the note buffer is consulted AFTER the branch that sends every \
+             keystroke down the pseudoterminal, so every character of a note is \
+             typed into the agent on its way to the note."
+        );
+    }
+
+    /// The shelf strip wraps, because four tabs do not fit on one line.
+    ///
+    /// The rail is a SHARE of the pane — `RAIL_SHARE`, clamped into
+    /// `RAIL_MIN_W..=RAIL_W` — so the strip gets between about 118 and 194
+    /// points of room. Four tabs measure about 161, read off the running build
+    /// at the 208-point cap: comfortable at a wide rail, over the edge well
+    /// before the rail reaches its floor. The strip sits inside a frame that is
+    /// `overflow_hidden`, so the overflow never shows up as a squeeze or a
+    /// scrollbar — the last tab simply stops being drawn, and a tab nobody can
+    /// see is a shelf nobody can reach.
+    ///
+    /// The three-tab strip was FINE, at every width. A plan for this feature
+    /// said otherwise on an estimated glyph width that measured a third too
+    /// fat; the estimate was wrong and the finding died on the check written
+    /// beside it.
+    ///
+    /// Structural rather than a width calculation, because the layout is gpui's
+    /// and a unit test cannot measure a glyph. What it can do is hold the
+    /// container to the property that makes the arithmetic stop mattering.
+    ///
+    /// Found by the SHELF STRIP itself rather than by a variable name: the
+    /// nearest `div()` above the one call that builds the tabs IS the container,
+    /// whatever it ends up being called. Comments are stripped first — a scan
+    /// that can be satisfied by the prose explaining the line it guards is not a
+    /// gate.
+    ///
+    /// Mutation-tested: deleting `.flex_wrap()` fails this; so does moving it
+    /// onto the frame outside the strip, which is the plausible wrong fix.
+    #[test]
+    fn the_shelf_strip_wraps_so_every_shelf_stays_reachable() {
+        let bench = include_str!("pane/bench.rs");
+        let (code, _tests) = bench
+            .split_once("#[cfg(test)]")
+            .unwrap_or((bench, "no test module yet"));
+        let stripped: String = code
+            .lines()
+            .map(|l| l.split("//").next().unwrap_or(""))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let at = stripped
+            .find("Shelf::ALL.into_iter().map(|shelf|")
+            .expect("the shelf strip");
+        let open = stripped[..at]
+            .rfind("div()")
+            .expect("the strip's container");
+        assert!(
+            stripped[open..at].contains(".flex_wrap()"),
+            "the shelf strip no longer wraps, and there are {} shelves to fit in \
+             as little as {} points of rail — against about 161 points of tabs, \
+             measured on the running build. The strip is inside an overflow_hidden \
+             frame, so this does not look like a layout bug: the last tab just \
+             stops being drawn, and the shelf behind it becomes unreachable.",
+            crate::surface::Shelf::ALL.len(),
+            crate::workbench::RAIL_MIN_W,
         );
     }
 
