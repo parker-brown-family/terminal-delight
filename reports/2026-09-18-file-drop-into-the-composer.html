@@ -1,0 +1,1507 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>File drop &middot; terminal-delight</title>
+<style>/* decision-brief — surfaces, ink, and the three structural components.
+ *
+ * ONE palette. No theme system, no theme toggle. tps-report shipped four themes and
+ * 165 theme-related rules; nobody ever switched. A brief is read once, quickly, to make
+ * a decision — the reader is not shopping for a skin.
+ *
+ * Categorical colours are the validated dataviz default palette (dark steps), which
+ * clears the CVD, chroma, lightness and contrast gates on the adjacent pairlist.
+ * If you change them, re-run the validator; do not eyeball it.
+ *
+ * What is here: tokens, the modal shell, tables, callouts, code. Everything else —
+ * cards, escalation lists, stat tiles, charts — is the brief's own business.
+ * Build what the material needs.
+ */
+:root {
+  color-scheme: dark;
+
+  --surface-0: #111110;   /* page */
+  --surface-1: #1a1a19;   /* panel */
+  --surface-2: #232321;   /* raised */
+  --surface-3: #2e2e2b;   /* control */
+  --line:      #3a3a36;
+
+  --text-primary:   #ffffff;
+  --text-secondary: #c3c2b7;
+  --text-muted:     #8b8a80;
+
+  /* categorical — assign in fixed order, never cycle */
+  --s1: #3987e5;  --s2: #d95926;  --s3: #199e70;  --s4: #c98500;
+  --s5: #d55181;  --s6: #008300;  --s7: #9085e9;  --s8: #e66767;
+
+  /* status — reserved. Never reuse as "series 5". Always ship with a label. */
+  --good:     #0ca30c;
+  --warning:  #fab219;
+  --serious:  #ec835a;
+  --critical: #d03b3b;
+
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, "JetBrains Mono", Menlo, Consolas, monospace;
+  --sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif;
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0; background: var(--surface-0); color: var(--text-primary);
+  font-family: var(--sans); font-size: 15px; line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+.wrap { max-width: 1180px; margin: 0 auto; padding: 0 24px 120px; }
+header.top .wrap { padding-bottom: 0; }   /* the wrap's bottom padding is for the page, not the header */
+
+/* ---- headings ----
+   A heading names the thing. It does not explain it — an em-dash gloss after a
+   heading breaks the heading. The body does the explaining. */
+h1 { font-size: 34px; line-height: 1.18; margin: 0 0 16px; letter-spacing: -.02em; font-weight: 650; }
+h2.sec {
+  font-size: 13px; font-family: var(--mono); letter-spacing: .13em; text-transform: uppercase;
+  color: var(--text-muted); margin: 56px 0 18px; padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+/* ---- modal shell: where depth lives ---- */
+dialog {
+  border: 1px solid var(--line); border-radius: 12px;
+  background: var(--surface-1); color: var(--text-primary);
+  max-width: 880px; width: calc(100vw - 44px); max-height: 86vh; padding: 0; overflow: hidden;
+}
+dialog::backdrop { background: rgba(0,0,0,.76); backdrop-filter: blur(3px); }
+.dlg-head {
+  position: sticky; top: 0; background: var(--surface-2);
+  border-bottom: 1px solid var(--line); padding: 20px 26px;
+  display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; z-index: 2;
+}
+.dlg-head h3 { margin: 0 0 5px; font-size: 20px; letter-spacing: -.015em; }
+.dlg-head .repo { font-family: var(--mono); font-size: 11.5px; color: var(--text-muted); margin: 0; }
+.x {
+  background: var(--surface-3); border: 1px solid var(--line); color: var(--text-secondary);
+  border-radius: 6px; width: 30px; height: 30px; font-size: 17px; line-height: 1;
+  cursor: pointer; flex: none;
+}
+.x:hover { background: var(--critical); color: #fff; border-color: var(--critical); }
+.dlg-body { padding: 24px 26px 34px; overflow-y: auto; max-height: calc(86vh - 78px); }
+.dlg-body h4 {
+  font-family: var(--mono); font-size: 11.5px; letter-spacing: .12em; text-transform: uppercase;
+  color: var(--text-muted); margin: 30px 0 12px; padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+}
+.dlg-body h4:first-child { margin-top: 0; }
+.dlg-body p  { margin: 0 0 13px; color: var(--text-secondary); font-size: 14.5px; }
+.dlg-body ul { margin: 0 0 15px; padding-left: 20px; color: var(--text-secondary); font-size: 14.5px; }
+.dlg-body li { margin-bottom: 8px; }
+.dlg-body strong { color: var(--text-primary); font-weight: 600; }
+
+/* ---- prose furniture ---- */
+code {
+  font-family: var(--mono); font-size: 12.5px; background: var(--surface-3);
+  padding: 1.5px 5px; border-radius: 4px; color: #e8d9a8; word-break: break-word;
+}
+pre {
+  background: var(--surface-0); border: 1px solid var(--line); border-radius: 7px;
+  padding: 15px 17px; overflow-x: auto; margin: 0 0 15px;
+}
+pre code { background: none; padding: 0; color: var(--text-secondary); font-size: 12.5px; line-height: 1.65; }
+
+table { width: 100%; border-collapse: collapse; margin: 0 0 17px; font-size: 13.5px; }
+th, td { text-align: left; padding: 9px 11px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th {
+  font-family: var(--mono); font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--text-muted); font-weight: 500; background: var(--surface-2);
+}
+td { color: var(--text-secondary); }
+td b, td strong { color: var(--text-primary); }
+
+blockquote {
+  margin: 0 0 15px; padding: 12px 18px; border-left: 3px solid var(--s1);
+  background: var(--surface-2); border-radius: 0 7px 7px 0;
+  color: var(--text-secondary); font-size: 14px; font-style: italic;
+}
+
+.callout {
+  border-left: 3px solid var(--warning); background: rgba(250,178,25,.07);
+  padding: 14px 18px; border-radius: 0 7px 7px 0; margin: 0 0 17px;
+}
+.callout.crit { border-color: var(--critical); background: rgba(208,59,59,.08); }
+.callout.good { border-color: var(--good);     background: rgba(12,163,12,.08); }
+.callout p:last-child { margin-bottom: 0; }
+.callout .lbl {
+  font-family: var(--mono); font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--text-muted); margin: 0 0 7px; display: block;
+}
+
+/* ---- confidence labels. Never assert without one. ---- */
+.tag {
+  display: inline-block; font-family: var(--mono); font-size: 10px; letter-spacing: .07em;
+  text-transform: uppercase; padding: 2.5px 7px; border-radius: 4px;
+  margin-right: 6px; font-weight: 600;
+}
+.tag.v { background: rgba(12,163,12,.18);  color: #6cd46c; border: 1px solid rgba(12,163,12,.4); }   /* measured */
+.tag.w { background: rgba(250,178,25,.14); color: #f5c95f; border: 1px solid rgba(250,178,25,.38); } /* inferred */
+.tag.c { background: rgba(208,59,59,.16);  color: #f08a8a; border: 1px solid rgba(208,59,59,.4); }   /* contradicted / hunch */
+
+footer {
+  margin-top: 70px; padding-top: 26px; border-top: 1px solid var(--line);
+  font-family: var(--mono); font-size: 11.5px; color: var(--text-muted);
+}
+footer p { margin: 0 0 7px; }
+
+@media (max-width: 640px) {
+  h1 { font-size: 26px; }
+  .wrap { padding: 0 16px 80px; }
+}
+</style>
+<style>/* decision-brief — reader notes, styling.
+   Depends on the surface/ink/status custom properties in base.css. */
+
+.notable { position: relative; }
+
+.note-btn {
+  position: absolute; top: 8px; right: 8px; z-index: 6;
+  width: 26px; height: 26px; line-height: 1; padding: 0;
+  background: var(--surface-3); border: 1px solid var(--line); border-radius: 6px;
+  color: var(--text-muted); font-size: 13px; cursor: pointer; opacity: 0;
+  transition: opacity .12s, background .12s, color .12s, border-color .12s;
+}
+/* Hidden until hover: a brief with 130 always-visible affordances reads as a form. */
+.notable:hover > .note-btn,
+.note-btn:focus-visible { opacity: 1; }
+.note-btn:hover { background: var(--warning); border-color: var(--warning); color: var(--surface-1); }
+
+.notable.has-note > .note-btn {
+  opacity: 1; background: var(--warning); border-color: var(--warning);
+  color: var(--surface-1); font-weight: 700;
+}
+.notable.has-note { box-shadow: inset 3px 0 0 var(--warning); }
+tr.notable.has-note > td:first-child { box-shadow: inset 3px 0 0 var(--warning); }
+
+/* Table rows can't host an absolutely-positioned child reliably — inline it. */
+tr.notable .note-btn {
+  position: static; opacity: .35; width: 22px; height: 22px; font-size: 11px;
+  margin-left: 6px; vertical-align: middle; display: inline-block;
+}
+tr.notable:hover .note-btn { opacity: 1; }
+
+/* ---- floating bar ---- */
+.notebar {
+  position: fixed; right: 18px; bottom: 18px; z-index: 900;
+  display: flex; gap: 8px; align-items: center;
+  background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px;
+  padding: 9px 11px; box-shadow: 0 10px 32px rgba(0,0,0,.55);
+  font-family: var(--mono); font-size: 11.5px;
+}
+.notebar .cnt { color: var(--text-muted); padding-right: 4px; }
+.notebar .cnt b { color: var(--warning); font-size: 14px; }
+.notebar button {
+  font-family: var(--mono); font-size: 11px; letter-spacing: .03em; cursor: pointer;
+  background: var(--surface-3); border: 1px solid var(--line); color: var(--text-secondary);
+  border-radius: 6px; padding: 6px 10px;
+  transition: background .12s, color .12s, border-color .12s;
+}
+.notebar button:hover { background: var(--warning); color: var(--surface-1); border-color: var(--warning); }
+.notebar button.primary {
+  background: rgba(250,178,25,.14); border-color: rgba(250,178,25,.45); color: #f5c95f;
+}
+.notebar button:disabled {
+  opacity: .4; cursor: default; background: var(--surface-3);
+  color: var(--text-muted); border-color: var(--line);
+}
+@media (max-width: 640px) {
+  .notebar { right: 8px; bottom: 8px; flex-wrap: wrap; max-width: calc(100vw - 16px); }
+}
+
+/* ---- note dialog ---- */
+dialog#d-note { max-width: 620px; }
+#note-list { margin: 0 0 18px; padding: 0; list-style: none; }
+#note-list li {
+  background: var(--surface-2); border: 1px solid var(--line);
+  border-left: 3px solid var(--warning); border-radius: 0 7px 7px 0;
+  padding: 11px 14px; margin-bottom: 9px; font-size: 14px; color: var(--text-secondary);
+}
+#note-list .nts {
+  font-family: var(--mono); font-size: 10px; color: var(--text-muted);
+  display: flex; justify-content: space-between; gap: 10px; margin-bottom: 6px;
+}
+#note-list .ndel {
+  background: none; border: none; color: var(--text-muted);
+  cursor: pointer; font-size: 11px; padding: 0;
+}
+#note-list .ndel:hover { color: var(--critical); }
+#note-none { color: var(--text-muted); font-size: 13.5px; margin: 0 0 16px; }
+
+#note-text {
+  width: 100%; min-height: 104px; background: var(--surface-0);
+  border: 1px solid var(--line); border-radius: 7px; color: var(--text-primary);
+  padding: 11px 13px; font-family: var(--sans); font-size: 14.5px;
+  resize: vertical; line-height: 1.55;
+}
+#note-text:focus { outline: none; border-color: var(--warning); }
+
+.note-actions { display: flex; gap: 9px; align-items: center; margin-top: 11px; }
+.note-actions button {
+  font-family: var(--mono); font-size: 11.5px; cursor: pointer; border-radius: 6px;
+  padding: 8px 14px; border: 1px solid var(--line);
+  background: var(--surface-3); color: var(--text-secondary);
+}
+.note-actions button.save {
+  background: var(--warning); border-color: var(--warning);
+  color: var(--surface-1); font-weight: 600;
+}
+.note-actions .hintk {
+  font-family: var(--mono); font-size: 10.5px; color: var(--text-muted); margin-left: auto;
+}
+
+/* ---- export dialog ---- */
+dialog#d-export { max-width: 780px; }
+#export-out {
+  width: 100%; min-height: 320px; background: var(--surface-0);
+  border: 1px solid var(--line); border-radius: 7px; color: var(--text-secondary);
+  padding: 13px; font-family: var(--mono); font-size: 12px; line-height: 1.55;
+  resize: vertical; white-space: pre;
+}
+.tokest { font-family: var(--mono); font-size: 11px; color: var(--text-muted); margin: 9px 0 0; }
+</style>
+<style>
+  .lede{font-size:17px;line-height:1.62;color:var(--text-secondary);max-width:78ch;margin:0 0 8px}
+  .lede b{color:var(--text-primary)}
+  .meta{font-family:var(--mono);font-size:11.5px;color:var(--text-muted);margin:0 0 30px}
+
+  /* verdict cards */
+  .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(268px,1fr));gap:14px}
+  .card{background:var(--surface-1);border:1px solid var(--line);border-radius:10px;padding:16px 18px}
+  .card.rec{border-color:var(--s3);box-shadow:0 0 0 1px var(--s3) inset}
+  .card .badge{font-family:var(--mono);font-size:10px;letter-spacing:.09em;text-transform:uppercase;
+    color:var(--text-muted);display:block;margin-bottom:8px}
+  .card.rec .badge{color:var(--s3)}
+  .card h3{margin:0 0 6px;font-size:16px;letter-spacing:-.01em}
+  .card .score{font-family:var(--mono);font-size:28px;line-height:1;color:var(--text-primary);margin:0 0 10px}
+  .card .score span{font-size:13px;color:var(--text-muted)}
+  .card p{margin:0 0 9px;font-size:13.5px;color:var(--text-secondary);line-height:1.55}
+  .card p.why{background:var(--surface-2);border-radius:6px;padding:9px 12px;margin:0;font-size:13px}
+  .card p.why b{color:var(--text-primary)}
+
+  /* read-first */
+  .esc-list{list-style:none;margin:0;padding:0}
+  .esc-list li{display:flex;gap:16px;background:var(--surface-1);border:1px solid var(--line);
+    border-radius:9px;padding:15px 18px;margin-bottom:10px;align-items:flex-start}
+  .esc-n{font-family:var(--mono);font-size:21px;color:var(--warning);flex:none;width:26px;line-height:1.1}
+  .esc-b{min-width:0}
+  .esc-b h3,.esc-b p,.esc-b .cost{overflow-wrap:anywhere}
+  .esc-b h3{margin:0 0 5px;font-size:15.5px;letter-spacing:-.01em}
+  .esc-b p{margin:0;font-size:13.5px;color:var(--text-secondary);line-height:1.55}
+  .esc-b .cost{display:block;margin-top:5px;font-family:var(--mono);font-size:11px;color:var(--text-muted)}
+
+  /* figures */
+  figure{margin:0 0 30px;background:var(--surface-1);border:1px solid var(--line);
+    border-radius:10px;padding:18px 20px 16px}
+  figure .lbl{display:block;font-family:var(--mono);font-size:10.5px;letter-spacing:.11em;
+    text-transform:uppercase;color:var(--text-muted);margin:0 0 14px}
+  figcaption{font-size:13.5px;color:var(--text-secondary);margin-top:14px;max-width:88ch;line-height:1.55}
+  figcaption b{color:var(--text-primary)}
+  .scroller{overflow-x:auto;padding-bottom:4px}
+  .gutter{font-family:var(--mono);font-size:10.5px;color:var(--text-muted);margin-top:12px;
+    border-top:1px dashed var(--line);padding-top:8px;line-height:1.5}
+  svg{display:block;width:100%;height:auto;max-width:100%}
+
+  /* architecture frames */
+  .frame{border:1px solid var(--line);border-radius:9px;padding:13px 15px 15px;background:var(--surface-0);
+    margin-bottom:12px}
+  .frame > .step{font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;
+    color:var(--text-muted);margin:0 0 12px;display:block}
+  .bnd{border:1px solid #3a3a36;border-radius:8px;padding:14px 11px 11px;position:relative;margin-bottom:10px}
+  .bnd:last-of-type{margin-bottom:0}
+  .bnd.dash{border-style:dashed}
+  .bnd .cor{position:absolute;top:-7px;left:11px;background:var(--surface-0);padding:0 6px;
+    font-family:var(--mono);font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--text-muted)}
+  .lane{display:flex;gap:9px;align-items:stretch;flex-wrap:wrap}
+  .node{border:1px solid var(--line);border-radius:7px;padding:8px 10px;background:var(--surface-1);
+    flex:1 1 150px;min-width:132px}
+  .node .n{font-family:var(--mono);font-size:11px;color:var(--text-primary);display:block}
+  .node .s{font-size:10.5px;color:var(--text-muted);margin-top:4px;display:block;line-height:1.4}
+  .node.new{border-color:var(--s1);box-shadow:0 0 0 1px rgba(57,135,229,.34) inset}
+  .node.new .n{color:#8fc0f5}
+  .node.have{border-color:rgba(25,158,112,.45)}
+  .node.ghost{opacity:.3;border-style:dashed;background:none}
+  .stepcap{font-size:12.5px;color:var(--text-secondary);margin:11px 0 0;line-height:1.5}
+  .stepcap b{color:var(--text-primary)}
+  .legend{font-family:var(--mono);font-size:10px;color:var(--text-muted);margin:0 0 10px}
+  .legend i{font-style:normal}
+  .legend .g{color:#6cd46c}.legend .b{color:#8fc0f5}.legend .a{color:#f5c95f}.legend .m{color:var(--text-muted)}
+
+  /* the bench mock — terminal metrics */
+  .pair{display:flex;gap:18px;align-items:flex-start}
+  .sidelbl{display:block;font-family:var(--mono);font-size:10px;letter-spacing:.1em;
+    text-transform:uppercase;color:var(--text-muted);margin-bottom:8px}
+  .sidelbl.a{color:#6cd46c}.sidelbl.b{color:#f5c95f}.sidelbl.c{color:#6cd46c}
+  .pane{--ink:#d5e2da;--dim:#8ea095;--faint:#5d6f66;--acc:#46d16e;--amb:#d9a441;
+    --tmono:"JetBrains Mono",ui-monospace,monospace;
+    width:340px;flex:none;box-sizing:border-box;background:#0a0e0f;border:1px solid #1a2124;
+    border-radius:6px;padding:11px;font-family:var(--tmono);color:var(--ink)}
+  .pane .hdr{display:flex;justify-content:space-between;font-size:9px;color:var(--faint);margin-bottom:9px}
+  .cmp{border:1px solid #223034;border-radius:5px;padding:10px 11px;background:#0d1214;min-height:74px}
+  .cmp.hot{border-color:var(--amb);box-shadow:0 0 0 1px rgba(217,164,65,.35),0 0 18px rgba(217,164,65,.16)}
+  .cmp .txt{font-size:11.5px;line-height:1.6;word-break:break-word}
+  .caret{display:inline-block;width:7px;height:13px;background:var(--acc);vertical-align:-2px;
+    box-shadow:0 0 9px rgba(70,209,110,.5)}
+  .cmp .hint{font-size:9.5px;color:var(--faint);margin-top:8px}
+  .cmp .hint.amb{color:var(--amb)}
+  .filechip{display:inline-block;border:1px solid var(--amb);border-radius:4px;padding:2px 7px;
+    font-size:9.5px;color:var(--amb);background:rgba(217,164,65,.09);margin-top:9px}
+  .path{color:#8fc0f5}
+
+  /* case table */
+  table.wide{width:100%;border-collapse:collapse;font-size:13px}
+  table.wide th,table.wide td{padding:9px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+  table.wide th{font-family:var(--mono);font-size:10px;letter-spacing:.08em;text-transform:uppercase;
+    color:var(--text-muted);background:var(--surface-2);font-weight:500}
+  .pill{display:inline-block;font-family:var(--mono);font-size:9.5px;letter-spacing:.06em;
+    text-transform:uppercase;padding:2px 7px;border-radius:4px;white-space:nowrap}
+  .pill.ok{background:rgba(25,158,112,.16);color:#6cd46c;border:1px solid rgba(25,158,112,.4)}
+  .pill.no{background:rgba(250,178,25,.13);color:#f5c95f;border:1px solid rgba(250,178,25,.36)}
+  .pill.unk{background:rgba(139,138,128,.14);color:var(--text-muted);border:1px solid rgba(139,138,128,.35)}
+
+  /* fence */
+  .fence{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .fence > div{border-radius:9px;padding:13px 15px}
+  .fence .in{border:1px solid var(--s3);background:rgba(25,158,112,.05)}
+  .fence .out{border:1px dashed var(--line)}
+  .fence h4{margin:0 0 9px;font-family:var(--mono);font-size:10px;letter-spacing:.1em;
+    text-transform:uppercase;color:var(--text-muted)}
+  .fence .in h4{color:#6cd46c}
+  .fence ul{margin:0;padding-left:17px}
+  .fence li{font-size:13px;color:var(--text-secondary);margin-bottom:6px;line-height:1.45}
+
+  /* grill */
+  .grill{display:flex;flex-direction:column;gap:12px}
+  .ask{background:var(--surface-1);border:1px solid var(--line);border-left:3px solid var(--s1);
+    border-radius:0 9px 9px 0;padding:16px 20px}
+  .ask h3{margin:0 0 8px;font-size:16px;letter-spacing:-.01em}
+  .ask p{margin:0 0 8px;font-size:14px;color:var(--text-secondary)}
+  .ask .rec{font-size:13.5px;color:var(--text-secondary);background:var(--surface-2);
+    border-radius:6px;padding:9px 13px;margin:0}
+  .ask .rec b{color:var(--good)}
+
+  .more{background:var(--surface-3);border:1px solid var(--line);color:var(--text-secondary);
+    border-radius:6px;padding:5px 11px;font-family:var(--mono);font-size:11px;cursor:pointer;
+    margin:0 8px 10px 0}
+  .more:hover{border-color:var(--s1);color:var(--text-primary)}
+  .finding{background:var(--surface-1);border:1px solid var(--line);border-left:3px solid var(--warning);
+    border-radius:0 9px 9px 0;padding:14px 18px;margin-bottom:12px}
+  .finding h3{margin:0 0 6px;font-size:15px}
+  .finding p{margin:0 0 7px;font-size:13.5px;color:var(--text-secondary)}
+  .finding p:last-child{margin:0}
+  @media (max-width:720px){ .fence{grid-template-columns:1fr} .pair{flex-direction:column} }
+</style>
+</head>
+<body>
+
+<header class="top"><div class="wrap">
+  <h1>File drop</h1>
+  <p class="lede">Dragging a file out of the file manager and onto the workbench prompt scores
+  <b>three out of ten</b>. Three of the four legs it needs are already built and carry tests:
+  the compositor hands gpui a list of paths, the bench already un-bends a pointer into a named
+  control, and the composer already types into the agent's own line. What is missing is one
+  listener and a rule about what text a dropped file turns into.</p>
+  <p class="lede">The part worth deciding before anyone writes it is narrower than the feature
+  sounds. gpui accepts a drag only when every URI in it is a local file, and destroys the rest
+  before Terminal Delight is told anything happened &mdash; so an image dragged off a web page,
+  which is the first thing anybody tries, does nothing and can only be made to work by patching
+  the pinned renderer.</p>
+  <p class="meta">terminal-delight &middot; assessed 2026-09-18 &middot; read from source at zed
+  rev abbe85a &middot; nothing built, nothing run in the app</p>
+</div></header>
+
+<div class="wrap">
+
+<h2 class="sec">Verdict</h2>
+<div class="cards">
+  <div class="card rec">
+    <span class="badge">recommended</span>
+    <h3>A &middot; A file into the prompt</h3>
+    <p class="score">3<span>/10</span></p>
+    <p>One <code>on_drop</code> on the pane's root, the existing warp inverse to ask whether the
+    pointer was over the composer, and the existing typing route to put the path in the line.
+    Three files, no new state, no renderer patch, nothing the session host has to be told.</p>
+    <p class="why"><b>Its cost:</b> it accepts local files and nothing else, forever, unless
+    tier C is also built. A person who drags a picture off a web page gets silence.</p>
+  </div>
+  <div class="card">
+    <span class="badge">bigger</span>
+    <h3>B &middot; Terminal Delight's own things</h3>
+    <p class="score">6<span>/10</span></p>
+    <p>Dragging a surface card, a tab or a selected path from the scrollback into the prompt.
+    The codebase already hand-rolls six drags of this shape, so the pattern is settled &mdash;
+    what is not settled is what a card <em>means</em> as text, and that question stays wrong
+    quietly.</p>
+    <p class="why"><b>Better at:</b> the gesture people actually invent once the prompt accepts
+    anything at all &mdash; moving something you are already looking at into the sentence.</p>
+  </div>
+  <div class="card">
+    <span class="badge">not recommended</span>
+    <h3>C &middot; Anything a browser can drag</h3>
+    <p class="score">7<span>/10</span></p>
+    <p>An image off a page, a link, selected text. Needs a second patch to the pinned Zed
+    checkout beside the CRT one, plus a policy for downloading a remote thing to disk before a
+    path can be typed.</p>
+    <p class="why"><b>Better at:</b> the one case a person will assume already works. It fails
+    silently when the patch falls off the next revision bump, which is the failure shape this
+    repo has already paid for once.</p>
+  </div>
+</div>
+
+<h2 class="sec">Read first</h2>
+<ol class="esc-list">
+  <li><span class="esc-n">1</span><div class="esc-b">
+    <h3>Three of the four legs exist</h3>
+    <p>The compositor leg is gpui's and is written. The hit-test leg is ours and is written &mdash;
+    <code>bench_hit_at</code> un-bends a pointer and answers <code>Hit::Composer</code>. The typing
+    leg is ours and is written &mdash; <code>bench_typed</code> mirrors into the composer and writes
+    the bytes down the pseudoterminal. The missing leg is the listener that joins them.</p>
+    <span class="cost"><span class="tag v">measured</span> app/src/pane/bench.rs:55, :1333 &middot; app/src/pane.rs:8014</span>
+  </div></li>
+  <li><span class="esc-n">2</span><div class="esc-b">
+    <h3>Only files arrive</h3>
+    <p>gpui's Wayland client asks a drag for <code>text/uri-list</code>, turns each URI into a
+    local path, and if none of them is a local path it destroys the offer with the comment
+    &ldquo;prevent dropping text from other programs&rdquo;. A web image, a link and a text
+    selection all die there, before any code of ours could see them.</p>
+    <span class="cost"><span class="tag v">measured</span> zed-upstream crates/gpui_linux/src/linux/wayland/client.rs:2282, :2320</span>
+  </div></li>
+  <li><span class="esc-n">3</span><div class="esc-b">
+    <h3>The drop can land mid-sentence</h3>
+    <p>Clicking into the composer already moves the agent's own caret, one arrow key per column,
+    because the drawing and the line editor have to agree. A drop reuses that: the path goes in
+    where the pointer was, not at the end of whatever you were typing.</p>
+    <span class="cost"><span class="tag v">measured</span> <code>bench_click</code> &rarr; <code>caret_move</code>, app/src/pane/bench.rs:1211</span>
+  </div></li>
+  <li><span class="esc-n">4</span><div class="esc-b">
+    <h3>Nothing crosses to the session host</h3>
+    <p>The window does all of it. What reaches the other process is the same bytes a paste
+    already sends down the pseudoterminal, so no field is added to the host protocol and no pane
+    has to die for the feature to exist.</p>
+    <span class="cost"><span class="tag w">inferred</span> from <code>bench_typed</code> &rarr; <code>bench_keystroke</code>, app/src/pane/bench.rs:1544</span>
+  </div></li>
+  <li><span class="esc-n">5</span><div class="esc-b">
+    <h3>Nothing on this box can fake a drag</h3>
+    <p>There is no <code>ydotool</code>, no <code>xdotool</code> and no <code>dragon-drop</code>
+    installed; <code>wtype</code> is keyboard-only, and the app has no gpui test harness to
+    inject a synthetic <code>FileDropEvent</code> into. The last leg of verification is a hand
+    dragging a file out of Nautilus.</p>
+    <span class="cost"><span class="tag v">measured</span> <code>which</code> over five tools &middot; zero <code>gpui::test</code> uses in app/src</span>
+  </div></li>
+</ol>
+
+<h2 class="sec">What a drop has to travel</h2>
+
+<figure>
+  <span class="lbl">01 &middot; The four legs, one frame at a time</span>
+  <p class="legend"><span class="g">&#9679;</span> already built and carrying tests &nbsp;
+    <span class="b">&#9679;</span> what this step adds &nbsp;
+    <span class="m">&#9679;</span> not there yet</p>
+
+  <div class="frame">
+    <span class="step">A &middot; today</span>
+    <div class="bnd"><span class="cor">&#9646; your workstation</span>
+      <div class="lane">
+        <div class="node have"><span class="n">Nautilus</span><span class="s">drag offers text/uri-list</span></div>
+        <div class="node ghost"><span class="n">&nbsp;</span><span class="s">&nbsp;</span></div>
+        <div class="node ghost"><span class="n">&nbsp;</span><span class="s">&nbsp;</span></div>
+      </div>
+      <div class="bnd" style="margin-top:11px"><span class="cor">&#9646; terminal-delight window</span>
+        <div class="lane">
+          <div class="node have"><span class="n">pane &middot; workbench face</span><span class="s">the composer is drawn and typed into</span></div>
+          <div class="node ghost"><span class="n">no drop listener</span><span class="s">the drag ends here</span></div>
+          <div class="node ghost"><span class="n">&nbsp;</span><span class="s">&nbsp;</span></div>
+        </div>
+      </div>
+      <div class="bnd dash" style="margin-top:11px"><span class="cor">&#9251; session host &middot; another process</span>
+        <div class="lane">
+          <div class="node have"><span class="n">pty &middot; the agent</span><span class="s">already receives typed bytes and pastes</span></div>
+        </div>
+      </div>
+    </div>
+    <p class="stepcap"><b>Nothing in the app registers a drop.</b> A file dragged onto a pane
+    today changes nothing, and the search that establishes that is the same one that found the
+    paste handler for external paths sitting three lines away.</p>
+  </div>
+
+  <div class="frame">
+    <span class="step">B &middot; the compositor leg, which is gpui's and is written</span>
+    <div class="bnd"><span class="cor">&#9646; your workstation</span>
+      <div class="lane">
+        <div class="node have"><span class="n">Nautilus</span><span class="s">drag offers text/uri-list</span></div>
+        <div class="node new"><span class="n">wl_data_device</span><span class="s">enter / motion / drop, one pipe read</span></div>
+        <div class="node new"><span class="n">ExternalPaths</span><span class="s">non-file URIs destroyed here</span></div>
+      </div>
+      <div class="bnd" style="margin-top:11px"><span class="cor">&#9646; terminal-delight window</span>
+        <div class="lane">
+          <div class="node have"><span class="n">pane &middot; workbench face</span><span class="s">the composer is drawn and typed into</span></div>
+          <div class="node new"><span class="n">active_drag + synthetic mouse</span><span class="s">move while hovering, up on release</span></div>
+          <div class="node ghost"><span class="n">&nbsp;</span><span class="s">&nbsp;</span></div>
+        </div>
+      </div>
+      <div class="bnd dash" style="margin-top:11px"><span class="cor">&#9251; session host &middot; another process</span>
+        <div class="lane">
+          <div class="node have"><span class="n">pty &middot; the agent</span><span class="s">already receives typed bytes and pastes</span></div>
+        </div>
+      </div>
+    </div>
+    <p class="stepcap">gpui turns the drag into ordinary mouse events with a value attached, so
+    an element sees a mouse-up while <code>active_drag</code> holds the paths. <b>This leg costs
+    nothing and decides the feature's whole scope</b> &mdash; the filter that keeps text drags out
+    is four lines above where the paths are handed over.</p>
+  </div>
+
+  <div class="frame">
+    <span class="step">C &middot; the listener, and the inverse the bench already owns</span>
+    <div class="bnd"><span class="cor">&#9646; your workstation</span>
+      <div class="lane">
+        <div class="node have"><span class="n">Nautilus</span><span class="s">drag offers text/uri-list</span></div>
+        <div class="node have"><span class="n">wl_data_device</span><span class="s">enter / motion / drop, one pipe read</span></div>
+        <div class="node have"><span class="n">ExternalPaths</span><span class="s">non-file URIs destroyed here</span></div>
+      </div>
+      <div class="bnd" style="margin-top:11px"><span class="cor">&#9646; terminal-delight window</span>
+        <div class="lane">
+          <div class="node have"><span class="n">pane &middot; workbench face</span><span class="s">the composer is drawn and typed into</span></div>
+          <div class="node have"><span class="n">active_drag + synthetic mouse</span><span class="s">move while hovering, up on release</span></div>
+          <div class="node new"><span class="n">root div &middot; on_drop</span><span class="s">unwarp &rarr; zones &rarr; Hit::Composer</span></div>
+        </div>
+      </div>
+      <div class="bnd dash" style="margin-top:11px"><span class="cor">&#9251; session host &middot; another process</span>
+        <div class="lane">
+          <div class="node have"><span class="n">pty &middot; the agent</span><span class="s">already receives typed bytes and pastes</span></div>
+        </div>
+      </div>
+    </div>
+    <p class="stepcap">One listener, on the same root div that already carries the pane's mouse
+    handlers, resolved through <code>bench_hit_at</code> &mdash; the function every bench click
+    goes through. <b>The zone it asks about already exists</b>: the composer registers
+    <code>Hit::Composer</code> as it paints.</p>
+  </div>
+
+  <div class="frame">
+    <span class="step">D &middot; what the drop does, and where it lands</span>
+    <div class="bnd"><span class="cor">&#9646; your workstation</span>
+      <div class="lane">
+        <div class="node have"><span class="n">Nautilus</span><span class="s">drag offers text/uri-list</span></div>
+        <div class="node have"><span class="n">wl_data_device</span><span class="s">enter / motion / drop, one pipe read</span></div>
+        <div class="node have"><span class="n">ExternalPaths</span><span class="s">non-file URIs destroyed here</span></div>
+      </div>
+      <div class="bnd" style="margin-top:11px"><span class="cor">&#9646; terminal-delight window</span>
+        <div class="lane">
+          <div class="node have"><span class="n">pane &middot; workbench face</span><span class="s">the composer is drawn and typed into</span></div>
+          <div class="node have"><span class="n">active_drag + synthetic mouse</span><span class="s">move while hovering, up on release</span></div>
+          <div class="node have"><span class="n">root div &middot; on_drop</span><span class="s">unwarp &rarr; zones &rarr; Hit::Composer</span></div>
+        </div>
+        <div class="lane" style="margin-top:9px">
+          <div class="node new"><span class="n">dropped_text(paths)</span><span class="s">a pure function with table tests</span></div>
+          <div class="node new"><span class="n">caret to the pointer</span><span class="s">arrows sent so both carets agree</span></div>
+          <div class="node new"><span class="n">bench_typed</span><span class="s">mirror in the box, bytes to the pty</span></div>
+        </div>
+      </div>
+      <div class="bnd dash" style="margin-top:11px"><span class="cor">&#9251; session host &middot; another process</span>
+        <div class="lane">
+          <div class="node have"><span class="n">pty &middot; the agent</span><span class="s">receives the path as though you typed it</span></div>
+        </div>
+      </div>
+    </div>
+    <p class="stepcap">The only thing crossing the process boundary is a path, as keystrokes, on
+    the route paste already uses. <b>No host protocol change, so nothing has to be restarted</b>
+    &mdash; and the decision worth testing (what text a file turns into) sits in a pure function
+    where a test can reach it.</p>
+  </div>
+
+  <figcaption>Built up in four frames, and the frame does not move. <b>Only the last frame is
+  work</b> &mdash; frames B and C are one listener wide, and the green boxes were all written for
+  something else.</figcaption>
+  <p class="gutter">not run by anyone: whether the pane's hitbox already reports hovered on the
+  very first frame of a drag, before anything repaints. Zed leans on the same path, so it
+  probably self-corrects on the next motion event.</p>
+</figure>
+
+<h2 class="sec">The gesture</h2>
+
+<figure>
+  <span class="lbl">02 &middot; Dropping a screenshot mid-sentence</span>
+  <p class="legend"><span class="g">&#9679;</span> drawn from the code as it is &nbsp;
+    <span class="a">&#9679;</span> mine, proposed, not built</p>
+  <div class="scroller"><div class="pair">
+    <div>
+      <span class="sidelbl a">before</span>
+      <div class="pane">
+        <div class="hdr"><span>claude &middot; opus</span><span>workbench</span></div>
+        <div class="cmp">
+          <div class="txt">have a look at <span class="caret"></span> and tell me if the axis is
+          wrong</div>
+          <div class="hint">typing goes to the agent</div>
+        </div>
+      </div>
+    </div>
+    <div>
+      <span class="sidelbl b">while the file is over it</span>
+      <div class="pane">
+        <div class="hdr"><span>claude &middot; opus</span><span>workbench</span></div>
+        <div class="cmp hot">
+          <div class="txt">have a look at <span class="caret"></span> and tell me if the axis is
+          wrong</div>
+          <div class="filechip">&#9646; Screenshot 2026-09-18.png</div>
+          <div class="hint amb">drop to insert &middot; 1 file</div>
+        </div>
+      </div>
+    </div>
+    <div>
+      <span class="sidelbl c">after</span>
+      <div class="pane">
+        <div class="hdr"><span>claude &middot; opus</span><span>workbench</span></div>
+        <div class="cmp">
+          <div class="txt">have a look at <span class="path">'/home/parker/Pictures/Screenshot
+          2026-09-18.png'</span><span class="caret"></span> and tell me if the axis is wrong</div>
+          <div class="hint">typing goes to the agent</div>
+        </div>
+      </div>
+    </div>
+  </div></div>
+  <figcaption>The composer at 340&nbsp;px, roughly a narrow tiled pane. <b>The path lands at the
+  caret and the tail of the sentence survives</b>, because placing a caret already sends the
+  agent's line editor the arrow keys to match. The amber middle state is a proposal &mdash;
+  nothing draws a drop target today, and a drop target that says nothing while you hover reads
+  as a broken one.</figcaption>
+  <p class="gutter">the quotes around the path are a decision, not a given: paste joins several
+  paths with spaces and quotes nothing, so a filename with a space is already ambiguous there</p>
+</figure>
+
+<h2 class="sec">What actually arrives</h2>
+
+<figure>
+  <span class="lbl">03 &middot; Every drag someone will try</span>
+  <div class="scroller">
+  <table class="wide">
+    <thead><tr><th>What you drag</th><th>From</th><th>Today</th><th>With tier A</th><th></th></tr></thead>
+    <tbody>
+      <tr>
+        <td><b>A file, or several</b></td><td>Nautilus</td><td>nothing</td>
+        <td>each path typed into the line, space separated</td><td><span class="pill ok">arrives</span></td>
+      </tr>
+      <tr>
+        <td><b>A folder</b></td><td>Nautilus</td><td>nothing</td>
+        <td>the path typed &mdash; a directory is a path like any other</td><td><span class="pill ok">arrives</span></td>
+      </tr>
+      <tr>
+        <td><b>A finished download</b></td><td>Chrome's download shelf</td><td>nothing</td>
+        <td>typed; the shelf offers a <code>file://</code> URI</td><td><span class="pill ok">arrives</span></td>
+      </tr>
+      <tr>
+        <td><b>An image on a web page</b></td><td>Chrome</td>
+        <td>nothing</td>
+        <td>still nothing &mdash; the URI is <code>https://</code>, so gpui drops the offer before
+        the app is told</td><td><span class="pill no">tier C</span></td>
+      </tr>
+      <tr>
+        <td><b>Selected text</b></td><td>an editor, a browser, another terminal</td><td>nothing</td>
+        <td>still nothing &mdash; the offer carries no file list and is destroyed</td>
+        <td><span class="pill no">tier C</span></td>
+      </tr>
+      <tr>
+        <td><b>A surface card, a tab, a pane</b></td><td>Terminal Delight itself</td>
+        <td>tabs and panes already drag to reorder; nothing drags into the prompt</td>
+        <td>unchanged &mdash; there is no drag source on a bench card to grab</td>
+        <td><span class="pill no">tier B</span></td>
+      </tr>
+      <tr>
+        <td><b>A file in the Trash, or on an unmounted remote</b></td><td>Nautilus</td><td>nothing</td>
+        <td>not established &mdash; the URI is not <code>file://</code>, so it most likely lands in
+        the same bin as the web image, but nobody has dragged one</td>
+        <td><span class="pill unk">unknown</span></td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+  <figcaption>Day one accepts a <b>file</b> and nothing else. The row that will produce the
+  complaint is the web image: it is the most natural thing to try, it is indistinguishable from
+  the working cases while you are dragging, and the only way to serve it is to patch the pinned
+  renderer.</figcaption>
+  <p class="gutter">a pane covered by an open menu, the launcher or the palette is not the
+  hovered hitbox, so a drop there is swallowed &mdash; inferred from gpui's drop dispatch, not
+  observed</p>
+</figure>
+
+<h2 class="sec">Where the listener goes</h2>
+
+<figure>
+  <span class="lbl">04 &middot; Why the composer cannot carry it</span>
+  <div class="scroller">
+  <svg viewBox="0 0 760 268" role="img" aria-label="Three panels: the composer as painted through the barrel warp, the flat rectangle gpui would hit-test, the two overlaid showing a drop near the bottom edge missing the flat box; below, the resolution chain from pointer to Hit::Composer.">
+    <defs>
+      <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+        <path d="M0,0 L10,5 L0,10 z" fill="#8b8a80"/>
+      </marker>
+    </defs>
+    <g font-family="ui-monospace, monospace" font-size="10.5" fill="#8b8a80">
+
+      <text x="10" y="14">PAINTED &#183; bent by the tube</text>
+      <rect x="10" y="22" width="228" height="128" rx="6" fill="#111110" stroke="#3a3a36"/>
+      <path d="M32,92 C88,80 160,80 216,92 L216,128 C160,140 88,140 32,128 Z"
+            fill="rgba(25,158,112,.10)" stroke="#199e70"/>
+      <text x="44" y="114" fill="#199e70">the composer, as seen</text>
+
+      <text x="266" y="14">MEASURED &#183; what a div hit-tests</text>
+      <rect x="266" y="22" width="228" height="128" rx="6" fill="#111110" stroke="#3a3a36"/>
+      <rect x="288" y="86" width="184" height="46" fill="rgba(57,135,229,.10)" stroke="#3987e5"
+            stroke-dasharray="4 3"/>
+      <text x="300" y="114" fill="#3987e5">its flat layout box</text>
+
+      <text x="522" y="14">OVERLAID &#183; where a drop lands</text>
+      <rect x="522" y="22" width="228" height="128" rx="6" fill="#111110" stroke="#3a3a36"/>
+      <path d="M544,92 C600,80 672,80 728,92 L728,128 C672,140 600,140 544,128 Z"
+            fill="none" stroke="#199e70"/>
+      <rect x="544" y="86" width="184" height="46" fill="none" stroke="#3987e5" stroke-dasharray="4 3"/>
+      <circle cx="636" cy="136" r="4" fill="#d03b3b"/>
+      <text x="566" y="160" fill="#d03b3b">a drop on the visible box, outside the flat one</text>
+
+      <line x1="10" y1="186" x2="750" y2="186" stroke="#3a3a36" stroke-dasharray="3 3"/>
+      <text x="10" y="206" fill="#c3c2b7">WHAT THE PANE ALREADY DOES WITH A CLICK</text>
+
+      <rect x="10" y="216" width="112" height="34" rx="5" fill="#1a1a19" stroke="#3a3a36"/>
+      <text x="22" y="237" fill="#c3c2b7">pointer</text>
+      <line x1="126" y1="233" x2="152" y2="233" stroke="#8b8a80" marker-end="url(#ah)"/>
+
+      <rect x="156" y="216" width="150" height="34" rx="5" fill="#1a1a19" stroke="#3a3a36"/>
+      <text x="168" y="237" fill="#c3c2b7">unwarp(k1, k2)</text>
+      <line x1="310" y1="233" x2="336" y2="233" stroke="#8b8a80" marker-end="url(#ah)"/>
+
+      <rect x="340" y="216" width="150" height="34" rx="5" fill="#1a1a19" stroke="#3a3a36"/>
+      <text x="352" y="237" fill="#c3c2b7">zones painted flat</text>
+      <line x1="494" y1="233" x2="520" y2="233" stroke="#8b8a80" marker-end="url(#ah)"/>
+
+      <rect x="524" y="216" width="226" height="34" rx="5" fill="#1a1a19" stroke="#199e70"/>
+      <text x="536" y="237" fill="#6cd46c">Hit::Composer, and the flat point</text>
+    </g>
+  </svg>
+  </div>
+  <figcaption>The bench is bent by the same barrel pass as the grid, and gpui hit-tests the flat
+  tree &mdash; so a <code>on_drop</code> hung on the composer element would catch drops beside
+  where the composer appears. <b>The pane's rule is that no bench element carries a gpui click
+  handler</b>; the drop obeys it by landing on the root and asking the same inverse a click
+  asks.</figcaption>
+  <p class="gutter">the curvature in the left panel is schematic &mdash; it is drawn to show that
+  the two shapes differ, not to show by how much</p>
+</figure>
+
+<p>
+  <button class="more" data-dlg="d-path">the route, line by line</button>
+  <button class="more" data-dlg="d-proof">how it would be proved</button>
+</p>
+
+<h2 class="sec">How much to build</h2>
+
+<figure>
+  <span class="lbl">05 &middot; Four slices, and where to stop</span>
+  <div class="scroller">
+  <svg viewBox="0 0 760 210" role="img" aria-label="A timeline of four slices: the drop types a path; the composer says it will take it; the caret and quoting; the terminal face takes drops too. The recommended stopping point is after the third.">
+    <g font-family="ui-monospace, monospace" font-size="10.5">
+      <line x1="40" y1="52" x2="720" y2="52" stroke="#3a3a36"/>
+      <circle cx="70"  cy="52" r="7" fill="#199e70"/>
+      <circle cx="260" cy="52" r="7" fill="#199e70"/>
+      <circle cx="450" cy="52" r="7" fill="#199e70"/>
+      <circle cx="640" cy="52" r="7" fill="#111110" stroke="#c98500" stroke-width="1.5"/>
+
+      <text x="46"  y="34" fill="#c3c2b7">slice 1</text>
+      <text x="236" y="34" fill="#c3c2b7">slice 2</text>
+      <text x="426" y="34" fill="#c3c2b7">slice 3</text>
+      <text x="616" y="34" fill="#c98500">slice 4</text>
+
+      <foreignObject x="20" y="68" width="160" height="126">
+        <div xmlns="http://www.w3.org/1999/xhtml" style="font:11px ui-monospace,monospace;color:#c3c2b7;line-height:1.45">
+          <b style="color:#fff">a drop types a path</b><br/>
+          one listener, one pure function, one guard test<br/>
+          <span style="color:#8b8a80">the feature exists here</span>
+        </div>
+      </foreignObject>
+      <foreignObject x="210" y="68" width="160" height="126">
+        <div xmlns="http://www.w3.org/1999/xhtml" style="font:11px ui-monospace,monospace;color:#c3c2b7;line-height:1.45">
+          <b style="color:#fff">the box says it will take it</b><br/>
+          highlight while a drag is over the composer<br/>
+          <span style="color:#8b8a80">without it the gesture feels broken</span>
+        </div>
+      </foreignObject>
+      <foreignObject x="400" y="68" width="160" height="126">
+        <div xmlns="http://www.w3.org/1999/xhtml" style="font:11px ui-monospace,monospace;color:#c3c2b7;line-height:1.45">
+          <b style="color:#fff">caret and quoting</b><br/>
+          land at the pointer; quote a path with a space<br/>
+          <span style="color:#8b8a80">stop here</span>
+        </div>
+      </foreignObject>
+      <foreignObject x="590" y="68" width="160" height="126">
+        <div xmlns="http://www.w3.org/1999/xhtml" style="font:11px ui-monospace,monospace;color:#c3c2b7;line-height:1.45">
+          <b style="color:#c98500">the terminal face too</b><br/>
+          a drop on a shell pane types the path, as every terminal does<br/>
+          <span style="color:#8b8a80">one branch, your call</span>
+        </div>
+      </foreignObject>
+
+      <line x1="548" y1="44" x2="548" y2="196" stroke="#199e70" stroke-dasharray="4 4"/>
+      <text x="554" y="192" fill="#6cd46c">done enough</text>
+    </g>
+  </svg>
+  </div>
+  <figcaption>Slices one to three are the same sitting &mdash; they touch three files and share a
+  test. <b>Slice two is the one that is easy to skip and shouldn't be</b>: a target that gives no
+  sign while you hover over it teaches people the feature does not work.</figcaption>
+  <p class="gutter">sizes here are mine, from the nearest comparable commits in this repo rather
+  than from writing it &mdash; the paste-chords change was 37 lines across two files</p>
+</figure>
+
+<figure>
+  <span class="lbl">06 &middot; The fence around tier A</span>
+  <div class="fence">
+    <div class="in">
+      <h4>inside</h4>
+      <ul>
+        <li>One or many local files, from any app that offers a file list</li>
+        <li>Directories, which are just paths</li>
+        <li>Agent panes and shell panes alike &mdash; both have a line to type into</li>
+        <li>The path landing at the caret, mid-sentence</li>
+        <li>A visible drop target while the file is over the composer</li>
+        <li>A path with a space surviving the trip</li>
+      </ul>
+    </div>
+    <div class="out">
+      <h4>outside</h4>
+      <ul>
+        <li>Images and links dragged from a browser &mdash; needs the renderer patched</li>
+        <li>Text selections dragged from anywhere</li>
+        <li>Dragging Terminal Delight's own cards, tabs or panes into a prompt</li>
+        <li>Dragging anything <em>out</em> of Terminal Delight</li>
+        <li>Uploading, copying or moving the dropped file &mdash; the path is typed, the file stays put</li>
+        <li>Any change to the session host or its protocol</li>
+      </ul>
+    </div>
+  </div>
+  <figcaption>The refusals carry more than the inclusions here. <b>Nothing is copied, moved or
+  uploaded</b> &mdash; a drop types the path where the file already lives, which is also why an
+  image from a web page has nothing to type.</figcaption>
+</figure>
+
+<h2 class="sec">Found on the way</h2>
+
+<div class="finding">
+  <h3>Paste already loses a filename with a space</h3>
+  <p>The clipboard path joins external paths with a single space and quotes nothing
+  (<code>app/src/pane/bench.rs:1315</code>), so pasting two files, or one called
+  <code>Screenshot 2026-09-18.png</code>, produces a line nobody downstream can split back. A
+  drop would inherit that unless the quoting decision is made once and shared.</p>
+  <p><span class="tag w">inferred</span> from the source; not reproduced by pasting. <b>Invalidation:</b>
+  if copying a space-containing file in Nautilus and pressing paste on a bench produces a quoted
+  path, the clipboard entry is already quoted upstream and this is not real. Not filed as an
+  issue &mdash; say the word and it becomes one.</p>
+</div>
+
+<h2 class="sec">Yours to decide</h2>
+
+<div class="grill">
+  <div class="ask">
+    <h3>1 &middot; Which drag did you have in mind?</h3>
+    <p>Everything above assesses a file coming in from outside. If what you pictured was
+    dragging one of the bench's own cards, or a tab, into the prompt, that is a different build
+    with a different number &mdash; six rather than three, and its hard part is deciding what a
+    card means once it is text.</p>
+    <p class="rec"><b>Recommendation:</b> the file, now. Tier B earns its cost only once you can
+    name the thing you want to drag and what you expect to appear in the line.</p>
+  </div>
+  <div class="ask">
+    <h3>2 &middot; Should a shell pane take drops too?</h3>
+    <p>The ask was the workbench prompt. The same listener can serve the terminal face for one
+    extra branch, and typing a dropped path is what every other terminal on this machine does.</p>
+    <p class="rec"><b>Recommendation:</b> yes. It is a branch, not a feature, and leaving it out
+    makes the behaviour depend on which face a pane happens to be showing.</p>
+  </div>
+  <div class="ask">
+    <h3>3 &middot; Quote the path, or type it bare?</h3>
+    <p>Bare matches what paste does today and reads cleanly for an agent. Quoted survives a space
+    and can be pasted into a shell. The two can disagree only if the decision is left in two
+    places.</p>
+    <p class="rec"><b>Recommendation:</b> single-quote when the path holds whitespace or a shell
+    metacharacter, bare otherwise, in one function that paste also calls.</p>
+  </div>
+</div>
+
+<p style="margin-top:22px">
+  <button class="more" data-dlg="d-drawn">what the pictures are drawn from</button>
+  <button class="more" data-dlg="d-limits">method and limits</button>
+</p>
+
+<footer>
+  <p>terminal-delight &middot; reports/2026-09-18-file-drop-into-the-composer.html</p>
+  <p>Read from source on 2026-09-18. gpui at zed rev abbe85a, the revision pinned in
+  app/Cargo.toml. Nothing here was built or run in the app.</p>
+</footer>
+
+</div>
+
+<dialog id="d-path">
+  <div class="dlg-head">
+    <div><h3>The route, line by line</h3>
+      <p class="repo">app/src/pane.rs &middot; app/src/pane/bench.rs &middot; app/src/workbench.rs</p></div>
+    <button class="x" data-close>&times;</button>
+  </div>
+  <div class="dlg-body">
+    <h4>What already exists</h4>
+    <table>
+      <tbody>
+        <tr><td><code>pane.rs:8014</code></td><td>the pane's root div, already carrying key,
+          wheel, mouse-down (both buttons), mouse-move and mouse-up listeners. The drop listener
+          goes here.</td></tr>
+        <tr><td><code>pane/bench.rs:55</code></td><td><code>bench_hit_at</code> &mdash; un-bends a
+          pointer with the pane's own curvature and answers the control under it plus the flat
+          point.</td></tr>
+        <tr><td><code>pane/bench.rs:1983</code></td><td>the composer element registers
+          <code>Hit::Composer</code> over its own painted rectangle as it draws.</td></tr>
+        <tr><td><code>pane/bench.rs:1211</code></td><td><code>bench_click</code> &mdash; arms the
+          line if it is not armed, otherwise moves both carets: the drawn one and the agent's,
+          the latter by sending arrow keys.</td></tr>
+        <tr><td><code>pane/bench.rs:1333</code></td><td><code>bench_typed</code> &mdash; inserts
+          into the mirror and writes the bytes to the pseudoterminal. Already the destination of
+          every paste.</td></tr>
+        <tr><td><code>pane.rs:5835</code></td><td>the mouse-move handler starts a selection only
+          when <code>self.selecting</code> is set by a real mouse-down, so the synthetic moves a
+          drag produces cannot smear a selection across the grid.</td></tr>
+        <tr><td><code>app.rs:2290</code> (gpui)</td><td><code>has_active_drag()</code> is public,
+          so the hover highlight in slice two needs no new plumbing &mdash; the existing
+          <code>bench_hover</code> can ask.</td></tr>
+      </tbody>
+    </table>
+
+    <h4>What gets added</h4>
+    <pre><code>// app/src/pane.rs — beside the existing mouse listeners on the root div
+.on_drop::&lt;gpui::ExternalPaths&gt;(cx.listener(Self::bench_drop))</code></pre>
+    <pre><code>// app/src/pane/bench.rs — beside bench_paste, which it deliberately resembles
+pub(super) fn bench_drop(
+    &amp;mut self,
+    paths: &amp;gpui::ExternalPaths,
+    window: &amp;mut Window,
+    cx: &amp;mut Context&lt;Self&gt;,
+) {
+    if self.bench.face() != crate::workbench::Face::Workbench {
+        return;                      // slice 4 replaces this with a terminal-face branch
+    }
+    let Some((hit, flat)) = self.bench_hit_at(window.mouse_position()) else {
+        return;
+    };
+    if !matches!(hit, Hit::Composer | Hit::Arm) {
+        return;                      // a drop on a card is not a drop on the line
+    }
+    // bench_click ARMS and returns when the line is cold, so arm first and
+    // then place the caret — otherwise the first drop lands at the end.
+    if self.wb_compose.is_none() {
+        self.wb_compose = Some(crate::workbench::Line::new());
+    }
+    self.bench_click(flat, cx);
+    window.focus(&amp;self.focus_handle, cx);
+    self.bench_typed(crate::workbench::dropped_text(paths.paths()), cx);
+}</code></pre>
+    <pre><code>// app/src/workbench.rs — the decision, where a table test can reach it
+pub fn dropped_text(paths: &amp;[std::path::PathBuf]) -&gt; String</code></pre>
+    <p>Three files. The listener is one line, the handler is the block above, the pure function
+    and its tests are the rest. Slice two adds a boolean through
+    <code>benchdraw::composer</code> and one branch in <code>bench_hover</code>.</p>
+
+    <h4>What it deliberately does not touch</h4>
+    <p>No host protocol field, no new message, no gpui patch, no change to the zone system, and
+    no gpui click handler on a bench element &mdash; the rule the bench keeps because the picture
+    is bent and the layout tree is not.</p>
+  </div>
+</dialog>
+
+<dialog id="d-proof">
+  <div class="dlg-head">
+    <div><h3>How it would be proved</h3>
+      <p class="repo">and what cannot be proved on this machine</p></div>
+    <button class="x" data-close>&times;</button>
+  </div>
+  <div class="dlg-body">
+    <h4>The three legs that can be tested</h4>
+    <p><b>The decision.</b> <code>dropped_text</code> is a pure function in a file that already
+    holds 98 tests, so quoting, several files, an empty list and a path with a newline in it are
+    table rows. This is the part that can actually be wrong in a way nobody notices.</p>
+    <p><b>The registration.</b> A source-grep guard in the pane's own tests, in the shape the
+    pane already uses for its mouse buttons: the root div must register a drop listener, because
+    a handler nothing dispatches to is the failure this repo has shipped before. Strip comments
+    before grepping and then break the line on purpose and watch the test fail &mdash; a grep gate
+    can otherwise be satisfied by the comment explaining the code it is checking for.</p>
+    <p><b>The route.</b> The caret and the typed bytes are already covered by the paste tests
+    that exercise <code>bench_typed</code>.</p>
+
+    <h4>The leg that cannot</h4>
+    <p>No <code>ydotool</code>, no <code>xdotool</code>, no <code>dragon-drop</code> on this box,
+    and <code>wtype</code> types keys and cannot hold a drag. The app has no gpui test harness
+    &mdash; zero uses of <code>gpui::test</code> or <code>TestAppContext</code> in app/src &mdash;
+    so a synthetic <code>FileDropEvent</code> has nowhere to be injected without building one.
+    Verification of the gesture itself is a hand dragging a file out of Nautilus onto a pane.</p>
+
+    <h4>Invalidation, before anyone writes a line</h4>
+    <p>The whole assessment rests on the compositor leg working in this window. Put a temporary
+    print in the drop listener, drag one file from Nautilus onto a workbench pane, and look:</p>
+    <ul>
+      <li>Path printed &rarr; the three-out-of-ten holds and the rest is our code.</li>
+      <li>Nothing printed at all &rarr; the drag never became a <code>FileDropEvent</code> here,
+      the work starts at the compositor leg instead, and the number is wrong by a lot.</li>
+      <li>Printed but at the wrong pane or the wrong zone &rarr; the hitbox-hover question in the
+      first figure's gutter line is real and the listener needs the position from the last drag
+      motion rather than from the window.</li>
+    </ul>
+  </div>
+</dialog>
+
+<dialog id="d-drawn">
+  <div class="dlg-head">
+    <div><h3>What the pictures are drawn from</h3>
+      <p class="repo">code, proposal, or estimate &mdash; per figure</p></div>
+    <button class="x" data-close>&times;</button>
+  </div>
+  <div class="dlg-body">
+    <h4>Drawn from the code</h4>
+    <p><b>Figure 1</b>, every green box: <code>bench_hit_at</code>, the composer's zone
+    registration, <code>bench_typed</code>, <code>bench_keystroke</code>, and gpui's Wayland data
+    device handler. The blue boxes in frames B and C are also code &mdash; gpui's, not ours.</p>
+    <p><b>Figure 3</b>, the first three rows and the two tier-C rows: read from the URI filter in
+    gpui's drag handler. The internal row is read from the absence of any drag source on a bench
+    card, and from the tab and pane drags that do exist.</p>
+    <p><b>Figure 4</b>, the resolution chain: the real one, from the pane's mouse-down handler.
+    The curvature is schematic.</p>
+
+    <h4>Mine, and unbuilt</h4>
+    <p>The middle panel of <b>figure 2</b> &mdash; the amber outline, the file chip and the
+    &ldquo;drop to insert&rdquo; line. Nothing draws a drop target today; that is slice two, and
+    the wording is a first guess.</p>
+    <p><b>Figure 5</b> entirely: the slice split, the order and the stopping point.
+    <b>Figure 6</b>'s fence, which is a scope proposal rather than a finding.</p>
+
+    <h4>The estimated numbers, and their method</h4>
+    <p>&ldquo;About forty lines&rdquo; and the slice sizes come from the nearest comparable
+    commits in this repository, not from writing the change: the commit that unified the three
+    paste chords behind one tested function was 37 insertions across two files, and the one that
+    added click-to-caret plus the agent's image chip was 285 across one. Tier A sits between
+    them and nearer the first.</p>
+    <p>The three difficulty scores are intuitions submitted before the work, in the house
+    convention: what moves them is how long the work can be wrong before anyone notices and what
+    unwinding it costs, never file count or line count.</p>
+  </div>
+</dialog>
+
+<dialog id="d-limits">
+  <div class="dlg-head">
+    <div><h3>Method and limits</h3>
+      <p class="repo">what this assessment structurally cannot see</p></div>
+    <button class="x" data-close>&times;</button>
+  </div>
+  <div class="dlg-body">
+    <h4>Method</h4>
+    <p>Source reading, in two trees: this repository at the tip of
+    <code>chrome/phosphor-legibility</code>, and the pinned Zed checkout at rev
+    <code>abbe85a</code> that <code>app/Cargo.toml</code> names. Presence and absence claims come
+    from grep over <code>app/src</code>; behavioural claims are inferences from reading the two
+    dispatch paths end to end.</p>
+
+    <h4>What it misses</h4>
+    <p>Nothing was compiled and nothing was run, so every timing, every feel and the build cost
+    of the change are unestablished. The incremental build cost of touching
+    <code>pane.rs</code> in particular is not measured here, and that file is 477&nbsp;KB.</p>
+    <p>X11 has the same event path &mdash; gpui handles the X drag-and-drop atoms and emits the
+    same events &mdash; but only the Wayland side was read carefully, and this machine is a
+    Wayland session.</p>
+    <p>The tree is shared. Another session has <code>app/src/skin.rs</code> modified in the
+    working directory right now, and the branch this was read from is not main, so a line number
+    here can move under someone else's commit.</p>
+    <p>Whether Nautilus is the app the drag will actually come from is an assumption &mdash; it is
+    the only graphical file manager installed, but a drag can start in any application, and the
+    only thing that matters is whether it offers a file list.</p>
+
+    <h4>Not established</h4>
+    <p>That the pane's hitbox reports as hovered on the first frame of a drag. That a drag over a
+    pane with an open menu or the launcher behaves as described. That Nautilus sends anything at
+    all for a trashed or remote file. Each would take one drag to settle.</p>
+  </div>
+</dialog>
+
+<div class="notebar" id="notebar">
+  <span class="cnt"><b id="note-count">0</b> notes</span>
+  <button id="btn-export" class="primary" data-note-action="export"
+          title="Anchored note map for pasting into a prompt">&#x1F4CB; copy map</button>
+  <button id="btn-embed" data-note-action="embed"
+          title="Download this file with your notes baked in">&#x1F4BE; save into file</button>
+  <button id="btn-clear" data-note-action="clear" title="Delete every note">&#x2715;</button>
+</div>
+
+<dialog id="d-note">
+  <div class="dlg-head">
+    <div>
+      <h3 id="note-title">Note</h3>
+      <p class="repo" id="note-anchor">&nbsp;</p>
+    </div>
+    <button class="x" data-close>&times;</button>
+  </div>
+  <div class="dlg-body">
+    <ul id="note-list"></ul>
+    <p id="note-none">No notes on this yet.</p>
+    <textarea id="note-text"
+      placeholder="Your note. Saved against this element and readable by an agent once you save into the file."></textarea>
+    <div class="note-actions">
+      <button class="save" data-note-action="add">Add note</button>
+      <button data-close>Close</button>
+      <span class="hintk">Ctrl+Enter to add</span>
+    </div>
+  </div>
+</dialog>
+
+<dialog id="d-export">
+  <div class="dlg-head">
+    <div>
+      <h3>Note map</h3>
+      <p class="repo">Anchored to element ids in this file &middot; paste straight into a prompt</p>
+    </div>
+    <button class="x" data-close>&times;</button>
+  </div>
+  <div class="dlg-body">
+    <p style="margin-bottom:12px">
+      Each line is anchored to an element id, so an agent can locate the passage without you
+      pasting the file. Prompt shape: <em>"read my notes in <code>&lt;filename&gt;</code> and act
+      on them."</em>
+    </p>
+    <textarea id="export-out" readonly></textarea>
+    <p class="tokest" id="export-est"></p>
+    <div class="note-actions">
+      <button class="save" data-note-action="copy">Copy to clipboard</button>
+      <button data-close>Close</button>
+    </div>
+  </div>
+</dialog>
+
+<!-- Notes are baked in here by "save into file". Leave it empty and leave it in. -->
+<script type="application/json" id="report-notes">{}</script>
+
+<script>
+  window.NOTES_FILE = '2026-09-18-file-drop-into-the-composer.html';
+</script>
+<script>/* decision-brief — reader notes.
+ *
+ * Drop-in. No build step, no dependencies. Paste this file's contents inline inside a
+ * script element, after the document body — a decision brief must survive being emailed
+ * as one file, so never load it with a src attribute.
+ *
+ * NOTHING IN THIS FILE MAY CONTAIN THE LITERAL CLOSING SCRIPT TAG, not even inside a
+ * comment or a string: an HTML parser ends the script element at the first one it sees,
+ * and everything after it silently becomes page content. Write it broken up, e.g.
+ * "<\/script>", if you ever need to emit one.
+ *
+ * Three outputs, in the order they matter:
+ *   1. copy map    — anchored note map, ~1% of the tokens of the whole document
+ *   2. save into   — bakes notes into a downloadable copy so an agent can READ them
+ *   3. localStorage — live persistence between reloads
+ *
+ * Why the map exists: pasting a whole annotated report into a prompt costs thousands of
+ * tokens; pasting bare notes loses which passage each one is about. The map is the third
+ * option — [element-id] + note, so the agent greps the id and finds the passage itself.
+ *
+ * Configure before this script runs (all optional):
+ *   window.NOTES_FILE    — filename used for the storage key and the download. Default: location basename.
+ *   window.NOTES_TARGETS — [[selector, prefix], ...] overriding what gets an affordance.
+ */
+(function () {
+  'use strict';
+
+  var FILE = window.NOTES_FILE ||
+    (location.pathname.split('/').pop() || 'decision-brief.html');
+  var KEY = 'notes:' + FILE;
+
+  /* Default targets. A prefix keeps exported anchors readable and grouped.
+     Override wholesale with window.NOTES_TARGETS if a brief's shape differs.
+
+     THE GRILL COMES FIRST, AND IT IS NOT OPTIONAL. Until 2026-09-02 this list
+     covered five of the seven components layout.md tells you to build and
+     omitted the grill — so the one section whose entire purpose is a decision
+     the reader has to make was the one section the reader could not comment on.
+     Two briefs shipped that way, each having invented its own class name
+     (`grill-q`, then `q`) because nothing here named one. Both spellings are
+     matched below; `.ask` is the name to use going forward. If you add a
+     component, add it here in the same commit.
+
+     FIGURES ARE SECOND, for the same reason. The 2026-09-15 attention-spine
+     brief carried eleven pictures and had to override NOTES_TARGETS wholesale
+     to make any of them annotatable, because `figure` was not here — a fork of
+     this list living in one report, where nothing else would inherit it. The
+     pictures are the part a reader argues with, so they are in the default list
+     now. `titleOf()` already reads `.lbl`, so a figure labelled `03 · What
+     opening costs` anchors as `fig-03-what-opening-costs`. */
+  var TARGETS = window.NOTES_TARGETS || [
+    ['.grill .q, .grill-q, .ask', 'ask'],
+    ['figure', 'fig'],
+    ['.card', 'verdict'],
+    ['.esc-list li', 'readfirst'],
+    ['.finding', 'finding'],
+    ['.tile', 'stat'],
+    ['table.wide tr', 'row'],
+    ['.bar-row', 'chart'],
+    ['.callout', 'callout'],
+    ['dialog .dlg-body > h4', 'sub']
+  ];
+
+  /* Notes baked into the file win on first load — a fresh browser should see what the
+     author saved. After that localStorage is the live copy. */
+  var baked = {};
+  try {
+    var island = document.getElementById('report-notes');
+    if (island) baked = JSON.parse(island.textContent || '{}');
+  } catch (e) { /* a malformed island must not break the page */ }
+
+  var N;
+  try { N = JSON.parse(localStorage.getItem(KEY) || 'null') || baked; }
+  catch (e) { N = baked; }
+
+  var active = null, activeTitle = '';
+
+  function save() {
+    try { localStorage.setItem(KEY, JSON.stringify(N)); } catch (e) {}
+  }
+  function esc(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+  function slug(s) {
+    return String(s || 'x').toLowerCase().replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '').slice(0, 44) || 'x';
+  }
+  function titleOf(el) {
+    var h = el.querySelector('h2,h3,h4,.bar-lab,.k,.lbl,td:first-child,th:first-child');
+    var t = ((h ? h.textContent : el.textContent) || 'item').replace(/\s+/g, ' ').trim();
+    return t.length > 72 ? t.slice(0, 69) + '…' : t;
+  }
+
+  /* ---- give every target a stable anchor id and a note affordance ---- */
+  function tag() {
+    var used = {};
+    TARGETS.forEach(function (pair) {
+      var sel = pair[0], pre = pair[1];
+      Array.prototype.forEach.call(document.querySelectorAll(sel), function (el, i) {
+        if (el.classList.contains('notable')) return;
+        if (el.tagName === 'TR' && el.querySelector('th')) return;   // header rows
+        if (el.closest('#d-note, #d-export, .notebar')) return;
+
+        /* Numbered lists anchor by position; everything else by a SHORT title slug.
+           Long slugs make the exported map unreadable, which defeats the map. */
+        var id;
+        var num = el.querySelector('.esc-n');
+        if (num) id = pre + '-' + num.textContent.trim();
+        else id = pre + '-' + slug(titleOf(el)).split('-').slice(0, 4).join('-');
+
+        var base = id, n = 2;
+        while (used[id]) id = base + '-' + (n++);
+        used[id] = 1;
+
+        el.classList.add('notable');
+        el.dataset.nid = id;
+        el.dataset.ntitle = titleOf(el);
+        if (!el.id) el.id = id;                      // a real anchor in the file
+
+        var b = document.createElement('button');
+        b.className = 'note-btn';
+        b.type = 'button';
+        b.title = 'Add a note';
+        b.innerHTML = '&#x1F4AC;';
+        b.addEventListener('click', function (ev) {
+          ev.preventDefault(); ev.stopPropagation(); open(el);
+        });
+        el.appendChild(b);
+      });
+    });
+  }
+
+  function badges() {
+    var total = 0;
+    Array.prototype.forEach.call(document.querySelectorAll('.notable'), function (el) {
+      var n = (N[el.dataset.nid] || []).length;
+      total += n;
+      el.classList.toggle('has-note', n > 0);
+      var b = el.querySelector(':scope > .note-btn');
+      if (b) b.innerHTML = n ? String(n) : '&#x1F4AC;';
+    });
+    var c = document.getElementById('note-count');
+    if (c) c.textContent = total;
+    ['btn-export', 'btn-embed', 'btn-clear'].forEach(function (id) {
+      var b = document.getElementById(id);
+      if (b) b.disabled = total === 0;
+    });
+  }
+
+  function render() {
+    var list = N[active] || [];
+    var ul = document.getElementById('note-list');
+    document.getElementById('note-none').style.display = list.length ? 'none' : 'block';
+    ul.innerHTML = list.map(function (n, i) {
+      return '<li><div class="nts"><span>' + esc(n.ts) + '</span>' +
+        '<button class="ndel" data-i="' + i + '">delete</button></div>' + esc(n.text) + '</li>';
+    }).join('');
+    Array.prototype.forEach.call(ul.querySelectorAll('.ndel'), function (b) {
+      b.addEventListener('click', function () { del(+b.dataset.i); });
+    });
+  }
+
+  function open(el) {
+    active = el.dataset.nid;
+    activeTitle = el.dataset.ntitle;
+    document.getElementById('note-title').textContent = activeTitle;
+    document.getElementById('note-anchor').textContent = '#' + active;
+    render();
+    document.getElementById('d-note').showModal();
+    document.getElementById('note-text').focus();
+  }
+
+  function add() {
+    var ta = document.getElementById('note-text');
+    var t = ta.value.trim();
+    if (!t || !active) return;
+    (N[active] = N[active] || []).push({
+      text: t,
+      title: activeTitle,
+      ts: new Date().toISOString().slice(0, 16).replace('T', ' ')
+    });
+    ta.value = '';
+    save(); render(); badges();
+  }
+
+  function del(i) {
+    N[active].splice(i, 1);
+    if (!N[active].length) delete N[active];
+    save(); render(); badges();
+  }
+
+  /* ---- the map: anchored, compact, prompt-ready ---- */
+  function buildMap() {
+    var count = 0, els = 0;
+    for (var k in N) { if (N.hasOwnProperty(k)) { els++; count += N[k].length; } }
+    var out = [
+      'NOTES — ' + FILE,
+      count + ' notes on ' + els + ' elements.',
+      'Each [anchor] is an element id in that file — search it to find the passage.',
+      ''
+    ];
+    /* Document order, not object order: the map should read the way the brief reads. */
+    Array.prototype.forEach.call(document.querySelectorAll('.notable'), function (el) {
+      var list = N[el.dataset.nid];
+      if (!list || !list.length) return;
+      out.push('[' + el.dataset.nid + '] ' + el.dataset.ntitle);
+      list.forEach(function (n) { out.push('  · ' + n.text.replace(/\n+/g, ' ')); });
+      out.push('');
+    });
+    return out.join('\n');
+  }
+
+  function exportNotes() {
+    var txt = buildMap();
+    document.getElementById('export-out').value = txt;
+    var est = document.getElementById('export-est');
+    if (est) {
+      est.textContent = txt.length + ' characters ≈ ' + Math.ceil(txt.length / 4) +
+        ' tokens — versus ~' + Math.ceil(document.body.innerText.length / 4) +
+        ' for the whole document.';
+    }
+    document.getElementById('d-export').showModal();
+  }
+
+  function copyExport(btn) {
+    var ta = document.getElementById('export-out');
+    ta.select();
+    try { document.execCommand('copy'); } catch (e) {}
+    if (btn) {
+      var o = btn.textContent;
+      btn.textContent = 'Copied';
+      setTimeout(function () { btn.textContent = o; }, 1400);
+    }
+  }
+
+  /* ---- bake notes into a downloadable copy of this file ----
+     localStorage is invisible to an agent. This is what makes
+     "read my notes in <file>" work. */
+  function embedNotes() {
+    var doc = document.documentElement.cloneNode(true);
+    Array.prototype.forEach.call(doc.querySelectorAll('.note-btn'), function (n) { n.remove(); });
+    Array.prototype.forEach.call(doc.querySelectorAll('.notable'), function (n) {
+      n.classList.remove('notable', 'has-note');
+    });
+    var island = doc.querySelector('#report-notes');
+    if (island) island.textContent = JSON.stringify(N, null, 1);
+    /* A plain-text mirror as well, so grep and ctx_read find the notes
+       without anyone having to parse JSON out of a script tag. */
+    var body = doc.querySelector('body');
+    if (body) body.appendChild(document.createComment('\nREADER NOTES —\n' + buildMap() + '\n'));
+
+    var blob = new Blob(['<!DOCTYPE html>\n' + doc.outerHTML], { type: 'text/html' });
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = FILE;
+    a.click();
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 4000);
+
+    var b = document.getElementById('btn-embed');
+    if (b) { var o = b.innerHTML; b.innerHTML = 'saved &#x2713;'; setTimeout(function () { b.innerHTML = o; }, 2200); }
+  }
+
+  function clearNotes() {
+    if (!confirm('Delete every note in this brief?')) return;
+    N = {}; save(); badges();
+  }
+
+  /* ---- wiring ---- */
+  function init() {
+    var ta = document.getElementById('note-text');
+    if (ta) {
+      ta.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); add(); }
+      });
+    }
+    document.addEventListener('click', function (e) {
+      var t = e.target.closest('[data-note-action]');
+      if (!t) return;
+      var a = t.dataset.noteAction;
+      if (a === 'add') add();
+      else if (a === 'export') exportNotes();
+      else if (a === 'embed') embedNotes();
+      else if (a === 'clear') clearNotes();
+      else if (a === 'copy') copyExport(t);
+    });
+    ['d-note', 'd-export'].forEach(function (id) {
+      var d = document.getElementById(id);
+      if (!d) return;
+      Array.prototype.forEach.call(d.querySelectorAll('[data-close]'), function (x) {
+        x.addEventListener('click', function () { d.close(); });
+      });
+      d.addEventListener('click', function (e) { if (e.target === d) d.close(); });
+    });
+    tag();
+    badges();
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+  else init();
+})();
+</script>
+<script>
+  /* content modals — notes.js only wires its own two */
+  document.querySelectorAll('[data-dlg]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      var d = document.getElementById(b.dataset.dlg);
+      if (d) d.showModal();
+    });
+  });
+  document.querySelectorAll('dialog').forEach(function (d) {
+    d.querySelectorAll('[data-close]').forEach(function (x) {
+      x.addEventListener('click', function () { d.close(); });
+    });
+    d.addEventListener('click', function (e) { if (e.target === d) d.close(); });
+  });
+</script>
+</body>
+</html>

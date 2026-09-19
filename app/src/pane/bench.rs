@@ -212,12 +212,30 @@ impl TerminalView {
     /// change, so ordinary mousing costs nothing; [`Self::pointer_hook`]
     /// paints whatever this last decided.
     pub(super) fn bench_hover(&mut self, at: gpui::Point<gpui::Pixels>, cx: &mut Context<Self>) {
-        let pointer = self
-            .bench_flat(at)
-            .and_then(|(hit, _)| hit)
+        let hit = self.bench_flat(at).and_then(|(hit, _)| hit);
+        let pointer = hit
+            .as_ref()
             .map_or(crate::workbench::Pointer::Arrow, |h| h.pointer());
-        if pointer != self.wb_pointer {
+        // A dragged file crossing the composer, which arrives here as an
+        // ordinary mouse move: gpui turns the drag's motion into one, with
+        // the paths parked on the app until the drop. A target that gives no
+        // sign while you hover over it teaches people it does not work.
+        //
+        // `has_active_drag` says only that SOMETHING is being carried, not
+        // what — and that is exact today, because the only drag this app
+        // takes part in is a file drop (its tab, pane and slider drags are
+        // hand-rolled state machines, not gpui drags). Add a real gpui drag
+        // and this lights for it too while the drop does nothing; the fix
+        // then is `on_drag_move::<ExternalPaths>`, which is scoped to the
+        // type and fires on every pane rather than only the hovered one.
+        let drop = cx.has_active_drag()
+            && matches!(
+                hit,
+                Some(crate::workbench::Hit::Composer | crate::workbench::Hit::Arm)
+            );
+        if pointer != self.wb_pointer || drop != self.wb_drop {
             self.wb_pointer = pointer;
+            self.wb_drop = drop;
             cx.notify();
         }
     }
@@ -243,12 +261,35 @@ impl TerminalView {
             |bounds, window, _cx| window.insert_hitbox(bounds, gpui::HitboxBehavior::Normal),
             move |_bounds, hitbox, window, _cx| {
                 window.set_cursor_style(pointer, &hitbox);
+                let wheel_weak = weak.clone();
                 window.on_mouse_event(move |ev: &ScrollWheelEvent, phase, window, cx| {
                     if phase != gpui::DispatchPhase::Capture || !hitbox.is_hovered(window) {
                         return;
                     }
                     let line_height = window.line_height();
-                    let _ = weak.update(cx, |view, cx| view.bench_wheel(ev, line_height, cx));
+                    let _ = wheel_weak.update(cx, |view, cx| view.bench_wheel(ev, line_height, cx));
+                });
+                // Putting the drag DOWN, and taking it out of the window, are
+                // the two ways the box stops being a target — and neither of
+                // them is a mouse move over this pane, which is the only
+                // event `on_mouse_move` delivers. A drop on a sibling pane
+                // would otherwise leave this one lit, because a pane stops
+                // hearing moves the moment the pointer is over its
+                // neighbour. Deliberately no hitbox test on either: the drag
+                // is over wherever it ended.
+                let up_weak = weak.clone();
+                window.on_mouse_event(move |_: &MouseUpEvent, phase, _window, cx| {
+                    if phase == gpui::DispatchPhase::Bubble {
+                        clear_drop(&up_weak, cx);
+                    }
+                });
+                // Leaving the window is the one event in a drag that arrives
+                // as itself: gpui turns enter, motion and drop into mouse
+                // events and passes this one through.
+                window.on_mouse_event(move |_: &gpui::FileDropEvent, phase, _window, cx| {
+                    if phase == gpui::DispatchPhase::Bubble {
+                        clear_drop(&weak, cx);
+                    }
                 });
             },
         )
@@ -507,6 +548,17 @@ impl TerminalView {
                     } else {
                         self.bench_act(action, None, cx);
                     }
+                } else if crate::workbench::return_launches(
+                    crate::workbench::strip_verb(self.bench_status(), self.mode.is_agent()),
+                    self.bench.selected().is_some(),
+                ) {
+                    // The one thing this bench offers. Until now return did
+                    // nothing at all here — `Act` takes the selected surface's
+                    // first verb, and a bench nobody has run an agent on has no
+                    // surfaces to select — so the key that means *do the obvious
+                    // thing* was the one key with no effect on the emptiest
+                    // screen in the window.
+                    cx.emit(OpenAgentLauncher);
                 }
             }
             crate::workbench::Reading::Choose(i) => self.bench_choose(i, cx),
@@ -656,50 +708,8 @@ impl TerminalView {
         let mut out: Vec<gpui::Div> = Vec::new();
         let pressable = agent_now && crate::workbench::dials_live(state);
         if agent_now {
-            let harness = match self.mode {
-                crate::pane::PaneMode::Codex => crate::launcher::Harness::Codex,
-                _ => crate::launcher::Harness::Claude,
-            };
-            // What this pane's agent was STARTED with, which is a reading and
-            // not a guess: the resume command is built from `/proc`, and a
-            // `--model` on it is a fact about the process that is running.
-            let launched = self.runtime().resume;
             for which in [Dial::Model, Dial::Effort] {
-                let (value, known) = match which {
-                    Dial::Model => self
-                        .wb_model
-                        .clone()
-                        .map(|m| (m, true))
-                        .or_else(|| {
-                            launched
-                                .as_deref()
-                                .and_then(|c| crate::workbench::flag_value(c, "--model"))
-                                .map(|m| (m, true))
-                        })
-                        // Nobody said, so the button says the one thing that is
-                        // true anyway — which harness is in there. A faint
-                        // CLAUDE is a better button than a crisp `model ?`, and
-                        // it still never claims a model was chosen.
-                        .unwrap_or_else(|| (harness.label().to_string(), false)),
-                    Dial::Effort => self
-                        .wb_effort
-                        .map(|e| (e.id().to_string(), true))
-                        .or_else(|| {
-                            launched
-                                .as_deref()
-                                .and_then(|c| {
-                                    crate::workbench::flag_value(c, "--effort").or_else(|| {
-                                        // Codex spells it as a config key.
-                                        crate::workbench::flag_value(c, "model_reasoning_effort")
-                                    })
-                                })
-                                .map(|e| (e, true))
-                        })
-                        // The level the harness runs at when nobody passes the
-                        // flag — TD's own claim, made in `default_effort`, and
-                        // drawn faint because nobody chose it here.
-                        .unwrap_or_else(|| (harness.default_effort().id().to_string(), false)),
-                };
+                let (value, known) = self.dial_now(which);
                 let mut chip = crate::benchdraw::dial(
                     &value,
                     known,
@@ -735,43 +745,105 @@ impl TerminalView {
         out
     }
 
-    /// The list an open dial drops, and the values in it.
+    /// The harness in this pane, from its mode.
+    fn dial_harness(&self) -> crate::launcher::Harness {
+        match self.mode {
+            crate::pane::PaneMode::Codex => crate::launcher::Harness::Codex,
+            _ => crate::launcher::Harness::Claude,
+        }
+    }
+
+    /// What a dial is showing, and whether anybody actually SAID it.
+    ///
+    /// Three sources in order: what a press on this dial set, then what the
+    /// pane's agent was STARTED with — a reading and not a guess, since the
+    /// resume command is built from `/proc` and a `--model` on it is a fact
+    /// about the process that is running — and finally the harness itself,
+    /// which is the one thing still true when nobody has said anything. The
+    /// `bool` is the difference between the middle two and the last: a value
+    /// somebody chose reads as text, an inferred one reads faint, and neither
+    /// reads as the other.
+    ///
+    /// **One resolver, two readers.** The button had this chain and the open
+    /// list had a different, shorter one — `wb_model` alone — so a pane running
+    /// a model it was LAUNCHED with showed `OPUS` on the button and lit nothing
+    /// in the list underneath it. Parker: *"the current model is not
+    /// highlighted in the options list"*. Two copies of "what is this dial on"
+    /// can only ever agree by accident.
+    fn dial_now(&self, which: crate::workbench::Dial) -> (String, bool) {
+        use crate::workbench::Dial;
+        let harness = self.dial_harness();
+        let launched = self.runtime().resume;
+        match which {
+            Dial::Model => self
+                .wb_model
+                .clone()
+                .map(|m| (m, true))
+                .or_else(|| {
+                    launched
+                        .as_deref()
+                        .and_then(|c| crate::workbench::flag_value(c, "--model"))
+                        .map(|m| (m, true))
+                })
+                // Nobody said, so the button says the one thing that is true
+                // anyway — which harness is in there. A faint CLAUDE is a
+                // better button than a crisp `model ?`, and it still never
+                // claims a model was chosen. It matches no row in the list,
+                // which is correct: nothing is lit because nothing is known.
+                .unwrap_or_else(|| (harness.label().to_string(), false)),
+            Dial::Effort => self
+                .wb_effort
+                .map(|e| (e.id().to_string(), true))
+                .or_else(|| {
+                    launched
+                        .as_deref()
+                        .and_then(|c| {
+                            crate::workbench::flag_value(c, "--effort").or_else(|| {
+                                // Codex spells it as a config key.
+                                crate::workbench::flag_value(c, "model_reasoning_effort")
+                            })
+                        })
+                        .map(|e| (e, true))
+                })
+                // The level the harness runs at when nobody passes the flag —
+                // TD's own claim, made in `default_effort`, and drawn faint
+                // because nobody chose it here.
+                .unwrap_or_else(|| (harness.default_effort().id().to_string(), false)),
+        }
+    }
+
+    /// The list an open dial drops, which row of it is lit, and whether that
+    /// row was CHOSEN or merely read off the launch command.
     ///
     /// The values are the harness's own — [`crate::launcher::Harness::models`]
     /// and [`crate::launcher::Harness::efforts`], already checked against
     /// `claude --help` and already clamped per harness. A second copy of that
     /// list here is how a menu goes stale and silently starts the wrong model.
-    fn dial_values(&self, which: crate::workbench::Dial) -> (Vec<String>, Option<usize>) {
+    ///
+    /// The lit row is whatever [`Self::dial_now`] says the BUTTON is showing,
+    /// matched case-insensitively because the button uppercases what it draws
+    /// and a `--model Opus` on somebody's launch command is the same model as
+    /// `opus`. A value the list does not contain lights nothing — an agent
+    /// started on a model this window does not offer is a fact, and inventing
+    /// a nearest row for it would be a claim.
+    fn dial_values(&self, which: crate::workbench::Dial) -> (Vec<String>, Option<usize>, bool) {
         use crate::workbench::Dial;
-        let harness = match self.mode {
-            crate::pane::PaneMode::Codex => crate::launcher::Harness::Codex,
-            _ => crate::launcher::Harness::Claude,
+        let harness = self.dial_harness();
+        let vals: Vec<String> = match which {
+            Dial::Model => harness
+                .models()
+                .iter()
+                .map(|m| m.label.to_string())
+                .collect(),
+            Dial::Effort => harness
+                .efforts()
+                .iter()
+                .map(|e| e.id().to_string())
+                .collect(),
         };
-        match which {
-            Dial::Model => {
-                let vals: Vec<String> = harness
-                    .models()
-                    .iter()
-                    .map(|m| m.label.to_string())
-                    .collect();
-                let at = self
-                    .wb_model
-                    .as_ref()
-                    .and_then(|m| vals.iter().position(|v| v == m));
-                (vals, at)
-            }
-            Dial::Effort => {
-                let vals: Vec<String> = harness
-                    .efforts()
-                    .iter()
-                    .map(|e| e.id().to_string())
-                    .collect();
-                let at = self
-                    .wb_effort
-                    .and_then(|e| harness.efforts().iter().position(|o| *o == e));
-                (vals, at)
-            }
-        }
+        let (now, chosen) = self.dial_now(which);
+        let at = vals.iter().position(|v| v.eq_ignore_ascii_case(&now));
+        (vals, at, chosen)
     }
 
     /// Take a value from an open dial: remember it, and tell the agent.
@@ -794,7 +866,7 @@ impl TerminalView {
         cx: &mut Context<Self>,
     ) {
         use crate::workbench::Dial;
-        let (vals, _) = self.dial_values(which);
+        let (vals, _, _) = self.dial_values(which);
         let Some(value) = vals.get(at).cloned() else {
             return;
         };
@@ -1376,7 +1448,16 @@ impl TerminalView {
                     parts.push(text.text().replace(['\n', '\r'], " "));
                 }
                 ClipboardEntry::ExternalPaths(paths) => {
-                    parts.extend(paths.paths().iter().map(|p| p.display().to_string()));
+                    // The same rule a DROP follows, from the same function: a
+                    // path is one word. This arm used to join the paths raw,
+                    // so copying `Screenshot 2026-09-18.png` pasted two words
+                    // and nothing downstream could put them back together.
+                    let words = crate::workbench::paths_as_words(paths.paths());
+                    // An entry carrying no path at all adds nothing, rather
+                    // than a stray space in the middle of the sentence.
+                    if !words.is_empty() {
+                        parts.push(words);
+                    }
                 }
                 ClipboardEntry::Image(image) => match self.save_pasted_image(image) {
                     Some(path) => parts.push(path),
@@ -1385,6 +1466,66 @@ impl TerminalView {
             }
         }
         let text = parts.join(" ");
+        self.bench_typed(text, cx);
+    }
+
+    /// A file dropped on the pane: its path typed where it landed.
+    ///
+    /// The compositor's half of this is gpui's and costs us nothing — its
+    /// Wayland client asks the drag for `text/uri-list`, turns the URIs into
+    /// paths, and hands them over as an ordinary mouse-up with the value
+    /// attached. It also DESTROYS any drag whose URIs are not local files, so
+    /// an image dragged off a web page never reaches this function and there
+    /// is nothing here that could serve it. Files, and only files.
+    ///
+    /// The listener sits on the pane's root rather than on the composer,
+    /// because the bench is bent by the barrel pass and gpui hit-tests the
+    /// flat tree — a drop target hung on the composer element would catch
+    /// drops beside where the composer appears. So this un-bends the pointer
+    /// through [`Self::bench_hit_at`], the same inverse every bench click goes
+    /// through, and the composer's own zone answers.
+    pub(super) fn bench_drop(
+        &mut self,
+        paths: &gpui::ExternalPaths,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.wb_drop = false;
+        let text = crate::workbench::paths_as_words(paths.paths());
+        if text.is_empty() {
+            return;
+        }
+        // On the TERMINAL face there is no composer to aim at and no mirror to
+        // keep: the path goes to the process as a paste, which is what every
+        // other terminal on this machine does with a dropped file.
+        if self.bench.face() != crate::workbench::Face::Workbench {
+            window.focus(&self.focus_handle, cx);
+            self.paste_text(&text);
+            cx.notify();
+            return;
+        }
+        let Some((hit, flat)) = self.bench_hit_at(window.mouse_position()) else {
+            return;
+        };
+        // The composer and the field around it, which is the gesture people
+        // will actually make — the box is the biggest thing on the bench. A
+        // drop on a card is not a drop on the line and does nothing, on the
+        // same terms as a click there.
+        if !matches!(
+            hit,
+            crate::workbench::Hit::Composer | crate::workbench::Hit::Arm
+        ) {
+            return;
+        }
+        // Arm FIRST. `bench_click` arms a cold line and returns without
+        // moving anything, so calling it on an unarmed composer would place
+        // no caret and the path would land at the end of a line nobody could
+        // see yet.
+        if self.wb_compose.is_none() {
+            self.wb_compose = Some(crate::workbench::Line::new());
+        }
+        self.bench_click(flat, cx);
+        window.focus(&self.focus_handle, cx);
         self.bench_typed(text, cx);
     }
 
@@ -1978,6 +2119,32 @@ impl TerminalView {
         weak: gpui::WeakEntity<Self>,
     ) -> gpui::AnyElement {
         use crate::workbench::RailFit;
+        // WHERE THE DIALS WERE, taken before the list is emptied.
+        //
+        // An overlay has to be placed while the tree is being BUILT, and a
+        // control's position is only known once it has been LAID OUT — so the
+        // newest measurement any frame can place with is the one the frame
+        // before it recorded. That is exact here rather than approximate: the
+        // dial is drawn on every frame, and the only frame whose position could
+        // be stale is one where the strip reflowed in the same frame the list
+        // opened, which no press can cause.
+        let dial_rect = |which| {
+            self.wb_zones
+                .borrow()
+                .iter()
+                .rev()
+                .find(|z| z.hit == crate::workbench::Hit::Dial(which))
+                .map(|z| crate::workbench::Rect {
+                    x: z.x,
+                    y: z.y,
+                    w: z.w,
+                    h: z.h,
+                })
+        };
+        let dial_was = [
+            dial_rect(crate::workbench::Dial::Model),
+            dial_rect(crate::workbench::Dial::Effort),
+        ];
         // A fresh zone list per frame: the elements about to paint fill it.
         self.wb_zones.borrow_mut().clear();
         // Every size decision on this surface, resolved in one call and
@@ -2058,6 +2225,27 @@ impl TerminalView {
                 sk,
                 th,
             )
+        });
+
+        // ── what YOU said, over the reply to it ─────────────────────────────
+        //
+        // Read off the pane's own scrollback rather than kept as a second
+        // record of the conversation: the terminal already holds every turn,
+        // including the ones typed at the terminal face instead of through
+        // this composer, and a copy this side would be a second truth that
+        // could disagree with the first. [`crate::workbench::ask_lines`] owns
+        // whether it is drawn at all.
+        let asked_above = crate::workbench::ask_lines(
+            self.bench.shelf(),
+            self.bench.standing_in(),
+            agent_now,
+            how,
+        )
+        .map(|n| {
+            // Read one line longer than the block draws, so a message that ran
+            // on can say so rather than stopping mid-word.
+            let lines = crate::workbench::ask_clipped(self.last_human_message(n + 1), n);
+            crate::benchdraw::asked(&lines, sk, th)
         });
 
         // ── the main area ───────────────────────────────────────────────────
@@ -2273,6 +2461,7 @@ impl TerminalView {
             crate::benchdraw::composer(
                 self.wb_compose.as_ref(),
                 focused,
+                self.wb_drop,
                 &shows,
                 &self.wb_slots,
                 sk,
@@ -2522,16 +2711,20 @@ impl TerminalView {
 
         // ── the open dial's list ────────────────────────────────────────────
         //
-        // Drawn last and placed absolutely, under the strip on the right, so
+        // Drawn last and placed absolutely, UNDER THE DIAL THAT OPENED IT, so
         // it lands over the card rather than pushing it. A menu that reflows
-        // the page it opens on is one that moves the thing you were reading.
+        // the page it opens on is one that moves the thing you were reading;
+        // one that always drops at the far end of the strip is one that does
+        // not say which button it belongs to. Where it goes is
+        // [`crate::workbench::dial_drop`]'s call, from the two rectangles the
+        // previous frame measured.
         let dial_list = self.wb_dial.filter(|_| agent_now).map(|which| {
-            let (vals, at) = self.dial_values(which);
+            let (vals, at, chosen) = self.dial_values(which);
             let rows: Vec<gpui::Div> = vals
                 .iter()
                 .enumerate()
                 .map(|(i, v)| {
-                    crate::benchdraw::dial_row(v, at == Some(i), sk, th).child(
+                    crate::benchdraw::dial_row(v, at == Some(i), chosen, sk, th).child(
                         crate::benchdraw::zone(
                             self.wb_zones.clone(),
                             crate::workbench::Hit::DialPick(which, i),
@@ -2539,11 +2732,20 @@ impl TerminalView {
                     )
                 })
                 .collect();
-            div()
-                .absolute()
-                .top(px(46.))
-                .right(px(rail_px + 18.))
-                .child(crate::benchdraw::dial_menu(rows, sk, th))
+            let was = match which {
+                crate::workbench::Dial::Model => dial_was[0],
+                crate::workbench::Dial::Effort => dial_was[1],
+            };
+            let holder = div().absolute();
+            // The old fixed corner is the fallback and nothing else: on the
+            // first frame a window ever paints, nothing has been measured, and
+            // a list in the top-left would be worse than a list in the wrong
+            // corner of the right area.
+            let holder = match crate::workbench::dial_drop(was, *self.wb_bench_rect.borrow()) {
+                Some((right, top)) => holder.right(px(right)).top(px(top)),
+                None => holder.top(px(46.)).right(px(rail_px + 18.)),
+            };
+            holder.child(crate::benchdraw::dial_menu(rows, sk, th))
         });
 
         div()
@@ -2553,6 +2755,13 @@ impl TerminalView {
             .flex_row()
             .gap(px(4.))
             .p(px(10.))
+            // WHERE THIS BOX IS. Everything absolutely positioned inside it is
+            // placed in coordinates relative to here, and the rectangles those
+            // placements are computed FROM are recorded in window space — so
+            // without this measurement there is no way to turn one into the
+            // other. First child, so it paints under everything and covers the
+            // whole box; it carries no hit and takes no click.
+            .child(crate::benchdraw::probe(self.wb_bench_rect.clone()))
             .child(
                 div()
                     .flex_1()
@@ -2562,6 +2771,11 @@ impl TerminalView {
                     .flex_col()
                     .gap(px(9.))
                     .children(live)
+                    // Above the reply and OUTSIDE its scroll, for the same
+                    // reason the waiting block sits below it: the question
+                    // this card is answering is not part of the document, and
+                    // scrolling a long reply must not take it off the surface.
+                    .children(asked_above)
                     // The conversation sits ON the composer, the way every
                     // conversation does: newest last, just above where you
                     // answer it. Top-aligned it floated in a field of empty
@@ -2665,4 +2879,18 @@ impl TerminalView {
             .child(self.pointer_hook(weak))
             .into_any_element()
     }
+}
+
+/// Put the composer's drop target out.
+///
+/// A free function because the two listeners that call it are window-level
+/// and hold a weak handle rather than a `self`: a pane can be closed with a
+/// drag still in the air, and both listeners outlive the frame that made
+/// them.
+fn clear_drop(weak: &gpui::WeakEntity<TerminalView>, cx: &mut gpui::App) {
+    let _ = weak.update(cx, |view, cx| {
+        if std::mem::take(&mut view.wb_drop) {
+            cx.notify();
+        }
+    });
 }

@@ -45,9 +45,24 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
   did before they were split and what every session already on disk describes.
   So nothing shrinks on upgrade, and the two only come apart once somebody
   turns one of them.
+- **Drag a file onto the bench and its path lands in the line you are
+  writing.** The composer lights up in your own colour while the file is over
+  it, and letting go types the path at the caret — mid-sentence, with the rest
+  of the sentence intact, because placing a caret already sends the agent's
+  line editor the matching arrows. Several files come in as several words, and
+  a name with a space in it arrives quoted, so `Screenshot 2026-09-18.png`
+  stays one filename instead of two arguments nothing downstream can rejoin.
+  A drop on the terminal face pastes the path the way every other terminal
+  does. Files only: the renderer discards a drag whose contents are not local
+  files before the app is told, so an image dragged straight off a web page
+  still does nothing. (#561)
 
 ### Fixed
 
+- **Pasting a filename with a space in it no longer breaks it in two.** The
+  clipboard's file arm joined paths raw, so a copied `Screenshot
+  2026-09-18.png` arrived as two words. It now goes through the same quoting a
+  dropped file does. (#561)
 - **The shelf strip wraps, so a fourth tab does not fall off the rail.** The rail
   is a share of the pane, clamped between 132 and 208 points, and four tabs
   measure about 161 of them. The strip sat in an `overflow_hidden` frame, so the
@@ -119,6 +134,64 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
   the pane header and the lit half was a pill you could not read the word inside.
   One bordered track now, with the half you are on filled and carrying the
   control's whole phosphor budget, so throwing the switch moves the glow. (#555)
+- **The overview shows what YOU said, over the reply to it.** The bench's
+  overview is the feed of what the agent said, and for a while it was only
+  that: the newest reply stood in the room with nothing above it, so the one
+  thing a person could not read on the surface that holds the answer was the
+  question they had just asked. It was legible in the pane's mirrored
+  conversation and on the agent wall's card, which are two other places. Your
+  own message now sits above the reply as its own indented block, in the ink
+  the terminal already paints your turns in, pinned outside the card's scroll
+  so a long answer cannot take it off the surface. It is read out of the
+  pane's own scrollback rather than kept as a second record, so a turn typed
+  at the terminal face counts the same as one sent from the composer; a
+  message longer than the block ends in an ellipsis rather than stopping
+  mid-word, and one that has scrolled out of history says so instead of
+  drawing an empty block. Drawn for the reply that is STANDING IN and never
+  for a card opened off the rail — this window can only read the latest
+  message, and captioning a four-turn-old answer with a new question would be
+  a pairing nobody made.
+
+- **A new agent starts as whatever you told it to.** The LAUNCH AGENT panel
+  opened on three constants — claude, the first model in the list, the harness's
+  own effort — and every launch that wanted something else paid for it in
+  keystrokes, every time. Three rows at the top of the usage card (the `Σ usage`
+  face of the `</>` card, which the subscription slot in the bottom-left corner
+  opens) now set them, and the panel opens holding them. The store keeps
+  *nobody has chosen* apart from *somebody chose exactly what would have
+  happened anyway*: an unset row still shows the value in force, drawn with a
+  quiet edge and tagged `unset`, against the accent and `chosen` of a decision.
+  Pressing the lit chip again clears it back to the harness's own.
+
+### Fixed
+
+- **Return starts the agent on a bench that is offering one.** A workbench with
+  no agent in it shows a single LAUNCH AGENT button, and the key that means *do
+  the obvious thing* did nothing at all there: return takes the selected
+  surface's first verb, and a bench nobody has run an agent on has no surfaces.
+  It now opens the launcher — unless a card is open, whose first verb still
+  wins the key.
+
+- **A dial's list drops under the dial that opened it.** The model and effort
+  lists were placed at a fixed offset from the rail, which put both of them
+  under the END SESSION button at the far end of the strip whichever dial had
+  been pressed. Each now hangs from its own button, sharing its right edge.
+
+- **The open list lights the value the dial is showing.** The button resolved
+  what a pane is running from three sources — a press on the dial, the
+  `--model` on the command that started the agent, then the harness itself —
+  and the list underneath it looked only at the first, so a pane launched with
+  `--model opus` read `OPUS` above a list with nothing marked in it. Both now
+  ask one resolver, and the row's ink carries the same claim the button's does:
+  accent for a value somebody chose, half-strength for one read off the launch
+  command.
+
+- **The agent wall's header no longer counts the fleet twice.** Six unlabelled
+  glyph counters sat between the name and the token totals, setting the same
+  state filter the bordered WORKING / DONE / IDLE chips two rows below set — the
+  same control twice, one of them unreadable, and their numbers were fleet-wide
+  while the chips' are context-aware, so the two rows contradicted each other
+  whenever any filter was on. The chips stay; the glyphs are gone.
 
 - **Changing the model or the effort no longer sends your half-written prompt.**
   The bench composer mirrors the agent's own line editor, so a draft is already

@@ -2197,8 +2197,16 @@ pub fn dial_menu(rows: Vec<Div>, sk: &Skin, th: &Theme) -> Div {
     .children(rows)
 }
 
-/// One value in an open dial's list. `lit` is the value the dial is showing.
-pub fn dial_row(label: &str, lit: bool, sk: &Skin, th: &Theme) -> Div {
+/// One value in an open dial's list.
+///
+/// `lit` is the value the dial is showing. `chosen` is whether anybody SAID so
+/// — the same claim the button's ink makes, carried down into the list so the
+/// two cannot disagree: a level a person picked is the accent, a level read off
+/// the launch command is the accent at half strength, and a row that is neither
+/// is plain text. The list used to light only what a press on the dial had set,
+/// so an agent launched with `--model opus` showed OPUS above a list with
+/// nothing marked in it at all.
+pub fn dial_row(label: &str, lit: bool, chosen: bool, sk: &Skin, th: &Theme) -> Div {
     sk.chip(lit)
         .relative()
         .flex()
@@ -2207,7 +2215,11 @@ pub fn dial_row(label: &str, lit: bool, sk: &Skin, th: &Theme) -> Div {
         .cursor_pointer()
         .whitespace_nowrap()
         .text_size(px(sk.pt(Step::Note)))
-        .text_color(if lit { th.accent } else { th.text.alpha(0.85) })
+        .text_color(match (lit, chosen) {
+            (true, true) => th.accent,
+            (true, false) => th.accent.alpha(0.62),
+            _ => th.text.alpha(0.85),
+        })
         .child(label.to_string())
 }
 
@@ -2351,6 +2363,38 @@ pub fn zone(
     .inset_0()
 }
 
+/// Record where the element this is a child of ended up, without making it a
+/// click target.
+///
+/// [`zone`]'s other half: same canvas, same flat bounds, no [`crate::workbench::Hit`].
+/// It exists because one element on the bench — the root — has to be MEASURED
+/// rather than pressed: an absolutely-positioned overlay inside it is placed in
+/// coordinates relative to its padding box, and the only thing that knows where
+/// a window-space rectangle lands in that space is the root's own origin.
+///
+/// Giving the root a zone instead would have been cheaper and wrong: a
+/// root-sized rectangle at the bottom of the list answers every click that hit
+/// nothing, and "on the bench but on nothing" is an answer the wheel reads.
+///
+/// The parent must be `relative()`, exactly as for [`zone`].
+pub fn probe(
+    into: std::rc::Rc<std::cell::RefCell<Option<crate::workbench::Rect>>>,
+) -> impl gpui::IntoElement {
+    gpui::canvas(
+        move |bounds, _window, _cx| {
+            *into.borrow_mut() = Some(crate::workbench::Rect {
+                x: f32::from(bounds.origin.x),
+                y: f32::from(bounds.origin.y),
+                w: f32::from(bounds.size.width),
+                h: f32::from(bounds.size.height),
+            });
+        },
+        |_, _, _, _| {},
+    )
+    .absolute()
+    .inset_0()
+}
+
 /// The line into the agent's own terminal.
 ///
 /// Not a text box. While it is armed, every keystroke is encoded by the same
@@ -2377,112 +2421,14 @@ pub fn zone(
 /// room, and one line underneath says what the keys do, because the three
 /// things it names (type without clicking first, enter sends, paste takes an
 /// image) are each invisible otherwise.
-/// The box a note is typed into, and a box with no wire to the agent.
-///
-/// A separate renderer rather than a mode on [`composer`], for the same reason
-/// the note is a separate field on the pane: the two boxes do opposite things
-/// and look alike, and the cost of confusing them is a private sentence
-/// arriving in somebody's prompt. Nothing here reads `Shows`, `Slots` or the
-/// scroll handle, because none of them apply — a note is not mirroring a remote
-/// editor, so there is no caret to chase across a wrap that somebody else owns.
-///
-/// It SAYS what it is, in a line above the text. That label is the only thing
-/// standing between the two boxes for a person who has just pressed `alt+m` out
-/// of muscle memory, so it names the destination rather than the feature: not
-/// `NOTE`, but where the words are going and who will not see them.
-pub fn note_box(
-    line: &crate::workbench::Line,
-    focused: bool,
-    durable: bool,
-    sk: &Skin,
-    th: &Theme,
-) -> Div {
-    let mine = ink(Tint::Mine, th);
-    // The caret rides IN the text as a highlight on the character it is on —
-    // the composer's technique, and the reason is the same one written out at
-    // length there: a line wraps, and anything that positions a caret by
-    // arithmetic is computing a column on a single axis that does not exist.
-    let text = format!("{} ", line.text());
-    let at = text
-        .char_indices()
-        .nth(line.caret())
-        .map(|(i, _)| i)
-        .unwrap_or(line.text().len());
-    let next = text[at..]
-        .chars()
-        .next()
-        .map(|c| at + c.len_utf8())
-        .unwrap_or(text.len());
-    let caret = gpui::HighlightStyle {
-        background_color: Some(mine.alpha(if focused { 0.85 } else { 0.35 })),
-        color: Some(if focused { th.bg } else { th.text }),
-        ..Default::default()
-    };
-    let selection = gpui::HighlightStyle {
-        background_color: Some(mine.alpha(if focused { 0.34 } else { 0.18 })),
-        ..Default::default()
-    };
-    let spans = if line.marked() {
-        vec![(0..line.text().len(), selection)]
-    } else {
-        vec![(at..next, caret)]
-    };
-    raised(
-        sk.panel()
-            .flex()
-            .flex_col()
-            .gap(px(7.))
-            .flex_none()
-            .px(px(14.))
-            .py(px(12.))
-            .bg(th.surface)
-            .border_color(mine.alpha(if focused { 0.9 } else { 0.5 })),
-        mine,
-        th,
-    )
-    .child(micro(
-        "A NOTE ON THIS PANE \u{b7} THE AGENT IS NOT TOLD",
-        Step::Tag,
-        mine,
-        sk,
-        th,
-    ))
-    .child(
-        div()
-            .text_size(px(sk.pt(Step::Body)))
-            .text_color(th.text)
-            .child(gpui::StyledText::new(text).with_highlights(spans)),
-    )
-    .child(if durable {
-        micro(
-            "return posts \u{b7} shift+return a new line \u{b7} esc discards",
-            Step::Tag,
-            sk.ink.ink_faint,
-            sk,
-            th,
-        )
-    } else {
-        // SAID BEFORE THE NOTE IS WRITTEN, not after return does nothing.
-        //
-        // A pane with no surfaces directory — a scratch window, which has no
-        // pane id to name one with — has nowhere durable to put a note. The
-        // first version of this refused on `return` and reported it to stderr,
-        // where nobody is looking, so the key just appeared to be broken. An
-        // absence a person can act on has to be on the face of the thing while
-        // they still have the choice not to type into it.
-        micro(
-            "THIS PANE CANNOT SAVE NOTES \u{b7} NOTHING HERE WILL SURVIVE",
-            Step::Tag,
-            ink(Tint::Waiting, th),
-            sk,
-            th,
-        )
-    })
-}
-
+/// `hot` is a dragged file hovering over this box, and it is drawn in the
+/// person's own colour at full strength: a drop is the same act as typing,
+/// aimed at the same line, so it would be strange for it to arrive in a
+/// colour that means anything else.
 pub fn composer(
     line: Option<&crate::workbench::Line>,
     focused: bool,
+    hot: bool,
     shows: &crate::workbench::Shows,
     slots: &Slots,
     sk: &Skin,
@@ -2589,8 +2535,21 @@ pub fn composer(
             // Lit whether or not it is armed. The border was the only thing
             // saying "this is an input" and it only said so AFTER the first
             // click, which is the wrong way round: the invitation has to be
-            // legible before anyone has accepted it.
-            .border_color(th.human.alpha(if live { 0.9 } else { 0.5 })),
+            // legible before anyone has accepted it. A file hovering over it
+            // takes the border to full strength and tints the box, because
+            // "let go here" has to beat "you may type here" while a person is
+            // holding something.
+            .border_color(th.human.alpha(if hot {
+                1.0
+            } else if live {
+                0.9
+            } else {
+                0.5
+            }))
+            // Blended rather than laid over: `bg` replaces, so a translucent
+            // wash here would drop the panel's own surface and let the pane
+            // behind it through.
+            .when(hot, |d| d.bg(th.surface.blend(th.human.alpha(0.14)))),
         th.human,
         th,
     )
@@ -2683,8 +2642,11 @@ pub fn composer(
             })
             // Only while it is armed, and then unmissable. This is the answer
             // to the question the surface kept failing: *am I typing to the
-            // agent right now, or do I have to click something first?*
-            .when(live, |d| {
+            // agent right now, or do I have to click something first?* While
+            // a file is over the box it gives up its place: what happens when
+            // you let go is the more urgent question, and two chips side by
+            // side would be competing for the same corner.
+            .when(live && !hot, |d| {
                 d.child(
                     div()
                         .flex_none()
@@ -2693,6 +2655,26 @@ pub fn composer(
                         .rounded(sk.rad_raw(3.))
                         .bg(th.human.alpha(0.16))
                         .child(micro("LIVE \u{2192} AGENT", Step::Tag, th.human, sk, th)),
+                )
+            })
+            // No count of files. The drag's value is parked on the app until
+            // the drop and the hover only knows that SOMETHING is being
+            // carried, so saying "1 file" here would be inventing a number.
+            .when(hot, |d| {
+                d.child(
+                    div()
+                        .flex_none()
+                        .px(px(7.))
+                        .py(px(2.))
+                        .rounded(sk.rad_raw(3.))
+                        .bg(th.human.alpha(0.24))
+                        .child(micro(
+                            "\u{2913} DROP TO INSERT THE PATH",
+                            Step::Tag,
+                            th.human,
+                            sk,
+                            th,
+                        )),
                 )
             }),
     )
@@ -2719,6 +2701,155 @@ pub fn composer(
             th,
         ))
     })
+}
+
+/// The box a note is typed into, and a box with no wire to the agent.
+///
+/// A separate renderer rather than a mode on [`composer`], for the same reason
+/// the note is a separate field on the pane: the two boxes do opposite things
+/// and look alike, and the cost of confusing them is a private sentence
+/// arriving in somebody's prompt. Nothing here reads `Shows`, `Slots` or the
+/// scroll handle, because none of them apply — a note is not mirroring a remote
+/// editor, so there is no caret to chase across a wrap that somebody else owns.
+///
+/// It SAYS what it is, in a line above the text. That label is the only thing
+/// standing between the two boxes for a person who has just pressed `alt+m` out
+/// of muscle memory, so it names the destination rather than the feature: not
+/// `NOTE`, but where the words are going and who will not see them.
+pub fn note_box(
+    line: &crate::workbench::Line,
+    focused: bool,
+    durable: bool,
+    sk: &Skin,
+    th: &Theme,
+) -> Div {
+    let mine = ink(Tint::Mine, th);
+    // The caret rides IN the text as a highlight on the character it is on —
+    // the composer's technique, and the reason is the same one written out at
+    // length there: a line wraps, and anything that positions a caret by
+    // arithmetic is computing a column on a single axis that does not exist.
+    let text = format!("{} ", line.text());
+    let at = text
+        .char_indices()
+        .nth(line.caret())
+        .map(|(i, _)| i)
+        .unwrap_or(line.text().len());
+    let next = text[at..]
+        .chars()
+        .next()
+        .map(|c| at + c.len_utf8())
+        .unwrap_or(text.len());
+    let caret = gpui::HighlightStyle {
+        background_color: Some(mine.alpha(if focused { 0.85 } else { 0.35 })),
+        color: Some(if focused { th.bg } else { th.text }),
+        ..Default::default()
+    };
+    let selection = gpui::HighlightStyle {
+        background_color: Some(mine.alpha(if focused { 0.34 } else { 0.18 })),
+        ..Default::default()
+    };
+    let spans = if line.marked() {
+        vec![(0..line.text().len(), selection)]
+    } else {
+        vec![(at..next, caret)]
+    };
+    raised(
+        sk.panel()
+            .flex()
+            .flex_col()
+            .gap(px(7.))
+            .flex_none()
+            .px(px(14.))
+            .py(px(12.))
+            .bg(th.surface)
+            .border_color(mine.alpha(if focused { 0.9 } else { 0.5 })),
+        mine,
+        th,
+    )
+    .child(micro(
+        "A NOTE ON THIS PANE \u{b7} THE AGENT IS NOT TOLD",
+        Step::Tag,
+        mine,
+        sk,
+        th,
+    ))
+    .child(
+        div()
+            .text_size(px(sk.pt(Step::Body)))
+            .text_color(th.text)
+            .child(gpui::StyledText::new(text).with_highlights(spans)),
+    )
+    .child(if durable {
+        micro(
+            "return posts \u{b7} shift+return a new line \u{b7} esc discards",
+            Step::Tag,
+            sk.ink.ink_faint,
+            sk,
+            th,
+        )
+    } else {
+        // SAID BEFORE THE NOTE IS WRITTEN, not after return does nothing.
+        //
+        // A pane with no surfaces directory — a scratch window, which has no
+        // pane id to name one with — has nowhere durable to put a note. The
+        // first version of this refused on `return` and reported it to stderr,
+        // where nobody is looking, so the key just appeared to be broken. An
+        // absence a person can act on has to be on the face of the thing while
+        // they still have the choice not to type into it.
+        micro(
+            "THIS PANE CANNOT SAVE NOTES \u{b7} NOTHING HERE WILL SURVIVE",
+            Step::Tag,
+            ink(Tint::Waiting, th),
+            sk,
+            th,
+        )
+    })
+}
+
+/// WHAT YOU SAID, over the reply that answers it.
+///
+/// Its own block, in the human ink, above the card and outside its scroll —
+/// three separations, because the complaint was that the person's own words
+/// were nowhere on the surface that shows the answer to them. In the ink the
+/// terminal already paints a person's turns in, so the two faces of a pane
+/// agree about whose voice this is.
+///
+/// An EMPTY list is drawn as a sentence rather than as nothing. The message
+/// may simply have scrolled out of the pane's history, and a block that
+/// vanished in that case would say "you asked nothing", which is a different
+/// fact and never the true one.
+pub fn asked(lines: &[String], sk: &Skin, th: &Theme) -> Div {
+    sk.panel()
+        .flex()
+        .flex_col()
+        .gap(px(4.))
+        // Inset from the reply beneath it, the way a quoted turn is: the
+        // indent is what says these two blocks are one exchange and not two
+        // unrelated panels stacked. Parker, on the first build of it:
+        // *"indent a little bit! very nice!"*
+        .ml(px(18.))
+        .px(px(12.))
+        .py(px(9.))
+        .border_l(px(3.))
+        .border_color(th.human)
+        .bg(th.human.alpha(0.07))
+        .child(micro("YOU", Step::Fine, th.human, sk, th))
+        .when(lines.is_empty(), |d| {
+            d.child(micro(
+                "your message is no longer in this pane\u{2019}s scrollback",
+                Step::Note,
+                th.faint,
+                sk,
+                th,
+            ))
+        })
+        .children(lines.iter().map(|line| {
+            div()
+                .text_size(px(sk.pt(Step::Body)))
+                .font_family(th.font_family.clone())
+                .text_color(th.human)
+                .child(line.clone())
+        }))
 }
 
 /// The agent, talking. The main area's ordinary state.
