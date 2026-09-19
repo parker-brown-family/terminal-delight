@@ -159,6 +159,12 @@ does, the repair is that a new reply arrives below the reader and the strip says
 it landed — a small design rather than a deletion, and it supersedes this
 paragraph.
 
+The test itself is tracked — issue 565, *Scream test: the overview resets your
+card scroll when a new reply arrives mid-read* — with the deadline and the
+close-as-invalid criterion written into it, so the scream test is a thing that
+finishes rather than a sentence that sits here forever. Whoever picks it up
+runs the invalidation first.
+
 ## Scope
 
 This record is about this repository. Whether it generalises to the
