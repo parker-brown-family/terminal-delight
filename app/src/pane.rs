@@ -2500,6 +2500,39 @@ pub struct MirrorSnapshot {
     pub glare: f32,
 }
 
+/// Which size dial a ctrl+wheel at `pos` is turning, given where this pane's
+/// CONTENT area was last painted and which face it is showing.
+///
+/// A pane is two regions and the gesture means a different thing in each. The
+/// header is chrome and answers to [`theme::GradeKey::Scale`], the same dial
+/// the outer cabinet uses and the reason a pane's header can be sized on its
+/// own. Below it is content, and which content depends on the face: the
+/// terminal grid takes [`theme::GradeKey::TextSize`], the workbench takes
+/// [`theme::GradeKey::BenchSize`]. `content` is the rect below the header — it
+/// is captured by the canvas inside the pane's content div, so "not in it" is
+/// exactly "in the header or on the pane's own frame".
+///
+/// `None` when the pane has never been painted and there is therefore no rect
+/// to compare against. That is not the header: it is *we have not measured this
+/// pane*, and answering with a dial would size whatever the guess landed on.
+/// One frame later the answer exists; until then the gesture does nothing.
+fn size_dial_at(
+    pos: gpui::Point<Pixels>,
+    content: Option<Bounds<Pixels>>,
+    on_bench: bool,
+) -> Option<theme::GradeKey> {
+    let content = content?;
+    Some(if content.contains(&pos) {
+        if on_bench {
+            theme::GradeKey::BenchSize
+        } else {
+            theme::GradeKey::TextSize
+        }
+    } else {
+        theme::GradeKey::Scale
+    })
+}
+
 impl TerminalView {
     /// The theme this pane actually renders with: each appearance group
     /// (theme, grade) resolved to the pane's own override or the live outer
@@ -4978,13 +5011,65 @@ impl TerminalView {
         self.scroll_by_wheel(ev, cx);
     }
 
+    /// Step one of THIS pane's size dials by `notches` wheel notches — the
+    /// ctrl+wheel gesture, after [`size_dial_at`] has decided which dial the
+    /// cursor was standing on.
+    ///
+    /// Only `key` becomes the pane's own; every other dial keeps tracking
+    /// outer, which is what makes sizing one region of one pane a local act
+    /// rather than a detachment from the mother theme.
+    ///
+    /// A notch that changes nothing — the channel is already at its stop —
+    /// leaves the pane exactly as it found it, pin included. Sizing past the end
+    /// must not silently detach a pane from outer: nothing about its size was
+    /// chosen here, and a pane that quietly stopped following would only be
+    /// noticed the next time outer moved and this one did not.
+    pub fn nudge_size(&mut self, key: theme::GradeKey, notches: f32, cx: &mut Context<Self>) {
+        let outer = theme::outer_choice(cx);
+        let mut grade = self.appearance.effective(&outer).grade;
+        let from = grade.get(key);
+        let next = key.nudged(from, notches);
+        if (next - from).abs() < f32::EPSILON {
+            return;
+        }
+        grade.set(key, next);
+        self.appearance
+            .pin_grade(grade, theme::GradePins::only(key.into()));
+        // Same contract as a paint pick: the pane has already changed, the
+        // workspace just writes the layout down so the size survives a restart.
+        cx.emit(PaintApplied);
+        cx.notify();
+    }
+
+    /// Which of this pane's size dials sits under `pos`, if the pane has been
+    /// painted yet. Sugar over [`size_dial_at`] with the pane's own geometry.
+    fn size_dial_under(&self, pos: gpui::Point<Pixels>) -> Option<theme::GradeKey> {
+        size_dial_at(
+            pos,
+            *self.content_bounds.lock().unwrap(),
+            self.bench.face() == crate::workbench::Face::Workbench,
+        )
+    }
+
     /// Scroll the terminal scrollback from a wheel event. Public so the FOCUS
     /// reading modal (rendered by the Workspace) can route its wheel events here:
     /// the modal's locking scrim `.occlude()`s the pane behind it and would
     /// otherwise swallow the wheel, leaving the mirror un-scrollable.
     pub fn scroll_by_wheel(&mut self, ev: &ScrollWheelEvent, cx: &mut Context<Self>) {
+        // ctrl+wheel is the SIZE gesture, not a scroll, and it sizes the region
+        // of this pane the cursor is actually standing on — header, grid or
+        // bench. The Workspace binds the same chord to the outer cabinet; both
+        // handlers are bubble-phase, a pane's is registered deeper, and gpui
+        // runs the deepest first — so halting here is what keeps one flick from
+        // doing both jobs at once. Halted even when no dial resolves: the
+        // cursor is over this pane either way, and the cabinet is not what the
+        // person was pointing at.
         if ev.modifiers.control {
-            return; // workspace handles ctrl+wheel = text-size scrub
+            if let Some(key) = self.size_dial_under(ev.position) {
+                self.nudge_size(key, theme::wheel_notches(ev.delta), cx);
+            }
+            cx.stop_propagation();
+            return;
         }
         let dy = match ev.delta {
             gpui::ScrollDelta::Lines(l) => l.y * 3.0,
@@ -7092,15 +7177,20 @@ impl Render for TerminalView {
         // grade is detached, else the live outer (Mother) scale. This scrubber
         // sizes the HEADER (height + glyphs/icons), never the terminal grid.
         //
-        // Its neighbour on the tray is a DIFFERENT dial with a different job, and
-        // both are read here off the one resolved grade: `text_size` sizes what a
-        // person reads — the terminal's grid, and now the bench, which is the
-        // other thing that pane can be showing. Chrome takes `scale`, content
-        // takes `text_size`, on both faces, so a pane sized to somebody's eyes
-        // stays that size when it is flipped.
+        // Its neighbours on the tray are DIFFERENT dials with different jobs,
+        // and all three are read here off the one resolved grade. Chrome takes
+        // `scale`; the terminal grid takes `text_size`; the bench takes its own
+        // `bench_gauge`, which is `text_size` until somebody splits them.
+        //
+        // The two faces used to share `text_size` outright, so flipping a pane
+        // kept the size somebody had chosen. They are separate now because they
+        // are read differently — a grid at arm's length for hours against a
+        // feed of replies — and because ctrl+wheel resolves to whichever one is
+        // under the cursor, which needs somewhere distinct to land. `None` keeps
+        // the old behaviour for every pane nobody has split.
         let grade = self.appearance.effective(&theme::outer_choice(cx)).grade;
         let scale = grade.scale;
-        let text_k = grade.text_size;
+        let bench_k = grade.bench_gauge();
         // This pane's chrome shape. Baked against THIS pane's palette rather than
         // the window's — a pane wearing its own theme has to have its own header
         // edge, or the two disagree by exactly the amount the pane was retinted.
@@ -7510,7 +7600,7 @@ impl Render for TerminalView {
             // because chrome answers to the menu-bar scale and content answers to
             // these. See [`graded_palette`] and [`crate::skin::Skin::ty`].
             let bench_th = graded_palette(&th);
-            let bench_sk = crate::skin::for_theme(cx, &bench_th, scale).with_type(text_k);
+            let bench_sk = crate::skin::for_theme(cx, &bench_th, scale).with_type(bench_k);
             self.bench_el(
                 &bench_th,
                 &bench_sk,
@@ -8224,6 +8314,206 @@ impl Render for TerminalView {
 
 #[cfg(test)]
 mod tests {
+
+    /// This file's shipped code with every comment line removed.
+    ///
+    /// A source-grep gate its own explanation can satisfy is not a gate: one in
+    /// this repository passed on the comment describing the line it was meant to
+    /// find, while the line itself was gone. Scans below run against code only.
+    fn shipped_code() -> String {
+        let here = include_str!("pane.rs");
+        let (code, _tests) = here.split_once("\n#[cfg(test)]").expect("a test module");
+        code.lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// The four size dials are four dials, and a pane owns three of them.
+    ///
+    /// ctrl+wheel means "size what is under the pointer", and inside one pane
+    /// that is three different answers: the header is chrome and takes the same
+    /// `Scale` the outer cabinet uses, the terminal grid takes `TextSize`, and
+    /// the workbench takes `BenchSize`. Collapsing any two of them would make
+    /// the gesture size something the person was not pointing at, which is the
+    /// single way this feature can be wrong and still look like it works.
+    #[test]
+    fn each_region_of_a_pane_turns_its_own_dial() {
+        use crate::theme::GradeKey;
+        use gpui::{point, px, size, Bounds};
+
+        // The content rect is what the canvas below the header measured, so
+        // "outside it" is the header band and the pane's own frame.
+        let content = Bounds {
+            origin: point(px(100.), px(140.)),
+            size: size(px(400.), px(300.)),
+        };
+        let in_content = point(px(300.), px(280.));
+        let in_header = point(px(300.), px(120.));
+
+        assert_eq!(
+            size_dial_at(in_content, Some(content), false),
+            Some(GradeKey::TextSize),
+            "over the grid, the chord sizes the terminal's text"
+        );
+        assert_eq!(
+            size_dial_at(in_content, Some(content), true),
+            Some(GradeKey::BenchSize),
+            "the SAME point on the workbench face sizes the bench instead — the \
+             face decides, because the two are different things to read"
+        );
+        assert_eq!(
+            size_dial_at(in_header, Some(content), false),
+            Some(GradeKey::Scale),
+            "over the pane's own header, the chord sizes that header"
+        );
+        assert_eq!(
+            size_dial_at(in_header, Some(content), true),
+            Some(GradeKey::Scale),
+            "the header is chrome on both faces, so the face must not change \
+             this answer"
+        );
+
+        // The boundary belongs to the content: the rect is half-open, and the
+        // first row of pixels the canvas measured is content, not header.
+        assert_eq!(
+            size_dial_at(content.origin, Some(content), false),
+            Some(GradeKey::TextSize)
+        );
+        assert_eq!(
+            size_dial_at(point(px(500.), px(440.)), Some(content), false),
+            Some(GradeKey::Scale),
+            "the far corner is one pixel PAST the rect and so is not in it"
+        );
+
+        // A pane that has never been painted has no rect, and that is not the
+        // same as the pointer being on its header. Answering anything here
+        // would size whatever the guess landed on.
+        assert_eq!(size_dial_at(in_content, None, false), None);
+        assert_eq!(size_dial_at(in_header, None, true), None);
+
+        // Three dials, three channels. A rename that pointed two of these at
+        // one channel would leave every assertion above passing.
+        let dials = [GradeKey::Scale, GradeKey::TextSize, GradeKey::BenchSize];
+        for (i, a) in dials.iter().enumerate() {
+            for b in &dials[i + 1..] {
+                assert_ne!(
+                    crate::theme::GradeChannel::from(*a),
+                    crate::theme::GradeChannel::from(*b),
+                    "{a:?} and {b:?} pin the same channel, so sizing one region \
+                     would size the other"
+                );
+            }
+        }
+    }
+
+    /// One ctrl+wheel flick is answered once, by the pane under the cursor.
+    ///
+    /// Both the pane and the Workspace bind the chord — the pane sizes one of
+    /// its own three regions, the Workspace sizes the cabinet — and gpui hands
+    /// a wheel event to the deepest bubble listener first. Everything therefore
+    /// rests on the pane HALTING the event: without the stop, standing over a
+    /// pane and scrolling would grow that pane AND the whole menu bar, on every
+    /// notch, and the two would drift apart with no way to put them back.
+    ///
+    /// The halt is UNCONDITIONAL — outside the `if let` that resolves a dial.
+    /// A pane that has not been painted yet resolves nothing, and letting that
+    /// case fall through to the cabinet would mean the gesture silently resized
+    /// the menu bar on exactly the panes it could not size.
+    ///
+    /// Behaviour a running window is needed to see, so it is guarded at the
+    /// source. Mutation-tested: deleting the halt, moving it inside the `if
+    /// let`, deleting the size call, and leaving the halt behind as a
+    /// commented-out line each fail this test.
+    #[test]
+    fn ctrl_wheel_over_a_pane_sizes_that_pane_and_goes_no_further() {
+        let code = shipped_code();
+        let at = code
+            .find("pub fn scroll_by_wheel")
+            .expect("pub fn scroll_by_wheel");
+        let end = code[at..].find("\n    }\n").expect("end of fn");
+        let body = &code[at..at + end];
+
+        let ctrl = body
+            .find("if ev.modifiers.control {")
+            .expect("scroll_by_wheel must still branch on ctrl — it is the size chord");
+        let branch = &body[ctrl..];
+
+        assert!(
+            branch.contains("self.size_dial_under(ev.position)"),
+            "ctrl+wheel over a pane must resolve WHICH of the pane's dials the \
+             pointer is on; the branch used to bail outright, and then sized \
+             one dial for the whole pane"
+        );
+        assert!(branch.contains("self.nudge_size("), "…and then turn it");
+        assert!(
+            branch.contains("theme::wheel_notches("),
+            "the pane must read the wheel through the shared notch conversion, \
+             so a flick steps the same amount here as it does on the cabinet"
+        );
+
+        let halt = branch.find("cx.stop_propagation();").expect(
+            "the pane must halt the ctrl+wheel it just answered — the \
+                 Workspace's handler is bound to the same chord and would size \
+                 the menu bar off the very same notch",
+        );
+        let resolved = branch.find("if let Some(key)").expect("the dial lookup");
+        let lookup_end = branch[resolved..]
+            .find("\n            }")
+            .expect("end of the lookup block")
+            + resolved;
+        assert!(
+            halt > lookup_end,
+            "the halt sits INSIDE the dial lookup, so a pane with no measured \
+             rect yet would let the flick through to the cabinet"
+        );
+    }
+
+    /// Sizing past the end of a dial is not a decision, so it must not pin.
+    ///
+    /// `nudge_size` compares the nudged value against the one it started from
+    /// and returns early when they match. Drop that and a pane parked at the
+    /// maximum quietly stops following outer the first time somebody keeps
+    /// scrolling — invisible until the cabinet's own size moves and that one
+    /// pane does not (and it writes the layout to disk on every notch besides).
+    ///
+    /// It pins the ONE dial it was handed, never the whole grade: the three
+    /// regions of a pane are sized independently, and a person who grew the
+    /// bench has said nothing about the grid.
+    ///
+    /// Mutation-tested: deleting the bail, widening the pin to every channel,
+    /// and dropping the persist each fail this test.
+    #[test]
+    fn sizing_a_pane_past_its_stop_leaves_it_following_outer() {
+        let code = shipped_code();
+        let at = code.find("pub fn nudge_size").expect("pub fn nudge_size");
+        let end = code[at..].find("\n    }\n").expect("end of fn");
+        let body = &code[at..at + end];
+
+        let guard = body.find("if (next - from).abs() < f32::EPSILON").expect(
+            "nudge_size must compare the nudged value against the current one \
+             and bail when the channel is already at its stop",
+        );
+        let pin = body
+            .find("pin_grade")
+            .expect("nudge_size must pin the channel it turned");
+        assert!(
+            guard < pin,
+            "the no-change bail has to come BEFORE the pin, or a notch at the \
+             stop still detaches the pane from outer"
+        );
+        assert!(
+            body.contains("GradePins::only(key.into())"),
+            "only the dial that was actually turned becomes the pane's own — \
+             every other one must keep tracking outer, which is what makes \
+             sizing one region of one pane a local act and not a detachment"
+        );
+        assert!(
+            body.contains("cx.emit(PaintApplied)"),
+            "the new size has to be persisted like any other appearance change, \
+             or it is gone on the next restart"
+        );
+    }
 
     /// The bench does not grow back into this file.
     ///

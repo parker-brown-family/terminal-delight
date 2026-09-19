@@ -7,6 +7,30 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Added
+
+- **ctrl+wheel sizes exactly what you are pointing at — four dials, one chord.**
+  It used to size the cabinet from anywhere in the window, which meant the
+  things a person most wants bigger — the terminal they are reading, the
+  workbench they are reading — were the two it could not touch. There are now
+  four separate answers and the pointer picks between them: over the **outer
+  chrome** (menu bar, tabs, left bar, the gaps) it scrubs the cabinet exactly as
+  before; over a **pane's own header** it scrubs that one pane's header chrome;
+  over the **terminal grid** it scrubs that pane's terminal text, so the font
+  and cell height move together and the shell reflows; over the **workbench**
+  it scrubs the bench's type ramp. Only the dial actually turned becomes that
+  pane's own — every other one keeps following the outer theme — and each is
+  written into the layout like any other appearance change. The keyboard help
+  has advertised `A──A · Ctrl+wheel` under "Text size" all along; it is true now.
+
+- **The workbench has its own size dial.** A new `bench_size` grade channel,
+  beside the existing text-size one on the DISPLAY tray and in the MCP
+  `set_pane_config` API. It starts **unset**, which is not the same as `1.0`:
+  unset means the bench follows the terminal's dial, which is what the two faces
+  did before they were split and what every session already on disk describes.
+  So nothing shrinks on upgrade, and the two only come apart once somebody
+  turns one of them.
+
 ### Fixed
 
 - **The small print on a card is small, not invisible.** Every subtitle, cost

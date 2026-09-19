@@ -6629,6 +6629,7 @@ impl Workspace {
             gamma: K::Gamma.to_percent(g.gamma),
             menu_bar: K::Scale.to_percent(g.scale),
             text_size: K::TextSize.to_percent(g.text_size),
+            bench_size: K::BenchSize.to_percent(g.bench_gauge()),
             warp: K::Warp.to_percent(g.warp),
             crawl: g.crawl,
             crawl_angle: K::CrawlAngle.to_percent(g.crawl_angle),
@@ -6679,6 +6680,9 @@ impl Workspace {
         }
         if let Some(p) = patch.text_size {
             set!(K::TextSize, p);
+        }
+        if let Some(p) = patch.bench_size {
+            set!(K::BenchSize, p);
         }
         if let Some(p) = patch.warp {
             set!(K::Warp, p);
@@ -14822,17 +14826,21 @@ impl Workspace {
         }
     }
 
-    /// ctrl+wheel anywhere = menu-bar size scrub (panes skip scrolling when ctrl).
+    /// ctrl+wheel over the CABINET = menu-bar size scrub.
+    ///
+    /// The chord means "size whatever the cursor is standing on", and this is
+    /// its outer half: the bar, the tabs, the left bar, the gaps between panes.
+    /// It is reached only when no pane claimed the event first — a pane sizes
+    /// its own terminal text and halts propagation
+    /// ([`TerminalView::nudge_text_size`]) — so one flick is never answered
+    /// twice.
     fn on_wheel(&mut self, ev: &ScrollWheelEvent, _w: &mut Window, cx: &mut Context<Self>) {
         if !ev.modifiers.control {
             return;
         }
-        let dy = match ev.delta {
-            gpui::ScrollDelta::Lines(l) => l.y,
-            gpui::ScrollDelta::Pixels(p) => f32::from(p.y) / 20.,
-        };
         let cur = theme::outer_choice(cx).grade.scale;
-        self.set_scale(cur + dy * 0.05, cx);
+        let notches = theme::wheel_notches(ev.delta);
+        self.set_scale(theme::GradeKey::Scale.nudged(cur, notches), cx);
     }
 
     fn on_mouse_move(&mut self, ev: &MouseMoveEvent, _w: &mut Window, cx: &mut Context<Self>) {
@@ -15921,7 +15929,9 @@ impl Workspace {
                     // crawl angle in degrees, crawl depth as a ratio; colour
                     // channels read as a signed offset ("-12", "+0").
                     .child(match key {
-                        theme::GradeKey::Scale | theme::GradeKey::TextSize => {
+                        theme::GradeKey::Scale
+                        | theme::GradeKey::TextSize
+                        | theme::GradeKey::BenchSize => {
                             format!("{}%", (v * 100.).round() as i32)
                         }
                         theme::GradeKey::CrawlAngle => format!("{}\u{00b0}", v.round() as i32),
@@ -23001,6 +23011,7 @@ impl Render for Workspace {
             for (key, _name) in theme::Grade::CHANNELS {
                 let name = match key {
                     theme::GradeKey::TextSize => t.g_text_size,
+                    theme::GradeKey::BenchSize => t.g_bench_size,
                     theme::GradeKey::Brightness => t.g_brightness,
                     theme::GradeKey::Contrast => t.g_contrast,
                     theme::GradeKey::Colour => t.g_colour,
@@ -27292,6 +27303,28 @@ impl Render for Workspace {
                     // already fits) the wheel falls through to the read pane's own
                     // scrollback — the wheel is never lost.
                     .on_scroll_wheel(cx.listener(|ws, ev: &ScrollWheelEvent, _w, cx| {
+                        // ctrl+wheel is the size gesture and never a pan. The
+                        // reader mirrors the GRID on both faces (see
+                        // `the_focus_reader_mirrors_the_grid_on_both_faces`), so
+                        // the dial it turns is the grid's, named here rather
+                        // than resolved from the cursor: the scrim covers the
+                        // window, so where the pointer is says nothing about
+                        // which region of the pane is being read.
+                        //
+                        // It halts, like the pane's own handler. Before this the
+                        // chord panned the reader AND — propagation never
+                        // stopped — resized the outer bar behind it.
+                        if ev.modifiers.control {
+                            if let Some(pane) = ws.focus_read.as_ref().and_then(|w| w.upgrade()) {
+                                let notches = theme::wheel_notches(ev.delta);
+                                pane.update(cx, |v, cx| {
+                                    v.nudge_size(theme::GradeKey::TextSize, notches, cx)
+                                });
+                                cx.notify();
+                            }
+                            cx.stop_propagation();
+                            return;
+                        }
                         let dy = match ev.delta {
                             gpui::ScrollDelta::Lines(l) => l.y * ws.focus_line_h,
                             gpui::ScrollDelta::Pixels(p) => f32::from(p.y),
@@ -29173,6 +29206,122 @@ mod tests {
         assert!(
             top.contains(".child(scrubber)") && top.contains(".child(win_controls)"),
             "the top right keeps the menu-bar scale and the window buttons"
+        );
+    }
+
+    /// ctrl+wheel sizes what the cursor is standing on, at one rate.
+    ///
+    /// The chord is bound twice on purpose — a pane sizes its own terminal text
+    /// (`TerminalView::nudge_text_size`), and this handler sizes the cabinet for
+    /// every flick no pane claimed. What keeps that from reading as two
+    /// unrelated features is that both go through the same notch conversion and
+    /// the same per-notch step, so a gesture travels the same distance whichever
+    /// surface it lands on. Open-coding the delta arithmetic here again — which
+    /// is exactly what this handler used to do — is how the two drift.
+    ///
+    /// Mutation-tested: restoring the old open-coded delta, and reducing the
+    /// pane's halt to a commented-out line, each fail this test.
+    #[test]
+    fn the_cabinets_ctrl_wheel_steps_at_the_same_rate_as_a_panes() {
+        let code = shipped_code();
+        let at = code
+            .find("    fn on_wheel(&mut self, ev: &ScrollWheelEvent")
+            .expect("Workspace::on_wheel");
+        let end = code[at..].find("\n    }\n").expect("end of fn");
+        let body = &code[at..at + end];
+
+        assert!(
+            body.contains("theme::wheel_notches(ev.delta)"),
+            "the cabinet must read the wheel through the shared notch \
+             conversion, not its own copy of the pixel divisor"
+        );
+        assert!(
+            body.contains("theme::GradeKey::Scale.nudged("),
+            "and step the menu-bar channel by the shared per-notch step"
+        );
+        assert!(
+            !body.contains("ScrollDelta::Pixels"),
+            "no second copy of the delta arithmetic lives here"
+        );
+
+        // The pane's half of the same chord, asserted from over here too: this
+        // handler's correctness depends on never seeing an event a pane already
+        // answered, and that promise is kept in pane.rs. Comments stripped —
+        // the block being scanned explains the halt in prose that names it.
+        let pane_src: String = include_str!("pane.rs")
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let at = pane_src
+            .find("pub fn scroll_by_wheel")
+            .expect("pub fn scroll_by_wheel");
+        let end = pane_src[at..].find("\n    }\n").expect("end of fn");
+        assert!(
+            pane_src[at..at + end].contains("cx.stop_propagation();"),
+            "a pane that sized itself must halt the wheel, or this handler \
+             sizes the menu bar off the same notch"
+        );
+    }
+
+    /// The FOCUS reader names the dial it turns instead of guessing at one.
+    ///
+    /// Its scrim `.occlude()`s the whole window, so the reader's own wheel
+    /// handler is the only one a flick reaches — and where the pointer happens
+    /// to be says nothing about which region of the mirrored pane is being
+    /// read. The reader mirrors the GRID on both faces (see
+    /// `the_focus_reader_mirrors_the_grid_on_both_faces` in pane.rs), so the
+    /// grid's dial is the answer and it is written down here rather than
+    /// resolved from a cursor that is standing on a modal.
+    ///
+    /// It also has to HALT, and take ctrl before the pan. Before that the chord
+    /// scrolled the reader and — propagation never stopped — resized the outer
+    /// bar behind it, off one flick.
+    ///
+    /// Mutation-tested: dropping the halt, putting the pan first, and swapping
+    /// the named dial for the bench's each fail this test.
+    #[test]
+    fn the_focus_reader_does_not_pan_on_the_size_chord() {
+        let code = shipped_code();
+        let at = code
+            .find("if let Some(pane) = ws.focus_read.as_ref()")
+            .expect("the FOCUS reader's wheel handler");
+        // Back up to the top of the listener so the ctrl branch is in view.
+        let at = code[..at]
+            .rfind(".on_scroll_wheel(cx.listener(|ws, ev: &ScrollWheelEvent")
+            .expect("the listener");
+        let end = code[at..]
+            .find("\n                    }))")
+            .expect("end of listener");
+        let body = &code[at..at + end];
+
+        let ctrl = body
+            .find("if ev.modifiers.control {")
+            .expect("the reader must recognise the size chord at all");
+        let pan = body
+            .find("ws.focus_overflow > 0.0")
+            .expect("the pan branch is still there for a plain wheel");
+        assert!(
+            ctrl < pan,
+            "ctrl has to be taken BEFORE the pan, or the chord scrolls the \
+             reader instead of sizing what it is showing"
+        );
+
+        let branch = &body[ctrl..pan];
+        assert!(
+            branch.contains("theme::GradeKey::TextSize"),
+            "the reader mirrors the GRID, so the grid's dial is the one it \
+             turns — and it says so, rather than resolving a region from a \
+             pointer that is standing on the scrim"
+        );
+        assert!(
+            branch.contains("theme::wheel_notches("),
+            "…read through the shared notch conversion like every other scrub"
+        );
+        assert!(
+            branch.contains("cx.stop_propagation();"),
+            "the reader must halt the chord it answered, or the root handler \
+             resizes the outer bar off the same notch"
         );
     }
 
