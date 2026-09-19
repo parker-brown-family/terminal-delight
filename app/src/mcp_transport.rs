@@ -519,6 +519,18 @@ mod tests {
             .unwrap_or_else(|_| panic!("no push arrived; expected {waiting_for}"))
     }
 
+    /// A pid no process can have.
+    ///
+    /// Linux caps pids at `/proc/sys/kernel/pid_max`, which is at most 2^22 on
+    /// this architecture, so nothing above it ever has a `/proc` entry. The test
+    /// pane below needs that: a pane whose agent CANNOT be read is the one case
+    /// where [`crate::paneident`] falls back to the pane's own resume line, and
+    /// a pid that merely happens to be free on the machine running the suite is
+    /// not the same thing. This test used 4242 and passed here for a year and
+    /// failed in CI the first time it ran there, because a busy runner had a
+    /// process sitting on it.
+    const NO_SUCH_PID: u32 = u32::MAX - 1;
+
     /// End-to-end push feed over a REAL transcript file (no gpui): first sight
     /// announces the agent without replaying history, and a tool call written
     /// afterwards is pushed as a `notifications/message`. The barrier (reading
@@ -543,16 +555,16 @@ mod tests {
         let handle = thread::spawn(move || notify_loop(snap_rx, out_tx, level, active, h));
 
         // 1st poll: first sight ⇒ agent_appeared, history NOT replayed.
-        snap_tx.send(agent_snapshot(4242, cwd)).unwrap();
+        snap_tx.send(agent_snapshot(NO_SUCH_PID, cwd)).unwrap();
         let first: serde_json::Value =
             serde_json::from_str(&next(&out_rx, "agent_appeared")).unwrap();
         assert_eq!(first["method"], "notifications/message");
         assert_eq!(first["params"]["data"]["event"], "agent_appeared");
-        assert_eq!(first["params"]["data"]["pid"], 4242);
+        assert_eq!(first["params"]["data"]["pid"], NO_SUCH_PID);
 
         // A new tool call lands, then the next poll arrives → it is pushed.
         append_tool_use(&transcript, "Edit", "second");
-        snap_tx.send(agent_snapshot(4242, cwd)).unwrap();
+        snap_tx.send(agent_snapshot(NO_SUCH_PID, cwd)).unwrap();
         let second: serde_json::Value = serde_json::from_str(&next(&out_rx, "tool_call")).unwrap();
         assert_eq!(second["params"]["data"]["event"], "tool_call");
         assert_eq!(second["params"]["data"]["tool"], "Edit");
