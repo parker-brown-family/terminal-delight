@@ -104,6 +104,7 @@ impl TerminalView {
                 self.bench.close_card();
             }
             Hit::Launch => cx.emit(OpenAgentLauncher),
+            Hit::AddNote => self.bench_note_open(cx),
             Hit::EndAgent => self.bench_end_agent(cx),
             // A second press on the open dial closes it. A menu with no way
             // back out except picking something is a menu that has taken a
@@ -578,29 +579,27 @@ impl TerminalView {
             }
             crate::workbench::Reading::Choose(i) => self.bench_choose(i, cx),
             crate::workbench::Reading::Talk => {
-                // ON THE COMMENTS BOARD, TYPING STARTS A NOTE.
+                // WHICH SHELF YOU ARE READING DOES NOT CHANGE WHERE TYPING GOES.
                 //
-                // The same gesture the rest of the bench already has — start
-                // typing and the box opens under the character, with no "click
-                // here first" — pointed at the shelf the person is looking at.
-                // Parker, on meeting it in the reply composer: *"the
+                // It did, for one build. Standing on the comments board opened
+                // a note under the first character, on the reasoning that the
+                // bench already works that way and the board should too —
+                // Parker had praised the reply composer for exactly that: *"the
                 // functionality of JUST TYPE (withough click sleecting the
-                // prompt area) is SUPPPPER nice!"*, which is an argument for
-                // the board having it too rather than for leaving the board's
-                // box to be found with a mouse.
+                // prompt area) is SUPPPPER nice!"*. The extension was wrong and
+                // he found it in a minute: *"if COMMENTS is selected and I type
+                // ... the keystroke gets caught in the COMMENT instead of the
+                // prompt --- this is WRONG! --- comment MUST require alt+m"*.
                 //
-                // Ahead of the agent check below, deliberately. A note has
-                // nothing to do with whether an agent is running in this pane,
-                // so this is the one shelf where typing works on a plain shell.
-                if self.bench.shelf() == crate::surface::Shelf::Comments {
-                    self.bench_note_open(cx);
-                    if let (Some(line), Some(c)) = (self.wb_note.as_mut(), ks.key_char.as_deref()) {
-                        line.insert(c);
-                    }
-                    cx.notify();
-                    cx.stop_propagation();
-                    return true;
-                }
+                // The reason it is wrong is what "just type" was ever for. It
+                // means there is ONE place a character goes and you never have
+                // to aim at it. A shelf is a thing you are LOOKING at; making
+                // it decide where your typing lands turns reading into a mode,
+                // and a mode you entered by reading is one nobody chose. The
+                // note box is opened on purpose — `alt+m`, or the `+ write a
+                // note` row on the board — and it catches keys only once it is
+                // open, which is [`Self::bench_note_key`]'s whole job.
+                //
                 // Nobody to talk to. The bench keeps the key rather than
                 // starting a sentence into a shell.
                 //
@@ -2632,15 +2631,36 @@ impl TerminalView {
                     // artifacts' -- 'No decisions' etc."*. The path lives
                     // in the protocol doc, which is where somebody asking
                     // that question is already standing.
-                    .when(rows.is_empty(), |d| {
-                        d.child(
-                            div()
-                                .text_size(px(sk.pt(Step::Small)))
-                                .text_color(sk.ink.ink_faint)
-                                .font_family(th.font_family.clone())
-                                .child(format!("No {}", shelf_now.empty_word())),
-                        )
+                    // The board's own affordance, ABOVE the empty line and
+                    // above the rows, because on a newest-first list the top is
+                    // where the next thing goes. It is drawn whether or not the
+                    // shelf has anything on it: an empty comments board with no
+                    // way to start one would be the only shelf on this rail
+                    // that tells you it is empty and not what to do about it.
+                    .when(shelf_now == crate::surface::Shelf::Comments, |d| {
+                        d.child(crate::benchdraw::add_note_row(sk, th).relative().child(
+                            crate::benchdraw::zone(
+                                self.wb_zones.clone(),
+                                crate::workbench::Hit::AddNote,
+                            ),
+                        ))
                     })
+                    // "No comments yet" is still worth saying underneath it,
+                    // but only on the shelves whose emptiness is the whole
+                    // message. The board now has a thing to press, so the
+                    // sentence would be explaining a slot that explains itself.
+                    .when(
+                        rows.is_empty() && shelf_now != crate::surface::Shelf::Comments,
+                        |d| {
+                            d.child(
+                                div()
+                                    .text_size(px(sk.pt(Step::Small)))
+                                    .text_color(sk.ink.ink_faint)
+                                    .font_family(th.font_family.clone())
+                                    .child(format!("No {}", shelf_now.empty_word())),
+                            )
+                        },
+                    )
                     .children(rows.into_iter().map(|row| {
                         let id = row.id.clone();
                         crate::benchdraw::rail_row(&row, sk, th).relative().child(

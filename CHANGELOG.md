@@ -7,6 +7,29 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Standing on the comments board no longer swallows a keystroke meant for the
+  agent.** For one build, typing while the board was on screen opened a note
+  under the first character — the reasoning being that the bench already works
+  that way and the board should too. It is the wrong extension of that idea:
+  "just type" is valuable because there is ONE place a character goes and you
+  never have to aim at it, and letting the shelf you happen to be READING choose
+  the destination turns reading into a mode nobody entered on purpose. Typing
+  goes to the agent on every shelf. A note is opened deliberately — `alt+m`, or
+  the new row — and catches keys only once it is open. (#XXX)
+
+### Added
+
+- **A `+ write a note` row sits at the head of the comments board.** With
+  type-to-open gone, `alt+m` was the only door, and a feature reachable by one
+  undiscoverable chord is one most people never find. The row is a dashed
+  outline rather than a filled box, because every real row on the rail is filled
+  and a filled affordance at the top of a newest-first list reads as the newest
+  note. It carries `ALT+M` on its right, so the mouse path teaches the keyboard
+  path instead of competing with it, and it is drawn whether or not the board
+  has anything on it. (#XXX)
+
 ### Added
 
 - **`alt+1` … `alt+4` land on a workbench tab without reaching for the mouse.**

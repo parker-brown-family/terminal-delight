@@ -906,6 +906,15 @@ pub enum Hit {
         key: String,
     },
     Shelf(crate::surface::Shelf),
+    /// The `+ write a note` row at the head of the comments board.
+    ///
+    /// A note is now only ever opened on purpose — `alt+m`, or this. Typing on
+    /// the board used to open one under the first character and that took the
+    /// keystroke away from the agent, which is where typing goes everywhere
+    /// else on the bench. Removing it left the feature reachable by one chord
+    /// and nothing else, so the chord needed a visible twin: the row teaches
+    /// `alt+m` by wearing it, and is the thing a hand reaches for meanwhile.
+    AddNote,
     OpenRow(crate::surface::SurfaceId),
     GalleryBack,
     GalleryForward,

@@ -383,6 +383,77 @@ pub fn rail_row(row: &Row, sk: &Skin, th: &Theme) -> Div {
         })
 }
 
+/// The `+ write a note` row, at the head of the comments board.
+///
+/// # Why it exists at all
+///
+/// A note is opened on purpose or not at all — typing on the board used to
+/// open one under the first character and that took the keystroke away from the
+/// agent, which is where typing goes on every other shelf. Taking that back out
+/// left `alt+m` as the only door, and a feature reachable by one undiscoverable
+/// chord is a feature most people never find. This is the chord's visible twin.
+///
+/// # Why it is outlined rather than filled
+///
+/// Every real row on this rail is a filled box with a solid colour edge. This
+/// one is a dashed outline over nothing, which is the oldest honest signal in
+/// the vocabulary: a filled box is a THING, an outlined box is a SLOT where a
+/// thing would go. It needs no icon to explain it and no label saying "button",
+/// and it cannot be misread as the newest note — which a filled row at the top
+/// of a newest-first list absolutely would be.
+///
+/// # Why it wears its own shortcut
+///
+/// `ALT+M` sits on the right of the row, quiet, permanently. The affordance
+/// teaches the faster way to use it every time somebody reaches for the slower
+/// one, so the mouse path trains the keyboard path out of existence instead of
+/// competing with it.
+///
+/// The geometry is [`rail_row`]'s — the same 7-point left inset, the same
+/// vertical padding, the same corner from the skin — so it sits IN the list
+/// rather than on top of it, and a restyle moves both.
+pub fn add_note_row(sk: &Skin, th: &Theme) -> Div {
+    let mine = ink(Tint::Mine, th);
+    sk.row()
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap(px(7.))
+        .pl(px(7.))
+        .pr(px(6.))
+        .py(px(6.))
+        .border_l(px(2.))
+        .border_color(mine.alpha(0.45))
+        .border_t(px(1.))
+        .border_r(px(1.))
+        .border_b(px(1.))
+        .border_dashed()
+        .rounded(sk.radius())
+        .bg(mine.alpha(0.05))
+        .hover(move |st| st.bg(mine.alpha(0.14)))
+        .cursor_pointer()
+        // The plus sits in the same 7-point column the unseen dot occupies on a
+        // real row, so the two line up down the list instead of the affordance
+        // hanging off the side of it.
+        .child(
+            div()
+                .w(px(7.))
+                .flex_none()
+                .text_size(px(sk.pt(Step::Small)))
+                .text_color(mine)
+                .child("\u{2b}"),
+        )
+        .child(
+            div()
+                .flex_1()
+                .min_w(px(0.))
+                .text_size(px(sk.pt(Step::Small)))
+                .text_color(mine.alpha(0.92))
+                .child("write a note"),
+        )
+        .child(micro("ALT+M", Step::Tag, sk.ink.ink_faint, sk, th))
+}
+
 /// The rail collapsed: one tick per surface, newest at the top.
 ///
 /// The same gesture the attention spine makes on the window's right edge, one
