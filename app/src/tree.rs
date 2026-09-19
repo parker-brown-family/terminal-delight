@@ -888,6 +888,66 @@ pub fn first_child(rows: &[Row], of: RowId) -> Option<RowId> {
 mod tests {
     use super::*;
 
+    /// This file's source with the test module cut off, and then with every
+    /// comment line removed.
+    ///
+    /// Both cuts are load-bearing and both have been learned the hard way in
+    /// this repository. `include_str!` reads the file holding the assertion, so
+    /// a needle searched for across the WHOLE file is satisfied by the `assert!`
+    /// looking for it. And a gate can be satisfied by its own EXPLANATION: one
+    /// in `main.rs` passed on the comment describing a line that had been
+    /// deleted. The doc comment on [`Scope::toggled`] says `Scope::default()`
+    /// in prose, so the guard below would pass on the prose alone without this.
+    fn shipped_code() -> String {
+        let src = include_str!("tree.rs");
+        src[..src.find("\n#[cfg(test)]").expect("the test module")]
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// **The gate for the mistake itself, not for the bug it caused.**
+    ///
+    /// The bug was one stale return value; the MISTAKE was naming the resting
+    /// scope by its value in a place that means "back out to the resting
+    /// scope". That compiles, passes, and reads correctly right up until the
+    /// resting scope moves — and then it points at the far end of the bar with
+    /// nothing to say so. `toggled` sat in exactly that state for a day and put
+    /// 31 tabs across the top of a window.
+    ///
+    /// The behavioural tests below prove today's answer. This one refuses the
+    /// shape that made today's answer go stale, so the next person to move
+    /// [`Scope::default`] cannot leave this function behind the way the last
+    /// one did.
+    #[test]
+    fn nothing_names_the_resting_scope_by_value_where_it_means_the_default() {
+        let code = shipped_code();
+        let body = {
+            let at = code.find("pub fn toggled").expect("Scope::toggled");
+            let rest = &code[at..];
+            &rest[..rest.find("\n    }").expect("the end of toggled")]
+        };
+        assert!(
+            body.contains("Scope::default()"),
+            "Scope::toggled must back out to the resting scope BY NAME. Naming a \
+             variant instead is what stranded it when the resting scope moved from \
+             All to Branch. Body was:\n{body}"
+        );
+        for named in [
+            "Scope::All",
+            "Scope::Branch",
+            "Scope::Project",
+            "Scope::Initiative",
+        ] {
+            assert!(
+                !body.contains(named),
+                "Scope::toggled names {named} as a value. The only scope it may \
+                 produce that it was not handed is Scope::default(). Body was:\n{body}"
+            );
+        }
+    }
+
     /// The nearest parent, in all four shapes a task can be filed in.
     ///
     /// The grouped case is the one that was wrong on screen: a task under the
