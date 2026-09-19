@@ -6576,6 +6576,7 @@ impl Workspace {
             gamma: K::Gamma.to_percent(g.gamma),
             menu_bar: K::Scale.to_percent(g.scale),
             text_size: K::TextSize.to_percent(g.text_size),
+            bench_size: K::BenchSize.to_percent(g.bench_gauge()),
             warp: K::Warp.to_percent(g.warp),
             crawl: g.crawl,
             crawl_angle: K::CrawlAngle.to_percent(g.crawl_angle),
@@ -6626,6 +6627,9 @@ impl Workspace {
         }
         if let Some(p) = patch.text_size {
             set!(K::TextSize, p);
+        }
+        if let Some(p) = patch.bench_size {
+            set!(K::BenchSize, p);
         }
         if let Some(p) = patch.warp {
             set!(K::Warp, p);
@@ -15888,7 +15892,9 @@ impl Workspace {
                     // crawl angle in degrees, crawl depth as a ratio; colour
                     // channels read as a signed offset ("-12", "+0").
                     .child(match key {
-                        theme::GradeKey::Scale | theme::GradeKey::TextSize => {
+                        theme::GradeKey::Scale
+                        | theme::GradeKey::TextSize
+                        | theme::GradeKey::BenchSize => {
                             format!("{}%", (v * 100.).round() as i32)
                         }
                         theme::GradeKey::CrawlAngle => format!("{}\u{00b0}", v.round() as i32),
@@ -22959,6 +22965,7 @@ impl Render for Workspace {
             for (key, _name) in theme::Grade::CHANNELS {
                 let name = match key {
                     theme::GradeKey::TextSize => t.g_text_size,
+                    theme::GradeKey::BenchSize => t.g_bench_size,
                     theme::GradeKey::Brightness => t.g_brightness,
                     theme::GradeKey::Contrast => t.g_contrast,
                     theme::GradeKey::Colour => t.g_colour,
@@ -27250,17 +27257,33 @@ impl Render for Workspace {
                     // already fits) the wheel falls through to the read pane's own
                     // scrollback — the wheel is never lost.
                     .on_scroll_wheel(cx.listener(|ws, ev: &ScrollWheelEvent, _w, cx| {
+                        // ctrl+wheel is the size gesture and never a pan. The
+                        // reader mirrors the GRID on both faces (see
+                        // `the_focus_reader_mirrors_the_grid_on_both_faces`), so
+                        // the dial it turns is the grid's, named here rather
+                        // than resolved from the cursor: the scrim covers the
+                        // window, so where the pointer is says nothing about
+                        // which region of the pane is being read.
+                        //
+                        // It halts, like the pane's own handler. Before this the
+                        // chord panned the reader AND — propagation never
+                        // stopped — resized the outer bar behind it.
+                        if ev.modifiers.control {
+                            if let Some(pane) = ws.focus_read.as_ref().and_then(|w| w.upgrade()) {
+                                let notches = theme::wheel_notches(ev.delta);
+                                pane.update(cx, |v, cx| {
+                                    v.nudge_size(theme::GradeKey::TextSize, notches, cx)
+                                });
+                                cx.notify();
+                            }
+                            cx.stop_propagation();
+                            return;
+                        }
                         let dy = match ev.delta {
                             gpui::ScrollDelta::Lines(l) => l.y * ws.focus_line_h,
                             gpui::ScrollDelta::Pixels(p) => f32::from(p.y),
                         };
-                        // ctrl+wheel is the size gesture and never a pan. The
-                        // scrim `.occlude()`s the pane it mirrors, so without
-                        // this the chord panned the reader AND — propagation
-                        // never halted — resized the outer bar behind it. Held
-                        // ctrl falls straight through to the mirrored pane,
-                        // which sizes its own text and stops there.
-                        if !ev.modifiers.control && ws.focus_overflow > 0.0 {
+                        if ws.focus_overflow > 0.0 {
                             let next = (ws.focus_scroll_y - dy).clamp(0.0, ws.focus_overflow);
                             if (next - ws.focus_scroll_y).abs() > f32::EPSILON {
                                 ws.focus_scroll_y = next;
@@ -29195,35 +29218,64 @@ mod tests {
         );
     }
 
-    /// The FOCUS reader passes the size chord through to the pane it mirrors.
+    /// The FOCUS reader names the dial it turns instead of guessing at one.
     ///
-    /// Its scrim `.occlude()`s the window, so the reader's own wheel handler is
-    /// the only one a flick reaches. Panning on ctrl did two wrong things at
-    /// once: it scrolled the reader, and — having never halted the event — let
-    /// the root handler resize the outer bar behind it. ctrl is not a pan
-    /// anywhere else in the window and is not one here.
+    /// Its scrim `.occlude()`s the whole window, so the reader's own wheel
+    /// handler is the only one a flick reaches — and where the pointer happens
+    /// to be says nothing about which region of the mirrored pane is being
+    /// read. The reader mirrors the GRID on both faces (see
+    /// `the_focus_reader_mirrors_the_grid_on_both_faces` in pane.rs), so the
+    /// grid's dial is the answer and it is written down here rather than
+    /// resolved from a cursor that is standing on a modal.
     ///
-    /// Mutation-tested: putting the unguarded pan back fails this test.
+    /// It also has to HALT, and take ctrl before the pan. Before that the chord
+    /// scrolled the reader and — propagation never stopped — resized the outer
+    /// bar behind it, off one flick.
+    ///
+    /// Mutation-tested: dropping the halt, putting the pan first, and swapping
+    /// the named dial for the bench's each fail this test.
     #[test]
     fn the_focus_reader_does_not_pan_on_the_size_chord() {
         let code = shipped_code();
         let at = code
-            .find("gpui::ScrollDelta::Lines(l) => l.y * ws.focus_line_h")
+            .find("if let Some(pane) = ws.focus_read.as_ref()")
             .expect("the FOCUS reader's wheel handler");
-        let body = &code[at..];
+        // Back up to the top of the listener so the ctrl branch is in view.
+        let at = code[..at]
+            .rfind(".on_scroll_wheel(cx.listener(|ws, ev: &ScrollWheelEvent")
+            .expect("the listener");
+        let end = code[at..]
+            .find("\n                    }))")
+            .expect("end of listener");
+        let body = &code[at..at + end];
+
+        let ctrl = body
+            .find("if ev.modifiers.control {")
+            .expect("the reader must recognise the size chord at all");
         let pan = body
             .find("ws.focus_overflow > 0.0")
-            .expect("the pan branch");
-        let guarded = &body[..pan + "ws.focus_overflow > 0.0".len()];
+            .expect("the pan branch is still there for a plain wheel");
         assert!(
-            guarded.contains("!ev.modifiers.control && ws.focus_overflow > 0.0"),
-            "the reader's pan must stand down while ctrl is held so the chord \
-             reaches the mirrored pane's own text size"
+            ctrl < pan,
+            "ctrl has to be taken BEFORE the pan, or the chord scrolls the \
+             reader instead of sizing what it is showing"
+        );
+
+        let branch = &body[ctrl..pan];
+        assert!(
+            branch.contains("theme::GradeKey::TextSize"),
+            "the reader mirrors the GRID, so the grid's dial is the one it \
+             turns — and it says so, rather than resolving a region from a \
+             pointer that is standing on the scrim"
         );
         assert!(
-            body[..pan].len() < 400,
-            "the ctrl guard belongs on the pan branch itself, not somewhere \
-             earlier that a later edit can step around"
+            branch.contains("theme::wheel_notches("),
+            "…read through the shared notch conversion like every other scrub"
+        );
+        assert!(
+            branch.contains("cx.stop_propagation();"),
+            "the reader must halt the chord it answered, or the root handler \
+             resizes the outer bar off the same notch"
         );
     }
 

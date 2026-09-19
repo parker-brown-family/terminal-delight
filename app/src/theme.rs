@@ -327,6 +327,15 @@ pub enum GradeKey {
     /// (the terminal reflows), distinct from `Scale` (chrome). Not a paint-time
     /// grade; rides the grade group for the per-pane override + "follow outer".
     TextSize,
+    /// Workbench type multiplier — scales the pane's OTHER face, the surface
+    /// feed, through its type ramp ([`crate::workbench::Type`]).
+    ///
+    /// A fourth dial rather than a reuse of `TextSize`, because the two faces
+    /// are read at different distances for different lengths of time and a
+    /// person sizing one is rarely asking for the other. Until somebody turns
+    /// it, it is *unset* and the bench follows `TextSize` — see
+    /// [`Grade::bench_size`], where unset and 1.0 are deliberately different.
+    BenchSize,
     /// Barrel-warp (CRT curvature) amount, `0..=WARP_MAX` (0 = dead flat). Not a
     /// paint grade — it drives the per-pane tube curvature the renderer bends by —
     /// but it rides the grade group so each pane curves by its OWN amount (own
@@ -348,7 +357,7 @@ impl GradeKey {
     pub fn range(self) -> (f32, f32, f32) {
         match self {
             GradeKey::Scale => (0.7, 1.6, 1.0),
-            GradeKey::TextSize => (0.6, 2.0, 1.0),
+            GradeKey::TextSize | GradeKey::BenchSize => (0.6, 2.0, 1.0),
             GradeKey::Warp => (0.0, WARP_MAX, 0.0),
             GradeKey::CrawlAngle => (CRAWL_ANGLE_MIN, CRAWL_ANGLE_MAX, CRAWL_ANGLE_DEFAULT),
             GradeKey::CrawlDepth => (CRAWL_DEPTH_MIN, CRAWL_DEPTH_MAX, CRAWL_DEPTH_DEFAULT),
@@ -446,6 +455,20 @@ pub struct Grade {
     /// Terminal text-size multiplier (`0.6..2.0`, neutral `1.0`). Scales the
     /// pane's grid font + cell metrics, so the terminal reflows.
     pub text_size: f32,
+    /// Workbench type multiplier (`0.6..2.0`), or `None` for **nobody has split
+    /// this pane's two faces yet**.
+    ///
+    /// `None` is not `1.0`, and the difference is the whole reason this is an
+    /// `Option`. The bench used to be drawn at `text_size`, so every pane
+    /// already on disk carries a bench sized by that dial and no record of a
+    /// bench dial at all; reading the absent field as neutral would shrink
+    /// every one of them back to config size the first time this build opened
+    /// their session. Unset therefore means "follow `text_size`", which is what
+    /// [`Grade::bench_gauge`] resolves and the only accessor anything should
+    /// read. Turning the dial writes `Some`, and from then on the two faces are
+    /// independent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bench_size: Option<f32>,
     /// Barrel-warp amount (`0..=WARP_MAX`, `0` = flat). The renderer bends THIS
     /// pane's tube by it, so warp is per-pane (override else inherited outer) —
     /// not the old global dial that curved every pane at once.
@@ -479,6 +502,7 @@ pub enum GradeChannel {
     Gamma,
     Scale,
     TextSize,
+    BenchSize,
     Warp,
     CrawlAngle,
     CrawlDepth,
@@ -488,8 +512,10 @@ pub enum GradeChannel {
 
 impl GradeChannel {
     /// Every channel in bit order. This is the wire order too, so a serialized
-    /// pin list reads the same way every time.
-    pub const ALL: [GradeChannel; 13] = [
+    /// pin list reads the same way every time. Safe to insert into: a pin list
+    /// travels as channel NAMES, never as the bitmask, so the discriminants are
+    /// an in-memory detail and a new dial can sit beside its sibling.
+    pub const ALL: [GradeChannel; 14] = [
         Self::Brightness,
         Self::Contrast,
         Self::Colour,
@@ -498,6 +524,7 @@ impl GradeChannel {
         Self::Gamma,
         Self::Scale,
         Self::TextSize,
+        Self::BenchSize,
         Self::Warp,
         Self::CrawlAngle,
         Self::CrawlDepth,
@@ -517,6 +544,7 @@ impl GradeChannel {
             Self::Gamma => "gamma",
             Self::Scale => "scale",
             Self::TextSize => "text_size",
+            Self::BenchSize => "bench_size",
             Self::Warp => "warp",
             Self::CrawlAngle => "crawl_angle",
             Self::CrawlDepth => "crawl_depth",
@@ -549,6 +577,15 @@ impl GradeChannel {
             Self::Gamma => close(a.gamma, b.gamma),
             Self::Scale => close(a.scale, b.scale),
             Self::TextSize => close(a.text_size, b.text_size),
+            // Option equality, not resolved equality: unset and "set to
+            // exactly what unset resolves to" are different states of this
+            // pane, and collapsing them here would let a pin quietly go
+            // missing the moment somebody dialled the bench to match.
+            Self::BenchSize => match (a.bench_size, b.bench_size) {
+                (None, None) => true,
+                (Some(x), Some(y)) => close(x, y),
+                _ => false,
+            },
             Self::Warp => close(a.warp, b.warp),
             Self::CrawlAngle => close(a.crawl_angle, b.crawl_angle),
             Self::CrawlDepth => close(a.crawl_depth, b.crawl_depth),
@@ -572,6 +609,7 @@ impl GradeChannel {
             Self::Gamma => dst.gamma = src.gamma,
             Self::Scale => dst.scale = src.scale,
             Self::TextSize => dst.text_size = src.text_size,
+            Self::BenchSize => dst.bench_size = src.bench_size,
             Self::Warp => dst.warp = src.warp,
             Self::CrawlAngle => dst.crawl_angle = src.crawl_angle,
             Self::CrawlDepth => dst.crawl_depth = src.crawl_depth,
@@ -592,6 +630,7 @@ impl From<GradeKey> for GradeChannel {
             GradeKey::Gamma => Self::Gamma,
             GradeKey::Scale => Self::Scale,
             GradeKey::TextSize => Self::TextSize,
+            GradeKey::BenchSize => Self::BenchSize,
             GradeKey::Warp => Self::Warp,
             GradeKey::CrawlAngle => Self::CrawlAngle,
             GradeKey::CrawlDepth => Self::CrawlDepth,
@@ -730,6 +769,7 @@ impl Default for Grade {
             gamma: 0.5,         // 0 (no gamma lift — keeps the field dark)
             scale: 0.99,        // 99%
             text_size: 1.0,     // terminal grid at config size
+            bench_size: None,   // unset: the bench follows the grid's dial
             warp: WARP_DEFAULT, // the house near-fishbowl bend
             tracking: None,     // defer to the theme's authored roll bar
             crawl: false,       // crawl mode off until toggled
@@ -742,8 +782,9 @@ impl Default for Grade {
 impl Grade {
     /// Picker order: (channel, label) for the OSD slider rows. Terminal text
     /// size leads — it's the control people reach for most.
-    pub const CHANNELS: [(GradeKey, &'static str); 9] = [
+    pub const CHANNELS: [(GradeKey, &'static str); 10] = [
         (GradeKey::TextSize, "text size"),
+        (GradeKey::BenchSize, "bench size"),
         (GradeKey::Brightness, "brightness"),
         (GradeKey::Contrast, "contrast"),
         (GradeKey::Colour, "colour"),
@@ -767,6 +808,11 @@ impl Grade {
             gamma: 0.5,
             scale: 1.0,
             text_size: 1.0,
+            // Reset is an explicit "I want nothing here", and what the
+            // bench wants when nothing is asked of it is to follow the
+            // grid — so reset restores the unset state rather than
+            // pinning a 1.0 that would outlive the next text-size change.
+            bench_size: None,
             warp: 0.0,      // reset = dead flat
             tracking: None, // reset = defer to the theme's roll bar
             crawl: false,   // reset = crawl off
@@ -792,6 +838,7 @@ impl Grade {
         .all(|v| (v - 0.5).abs() < EPS)
             && (self.scale - 1.0).abs() < EPS
             && (self.text_size - 1.0).abs() < EPS
+            && (self.bench_gauge() - 1.0).abs() < EPS
     }
 
     /// True when the six PAINT channels sit at neutral, whatever the rest of
@@ -835,11 +882,24 @@ impl Grade {
             && (self.gamma - d.gamma).abs() < EPS
             && (self.scale - d.scale).abs() < EPS
             && (self.text_size - d.text_size).abs() < EPS
+            && self.bench_size == d.bench_size
             && (self.warp - d.warp).abs() < EPS
             && self.tracking == d.tracking
             && self.crawl == d.crawl
             && (self.crawl_angle - d.crawl_angle).abs() < EPS
             && (self.crawl_depth - d.crawl_depth).abs() < EPS
+    }
+
+    /// The multiplier the WORKBENCH face's type ramp is drawn at.
+    ///
+    /// The only place [`Self::bench_size`]'s unset state is allowed to collapse,
+    /// and it collapses onto `text_size` rather than onto neutral: a pane whose
+    /// bench dial nobody has turned is a pane whose two faces are still one
+    /// size, which is what every session written before the dial existed means
+    /// and what a fresh pane should go on meaning. Store the `Option`,
+    /// resolve here, and never read the field directly to draw with.
+    pub fn bench_gauge(&self) -> f32 {
+        self.bench_size.unwrap_or(self.text_size)
     }
 
     pub fn get(&self, k: GradeKey) -> f32 {
@@ -852,6 +912,7 @@ impl Grade {
             GradeKey::Gamma => self.gamma,
             GradeKey::Scale => self.scale,
             GradeKey::TextSize => self.text_size,
+            GradeKey::BenchSize => self.bench_gauge(),
             GradeKey::Warp => self.warp,
             GradeKey::CrawlAngle => self.crawl_angle,
             GradeKey::CrawlDepth => self.crawl_depth,
@@ -870,6 +931,7 @@ impl Grade {
             GradeKey::Gamma => self.gamma = v,
             GradeKey::Scale => self.scale = v,
             GradeKey::TextSize => self.text_size = v,
+            GradeKey::BenchSize => self.bench_size = Some(v),
             GradeKey::Warp => self.warp = v,
             GradeKey::CrawlAngle => self.crawl_angle = v,
             GradeKey::CrawlDepth => self.crawl_depth = v,
@@ -981,6 +1043,7 @@ pub fn house_outer() -> ThemeChoice {
             gamma: 0.5,
             scale: HOUSE_SCALE,         // 80%
             text_size: HOUSE_TEXT_SIZE, // 75%
+            bench_size: None,           // unset: the bench opens at the grid's size
             warp: WARP_DEFAULT,         // the house near-fishbowl bend
             tracking: None,             // defer to the theme's authored roll bar
             crawl: false,
@@ -3075,6 +3138,131 @@ mod tests {
         assert!((eff.grade.text_size - 1.15).abs() < 1e-6);
     }
 
+    /// A bench dial nobody has turned is UNSET, and unset follows the grid.
+    ///
+    /// This is the upgrade path and the reason the field is an `Option`. The
+    /// two faces shared `text_size` until the dials were split, so every
+    /// session already on disk describes a bench sized by the grid's dial and
+    /// says nothing at all about a bench dial. Reading that silence as neutral
+    /// would shrink every one of those benches back to config size the first
+    /// time this build opened their session — a regression that looks exactly
+    /// like a rendering bug and is nowhere in the diff that caused it.
+    #[test]
+    fn an_unset_bench_dial_follows_the_grid_and_a_turned_one_does_not() {
+        // What a state file written before the split deserialises to: a grid
+        // dial with a value on it, and no bench key at all.
+        let stored: Grade = toml::from_str("text_size = 1.6").expect("an older grade");
+        assert_eq!(stored.bench_size, None, "the field is simply absent");
+        assert!(
+            (stored.bench_gauge() - 1.6).abs() < 1e-6,
+            "so the bench opens at the size that session was actually showing, \
+             not at neutral"
+        );
+        assert!(
+            (Grade::neutral().bench_gauge() - 1.0).abs() < 1e-6,
+            "…and on a neutral grade that resolves to neutral, which is why \
+             the collapse is safe to make HERE and nowhere earlier"
+        );
+
+        // Turning it splits the two, in both directions and for good.
+        let mut g = stored;
+        g.set(GradeKey::BenchSize, 0.9);
+        assert_eq!(g.bench_size, Some(0.9));
+        assert!((g.bench_gauge() - 0.9).abs() < 1e-6);
+        g.set(GradeKey::TextSize, 1.2);
+        assert!(
+            (g.bench_gauge() - 0.9).abs() < 1e-6,
+            "the grid moved and the bench did not — that is what split means"
+        );
+
+        // `get` reports the size the bench is DRAWN at, so the tray slider and
+        // the MCP percent read the same number a person is looking at.
+        assert!((g.get(GradeKey::BenchSize) - 0.9).abs() < 1e-6);
+        assert!((stored.get(GradeKey::BenchSize) - 1.6).abs() < 1e-6);
+
+        // Unset and "set to exactly what unset resolves to" are different
+        // states, and nothing in the grade may confuse them.
+        let mut same_number = Grade::default();
+        same_number.set(GradeKey::BenchSize, Grade::default().text_size);
+        assert_ne!(same_number, Grade::default());
+        assert!(!same_number.is_default());
+        assert!(
+            !GradeChannel::BenchSize.same(&same_number, &Grade::default()),
+            "a pane that dialled the bench to match the grid has still made a \
+             choice, and un-pinning it later must put it back to FOLLOWING"
+        );
+
+        // Reset is an explicit "nothing here", and for this dial nothing means
+        // following the grid again — not a 1.0 that would outlive the next
+        // text-size change.
+        assert_eq!(Grade::neutral().bench_size, None);
+    }
+
+    /// Three dials on a pane, three independent pins.
+    ///
+    /// ctrl+wheel resolves to the region under the pointer, so the header, the
+    /// grid and the bench each have to be ownable on their own. A person who
+    /// grew the bench has said nothing about the grid, and nothing about the
+    /// cabinet the pane's header still follows.
+    #[test]
+    fn a_panes_three_regions_are_sized_independently() {
+        let mut outer = house_outer();
+        outer.grade.scale = 1.0;
+        outer.grade.text_size = 1.0;
+        let mut p = PaneTheme::house();
+
+        let turn = |p: &mut PaneTheme, outer: &ThemeChoice, key: GradeKey, notches: f32| {
+            let mut g = p.effective(outer).grade;
+            let next = key.nudged(g.get(key), notches);
+            g.set(key, next);
+            p.pin_grade(g, GradePins::only(key.into()));
+        };
+
+        // Grow the bench only.
+        turn(&mut p, &outer, GradeKey::BenchSize, 4.0);
+        let eff = p.effective(&outer);
+        assert!((eff.grade.bench_gauge() - (1.0 + 4.0 * GradeKey::WHEEL_STEP)).abs() < 1e-6);
+        assert!(
+            (eff.grade.text_size - 1.0).abs() < 1e-6,
+            "the grid did not move"
+        );
+        assert!(
+            (eff.grade.scale - 1.0).abs() < 1e-6,
+            "and neither did the header"
+        );
+        assert_eq!(p.pins, GradePins::only(GradeChannel::BenchSize));
+
+        // Now the header only. This is the dial the outer cabinet also uses,
+        // so owning it here is what lets ONE pane wear a bigger header.
+        turn(&mut p, &outer, GradeKey::Scale, -2.0);
+        let eff = p.effective(&outer);
+        assert!((eff.grade.scale - (1.0 - 2.0 * GradeKey::WHEEL_STEP)).abs() < 1e-6);
+        assert!((eff.grade.text_size - 1.0).abs() < 1e-6, "still the grid");
+        assert!(p.pins.has(GradeChannel::Scale) && p.pins.has(GradeChannel::BenchSize));
+        assert!(
+            !p.pins.has(GradeChannel::TextSize),
+            "the grid was never touched, so it is still following outer"
+        );
+
+        // …and it proves it by following.
+        outer.grade.text_size = 1.8;
+        outer.grade.scale = 1.5;
+        let eff = p.effective(&outer);
+        assert!(
+            (eff.grade.text_size - 1.8).abs() < 1e-6,
+            "the grid followed"
+        );
+        assert!(
+            (eff.grade.scale - 0.9).abs() < 1e-6,
+            "the header is this pane's own and ignored the cabinet"
+        );
+        assert!(
+            (eff.grade.bench_gauge() - 1.2).abs() < 1e-6,
+            "and the bench, once turned, does NOT chase the grid it used to \
+             follow — that is the whole point of having split them"
+        );
+    }
+
     /// A pane stamped with the old birth theme is released on load; one that
     /// somebody actually dressed is left exactly alone.
     #[test]
@@ -3289,6 +3477,10 @@ mod tests {
             gamma: 0.7,
             scale: 1.5,
             text_size: 1.9,
+            // Deliberately NOT 1.9: a bench dial that happened to equal the
+            // grid's would make this channel's leg of the walk pass on the
+            // other one's value.
+            bench_size: Some(1.4),
             warp: 2.0,
             crawl_angle: 40.0,
             crawl_depth: 9.0,
