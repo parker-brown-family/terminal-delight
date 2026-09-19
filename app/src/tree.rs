@@ -615,14 +615,40 @@ pub fn reorder(ids: &mut Vec<u32>, moving: u32, neighbour: u32, after: bool) {
 /// Kept beside [`rows`] on purpose: the strip and the tree answer the same
 /// question about the same session and must never disagree about which tasks
 /// exist.
+///
+/// **A pin that shows nothing shows your own branch instead.** An empty strip
+/// is the one state on that bar with no way out of itself: the chip that would
+/// widen it sits in the tree's header, which a person can have closed, and
+/// somebody whose tabs have all vanished is not in a mood to go looking for it.
+/// Parker, on a restarted window whose strip drew nothing: *"I don't see our
+/// tabs across the top"*.
+///
+/// Only a PIN can be empty — a branch scope always contains the task it is
+/// standing on — and a pin can be emptied after the fact, by closing its last
+/// tab or dragging that tab somewhere else. So the floor is the branch you are
+/// in rather than the whole session: the same guarantee that the strip is never
+/// blank, without answering an over-narrow strip with every tab in the window,
+/// which is the complaint at the other end of this same bar.
 pub fn shown(places: &[Place], scope: Scope, active: usize) -> Vec<usize> {
     let home = places.get(active).copied().unwrap_or_default();
-    places
+    let out: Vec<usize> = places
         .iter()
         .enumerate()
         .filter(|(_, place)| scope.shows(place, &home))
         .map(|(i, _)| i)
-        .collect()
+        .collect();
+    if out.is_empty() {
+        // Spelled out rather than recursing through `Scope::Branch`: an
+        // `active` that indexes nothing has no home, and a recursive fallback
+        // on that would not terminate.
+        return places
+            .iter()
+            .enumerate()
+            .filter(|(_, place)| same_branch(place, &home))
+            .map(|(i, _)| i)
+            .collect();
+    }
+    out
 }
 
 /// Do these two tasks hang from the SAME branch of the tree?
@@ -1284,19 +1310,37 @@ mod tests {
     }
 
     #[test]
-    fn a_pin_with_nothing_under_it_draws_an_empty_strip_not_a_wrong_one() {
-        // The empty answer is a real answer, and the workspace is the layer
-        // that refuses to sit in it: `Scope::widened_for` moves the scope when
-        // an activated tab is outside it, and `Workspace::set_scope` backs out
-        // to `Branch` when a pin would show nothing. This function's job is to
-        // report the emptiness rather than to paper over it with a fallback
-        // branch nobody asked for — and only a PIN can be empty, which is the
-        // argument for the unpinned scope being the default.
+    fn a_pin_with_nothing_under_it_draws_your_branch_rather_than_none() {
+        // The strip is the one surface that cannot recover from being empty:
+        // the control that would widen it is in the tree's header, which can be
+        // closed. So a pin nothing answers to — a project whose tabs have all
+        // been closed, a stale id — falls back rather than stranding the row.
+        // It falls back to the branch the active task is in, not to the whole
+        // session: an over-narrow strip and a strip carrying everything are the
+        // two complaints this bar has collected, and a floor is no place to
+        // trade one for the other. The workspace's own guards (`widened_for` on
+        // every activation, `set_scope` on a click) still run; this is the
+        // floor under them, for the paths that reach the renderer first.
         let places: Vec<Place> = [task(Some(1), Some(10)), task(None, None)]
             .iter()
             .map(|t| t.place)
             .collect();
-        assert_eq!(shown(&places, Scope::Project(99), 0), Vec::<usize>::new());
+        // active is the grouped task, so the floor is its group
+        assert_eq!(shown(&places, Scope::Project(99), 0), vec![0]);
+        // ...and from the loose one, the loose bucket it sits in
+        assert_eq!(shown(&places, Scope::Project(99), 1), vec![1]);
+        // And with no tabs at all the answer is still empty — a fallback that
+        // invented a row would be worse than the hole it filled.
+        assert_eq!(shown(&[], Scope::All, 0), Vec::<usize>::new());
+        // An `active` that indexes nothing reads as unfiled, so the floor is
+        // the unfiled bucket...
+        assert_eq!(shown(&places, Scope::Project(99), 9), vec![1]);
+        // ...and where the session holds no unfiled task either, the floor is
+        // allowed to be empty. It must TERMINATE rather than go looking for a
+        // branch that is not there, which is why it is not written as a
+        // recursive call on the branch scope.
+        let filed: Vec<Place> = [task(Some(1), Some(10))].iter().map(|t| t.place).collect();
+        assert_eq!(shown(&filed, Scope::Project(99), 9), Vec::<usize>::new());
     }
 
     #[test]
