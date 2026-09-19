@@ -9,6 +9,24 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ### Added
 
+- **The overview shows what YOU said, over the reply to it.** The bench's
+  overview is the feed of what the agent said, and for a while it was only
+  that: the newest reply stood in the room with nothing above it, so the one
+  thing a person could not read on the surface that holds the answer was the
+  question they had just asked. It was legible in the pane's mirrored
+  conversation and on the agent wall's card, which are two other places. Your
+  own message now sits above the reply as its own indented block, in the ink
+  the terminal already paints your turns in, pinned outside the card's scroll
+  so a long answer cannot take it off the surface. It is read out of the
+  pane's own scrollback rather than kept as a second record, so a turn typed
+  at the terminal face counts the same as one sent from the composer; a
+  message longer than the block ends in an ellipsis rather than stopping
+  mid-word, and one that has scrolled out of history says so instead of
+  drawing an empty block. Drawn for the reply that is STANDING IN and never
+  for a card opened off the rail — this window can only read the latest
+  message, and captioning a four-turn-old answer with a new question would be
+  a pairing nobody made.
+
 - **A new agent starts as whatever you told it to.** The LAUNCH AGENT panel
   opened on three constants — claude, the first model in the list, the harness's
   own effort — and every launch that wanted something else paid for it in

@@ -1710,6 +1710,65 @@ pub fn body_anchor(card: bool, offering: bool) -> Anchor {
     }
 }
 
+/// The person's message cut to what the block will draw, SAYING when it cut.
+///
+/// `lines` is read one line longer than the block has room for, so this can
+/// tell a message that ended from a message that ran on. A paragraph stopped
+/// mid-word with nothing marking the stop reads as the person having typed
+/// exactly that much, which is the same lie a silently clipped title tells —
+/// the ellipsis is the bench's own mark and the rest of it already uses one.
+pub fn ask_clipped(mut lines: Vec<String>, keep: usize) -> Vec<String> {
+    if lines.len() <= keep {
+        return lines;
+    }
+    lines.truncate(keep);
+    if let Some(last) = lines.last_mut() {
+        last.push('\u{2026}');
+    }
+    lines
+}
+
+/// How many lines of THE PERSON'S OWN MESSAGE the main area draws above the
+/// reply — `None` when it draws none.
+///
+/// The overview is the feed of what the agent said, and for a while that was
+/// all it was: the newest reply stood in the room with nothing above it, so
+/// the one thing a person could not read on that surface was the thing they
+/// had themselves just asked. It was legible in the pane's mirrored
+/// conversation and on the agent wall's card, which are two places that are
+/// not the one being looked at. Parker: *"I DON'T SEE THE HUMAN MESSAGE IN
+/// THE FULL SCREEN VIEW OF OVERVIEW!!! The human message must be separate
+/// from the agent outputs! AND visible in the Main view of overview, not the
+/// right spine summary"*.
+///
+/// Four things decide it, and each rules the block out on its own:
+///
+/// - the OVERVIEW. It is the shelf that holds a conversation; a document
+///   opened off the artifacts shelf is not an answer to anything anybody
+///   said, and captioning it with a question would invent a relationship.
+/// - the STAND-IN, never a card the person opened from the rail. The only
+///   message this window can read out of a pane is the LATEST one, so putting
+///   it over a reply from four turns ago would caption an old answer with a
+///   new question — [`Bench::standing_in`] is that distinction.
+/// - an AGENT. A shell pane's `>` is a prompt, not a message, and the bench
+///   would be labelling somebody's last `cd` as a thing they said.
+/// - ROOM. `Summary` is a pane too small to read a paragraph in, and the
+///   reply is what that pane is for.
+///
+/// Two rungs rather than one number: a full pane can hold the opening of a
+/// long ask, a compact one gets the first line and its wrap. Both are counts
+/// of CONTINUATION lines — the message's first line always comes.
+pub fn ask_lines(shelf: Shelf, stand_in: bool, agent: bool, how: Embodiment) -> Option<usize> {
+    if shelf != Shelf::Overview || !stand_in || !agent {
+        return None;
+    }
+    match how {
+        Embodiment::Full => Some(4),
+        Embodiment::Compact => Some(2),
+        Embodiment::Summary => None,
+    }
+}
+
 /// Whether the strip's dials can be pressed in this state.
 ///
 /// A dial press types a slash command, and a slash command typed mid-turn does
@@ -2605,6 +2664,17 @@ impl Bench {
         })
     }
 
+    /// True when the card in the room is the overview's STAND-IN — the newest
+    /// reply, standing there because nobody opened anything.
+    ///
+    /// Not the same question as "is a card showing". A card the person OPENED
+    /// is a document they navigated to; the stand-in is the tail of a
+    /// conversation, and only the tail can honestly be captioned with the
+    /// latest thing the person said. See [`ask_lines`].
+    pub fn standing_in(&self) -> bool {
+        self.selected.is_none() && self.showing().is_some()
+    }
+
     /// Read one group of a response card.
     pub fn pick_tab(&mut self, id: &SurfaceId, group: crate::surface::Group) {
         self.tab.insert(id.clone(), group);
@@ -3055,6 +3125,76 @@ mod tests {
         assert!(
             b.showing().is_none(),
             "the newest reply stands in on the overview only; another shelf shows its own card or nothing"
+        );
+    }
+
+    #[test]
+    fn a_message_that_ran_on_says_it_ran_on() {
+        let three = || vec!["one".to_string(), "two".to_string(), "three".to_string()];
+        assert_eq!(ask_clipped(three(), 3), three(), "it all fitted: no mark");
+        assert_eq!(ask_clipped(three(), 4), three(), "room to spare: no mark");
+        assert_eq!(
+            ask_clipped(three(), 2),
+            vec!["one".to_string(), "two\u{2026}".to_string()],
+            "the cut is on the last line drawn, where the reader is looking",
+        );
+        assert!(ask_clipped(Vec::new(), 2).is_empty(), "nothing to mark");
+    }
+
+    #[test]
+    fn the_overview_captions_the_standing_reply_with_what_you_asked() {
+        // The block is drawn for the reply that is STANDING IN, on the
+        // overview, in a pane with room — and for nothing else. Every other
+        // row here is a case where the latest thing the person said is not
+        // what the thing in the room is answering.
+        let mut b = Bench::new();
+        b.apply(response("r1", "First."));
+        b.apply(response("r2", "Second."));
+        assert!(
+            b.standing_in(),
+            "the newest reply stands with nobody opening it"
+        );
+        assert_eq!(
+            ask_lines(b.shelf(), b.standing_in(), true, Embodiment::Full),
+            Some(4),
+        );
+        assert_eq!(
+            ask_lines(b.shelf(), b.standing_in(), true, Embodiment::Compact),
+            Some(2),
+            "a compact pane gets the opening of it rather than nothing",
+        );
+        assert_eq!(
+            ask_lines(b.shelf(), b.standing_in(), true, Embodiment::Summary),
+            None,
+            "a pane too small to read a paragraph in shows the reply alone",
+        );
+        assert_eq!(
+            ask_lines(b.shelf(), b.standing_in(), false, Embodiment::Full),
+            None,
+            "a shell's prompt is not a message somebody sent",
+        );
+        // Opened from the rail: an older reply, captioned with the newest
+        // question, would be the window inventing a pairing.
+        b.select(&SurfaceId("r1".into()));
+        assert!(!b.standing_in(), "an opened card is not the stand-in");
+        assert_eq!(
+            ask_lines(b.shelf(), b.standing_in(), true, Embodiment::Full),
+            None,
+        );
+        b.close_card();
+        // Another shelf: a document is not an answer to anything said.
+        b.set_shelf(Shelf::Artifacts);
+        assert_eq!(
+            ask_lines(b.shelf(), b.standing_in(), true, Embodiment::Full),
+            None,
+        );
+        // And an overview with nothing in it: the main area is the mirrored
+        // conversation, which carries the person's own turns already.
+        let empty = Bench::new();
+        assert!(!empty.standing_in());
+        assert_eq!(
+            ask_lines(empty.shelf(), empty.standing_in(), true, Embodiment::Full),
+            None,
         );
     }
 

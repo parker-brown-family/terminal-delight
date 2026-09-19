@@ -1865,6 +1865,27 @@ impl TerminalView {
             )
         });
 
+        // ── what YOU said, over the reply to it ─────────────────────────────
+        //
+        // Read off the pane's own scrollback rather than kept as a second
+        // record of the conversation: the terminal already holds every turn,
+        // including the ones typed at the terminal face instead of through
+        // this composer, and a copy this side would be a second truth that
+        // could disagree with the first. [`crate::workbench::ask_lines`] owns
+        // whether it is drawn at all.
+        let asked_above = crate::workbench::ask_lines(
+            self.bench.shelf(),
+            self.bench.standing_in(),
+            agent_now,
+            how,
+        )
+        .map(|n| {
+            // Read one line longer than the block draws, so a message that ran
+            // on can say so rather than stopping mid-word.
+            let lines = crate::workbench::ask_clipped(self.last_human_message(n + 1), n);
+            crate::benchdraw::asked(&lines, sk, th)
+        });
+
         // ── the main area ───────────────────────────────────────────────────
         //
         // The conversation by default, because "what is this agent doing" is
@@ -2349,6 +2370,11 @@ impl TerminalView {
                     .flex_col()
                     .gap(px(9.))
                     .children(live)
+                    // Above the reply and OUTSIDE its scroll, for the same
+                    // reason the waiting block sits below it: the question
+                    // this card is answering is not part of the document, and
+                    // scrolling a long reply must not take it off the surface.
+                    .children(asked_above)
                     // The conversation sits ON the composer, the way every
                     // conversation does: newest last, just above where you
                     // answer it. Top-aligned it floated in a field of empty

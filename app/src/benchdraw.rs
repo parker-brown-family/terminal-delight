@@ -2502,6 +2502,52 @@ pub fn composer(
     })
 }
 
+/// WHAT YOU SAID, over the reply that answers it.
+///
+/// Its own block, in the human ink, above the card and outside its scroll —
+/// three separations, because the complaint was that the person's own words
+/// were nowhere on the surface that shows the answer to them. In the ink the
+/// terminal already paints a person's turns in, so the two faces of a pane
+/// agree about whose voice this is.
+///
+/// An EMPTY list is drawn as a sentence rather than as nothing. The message
+/// may simply have scrolled out of the pane's history, and a block that
+/// vanished in that case would say "you asked nothing", which is a different
+/// fact and never the true one.
+pub fn asked(lines: &[String], sk: &Skin, th: &Theme) -> Div {
+    sk.panel()
+        .flex()
+        .flex_col()
+        .gap(px(4.))
+        // Inset from the reply beneath it, the way a quoted turn is: the
+        // indent is what says these two blocks are one exchange and not two
+        // unrelated panels stacked. Parker, on the first build of it:
+        // *"indent a little bit! very nice!"*
+        .ml(px(18.))
+        .px(px(12.))
+        .py(px(9.))
+        .border_l(px(3.))
+        .border_color(th.human)
+        .bg(th.human.alpha(0.07))
+        .child(micro("YOU", Step::Fine, th.human, sk, th))
+        .when(lines.is_empty(), |d| {
+            d.child(micro(
+                "your message is no longer in this pane\u{2019}s scrollback",
+                Step::Note,
+                th.faint,
+                sk,
+                th,
+            ))
+        })
+        .children(lines.iter().map(|line| {
+            div()
+                .text_size(px(sk.pt(Step::Body)))
+                .font_family(th.font_family.clone())
+                .text_color(th.human)
+                .child(line.clone())
+        }))
+}
+
 /// The agent, talking. The main area's ordinary state.
 ///
 /// Its own recent output, in its own font, with nothing drawn around it. This
