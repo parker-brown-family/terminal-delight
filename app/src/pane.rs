@@ -8316,6 +8316,10 @@ mod tests {
     /// paragraph in `bench_act` explaining why the flip was removed names both
     /// `set_face` and `Face::Terminal`, and a scan that cannot tell code from
     /// a description of code is satisfied by its own gravestone.
+    ///
+    /// The rule this enforces is `0001 — The machine does not decide that an
+    /// interaction is over`, in `docs/decisions/`, which carries the other
+    /// eight instances of the same shape in this repository.
     #[test]
     fn nothing_in_the_bench_half_flips_the_pane_off_the_bench() {
         let bench = include_str!("pane/bench.rs");
