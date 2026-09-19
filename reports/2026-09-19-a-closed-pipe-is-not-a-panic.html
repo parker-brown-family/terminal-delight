@@ -1,0 +1,1203 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>A closed pipe is not an error worth a backtrace</title>
+<style>
+/* decision-brief — surfaces, ink, and the three structural components.
+ *
+ * ONE palette. No theme system, no theme toggle. tps-report shipped four themes and
+ * 165 theme-related rules; nobody ever switched. A brief is read once, quickly, to make
+ * a decision — the reader is not shopping for a skin.
+ *
+ * Categorical colours are the validated dataviz default palette (dark steps), which
+ * clears the CVD, chroma, lightness and contrast gates on the adjacent pairlist.
+ * If you change them, re-run the validator; do not eyeball it.
+ *
+ * What is here: tokens, the modal shell, tables, callouts, code. Everything else —
+ * cards, escalation lists, stat tiles, charts — is the brief's own business.
+ * Build what the material needs.
+ */
+:root {
+  color-scheme: dark;
+
+  --surface-0: #111110;   /* page */
+  --surface-1: #1a1a19;   /* panel */
+  --surface-2: #232321;   /* raised */
+  --surface-3: #2e2e2b;   /* control */
+  --line:      #3a3a36;
+
+  --text-primary:   #ffffff;
+  --text-secondary: #c3c2b7;
+  --text-muted:     #8b8a80;
+
+  /* categorical — assign in fixed order, never cycle */
+  --s1: #3987e5;  --s2: #d95926;  --s3: #199e70;  --s4: #c98500;
+  --s5: #d55181;  --s6: #008300;  --s7: #9085e9;  --s8: #e66767;
+
+  /* status — reserved. Never reuse as "series 5". Always ship with a label. */
+  --good:     #0ca30c;
+  --warning:  #fab219;
+  --serious:  #ec835a;
+  --critical: #d03b3b;
+
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, "JetBrains Mono", Menlo, Consolas, monospace;
+  --sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif;
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0; background: var(--surface-0); color: var(--text-primary);
+  font-family: var(--sans); font-size: 15px; line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+.wrap { max-width: 1180px; margin: 0 auto; padding: 0 24px 120px; }
+header.top .wrap { padding-bottom: 0; }   /* the wrap's bottom padding is for the page, not the header */
+
+/* ---- headings ----
+   A heading names the thing. It does not explain it — an em-dash gloss after a
+   heading breaks the heading. The body does the explaining. */
+h1 { font-size: 34px; line-height: 1.18; margin: 0 0 16px; letter-spacing: -.02em; font-weight: 650; }
+h2.sec {
+  font-size: 13px; font-family: var(--mono); letter-spacing: .13em; text-transform: uppercase;
+  color: var(--text-muted); margin: 56px 0 18px; padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+/* ---- modal shell: where depth lives ---- */
+dialog {
+  border: 1px solid var(--line); border-radius: 12px;
+  background: var(--surface-1); color: var(--text-primary);
+  max-width: 880px; width: calc(100vw - 44px); max-height: 86vh; padding: 0; overflow: hidden;
+}
+dialog::backdrop { background: rgba(0,0,0,.76); backdrop-filter: blur(3px); }
+.dlg-head {
+  position: sticky; top: 0; background: var(--surface-2);
+  border-bottom: 1px solid var(--line); padding: 20px 26px;
+  display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; z-index: 2;
+}
+.dlg-head h3 { margin: 0 0 5px; font-size: 20px; letter-spacing: -.015em; }
+.dlg-head .repo { font-family: var(--mono); font-size: 11.5px; color: var(--text-muted); margin: 0; }
+.x {
+  background: var(--surface-3); border: 1px solid var(--line); color: var(--text-secondary);
+  border-radius: 6px; width: 30px; height: 30px; font-size: 17px; line-height: 1;
+  cursor: pointer; flex: none;
+}
+.x:hover { background: var(--critical); color: #fff; border-color: var(--critical); }
+.dlg-body { padding: 24px 26px 34px; overflow-y: auto; max-height: calc(86vh - 78px); }
+.dlg-body h4 {
+  font-family: var(--mono); font-size: 11.5px; letter-spacing: .12em; text-transform: uppercase;
+  color: var(--text-muted); margin: 30px 0 12px; padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+}
+.dlg-body h4:first-child { margin-top: 0; }
+.dlg-body p  { margin: 0 0 13px; color: var(--text-secondary); font-size: 14.5px; }
+.dlg-body ul { margin: 0 0 15px; padding-left: 20px; color: var(--text-secondary); font-size: 14.5px; }
+.dlg-body li { margin-bottom: 8px; }
+.dlg-body strong { color: var(--text-primary); font-weight: 600; }
+
+/* ---- prose furniture ---- */
+code {
+  font-family: var(--mono); font-size: 12.5px; background: var(--surface-3);
+  padding: 1.5px 5px; border-radius: 4px; color: #e8d9a8; word-break: break-word;
+}
+pre {
+  background: var(--surface-0); border: 1px solid var(--line); border-radius: 7px;
+  padding: 15px 17px; overflow-x: auto; margin: 0 0 15px;
+}
+pre code { background: none; padding: 0; color: var(--text-secondary); font-size: 12.5px; line-height: 1.65; }
+
+table { width: 100%; border-collapse: collapse; margin: 0 0 17px; font-size: 13.5px; }
+th, td { text-align: left; padding: 9px 11px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th {
+  font-family: var(--mono); font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--text-muted); font-weight: 500; background: var(--surface-2);
+}
+td { color: var(--text-secondary); }
+td b, td strong { color: var(--text-primary); }
+
+blockquote {
+  margin: 0 0 15px; padding: 12px 18px; border-left: 3px solid var(--s1);
+  background: var(--surface-2); border-radius: 0 7px 7px 0;
+  color: var(--text-secondary); font-size: 14px; font-style: italic;
+}
+
+.callout {
+  border-left: 3px solid var(--warning); background: rgba(250,178,25,.07);
+  padding: 14px 18px; border-radius: 0 7px 7px 0; margin: 0 0 17px;
+}
+.callout.crit { border-color: var(--critical); background: rgba(208,59,59,.08); }
+.callout.good { border-color: var(--good);     background: rgba(12,163,12,.08); }
+.callout p:last-child { margin-bottom: 0; }
+.callout .lbl {
+  font-family: var(--mono); font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--text-muted); margin: 0 0 7px; display: block;
+}
+
+/* ---- confidence labels. Never assert without one. ---- */
+.tag {
+  display: inline-block; font-family: var(--mono); font-size: 10px; letter-spacing: .07em;
+  text-transform: uppercase; padding: 2.5px 7px; border-radius: 4px;
+  margin-right: 6px; font-weight: 600;
+}
+.tag.v { background: rgba(12,163,12,.18);  color: #6cd46c; border: 1px solid rgba(12,163,12,.4); }   /* measured */
+.tag.w { background: rgba(250,178,25,.14); color: #f5c95f; border: 1px solid rgba(250,178,25,.38); } /* inferred */
+.tag.c { background: rgba(208,59,59,.16);  color: #f08a8a; border: 1px solid rgba(208,59,59,.4); }   /* contradicted / hunch */
+
+footer {
+  margin-top: 70px; padding-top: 26px; border-top: 1px solid var(--line);
+  font-family: var(--mono); font-size: 11.5px; color: var(--text-muted);
+}
+footer p { margin: 0 0 7px; }
+
+@media (max-width: 640px) {
+  h1 { font-size: 26px; }
+  .wrap { padding: 0 16px 80px; }
+}
+
+
+.kicker { font-family: var(--mono); font-size: 11px; letter-spacing: .13em;
+  text-transform: uppercase; color: var(--text-muted); margin: 44px 0 18px; }
+.standfirst { font-size: 18px; line-height: 1.55; color: var(--text-secondary);
+  max-width: 78ch; margin: 0 0 26px; }
+.meta { display: flex; flex-wrap: wrap; gap: 10px 26px; padding: 16px 0 30px;
+  border-top: 1px solid var(--line); font-family: var(--mono); font-size: 11.5px;
+  color: var(--text-muted); }
+.meta b { color: var(--text-secondary); font-weight: 500; margin-right: 7px; }
+
+figure { margin: 0 0 22px; border: 1px solid var(--line); border-radius: 10px;
+  background: var(--surface-1); padding: 16px 18px 14px; }
+figure > .lbl { display: block; font-family: var(--mono); font-size: 10.5px;
+  letter-spacing: .1em; text-transform: uppercase; color: var(--text-muted); margin: 0 0 13px; }
+figcaption { margin-top: 13px; font-size: 13.5px; color: var(--text-secondary); }
+figcaption b { color: var(--text-primary); }
+.scroller { overflow-x: auto; }
+svg { display: block; width: 100%; height: auto; }
+
+ol.esc-list { list-style: none; margin: 0 0 10px; padding: 0; counter-reset: none; }
+.esc-list li { display: flex; gap: 15px; align-items: flex-start; padding: 15px 0;
+  border-bottom: 1px solid var(--line); }
+.esc-list li:first-child { border-top: 1px solid var(--line); }
+.esc-list .rank { flex: none; width: 24px; height: 24px; border-radius: 50%;
+  background: var(--surface-3); color: var(--text-secondary); font-family: var(--mono);
+  font-size: 11px; display: inline-flex; align-items: center; justify-content: center;
+  margin-top: 2px; }
+.esc-list h3 { margin: 0 0 5px; font-size: 15.5px; font-weight: 600; letter-spacing: -.01em; }
+.esc-list h3 em { font-style: italic; color: var(--text-primary); }
+.esc-list p { margin: 0; font-size: 13.5px; color: var(--text-secondary); }
+.esc-list p b { color: var(--text-primary); }
+
+.bars { display: flex; flex-direction: column; gap: 5px; }
+.bar-row { display: grid; grid-template-columns: 118px 1fr 210px; gap: 12px;
+  align-items: center; font-family: var(--mono); font-size: 11.5px; padding: 3px 0; }
+.bar-row .bn { color: var(--text-primary); }
+.bar-row .bt { background: var(--surface-0); border: 1px solid var(--line);
+  border-radius: 3px; height: 15px; overflow: hidden; }
+.bar-row .bt i { display: block; height: 100%; }
+.bar-row .bv { color: var(--text-secondary); }
+.bar-row .bv.zero { color: var(--text-muted); }
+.bar-row .bv.unk { color: var(--text-muted); font-style: italic; }
+
+table.wide td.y { color: var(--text-secondary); }
+table.wide td.n { color: #f08a8a; }
+table.wide td.g { color: var(--text-muted); font-style: italic; }
+
+.findings { display: flex; flex-direction: column; gap: 13px; }
+.finding { border: 1px solid var(--line); border-left: 3px solid var(--s3);
+  border-radius: 0 9px 9px 0; background: var(--surface-1); padding: 15px 18px; }
+.finding h3 { margin: 0 0 8px; font-size: 15px; font-weight: 600; letter-spacing: -.01em; }
+.finding p { margin: 0; font-size: 13.5px; color: var(--text-secondary); }
+
+.grill { display: flex; flex-direction: column; gap: 13px; }
+.ask { border: 1px solid var(--line); border-left: 3px solid var(--critical);
+  border-radius: 0 9px 9px 0; background: var(--surface-1); padding: 16px 19px; }
+.ask h3 { margin: 0 0 8px; font-size: 16px; font-weight: 600; letter-spacing: -.01em; }
+.ask p { margin: 0; font-size: 14px; color: var(--text-secondary); }
+.ask p b { color: var(--text-primary); }
+
+/* decision-brief — reader notes, styling.
+   Depends on the surface/ink/status custom properties in base.css. */
+
+.notable { position: relative; }
+
+.note-btn {
+  position: absolute; top: 8px; right: 8px; z-index: 6;
+  width: 26px; height: 26px; line-height: 1; padding: 0;
+  background: var(--surface-3); border: 1px solid var(--line); border-radius: 6px;
+  color: var(--text-muted); font-size: 13px; cursor: pointer; opacity: 0;
+  transition: opacity .12s, background .12s, color .12s, border-color .12s;
+}
+/* Hidden until hover: a brief with 130 always-visible affordances reads as a form. */
+.notable:hover > .note-btn,
+.note-btn:focus-visible { opacity: 1; }
+.note-btn:hover { background: var(--warning); border-color: var(--warning); color: var(--surface-1); }
+
+.notable.has-note > .note-btn {
+  opacity: 1; background: var(--warning); border-color: var(--warning);
+  color: var(--surface-1); font-weight: 700;
+}
+.notable.has-note { box-shadow: inset 3px 0 0 var(--warning); }
+tr.notable.has-note > td:first-child { box-shadow: inset 3px 0 0 var(--warning); }
+
+/* Table rows can't host an absolutely-positioned child reliably — inline it. */
+tr.notable .note-btn {
+  position: static; opacity: .35; width: 22px; height: 22px; font-size: 11px;
+  margin-left: 6px; vertical-align: middle; display: inline-block;
+}
+tr.notable:hover .note-btn { opacity: 1; }
+
+/* ---- floating bar ---- */
+.notebar {
+  position: fixed; right: 18px; bottom: 18px; z-index: 900;
+  display: flex; gap: 8px; align-items: center;
+  background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px;
+  padding: 9px 11px; box-shadow: 0 10px 32px rgba(0,0,0,.55);
+  font-family: var(--mono); font-size: 11.5px;
+}
+.notebar .cnt { color: var(--text-muted); padding-right: 4px; }
+.notebar .cnt b { color: var(--warning); font-size: 14px; }
+.notebar button {
+  font-family: var(--mono); font-size: 11px; letter-spacing: .03em; cursor: pointer;
+  background: var(--surface-3); border: 1px solid var(--line); color: var(--text-secondary);
+  border-radius: 6px; padding: 6px 10px;
+  transition: background .12s, color .12s, border-color .12s;
+}
+.notebar button:hover { background: var(--warning); color: var(--surface-1); border-color: var(--warning); }
+.notebar button.primary {
+  background: rgba(250,178,25,.14); border-color: rgba(250,178,25,.45); color: #f5c95f;
+}
+.notebar button:disabled {
+  opacity: .4; cursor: default; background: var(--surface-3);
+  color: var(--text-muted); border-color: var(--line);
+}
+@media (max-width: 640px) {
+  .notebar { right: 8px; bottom: 8px; flex-wrap: wrap; max-width: calc(100vw - 16px); }
+}
+
+/* ---- note dialog ---- */
+dialog#d-note { max-width: 620px; }
+#note-list { margin: 0 0 18px; padding: 0; list-style: none; }
+#note-list li {
+  background: var(--surface-2); border: 1px solid var(--line);
+  border-left: 3px solid var(--warning); border-radius: 0 7px 7px 0;
+  padding: 11px 14px; margin-bottom: 9px; font-size: 14px; color: var(--text-secondary);
+}
+#note-list .nts {
+  font-family: var(--mono); font-size: 10px; color: var(--text-muted);
+  display: flex; justify-content: space-between; gap: 10px; margin-bottom: 6px;
+}
+#note-list .ndel {
+  background: none; border: none; color: var(--text-muted);
+  cursor: pointer; font-size: 11px; padding: 0;
+}
+#note-list .ndel:hover { color: var(--critical); }
+#note-none { color: var(--text-muted); font-size: 13.5px; margin: 0 0 16px; }
+
+#note-text {
+  width: 100%; min-height: 104px; background: var(--surface-0);
+  border: 1px solid var(--line); border-radius: 7px; color: var(--text-primary);
+  padding: 11px 13px; font-family: var(--sans); font-size: 14.5px;
+  resize: vertical; line-height: 1.55;
+}
+#note-text:focus { outline: none; border-color: var(--warning); }
+
+.note-actions { display: flex; gap: 9px; align-items: center; margin-top: 11px; }
+.note-actions button {
+  font-family: var(--mono); font-size: 11.5px; cursor: pointer; border-radius: 6px;
+  padding: 8px 14px; border: 1px solid var(--line);
+  background: var(--surface-3); color: var(--text-secondary);
+}
+.note-actions button.save {
+  background: var(--warning); border-color: var(--warning);
+  color: var(--surface-1); font-weight: 600;
+}
+.note-actions .hintk {
+  font-family: var(--mono); font-size: 10.5px; color: var(--text-muted); margin-left: auto;
+}
+
+/* ---- export dialog ---- */
+dialog#d-export { max-width: 780px; }
+#export-out {
+  width: 100%; min-height: 320px; background: var(--surface-0);
+  border: 1px solid var(--line); border-radius: 7px; color: var(--text-secondary);
+  padding: 13px; font-family: var(--mono); font-size: 12px; line-height: 1.55;
+  resize: vertical; white-space: pre;
+}
+.tokest { font-family: var(--mono); font-size: 11px; color: var(--text-muted); margin: 9px 0 0; }
+
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="wrap">
+    <p class="kicker">terminal-delight &middot; issue 410 &middot; pull request 608 &middot; 19 September 2026</p>
+    <h1>A closed pipe is not an error worth a backtrace</h1>
+    <p class="standfirst">
+      The fix is one call. What took the morning was measuring around it, and the measuring
+      moved the work twice: the repro written into the issue turns out to be blind to two of
+      the three broken paths, and nine of the ten verbs would have turned the obvious test
+      into a row of cases that cannot fail.
+    </p>
+    <div class="meta">
+      <span><b>Change</b> one call, one placement rule, one roster, one test file</span>
+      <span><b>Gates</b> fmt, clippy, 1374 unit + 32 integration</span>
+      <span><b>Status</b> open for review</span>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+
+<h2 class="sec">Read first</h2>
+<ol class="esc-list">
+  <li>
+    <span class="rank">1</span>
+    <div>
+      <h3>The gate asserts the <em>absence of a panic</em>, never a successful exit</h3>
+      <p>A fixed process is killed by SIGPIPE: no exit code, signal 13, <code>success()</code>
+      false. <b>What it would take:</b> nothing — but any future edit that "tidies" this into
+      <code>assert!(status.success())</code> inverts the test in silence.</p>
+    </div>
+  </li>
+  <li>
+    <span class="rank">2</span>
+    <div>
+      <h3>Three broken paths the issue never named</h3>
+      <p><code>--help</code>, <code>--version</code> and the unknown-word refusal all panicked
+      too, the last on stderr. <b>What it would take:</b> they are fixed and gated; the point
+      is that the issue's own repro is structurally blind to them.</p>
+    </div>
+  </li>
+  <li>
+    <span class="rank">3</span>
+    <div>
+      <h3>The window is deliberately left as it was</h3>
+      <p>The long-lived process keeps Rust's SIGPIPE masking, because the kernel killing it on
+      one broken write would be a silent loss of somebody's session. <b>What it would take:</b>
+      a decision to disagree — it is the only risk judgement in the change.</p>
+    </div>
+  </li>
+  <li>
+    <span class="rank">4</span>
+    <div>
+      <h3>The verb roster grew past the one-line fix on purpose</h3>
+      <p>Four hand-copied lists had already drifted apart. <b>What it would take:</b> your call
+      on whether that belongs in this pull request or a second one — it is genuine scope
+      beyond the bug.</p>
+    </div>
+  </li>
+  <li>
+    <span class="rank">5</span>
+    <div>
+      <h3>Nothing proves the GUI process never receives SIG_DFL</h3>
+      <p>Only that the branch deciding it is correct. <b>What it would take:</b> opening a
+      window in CI, which is why it is declared rather than tested.</p>
+    </div>
+  </li>
+</ol>
+
+<h2 class="sec">What was actually wrong</h2>
+
+<p>
+  Rust masks SIGPIPE at process start so that a write to a pipe with no reader arrives as an
+  ordinary <code>io::Error</code> rather than killing the process. That is a good default for a
+  program that wants to handle the error. <code>println!</code> is not such a program: it
+  unwraps, and an unwrapped <code>EPIPE</code> is a panic. So a verb whose whole purpose is to
+  be piped into <code>jq</code>, <code>grep</code> or <code>head</code> printed a Rust backtrace
+  the moment anyone did.
+</p>
+
+<figure>
+  <span class="lbl">01 &middot; How a closed pipe becomes a backtrace</span>
+  <div class="scroller">
+    <svg viewBox="0 0 900 260" role="img" aria-label="Two lanes comparing the old and new handling of a write to a closed pipe. Before: write returns EPIPE, Rust's masked SIGPIPE turns it into an io error, println unwraps it, the process panics and exits 101. After: the default disposition is restored, so the kernel delivers SIGPIPE and the process ends silently.">
+      <defs>
+        <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+          <path d="M0,0 L10,5 L0,10 z" fill="#8b8a80"/>
+        </marker>
+      </defs>
+      <g font-family="ui-monospace, monospace" font-size="11">
+        <text x="0" y="14" fill="#8b8a80" font-size="10.5" letter-spacing="1.4">BEFORE</text>
+        <rect x="0" y="26" width="132" height="42" rx="6" fill="#232321" stroke="#3a3a36"/>
+        <text x="66" y="44" fill="#c3c2b7" text-anchor="middle">write(1, &hellip;)</text>
+        <text x="66" y="59" fill="#8b8a80" text-anchor="middle" font-size="10">no reader left</text>
+        <line x1="136" y1="47" x2="178" y2="47" stroke="#8b8a80" marker-end="url(#ah)"/>
+        <rect x="182" y="26" width="120" height="42" rx="6" fill="#232321" stroke="#3a3a36"/>
+        <text x="242" y="51" fill="#c3c2b7" text-anchor="middle">EPIPE</text>
+        <line x1="306" y1="47" x2="348" y2="47" stroke="#8b8a80" marker-end="url(#ah)"/>
+        <rect x="352" y="20" width="182" height="54" rx="6" fill="#232321" stroke="#d03b3b"/>
+        <text x="443" y="41" fill="#f08a8a" text-anchor="middle">SIGPIPE masked</text>
+        <text x="443" y="57" fill="#8b8a80" text-anchor="middle" font-size="10">Rust's startup default</text>
+        <line x1="538" y1="47" x2="580" y2="47" stroke="#8b8a80" marker-end="url(#ah)"/>
+        <rect x="584" y="26" width="140" height="42" rx="6" fill="#232321" stroke="#3a3a36"/>
+        <text x="654" y="51" fill="#c3c2b7" text-anchor="middle">println! unwraps</text>
+        <line x1="728" y1="47" x2="770" y2="47" stroke="#8b8a80" marker-end="url(#ah)"/>
+        <rect x="774" y="26" width="124" height="42" rx="6" fill="rgba(208,59,59,.14)" stroke="#d03b3b"/>
+        <text x="836" y="44" fill="#f08a8a" text-anchor="middle">panic</text>
+        <text x="836" y="59" fill="#f08a8a" text-anchor="middle" font-size="10">exit 101</text>
+
+        <line x1="0" y1="110" x2="900" y2="110" stroke="#3a3a36" stroke-dasharray="3 4"/>
+
+        <text x="0" y="146" fill="#8b8a80" font-size="10.5" letter-spacing="1.4">AFTER</text>
+        <rect x="0" y="158" width="132" height="42" rx="6" fill="#232321" stroke="#3a3a36"/>
+        <text x="66" y="176" fill="#c3c2b7" text-anchor="middle">write(1, &hellip;)</text>
+        <text x="66" y="191" fill="#8b8a80" text-anchor="middle" font-size="10">no reader left</text>
+        <line x1="136" y1="179" x2="178" y2="179" stroke="#8b8a80" marker-end="url(#ah)"/>
+        <rect x="182" y="158" width="120" height="42" rx="6" fill="#232321" stroke="#3a3a36"/>
+        <text x="242" y="183" fill="#c3c2b7" text-anchor="middle">EPIPE</text>
+        <line x1="306" y1="179" x2="348" y2="179" stroke="#8b8a80" marker-end="url(#ah)"/>
+        <rect x="352" y="152" width="182" height="54" rx="6" fill="rgba(57,135,229,.12)" stroke="#3987e5"/>
+        <text x="443" y="173" fill="#7fb4f0" text-anchor="middle">SIG_DFL restored</text>
+        <text x="443" y="189" fill="#8b8a80" text-anchor="middle" font-size="10">the one call</text>
+        <line x1="538" y1="179" x2="580" y2="179" stroke="#8b8a80" marker-end="url(#ah)"/>
+        <rect x="584" y="158" width="140" height="42" rx="6" fill="#232321" stroke="#3a3a36"/>
+        <text x="654" y="183" fill="#c3c2b7" text-anchor="middle">kernel signals</text>
+        <line x1="728" y1="179" x2="770" y2="179" stroke="#8b8a80" marker-end="url(#ah)"/>
+        <rect x="774" y="158" width="124" height="42" rx="6" fill="rgba(25,158,112,.14)" stroke="#199e70"/>
+        <text x="836" y="176" fill="#5fc7a0" text-anchor="middle">ends quietly</text>
+        <text x="836" y="191" fill="#5fc7a0" text-anchor="middle" font-size="10">signal 13</text>
+
+        <text x="0" y="236" fill="#8b8a80" font-size="10.5">Blue is what the change adds. Red is the state that shipped. Green is the outcome every other command-line tool already has.</text>
+      </g>
+    </svg>
+  </div>
+  <figcaption>
+    Drawn from the code and from a reproduction on the live binary.
+    <b>Nothing is lost by dying at the write</b> — the bytes anyone could have read had already
+    left. What was lost was the reader's willingness to take a panic seriously.
+  </figcaption>
+</figure>
+
+<div class="callout">
+  <span class="lbl">Why a harmless bug was worth a morning</span>
+  <p>
+    Nothing breaks. What it costs is that a panic stops meaning anything: one that turns up
+    during ordinary use teaches a reader to scroll past the next one, and this binary prints
+    real ones.
+  </p>
+</div>
+
+<h2 class="sec">The measurement that changed the work</h2>
+
+<p>
+  The issue prescribed the repro: <code>skin --list | head -5</code>. Taken at face value it
+  would have produced a one-line fix and a one-case test, and the test would have been green on
+  most of the bug.
+</p>
+
+<figure>
+  <span class="lbl">02 &middot; What each pipeline can see</span>
+  <div class="scroller">
+    <svg viewBox="0 0 900 300" role="img" aria-label="A grid comparing two test constructions against four printing paths. The head -1 pipeline catches only skin --list. The already-closed-reader pipeline catches all four.">
+      <g font-family="ui-monospace, monospace" font-size="11">
+        <text x="250" y="20" fill="#8b8a80" font-size="10.5" letter-spacing="1.3" text-anchor="middle">&#124; head -1 &nbsp;&mdash;&nbsp; READER DRAINS, THEN LEAVES</text>
+        <text x="680" y="20" fill="#8b8a80" font-size="10.5" letter-spacing="1.3" text-anchor="middle">&#124; true &nbsp;&mdash;&nbsp; READER ALREADY GONE</text>
+
+        <g fill="#c3c2b7">
+          <text x="0" y="62">skin --list</text>
+          <text x="0" y="104">--help</text>
+          <text x="0" y="146">--version</text>
+          <text x="0" y="188">an unknown word</text>
+        </g>
+        <g fill="#8b8a80" font-size="10">
+          <text x="0" y="76">many writes &middot; stdout</text>
+          <text x="0" y="118">one write &middot; stdout</text>
+          <text x="0" y="160">one write &middot; stdout</text>
+          <text x="0" y="202">one write &middot; stderr</text>
+        </g>
+
+        <rect x="170" y="44" width="330" height="34" rx="6" fill="rgba(208,59,59,.14)" stroke="#d03b3b"/>
+        <text x="335" y="66" fill="#f08a8a" text-anchor="middle">caught &mdash; panics 6 runs of 6</text>
+        <rect x="170" y="86" width="330" height="34" rx="6" fill="#1a1a19" stroke="#3a3a36"/>
+        <text x="335" y="108" fill="#8b8a80" text-anchor="middle">missed &mdash; clean 6 runs of 6</text>
+        <rect x="170" y="128" width="330" height="34" rx="6" fill="#1a1a19" stroke="#3a3a36"/>
+        <text x="335" y="150" fill="#8b8a80" text-anchor="middle">missed</text>
+        <rect x="170" y="170" width="330" height="34" rx="6" fill="#1a1a19" stroke="#3a3a36"/>
+        <text x="335" y="192" fill="#8b8a80" text-anchor="middle">missed &mdash; wrong stream entirely</text>
+
+        <rect x="530" y="44" width="300" height="34" rx="6" fill="rgba(208,59,59,.14)" stroke="#d03b3b"/>
+        <text x="680" y="66" fill="#f08a8a" text-anchor="middle">caught</text>
+        <rect x="530" y="86" width="300" height="34" rx="6" fill="rgba(208,59,59,.14)" stroke="#d03b3b"/>
+        <text x="680" y="108" fill="#f08a8a" text-anchor="middle">caught</text>
+        <rect x="530" y="128" width="300" height="34" rx="6" fill="rgba(208,59,59,.14)" stroke="#d03b3b"/>
+        <text x="680" y="150" fill="#f08a8a" text-anchor="middle">caught</text>
+        <rect x="530" y="170" width="300" height="34" rx="6" fill="rgba(208,59,59,.14)" stroke="#d03b3b"/>
+        <text x="680" y="192" fill="#f08a8a" text-anchor="middle">caught &mdash; by exit code only</text>
+
+        <rect x="0" y="230" width="900" height="54" rx="7" fill="rgba(57,135,229,.08)" stroke="#3987e5"/>
+        <text x="16" y="252" fill="#7fb4f0">Why the difference: a reader that is still draining never breaks a producer that writes once.</text>
+        <text x="16" y="270" fill="#8b8a80"><tspan fill="#c3c2b7">head</tspan> reads its line, then exits &mdash; by which time a single <tspan fill="#c3c2b7">println!</tspan> of the whole help text has already landed in the 64 KB pipe buffer.</text>
+      </g>
+    </svg>
+  </div>
+  <figcaption>
+    <span class="tag v">measured</span>
+    Six runs of each pipeline against the installed binary, before any code was written.
+    <b>The construction decides the coverage</b> — which is why the test closes the read end
+    before the child's first write rather than mid-stream.
+  </figcaption>
+</figure>
+
+<p>
+  The second finding was worse, because it produces a test that looks like it is working. A
+  table-driven gate over "every headless verb" reads as thorough. It is not, because most of
+  these verbs never write to the stream the gate is watching.
+</p>
+
+<figure>
+  <span class="lbl">03 &middot; What each verb puts on stdout with no arguments</span>
+  <div class="bars">
+    <div class="bar-row"><span class="bn">skin</span><span class="bt"><i style="width:100%;background:#199e70"></i></span><span class="bv">2446 bytes</span></div>
+    <div class="bar-row"><span class="bn">ctl</span><span class="bt"><i style="width:0;background:#3a3a36"></i></span><span class="bv zero">0 &mdash; refuses on stderr</span></div>
+    <div class="bar-row"><span class="bn">mcp</span><span class="bt"><i style="width:0;background:#3a3a36"></i></span><span class="bv zero">0 &mdash; nothing to relay to</span></div>
+    <div class="bar-row"><span class="bn">agent-usage</span><span class="bt"><i style="width:0;background:#3a3a36"></i></span><span class="bv zero">0 &mdash; dials vendor endpoints</span></div>
+    <div class="bar-row"><span class="bn">agent-vitals</span><span class="bt"><i style="width:0;background:#3a3a36"></i></span><span class="bv zero">0 &mdash; wants a transcript</span></div>
+    <div class="bar-row"><span class="bn">probe</span><span class="bt"><i style="width:0;background:#3a3a36"></i></span><span class="bv zero">0 &mdash; wants a pid</span></div>
+    <div class="bar-row"><span class="bn">surface</span><span class="bt"><i style="width:0;background:#3a3a36"></i></span><span class="bv zero">0 &mdash; wants a document</span></div>
+    <div class="bar-row"><span class="bn">bindings</span><span class="bt"><i style="width:0;background:#8b8a80"></i></span><span class="bv unk">unmeasured &mdash; output depends on the machine</span></div>
+    <div class="bar-row"><span class="bn">serve</span><span class="bt"><i style="width:0;background:#8b8a80"></i></span><span class="bv unk">not applicable &mdash; runs until killed</span></div>
+    <div class="bar-row"><span class="bn">--td-emit-demo</span><span class="bt"><i style="width:0;background:#8b8a80"></i></span><span class="bv unk">not applicable &mdash; blocks forever</span></div>
+  </div>
+  <figcaption>
+    <span class="tag v">measured</span> for the seven that terminate;
+    <span class="tag w">declared unmeasured</span> for the three that do not.
+    <b>Only one verb can fail a stdout gate</b>, so a ten-case table would have been nine
+    cases that cannot fail, presented as nine passes. Grey is the honest answer, not zero.
+  </figcaption>
+</figure>
+
+<h2 class="sec">Where the restore is placed</h2>
+
+<p>
+  This is the one judgement in the change with a real downside if it is wrong. Restoring the
+  default disposition is right for a process that prints and exits. It is not obviously right
+  for the window, which lives for days and writes to a compositor socket and to the
+  pseudoterminal of every pane.
+</p>
+
+<figure>
+  <span class="lbl">04 &middot; Which launches are gated</span>
+  <div class="scroller">
+    <svg viewBox="0 0 900 250" role="img" aria-label="A fence diagram. Inside the gate: the verb arm and the reply arm, both of which print and exit. Outside: the window arm, which keeps Rust's SIGPIPE masking.">
+      <g font-family="ui-monospace, monospace" font-size="11">
+        <rect x="0" y="30" width="150" height="46" rx="6" fill="#232321" stroke="#3a3a36"/>
+        <text x="75" y="50" fill="#c3c2b7" text-anchor="middle">dispatch(argv)</text>
+        <text x="75" y="65" fill="#8b8a80" text-anchor="middle" font-size="10">returns a Launch</text>
+
+        <path d="M154,53 H196 V78 H240" fill="none" stroke="#8b8a80"/>
+        <path d="M154,53 H196 V128 H240" fill="none" stroke="#8b8a80"/>
+        <path d="M154,53 H196 V190 H240" fill="none" stroke="#8b8a80"/>
+
+        <rect x="240" y="14" width="360" height="152" rx="9" fill="rgba(57,135,229,.06)" stroke="#3987e5"/>
+        <text x="256" y="34" fill="#7fb4f0" font-size="10" letter-spacing="1.2">GATED &mdash; prints_and_exits</text>
+
+        <rect x="256" y="56" width="164" height="44" rx="6" fill="#232321" stroke="#3a3a36"/>
+        <text x="338" y="74" fill="#c3c2b7" text-anchor="middle">Launch::Verb</text>
+        <text x="338" y="89" fill="#8b8a80" text-anchor="middle" font-size="10">ten headless verbs</text>
+
+        <rect x="256" y="106" width="164" height="44" rx="6" fill="#232321" stroke="#3a3a36"/>
+        <text x="338" y="124" fill="#c3c2b7" text-anchor="middle">Launch::Reply</text>
+        <text x="338" y="139" fill="#8b8a80" text-anchor="middle" font-size="10">help, version, refusal</text>
+
+        <rect x="436" y="56" width="148" height="94" rx="6" fill="rgba(25,158,112,.1)" stroke="#199e70"/>
+        <text x="510" y="96" fill="#5fc7a0" text-anchor="middle">SIG_DFL</text>
+        <text x="510" y="113" fill="#8b8a80" text-anchor="middle" font-size="10">one call site</text>
+
+        <rect x="240" y="176" width="360" height="62" rx="9" fill="#1a1a19" stroke="#3a3a36" stroke-dasharray="5 4"/>
+        <text x="256" y="196" fill="#8b8a80" font-size="10" letter-spacing="1.2">NOT GATED &mdash; deliberately</text>
+        <rect x="256" y="204" width="164" height="26" rx="6" fill="#232321" stroke="#3a3a36"/>
+        <text x="338" y="221" fill="#c3c2b7" text-anchor="middle">Launch::Window</text>
+        <text x="436" y="221" fill="#8b8a80" font-size="10">keeps Rust's masking</text>
+
+        <rect x="630" y="14" width="270" height="224" rx="9" fill="rgba(250,178,25,.06)" stroke="#fab219"/>
+        <text x="646" y="34" fill="#f5c95f" font-size="10" letter-spacing="1.2">THE RULE, NOT THE LIST</text>
+        <text x="646" y="60" fill="#c3c2b7">The gate is written as</text>
+        <text x="646" y="77" fill="#c3c2b7">"everything that is not a</text>
+        <text x="646" y="94" fill="#c3c2b7">window", not as the two</text>
+        <text x="646" y="111" fill="#c3c2b7">arms that exist today.</text>
+        <text x="646" y="140" fill="#8b8a80">A third printing arm added</text>
+        <text x="646" y="157" fill="#8b8a80">later inherits the gate</text>
+        <text x="646" y="174" fill="#8b8a80">instead of quietly missing</text>
+        <text x="646" y="191" fill="#8b8a80">it &mdash; which is how the</text>
+        <text x="646" y="208" fill="#8b8a80">reply arm was missed in</text>
+        <text x="646" y="225" fill="#8b8a80">the first place.</text>
+      </g>
+    </svg>
+  </div>
+  <figcaption>
+    Drawn from the code as merged. <b>The asymmetry now has a test of its own</b> — it had
+    lived only in the shape of a <code>match</code>, which is not something a reader can be
+    asked to notice.
+  </figcaption>
+</figure>
+
+<h2 class="sec">Why the roster moved</h2>
+
+<p>
+  The gate needs a list of verbs, and this file already had four, kept in step by hand. They
+  were not in step. Nobody had done anything wrong; a hand-copied list is simply a list that
+  falls behind, and the cost lands on whichever test was supposed to be watching.
+</p>
+
+<figure>
+  <span class="lbl">05 &middot; Four rosters, and what each one knew</span>
+  <div class="scroller">
+  <table class="wide">
+    <thead>
+      <tr><th>Verb</th><th>Verb::parse</th><th>dispatch test</th><th>usage test</th><th>USAGE text</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><b>ctl</b></td><td class="y">yes</td><td class="y">yes</td><td class="y">yes</td><td class="y">yes</td></tr>
+      <tr><td><b>mcp</b></td><td class="y">yes</td><td class="y">yes</td><td class="y">yes</td><td class="y">yes</td></tr>
+      <tr><td><b>agent-usage</b></td><td class="y">yes</td><td class="y">yes</td><td class="y">yes</td><td class="y">yes</td></tr>
+      <tr><td><b>agent-vitals</b></td><td class="y">yes</td><td class="y">yes</td><td class="y">yes</td><td class="y">yes</td></tr>
+      <tr><td><b>probe</b></td><td class="y">yes</td><td class="y">yes</td><td class="y">yes</td><td class="y">yes</td></tr>
+      <tr><td><b>serve</b></td><td class="y">yes</td><td class="y">yes</td><td class="y">yes</td><td class="y">yes</td></tr>
+      <tr><td><b>bindings</b></td><td class="y">yes</td><td class="y">yes</td><td class="n">missing</td><td class="y">yes</td></tr>
+      <tr><td><b>skin</b></td><td class="y">yes</td><td class="y">yes</td><td class="n">missing</td><td class="y">yes</td></tr>
+      <tr><td><b>surface</b></td><td class="y">yes</td><td class="n">missing</td><td class="n">missing</td><td class="y">yes</td></tr>
+      <tr><td><b>--td-emit-demo</b></td><td class="y">yes</td><td class="y">yes</td><td class="g">excluded &mdash; internal</td><td class="g">excluded &mdash; internal</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <figcaption>
+    <span class="tag v">measured</span> by reading the four lists on <code>main</code> before
+    the change. <b>The drift had not bitten yet</b> — the usage text itself was complete, so
+    the two stale copies were tests quietly checking less than they claimed. All four now read
+    one table, and <code>bindings</code>, <code>skin</code> and <code>surface</code> gain usage
+    coverage as a side effect.
+  </figcaption>
+</figure>
+
+<p>
+  The new table carries one field the old lists could not: what happens to a verb when its
+  reader walks away. It is an enum with no neutral value &mdash; either the arguments that make
+  the verb stream, or a written sentence saying why the gate cannot run it. A blank sentence
+  fails a test. Adding a verb therefore costs one sentence of thought at the moment the author
+  still has the context to write it, and an exemption can never be silent.
+</p>
+
+<h2 class="sec">The assertion that would have been backwards</h2>
+
+<figure>
+  <span class="lbl">06 &middot; What a fixed process actually reports</span>
+  <div class="scroller">
+    <svg viewBox="0 0 900 190" role="img" aria-label="Three exit outcomes compared. A panicking process reports exit code 101 and success false. A fixed process reports no exit code, signal 13, success false. The naive assertion expects success true, which neither produces.">
+      <g font-family="ui-monospace, monospace" font-size="11">
+        <rect x="0" y="16" width="286" height="110" rx="8" fill="rgba(208,59,59,.1)" stroke="#d03b3b"/>
+        <text x="16" y="38" fill="#f08a8a" font-size="10.5" letter-spacing="1.2">THE BROKEN BUILD</text>
+        <text x="16" y="64" fill="#c3c2b7">code() &nbsp;&nbsp;= Some(101)</text>
+        <text x="16" y="82" fill="#c3c2b7">signal() = None</text>
+        <text x="16" y="100" fill="#c3c2b7">success() = false</text>
+        <text x="16" y="118" fill="#8b8a80" font-size="10">a Rust panic</text>
+
+        <rect x="306" y="16" width="286" height="110" rx="8" fill="rgba(25,158,112,.1)" stroke="#199e70"/>
+        <text x="322" y="38" fill="#5fc7a0" font-size="10.5" letter-spacing="1.2">THE FIXED BUILD</text>
+        <text x="322" y="64" fill="#c3c2b7">code() &nbsp;&nbsp;= None</text>
+        <text x="322" y="82" fill="#c3c2b7">signal() = Some(13)</text>
+        <text x="322" y="100" fill="#c3c2b7">success() = false</text>
+        <text x="322" y="118" fill="#8b8a80" font-size="10">killed by the kernel</text>
+
+        <rect x="612" y="16" width="288" height="110" rx="8" fill="rgba(250,178,25,.08)" stroke="#fab219"/>
+        <text x="628" y="38" fill="#f5c95f" font-size="10.5" letter-spacing="1.2">WHAT THE OBVIOUS TEST WANTS</text>
+        <text x="628" y="64" fill="#c3c2b7">assert!(status.success())</text>
+        <text x="628" y="90" fill="#f5c95f" font-size="10">satisfied by neither column</text>
+        <text x="628" y="108" fill="#f5c95f" font-size="10">&mdash; and it is the line a person</text>
+        <text x="628" y="122" fill="#f5c95f" font-size="10">writes first</text>
+
+        <rect x="0" y="146" width="900" height="36" rx="7" fill="#1a1a19" stroke="#3a3a36"/>
+        <text x="16" y="169" fill="#8b8a80">So the gate asserts on <tspan fill="#c3c2b7">the absence of "panicked" in stderr</tspan> and <tspan fill="#c3c2b7">code != Some(101)</tspan>, which separates the two columns without depending on a clean exit.</text>
+      </g>
+    </svg>
+  </div>
+  <figcaption>
+    <span class="tag v">measured</span> by compiling the exact construction and running it
+    before the test was written.
+    <b>An <code>assert!(status.success())</code> here fails on correct code</b> and, on the
+    stderr path, would have been the only witness available at all &mdash; the panic message is
+    printed to the very stream the test has closed.
+  </figcaption>
+</figure>
+
+<h2 class="sec">How the gate was checked</h2>
+
+<div class="findings">
+  <div class="finding">
+    <h3>The fix was deleted and the gate went red on all four paths</h3>
+    <p>
+      <span class="tag v">measured</span>
+      Removing the single call produced
+      <code>4 of 4 printing paths mishandle a closed reader</code>, each naming its own stream
+      and carrying the panic text from the issue. The test reports every failing path rather
+      than stopping at the first, because "one path regressed" and "all four did" want
+      different repairs.
+    </p>
+  </div>
+  <div class="finding">
+    <h3>The deletion was confirmed in the diff before the run</h3>
+    <p>
+      <span class="tag v">measured</span>
+      A mutation that silently fails to apply reads exactly like a dead guard. The diff was
+      checked for the edit before the suite was trusted to have proved anything.
+    </p>
+  </div>
+  <div class="finding">
+    <h3>Each case proves it writes before it is asked to survive a closed reader</h3>
+    <p>
+      <span class="tag v">measured</span>
+      Every case runs twice. The first run, with the pipe open, asserts the stream under test
+      received bytes. Without it a verb that stops printing becomes a passing case forever, and
+      that is not hypothetical here &mdash; nine of ten verbs are already in that state.
+    </p>
+  </div>
+  <div class="finding">
+    <h3>Two test failures on this machine are pre-existing and unrelated</h3>
+    <p>
+      <span class="tag v">measured</span>
+      <code>paneident::tests</code> reads the machine's process tree and is red on any box with
+      agents running. Confirmed by checking out pristine <code>main</code> and running the same
+      two: identical failures. They are already tracked as separate issues.
+    </p>
+  </div>
+</div>
+
+<h2 class="sec">What this does not prove</h2>
+
+<div class="callout">
+  <span class="lbl">Declared gap</span>
+  <p>
+    <span class="tag w">inferred</span>
+    Nothing here demonstrates that the running window never receives <code>SIG_DFL</code> &mdash;
+    only that the branch deciding it returns the right answer for every launch shape. Proving
+    the process itself would mean opening a window in continuous integration. The risk if the
+    branch were wrong is not a crash in a test; it is a window dying silently mid-session,
+    which is why it is named here rather than left to be discovered.
+  </p>
+</div>
+
+<div class="callout">
+  <span class="lbl">Not measured</span>
+  <p>
+    <span class="tag w">inferred</span>
+    The test drops the pipe's read end immediately after <code>spawn</code> returns, relying on
+    the child still having an <code>execve</code> and process startup ahead of its first write.
+    That margin is large and it held every run here, but it has not been exercised a hundred
+    times on a loaded continuous-integration box. If this file ever flakes, this is the line to
+    suspect first.
+  </p>
+</div>
+
+<h2 class="sec">Yours to settle</h2>
+
+<div class="grill">
+  <div class="ask">
+    <h3>Does the roster hoist belong in this pull request?</h3>
+    <p>
+      It is real scope beyond the bug: one table replacing four hand-copied lists, and two
+      stale tests quietly widened. <b>Recommendation: keep it here.</b> The gate needs a verb
+      list, and adding a fifth hand-maintained copy to fix a bug about a list nobody maintained
+      would be the wrong lesson. Splitting it means two reviews of the same file.
+    </p>
+  </div>
+  <div class="ask">
+    <h3>Is a written reason enough for the nine ungated verbs?</h3>
+    <p>
+      Each carries a sentence saying why the gate cannot run it, and a blank sentence fails a
+      test &mdash; but a sentence is not a test. <code>bindings</code> and <code>probe</code>
+      could both be gated with a fixture. <b>Recommendation: leave them.</b> The fix is a
+      process-wide signal disposition, so one gated path proves it for all of them; more cases
+      would buy coverage of the argument parsing, not of this.
+    </p>
+  </div>
+  <div class="ask">
+    <h3>Should the unproven GUI placement become a follow-up issue?</h3>
+    <p>
+      <b>Recommendation: no issue, keep the note.</b> A follow-up wants proof it is real, and
+      there is none &mdash; the branch is tested and correct. Filing a ticket for "we cannot
+      test this in CI" adds a row to a list of two hundred that nobody can close. Say the word
+      and I will file it anyway.
+    </p>
+  </div>
+</div>
+
+<footer>
+  <p>terminal-delight &middot; issue 410 &middot; pull request 608 &middot; branch fix/a-closed-pipe-is-not-a-panic</p>
+  <p>Every measurement in this brief was taken on this machine on 19 September 2026, against the
+  installed build for the reproductions and against the branch for the gate.</p>
+</footer>
+
+</div>
+
+<!-- decision-brief — the markup the notes system needs.
+     Paste immediately before the closing </body>. notes.js finds these by id.
+     Nothing here needs editing except NOTES_FILE. -->
+
+<div class="notebar" id="notebar">
+  <span class="cnt"><b id="note-count">0</b> notes</span>
+  <button id="btn-export" class="primary" data-note-action="export"
+          title="Anchored note map for pasting into a prompt">&#x1F4CB; copy map</button>
+  <button id="btn-embed" data-note-action="embed"
+          title="Download this file with your notes baked in">&#x1F4BE; save into file</button>
+  <button id="btn-clear" data-note-action="clear" title="Delete every note">&#x2715;</button>
+</div>
+
+<dialog id="d-note">
+  <div class="dlg-head">
+    <div>
+      <h3 id="note-title">Note</h3>
+      <p class="repo" id="note-anchor">&nbsp;</p>
+    </div>
+    <button class="x" data-close>&times;</button>
+  </div>
+  <div class="dlg-body">
+    <ul id="note-list"></ul>
+    <p id="note-none">No notes on this yet.</p>
+    <textarea id="note-text"
+      placeholder="Your note. Saved against this element and readable by an agent once you save into the file."></textarea>
+    <div class="note-actions">
+      <button class="save" data-note-action="add">Add note</button>
+      <button data-close>Close</button>
+      <span class="hintk">Ctrl+Enter to add</span>
+    </div>
+  </div>
+</dialog>
+
+<dialog id="d-export">
+  <div class="dlg-head">
+    <div>
+      <h3>Note map</h3>
+      <p class="repo">Anchored to element ids in this file &middot; paste straight into a prompt</p>
+    </div>
+    <button class="x" data-close>&times;</button>
+  </div>
+  <div class="dlg-body">
+    <p style="margin-bottom:12px">
+      Each line is anchored to an element id, so an agent can locate the passage without you
+      pasting the file. Prompt shape: <em>"read my notes in <code>&lt;filename&gt;</code> and act
+      on them."</em>
+    </p>
+    <textarea id="export-out" readonly></textarea>
+    <p class="tokest" id="export-est"></p>
+    <div class="note-actions">
+      <button class="save" data-note-action="copy">Copy to clipboard</button>
+      <button data-close>Close</button>
+    </div>
+  </div>
+</dialog>
+
+<!-- Notes are baked in here by "save into file". Leave it empty and leave it in. -->
+<script type="application/json" id="report-notes">{}</script>
+
+<script>
+  /* Set before notes.js runs. Used for the storage key and the download filename. */
+  window.NOTES_FILE = '2026-09-19-a-closed-pipe-is-not-a-panic.html';
+</script>
+
+
+<script>
+/* decision-brief — reader notes.
+ *
+ * Drop-in. No build step, no dependencies. Paste this file's contents inline inside a
+ * script element, after the document body — a decision brief must survive being emailed
+ * as one file, so never load it with a src attribute.
+ *
+ * NOTHING IN THIS FILE MAY CONTAIN THE LITERAL CLOSING SCRIPT TAG, not even inside a
+ * comment or a string: an HTML parser ends the script element at the first one it sees,
+ * and everything after it silently becomes page content. Write it broken up, e.g.
+ * "<\/script>", if you ever need to emit one.
+ *
+ * Three outputs, in the order they matter:
+ *   1. copy map    — anchored note map, ~1% of the tokens of the whole document
+ *   2. save into   — bakes notes into a downloadable copy so an agent can READ them
+ *   3. localStorage — live persistence between reloads
+ *
+ * Why the map exists: pasting a whole annotated report into a prompt costs thousands of
+ * tokens; pasting bare notes loses which passage each one is about. The map is the third
+ * option — [element-id] + note, so the agent greps the id and finds the passage itself.
+ *
+ * Configure before this script runs (all optional):
+ *   window.NOTES_FILE    — filename used for the storage key and the download. Default: location basename.
+ *   window.NOTES_TARGETS — [[selector, prefix], ...] overriding what gets an affordance.
+ */
+(function () {
+  'use strict';
+
+  var FILE = window.NOTES_FILE ||
+    (location.pathname.split('/').pop() || 'decision-brief.html');
+  var KEY = 'notes:' + FILE;
+
+  /* Default targets. A prefix keeps exported anchors readable and grouped.
+     Override wholesale with window.NOTES_TARGETS if a brief's shape differs.
+
+     THE GRILL COMES FIRST, AND IT IS NOT OPTIONAL. Until 2026-09-02 this list
+     covered five of the seven components layout.md tells you to build and
+     omitted the grill — so the one section whose entire purpose is a decision
+     the reader has to make was the one section the reader could not comment on.
+     Two briefs shipped that way, each having invented its own class name
+     (`grill-q`, then `q`) because nothing here named one. Both spellings are
+     matched below; `.ask` is the name to use going forward. If you add a
+     component, add it here in the same commit.
+
+     FIGURES ARE SECOND, for the same reason. The 2026-09-15 attention-spine
+     brief carried eleven pictures and had to override NOTES_TARGETS wholesale
+     to make any of them annotatable, because `figure` was not here — a fork of
+     this list living in one report, where nothing else would inherit it. The
+     pictures are the part a reader argues with, so they are in the default list
+     now. `titleOf()` already reads `.lbl`, so a figure labelled `03 · What
+     opening costs` anchors as `fig-03-what-opening-costs`. */
+  var TARGETS = window.NOTES_TARGETS || [
+    ['.grill .q, .grill-q, .ask', 'ask'],
+    ['figure', 'fig'],
+    ['.card', 'verdict'],
+    ['.esc-list li', 'readfirst'],
+    ['.finding', 'finding'],
+    ['.tile', 'stat'],
+    ['table.wide tr', 'row'],
+    ['.bar-row', 'chart'],
+    ['.callout', 'callout'],
+    ['dialog .dlg-body > h4', 'sub']
+  ];
+
+  /* Notes baked into the file win on first load — a fresh browser should see what the
+     author saved. After that localStorage is the live copy. */
+  var baked = {};
+  try {
+    var island = document.getElementById('report-notes');
+    if (island) baked = JSON.parse(island.textContent || '{}');
+  } catch (e) { /* a malformed island must not break the page */ }
+
+  var N;
+  try { N = JSON.parse(localStorage.getItem(KEY) || 'null') || baked; }
+  catch (e) { N = baked; }
+
+  var active = null, activeTitle = '';
+
+  function save() {
+    try { localStorage.setItem(KEY, JSON.stringify(N)); } catch (e) {}
+  }
+  function esc(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+  function slug(s) {
+    return String(s || 'x').toLowerCase().replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '').slice(0, 44) || 'x';
+  }
+  function titleOf(el) {
+    var h = el.querySelector('h2,h3,h4,.bar-lab,.k,.lbl,td:first-child,th:first-child');
+    var t = ((h ? h.textContent : el.textContent) || 'item').replace(/\s+/g, ' ').trim();
+    return t.length > 72 ? t.slice(0, 69) + '…' : t;
+  }
+
+  /* ---- give every target a stable anchor id and a note affordance ---- */
+  function tag() {
+    var used = {};
+    TARGETS.forEach(function (pair) {
+      var sel = pair[0], pre = pair[1];
+      Array.prototype.forEach.call(document.querySelectorAll(sel), function (el, i) {
+        if (el.classList.contains('notable')) return;
+        if (el.tagName === 'TR' && el.querySelector('th')) return;   // header rows
+        if (el.closest('#d-note, #d-export, .notebar')) return;
+
+        /* Numbered lists anchor by position; everything else by a SHORT title slug.
+           Long slugs make the exported map unreadable, which defeats the map. */
+        var id;
+        var num = el.querySelector('.esc-n');
+        if (num) id = pre + '-' + num.textContent.trim();
+        else id = pre + '-' + slug(titleOf(el)).split('-').slice(0, 4).join('-');
+
+        var base = id, n = 2;
+        while (used[id]) id = base + '-' + (n++);
+        used[id] = 1;
+
+        el.classList.add('notable');
+        el.dataset.nid = id;
+        el.dataset.ntitle = titleOf(el);
+        if (!el.id) el.id = id;                      // a real anchor in the file
+
+        var b = document.createElement('button');
+        b.className = 'note-btn';
+        b.type = 'button';
+        b.title = 'Add a note';
+        b.innerHTML = '&#x1F4AC;';
+        b.addEventListener('click', function (ev) {
+          ev.preventDefault(); ev.stopPropagation(); open(el);
+        });
+        el.appendChild(b);
+      });
+    });
+  }
+
+  function badges() {
+    var total = 0;
+    Array.prototype.forEach.call(document.querySelectorAll('.notable'), function (el) {
+      var n = (N[el.dataset.nid] || []).length;
+      total += n;
+      el.classList.toggle('has-note', n > 0);
+      var b = el.querySelector(':scope > .note-btn');
+      if (b) b.innerHTML = n ? String(n) : '&#x1F4AC;';
+    });
+    var c = document.getElementById('note-count');
+    if (c) c.textContent = total;
+    ['btn-export', 'btn-embed', 'btn-clear'].forEach(function (id) {
+      var b = document.getElementById(id);
+      if (b) b.disabled = total === 0;
+    });
+  }
+
+  function render() {
+    var list = N[active] || [];
+    var ul = document.getElementById('note-list');
+    document.getElementById('note-none').style.display = list.length ? 'none' : 'block';
+    ul.innerHTML = list.map(function (n, i) {
+      return '<li><div class="nts"><span>' + esc(n.ts) + '</span>' +
+        '<button class="ndel" data-i="' + i + '">delete</button></div>' + esc(n.text) + '</li>';
+    }).join('');
+    Array.prototype.forEach.call(ul.querySelectorAll('.ndel'), function (b) {
+      b.addEventListener('click', function () { del(+b.dataset.i); });
+    });
+  }
+
+  function open(el) {
+    active = el.dataset.nid;
+    activeTitle = el.dataset.ntitle;
+    document.getElementById('note-title').textContent = activeTitle;
+    document.getElementById('note-anchor').textContent = '#' + active;
+    render();
+    document.getElementById('d-note').showModal();
+    document.getElementById('note-text').focus();
+  }
+
+  function add() {
+    var ta = document.getElementById('note-text');
+    var t = ta.value.trim();
+    if (!t || !active) return;
+    (N[active] = N[active] || []).push({
+      text: t,
+      title: activeTitle,
+      ts: new Date().toISOString().slice(0, 16).replace('T', ' ')
+    });
+    ta.value = '';
+    save(); render(); badges();
+  }
+
+  function del(i) {
+    N[active].splice(i, 1);
+    if (!N[active].length) delete N[active];
+    save(); render(); badges();
+  }
+
+  /* ---- the map: anchored, compact, prompt-ready ---- */
+  function buildMap() {
+    var count = 0, els = 0;
+    for (var k in N) { if (N.hasOwnProperty(k)) { els++; count += N[k].length; } }
+    var out = [
+      'NOTES — ' + FILE,
+      count + ' notes on ' + els + ' elements.',
+      'Each [anchor] is an element id in that file — search it to find the passage.',
+      ''
+    ];
+    /* Document order, not object order: the map should read the way the brief reads. */
+    Array.prototype.forEach.call(document.querySelectorAll('.notable'), function (el) {
+      var list = N[el.dataset.nid];
+      if (!list || !list.length) return;
+      out.push('[' + el.dataset.nid + '] ' + el.dataset.ntitle);
+      list.forEach(function (n) { out.push('  · ' + n.text.replace(/\n+/g, ' ')); });
+      out.push('');
+    });
+    return out.join('\n');
+  }
+
+  function exportNotes() {
+    var txt = buildMap();
+    document.getElementById('export-out').value = txt;
+    var est = document.getElementById('export-est');
+    if (est) {
+      est.textContent = txt.length + ' characters ≈ ' + Math.ceil(txt.length / 4) +
+        ' tokens — versus ~' + Math.ceil(document.body.innerText.length / 4) +
+        ' for the whole document.';
+    }
+    document.getElementById('d-export').showModal();
+  }
+
+  function copyExport(btn) {
+    var ta = document.getElementById('export-out');
+    ta.select();
+    try { document.execCommand('copy'); } catch (e) {}
+    if (btn) {
+      var o = btn.textContent;
+      btn.textContent = 'Copied';
+      setTimeout(function () { btn.textContent = o; }, 1400);
+    }
+  }
+
+  /* ---- bake notes into a downloadable copy of this file ----
+     localStorage is invisible to an agent. This is what makes
+     "read my notes in <file>" work. */
+  function embedNotes() {
+    var doc = document.documentElement.cloneNode(true);
+    Array.prototype.forEach.call(doc.querySelectorAll('.note-btn'), function (n) { n.remove(); });
+    Array.prototype.forEach.call(doc.querySelectorAll('.notable'), function (n) {
+      n.classList.remove('notable', 'has-note');
+    });
+    var island = doc.querySelector('#report-notes');
+    if (island) island.textContent = JSON.stringify(N, null, 1);
+    /* A plain-text mirror as well, so grep and ctx_read find the notes
+       without anyone having to parse JSON out of a script tag. */
+    var body = doc.querySelector('body');
+    if (body) body.appendChild(document.createComment('\nREADER NOTES —\n' + buildMap() + '\n'));
+
+    var blob = new Blob(['<!DOCTYPE html>\n' + doc.outerHTML], { type: 'text/html' });
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = FILE;
+    a.click();
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 4000);
+
+    var b = document.getElementById('btn-embed');
+    if (b) { var o = b.innerHTML; b.innerHTML = 'saved &#x2713;'; setTimeout(function () { b.innerHTML = o; }, 2200); }
+  }
+
+  function clearNotes() {
+    if (!confirm('Delete every note in this brief?')) return;
+    N = {}; save(); badges();
+  }
+
+  /* ---- wiring ---- */
+  function init() {
+    var ta = document.getElementById('note-text');
+    if (ta) {
+      ta.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); add(); }
+      });
+    }
+    document.addEventListener('click', function (e) {
+      var t = e.target.closest('[data-note-action]');
+      if (!t) return;
+      var a = t.dataset.noteAction;
+      if (a === 'add') add();
+      else if (a === 'export') exportNotes();
+      else if (a === 'embed') embedNotes();
+      else if (a === 'clear') clearNotes();
+      else if (a === 'copy') copyExport(t);
+    });
+    ['d-note', 'd-export'].forEach(function (id) {
+      var d = document.getElementById(id);
+      if (!d) return;
+      Array.prototype.forEach.call(d.querySelectorAll('[data-close]'), function (x) {
+        x.addEventListener('click', function () { d.close(); });
+      });
+      d.addEventListener('click', function (e) { if (e.target === d) d.close(); });
+    });
+    tag();
+    badges();
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+  else init();
+})();
+
+</script>
+</body>
+</html>
