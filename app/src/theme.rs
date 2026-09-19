@@ -1361,6 +1361,21 @@ pub fn builtin_toml(id: &str) -> Option<&'static str> {
         .map(|(_, src)| *src)
 }
 
+/// Every builtin theme's id, in registry order.
+///
+/// For headless callers that want to assert something about ALL of them — a
+/// legibility floor, a collision check — without an `App`. A test that hard-codes
+/// the list stops covering the theme added after the test was written, which is
+/// the only kind of palette bug anybody actually ships.
+///
+/// Only the tests walk it today, and it stays in the shipped build anyway: it is
+/// the inventory, and the next headless caller that needs one should find it
+/// here rather than reach into `BUILTIN_THEMES` and make a second answer.
+#[allow(dead_code)]
+pub fn builtin_ids() -> Vec<&'static str> {
+    BUILTIN_THEMES.iter().map(|(k, _)| *k).collect()
+}
+
 /// How many buttons the DESIGN picker draws: every builtin, plus the one
 /// hot-reloaded "custom" slot [`all_themes`] always appends.
 ///

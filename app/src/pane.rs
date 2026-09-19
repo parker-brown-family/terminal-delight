@@ -7416,17 +7416,22 @@ impl Render for TerminalView {
         // nobody has. The × is the only other control with that standing, and
         // for the same reason — both answer "what is this pane even doing".
         //
-        // Two chips rather than one switch, because a switch has to be read
-        // ("is it on? on meaning what?") while two labelled chips say which
-        // face is showing and what the other one is called, in one glance.
+        // BOTH labels stay visible, because a switch with one word on it has to
+        // be read twice ("is it on? on meaning what?") and a pane header is not
+        // a place anyone reads twice. What changed on 2026-09-18 is that the two
+        // words now share ONE bordered track instead of being two chips with a
+        // gap: two adjacent buttons, each reserving its own ring, put four
+        // vertical edges on the header for one binary choice, and the lit one
+        // was a glowing pill you could not read the word inside. Parker: *"TERM
+        // and BENCH — combine into a single bordered slider toggler, also pretty
+        // unreadable"*. See [`skin::Skin::slider`].
         let face_now = self.bench.face();
         let unseen = self.bench_unseen();
         let queued = self.bench_queued();
         let face_toggle = {
-            let chip = |face: crate::workbench::Face, cx: &mut Context<Self>| {
+            let half = |face: crate::workbench::Face, cx: &mut Context<Self>| {
                 let lit = face_now == face;
-                sk.chip(lit)
-                    .cursor_pointer()
+                sk.slider_half(lit, sk.ink.select)
                     .text_size(px((hicon * 0.42).max(8.5)))
                     .child(face.chip())
                     .on_mouse_down(
@@ -7442,8 +7447,11 @@ impl Render for TerminalView {
                 .flex_row()
                 .items_center()
                 .gap(px(2.))
-                .child(chip(crate::workbench::Face::Terminal, cx))
-                .child(chip(crate::workbench::Face::Workbench, cx))
+                .child(
+                    sk.slider()
+                        .child(half(crate::workbench::Face::Terminal, cx))
+                        .child(half(crate::workbench::Face::Workbench, cx)),
+                )
                 // What the bench is holding, and WHY it is holding it. Nobody
                 // looking at this pane is the old reason and lands the moment
                 // it is on screen; no agent to receive it is the other, and

@@ -50,9 +50,18 @@ icon = "▢"
 # ink          = { from = "text" }
 # ink_dim      = { from = "text", a = 0.70 }          # a subtitle, an inactive label
 # ink_off      = { from = "faint" }                   # a label not currently in effect
-# ink_faint    = { from = "text", a = 0.45 }          # counts, ages, paths
+# ink_faint    = { from = "text", a = 0.60 }          # counts, ages, paths
 # ink_ghost    = { from = "text", a = 0.20 }
 # ink_on_mark  = { from = "white", a = 0.95 }         # text drawn ON the accent
+
+# a control's two states — the model/effort strip's own numbers, lifted here so
+# that strip and every tab in the window cannot drift apart again. THE LIT LABEL
+# IS NOT THE LIT COLOUR: the hue is spent on the edge, the seat and the halo, and
+# the word stays the foreground. Painted in `select` it had the same colour
+# above, around and behind it, and a shape with no figure is not a word.
+# ink_lit      = { from = "text", a = 0.92 }          # the label of the control you are on
+# edge_rest    = { from = "text", a = 0.30 }          # the edge of a control that is not the lit one
+# face_rest    = { from = "text", a = 0.06 }          # the face of a control that is not the lit one
 
 # the accent, by job
 # mark         = { from = "accent" }                  # what is selected
@@ -91,7 +100,7 @@ icon = "▢"
 # bracket    = 5.0    # the arm of a corner bracket
 # rail       = 2.0    # the bar marking an active row
 # glow       = 5.25   # how far the phosphor ring blooms past its border
-# glow_a     = 0.41   # how hot the bloom is, 0..1 — NOT a length
+# glow_a     = 0.11   # how hot the bloom is, 0..1 — NOT a length
 
 # ── shape ────────────────────────────────────────────────────────────────────
 # The strategies. These are what make a LOOK rather than a tint: they change

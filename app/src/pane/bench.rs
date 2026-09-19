@@ -729,10 +729,17 @@ impl TerminalView {
 
     /// Take a value from an open dial: remember it, and tell the agent.
     ///
-    /// One [`Self::bench_say`] and nothing else. `/model` and `/effort` are the
-    /// harness's own commands — both present in the installed Claude Code and
-    /// both taking an inline argument — so this needs no host verb, no wire
-    /// change, and nothing about the running session upgraded.
+    /// `/model` and `/effort` are the harness's own commands — both present in
+    /// the installed Claude Code and both taking an inline argument — so this
+    /// needs no host verb, no wire change, and nothing about the running
+    /// session upgraded.
+    ///
+    /// It goes in BESIDE the draft, through [`crate::workbench::aside_bytes`],
+    /// and never through the composer. This used to be one `bench_say`, which
+    /// puts its argument IN the composer and sends it — and the composer is the
+    /// person's unsent prompt, sitting on the agent's line editor because that
+    /// is what a mirror is. So changing the dial mid-sentence sent the sentence,
+    /// at the strength being changed away from.
     fn bench_dial_pick(
         &mut self,
         which: crate::workbench::Dial,
@@ -760,7 +767,17 @@ impl TerminalView {
             }
         }
         self.wb_dial = None;
-        self.bench_say(&format!("{} {value}", which.command()), cx);
+        let draft = self.wb_compose.clone().unwrap_or_default();
+        let bytes = crate::workbench::aside_bytes(&format!("{} {value}", which.command()), &draft);
+        // The erase takes any pasted image with it, and nothing this side can
+        // type one back. Say so in the only place that can: the mirror stops
+        // counting attachments the agent is no longer holding.
+        if draft.pasted() > 0 {
+            if let Some(line) = self.wb_compose.as_mut() {
+                line.forget_pastes();
+            }
+        }
+        self.bench_deliver(bytes, cx);
     }
 
     /// Did the bench type into this pane recently enough that the agent is
@@ -1025,7 +1042,6 @@ impl TerminalView {
                             sk.chip(true).child(format!("\u{2714} {submit_word}")),
                             true,
                             sk,
-                            th,
                         )
                         .relative()
                         .child(crate::benchdraw::zone(
@@ -1111,13 +1127,13 @@ impl TerminalView {
             .pt(px(2.))
             .font_family(th.font_family.clone())
             .text_size(px(sk.pt(Step::Fine)))
-            .child(div().text_color(th.faint).child(where_to))
+            .child(div().text_color(sk.ink.ink_faint).child(where_to))
             .children(previews.into_iter().map(|(chip, what)| {
                 div()
                     .flex()
                     .flex_row()
                     .gap(px(8.))
-                    .child(div().flex_none().text_color(th.faint).child(chip))
+                    .child(div().flex_none().text_color(sk.ink.ink_faint).child(chip))
                     .child(div().text_color(th.text.alpha(0.72)).child(what))
             }));
         let row = div()
@@ -1167,7 +1183,6 @@ impl TerminalView {
                                 .child(text),
                             primary,
                             sk,
-                            th,
                         )
                         .relative()
                         .child(crate::benchdraw::zone(
@@ -1922,7 +1937,7 @@ impl TerminalView {
                             .right(px(10.))
                             .top(px(8.))
                             .text_size(px(sk.pt(Step::Lead)))
-                            .text_color(th.faint)
+                            .text_color(sk.ink.ink_faint)
                             .child("\u{2715}")
                             .relative()
                             .child(crate::benchdraw::zone(
@@ -2138,7 +2153,7 @@ impl TerminalView {
                         d.child(
                             div()
                                 .text_size(px(sk.pt(Step::Small)))
-                                .text_color(th.faint)
+                                .text_color(sk.ink.ink_faint)
                                 .font_family(th.font_family.clone())
                                 .child(format!("No {}", shelf_now.empty_word())),
                         )

@@ -574,6 +574,17 @@ impl Line {
         self.pasted += 1;
     }
 
+    /// The images are no longer on the agent's line, so stop saying they are.
+    ///
+    /// One caller: [`aside_bytes`] erases the far end's line to make room for a
+    /// command and types the TEXT back, and an attachment is not text — the
+    /// agent's `[Image #7]` is a reference into something it read from the
+    /// clipboard itself, and nothing this side can retype it. A count that
+    /// outlived the thing it counted would be the mirror lying about the line.
+    pub fn forget_pastes(&mut self) {
+        self.pasted = 0;
+    }
+
     /// How many, so the composer can say so without claiming to know what the
     /// agent called them.
     pub fn pasted(&self) -> usize {
@@ -1327,6 +1338,48 @@ pub enum Edit {
 /// have drifted from.
 pub fn replace_bytes() -> Vec<u8> {
     vec![0x0b]
+}
+
+/// A line typed at the agent BESIDE an unsent draft, which is put back after.
+///
+/// The composer is a mirror: every keystroke that built the draft has already
+/// gone down the pseudoterminal, so the agent's own line editor is holding that
+/// draft right now. Anything the bench needs to say on its own account — a
+/// dial's `/model`, a `/effort` — therefore cannot simply be typed, because it
+/// would land on the END of what the person is writing and the return key would
+/// send both as one prompt. Which is exactly what happened: the dial wrote its
+/// command into the composer, sent it, and the person's half-finished prompt
+/// went to the agent glued to a slash command and answered at the OLD strength.
+/// Parker: *"if I enter a prompt into the workbench prompt area and THEN click
+/// to change model or effort, THE PROMPT DISAPPEARS — it sent the prompt at the
+/// PREVIOUS effort/model. Intended: the prompt PERSISTS, changing the effort
+/// SNEAKS behind the prompt."*
+///
+/// So it sneaks: take the far end's caret to column zero and kill forward — the
+/// same pair the composer already uses to replace a selected draft, and the
+/// only erase on this side that never guesses at the far end's contents — send
+/// the command, type the draft back, and leave the caret where the person had
+/// it. One write, in order, so nothing can arrive between the parts.
+///
+/// **What does not survive is a pasted image.** `[Image #7]` is the agent's own
+/// reference to something it read off the clipboard; the erase takes it and no
+/// retyping brings it back. The caller answers for that by clearing the mirror's
+/// count (see [`Line::forget_pastes`]) rather than leaving the box claiming an
+/// attachment the agent no longer holds.
+pub fn aside_bytes(command: &str, draft: &Line) -> Vec<u8> {
+    let mut out = Vec::new();
+    let text = draft.text();
+    let end = text.chars().count();
+    if end > 0 {
+        out.extend(caret_move(draft.caret(), 0));
+        out.extend(replace_bytes());
+    }
+    out.extend(typed_line(command));
+    if end > 0 {
+        out.extend_from_slice(text.as_bytes());
+        out.extend(caret_move(end, draft.caret()));
+    }
+    out
 }
 
 /// The value of a flag in a launch or resume command, if it carries one.
@@ -4470,6 +4523,105 @@ mod tests {
         assert_eq!(caret_move(3, 3), Vec::<u8>::new(), "already there");
         assert_eq!(caret_move(0, 2), b"\x1b[C\x1b[C".to_vec());
         assert_eq!(caret_move(5, 3), b"\x1b[D\x1b[D".to_vec());
+    }
+
+    #[test]
+    fn a_command_beside_an_empty_draft_is_just_the_command() {
+        // Nothing to move out of the way and nothing to put back, so the bytes
+        // are the ones this has always sent — which is what keeps the ordinary
+        // case (press a dial, type nothing) exactly as it was.
+        assert_eq!(
+            aside_bytes("/model opus", &Line::new()),
+            typed_line("/model opus")
+        );
+    }
+
+    #[test]
+    fn a_command_beside_a_draft_erases_it_first_and_types_it_back() {
+        // The bug this exists for: the command used to be typed at the END of
+        // the person's unsent prompt, and the return key sent both as one — the
+        // prompt answered at the strength it was being changed away from.
+        let mut draft = Line::holding("count the tests");
+        for _ in 0..5 {
+            draft.apply(Edit::Left);
+        }
+        let caret = draft.caret();
+        assert_eq!(caret, 10, "ten characters in, mid-word");
+
+        let bytes = aside_bytes("/effort max", &draft);
+        let mut want = Vec::new();
+        want.extend(caret_move(caret, 0)); // to column zero...
+        want.extend(replace_bytes()); // ...and kill what is ahead
+        want.extend(typed_line("/effort max")); // the command, sent alone
+        want.extend_from_slice(b"count the tests"); // the draft, back again
+        want.extend(caret_move(15, caret)); // and the caret where it was
+        assert_eq!(bytes, want);
+
+        // The two orderings that make it a fix rather than a rearrangement: the
+        // erase happens before the command, and the draft is retyped after the
+        // command's return — never before it, which is the old bug exactly.
+        let kill = bytes.iter().position(|b| *b == 0x0b).expect("the kill");
+        let submit = bytes.iter().position(|b| *b == b'\r').expect("the return");
+        let back = bytes
+            .windows(5)
+            .position(|w| w == b"count")
+            .expect("the draft goes back");
+        assert!(
+            kill < submit,
+            "the line is cleared before the command is sent"
+        );
+        assert!(
+            submit < back,
+            "the draft is retyped after the command, not into it"
+        );
+    }
+
+    /// The dial's command goes in beside the draft, not through the composer.
+    ///
+    /// [`aside_bytes`] only helps if it is the thing that runs, and the bug was
+    /// a call site rather than a calculation: `bench_dial_pick` used
+    /// `bench_say`, which puts its argument IN the composer — the person's
+    /// unsent prompt — and sends that. Nothing in the type system stops that
+    /// line coming back, so this reads the call site.
+    ///
+    /// Comments are stripped first, so neither this test's prose nor the call
+    /// site's own explanation can satisfy it.
+    #[test]
+    fn the_dial_types_beside_the_draft_rather_than_through_the_composer() {
+        let src = include_str!("pane/bench.rs");
+        let code: String = src
+            .lines()
+            .map(|l| l.split("//").next().unwrap_or(""))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let at = code.find("fn bench_dial_pick(").expect("the dial's press");
+        let body = &code[at..];
+        // The first closing brace at the impl's own indent ends the function;
+        // every brace inside it is deeper.
+        let end = body.find("\n    }").map(|i| i + 6).unwrap_or(body.len());
+        let body = &body[..end];
+        assert!(
+            body.contains("aside_bytes("),
+            "the dial no longer types beside the draft:\n{body}"
+        );
+        assert!(
+            !body.contains("bench_say("),
+            "the dial types through the composer, which holds the person's prompt:\n{body}"
+        );
+    }
+
+    #[test]
+    fn a_retyped_draft_no_longer_claims_the_images_it_lost() {
+        // An `[Image #7]` is the agent's reference to something it read off the
+        // clipboard itself, so the erase takes it and no retyping restores it.
+        // The count is the mirror's only claim about attachments, and a claim
+        // that outlives what it describes is worse than no claim.
+        let mut draft = Line::holding("look at this");
+        draft.note_paste();
+        assert_eq!(draft.pasted(), 1);
+        draft.forget_pastes();
+        assert_eq!(draft.pasted(), 0);
+        assert_eq!(draft.text(), "look at this", "the words are not the image");
     }
 
     // -----------------------------------------------------------------
