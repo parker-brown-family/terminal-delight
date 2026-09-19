@@ -171,18 +171,36 @@ pub struct InitiativeRef {
 /// tabs is a strip that stops wrapping — but it is only safe because the tree
 /// beside it never narrows and because [`Scope::widened_for`] refuses to leave
 /// the active task outside the frame.
+///
+/// `Branch` is the default, and it is the only one of the four that nobody has
+/// to choose or maintain: it names no id, so it cannot go stale, cannot be
+/// emptied by a delete, and cannot be restored onto a session it no longer
+/// describes. The other three are PINS — a person asking for one branch, or for
+/// the whole session — and every repair in the workspace layer is about getting
+/// a pin off a branch that stopped existing. Those repairs land here, because a
+/// scope that cannot be empty is the safe place to land. The deliberate "show
+/// me the whole session" is still `All`, one press on the chip.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum Scope {
+    /// Wherever you are: the branch holding the active task, re-asked every
+    /// frame. Activating a task in another branch moves the strip WITH you —
+    /// the one scope that narrows as well as widens.
     #[default]
+    Branch,
     All,
     Project(u32),
     Initiative(u32),
 }
 
 impl Scope {
-    /// Does the strip show a task in this place?
-    pub fn shows(&self, place: &Place) -> bool {
+    /// Does the strip show a task in this place, with the active task in `home`?
+    ///
+    /// `home` decides nothing for the three pins and everything for `Branch`,
+    /// which is a question about the active task rather than about a stored id:
+    /// two tasks share a strip when they hang from the same branch.
+    pub fn shows(&self, place: &Place, home: &Place) -> bool {
         match self {
+            Scope::Branch => same_branch(place, home),
             Scope::All => true,
             Scope::Project(p) => place.project == Some(*p),
             Scope::Initiative(g) => place.initiative == Some(*g),
@@ -197,8 +215,14 @@ impl Scope {
     /// project, and dumping the whole session back onto the strip would undo
     /// the narrowing the person chose. A task with no project has nowhere
     /// narrower to be than everywhere.
+    ///
+    /// `Branch` never widens, and it is the `shows` call below that says so
+    /// rather than a special case: the task being activated is asked about as
+    /// its own home, and a branch scope always shows the task it is asked
+    /// about. It follows instead, which is the behaviour widening was standing
+    /// in for.
     pub fn widened_for(&self, place: &Place) -> Option<Scope> {
-        if self.shows(place) {
+        if self.shows(place, place) {
             return None;
         }
         Some(match place.project {
@@ -571,36 +595,58 @@ pub fn reorder(ids: &mut Vec<u32>, moving: u32, neighbour: u32, after: bool) {
     ids.insert(if after { at + 1 } else { at }, moving);
 }
 
-/// The tasks the strip draws, in tab order: whatever the scope chip says.
+/// The tasks the strip draws, in tab order: whatever the scope chip says, with
+/// the active task deciding what [`Scope::Branch`] means.
 ///
-/// This replaced `family`, which drew the active task's branch and nothing else
-/// whatever the chip said — so a session scoped to ALL saw three of its
-/// twenty-one tabs and had no control that would bring the rest back. The
-/// branch-wide strip is still one press away, and it is now the press the chip
-/// has always been labelled with.
+/// The strip has now been wrong in both directions on the same day, and the two
+/// complaints are the same complaint. It used to draw the active task's branch
+/// and nothing else whatever the chip said — a session whose chip read ALL saw
+/// three of its twenty-one tabs, with no control that would bring the rest
+/// back. Making it obey the chip fixed the label and moved the DEFAULT to the
+/// whole session, which is the wrapping, unreadable strip that scoping was
+/// built to end: *"the top area should only have tabs for the GROUP — not even
+/// sibling groups"*.
+///
+/// A fixed default answers neither. The chip rules the strip, and what it says
+/// when nobody has pinned anything is the branch you are in — so the label
+/// describes the tabs, the tabs are one branch's worth, and the whole session
+/// is one press away rather than the thing you must press your way out of.
 ///
 /// Kept beside [`rows`] on purpose: the strip and the tree answer the same
 /// question about the same session and must never disagree about which tasks
 /// exist.
 ///
-/// **A scope that shows nothing shows everything instead.** An empty strip is
-/// the one state on that bar with no way out of itself: the chip that would
-/// widen it sits in the tree, and a person whose tabs have all vanished is not
-/// in a mood to go looking for it. The workspace corrects a stranding scope at
-/// every activation ([`Scope::widened_for`]) and refuses one outright on a
-/// click, but a scope can still arrive from a state file written before a
-/// branch was emptied, and that path reaches this function before it reaches
-/// either guard. Parker, on a restarted window whose strip drew nothing: *"I
-/// don't see our tabs across the top"*.
-pub fn shown(places: &[Place], scope: Scope) -> Vec<usize> {
+/// **A pin that shows nothing shows your own branch instead.** An empty strip
+/// is the one state on that bar with no way out of itself: the chip that would
+/// widen it sits in the tree's header, which a person can have closed, and
+/// somebody whose tabs have all vanished is not in a mood to go looking for it.
+/// Parker, on a restarted window whose strip drew nothing: *"I don't see our
+/// tabs across the top"*.
+///
+/// Only a PIN can be empty — a branch scope always contains the task it is
+/// standing on — and a pin can be emptied after the fact, by closing its last
+/// tab or dragging that tab somewhere else. So the floor is the branch you are
+/// in rather than the whole session: the same guarantee that the strip is never
+/// blank, without answering an over-narrow strip with every tab in the window,
+/// which is the complaint at the other end of this same bar.
+pub fn shown(places: &[Place], scope: Scope, active: usize) -> Vec<usize> {
+    let home = places.get(active).copied().unwrap_or_default();
     let out: Vec<usize> = places
         .iter()
         .enumerate()
-        .filter(|(_, place)| scope.shows(place))
+        .filter(|(_, place)| scope.shows(place, &home))
         .map(|(i, _)| i)
         .collect();
     if out.is_empty() {
-        return (0..places.len()).collect();
+        // Spelled out rather than recursing through `Scope::Branch`: an
+        // `active` that indexes nothing has no home, and a recursive fallback
+        // on that would not terminate.
+        return places
+            .iter()
+            .enumerate()
+            .filter(|(_, place)| same_branch(place, &home))
+            .map(|(i, _)| i)
+            .collect();
     }
     out
 }
@@ -1112,17 +1158,96 @@ mod tests {
         .iter()
         .map(|t| t.place)
         .collect();
-        // The chip says ALL, so the strip draws all of them. This is the case
-        // the old `family` filter got wrong: it drew two of these five while
-        // the chip beside them read ALL.
-        assert_eq!(shown(&places, Scope::All), vec![0, 1, 2, 3, 4]);
+        // The chip says ALL, so the strip draws all of them — a pin ignores
+        // which task is active, so the active index cannot change any answer
+        // below.
+        assert_eq!(shown(&places, Scope::All, 0), vec![0, 1, 2, 3, 4]);
+        assert_eq!(shown(&places, Scope::All, 4), vec![0, 1, 2, 3, 4]);
         // Narrowed to an initiative: its members, and not the sibling
         // initiative that happens to share a project.
-        assert_eq!(shown(&places, Scope::Initiative(10)), vec![0, 1]);
-        assert_eq!(shown(&places, Scope::Initiative(11)), vec![2]);
+        assert_eq!(shown(&places, Scope::Initiative(10), 0), vec![0, 1]);
+        assert_eq!(shown(&places, Scope::Initiative(11), 0), vec![2]);
         // Narrowed to a project: everything filed under it, initiative or not.
-        assert_eq!(shown(&places, Scope::Project(1)), vec![0, 1, 2]);
-        assert_eq!(shown(&places, Scope::Project(2)), vec![3]);
+        assert_eq!(shown(&places, Scope::Project(1), 0), vec![0, 1, 2]);
+        assert_eq!(shown(&places, Scope::Project(2), 0), vec![3]);
+    }
+
+    #[test]
+    fn with_nothing_pinned_the_strip_is_the_active_task_s_group_and_no_sibling() {
+        // Parker, on a strip carrying every tab in the window: *"the top area
+        // should only have tabs for the GROUP — not even sibling groups"*.
+        // Same five tasks as above, nothing pinned.
+        let places: Vec<Place> = [
+            task(Some(1), Some(10)),
+            task(Some(1), Some(10)),
+            task(Some(1), Some(11)),
+            task(Some(2), None),
+            task(None, None),
+        ]
+        .iter()
+        .map(|t| t.place)
+        .collect();
+        // in initiative 10: its two tabs. Initiative 11 is a SIBLING under the
+        // same project and stays off the strip; so does everything else.
+        assert_eq!(shown(&places, Scope::Branch, 0), vec![0, 1]);
+        assert_eq!(shown(&places, Scope::Branch, 1), vec![0, 1]);
+        // the sibling, from the other side
+        assert_eq!(shown(&places, Scope::Branch, 2), vec![2]);
+    }
+
+    #[test]
+    fn the_scope_a_window_opens_on_is_the_one_that_cannot_be_stale() {
+        // The whole fix in one line, and the line a future change would have to
+        // walk past on purpose: a default of `All` is a window that opens with
+        // every tab in the session on the strip, which is the state this file's
+        // scoping exists to prevent. `Default` is what a fresh workspace, a
+        // state file with no opinion, and every back-out in `main.rs` land on.
+        assert_eq!(Scope::default(), Scope::Branch);
+    }
+
+    #[test]
+    fn activating_a_task_in_another_branch_moves_the_strip_with_it() {
+        // The half a pin cannot do. `widened_for` only ever widens — landing on
+        // a task in another branch used to dump that task's whole PROJECT onto
+        // the strip and leave it there. Following is a narrowing as well as a
+        // widening, and it costs nothing to undo because nothing was stored.
+        let places: Vec<Place> = [
+            task(Some(1), Some(10)),
+            task(Some(1), Some(11)),
+            task(Some(2), Some(12)),
+        ]
+        .iter()
+        .map(|t| t.place)
+        .collect();
+        assert_eq!(shown(&places, Scope::Branch, 0), vec![0]);
+        assert_eq!(shown(&places, Scope::Branch, 1), vec![1]);
+        assert_eq!(shown(&places, Scope::Branch, 2), vec![2]);
+        // and the strip is never empty: whatever is active is on it
+        for active in 0..places.len() {
+            assert!(
+                shown(&places, Scope::Branch, active).contains(&active),
+                "the branch scope dropped the task it is standing on"
+            );
+        }
+    }
+
+    #[test]
+    fn a_loose_task_s_branch_is_its_project_s_loose_bucket_not_the_project() {
+        // The distinction a pin cannot express, and the reason `Branch` is a
+        // variant rather than "set `Project(p)` on every activation": pinning
+        // the project would pull that project's INITIATIVES onto the strip
+        // beside a loose task that is not in any of them.
+        let places: Vec<Place> = [
+            task(Some(1), Some(10)),
+            task(Some(1), None),
+            task(Some(1), None),
+            task(Some(2), None),
+        ]
+        .iter()
+        .map(|t| t.place)
+        .collect();
+        assert_eq!(shown(&places, Scope::Branch, 1), vec![1, 2]);
+        assert_eq!(shown(&places, Scope::Project(1), 1), vec![0, 1, 2]);
     }
 
     #[test]
@@ -1139,10 +1264,14 @@ mod tests {
         .iter()
         .map(|t| t.place)
         .collect();
-        assert_eq!(shown(&places, Scope::Project(1)), vec![0, 2]);
-        assert_eq!(shown(&places, Scope::Project(2)), vec![1]);
+        assert_eq!(shown(&places, Scope::Project(1), 0), vec![0, 2]);
+        assert_eq!(shown(&places, Scope::Project(2), 0), vec![1]);
         // Filed under no project at all: reachable only from ALL.
-        assert_eq!(shown(&places, Scope::All), vec![0, 1, 2, 3]);
+        assert_eq!(shown(&places, Scope::All, 0), vec![0, 1, 2, 3]);
+        // ...and unpinned, that task's branch is the other unfiled tasks —
+        // here, only itself. Loose in project 1 is a different bucket again.
+        assert_eq!(shown(&places, Scope::Branch, 3), vec![3]);
+        assert_eq!(shown(&places, Scope::Branch, 0), vec![0, 2]);
     }
 
     #[test]
@@ -1173,26 +1302,45 @@ mod tests {
         // The identity case, and the one that decides whether this is safe to
         // ship to somebody who has never made a group.
         let places: Vec<Place> = (0..4).map(|_| task(None, None).place).collect();
-        assert_eq!(shown(&places, Scope::All), vec![0, 1, 2, 3]);
+        assert_eq!(shown(&places, Scope::All, 0), vec![0, 1, 2, 3]);
+        // And unpinned, which is what such a session actually runs with: one
+        // bucket holding everything, so the default hides nothing from somebody
+        // who has never made a group.
+        assert_eq!(shown(&places, Scope::Branch, 0), vec![0, 1, 2, 3]);
     }
 
     #[test]
-    fn a_scope_with_nothing_under_it_draws_every_tab_rather_than_none() {
+    fn a_pin_with_nothing_under_it_draws_your_branch_rather_than_none() {
         // The strip is the one surface that cannot recover from being empty:
-        // the control that would widen it is in the tree, not on the bar. So a
-        // scope nothing answers to — a project whose tabs have all been closed,
-        // a stale id out of a state file — falls all the way back rather than
-        // stranding the row. The workspace's own guards (`widened_for` on every
-        // activation, `set_scope` on a click) still run; this is the floor
-        // under them, for the paths that reach the renderer first.
+        // the control that would widen it is in the tree's header, which can be
+        // closed. So a pin nothing answers to — a project whose tabs have all
+        // been closed, a stale id — falls back rather than stranding the row.
+        // It falls back to the branch the active task is in, not to the whole
+        // session: an over-narrow strip and a strip carrying everything are the
+        // two complaints this bar has collected, and a floor is no place to
+        // trade one for the other. The workspace's own guards (`widened_for` on
+        // every activation, `set_scope` on a click) still run; this is the
+        // floor under them, for the paths that reach the renderer first.
         let places: Vec<Place> = [task(Some(1), Some(10)), task(None, None)]
             .iter()
             .map(|t| t.place)
             .collect();
-        assert_eq!(shown(&places, Scope::Project(99)), vec![0, 1]);
+        // active is the grouped task, so the floor is its group
+        assert_eq!(shown(&places, Scope::Project(99), 0), vec![0]);
+        // ...and from the loose one, the loose bucket it sits in
+        assert_eq!(shown(&places, Scope::Project(99), 1), vec![1]);
         // And with no tabs at all the answer is still empty — a fallback that
         // invented a row would be worse than the hole it filled.
-        assert_eq!(shown(&[], Scope::All), Vec::<usize>::new());
+        assert_eq!(shown(&[], Scope::All, 0), Vec::<usize>::new());
+        // An `active` that indexes nothing reads as unfiled, so the floor is
+        // the unfiled bucket...
+        assert_eq!(shown(&places, Scope::Project(99), 9), vec![1]);
+        // ...and where the session holds no unfiled task either, the floor is
+        // allowed to be empty. It must TERMINATE rather than go looking for a
+        // branch that is not there, which is why it is not written as a
+        // recursive call on the branch scope.
+        let filed: Vec<Place> = [task(Some(1), Some(10))].iter().map(|t| t.place).collect();
+        assert_eq!(shown(&filed, Scope::Project(99), 9), Vec::<usize>::new());
     }
 
     #[test]
@@ -1239,6 +1387,10 @@ mod tests {
             Scope::Project(1).widened_for(&Place::default()),
             Some(Scope::All)
         );
+        // the unpinned scope is already wherever the task is, so there is
+        // nothing to widen — it follows instead, and `shown` re-asks per frame
+        assert_eq!(Scope::Branch.widened_for(&elsewhere), None);
+        assert_eq!(Scope::Branch.widened_for(&Place::default()), None);
     }
 
     #[test]
@@ -1578,6 +1730,7 @@ mod tests {
             Place::default(),
         ];
         let scopes = [
+            Scope::Branch,
             Scope::All,
             Scope::Project(1),
             Scope::Project(2),
@@ -1589,7 +1742,9 @@ mod tests {
             for place in places {
                 let settled = scope.widened_for(&place).unwrap_or(scope);
                 assert!(
-                    settled.shows(&place),
+                    // the task being activated is its own home — the question
+                    // is whether the settled scope shows it once you are in it
+                    settled.shows(&place, &place),
                     "{scope:?} widened for {place:?} to {settled:?}, which still hides it"
                 );
                 assert_eq!(
