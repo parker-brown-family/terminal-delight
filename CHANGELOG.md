@@ -23,12 +23,32 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
   on it. The phosphor is dialled from 0.41 to 0.11 and the crisp spread-ring is
   gone — on a box five pixels wider than its own word it closed over the glyphs
   from every side. A new test walks every palette we ship and fails under either
-  of the old inks.
+  of the old inks. (#555)
 - **TERM ⇄ BENCH is one switch.** It was two chips with two pixels between them,
   each reserving its own ring, so one binary choice put four vertical edges on
   the pane header and the lit half was a pill you could not read the word inside.
   One bordered track now, with the half you are on filled and carrying the
-  control's whole phosphor budget, so throwing the switch moves the glow.
+  control's whole phosphor budget, so throwing the switch moves the glow. (#555)
+
+- **Changing the model or the effort no longer sends your half-written prompt.**
+  The bench composer mirrors the agent's own line editor, so a draft is already
+  sitting on that line — and the dial announced its new value by putting
+  `/model …` into the composer and sending it. One press posted the unsent
+  prompt with a slash command glued to the end, answered at the strength it was
+  being changed away from, and left the box looking as though the prompt had
+  been thrown away. The command now goes in beside the draft: the line is
+  cleared, the command is sent on its own, the draft is typed back and the caret
+  returns to the character you stopped at. A pasted image does not survive that
+  erase — see #557. (#556)
+
+- **The model and effort a pane is running stay readable while it is working.**
+  The bench's two dials switched to the faint ink at 0.45 alpha whenever a press
+  would not be read — which is the whole of a turn in flight — so a busy pane
+  carried two outlined boxes with nothing legible in them, on a header lit green
+  because the agent was busy. The value is a fact about the process, and a turn
+  in flight is when a person most wants it: which model is spending this, and at
+  what effort. Pressability is now drawn by the caret and the cursor, and the
+  ink carries one claim only — whether anybody chose the value. (#553)
 
 - **The tab strip opens on the group you are in.** Teaching the strip to obey
   the scope chip left the chip's default on ALL, so a window opened with every

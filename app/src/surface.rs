@@ -913,6 +913,65 @@ impl Register {
     }
 }
 
+/// Which tab of a response card a register is read under.
+///
+/// **Derived, never sent.** A group is a pure function of the register the
+/// parser already resolved, so nothing crosses the wire that did not cross it
+/// before and no agent has to learn a field. An optional per-section `_group`
+/// escape hatch was named in the design and deliberately not built: it is one
+/// line to add the day something wants it, and building it first would be
+/// inventing a requirement.
+///
+/// The cut is Parker's, approved 2026-09-18 on the brief: *"I go with 100%
+/// recommendations - lgtm. SHIP!"* Four lengths of one reply are alternatives
+/// rather than a checklist, which is the whole argument for grouping them.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
+pub enum Group {
+    /// The reply, at whatever length you want it: tl;dr, ELI5, plain, technical.
+    Reading,
+    /// What was checked, and what the agent is unsure of. The doubts live here
+    /// and carry their count on the tab.
+    Evidence,
+    /// What the agent needs, and what happens next.
+    Next,
+    /// Keys this build does not know, under the agent's own names.
+    ///
+    /// Drawn only when something is in it. An unknown key gets a labelled tab
+    /// rather than being folded into the nearest group: guessing which group an
+    /// agent's own word belongs to would be inventing a fact about it.
+    Other,
+}
+
+impl Group {
+    /// Every group, in the order a card draws them.
+    pub const ALL: [Group; 4] = [Group::Reading, Group::Evidence, Group::Next, Group::Other];
+
+    /// Where a register is read. Total, and a pure function.
+    pub fn of(register: Register) -> Group {
+        match register {
+            Register::Tldr | Register::Eli5 | Register::Layman | Register::Technical => {
+                Group::Reading
+            }
+            Register::Evidence => Group::Evidence,
+            Register::Asks | Register::Next => Group::Next,
+            Register::Other => Group::Other,
+        }
+    }
+
+    /// The word on the tab. Lowercase single nouns, matching the rail's own
+    /// `overview / artifacts / decisions` strip — which is also why a group name
+    /// colliding with a register inside it (the `evidence` tab holds *What was
+    /// verified*) reads as two things rather than as a repetition.
+    pub fn label(self) -> &'static str {
+        match self {
+            Group::Reading => "reading",
+            Group::Evidence => "evidence",
+            Group::Next => "next",
+            Group::Other => "other",
+        }
+    }
+}
+
 /// What a section holds, decided by the JSON's own shape.
 ///
 /// A string is prose, an array of strings is a list, an object of strings is
@@ -2415,6 +2474,36 @@ pub fn launch_briefing(dir: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    /// Every register has a home, and the table says which.
+    ///
+    /// A table test over all eight rather than a spot check: the mapping is the
+    /// navigation every reply is read through, and a register quietly landing
+    /// in the wrong tab is a thing a person would work around for weeks before
+    /// reporting it.
+    #[test]
+    fn every_register_has_exactly_one_group_and_the_table_says_which() {
+        use super::{Group, Register};
+        let table = [
+            (Register::Tldr, Group::Reading),
+            (Register::Eli5, Group::Reading),
+            (Register::Layman, Group::Reading),
+            (Register::Technical, Group::Reading),
+            (Register::Evidence, Group::Evidence),
+            (Register::Asks, Group::Next),
+            (Register::Next, Group::Next),
+            (Register::Other, Group::Other),
+        ];
+        for (register, group) in table {
+            assert_eq!(Group::of(register), group, "{register:?}");
+        }
+        // The labels are lowercase single nouns, like the rail's own strip.
+        for g in Group::ALL {
+            let l = g.label();
+            assert_eq!(l, l.to_lowercase(), "{g:?} is lowercase");
+            assert!(!l.contains(' '), "{g:?} is one word");
+        }
+    }
 
     #[test]
     fn an_older_minor_still_parses_which_is_the_whole_promise_of_the_number() {

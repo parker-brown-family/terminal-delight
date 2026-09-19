@@ -44,13 +44,16 @@
 //!
 //! A renderer asks for a tier and is clothed. It never picks an ink again.
 //!
-//! # The budget is a property of the type
+//! # The budget used to be a property of the type
 //!
-//! [`Emphasis::Active`] is not handed out by callers. [`shelf`] tiers a whole
-//! row of registers at once and returns one tier per row, so "exactly one lit
-//! thing" cannot be overspent by a renderer that forgot — there is no call that
-//! would overspend it. This is the same reason `gpui-base` refuses to let a
-//! control assemble its own state order.
+//! [`Emphasis::Active`] was handed out by `shelf()`, which tiered a whole row of
+//! registers at once so that "exactly one lit thing" could not be overspent by a
+//! renderer that forgot. The response card stopped being a row on 2026-09-18 —
+//! it shows one body under a strip of tabs — and the function went with it,
+//! because a rule about rows kept in a file with no rows is the shape the next
+//! reader would have reached for. The budget now holds for the older reason: the
+//! only thing on a card that can be Active is the tab being read, and there is
+//! one of those.
 
 use gpui::{px, Hsla, Styled};
 
@@ -102,41 +105,25 @@ impl Emphasis {
     ];
 }
 
-/// Tier every row of a reading shelf at once.
-///
-/// `open[i]` is whether row `i` is unfolded; `focused` is the row the keyboard
-/// is on, if the reader has moved it anywhere.
-///
-/// Two rules, and both are here rather than at the call sites because both were
-/// got wrong at call sites before:
-///
-/// 1. **A closed row is never Active.** Lighting a fold nobody can read is a
-///    glow that points at nothing.
-/// 2. **With no focus, NOTHING is Active.** The light marks where the reader
-///    last went, so before they have gone anywhere there is nowhere to mark.
-///
-/// Rule 2 used to promote the first open row, which meant the tl;dr arrived lit
-/// on every card the reader had never touched — a permanent highlight on the one
-/// register that never moves, which is a decoration rather than a signal.
-/// Parker: *"kill the bright light on tl;dr as a persistent default... this light
-/// should be on the most recent clicked"*. A default that is always the same row
-/// carries no information, and it spent the card's one bloom to say so.
-///
-/// Returns one tier per row, in the order given. This is the ONLY way a row gets
-/// [`Emphasis::Active`], so the one-lit-thing budget holds by construction.
-pub fn shelf(open: &[bool], focused: Option<usize>) -> Vec<Emphasis> {
-    let lit = focused.filter(|&i| open.get(i).copied().unwrap_or(false));
-    open.iter()
-        .enumerate()
-        .map(|(i, _)| {
-            if Some(i) == lit {
-                Emphasis::Active
-            } else {
-                Emphasis::Reading
-            }
-        })
-        .collect()
-}
+// `shelf()` lived here: one tier per row of an open-or-shut reading shelf, with
+// the one-lit-thing budget enforced by construction because no call site held
+// it. It is gone, and the deletion is the point rather than a tidy-up.
+//
+// It solved a problem the card no longer has. A shelf needs tiering when several
+// rows are on screen at once and exactly one of them may be lit; the tabbed card
+// shows ONE body, so the register being read is the only register there is, and
+// "which one is Active" stops being a question anything has to answer. Keeping
+// the function would have left a rule about a row of things in a file whose only
+// row is now a strip of tabs — and the next person to want tiers would have
+// reached for it and got the old shape back.
+//
+// The rules it carried are not lost. *A closed row is never Active* has no
+// closed rows to speak of; *with no focus nothing is Active* survives as the
+// renderer drawing the first register with no accent until the reader picks one,
+// which is the same promise made where it now applies. Parker's own reason for
+// rule 2 — *"kill the bright light on tl;dr as a persistent default... this
+// light should be on the most recent clicked"* — is why the strip lights the
+// open TAB and not the first one on a card nobody has touched.
 
 /// What an escalation earns on the card, or `None` for one that draws nothing.
 ///
@@ -346,48 +333,6 @@ mod tests {
     }
 
     #[test]
-    fn a_shelf_lights_exactly_one_row() {
-        let tiers = shelf(&[true, true, false, true], Some(3));
-        assert_eq!(
-            tiers.iter().filter(|t| **t == Emphasis::Active).count(),
-            1,
-            "the budget is one lit row: {tiers:?}"
-        );
-        assert_eq!(tiers[3], Emphasis::Active);
-    }
-
-    #[test]
-    fn a_closed_row_is_never_lit() {
-        // A light pointing at a fold nobody can read points at nothing. It goes
-        // OUT rather than moving somewhere the reader did not choose.
-        let tiers = shelf(&[true, false, true], Some(1));
-        assert!(
-            tiers.iter().all(|t| *t == Emphasis::Reading),
-            "the light goes out, it does not wander: {tiers:?}"
-        );
-    }
-
-    #[test]
-    fn an_untouched_card_lights_nothing() {
-        // The regression this replaces: with no focus the shelf used to promote
-        // the first open row, so the tl;dr arrived lit on every card nobody had
-        // opened — a permanent highlight on the one register that never moves,
-        // spending the card's whole bloom to say nothing.
-        let tiers = shelf(&[true, true, true], None);
-        assert!(
-            tiers.iter().all(|t| *t == Emphasis::Reading),
-            "nothing is lit until the reader opens something: {tiers:?}"
-        );
-    }
-
-    #[test]
-    fn the_light_sits_where_the_reader_last_went() {
-        let tiers = shelf(&[true, true, true], Some(2));
-        assert_eq!(tiers[2], Emphasis::Active);
-        assert_eq!(tiers[0], Emphasis::Reading, "not the first open row");
-    }
-
-    #[test]
     fn a_bookmark_is_dimmer_than_a_summons() {
         let th = palette();
         let th_active = facet(Emphasis::Active, &th);
@@ -401,28 +346,6 @@ mod tests {
         for quiet in [Emphasis::Reading, Emphasis::Quiet] {
             assert_eq!(facet(quiet, &th).glow, 0.0, "{quiet:?} never blooms");
         }
-    }
-
-    #[test]
-    fn a_shelf_with_nothing_open_lights_nothing() {
-        let tiers = shelf(&[false, false], None);
-        assert!(
-            tiers.iter().all(|t| *t == Emphasis::Reading),
-            "nothing to read means nothing to light: {tiers:?}"
-        );
-    }
-
-    #[test]
-    fn every_reading_row_is_a_peer() {
-        // The point of the whole change: the shelf must hand out ONE tier to
-        // every unlit row, whatever register it is, so no register can outrank
-        // another by accident.
-        let tiers = shelf(&[true, true, true, true, true, true], Some(0));
-        let unlit: Vec<_> = tiers.iter().skip(1).collect();
-        assert!(
-            unlit.iter().all(|t| **t == Emphasis::Reading),
-            "reading is flat: {tiers:?}"
-        );
     }
 
     #[test]

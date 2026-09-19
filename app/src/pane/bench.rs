@@ -123,7 +123,8 @@ impl TerminalView {
                 window.focus(&self.focus_handle, cx);
             }
             Hit::ToggleRail => self.bench.toggle_rail(),
-            Hit::ToggleSection { id, key } => self.bench.toggle_section(&id, &key),
+            Hit::PickTab { id, group } => self.bench.pick_tab(&id, group),
+            Hit::PickRegister { id, key } => self.bench.pick_register(&id, &key),
             Hit::Shelf(shelf) => self.bench.set_shelf(shelf),
             Hit::OpenRow(id) => self.bench_open(&id, cx),
             Hit::GalleryBack => {
@@ -728,10 +729,17 @@ impl TerminalView {
 
     /// Take a value from an open dial: remember it, and tell the agent.
     ///
-    /// One [`Self::bench_say`] and nothing else. `/model` and `/effort` are the
-    /// harness's own commands — both present in the installed Claude Code and
-    /// both taking an inline argument — so this needs no host verb, no wire
-    /// change, and nothing about the running session upgraded.
+    /// `/model` and `/effort` are the harness's own commands — both present in
+    /// the installed Claude Code and both taking an inline argument — so this
+    /// needs no host verb, no wire change, and nothing about the running
+    /// session upgraded.
+    ///
+    /// It goes in BESIDE the draft, through [`crate::workbench::aside_bytes`],
+    /// and never through the composer. This used to be one `bench_say`, which
+    /// puts its argument IN the composer and sends it — and the composer is the
+    /// person's unsent prompt, sitting on the agent's line editor because that
+    /// is what a mirror is. So changing the dial mid-sentence sent the sentence,
+    /// at the strength being changed away from.
     fn bench_dial_pick(
         &mut self,
         which: crate::workbench::Dial,
@@ -759,7 +767,17 @@ impl TerminalView {
             }
         }
         self.wb_dial = None;
-        self.bench_say(&format!("{} {value}", which.command()), cx);
+        let draft = self.wb_compose.clone().unwrap_or_default();
+        let bytes = crate::workbench::aside_bytes(&format!("{} {value}", which.command()), &draft);
+        // The erase takes any pasted image with it, and nothing this side can
+        // type one back. Say so in the only place that can: the mirror stops
+        // counting attachments the agent is no longer holding.
+        if draft.pasted() > 0 {
+            if let Some(line) = self.wb_compose.as_mut() {
+                line.forget_pastes();
+            }
+        }
+        self.bench_deliver(bytes, cx);
     }
 
     /// Did the bench type into this pane recently enough that the agent is
@@ -1848,14 +1866,21 @@ impl TerminalView {
             Some(surface) => {
                 let tint = crate::benchdraw::ink(crate::workbench::tint_of(&surface.kind), th);
                 let bench = &self.bench;
-                let open = |s: &crate::surface::Section| bench.section_open(&surface.id, s);
-                let folds = crate::benchdraw::Folds {
+                // The picks the renderer cannot hold: which tab, and which
+                // register inside whichever tab it resolves to. The closure is
+                // what lets the renderer ask AFTER it has worked out the open
+                // group, which is a thing only it can do — it is the half that
+                // knows which groups this reply actually carries.
+                let reg = |g: crate::surface::Group| {
+                    bench.picked_register(&surface.id, g).map(str::to_string)
+                };
+                let picks = crate::benchdraw::Picks {
                     id: &surface.id,
-                    open: &open,
-                    lit: bench.lit_section(&surface.id),
+                    tab: bench.picked_tab(&surface.id),
+                    reg: &reg,
                     zones: self.wb_zones.clone(),
                 };
-                let drawn = crate::benchdraw::body(surface, how, Some(&folds), sk, th);
+                let drawn = crate::benchdraw::body(surface, how, Some(&picks), sk, th);
                 // A question opened from the rail is still a question, so it
                 // gets the chips the inline block gets. Built before the verb
                 // row because both borrow `self`.
