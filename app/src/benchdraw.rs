@@ -952,16 +952,8 @@ fn response(r: &Response, picks: Option<&Picks>, sk: &Skin, th: &Theme) -> Div {
                 .flex_row()
                 .flex_wrap()
                 .gap(px(3.))
-                .children(tabs.iter().map(|(g, mine)| {
+                .children(tabs.iter().map(|(g, _leaves)| {
                     let active = open_group == Some(*g);
-                    // The doubts never leave the strip. They are a click away
-                    // and the count says they are there, which is the one
-                    // treatment that neither buries them nor charges every card
-                    // with a permanent block — see figure 07 of the brief.
-                    let doubts = mine
-                        .iter()
-                        .any(|l| matches!(l, Leaf::Doubts))
-                        .then_some(r.doubts.len());
                     // The tier vocabulary, not a hand-picked colour: the open
                     // tab IS the Active thing on this card now, which is what
                     // `emphasis::shelf()` used to decide for a row of panels.
@@ -987,15 +979,7 @@ fn response(r: &Response, picks: Option<&Picks>, sk: &Skin, th: &Theme) -> Div {
                             crate::emphasis::meta(th)
                         })
                         .when(active, |x| x.border_b_1().border_color(facet.tint))
-                        .child(sk.caps(g.label()))
-                        .when_some(doubts, |x, n| {
-                            x.child(
-                                div()
-                                    .text_size(px(sk.pt(Step::Tag)))
-                                    .text_color(ink(crate::workbench::Tint::Pending, th))
-                                    .child(format!("\u{b7}{n}")),
-                            )
-                        });
+                        .child(sk.caps(g.label()));
                     match picks {
                         Some(p) => tab.cursor_pointer().relative().child(zone(
                             p.zones.clone(),
