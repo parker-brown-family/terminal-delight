@@ -512,7 +512,16 @@ pub fn body(
     // neither is worth a line in front of somebody who has been asked a
     // question. Parker: *"2 options (we can see it is 2 options, no need to
     // show this... if the machine needs it fine, but don't show user)"*.
-    let asking = matches!(surface.kind, Kind::Question(_));
+    //
+    // A COMMENT skips the weights for a stronger reason: there is nothing that
+    // could ever fill them. Effort, complexity, depth and confidence are an
+    // AGENT's estimate of work it did, and a note is a person writing a
+    // sentence to themselves. `unweighed` on every comment card would be a
+    // permanent report of an absence nobody could ever fill — the same line on
+    // every row of the shelf, which is a line that has stopped carrying
+    // anything. Its subtitle stays, because the stamp under a note is the one
+    // fact a chronological board is sorted by.
+    let unweighable = matches!(surface.kind, Kind::Question(_) | Kind::Comment(_));
     // ABOVE THE TITLE, and above everything.
     //
     // The position is the point, not the colour: an escalation sorted among six
@@ -539,7 +548,7 @@ pub fn body(
         Embodiment::Compact => frame
             .child(heading(surface, sk, th))
             .child(compact(surface, picks, sk, th)),
-        Embodiment::Full if asking => frame
+        Embodiment::Full if unweighable => frame
             .child(heading(surface, sk, th))
             .child(full(surface, picks, sk, th)),
         Embodiment::Full => frame

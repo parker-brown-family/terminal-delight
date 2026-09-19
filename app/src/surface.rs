@@ -1874,12 +1874,30 @@ fn stamp_local(ms: u64) -> Option<String> {
         return None;
     }
     let month = MONTH.get(usize::try_from(tm.tm_mon).ok()?)?;
+    let year = 1900i32.checked_add(tm.tm_year)?;
+    // A YEAR THAT IS NOT A YEAR IS NOT A STAMP.
+    //
+    // `localtime_r` does not refuse absurd input: handed `u64::MAX` milliseconds
+    // it returns, cheerfully and without error, `3 Apr 584556019`. That is the
+    // failure this whole function was written against wearing better clothes —
+    // not a missing value, but an invented one with the right shape, which every
+    // later reader would take for a measurement. `arrived_ms` is stamped from a
+    // system clock, so anything outside a range a clock could plausibly hold is
+    // corruption, and corruption reads as `time unavailable` rather than as a
+    // date nobody can argue with.
+    //
+    // Caught by the test that asserts this, which is the whole argument for
+    // writing a test that has to fail before it is believed.
+    // The bound is `1900`, not `1970`, and that is not slack. West of UTC the
+    // epoch itself is 31 December 1969 in local time, so a lower bound of 1970
+    // refuses a real instant on this very machine — which the test caught, in
+    // the timezone this is written in.
+    if !(1900..=2999).contains(&year) {
+        return None;
+    }
     Some(format!(
-        "{} {month} {}, {:02}:{:02}",
-        tm.tm_mday,
-        1900 + tm.tm_year,
-        tm.tm_hour,
-        tm.tm_min
+        "{} {month} {year}, {:02}:{:02}",
+        tm.tm_mday, tm.tm_hour, tm.tm_min
     ))
 }
 
@@ -2984,6 +3002,200 @@ mod tests {
             "open was already a default and is not listed twice"
         );
         assert!(s.actions.contains(&Action::Custom("publish".into())));
+    }
+
+    /// A comment carries WHO only where who is knowable, and WHEN always.
+    ///
+    /// The three cases are the whole attribution story of the board, and two of
+    /// them are the reason it is a story at all: anything running as this user
+    /// can drop a file into a pane's directory claiming `"kind": "comment"`, so
+    /// a row that signed everything `you` would be signing somebody else's
+    /// words with the reader's name.
+    ///
+    /// The third case is the one that is easy to read as a bug later: after a
+    /// restart the file is all the evidence there is, and it says nothing about
+    /// who typed it — so a note you wrote yesterday comes back unsigned. That
+    /// is correct and it is also why issue 483's claimed-writer field exists.
+    /// Pinned here so changing it is a decision somebody makes rather than a
+    /// line somebody edits.
+    #[test]
+    fn a_comment_signs_itself_only_when_the_window_watched_it_being_typed() {
+        let note = |origin: Origin| {
+            let mut s = Surface {
+                id: SurfaceId("n".into()),
+                title: "x".into(),
+                kind: Kind::Comment(Comment { body: "x".into() }),
+                weight: Weight::default(),
+                actions: vec![],
+                source: None,
+                // 18 Sep 2026, 22:14 UTC. The stamp resolves in LOCAL time, so
+                // the assertions below check the shape and the signature rather
+                // than a wall-clock string this test cannot know.
+                arrived_ms: 1_789_863_240_000,
+                origin,
+            };
+            s.title = default_title(&s.kind);
+            s.subtitle()
+        };
+        let mine = note(Origin::Person);
+        assert!(
+            mine.starts_with("you \u{b7} "),
+            "a note this window watched being typed signs itself: {mine}"
+        );
+        for anonymous in [Origin::FileDrop, Origin::Unknown, Origin::Derived] {
+            let sub = note(anonymous.clone());
+            assert!(
+                !sub.contains("you"),
+                "{anonymous:?} is not evidence that you wrote it: {sub}"
+            );
+            // And it does not shout about it either — the alarm belongs on the
+            // card, where `Origin::label` already draws `writer unknown` at
+            // full strength. A row that says so on every line after a restart
+            // is a warning nobody can act on.
+            assert!(
+                !sub.contains("unknown"),
+                "the row is not the place for the alarm: {sub}"
+            );
+            assert_eq!(sub, mine.trim_start_matches("you \u{b7} "), "same stamp");
+        }
+    }
+
+    /// The window's own stamp survives the sweep reading back the file it wrote.
+    ///
+    /// Posting a note puts it on the bench AND writes it to the pane's
+    /// directory, and the ordinary file sweep reads that file a moment later as
+    /// exactly what it is — a drop. Without the rule in [`Surface::merge`] the
+    /// note would relabel itself `writer unknown` within the second, while the
+    /// person was still looking at it.
+    ///
+    /// The second half of the test is the part that keeps the rule narrow: a
+    /// file drop landing on a surface that was NOT typed here still wins, which
+    /// is the behaviour every other kind depends on.
+    #[test]
+    fn a_note_typed_here_is_not_downgraded_by_the_file_it_wrote() {
+        let make = |origin: Origin| Surface {
+            id: SurfaceId("n".into()),
+            title: "x".into(),
+            kind: Kind::Comment(Comment { body: "x".into() }),
+            weight: Weight::default(),
+            actions: vec![],
+            source: None,
+            arrived_ms: 1_789_863_240_000,
+            origin,
+        };
+        let mut typed_here = make(Origin::Person);
+        typed_here.merge(make(Origin::FileDrop));
+        assert_eq!(
+            typed_here.origin,
+            Origin::Person,
+            "the sweep re-reading our own file must not unsign the note"
+        );
+
+        let mut from_mcp = make(Origin::Mcp {
+            pid: 42,
+            own: Some(true),
+        });
+        from_mcp.merge(make(Origin::FileDrop));
+        assert_eq!(
+            from_mcp.origin,
+            Origin::FileDrop,
+            "the exception is for Person alone; every other origin still yields \
+             to the latest writer"
+        );
+    }
+
+    /// A note's title is its first LINE, and its card shows only the rest.
+    ///
+    /// The commit-message split. Without it a one-line note draws its own words
+    /// twice on the card — once large as the heading and once again as the
+    /// opening of the body, three lines apart — which reads as a bug rather
+    /// than as a summary.
+    #[test]
+    fn a_notes_title_is_its_first_line_and_never_the_whole_paragraph() {
+        let one_liner = Kind::Comment(Comment {
+            body: "check the phosphor bleed at 40% contrast".into(),
+        });
+        assert_eq!(
+            default_title(&one_liner),
+            "check the phosphor bleed at 40% contrast"
+        );
+
+        let with_body = Kind::Comment(Comment {
+            body: "check the bleed. it might be the chip\n\nlook before touching the skin".into(),
+        });
+        assert_eq!(
+            default_title(&with_body),
+            "check the bleed. it might be the chip",
+            "split on the newline, not on the full stop"
+        );
+
+        // Whitespace is not a title, and neither is an empty note. The board
+        // would otherwise grow a row with nothing on its face.
+        assert_eq!(
+            default_title(&Kind::Comment(Comment {
+                body: "   \n  ".into()
+            })),
+            "note"
+        );
+    }
+
+    /// A comment is the person's, all the way down.
+    ///
+    /// Four properties in one place because they are one decision, and because
+    /// the fifth thing this asserts is an absence: a comment offers no verb
+    /// that reaches an agent. Every other kind on this bench offers `Comment`
+    /// or `AskAgent`, both of which type a line into somebody's terminal.
+    #[test]
+    fn a_comment_offers_nothing_that_reaches_an_agent() {
+        let kind = Kind::Comment(Comment { body: "x".into() });
+        assert_eq!(kind.id(), "comment");
+        assert_eq!(kind.shelf(), Shelf::Comments);
+        assert_eq!(
+            crate::workbench::tint_of(&kind),
+            crate::workbench::Tint::Mine
+        );
+        assert_eq!(kind.default_actions(), vec![Action::Copy]);
+        for verb in kind.default_actions() {
+            assert!(
+                verb.is_local(),
+                "{verb:?} leaves this window; a comment is external to the agent"
+            );
+            assert!(
+                !verb.wants_comment(),
+                "{verb:?} would open a composer that types at the agent"
+            );
+        }
+        // And it is NOT advertised to agents. Parker: *"concur. Meta - human
+        // facing"*. The parser still accepts one, because refusing silently
+        // would be worse than labelling whoever dropped it.
+        assert!(
+            !catalogue_names().contains(&"comment"),
+            "the catalogue invites agents to write in the person's own voice"
+        );
+        assert!(
+            parse_kind("comment", Some(&json!({ "body": "hi" }))).is_ok(),
+            "an undocumented kind is still parsed, and arrives labelled"
+        );
+    }
+
+    /// An unresolvable clock says so rather than reading 1 Jan 1970.
+    #[test]
+    fn a_stamp_this_machine_cannot_resolve_is_absent_not_the_epoch() {
+        let ok = stamp_local(1_789_863_240_000).expect("a resolvable stamp");
+        assert!(ok.contains("2026"), "{ok}");
+        assert!(ok.contains("Sep"), "{ok}");
+        // `localtime_r` does NOT refuse this: it answers `3 Apr 584556019`,
+        // which is a confident, correctly-shaped, entirely invented date. An
+        // absent stamp is the honest answer and the row prints `time
+        // unavailable` for it.
+        assert_eq!(stamp_local(u64::MAX), None, "a garbage clock is not a date");
+        // The boundary, from both sides, so the range is a decision and not an
+        // accident: the epoch itself resolves, and a year past 2999 does not.
+        assert!(
+            stamp_local(0).is_some(),
+            "the epoch is a real instant, and west of UTC it falls in 1969"
+        );
+        assert_eq!(stamp_local(33_000_000_000_000_000), None, "year 3015");
     }
 
     #[test]
