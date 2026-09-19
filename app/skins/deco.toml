@@ -76,9 +76,12 @@ chip_py    = 2.0
 gap        = 5.0
 # The ring's bloom. Brass on near-black wants a wider, softer halo than a
 # green phosphor does — the hue is already warm, so the glow reads as light
-# rather than as haze.
+# rather than as haze. Wider, and still quiet: 0.45 was a marking alpha from
+# when the ring also drew a crisp spread over the glyphs, and deco's own chips
+# are the roomiest in the app, so the halo has further to travel before it
+# reaches a letter. A shade hotter than default's 0.11 and nowhere near 0.45.
 glow       = 6.0
-glow_a     = 0.45
+glow_a     = 0.13
 rail       = 2.0
 label_size = 9.0
 row_h      = 16.0

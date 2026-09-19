@@ -17119,11 +17119,15 @@ impl Workspace {
                 .overflow_hidden()
                 .whitespace_nowrap()
                 .text_size(px(CHROME_NAME_PT * s))
-                // The selected row's label joins its ring. A task that was given
-                // its own colour keeps it — that was somebody's choice and the
-                // selection has no business overruling it.
+                // The selected row's label brightens; it does not change hue.
+                // It used to take `select`, which is the colour of the ring
+                // around it and of the bloom outside that — three devices, one
+                // colour, and the word is the one of the three you have to
+                // read. A task that was given its own colour keeps it: that was
+                // somebody's choice and the selection has no business
+                // overruling it.
                 .text_color(text.unwrap_or(if is_active {
-                    sk.ink.select
+                    sk.ink.ink_lit
                 } else {
                     th.text.alpha(0.8)
                 }))
@@ -19969,10 +19973,15 @@ impl Workspace {
                 .rounded(sk.radius())
                 .text_size(px(CHROME_NAME_PT * ts))
                 .cursor_pointer()
+                // The foreground at two weights, not the select hue at one. A
+                // tab whose word is painted the same colour as the ring around
+                // it and the bloom outside it has no figure left to read, and
+                // `ink_off` is Faint, which on a dark palette is a word you
+                // cannot find. See the pair in `Skin::chip`.
                 .text_color(if is_active {
-                    sk.ink.select
+                    sk.ink.ink_lit
                 } else {
-                    sk.ink.ink_off
+                    sk.ink.ink_dim
                 })
                 .child(label.to_string()),
             is_active,

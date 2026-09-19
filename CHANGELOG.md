@@ -9,6 +9,27 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ### Fixed
 
+- **A tab you can read.** Every tab in the window — the bench's shelf strip, the
+  strip across the top, the rows in the left bar — drew the lit one's label in
+  the selection colour, inside a border in the selection colour, on a seat mixed
+  from it, under a bloom of it: four devices, one hue, and the word was the only
+  one of the four anybody had to read. The unlit ones took the "not in effect"
+  ink, which is Faint, and came out as grey words floating beside a glowing pill.
+  Measured on the `quiet-command` palette, the lit label ran at **1.38:1**
+  against its own seat and the resting one at **1.08:1** against its face; 1.0 is
+  two identical colours. The hue now goes on the edge, the seat and the halo and
+  the label stays the foreground, at two weights; a tab at rest keeps a quiet
+  bordered face, because a control is a control whether or not you are standing
+  on it. The phosphor is dialled from 0.41 to 0.11 and the crisp spread-ring is
+  gone — on a box five pixels wider than its own word it closed over the glyphs
+  from every side. A new test walks every palette we ship and fails under either
+  of the old inks.
+- **TERM ⇄ BENCH is one switch.** It was two chips with two pixels between them,
+  each reserving its own ring, so one binary choice put four vertical edges on
+  the pane header and the lit half was a pill you could not read the word inside.
+  One bordered track now, with the half you are on filled and carrying the
+  control's whole phosphor budget, so throwing the switch moves the glow.
+
 - **The tab strip opens on the group you are in.** Teaching the strip to obey
   the scope chip left the chip's default on ALL, so a window opened with every
   tab in the session across the top: the branch a person was actually working in

@@ -320,6 +320,20 @@ ink_tokens! {
     ink_ghost    => "ink_ghost",    Recipe::of(Role::Text).a(0.20),                "text that is present but not for reading yet";
     ink_on_mark  => "ink_on_mark",  Recipe::of(Role::White).a(0.95),               "text drawn ON the accent";
 
+    // ---- a control's two states ----
+    // THE LIT LABEL IS NOT THE LIT COLOUR. Drawing the selected tab's word in
+    // `select` put the glyphs, the border around them and the bloom outside it
+    // all in one hue, and a shape whose figure and ground are the same colour
+    // has no figure. Parker, on the bench's shelf tabs: *"The workbench right
+    // bar tabs are unreadable... compare to model and effort which look fine"*
+    // — and the model/effort strip he was pointing at draws its value in the
+    // foreground at 0.92 and lets the EDGE carry the hue. These three are that
+    // strip's own numbers, lifted into the token table so the strip and every
+    // tab in the window cannot drift apart again.
+    ink_lit      => "ink_lit",      Recipe::of(Role::Text).a(0.92),                "the label of the control you are on";
+    edge_rest    => "edge_rest",    Recipe::of(Role::Text).a(0.30),                "the edge of a control that is not the lit one";
+    face_rest    => "face_rest",    Recipe::of(Role::Text).a(0.06),                "the face of a control that is not the lit one";
+
     // ---- the accent, by job ----
     mark         => "mark",         Recipe::of(Role::Accent),                      "the accent at full strength: what is selected";
     mark_soft    => "mark_soft",    Recipe::of(Role::Accent).a(0.85),              "the accent carrying text";
@@ -416,8 +430,18 @@ metric_tokens! {
     // first numbers were calibrated on a still window and read as haze once the
     // crisp spread-ring was added beside the halo. Two bright devices need less
     // of each than one did.
+    //
+    // …and then to 0.11 on 2026-09-18, which is the number this line is really
+    // about. 0.41 was a MARKING alpha — right for the one thing on a surface
+    // that is shouting, wrong for a strip where one of four tabs is always lit.
+    // Paired with the crisp spread-ring it doubled the border inward over
+    // 9-to-10 point glyphs and the lit tab came out as a coloured blob. The
+    // spread-ring is gone (see [`Skin::ring`]) and what is left is one soft
+    // halo, deliberately just past the model/effort strip's zero: Parker,
+    // handing over that strip as the reference, *"dialing back the phosphor to
+    // the level of the model and effort buttons but like +10% more phosphor"*.
     glow        => "glow",        5.25,  "how far the phosphor ring blooms past its border";
-    glow_a      => "glow_a",      0.41,  "how hot the bloom is, 0..1 — NOT a length";
+    glow_a      => "glow_a",      0.11,  "how hot the bloom is, 0..1 — NOT a length";
 }
 
 // ---------------------------------------------------------------------------
@@ -670,6 +694,29 @@ impl Skin {
 // The element vocabulary
 // ---------------------------------------------------------------------------
 
+/// What a ringed thing looks like when it is NOT the lit one.
+///
+/// Not a style preference — the two answers belong to two different shapes, and
+/// giving either one the other's answer is a bug you can see from across the
+/// room.
+///
+/// A **row** in a list of twenty carries its selection alone. Box the other
+/// nineteen and a tree becomes a grid; the border is merely reserved,
+/// transparent, so that moving the selection moves nothing.
+///
+/// A **tab** is one of three or four side by side, and it is a control whether
+/// or not it is the one you are standing on. Drawn bare it comes out as two
+/// grey words floating beside a lit pill — which is exactly what `overview` and
+/// `artifacts` were next to `decisions`, and why the strip read as one button
+/// and some text rather than as three tabs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Rest {
+    /// Nothing but the reserved, transparent border.
+    Bare,
+    /// A quiet bordered face — [`Inks::edge_rest`] around [`Inks::face_rest`].
+    Face,
+}
+
 /// gpui spells border widths as `border_0` … `border_8` (1px steps) rather than
 /// taking a length, so a token width has to be routed to one of them.
 ///
@@ -790,7 +837,21 @@ impl Skin {
             // The ring takes the whole edge, so the strip's reserved bottom rule
             // is not drawn as well — two devices on one tab is one too many, and
             // `ring` reserves its own border in every state regardless.
-            Emphasis::Glow => self.ring(d, active, tint),
+            //
+            // `Rest::Face` because a tab strip is a row of controls: an inactive
+            // tab that is only a dim word reads as a caption, and the strip
+            // stops looking like somewhere you can click.
+            Emphasis::Glow => {
+                let d = self.ring(d, active, tint, Rest::Face);
+                if active {
+                    // The seat, in the TAB'S OWN hue rather than the accent's.
+                    // A wash mixed from one colour under a ring lit in another
+                    // is two claims about the same box.
+                    d.bg(tint.alpha(self.ink.mark_wash.a))
+                } else {
+                    d
+                }
+            }
             // The rule still occupies its two pixels, transparent, so switching
             // tabs under a bracketed skin moves nothing either.
             Emphasis::Bracket => {
@@ -975,15 +1036,23 @@ impl Skin {
             .whitespace_nowrap();
         // The ring reserves its border in every state, so an unlit chip under a
         // glow skin is the same size as a lit one.
+        //
+        // NEITHER ink is the select colour any more. Lit was `select`, which put
+        // the word, its border and its bloom in one hue; unlit was `ink_off`,
+        // which is Faint — a legitimate colour for a label that is genuinely not
+        // in effect, and the wrong one for a tab you are meant to press. The
+        // pair is now the foreground at two weights, and the hue is spent on the
+        // edge, the seat and the halo, which is how the model/effort strip has
+        // always done it.
         if matches!(self.shape.emphasis, Emphasis::Glow) {
             let ink = if active {
-                self.ink.select
+                self.ink.ink_lit
             } else {
-                self.ink.ink_off
+                self.ink.ink_dim
             };
-            let r = self.ring(base.text_color(ink), active, self.ink.select);
+            let r = self.ring(base.text_color(ink), active, self.ink.select, Rest::Face);
             return if active && self.ink.mark_wash.a > 0.02 {
-                r.bg(self.ink.mark_wash)
+                r.bg(self.ink.select.alpha(self.ink.mark_wash.a))
             } else {
                 r
             };
@@ -1004,6 +1073,64 @@ impl Skin {
         }
     }
 
+    /// A two-state slider: one bordered track, and the half you are on filled.
+    ///
+    /// TERM ⇄ BENCH was two chips with two pixels between them. Under the ring
+    /// each reserved its own border, so one binary choice put four vertical
+    /// edges on the header — and a pair of adjacent buttons is not a switch,
+    /// it is a pair of adjacent buttons. Parker: *"TERM and BENCH — combine
+    /// into a single bordered slider toggler, also pretty unreadable"*. The
+    /// count of edges is now the count of decisions in the control.
+    ///
+    /// The track wears the [`Rest::Face`] treatment — the same quiet edge every
+    /// tab at rest wears — so the toggle reads as a member of the chrome's
+    /// family rather than as a shape of its own. Feed it [`Skin::slider_half`].
+    pub fn slider(&self) -> Div {
+        b_all(
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .p(px(self.m.hairline))
+                .rounded(self.radius())
+                .bg(self.ink.face_rest),
+            self.m.border,
+        )
+        .border_color(self.ink.edge_rest)
+    }
+
+    /// One half of a [`Skin::slider`].
+    ///
+    /// The thumb is a FILL and not a second border: a bordered thing inside a
+    /// bordered thing is the four-edge problem again at half the size. It also
+    /// carries the control's entire phosphor budget, so throwing the switch
+    /// MOVES the glow rather than lighting a second one — which is the whole
+    /// read of a slider, and the reason this is one control instead of two.
+    pub fn slider_half(&self, lit: bool, tint: Hsla) -> Div {
+        let d = div()
+            .px(self.px(self.m.chip_px))
+            .py(self.px(self.m.chip_py))
+            .rounded(self.rad_raw((self.m.radius - self.m.border).max(0.)))
+            .whitespace_nowrap()
+            .cursor_pointer();
+        if !lit {
+            return d.text_color(self.ink.ink_dim);
+        }
+        // Heavier than `mark_wash` on purpose. Everywhere else the fill is a
+        // seat under a lit border and the border does the marking; here there is
+        // no border to do it, so the fill IS the thumb and has to survive being
+        // read at a glance against the track it sits in.
+        d.bg(tint.alpha((self.ink.mark_wash.a * 1.6).min(0.28)))
+            .text_color(self.ink.ink_lit)
+            .shadow(vec![gpui::BoxShadow {
+                color: tint.alpha(self.m.glow_a.clamp(0., 1.)),
+                offset: gpui::point(px(0.), px(0.)),
+                blur_radius: px(self.m.glow),
+                spread_radius: px(0.),
+                inset: false,
+            }])
+    }
+
     /// The phosphor ring: a lit border that blooms outward.
     ///
     /// `tint` is what the marked thing is lit in — the accent, or the thing's own
@@ -1012,15 +1139,19 @@ impl Skin {
     /// moves anything by a border width. That reservation is the whole reason
     /// this lives here rather than at a call site.
     ///
-    /// **Two shadows, and no fill.** This is the focused pane's own phosphor
-    /// recipe, scaled down to row size — `render_node` in main.rs lights the
-    /// selected tube with a crisp 1px spread ring at high alpha *plus* a wide
-    /// soft halo, and carries no background tint whatever. That pairing is what
-    /// makes it read as phosphor rather than as a highlight:
+    /// **One halo, and no fill.** It used to be two shadows — a crisp 1px
+    /// spread ring at `glow_a` *plus* a wide soft halo — copied down from the
+    /// focused pane, where it is right: a tube is a large object and the thing
+    /// it is competing with is another tube. A tab is a nine-point word in a
+    /// box five pixels wider than itself, and a spread ring on a box that small
+    /// closes over the glyphs from every side at once. The lit shelf tab came
+    /// out as a coloured blob with something written in it.
     ///
-    /// - the **crisp ring** (blur 0, spread 1) doubles the border without
-    ///   thickening it, which is what gives the edge its hard bright line;
-    /// - the **halo** (wide blur, lower alpha) is the bloom around it;
+    /// So the crisp ring is gone and the border does that job, which is what a
+    /// border is for:
+    ///
+    /// - the **border** is the hard bright line, at the strip's own 0.85;
+    /// - the **halo** (wide blur, `glow_a`) is all the phosphor there is;
     /// - the **absence of fill** is why the text underneath keeps its contrast.
     ///
     /// A first pass used one soft shadow and a background wash. The wash is what
@@ -1029,29 +1160,27 @@ impl Skin {
     ///
     /// No inset shadow: an inset reads as a bevel, and a bevel claims the thing
     /// is raised, which is the opposite of what a glow says.
-    pub fn ring<E: Styled>(&self, d: E, lit: bool, tint: Hsla) -> E {
+    pub fn ring<E: Styled>(&self, d: E, lit: bool, tint: Hsla, rest: Rest) -> E {
         let clear = hsla(0., 0., 0., 0.);
-        let d = b_all(d, self.m.border).border_color(if lit { tint } else { clear });
         if !lit {
-            return d;
+            // The border is drawn at every state and merely goes transparent,
+            // so switching which tab is lit never moves anything by a border
+            // width. `Rest::Face` spends those same pixels on a visible edge.
+            let d = b_all(d, self.m.border);
+            return match rest {
+                Rest::Bare => d.border_color(clear),
+                Rest::Face => d.border_color(self.ink.edge_rest).bg(self.ink.face_rest),
+            };
         }
+        let d = b_all(d, self.m.border).border_color(tint.alpha(0.85));
         let a = self.m.glow_a.clamp(0., 1.);
-        d.shadow(vec![
-            gpui::BoxShadow {
-                color: tint.alpha(a),
-                offset: gpui::point(px(0.), px(0.)),
-                blur_radius: px(0.),
-                spread_radius: px(1.),
-                inset: false,
-            },
-            gpui::BoxShadow {
-                color: tint.alpha(a * 0.6),
-                offset: gpui::point(px(0.), px(0.)),
-                blur_radius: px(self.m.glow),
-                spread_radius: px(0.),
-                inset: false,
-            },
-        ])
+        d.shadow(vec![gpui::BoxShadow {
+            color: tint.alpha(a),
+            offset: gpui::point(px(0.), px(0.)),
+            blur_radius: px(self.m.glow),
+            spread_radius: px(0.),
+            inset: false,
+        }])
     }
 
     /// Four corner ticks around whatever the div holds. One div per corner, each
@@ -1086,7 +1215,11 @@ impl Skin {
         // this recipe comes from carries no fill at all. A tint is still
         // available to a skin that wants one; it is simply not the default.
         if matches!(self.shape.emphasis, Emphasis::Glow) {
-            let r = self.ring(d, active, self.ink.select);
+            // `Rest::Bare`, and this is the whole reason that argument exists: a
+            // bar of twenty rows with nineteen quiet boxes in it is a grid, and
+            // a tree that looks like a grid has stopped saying which rows hang
+            // off which.
+            let r = self.ring(d, active, self.ink.select, Rest::Bare);
             return if active && self.ink.row_active.a > 0.02 {
                 r.bg(self.ink.row_active)
             } else {
@@ -2133,6 +2266,118 @@ mod tests {
                 assert!(s.ink.mark.a > 0.5, "{} rings in a transparent ink", s.name);
             }
         }
+    }
+
+    /// sRGB relative luminance, the WCAG definition.
+    fn luminance(c: gpui::Rgba) -> f32 {
+        fn lin(v: f32) -> f32 {
+            if v <= 0.03928 {
+                v / 12.92
+            } else {
+                ((v + 0.055) / 1.055).powf(2.4)
+            }
+        }
+        0.2126 * lin(c.r) + 0.7152 * lin(c.g) + 0.0722 * lin(c.b)
+    }
+
+    /// `over` composited onto `under` by `over`'s own alpha. Done in RGB rather
+    /// than in HSL because HSL does not composite — interpolating a hue between
+    /// magenta and near-black walks it through colours neither of them contains.
+    fn over(top: Hsla, bottom: Hsla) -> Hsla {
+        let f = gpui::Rgba::from(top);
+        let b = gpui::Rgba::from(bottom);
+        let mix = |x: f32, y: f32| x * f.a + y * (1. - f.a);
+        Hsla::from(gpui::Rgba {
+            r: mix(f.r, b.r),
+            g: mix(f.g, b.g),
+            b: mix(f.b, b.b),
+            a: 1.,
+        })
+    }
+
+    /// The WCAG contrast ratio between two OPAQUE colours, 1.0 … 21.0.
+    fn contrast(a: Hsla, b: Hsla) -> f32 {
+        let (x, y) = (
+            luminance(gpui::Rgba::from(a)),
+            luminance(gpui::Rgba::from(b)),
+        );
+        let (hi, lo) = if x > y { (x, y) } else { (y, x) };
+        (hi + 0.05) / (lo + 0.05)
+    }
+
+    /// A word on a tab can be READ, on every palette we ship.
+    ///
+    /// This is the test that would have caught what a person caught by eye. The
+    /// bench's shelf tabs drew the lit one's label in `select`, inside a border
+    /// in `select`, on a seat mixed from `select`, under a bloom of `select` —
+    /// four devices, one hue, and the glyphs were the only one of the four you
+    /// had to read. The unlit ones took `ink_off`, which is Faint, a legitimate
+    /// colour for a label that is genuinely not in effect and the wrong one for
+    /// a tab you are meant to press. Parker: *"The workbench right bar tabs are
+    /// unreadable"*, then *"retro is bad... Tide is AWEFUL!"* — a palette-shaped
+    /// complaint, which is why this walks every palette rather than the default.
+    ///
+    /// The floors are the WCAG small-text and UI-component numbers, and they are
+    /// not aspirational — both legs were run against the inks this replaced,
+    /// which is the only way to know a check is measuring anything. On
+    /// `quiet-command` the old lit label came out at **1.38:1** against its own
+    /// seat and the old resting label at **1.08:1** against its face. 1.0 is two
+    /// identical colours. That is what "unreadable" was, as a number.
+    #[test]
+    fn a_tab_label_is_legible_on_every_builtin_palette() {
+        let mut ids = crate::theme::builtin_ids();
+        ids.push("hacker");
+        for id in ids {
+            let src = crate::theme::builtin_toml(id).unwrap_or(crate::theme::DEFAULT_THEME_TOML);
+            let th = theme::parse(src).unwrap_or_else(|e| panic!("{id} does not parse: {e:?}"));
+            let sk = parse(DEFAULT_SKIN_TOML).unwrap().bake(&th, 1.0);
+            // The two grounds chrome sits on. A tab lands on one or the other.
+            for ground in [sk.ink.panel, sk.ink.panel_raised] {
+                // LIT: the label over the seat the ring lays down.
+                let seat = over(sk.ink.select.alpha(sk.ink.mark_wash.a), ground);
+                let lit = contrast(over(sk.ink.ink_lit, seat), seat);
+                assert!(
+                    lit >= 4.5,
+                    "{id}: a lit tab's word is {lit:.2}:1 against its own seat"
+                );
+                // AT REST: still a control, so still a word somebody reads.
+                let face = over(sk.ink.face_rest, ground);
+                let rest = contrast(over(sk.ink.ink_dim, face), face);
+                assert!(
+                    rest >= 3.0,
+                    "{id}: a resting tab's word is {rest:.2}:1 against its face"
+                );
+                // …and its EDGE has to be findable, or the control has no shape.
+                let edge = contrast(over(sk.ink.edge_rest, ground), ground);
+                assert!(
+                    edge >= 1.4,
+                    "{id}: a resting tab's edge is {edge:.2}:1 against the ground"
+                );
+            }
+        }
+    }
+
+    /// One bloom, and a quiet one.
+    ///
+    /// The crisp spread-ring is gone on purpose — on a box five pixels wider
+    /// than its own word it closed over the glyphs from every side — and the
+    /// halo that remains is deliberately just past the model/effort strip's
+    /// zero. A future edit that reaches for 0.4 again is reaching for the blob.
+    #[test]
+    fn the_phosphor_is_dialled_to_the_strip_plus_a_little() {
+        let sk = parse(DEFAULT_SKIN_TOML).unwrap().bake(&palette(), 1.0);
+        assert!(sk.m.glow > 0., "a ring with no bloom is just a border");
+        assert!(
+            (0.05..=0.18).contains(&sk.m.glow_a),
+            "glow_a left the strip's neighbourhood: {}",
+            sk.m.glow_a
+        );
+        // The thumb is the one fill that is allowed to be heavier than a seat,
+        // because on a slider there is no lit border doing the marking.
+        assert!(
+            sk.ink.mark_wash.a * 1.6 > sk.ink.row_active.a,
+            "the slider's thumb is lighter than the seat under a row"
+        );
     }
 
     #[test]
