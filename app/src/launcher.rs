@@ -84,6 +84,15 @@ impl Harness {
         }
     }
 
+    /// The harness a stored word names, or `None` if it names none of them.
+    ///
+    /// The inverse of [`Self::label`], and deliberately the only one: a second
+    /// table mapping words to harnesses is how a config file starts saying
+    /// `claude` and meaning codex.
+    pub fn from_label(word: &str) -> Option<Harness> {
+        Harness::ALL.into_iter().find(|h| h.label() == word)
+    }
+
     /// The models this window offers for the harness.
     ///
     /// A short list on purpose. The full set changes under us and a stale menu
@@ -188,6 +197,30 @@ pub enum Effort {
 }
 
 impl Effort {
+    /// Every level, lowest first — the union, before any harness narrows it.
+    ///
+    /// [`Harness::efforts`] is what a harness *offers*; this is what the word
+    /// list can contain at all, which is what a stored preference has to be
+    /// read against. A file written while Claude was selected can hold `max`,
+    /// and Codex has no such level — parsing it against Codex's own list would
+    /// lose the choice rather than clamp it.
+    pub const ALL: [Effort; 5] = [
+        Effort::Low,
+        Effort::Medium,
+        Effort::High,
+        Effort::XHigh,
+        Effort::Max,
+    ];
+
+    /// The level a stored word names, or `None` if it names none of them.
+    ///
+    /// The inverse of [`Self::id`]. One table, walked, rather than a second
+    /// `match` that can drift from the first — which is how `xhigh` would come
+    /// to mean `high` on a round trip through a config file.
+    pub fn from_id(word: &str) -> Option<Effort> {
+        Effort::ALL.into_iter().find(|e| e.id() == word)
+    }
+
     /// The word on the chip, in the launch journal, and after the flag. One
     /// word for all three on purpose: a label that differs from the value is
     /// how `standard` came to mean nothing.
@@ -663,6 +696,22 @@ mod tests {
                 assert!(line.contains(&expected), "{harness:?} {effort:?}: {line}");
             }
         }
+    }
+
+    /// A stored word survives the trip to disk and back as the same level and
+    /// the same harness — and a word neither table knows stays unknown rather
+    /// than becoming the first row of whichever list was walked.
+    #[test]
+    fn a_stored_word_reads_back_as_what_wrote_it_or_as_nothing() {
+        for e in Effort::ALL {
+            assert_eq!(Effort::from_id(e.id()), Some(e), "{e:?}");
+        }
+        for h in Harness::ALL {
+            assert_eq!(Harness::from_label(h.label()), Some(h), "{h:?}");
+        }
+        assert_eq!(Effort::from_id("standard"), None);
+        assert_eq!(Effort::from_id(""), None);
+        assert_eq!(Harness::from_label("gemini"), None);
     }
 
     #[test]

@@ -51,6 +51,7 @@ mod instance;
 mod keylayer;
 mod lang;
 mod launcher;
+mod launchpref;
 mod mcp;
 mod mcp_tail;
 mod mcp_transport;
@@ -3651,6 +3652,17 @@ struct Workspace {
     provider_marks: std::collections::HashMap<String, std::path::PathBuf>,
     /// Which subscription's card is open (index into the drawable records).
     usage_pick: usize,
+    /// What the LAUNCH AGENT panel opens holding — harness, model, effort.
+    ///
+    /// Read off disk once, here, rather than in `open_agent_launcher`: the
+    /// usage card draws the same three rows on every frame it is up, and a
+    /// file read per frame to answer *which chip is lit* is a file read per
+    /// frame. Written straight through to [`launchpref::save`] on every press,
+    /// so a second window opening its launcher gets the new answer.
+    ///
+    /// Each field is an `Option` all the way here: see [`launchpref`] for why
+    /// *nobody chose* must not be stored as the thing that would have happened.
+    launch_defaults: launchpref::Prefs,
     /// What the last refresh said, when it had something to say.
     usage_status: Option<String>,
     /// A collector run is in flight on a pool thread.
@@ -5092,6 +5104,7 @@ impl Workspace {
             usage_pick: 0,
             usage_status: None,
             usage_refreshing: false,
+            launch_defaults: launchpref::load(),
             agent_vitals: std::collections::HashMap::new(),
             vitals_refreshing: false,
             surface_feed: Some(surfacefeed::Feed::new()),
@@ -6669,6 +6682,7 @@ impl Workspace {
             gamma: K::Gamma.to_percent(g.gamma),
             menu_bar: K::Scale.to_percent(g.scale),
             text_size: K::TextSize.to_percent(g.text_size),
+            bench_size: K::BenchSize.to_percent(g.bench_gauge()),
             warp: K::Warp.to_percent(g.warp),
             crawl: g.crawl,
             crawl_angle: K::CrawlAngle.to_percent(g.crawl_angle),
@@ -6719,6 +6733,9 @@ impl Workspace {
         }
         if let Some(p) = patch.text_size {
             set!(K::TextSize, p);
+        }
+        if let Some(p) = patch.bench_size {
+            set!(K::BenchSize, p);
         }
         if let Some(p) = patch.warp {
             set!(K::Warp, p);
@@ -7662,6 +7679,182 @@ impl Workspace {
         .detach();
     }
 
+    /// The top of the usage card: what a NEW agent starts as.
+    ///
+    /// Three rows — harness, model, effort — and pressing a chip is the whole
+    /// interaction. It sits here, above the subscriptions, because this page
+    /// already answers *what are these agents costing* and choosing the model
+    /// is that same question one step earlier: Parker asked for the defaults
+    /// *"right at the top of that page ... so that when I spin up an agent in
+    /// workbench, its default[s are] configured"*.
+    ///
+    /// **A lit chip is not the same as a chosen one.** A row nobody has
+    /// answered still has a value in force — the shipped fallback — and it is
+    /// drawn lit but with a quiet border and an `unset` tag, against the accent
+    /// border and `chosen` tag of a decision. Storing the fallback instead
+    /// would make the two indistinguishable the moment the file is read back,
+    /// and the harness's own default could then never change under anyone. See
+    /// [`launchpref`].
+    ///
+    /// Pressing the lit chip again clears it — the dial's convention, where a
+    /// second press on what is already open is how you get back out.
+    fn render_launch_defaults(&self, th: &theme::Theme, cx: &mut Context<Self>) -> gpui::Div {
+        let pref = &self.launch_defaults;
+        // What the panel would open on right now. `unwrap_or` is the fallback
+        // and it is deliberately not written anywhere durable.
+        let harness = pref.harness().unwrap_or(launcher::Harness::Claude);
+        let model_at = pref.model_ix(harness).unwrap_or(0);
+        let effort_now = pref
+            .effort(harness)
+            .unwrap_or_else(|| harness.default_effort());
+        let acc = th.accent;
+        let txt = th.text;
+        // The same pill the subscription row below wears, in three states:
+        // chosen (accent, filled), in force but unchosen (quiet edge, no
+        // fill), and neither.
+        let chip = move |word: &str, lit: bool, chosen: bool| {
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_1p5()
+                .px_2()
+                .py_0p5()
+                .rounded_full()
+                .border_1()
+                .border_color(match (lit, chosen) {
+                    (true, true) => acc.alpha(0.85),
+                    (true, false) => txt.alpha(0.40),
+                    _ => txt.alpha(0.16),
+                })
+                .bg(if lit && chosen {
+                    acc.alpha(0.16)
+                } else {
+                    txt.alpha(0.04)
+                })
+                .text_size(px(10.))
+                .text_color(if lit { txt } else { txt.alpha(0.62) })
+                .cursor_pointer()
+                .hover(move |st| st.bg(acc.alpha(0.12)))
+                .child(word.to_string())
+        };
+        let row = move |name: &str, chips: gpui::Div, chosen: bool| {
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_2()
+                .child(
+                    div()
+                        .w(px(44.))
+                        .flex_none()
+                        .text_size(px(9.))
+                        .text_color(txt.alpha(0.45))
+                        .child(name.to_string()),
+                )
+                .child(chips)
+                .child(div().flex_1().min_w(px(0.)))
+                .child(
+                    div()
+                        .flex_none()
+                        .text_size(px(8.5))
+                        .text_color(if chosen {
+                            acc.alpha(0.85)
+                        } else {
+                            txt.alpha(0.40)
+                        })
+                        .child(if chosen { "chosen" } else { "unset" }),
+                )
+        };
+        let pills = || div().flex().flex_row().flex_wrap().items_center().gap_1p5();
+
+        let mut harness_chips = pills();
+        for h in launcher::Harness::ALL {
+            let word = h.label();
+            harness_chips = harness_chips.child(
+                chip(word, h == harness, pref.harness() == Some(h)).on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        ws.launch_defaults.harness = (ws.launch_defaults.harness.as_deref()
+                            != Some(word))
+                        .then(|| word.to_string());
+                        launchpref::save(&ws.launch_defaults);
+                        cx.notify();
+                    }),
+                ),
+            );
+        }
+
+        let mut model_chips = pills();
+        for (i, m) in harness.models().iter().enumerate() {
+            let id = m.id;
+            model_chips = model_chips.child(
+                chip(m.label, i == model_at, pref.model_ix(harness) == Some(i)).on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        ws.launch_defaults.model = (ws.launch_defaults.model.as_deref()
+                            != Some(id))
+                        .then(|| id.to_string());
+                        launchpref::save(&ws.launch_defaults);
+                        cx.notify();
+                    }),
+                ),
+            );
+        }
+
+        let mut effort_chips = pills();
+        for e in harness.efforts() {
+            let e = *e;
+            let id = e.id();
+            effort_chips = effort_chips.child(
+                chip(id, e == effort_now, pref.effort(harness) == Some(e)).on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        ws.launch_defaults.effort = (ws.launch_defaults.effort.as_deref()
+                            != Some(id))
+                        .then(|| id.to_string());
+                        launchpref::save(&ws.launch_defaults);
+                        cx.notify();
+                    }),
+                ),
+            );
+        }
+
+        div()
+            .flex()
+            .flex_col()
+            .gap_1p5()
+            .pb_2()
+            .border_b_1()
+            .border_color(txt.alpha(0.12))
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_baseline()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_size(px(10.))
+                            .font_weight(gpui::FontWeight::EXTRA_BOLD)
+                            .text_color(th.complement)
+                            .child("NEW AGENT"),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(8.5))
+                            .text_color(txt.alpha(0.5))
+                            .child("what LAUNCH AGENT opens holding \u{2014} press again to unset"),
+                    ),
+            )
+            .child(row("harness", harness_chips, pref.harness().is_some()))
+            .child(row("model", model_chips, pref.model_ix(harness).is_some()))
+            .child(row("effort", effort_chips, pref.effort(harness).is_some()))
+    }
+
     /// The usage face of the </> card: every AI coding subscription on the
     /// machine, one tab each — the ceilings and how close they are, today, the
     /// week behind it, and where the tokens actually went.
@@ -7670,7 +7863,15 @@ impl Workspace {
     /// rounded up on this side. Where a vendor cannot answer, its own words go in
     /// the card (`usageStatusText`) with its own remedy under them.
     fn render_usage_body(&self, th: &theme::Theme, cx: &mut Context<Self>) -> gpui::Div {
-        let body = div().flex().flex_col().gap_2p5();
+        // FIRST, and before the early return below. The defaults are a fact
+        // about this machine, not about whether a collector has ever managed to
+        // write a usage record — a box whose whole content vanishes on the
+        // machines that have not run one is a control nobody can find.
+        let body = div()
+            .flex()
+            .flex_col()
+            .gap_2p5()
+            .child(self.render_launch_defaults(th, cx));
         let drawable: Vec<&usage::Record> = self
             .usage_records
             .iter()
@@ -11491,15 +11692,23 @@ impl Workspace {
         // its exact name found nothing. The render caps what is DRAWN; the
         // filter is how a person reaches the rest, and it needs the rest.
         let projects = launcher::scan(&launcher::default_roots(&home), 1000);
-        let harness = launcher::Harness::Claude;
+        // The three chips open on what somebody chose on the usage card, and
+        // on the shipped behaviour where nobody has. The `unwrap_or` is the
+        // whole of the fallback and it lives HERE rather than in the store,
+        // because a default written to disk is indistinguishable from a
+        // decision the next time it is read. See [`launchpref`].
+        let pref = &self.launch_defaults;
+        let harness = pref.harness().unwrap_or(launcher::Harness::Claude);
         let mut lp = AgentLauncher {
             query: EditBuffer::seeded(""),
             projects,
             order: Vec::new(),
             selected: 0,
             harness,
-            model_ix: 0,
-            effort: harness.default_effort(),
+            model_ix: pref.model_ix(harness).unwrap_or(0),
+            effort: pref
+                .effort(harness)
+                .unwrap_or_else(|| harness.default_effort()),
             reach: launcher::Reach::Anywhere,
             from,
         };
@@ -14891,17 +15100,21 @@ impl Workspace {
         }
     }
 
-    /// ctrl+wheel anywhere = menu-bar size scrub (panes skip scrolling when ctrl).
+    /// ctrl+wheel over the CABINET = menu-bar size scrub.
+    ///
+    /// The chord means "size whatever the cursor is standing on", and this is
+    /// its outer half: the bar, the tabs, the left bar, the gaps between panes.
+    /// It is reached only when no pane claimed the event first — a pane sizes
+    /// its own terminal text and halts propagation
+    /// ([`TerminalView::nudge_text_size`]) — so one flick is never answered
+    /// twice.
     fn on_wheel(&mut self, ev: &ScrollWheelEvent, _w: &mut Window, cx: &mut Context<Self>) {
         if !ev.modifiers.control {
             return;
         }
-        let dy = match ev.delta {
-            gpui::ScrollDelta::Lines(l) => l.y,
-            gpui::ScrollDelta::Pixels(p) => f32::from(p.y) / 20.,
-        };
         let cur = theme::outer_choice(cx).grade.scale;
-        self.set_scale(cur + dy * 0.05, cx);
+        let notches = theme::wheel_notches(ev.delta);
+        self.set_scale(theme::GradeKey::Scale.nudged(cur, notches), cx);
     }
 
     fn on_mouse_move(&mut self, ev: &MouseMoveEvent, _w: &mut Window, cx: &mut Context<Self>) {
@@ -15990,7 +16203,9 @@ impl Workspace {
                     // crawl angle in degrees, crawl depth as a ratio; colour
                     // channels read as a signed offset ("-12", "+0").
                     .child(match key {
-                        theme::GradeKey::Scale | theme::GradeKey::TextSize => {
+                        theme::GradeKey::Scale
+                        | theme::GradeKey::TextSize
+                        | theme::GradeKey::BenchSize => {
                             format!("{}%", (v * 100.).round() as i32)
                         }
                         theme::GradeKey::CrawlAngle => format!("{}\u{00b0}", v.round() as i32),
@@ -23070,6 +23285,7 @@ impl Render for Workspace {
             for (key, _name) in theme::Grade::CHANNELS {
                 let name = match key {
                     theme::GradeKey::TextSize => t.g_text_size,
+                    theme::GradeKey::BenchSize => t.g_bench_size,
                     theme::GradeKey::Brightness => t.g_brightness,
                     theme::GradeKey::Contrast => t.g_contrast,
                     theme::GradeKey::Colour => t.g_colour,
@@ -23401,12 +23617,16 @@ impl Render for Workspace {
             let preview = self.mcp_theme_preview;
             let cs = self.card_scale.clamp(0.7, 1.6);
             let card_slider = self.card_scale_slider(th.accent, th.text, cx);
-            // ---- pre-pass: whole-fleet counts (unfiltered) + context-aware
-            // filter domains. Group chips come from tab groups; program chips
-            // come from live pane modes; state chips only come from matching
-            // agents. ----
-            let (mut n_work, mut n_block, mut n_err, mut n_done, mut n_idle, mut n_unknown) =
-                (0u32, 0u32, 0u32, 0u32, 0u32, 0u32);
+            // ---- pre-pass: the whole-fleet token totals (unfiltered) plus the
+            // context-aware filter domains. Group chips come from tab groups;
+            // program chips come from live pane modes; state chips only come
+            // from matching agents.
+            //
+            // There is no longer a second, unfiltered state tally beside the
+            // `v_*` one: the header carried six bare glyph-and-number counters
+            // over the bordered chips that say the same six things with their
+            // words on, and two rows of the same fact disagreeing whenever a
+            // filter was on is worse than either row alone. ----
             let mut turn_tok_total = 0u64;
             let mut sess_tok_total = 0u64;
             let mut total_panes = 0u32;
@@ -23447,14 +23667,6 @@ impl Render for Workspace {
                         .is_none_or(|program| program == mode_lbl.as_str());
                     if p.mode.is_agent() {
                         let st = p.agent_status();
-                        match st.state {
-                            hud::AgentState::Working => n_work += 1,
-                            hud::AgentState::Blocked => n_block += 1,
-                            hud::AgentState::Error => n_err += 1,
-                            hud::AgentState::Finished => n_done += 1,
-                            hud::AgentState::Idle => n_idle += 1,
-                            hud::AgentState::Unknown => n_unknown += 1,
-                        }
                         turn_tok_total += st.turn_tokens.unwrap_or(0);
                         sess_tok_total += p.session_tokens();
                         if show_group && program_matches {
@@ -24757,7 +24969,17 @@ impl Render for Workspace {
                     }
                 )))
                 .child(
-                    // ---- the agent-wall scoreboard rollup ----
+                    // ---- the agent-wall header: the name, the fleet's token
+                    // totals, and the two overlay buttons.
+                    //
+                    // The six state counters that used to sit between the name
+                    // and the totals are gone. They were unbordered glyphs
+                    // (`\u{25b6} 5`, `\u{2713} 6`) and they set the SAME
+                    // `mcp_state_filter` the bordered WORKING/DONE/IDLE chips
+                    // two rows down set — the same control twice, one of them
+                    // unlabelled, and their numbers were fleet-wide while the
+                    // chips' are context-aware, so the two rows contradicted
+                    // each other the moment any filter was on. ----
                     div()
                         .flex()
                         .flex_row()
@@ -24770,157 +24992,6 @@ impl Render for Workspace {
                                 .font_weight(gpui::FontWeight::EXTRA_BOLD)
                                 .text_color(th.complement)
                                 .child("AGENT WALL"),
-                        )
-                        .child(
-                            div()
-                                .text_color(th.accent)
-                                .cursor_pointer()
-                                .px_1()
-                                .rounded(sk.radius())
-                                .when(state_filt == Some(hud::AgentState::Working), |d| {
-                                    d.bg(th.accent.alpha(0.22))
-                                })
-                                .hover(|s| s.bg(th.accent.alpha(0.12)))
-                                .child(format!("\u{25b6} {n_work}"))
-                                .on_mouse_down(
-                                    MouseButton::Left,
-                                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                                        cx.stop_propagation();
-                                        ws.mcp_state_filter = (ws.mcp_state_filter
-                                            != Some(hud::AgentState::Working))
-                                        .then_some(hud::AgentState::Working);
-                                        cx.notify();
-                                    }),
-                                ),
-                        )
-                        .child(
-                            div()
-                                .text_color(hsla(0.11, 0.85, 0.60, 1.))
-                                .cursor_pointer()
-                                .px_1()
-                                .rounded(sk.radius())
-                                .when(state_filt == Some(hud::AgentState::Blocked), |d| {
-                                    d.bg(hsla(0.11, 0.85, 0.60, 1.).alpha(0.22))
-                                })
-                                .hover(|s| s.bg(hsla(0.11, 0.85, 0.60, 1.).alpha(0.12)))
-                                .child(format!("\u{23f8} {n_block}"))
-                                .on_mouse_down(
-                                    MouseButton::Left,
-                                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                                        cx.stop_propagation();
-                                        ws.mcp_state_filter = (ws.mcp_state_filter
-                                            != Some(hud::AgentState::Blocked))
-                                        .then_some(hud::AgentState::Blocked);
-                                        cx.notify();
-                                    }),
-                                ),
-                        )
-                        .child(
-                            div()
-                                .text_color(hsla(0., 0.75, 0.60, 1.))
-                                .cursor_pointer()
-                                .px_1()
-                                .rounded(sk.radius())
-                                .when(state_filt == Some(hud::AgentState::Error), |d| {
-                                    d.bg(hsla(0., 0.75, 0.60, 1.).alpha(0.22))
-                                })
-                                .hover(|s| s.bg(hsla(0., 0.75, 0.60, 1.).alpha(0.12)))
-                                .child(format!("\u{2715} {n_err}"))
-                                .on_mouse_down(
-                                    MouseButton::Left,
-                                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                                        cx.stop_propagation();
-                                        ws.mcp_state_filter = (ws.mcp_state_filter
-                                            != Some(hud::AgentState::Error))
-                                        .then_some(hud::AgentState::Error);
-                                        cx.notify();
-                                    }),
-                                ),
-                        )
-                        .child(
-                            div()
-                                .text_color(agent_state_glow(
-                                    &th,
-                                    th.text.alpha(0.45),
-                                    hud::AgentState::Finished,
-                                ))
-                                .cursor_pointer()
-                                .px_1()
-                                .rounded(sk.radius())
-                                .when(state_filt == Some(hud::AgentState::Finished), |d| {
-                                    d.bg(agent_state_glow(
-                                        &th,
-                                        th.text.alpha(0.45),
-                                        hud::AgentState::Finished,
-                                    )
-                                    .alpha(0.22))
-                                })
-                                .hover(|s| {
-                                    s.bg(agent_state_glow(
-                                        &th,
-                                        th.text.alpha(0.45),
-                                        hud::AgentState::Finished,
-                                    )
-                                    .alpha(0.12))
-                                })
-                                .child(format!("\u{2713} {n_done}"))
-                                .on_mouse_down(
-                                    MouseButton::Left,
-                                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                                        cx.stop_propagation();
-                                        ws.mcp_state_filter = (ws.mcp_state_filter
-                                            != Some(hud::AgentState::Finished))
-                                        .then_some(hud::AgentState::Finished);
-                                        cx.notify();
-                                    }),
-                                ),
-                        )
-                        .child(
-                            div()
-                                .text_color(th.text.alpha(0.45))
-                                .cursor_pointer()
-                                .px_1()
-                                .rounded(sk.radius())
-                                .when(state_filt == Some(hud::AgentState::Idle), |d| {
-                                    d.bg(th.text.alpha(0.45).alpha(0.22))
-                                })
-                                .hover(|s| s.bg(th.text.alpha(0.45).alpha(0.12)))
-                                .child(format!("\u{25cb} {n_idle}"))
-                                .on_mouse_down(
-                                    MouseButton::Left,
-                                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                                        cx.stop_propagation();
-                                        ws.mcp_state_filter = (ws.mcp_state_filter
-                                            != Some(hud::AgentState::Idle))
-                                        .then_some(hud::AgentState::Idle);
-                                        cx.notify();
-                                    }),
-                                ),
-                        )
-                        // Panes whose screen matched no rule. Its own chip, so
-                        // the set can be filtered to and looked at — the first
-                        // thing anyone will want when this number is not zero.
-                        .child(
-                            div()
-                                .text_color(th.text.alpha(0.45))
-                                .cursor_pointer()
-                                .px_1()
-                                .rounded(sk.radius())
-                                .when(state_filt == Some(hud::AgentState::Unknown), |d| {
-                                    d.bg(th.text.alpha(0.45).alpha(0.22))
-                                })
-                                .hover(|s| s.bg(th.text.alpha(0.45).alpha(0.12)))
-                                .child(format!("? {n_unknown}"))
-                                .on_mouse_down(
-                                    MouseButton::Left,
-                                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                                        cx.stop_propagation();
-                                        ws.mcp_state_filter = (ws.mcp_state_filter
-                                            != Some(hud::AgentState::Unknown))
-                                        .then_some(hud::AgentState::Unknown);
-                                        cx.notify();
-                                    }),
-                                ),
                         )
                         .child(div().flex_1().min_w(px(0.)))
                         .child(div().text_color(th.text.alpha(0.7)).child(format!(
@@ -27361,6 +27432,28 @@ impl Render for Workspace {
                     // already fits) the wheel falls through to the read pane's own
                     // scrollback — the wheel is never lost.
                     .on_scroll_wheel(cx.listener(|ws, ev: &ScrollWheelEvent, _w, cx| {
+                        // ctrl+wheel is the size gesture and never a pan. The
+                        // reader mirrors the GRID on both faces (see
+                        // `the_focus_reader_mirrors_the_grid_on_both_faces`), so
+                        // the dial it turns is the grid's, named here rather
+                        // than resolved from the cursor: the scrim covers the
+                        // window, so where the pointer is says nothing about
+                        // which region of the pane is being read.
+                        //
+                        // It halts, like the pane's own handler. Before this the
+                        // chord panned the reader AND — propagation never
+                        // stopped — resized the outer bar behind it.
+                        if ev.modifiers.control {
+                            if let Some(pane) = ws.focus_read.as_ref().and_then(|w| w.upgrade()) {
+                                let notches = theme::wheel_notches(ev.delta);
+                                pane.update(cx, |v, cx| {
+                                    v.nudge_size(theme::GradeKey::TextSize, notches, cx)
+                                });
+                                cx.notify();
+                            }
+                            cx.stop_propagation();
+                            return;
+                        }
                         let dy = match ev.delta {
                             gpui::ScrollDelta::Lines(l) => l.y * ws.focus_line_h,
                             gpui::ScrollDelta::Pixels(p) => f32::from(p.y),
@@ -29242,6 +29335,122 @@ mod tests {
         assert!(
             top.contains(".child(scrubber)") && top.contains(".child(win_controls)"),
             "the top right keeps the menu-bar scale and the window buttons"
+        );
+    }
+
+    /// ctrl+wheel sizes what the cursor is standing on, at one rate.
+    ///
+    /// The chord is bound twice on purpose — a pane sizes its own terminal text
+    /// (`TerminalView::nudge_text_size`), and this handler sizes the cabinet for
+    /// every flick no pane claimed. What keeps that from reading as two
+    /// unrelated features is that both go through the same notch conversion and
+    /// the same per-notch step, so a gesture travels the same distance whichever
+    /// surface it lands on. Open-coding the delta arithmetic here again — which
+    /// is exactly what this handler used to do — is how the two drift.
+    ///
+    /// Mutation-tested: restoring the old open-coded delta, and reducing the
+    /// pane's halt to a commented-out line, each fail this test.
+    #[test]
+    fn the_cabinets_ctrl_wheel_steps_at_the_same_rate_as_a_panes() {
+        let code = shipped_code();
+        let at = code
+            .find("    fn on_wheel(&mut self, ev: &ScrollWheelEvent")
+            .expect("Workspace::on_wheel");
+        let end = code[at..].find("\n    }\n").expect("end of fn");
+        let body = &code[at..at + end];
+
+        assert!(
+            body.contains("theme::wheel_notches(ev.delta)"),
+            "the cabinet must read the wheel through the shared notch \
+             conversion, not its own copy of the pixel divisor"
+        );
+        assert!(
+            body.contains("theme::GradeKey::Scale.nudged("),
+            "and step the menu-bar channel by the shared per-notch step"
+        );
+        assert!(
+            !body.contains("ScrollDelta::Pixels"),
+            "no second copy of the delta arithmetic lives here"
+        );
+
+        // The pane's half of the same chord, asserted from over here too: this
+        // handler's correctness depends on never seeing an event a pane already
+        // answered, and that promise is kept in pane.rs. Comments stripped —
+        // the block being scanned explains the halt in prose that names it.
+        let pane_src: String = include_str!("pane.rs")
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let at = pane_src
+            .find("pub fn scroll_by_wheel")
+            .expect("pub fn scroll_by_wheel");
+        let end = pane_src[at..].find("\n    }\n").expect("end of fn");
+        assert!(
+            pane_src[at..at + end].contains("cx.stop_propagation();"),
+            "a pane that sized itself must halt the wheel, or this handler \
+             sizes the menu bar off the same notch"
+        );
+    }
+
+    /// The FOCUS reader names the dial it turns instead of guessing at one.
+    ///
+    /// Its scrim `.occlude()`s the whole window, so the reader's own wheel
+    /// handler is the only one a flick reaches — and where the pointer happens
+    /// to be says nothing about which region of the mirrored pane is being
+    /// read. The reader mirrors the GRID on both faces (see
+    /// `the_focus_reader_mirrors_the_grid_on_both_faces` in pane.rs), so the
+    /// grid's dial is the answer and it is written down here rather than
+    /// resolved from a cursor that is standing on a modal.
+    ///
+    /// It also has to HALT, and take ctrl before the pan. Before that the chord
+    /// scrolled the reader and — propagation never stopped — resized the outer
+    /// bar behind it, off one flick.
+    ///
+    /// Mutation-tested: dropping the halt, putting the pan first, and swapping
+    /// the named dial for the bench's each fail this test.
+    #[test]
+    fn the_focus_reader_does_not_pan_on_the_size_chord() {
+        let code = shipped_code();
+        let at = code
+            .find("if let Some(pane) = ws.focus_read.as_ref()")
+            .expect("the FOCUS reader's wheel handler");
+        // Back up to the top of the listener so the ctrl branch is in view.
+        let at = code[..at]
+            .rfind(".on_scroll_wheel(cx.listener(|ws, ev: &ScrollWheelEvent")
+            .expect("the listener");
+        let end = code[at..]
+            .find("\n                    }))")
+            .expect("end of listener");
+        let body = &code[at..at + end];
+
+        let ctrl = body
+            .find("if ev.modifiers.control {")
+            .expect("the reader must recognise the size chord at all");
+        let pan = body
+            .find("ws.focus_overflow > 0.0")
+            .expect("the pan branch is still there for a plain wheel");
+        assert!(
+            ctrl < pan,
+            "ctrl has to be taken BEFORE the pan, or the chord scrolls the \
+             reader instead of sizing what it is showing"
+        );
+
+        let branch = &body[ctrl..pan];
+        assert!(
+            branch.contains("theme::GradeKey::TextSize"),
+            "the reader mirrors the GRID, so the grid's dial is the one it \
+             turns — and it says so, rather than resolving a region from a \
+             pointer that is standing on the scrim"
+        );
+        assert!(
+            branch.contains("theme::wheel_notches("),
+            "…read through the shared notch conversion like every other scrub"
+        );
+        assert!(
+            branch.contains("cx.stop_propagation();"),
+            "the reader must halt the chord it answered, or the root handler \
+             resizes the outer bar off the same notch"
         );
     }
 

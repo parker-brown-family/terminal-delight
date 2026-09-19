@@ -2076,6 +2076,20 @@ pub struct TerminalView {
     /// same as empty: a composer that is open and holding nothing is a person
     /// who has started answering, and closing it under them loses that.
     wb_compose: Option<crate::workbench::Line>,
+    /// A NOTE being typed for the comments board.
+    ///
+    /// Deliberately a second field rather than a mode on `wb_compose`, because
+    /// the two are opposite things wearing the same shape. `wb_compose` is a
+    /// MIRROR: its bytes have already gone down the pseudoterminal and the local
+    /// copy exists only so the caret can be drawn. This is a BUFFER: nothing
+    /// leaves it until the person presses return, and then it goes to a file and
+    /// never to the agent.
+    ///
+    /// A flag on one field would have made every keystroke path ask which mode
+    /// it was in, and the cost of getting that branch wrong is not a glitch —
+    /// it is a private note typed into somebody's agent. Two fields make the
+    /// wrong path fail to compile instead.
+    wb_note: Option<crate::workbench::Line>,
     /// Where layout actually put the composer, in the three forms different
     /// readers need. See [`crate::benchdraw::Slots`].
     ///
@@ -2121,9 +2135,25 @@ pub struct TerminalView {
     /// elements as they paint, read by the root mouse handler. See
     /// [`crate::benchdraw::zone`].
     wb_zones: std::rc::Rc<std::cell::RefCell<Vec<crate::workbench::Zone>>>,
+    /// Where the bench's outermost box is in the window, as of the last frame
+    /// that painted one.
+    ///
+    /// The only thing that turns a window-space rectangle — a dial's, read back
+    /// out of [`Self::wb_zones`] — into the coordinates an absolutely-positioned
+    /// child of that box is placed in. NOT cleared per frame, unlike the zones:
+    /// the tree is BUILT before it is painted, so a frame can only ever be
+    /// placed with what the previous one measured, and clearing it would mean
+    /// every frame drew with nothing. See [`crate::benchdraw::probe`].
+    wb_bench_rect: std::rc::Rc<std::cell::RefCell<Option<crate::workbench::Rect>>>,
     /// What the pointer looks like over the bench, decided from the un-bent
     /// position on every mouse move and painted by the bench's pointer hook.
     wb_pointer: crate::workbench::Pointer,
+    /// Whether a dragged file is over the composer right now, so the box can
+    /// say it will take it. Set from the same un-bent hover that decides the
+    /// pointer, and cleared when the drag leaves the window — which arrives
+    /// as a `FileDropEvent`, not as a mouse move, and so is listened for in
+    /// [`TerminalView::pointer_hook`].
+    wb_drop: bool,
     /// Whether the bench is showing the agent's own scrollback this frame —
     /// `shows.mirror`, kept for the wheel handler that runs between frames.
     wb_mirror: bool,
@@ -2498,6 +2528,39 @@ pub struct MirrorSnapshot {
     pub k1: f32,
     pub k2: f32,
     pub glare: f32,
+}
+
+/// Which size dial a ctrl+wheel at `pos` is turning, given where this pane's
+/// CONTENT area was last painted and which face it is showing.
+///
+/// A pane is two regions and the gesture means a different thing in each. The
+/// header is chrome and answers to [`theme::GradeKey::Scale`], the same dial
+/// the outer cabinet uses and the reason a pane's header can be sized on its
+/// own. Below it is content, and which content depends on the face: the
+/// terminal grid takes [`theme::GradeKey::TextSize`], the workbench takes
+/// [`theme::GradeKey::BenchSize`]. `content` is the rect below the header — it
+/// is captured by the canvas inside the pane's content div, so "not in it" is
+/// exactly "in the header or on the pane's own frame".
+///
+/// `None` when the pane has never been painted and there is therefore no rect
+/// to compare against. That is not the header: it is *we have not measured this
+/// pane*, and answering with a dial would size whatever the guess landed on.
+/// One frame later the answer exists; until then the gesture does nothing.
+fn size_dial_at(
+    pos: gpui::Point<Pixels>,
+    content: Option<Bounds<Pixels>>,
+    on_bench: bool,
+) -> Option<theme::GradeKey> {
+    let content = content?;
+    Some(if content.contains(&pos) {
+        if on_bench {
+            theme::GradeKey::BenchSize
+        } else {
+            theme::GradeKey::TextSize
+        }
+    } else {
+        theme::GradeKey::Scale
+    })
 }
 
 impl TerminalView {
@@ -3285,6 +3348,7 @@ impl TerminalView {
             tok_was_working: false,
             bench: crate::workbench::Bench::new(),
             wb_compose: None,
+            wb_note: None,
             wb_slots: crate::benchdraw::Slots::default(),
             wb_review: None,
             wb_quiet: 0,
@@ -3294,7 +3358,9 @@ impl TerminalView {
             wb_delivered_ms: None,
             wb_flash_until_ms: None,
             wb_zones: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
+            wb_bench_rect: std::rc::Rc::new(std::cell::RefCell::new(None)),
             wb_pointer: crate::workbench::Pointer::Arrow,
+            wb_drop: false,
             wb_mirror: false,
             wb_live_q: None,
             wb_card_scroll: gpui::ScrollHandle::new(),
@@ -4978,13 +5044,65 @@ impl TerminalView {
         self.scroll_by_wheel(ev, cx);
     }
 
+    /// Step one of THIS pane's size dials by `notches` wheel notches — the
+    /// ctrl+wheel gesture, after [`size_dial_at`] has decided which dial the
+    /// cursor was standing on.
+    ///
+    /// Only `key` becomes the pane's own; every other dial keeps tracking
+    /// outer, which is what makes sizing one region of one pane a local act
+    /// rather than a detachment from the mother theme.
+    ///
+    /// A notch that changes nothing — the channel is already at its stop —
+    /// leaves the pane exactly as it found it, pin included. Sizing past the end
+    /// must not silently detach a pane from outer: nothing about its size was
+    /// chosen here, and a pane that quietly stopped following would only be
+    /// noticed the next time outer moved and this one did not.
+    pub fn nudge_size(&mut self, key: theme::GradeKey, notches: f32, cx: &mut Context<Self>) {
+        let outer = theme::outer_choice(cx);
+        let mut grade = self.appearance.effective(&outer).grade;
+        let from = grade.get(key);
+        let next = key.nudged(from, notches);
+        if (next - from).abs() < f32::EPSILON {
+            return;
+        }
+        grade.set(key, next);
+        self.appearance
+            .pin_grade(grade, theme::GradePins::only(key.into()));
+        // Same contract as a paint pick: the pane has already changed, the
+        // workspace just writes the layout down so the size survives a restart.
+        cx.emit(PaintApplied);
+        cx.notify();
+    }
+
+    /// Which of this pane's size dials sits under `pos`, if the pane has been
+    /// painted yet. Sugar over [`size_dial_at`] with the pane's own geometry.
+    fn size_dial_under(&self, pos: gpui::Point<Pixels>) -> Option<theme::GradeKey> {
+        size_dial_at(
+            pos,
+            *self.content_bounds.lock().unwrap(),
+            self.bench.face() == crate::workbench::Face::Workbench,
+        )
+    }
+
     /// Scroll the terminal scrollback from a wheel event. Public so the FOCUS
     /// reading modal (rendered by the Workspace) can route its wheel events here:
     /// the modal's locking scrim `.occlude()`s the pane behind it and would
     /// otherwise swallow the wheel, leaving the mirror un-scrollable.
     pub fn scroll_by_wheel(&mut self, ev: &ScrollWheelEvent, cx: &mut Context<Self>) {
+        // ctrl+wheel is the SIZE gesture, not a scroll, and it sizes the region
+        // of this pane the cursor is actually standing on — header, grid or
+        // bench. The Workspace binds the same chord to the outer cabinet; both
+        // handlers are bubble-phase, a pane's is registered deeper, and gpui
+        // runs the deepest first — so halting here is what keeps one flick from
+        // doing both jobs at once. Halted even when no dial resolves: the
+        // cursor is over this pane either way, and the cabinet is not what the
+        // person was pointing at.
         if ev.modifiers.control {
-            return; // workspace handles ctrl+wheel = text-size scrub
+            if let Some(key) = self.size_dial_under(ev.position) {
+                self.nudge_size(key, theme::wheel_notches(ev.delta), cx);
+            }
+            cx.stop_propagation();
+            return;
         }
         let dy = match ev.delta {
             gpui::ScrollDelta::Lines(l) => l.y * 3.0,
@@ -5551,19 +5669,29 @@ impl TerminalView {
     /// Paste the clipboard into the PTY, honouring bracketed-paste mode.
     fn paste_clipboard(&self, cx: &mut Context<Self>) {
         if let Some(text) = cx.read_from_clipboard().and_then(|i| i.text()) {
-            let bracketed = self
-                .session
-                .term
-                .lock()
-                .mode()
-                .contains(TermMode::BRACKETED_PASTE);
-            let bytes = if bracketed {
-                [b"\x1b[200~", text.as_bytes(), b"\x1b[201~"].concat()
-            } else {
-                text.into_bytes()
-            };
-            self.session.notifier.notify(bytes);
+            self.paste_text(&text);
         }
+    }
+
+    /// Paste text that did not come from the clipboard — a dropped file's
+    /// path — into the PTY on the same terms, bracketing included.
+    ///
+    /// Bracketed because the far end asked to be told: an editor that turns
+    /// paste bracketing on is an editor that will treat these bytes as
+    /// content rather than as keys, which is exactly what a dropped path is.
+    fn paste_text(&self, text: &str) {
+        let bracketed = self
+            .session
+            .term
+            .lock()
+            .mode()
+            .contains(TermMode::BRACKETED_PASTE);
+        let bytes = if bracketed {
+            [b"\x1b[200~", text.as_bytes(), b"\x1b[201~"].concat()
+        } else {
+            text.as_bytes().to_vec()
+        };
+        self.session.notifier.notify(bytes);
     }
     fn has_selection(&self) -> bool {
         self.session
@@ -7092,15 +7220,20 @@ impl Render for TerminalView {
         // grade is detached, else the live outer (Mother) scale. This scrubber
         // sizes the HEADER (height + glyphs/icons), never the terminal grid.
         //
-        // Its neighbour on the tray is a DIFFERENT dial with a different job, and
-        // both are read here off the one resolved grade: `text_size` sizes what a
-        // person reads — the terminal's grid, and now the bench, which is the
-        // other thing that pane can be showing. Chrome takes `scale`, content
-        // takes `text_size`, on both faces, so a pane sized to somebody's eyes
-        // stays that size when it is flipped.
+        // Its neighbours on the tray are DIFFERENT dials with different jobs,
+        // and all three are read here off the one resolved grade. Chrome takes
+        // `scale`; the terminal grid takes `text_size`; the bench takes its own
+        // `bench_gauge`, which is `text_size` until somebody splits them.
+        //
+        // The two faces used to share `text_size` outright, so flipping a pane
+        // kept the size somebody had chosen. They are separate now because they
+        // are read differently — a grid at arm's length for hours against a
+        // feed of replies — and because ctrl+wheel resolves to whichever one is
+        // under the cursor, which needs somewhere distinct to land. `None` keeps
+        // the old behaviour for every pane nobody has split.
         let grade = self.appearance.effective(&theme::outer_choice(cx)).grade;
         let scale = grade.scale;
-        let text_k = grade.text_size;
+        let bench_k = grade.bench_gauge();
         // This pane's chrome shape. Baked against THIS pane's palette rather than
         // the window's — a pane wearing its own theme has to have its own header
         // edge, or the two disagree by exactly the amount the pane was retinted.
@@ -7256,7 +7389,6 @@ impl Render for TerminalView {
         } else {
             ps.ph_live.to_string()
         };
-        let grid_label = format!("{}×{}", self.grid.cols, self.grid.rows);
         let glow = th.glow;
 
         // ── Responsive header ────────────────────────────────────────────────
@@ -7510,7 +7642,7 @@ impl Render for TerminalView {
             // because chrome answers to the menu-bar scale and content answers to
             // these. See [`graded_palette`] and [`crate::skin::Skin::ty`].
             let bench_th = graded_palette(&th);
-            let bench_sk = crate::skin::for_theme(cx, &bench_th, scale).with_type(text_k);
+            let bench_sk = crate::skin::for_theme(cx, &bench_th, scale).with_type(bench_k);
             self.bench_el(
                 &bench_th,
                 &bench_sk,
@@ -7713,7 +7845,6 @@ impl Render for TerminalView {
                     .flex_shrink_0()
                     // roomier spacing between the header glyphs — scales with the bar
                     .gap(hpad)
-                    .child(grid_label)
                     .child(face_toggle)
                     // Part 1: only in an agent (claude/codex) pane — jump between
                     // *your own* messages. Coloured like your input (`th.human`).
@@ -8028,6 +8159,14 @@ impl Render for TerminalView {
             .on_mouse_down(MouseButton::Right, cx.listener(Self::on_mouse_down))
             .on_mouse_move(cx.listener(Self::on_mouse_move))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
+            // A FILE DROPPED ON THIS PANE, and it is registered HERE for the
+            // same reason every other bench gesture is: gpui hit-tests the
+            // flat layout tree, the bench is drawn bent, and a drop target
+            // hung on the composer would catch drops beside where the
+            // composer appears. `bench_drop` un-bends the pointer and asks
+            // the composer's own zone. Guarded by
+            // `the_pane_root_takes_a_file_drop`.
+            .on_drop::<gpui::ExternalPaths>(cx.listener(Self::bench_drop))
             .size_full()
             // Grade the base background too (not just cells): the DISPLAY brightness
             // / contrast / colour sliders dim the whole pane like a dimmer light —
@@ -8225,6 +8364,206 @@ impl Render for TerminalView {
 #[cfg(test)]
 mod tests {
 
+    /// This file's shipped code with every comment line removed.
+    ///
+    /// A source-grep gate its own explanation can satisfy is not a gate: one in
+    /// this repository passed on the comment describing the line it was meant to
+    /// find, while the line itself was gone. Scans below run against code only.
+    fn shipped_code() -> String {
+        let here = include_str!("pane.rs");
+        let (code, _tests) = here.split_once("\n#[cfg(test)]").expect("a test module");
+        code.lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// The four size dials are four dials, and a pane owns three of them.
+    ///
+    /// ctrl+wheel means "size what is under the pointer", and inside one pane
+    /// that is three different answers: the header is chrome and takes the same
+    /// `Scale` the outer cabinet uses, the terminal grid takes `TextSize`, and
+    /// the workbench takes `BenchSize`. Collapsing any two of them would make
+    /// the gesture size something the person was not pointing at, which is the
+    /// single way this feature can be wrong and still look like it works.
+    #[test]
+    fn each_region_of_a_pane_turns_its_own_dial() {
+        use crate::theme::GradeKey;
+        use gpui::{point, px, size, Bounds};
+
+        // The content rect is what the canvas below the header measured, so
+        // "outside it" is the header band and the pane's own frame.
+        let content = Bounds {
+            origin: point(px(100.), px(140.)),
+            size: size(px(400.), px(300.)),
+        };
+        let in_content = point(px(300.), px(280.));
+        let in_header = point(px(300.), px(120.));
+
+        assert_eq!(
+            size_dial_at(in_content, Some(content), false),
+            Some(GradeKey::TextSize),
+            "over the grid, the chord sizes the terminal's text"
+        );
+        assert_eq!(
+            size_dial_at(in_content, Some(content), true),
+            Some(GradeKey::BenchSize),
+            "the SAME point on the workbench face sizes the bench instead — the \
+             face decides, because the two are different things to read"
+        );
+        assert_eq!(
+            size_dial_at(in_header, Some(content), false),
+            Some(GradeKey::Scale),
+            "over the pane's own header, the chord sizes that header"
+        );
+        assert_eq!(
+            size_dial_at(in_header, Some(content), true),
+            Some(GradeKey::Scale),
+            "the header is chrome on both faces, so the face must not change \
+             this answer"
+        );
+
+        // The boundary belongs to the content: the rect is half-open, and the
+        // first row of pixels the canvas measured is content, not header.
+        assert_eq!(
+            size_dial_at(content.origin, Some(content), false),
+            Some(GradeKey::TextSize)
+        );
+        assert_eq!(
+            size_dial_at(point(px(500.), px(440.)), Some(content), false),
+            Some(GradeKey::Scale),
+            "the far corner is one pixel PAST the rect and so is not in it"
+        );
+
+        // A pane that has never been painted has no rect, and that is not the
+        // same as the pointer being on its header. Answering anything here
+        // would size whatever the guess landed on.
+        assert_eq!(size_dial_at(in_content, None, false), None);
+        assert_eq!(size_dial_at(in_header, None, true), None);
+
+        // Three dials, three channels. A rename that pointed two of these at
+        // one channel would leave every assertion above passing.
+        let dials = [GradeKey::Scale, GradeKey::TextSize, GradeKey::BenchSize];
+        for (i, a) in dials.iter().enumerate() {
+            for b in &dials[i + 1..] {
+                assert_ne!(
+                    crate::theme::GradeChannel::from(*a),
+                    crate::theme::GradeChannel::from(*b),
+                    "{a:?} and {b:?} pin the same channel, so sizing one region \
+                     would size the other"
+                );
+            }
+        }
+    }
+
+    /// One ctrl+wheel flick is answered once, by the pane under the cursor.
+    ///
+    /// Both the pane and the Workspace bind the chord — the pane sizes one of
+    /// its own three regions, the Workspace sizes the cabinet — and gpui hands
+    /// a wheel event to the deepest bubble listener first. Everything therefore
+    /// rests on the pane HALTING the event: without the stop, standing over a
+    /// pane and scrolling would grow that pane AND the whole menu bar, on every
+    /// notch, and the two would drift apart with no way to put them back.
+    ///
+    /// The halt is UNCONDITIONAL — outside the `if let` that resolves a dial.
+    /// A pane that has not been painted yet resolves nothing, and letting that
+    /// case fall through to the cabinet would mean the gesture silently resized
+    /// the menu bar on exactly the panes it could not size.
+    ///
+    /// Behaviour a running window is needed to see, so it is guarded at the
+    /// source. Mutation-tested: deleting the halt, moving it inside the `if
+    /// let`, deleting the size call, and leaving the halt behind as a
+    /// commented-out line each fail this test.
+    #[test]
+    fn ctrl_wheel_over_a_pane_sizes_that_pane_and_goes_no_further() {
+        let code = shipped_code();
+        let at = code
+            .find("pub fn scroll_by_wheel")
+            .expect("pub fn scroll_by_wheel");
+        let end = code[at..].find("\n    }\n").expect("end of fn");
+        let body = &code[at..at + end];
+
+        let ctrl = body
+            .find("if ev.modifiers.control {")
+            .expect("scroll_by_wheel must still branch on ctrl — it is the size chord");
+        let branch = &body[ctrl..];
+
+        assert!(
+            branch.contains("self.size_dial_under(ev.position)"),
+            "ctrl+wheel over a pane must resolve WHICH of the pane's dials the \
+             pointer is on; the branch used to bail outright, and then sized \
+             one dial for the whole pane"
+        );
+        assert!(branch.contains("self.nudge_size("), "…and then turn it");
+        assert!(
+            branch.contains("theme::wheel_notches("),
+            "the pane must read the wheel through the shared notch conversion, \
+             so a flick steps the same amount here as it does on the cabinet"
+        );
+
+        let halt = branch.find("cx.stop_propagation();").expect(
+            "the pane must halt the ctrl+wheel it just answered — the \
+                 Workspace's handler is bound to the same chord and would size \
+                 the menu bar off the very same notch",
+        );
+        let resolved = branch.find("if let Some(key)").expect("the dial lookup");
+        let lookup_end = branch[resolved..]
+            .find("\n            }")
+            .expect("end of the lookup block")
+            + resolved;
+        assert!(
+            halt > lookup_end,
+            "the halt sits INSIDE the dial lookup, so a pane with no measured \
+             rect yet would let the flick through to the cabinet"
+        );
+    }
+
+    /// Sizing past the end of a dial is not a decision, so it must not pin.
+    ///
+    /// `nudge_size` compares the nudged value against the one it started from
+    /// and returns early when they match. Drop that and a pane parked at the
+    /// maximum quietly stops following outer the first time somebody keeps
+    /// scrolling — invisible until the cabinet's own size moves and that one
+    /// pane does not (and it writes the layout to disk on every notch besides).
+    ///
+    /// It pins the ONE dial it was handed, never the whole grade: the three
+    /// regions of a pane are sized independently, and a person who grew the
+    /// bench has said nothing about the grid.
+    ///
+    /// Mutation-tested: deleting the bail, widening the pin to every channel,
+    /// and dropping the persist each fail this test.
+    #[test]
+    fn sizing_a_pane_past_its_stop_leaves_it_following_outer() {
+        let code = shipped_code();
+        let at = code.find("pub fn nudge_size").expect("pub fn nudge_size");
+        let end = code[at..].find("\n    }\n").expect("end of fn");
+        let body = &code[at..at + end];
+
+        let guard = body.find("if (next - from).abs() < f32::EPSILON").expect(
+            "nudge_size must compare the nudged value against the current one \
+             and bail when the channel is already at its stop",
+        );
+        let pin = body
+            .find("pin_grade")
+            .expect("nudge_size must pin the channel it turned");
+        assert!(
+            guard < pin,
+            "the no-change bail has to come BEFORE the pin, or a notch at the \
+             stop still detaches the pane from outer"
+        );
+        assert!(
+            body.contains("GradePins::only(key.into())"),
+            "only the dial that was actually turned becomes the pane's own — \
+             every other one must keep tracking outer, which is what makes \
+             sizing one region of one pane a local act and not a detachment"
+        );
+        assert!(
+            body.contains("cx.emit(PaintApplied)"),
+            "the new size has to be persisted like any other appearance change, \
+             or it is gone on the next restart"
+        );
+    }
+
     /// The bench does not grow back into this file.
     ///
     /// Its methods live in `pane/bench.rs` because the retro named their
@@ -8298,6 +8637,208 @@ mod tests {
         assert!(
             gate.contains("wb_on_screen") && gate.contains("is_agent()"),
             "the bench gate stopped asking one of its two questions: {gate}"
+        );
+    }
+
+    /// A note never reaches the agent, checked by WHAT it calls and by WHEN.
+    ///
+    /// Both halves are needed and neither implies the other.
+    ///
+    /// The first is the obvious one: no function that handles a note may call
+    /// anything that writes to the pseudoterminal. Scanned rather than listed,
+    /// because the write sites are several and the next one will be added by
+    /// somebody who has not read this — the same reasoning as
+    /// [`every_bench_write_goes_through_the_gate`], and stricter, since
+    /// `bench_keystroke` and `bench_deliver` are *allowed* writers there and
+    /// forbidden here.
+    ///
+    /// The second is the one that would actually have bitten. `bench_key` has a
+    /// branch that puts every keystroke it receives down the pseudoterminal
+    /// BEFORE applying it locally, because the reply composer is mirroring an
+    /// editor in the agent's process. A note routed after that branch would be
+    /// clean by inspection — calling nothing forbidden — and would still have
+    /// its every character typed into somebody's prompt on the way past. So the
+    /// order is asserted, not just the contents.
+    ///
+    /// Mutation-tested: deleting the note's routing, and moving it below the
+    /// composer branch, each fail this; so does calling `bench_keystroke` from
+    /// `bench_note_post`.
+    #[test]
+    fn writing_a_note_sends_nothing_to_the_agent() {
+        let bench = include_str!("pane/bench.rs");
+        let (code, _tests) = bench
+            .split_once("#[cfg(test)]")
+            .unwrap_or((bench, "no test module yet"));
+        // Comments stripped first. This file explains at length that a note
+        // must not call `bench_keystroke`, and a scan that its own explanation
+        // can satisfy — or trip — is not a gate.
+        let stripped: String = code
+            .lines()
+            .map(|l| l.split("//").next().unwrap_or(""))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let mut owner = "<file>";
+        let mut strays: Vec<String> = Vec::new();
+        for line in stripped.lines() {
+            let t = line.trim_start();
+            if let Some(rest) = t.split_once("fn ").map(|(_, r)| r) {
+                if t.starts_with("fn ") || t.starts_with("pub fn ") || t.starts_with("pub(") {
+                    owner = rest.split('(').next().unwrap_or(rest);
+                }
+            }
+            if !owner.starts_with("bench_note") {
+                continue;
+            }
+            for writer in [
+                "bench_keystroke(",
+                "bench_deliver(",
+                "bench_typed(",
+                "bench_type(",
+                "self.send(",
+                "journal(",
+            ] {
+                if t.contains(writer) {
+                    strays.push(format!("{owner}: {t}"));
+                }
+            }
+        }
+        assert!(
+            strays.is_empty(),
+            "a note reached the agent. The comments board is defined by the fact \
+             that it does not, so this is the feature failing and not a lint: {strays:?}"
+        );
+
+        let routed = stripped
+            .find("self.wb_note.is_some()")
+            .expect("the note's key routing in bench_key");
+        let composer = stripped
+            .find("if talking {")
+            .expect("the composer's send-first branch");
+        assert!(
+            routed < composer,
+            "the note buffer is consulted AFTER the branch that sends every \
+             keystroke down the pseudoterminal, so every character of a note is \
+             typed into the agent on its way to the note."
+        );
+    }
+
+    /// The shelf strip wraps, because four tabs do not fit on one line.
+    ///
+    /// The rail is a SHARE of the pane — `RAIL_SHARE`, clamped into
+    /// `RAIL_MIN_W..=RAIL_W` — so the strip gets between about 118 and 194
+    /// points of room. Four tabs measure about 161, read off the running build
+    /// at the 208-point cap: comfortable at a wide rail, over the edge well
+    /// before the rail reaches its floor. The strip sits inside a frame that is
+    /// `overflow_hidden`, so the overflow never shows up as a squeeze or a
+    /// scrollbar — the last tab simply stops being drawn, and a tab nobody can
+    /// see is a shelf nobody can reach.
+    ///
+    /// The three-tab strip was FINE, at every width. A plan for this feature
+    /// said otherwise on an estimated glyph width that measured a third too
+    /// fat; the estimate was wrong and the finding died on the check written
+    /// beside it.
+    ///
+    /// Structural rather than a width calculation, because the layout is gpui's
+    /// and a unit test cannot measure a glyph. What it can do is hold the
+    /// container to the property that makes the arithmetic stop mattering.
+    ///
+    /// Found by the SHELF STRIP itself rather than by a variable name: the
+    /// nearest `div()` above the one call that builds the tabs IS the container,
+    /// whatever it ends up being called. Comments are stripped first — a scan
+    /// that can be satisfied by the prose explaining the line it guards is not a
+    /// gate.
+    ///
+    /// Mutation-tested: deleting `.flex_wrap()` fails this; so does moving it
+    /// onto the frame outside the strip, which is the plausible wrong fix.
+    #[test]
+    fn the_shelf_strip_wraps_so_every_shelf_stays_reachable() {
+        let bench = include_str!("pane/bench.rs");
+        let (code, _tests) = bench
+            .split_once("#[cfg(test)]")
+            .unwrap_or((bench, "no test module yet"));
+        let stripped: String = code
+            .lines()
+            .map(|l| l.split("//").next().unwrap_or(""))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let at = stripped
+            .find("Shelf::ALL.into_iter().map(|shelf|")
+            .expect("the shelf strip");
+        let open = stripped[..at]
+            .rfind("div()")
+            .expect("the strip's container");
+        assert!(
+            stripped[open..at].contains(".flex_wrap()"),
+            "the shelf strip no longer wraps, and there are {} shelves to fit in \
+             as little as {} points of rail — against about 161 points of tabs, \
+             measured on the running build. The strip is inside an overflow_hidden \
+             frame, so this does not look like a layout bug: the last tab just \
+             stops being drawn, and the shelf behind it becomes unreachable.",
+            crate::surface::Shelf::ALL.len(),
+            crate::workbench::RAIL_MIN_W,
+        );
+    }
+
+    /// Nothing in the bench half moves the pane's face.
+    ///
+    /// Four separate ways off the workbench were built and then taken back
+    /// out, one at a time, each found by Parker in use: escape's last rung
+    /// flipped the face (deleted, [`crate::workbench::Peel`]); escape over a
+    /// question an agent was waiting on retired it (floored); sending from the
+    /// composer flipped the face (stopped in `bench_send`); and answering a
+    /// surface flipped the face, which is this one — *"if I am in workbench I
+    /// should stay locked in unless I specifically step out"*.
+    ///
+    /// They were four bugs and not one because the exit was decided at each
+    /// call site. That is the same shape escape had before `peel` became a
+    /// single table, and the repair is the same: one rule, in one place, and
+    /// the place is this FILE. `pane/bench.rs` is everything the bench does
+    /// with a click, a key or a wheel, and none of it may move the face. The
+    /// two gestures that legitimately do are alt+k and the TERM chip, both in
+    /// `pane.rs`; a script says so through `ctl`'s `bench off`.
+    ///
+    /// Scanned rather than listed, because the fifth auto-exit will be added
+    /// to a function nobody has written yet. Comments are stripped first: the
+    /// paragraph in `bench_act` explaining why the flip was removed names both
+    /// `set_face` and `Face::Terminal`, and a scan that cannot tell code from
+    /// a description of code is satisfied by its own gravestone.
+    ///
+    /// The rule this enforces is `0001 — The machine does not decide that an
+    /// interaction is over`, in `docs/decisions/`, which carries the other
+    /// eight instances of the same shape in this repository.
+    #[test]
+    fn nothing_in_the_bench_half_flips_the_pane_off_the_bench() {
+        let bench = include_str!("pane/bench.rs");
+        let (code, _tests) = bench
+            .split_once("#[cfg(test)]")
+            .unwrap_or((bench, "no test module yet"));
+        let code: String = code
+            .lines()
+            .map(|l| l.split("//").next().unwrap_or(""))
+            .collect::<Vec<_>>()
+            .join("\n");
+        // Which function each call sits in, by the nearest `fn` above it.
+        let mut owner = "<file>".to_string();
+        let mut strays: Vec<(String, String)> = Vec::new();
+        for line in code.lines() {
+            let t = line.trim_start();
+            if let Some(rest) = t.split_once("fn ").map(|(_, r)| r) {
+                if t.starts_with("fn ") || t.starts_with("pub fn ") || t.starts_with("pub(") {
+                    owner = rest.split('(').next().unwrap_or(rest).to_string();
+                }
+            }
+            if t.contains("set_face(") || t.contains("toggle_face(") {
+                strays.push((owner.clone(), t.to_string()));
+            }
+        }
+        assert!(
+            strays.is_empty(),
+            "the bench half moves the pane's face. Answering, sending and dismissing each \
+             tried this and each was taken back out: a person on the workbench stays on it \
+             until they press alt+k or the TERM chip. If this really is a new deliberate \
+             gesture it belongs in pane.rs beside those two, and this test changes in the \
+             same commit with the reasoning: {strays:?}"
         );
     }
 
@@ -10142,6 +10683,33 @@ mod tests {
                  register it beside the others in `render`"
             );
         }
+    }
+
+    #[test]
+    fn the_pane_root_takes_a_file_drop() {
+        // gpui delivers a dropped file as a mouse-up carrying the paths, and
+        // only to an element that registered `on_drop` for that exact type.
+        // Nothing about `bench_drop` existing makes it reachable: it would
+        // compile, read as live, and never run — the same hole the pane's
+        // right-click tray sat in for months, asserted two tests above.
+        //
+        // Two things make this gate honest rather than decorative. The source
+        // is cut at the test module, so this assertion cannot satisfy itself
+        // with its own needle; and comment lines are dropped, because the
+        // registration is explained in a comment beside it and a gate its own
+        // explanation can pass is a gate that passes on a deleted line.
+        let src = include_str!("pane.rs");
+        let code: String = src[..src.find("\n#[cfg(test)]").unwrap_or(src.len())]
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            code.contains(".on_drop::<gpui::ExternalPaths>(cx.listener(Self::bench_drop))"),
+            "TerminalView::bench_drop exists but the root div never registers a drop \
+             listener for gpui::ExternalPaths, so a dropped file reaches nothing — \
+             register it beside the mouse listeners in `render`"
+        );
     }
 
     #[test]

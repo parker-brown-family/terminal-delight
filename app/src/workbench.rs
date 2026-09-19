@@ -160,6 +160,19 @@ pub enum Tint {
     Settled,
     /// Nothing is claimed about it.
     Unknown,
+    /// YOURS. Not a state of the work at all — a statement about whose voice
+    /// this is.
+    ///
+    /// Every other tint here answers *what should happen to this thing*, and a
+    /// comment has no answer to that question: it is not waiting, not pending,
+    /// not settled, and `Unknown` would be a claim that nobody has looked. What
+    /// distinguishes it is authorship, so that is what it says.
+    ///
+    /// It resolves to the palette's `human` role — the colour your own typing
+    /// is already drawn in inside an agent session, and dialable from the
+    /// wheel's own pip. A comments board is then legible as yours before a word
+    /// of it is read, and it moves with the palette like everything else.
+    Mine,
 }
 
 /// Sort a shelf into waiting, then what stands, then the record.
@@ -228,6 +241,8 @@ pub fn tint_of(kind: &Kind) -> Tint {
         // own colour inside the card rather than tinting the whole row.
         Kind::Response(_) => Tint::Ident,
         Kind::Unclassified(_) => Tint::Unknown,
+        // The person's own voice, in the person's own colour.
+        Kind::Comment(_) => Tint::Mine,
     }
 }
 
@@ -1047,6 +1062,48 @@ pub struct Zone {
     pub hit: Hit,
 }
 
+/// A flat rectangle that is only a measurement — no hit, nothing pressable.
+///
+/// Recorded by [`crate::benchdraw::probe`] in the same coordinates a [`Zone`]
+/// is, because an overlay has to be POSITIONED against things whose position
+/// nobody chose: where the strip's dials ended up after a flex row laid them
+/// out, and where the bench's own root is in the window.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct Rect {
+    pub x: f32,
+    pub y: f32,
+    pub w: f32,
+    pub h: f32,
+}
+
+/// The air between a dial and the list it drops.
+pub const DIAL_DROP_GAP: f32 = 6.0;
+
+/// Where an open dial's list hangs, in the bench root's own coordinates.
+///
+/// `dial` and `root` are flat window-space rectangles — the pressed dial and
+/// the bench's outermost box — and the answer is the `(right, top)` an
+/// absolutely-positioned child of that root takes to sit directly under the
+/// dial. The list used to take a constant `right` measured from the rail, which
+/// put it under the END SESSION button at the far end of the strip whichever
+/// dial had been pressed; Parker, on the model list: *"are misaligned on the
+/// drop down :("*.
+///
+/// **Right-aligned, not left.** The dials live at the right-hand end of the
+/// strip, the list is as wide as its longest word, and nothing here knows that
+/// width — so hanging it from the dial's LEFT edge is the one choice that can
+/// push it off the pane on a narrow bench. Sharing the dial's right edge cannot,
+/// by construction.
+///
+/// `None` while either rectangle is unmeasured, which is a real state and not a
+/// zero: on the very first frame of a window nothing has painted yet, and the
+/// caller falls back to the old fixed corner rather than stacking the list in
+/// the top-left.
+pub fn dial_drop(dial: Option<Rect>, root: Option<Rect>) -> Option<(f32, f32)> {
+    let (d, r) = (dial?, root?);
+    Some(((r.x + r.w) - (d.x + d.w), (d.y + d.h + DIAL_DROP_GAP) - r.y))
+}
+
 /// Which zone a FLAT point lands in.
 ///
 /// The LAST zone that contains the point wins, because zones are recorded in
@@ -1519,6 +1576,52 @@ pub fn ext_of_image_mime(mime: &str) -> Option<&'static str> {
     })
 }
 
+/// The text a set of dropped — or pasted — file paths becomes.
+///
+/// A path is typed rather than the file being read, on the same terms as the
+/// clipboard's image paste: a pseudoterminal carries bytes, and every agent
+/// worth dropping a file into already opens a filename.
+///
+/// **One path is one word.** A path is quoted the moment it holds whitespace
+/// or anything a shell would act on, because the far end is a line editor: an
+/// unquoted `Screenshot 2026-09-18.png` arrives as two arguments and nothing
+/// downstream can put it back together. Quoting is single-quote and an
+/// embedded quote closes, escapes and reopens (`'\''`), which is the one form
+/// every POSIX shell agrees on and which an agent reading the line also
+/// understands.
+///
+/// A newline inside a filename is legal and would SUBMIT the line half-typed,
+/// so control characters become spaces — the same trade
+/// [`crate::pane::TerminalView::bench_paste`] already makes for pasted text.
+/// The path is then wrong, and it was unusable either way; what it no longer
+/// does is send half a sentence to the agent.
+pub fn paths_as_words(paths: &[std::path::PathBuf]) -> String {
+    paths
+        .iter()
+        .map(|p| path_word(&p.to_string_lossy()))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// One path, as one word on the far end's line.
+fn path_word(raw: &str) -> String {
+    let flat: String = raw
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect();
+    // Bare when nothing in it can be misread. The list is what a shell acts
+    // on plus the quotes themselves; `-` and `.` and `/` are left alone, so
+    // an ordinary path still reads as an ordinary path.
+    let plain = !flat.is_empty()
+        && !flat
+            .chars()
+            .any(|c| c.is_whitespace() || "\"'\\$`&|;<>()[]{}*?!#~^".contains(c));
+    if plain {
+        return flat;
+    }
+    format!("'{}'", flat.replace('\'', r"'\''"))
+}
+
 /// What a bench of this size, on a pane of this kind, actually shows.
 ///
 /// Every one of these was a condition written inline in the render, and each
@@ -1668,6 +1771,65 @@ pub fn body_anchor(card: bool, offering: bool) -> Anchor {
     }
 }
 
+/// The person's message cut to what the block will draw, SAYING when it cut.
+///
+/// `lines` is read one line longer than the block has room for, so this can
+/// tell a message that ended from a message that ran on. A paragraph stopped
+/// mid-word with nothing marking the stop reads as the person having typed
+/// exactly that much, which is the same lie a silently clipped title tells —
+/// the ellipsis is the bench's own mark and the rest of it already uses one.
+pub fn ask_clipped(mut lines: Vec<String>, keep: usize) -> Vec<String> {
+    if lines.len() <= keep {
+        return lines;
+    }
+    lines.truncate(keep);
+    if let Some(last) = lines.last_mut() {
+        last.push('\u{2026}');
+    }
+    lines
+}
+
+/// How many lines of THE PERSON'S OWN MESSAGE the main area draws above the
+/// reply — `None` when it draws none.
+///
+/// The overview is the feed of what the agent said, and for a while that was
+/// all it was: the newest reply stood in the room with nothing above it, so
+/// the one thing a person could not read on that surface was the thing they
+/// had themselves just asked. It was legible in the pane's mirrored
+/// conversation and on the agent wall's card, which are two places that are
+/// not the one being looked at. Parker: *"I DON'T SEE THE HUMAN MESSAGE IN
+/// THE FULL SCREEN VIEW OF OVERVIEW!!! The human message must be separate
+/// from the agent outputs! AND visible in the Main view of overview, not the
+/// right spine summary"*.
+///
+/// Four things decide it, and each rules the block out on its own:
+///
+/// - the OVERVIEW. It is the shelf that holds a conversation; a document
+///   opened off the artifacts shelf is not an answer to anything anybody
+///   said, and captioning it with a question would invent a relationship.
+/// - the STAND-IN, never a card the person opened from the rail. The only
+///   message this window can read out of a pane is the LATEST one, so putting
+///   it over a reply from four turns ago would caption an old answer with a
+///   new question — [`Bench::standing_in`] is that distinction.
+/// - an AGENT. A shell pane's `>` is a prompt, not a message, and the bench
+///   would be labelling somebody's last `cd` as a thing they said.
+/// - ROOM. `Summary` is a pane too small to read a paragraph in, and the
+///   reply is what that pane is for.
+///
+/// Two rungs rather than one number: a full pane can hold the opening of a
+/// long ask, a compact one gets the first line and its wrap. Both are counts
+/// of CONTINUATION lines — the message's first line always comes.
+pub fn ask_lines(shelf: Shelf, stand_in: bool, agent: bool, how: Embodiment) -> Option<usize> {
+    if shelf != Shelf::Overview || !stand_in || !agent {
+        return None;
+    }
+    match how {
+        Embodiment::Full => Some(4),
+        Embodiment::Compact => Some(2),
+        Embodiment::Summary => None,
+    }
+}
+
 /// Whether the strip's dials can be pressed in this state.
 ///
 /// A dial press types a slash command, and a slash command typed mid-turn does
@@ -1718,6 +1880,24 @@ pub fn strip_verb(state: AgentState, agent_present: bool) -> StripVerb {
     } else {
         StripVerb::End
     }
+}
+
+/// Does RETURN start an agent on this bench?
+///
+/// A bench with no agent in it offers exactly one thing, and until now the key
+/// that means *do the obvious thing* did nothing there at all: `reading_key`
+/// answers `Act`, `Act` takes the selected surface's first action, and a bench
+/// nobody has run an agent on has no surfaces to select. Parker, arriving at
+/// one: *"FROM FRESH WORKBENCH — the spin up agent should be ACTIVATED IF I
+/// HIT RETURN!"*.
+///
+/// `selected` is the guard and it is the whole subtlety. A pane whose agent has
+/// QUIT also offers the launch — one slot, two states, see [`strip_verb`] — but
+/// it is still holding everything that agent presented, and return on an open
+/// card means *take this card's first verb*. So the launch is only what return
+/// does when there is nothing else for it to do.
+pub fn return_launches(verb: StripVerb, selected: bool) -> bool {
+    verb == StripVerb::Launch && !selected
 }
 
 // ---------------------------------------------------------------------------
@@ -2162,6 +2342,15 @@ pub enum Dispatch {
         /// What it did, for whoever is looking at the surface afterwards.
         note: String,
     },
+    /// Put text on the system clipboard, and do nothing else.
+    ///
+    /// Local like [`Dispatch::Open`], and separate from it because the desktop
+    /// handler is the wrong instrument: `Open` hands a path to whatever the
+    /// machine has registered for it, and this carries the surface's own words
+    /// with no file in the story at all. It exists because a comment has no
+    /// verb that reaches the agent, so lifting the words by hand is the only
+    /// route there is — see [`crate::surface::Action::Copy`].
+    Clipboard(String),
     /// Nothing to do, and a reason worth showing rather than a silent no-op.
     Refused(String),
 }
@@ -2346,6 +2535,12 @@ pub fn verb_preview(
         Action::OpenSource => match surface.source.as_ref().and_then(|s| s.files.first()) {
             Some(f) => format!("opens {f}"),
             None => "opens nothing \u{2014} this surface names no source".to_string(),
+        },
+        Action::Copy => match &surface.kind {
+            Kind::Comment(_) | Kind::Markdown(_) => {
+                "copies the text \u{2014} the agent is not told".to_string()
+            }
+            _ => "copies nothing \u{2014} this surface is not text".to_string(),
         },
         _ => ActionReport {
             surface: surface.id.clone(),
@@ -2543,6 +2738,17 @@ impl Bench {
                 })
                 .flatten()
         })
+    }
+
+    /// True when the card in the room is the overview's STAND-IN — the newest
+    /// reply, standing there because nobody opened anything.
+    ///
+    /// Not the same question as "is a card showing". A card the person OPENED
+    /// is a document they navigated to; the stand-in is the tail of a
+    /// conversation, and only the tail can honestly be captioned with the
+    /// latest thing the person said. See [`ask_lines`].
+    pub fn standing_in(&self) -> bool {
+        self.selected.is_none() && self.showing().is_some()
     }
 
     /// Read one group of a response card.
@@ -2821,6 +3027,14 @@ impl Bench {
                     Some(f) => Dispatch::Open(f.clone()),
                     None => Dispatch::Refused("this surface names no source".into()),
                 },
+                // Only the kinds that ARE text. A refusal naming what is
+                // missing beats copying a rendering of a diagram that nobody
+                // would recognise when they pasted it.
+                Action::Copy => match &surface.kind {
+                    Kind::Comment(c) => Dispatch::Clipboard(c.body.clone()),
+                    Kind::Markdown(m) => Dispatch::Clipboard(m.body.clone()),
+                    _ => Dispatch::Refused("this surface has no text to copy".into()),
+                },
                 other => Dispatch::Refused(format!(
                     "{} is marked local but nothing here performs it",
                     other.id()
@@ -2995,6 +3209,76 @@ mod tests {
         assert!(
             b.showing().is_none(),
             "the newest reply stands in on the overview only; another shelf shows its own card or nothing"
+        );
+    }
+
+    #[test]
+    fn a_message_that_ran_on_says_it_ran_on() {
+        let three = || vec!["one".to_string(), "two".to_string(), "three".to_string()];
+        assert_eq!(ask_clipped(three(), 3), three(), "it all fitted: no mark");
+        assert_eq!(ask_clipped(three(), 4), three(), "room to spare: no mark");
+        assert_eq!(
+            ask_clipped(three(), 2),
+            vec!["one".to_string(), "two\u{2026}".to_string()],
+            "the cut is on the last line drawn, where the reader is looking",
+        );
+        assert!(ask_clipped(Vec::new(), 2).is_empty(), "nothing to mark");
+    }
+
+    #[test]
+    fn the_overview_captions_the_standing_reply_with_what_you_asked() {
+        // The block is drawn for the reply that is STANDING IN, on the
+        // overview, in a pane with room — and for nothing else. Every other
+        // row here is a case where the latest thing the person said is not
+        // what the thing in the room is answering.
+        let mut b = Bench::new();
+        b.apply(response("r1", "First."));
+        b.apply(response("r2", "Second."));
+        assert!(
+            b.standing_in(),
+            "the newest reply stands with nobody opening it"
+        );
+        assert_eq!(
+            ask_lines(b.shelf(), b.standing_in(), true, Embodiment::Full),
+            Some(4),
+        );
+        assert_eq!(
+            ask_lines(b.shelf(), b.standing_in(), true, Embodiment::Compact),
+            Some(2),
+            "a compact pane gets the opening of it rather than nothing",
+        );
+        assert_eq!(
+            ask_lines(b.shelf(), b.standing_in(), true, Embodiment::Summary),
+            None,
+            "a pane too small to read a paragraph in shows the reply alone",
+        );
+        assert_eq!(
+            ask_lines(b.shelf(), b.standing_in(), false, Embodiment::Full),
+            None,
+            "a shell's prompt is not a message somebody sent",
+        );
+        // Opened from the rail: an older reply, captioned with the newest
+        // question, would be the window inventing a pairing.
+        b.select(&SurfaceId("r1".into()));
+        assert!(!b.standing_in(), "an opened card is not the stand-in");
+        assert_eq!(
+            ask_lines(b.shelf(), b.standing_in(), true, Embodiment::Full),
+            None,
+        );
+        b.close_card();
+        // Another shelf: a document is not an answer to anything said.
+        b.set_shelf(Shelf::Artifacts);
+        assert_eq!(
+            ask_lines(b.shelf(), b.standing_in(), true, Embodiment::Full),
+            None,
+        );
+        // And an overview with nothing in it: the main area is the mirrored
+        // conversation, which carries the person's own turns already.
+        let empty = Bench::new();
+        assert!(!empty.standing_in());
+        assert_eq!(
+            ask_lines(empty.shelf(), empty.standing_in(), true, Embodiment::Full),
+            None,
         );
     }
 
@@ -4950,6 +5234,76 @@ mod tests {
         }
     }
 
+    /// Return starts an agent only where there is nothing else for it to do —
+    /// and the case that makes the guard load-bearing is the pane whose agent
+    /// QUIT: it offers the launch and it is still holding that agent's cards.
+    #[test]
+    fn return_starts_an_agent_only_on_a_bench_with_nothing_else_on_it() {
+        assert!(
+            return_launches(StripVerb::Launch, false),
+            "a fresh bench offers one thing and return should take it"
+        );
+        assert!(
+            !return_launches(StripVerb::Launch, true),
+            "an open card's first verb still wins the key"
+        );
+        assert!(
+            !return_launches(StripVerb::End, false),
+            "there is already an agent in this pane"
+        );
+        assert!(!return_launches(StripVerb::End, true));
+    }
+
+    /// The list hangs under the dial that opened it, sharing its right edge —
+    /// and the number it is placed with is relative to the bench's root, not to
+    /// the window, because that is the box it is a child of.
+    #[test]
+    fn a_dials_list_hangs_under_that_dial_and_not_under_the_strips_end() {
+        // A root at (100, 50) 800 wide; a dial 420 across it, 20 tall.
+        let root = Rect {
+            x: 100.,
+            y: 50.,
+            w: 800.,
+            h: 400.,
+        };
+        let model = Rect {
+            x: 520.,
+            y: 60.,
+            w: 70.,
+            h: 20.,
+        };
+        let effort = Rect {
+            x: 600.,
+            y: 60.,
+            w: 60.,
+            h: 20.,
+        };
+        let (right, top) = dial_drop(Some(model), Some(root)).unwrap();
+        // 900 (root's right edge) − 590 (the dial's) = 310.
+        assert_eq!(right, 310.);
+        assert_eq!(top, 60. + 20. + DIAL_DROP_GAP - 50.);
+        // The whole complaint: the two dials must not resolve to one place.
+        let (other, _) = dial_drop(Some(effort), Some(root)).unwrap();
+        assert_ne!(right, other, "each dial drops under itself");
+        assert_eq!(other, 240.);
+    }
+
+    /// An unmeasured rectangle is not the origin. Before anything has painted
+    /// there is no answer, and the caller keeps its old fixed corner rather
+    /// than stacking the list in the top-left of the bench.
+    #[test]
+    fn an_unmeasured_dial_has_no_place_rather_than_the_corner() {
+        let r = Rect {
+            x: 0.,
+            y: 0.,
+            w: 10.,
+            h: 10.,
+        };
+        assert_eq!(dial_drop(None, Some(r)), None);
+        assert_eq!(dial_drop(Some(r), None), None);
+        assert_eq!(dial_drop(None, None), None);
+    }
+
     #[test]
     fn the_three_anchors_are_three_different_answers() {
         // A third variant that collapsed onto one of the other two would be a
@@ -5278,6 +5632,56 @@ mod tests {
             );
         }
         assert_eq!(ext_of_image_mime("text/plain"), None);
+    }
+
+    #[test]
+    fn a_dropped_path_arrives_as_one_word() {
+        use std::path::PathBuf;
+        let p = |s: &str| PathBuf::from(s);
+
+        // The ordinary case stays bare: a quoted path in the middle of a
+        // sentence to an agent reads as a quotation, so quotes are spent only
+        // where they buy something.
+        assert_eq!(
+            paths_as_words(&[p("/home/parker/notes.md")]),
+            "/home/parker/notes.md"
+        );
+
+        // The case this function exists for. Unquoted, the far end's line
+        // editor sees two words and the file cannot be found.
+        assert_eq!(
+            paths_as_words(&[p("/home/parker/Screenshot 2026-09-18.png")]),
+            "'/home/parker/Screenshot 2026-09-18.png'"
+        );
+
+        // Several files: one word each, separated by one space.
+        assert_eq!(
+            paths_as_words(&[p("/tmp/a.png"), p("/tmp/b c.png")]),
+            "/tmp/a.png '/tmp/b c.png'"
+        );
+
+        // A quote inside the name closes, escapes and reopens.
+        assert_eq!(paths_as_words(&[p("/tmp/it's.txt")]), r"'/tmp/it'\''s.txt'");
+
+        // Anything a shell would act on is quoted even without a space —
+        // `$HOME` in a filename is a real filename, not a variable.
+        for hostile in ["/tmp/$HOME", "/tmp/a;rm -rf b", "/tmp/a|b", "/tmp/*"] {
+            let out = paths_as_words(&[p(hostile)]);
+            assert!(
+                out.starts_with('\'') && out.ends_with('\''),
+                "{hostile} went out unquoted as {out}"
+            );
+        }
+
+        // A newline in a filename would SUBMIT the line half-written. It
+        // becomes a space, inside quotes, which is wrong about the file and
+        // right about the sentence.
+        let out = paths_as_words(&[p("/tmp/two\nlines.txt")]);
+        assert!(!out.contains('\n'), "a newline reached the line: {out}");
+        assert_eq!(out, "'/tmp/two lines.txt'");
+
+        // Nothing dropped is not an empty word; it is nothing typed.
+        assert_eq!(paths_as_words(&[]), "");
     }
 
     #[test]

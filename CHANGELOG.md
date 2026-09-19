@@ -7,6 +7,56 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Added
+
+- **A pane's rail has a fourth tab, COMMENTS, and the agent has no wire to it.**
+  The bench held an agent's replies, its artifacts and what it was asking, and
+  nowhere to put your own thinking — the only answer was the sticky note on the
+  glass, which is one slot in handwriting built to be read across a wall of
+  panes rather than written into. The board is the quiet plural version: notes
+  in the palette's `human` colour, newest first, persisted through the same file
+  transport every surface uses so they survive a restart. `alt+m` opens the box,
+  and on the comments shelf simply typing opens it, the way typing anywhere else
+  on the bench already starts talking. Nothing you write there reaches the agent
+  — no bytes down the pseudoterminal, no line in the action journal, and
+  deliberately no verb that hands a note over. `copy` is the whole escape hatch,
+  so the words move when you decide they should. A comment is a ninth surface
+  kind rather than a store of its own, which is why it arrived with persistence,
+  restore, the history cap and the unseen mark already working. (#566)
+
+- **ctrl+wheel sizes exactly what you are pointing at — four dials, one chord.**
+  It used to size the cabinet from anywhere in the window, which meant the
+  things a person most wants bigger — the terminal they are reading, the
+  workbench they are reading — were the two it could not touch. There are now
+  four separate answers and the pointer picks between them: over the **outer
+  chrome** (menu bar, tabs, left bar, the gaps) it scrubs the cabinet exactly as
+  before; over a **pane's own header** it scrubs that one pane's header chrome;
+  over the **terminal grid** it scrubs that pane's terminal text, so the font
+  and cell height move together and the shell reflows; over the **workbench**
+  it scrubs the bench's type ramp. Only the dial actually turned becomes that
+  pane's own — every other one keeps following the outer theme — and each is
+  written into the layout like any other appearance change. The keyboard help
+  has advertised `A──A · Ctrl+wheel` under "Text size" all along; it is true now.
+
+- **The workbench has its own size dial.** A new `bench_size` grade channel,
+  beside the existing text-size one on the DISPLAY tray and in the MCP
+  `set_pane_config` API. It starts **unset**, which is not the same as `1.0`:
+  unset means the bench follows the terminal's dial, which is what the two faces
+  did before they were split and what every session already on disk describes.
+  So nothing shrinks on upgrade, and the two only come apart once somebody
+  turns one of them.
+- **Drag a file onto the bench and its path lands in the line you are
+  writing.** The composer lights up in your own colour while the file is over
+  it, and letting go types the path at the caret — mid-sentence, with the rest
+  of the sentence intact, because placing a caret already sends the agent's
+  line editor the matching arrows. Several files come in as several words, and
+  a name with a space in it arrives quoted, so `Screenshot 2026-09-18.png`
+  stays one filename instead of two arguments nothing downstream can rejoin.
+  A drop on the terminal face pastes the path the way every other terminal
+  does. Files only: the renderer discards a drag whose contents are not local
+  files before the app is told, so an image dragged straight off a web page
+  still does nothing. (#561)
+
 ### Fixed
 
 - **One pane, one conversation.** A bench, a tool glyph, a pane's tool-call feed
@@ -40,6 +90,42 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
   valid hand-written entry parsed as *no id at all* and the reader fell through
   to forensics as though the file were absent. Whitespace around the colon is
   allowed now, and a non-string value is still refused. (#564)
+- **Two numbers that said nothing are gone.** A pane header carried its own
+  grid size — `194×50` — in among the controls, and a response's group tab
+  carried a doubt count as `·2`. Neither is a number anybody acts on: the grid
+  size is a fact about the window you are already looking at, and the count
+  sits on a tab whose own label is one click from the doubts themselves.
+  Parker, on the pair: *"that -2 shouldn't be there"*, and *"the number 194x50
+  for the pane resolution in the pane header - can go away also"*. The doubts
+  are untouched and still one click away; only the badge in front of them is
+  gone.
+
+- **Pasting a filename with a space in it no longer breaks it in two.** The
+  clipboard's file arm joined paths raw, so a copied `Screenshot
+  2026-09-18.png` arrived as two words. It now goes through the same quoting a
+  dropped file does. (#561)
+- **The shelf strip wraps, so a fourth tab does not fall off the rail.** The rail
+  is a share of the pane, clamped between 132 and 208 points, and four tabs
+  measure about 161 of them. The strip sat in an `overflow_hidden` frame, so the
+  overflow would not have read as a layout problem — the last tab would simply
+  have stopped being drawn, and a tab nobody can see is a shelf nobody can
+  reach. The three-tab strip was fine at every width. (#566)
+
+- **Two corners on the bench stopped ignoring the skin.** `benchdraw.rs` has
+  promised since it was written that a guard test caught literal corner radii.
+  There was no such test anywhere, and two `rounded(px(3.))` had gone in
+  underneath the promise — the paste chip and the `LIVE → AGENT` chip in the
+  composer — both of which would have stayed round under a square skin while
+  every other corner squared. The gate is real now, it lives beside the three
+  other source scans in the file it guards, and the module's header points at it
+  instead of at another module. (#566)
+
+- **A note stamped from a broken clock says so instead of inventing a date.**
+  `localtime_r` does not refuse absurd input: handed a garbage millisecond count
+  it answers `3 Apr 584556019` without an error, which is an invented value with
+  the right shape — the kind every later reader takes for a measurement. A year
+  outside 1900–2999 now resolves to `time unavailable`. (#566)
+
 - **The small print on a card is small, not invisible.** Every subtitle, cost
   line, consequence, section tag and provenance line on the workbench was drawn
   in the palette's `faint` role. `faint` is furniture — it is what a divider is
@@ -89,6 +175,64 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
   the pane header and the lit half was a pill you could not read the word inside.
   One bordered track now, with the half you are on filled and carrying the
   control's whole phosphor budget, so throwing the switch moves the glow. (#555)
+- **The overview shows what YOU said, over the reply to it.** The bench's
+  overview is the feed of what the agent said, and for a while it was only
+  that: the newest reply stood in the room with nothing above it, so the one
+  thing a person could not read on the surface that holds the answer was the
+  question they had just asked. It was legible in the pane's mirrored
+  conversation and on the agent wall's card, which are two other places. Your
+  own message now sits above the reply as its own indented block, in the ink
+  the terminal already paints your turns in, pinned outside the card's scroll
+  so a long answer cannot take it off the surface. It is read out of the
+  pane's own scrollback rather than kept as a second record, so a turn typed
+  at the terminal face counts the same as one sent from the composer; a
+  message longer than the block ends in an ellipsis rather than stopping
+  mid-word, and one that has scrolled out of history says so instead of
+  drawing an empty block. Drawn for the reply that is STANDING IN and never
+  for a card opened off the rail — this window can only read the latest
+  message, and captioning a four-turn-old answer with a new question would be
+  a pairing nobody made.
+
+- **A new agent starts as whatever you told it to.** The LAUNCH AGENT panel
+  opened on three constants — claude, the first model in the list, the harness's
+  own effort — and every launch that wanted something else paid for it in
+  keystrokes, every time. Three rows at the top of the usage card (the `Σ usage`
+  face of the `</>` card, which the subscription slot in the bottom-left corner
+  opens) now set them, and the panel opens holding them. The store keeps
+  *nobody has chosen* apart from *somebody chose exactly what would have
+  happened anyway*: an unset row still shows the value in force, drawn with a
+  quiet edge and tagged `unset`, against the accent and `chosen` of a decision.
+  Pressing the lit chip again clears it back to the harness's own.
+
+### Fixed
+
+- **Return starts the agent on a bench that is offering one.** A workbench with
+  no agent in it shows a single LAUNCH AGENT button, and the key that means *do
+  the obvious thing* did nothing at all there: return takes the selected
+  surface's first verb, and a bench nobody has run an agent on has no surfaces.
+  It now opens the launcher — unless a card is open, whose first verb still
+  wins the key.
+
+- **A dial's list drops under the dial that opened it.** The model and effort
+  lists were placed at a fixed offset from the rail, which put both of them
+  under the END SESSION button at the far end of the strip whichever dial had
+  been pressed. Each now hangs from its own button, sharing its right edge.
+
+- **The open list lights the value the dial is showing.** The button resolved
+  what a pane is running from three sources — a press on the dial, the
+  `--model` on the command that started the agent, then the harness itself —
+  and the list underneath it looked only at the first, so a pane launched with
+  `--model opus` read `OPUS` above a list with nothing marked in it. Both now
+  ask one resolver, and the row's ink carries the same claim the button's does:
+  accent for a value somebody chose, half-strength for one read off the launch
+  command.
+
+- **The agent wall's header no longer counts the fleet twice.** Six unlabelled
+  glyph counters sat between the name and the token totals, setting the same
+  state filter the bordered WORKING / DONE / IDLE chips two rows below set — the
+  same control twice, one of them unreadable, and their numbers were fleet-wide
+  while the chips' are context-aware, so the two rows contradicted each other
+  whenever any filter was on. The chips stay; the glyphs are gone.
 
 - **Changing the model or the effort no longer sends your half-written prompt.**
   The bench composer mirrors the agent's own line editor, so a draft is already

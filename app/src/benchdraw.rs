@@ -22,8 +22,15 @@
 //!
 //! No literal `rounded(px(…))`, no `px(9. * s)`, no branching on which skin is
 //! active. A workbench drawn with hand-rolled corners would be the one surface
-//! in this window that stays round under a square skin, and the guard test in
-//! [`crate::skin`] exists because that has happened before.
+//! in this window that stays round under a square skin.
+//!
+//! This paragraph claimed a guard test in `crate::skin` for weeks and there was
+//! none — and two literal corners went in underneath the claim, in the
+//! composer, where they stayed round while the rest of the window squared. The
+//! gate is real now and it is `every_corner_on_the_bench_goes_through_the_skin`,
+//! at the bottom of THIS file beside the three other source scans. A promise
+//! pointing somewhere else is how the first one went unnoticed, so it points
+//! here.
 
 use gpui::prelude::FluentBuilder;
 use gpui::{
@@ -94,6 +101,8 @@ fn role_of(tint: Tint) -> Role {
         // Grey, and deliberately not a hue: an unknown that arrives in a
         // colour looks like a claim, and no claim has been made.
         Tint::Unknown => Role::Faint,
+        // Yours. The one role in the palette that already means "you".
+        Tint::Mine => Role::Human,
     }
 }
 
@@ -281,11 +290,23 @@ pub fn rail_row(row: &Row, sk: &Skin, th: &Theme) -> Div {
     // shelf shapes demanding at most one row claims it — so this can never be
     // the emphasis on two rows at once.
     let on_cursor = row.selected || row.standing.lit();
-    let lane = match row.standing {
-        Standing::Waiting => Some("WAITING ON YOU"),
-        Standing::Queued => Some("ALSO WAITING"),
-        Standing::Current => Some("STANDS NOW"),
-        Standing::Past => match (row.tint, row.kind) {
+    let lane = match (row.standing, row.kind) {
+        // A note does not STAND. The standing vocabulary is about work a person
+        // has to resolve — what is waiting, what the answer currently is, how it
+        // got there — and none of those questions apply to something you wrote
+        // to yourself. `STANDS NOW` on a comment would be the rail claiming an
+        // opinion the comment never held.
+        //
+        // The head of the board still earns a word, because the head of a shelf
+        // is where a reader who has not moved the cursor is meant to start, and
+        // `Standing::lit` already gives it the weight. LATEST is what that word
+        // is on a chronological board. Parker: *"LATEST is nice."*
+        (Standing::Current, "comment") => Some("LATEST"),
+        (_, "comment") => None,
+        (Standing::Waiting, _) => Some("WAITING ON YOU"),
+        (Standing::Queued, _) => Some("ALSO WAITING"),
+        (Standing::Current, _) => Some("STANDS NOW"),
+        (Standing::Past, _) => match (row.tint, row.kind) {
             (Tint::Settled, "question") | (Tint::Settled, "decision") => Some("ANSWERED"),
             (Tint::Settled, _) => Some("DONE"),
             _ => None,
@@ -503,7 +524,16 @@ pub fn body(
     // neither is worth a line in front of somebody who has been asked a
     // question. Parker: *"2 options (we can see it is 2 options, no need to
     // show this... if the machine needs it fine, but don't show user)"*.
-    let asking = matches!(surface.kind, Kind::Question(_));
+    //
+    // A COMMENT skips the weights for a stronger reason: there is nothing that
+    // could ever fill them. Effort, complexity, depth and confidence are an
+    // AGENT's estimate of work it did, and a note is a person writing a
+    // sentence to themselves. `unweighed` on every comment card would be a
+    // permanent report of an absence nobody could ever fill — the same line on
+    // every row of the shelf, which is a line that has stopped carrying
+    // anything. Its subtitle stays, because the stamp under a note is the one
+    // fact a chronological board is sorted by.
+    let unweighable = matches!(surface.kind, Kind::Question(_) | Kind::Comment(_));
     // ABOVE THE TITLE, and above everything.
     //
     // The position is the point, not the colour: an escalation sorted among six
@@ -530,7 +560,7 @@ pub fn body(
         Embodiment::Compact => frame
             .child(heading(surface, sk, th))
             .child(compact(surface, picks, sk, th)),
-        Embodiment::Full if asking => frame
+        Embodiment::Full if unweighable => frame
             .child(heading(surface, sk, th))
             .child(full(surface, picks, sk, th)),
         Embodiment::Full => frame
@@ -699,6 +729,11 @@ fn compact(surface: &Surface, picks: Option<&Picks>, sk: &Skin, th: &Theme) -> D
         // that is missing, which is what the reader reads as a broken feature
         // rather than as a small screen.
         Kind::Response(r) => response(r, picks, sk, th),
+        // DELEGATES, and belongs on the list the delegation test walks: a
+        // comment is short by nature, so there is nothing a narrow pane could
+        // usefully show LESS of. A second renderer here would exist only to
+        // drift from the first one.
+        Kind::Comment(_) => comment(surface, sk, th),
         Kind::Unclassified(u) => list.child(micro(
             u.reason.clone(),
             Step::Small,
@@ -720,6 +755,7 @@ fn full(surface: &Surface, picks: Option<&Picks>, sk: &Skin, th: &Theme) -> Div 
         Kind::Decision(d) => decision(d, sk, th),
         Kind::Question(q) => question(q, sk, th),
         Kind::Response(r) => response(r, picks, sk, th),
+        Kind::Comment(_) => comment(surface, sk, th),
         Kind::Unclassified(u) => unclassified(u, sk, th),
     }
 }
@@ -916,16 +952,8 @@ fn response(r: &Response, picks: Option<&Picks>, sk: &Skin, th: &Theme) -> Div {
                 .flex_row()
                 .flex_wrap()
                 .gap(px(3.))
-                .children(tabs.iter().map(|(g, mine)| {
+                .children(tabs.iter().map(|(g, _leaves)| {
                     let active = open_group == Some(*g);
-                    // The doubts never leave the strip. They are a click away
-                    // and the count says they are there, which is the one
-                    // treatment that neither buries them nor charges every card
-                    // with a permanent block — see figure 07 of the brief.
-                    let doubts = mine
-                        .iter()
-                        .any(|l| matches!(l, Leaf::Doubts))
-                        .then_some(r.doubts.len());
                     // The tier vocabulary, not a hand-picked colour: the open
                     // tab IS the Active thing on this card now, which is what
                     // `emphasis::shelf()` used to decide for a row of panels.
@@ -951,15 +979,7 @@ fn response(r: &Response, picks: Option<&Picks>, sk: &Skin, th: &Theme) -> Div {
                             crate::emphasis::meta(th)
                         })
                         .when(active, |x| x.border_b_1().border_color(facet.tint))
-                        .child(sk.caps(g.label()))
-                        .when_some(doubts, |x, n| {
-                            x.child(
-                                div()
-                                    .text_size(px(sk.pt(Step::Tag)))
-                                    .text_color(ink(crate::workbench::Tint::Pending, th))
-                                    .child(format!("\u{b7}{n}")),
-                            )
-                        });
+                        .child(sk.caps(g.label()));
                     match picks {
                         Some(p) => tab.cursor_pointer().relative().child(zone(
                             p.zones.clone(),
@@ -1717,6 +1737,58 @@ fn decision(d: &crate::surface::Decision, sk: &Skin, th: &Theme) -> Div {
         })
 }
 
+/// A note the person left, drawn as the note and nothing else.
+///
+/// It takes the whole [`Surface`] rather than the payload, which none of its
+/// neighbours do, and the reason is the TITLE. A comment's title is derived
+/// from its own first line, so drawing both would print that line twice — once
+/// large in the heading and once again as the opening of the body, three lines
+/// apart. Comparing the two is the only way to know whether that has happened,
+/// and the payload alone cannot: a dropped file may carry a title that is
+/// nothing to do with its body, and there the first line is real content that
+/// must not be swallowed.
+///
+/// So: show what the heading has not already said. A one-line note draws as a
+/// heading with its provenance and an empty body, which is the whole note; a
+/// note with more draws the rest underneath.
+fn comment(surface: &Surface, sk: &Skin, th: &Theme) -> Div {
+    let body = match &surface.kind {
+        Kind::Comment(c) => c.body.as_str(),
+        // Unreachable through `compact`/`full`, which match the kind before
+        // calling. Drawing nothing beats a panic on a surface.
+        _ => "",
+    };
+    let (first, rest) = match body.split_once('\n') {
+        Some((head, tail)) => (head, tail),
+        None => (body, ""),
+    };
+    // The heading already carries the first line IF it is the title. Where the
+    // two differ the first line is the payload's own, and it stays.
+    let shown = if first.trim() == surface.title.trim() {
+        rest
+    } else {
+        body
+    };
+    let panel = sk.panel().flex().flex_col().gap(px(6.));
+    if shown.trim().is_empty() {
+        // Not an error, and not empty in a way worth apologising for: a
+        // one-line note IS the heading above. The card says what the shelf is
+        // for instead of leaving a blank panel that reads as a failure.
+        return panel.child(micro(
+            "A NOTE TO YOURSELF \u{b7} THE AGENT WAS NOT TOLD",
+            Step::Tag,
+            // `ink_faint`, not `th.faint` — the chrome legibility pass moved
+            // every quiet line onto the foreground at low alpha because the
+            // palette's grey on a grey panel was not readable at all. A line
+            // added after that pass has no business reintroducing it.
+            sk.ink.ink_faint,
+            sk,
+            th,
+        ));
+    }
+    panel.child(paragraph(shown.trim().to_string(), sk, th))
+}
+
 /// Something arrived that this build cannot type.
 ///
 /// Drawn plainly and labelled, never guessed at. The reason comes first
@@ -2109,8 +2181,16 @@ pub fn dial_menu(rows: Vec<Div>, sk: &Skin, th: &Theme) -> Div {
     .children(rows)
 }
 
-/// One value in an open dial's list. `lit` is the value the dial is showing.
-pub fn dial_row(label: &str, lit: bool, sk: &Skin, th: &Theme) -> Div {
+/// One value in an open dial's list.
+///
+/// `lit` is the value the dial is showing. `chosen` is whether anybody SAID so
+/// — the same claim the button's ink makes, carried down into the list so the
+/// two cannot disagree: a level a person picked is the accent, a level read off
+/// the launch command is the accent at half strength, and a row that is neither
+/// is plain text. The list used to light only what a press on the dial had set,
+/// so an agent launched with `--model opus` showed OPUS above a list with
+/// nothing marked in it at all.
+pub fn dial_row(label: &str, lit: bool, chosen: bool, sk: &Skin, th: &Theme) -> Div {
     sk.chip(lit)
         .relative()
         .flex()
@@ -2119,7 +2199,11 @@ pub fn dial_row(label: &str, lit: bool, sk: &Skin, th: &Theme) -> Div {
         .cursor_pointer()
         .whitespace_nowrap()
         .text_size(px(sk.pt(Step::Note)))
-        .text_color(if lit { th.accent } else { th.text.alpha(0.85) })
+        .text_color(match (lit, chosen) {
+            (true, true) => th.accent,
+            (true, false) => th.accent.alpha(0.62),
+            _ => th.text.alpha(0.85),
+        })
         .child(label.to_string())
 }
 
@@ -2263,6 +2347,38 @@ pub fn zone(
     .inset_0()
 }
 
+/// Record where the element this is a child of ended up, without making it a
+/// click target.
+///
+/// [`zone`]'s other half: same canvas, same flat bounds, no [`crate::workbench::Hit`].
+/// It exists because one element on the bench — the root — has to be MEASURED
+/// rather than pressed: an absolutely-positioned overlay inside it is placed in
+/// coordinates relative to its padding box, and the only thing that knows where
+/// a window-space rectangle lands in that space is the root's own origin.
+///
+/// Giving the root a zone instead would have been cheaper and wrong: a
+/// root-sized rectangle at the bottom of the list answers every click that hit
+/// nothing, and "on the bench but on nothing" is an answer the wheel reads.
+///
+/// The parent must be `relative()`, exactly as for [`zone`].
+pub fn probe(
+    into: std::rc::Rc<std::cell::RefCell<Option<crate::workbench::Rect>>>,
+) -> impl gpui::IntoElement {
+    gpui::canvas(
+        move |bounds, _window, _cx| {
+            *into.borrow_mut() = Some(crate::workbench::Rect {
+                x: f32::from(bounds.origin.x),
+                y: f32::from(bounds.origin.y),
+                w: f32::from(bounds.size.width),
+                h: f32::from(bounds.size.height),
+            });
+        },
+        |_, _, _, _| {},
+    )
+    .absolute()
+    .inset_0()
+}
+
 /// The line into the agent's own terminal.
 ///
 /// Not a text box. While it is armed, every keystroke is encoded by the same
@@ -2289,9 +2405,14 @@ pub fn zone(
 /// room, and one line underneath says what the keys do, because the three
 /// things it names (type without clicking first, enter sends, paste takes an
 /// image) are each invisible otherwise.
+/// `hot` is a dragged file hovering over this box, and it is drawn in the
+/// person's own colour at full strength: a drop is the same act as typing,
+/// aimed at the same line, so it would be strange for it to arrive in a
+/// colour that means anything else.
 pub fn composer(
     line: Option<&crate::workbench::Line>,
     focused: bool,
+    hot: bool,
     shows: &crate::workbench::Shows,
     slots: &Slots,
     sk: &Skin,
@@ -2398,8 +2519,21 @@ pub fn composer(
             // Lit whether or not it is armed. The border was the only thing
             // saying "this is an input" and it only said so AFTER the first
             // click, which is the wrong way round: the invitation has to be
-            // legible before anyone has accepted it.
-            .border_color(th.human.alpha(if live { 0.9 } else { 0.5 })),
+            // legible before anyone has accepted it. A file hovering over it
+            // takes the border to full strength and tints the box, because
+            // "let go here" has to beat "you may type here" while a person is
+            // holding something.
+            .border_color(th.human.alpha(if hot {
+                1.0
+            } else if live {
+                0.9
+            } else {
+                0.5
+            }))
+            // Blended rather than laid over: `bg` replaces, so a translucent
+            // wash here would drop the panel's own surface and let the pane
+            // behind it through.
+            .when(hot, |d| d.bg(th.surface.blend(th.human.alpha(0.14)))),
         th.human,
         th,
     )
@@ -2475,7 +2609,7 @@ pub fn composer(
                         .flex_none()
                         .px(px(7.))
                         .py(px(2.))
-                        .rounded(px(3.))
+                        .rounded(sk.rad_raw(3.))
                         .bg(th.accent.alpha(0.18))
                         .child(micro(
                             if n == 1 {
@@ -2492,16 +2626,39 @@ pub fn composer(
             })
             // Only while it is armed, and then unmissable. This is the answer
             // to the question the surface kept failing: *am I typing to the
-            // agent right now, or do I have to click something first?*
-            .when(live, |d| {
+            // agent right now, or do I have to click something first?* While
+            // a file is over the box it gives up its place: what happens when
+            // you let go is the more urgent question, and two chips side by
+            // side would be competing for the same corner.
+            .when(live && !hot, |d| {
                 d.child(
                     div()
                         .flex_none()
                         .px(px(7.))
                         .py(px(2.))
-                        .rounded(px(3.))
+                        .rounded(sk.rad_raw(3.))
                         .bg(th.human.alpha(0.16))
                         .child(micro("LIVE \u{2192} AGENT", Step::Tag, th.human, sk, th)),
+                )
+            })
+            // No count of files. The drag's value is parked on the app until
+            // the drop and the hover only knows that SOMETHING is being
+            // carried, so saying "1 file" here would be inventing a number.
+            .when(hot, |d| {
+                d.child(
+                    div()
+                        .flex_none()
+                        .px(px(7.))
+                        .py(px(2.))
+                        .rounded(sk.rad_raw(3.))
+                        .bg(th.human.alpha(0.24))
+                        .child(micro(
+                            "\u{2913} DROP TO INSERT THE PATH",
+                            Step::Tag,
+                            th.human,
+                            sk,
+                            th,
+                        )),
                 )
             }),
     )
@@ -2528,6 +2685,155 @@ pub fn composer(
             th,
         ))
     })
+}
+
+/// The box a note is typed into, and a box with no wire to the agent.
+///
+/// A separate renderer rather than a mode on [`composer`], for the same reason
+/// the note is a separate field on the pane: the two boxes do opposite things
+/// and look alike, and the cost of confusing them is a private sentence
+/// arriving in somebody's prompt. Nothing here reads `Shows`, `Slots` or the
+/// scroll handle, because none of them apply — a note is not mirroring a remote
+/// editor, so there is no caret to chase across a wrap that somebody else owns.
+///
+/// It SAYS what it is, in a line above the text. That label is the only thing
+/// standing between the two boxes for a person who has just pressed `alt+m` out
+/// of muscle memory, so it names the destination rather than the feature: not
+/// `NOTE`, but where the words are going and who will not see them.
+pub fn note_box(
+    line: &crate::workbench::Line,
+    focused: bool,
+    durable: bool,
+    sk: &Skin,
+    th: &Theme,
+) -> Div {
+    let mine = ink(Tint::Mine, th);
+    // The caret rides IN the text as a highlight on the character it is on —
+    // the composer's technique, and the reason is the same one written out at
+    // length there: a line wraps, and anything that positions a caret by
+    // arithmetic is computing a column on a single axis that does not exist.
+    let text = format!("{} ", line.text());
+    let at = text
+        .char_indices()
+        .nth(line.caret())
+        .map(|(i, _)| i)
+        .unwrap_or(line.text().len());
+    let next = text[at..]
+        .chars()
+        .next()
+        .map(|c| at + c.len_utf8())
+        .unwrap_or(text.len());
+    let caret = gpui::HighlightStyle {
+        background_color: Some(mine.alpha(if focused { 0.85 } else { 0.35 })),
+        color: Some(if focused { th.bg } else { th.text }),
+        ..Default::default()
+    };
+    let selection = gpui::HighlightStyle {
+        background_color: Some(mine.alpha(if focused { 0.34 } else { 0.18 })),
+        ..Default::default()
+    };
+    let spans = if line.marked() {
+        vec![(0..line.text().len(), selection)]
+    } else {
+        vec![(at..next, caret)]
+    };
+    raised(
+        sk.panel()
+            .flex()
+            .flex_col()
+            .gap(px(7.))
+            .flex_none()
+            .px(px(14.))
+            .py(px(12.))
+            .bg(th.surface)
+            .border_color(mine.alpha(if focused { 0.9 } else { 0.5 })),
+        mine,
+        th,
+    )
+    .child(micro(
+        "A NOTE ON THIS PANE \u{b7} THE AGENT IS NOT TOLD",
+        Step::Tag,
+        mine,
+        sk,
+        th,
+    ))
+    .child(
+        div()
+            .text_size(px(sk.pt(Step::Body)))
+            .text_color(th.text)
+            .child(gpui::StyledText::new(text).with_highlights(spans)),
+    )
+    .child(if durable {
+        micro(
+            "return posts \u{b7} shift+return a new line \u{b7} esc discards",
+            Step::Tag,
+            sk.ink.ink_faint,
+            sk,
+            th,
+        )
+    } else {
+        // SAID BEFORE THE NOTE IS WRITTEN, not after return does nothing.
+        //
+        // A pane with no surfaces directory — a scratch window, which has no
+        // pane id to name one with — has nowhere durable to put a note. The
+        // first version of this refused on `return` and reported it to stderr,
+        // where nobody is looking, so the key just appeared to be broken. An
+        // absence a person can act on has to be on the face of the thing while
+        // they still have the choice not to type into it.
+        micro(
+            "THIS PANE CANNOT SAVE NOTES \u{b7} NOTHING HERE WILL SURVIVE",
+            Step::Tag,
+            ink(Tint::Waiting, th),
+            sk,
+            th,
+        )
+    })
+}
+
+/// WHAT YOU SAID, over the reply that answers it.
+///
+/// Its own block, in the human ink, above the card and outside its scroll —
+/// three separations, because the complaint was that the person's own words
+/// were nowhere on the surface that shows the answer to them. In the ink the
+/// terminal already paints a person's turns in, so the two faces of a pane
+/// agree about whose voice this is.
+///
+/// An EMPTY list is drawn as a sentence rather than as nothing. The message
+/// may simply have scrolled out of the pane's history, and a block that
+/// vanished in that case would say "you asked nothing", which is a different
+/// fact and never the true one.
+pub fn asked(lines: &[String], sk: &Skin, th: &Theme) -> Div {
+    sk.panel()
+        .flex()
+        .flex_col()
+        .gap(px(4.))
+        // Inset from the reply beneath it, the way a quoted turn is: the
+        // indent is what says these two blocks are one exchange and not two
+        // unrelated panels stacked. Parker, on the first build of it:
+        // *"indent a little bit! very nice!"*
+        .ml(px(18.))
+        .px(px(12.))
+        .py(px(9.))
+        .border_l(px(3.))
+        .border_color(th.human)
+        .bg(th.human.alpha(0.07))
+        .child(micro("YOU", Step::Fine, th.human, sk, th))
+        .when(lines.is_empty(), |d| {
+            d.child(micro(
+                "your message is no longer in this pane\u{2019}s scrollback",
+                Step::Note,
+                th.faint,
+                sk,
+                th,
+            ))
+        })
+        .children(lines.iter().map(|line| {
+            div()
+                .text_size(px(sk.pt(Step::Body)))
+                .font_family(th.font_family.clone())
+                .text_color(th.human)
+                .child(line.clone())
+        }))
 }
 
 /// The agent, talking. The main area's ordinary state.
@@ -2942,6 +3248,72 @@ mod tests {
     /// caught at. The unmutated file passes, so this is a guard and not an
     /// alarm; a scan that cries wolf gets switched off, and then nothing is
     /// enforced.
+    /// Every corner on the bench is the skin's to decide.
+    ///
+    /// This file's own header has promised this since it was written — *"the
+    /// guard test in `crate::skin` exists because that has happened before"* —
+    /// and there was no such test in `skin.rs` or anywhere else. Two literal
+    /// corners went in underneath that sentence and sat there: the paste chip
+    /// and the `LIVE -> AGENT` chip in the composer, both `rounded(px(3.))`,
+    /// both of which would have stayed round under a square skin while every
+    /// other corner in the window squared. A comment promising a gate is worse
+    /// than no comment, because it stops the next reader looking.
+    ///
+    /// Two shapes are caught. A `rounded()` whose argument is not a skin verb
+    /// is a radius decided here; and gpui's own `rounded_sm`/`_md`/`_lg`/
+    /// `_full` are fixed numbers wearing names, which is the same bypass with
+    /// better manners.
+    ///
+    /// Comments are stripped first, or this file's header would trip its own
+    /// scan on the word it uses to describe the rule.
+    ///
+    /// Mutation-tested: it FAILED on the two real literals before they were
+    /// fixed, which is the only way to know a scan matches anything; and
+    /// `.gap(px(8.))`, `.w(px(6.))` and `sk.rad_raw(3.)` were checked to pass
+    /// untouched, because a check that fires on innocent lines gets switched
+    /// off and then nothing is enforced.
+    #[test]
+    fn every_corner_on_the_bench_goes_through_the_skin() {
+        let src = include_str!("benchdraw.rs");
+        let (code, _tests) = src.split_once("\n#[cfg(test)]").expect("a test module");
+        let lines: Vec<&str> = code.lines().collect();
+        let mut found = Vec::new();
+        for (n, raw) in lines.iter().enumerate() {
+            let line = raw.split("//").next().unwrap_or("");
+            for fixed in ["rounded_sm(", "rounded_md(", "rounded_lg(", "rounded_full("] {
+                if line.contains(fixed) {
+                    found.push(format!(
+                        "{}: {fixed} is a fixed radius, not the skin's: {}",
+                        n + 1,
+                        raw.trim()
+                    ));
+                }
+            }
+            let Some(at) = line.find(".rounded(") else {
+                continue;
+            };
+            let mut arg = line[at + ".rounded(".len()..].trim_start();
+            // rustfmt may put the argument on the next line. Follow it rather
+            // than flagging a wrap, which is not a decision anybody made.
+            if arg.is_empty() {
+                arg = lines
+                    .get(n + 1)
+                    .map(|l| l.split("//").next().unwrap_or("").trim_start())
+                    .unwrap_or("");
+            }
+            if !arg.starts_with("sk.") {
+                found.push(format!("{}: a hand-rolled corner: {}", n + 1, raw.trim()));
+            }
+        }
+        assert!(
+            found.is_empty(),
+            "corners decided in the renderer instead of by the skin. A square \
+             skin cannot square these, so they stay round while everything \
+             around them changes shape:\n{}",
+            found.join("\n")
+        );
+    }
+
     #[test]
     fn a_renderer_contains_no_decisions() {
         let src = include_str!("benchdraw.rs");
@@ -3076,6 +3448,10 @@ mod tests {
         for (kind, renderer) in [
             ("Kind::Question(q)", "question("),
             ("Kind::Response(r)", "response("),
+            // A comment joins the list for the same reason, one step earlier:
+            // it is short enough that a compact form could only be the same
+            // thing, so a second renderer would exist purely to drift.
+            ("Kind::Comment(_)", "comment("),
         ] {
             for (which, body) in [("compact", compact_body), ("full", full_body)] {
                 let arm = body
