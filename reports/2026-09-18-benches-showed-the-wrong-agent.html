@@ -1,0 +1,203 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>The benches were showing the wrong agent</title>
+<style>
+  :root{
+    --ink:#e8e6e3; --dim:#9b9691; --bg:#12100f; --panel:#1a1817; --line:#2e2a28;
+    --red:#e5484d; --orange:#e8913a; --green:#46c08a; --blue:#5b9dd9; --amber:#e3c05c; --grey:#6f6a66;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font:16px/1.65 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
+  main{max-width:60rem;margin:0 auto;padding:3rem 1.5rem 6rem}
+  h1{font-size:1.9rem;line-height:1.25;margin:0 0 .4rem}
+  .sub{color:var(--dim);margin:0 0 2.5rem}
+  h2{font-size:1.15rem;margin:2.8rem 0 .6rem;padding-top:1.2rem;border-top:1px solid var(--line)}
+  p{margin:0 0 1rem}
+  code{font-family:ui-monospace,"JetBrains Mono",monospace;font-size:.86em;
+       background:#000;padding:.1em .35em;border-radius:3px;color:#cfe8ff}
+  figure{margin:1.6rem 0;padding:1rem;background:var(--panel);border:1px solid var(--line);border-radius:6px}
+  figcaption{color:var(--dim);font-size:.9rem;margin-top:.7rem;border-left:3px solid var(--blue);padding-left:.7rem}
+  figcaption b{color:var(--ink);font-weight:600}
+  svg{width:100%;height:auto;display:block}
+  .src{font-size:.78rem;color:var(--grey);margin-top:.5rem;font-style:italic}
+  table{border-collapse:collapse;width:100%;margin:1.2rem 0;font-size:.92rem}
+  th,td{text-align:left;padding:.45rem .6rem;border-bottom:1px solid var(--line);vertical-align:top}
+  th{color:var(--dim);font-weight:600;font-size:.82rem;text-transform:uppercase;letter-spacing:.04em}
+  .ok{color:var(--green)} .bad{color:var(--orange)} .unk{color:var(--grey)} .mine{color:var(--amber)}
+  .box{background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--amber);
+       border-radius:4px;padding:1rem 1.2rem;margin:1.4rem 0}
+  .box h3{margin:0 0 .5rem;font-size:1rem}
+  ul{margin:.3rem 0 1rem;padding-left:1.2rem} li{margin:.3rem 0}
+</style>
+<main>
+
+<h1>The benches were showing the wrong agent</h1>
+<p class="sub">Why a workbench in one pane displayed another pane's deliverable — 2026-09-18, terminal-delight</p>
+
+<p>You saw a pane whose bench carried <em>File drop — difficulty brief</em> and <em>The drop — as built</em>,
+neither of which that agent had made. Both belonged to the pane two tabs over. The guess in your message —
+<em>probably others?</em> — was right: at the moment you asked, <b>seven</b> agent panes in this repository
+were reading one single conversation, and it was not theirs.</p>
+
+<h2>What a bench reads, and where it goes wrong</h2>
+
+<p>Half of what lands on a bench needs nothing from the agent: Terminal Delight reads the agent's own
+transcript and derives the surfaces itself — the questions it is waiting on, and the
+<code>Deliverable:</code> line in its last reply. To do that it has to answer one question first:
+<em>which conversation is this pane in?</em></p>
+
+<figure>
+<svg viewBox="0 0 760 300" role="img" aria-label="Seven panes all pointing at one newest transcript file, while their own transcripts sit unread">
+  <text x="0" y="14" fill="#9b9691" font-size="12" font-family="ui-monospace,monospace">PANES (each its own conversation)</text>
+  <text x="430" y="14" fill="#9b9691" font-size="12" font-family="ui-monospace,monospace">~/.claude/projects/&lt;one shared cwd&gt;/</text>
+  <g font-size="12" font-family="ui-monospace,monospace">
+    <g>
+      <rect x="0" y="30" width="190" height="26" fill="#1a1817" stroke="#5b9dd9"/>
+      <text x="10" y="48" fill="#e8e6e3">Drag and drop</text>
+      <rect x="0" y="62" width="190" height="26" fill="#1a1817" stroke="#e8913a"/>
+      <text x="10" y="80" fill="#e8e6e3">Comments tab</text>
+      <rect x="0" y="94" width="190" height="26" fill="#1a1817" stroke="#e8913a"/>
+      <text x="10" y="112" fill="#e8e6e3">Ungrouped tabs line</text>
+      <rect x="0" y="126" width="190" height="26" fill="#1a1817" stroke="#e8913a"/>
+      <text x="10" y="144" fill="#e8e6e3">Focus snap to TERM</text>
+      <rect x="0" y="158" width="190" height="26" fill="#1a1817" stroke="#e8913a"/>
+      <text x="10" y="176" fill="#e8e6e3">Style work</text>
+      <rect x="0" y="190" width="190" height="26" fill="#1a1817" stroke="#e8913a"/>
+      <text x="10" y="208" fill="#e8e6e3">Scan git issues</text>
+      <rect x="0" y="222" width="190" height="26" fill="#1a1817" stroke="#e8913a"/>
+      <text x="10" y="240" fill="#e8e6e3">Task tracking</text>
+      <rect x="0" y="254" width="190" height="26" fill="#1a1817" stroke="#e8913a"/>
+      <text x="10" y="272" fill="#e8e6e3">Workbench comparison</text>
+    </g>
+    <g stroke="#e8913a" fill="none" stroke-width="1.5">
+      <path d="M195 43 C 300 43, 320 150, 425 150"/>
+      <path d="M195 75 C 300 75, 320 150, 425 150"/>
+      <path d="M195 107 C 300 107, 330 150, 425 150"/>
+      <path d="M195 139 C 320 139, 350 150, 425 150"/>
+      <path d="M195 171 C 320 171, 350 150, 425 150"/>
+      <path d="M195 203 C 300 203, 330 150, 425 150"/>
+      <path d="M195 235 C 300 235, 320 150, 425 150"/>
+      <path d="M195 267 C 300 267, 320 150, 425 150"/>
+    </g>
+    <rect x="430" y="136" width="320" height="28" fill="#1a1817" stroke="#e5484d" stroke-width="2"/>
+    <text x="440" y="155" fill="#e5484d">newest .jsonl — whoever typed last</text>
+    <g fill="#6f6a66">
+      <rect x="430" y="40" width="320" height="22" fill="#141312" stroke="#2e2a28" stroke-dasharray="3 3"/>
+      <text x="440" y="56">cb29e489…  its own transcript, unread</text>
+      <rect x="430" y="68" width="320" height="22" fill="#141312" stroke="#2e2a28" stroke-dasharray="3 3"/>
+      <text x="440" y="84">905e3bd8…  its own transcript, unread</text>
+      <rect x="430" y="96" width="320" height="22" fill="#141312" stroke="#2e2a28" stroke-dasharray="3 3"/>
+      <text x="440" y="112">624edfd3…  its own transcript, unread</text>
+      <rect x="430" y="196" width="320" height="22" fill="#141312" stroke="#2e2a28" stroke-dasharray="3 3"/>
+      <text x="440" y="212">…and four more, all unread</text>
+    </g>
+  </g>
+</svg>
+<figcaption><b>Figure 1 — one conversation was being served to eight panes.</b> Blue is the pane that
+happened to be right (it wrote last, so the newest file was genuinely its own). Orange is every pane reading
+a stranger. Grey dashed are the transcripts those panes actually own, which nothing was reading.
+<div class="src">Drawn from the code (<code>session.rs:526</code>, the <code>newest_jsonl</code> fallback) and
+from a live census of the 14 <code>claude</code> processes in this cwd at 21:55.</div></figcaption>
+</figure>
+
+<h2>The resolver had four rungs and was falling off the bottom</h2>
+
+<p><code>agent_resume</code> tries, in order: a ledger entry pushed by the agent, the transcript the process
+holds <em>open</em>, a <code>--resume</code> id on its command line, a transcript <em>born</em> within 120
+seconds of the process starting, the newest line in <code>history.jsonl</code>, and finally the newest file
+in the directory. Every rung above the last was returning nothing.</p>
+
+<figure>
+<svg viewBox="0 0 760 250" role="img" aria-label="Six resolver rungs, showing which ones fired before and after the repair">
+  <g font-family="ui-monospace,monospace" font-size="12.5">
+    <text x="292" y="14" fill="#9b9691">BEFORE</text><text x="560" y="14" fill="#9b9691">AFTER</text>
+    <g>
+      <rect x="0" y="26" width="280" height="28" fill="#1a1817" stroke="#2e2a28"/><text x="10" y="45" fill="#e8e6e3">1 · ledger entry (hook)</text>
+      <rect x="0" y="60" width="280" height="28" fill="#1a1817" stroke="#2e2a28"/><text x="10" y="79" fill="#e8e6e3">2 · open transcript fd</text>
+      <rect x="0" y="94" width="280" height="28" fill="#1a1817" stroke="#2e2a28"/><text x="10" y="113" fill="#e8e6e3">3 · --resume on cmdline</text>
+      <rect x="0" y="128" width="280" height="28" fill="#1a1817" stroke="#2e2a28"/><text x="10" y="147" fill="#e8e6e3">4 · born within 120s of start</text>
+      <rect x="0" y="162" width="280" height="28" fill="#1a1817" stroke="#2e2a28"/><text x="10" y="181" fill="#e8e6e3">5 · newest history.jsonl line</text>
+      <rect x="0" y="196" width="280" height="28" fill="#1a1817" stroke="#e5484d" stroke-width="2"/><text x="10" y="215" fill="#e5484d">6 · newest file in the directory</text>
+    </g>
+    <g font-size="12">
+      <text x="292" y="45" fill="#e8913a">never installed — no dir at all</text>
+      <text x="292" y="79" fill="#e8913a">claude stopped holding it open</text>
+      <text x="292" y="113" fill="#6f6a66">fresh panes carry no id</text>
+      <text x="292" y="147" fill="#e8913a">born at the FIRST PROMPT: +272s, +318s</text>
+      <text x="292" y="181" fill="#6f6a66">same file, same answer</text>
+      <text x="292" y="215" fill="#e5484d">everybody lands here</text>
+    </g>
+    <g font-size="12">
+      <rect x="548" y="26" width="212" height="28" fill="#132a20" stroke="#46c08a" stroke-width="2"/>
+      <text x="558" y="45" fill="#46c08a">installed + backfilled → 21/21</text>
+      <text x="558" y="79" fill="#6f6a66">unchanged</text>
+      <text x="558" y="113" fill="#6f6a66">unchanged</text>
+      <text x="558" y="147" fill="#e3c05c">proposed: one-to-one, no window</text>
+      <text x="558" y="181" fill="#6f6a66">unchanged</text>
+      <text x="558" y="215" fill="#e3c05c">proposed: refuse when shared</text>
+    </g>
+  </g>
+</svg>
+<figcaption><b>Figure 2 — rung four was the one meant to catch this, and it misses by minutes.</b> A
+transcript is born when the <em>first prompt</em> is submitted, not when the process starts, so a pane you
+open and come back to later can never match a 120-second window. Measured on two live panes: 272s and 318s.
+Yellow is mine to argue with — neither proposed rung is built.
+<div class="src">Left column measured against the live processes; the 120s constant is
+<code>session.rs:436</code>. Right column: rung 1 is done and verified, rungs 4 and 6 are proposals.</div></figcaption>
+</figure>
+
+<h2>The fix was already in the repository, switched off</h2>
+
+<p>Rung one — <code>scripts/td-agent-ledger</code>, a SessionStart hook that writes each agent's current
+session id to <code>~/.local/state/terminal-delight/agent-ledger/&lt;pid&gt;.json</code> — is the exact,
+rotation-proof answer, and it beats every forensic rung. It has code, tests and an installer. It had never
+been run on this machine: no hook in <code>settings.json</code>, no binary in <code>~/.local/bin</code>, no
+state directory. The capability was advertised in the resolver's own comments and carried nothing.</p>
+
+<p>Installing it fixes every session started from now on. It does nothing for the forty already running, so
+those were bound by hand: each live agent's own session id read out of the file descriptor it holds on
+<code>/tmp/claude-&lt;uid&gt;/&lt;project&gt;/&lt;session-id&gt;/</code>, and where no such descriptor
+existed, by matching process start times to transcript birth times one-to-one.</p>
+
+<table>
+  <tr><th>Pane</th><th>Was reading</th><th>Now reads</th><th>How it was bound</th></tr>
+  <tr><td>Comments tab and workbench styling</td><td class="bad">9b44c0c1 (Drag and drop's)</td><td class="ok">cb29e489</td><td>own fd</td></tr>
+  <tr><td>Ungrouped tabs line visibility</td><td class="bad">9b44c0c1</td><td class="ok">905e3bd8</td><td>birth match, confirmed on screen</td></tr>
+  <tr><td>Workbench focus snap to TERM</td><td class="bad">9b44c0c1</td><td class="ok">624edfd3</td><td>birth match</td></tr>
+  <tr><td>Workbench comparison (this one)</td><td class="bad">9b44c0c1</td><td class="ok">38d3be3e</td><td>own fd</td></tr>
+  <tr><td>Drag and drop into workbench</td><td class="ok">9b44c0c1</td><td class="ok">9b44c0c1</td><td>was right by luck — it wrote last</td></tr>
+  <tr><td colspan="4" class="unk">…and 16 more in this window, all now one-to-one. Verification: 36 live agents,
+      36 distinct sessions, zero collisions.</td></tr>
+</table>
+
+<div class="box">
+  <h3>The one decision left</h3>
+  <p>Rung six is still there, and it is the rule that turned a missing answer into a confident wrong one.
+  <em>Unknown is not zero</em>: when Terminal Delight cannot tell which conversation a pane holds, the
+  honest answer is to derive nothing, not to hand it whichever one moved last.</p>
+  <ul>
+    <li><b>Refuse the shared fallback.</b> Newest-by-mtime only when this is the <em>only</em> live agent in
+    that directory. Several agents, no exact binding → no derived surfaces, and the bench says so.</li>
+    <li><b>Replace the 120-second window</b> with greedy one-to-one matching: each transcript goes to the
+    latest-started process that predates its birth, and no transcript is ever handed to two panes. Run by
+    hand tonight on eight panes, all eight correct, one confirmed against the pane's own screen.</li>
+    <li><b>Read the scratchpad descriptor</b> as a new exact rung — it bound 13 of the 40 live agents
+    outright, including both panes in your screenshots.</li>
+  </ul>
+  <p>Difficulty <b>5 / 10</b> — one resolver, forty lines, but pane identity feeds the bench, the MCP
+  census and the desktop recaps, and a wrong answer there is invisible until somebody notices a strange
+  card. <b>Invalidation:</b> if a fresh window comes up with every pane already bound by rung one, the code
+  change is optional hardening rather than a fix, and should be judged on that lower bar.</p>
+</div>
+
+<h2>What this also explains</h2>
+<p>The duplicate session ids in <code>list_panes</code> — two panes reporting the same
+<code>--resume</code> line — were never a display bug. They were this. The same resolver feeds
+<code>pane_events</code>, which is why tailing one pane's tool calls could return another agent's work,
+and it feeds the notification recaps.</p>
+
+<p class="src">Nothing on this page is drawn from memory: every number came from <code>/proc</code>, the
+transcripts on disk, or <code>terminal-delight probe</code> run against the live panes.</p>
+
+</main>

@@ -1,0 +1,407 @@
+<div class="runbar"><div class="inner">
+  <span class="k">RODEO</span>
+  <span class="p">pass <b id="c-pass">0</b></span>
+  <span class="f">fail <b id="c-fail">0</b></span>
+  <span class="o">odd <b id="c-odd">0</b></span>
+  <span class="u">untried <b id="c-todo">0</b></span>
+  <span class="k" style="margin-left:auto">note anything → 💾 save into file → tell me to read it</span>
+</div></div>
+
+<header class="top">
+  <div class="wrap">
+    <p class="repo">terminal-delight &middot; live-test checklist &middot; overseer, pane 91 &middot; regenerated __STAMP__</p>
+    <h1>The rodeo</h1>
+    <p class="lede">Every feature the fleet has built that nobody has put a finger on. Each item says
+      <b>what to do</b>, <b>what passing looks like</b>, and <b>which pane built it</b>. Mark it with the
+      buttons, type what you saw, save the file, and tell me to read your notes.</p>
+    <p class="lede"><b>You do not need me to build anything to start.</b> The binary already installed
+      on this box is byte-identical in content to the tip of main — I checked the trees, not the shas.
+      <b>But reopen it from the launcher.</b> A relaunch tonight came up on a debug build out of a
+      worktree, drew every pane in pre-#555 chrome, and that is the chrome you photographed and
+      complained about. The install was never the problem.</p>
+  </div>
+</header>
+
+<div class="wrap">
+
+<div class="stamp">
+  <b>This page has a shelf life.</b> The board below was read from git and GitHub at
+  <code>__STAMP__</code>, and this repository merges a pull request every few minutes — the last sweep
+  counted <b>__COMMITS24__ commits onto main in twenty-four hours</b>. Regenerate it with
+  <code>python3 reports/_assemble_rodeo.py</code>; your notes live in the browser and survive the rebuild.
+</div>
+
+<h2 class="sec">The board, read live</h2>
+<div class="tiles">__TILES__</div>
+
+<figure>
+  <span class="lbl">01 &middot; Three builds, and which one you are looking at</span>
+  <div class="scroller">
+  <svg viewBox="0 0 700 168" role="img" aria-label="The running window, the installed binary and the tip of main, showing the running window is the only one behind" font-family="ui-monospace, monospace">
+    <defs><marker id="a3" markerWidth="7" markerHeight="7" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L6,3 L0,6 z" fill="#8b8a80"/></marker></defs>
+
+    <rect x="0" y="16" width="214" height="60" rx="7" fill="rgba(208,59,59,.10)" stroke="#d03b3b"/>
+    <text x="107" y="36" font-size="11" fill="#f08a8a" text-anchor="middle">THE WINDOW YOU SEE</text>
+    <text x="107" y="53" font-size="12" fill="#ffffff" text-anchor="middle">__RUNNING__</text>
+    <text x="107" y="68" font-size="9.5" fill="#8b8a80" text-anchor="middle">__BEHINDN__ merges behind</text>
+
+    <line x1="214" y1="46" x2="240" y2="46" stroke="#3a3a36" marker-end="url(#a3)"/>
+
+    <rect x="244" y="16" width="214" height="60" rx="7" fill="rgba(25,158,112,.11)" stroke="#199e70"/>
+    <text x="351" y="36" font-size="11" fill="#6cd46c" text-anchor="middle">ALREADY ON DISK</text>
+    <text x="351" y="53" font-size="12" fill="#ffffff" text-anchor="middle">__INSTALLED__</text>
+    <text x="351" y="68" font-size="9.5" fill="#8b8a80" text-anchor="middle">one relaunch away</text>
+
+    <line x1="458" y1="46" x2="484" y2="46" stroke="#3a3a36" marker-end="url(#a3)"/>
+
+    <rect x="488" y="16" width="212" height="60" rx="7" fill="rgba(25,158,112,.11)" stroke="#199e70"/>
+    <text x="594" y="36" font-size="11" fill="#6cd46c" text-anchor="middle">TIP OF MAIN</text>
+    <text x="594" y="53" font-size="12" fill="#ffffff" text-anchor="middle">__MAIN__</text>
+    <text x="594" y="68" font-size="9.5" fill="#8b8a80" text-anchor="middle">__TREEMSG__</text>
+
+    <path d="M351,76 L351,96 L594,96 L594,76" fill="none" stroke="#199e70" stroke-dasharray="3 3"/>
+    <text x="472" y="112" font-size="10.5" fill="#6cd46c" text-anchor="middle">__TREEVERDICT__</text>
+
+    <text x="0" y="140" font-size="10.5" fill="#c3c2b7">only the left box is stale, and only you can fix it</text>
+    <text x="0" y="157" font-size="10" fill="#8b8a80">compared by tree oid, not by sha — a merge commit has a new sha and the same program inside it</text>
+  </svg>
+  </div>
+  <figcaption><b>A merged pull request changes nothing you can see until the window is restarted, and a
+    reinstall changes nothing until then either.</b> The binary on disk is already the tip of main; the
+    process you are reading this in was launched before any of it. This is the single cheapest thing on
+    the page and it unblocks the whole of section A.</figcaption>
+  <div class="gutter">the launcher moved three times tonight — td-fcfbaa6-main, then td-43f52ab-chrome, then where it is now. Whoever builds next repoints it again.</div>
+</figure>
+
+<h3 class="mini">Every window alive right now, and what each one actually is</h3>
+<p class="sub">__NWINDOWS__ running. Read off <code>/proc/&lt;pid&gt;/exe</code>, so it is what the
+  kernel says rather than what anything reports about itself — <b>__WINVERDICT__</b>.</p>
+<div class="scroller">
+<table class="wide" style="min-width:560px">
+  <thead><tr><th>Window pid</th><th>Started</th><th>The binary it is</th><th>Where it came from</th></tr></thead>
+  <tbody>__WINDOWROWS__</tbody>
+</table>
+</div>
+
+<figure>
+  <span class="lbl">02 &middot; Two ways to start, and only one of them obeys the symlink</span>
+  <div class="scroller">
+  <svg viewBox="0 0 700 250" role="img" aria-label="Launching by name follows the symlink to the installed build; launching by path from a worktree ignores it and adopts the live session anyway" font-family="ui-monospace, monospace">
+    <defs><marker id="a9" markerWidth="7" markerHeight="7" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L6,3 L0,6 z" fill="#8b8a80"/></marker></defs>
+
+    <rect x="0" y="12" width="196" height="40" rx="6" fill="rgba(25,158,112,.11)" stroke="#199e70"/>
+    <text x="98" y="30" font-size="11" fill="#6cd46c" text-anchor="middle">terminal-delight</text>
+    <text x="98" y="44" font-size="9.5" fill="#8b8a80" text-anchor="middle">a name on your PATH</text>
+    <line x1="196" y1="32" x2="248" y2="32" stroke="#199e70" marker-end="url(#a9)"/>
+    <rect x="252" y="12" width="208" height="40" rx="6" fill="rgba(25,158,112,.07)" stroke="#199e70" stroke-dasharray="4 3"/>
+    <text x="356" y="30" font-size="10" fill="#c3c2b7" text-anchor="middle">~/.local/bin/terminal-delight</text>
+    <text x="356" y="44" font-size="9.5" fill="#8b8a80" text-anchor="middle">the symlink</text>
+    <line x1="460" y1="32" x2="504" y2="32" stroke="#199e70" marker-end="url(#a9)"/>
+    <rect x="508" y="12" width="192" height="40" rx="6" fill="rgba(25,158,112,.14)" stroke="#199e70"/>
+    <text x="604" y="30" font-size="10.5" fill="#6cd46c" text-anchor="middle">__INSTALLED__</text>
+    <text x="604" y="44" font-size="9.5" fill="#8b8a80" text-anchor="middle">the build you meant</text>
+
+    <rect x="0" y="86" width="196" height="40" rx="6" fill="rgba(208,59,59,.11)" stroke="#d03b3b"/>
+    <text x="98" y="104" font-size="11" fill="#f08a8a" text-anchor="middle">./target/debug/…</text>
+    <text x="98" y="118" font-size="9.5" fill="#8b8a80" text-anchor="middle">a path in a worktree</text>
+    <path d="M196,106 L226,106 L226,72 L252,72" fill="none" stroke="#d03b3b" stroke-dasharray="3 3"/>
+    <text x="300" y="76" font-size="9.5" fill="#f08a8a">the symlink is never consulted</text>
+    <line x1="196" y1="106" x2="504" y2="106" stroke="#d03b3b" marker-end="url(#a9)"/>
+    <rect x="508" y="86" width="192" height="40" rx="6" fill="rgba(208,59,59,.14)" stroke="#d03b3b"/>
+    <text x="604" y="104" font-size="10.5" fill="#f08a8a" text-anchor="middle">whatever that branch is</text>
+    <text x="604" y="118" font-size="9.5" fill="#8b8a80" text-anchor="middle">pre-#555, tonight</text>
+
+    <rect x="252" y="146" width="448" height="44" rx="6" fill="rgba(58,58,54,.35)" stroke="#3a3a36"/>
+    <text x="476" y="164" font-size="10.5" fill="#c3c2b7" text-anchor="middle">…and it adopts session 1 either way</text>
+    <text x="476" y="179" font-size="9.5" fill="#8b8a80" text-anchor="middle">so every pane you already had is drawn by it, with no warning</text>
+    <path d="M604,126 L604,146" stroke="#d03b3b" marker-end="url(#a9)"/>
+    <path d="M604,52 L680,52 L680,140 L620,140 L620,146" fill="none" stroke="#199e70" stroke-dasharray="3 3"/>
+
+    <text x="0" y="168" font-size="10" fill="#8b8a80">green = what you</text>
+    <text x="0" y="181" font-size="10" fill="#8b8a80">intended</text>
+    <text x="0" y="200" font-size="10" fill="#f08a8a">red = what happened</text>
+
+    <text x="0" y="228" font-size="10.5" fill="#c3c2b7">the tell: instance.build reads td-&lt;sha&gt;-&lt;label&gt; for an installed build,</text>
+    <text x="0" y="243" font-size="10.5" fill="#c3c2b7">and the bare word terminal-delight when a worktree build has the session</text>
+  </svg>
+  </div>
+  <figcaption>The failure has no symptom of its own. <b>A worktree build adopts your live session
+    exactly as smoothly as the right one, and the only difference you can see is that the chrome is
+    wrong</b> — which reads as "the fix did not work" rather than "you are running last week's
+    binary". Drawn from <code>/proc/&lt;pid&gt;/exe</code> on the two windows alive tonight.</figcaption>
+  <div class="gutter">the MCP helpers are NOT affected — they spawn through the launcher, so they were the correct build the whole time the window was wrong. That disagreement is the cheapest signal there is.</div>
+</figure>
+
+<h3 class="mini">The open queue, as of __STAMP__</h3>
+<div class="scroller">
+<table class="wide" style="min-width:600px">
+  <thead><tr><th>PR</th><th>Branch</th><th>Merges onto main</th><th>Touches</th></tr></thead>
+  <tbody>__PRROWS__</tbody>
+</table>
+</div>
+
+<h2 class="sec">Can I route your comments back to the agents?</h2>
+
+<div class="cards">
+  <div class="card yes">
+    <h4>Write a note onto any pane</h4>
+    <p><code>leave_note(pid)</code> puts a titled note on that pane's glass, pinnable to its tab.
+      Addressed by <b>pid</b>, so it always lands on the pane I mean.</p>
+  </div>
+  <div class="card yes">
+    <h4>Put a surface on any pane's workbench</h4>
+    <p><code>present_surface(pid, &hellip;)</code> takes a pid too, so I can drop a
+      <code>question</code> carrying your words onto another agent's bench.</p>
+  </div>
+  <div class="card yes">
+    <h4>Send a prompt into an agent's input</h4>
+    <p><b>Solved tonight.</b> A pane's pid joins to the name <code>SendMessage</code> takes, in
+      three exact hops. <b>__NPEER__ of __NPANES__</b> panes resolve. Figure 02 draws it.</p>
+  </div>
+  <div class="card part">
+    <h4>Know it arrived</h4>
+    <p>Still no. A cross-session send can sit in an approval queue while the tool answers
+      <code>success</code>. I report a relay as sent, never as delivered.</p>
+  </div>
+</div>
+
+<figure>
+  <span class="lbl">03 &middot; The loop, and the link that was missing until tonight</span>
+  <div class="scroller">
+  <svg viewBox="0 0 700 300" role="img" aria-label="The comment to agent loop, with the pid to peer name join resolved in three hops" font-family="ui-monospace, monospace">
+    <defs><marker id="a4" markerWidth="7" markerHeight="7" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L6,3 L0,6 z" fill="#8b8a80"/></marker></defs>
+
+    <rect x="0" y="12" width="150" height="42" rx="6" fill="rgba(57,135,229,.10)" stroke="#3987e5"/>
+    <text x="75" y="31" font-size="10.5" fill="#7fb4f0" text-anchor="middle">you note this page</text>
+    <text x="75" y="45" font-size="9.5" fill="#8b8a80" text-anchor="middle">anchored per feature</text>
+    <line x1="150" y1="33" x2="196" y2="33" stroke="#3a3a36" marker-end="url(#a4)"/>
+
+    <rect x="200" y="12" width="150" height="42" rx="6" fill="rgba(25,158,112,.11)" stroke="#199e70"/>
+    <text x="275" y="31" font-size="10.5" fill="#6cd46c" text-anchor="middle">save into file</text>
+    <text x="275" y="45" font-size="9.5" fill="#8b8a80" text-anchor="middle">notes baked into the html</text>
+    <line x1="350" y1="33" x2="396" y2="33" stroke="#3a3a36" marker-end="url(#a4)"/>
+
+    <rect x="400" y="12" width="150" height="42" rx="6" fill="rgba(25,158,112,.11)" stroke="#199e70"/>
+    <text x="475" y="31" font-size="10.5" fill="#6cd46c" text-anchor="middle">I read your notes</text>
+    <text x="475" y="45" font-size="9.5" fill="#8b8a80" text-anchor="middle">~150 tokens, not the doc</text>
+    <path d="M475,54 L475,74" stroke="#3a3a36" marker-end="url(#a4)"/>
+
+    <text x="0" y="92" font-size="10.5" fill="#8b8a80">THE JOIN &mdash; three hops, no inference, __NPEER__ of __NPANES__ panes resolved</text>
+
+    <rect x="0" y="102" width="158" height="46" rx="6" fill="rgba(57,135,229,.10)" stroke="#3987e5"/>
+    <text x="79" y="119" font-size="10" fill="#7fb4f0" text-anchor="middle">1 &middot; pane pid</text>
+    <text x="79" y="134" font-size="9" fill="#8b8a80" text-anchor="middle">list_panes</text>
+    <line x1="158" y1="125" x2="186" y2="125" stroke="#199e70" marker-end="url(#a4)"/>
+
+    <rect x="190" y="102" width="200" height="46" rx="6" fill="rgba(25,158,112,.11)" stroke="#199e70"/>
+    <text x="290" y="119" font-size="10" fill="#6cd46c" text-anchor="middle">2 &middot; cc-socks/&lt;agent&gt;.sock</text>
+    <text x="290" y="134" font-size="9" fill="#8b8a80" text-anchor="middle">where PPid(agent) == pane pid</text>
+    <line x1="390" y1="125" x2="418" y2="125" stroke="#199e70" marker-end="url(#a4)"/>
+
+    <rect x="422" y="102" width="278" height="46" rx="6" fill="rgba(25,158,112,.11)" stroke="#199e70"/>
+    <text x="561" y="119" font-size="10" fill="#6cd46c" text-anchor="middle">3 &middot; ~/.claude/sessions/&lt;agent&gt;.json</text>
+    <text x="561" y="134" font-size="9" fill="#8b8a80" text-anchor="middle">carries name, sessionId, cwd</text>
+
+    <path d="M561,148 L561,166" stroke="#199e70" marker-end="url(#a4)"/>
+    <rect x="422" y="170" width="278" height="30" rx="6" fill="rgba(25,158,112,.16)" stroke="#199e70"/>
+    <text x="561" y="189" font-size="10.5" fill="#6cd46c" text-anchor="middle">SendMessage(&quot;terminal-delight-a9&quot;)</text>
+
+    <text x="0" y="172" font-size="9.5" fill="#8b8a80">self-check: this pane resolved to</text>
+    <text x="0" y="185" font-size="9.5" fill="#8b8a80">terminal-delight-a9, which is exactly</text>
+    <text x="0" y="198" font-size="9.5" fill="#8b8a80">what ListAgents prints for itself</text>
+
+    <rect x="0" y="216" width="700" height="46" rx="6" fill="rgba(201,133,0,.10)" stroke="#c98500" stroke-dasharray="4 3"/>
+    <text x="14" y="234" font-size="10.5" fill="#f5c95f">AND THE THING THE JOIN REVEALED: a peer name is not unique</text>
+    <text x="14" y="250" font-size="9.5" fill="#c3c2b7">__NAMB__ of the panes on this page answer to a name another pane also answers to. A send to it is a coin flip — those fall back to a note.</text>
+
+    <text x="0" y="284" font-size="10" fill="#8b8a80">yellow = what I would have got wrong yesterday by sending confidently to a shared name</text>
+  </svg>
+  </div>
+  <figcaption>Yesterday this picture had a dashed amber box reading <i>cannot aim it</i>.
+    <b>The join is three hops and it resolved every pane in the window</b>, checked against
+    <code>ListAgents</code>' own answer for this session and against an inbound peer message that
+    named itself. <b>It also found the trap underneath</b>: peer names collide, so the honest
+    channel for a shared name is still the pid.</figcaption>
+  <div class="gutter">the same session file carries the agent's real sessionId — which is the fix for pane_events answering for the wrong pane, filed as terminal-delight#416</div>
+</figure>
+
+<h2 class="sec">A &middot; __AHEAD__</h2>
+<p class="sub">__ALEAD__</p>
+__SEC_A__
+
+<h2 class="sec">B &middot; Merges clean, in no binary yet</h2>
+<p class="sub">__NB__ pull requests that merge onto main without help. They need one build after they land — say the word and it is the same twenty minutes for all of them.</p>
+__SEC_B__
+
+<h2 class="sec">C &middot; Blocked on a conflict</h2>
+<p class="sub">__NC__ blocked, and the conflict is almost always <code>CHANGELOG.md</code> and nothing else.</p>
+__SEC_C__
+
+<h2 class="sec">D &middot; Spot-checks on what is already running</h2>
+<p class="sub">__ND__ things that landed earlier and are in the window you have. If the rodeo turns up nothing here, that is a result — the last day of merges did not regress them.</p>
+__SEC_D__
+
+<h2 class="sec">Where each verdict goes</h2>
+
+<figure>
+  <span class="lbl">04 &middot; The routing table I will use on your notes</span>
+  <div class="scroller">
+  <table class="wide" style="min-width:560px">
+    <thead><tr><th>Items</th><th>Pane, as you named it</th><th>Group</th><th>pid</th><th>Peer name</th><th>How I reach it</th><th>Address from</th></tr></thead>
+    <tbody>__ROUTEROWS__</tbody>
+  </table>
+  </div>
+  <figcaption>These are the names <b>you</b> typed in the left bar, which is how you point at a pane — and the pid beside each, which is the only thing that reliably addresses one. <b>A row with no pane is not an idle agent and not an absent one</b>; it is work I could not trace to anyone, so its verdicts become falsifiable issues rather than messages to nobody.</figcaption>
+  <div class="gutter">tab names come from the session's saved state joined to the pane census by tab index; session ids move between panes — one changed under me between two sweeps twenty minutes apart — so they are useless as an address</div>
+</figure>
+
+<figure>
+  <span class="lbl">05 &middot; Your left bar, and what each tab shipped tonight</span>
+  <div class="leg">
+    <span><i style="background:#199e70"></i>shipped, waiting on your restart</span>
+    <span><i style="background:#3987e5"></i>pull request open, merges clean</span>
+    <span><i style="background:#d03b3b"></i>open and conflicting</span>
+    <span><i style="background:#8b8a80"></i>landed earlier, or nothing on this page</span>
+  </div>
+  <div class="scroller"><div class="fleet">__FLEETMAP__</div></div>
+  <figcaption>The same bar you were pointing at, with each tab carrying the item numbers on this
+    page that came out of it. <b>This is the join doing its real job</b> — every row is a name you
+    typed, a pid I can write to, and a peer I can now prompt. A tab marked <i>nothing on this
+    page</i> is not an idle pane; it is one whose work has not become a pull request yet, which is
+    a different thing and drawn differently.</figcaption>
+  <div class="gutter">groups and tab names read from the session's saved state; the state chip on each row is derived from that tab's pull requests, so a pane working on something unticketed shows grey however busy it is</div>
+</figure>
+
+<h2 class="sec">What a FAIL verdict does</h2>
+<p class="sub">You asked me to read more code and decide this one. Here is the decision, and the
+  reasoning is your own doctrine rather than my taste: <b>noticed-but-not-fixed work becomes a
+  falsifiable issue, never a buried note.</b> A FAIL is exactly that. But an issue is slow when the
+  agent that built the thing is still in the room, so a live owner gets both.</p>
+
+<figure>
+  <span class="lbl">06 &middot; Where a verdict goes, decided</span>
+  <div class="scroller">
+  <svg viewBox="0 0 700 260" role="img" aria-label="Decision tree routing each verdict to an issue, a note, a prompt, or nothing" font-family="ui-monospace, monospace">
+    <defs><marker id="a5" markerWidth="7" markerHeight="7" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L6,3 L0,6 z" fill="#8b8a80"/></marker></defs>
+
+    <rect x="250" y="8" width="200" height="30" rx="6" fill="rgba(57,135,229,.10)" stroke="#3987e5"/>
+    <text x="350" y="27" font-size="11" fill="#7fb4f0" text-anchor="middle">a verdict in your note map</text>
+
+    <path d="M350,38 L350,52 M120,52 L620,52" stroke="#3a3a36" fill="none"/>
+    <path d="M120,52 L120,66 M350,52 L350,66 M620,52 L620,66" stroke="#3a3a36" fill="none" marker-end="url(#a5)"/>
+
+    <rect x="40" y="70" width="160" height="26" rx="5" fill="rgba(208,59,59,.14)" stroke="#d03b3b"/>
+    <text x="120" y="88" font-size="11" fill="#f08a8a" text-anchor="middle">FAIL</text>
+    <rect x="270" y="70" width="160" height="26" rx="5" fill="rgba(250,178,25,.13)" stroke="#fab219"/>
+    <text x="350" y="88" font-size="11" fill="#f5c95f" text-anchor="middle">ODD</text>
+    <rect x="540" y="70" width="160" height="26" rx="5" fill="rgba(12,163,12,.13)" stroke="#0ca30c"/>
+    <text x="620" y="88" font-size="11" fill="#6cd46c" text-anchor="middle">PASS</text>
+
+    <path d="M120,96 L120,112" stroke="#3a3a36" marker-end="url(#a5)"/>
+    <rect x="10" y="116" width="220" height="60" rx="6" fill="rgba(208,59,59,.08)" stroke="#d03b3b"/>
+    <text x="120" y="133" font-size="10" fill="#ffffff" text-anchor="middle">a falsifiable issue, always</text>
+    <text x="120" y="147" font-size="9" fill="#c3c2b7" text-anchor="middle">problem / proof / reproduce</text>
+    <text x="120" y="159" font-size="9" fill="#c3c2b7" text-anchor="middle">verify + invalidate / done-when</text>
+    <text x="120" y="171" font-size="9" fill="#8b8a80" text-anchor="middle">your words are the proof</text>
+
+    <path d="M120,176 L120,192" stroke="#3a3a36" marker-end="url(#a5)"/>
+    <rect x="10" y="196" width="220" height="44" rx="6" fill="rgba(25,158,112,.10)" stroke="#199e70"/>
+    <text x="120" y="213" font-size="10" fill="#6cd46c" text-anchor="middle">+ owner still live? tell it</text>
+    <text x="120" y="227" font-size="9" fill="#8b8a80" text-anchor="middle">prompt if its name is unique, else a note</text>
+
+    <path d="M350,96 L350,112" stroke="#3a3a36" marker-end="url(#a5)"/>
+    <rect x="248" y="116" width="204" height="60" rx="6" fill="rgba(250,178,25,.07)" stroke="#fab219"/>
+    <text x="350" y="133" font-size="10" fill="#ffffff" text-anchor="middle">a note on the owner, no issue</text>
+    <text x="350" y="148" font-size="9" fill="#c3c2b7" text-anchor="middle">odd is not yet a claim that</text>
+    <text x="350" y="160" font-size="9" fill="#c3c2b7" text-anchor="middle">would survive being falsified</text>
+    <text x="350" y="172" font-size="9" fill="#8b8a80" text-anchor="middle">I go look before it becomes one</text>
+
+    <path d="M620,96 L620,112" stroke="#3a3a36" marker-end="url(#a5)"/>
+    <rect x="518" y="116" width="182" height="60" rx="6" fill="rgba(12,163,12,.06)" stroke="#0ca30c"/>
+    <text x="609" y="133" font-size="10" fill="#ffffff" text-anchor="middle">nothing, and that is right</text>
+    <text x="609" y="148" font-size="9" fill="#c3c2b7" text-anchor="middle">it rides in the merge summary</text>
+    <text x="609" y="160" font-size="9" fill="#8b8a80" text-anchor="middle">a pass nobody records is a pass</text>
+    <text x="609" y="172" font-size="9" fill="#8b8a80" text-anchor="middle">nobody can cite later</text>
+
+    <text x="248" y="256" font-size="10" fill="#8b8a80">an item you never touched stays UNTRIED — which is not a pass, and the run bar counts it separately</text>
+  </svg>
+  </div>
+  <figcaption><b>FAIL earns an issue because the fleet turns over faster than the bug does</b> — the
+  pane that built a thing may be gone by morning, and an issue is the only container that outlives
+  it. ODD earns a look from me first, because filing an unfalsifiable ticket wastes the next
+  reader's time. And an untried item is drawn and counted as untried, never folded into the pass
+  column.</figcaption>
+  <div class="gutter">every issue I open from your notes quotes your sentence verbatim as its proof — a verdict in your words is stronger evidence than my restatement of it</div>
+</figure>
+
+<h2 class="sec">What I need from you</h2>
+
+<div class="grill">
+  <div class="q">
+    <h4>Decided: build the rodeo binary after the current flight</h4>
+    <p>Your words. So I am not merging anything yet. A watcher is polling the board every
+      45 seconds; when the open pull requests and main both stop moving, I land everything
+      green, fix the changelog hunks on the two that conflict, build once, and install once.</p>
+    <p class="rec"><b>Done so far:</b> nothing merged, nothing built. Waiting is the instruction
+      and the watcher is the mechanism.</p>
+  </div>
+  <div class="q">
+    <h4>Decided: a FAIL verdict becomes an issue, and a note when the owner is live</h4>
+    <p>You asked me to read more and decide. Figure 06 draws the rule. It follows your own
+      standing doctrine — noticed-but-not-fixed work is a falsifiable GitHub issue, never a
+      buried note — so <b>every FAIL gets an issue with Problem, Proof, Reproduce,
+      Verify-and-Invalidate, Done-when</b>. On top of that, a live owner also gets a sticky
+      note, because an issue is slow when the agent is still in the room.</p>
+    <p class="rec"><b>And ODD gets a note only.</b> "Odd" is not yet a claim that can survive
+      falsification, and an issue that cannot be disproved is the kind nobody closes.</p>
+  </div>
+  <div class="q">
+    <h4>Decided: the pid-to-peer-name join — built tonight</h4>
+    <p>You said it sounded logical: <i>"you operate in PID land, but I operate in name land"</i>.
+      It resolves in three exact hops and <b>every pane in the window resolves</b>. The routing
+      table above now carries the real <code>SendMessage</code> name beside each pid, and flags
+      the names that two panes answer to rather than letting me flip a coin.</p>
+    <p class="rec"><b>Worth knowing:</b> it survives a restart. Pids do not — every pane got a
+      new one at 22:07 and the first version of this table was pointing at dead processes. It
+      keys on the resume uuid instead, which is stable.</p>
+  </div>
+  <div class="q">
+    <h4>Decided: an agent may launch a Terminal Delight instance without asking</h4>
+    <p>Your ruling — the annoyance is worth seeing the thing. Recorded as a standing rule, and
+      it reverses what I recommended, which was wrong.</p>
+    <p class="rec"><b>One caveat that is not a walk-back:</b> launch a <i>separate</i> instance
+      freely. Tonight's fault was the opposite move — a worktree build that took over the
+      session you were already using. Own window, own session, any time; adopting yours, no.</p>
+  </div>
+  <div class="q">
+    <h4>Still open: the changelog has now collided five times today</h4>
+    <p>Every agent appends to the top of <code>### Fixed</code> under <code>[Unreleased]</code>.
+      With a merge every few minutes, two agents in the same window always collide, and the
+      conflict is always semantically empty — both entries are true and neither replaces the
+      other. It is the only thing anything conflicts on.</p>
+    <p class="rec"><b>Recommend:</b> a union merge driver on <code>[Unreleased]</code>, or one
+      entry per file under <code>changelog.d/</code> assembled at release. Its own pull request
+      after the flight, not a fix squeezed into a merge. <b>This is the one thing on the page I
+      still need a word on.</b></p>
+  </div>
+</div>
+
+<h2 class="sec">How this list was built, and what it does not know</h2>
+<p class="sub">Every item's claim is quoted from the pull request that made it or its changelog entry, not
+  written by me. The board, the build comparison and the merge results in the table above are read from
+  <code>git</code> and <code>gh</code> at the moment this file was generated — including the tree-oid
+  comparison that says the installed binary and the tip of main are the same program. Pane addresses come
+  from the terminal's own census, per-pane scrollback search, and per-pane transcripts used only where a
+  pane's session id is not shared.</p>
+<p class="sub">Not established: whether items 11 to 17 ever worked, since I have not run one of them; who
+  owns seven of the seventeen; and whether the three chrome measurements in item 5 are right — those are
+  <b>another pane's numbers, relayed</b>, and I verified its four claims about git but not its contrast
+  arithmetic. One correction already came in from a peer after the last brief shipped, and all four of its
+  points held up, which is a reason to trust the source and not a reason to skip the check.</p>
+
+</div>
+

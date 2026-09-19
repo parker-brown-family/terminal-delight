@@ -1,0 +1,223 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>One pane, one conversation — what the fix decides</title>
+<style>
+  :root{
+    --ink:#e8e6e3; --dim:#9b9691; --bg:#12100f; --panel:#1a1817; --line:#2e2a28;
+    --red:#e5484d; --orange:#e8913a; --green:#46c08a; --blue:#5b9dd9; --amber:#e3c05c; --grey:#6f6a66;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font:16px/1.65 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
+  main{max-width:62rem;margin:0 auto;padding:3rem 1.5rem 6rem}
+  h1{font-size:1.9rem;line-height:1.25;margin:0 0 .4rem}
+  .sub{color:var(--dim);margin:0 0 2.5rem}
+  h2{font-size:1.15rem;margin:2.8rem 0 .6rem;padding-top:1.2rem;border-top:1px solid var(--line)}
+  p{margin:0 0 1rem}
+  code{font-family:ui-monospace,"JetBrains Mono",monospace;font-size:.86em;
+       background:#000;padding:.1em .35em;border-radius:3px;color:#cfe8ff}
+  figure{margin:1.6rem 0;padding:1rem;background:var(--panel);border:1px solid var(--line);border-radius:6px}
+  figcaption{color:var(--dim);font-size:.9rem;margin-top:.7rem;border-left:3px solid var(--blue);padding-left:.7rem}
+  figcaption b{color:var(--ink);font-weight:600}
+  svg{width:100%;height:auto;display:block}
+  .src{font-size:.78rem;color:var(--grey);margin-top:.5rem;font-style:italic}
+  table{border-collapse:collapse;width:100%;margin:1.2rem 0;font-size:.92rem}
+  th,td{text-align:left;padding:.45rem .6rem;border-bottom:1px solid var(--line);vertical-align:top}
+  th{color:var(--dim);font-weight:600;font-size:.82rem;text-transform:uppercase;letter-spacing:.04em}
+  .ok{color:var(--green)} .bad{color:var(--orange)} .unk{color:var(--grey)} .mine{color:var(--amber)}
+  .box{background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--amber);
+       border-radius:4px;padding:1rem 1.2rem;margin:1.4rem 0}
+  .box h3{margin:0 0 .5rem;font-size:1rem}
+  ul{margin:.3rem 0 1rem;padding-left:1.2rem} li{margin:.3rem 0}
+</style>
+<main>
+
+<h1>One pane, one conversation</h1>
+<p class="sub">What the fix decides, and what its tests actually prove — terminal-delight, pull request 576, green on every check</p>
+
+<p>Your bench was showing another agent's work because five separate parts of Terminal Delight
+each asked <em>which conversation is this pane in?</em> on their own, one pane at a time, and all
+five ended on the same last resort: <b>the newest file in that project folder</b>. With fourteen
+agents in one repository that is one answer shared by everybody.</p>
+
+<p>There is now one place that answers, it answers for the whole window at once, and — the part
+that matters — <b>it is allowed to say it does not know</b>. A pane it cannot place shows nothing
+instead of its neighbour's deliverable.</p>
+
+<h2>The four rungs, and who is allowed to stand on them</h2>
+
+<figure>
+<svg viewBox="0 0 760 250" role="img" aria-label="Four rungs of evidence, the top three usable for attribution and the bottom one refused">
+  <g font-family="ui-monospace,monospace" font-size="12.5">
+    <g>
+      <rect x="0" y="20" width="430" height="44" fill="#132a20" stroke="#46c08a" stroke-width="2"/>
+      <text x="14" y="40" fill="#46c08a" font-size="13">DECLARED</text>
+      <text x="14" y="57" fill="#9b9691">the agent named the session itself</text>
+      <rect x="0" y="70" width="430" height="44" fill="#132a20" stroke="#46c08a"/>
+      <text x="14" y="90" fill="#46c08a" font-size="13">BIRTH</text>
+      <text x="14" y="107" fill="#9b9691">it started when the conversation opened</text>
+      <rect x="0" y="120" width="430" height="44" fill="#132a20" stroke="#46c08a"/>
+      <text x="14" y="140" fill="#46c08a" font-size="13">SOLE</text>
+      <text x="14" y="157" fill="#9b9691">nothing else could own it — elimination</text>
+      <rect x="0" y="170" width="430" height="44" fill="#2a1416" stroke="#e5484d" stroke-width="2"/>
+      <text x="14" y="190" fill="#e5484d" font-size="13">GUESS</text>
+      <text x="14" y="207" fill="#9b9691">probably this one. the rung that caused the bug</text>
+    </g>
+    <g font-size="12">
+      <text x="452" y="40" fill="#e8e6e3">bench · glyph · events · recap · wall</text>
+      <text x="452" y="57" fill="#6f6a66">all five act on it</text>
+      <text x="452" y="90" fill="#e8e6e3">all five act on it</text>
+      <text x="452" y="140" fill="#e8e6e3">all five act on it</text>
+      <text x="452" y="190" fill="#e5484d">nobody acts on it</text>
+      <text x="452" y="207" fill="#6f6a66">the pane shows nothing at all</text>
+    </g>
+  </g>
+</svg>
+<figcaption><b>Figure 1 — the fix is the bottom row.</b> Every rung existed before in some form; what
+did not exist was the ability to tell them apart, so the weakest one was served with the same
+confidence as the strongest. A reader that would put one agent's name on another's work now has to
+be able to see which rung it is standing on.
+<div class="src">Drawn from the code: the four values of <code>Bond</code>, and the one call —
+<code>certain()</code> — that the five readers share.</div></figcaption>
+</figure>
+
+<h2>What the machine says now</h2>
+
+<figure>
+<svg viewBox="0 0 760 150" role="img" aria-label="Forty-three live agents sorted by how they were bound: thirty-six declared, two by birth, two refused, three with nothing to bind to">
+  <g font-family="ui-monospace,monospace" font-size="12">
+    <text x="0" y="16" fill="#9b9691">43 live agents on this machine, after the fix</text>
+    <rect x="0" y="28" width="592" height="34" fill="#132a20" stroke="#46c08a" stroke-width="2"/>
+    <text x="12" y="50" fill="#46c08a">36 · DECLARED — named their own session</text>
+    <rect x="596" y="28" width="34" height="34" fill="#132a20" stroke="#46c08a"/>
+    <text x="602" y="50" fill="#46c08a">2</text>
+    <rect x="634" y="28" width="34" height="34" fill="#2a1416" stroke="#e5484d" stroke-width="2"/>
+    <text x="640" y="50" fill="#e5484d">2</text>
+    <rect x="672" y="28" width="88" height="34" fill="#141312" stroke="#2e2a28" stroke-dasharray="3 3"/>
+    <text x="680" y="50" fill="#6f6a66">3 · none</text>
+    <text x="596" y="80" fill="#6f6a66">birth</text>
+    <text x="628" y="96" fill="#e5484d">refused</text>
+    <text x="672" y="80" fill="#6f6a66">nothing in the folder</text>
+    <text x="0" y="126" fill="#9b9691">no conversation is certain for two different panes — which is the whole claim</text>
+  </g>
+</svg>
+<figcaption><b>Figure 2 — thirty-six of forty-three name themselves, because the hook is installed now.</b>
+The two refusals are a pair of Codex panes that had both picked the same transcript while each
+looked alone in its own folder; the three with nothing are agents whose folder holds no transcript
+at all. None of those three is a pane you are watching.
+<div class="src">Measured, not estimated: <code>terminal-delight bindings</code> on this machine at
+23:40, counted by bond. That verb is new in this change.</div></figcaption>
+</figure>
+
+<h2>Three things the live run found that reasoning had not</h2>
+
+<p><b>Codex could still hand one transcript to two panes.</b> Codex conversations are found by
+reading the top of each file for a folder name — as a <em>substring</em> — so a pane sitting in
+<code>/home/parker</code> and a pane in <code>/home/parker/PROJECT</code> both matched the same
+newest file while each one looked alone. The same bug, in the half nobody was looking at. Two panes
+pointing at one transcript are now both demoted to a guess unless one of them named it.</p>
+
+<p><b>A pane can have two agents under one shell — and the wrong one was winning.</b> One of yours
+does. Looking properly at it: the older agent is <em>suspended</em> (you pressed ctrl+Z), the newer
+one is the one your keystrokes reach, and the lookup that turns a pane into an agent was walking the
+shell's children and taking the first it found — which is always the one you left behind.</p>
+
+<figure>
+<svg viewBox="0 0 760 210" role="img" aria-label="One shell with two agents: the suspended older one and the live foreground one, with the old and new rules pointing at different agents">
+  <g font-family="ui-monospace,monospace" font-size="12.5">
+    <rect x="0" y="24" width="200" height="40" fill="#1a1817" stroke="#5b9dd9" stroke-width="2"/>
+    <text x="12" y="42" fill="#5b9dd9">one pane</text>
+    <text x="12" y="58" fill="#6f6a66">shell 1320940</text>
+
+    <rect x="300" y="8" width="460" height="40" fill="#1a1817" stroke="#e8913a" stroke-width="2"/>
+    <text x="312" y="26" fill="#e8913a">agent 1384250 · SUSPENDED (ctrl+Z)</text>
+    <text x="312" y="42" fill="#6f6a66">its conversation: cfa9eefd…  · started first</text>
+
+    <rect x="300" y="72" width="460" height="40" fill="#132a20" stroke="#46c08a" stroke-width="2"/>
+    <text x="312" y="90" fill="#46c08a">agent 1390176 · FOREGROUND — your keystrokes go here</text>
+    <text x="312" y="106" fill="#6f6a66">its conversation: 470a6cfd…</text>
+
+    <path d="M200 40 C 250 40, 260 28, 300 28" stroke="#e5484d" stroke-width="2" fill="none"/>
+    <path d="M200 48 C 250 48, 260 92, 300 92" stroke="#46c08a" stroke-width="2" fill="none" stroke-dasharray="5 3"/>
+    <text x="0" y="150" fill="#e5484d">— was: first child found, which is always the older one</text>
+    <text x="0" y="172" fill="#46c08a">- - now: the terminal's foreground process group, which is the definition of "the one you are talking to"</text>
+    <text x="0" y="196" fill="#6f6a66">the kernel knew all along: tpgid on the shell's own stat line</text>
+  </g>
+</svg>
+<figcaption><b>Figure 3 — the old rule picked the agent you had put down.</b> On this pane it landed
+on the right transcript anyway, by a ninety-second timing coincidence: the two agents started
+eighteen seconds apart, so a birth match forgave the wrong process. Start the second agent an hour
+later and the pane reads the suspended one's conversation.
+<div class="src">Measured: <code>tpgid</code> from the shell's stat line, process states from
+<code>/proc</code>, and each agent's own session id from the ledger. The bond for that pane moved
+from <code>birth</code> (a coincidence) to <code>declared</code> (the live agent's own claim).</div></figcaption>
+</figure>
+
+<h2>What the tests prove, and the one that proved nothing</h2>
+
+<p>Twenty-one tests cover the resolver, and the suite is 1364 green. But a test that has never failed
+is a rumour, so each of the four rules was <b>broken on purpose</b> to see whether its guard
+noticed.</p>
+
+<table>
+  <tr><th>Rule removed</th><th>Guard</th><th>Result</th></tr>
+  <tr><td>readers stop refusing the weak rung</td><td>two unplaceable panes are told nothing</td><td class="ok">went red</td></tr>
+  <tr><td>elimination stops checking for a rival</td><td>a transcript two panes could own is not "forced"</td><td class="bad">stayed green → test sharpened, then red</td></tr>
+  <tr><td>a module reaches for the deleted resolver</td><td>source scan over every file</td><td class="ok">went red</td></tr>
+  <tr><td>a live agent's resume line is believed</td><td>the process is asked, not believed</td><td class="ok">went red</td></tr>
+</table>
+
+<p>The second row is the finding. The crowded-directory test I had written could not fail that way:
+with three transcripts in play, the rung it was meant to police never ran at all. It passed for a
+reason that had nothing to do with what it claimed to check — which is exactly the shape of a test
+that will wave a future regression through. It was replaced with two panes and one transcript, and
+then it failed properly.</p>
+
+<h2>And one the mutation exercise could not have caught</h2>
+
+<p>The first CI run went red on a test that passes on this machine and cannot pass on a busy one.
+The end-to-end feed test drives a made-up pane with process id 4242, and after this change that
+pane's binding turns on whether the process can be <em>read</em> — an unreadable agent is the single
+case where the resolver falls back to the pane's own resume line. Here 4242 was free, so the pane
+bound and the test passed. On the runner a real process was sitting on it, the fallback was
+correctly refused, nothing was pushed, and the test failed.</p>
+
+<p>The assertion was true about the feed and false about the world it assumed. It now uses a number
+above the kernel's process-id ceiling, which nothing can ever hold, with the reason written beside
+it. Worth saying plainly: <b>the only reason this surfaced as a failure rather than a twenty-minute
+stall is that the same test had been given a deadline earlier in the branch</b> — before that, it
+waited on a channel forever and took the whole suite with it.</p>
+
+<h2>Is reusing a terminal poor hygiene?</h2>
+
+<p><b>No — and after this it is not even a risk.</b> Shutting an agent down and starting a fresh one
+in the same terminal is the normal way to use it, and the machinery is built for it: the pane keeps
+its identity, the new agent writes its own ledger entry at startup, the old entry is removed when
+that session ends or swept when its process is gone. Nothing carries over.</p>
+
+<p>The one habit worth keeping is about <em>overlap</em> rather than reuse: an agent you suspend with
+ctrl+Z is still alive, still holds its conversation, and until this change was the one your pane was
+being read from. If you are finished with an agent, exit it. If you suspend one on purpose to come
+back to it, that is fine now — the pane follows the keyboard.</p>
+
+<div class="box">
+  <h3>What is yours to decide</h3>
+  <ul>
+    <li><b>The wall now clears a card it cannot attribute</b> rather than drawing probable bars.
+    That is a visible change and the one its own code comment asks for — a wrong fatigue bar is a
+    shutdown decision taken on another agent's evidence. If you would rather see a probable bar
+    than an empty card, say so and it is one line.</li>
+    <li><b>Codex has no real fleet pass.</b> It gets the honest half: alone in a folder is certain,
+    sharing one is not. A full pass means reading rollout headers properly and is its own piece of
+    work.</li>
+    <li><b>Nothing here reaches your running window until you relaunch.</b> The live repair from
+    earlier tonight — the hook, plus the forty-odd bindings written by hand — is what is holding
+    your panes apart right now.</li>
+  </ul>
+</div>
+
+<p class="src">Everything on this page came from the code, from <code>/proc</code>, or from running
+the new verb. The one number that is a count rather than a measurement is "1364 tests", which is
+what <code>cargo test</code> printed after merging main in.</p>
+
+</main>
