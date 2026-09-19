@@ -369,6 +369,21 @@ impl TerminalView {
             cx.stop_propagation();
             return true;
         }
+        // ALT+<n> LANDS ON A SHELF, above everything that could swallow a digit.
+        //
+        // Above `reading_key` in particular, which reads a bare digit as
+        // answering option `n` of a waiting question — so this has to be the
+        // thing that consumes the keystroke, not a branch further down that
+        // happens to agree. The rule itself is [`crate::workbench::shelf_chord`],
+        // where the modifiers are checked and the reasoning lives.
+        if let Some(shelf) =
+            crate::workbench::shelf_chord(ks.key.as_str(), ks.modifiers.alt, ks.modifiers.control)
+        {
+            self.bench.set_shelf(shelf);
+            cx.notify();
+            cx.stop_propagation();
+            return true;
+        }
         // A NOTE, on `alt+m`. Never on a bare `m`, which is a character.
         //
         // `m` is not in [`crate::workbench::window_chord`]'s list, so the chord

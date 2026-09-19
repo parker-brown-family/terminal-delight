@@ -26199,6 +26199,8 @@ impl Render for Workspace {
                         row("▲ / ▼", s.jump_msg),
                         row("Alt+R", s.focus),
                         row(s.k_focus_inherit_key, s.focus_inherit),
+                        row("Alt+1 … 4", s.bench_shelf),
+                        row("Alt+M", s.bench_note),
                         row("Alt+S", s.sticky),
                         row("Alt+Backspace", s.sticky_peel),
                         row(s.k_rclick_note, s.sticky_pin),
