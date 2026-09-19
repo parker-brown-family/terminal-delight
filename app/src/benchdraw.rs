@@ -2044,8 +2044,16 @@ pub fn dial_menu(rows: Vec<Div>, sk: &Skin, th: &Theme) -> Div {
     .children(rows)
 }
 
-/// One value in an open dial's list. `lit` is the value the dial is showing.
-pub fn dial_row(label: &str, lit: bool, sk: &Skin, th: &Theme) -> Div {
+/// One value in an open dial's list.
+///
+/// `lit` is the value the dial is showing. `chosen` is whether anybody SAID so
+/// — the same claim the button's ink makes, carried down into the list so the
+/// two cannot disagree: a level a person picked is the accent, a level read off
+/// the launch command is the accent at half strength, and a row that is neither
+/// is plain text. The list used to light only what a press on the dial had set,
+/// so an agent launched with `--model opus` showed OPUS above a list with
+/// nothing marked in it at all.
+pub fn dial_row(label: &str, lit: bool, chosen: bool, sk: &Skin, th: &Theme) -> Div {
     sk.chip(lit)
         .relative()
         .flex()
@@ -2054,7 +2062,11 @@ pub fn dial_row(label: &str, lit: bool, sk: &Skin, th: &Theme) -> Div {
         .cursor_pointer()
         .whitespace_nowrap()
         .text_size(px(sk.pt(Step::Note)))
-        .text_color(if lit { th.accent } else { th.text.alpha(0.85) })
+        .text_color(match (lit, chosen) {
+            (true, true) => th.accent,
+            (true, false) => th.accent.alpha(0.62),
+            _ => th.text.alpha(0.85),
+        })
         .child(label.to_string())
 }
 
@@ -2183,6 +2195,38 @@ pub fn zone(
                 w: f32::from(bounds.size.width),
                 h: f32::from(bounds.size.height),
                 hit: hit.clone(),
+            });
+        },
+        |_, _, _, _| {},
+    )
+    .absolute()
+    .inset_0()
+}
+
+/// Record where the element this is a child of ended up, without making it a
+/// click target.
+///
+/// [`zone`]'s other half: same canvas, same flat bounds, no [`crate::workbench::Hit`].
+/// It exists because one element on the bench — the root — has to be MEASURED
+/// rather than pressed: an absolutely-positioned overlay inside it is placed in
+/// coordinates relative to its padding box, and the only thing that knows where
+/// a window-space rectangle lands in that space is the root's own origin.
+///
+/// Giving the root a zone instead would have been cheaper and wrong: a
+/// root-sized rectangle at the bottom of the list answers every click that hit
+/// nothing, and "on the bench but on nothing" is an answer the wheel reads.
+///
+/// The parent must be `relative()`, exactly as for [`zone`].
+pub fn probe(
+    into: std::rc::Rc<std::cell::RefCell<Option<crate::workbench::Rect>>>,
+) -> impl gpui::IntoElement {
+    gpui::canvas(
+        move |bounds, _window, _cx| {
+            *into.borrow_mut() = Some(crate::workbench::Rect {
+                x: f32::from(bounds.origin.x),
+                y: f32::from(bounds.origin.y),
+                w: f32::from(bounds.size.width),
+                h: f32::from(bounds.size.height),
             });
         },
         |_, _, _, _| {},

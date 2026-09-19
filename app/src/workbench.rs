@@ -1047,6 +1047,48 @@ pub struct Zone {
     pub hit: Hit,
 }
 
+/// A flat rectangle that is only a measurement — no hit, nothing pressable.
+///
+/// Recorded by [`crate::benchdraw::probe`] in the same coordinates a [`Zone`]
+/// is, because an overlay has to be POSITIONED against things whose position
+/// nobody chose: where the strip's dials ended up after a flex row laid them
+/// out, and where the bench's own root is in the window.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct Rect {
+    pub x: f32,
+    pub y: f32,
+    pub w: f32,
+    pub h: f32,
+}
+
+/// The air between a dial and the list it drops.
+pub const DIAL_DROP_GAP: f32 = 6.0;
+
+/// Where an open dial's list hangs, in the bench root's own coordinates.
+///
+/// `dial` and `root` are flat window-space rectangles — the pressed dial and
+/// the bench's outermost box — and the answer is the `(right, top)` an
+/// absolutely-positioned child of that root takes to sit directly under the
+/// dial. The list used to take a constant `right` measured from the rail, which
+/// put it under the END SESSION button at the far end of the strip whichever
+/// dial had been pressed; Parker, on the model list: *"are misaligned on the
+/// drop down :("*.
+///
+/// **Right-aligned, not left.** The dials live at the right-hand end of the
+/// strip, the list is as wide as its longest word, and nothing here knows that
+/// width — so hanging it from the dial's LEFT edge is the one choice that can
+/// push it off the pane on a narrow bench. Sharing the dial's right edge cannot,
+/// by construction.
+///
+/// `None` while either rectangle is unmeasured, which is a real state and not a
+/// zero: on the very first frame of a window nothing has painted yet, and the
+/// caller falls back to the old fixed corner rather than stacking the list in
+/// the top-left.
+pub fn dial_drop(dial: Option<Rect>, root: Option<Rect>) -> Option<(f32, f32)> {
+    let (d, r) = (dial?, root?);
+    Some(((r.x + r.w) - (d.x + d.w), (d.y + d.h + DIAL_DROP_GAP) - r.y))
+}
+
 /// Which zone a FLAT point lands in.
 ///
 /// The LAST zone that contains the point wins, because zones are recorded in
@@ -1718,6 +1760,24 @@ pub fn strip_verb(state: AgentState, agent_present: bool) -> StripVerb {
     } else {
         StripVerb::End
     }
+}
+
+/// Does RETURN start an agent on this bench?
+///
+/// A bench with no agent in it offers exactly one thing, and until now the key
+/// that means *do the obvious thing* did nothing there at all: `reading_key`
+/// answers `Act`, `Act` takes the selected surface's first action, and a bench
+/// nobody has run an agent on has no surfaces to select. Parker, arriving at
+/// one: *"FROM FRESH WORKBENCH — the spin up agent should be ACTIVATED IF I
+/// HIT RETURN!"*.
+///
+/// `selected` is the guard and it is the whole subtlety. A pane whose agent has
+/// QUIT also offers the launch — one slot, two states, see [`strip_verb`] — but
+/// it is still holding everything that agent presented, and return on an open
+/// card means *take this card's first verb*. So the launch is only what return
+/// does when there is nothing else for it to do.
+pub fn return_launches(verb: StripVerb, selected: bool) -> bool {
+    verb == StripVerb::Launch && !selected
 }
 
 // ---------------------------------------------------------------------------
@@ -4948,6 +5008,76 @@ mod tests {
                 "no agent present, whatever {state:?} claims"
             );
         }
+    }
+
+    /// Return starts an agent only where there is nothing else for it to do —
+    /// and the case that makes the guard load-bearing is the pane whose agent
+    /// QUIT: it offers the launch and it is still holding that agent's cards.
+    #[test]
+    fn return_starts_an_agent_only_on_a_bench_with_nothing_else_on_it() {
+        assert!(
+            return_launches(StripVerb::Launch, false),
+            "a fresh bench offers one thing and return should take it"
+        );
+        assert!(
+            !return_launches(StripVerb::Launch, true),
+            "an open card's first verb still wins the key"
+        );
+        assert!(
+            !return_launches(StripVerb::End, false),
+            "there is already an agent in this pane"
+        );
+        assert!(!return_launches(StripVerb::End, true));
+    }
+
+    /// The list hangs under the dial that opened it, sharing its right edge —
+    /// and the number it is placed with is relative to the bench's root, not to
+    /// the window, because that is the box it is a child of.
+    #[test]
+    fn a_dials_list_hangs_under_that_dial_and_not_under_the_strips_end() {
+        // A root at (100, 50) 800 wide; a dial 420 across it, 20 tall.
+        let root = Rect {
+            x: 100.,
+            y: 50.,
+            w: 800.,
+            h: 400.,
+        };
+        let model = Rect {
+            x: 520.,
+            y: 60.,
+            w: 70.,
+            h: 20.,
+        };
+        let effort = Rect {
+            x: 600.,
+            y: 60.,
+            w: 60.,
+            h: 20.,
+        };
+        let (right, top) = dial_drop(Some(model), Some(root)).unwrap();
+        // 900 (root's right edge) − 590 (the dial's) = 310.
+        assert_eq!(right, 310.);
+        assert_eq!(top, 60. + 20. + DIAL_DROP_GAP - 50.);
+        // The whole complaint: the two dials must not resolve to one place.
+        let (other, _) = dial_drop(Some(effort), Some(root)).unwrap();
+        assert_ne!(right, other, "each dial drops under itself");
+        assert_eq!(other, 240.);
+    }
+
+    /// An unmeasured rectangle is not the origin. Before anything has painted
+    /// there is no answer, and the caller keeps its old fixed corner rather
+    /// than stacking the list in the top-left of the bench.
+    #[test]
+    fn an_unmeasured_dial_has_no_place_rather_than_the_corner() {
+        let r = Rect {
+            x: 0.,
+            y: 0.,
+            w: 10.,
+            h: 10.,
+        };
+        assert_eq!(dial_drop(None, Some(r)), None);
+        assert_eq!(dial_drop(Some(r), None), None);
+        assert_eq!(dial_drop(None, None), None);
     }
 
     #[test]

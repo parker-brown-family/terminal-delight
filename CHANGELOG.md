@@ -7,7 +7,48 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Added
+
+- **A new agent starts as whatever you told it to.** The LAUNCH AGENT panel
+  opened on three constants — claude, the first model in the list, the harness's
+  own effort — and every launch that wanted something else paid for it in
+  keystrokes, every time. Three rows at the top of the usage card (the `Σ usage`
+  face of the `</>` card, which the subscription slot in the bottom-left corner
+  opens) now set them, and the panel opens holding them. The store keeps
+  *nobody has chosen* apart from *somebody chose exactly what would have
+  happened anyway*: an unset row still shows the value in force, drawn with a
+  quiet edge and tagged `unset`, against the accent and `chosen` of a decision.
+  Pressing the lit chip again clears it back to the harness's own.
+
 ### Fixed
+
+- **Return starts the agent on a bench that is offering one.** A workbench with
+  no agent in it shows a single LAUNCH AGENT button, and the key that means *do
+  the obvious thing* did nothing at all there: return takes the selected
+  surface's first verb, and a bench nobody has run an agent on has no surfaces.
+  It now opens the launcher — unless a card is open, whose first verb still
+  wins the key.
+
+- **A dial's list drops under the dial that opened it.** The model and effort
+  lists were placed at a fixed offset from the rail, which put both of them
+  under the END SESSION button at the far end of the strip whichever dial had
+  been pressed. Each now hangs from its own button, sharing its right edge.
+
+- **The open list lights the value the dial is showing.** The button resolved
+  what a pane is running from three sources — a press on the dial, the
+  `--model` on the command that started the agent, then the harness itself —
+  and the list underneath it looked only at the first, so a pane launched with
+  `--model opus` read `OPUS` above a list with nothing marked in it. Both now
+  ask one resolver, and the row's ink carries the same claim the button's does:
+  accent for a value somebody chose, half-strength for one read off the launch
+  command.
+
+- **The agent wall's header no longer counts the fleet twice.** Six unlabelled
+  glyph counters sat between the name and the token totals, setting the same
+  state filter the bordered WORKING / DONE / IDLE chips two rows below set — the
+  same control twice, one of them unreadable, and their numbers were fleet-wide
+  while the chips' are context-aware, so the two rows contradicted each other
+  whenever any filter was on. The chips stay; the glyphs are gone.
 
 - **Changing the model or the effort no longer sends your half-written prompt.**
   The bench composer mirrors the agent's own line editor, so a draft is already
