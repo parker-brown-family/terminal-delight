@@ -9,31 +9,23 @@
 //! and unit-tested against fixture transcripts. It only ever *reads*.
 
 use crate::mcp::ToolEvent;
-use crate::session;
 use serde_json::Value;
 use std::io::{Read, Seek, SeekFrom};
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(test)]
+use std::path::PathBuf;
 
 /// Cap each read to the final chunk of a transcript — a long conversation can
 /// be many MB, but the recent tool calls are always at the end.
 const TAIL_BYTES: u64 = 256 * 1024;
 
-/// Resolve the transcript file a pane is using, from its mode label, cwd, and
-/// `session` (the resume command, which carries the fd-accurate session id).
-/// `None` for non-agent panes (a plain shell has no transcript) or no cwd.
-pub fn transcript_for(
-    mode: &str,
-    cwd: Option<&str>,
-    session: Option<&str>,
-    home: &Path,
-) -> Option<PathBuf> {
-    let cwd = cwd?;
-    match mode {
-        "CLAUDE" => session::claude_transcript(cwd, session, home),
-        "CODEX" => session::codex_transcript(cwd, home),
-        _ => None,
-    }
-}
+// `transcript_for(mode, cwd, session, home)` used to live here — one pane in,
+// one transcript out. Deleted with the fallback it fronted: a pane's
+// conversation is not a fact about that pane alone, because two panes may not
+// hold one, and asking one at a time is what let them (#564).
+//
+// [`crate::paneident::certain`] is the way to ask now: the whole window in, the
+// evidenced bindings out, and silence for the panes it cannot place.
 
 /// The last `limit` structured tool-call events from a transcript JSONL, oldest
 /// first. Tolerant: an unparseable or irrelevant line is skipped, never fatal;
@@ -319,10 +311,26 @@ mod tests {
         assert!(evs.is_empty());
     }
 
+    /// `transcript_for_only_resolves_agents_with_a_cwd` lived here. Its subject
+    /// is gone; the same two refusals are asserted against the resolver that
+    /// replaced it, in `paneident`.
     #[test]
-    fn transcript_for_only_resolves_agents_with_a_cwd() {
+    fn a_shell_and_a_cwdless_pane_still_resolve_to_nothing() {
         let home = Path::new("/nonexistent");
-        assert!(transcript_for("SHELL", Some("/tmp"), None, home).is_none());
-        assert!(transcript_for("CLAUDE", None, None, home).is_none());
+        let facts = vec![
+            crate::paneident::PaneFacts {
+                shell_pid: 1,
+                mode: "SHELL".into(),
+                cwd: Some("/tmp".into()),
+                resume: None,
+            },
+            crate::paneident::PaneFacts {
+                shell_pid: 2,
+                mode: "CLAUDE".into(),
+                cwd: None,
+                resume: None,
+            },
+        ];
+        assert!(crate::paneident::certain(&facts, home).is_empty());
     }
 }

@@ -9,6 +9,37 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ### Fixed
 
+- **One pane, one conversation.** A bench, a tool glyph, a pane's tool-call feed
+  and a desktop recap all asked the same question — *which conversation is this
+  pane in?* — and all asked it one pane at a time, ending in "the newest
+  `.jsonl` in that project directory". That is the same answer for every pane
+  sharing a directory. With fourteen agents in one repository, eight of them with
+  nothing on this machine naming their session, eight benches read one
+  conversation and each showed that agent's deliverable as its own. The wall
+  already did this properly — one pass, every transcript claimable once — so its
+  resolver is now the only one: `paneident` binds the whole window at once and
+  labels each binding with the rung that produced it (a claim the agent pushed, a
+  process that started when the conversation opened, elimination, or a
+  preference between live conversations). Readers that attribute work take the
+  first three and refuse the fourth, which means a pane that cannot be placed
+  shows nothing rather than its neighbour's work. The per-pane resolver is
+  deleted rather than deprecated, and a source scan fails the build if one comes
+  back. Two rungs were added on the way: the session id Claude Code's own
+  scratchpad descriptor names, which is the only thing left that binds a
+  conversation to a *pid* now that transcripts are opened and closed per write;
+  and the ledger the SessionStart hook pushes, which the wall was not consulting.
+  Codex panes have no fleet pass yet and get the honest half of one — a pane
+  alone in its directory is bound by elimination, a crowded one only by naming
+  its own session, and two panes pointing at one rollout are both demoted, which
+  is not theoretical: the rollout lookup matches a cwd as a SUBSTRING, so a pane
+  in `/home/parker` and a pane in `/home/parker/PROJECT` selected the same file
+  while each looked alone. (#564)
+- **A ledger entry with a space in it is still a ledger entry.** The JSON reader
+  behind the agent-session ledger matched the literal `"session_id":"` — the
+  shape a compact writer emits, and not the one any pretty-printer does — so a
+  valid hand-written entry parsed as *no id at all* and the reader fell through
+  to forensics as though the file were absent. Whitespace around the colon is
+  allowed now, and a non-string value is still refused. (#564)
 - **The small print on a card is small, not invisible.** Every subtitle, cost
   line, consequence, section tag and provenance line on the workbench was drawn
   in the palette's `faint` role. `faint` is furniture — it is what a divider is

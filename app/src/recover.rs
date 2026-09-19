@@ -143,11 +143,23 @@ fn read_head(p: &Path, max: usize) -> String {
 /// First plain-string value of `"key":"..."` in `s` (minimal escape handling).
 /// Returns None when the key is absent or its value isn't a JSON string (e.g.
 /// `"content":[…]`), so an object/array value never gets mis-parsed.
+///
+/// Whitespace around the colon is allowed. It used to be a literal
+/// `"key":"` match, which is the shape a compact writer emits and NOT the shape
+/// any pretty-printer does — so a perfectly valid ledger entry written as
+/// `{"session_id": "…"}` parsed as *no session id at all*, silently, and the
+/// reader fell through to its forensic rungs as though the file were not there.
+/// Found by writing one by hand.
 pub(crate) fn json_str(s: &str, key: &str) -> Option<String> {
-    let pat = format!("\"{key}\":\"");
-    let start = s.find(&pat)? + pat.len();
+    let at = s.find(&format!("\"{key}\""))? + key.len() + 2;
+    let value = s
+        .get(at..)?
+        .trim_start()
+        .strip_prefix(':')?
+        .trim_start()
+        .strip_prefix('"')?;
     let mut out = String::new();
-    let mut it = s[start..].chars();
+    let mut it = value.chars();
     while let Some(c) = it.next() {
         match c {
             '\\' => {
@@ -207,6 +219,26 @@ mod tests {
         // a non-string value is not mis-parsed as a string
         assert_eq!(json_str(line, "arr"), None);
         assert_eq!(json_str(line, "missing"), None);
+    }
+
+    /// A pretty-printed entry is still JSON, and the ledger reader is the caller
+    /// that made this matter: a hand-written `{"session_id": "…"}` parsed as an
+    /// absent id, so a pane that HAD named its session fell through to the
+    /// forensic rungs — and looked, from the outside, exactly like a pane that
+    /// had said nothing at all.
+    #[test]
+    fn a_space_after_the_colon_is_still_a_value() {
+        assert_eq!(
+            json_str(r#"{"session_id": "abc-123", "pid": 42}"#, "session_id").as_deref(),
+            Some("abc-123")
+        );
+        assert_eq!(
+            json_str("{\n  \"cwd\" : \"/home/x\"\n}", "cwd").as_deref(),
+            Some("/home/x")
+        );
+        // Still not a string value, however it is spaced.
+        assert_eq!(json_str(r#"{"arr" : [1,2]}"#, "arr"), None);
+        assert_eq!(json_str(r#"{"n": 7}"#, "n"), None);
     }
 
     #[test]
