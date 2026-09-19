@@ -1916,28 +1916,47 @@ fn strip_face(open: bool, primary: bool, sk: &Skin, th: &Theme) -> Div {
 ///
 /// `live` is whether a press would be read now; a dial that cannot be pressed
 /// says so by going quiet rather than by disappearing, because a control that
-/// vanishes and returns is one nobody learns the position of.
+/// vanishes and returns is one nobody learns the position of. **Quiet is the
+/// CARET's job, never the value's** — see [`dial_ink`].
 pub fn dial(value: &str, known: bool, open: bool, live: bool, sk: &Skin, th: &Theme) -> Div {
     strip_face(open, false, sk, th)
         .when(live, |d| d.cursor_pointer())
         .text_size(px(sk.pt(Step::Note)))
-        // Three inks for three states, and the middle one is the point: a
-        // value somebody chose reads as text, a value read off the launch
-        // command or taken from the harness reads faint, and neither of them
-        // reads as the other. The word is the same either way; the ink is the
-        // whole of the claim.
-        .text_color(match (live, known) {
-            (false, _) => th.faint.alpha(0.45),
-            (true, true) => th.text.alpha(0.92),
-            (true, false) => th.text.alpha(0.55),
-        })
+        .text_color(th.text.alpha(dial_ink(known)))
         .child(sk.caps(&value.to_uppercase()))
         .child(
             div()
                 .text_size(px(sk.pt(Step::Tag)))
+                // The affordance, and the only part of the chip that is allowed
+                // to answer to `live`: this arrow says a press would open a
+                // list, and while the agent is working it would not.
                 .text_color(th.faint.alpha(if live { 0.9 } else { 0.35 }))
                 .child("\u{25be}"),
         )
+}
+
+/// How strongly a dial draws its VALUE, as an alpha on the theme's text ink.
+///
+/// **It takes `known` and nothing else, and that is the whole point.** Which
+/// model and which effort a pane's agent is running is a fact read off the
+/// launch command; it does not stop being true while that agent is busy, and it
+/// is most worth reading exactly then — a turn in flight is when a person asks
+/// *which model is burning my tokens on this*. The chip used to switch to
+/// `faint` at 0.45 alpha whenever the dials were not pressable, which is every
+/// working turn, and on the lit header of a working pane that reads as two empty
+/// boxes. Parker, with a screenshot of each: *"when idle we can see the model
+/// and effort, but when in flight it is hard to read — should ALWAYS be
+/// visible!"*.
+///
+/// So pressability is drawn by the caret and the cursor, and the ink carries one
+/// claim only: did somebody CHOOSE this value, or is it inherited from the
+/// harness. Two states, two inks, neither of them a disappearing act.
+pub fn dial_ink(known: bool) -> f32 {
+    if known {
+        0.92
+    } else {
+        0.62
+    }
 }
 
 /// The list a dial opens: the harness's own values, the current one lit.
@@ -3009,5 +3028,69 @@ mod tests {
             .map(|v| verdict_word(*v))
             .collect();
         assert_eq!(words, vec!["undecided", "accepted", "rejected"]);
+    }
+
+    /// A dial's value is readable whatever the agent is doing.
+    ///
+    /// Two halves, because the value half cannot be checked by looking at a
+    /// colour. [`dial_ink`] takes `known` and no liveness at all, so the
+    /// regression is unreachable through it — and the scan below is what stops
+    /// it coming back through the renderer instead, which is exactly how it
+    /// arrived: `match (live, known)` with a `faint` arm at 0.45 for every
+    /// state where a press would not be read.
+    ///
+    /// The scan slices the `dial` renderer out of the CODE half (tests split
+    /// off first) and reads only the line that inks the value — the one before
+    /// the `sk.caps` child. `live` is legitimately consulted elsewhere in that
+    /// function, by the cursor and by the caret, and a scan of the whole body
+    /// would fire on both.
+    ///
+    /// Mutation-tested when written: the old `match (live, known)` arm was put
+    /// back and this test named the line; putting the `faint` ink on the caret
+    /// alone left it passing, which is the innocent case it must not cry wolf
+    /// on.
+    #[test]
+    fn a_dial_value_is_legible_whatever_the_agent_is_doing() {
+        assert!(
+            dial_ink(true) > dial_ink(false),
+            "a chosen value still has to read louder than an inherited one"
+        );
+        assert!(
+            dial_ink(false) >= 0.55,
+            "an inherited value is still a value somebody has to read: {}",
+            dial_ink(false)
+        );
+
+        let src = include_str!("benchdraw.rs");
+        let (code, _tests) = src.split_once("\n#[cfg(test)]").expect("a test module");
+        let at = code.find("pub fn dial(").expect("the dial renderer");
+        let body = &code[at..];
+        let ends = body
+            .find(".child(sk.caps(")
+            .expect("the dial draws its value");
+        let head: String = body[..ends]
+            .lines()
+            .map(|l| l.split("//").next().unwrap_or(""))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let inked = head
+            .rfind(".text_color(")
+            .map(|i| &head[i..])
+            .expect("the value is inked");
+        assert!(
+            !inked.contains("live"),
+            "the value's ink reads the agent's state: {}",
+            inked.trim()
+        );
+        assert!(
+            !inked.contains("faint"),
+            "the value is drawn in the faint ink: {}",
+            inked.trim()
+        );
+        assert!(
+            inked.contains("dial_ink("),
+            "the value's ink goes through dial_ink: {}",
+            inked.trim()
+        );
     }
 }
