@@ -2969,6 +2969,19 @@ impl Bench {
     }
 
     /// Anything anywhere on this bench the person has not looked at.
+    ///
+    /// **A probe, not a surface.** The one thing that drew this number was the
+    /// bare `2` beside the BENCH toggle, and that badge is gone — see the face
+    /// toggle in `pane.rs`. What remains live is the SET it counts: every shelf
+    /// row asks `unseen.contains(id)` for its own dot, and `shelf_counts` asks
+    /// it per shelf. Those are where the distinction is worth drawing, because
+    /// a row says what it is and a digit on the header did not.
+    ///
+    /// So this stays `cfg(test)`: four tests assert on the marking rules
+    /// through it, and gating it means the compiler will say so the day
+    /// somebody wants a whole-bench count on a real surface again, rather than
+    /// letting a dead aggregate sit around looking supported.
+    #[cfg(test)]
     pub fn unseen_total(&self) -> usize {
         self.unseen.len()
     }

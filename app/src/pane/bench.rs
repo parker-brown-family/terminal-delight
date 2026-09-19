@@ -633,11 +633,6 @@ impl TerminalView {
         true
     }
 
-    /// How many surfaces this pane is holding that nobody has looked at.
-    pub fn bench_unseen(&self) -> usize {
-        self.bench.unseen_total()
-    }
-
     /// What the agent is doing, in the header's own words.
     ///
     /// Read off the same three flags the header status uses rather than
