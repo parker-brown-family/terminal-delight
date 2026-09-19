@@ -201,6 +201,59 @@ pub fn clip_evidence(row: &str) -> Option<String> {
 /// fifteenth-from-last row happened to change.
 pub const PROMPT_TAIL_ROWS: usize = 14;
 
+/// How many lines of the person's own turn are ever kept.
+///
+/// The overview draws at most four and reads one more, so that a message that
+/// ran on can say so rather than stopping mid-word. See
+/// [`crate::workbench::ask_lines`].
+pub const ASKED_LINES: usize = 6;
+
+/// The person's own last turn, out of a window of rendered rows.
+///
+/// ONE reader of this rule, called over two different windows: the bottom of
+/// the screen on the pane's fast clock, where a message is caught the moment
+/// it is echoed, and a deep walk of the scrollback once a second, which is the
+/// only thing that can find a turn sent before this window was watching. Two
+/// implementations would be two answers, and they would differ exactly on the
+/// screens where it matters — a long message, a message under a tool result,
+/// a message that is half off the top of the window.
+///
+/// Walks UP to the last row that reads as human input and carries text, then
+/// takes the lines under it until the agent starts talking. Everything about
+/// which rows those are lives in [`is_human_input_line`].
+pub fn human_message(rows: &[String], max_lines: usize) -> Vec<String> {
+    let strip = |t: &str| -> String {
+        t.trim_start()
+            .trim_start_matches(['\u{276f}', '>', '\u{258c}', '\u{00b7}', ' '])
+            .trim()
+            .to_string()
+    };
+    // EMPTY means "no turn of theirs is in these rows", which is a different
+    // fact from an empty message and the caller acts on the difference: it
+    // keeps whatever it last saw rather than replacing it with nothing.
+    let Some(start) = rows
+        .iter()
+        .rposition(|r| is_human_input_line(r) && !strip(r).is_empty())
+    else {
+        return Vec::new();
+    };
+    let mut out = vec![strip(&rows[start])];
+    for row in rows.iter().skip(start + 1) {
+        let t = row.trim();
+        // The agent's own first line, the next turn's prompt, or the footer
+        // — any of them ends the message, and an empty row ends it too
+        // because a turn is a block.
+        if t.is_empty() || is_human_input_line(row) || t.starts_with('?') || t.starts_with("esc ") {
+            break;
+        }
+        if out.len() >= max_lines {
+            break;
+        }
+        out.push(t.to_string());
+    }
+    out
+}
+
 /// A cheap identity for the rows a predicate was just evaluated over.
 ///
 /// Not a checksum and not a diff — only enough to answer "is this the same
@@ -476,6 +529,95 @@ pub fn round_on_screen(rows: &[String]) -> Option<Round> {
     (steps.len() > 1).then_some(Round { steps, submitting })
 }
 
+/// What is on the bottom of this agent's screen, for a dial press that is
+/// waiting to hear.
+///
+/// THREE answers, not two, and the third is the one that matters: a picker
+/// that is not ours is not the same as no picker. Both mean *do not press
+/// anything*, and only one of them means *do not type anything either* — a
+/// draft typed back while any menu is up is a menu keystroke, and the digits
+/// in somebody's sentence choose options. Collapsing `Other` into `None`
+/// would have made the safe-looking answer the dangerous one.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Picker {
+    /// Nothing is up. The far end is a line editor and can be typed at.
+    None,
+    /// Something is up, and it is not the dial's confirmation. Keep hands off
+    /// the keyboard entirely.
+    Other,
+    /// The harness's own confirmation: the Yes row and where the cursor is,
+    /// in the picker's up/down order, which is what
+    /// [`crate::workbench::menu_keys`] drives.
+    Confirm { yes: usize, cursor: usize },
+}
+
+/// The harness's OWN confirmation of a `/model` or `/effort` the bench typed.
+///
+/// Three things all have to hold before this answers [`Picker::Confirm`], and
+/// each one is here to refuse a different wrong screen:
+///
+/// - the picker's HEADING carries `word` — `model` or `effort`, from the dial
+///   that was pressed. A permission gate is also a small picker with a Yes in
+///   it, and pressing that would approve a tool call nobody read.
+/// - exactly TWO options. The harness's confirm is yes/no; a three-way is
+///   somebody else's question.
+/// - one of them opens with `yes`. Nothing here decides which answer is
+///   right — the person already decided by pressing the dial — but a picker
+///   whose options are not a yes and a no is not the one we are looking for.
+///
+/// It is only ever asked while a press is in flight ([`crate::workbench::
+/// DialSent`]), so a screen that satisfies all three a minute later is never
+/// even looked at.
+pub fn harness_confirm(rows: &[String], word: &str) -> Picker {
+    let Some(q) = question_on_screen(rows) else {
+        return Picker::None;
+    };
+    // NOT EVERY NUMBERED BLOCK IS A MENU. An agent's own reply is full of
+    // numbered lists, and reading one as a live picker would hold the
+    // person's draft until the screen happened to change — the composer
+    // silently refusing to send, for as long as a finished answer sat there.
+    // So `Other` needs the footer the CLI prints only under a LIVE picker,
+    // which is what [`wants_human`] is: strict, anchored, and already the
+    // predicate this window trusts to say an agent has stopped for a person.
+    //
+    // The CONFIRM arm below does not take that gate, and that asymmetry is
+    // deliberate: naming the dial in a question is the stronger signal, and
+    // a footer this window failed to recognise must not turn into a draft
+    // typed into a picker.
+    let live = wants_human(rows);
+    if q.options.len() != 2 {
+        return if live { Picker::Other } else { Picker::None };
+    }
+    // The HEADING, found here rather than taken from the parse.
+    //
+    // `question_on_screen` takes the nearest line above the first option,
+    // which for this picker is the harness's REASON — *"your next response
+    // will be slower and use more tokens"* — and the word that identifies the
+    // dial is a line further up. So the whole screen is searched for a
+    // question that names it, and `?` is what keeps that from matching the
+    // person's own echoed `/effort max` two rows above.
+    if !rows.iter().any(|r| {
+        let t = prompt_sentence(r.trim());
+        t.ends_with('?') && t.to_ascii_lowercase().contains(word)
+    }) {
+        return if live { Picker::Other } else { Picker::None };
+    }
+    let yes = q
+        .options
+        .iter()
+        .position(|o| o.label.trim().to_ascii_lowercase().starts_with("yes"));
+    match (yes, q.cursor) {
+        (Some(yes), Some(cursor)) => Picker::Confirm {
+            yes: crate::workbench::nav_index(yes, q.submit),
+            cursor,
+        },
+        // A picker we cannot drive is still a picker, and that is the half
+        // of this answer that keeps a draft from being typed into it.
+        _ if live => Picker::Other,
+        _ => Picker::None,
+    }
+}
+
 pub fn question_on_screen(rows: &[String]) -> Option<Question> {
     let numbered = collect_options(rows)?;
     let (first_line, options, cursor, submit) = numbered;
@@ -687,6 +829,193 @@ pub fn screen_question_id(q: &Question) -> SurfaceId {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The harness's own confirmation of a dial press.
+    ///
+    /// **Half measured, half inferred, and the halves are worth separating.**
+    /// The four strings are read out of the shipped Claude Code binary
+    /// (2.1.274): `Switch model?`, `Change effort level?`, `Your next response
+    /// will be slower and use more tokens`, `Yes, switch to `, `No, go back`.
+    /// The LAYOUT — a bare question line, a blank, a numbered pair with the
+    /// gutter mark on the cursor — is the same select component every other
+    /// fixture in this file was transcribed from, not a photograph of this
+    /// particular picker.
+    ///
+    /// If the real one differs, [`harness_confirm`] answers `None`, the
+    /// window presses nothing, and the person answers the question with their
+    /// own hand — which is exactly what happens today. The failure of this
+    /// guess is a feature that does not arrive, never a keystroke sent
+    /// somewhere it was not wanted.
+    fn confirm_rows(head: &str, yes: &str) -> Vec<String> {
+        [
+            // The echoed command, with the caret this window has MEASURED off
+            // four live panes: `❯`, U+276F. It is here because it contains
+            // the word `effort` and must not be what satisfies the match.
+            "❯ /effort max",
+            "",
+            head,
+            "Your next response will be slower and use more tokens",
+            "",
+            &format!("❯ 1. {yes}"),
+            "  2. No, go back",
+            "",
+            "esc to cancel",
+        ]
+        .iter()
+        .map(|r| r.to_string())
+        .collect()
+    }
+
+    #[test]
+    fn the_window_presses_yes_on_the_dial_question_and_on_nothing_else() {
+        let rows = confirm_rows("Change effort level?", "Yes, switch to max");
+        // Row zero is Yes, and the cursor is already on it — so the answer is
+        // a bare return, which is what `menu_keys` makes of (0, 0).
+        assert_eq!(
+            harness_confirm(&rows, "effort"),
+            Picker::Confirm { yes: 0, cursor: 0 }
+        );
+        // …but not for the OTHER dial. A press on the model dial must not be
+        // satisfied by an effort question that happened to be on screen —
+        // and the answer is `Other`, not `None`: something IS up, and that
+        // difference is what stops a draft being typed into it.
+        assert_eq!(harness_confirm(&rows, "model"), Picker::Other);
+
+        let rows = confirm_rows("Switch model?", "Yes, switch to opus");
+        assert_eq!(
+            harness_confirm(&rows, "model"),
+            Picker::Confirm { yes: 0, cursor: 0 }
+        );
+
+        // A quiet screen is the third answer, and the only one that lets the
+        // window type at all.
+        let quiet: Vec<String> = ["❯ /effort max", "", "❯"]
+            .iter()
+            .map(|r| r.to_string())
+            .collect();
+        assert_eq!(harness_confirm(&quiet, "effort"), Picker::None);
+
+        // AND A NUMBERED LIST IN THE AGENT'S OWN PROSE IS NOT A MENU.
+        //
+        // The case that makes `Other` dangerous if it is read too widely: a
+        // finished reply ending in a numbered list sits on screen
+        // indefinitely, and reading it as a live picker would hold the
+        // person's composer for as long as it did. There is no footer, so
+        // there is no picker.
+        let prose: Vec<String> = [
+            "Three things are wrong with it:",
+            "  1. the dial does not confirm",
+            "  2. the menu does not close",
+            "  3. the table does not fit",
+            "",
+            "❯",
+        ]
+        .iter()
+        .map(|r| r.to_string())
+        .collect();
+        assert_eq!(
+            harness_confirm(&prose, "effort"),
+            Picker::None,
+            "a numbered list in a finished reply held the composer"
+        );
+
+        // THE SCREEN THIS MUST NEVER ANSWER. A permission gate is also a
+        // small picker with a Yes in it, and it can be on screen when a dial
+        // is pressed — the dials are live in the `Asking` state. Pressing
+        // this one would approve a tool call nobody read.
+        let gate: Vec<String> = [
+            "Bash command",
+            "  rm -rf ~/Work/terminal-delight/app/target",
+            "Do you want to proceed?",
+            "❯ 1. Yes",
+            "  2. Yes, and don't ask again for rm commands",
+            "  3. No, and tell Claude what to do differently",
+            "esc to cancel",
+        ]
+        .iter()
+        .map(|r| r.to_string())
+        .collect();
+        assert_eq!(
+            harness_confirm(&gate, "effort"),
+            Picker::Other,
+            "a permission gate is not a dial confirmation"
+        );
+        // Two options and a Yes, but about something else entirely — and
+        // WITH the footer, which is what makes it a live picker rather than
+        // a list somebody printed.
+        let other: Vec<String> = [
+            "Overwrite the existing file?",
+            "❯ 1. Yes, overwrite it",
+            "  2. No, go back",
+            "esc to cancel",
+        ]
+        .iter()
+        .map(|r| r.to_string())
+        .collect();
+        assert_eq!(harness_confirm(&other, "effort"), Picker::Other);
+    }
+
+    #[test]
+    fn a_confirmation_whose_yes_is_the_second_row_is_walked_to() {
+        // Nothing here assumes Yes is first. The harness puts its cursor
+        // where it likes, and an answer sent by position rather than by
+        // walking would press whatever happened to be highlighted.
+        let rows: Vec<String> = [
+            "Change effort level?",
+            "❯ 1. No, go back",
+            "  2. Yes, switch to max",
+        ]
+        .iter()
+        .map(|r| r.to_string())
+        .collect();
+        let Picker::Confirm { yes, cursor } = harness_confirm(&rows, "effort") else {
+            panic!("the confirmation was not recognised");
+        };
+        assert_eq!((yes, cursor), (1, 0));
+        assert_eq!(
+            crate::workbench::menu_keys(yes, cursor),
+            b"\x1b[B\r".to_vec(),
+            "one row down, then return"
+        );
+    }
+
+    #[test]
+    fn the_persons_own_turn_is_read_out_of_whatever_rows_are_offered() {
+        // One rule, two windows — this is the function the fast clock runs
+        // over fourteen rows and the slow one runs over two thousand. The
+        // message is the LAST human line and the lines under it, and it
+        // stops where the agent starts talking.
+        let rows: Vec<String> = [
+            "❯ an older question nobody is answering now",
+            "  some reply to it",
+            "",
+            "❯ fix the login bug",
+            "  and while you are there, the logout one",
+            "",
+            "I'll start with the session cookie.",
+        ]
+        .iter()
+        .map(|r| r.to_string())
+        .collect();
+        assert_eq!(
+            human_message(&rows, ASKED_LINES),
+            vec![
+                "fix the login bug".to_string(),
+                "and while you are there, the logout one".to_string()
+            ]
+        );
+        // EMPTY is a real answer and the caller depends on it: it means "no
+        // turn of theirs is in these rows", which is why a latch keeps what
+        // it last saw instead of replacing it with nothing.
+        let quiet: Vec<String> = ["running 1077 tests", "ok"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert!(human_message(&quiet, ASKED_LINES).is_empty());
+        // And the empty live input box is not a message.
+        let idle: Vec<String> = ["❯", "  ", ""].iter().map(|s| s.to_string()).collect();
+        assert!(human_message(&idle, ASKED_LINES).is_empty());
+    }
 
     /// The real thing, transcribed from a pane on 2026-09-17 — the question
     /// that exposed the whole gap, because it was on screen and nowhere in

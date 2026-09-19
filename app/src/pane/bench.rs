@@ -80,6 +80,35 @@ impl TerminalView {
         Some((hit?, flat))
     }
 
+    /// An open dial menu takes the next click, wherever it lands — including
+    /// on nothing at all. Answers whether it took this one.
+    ///
+    /// Closing the menu used to be a second press on the dial and nothing
+    /// else, so a person who opened one to look and then went back to reading
+    /// left a list of effort levels floating over the card they were reading,
+    /// over the spine, over everything, with no way out they would think to
+    /// try. Parker, with one open across a whole screenshot: *"effort is stuck
+    /// to the workbench after I clicked it open and did not change it"*.
+    ///
+    /// It is resolved BEFORE the zone lookup because most of the screen is not
+    /// a zone: a click on the bench's empty background reaches no control at
+    /// all, and that is the click most likely to mean *go away*. And it is
+    /// SWALLOWED rather than passed through, which is what every other menu on
+    /// this desk does — the press that dismisses a popup is not also a press
+    /// on what the popup was covering.
+    pub(super) fn bench_dismiss_dial(
+        &mut self,
+        hit: Option<&crate::workbench::Hit>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if !crate::workbench::dial_dismisses(self.wb_dial.is_some(), hit) {
+            return false;
+        }
+        self.wb_dial = None;
+        cx.notify();
+        true
+    }
+
     /// Act on a bench click. One `match`, so a control added to [`Hit`] is a
     /// control the compiler makes this handle.
     pub(super) fn bench_hit(
@@ -434,11 +463,16 @@ impl TerminalView {
                     if q.answer == crate::surface::Answered::Waiting
             );
             match crate::workbench::peel(
+                self.wb_dial.is_some(),
                 self.wb_review.is_some(),
                 talking,
                 self.bench.selected().is_some(),
                 card_waits,
             ) {
+                Peel::Dial => {
+                    self.wb_dial = None;
+                    cx.notify();
+                }
                 Peel::Gallery => {
                     self.wb_review = None;
                     cx.notify();
@@ -914,7 +948,7 @@ impl TerminalView {
         }
         self.wb_dial = None;
         let draft = self.wb_compose.clone().unwrap_or_default();
-        let bytes = crate::workbench::aside_bytes(&format!("{} {value}", which.command()), &draft);
+        let bytes = crate::workbench::dial_bytes(&format!("{} {value}", which.command()), &draft);
         // The erase takes any pasted image with it, and nothing this side can
         // type one back. Say so in the only place that can: the mirror stops
         // counting attachments the agent is no longer holding.
@@ -923,7 +957,55 @@ impl TerminalView {
                 line.forget_pastes();
             }
         }
+        // The command goes FIRST and the hold goes on after it, because the
+        // hold is on everything the person does next — including the draft
+        // this press just took off their screen.
         self.bench_deliver(bytes, cx);
+        self.wb_dial_sent = Some(crate::workbench::DialSent {
+            which,
+            text: draft.text().to_string(),
+            caret: draft.caret(),
+            sent_ms: crate::surfacefeed::now_ms(),
+            answered: false,
+        });
+    }
+
+    /// Carry a dial press through the harness's own confirmation, then give
+    /// the person their sentence back.
+    ///
+    /// Called from the pane's 120ms clock with the bottom of the screen, and
+    /// only while a press is in flight. The judgement is
+    /// [`crate::workbench::dial_step`] and the reading is
+    /// [`crate::screenread::harness_confirm`]; what is left here is the
+    /// writing, which is the part that cannot be tested without a terminal.
+    pub(super) fn dial_watch(&mut self, rows: &[String], cx: &mut Context<Self>) {
+        use crate::workbench::DialStep;
+        let Some(sent) = self.wb_dial_sent.clone() else {
+            return;
+        };
+        let picker = crate::screenread::harness_confirm(rows, sent.which.confirm_word());
+        match crate::workbench::dial_step(&sent, picker, crate::surfacefeed::now_ms()) {
+            DialStep::Wait => {}
+            DialStep::Answer { to, from } => {
+                if let Some(live) = self.wb_dial_sent.as_mut() {
+                    live.answered = true;
+                }
+                self.dial_answer(crate::workbench::menu_keys(to, from), cx);
+            }
+            DialStep::Settle => {
+                // Cleared BEFORE the write, so the write is not held by the
+                // hold it is ending.
+                self.wb_dial_sent = None;
+                let bytes = crate::workbench::restore_bytes(&sent.text, sent.caret);
+                if !bytes.is_empty() {
+                    self.bench_deliver(bytes, cx);
+                }
+                // Then everything they typed while it was in flight, in the
+                // order they typed it.
+                self.bench_drain(cx);
+                cx.notify();
+            }
+        }
     }
 
     /// Did the bench type into this pane recently enough that the agent is
@@ -1736,14 +1818,35 @@ impl TerminalView {
     /// flash, so a write is something a person sees happen.
     pub(super) fn bench_deliver(&mut self, bytes: Vec<u8>, cx: &mut Context<Self>) {
         if self.bench_may_write() {
-            let now = crate::surfacefeed::now_ms();
-            self.session.notifier.notify(bytes);
-            self.wb_delivered_ms = Some(now);
-            self.wb_flash_until_ms = Some(now + 450);
+            self.write_through(bytes);
         } else {
             self.wb_queued.push(bytes);
         }
         cx.notify();
+    }
+
+    /// The bytes, into the pseudoterminal, stamped. No rules — the callers
+    /// above own those, and each of them owns a different set.
+    fn write_through(&mut self, bytes: Vec<u8>) {
+        let now = crate::surfacefeed::now_ms();
+        self.session.notifier.notify(bytes);
+        self.wb_delivered_ms = Some(now);
+        self.wb_flash_until_ms = Some(now + 450);
+    }
+
+    /// The window pressing Yes on the picker its own dial press raised.
+    ///
+    /// The one write that goes past the dial hold, because the hold exists to
+    /// keep the PERSON's keystrokes out of that picker and this keystroke is
+    /// what the picker is for. It is not queued either: a queue would press
+    /// Yes on a question that had gone, and the two visibility rules still
+    /// apply — a picker on a pane nobody is looking at is a picker nobody
+    /// asked us to answer.
+    fn dial_answer(&mut self, bytes: Vec<u8>, cx: &mut Context<Self>) {
+        if self.bench_channel_open() {
+            self.write_through(bytes);
+            cx.notify();
+        }
     }
 
     /// Both conditions on a bench write, in one place.
@@ -1760,8 +1863,24 @@ impl TerminalView {
     ///
     /// `Unknown` is not an agent either. A host-owned pane is born unread, and
     /// "we have not looked" must not be the state that lets a write through.
-    fn bench_may_write(&self) -> bool {
+    fn bench_channel_open(&self) -> bool {
         self.wb_on_screen && self.mode.is_agent()
+    }
+
+    /// …and the third rule, which is about WHAT IS LISTENING rather than
+    /// whether anything is.
+    ///
+    /// A dial press leaves the harness showing a modal picker, and for as long
+    /// as it is up the pane's line editor is not reading: every byte sent
+    /// there is a menu keystroke, and a digit in somebody's half-typed
+    /// sentence chooses an option. So the bench holds — in the same queue and
+    /// with the same promise as the other two rules — until
+    /// [`Self::dial_watch`] has seen the picker answered and typed the draft
+    /// back. Held, never dropped: the person goes on typing into a composer
+    /// that keeps drawing their words, and the keystrokes land in order the
+    /// moment the far end is a line editor again.
+    fn bench_may_write(&self) -> bool {
+        self.bench_channel_open() && self.wb_dial_sent.is_none()
     }
 
     /// One keystroke from the composer, under the same two rules as a line.
@@ -2262,6 +2381,15 @@ impl TerminalView {
         // this composer, and a copy this side would be a second truth that
         // could disagree with the first. [`crate::workbench::ask_lines`] owns
         // whether it is drawn at all.
+        //
+        // What changed is WHEN it is read, not where from. The read happened
+        // here, at paint, and answered nothing once the message had scrolled
+        // past the history — so the block went blank on exactly the long
+        // turns a person most wants it on. It is now latched off the same
+        // scrollback by the pane's own clocks
+        // ([`crate::pane::TerminalView::latch_asked`]) and this draws what was
+        // last seen, which is still the terminal's record and no longer a
+        // question about whether the terminal still has it.
         let asked_above = crate::workbench::ask_lines(
             self.bench.shelf(),
             self.bench.standing_in(),
@@ -2270,8 +2398,10 @@ impl TerminalView {
         )
         .map(|n| {
             // Read one line longer than the block draws, so a message that ran
-            // on can say so rather than stopping mid-word.
-            let lines = crate::workbench::ask_clipped(self.last_human_message(n + 1), n);
+            // on can say so rather than stopping mid-word — the latch keeps
+            // [`crate::screenread::ASKED_LINES`], which is more than any
+            // caller here asks for.
+            let lines = crate::workbench::ask_clipped(self.asked_latched(), n);
             crate::benchdraw::asked(&lines, sk, th)
         });
 

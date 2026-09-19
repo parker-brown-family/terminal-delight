@@ -884,6 +884,15 @@ const HEADER_H: f32 = 40.0;
 /// flat or tiny pane the 2% term falls below this and the floor takes over.
 const PAD_MIN: f32 = 4.0;
 
+/// How far up the scrollback the once-a-second latch looks for the person's
+/// own last turn.
+///
+/// A floor on the cost of NOT finding one: the walk is cheap when it hits,
+/// and the length of the whole history when it misses. Two thousand rows is
+/// several screens of tool output above the message being answered, and a
+/// turn further up than that is not the one on the bench.
+const DEEP_ASK_ROWS: i32 = 2000;
+
 /// Padding (px) that frames the terminal grid inside its tube, returned as
 /// `(pad_x, pad_y)` for the left/right and top/bottom insets. Two terms add up:
 ///
@@ -2178,6 +2187,26 @@ pub struct TerminalView {
     wb_card_at: Option<crate::surface::SurfaceId>,
     /// Which of the strip's dials has its list open, if either.
     wb_dial: Option<crate::workbench::Dial>,
+    /// A dial press that has typed its command and is waiting on the harness.
+    ///
+    /// See [`crate::workbench::DialSent`]. While this is `Some`, the bench
+    /// holds every write instead of sending it: the person's line editor is
+    /// under a modal picker that belongs to the harness, and a keystroke sent
+    /// into that picker chooses something.
+    wb_dial_sent: Option<crate::workbench::DialSent>,
+    /// The last turn this window WATCHED the person send, in this pane.
+    ///
+    /// The overview draws the person's own words above the reply to them, and
+    /// it used to read them off the scrollback at every paint. That read
+    /// answers nothing the moment the message scrolls past the history, which
+    /// on a long turn is most of the time — and the block then said so, which
+    /// is honest and useless. Latched at one hertz instead, so the sentence is
+    /// kept by whoever saw it rather than re-derived by whoever needs it.
+    ///
+    /// EMPTY is still a real state: a pane adopted mid-conversation was never
+    /// watched, and inventing a message for it would be worse than the line
+    /// that admits nothing was seen.
+    wb_asked: Vec<String>,
     /// The model this pane's agent was TOLD to use — by the launcher, or by a
     /// press on the strip's dial since.
     ///
@@ -2901,6 +2930,13 @@ impl TerminalView {
             self.wb_model = None;
             self.wb_effort = None;
             self.wb_dial = None;
+            // And the conversation with it. The next agent in this pane is a
+            // different conversation, and the last thing said to the one that
+            // left would be drawn over its first reply as if it had been the
+            // question — a caption that is wrong in the one way a caption
+            // must never be.
+            self.wb_dial_sent = None;
+            self.wb_asked.clear();
         }
         cx.notify();
     }
@@ -3089,6 +3125,16 @@ impl TerminalView {
                         // the live status line every tick (independent of the bell's
                         // scroll-settle gate below, which would otherwise skip it).
                         view.accrue_tokens();
+                        // A dial press waiting on the harness's own "are you
+                        // sure" — answered here, at the clock's own rate,
+                        // because the person's composer is held until it is.
+                        // Outside the scroll gate below for the same reason
+                        // the token accrual is: a held draft must not wait on
+                        // somebody having stopped scrolling.
+                        if view.wb_dial_sent.is_some() {
+                            let rows = view.recent_lines(crate::screenread::PROMPT_TAIL_ROWS);
+                            view.dial_watch(&rows, cx);
+                        }
                         // Scroll-settle debounce: Alt+up/down scrollback navigation
                         // moves the "esc to interrupt" line off-screen and would trip
                         // a false agent-done bell. Only run the thinking-scan once the
@@ -3152,6 +3198,11 @@ impl TerminalView {
                             view.needs_input_line = needs
                                 .then(|| wants_human_row(&recent).and_then(clip_evidence))
                                 .flatten();
+                            // The person's own turn, off the rows already
+                            // read. Free, and eight times a second, which is
+                            // what catches a message that a fast turn scrolls
+                            // out of sight before the slow latch comes round.
+                            view.latch_asked(Some(&recent));
                             // One grid walk per pane per tick, not per frame.
                             // Inside the scroll gate with the rest of the
                             // screen-reading: a parse taken mid-scroll reads a
@@ -3366,6 +3417,8 @@ impl TerminalView {
             wb_card_scroll: gpui::ScrollHandle::new(),
             wb_card_at: None,
             wb_dial: None,
+            wb_dial_sent: None,
+            wb_asked: Vec::new(),
             wb_model: None,
             wb_effort: None,
             wb_had_agent: false,
@@ -3451,7 +3504,14 @@ impl TerminalView {
         let grid = term.grid();
         let cols = grid.columns();
         let screen = grid.screen_lines() as i32;
-        let hist = grid.history_size() as i32;
+        // BOUNDED, where it used to be the whole history.
+        //
+        // This is no longer read at paint — it is a once-a-second latch (see
+        // [`Self::latch_asked`]) — and a walk with no floor costs the length
+        // of the scrollback every time it finds nothing, which is precisely
+        // the case it is called in. A turn that is two thousand rows above the
+        // bottom is not the turn being answered anyway.
+        let hist = (grid.history_size() as i32).min(DEEP_ASK_ROWS);
         // Read a grid line by absolute index — NEGATIVE indices are SCROLLBACK, so
         // the prompt is found even when the agent's reply has scrolled it off the
         // visible screen (the whole point: an idle agent's last ask).
@@ -3467,39 +3527,47 @@ impl TerminalView {
             }
             s.trim_end().to_string()
         };
-        let strip = |t: &str| -> String {
-            t.trim_start()
-                .trim_start_matches(|c| {
-                    matches!(c, '\u{276f}' | '>' | '\u{258c}' | '\u{00b7}' | ' ')
-                })
-                .trim()
-                .to_string()
+        // The rule for which rows are a turn of theirs lives ONCE, in
+        // `screenread`, because the pane's fast clock reads the same thing out
+        // of the fourteen rows it already has in hand. Two walks would be two
+        // answers to one question.
+        let rows: Vec<String> = (-hist..screen).map(read).collect();
+        crate::screenread::human_message(&rows, max_lines)
+    }
+
+    /// Remember the newest turn of the person's that this window has SEEN.
+    ///
+    /// The overview draws their own words above the reply to them, and it read
+    /// them off the scrollback at every paint — so the block went blank the
+    /// moment a long turn scrolled the message past the history, which is most
+    /// of the time and is exactly when a person most wants to see what they
+    /// asked. Parker: *"the user message prompt... not available because of
+    /// scrollback limitation... TOTALLY unacceptable, this is EXACTLY
+    /// important"*.
+    ///
+    /// Kept by whoever watched it rather than re-derived by whoever needs it.
+    /// Called from two clocks with two windows — the tail at 120ms, the deep
+    /// walk at one hertz — and an EMPTY read never overwrites a full one: not
+    /// finding a message is not the same as there not being one, and this is
+    /// the field where that difference is the whole feature.
+    pub fn latch_asked(&mut self, rows: Option<&[String]>) {
+        let seen = match rows {
+            Some(rows) => crate::screenread::human_message(rows, crate::screenread::ASKED_LINES),
+            None => self.last_human_message(crate::screenread::ASKED_LINES),
         };
-        // walk UP from the bottom (incl. scrollback) to the last human-input line
-        // that actually carries text (skip the empty live input box).
-        let start = (-hist..screen)
-            .rev()
-            .find(|&l| is_human_input_line(&read(l)) && !strip(&read(l)).is_empty());
-        let Some(start) = start else {
-            return Vec::new();
-        };
-        let mut out = vec![strip(&read(start))];
-        for l in (start + 1)..screen {
-            let s = read(l);
-            let t = s.trim();
-            if t.is_empty()
-                || is_human_input_line(&s)
-                || t.starts_with('?')
-                || t.starts_with("esc ")
-            {
-                break;
-            }
-            if out.len() >= max_lines {
-                break;
-            }
-            out.push(t.to_string());
+        if !seen.is_empty() {
+            self.wb_asked = seen;
         }
-        out
+    }
+
+    /// What the person last said in this pane, as far as this window knows.
+    ///
+    /// Empty means nobody here watched them say anything — a pane adopted
+    /// mid-conversation, or a turn that had already left the history. The
+    /// block that draws this says so in those words rather than drawing
+    /// nothing.
+    pub fn asked_latched(&self) -> Vec<String> {
+        self.wb_asked.clone()
     }
 
     /// Parse this pane's live status line into an [`crate::hud::AgentStatus`] for
@@ -5857,7 +5925,16 @@ impl TerminalView {
         // element carries a gpui click handler of its own any more.
         if ev.button == MouseButton::Left && self.bench.face() == crate::workbench::Face::Workbench
         {
-            if let Some((hit, flat)) = self.bench_hit_at(ev.position) {
+            let landed = self.bench_hit_at(ev.position);
+            // An open dial menu eats this click first — see
+            // [`TerminalView::bench_dismiss_dial`]. Before the `if let`,
+            // because a click on the bench's empty background lands on no
+            // zone and would otherwise never be seen at all.
+            if self.bench_dismiss_dial(landed.as_ref().map(|(hit, _)| hit), cx) {
+                cx.stop_propagation();
+                return;
+            }
+            if let Some((hit, flat)) = landed {
                 self.bench_hit(hit, flat, window, cx);
                 cx.stop_propagation();
                 return;
@@ -8843,8 +8920,17 @@ mod tests {
                 }
             }
             let writes = t.contains("self.send(") || t.contains("notifier.notify(");
-            let allowed = matches!(owner, "bench_keystroke" | "bench_deliver");
+            // `write_through` is the stamping half of `bench_deliver`, split
+            // out so the dial's own answer can reach the pseudoterminal
+            // without the queue. It is a write site and it is allowed to be
+            // one; what keeps it honest is the caller scan below.
+            let allowed = matches!(owner, "bench_keystroke" | "write_through");
             if writes && !allowed {
+                strays.push((owner, t));
+            }
+            if t.contains("self.write_through(")
+                && !matches!(owner, "bench_deliver" | "dial_answer")
+            {
                 strays.push((owner, t));
             }
         }
@@ -8853,13 +8939,32 @@ mod tests {
             "bench writes to the pseudoterminal outside the gate — route these through \
              bench_keystroke (a keystroke) or bench_deliver (a line): {strays:?}"
         );
-        // And the gate itself still asks both questions.
+        // And the gate itself still asks all THREE questions. The third
+        // arrived with the dials: a press leaves the harness showing a modal
+        // picker, and a keystroke sent into a picker chooses something.
+        let at = code.find("fn bench_channel_open").expect("the two rules");
+        let end = code[at..].find("\n    }\n").expect("end of fn") + at;
+        let two = &code[at..end];
+        assert!(
+            two.contains("wb_on_screen") && two.contains("is_agent()"),
+            "the bench gate stopped asking one of its two questions: {two}"
+        );
         let at = code.find("fn bench_may_write").expect("the gate");
         let end = code[at..].find("\n    }\n").expect("end of fn") + at;
         let gate = &code[at..end];
         assert!(
-            gate.contains("wb_on_screen") && gate.contains("is_agent()"),
-            "the bench gate stopped asking one of its two questions: {gate}"
+            gate.contains("bench_channel_open()") && gate.contains("wb_dial_sent"),
+            "the bench gate stopped asking one of its three questions: {gate}"
+        );
+        // The one write that goes around the hold answers the picker and
+        // nothing else — and it still asks the other two, because a picker on
+        // a pane nobody is looking at is not ours to press.
+        let at = code.find("fn dial_answer").expect("the dial's own answer");
+        let end = code[at..].find("\n    }\n").expect("end of fn") + at;
+        let answer = &code[at..end];
+        assert!(
+            answer.contains("bench_channel_open()"),
+            "the dial's answer writes to a pane that may not be on screen: {answer}"
         );
     }
 

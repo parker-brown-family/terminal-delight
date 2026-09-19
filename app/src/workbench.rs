@@ -828,6 +828,9 @@ pub struct Reviewed {
 /// The ways out of the bench are alt+k and the TERM chip, both deliberate.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Peel {
+    /// An open dial menu, which is drawn over everything and is the newest
+    /// thing on the screen.
+    Dial,
     /// The review gallery, drawn over everything.
     Gallery,
     /// A half-typed line in the composer.
@@ -839,7 +842,14 @@ pub enum Peel {
     Nothing,
 }
 
-pub fn peel(gallery: bool, typing: bool, card_open: bool, card_waits: bool) -> Peel {
+pub fn peel(dial: bool, gallery: bool, typing: bool, card_open: bool, card_waits: bool) -> Peel {
+    // ABOVE THE GALLERY, because it is above everything: a dial menu is the
+    // last thing opened and the smallest thing to lose. Escape reaching past
+    // it to empty the composer would take the person's sentence to close a
+    // list of five words — which is what it did before this rung existed.
+    if dial {
+        return Peel::Dial;
+    }
     if gallery {
         return Peel::Gallery;
     }
@@ -939,6 +949,16 @@ impl Hit {
     }
 }
 
+/// Does this click close an open dial menu instead of doing what it says?
+///
+/// `None` is a click that reached no control — the bench's own background,
+/// which is most of it — and that is a dismissal like any other. The menu's
+/// two controls are the exception: the dial itself toggles, and a value on
+/// the list is the press the menu was opened for.
+pub fn dial_dismisses(open: bool, hit: Option<&Hit>) -> bool {
+    open && !matches!(hit, Some(Hit::Dial(_)) | Some(Hit::DialPick(..)))
+}
+
 /// Which of the AGENT strip's two dials.
 ///
 /// The strip is the one place a running agent's model and effort can be
@@ -972,6 +992,27 @@ impl Dial {
         match self {
             Dial::Model => "/model",
             Dial::Effort => "/effort",
+        }
+    }
+
+    /// The word that has to appear in the harness's own confirmation for it to
+    /// be THIS dial's.
+    ///
+    /// Claude Code 2.1.274 heads the two pickers `Switch model?` and `Change
+    /// effort level?` (both read out of the shipped binary, not guessed), so
+    /// one word each separates them — and separates either from every other
+    /// question a terminal might be showing. The window presses Yes on its own
+    /// question and on nothing else: a permission gate is also a two-option
+    /// picker with a Yes in it, and auto-answering one of those would approve
+    /// a tool call nobody looked at.
+    ///
+    /// A harness that words it differently is not matched, the window never
+    /// presses anything, and the person answers the picker themselves — which
+    /// is exactly today's behaviour and is why this can be a plain word match.
+    pub fn confirm_word(self) -> &'static str {
+        match self {
+            Dial::Model => "model",
+            Dial::Effort => "effort",
         }
     }
 }
@@ -1432,20 +1473,129 @@ pub fn replace_bytes() -> Vec<u8> {
 /// retyping brings it back. The caller answers for that by clearing the mirror's
 /// count (see [`Line::forget_pastes`]) rather than leaving the box claiming an
 /// attachment the agent no longer holds.
-pub fn aside_bytes(command: &str, draft: &Line) -> Vec<u8> {
+///
+/// **It is now TWO writes, not one, and the second one waits.** Typing
+/// `/effort max` does not change the effort — the harness answers it with a
+/// modal picker of its own, *"Change effort level?"*, and until somebody
+/// presses Yes nothing has happened. Everything written after the command
+/// therefore lands in that picker rather than in a line editor, which is
+/// where the retyped draft was going: into a menu, where its digits pick
+/// options. Parker: *"all that happens is the /effort <value> is pre-pended
+/// to the prompt and not PUSHED THROUGH and CONFIRMED... the prompt in
+/// progress should be saved, deleted, then the effort value pushed through to
+/// the prompt, confirmed, and then the user's prompt pasted back in, all
+/// seamlessly"*. So this half erases and commands; [`restore_bytes`] is the
+/// other half, and [`dial_step`] decides when it is safe to send.
+pub fn dial_bytes(command: &str, draft: &Line) -> Vec<u8> {
     let mut out = Vec::new();
     let text = draft.text();
-    let end = text.chars().count();
-    if end > 0 {
+    if text.chars().count() > 0 {
         out.extend(caret_move(draft.caret(), 0));
         out.extend(replace_bytes());
     }
     out.extend(typed_line(command));
-    if end > 0 {
-        out.extend_from_slice(text.as_bytes());
-        out.extend(caret_move(end, draft.caret()));
-    }
     out
+}
+
+/// The draft, typed back where it was, with the caret where it was.
+///
+/// Types the text the person had at the moment of the press — NOT the text
+/// the mirror is holding now. Anything they typed while the harness was being
+/// answered was held in the bench's own queue (see `bench_may_write`) and is
+/// drained straight after this, so replaying the original and then the held
+/// keystrokes reproduces exactly what the far end would have had if the dial
+/// had never been touched. Restoring the CURRENT text instead would apply
+/// every one of those edits twice.
+pub fn restore_bytes(text: &str, caret: usize) -> Vec<u8> {
+    let end = text.chars().count();
+    if end == 0 {
+        return Vec::new();
+    }
+    let mut out = text.as_bytes().to_vec();
+    out.extend(caret_move(end, caret.min(end)));
+    out
+}
+
+/// A dial press that has been typed and is waiting on the harness.
+///
+/// The draft is carried here rather than read back off the composer because
+/// the composer keeps moving: the person goes on typing into a box whose
+/// keystrokes are being held, and the text that has to be typed back is the
+/// one that was erased.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct DialSent {
+    /// Which dial was pressed — it decides which confirmation is OURS.
+    pub which: Dial,
+    /// The draft at the moment of the press.
+    pub text: String,
+    /// Where their caret was in it.
+    pub caret: usize,
+    /// When the command went out.
+    pub sent_ms: u64,
+    /// Has the window already pressed Yes on the harness's picker?
+    pub answered: bool,
+}
+
+/// What to do about a dial press that is in flight.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum DialStep {
+    /// Nothing yet — the harness has not put its question up.
+    Wait,
+    /// Its picker is up: walk from `from` to `to` and press return.
+    Answer { to: usize, from: usize },
+    /// Over. Type the draft back and let the held keystrokes go.
+    Settle,
+}
+
+/// How long to wait for the harness to ask before deciding it never will.
+///
+/// Generous against a redraw, short against a person: the dials are pressable
+/// only from a state where the harness is at its prompt ([`dials_live`]), so
+/// the picker — when there is one — is drawn on the next frame, and the only
+/// reason to wait a second and a half is that a frame can be slow. A harness
+/// that simply applies the command (Codex, or an effort level the harness
+/// does not think is worth asking about) never asks at all, and the draft
+/// must not be held hostage to a question nobody is going to pose.
+pub const DIAL_ASK_MS: u64 = 1500;
+
+/// The dial's state machine, over what is on the bottom of the screen.
+///
+/// Pure, so its cases can be asserted without a terminal — and they are the
+/// cases that decide whether a person ever sees their sentence again.
+///
+/// **A MENU ON SCREEN IS THE STOP CONDITION, not a clock.** There is
+/// deliberately no give-up while [`crate::screenread::Picker`] says something
+/// is up: typing a draft into a picker is the harm this whole mechanism
+/// exists to avoid, and a keystroke that lands in one cannot be taken back.
+/// Holding, by contrast, costs nothing that is not already lost — the far end
+/// is a modal picker and will not read a sentence from anybody until it is
+/// answered. So the draft waits, visible in the composer the whole time, and
+/// goes in the moment the screen is a line editor again. The person answering
+/// the question themselves ends it exactly as our own keypress does.
+pub fn dial_step(sent: &DialSent, picker: crate::screenread::Picker, now_ms: u64) -> DialStep {
+    use crate::screenread::Picker;
+    match (picker, sent.answered) {
+        // Its question is up and nobody has answered it. This is the press
+        // the person already made, arriving where the harness can hear it.
+        (Picker::Confirm { yes, cursor }, false) => DialStep::Answer {
+            to: yes,
+            from: cursor,
+        },
+        // Anything still up — ours after we pressed, or somebody else's — is
+        // a screen with no line editor on it. Wait.
+        (Picker::Confirm { .. } | Picker::Other, _) => DialStep::Wait,
+        // Answered and gone. Done.
+        (Picker::None, true) => DialStep::Settle,
+        // Never asked. Either the harness took the command outright or it is
+        // never going to ask, and both end the same way.
+        (Picker::None, false) => {
+            if now_ms.saturating_sub(sent.sent_ms) >= DIAL_ASK_MS {
+                DialStep::Settle
+            } else {
+                DialStep::Wait
+            }
+        }
+    }
 }
 
 /// The value of a flag in a launch or resume command, if it carries one.
@@ -4558,18 +4708,23 @@ mod tests {
 
     #[test]
     fn escape_peels_overlays_and_stops_at_a_question() {
-        // Outermost first.
-        assert_eq!(peel(true, true, true, true), Peel::Gallery);
-        assert_eq!(peel(false, true, true, true), Peel::Typing);
+        // Outermost first. The dial menu is above the gallery because it is
+        // the newest thing on the glass and the cheapest thing to lose — and
+        // because without this rung escape reached past an open menu and
+        // emptied the composer, trading somebody's sentence for a list of
+        // five words that stayed on screen anyway.
+        assert_eq!(peel(true, true, true, true, true), Peel::Dial);
+        assert_eq!(peel(false, true, true, true, true), Peel::Gallery);
+        assert_eq!(peel(false, false, true, true, true), Peel::Typing);
 
         // THE FLOOR. A card holding a question somebody is being waited on is
         // not something escape may take away — every other meaning of the key
         // here removes the thing the agent is waiting with.
-        assert_eq!(peel(false, false, true, true), Peel::Nothing);
+        assert_eq!(peel(false, false, false, true, true), Peel::Nothing);
 
         // An ANSWERED card is a record, and a record closes like anything
         // else.
-        assert_eq!(peel(false, false, true, false), Peel::Card);
+        assert_eq!(peel(false, false, false, true, false), Peel::Card);
     }
 
     /// The bench is a base surface, and escape does not leave one.
@@ -4582,12 +4737,12 @@ mod tests {
     #[test]
     fn escape_with_nothing_left_stays_on_the_bench() {
         assert_eq!(
-            peel(false, false, false, false),
+            peel(false, false, false, false, false),
             Peel::Nothing,
             "a quiet bench is still the surface you are on"
         );
         assert_eq!(
-            peel(false, false, false, true),
+            peel(false, false, false, false, true),
             Peel::Nothing,
             "a waiting question with no card open is on the rail, not under escape"
         );
@@ -4975,13 +5130,17 @@ mod tests {
         // are the ones this has always sent — which is what keeps the ordinary
         // case (press a dial, type nothing) exactly as it was.
         assert_eq!(
-            aside_bytes("/model opus", &Line::new()),
+            dial_bytes("/model opus", &Line::new()),
             typed_line("/model opus")
+        );
+        assert!(
+            restore_bytes("", 0).is_empty(),
+            "nothing was taken away, so nothing is typed back"
         );
     }
 
     #[test]
-    fn a_command_beside_a_draft_erases_it_first_and_types_it_back() {
+    fn a_command_beside_a_draft_erases_it_first_and_types_it_back_after() {
         // The bug this exists for: the command used to be typed at the END of
         // the person's unsent prompt, and the return key sent both as one — the
         // prompt answered at the strength it was being changed away from.
@@ -4992,32 +5151,110 @@ mod tests {
         let caret = draft.caret();
         assert_eq!(caret, 10, "ten characters in, mid-word");
 
-        let bytes = aside_bytes("/effort max", &draft);
+        let sent = dial_bytes("/effort max", &draft);
         let mut want = Vec::new();
         want.extend(caret_move(caret, 0)); // to column zero...
         want.extend(replace_bytes()); // ...and kill what is ahead
         want.extend(typed_line("/effort max")); // the command, sent alone
-        want.extend_from_slice(b"count the tests"); // the draft, back again
-        want.extend(caret_move(15, caret)); // and the caret where it was
-        assert_eq!(bytes, want);
+        assert_eq!(sent, want);
 
-        // The two orderings that make it a fix rather than a rearrangement: the
-        // erase happens before the command, and the draft is retyped after the
-        // command's return — never before it, which is the old bug exactly.
-        let kill = bytes.iter().position(|b| *b == 0x0b).expect("the kill");
-        let submit = bytes.iter().position(|b| *b == b'\r').expect("the return");
-        let back = bytes
-            .windows(5)
-            .position(|w| w == b"count")
-            .expect("the draft goes back");
+        // The erase happens before the command. That ordering is the fix.
+        let kill = sent.iter().position(|b| *b == 0x0b).expect("the kill");
+        let submit = sent.iter().position(|b| *b == b'\r').expect("the return");
         assert!(
             kill < submit,
             "the line is cleared before the command is sent"
         );
+        // And the draft is NOT in this write at all. It used to be, in the
+        // same breath as the command — which put it into the harness's
+        // confirmation picker, where the digits in somebody's sentence pick
+        // options. It comes back in its own write, once that picker is gone.
         assert!(
-            submit < back,
-            "the draft is retyped after the command, not into it"
+            !sent.windows(5).any(|w| w == b"count"),
+            "the draft went out beside the command again: {:?}",
+            String::from_utf8_lossy(&sent)
         );
+        let mut back = Vec::new();
+        back.extend_from_slice(b"count the tests");
+        back.extend(caret_move(15, caret));
+        assert_eq!(restore_bytes("count the tests", caret), back);
+    }
+
+    #[test]
+    fn a_dial_waits_for_the_harnesss_own_question_then_answers_it() {
+        use crate::screenread::Picker;
+        // The four screens a press can be looking at, and what each one is
+        // worth. Claude Code 2.1.274 answers `/effort max` with a picker
+        // headed "Change effort level?" — so the press is not the change, and
+        // everything written before that picker is answered lands IN it.
+        let sent = DialSent {
+            which: Dial::Effort,
+            text: "the draft".into(),
+            caret: 3,
+            sent_ms: 1_000,
+            answered: false,
+        };
+        // Nothing on screen yet, and no time gone: hold.
+        assert_eq!(dial_step(&sent, Picker::None, 1_100), DialStep::Wait);
+        // Its picker, with the cursor on the second row and Yes on the first.
+        assert_eq!(
+            dial_step(&sent, Picker::Confirm { yes: 0, cursor: 1 }, 1_200),
+            DialStep::Answer { to: 0, from: 1 }
+        );
+        // Answered, still up: give the keypress a moment.
+        let answered = DialSent {
+            answered: true,
+            ..sent.clone()
+        };
+        assert_eq!(
+            dial_step(&answered, Picker::Confirm { yes: 0, cursor: 0 }, 1_300),
+            DialStep::Wait
+        );
+        // Answered and gone. The draft goes back.
+        assert_eq!(dial_step(&answered, Picker::None, 1_300), DialStep::Settle);
+        // NEVER ASKED, and the window is up: a harness that simply applies
+        // the command must not cost the person their sentence. This is the
+        // case that makes the hold safe to have at all.
+        assert_eq!(
+            dial_step(&sent, Picker::None, 1_000 + DIAL_ASK_MS),
+            DialStep::Settle
+        );
+        // SOMEBODY ELSE'S MENU, long past every deadline, is still a menu.
+        //
+        // This is the case a clock gets wrong. The draft is held rather than
+        // typed, because typing it into a picker is the harm — its digits are
+        // option numbers — and holding costs nothing that is not already
+        // lost: no picker reads a sentence from anybody. It ends when the
+        // screen is a line editor again, whoever answers.
+        for waited in [1_100, 1_000 + DIAL_ASK_MS, 1_000 + 600_000] {
+            assert_eq!(
+                dial_step(&sent, Picker::Other, waited),
+                DialStep::Wait,
+                "a draft was typed into a menu after {waited}ms"
+            );
+            assert_eq!(dial_step(&answered, Picker::Other, waited), DialStep::Wait);
+        }
+    }
+
+    #[test]
+    fn an_open_dial_menu_takes_the_next_click_wherever_it_lands() {
+        // The complaint: a menu opened to look at, not picked from, stayed on
+        // the glass over everything. Its own two controls are what it is, and
+        // everything else — including the bench's bare background, which
+        // reaches no control at all — closes it.
+        assert!(dial_dismisses(true, None), "the empty background dismisses");
+        assert!(dial_dismisses(true, Some(&Hit::CloseCard)));
+        assert!(dial_dismisses(true, Some(&Hit::Composer)));
+        assert!(!dial_dismisses(true, Some(&Hit::Dial(Dial::Effort))));
+        assert!(
+            !dial_dismisses(true, Some(&Hit::Dial(Dial::Model))),
+            "the OTHER dial opens its own list rather than dismissing this one"
+        );
+        assert!(!dial_dismisses(true, Some(&Hit::DialPick(Dial::Effort, 2))));
+        // And with nothing open, nothing is ever swallowed.
+        for hit in [None, Some(&Hit::CloseCard), Some(&Hit::Composer)] {
+            assert!(!dial_dismisses(false, hit));
+        }
     }
 
     /// The dial's command goes in beside the draft, not through the composer.
@@ -5045,12 +5282,21 @@ mod tests {
         let end = body.find("\n    }").map(|i| i + 6).unwrap_or(body.len());
         let body = &body[..end];
         assert!(
-            body.contains("aside_bytes("),
+            body.contains("dial_bytes("),
             "the dial no longer types beside the draft:\n{body}"
         );
         assert!(
             !body.contains("bench_say("),
             "the dial types through the composer, which holds the person's prompt:\n{body}"
+        );
+        // And it ARMS. The erase is only half a fix: without the wait, the
+        // draft is typed back into the harness's confirmation picker, and the
+        // dial never gets confirmed at all. `wb_dial_sent` is what makes the
+        // rest of the press happen, and a call site that drops it would leave
+        // a composer that erases your sentence and changes nothing.
+        assert!(
+            body.contains("wb_dial_sent = Some("),
+            "the press does not wait for the harness to confirm it:\n{body}"
         );
     }
 
