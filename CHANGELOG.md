@@ -70,6 +70,22 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ### Fixed
 
+- **A surface presented over MCP now reaches the disk, so the bench survives a
+  restart.** `present_surface` handed the document to the live window and
+  stopped there, while this module's own header drew all three transports
+  converging on `surfaces/<session>/<pane>/*.json` and promised the directory is
+  re-read when a window opens. The file drop kept that promise and the verb did
+  not, so everything an agent sent through MCP died with the window — a pane
+  that had presented four surfaces had no directory at all, and the overview
+  came back reading "No responses yet". Three things had to be true at once for
+  the round trip to cost nothing: the document is written under the id it was
+  filed as, because `parse` invents a fresh `anon-…` for a document that names
+  no id and the surface would otherwise return from disk as a stranger; a
+  retire takes the file with it, or it reappears on the next restart; and a
+  second arrival cannot blur who wrote the first — the watcher re-reads the
+  file the verb just wrote and delivers it as a `FileDrop`, which by design
+  cannot name a writer, so an origin now only ever gets more specific. (#567)
+
 - **One pane, one conversation.** A bench, a tool glyph, a pane's tool-call feed
   and a desktop recap all asked the same question — *which conversation is this
   pane in?* — and all asked it one pane at a time, ending in "the newest

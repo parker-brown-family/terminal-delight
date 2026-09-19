@@ -350,6 +350,24 @@ pub fn drop_surface(dir: &Path, name: &str, value: &Value) -> std::io::Result<Pa
     fs::create_dir_all(dir)?;
     let safe = sanitise(name);
     let path = dir.join(format!("{safe}.json"));
+    // THE FILE'S NAME AND THE DOCUMENT'S ID ARE THE SAME THING, so make it so
+    // on the way out. `parse` invents an `anon-<hash>` id for a document that
+    // carries none — and invents it from the content, so the same surface
+    // written twice is fine but a surface filed under a name nobody put inside
+    // it comes back from disk answering to something else. The row it was
+    // meant to update becomes a second row, and a retire aimed at the id it
+    // had while it was live no longer matches the file holding it.
+    //
+    // Only fills a gap: a document that names itself is left exactly as the
+    // agent sent it, because the id is the agent's to choose.
+    let value = &match value.as_object() {
+        Some(map) if !map.contains_key("id") => {
+            let mut owned = map.clone();
+            owned.insert("id".into(), Value::String(safe.clone()));
+            Value::Object(owned)
+        }
+        _ => value.clone(),
+    };
     // Written beside and renamed into place, so a sweep can never read half a
     // file. The parse guard above would survive it; this means it never has to.
     //
@@ -383,6 +401,17 @@ pub fn drop_surface(dir: &Path, name: &str, value: &Value) -> std::io::Result<Pa
         return Err(err);
     }
     Ok(path)
+}
+
+/// Take a surface off the disk, by the id it was written under.
+///
+/// The counterpart to [`drop_surface`], and it exists for the same reason the
+/// write does: a retire that only reached the live window would come straight
+/// back on the next restart, because the restore path reads this directory.
+/// Returns whether a file was actually there — absent is the normal case for a
+/// surface that was never persisted, not a failure.
+pub fn retire_surface(dir: &Path, name: &str) -> bool {
+    fs::remove_file(dir.join(format!("{}.json", sanitise(name)))).is_ok()
 }
 
 // ---------------------------------------------------------------------------
@@ -952,6 +981,41 @@ mod tests {
 
     fn a_doc(title: &str) -> Value {
         json!({ "td": "0.1", "kind": "markdown", "title": title, "model": { "body": "b" } })
+    }
+
+    /// What `present_surface` now relies on: a surface written by id can be
+    /// read straight back by the path a window opening runs, and retiring it
+    /// takes it off the disk rather than only off the live bench.
+    ///
+    /// The second half is the one worth having. A retire that reached only the
+    /// window would look right for the rest of the session and put the surface
+    /// back on the next restart, which is the same shape of fault as #567 and
+    /// would be found the same slow way.
+    #[test]
+    fn a_presented_surface_survives_a_sweep_and_a_retire_removes_it() {
+        let scratch = Scratch::new("persist");
+
+        let path = drop_surface(scratch.path(), "carried", &a_doc("By the verb")).unwrap();
+        assert!(path.exists(), "the verb's surface must reach the disk");
+
+        // the path a window opening takes
+        let posts = Feed::new().sweep_pane(scratch.path(), NOW);
+        assert_eq!(posts.len(), 1, "a fresh window reads it back");
+        assert_eq!(posts[0].id.as_str(), "carried");
+
+        assert!(
+            retire_surface(scratch.path(), "carried"),
+            "retire must find the file it wrote"
+        );
+        assert!(!path.exists());
+        assert!(
+            Feed::new().sweep_pane(scratch.path(), NOW).is_empty(),
+            "a retired surface must not come back when a window opens"
+        );
+
+        // Retiring something that was never persisted is the normal case for a
+        // surface an older build presented, and is not a failure.
+        assert!(!retire_surface(scratch.path(), "never-here"));
     }
 
     #[test]
