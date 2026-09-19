@@ -60,6 +60,7 @@ mod notify;
 mod paint;
 mod palette;
 mod pane;
+mod paneident;
 mod plugins;
 mod recover;
 mod screenread;
@@ -313,6 +314,13 @@ enum Tree<L> {
 }
 
 type Node = Tree<Entity<TerminalView>>;
+
+/// One pane's bound transcript and the stamp it carried when the sweep read it:
+/// host pane id, path, and `(modified-ms, len)` where the file could be stat-ed.
+///
+/// Named because the bench sweep hands it across a thread boundary, and a bare
+/// three-tuple with a tuple inside it tells the next reader nothing.
+type BoundTranscript = (u64, PathBuf, Option<(u64, u64)>);
 
 impl<L: Clone> Tree<L> {
     fn leaves<'a>(&'a self, out: &mut Vec<&'a L>) {
@@ -5496,15 +5504,47 @@ impl Workspace {
             {
                 break;
             }
-            let Ok(reqs) = this.update(cx, |ws: &mut Workspace, cx| ws.derive_requests(cx)) else {
+            let Ok((facts, reqs)) =
+                this.update(cx, |ws: &mut Workspace, cx| ws.derive_requests(cx))
+            else {
                 break;
             };
             if !reqs.is_empty() {
+                // Bind the whole window once, off the main thread, and answer
+                // with the transcript AND its stamp so the main thread's only
+                // job is the cheap "has this moved since last sweep" test.
+                let bound = cx
+                    .background_executor()
+                    .spawn(async move {
+                        let home = session::home_dir();
+                        let certain = paneident::certain(&facts, &home);
+                        reqs.into_iter()
+                            .filter_map(|(shell_pid, pane)| {
+                                let path = certain.get(&shell_pid)?.clone();
+                                let stamp = std::fs::metadata(&path).ok().map(|m| {
+                                    let modified = m
+                                        .modified()
+                                        .ok()
+                                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                                        .map(|d| d.as_millis() as u64)
+                                        .unwrap_or(0);
+                                    (modified, m.len())
+                                });
+                                Some((pane, path, stamp))
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .await;
+                let Ok(moved) = this.update(cx, |ws: &mut Workspace, _cx| ws.take_moved(bound))
+                else {
+                    break;
+                };
                 let found = cx
                     .background_executor()
                     .spawn(async move {
                         let now = surfacefeed::now_ms();
-                        reqs.into_iter()
+                        moved
+                            .into_iter()
                             .map(|(pane, path)| surfacefeed::Arrivals {
                                 pane,
                                 posts: derive::from_transcript(&path, now),
@@ -7089,6 +7129,10 @@ impl Workspace {
     /// plugin client's deadline — lean-ctx's `gain` returns in ~180ms — and the
     /// numbers are precomputed, so this never tokenizes anything itself.
     fn fetch_savings(&mut self, agent_id: Option<String>, cx: &mut Context<Self>) {
+        // Owns the face it fills, the way `open_usage` owns the other one.
+        // Every caller used to set the tab itself, and the one that forgot is
+        // the failure this door now closes.
+        self.savings_tab = OverlayTab::Savings;
         let home = session::home_dir();
         let plugins = plugins::discover(&home);
         let Some(lc) = plugins.iter().find(|m| m.name == "leanctx-savings") else {
@@ -7160,6 +7204,7 @@ impl Workspace {
                 };
                 out.push(vitals::PaneReq {
                     shell_pid: pid,
+                    mode: view.mode.label().to_string(),
                     cwd: rt.cwd,
                     resume: rt.resume,
                     known: self.agent_vitals.get(&pid).map(|v| v.stamp),
@@ -7373,14 +7418,13 @@ impl Workspace {
         }
     }
 
-    /// Which agent panes have a transcript worth deriving surfaces from.
+    /// Every agent pane in this window, as [`paneident`] wants them.
     ///
-    /// Keyed by host pane id rather than pid, because that is what a surface
-    /// is addressed to — and the pid changes when a conversation is resumed
-    /// while the pane, and its bench, do not.
-    fn derive_requests(&mut self, cx: &App) -> Vec<(u64, std::path::PathBuf)> {
-        let home = session::home_dir();
-        let mut out = Vec::new();
+    /// The main-thread half of binding a pane to its conversation: cheap
+    /// per-pane facts only. The reading — project directories, transcript
+    /// edges — happens off this thread, against the whole set at once.
+    fn pane_facts(&self, cx: &App) -> Vec<paneident::PaneFacts> {
+        let mut facts = Vec::new();
         for tab in self.tabs.iter() {
             let mut leaves = Vec::new();
             tab.root.leaves(&mut leaves);
@@ -7389,38 +7433,68 @@ impl Workspace {
                 if !view.mode.is_agent() {
                     continue;
                 }
-                let Some(pane) = view.pane_id() else { continue };
-                let rt = view.runtime();
-                let Some(path) = mcp_tail::transcript_for(
-                    view.mode.label(),
-                    rt.cwd.as_deref(),
-                    rt.resume.as_deref(),
-                    &home,
-                ) else {
+                let Some(shell_pid) = view.shell_pid() else {
                     continue;
                 };
-                // Only a transcript that MOVED is worth parsing again. One
-                // stat per agent pane per sweep replaces one 256 KiB read and
-                // parse per agent pane per sweep; a stat that fails (the file
-                // is gone, or mid-rotation) falls through and lets the parse
-                // decide, exactly as before.
-                let stamp = std::fs::metadata(&path).ok().map(|m| {
-                    let modified = m
-                        .modified()
-                        .ok()
-                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                        .map(|d| d.as_millis() as u64)
-                        .unwrap_or(0);
-                    (modified, m.len())
+                let rt = view.runtime();
+                facts.push(paneident::PaneFacts {
+                    shell_pid,
+                    mode: view.mode.label().to_string(),
+                    cwd: rt.cwd.clone(),
+                    resume: rt.resume.clone(),
                 });
-                if let Some(stamp) = stamp {
-                    if self.derived_stamps.get(&pane) == Some(&stamp) {
-                        continue;
-                    }
-                    self.derived_stamps.insert(pane, stamp);
-                }
-                out.push((pane, path));
             }
+        }
+        facts
+    }
+
+    /// Which agent panes might have a transcript worth deriving surfaces from,
+    /// and which host pane id each one's surfaces belong to.
+    ///
+    /// Keyed by host pane id rather than pid, because that is what a surface is
+    /// addressed to — and the pid changes when a conversation is resumed while
+    /// the pane, and its bench, do not.
+    ///
+    /// The binding itself is NOT done here: it is done once, off the main
+    /// thread, over the whole window, and only where the evidence supports it.
+    /// A bench showing a deliverable is saying *this agent made this*, so a pane
+    /// whose conversation cannot be established gets no derived surfaces rather
+    /// than the directory's newest ones — #564, where eight panes read one
+    /// transcript and each showed another agent's work as its own.
+    fn derive_requests(&mut self, cx: &App) -> (Vec<paneident::PaneFacts>, Vec<(u32, u64)>) {
+        let mut panes: Vec<(u32, u64)> = Vec::new();
+        for tab in self.tabs.iter() {
+            let mut leaves = Vec::new();
+            tab.root.leaves(&mut leaves);
+            for e in leaves {
+                let view = e.read(cx);
+                if !view.mode.is_agent() {
+                    continue;
+                }
+                if let (Some(pane), Some(shell_pid)) = (view.pane_id(), view.shell_pid()) {
+                    panes.push((shell_pid, pane));
+                }
+            }
+        }
+        (self.pane_facts(cx), panes)
+    }
+
+    /// Fold this sweep's stamps in, and say which panes actually need parsing.
+    ///
+    /// Only a transcript that MOVED is worth parsing again: one stat per agent
+    /// pane per sweep replaces one 256 KiB read and parse per agent pane per
+    /// sweep. A stat that fails (the file is gone, or mid-rotation) falls
+    /// through and lets the parse decide, exactly as before.
+    fn take_moved(&mut self, bound: Vec<BoundTranscript>) -> Vec<(u64, PathBuf)> {
+        let mut out = Vec::new();
+        for (pane, path, stamp) in bound {
+            if let Some(stamp) = stamp {
+                if self.derived_stamps.get(&pane) == Some(&stamp) {
+                    continue;
+                }
+                self.derived_stamps.insert(pane, stamp);
+            }
+            out.push((pane, path));
         }
         out
     }
@@ -8395,15 +8469,17 @@ impl Workspace {
                     MouseButton::Left,
                     cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
                         cx.stop_propagation();
+                        // Switching to a face is the same act as opening it,
+                        // so each goes through that face's own door: set the
+                        // tab, then READ. Only usage did. Savings merely
+                        // flipped the tab, so every route into the card that
+                        // never ran the plugin — the Σ usage button,
+                        // ctrl+shift+A, a left-bar allowance rail — left
+                        // `savings_view` unset, and clicking `savings` drew the
+                        // wordmark over an empty card with nothing to say.
                         match want {
-                            // switching to usage is the same act as opening it,
-                            // so it goes through one door: read, then refresh if
-                            // what we read has gone stale.
                             OverlayTab::Usage => ws.open_usage(cx),
-                            OverlayTab::Savings => {
-                                ws.savings_tab = OverlayTab::Savings;
-                                cx.notify();
-                            }
+                            OverlayTab::Savings => ws.fetch_savings(None, cx),
                         }
                     }),
                 )
@@ -8690,6 +8766,20 @@ impl Workspace {
                     .text_size(px(10.5))
                     .text_color(hsla(0., 0.7, 0.62, 1.))
                     .child(err.clone()),
+            );
+        } else {
+            // Neither a reading nor a failure: nobody has asked the plugin. A
+            // THIRD state, and drawing it as nothing is the collapse the house
+            // rule forbids — an empty card under a wordmark that says "token
+            // savings" reads as "lean-ctx saved you nothing", which is the one
+            // thing it does not mean. Every door into this face now reads, so
+            // this should be unreachable; it is here because the last time it
+            // was unreachable-by-construction it shipped, and said nothing.
+            body = body.child(
+                div()
+                    .text_size(px(10.5))
+                    .text_color(th.text.alpha(0.6))
+                    .child("no rollup read yet \u{2014} not zero saved"),
             );
         }
 
@@ -11280,7 +11370,7 @@ impl Workspace {
                     .unwrap_or_else(|| format!("TAB {}", i + 1))
             })
             .unwrap_or_else(|| "TD".into());
-        let (pane_label, rt, mode, fallback) = {
+        let (pane_label, shell_pid, fallback) = {
             let v = pane.read(cx);
             let label = v.name.clone().unwrap_or_else(|| {
                 if v.title.trim().is_empty() {
@@ -11289,13 +11379,14 @@ impl Workspace {
                     v.title.clone()
                 }
             });
-            (
-                label,
-                v.runtime(),
-                v.mode.clone(),
-                v.recent_lines(2).join(" · "),
-            )
+            (label, v.shell_pid(), v.recent_lines(2).join(" · "))
         };
+        // The recap quotes an agent back to itself, so it is bound like every
+        // other reader: over the whole window, and only where the binding is
+        // evidenced. A single-pane lookup would look like a pane alone in its
+        // directory and take the newest transcript there, which is the bug
+        // wearing a different hat.
+        let recap_facts = self.pane_facts(cx);
         // WHY it stopped decorates the title: ❓ waiting on Parker (the 300ms
         // ring debounce means the prompt scan has already run by now), ❌ hit a
         // wall, ✅ clean — the same glyphs the tab wears.
@@ -11334,14 +11425,8 @@ impl Workspace {
                 .background_executor()
                 .spawn(async move {
                     let home = std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default());
-                    let cwd = rt.cwd.unwrap_or_default();
-                    let transcript = match mode {
-                        pane::PaneMode::Claude => {
-                            session::claude_transcript(&cwd, rt.resume.as_deref(), &home)
-                        }
-                        pane::PaneMode::Codex => session::codex_transcript(&cwd, &home),
-                        _ => None,
-                    };
+                    let transcript = shell_pid
+                        .and_then(|pid| paneident::certain(&recap_facts, &home).remove(&pid));
                     let body = transcript
                         .as_deref()
                         .and_then(notify::recap_from_transcript)
@@ -11488,9 +11573,13 @@ impl Workspace {
                     continue;
                 }
                 let id = leaf.entity_id();
+                let Some(shell_pid) = p.shell_pid() else {
+                    continue;
+                };
                 let rt = p.runtime();
                 out.push(toolprop::ToolProbeReq {
                     id,
+                    shell_pid,
                     mode: p.mode.label().to_string(),
                     cwd: rt.cwd,
                     session: rt.resume,
@@ -24953,7 +25042,6 @@ impl Render for Workspace {
                                     MouseButton::Left,
                                     cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
                                         cx.stop_propagation();
-                                        ws.savings_tab = OverlayTab::Savings;
                                         ws.fetch_savings(None, cx);
                                     }),
                                 ),
@@ -32224,6 +32312,51 @@ mod tests {
         );
     }
 
+    /// Every door into the </> card's savings face READS the rollup.
+    ///
+    /// The card has more ways in than it used to: the `</> savings` button, the
+    /// Σ usage button, ctrl+shift+A, and a left-bar allowance rail. Only the
+    /// first ran the plugin. The other three land on the usage face, and the
+    /// `savings` tab chip beside them merely flipped `savings_tab` — so the
+    /// card drew the lean-ctx wordmark, both chips, the dismiss hint, and a body
+    /// with nothing in it, on a machine whose rollup said 35M tokens saved.
+    ///
+    /// Asserted against comment-free source: the paragraph above names the very
+    /// call it is checking for.
+    #[test]
+    fn every_door_into_the_savings_face_reads_the_rollup() {
+        let code = shipped_code();
+        // The tab chip is the door that was missing. It calls the fetch, and it
+        // is the ONLY `OverlayTab::Savings =>` arm in the chip's match.
+        assert!(
+            code.contains("OverlayTab::Savings => ws.fetch_savings(None, cx),"),
+            "the savings tab chip must READ the rollup, not just flip the tab"
+        );
+        // The face belongs to its own door, so a fourth caller cannot forget it
+        // the way the third one did.
+        let fetch = code
+            .split_once("fn fetch_savings(")
+            .expect("fetch_savings exists")
+            .1;
+        let fetch_body = &fetch[..fetch.find("fn open_usage(").unwrap_or(fetch.len())];
+        assert!(
+            fetch_body.contains("self.savings_tab = OverlayTab::Savings;"),
+            "fetch_savings sets the face it fills, as open_usage does for its own"
+        );
+        // ...and no caller re-sets it, which is how the two could drift apart.
+        assert!(
+            !code.contains("ws.savings_tab = OverlayTab::Savings;"),
+            "callers must not set the face themselves — the door does it"
+        );
+        // Absence is drawn. With neither a reading nor an error, the body says
+        // it has not read, rather than rendering as nothing.
+        assert!(
+            code.contains("no rollup read yet"),
+            "an unread savings face must say so — a blank card under a \
+             \"token savings\" wordmark reads as zero saved"
+        );
+    }
+
     #[test]
     fn savings_view_parses_plugin_payload() {
         let json = r#"{
@@ -32496,6 +32629,7 @@ mod tests {
             ("agent-usage", Verb::AgentUsage),
             ("agent-vitals", Verb::AgentVitals),
             ("probe", Verb::Probe),
+            ("bindings", Verb::Bindings),
             ("serve", Verb::Serve),
             ("skin", Verb::Skin),
         ] {
@@ -34232,6 +34366,93 @@ fn probe_cli(args: &[String]) -> i32 {
     }
 }
 
+/// `terminal-delight bindings` — which conversation this machine thinks each
+/// live agent is in, and on what evidence, as JSON.
+///
+/// A binding nobody can read back is a binding nobody can debug, and this one
+/// was wrong for weeks in a way that only showed up as a strange card on a
+/// bench. It takes no window: the fleet is every live `claude`/`codex` process
+/// and the shell above it, so the answer can be checked against `/proc` by hand
+/// on a machine where the GUI is not running at all.
+///
+/// `bond` is the rung: `declared` (the agent named it), `birth` (it started when
+/// the conversation opened), `sole` (elimination), `guess` (a preference between
+/// live conversations — the one readers that attribute work refuse). A pane that
+/// cannot be bound is listed with a null session, because "I do not know" is the
+/// answer this whole module exists to be able to give.
+fn bindings_cli(_args: &[String]) -> i32 {
+    let home = session::home_dir();
+    let mut facts: Vec<paneident::PaneFacts> = Vec::new();
+    // The agent process behind each pane row, reported alongside it: two agents
+    // started under ONE shell are one pane to every reader in the window, and a
+    // row that showed only the shell would make that look like a duplicate
+    // rather than the unusual thing it is.
+    let mut agents: Vec<(u32, u32)> = Vec::new();
+    let Ok(rd) = std::fs::read_dir("/proc") else {
+        eprintln!("terminal-delight bindings: cannot read /proc");
+        return 2;
+    };
+    for e in rd.flatten() {
+        let Ok(pid) = e.file_name().to_string_lossy().parse::<u32>() else {
+            continue;
+        };
+        let comm = std::fs::read_to_string(format!("/proc/{pid}/comm")).unwrap_or_default();
+        let mode = match comm.trim() {
+            "claude" => "CLAUDE",
+            "codex" => "CODEX",
+            _ => continue,
+        };
+        // An agent that spawned another agent is not a second pane: a headless
+        // `claude -p` under a claude is one conversation's tooling, and keying
+        // both by the same shell would have them contend for one binding.
+        let parent_comm = |pid: u32| -> String {
+            std::fs::read_to_string(format!("/proc/{pid}/comm"))
+                .unwrap_or_default()
+                .trim()
+                .to_string()
+        };
+        // The pane's identity is its shell, which is this process's parent —
+        // the same key every reader inside the window uses.
+        let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).unwrap_or_default();
+        let ppid: u32 = stat
+            .rsplit_once(')')
+            .and_then(|(_, rest)| rest.split_whitespace().nth(1))
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0);
+        if matches!(parent_comm(ppid).as_str(), "claude" | "codex") {
+            continue;
+        }
+        agents.push((pid, ppid));
+        facts.push(paneident::PaneFacts {
+            shell_pid: ppid,
+            mode: mode.to_string(),
+            cwd: std::fs::read_link(format!("/proc/{pid}/cwd"))
+                .ok()
+                .map(|p| p.to_string_lossy().into_owned()),
+            resume: None,
+        });
+    }
+    let bound = paneident::resolve(&facts, &home);
+    let rows: Vec<serde_json::Value> = facts
+        .iter()
+        .zip(agents.iter())
+        .map(|(f, (agent_pid, _))| {
+            let b = bound.get(&f.shell_pid);
+            serde_json::json!({
+                "shell_pid": f.shell_pid,
+                "agent_pid": agent_pid,
+                "mode": f.mode,
+                "cwd": f.cwd,
+                "session": b.map(|b| b.session_id.clone()),
+                "bond": b.map(|b| b.bond.as_str()),
+                "certain": b.map(|b| b.is_certain()).unwrap_or(false),
+            })
+        })
+        .collect();
+    println!("{}", serde_json::json!({ "panes": rows }));
+    0
+}
+
 /// What `--help` prints, and what a refused word is printed beside. Every verb
 /// this binary carries is listed: the refusal arm in [`dispatch`] shows this
 /// text, so a build missing a verb tells the caller exactly which words it
@@ -34247,6 +34468,7 @@ Usage:
   terminal-delight probe <pid>   report a terminal's cwd + resumable agent session, as JSON
   terminal-delight agent-usage   refresh this machine's AI subscription usage records
   terminal-delight agent-vitals  the three attention bars for one transcript, as JSON
+  terminal-delight bindings      which conversation each live agent is in, as JSON
   terminal-delight skin          resolve a chrome skin against a palette, as JSON
   terminal-delight surface [f]   put a work object on this pane's workbench
                                  (a TDSP document, or prose with a ```td block;
@@ -34321,6 +34543,11 @@ enum Verb {
     /// report the foreground process, its cwd, and the resume line TD would
     /// use. `td-send` runs this before deciding whether a tile migrates.
     Probe,
+    /// Which conversation every live agent on this machine is in, and on what
+    /// evidence. The read-back verb for [`paneident`]: a binding nobody can
+    /// inspect is a binding nobody can debug, and this one was wrong for weeks
+    /// while looking like a rendering quirk.
+    Bindings,
     /// Run a session host: own the pseudoterminals for one session and serve
     /// them to whichever window is attached. This is the process that outlives
     /// windows, and the reason a crash costs a window rather than a day.
@@ -34352,6 +34579,7 @@ impl Verb {
             "agent-usage" => Self::AgentUsage,
             "agent-vitals" => Self::AgentVitals,
             "probe" => Self::Probe,
+            "bindings" => Self::Bindings,
             "serve" => Self::Serve,
             "skin" => Self::Skin,
             "surface" => Self::Surface,
@@ -34423,6 +34651,7 @@ fn main() {
                 Verb::AgentUsage => usage::run_cli(&argv[2..]),
                 Verb::AgentVitals => vitals::run_cli(&argv[2..]),
                 Verb::Probe => probe_cli(&argv[2..]),
+                Verb::Bindings => bindings_cli(&argv[2..]),
                 Verb::Serve => host::run_cli(&argv[2..]),
                 Verb::Skin => skin::run_cli(&argv[2..]),
                 Verb::Surface => surfacefeed::run_cli(&argv[2..]),
