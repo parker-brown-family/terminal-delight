@@ -451,6 +451,18 @@ table.wide td code, table.wide th code { font-size: 11px; }
 
 <p>The board itself turns out to be cheap. Everything a comment needs &mdash; a place on disk, a restore when the window opens, a row on the rail, a card when you click it, an unseen dot when one arrives while you were elsewhere &mdash; already exists for the eight kinds the bench holds today. Make a comment a ninth kind and it inherits all of it, and the only genuinely new machinery is a text box that does <em>not</em> type into the pseudoterminal.</p>
 
+<div class="callout crit" style="margin:0 0 22px">
+  <span class="lbl">Correction &middot; 19 September 2026</span>
+  <p><b>Read-first item 1 and figure 1 were wrong, and the check written beside them is what killed it.</b>
+  This brief claimed the three-tab strip was <em>already</em> clipping <code>decisions</code> on a 500-point
+  pane, from an estimate of 6.0 points per character. Measured afterwards on the running build, four tabs
+  span about <b>161</b> points at the 208-point rail cap &mdash; so three span about 121 and fitted at every
+  width an open rail can have. The estimate was roughly a third too fat.</p>
+  <p>What survives: the <b>fourth</b> tab does overflow, so the wrapping strip is a prerequisite for the
+  comments board rather than a fix to shipped behaviour. Everything else in this brief was built as written
+  and merged in <a href="https://github.com/parker-brown-family/terminal-delight/pull/566">pull request 566</a>.
+  The corrected numbers live in the code comment and the test message, not only here.</p>
+</div>
 <h2 class="sec">Read first</h2>
 <ol class="esc-list">
   <li>
@@ -493,7 +505,7 @@ table.wide td code, table.wide th code { font-size: 11px; }
 <h2 class="sec">What has to fit</h2>
 
 <figure>
-  <span class="lbl">01 &middot; The tab row against the width it gets</span>
+  <span class="lbl">01 &middot; The tab row against the width it gets &mdash; SUPERSEDED, see the correction above</span>
   <div class="scroller">
     <div class="railset">
 
