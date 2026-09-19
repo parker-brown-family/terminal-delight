@@ -2325,10 +2325,8 @@ mod tests {
     /// identical colours. That is what "unreadable" was, as a number.
     #[test]
     fn a_tab_label_is_legible_on_every_builtin_palette() {
-        let mut ids = crate::theme::builtin_ids();
-        ids.push("hacker");
-        for id in ids {
-            let src = crate::theme::builtin_toml(id).unwrap_or(crate::theme::DEFAULT_THEME_TOML);
+        for id in crate::theme::builtin_ids() {
+            let src = crate::theme::builtin_toml(id).expect("a builtin id resolves to its toml");
             let th = theme::parse(src).unwrap_or_else(|e| panic!("{id} does not parse: {e:?}"));
             let sk = parse(DEFAULT_SKIN_TOML).unwrap().bake(&th, 1.0);
             // The two grounds chrome sits on. A tab lands on one or the other.

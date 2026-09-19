@@ -2862,6 +2862,59 @@ enum BarDir {
 /// knows the boxes, so it carries the same lock the other bounds registries do.
 type BarBoxes = Arc<Mutex<Vec<(tree::RowId, Bounds<Pixels>)>>>;
 
+/// What a release at `pos` would do, from the row boxes captured last frame.
+///
+/// The row's HEIGHT carries the verb, which is the whole trick that lets one
+/// drag both file and order: the middle of a branch header means *join this*,
+/// its edges and a task's two halves mean *sit here*. A quarter is enough of a
+/// target at these row heights, and a task — which has no "into" — splits
+/// cleanly down the middle.
+///
+/// Scanned newest-last so the innermost row wins where boxes overlap. A free
+/// function rather than a method because the boxes are the entire input: the
+/// geometry can then be tested without standing up a window.
+fn bar_drop_at(rows: &[(tree::RowId, Bounds<Pixels>)], pos: Point<Pixels>) -> Option<tree::Drop> {
+    let Some((id, bounds)) = rows.iter().rev().find(|(_, b)| b.contains(&pos)) else {
+        return under_the_tree(rows, pos);
+    };
+    let top = f32::from(bounds.origin.y);
+    let height = f32::from(bounds.size.height).max(1.0);
+    let frac = ((f32::from(pos.y) - top) / height).clamp(0.0, 1.0);
+    Some(match id {
+        tree::RowId::Task(_) => {
+            if frac < 0.5 {
+                tree::Drop::Before(*id)
+            } else {
+                tree::Drop::After(*id)
+            }
+        }
+        tree::RowId::Unfiled => tree::Drop::Into(*id),
+        _ if frac < 0.25 => tree::Drop::Before(*id),
+        _ if frac > 0.75 => tree::Drop::After(*id),
+        _ => tree::Drop::Into(*id),
+    })
+}
+
+/// The empty bar beneath the last row belongs to the loose section.
+///
+/// The UNFILED line is the bottom of the tree and usually has a long drop of
+/// nothing under it, and the gesture is described — and aimed — as *drag it
+/// below the line*. Answering `None` down there made the release that reads as
+/// most deliberate the one that quietly did nothing, on a session where the
+/// hairline itself is the only ungrouping target on screen.
+///
+/// Held to the divider's own column and to the space below it, so a release out
+/// over the panes is still a cancel and a release in the empty bar ABOVE the
+/// tree stays one too.
+fn under_the_tree(
+    rows: &[(tree::RowId, Bounds<Pixels>)],
+    pos: Point<Pixels>,
+) -> Option<tree::Drop> {
+    let (_, line) = rows.iter().find(|(id, _)| *id == tree::RowId::Unfiled)?;
+    let column = pos.x >= line.origin.x && pos.x <= line.origin.x + line.size.width;
+    (column && pos.y >= line.origin.y).then_some(tree::Drop::Into(tree::RowId::Unfiled))
+}
+
 /// A left-bar row being dragged: the filing AND ordering gesture, which are the
 /// same drag and differ only in where inside a row you let go.
 ///
@@ -10659,23 +10712,7 @@ impl Workspace {
     /// Scanned newest-last so the innermost row wins where boxes overlap.
     fn resolve_bar_drop(&self, pos: Point<Pixels>) -> Option<tree::Drop> {
         let rows = self.bar_bounds.lock().unwrap();
-        let (id, bounds) = rows.iter().rev().find(|(_, b)| b.contains(&pos))?;
-        let top = f32::from(bounds.origin.y);
-        let height = f32::from(bounds.size.height).max(1.0);
-        let frac = ((f32::from(pos.y) - top) / height).clamp(0.0, 1.0);
-        Some(match id {
-            tree::RowId::Task(_) => {
-                if frac < 0.5 {
-                    tree::Drop::Before(*id)
-                } else {
-                    tree::Drop::After(*id)
-                }
-            }
-            tree::RowId::Unfiled => tree::Drop::Into(*id),
-            _ if frac < 0.25 => tree::Drop::Before(*id),
-            _ if frac > 0.75 => tree::Drop::After(*id),
-            _ => tree::Drop::Into(*id),
-        })
+        bar_drop_at(&rows, pos)
     }
 
     /// Write a task's branch from a resolved [`tree::Place`] — the two fields
@@ -33268,6 +33305,59 @@ node = "Leaf"
         assert!(near_perimeter(rect, point(px(398.), px(150.)), band));
         assert!(near_perimeter(rect, point(px(200.), px(2.)), band));
         assert!(near_perimeter(rect, point(px(200.), px(298.)), band));
+    }
+
+    /// The left bar as a filed session draws it: a group header, its two tasks,
+    /// then the UNFILED hairline at the bottom with a tall empty bar beneath.
+    fn filed_bar() -> Vec<(tree::RowId, Bounds<Pixels>)> {
+        let row = |y: f32, h: f32| Bounds {
+            origin: point(px(0.), px(y)),
+            size: size(px(200.), px(h)),
+        };
+        vec![
+            (tree::RowId::Initiative(7), row(100., 24.)),
+            (tree::RowId::Task(0), row(124., 24.)),
+            (tree::RowId::Task(1), row(148., 24.)),
+            (tree::RowId::Unfiled, row(172., 22.)),
+        ]
+    }
+
+    #[test]
+    fn a_release_in_the_empty_bar_below_the_line_ungroups() {
+        // "Drag it below UNFILED" is how the gesture is described and how it is
+        // aimed, and below the line is 600px of nothing against a 22px
+        // hairline. Landing in the nothing used to resolve to no target at all,
+        // so the most deliberate-looking release was the one that did nothing.
+        let rows = filed_bar();
+        let into_unfiled = Some(tree::Drop::Into(tree::RowId::Unfiled));
+        assert_eq!(bar_drop_at(&rows, point(px(100.), px(180.))), into_unfiled);
+        assert_eq!(bar_drop_at(&rows, point(px(100.), px(600.))), into_unfiled);
+        // On a task it is still that task's seat — the fallback only answers
+        // where nothing else does.
+        assert_eq!(
+            bar_drop_at(&rows, point(px(100.), px(128.))),
+            Some(tree::Drop::Before(tree::RowId::Task(0)))
+        );
+    }
+
+    #[test]
+    fn a_release_off_the_bar_is_still_a_cancel() {
+        let rows = filed_bar();
+        // Out over the panes, level with the empty space: not a filing.
+        assert_eq!(bar_drop_at(&rows, point(px(900.), px(600.))), None);
+        // Above the tree — the bar's own header strip — is not the loose
+        // section either. The fallback is BELOW the line, not "anywhere else".
+        assert_eq!(bar_drop_at(&rows, point(px(100.), px(20.))), None);
+        // And with no divider drawn at all (an unorganised flat session) there
+        // is nothing for a miss to fall through to.
+        let flat = vec![(
+            tree::RowId::Task(0),
+            Bounds {
+                origin: point(px(0.), px(100.)),
+                size: size(px(200.), px(24.)),
+            },
+        )];
+        assert_eq!(bar_drop_at(&flat, point(px(100.), px(600.))), None);
     }
 
     #[test]
