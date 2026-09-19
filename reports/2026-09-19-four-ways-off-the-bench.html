@@ -1,0 +1,1207 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Four ways off the bench &mdash; Terminal Delight</title>
+<style>
+/* decision-brief — surfaces, ink, and the three structural components.
+ *
+ * ONE palette. No theme system, no theme toggle. tps-report shipped four themes and
+ * 165 theme-related rules; nobody ever switched. A brief is read once, quickly, to make
+ * a decision — the reader is not shopping for a skin.
+ *
+ * Categorical colours are the validated dataviz default palette (dark steps), which
+ * clears the CVD, chroma, lightness and contrast gates on the adjacent pairlist.
+ * If you change them, re-run the validator; do not eyeball it.
+ *
+ * What is here: tokens, the modal shell, tables, callouts, code. Everything else —
+ * cards, escalation lists, stat tiles, charts — is the brief's own business.
+ * Build what the material needs.
+ */
+:root {
+  color-scheme: dark;
+
+  --surface-0: #111110;   /* page */
+  --surface-1: #1a1a19;   /* panel */
+  --surface-2: #232321;   /* raised */
+  --surface-3: #2e2e2b;   /* control */
+  --line:      #3a3a36;
+
+  --text-primary:   #ffffff;
+  --text-secondary: #c3c2b7;
+  --text-muted:     #8b8a80;
+
+  /* categorical — assign in fixed order, never cycle */
+  --s1: #3987e5;  --s2: #d95926;  --s3: #199e70;  --s4: #c98500;
+  --s5: #d55181;  --s6: #008300;  --s7: #9085e9;  --s8: #e66767;
+
+  /* status — reserved. Never reuse as "series 5". Always ship with a label. */
+  --good:     #0ca30c;
+  --warning:  #fab219;
+  --serious:  #ec835a;
+  --critical: #d03b3b;
+
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, "JetBrains Mono", Menlo, Consolas, monospace;
+  --sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif;
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0; background: var(--surface-0); color: var(--text-primary);
+  font-family: var(--sans); font-size: 15px; line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+.wrap { max-width: 1180px; margin: 0 auto; padding: 0 24px 120px; }
+header.top .wrap { padding-bottom: 0; }   /* the wrap's bottom padding is for the page, not the header */
+
+/* ---- headings ----
+   A heading names the thing. It does not explain it — an em-dash gloss after a
+   heading breaks the heading. The body does the explaining. */
+h1 { font-size: 34px; line-height: 1.18; margin: 0 0 16px; letter-spacing: -.02em; font-weight: 650; }
+h2.sec {
+  font-size: 13px; font-family: var(--mono); letter-spacing: .13em; text-transform: uppercase;
+  color: var(--text-muted); margin: 56px 0 18px; padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+/* ---- modal shell: where depth lives ---- */
+dialog {
+  border: 1px solid var(--line); border-radius: 12px;
+  background: var(--surface-1); color: var(--text-primary);
+  max-width: 880px; width: calc(100vw - 44px); max-height: 86vh; padding: 0; overflow: hidden;
+}
+dialog::backdrop { background: rgba(0,0,0,.76); backdrop-filter: blur(3px); }
+.dlg-head {
+  position: sticky; top: 0; background: var(--surface-2);
+  border-bottom: 1px solid var(--line); padding: 20px 26px;
+  display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; z-index: 2;
+}
+.dlg-head h3 { margin: 0 0 5px; font-size: 20px; letter-spacing: -.015em; }
+.dlg-head .repo { font-family: var(--mono); font-size: 11.5px; color: var(--text-muted); margin: 0; }
+.x {
+  background: var(--surface-3); border: 1px solid var(--line); color: var(--text-secondary);
+  border-radius: 6px; width: 30px; height: 30px; font-size: 17px; line-height: 1;
+  cursor: pointer; flex: none;
+}
+.x:hover { background: var(--critical); color: #fff; border-color: var(--critical); }
+.dlg-body { padding: 24px 26px 34px; overflow-y: auto; max-height: calc(86vh - 78px); }
+.dlg-body h4 {
+  font-family: var(--mono); font-size: 11.5px; letter-spacing: .12em; text-transform: uppercase;
+  color: var(--text-muted); margin: 30px 0 12px; padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+}
+.dlg-body h4:first-child { margin-top: 0; }
+.dlg-body p  { margin: 0 0 13px; color: var(--text-secondary); font-size: 14.5px; }
+.dlg-body ul { margin: 0 0 15px; padding-left: 20px; color: var(--text-secondary); font-size: 14.5px; }
+.dlg-body li { margin-bottom: 8px; }
+.dlg-body strong { color: var(--text-primary); font-weight: 600; }
+
+/* ---- prose furniture ---- */
+code {
+  font-family: var(--mono); font-size: 12.5px; background: var(--surface-3);
+  padding: 1.5px 5px; border-radius: 4px; color: #e8d9a8; word-break: break-word;
+}
+pre {
+  background: var(--surface-0); border: 1px solid var(--line); border-radius: 7px;
+  padding: 15px 17px; overflow-x: auto; margin: 0 0 15px;
+}
+pre code { background: none; padding: 0; color: var(--text-secondary); font-size: 12.5px; line-height: 1.65; }
+
+table { width: 100%; border-collapse: collapse; margin: 0 0 17px; font-size: 13.5px; }
+th, td { text-align: left; padding: 9px 11px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th {
+  font-family: var(--mono); font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--text-muted); font-weight: 500; background: var(--surface-2);
+}
+td { color: var(--text-secondary); }
+td b, td strong { color: var(--text-primary); }
+
+blockquote {
+  margin: 0 0 15px; padding: 12px 18px; border-left: 3px solid var(--s1);
+  background: var(--surface-2); border-radius: 0 7px 7px 0;
+  color: var(--text-secondary); font-size: 14px; font-style: italic;
+}
+
+.callout {
+  border-left: 3px solid var(--warning); background: rgba(250,178,25,.07);
+  padding: 14px 18px; border-radius: 0 7px 7px 0; margin: 0 0 17px;
+}
+.callout.crit { border-color: var(--critical); background: rgba(208,59,59,.08); }
+.callout.good { border-color: var(--good);     background: rgba(12,163,12,.08); }
+.callout p:last-child { margin-bottom: 0; }
+.callout .lbl {
+  font-family: var(--mono); font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--text-muted); margin: 0 0 7px; display: block;
+}
+
+/* ---- confidence labels. Never assert without one. ---- */
+.tag {
+  display: inline-block; font-family: var(--mono); font-size: 10px; letter-spacing: .07em;
+  text-transform: uppercase; padding: 2.5px 7px; border-radius: 4px;
+  margin-right: 6px; font-weight: 600;
+}
+.tag.v { background: rgba(12,163,12,.18);  color: #6cd46c; border: 1px solid rgba(12,163,12,.4); }   /* measured */
+.tag.w { background: rgba(250,178,25,.14); color: #f5c95f; border: 1px solid rgba(250,178,25,.38); } /* inferred */
+.tag.c { background: rgba(208,59,59,.16);  color: #f08a8a; border: 1px solid rgba(208,59,59,.4); }   /* contradicted / hunch */
+
+footer {
+  margin-top: 70px; padding-top: 26px; border-top: 1px solid var(--line);
+  font-family: var(--mono); font-size: 11.5px; color: var(--text-muted);
+}
+footer p { margin: 0 0 7px; }
+
+@media (max-width: 640px) {
+  h1 { font-size: 26px; }
+  .wrap { padding: 0 16px 80px; }
+}
+
+/* decision-brief — reader notes, styling.
+   Depends on the surface/ink/status custom properties in base.css. */
+
+.notable { position: relative; }
+
+.note-btn {
+  position: absolute; top: 8px; right: 8px; z-index: 6;
+  width: 26px; height: 26px; line-height: 1; padding: 0;
+  background: var(--surface-3); border: 1px solid var(--line); border-radius: 6px;
+  color: var(--text-muted); font-size: 13px; cursor: pointer; opacity: 0;
+  transition: opacity .12s, background .12s, color .12s, border-color .12s;
+}
+/* Hidden until hover: a brief with 130 always-visible affordances reads as a form. */
+.notable:hover > .note-btn,
+.note-btn:focus-visible { opacity: 1; }
+.note-btn:hover { background: var(--warning); border-color: var(--warning); color: var(--surface-1); }
+
+.notable.has-note > .note-btn {
+  opacity: 1; background: var(--warning); border-color: var(--warning);
+  color: var(--surface-1); font-weight: 700;
+}
+.notable.has-note { box-shadow: inset 3px 0 0 var(--warning); }
+tr.notable.has-note > td:first-child { box-shadow: inset 3px 0 0 var(--warning); }
+
+/* Table rows can't host an absolutely-positioned child reliably — inline it. */
+tr.notable .note-btn {
+  position: static; opacity: .35; width: 22px; height: 22px; font-size: 11px;
+  margin-left: 6px; vertical-align: middle; display: inline-block;
+}
+tr.notable:hover .note-btn { opacity: 1; }
+
+/* ---- floating bar ---- */
+.notebar {
+  position: fixed; right: 18px; bottom: 18px; z-index: 900;
+  display: flex; gap: 8px; align-items: center;
+  background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px;
+  padding: 9px 11px; box-shadow: 0 10px 32px rgba(0,0,0,.55);
+  font-family: var(--mono); font-size: 11.5px;
+}
+.notebar .cnt { color: var(--text-muted); padding-right: 4px; }
+.notebar .cnt b { color: var(--warning); font-size: 14px; }
+.notebar button {
+  font-family: var(--mono); font-size: 11px; letter-spacing: .03em; cursor: pointer;
+  background: var(--surface-3); border: 1px solid var(--line); color: var(--text-secondary);
+  border-radius: 6px; padding: 6px 10px;
+  transition: background .12s, color .12s, border-color .12s;
+}
+.notebar button:hover { background: var(--warning); color: var(--surface-1); border-color: var(--warning); }
+.notebar button.primary {
+  background: rgba(250,178,25,.14); border-color: rgba(250,178,25,.45); color: #f5c95f;
+}
+.notebar button:disabled {
+  opacity: .4; cursor: default; background: var(--surface-3);
+  color: var(--text-muted); border-color: var(--line);
+}
+@media (max-width: 640px) {
+  .notebar { right: 8px; bottom: 8px; flex-wrap: wrap; max-width: calc(100vw - 16px); }
+}
+
+/* ---- note dialog ---- */
+dialog#d-note { max-width: 620px; }
+#note-list { margin: 0 0 18px; padding: 0; list-style: none; }
+#note-list li {
+  background: var(--surface-2); border: 1px solid var(--line);
+  border-left: 3px solid var(--warning); border-radius: 0 7px 7px 0;
+  padding: 11px 14px; margin-bottom: 9px; font-size: 14px; color: var(--text-secondary);
+}
+#note-list .nts {
+  font-family: var(--mono); font-size: 10px; color: var(--text-muted);
+  display: flex; justify-content: space-between; gap: 10px; margin-bottom: 6px;
+}
+#note-list .ndel {
+  background: none; border: none; color: var(--text-muted);
+  cursor: pointer; font-size: 11px; padding: 0;
+}
+#note-list .ndel:hover { color: var(--critical); }
+#note-none { color: var(--text-muted); font-size: 13.5px; margin: 0 0 16px; }
+
+#note-text {
+  width: 100%; min-height: 104px; background: var(--surface-0);
+  border: 1px solid var(--line); border-radius: 7px; color: var(--text-primary);
+  padding: 11px 13px; font-family: var(--sans); font-size: 14.5px;
+  resize: vertical; line-height: 1.55;
+}
+#note-text:focus { outline: none; border-color: var(--warning); }
+
+.note-actions { display: flex; gap: 9px; align-items: center; margin-top: 11px; }
+.note-actions button {
+  font-family: var(--mono); font-size: 11.5px; cursor: pointer; border-radius: 6px;
+  padding: 8px 14px; border: 1px solid var(--line);
+  background: var(--surface-3); color: var(--text-secondary);
+}
+.note-actions button.save {
+  background: var(--warning); border-color: var(--warning);
+  color: var(--surface-1); font-weight: 600;
+}
+.note-actions .hintk {
+  font-family: var(--mono); font-size: 10.5px; color: var(--text-muted); margin-left: auto;
+}
+
+/* ---- export dialog ---- */
+dialog#d-export { max-width: 780px; }
+#export-out {
+  width: 100%; min-height: 320px; background: var(--surface-0);
+  border: 1px solid var(--line); border-radius: 7px; color: var(--text-secondary);
+  padding: 13px; font-family: var(--mono); font-size: 12px; line-height: 1.55;
+  resize: vertical; white-space: pre;
+}
+.tokest { font-family: var(--mono); font-size: 11px; color: var(--text-muted); margin: 9px 0 0; }
+
+/* page-specific — everything base.css does not own */
+
+header.top { border-bottom: 1px solid var(--line); background: var(--surface-1); padding: 40px 0 34px; margin-bottom: 8px; }
+.kicker { font-family: var(--mono); font-size: 11px; letter-spacing: .13em; text-transform: uppercase; color: var(--text-muted); margin: 0 0 14px; }
+.lede { font-size: 16.5px; line-height: 1.62; color: var(--text-secondary); max-width: 74ch; margin: 0; }
+.lede b { color: var(--text-primary); }
+kbd { font-family: var(--mono); font-size: 11.5px; background: var(--surface-3); border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 1px 5px; color: var(--text-primary); }
+
+/* ---- read-first ---- */
+.esc-list { list-style: none; counter-reset: none; margin: 0; padding: 0; }
+.esc-list li { display: flex; gap: 14px; align-items: flex-start; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-1); padding: 14px 16px; margin-bottom: 10px; }
+.esc-list .rank { font-family: var(--mono); font-size: 15px; color: var(--text-muted); width: 20px; flex: none; text-align: right; padding-top: 1px; }
+.esc-list .t { margin: 0 0 5px; font-size: 15px; font-weight: 620; color: var(--text-primary); }
+.esc-list .d { margin: 0 0 5px; font-size: 13.5px; color: var(--text-secondary); }
+.esc-list .w { margin: 0; font-size: 12.5px; color: var(--text-muted); }
+
+/* ---- figures ---- */
+figure { margin: 0 0 22px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-1); padding: 16px 18px 14px; }
+figure > .lbl { display: block; font-family: var(--mono); font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--text-muted); margin: 0 0 13px; }
+figcaption { margin-top: 13px; font-size: 13.5px; color: var(--text-secondary); }
+figcaption b { color: var(--text-primary); }
+.scroller { overflow-x: auto; }
+svg { display: block; width: 100%; height: auto; }
+
+/* ---- fence ---- */
+.fence { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.fside { border: 1px solid var(--line); border-radius: 9px; padding: 14px 16px; background: var(--surface-2); }
+.fside.in { border-color: rgba(25,158,112,.5); }
+.fside.out { border-color: rgba(208,59,59,.45); border-style: dashed; }
+.fh { margin: 0 0 11px; font-family: var(--mono); font-size: 10.5px; letter-spacing: .09em; text-transform: uppercase; }
+.fside.in .fh { color: #6cd46c; }
+.fside.out .fh { color: #f08a8a; }
+.fside ul { margin: 0 0 11px; padding-left: 17px; font-size: 13.5px; color: var(--text-secondary); }
+.fside li { margin-bottom: 7px; }
+.fside .fn { margin: 0; font-size: 12.5px; color: var(--text-muted); }
+.ded { display: inline-block; font-family: var(--mono); font-size: 9.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--text-muted); border: 1px solid var(--line); border-radius: 3px; padding: 0 4px; margin-left: 5px; }
+
+/* ---- before / after mockup ---- */
+.ba { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.bah { margin: 0 0 11px; font-family: var(--mono); font-size: 10.5px; letter-spacing: .09em; text-transform: uppercase; }
+.bah.bad { color: #f08a8a; }
+.bah.bag { color: #6cd46c; }
+.pane { border: 1px solid var(--line); border-radius: 7px; background: #0c0c0b; overflow: hidden; }
+.pane.dead { border-color: rgba(208,59,59,.45); }
+.phead { display: flex; align-items: center; gap: 5px; background: var(--surface-2); border-bottom: 1px solid var(--line); padding: 5px 8px; }
+.chip { font-family: var(--mono); font-size: 8.5px; letter-spacing: .08em; color: var(--text-muted); border: 1px solid var(--line); border-radius: 3px; padding: 1px 4px; }
+.chip.on { color: #0c0c0b; background: var(--s1); border-color: var(--s1); font-weight: 700; }
+.ptitle { font-family: var(--mono); font-size: 9.5px; color: var(--text-muted); margin-left: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pbody { padding: 10px; min-height: 104px; }
+.pbody.term p { font-family: var(--mono); font-size: 10.5px; color: #c3c2b7; margin: 0 0 3px; }
+.pbody.term p.mut { color: var(--text-muted); }
+.scard { border: 1px solid var(--line); border-left: 2px solid var(--s1); border-radius: 5px; padding: 8px 10px; background: var(--surface-1); }
+.sk { margin: 0 0 4px; font-family: var(--mono); font-size: 8.5px; letter-spacing: .1em; color: var(--s1); }
+.st { margin: 0 0 7px; font-size: 12.5px; font-weight: 640; color: var(--text-primary); }
+.so { margin: 0 0 3px; font-family: var(--mono); font-size: 10.5px; color: var(--text-secondary); }
+.so.chosen { color: #6cd46c; }
+.strip { margin-top: 8px; font-family: var(--mono); font-size: 9.5px; color: var(--text-muted); border-top: 1px solid var(--line); padding-top: 6px; display: flex; align-items: center; gap: 6px; }
+.strip .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--good); display: inline-block; }
+.arrowdown { margin: 7px 0; text-align: center; font-family: var(--mono); font-size: 10px; letter-spacing: .1em; color: var(--text-muted); }
+.bacap { margin: 10px 0 0; font-size: 12.5px; color: var(--text-muted); }
+
+/* ---- gate ---- */
+.gate { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.gcol { border: 1px solid var(--line); border-radius: 9px; padding: 14px 16px; background: var(--surface-2); }
+.gh { margin: 0 0 10px; font-family: var(--mono); font-size: 10.5px; letter-spacing: .09em; text-transform: uppercase; color: var(--text-muted); }
+.gcol pre { margin-bottom: 11px; }
+.gcol pre code { font-size: 11.5px; }
+.gn { margin: 0; font-size: 12.5px; color: var(--text-muted); }
+
+table.wide td:first-child { color: var(--text-primary); }
+
+/* ---- grill ---- */
+.grill .q { border: 1px solid var(--line); border-left: 3px solid var(--s4); border-radius: 0 9px 9px 0; background: var(--surface-1); padding: 14px 17px; margin-bottom: 11px; }
+.qq { margin: 0 0 7px; font-size: 15px; font-weight: 640; color: var(--text-primary); }
+.qa { margin: 0; font-size: 13.5px; color: var(--text-secondary); }
+
+.more { background: var(--surface-3); border: 1px solid var(--line); color: var(--text-secondary); border-radius: 7px; padding: 8px 14px; font-size: 13.5px; font-family: var(--sans); cursor: pointer; margin-right: 8px; }
+.more:hover { border-color: var(--s1); color: var(--text-primary); }
+
+@media (max-width: 760px) {
+  .fence, .ba, .gate { grid-template-columns: 1fr; }
+}
+
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="wrap">
+    <p class="kicker">Terminal Delight &middot; workbench &middot; 19 September 2026</p>
+    <h1>Four ways off the bench, built and removed one per day</h1>
+    <p class="lede">You picked an option on the workbench and the pane turned to face the
+    terminal. That is fixed. It is also the <b>fourth</b> automatic exit from this surface
+    since it shipped three days ago, and the four were four separate bugs for one structural
+    reason: nothing owned the question <em>&ldquo;may this leave the bench?&rdquo;</em>, so
+    every call site answered it privately. Something owns it now, and the build fails on the
+    fifth.</p>
+  </div>
+</header>
+
+<div class="wrap">
+
+<h2 class="sec">Read first</h2>
+<ol class="esc-list">
+  <li>
+    <span class="rank">1</span>
+    <div>
+      <p class="t">Answering a surface no longer moves the face <span class="tag v">measured</span></p>
+      <p class="d">Eleven lines deleted from <code>bench_act</code>. The answer still goes to
+      the agent as a typed line and still lands in the actions journal; only the face stays
+      put.</p>
+      <p class="w">Branch <code>bench/answering-does-not-leave-the-bench</code>, off current
+      main. Not installed &mdash; you will not see it until the launcher is repointed.</p>
+    </div>
+  </li>
+  <li>
+    <span class="rank">2</span>
+    <div>
+      <p class="t">One exit per day, every day the surface has existed <span class="tag v">measured</span></p>
+      <p class="d">The bench shipped 16 Sep. An exit was removed on the 17th, another on the
+      17th, another on the 18th, and this one on the 19th. You found all four in use.</p>
+      <p class="w">That is the patternicity answer, and it is a rate rather than a count.</p>
+    </div>
+  </li>
+  <li>
+    <span class="rank">3</span>
+    <div>
+      <p class="t">The surface already disagreed with itself <span class="tag v">measured</span></p>
+      <p class="d">A question read off the terminal and a question the agent declared draw
+      identically on the bench. Clicking the first kept you there; clicking the second threw
+      you out. Same gesture, same-looking card, two answers.</p>
+      <p class="w">Nothing to do &mdash; the fix collapses them onto the behaviour that was
+      already right.</p>
+    </div>
+  </li>
+  <li>
+    <span class="rank">4</span>
+    <div>
+      <p class="t">A build gate now fails on the fifth <span class="tag v">measured</span></p>
+      <p class="d">A source scan over the bench half: no face change may live there at all.
+      Put the deleted line back and the test names the function it found it in.</p>
+      <p class="w">Mutation-tested rather than asserted &mdash; I replanted the bug and
+      watched it fail.</p>
+    </div>
+  </li>
+  <li>
+    <span class="rank">5</span>
+    <div>
+      <p class="t">One live candidate I did not touch <span class="tag w">inferred</span></p>
+      <p class="d">On the overview, a newly-arrived reply becomes the stand-in card and the
+      card scroll resets to the top &mdash; so a long answer you are halfway through is
+      replaced under you when the next one lands.</p>
+      <p class="w">Defensible (it is a different document) and the code says so out loud. Your
+      call; the grill asks.</p>
+    </div>
+  </li>
+</ol>
+
+<h2 class="sec">01 &middot; What happened, four times</h2>
+
+<figure>
+  <span class="lbl">01 &middot; Four days, four exits</span>
+  <div class="scroller">
+    <svg viewBox="0 0 900 250" role="img" aria-label="Timeline from 16 to 19 September. The workbench ships on the 16th; on each following day one automatic exit from it is found in use and removed.">
+      <defs>
+        <marker id="ar" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto">
+          <path d="M0 0 L8 4 L0 8 z" fill="#8b8a80"/>
+        </marker>
+      </defs>
+      <line x1="60" y1="150" x2="850" y2="150" stroke="#3a3a36" stroke-width="1.5" marker-end="url(#ar)"/>
+
+      <!-- ship -->
+      <circle cx="105" cy="150" r="7" fill="#3987e5"/>
+      <text x="105" y="180" text-anchor="middle" font-family="ui-monospace, monospace" font-size="11" fill="#c3c2b7">16 Sep</text>
+      <text x="105" y="196" text-anchor="middle" font-family="ui-monospace, monospace" font-size="10" fill="#8b8a80">b74bd4d</text>
+      <text x="105" y="128" text-anchor="middle" font-family="ui-sans-serif, sans-serif" font-size="12.5" fill="#3987e5" font-weight="600">the bench ships</text>
+      <text x="105" y="112" text-anchor="middle" font-family="ui-sans-serif, sans-serif" font-size="11" fill="#8b8a80">a second face per pane</text>
+
+      <!-- 1 -->
+      <circle cx="300" cy="150" r="7" fill="#d03b3b"/>
+      <text x="300" y="180" text-anchor="middle" font-family="ui-monospace, monospace" font-size="11" fill="#c3c2b7">17 Sep</text>
+      <text x="300" y="196" text-anchor="middle" font-family="ui-monospace, monospace" font-size="10" fill="#8b8a80">ae44411</text>
+      <text x="300" y="128" text-anchor="middle" font-family="ui-sans-serif, sans-serif" font-size="12.5" fill="#ffffff" font-weight="600">escape retired the question</text>
+      <text x="300" y="112" text-anchor="middle" font-family="ui-sans-serif, sans-serif" font-size="11" fill="#8b8a80">floored: esc stops at a waiting card</text>
+
+      <!-- 2 -->
+      <circle cx="500" cy="150" r="7" fill="#d03b3b"/>
+      <text x="500" y="222" text-anchor="middle" font-family="ui-monospace, monospace" font-size="11" fill="#c3c2b7">17 Sep</text>
+      <text x="500" y="238" text-anchor="middle" font-family="ui-monospace, monospace" font-size="10" fill="#8b8a80">ae38d42</text>
+      <text x="500" y="202" text-anchor="middle" font-family="ui-sans-serif, sans-serif" font-size="12.5" fill="#ffffff" font-weight="600">sending flipped the face</text>
+      <line x1="500" y1="157" x2="500" y2="188" stroke="#3a3a36"/>
+
+      <!-- 3 -->
+      <circle cx="675" cy="150" r="7" fill="#d03b3b"/>
+      <text x="675" y="180" text-anchor="middle" font-family="ui-monospace, monospace" font-size="11" fill="#c3c2b7">18 Sep</text>
+      <text x="675" y="196" text-anchor="middle" font-family="ui-monospace, monospace" font-size="10" fill="#8b8a80">8a73ce2</text>
+      <text x="675" y="128" text-anchor="middle" font-family="ui-sans-serif, sans-serif" font-size="12.5" fill="#ffffff" font-weight="600">escape's last rung flipped it</text>
+      <text x="675" y="112" text-anchor="middle" font-family="ui-sans-serif, sans-serif" font-size="11" fill="#8b8a80">Peel::Face deleted, not disabled</text>
+
+      <!-- 4 -->
+      <circle cx="820" cy="150" r="9" fill="#c98500"/>
+      <text x="820" y="222" text-anchor="middle" font-family="ui-monospace, monospace" font-size="11" fill="#f5c95f">19 Sep</text>
+      <text x="820" y="238" text-anchor="middle" font-family="ui-monospace, monospace" font-size="10" fill="#8b8a80">this brief</text>
+      <text x="820" y="202" text-anchor="middle" font-family="ui-sans-serif, sans-serif" font-size="12.5" fill="#f5c95f" font-weight="600">answering flipped the face</text>
+      <line x1="820" y1="159" x2="820" y2="188" stroke="#3a3a36"/>
+
+      <text x="60" y="30" font-family="ui-monospace, monospace" font-size="10" fill="#8b8a80">RED = AN EXIT FOUND IN USE AND REMOVED &nbsp;&middot;&nbsp; AMBER = THIS ONE</text>
+      <text x="60" y="52" font-family="ui-sans-serif, sans-serif" font-size="13" fill="#c3c2b7">Every commit here was written after Parker hit the behaviour, never before.</text>
+    </svg>
+  </div>
+  <figcaption>Drawn from <code>git log</code> dates and <code>-S</code> searches for each
+  deleted symbol. <b>Four exits in the surface's first four days, and not one was caught by a
+  test or a review</b> &mdash; all four were caught by the person using it, which is the part
+  that makes it a pattern rather than a run of bad luck.</figcaption>
+</figure>
+
+<figure>
+  <span class="lbl">02 &middot; One click, two answers</span>
+  <div class="scroller">
+    <svg viewBox="0 0 900 310" role="img" aria-label="A single Choose click splits into two dispatch arms. The Keys arm, for a question observed in the terminal, leaves the face alone. The Tell arm, for a declared surface, used to flip the pane to the terminal.">
+      <defs>
+        <marker id="ar2" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto">
+          <path d="M0 0 L8 4 L0 8 z" fill="#8b8a80"/>
+        </marker>
+      </defs>
+
+      <rect x="30" y="126" width="180" height="58" rx="8" fill="#232321" stroke="#3987e5" stroke-width="1.5"/>
+      <text x="120" y="150" text-anchor="middle" font-family="ui-sans-serif, sans-serif" font-size="13" fill="#ffffff" font-weight="600">you click an option</text>
+      <text x="120" y="168" text-anchor="middle" font-family="ui-monospace, monospace" font-size="10.5" fill="#8b8a80">Hit::Choose</text>
+
+      <path d="M210 155 L270 155 L270 72 L320 72" fill="none" stroke="#3a3a36" stroke-width="1.5" marker-end="url(#ar2)"/>
+      <path d="M210 155 L270 155 L270 238 L320 238" fill="none" stroke="#3a3a36" stroke-width="1.5" marker-end="url(#ar2)"/>
+
+      <!-- keys arm -->
+      <rect x="326" y="44" width="230" height="58" rx="8" fill="#232321" stroke="#199e70" stroke-width="1.5"/>
+      <text x="441" y="68" text-anchor="middle" font-family="ui-monospace, monospace" font-size="11.5" fill="#199e70">Dispatch::Keys</text>
+      <text x="441" y="86" text-anchor="middle" font-family="ui-sans-serif, sans-serif" font-size="11.5" fill="#c3c2b7">a question read off the terminal</text>
+
+      <path d="M556 73 L616 73" fill="none" stroke="#3a3a36" stroke-width="1.5" marker-end="url(#ar2)"/>
+      <rect x="622" y="44" width="248" height="58" rx="8" fill="#16241e" stroke="#199e70" stroke-width="1.5"/>
+      <text x="746" y="68" text-anchor="middle" font-family="ui-sans-serif, sans-serif" font-size="13" fill="#6cd46c" font-weight="600">you stay on the bench</text>
+      <text x="746" y="86" text-anchor="middle" font-family="ui-sans-serif, sans-serif" font-size="11.5" fill="#8b8a80">it has never done anything else</text>
+
+      <!-- tell arm -->
+      <rect x="326" y="210" width="230" height="58" rx="8" fill="#232321" stroke="#d03b3b" stroke-width="1.5"/>
+      <text x="441" y="234" text-anchor="middle" font-family="ui-monospace, monospace" font-size="11.5" fill="#f08a8a">Dispatch::Tell</text>
+      <text x="441" y="252" text-anchor="middle" font-family="ui-sans-serif, sans-serif" font-size="11.5" fill="#c3c2b7">a surface the agent declared</text>
+
+      <path d="M556 239 L616 239" fill="none" stroke="#3a3a36" stroke-width="1.5" marker-end="url(#ar2)"/>
+      <rect x="622" y="210" width="248" height="58" rx="8" fill="#2a1717" stroke="#d03b3b" stroke-width="1.5"/>
+      <text x="746" y="234" text-anchor="middle" font-family="ui-sans-serif, sans-serif" font-size="13" fill="#f08a8a" font-weight="600">the pane turns to TERM</text>
+      <text x="746" y="252" text-anchor="middle" font-family="ui-monospace, monospace" font-size="10.5" fill="#8b8a80">if self.mode.is_agent() &mdash; deleted</text>
+
+      <text x="30" y="300" font-family="ui-monospace, monospace" font-size="10" fill="#8b8a80">the two cards are indistinguishable on the bench &mdash; a person cannot know which arm their click will take</text>
+    </svg>
+  </div>
+  <figcaption>Drawn from <code>Bench::act</code> in <code>workbench.rs</code> and the
+  <code>match</code> in <code>bench_act</code>. <b>Answering flipped the face half the
+  time</b>, and the thing deciding which half &mdash; did we scrape this question off the
+  screen, or did the agent declare it &mdash; has no representation anywhere in what you are
+  looking at.</figcaption>
+</figure>
+
+<h2 class="sec">02 &middot; Why it was four bugs and not one</h2>
+
+<p>Escape had the same disease and was cured in August's style: the ladder of what
+<kbd>esc</kbd> takes off moved into <b>one pure function</b>, <code>peel</code>, and the
+handler now asks it rather than deciding. That is why escape has stopped producing new bugs.
+The <em>face</em> never got that treatment. <code>set_face</code> stayed a plain setter any
+code in the pane could call, and four separate pieces of code called it for four separate
+private reasons.</p>
+
+<figure>
+  <span class="lbl">03 &middot; Who may take you off the bench</span>
+  <div class="fence">
+    <div class="fside in">
+      <p class="fh">Inside &mdash; deliberate, and all three survive</p>
+      <ul>
+        <li><b>alt+k</b> &mdash; the pane's own chord, from either face</li>
+        <li><b>the TERM chip</b> &mdash; in the pane header, where you are already looking</li>
+        <li><b><code>bench off</code></b> &mdash; a script, through <code>ctl</code></li>
+      </ul>
+      <p class="fn">All three live in <code>pane.rs</code> or <code>ctl.rs</code>. Each is a
+      person or a script saying so.</p>
+    </div>
+    <div class="fside out">
+      <p class="fh">Outside &mdash; built, then removed</p>
+      <ul>
+        <li>escape, once nothing else was left to dismiss <span class="ded">deleted 18 Sep</span></li>
+        <li>escape over a question an agent was waiting on <span class="ded">floored 17 Sep</span></li>
+        <li>pressing send in the composer <span class="ded">stopped 17 Sep</span></li>
+        <li>answering a declared surface <span class="ded">deleted today</span></li>
+      </ul>
+      <p class="fn">All four lived in the bench half. None of them was a person saying so.</p>
+    </div>
+  </div>
+  <figcaption>The rule, stated as a place rather than as a list of cases. <b>Nothing in
+  <code>pane/bench.rs</code> &mdash; everything the bench does with a click, a key or a wheel
+  &mdash; may move the face.</b> A list guards the cases on it; a file boundary guards the
+  function nobody has written yet.</figcaption>
+</figure>
+
+<h2 class="sec">03 &middot; What changed</h2>
+
+<figure>
+  <span class="lbl">04 &middot; The same click, before and after</span>
+  <div class="ba">
+    <div class="bacol">
+      <p class="bah bad">Before &mdash; you clicked, and the room changed</p>
+      <div class="pane">
+        <div class="phead"><span class="chip on">WB</span><span class="chip">TERM</span><span class="ptitle">claude &mdash; surface protocol</span></div>
+        <div class="pbody">
+          <div class="scard">
+            <p class="sk">DECISION</p>
+            <p class="st">Cache eviction policy</p>
+            <p class="so">&#9656; LRU &mdash; 3&times; fewer misses</p>
+            <p class="so">&nbsp;&nbsp;TTL &mdash; simpler to reason about</p>
+          </div>
+        </div>
+      </div>
+      <p class="arrowdown">click &#9660;</p>
+      <div class="pane dead">
+        <div class="phead"><span class="chip">WB</span><span class="chip on">TERM</span><span class="ptitle">claude &mdash; surface protocol</span></div>
+        <div class="pbody term">
+          <p>&gt; [workbench:a19f] chose LRU on Cache eviction policy</p>
+          <p class="mut">&#9608;</p>
+        </div>
+      </div>
+      <p class="bacap">Your card, your place in the shelf and your half-typed comment are all
+      still there. You just cannot see any of them.</p>
+    </div>
+    <div class="bacol">
+      <p class="bah bag">After &mdash; you clicked, and you are still here</p>
+      <div class="pane">
+        <div class="phead"><span class="chip on">WB</span><span class="chip">TERM</span><span class="ptitle">claude &mdash; surface protocol</span></div>
+        <div class="pbody">
+          <div class="scard">
+            <p class="sk">DECISION</p>
+            <p class="st">Cache eviction policy</p>
+            <p class="so chosen">&#10003; LRU &mdash; 3&times; fewer misses</p>
+            <p class="so">&nbsp;&nbsp;TTL &mdash; simpler to reason about</p>
+          </div>
+        </div>
+      </div>
+      <p class="arrowdown">click &#9660;</p>
+      <div class="pane">
+        <div class="phead"><span class="chip on">WB</span><span class="chip">TERM</span><span class="ptitle">claude &mdash; surface protocol</span></div>
+        <div class="pbody">
+          <div class="scard">
+            <p class="sk">DECISION &middot; answered</p>
+            <p class="st">Cache eviction policy</p>
+            <p class="so chosen">&#10003; LRU</p>
+          </div>
+          <div class="strip">live &middot; agent picked it up <span class="dot"></span></div>
+        </div>
+      </div>
+      <p class="bacap">The card records the answer, and the live strip above the composer
+      shows the agent taking it. Leaving is still one keypress away.</p>
+    </div>
+  </div>
+  <figcaption>Mockup, mine &mdash; drawn from the code paths, not photographed from a build.
+  <b>The right-hand column is behaviour the composer already had since 17 Sep</b>; this change
+  only extends it to the click. The live strip is the existing one, and its whole justification
+  in <code>bench_send</code> is that it makes staying put legible.</figcaption>
+</figure>
+
+<h2 class="sec">04 &middot; The gate</h2>
+
+<figure>
+  <span class="lbl">05 &middot; What the build now refuses</span>
+  <div class="gate">
+    <div class="gcol">
+      <p class="gh">The scan</p>
+      <pre><code>pane/bench.rs
+  &rarr; cut at #[cfg(test)]
+  &rarr; strip every //-comment
+  &rarr; any set_face( or toggle_face( ?
+  &rarr; report it with the fn it sits in</code></pre>
+      <p class="gn">Comments stripped first because the paragraph explaining the removal names
+      both <code>set_face</code> and <code>Face::Terminal</code>. A scan that cannot tell code
+      from a description of code is satisfied by its own gravestone &mdash; that has happened
+      here before.</p>
+    </div>
+    <div class="gcol">
+      <p class="gh">The leg that fails</p>
+      <pre><code>$ (replant the deleted line)
+$ cargo test nothing_in_the_bench_half
+
+FAILED
+  the bench half moves the pane's face &hellip;
+  [("bench_act",
+    "self.bench.set_face(
+       crate::workbench::Face::Terminal);")]</code></pre>
+      <p class="gn">Run before trusting it. A guard that has never been seen to fail would
+      report success against a broken build too, and it names the owning function so the next
+      reader does not have to find it.</p>
+    </div>
+  </div>
+  <figcaption>Copied from the real run. <b>The gate is about a place, not a list</b> &mdash;
+  it does not enumerate the four exits, it refuses the verb anywhere in the file, so the fifth
+  is caught in whatever function somebody invents for it. <span class="tag v">measured</span>
+  on the branch: fmt clean, clippy <code>-D warnings</code> clean, 1,325 tests green.</figcaption>
+</figure>
+
+<h2 class="sec">05 &middot; The same shape, elsewhere in this repo</h2>
+
+<p>You asked how patterned this is. Beyond the bench's four, the codebase carries
+<b>eight more</b> instances of one sentence &mdash; <em>a machine event reset something the
+person had put there</em> &mdash; each found in use and each fixed in its own commit with its
+own reasoning. They are listed here because the count is the argument: this is not a
+workbench problem.</p>
+
+<figure>
+  <span class="lbl">06 &middot; Twelve instances, three shapes</span>
+  <div class="scroller">
+  <table class="wide">
+    <thead><tr><th>Shape</th><th>Where</th><th>What the machine did</th><th>Status</th></tr></thead>
+    <tbody>
+      <tr><td rowspan="4"><b>The exit is decided at the call site</b></td><td><code>bench_act</code></td><td>answering a surface turned the pane to TERM</td><td><span class="tag v">fixed today</span></td></tr>
+      <tr><td><code>bench_send</code></td><td>pressing send turned the pane to TERM</td><td>fixed 17 Sep</td></tr>
+      <tr><td><code>Peel::Face</code></td><td>escape, with nothing left, turned the pane to TERM</td><td>fixed 18 Sep</td></tr>
+      <tr><td><code>peel</code></td><td>escape retired a question an agent was waiting on</td><td>fixed 17 Sep</td></tr>
+
+      <tr><td rowspan="5"><b>A machine event revoked a selection</b></td><td><code>skin.rs</code></td><td>saving <code>skin.toml</code> revoked an explicitly chosen skin</td><td>fixed</td></tr>
+      <tr><td><code>LogoPicker::merge</code></td><td>a later search tier yanked the highlighted row</td><td>fixed</td></tr>
+      <tr><td><code>Bench::apply</code></td><td>retiring a surface opened its neighbour</td><td>fixed</td></tr>
+      <tr><td><code>surfacefeed</code></td><td>an arriving surface selected itself and moved the shelf</td><td>fixed</td></tr>
+      <tr><td><code>plan_focus</code></td><td>the focus watchdog took the keyboard out of an open box mid-word</td><td>fixed</td></tr>
+
+      <tr><td rowspan="3"><b>A machine event moved what the eye had learned</b></td><td><code>embodiment</code></td><td>the bench shrank to a summary when the pane lost focus</td><td>fixed</td></tr>
+      <tr><td>mother-bar badges</td><td>an agent finishing reshuffled the badge strip</td><td>fixed</td></tr>
+      <tr><td>pinned-note badge</td><td>the pin moved slot as the roster changed</td><td>fixed</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <figcaption>Found by grepping the source for the comments that record each repair, then
+  confirming each against its code. <b>Twelve, and every one was found by a person using the
+  thing rather than by a test</b> &mdash; which is the real finding. The governing rule the
+  codebase has already converged on is written in <code>workbench.rs</code>: <em>if we cannot
+  say what changed, change nothing.</em></figcaption>
+</figure>
+
+<div class="callout">
+  <span class="lbl">The one I did not fix</span>
+  <p>On the overview, the newest reply stands in as the card without anyone opening it, and
+  the card's scroll resets whenever that stand-in changes. So a long answer you are halfway
+  down is replaced, at the top, when the next one arrives. <span class="tag w">inferred</span>
+  &mdash; I read the code path, I have not watched it happen.</p>
+  <p>It is defensible: it really is a different document, and one comparison in one place beats
+  five resets. It is also exactly shape two in the table above. I left it because changing the
+  overview's default is a design call, not a repair.</p>
+</div>
+
+<h2 class="sec">06 &middot; Yours to decide</h2>
+
+<div class="grill">
+  <div class="q">
+    <p class="qq">Merge it?</p>
+    <p class="qa"><b>Recommended: yes.</b> Pull request <b>559</b> is open, cut from current
+    main, gates green. Eleven lines out of <code>bench_act</code>, fifty-eight in as a test.
+    Nothing else rides along.</p>
+  </div>
+  <div class="q">
+    <p class="qq">Should the overview stop resetting your scroll when a new reply lands?</p>
+    <p class="qa"><b>My read: yes, but not in this change.</b> Keeping your place means the
+    new reply arrives below you rather than replacing you, and the strip has to say a new one
+    landed. That wants designing; today's change only removed a line.</p>
+  </div>
+  <div class="q">
+    <p class="qq">Do you want the rule written down outside the code?</p>
+    <p class="qa"><b>My read: yes.</b> Twelve instances and a fifth bench exit waiting to be
+    invented is the case for a short decision record &mdash; <em>the machine does not decide
+    that an interaction is over</em> &mdash; so the next agent meets it before writing the
+    line rather than after you hit it.</p>
+  </div>
+  <div class="q">
+    <p class="qq">Install it now, or wait for the merge?</p>
+    <p class="qa"><b>My read: wait.</b> Repointing the launcher at my build takes it away from
+    whoever cut over last, and the next agent's cutover takes it back. This repo has that
+    fight often enough that a merge is the cheaper route unless you want to feel it today.</p>
+  </div>
+</div>
+
+<h2 class="sec">Method</h2>
+<p><button data-dlg="d-method" class="more">What is measured and what is not &rarr;</button>
+<button data-dlg="d-pics" class="more">Where each picture comes from &rarr;</button></p>
+
+<footer>
+  <p>Terminal Delight &middot; <code>bench/answering-does-not-leave-the-bench</code> off
+  <code>666834a</code> &middot; 19 September 2026</p>
+  <p>Notes save into this file. Then: <em>&ldquo;read my notes in
+  2026-09-19-four-ways-off-the-bench.html&rdquo;</em></p>
+</footer>
+</div>
+
+<dialog id="d-method">
+  <div class="dlg-head">
+    <div><h3>Method</h3><p class="repo">what was run, and what it does not cover</p></div>
+    <button class="x" data-close>&times;</button>
+  </div>
+  <div class="dlg-body">
+    <h4>Measured</h4>
+    <ul>
+      <li>The four exits and their dates: <code>git log -S</code> on each deleted symbol
+      (<code>Peel::Face</code>, <code>card_waits</code>, <code>Stay on the bench</code>), read
+      back against the commits they name.</li>
+      <li>The two dispatch arms: read in <code>Bench::act</code> and the <code>match</code> in
+      <code>bench_act</code>. That the <code>Keys</code> arm has never touched the face comes
+      from a grep over the file rather than from remembering it.</li>
+      <li>Every write of the face in the whole crate: one automatic one, now deleted. The
+      others are alt+k, the header chip, <code>ctl</code>'s <code>bench off</code>, and the
+      demo seeder.</li>
+      <li>The gate fails when the bug is replanted, and names <code>bench_act</code>.</li>
+      <li><code>cargo fmt --check</code>, <code>cargo clippy --locked -- -D warnings</code>,
+      <code>cargo test --locked</code> &mdash; the three gates this repo's CI runs &mdash; all
+      green on the branch.</li>
+    </ul>
+    <h4>Not measured</h4>
+    <ul>
+      <li><b>Nobody has clicked it.</b> This is not installed and I have not driven a running
+      build. The claim is that the code path no longer moves the face, which is a source fact;
+      how it feels is not.</li>
+      <li>The twelve-instance census is a grep over comments plus a read of each site. Repairs
+      that left no comment behind are invisible to it, so twelve is a floor.</li>
+      <li>The overview scroll reset is read, not observed.</li>
+    </ul>
+    <h4>Invalidation &mdash; run this first</h4>
+    <p>If <code>rg 'set_face|toggle_face' app/src/pane/bench.rs</code> returns nothing on a
+    build where answering still turns the pane to TERM, this diagnosis is wrong and the flip
+    is coming from somewhere I did not look. Close it and start at
+    <code>Pane::set_face</code>'s callers.</p>
+  </div>
+</dialog>
+
+<dialog id="d-pics">
+  <div class="dlg-head">
+    <div><h3>Where each picture comes from</h3><p class="repo">a drawing reads as a measurement</p></div>
+    <button class="x" data-close>&times;</button>
+  </div>
+  <div class="dlg-body">
+    <h4>Drawn from the repository</h4>
+    <ul>
+      <li><b>01, the timeline</b> &mdash; commit hashes and dates from <code>git log</code>.
+      The claim that each was found in use is from the commit prose, which quotes you.</li>
+      <li><b>02, the two arms</b> &mdash; <code>Bench::act</code>: the <code>Keys</code> arm
+      exists only when <code>q.cursor</code> is set, which is the marker of a question read
+      off the screen.</li>
+      <li><b>03, the fence</b> &mdash; every caller of <code>set_face</code> and
+      <code>toggle_face</code> in the crate.</li>
+      <li><b>05, the gate</b> &mdash; the test as written, and its failure output pasted from
+      the real run.</li>
+      <li><b>06, the census</b> &mdash; each row read at its site before being listed.</li>
+    </ul>
+    <h4>Mine &mdash; argue with it</h4>
+    <ul>
+      <li><b>04, the before-and-after</b> is a mockup, not a screenshot. The chips, card and
+      live strip are drawn at roughly a tiled pane's proportions; real font metrics will differ.
+      What it asserts about behaviour is from the code, what it asserts about looks is from me.</li>
+      <li>Grouping twelve repairs into three shapes is my reading. The instances are real; the
+      taxonomy is a claim.</li>
+    </ul>
+  </div>
+</dialog>
+
+
+<div class="notebar" id="notebar">
+  <span class="cnt"><b id="note-count">0</b> notes</span>
+  <button id="btn-export" class="primary" data-note-action="export"
+          title="Anchored note map for pasting into a prompt">&#x1F4CB; copy map</button>
+  <button id="btn-embed" data-note-action="embed"
+          title="Download this file with your notes baked in">&#x1F4BE; save into file</button>
+  <button id="btn-clear" data-note-action="clear" title="Delete every note">&#x2715;</button>
+</div>
+
+<dialog id="d-note">
+  <div class="dlg-head">
+    <div>
+      <h3 id="note-title">Note</h3>
+      <p class="repo" id="note-anchor">&nbsp;</p>
+    </div>
+    <button class="x" data-close>&times;</button>
+  </div>
+  <div class="dlg-body">
+    <ul id="note-list"></ul>
+    <p id="note-none">No notes on this yet.</p>
+    <textarea id="note-text"
+      placeholder="Your note. Saved against this element and readable by an agent once you save into the file."></textarea>
+    <div class="note-actions">
+      <button class="save" data-note-action="add">Add note</button>
+      <button data-close>Close</button>
+      <span class="hintk">Ctrl+Enter to add</span>
+    </div>
+  </div>
+</dialog>
+
+<dialog id="d-export">
+  <div class="dlg-head">
+    <div>
+      <h3>Note map</h3>
+      <p class="repo">Anchored to element ids in this file &middot; paste straight into a prompt</p>
+    </div>
+    <button class="x" data-close>&times;</button>
+  </div>
+  <div class="dlg-body">
+    <p style="margin-bottom:12px">
+      Each line is anchored to an element id, so an agent can locate the passage without you
+      pasting the file. Prompt shape: <em>"read my notes in <code>&lt;filename&gt;</code> and act
+      on them."</em>
+    </p>
+    <textarea id="export-out" readonly></textarea>
+    <p class="tokest" id="export-est"></p>
+    <div class="note-actions">
+      <button class="save" data-note-action="copy">Copy to clipboard</button>
+      <button data-close>Close</button>
+    </div>
+  </div>
+</dialog>
+
+
+<script type="application/json" id="report-notes">{}</script>
+
+<script>window.NOTES_FILE = '2026-09-19-four-ways-off-the-bench.html';</script>
+<script>
+
+document.addEventListener('click', function (e) {
+  var open = e.target.closest('[data-dlg]');
+  if (open) { var d = document.getElementById(open.dataset.dlg); if (d) d.showModal(); return; }
+  if (e.target.closest('[data-close]')) {
+    var dlg = e.target.closest('dialog');
+    if (dlg && dlg.id !== 'd-note' && dlg.id !== 'd-export') dlg.close();
+  }
+});
+
+</script>
+<script>
+/* decision-brief — reader notes.
+ *
+ * Drop-in. No build step, no dependencies. Paste this file's contents inline inside a
+ * script element, after the document body — a decision brief must survive being emailed
+ * as one file, so never load it with a src attribute.
+ *
+ * NOTHING IN THIS FILE MAY CONTAIN THE LITERAL CLOSING SCRIPT TAG, not even inside a
+ * comment or a string: an HTML parser ends the script element at the first one it sees,
+ * and everything after it silently becomes page content. Write it broken up, e.g.
+ * "<\/script>", if you ever need to emit one.
+ *
+ * Three outputs, in the order they matter:
+ *   1. copy map    — anchored note map, ~1% of the tokens of the whole document
+ *   2. save into   — bakes notes into a downloadable copy so an agent can READ them
+ *   3. localStorage — live persistence between reloads
+ *
+ * Why the map exists: pasting a whole annotated report into a prompt costs thousands of
+ * tokens; pasting bare notes loses which passage each one is about. The map is the third
+ * option — [element-id] + note, so the agent greps the id and finds the passage itself.
+ *
+ * Configure before this script runs (all optional):
+ *   window.NOTES_FILE    — filename used for the storage key and the download. Default: location basename.
+ *   window.NOTES_TARGETS — [[selector, prefix], ...] overriding what gets an affordance.
+ */
+(function () {
+  'use strict';
+
+  var FILE = window.NOTES_FILE ||
+    (location.pathname.split('/').pop() || 'decision-brief.html');
+  var KEY = 'notes:' + FILE;
+
+  /* Default targets. A prefix keeps exported anchors readable and grouped.
+     Override wholesale with window.NOTES_TARGETS if a brief's shape differs.
+
+     THE GRILL COMES FIRST, AND IT IS NOT OPTIONAL. Until 2026-09-02 this list
+     covered five of the seven components layout.md tells you to build and
+     omitted the grill — so the one section whose entire purpose is a decision
+     the reader has to make was the one section the reader could not comment on.
+     Two briefs shipped that way, each having invented its own class name
+     (`grill-q`, then `q`) because nothing here named one. Both spellings are
+     matched below; `.ask` is the name to use going forward. If you add a
+     component, add it here in the same commit.
+
+     FIGURES ARE SECOND, for the same reason. The 2026-09-15 attention-spine
+     brief carried eleven pictures and had to override NOTES_TARGETS wholesale
+     to make any of them annotatable, because `figure` was not here — a fork of
+     this list living in one report, where nothing else would inherit it. The
+     pictures are the part a reader argues with, so they are in the default list
+     now. `titleOf()` already reads `.lbl`, so a figure labelled `03 · What
+     opening costs` anchors as `fig-03-what-opening-costs`. */
+  var TARGETS = window.NOTES_TARGETS || [
+    ['.grill .q, .grill-q, .ask', 'ask'],
+    ['figure', 'fig'],
+    ['.card', 'verdict'],
+    ['.esc-list li', 'readfirst'],
+    ['.finding', 'finding'],
+    ['.tile', 'stat'],
+    ['table.wide tr', 'row'],
+    ['.bar-row', 'chart'],
+    ['.callout', 'callout'],
+    ['dialog .dlg-body > h4', 'sub']
+  ];
+
+  /* Notes baked into the file win on first load — a fresh browser should see what the
+     author saved. After that localStorage is the live copy. */
+  var baked = {};
+  try {
+    var island = document.getElementById('report-notes');
+    if (island) baked = JSON.parse(island.textContent || '{}');
+  } catch (e) { /* a malformed island must not break the page */ }
+
+  var N;
+  try { N = JSON.parse(localStorage.getItem(KEY) || 'null') || baked; }
+  catch (e) { N = baked; }
+
+  var active = null, activeTitle = '';
+
+  function save() {
+    try { localStorage.setItem(KEY, JSON.stringify(N)); } catch (e) {}
+  }
+  function esc(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+  function slug(s) {
+    return String(s || 'x').toLowerCase().replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '').slice(0, 44) || 'x';
+  }
+  function titleOf(el) {
+    var h = el.querySelector('h2,h3,h4,.bar-lab,.k,.lbl,td:first-child,th:first-child');
+    var t = ((h ? h.textContent : el.textContent) || 'item').replace(/\s+/g, ' ').trim();
+    return t.length > 72 ? t.slice(0, 69) + '…' : t;
+  }
+
+  /* ---- give every target a stable anchor id and a note affordance ---- */
+  function tag() {
+    var used = {};
+    TARGETS.forEach(function (pair) {
+      var sel = pair[0], pre = pair[1];
+      Array.prototype.forEach.call(document.querySelectorAll(sel), function (el, i) {
+        if (el.classList.contains('notable')) return;
+        if (el.tagName === 'TR' && el.querySelector('th')) return;   // header rows
+        if (el.closest('#d-note, #d-export, .notebar')) return;
+
+        /* Numbered lists anchor by position; everything else by a SHORT title slug.
+           Long slugs make the exported map unreadable, which defeats the map. */
+        var id;
+        var num = el.querySelector('.esc-n');
+        if (num) id = pre + '-' + num.textContent.trim();
+        else id = pre + '-' + slug(titleOf(el)).split('-').slice(0, 4).join('-');
+
+        var base = id, n = 2;
+        while (used[id]) id = base + '-' + (n++);
+        used[id] = 1;
+
+        el.classList.add('notable');
+        el.dataset.nid = id;
+        el.dataset.ntitle = titleOf(el);
+        if (!el.id) el.id = id;                      // a real anchor in the file
+
+        var b = document.createElement('button');
+        b.className = 'note-btn';
+        b.type = 'button';
+        b.title = 'Add a note';
+        b.innerHTML = '&#x1F4AC;';
+        b.addEventListener('click', function (ev) {
+          ev.preventDefault(); ev.stopPropagation(); open(el);
+        });
+        el.appendChild(b);
+      });
+    });
+  }
+
+  function badges() {
+    var total = 0;
+    Array.prototype.forEach.call(document.querySelectorAll('.notable'), function (el) {
+      var n = (N[el.dataset.nid] || []).length;
+      total += n;
+      el.classList.toggle('has-note', n > 0);
+      var b = el.querySelector(':scope > .note-btn');
+      if (b) b.innerHTML = n ? String(n) : '&#x1F4AC;';
+    });
+    var c = document.getElementById('note-count');
+    if (c) c.textContent = total;
+    ['btn-export', 'btn-embed', 'btn-clear'].forEach(function (id) {
+      var b = document.getElementById(id);
+      if (b) b.disabled = total === 0;
+    });
+  }
+
+  function render() {
+    var list = N[active] || [];
+    var ul = document.getElementById('note-list');
+    document.getElementById('note-none').style.display = list.length ? 'none' : 'block';
+    ul.innerHTML = list.map(function (n, i) {
+      return '<li><div class="nts"><span>' + esc(n.ts) + '</span>' +
+        '<button class="ndel" data-i="' + i + '">delete</button></div>' + esc(n.text) + '</li>';
+    }).join('');
+    Array.prototype.forEach.call(ul.querySelectorAll('.ndel'), function (b) {
+      b.addEventListener('click', function () { del(+b.dataset.i); });
+    });
+  }
+
+  function open(el) {
+    active = el.dataset.nid;
+    activeTitle = el.dataset.ntitle;
+    document.getElementById('note-title').textContent = activeTitle;
+    document.getElementById('note-anchor').textContent = '#' + active;
+    render();
+    document.getElementById('d-note').showModal();
+    document.getElementById('note-text').focus();
+  }
+
+  function add() {
+    var ta = document.getElementById('note-text');
+    var t = ta.value.trim();
+    if (!t || !active) return;
+    (N[active] = N[active] || []).push({
+      text: t,
+      title: activeTitle,
+      ts: new Date().toISOString().slice(0, 16).replace('T', ' ')
+    });
+    ta.value = '';
+    save(); render(); badges();
+  }
+
+  function del(i) {
+    N[active].splice(i, 1);
+    if (!N[active].length) delete N[active];
+    save(); render(); badges();
+  }
+
+  /* ---- the map: anchored, compact, prompt-ready ---- */
+  function buildMap() {
+    var count = 0, els = 0;
+    for (var k in N) { if (N.hasOwnProperty(k)) { els++; count += N[k].length; } }
+    var out = [
+      'NOTES — ' + FILE,
+      count + ' notes on ' + els + ' elements.',
+      'Each [anchor] is an element id in that file — search it to find the passage.',
+      ''
+    ];
+    /* Document order, not object order: the map should read the way the brief reads. */
+    Array.prototype.forEach.call(document.querySelectorAll('.notable'), function (el) {
+      var list = N[el.dataset.nid];
+      if (!list || !list.length) return;
+      out.push('[' + el.dataset.nid + '] ' + el.dataset.ntitle);
+      list.forEach(function (n) { out.push('  · ' + n.text.replace(/\n+/g, ' ')); });
+      out.push('');
+    });
+    return out.join('\n');
+  }
+
+  function exportNotes() {
+    var txt = buildMap();
+    document.getElementById('export-out').value = txt;
+    var est = document.getElementById('export-est');
+    if (est) {
+      est.textContent = txt.length + ' characters ≈ ' + Math.ceil(txt.length / 4) +
+        ' tokens — versus ~' + Math.ceil(document.body.innerText.length / 4) +
+        ' for the whole document.';
+    }
+    document.getElementById('d-export').showModal();
+  }
+
+  function copyExport(btn) {
+    var ta = document.getElementById('export-out');
+    ta.select();
+    try { document.execCommand('copy'); } catch (e) {}
+    if (btn) {
+      var o = btn.textContent;
+      btn.textContent = 'Copied';
+      setTimeout(function () { btn.textContent = o; }, 1400);
+    }
+  }
+
+  /* ---- bake notes into a downloadable copy of this file ----
+     localStorage is invisible to an agent. This is what makes
+     "read my notes in <file>" work. */
+  function embedNotes() {
+    var doc = document.documentElement.cloneNode(true);
+    Array.prototype.forEach.call(doc.querySelectorAll('.note-btn'), function (n) { n.remove(); });
+    Array.prototype.forEach.call(doc.querySelectorAll('.notable'), function (n) {
+      n.classList.remove('notable', 'has-note');
+    });
+    var island = doc.querySelector('#report-notes');
+    if (island) island.textContent = JSON.stringify(N, null, 1);
+    /* A plain-text mirror as well, so grep and ctx_read find the notes
+       without anyone having to parse JSON out of a script tag. */
+    var body = doc.querySelector('body');
+    if (body) body.appendChild(document.createComment('\nREADER NOTES —\n' + buildMap() + '\n'));
+
+    var blob = new Blob(['<!DOCTYPE html>\n' + doc.outerHTML], { type: 'text/html' });
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = FILE;
+    a.click();
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 4000);
+
+    var b = document.getElementById('btn-embed');
+    if (b) { var o = b.innerHTML; b.innerHTML = 'saved &#x2713;'; setTimeout(function () { b.innerHTML = o; }, 2200); }
+  }
+
+  function clearNotes() {
+    if (!confirm('Delete every note in this brief?')) return;
+    N = {}; save(); badges();
+  }
+
+  /* ---- wiring ---- */
+  function init() {
+    var ta = document.getElementById('note-text');
+    if (ta) {
+      ta.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); add(); }
+      });
+    }
+    document.addEventListener('click', function (e) {
+      var t = e.target.closest('[data-note-action]');
+      if (!t) return;
+      var a = t.dataset.noteAction;
+      if (a === 'add') add();
+      else if (a === 'export') exportNotes();
+      else if (a === 'embed') embedNotes();
+      else if (a === 'clear') clearNotes();
+      else if (a === 'copy') copyExport(t);
+    });
+    ['d-note', 'd-export'].forEach(function (id) {
+      var d = document.getElementById(id);
+      if (!d) return;
+      Array.prototype.forEach.call(d.querySelectorAll('[data-close]'), function (x) {
+        x.addEventListener('click', function () { d.close(); });
+      });
+      d.addEventListener('click', function (e) { if (e.target === d) d.close(); });
+    });
+    tag();
+    badges();
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+  else init();
+})();
+
+</script>
+</body>
+</html>
