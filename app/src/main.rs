@@ -2287,9 +2287,9 @@ struct StateFile {
     /// load, and not the same thing as `false`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     slot_remaining: Option<bool>,
-    /// Which branch the mother bar was scoped to. Restored, then checked
-    /// against the active tab — a scope that would open the window with its own
-    /// active task off the strip is widened rather than honoured.
+    /// Which branch the mother bar was scoped to, in files old enough to carry
+    /// one. Read for nothing and written as `None`: a window opens on the
+    /// branch its active task is in, and the reasoning is on [`SavedScope`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     scope: Option<SavedScope>,
     /// Read-only MCP control-surface policy (the mother-bar robot panel). Absent
@@ -2473,32 +2473,23 @@ impl From<SavedLevel> for attention::Priority {
 
 /// The persisted form of [`tree::Scope`]. Its own type so the state file is
 /// never coupled to the tree module's derives.
+///
+/// PARSED, NEVER WRITTEN, AND NEVER RESTORED, since the strip started opening
+/// on the branch it is standing in. A narrowing is a gesture that lasts as long
+/// as the window — no surface ever offered it as a setting — and a saved one is
+/// the single thing that can defeat the default: every file written while `All`
+/// was the default says `All`, and no loader can tell that apart from a person
+/// asking for the whole session. Restoring it would hand a stale file the power
+/// to reinstate the exact strip the default exists to prevent.
+///
+/// The type survives so those files keep parsing, and because a state file
+/// should never start erroring on a key it used to write.
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
 enum SavedScope {
     #[default]
     All,
     Project(u32),
     Initiative(u32),
-}
-
-impl From<tree::Scope> for SavedScope {
-    fn from(s: tree::Scope) -> Self {
-        match s {
-            tree::Scope::All => SavedScope::All,
-            tree::Scope::Project(p) => SavedScope::Project(p),
-            tree::Scope::Initiative(g) => SavedScope::Initiative(g),
-        }
-    }
-}
-
-impl From<SavedScope> for tree::Scope {
-    fn from(s: SavedScope) -> Self {
-        match s {
-            SavedScope::All => tree::Scope::All,
-            SavedScope::Project(p) => tree::Scope::Project(p),
-            SavedScope::Initiative(g) => tree::Scope::Initiative(g),
-        }
-    }
 }
 
 /// A persisted project — the left bar's outer layer. `id` is what tabs and
@@ -5091,7 +5082,10 @@ impl Workspace {
             // default reading rather than the off one.
             slot_remaining: saved.slot_remaining.unwrap_or(SLOT_REMAINING_DEFAULT),
             bar_resize: None,
-            scope: saved.scope.map(tree::Scope::from).unwrap_or_default(),
+            // Deliberately not `saved.scope` — see [`SavedScope`]. Every window
+            // opens on the branch holding the tab it opens on, which is the one
+            // scope that no state file, no delete and no rename can strand.
+            scope: tree::Scope::default(),
             bar_cursor: None,
             bar_scroll: ScrollHandle::new(),
             bar_rename: None,
@@ -6316,7 +6310,8 @@ impl Workspace {
             rail_pinned: Some(self.rail_pinned),
             left_bar_w: Some(self.left_bar_w),
             slot_remaining: Some(self.slot_remaining),
-            scope: Some(self.scope.into()),
+            // never written — see [`SavedScope`]
+            scope: None,
             mcp: Some(self.mcp.clone()),
             focus_inherit: self.focus_inherit_theme,
             anchor_top: self.anchor_top,
@@ -8954,15 +8949,17 @@ impl Workspace {
         // Here, deliberately: this is where shells end.
         self.end_held(evicted, cx);
 
-        // A delete can strand the scope on a branch that no longer exists, and
-        // a strip scoped to nothing draws nothing.
+        // A delete can strand a PINNED scope on a branch that no longer exists,
+        // and a strip scoped to nothing draws nothing. Back out to the unpinned
+        // scope, which is whatever branch the surviving active tab lands in —
+        // deleting one branch is no reason to put every other one on the strip.
         let gone = match branch {
             BarBranch::Project(id) => self.scope == tree::Scope::Project(id),
             BarBranch::Initiative(id) => self.scope == tree::Scope::Initiative(id),
             BarBranch::Unfiled => false,
         };
         if gone {
-            self.scope = tree::Scope::All;
+            self.scope = tree::Scope::default();
         }
 
         self.prune_groups();
@@ -10491,17 +10488,20 @@ impl Workspace {
     fn set_scope(&mut self, to: tree::Scope, window: &mut Window, cx: &mut Context<Self>) {
         self.scope = to;
         let places = self.places();
+        let home = places.get(self.active).copied().unwrap_or_default();
         let active_shown = places
             .get(self.active)
-            .map(|p| self.scope.shows(p))
+            .map(|p| self.scope.shows(p, &home))
             .unwrap_or(true);
         if !active_shown {
-            if let Some(first) = places.iter().position(|p| self.scope.shows(p)) {
+            if let Some(first) = places.iter().position(|p| self.scope.shows(p, &home)) {
                 self.activate_tab(first, window, cx);
             } else {
-                // An empty branch cannot be worked in. Back out rather than
-                // strand the strip with nothing on it.
-                self.scope = tree::Scope::All;
+                // An empty branch cannot be worked in. Back out to the scope
+                // that cannot be empty — the one holding whatever tab you are
+                // on — rather than strand the strip with nothing on it, and
+                // rather than dump the whole session onto it as an apology.
+                self.scope = tree::Scope::default();
             }
         }
         self.save(cx);
@@ -10530,6 +10530,11 @@ impl Workspace {
     /// Widen the scope if it would hide task `i` — called on every activation,
     /// wherever it came from (a click, ctrl+pgup, a ctl script, a notification
     /// jump). The strip always contains the tab you are in.
+    ///
+    /// A no-op under the default scope, which follows the active tab instead of
+    /// being corrected after it: only a PIN can be left behind. Kept on every
+    /// activation path anyway, because a pin is one click away on any branch
+    /// row in the tree.
     fn ensure_scope_shows(&mut self, i: usize) {
         let place = self.place_of(i);
         if let Some(wider) = self.scope.widened_for(&place) {
@@ -19613,8 +19618,29 @@ impl Workspace {
             tree::Scope::All => "all".to_string(),
             tree::Scope::Project(id) => self.branch_label(BarBranch::Project(id)),
             tree::Scope::Initiative(id) => self.branch_label(BarBranch::Initiative(id)),
+            // The default names the branch it is standing in rather than the
+            // rule it is following — "the group you are in" is a thing a person
+            // has to translate, and its name is the thing they already know.
+            // Same reading as the heading over the strip (see `place_name`): an
+            // initiative by name, a loose tab by its project, and a session
+            // with nothing filed says `all`, which is exactly what one bucket
+            // holding every tab amounts to.
+            tree::Scope::Branch => {
+                let place = self.place_of(self.active);
+                match (place.initiative, place.project) {
+                    (Some(gid), _) => self.branch_label(BarBranch::Initiative(gid)),
+                    (None, Some(pid)) => self.branch_label(BarBranch::Project(pid)),
+                    (None, None) => "all".to_string(),
+                }
+            }
         };
-        let scoped = self.scope != tree::Scope::All;
+        // Lit when the strip is actually carrying less than the session, which
+        // under the default is a question about the tabs rather than about the
+        // scope: a window where nothing is filed is unpinned AND showing
+        // everything, and a chip claiming a narrowing there would be the old
+        // lie pointing the other way.
+        let places = self.places();
+        let scoped = tree::shown(&places, self.scope, self.active).len() < places.len();
         let header = sk
             .row()
             // Right-click anywhere on the strip opens the tray — what you can
@@ -19630,10 +19656,10 @@ impl Workspace {
             )
             .child(
                 // the scope chip: what the mother bar is currently showing, and
-                // the one click back to everything. `chip` carries the whole
-                // "this one is in effect" decision — a wash under the default
-                // skin, corner brackets under deco — so this call site never
-                // learns which look is running.
+                // the one click between this branch and the whole session.
+                // `chip` carries the whole "this one is in effect" decision — a
+                // wash under the default skin, corner brackets under deco — so
+                // this call site never learns which look is running.
                 sk.chip(scoped)
                     .id("bar-scope")
                     .flex_1()
@@ -19650,7 +19676,17 @@ impl Workspace {
                         MouseButton::Left,
                         cx.listener(|ws, _: &MouseDownEvent, window, cx| {
                             cx.stop_propagation();
-                            ws.set_scope(tree::Scope::All, window, cx);
+                            // One press each way, and the label says which way
+                            // the next one goes. Anything pinned lands on ALL
+                            // first — the press a person reaches for when they
+                            // cannot find a tab is "show me everything", never
+                            // "show me a different narrowing".
+                            let next = if ws.scope == tree::Scope::All {
+                                tree::Scope::default()
+                            } else {
+                                tree::Scope::All
+                            };
+                            ws.set_scope(next, window, cx);
                         }),
                     ),
             )
@@ -21633,24 +21669,26 @@ impl Render for Workspace {
                     inset: false,
                 }])
         };
-        // THE STRIP CARRIES WHAT THE SCOPE CHIP SAYS IT CARRIES.
+        // THE STRIP CARRIES WHAT THE SCOPE CHIP SAYS IT CARRIES, AND WHAT THE
+        // CHIP SAYS BY DEFAULT IS THE BRANCH YOU ARE IN.
         //
-        // It used to carry the active tab's branch and nothing else, always —
-        // `tree::family`, on the reasoning that a branch-wide strip cannot wrap
-        // into rows of titles nobody can read at a glance. What that reasoning
-        // missed is that the chip sitting immediately left of these tabs says
-        // ALL, and said it while eighteen of a session's twenty-one tabs were
-        // not drawn. Parker, on a window whose strip showed three: *"I don't
-        // see our top tabs"*.
+        // It used to carry the active tab's branch and nothing else, always,
+        // whatever the chip beside it said — and the chip said ALL while
+        // eighteen of a session's twenty-one tabs were not drawn. Parker, on a
+        // window whose strip showed three: *"I don't see our top tabs"*. Making
+        // the strip obey the chip fixed the label and left the DEFAULT on the
+        // whole session, which is the strip that wraps into rows of titles
+        // nobody can read — the thing scoping was built to end. Parker again,
+        // on that one: *"the top area should only have tabs for the GROUP —
+        // not even sibling groups — this is BROKEN"*.
         //
-        // So the filter is [`tree::Scope::shows`] — whose own doc comment has
-        // said "does the strip show a task in this place?" since before the
-        // strip stopped asking it — and narrowing is one press on a control
-        // that is already there and already labelled. `All` wraps to a second
-        // row on a big session, which is the cost, and it is a cost a person
-        // can see and undo rather than a policy nobody was told about.
+        // Both readings are the same requirement: the strip and the label have
+        // to describe each other. So the filter stays [`tree::Scope::shows`],
+        // the chip stays the one control, and the unpinned scope it starts on
+        // is the active tab's branch — named on the chip, followed when you
+        // move, and one press from the whole session when you want it.
         let places = self.places();
-        let family = tree::shown(&places, self.scope);
+        let family = tree::shown(&places, self.scope, self.active);
         // the caret marks a gap between visible tabs, not a tab index — see
         // [`tree::caret_gap`], which is where the non-contiguous case is argued
         let caret_at = drop_slot.map(|s| tree::caret_gap(&family, s));
