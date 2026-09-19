@@ -8293,6 +8293,64 @@ mod tests {
         );
     }
 
+    /// Nothing in the bench half moves the pane's face.
+    ///
+    /// Four separate ways off the workbench were built and then taken back
+    /// out, one at a time, each found by Parker in use: escape's last rung
+    /// flipped the face (deleted, [`crate::workbench::Peel`]); escape over a
+    /// question an agent was waiting on retired it (floored); sending from the
+    /// composer flipped the face (stopped in `bench_send`); and answering a
+    /// surface flipped the face, which is this one — *"if I am in workbench I
+    /// should stay locked in unless I specifically step out"*.
+    ///
+    /// They were four bugs and not one because the exit was decided at each
+    /// call site. That is the same shape escape had before `peel` became a
+    /// single table, and the repair is the same: one rule, in one place, and
+    /// the place is this FILE. `pane/bench.rs` is everything the bench does
+    /// with a click, a key or a wheel, and none of it may move the face. The
+    /// two gestures that legitimately do are alt+k and the TERM chip, both in
+    /// `pane.rs`; a script says so through `ctl`'s `bench off`.
+    ///
+    /// Scanned rather than listed, because the fifth auto-exit will be added
+    /// to a function nobody has written yet. Comments are stripped first: the
+    /// paragraph in `bench_act` explaining why the flip was removed names both
+    /// `set_face` and `Face::Terminal`, and a scan that cannot tell code from
+    /// a description of code is satisfied by its own gravestone.
+    #[test]
+    fn nothing_in_the_bench_half_flips_the_pane_off_the_bench() {
+        let bench = include_str!("pane/bench.rs");
+        let (code, _tests) = bench
+            .split_once("#[cfg(test)]")
+            .unwrap_or((bench, "no test module yet"));
+        let code: String = code
+            .lines()
+            .map(|l| l.split("//").next().unwrap_or(""))
+            .collect::<Vec<_>>()
+            .join("\n");
+        // Which function each call sits in, by the nearest `fn` above it.
+        let mut owner = "<file>".to_string();
+        let mut strays: Vec<(String, String)> = Vec::new();
+        for line in code.lines() {
+            let t = line.trim_start();
+            if let Some(rest) = t.split_once("fn ").map(|(_, r)| r) {
+                if t.starts_with("fn ") || t.starts_with("pub fn ") || t.starts_with("pub(") {
+                    owner = rest.split('(').next().unwrap_or(rest).to_string();
+                }
+            }
+            if t.contains("set_face(") || t.contains("toggle_face(") {
+                strays.push((owner.clone(), t.to_string()));
+            }
+        }
+        assert!(
+            strays.is_empty(),
+            "the bench half moves the pane's face. Answering, sending and dismissing each \
+             tried this and each was taken back out: a person on the workbench stays on it \
+             until they press alt+k or the TERM chip. If this really is a new deliberate \
+             gesture it belongs in pane.rs beside those two, and this test changes in the \
+             same commit with the reasoning: {strays:?}"
+        );
+    }
+
     /// FOCUS mirrors the grid whichever face the pane is showing.
     ///
     /// An undeclared case until `alt+r` could reach a bench pane at all
