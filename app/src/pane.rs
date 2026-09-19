@@ -8723,6 +8723,60 @@ mod tests {
         );
     }
 
+    /// WHICH SHELF YOU ARE READING NEVER DECIDES WHERE A CHARACTER GOES.
+    ///
+    /// For one build it did. Standing on the comments board opened a note under
+    /// the first character typed, so the keystroke that everywhere else on the
+    /// bench starts a sentence to the agent instead landed in a private note.
+    /// Parker found it within a minute of the board shipping: *"if COMMENTS is
+    /// selected and I type ... the keystroke gets caught in the COMMENT instead
+    /// of the prompt --- this is WRONG! --- comment MUST require alt+m"*.
+    ///
+    /// The rule is not "do not check for the comments shelf". It is that the
+    /// TALK arm — the one that fires on an ordinary printable character — takes
+    /// no interest in which shelf is showing. A shelf is a thing you are
+    /// LOOKING at; letting it choose the destination of your typing turns
+    /// reading into a mode, and a mode nobody entered on purpose.
+    ///
+    /// Scanned structurally rather than by naming `Shelf::Comments`, because
+    /// the next version of this mistake will be a different shelf, or a count,
+    /// or whether the board happens to be empty. Any shelf-dependent branch in
+    /// that arm is the bug, whatever it is keyed on.
+    ///
+    /// Mutation-tested: re-inserting the branch that opened a note on the
+    /// comments shelf fails this.
+    #[test]
+    fn what_shelf_you_are_on_never_catches_a_keystroke() {
+        let bench = include_str!("pane/bench.rs");
+        let (code, _tests) = bench
+            .split_once("#[cfg(test)]")
+            .unwrap_or((bench, "no test module yet"));
+        // Comments stripped, or the paragraph explaining this rule — which
+        // names the shelf it used to check — would trip the scan guarding it.
+        let stripped: String = code
+            .lines()
+            .map(|l| l.split("//").next().unwrap_or(""))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let at = stripped
+            .find("Reading::Talk =>")
+            .expect("the arm that fires on an ordinary character");
+        let arm = &stripped[at..];
+        let end = arm
+            .find("Reading::Ignore")
+            .expect("the end of the reading table");
+        let arm = &arm[..end];
+        for shelf_ish in ["shelf()", "Shelf::", "set_shelf", "bench_note_open"] {
+            assert!(
+                !arm.contains(shelf_ish),
+                "typing consults `{shelf_ish}`. Which shelf is on screen must not \
+                 decide where a character goes — that is how the comments board \
+                 came to swallow keystrokes meant for the agent. A note is opened \
+                 on purpose: alt+m, or the `+ write a note` row."
+            );
+        }
+    }
+
     /// The shelf strip wraps, because four tabs do not fit on one line.
     ///
     /// The rail is a SHARE of the pane — `RAIL_SHARE`, clamped into
