@@ -7129,6 +7129,10 @@ impl Workspace {
     /// plugin client's deadline — lean-ctx's `gain` returns in ~180ms — and the
     /// numbers are precomputed, so this never tokenizes anything itself.
     fn fetch_savings(&mut self, agent_id: Option<String>, cx: &mut Context<Self>) {
+        // Owns the face it fills, the way `open_usage` owns the other one.
+        // Every caller used to set the tab itself, and the one that forgot is
+        // the failure this door now closes.
+        self.savings_tab = OverlayTab::Savings;
         let home = session::home_dir();
         let plugins = plugins::discover(&home);
         let Some(lc) = plugins.iter().find(|m| m.name == "leanctx-savings") else {
@@ -8465,15 +8469,17 @@ impl Workspace {
                     MouseButton::Left,
                     cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
                         cx.stop_propagation();
+                        // Switching to a face is the same act as opening it,
+                        // so each goes through that face's own door: set the
+                        // tab, then READ. Only usage did. Savings merely
+                        // flipped the tab, so every route into the card that
+                        // never ran the plugin — the Σ usage button,
+                        // ctrl+shift+A, a left-bar allowance rail — left
+                        // `savings_view` unset, and clicking `savings` drew the
+                        // wordmark over an empty card with nothing to say.
                         match want {
-                            // switching to usage is the same act as opening it,
-                            // so it goes through one door: read, then refresh if
-                            // what we read has gone stale.
                             OverlayTab::Usage => ws.open_usage(cx),
-                            OverlayTab::Savings => {
-                                ws.savings_tab = OverlayTab::Savings;
-                                cx.notify();
-                            }
+                            OverlayTab::Savings => ws.fetch_savings(None, cx),
                         }
                     }),
                 )
@@ -8760,6 +8766,20 @@ impl Workspace {
                     .text_size(px(10.5))
                     .text_color(hsla(0., 0.7, 0.62, 1.))
                     .child(err.clone()),
+            );
+        } else {
+            // Neither a reading nor a failure: nobody has asked the plugin. A
+            // THIRD state, and drawing it as nothing is the collapse the house
+            // rule forbids — an empty card under a wordmark that says "token
+            // savings" reads as "lean-ctx saved you nothing", which is the one
+            // thing it does not mean. Every door into this face now reads, so
+            // this should be unreachable; it is here because the last time it
+            // was unreachable-by-construction it shipped, and said nothing.
+            body = body.child(
+                div()
+                    .text_size(px(10.5))
+                    .text_color(th.text.alpha(0.6))
+                    .child("no rollup read yet \u{2014} not zero saved"),
             );
         }
 
@@ -25022,7 +25042,6 @@ impl Render for Workspace {
                                     MouseButton::Left,
                                     cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
                                         cx.stop_propagation();
-                                        ws.savings_tab = OverlayTab::Savings;
                                         ws.fetch_savings(None, cx);
                                     }),
                                 ),
@@ -32290,6 +32309,51 @@ mod tests {
             bases(&c, &out),
             vec!["td-badge.png".to_string()],
             "a file whose dir matches loc and base matches name must be returned"
+        );
+    }
+
+    /// Every door into the </> card's savings face READS the rollup.
+    ///
+    /// The card has more ways in than it used to: the `</> savings` button, the
+    /// Σ usage button, ctrl+shift+A, and a left-bar allowance rail. Only the
+    /// first ran the plugin. The other three land on the usage face, and the
+    /// `savings` tab chip beside them merely flipped `savings_tab` — so the
+    /// card drew the lean-ctx wordmark, both chips, the dismiss hint, and a body
+    /// with nothing in it, on a machine whose rollup said 35M tokens saved.
+    ///
+    /// Asserted against comment-free source: the paragraph above names the very
+    /// call it is checking for.
+    #[test]
+    fn every_door_into_the_savings_face_reads_the_rollup() {
+        let code = shipped_code();
+        // The tab chip is the door that was missing. It calls the fetch, and it
+        // is the ONLY `OverlayTab::Savings =>` arm in the chip's match.
+        assert!(
+            code.contains("OverlayTab::Savings => ws.fetch_savings(None, cx),"),
+            "the savings tab chip must READ the rollup, not just flip the tab"
+        );
+        // The face belongs to its own door, so a fourth caller cannot forget it
+        // the way the third one did.
+        let fetch = code
+            .split_once("fn fetch_savings(")
+            .expect("fetch_savings exists")
+            .1;
+        let fetch_body = &fetch[..fetch.find("fn open_usage(").unwrap_or(fetch.len())];
+        assert!(
+            fetch_body.contains("self.savings_tab = OverlayTab::Savings;"),
+            "fetch_savings sets the face it fills, as open_usage does for its own"
+        );
+        // ...and no caller re-sets it, which is how the two could drift apart.
+        assert!(
+            !code.contains("ws.savings_tab = OverlayTab::Savings;"),
+            "callers must not set the face themselves — the door does it"
+        );
+        // Absence is drawn. With neither a reading nor an error, the body says
+        // it has not read, rather than rendering as nothing.
+        assert!(
+            code.contains("no rollup read yet"),
+            "an unread savings face must say so — a blank card under a \
+             \"token savings\" wordmark reads as zero saved"
         );
     }
 
