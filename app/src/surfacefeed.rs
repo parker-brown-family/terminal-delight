@@ -348,12 +348,40 @@ pub fn journal_event(path: &Path, event: &Value) -> std::io::Result<()> {
 /// path every test uses to put something on a bench.
 pub fn drop_surface(dir: &Path, name: &str, value: &Value) -> std::io::Result<PathBuf> {
     fs::create_dir_all(dir)?;
-    let path = dir.join(format!("{}.json", sanitise(name)));
+    let safe = sanitise(name);
+    let path = dir.join(format!("{safe}.json"));
     // Written beside and renamed into place, so a sweep can never read half a
     // file. The parse guard above would survive it; this means it never has to.
-    let temp = dir.join(format!(".{}.json.part", sanitise(name)));
-    fs::write(&temp, serde_json::to_vec_pretty(value)?)?;
-    fs::rename(&temp, &path)?;
+    //
+    // **The temp name carries the writer's identity, and that is not cosmetic.**
+    // It used to be `.{name}.json.part`, one path derived only from the surface
+    // id — so two writers updating the SAME id at the same time both wrote that
+    // one file, the first rename took it, and the second failed with `ENOENT`.
+    // The loser's surface was silently dropped and the error named the wrong
+    // cause: `cannot write: No such file or directory` reads as a missing
+    // directory, which sends whoever debugs it to `create_dir_all` rather than
+    // to the collision. Found by running the adversarial suite in parallel,
+    // where it failed two or three cases per run and a different set each time;
+    // serially it always passed. Updating one surface repeatedly is the NORMAL
+    // path — `present_surface` re-sends the same id to update a row in place —
+    // so this is reachable by one agent on its own, not only by two.
+    // A COUNTER, not a timestamp. The first fix here used nanoseconds and still
+    // lost three writes out of sixteen: threads starting together read the
+    // clock too close to be separated by it, so the name was unique only if the
+    // clock happened to be fine-grained enough. A monotonic counter is unique by
+    // construction within the process, and the pid separates processes.
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let ticket = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let temp = dir.join(format!(".{safe}.{}.{ticket}.json.part", std::process::id()));
+    if let Err(err) = fs::write(&temp, serde_json::to_vec_pretty(value)?) {
+        let _ = fs::remove_file(&temp);
+        return Err(err);
+    }
+    if let Err(err) = fs::rename(&temp, &path) {
+        // Never leave a `.part` behind for the sweep to trip over.
+        let _ = fs::remove_file(&temp);
+        return Err(err);
+    }
     Ok(path)
 }
 
@@ -649,7 +677,14 @@ pub fn run_cli(args: &[String]) -> i32 {
                 wrote += 1;
                 println!("{}", path.display());
             }
-            Err(err) => eprintln!("terminal-delight surface: cannot write: {err}"),
+            // Name the DIRECTORY it was writing into. `cannot write: No such
+            // file or directory` with no path reads as a missing folder no
+            // matter what actually failed, which is exactly how the temp-name
+            // collision above stayed hidden.
+            Err(err) => eprintln!(
+                "terminal-delight surface: cannot write {name:?} into {}: {err}",
+                dir.display()
+            ),
         }
     }
     i32::from(wrote == 0) * 2
@@ -1417,5 +1452,55 @@ mod tests {
             "and it is never the answer that deletes something"
         );
         assert!(fs::symlink_metadata(&ghost).is_ok());
+    }
+
+    /// Concurrent updates of ONE surface id must all land.
+    ///
+    /// The shipped path re-sends the same id to update a row in place, so two
+    /// writes racing on one name is the normal case rather than an exotic one.
+    /// With a temp name derived only from the id, both writers wrote the same
+    /// `.part`, the first rename took it and the second failed `ENOENT` — the
+    /// surface silently lost, under an error that named a missing directory.
+    ///
+    /// Sixteen threads is enough to lose a race reliably; the old code failed
+    /// this on every run, and never in the same places twice.
+    #[test]
+    fn concurrent_writers_of_one_surface_id_do_not_eat_each_other() {
+        let dir = std::env::temp_dir().join(format!("td-race-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("scratch");
+
+        let failures = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        std::thread::scope(|scope| {
+            for i in 0..16 {
+                let dir = dir.clone();
+                let failures = std::sync::Arc::clone(&failures);
+                scope.spawn(move || {
+                    let doc = serde_json::json!({ "td": "0.4", "kind": "response", "n": i });
+                    if let Err(err) = drop_surface(&dir, "same-id", &doc) {
+                        failures.lock().unwrap().push(format!("writer {i}: {err}"));
+                    }
+                });
+            }
+        });
+
+        let failures = failures.lock().unwrap();
+        assert!(
+            failures.is_empty(),
+            "a concurrent update was lost: {failures:?}"
+        );
+        // And exactly one file, still whole — the point of the rename.
+        let landed: Vec<_> = fs::read_dir(&dir)
+            .expect("read scratch")
+            .filter_map(Result::ok)
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(landed, vec!["same-id.json".to_string()], "left: {landed:?}");
+        let text = fs::read_to_string(dir.join("same-id.json")).expect("read");
+        assert!(
+            serde_json::from_str::<Value>(&text).is_ok(),
+            "a reader could see a half-written file: {text}"
+        );
+        let _ = fs::remove_dir_all(&dir);
     }
 }
