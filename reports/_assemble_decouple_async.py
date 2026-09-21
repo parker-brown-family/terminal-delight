@@ -49,6 +49,7 @@ kbd { font-family: var(--mono); font-size: 11px; padding: 1px 5px; border: 1px s
 .esc-list { list-style: none; padding: 0; margin: 0; counter-reset: none; }
 .esc-list li { display: flex; gap: 12px; align-items: flex-start; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-1); padding: 10px 12px; margin: 0 0 8px; font-size: 13.5px; }
 .esc-list li b { color: #fff; }
+.esc-t { min-width: 0; flex: 1 1 auto; }
 .esc-list li em { color: var(--text-muted); font-style: normal; }
 .esc-n { flex: none; width: 22px; height: 22px; border-radius: 50%; background: var(--critical); color: #fff; display: inline-flex; align-items: center; justify-content: center; font-family: var(--mono); font-size: 11px; }
 figure { margin: 0 0 22px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-1); padding: 16px 18px 14px; }

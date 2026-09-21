@@ -286,6 +286,7 @@ kbd { font-family: var(--mono); font-size: 11px; padding: 1px 5px; border: 1px s
 .esc-list { list-style: none; padding: 0; margin: 0; counter-reset: none; }
 .esc-list li { display: flex; gap: 12px; align-items: flex-start; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-1); padding: 10px 12px; margin: 0 0 8px; font-size: 13.5px; }
 .esc-list li b { color: #fff; }
+.esc-t { min-width: 0; flex: 1 1 auto; }
 .esc-list li em { color: var(--text-muted); font-style: normal; }
 .esc-n { flex: none; width: 22px; height: 22px; border-radius: 50%; background: var(--critical); color: #fff; display: inline-flex; align-items: center; justify-content: center; font-family: var(--mono); font-size: 11px; }
 figure { margin: 0 0 22px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-1); padding: 16px 18px 14px; }
@@ -392,11 +393,11 @@ table.wide td .dim { color: var(--text-muted); font-size: 11px; }
 <section>
 <h2 class="sec">Read first</h2>
 <ol class="esc-list">
-  <li><span class="esc-n">1</span><b>Figure 04, the round trip.</b> What a question does now, end to end, and where it falls back. <em>Why:</em> it is the whole design in one picture. <em>Takes:</em> a minute.</li>
-  <li><span class="esc-n">2</span><b>Decision 1 in the grill.</b> Option 3 plus the journaled keys road. <em>Why:</em> Gate 1 named it the most expensive decision to reverse, and I made it without you. <em>Takes:</em> a yes, or a note.</li>
-  <li><span class="esc-n">3</span><b>The hooks are in your settings.json.</b> Five events, exit 0 on every path, a backup kept. <em>Why:</em> it touches every agent you run, today. <em>Takes:</em> <code>scripts/install-agent-hooks.sh --uninstall</code> if you want them out.</li>
-  <li><span class="esc-n">4</span><b>The composer's new keys.</b> <kbd>ctrl+c</kbd> copies, <kbd>ctrl+x</kbd> cuts, <kbd>ctrl+g</kbd> interrupts, <kbd>shift+enter</kbd> breaks, <kbd>ctrl+z</kbd> undoes, up recalls. <em>Why:</em> the interrupt chord is mine to argue with. <em>Takes:</em> a press.</li>
-  <li><span class="esc-n">5</span><b>What is held.</b> Moving <code>Bench</code> out of the pane (124 references), and the Codex and Gemini adapters. <em>Why:</em> the first waits on the tenancy pane's key; the second on a harness nobody has driven. <em>Takes:</em> a next pane.</li>
+  <li><span class="esc-n">1</span><div class="esc-t"><b>Figure 04, the round trip.</b> What a question does now, end to end, and where it falls back. <em>Why:</em> it is the whole design in one picture. <em>Takes:</em> a minute.</div></li>
+  <li><span class="esc-n">2</span><div class="esc-t"><b>Decision 1 in the grill.</b> Option 3 plus the journaled keys road. <em>Why:</em> Gate 1 named it the most expensive decision to reverse, and I made it without you. <em>Takes:</em> a yes, or a note.</div></li>
+  <li><span class="esc-n">3</span><div class="esc-t"><b>The hooks are in your settings.json.</b> Five events, exit 0 on every path, a backup kept. <em>Why:</em> it touches every agent you run, today. <em>Takes:</em> <code>scripts/install-agent-hooks.sh --uninstall</code> if you want them out.</div></li>
+  <li><span class="esc-n">4</span><div class="esc-t"><b>The composer's new keys.</b> <kbd>ctrl+c</kbd> copies, <kbd>ctrl+x</kbd> cuts, <kbd>ctrl+g</kbd> interrupts, <kbd>shift+enter</kbd> breaks, <kbd>ctrl+z</kbd> undoes, up recalls. <em>Why:</em> the interrupt chord is mine to argue with. <em>Takes:</em> a press.</div></li>
+  <li><span class="esc-n">5</span><div class="esc-t"><b>What is held.</b> Moving <code>Bench</code> out of the pane (124 references), and the Codex and Gemini adapters. <em>Why:</em> the first waits on the tenancy pane's key; the second on a harness nobody has driven. <em>Takes:</em> a next pane.</div></li>
 </ol>
 </section>
 

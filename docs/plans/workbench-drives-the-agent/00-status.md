@@ -6,7 +6,14 @@ protocol, so being wrong is expensive for a long time and other things start
 targeting it; and the failure it fixes is silent, which means today's tests say
 nothing about whether the new one is correct. → **four gates.**
 
-**Turned out to be:** _(filled in at the end)_
+**Turned out to be:** a 9 for the *shape* — a protocol other things will
+target, and one silent failure the tests could not see (the marker as a
+surface) — and a 6 for the *ceremony*: the gates were written and not
+approved, because Parker was AFK and asked for it built, and the two things
+that actually needed him (the third cost, the interrupt chord) are one grill
+each in the brief. Built in one session on 2026-09-21: the gate green, PR
+#624 open, the release installed beside the current one as
+`td-00860a5-decouple` with the symlink untouched, the hooks wired.
 
 - Gate 1 — Product: **APPROVED 2026-09-21** — Parker, in chat: *"Great - love it
   yes."* Approved after the amendment below, which was folded in before the
