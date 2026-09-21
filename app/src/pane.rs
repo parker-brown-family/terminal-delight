@@ -7128,7 +7128,11 @@ impl Render for TerminalView {
         // right-click context menu (Copy / Paste / Open link), anchored at the cursor
         let ctx_menu_el = self.ctx_menu.map(|pos| {
             let link = self.link_under(pos);
-            let has_sel = self.has_selection();
+            // The bench's selection counts too, and on the bench face it is
+            // usually the only one — the grid behind it is not what a person
+            // dragged over. Both are checked so the row is live in either
+            // case and the handler below picks whichever exists.
+            let has_sel = self.has_selection() || self.bench_selected_text().is_some();
             let (acc, surf, txt, faint, ff) = (
                 th.accent,
                 th.surface,
@@ -7187,7 +7191,9 @@ impl Render for TerminalView {
                 .child(row("Copy", has_sel).on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|v, _, _, cx| {
-                        v.copy_selection(cx);
+                        if !v.bench_copy(cx) {
+                            v.copy_selection(cx);
+                        }
                         v.ctx_menu = None;
                         cx.stop_propagation();
                         cx.notify();

@@ -64,10 +64,30 @@ impl TerminalView {
         let byte = match atoms.1[i].index_for_position(flat) {
             Ok(b) | Err(b) => b,
         };
-        Some(crate::workbench::Caret {
+        let caret = crate::workbench::Caret {
             atom: i,
             byte: crate::workbench::on_boundary(&atoms.0[i].text, byte),
-        })
+        };
+        // TD_SELDEBUG=1 prints the run a pointer resolved to, and how many
+        // runs were collected this frame. A shell with no virtual pointer
+        // cannot drag the surface itself, so this is the only honest way to
+        // establish that a given piece of text on the bench IS registered —
+        // and a run missing from the list is missing from every copy
+        // afterwards, silently. `TD_HITDEBUG` prints the click chain beside
+        // it, under the same convention and for the same reason.
+        if std::env::var_os("TD_SELDEBUG").is_some() {
+            eprintln!(
+                "[bench-sel] flat=({:.1},{:.1}) runs={} -> atom {} byte {} region {:?} {:?}",
+                f32::from(flat.x),
+                f32::from(flat.y),
+                atoms.0.len(),
+                caret.atom,
+                caret.byte,
+                atoms.0[i].region,
+                atoms.0[i].text.chars().take(48).collect::<String>(),
+            );
+        }
+        Some(caret)
     }
 
     /// Begin a selection at a flat point. `false` when there is nothing there
