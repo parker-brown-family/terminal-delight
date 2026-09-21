@@ -3837,6 +3837,52 @@ mod tests {
         );
     }
 
+    /// A round's steps are drawn in the REGISTER vocabulary, not one of their own.
+    ///
+    /// The first cut of this navigator invented bordered, rounded, padded chips.
+    /// Nothing was wrong with them in isolation, which is exactly why this guard
+    /// exists: a person flipping between a response card and a question card met
+    /// two treatments of one gesture, and **every behavioural test passed** —
+    /// they assert over `Round` and `Step` and `waiting_question`, and none of
+    /// them can see a draw call. Parker had to catch it by eye. Reverting to
+    /// chips would be silent a second time.
+    ///
+    /// **Mutation-tested when written**, and the mutation is the real regression
+    /// rather than a strawman: `round_progress`'s tab reverted to
+    /// `.px(px(7.)).py(px(2.)).rounded(sk.radius()).border_1()`. The
+    /// behavioural tests stayed green and this one failed, naming the border.
+    ///
+    /// **The first attempt at that mutation proved nothing and looked like it
+    /// had.** It replaced the first `.px(px(sk.tpx(5.)))` in the file — there
+    /// are two, the other in the register row this tab was copied from — so the
+    /// box landed in a different function, the guard passed, and the only
+    /// evidence that the mutation had "applied" was a non-empty `git diff`. A
+    /// non-empty diff says the FILE changed and never that the function under
+    /// test did. The landing check is now the cut body itself: plant it, re-cut,
+    /// count the needle inside the slice, and only then believe what the test
+    /// says.
+    ///
+    /// It checks the two halves separately on purpose. A single disjunction
+    /// would pass on a tab that asked `emphasis` for its ink and then drew a box
+    /// around it anyway, which is the half-migration a hurried edit produces.
+    #[test]
+    fn a_round_step_is_drawn_the_way_a_register_tab_is() {
+        let body = body_of(include_str!("benchdraw.rs"), "pub fn round_progress(");
+        assert!(
+            body.contains("emphasis::facet("),
+            "the round's steps must take their ink from the same ramp the \
+             registers do, so one gesture has one look:\n{body}"
+        );
+        for boxy in [".border_1()", ".rounded("] {
+            assert!(
+                !body.contains(boxy),
+                "a round's step is a TAB, not a chip — `{boxy}` puts a box round \
+                 it and the registers it sits beside have none. The underline is \
+                 the whole affordance."
+            );
+        }
+    }
+
     #[test]
     fn a_renderer_contains_no_decisions() {
         let src = include_str!("benchdraw.rs");

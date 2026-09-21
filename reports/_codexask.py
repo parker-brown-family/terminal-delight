@@ -50,12 +50,30 @@ def main():
             if name in WANTED:
                 hits.append((os.path.basename(path), obj))
 
+    # THE CONTROL DECIDES; it does not merely print. The first version listed
+    # the counts under the words "all zero => the store filters" and left the
+    # reader to do the arithmetic. One of them WAS zero -- `Read` had simply not
+    # run inside the window -- which made a passing control look half-failed and
+    # invited exactly the squint this exists to replace. A check whose verdict a
+    # person has to infer is not a check.
     print("CONTROL -- non-ctx tools present in the store:")
     for t in CONTROL:
         print("  %-8s %s" % (t, names.get(t, 0)))
-    print("  (all zero => the store filters, and nothing below is evidence)")
+    live = sum(names.get(t, 0) for t in CONTROL)
+    if live == 0:
+        print()
+        print("  CONTROL FAILED: not one non-ctx tool is in this store, so it")
+        print("  filters to its own surface and its silence about an ask tool")
+        print("  proves NOTHING. Stop here -- see reports/_askhook.py.")
+        return
+    print("  CONTROL PASSED: %d non-ctx records, so the store is unfiltered and" % live)
+    print("  an absence below is a real absence. A single zero is fine: that")
+    print("  tool has simply not run inside the window.")
     print()
     print("ask-tool records found: %d" % len(hits))
+    if not hits:
+        print("  None in this window. The store rotates in MINUTES, so zero is")
+        print("  the expected steady state and is not a refutation.")
     print()
 
     for base, obj in hits:
