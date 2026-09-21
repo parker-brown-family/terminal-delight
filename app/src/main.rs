@@ -32,6 +32,7 @@ mod attention;
 mod bell;
 mod benchdraw;
 mod benchstore;
+mod channel;
 mod crt;
 mod csd;
 mod ctl;
@@ -5564,6 +5565,7 @@ impl Workspace {
                             .map(|(pane, path)| surfacefeed::Arrivals {
                                 pane,
                                 posts: derive::from_transcript(&path, now),
+                                events: Vec::new(),
                             })
                             .filter(|a| !a.posts.is_empty())
                             .collect::<Vec<_>>()
@@ -7432,6 +7434,9 @@ impl Workspace {
                 // was not open when it was sent. See
                 // [`TerminalView::latch_asked`].
                 view.latch_asked(None);
+                // The channel's liveness marker, which a hook reads before it
+                // holds a picker for this bench. See `bench_beacon`.
+                view.bench_beacon();
                 for post in view.live_questions(now) {
                     view.present(post, cx);
                 }
@@ -7574,6 +7579,7 @@ impl Workspace {
                 for post in arrival.posts {
                     view.present(post, cx);
                 }
+                view.channel_events(arrival.events, cx);
             });
         }
         cx.notify();
@@ -32678,19 +32684,72 @@ mod tests {
         // `is_dir` is never consulted for a verb: a directory called `ctl` in
         // the cwd cannot turn the control client into a window.
         let never = |_: &str| -> bool { panic!("is_dir consulted for a known verb") };
-        for (word, verb) in [
-            ("--td-emit-demo", Verb::EmitDemo),
-            ("ctl", Verb::Ctl),
-            ("mcp", Verb::Mcp),
-            ("agent-usage", Verb::AgentUsage),
-            ("agent-vitals", Verb::AgentVitals),
-            ("probe", Verb::Probe),
-            ("bindings", Verb::Bindings),
-            ("serve", Verb::Serve),
-            ("skin", Verb::Skin),
-        ] {
-            assert_eq!(dispatch(Some(word), never), Launch::Verb(verb), "{word}");
+        for spec in VERBS {
+            assert_eq!(
+                dispatch(Some(spec.word), never),
+                Launch::Verb(spec.verb),
+                "{}",
+                spec.word
+            );
         }
+    }
+
+    #[test]
+    fn the_broken_pipe_gate_knows_every_verb_that_streams() {
+        // This crate has no lib target, so `tests/broken_pipe.rs` cannot read
+        // [`VERBS`] — it names its cases by hand. This is the tripwire that
+        // keeps the two in step: classify a new verb as `Streams` and this test
+        // fails, with the instruction in its own message.
+        let streams: Vec<(&str, &[&str])> = VERBS
+            .iter()
+            .filter_map(|s| match s.piping {
+                Piping::Streams(args) => Some((s.word, args)),
+                Piping::Ungated(_) => None,
+            })
+            .collect();
+        assert_eq!(
+            streams,
+            [
+                ("skin", &["--list"][..]),
+                ("conversation", &["zzz-no-such-conversation"][..]),
+            ],
+            "a verb's piping changed: add, remove or re-argue its case in \
+             app/tests/broken_pipe.rs, then update this list"
+        );
+
+        // And the other half: an `Ungated` reason may not be blank, because a
+        // blank reason is an exemption nobody has to justify.
+        for spec in VERBS {
+            if let Piping::Ungated(why) = spec.piping {
+                assert!(
+                    why.len() > 20,
+                    "`{}` is ungated without saying why",
+                    spec.word
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn every_printing_launch_is_gated_against_a_closed_pipe() {
+        // The SIGPIPE decision, asserted rather than read. Both printing arms
+        // are gated and the window is not — that asymmetry is the whole design
+        // (a long-lived process must not be killed by one broken write), and
+        // it lived only in the shape of a `match` until this test.
+        for verb in VERBS.iter().map(|s| s.verb) {
+            assert!(
+                prints_and_exits(&Launch::Verb(verb)),
+                "{verb:?} prints and exits"
+            );
+        }
+        assert!(prints_and_exits(&Launch::Reply {
+            text: USAGE.to_string(),
+            code: 0,
+        }));
+        assert!(!prints_and_exits(&Launch::Window { open_here: None }));
+        assert!(!prints_and_exits(&Launch::Window {
+            open_here: Some(PathBuf::from("/home/me/src")),
+        }));
     }
 
     #[test]
@@ -32748,16 +32807,11 @@ mod tests {
     #[test]
     fn every_verb_a_caller_can_type_is_listed_in_the_usage_text() {
         // The refusal prints USAGE, so a verb missing from it is a verb the
-        // caller is told does not exist while it quietly works. `--td-emit-demo`
-        // is internal — spawned by a demo pane, never typed — and stays out.
-        for word in [
-            "ctl",
-            "mcp",
-            "agent-usage",
-            "agent-vitals",
-            "probe",
-            "serve",
-        ] {
+        // caller is told does not exist while it quietly works. An internal
+        // verb — spawned by a demo pane, never typed — stays out, and says so
+        // in the roster rather than by being absent from a copy of it.
+        for spec in VERBS.iter().filter(|s| s.typed) {
+            let word = spec.word;
             assert!(Verb::parse(word).is_some(), "`{word}` is not dispatched");
             assert!(USAGE.contains(word), "USAGE omits `{word}`");
         }
@@ -34632,22 +34686,142 @@ enum Verb {
     Conversation,
 }
 
+/// Whether the broken-pipe gate in `tests/broken_pipe.rs` can run a verb — and
+/// when it cannot, WHY.
+///
+/// The reason is a `&str` rather than a bare flag on purpose. "This verb is not
+/// gated" and "nobody has thought about this verb" are different answers, and a
+/// roster that cannot tell them apart quietly grows exemptions. Making the
+/// reason mandatory means adding a verb costs one sentence of thought at the
+/// moment the author still has the context to write it.
+///
+/// Both payloads are read by the roster tests and by nothing in the running
+/// binary — this crate has no lib target, so `tests/broken_pipe.rs` cannot
+/// import them either. The lint stays live under `cfg(test)` so that a payload
+/// the tripwire stops reading is still reported.
+#[cfg_attr(not(test), allow(dead_code))]
+#[derive(Debug, Clone, Copy)]
+enum Piping {
+    /// These arguments make the verb write to stdout, so a reader that has
+    /// already gone is reached by the first write. The gate runs it.
+    Streams(&'static [&'static str]),
+    /// The gate cannot run this one, for the reason given.
+    Ungated(&'static str),
+}
+
+/// Every word `argv[1]` may be, in ONE place.
+///
+/// It was four places when this was written, and they had already drifted:
+/// `Verb::parse` knew ten verbs, `known_verbs_dispatch_before_the_gui` knew
+/// nine (`surface` was missing), and
+/// `every_verb_a_caller_can_type_is_listed_in_the_usage_text` knew six. Nobody
+/// had done anything wrong — a hand-copied list is simply a list that falls
+/// behind, and the cost lands on whichever test was supposed to be watching.
+/// Every roster now reads this one, so a verb added below is a verb the
+/// dispatch test, the usage test and the broken-pipe gate all pick up.
+const VERBS: &[VerbSpec] = &[
+    VerbSpec {
+        word: "--td-emit-demo",
+        verb: Verb::EmitDemo,
+        // Internal: spawned as a demo pane's program, never typed, so it stays
+        // out of USAGE.
+        typed: false,
+        piping: Piping::Ungated("blocks forever by design — it never reaches an exit to assert on"),
+    },
+    VerbSpec {
+        word: "ctl",
+        verb: Verb::Ctl,
+        typed: true,
+        piping: Piping::Ungated("writes its usage to stderr and nothing to stdout without a running instance to drive"),
+    },
+    VerbSpec {
+        word: "mcp",
+        verb: Verb::Mcp,
+        typed: true,
+        piping: Piping::Ungated("a stdio relay: with no window to forward to it writes nothing"),
+    },
+    VerbSpec {
+        word: "agent-usage",
+        verb: Verb::AgentUsage,
+        typed: true,
+        piping: Piping::Ungated("talks to vendor endpoints — not something a test suite should dial"),
+    },
+    VerbSpec {
+        word: "agent-vitals",
+        verb: Verb::AgentVitals,
+        typed: true,
+        piping: Piping::Ungated("needs a transcript path; without one it refuses on stderr"),
+    },
+    VerbSpec {
+        word: "probe",
+        verb: Verb::Probe,
+        typed: true,
+        piping: Piping::Ungated("needs a pid; without one it refuses on stderr"),
+    },
+    VerbSpec {
+        word: "bindings",
+        verb: Verb::Bindings,
+        typed: true,
+        piping: Piping::Ungated("walks /proc for live agents, so what it prints depends on the machine running the suite"),
+    },
+    VerbSpec {
+        word: "serve",
+        verb: Verb::Serve,
+        typed: true,
+        piping: Piping::Ungated("a session host: it runs until something kills it"),
+    },
+    VerbSpec {
+        word: "skin",
+        verb: Verb::Skin,
+        typed: true,
+        piping: Piping::Streams(&["--list"]),
+    },
+    VerbSpec {
+        word: "surface",
+        verb: Verb::Surface,
+        typed: true,
+        piping: Piping::Ungated("reads a TDSP document from stdin; with none it refuses on stderr"),
+    },
+    VerbSpec {
+        word: "conversation",
+        verb: Verb::Conversation,
+        typed: true,
+        // One of the few that genuinely reaches a closed reader: given any
+        // well-formed root it writes to stdout before it knows whether the
+        // conversation exists, so the gate runs it for real rather than
+        // decoratively. A root nothing has been filed under is deliberate —
+        // the gate must not depend on this machine having a conversation on
+        // disk, which is what makes `bindings` ungatable.
+        piping: Piping::Streams(&["zzz-no-such-conversation"]),
+    },
+];
+
+/// One row of [`VERBS`].
+///
+/// `typed` and `piping` are read by the roster tests and by nothing the running
+/// binary does. They live here anyway: a verb's audience and its pipe behaviour
+/// belong beside the verb, and the alternative — a second list somewhere else —
+/// is the exact failure this table was written to end.
+#[cfg_attr(not(test), allow(dead_code))]
+#[derive(Debug, Clone, Copy)]
+struct VerbSpec {
+    /// The word a caller types.
+    word: &'static str,
+    verb: Verb,
+    /// Whether a caller is ever expected to type it. An internal verb is
+    /// dispatched but deliberately absent from `USAGE`, and the usage roster
+    /// skips it rather than failing on it.
+    typed: bool,
+    piping: Piping,
+}
+
 impl Verb {
     fn parse(word: &str) -> Option<Self> {
-        Some(match word {
-            "--td-emit-demo" => Self::EmitDemo,
-            "ctl" => Self::Ctl,
-            "mcp" => Self::Mcp,
-            "agent-usage" => Self::AgentUsage,
-            "agent-vitals" => Self::AgentVitals,
-            "probe" => Self::Probe,
-            "bindings" => Self::Bindings,
-            "serve" => Self::Serve,
-            "skin" => Self::Skin,
-            "conversation" => Self::Conversation,
-            "surface" => Self::Surface,
-            _ => return None,
-        })
+        // Theirs, whole. The hand-written match this replaced is exactly the
+        // drift that table was written to end, and `conversation` now reaches
+        // the dispatch test, the usage roster and the broken-pipe gate by
+        // being a row in it rather than by being copied into four lists.
+        VERBS.iter().find(|s| s.word == word).map(|s| s.verb)
     }
 }
 
@@ -34698,14 +34872,57 @@ fn dispatch(first: Option<&str>, is_dir: impl Fn(&str) -> bool) -> Launch {
     }
 }
 
+/// Does this launch print and exit, rather than opening a window?
+///
+/// Split out from `main` so the SIGPIPE decision below can be asserted in a
+/// test instead of read. It is written as "everything that is not a window"
+/// rather than as a list of the two printing arms, so a third printing arm
+/// added later inherits the behaviour instead of quietly missing it.
+fn prints_and_exits(launch: &Launch) -> bool {
+    !matches!(launch, Launch::Window { .. })
+}
+
+/// Restore the default SIGPIPE disposition, for a process that is about to
+/// write to a stream and then exit.
+///
+/// Rust masks SIGPIPE at startup so a broken pipe arrives as an ordinary `io`
+/// error — and then `println!` unwraps that error into a panic. So
+/// `terminal-delight skin --list | head -5` printed a Rust backtrace *after*
+/// its output, over a write nobody was left to read. Harmless in effect and
+/// corrosive in practice: it is exactly the noise that teaches a reader to
+/// scroll past a panic.
+///
+/// Restoring `SIG_DFL` gives these verbs the behaviour every other command-line
+/// tool has — the kernel ends the process at the first write nobody is
+/// listening to, silently, with no output lost that anyone could have read.
+///
+/// Deliberately NOT called on the window path. That process is long-lived and
+/// writes to a compositor socket and to the pseudoterminal of every pane;
+/// letting the kernel kill it on any one broken write would trade a loud,
+/// harmless panic in a throwaway subprocess for a silent death of somebody's
+/// whole session.
+fn quiet_on_a_closed_pipe() {
+    // SAFETY: `signal` is async-signal-safe, and this runs before any thread is
+    // spawned, so there is no handler and no other thread to race with.
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+    }
+}
+
 fn main() {
     // What this process is, decided before anything else runs: the headless
     // verbs are plain subprocesses the desktop and agents shell out to, so they
     // must land ahead of any gpui and any env mutation.
     let argv: Vec<String> = std::env::args().collect();
-    let open_here = match dispatch(argv.get(1).map(String::as_str), |p| {
+    let launch = dispatch(argv.get(1).map(String::as_str), |p| {
         std::path::Path::new(p).is_dir()
-    }) {
+    });
+    // One gate for every printing path, decided structurally rather than per
+    // arm — see [`quiet_on_a_closed_pipe`] for why the window is excluded.
+    if prints_and_exits(&launch) {
+        quiet_on_a_closed_pipe();
+    }
+    let open_here = match launch {
         Launch::Verb(verb) => {
             let code = match verb {
                 Verb::EmitDemo => demo::emit_and_block(),

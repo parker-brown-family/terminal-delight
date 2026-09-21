@@ -1,0 +1,1431 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The bench cannot see a question it is not standing on</title>
+<style>/* decision-brief — surfaces, ink, and the three structural components.
+ *
+ * ONE palette. No theme system, no theme toggle. tps-report shipped four themes and
+ * 165 theme-related rules; nobody ever switched. A brief is read once, quickly, to make
+ * a decision — the reader is not shopping for a skin.
+ *
+ * Categorical colours are the validated dataviz default palette (dark steps), which
+ * clears the CVD, chroma, lightness and contrast gates on the adjacent pairlist.
+ * If you change them, re-run the validator; do not eyeball it.
+ *
+ * What is here: tokens, the modal shell, tables, callouts, code. Everything else —
+ * cards, escalation lists, stat tiles, charts — is the brief's own business.
+ * Build what the material needs.
+ */
+:root {
+  color-scheme: dark;
+
+  --surface-0: #111110;   /* page */
+  --surface-1: #1a1a19;   /* panel */
+  --surface-2: #232321;   /* raised */
+  --surface-3: #2e2e2b;   /* control */
+  --line:      #3a3a36;
+
+  --text-primary:   #ffffff;
+  --text-secondary: #c3c2b7;
+  --text-muted:     #8b8a80;
+
+  /* categorical — assign in fixed order, never cycle */
+  --s1: #3987e5;  --s2: #d95926;  --s3: #199e70;  --s4: #c98500;
+  --s5: #d55181;  --s6: #008300;  --s7: #9085e9;  --s8: #e66767;
+
+  /* status — reserved. Never reuse as "series 5". Always ship with a label. */
+  --good:     #0ca30c;
+  --warning:  #fab219;
+  --serious:  #ec835a;
+  --critical: #d03b3b;
+
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, "JetBrains Mono", Menlo, Consolas, monospace;
+  --sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif;
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0; background: var(--surface-0); color: var(--text-primary);
+  font-family: var(--sans); font-size: 15px; line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+.wrap { max-width: 1180px; margin: 0 auto; padding: 0 24px 120px; }
+header.top .wrap { padding-bottom: 0; }   /* the wrap's bottom padding is for the page, not the header */
+
+/* ---- headings ----
+   A heading names the thing. It does not explain it — an em-dash gloss after a
+   heading breaks the heading. The body does the explaining. */
+h1 { font-size: 34px; line-height: 1.18; margin: 0 0 16px; letter-spacing: -.02em; font-weight: 650; }
+h2.sec {
+  font-size: 13px; font-family: var(--mono); letter-spacing: .13em; text-transform: uppercase;
+  color: var(--text-muted); margin: 56px 0 18px; padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+/* ---- modal shell: where depth lives ---- */
+dialog {
+  border: 1px solid var(--line); border-radius: 12px;
+  background: var(--surface-1); color: var(--text-primary);
+  max-width: 880px; width: calc(100vw - 44px); max-height: 86vh; padding: 0; overflow: hidden;
+}
+dialog::backdrop { background: rgba(0,0,0,.76); backdrop-filter: blur(3px); }
+.dlg-head {
+  position: sticky; top: 0; background: var(--surface-2);
+  border-bottom: 1px solid var(--line); padding: 20px 26px;
+  display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; z-index: 2;
+}
+.dlg-head h3 { margin: 0 0 5px; font-size: 20px; letter-spacing: -.015em; }
+.dlg-head .repo { font-family: var(--mono); font-size: 11.5px; color: var(--text-muted); margin: 0; }
+.x {
+  background: var(--surface-3); border: 1px solid var(--line); color: var(--text-secondary);
+  border-radius: 6px; width: 30px; height: 30px; font-size: 17px; line-height: 1;
+  cursor: pointer; flex: none;
+}
+.x:hover { background: var(--critical); color: #fff; border-color: var(--critical); }
+.dlg-body { padding: 24px 26px 34px; overflow-y: auto; max-height: calc(86vh - 78px); }
+.dlg-body h4 {
+  font-family: var(--mono); font-size: 11.5px; letter-spacing: .12em; text-transform: uppercase;
+  color: var(--text-muted); margin: 30px 0 12px; padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+}
+.dlg-body h4:first-child { margin-top: 0; }
+.dlg-body p  { margin: 0 0 13px; color: var(--text-secondary); font-size: 14.5px; }
+.dlg-body ul { margin: 0 0 15px; padding-left: 20px; color: var(--text-secondary); font-size: 14.5px; }
+.dlg-body li { margin-bottom: 8px; }
+.dlg-body strong { color: var(--text-primary); font-weight: 600; }
+
+/* ---- prose furniture ---- */
+code {
+  font-family: var(--mono); font-size: 12.5px; background: var(--surface-3);
+  padding: 1.5px 5px; border-radius: 4px; color: #e8d9a8; word-break: break-word;
+}
+pre {
+  background: var(--surface-0); border: 1px solid var(--line); border-radius: 7px;
+  padding: 15px 17px; overflow-x: auto; margin: 0 0 15px;
+}
+pre code { background: none; padding: 0; color: var(--text-secondary); font-size: 12.5px; line-height: 1.65; }
+
+table { width: 100%; border-collapse: collapse; margin: 0 0 17px; font-size: 13.5px; }
+th, td { text-align: left; padding: 9px 11px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th {
+  font-family: var(--mono); font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--text-muted); font-weight: 500; background: var(--surface-2);
+}
+td { color: var(--text-secondary); }
+td b, td strong { color: var(--text-primary); }
+
+blockquote {
+  margin: 0 0 15px; padding: 12px 18px; border-left: 3px solid var(--s1);
+  background: var(--surface-2); border-radius: 0 7px 7px 0;
+  color: var(--text-secondary); font-size: 14px; font-style: italic;
+}
+
+.callout {
+  border-left: 3px solid var(--warning); background: rgba(250,178,25,.07);
+  padding: 14px 18px; border-radius: 0 7px 7px 0; margin: 0 0 17px;
+}
+.callout.crit { border-color: var(--critical); background: rgba(208,59,59,.08); }
+.callout.good { border-color: var(--good);     background: rgba(12,163,12,.08); }
+.callout p:last-child { margin-bottom: 0; }
+.callout .lbl {
+  font-family: var(--mono); font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--text-muted); margin: 0 0 7px; display: block;
+}
+
+/* ---- confidence labels. Never assert without one. ---- */
+.tag {
+  display: inline-block; font-family: var(--mono); font-size: 10px; letter-spacing: .07em;
+  text-transform: uppercase; padding: 2.5px 7px; border-radius: 4px;
+  margin-right: 6px; font-weight: 600;
+}
+.tag.v { background: rgba(12,163,12,.18);  color: #6cd46c; border: 1px solid rgba(12,163,12,.4); }   /* measured */
+.tag.w { background: rgba(250,178,25,.14); color: #f5c95f; border: 1px solid rgba(250,178,25,.38); } /* inferred */
+.tag.c { background: rgba(208,59,59,.16);  color: #f08a8a; border: 1px solid rgba(208,59,59,.4); }   /* contradicted / hunch */
+
+footer {
+  margin-top: 70px; padding-top: 26px; border-top: 1px solid var(--line);
+  font-family: var(--mono); font-size: 11.5px; color: var(--text-muted);
+}
+footer p { margin: 0 0 7px; }
+
+@media (max-width: 640px) {
+  h1 { font-size: 26px; }
+  .wrap { padding: 0 16px 80px; }
+}
+</style>
+<style>/* decision-brief — reader notes, styling.
+   Depends on the surface/ink/status custom properties in base.css. */
+
+.notable { position: relative; }
+
+.note-btn {
+  position: absolute; top: 8px; right: 8px; z-index: 6;
+  width: 26px; height: 26px; line-height: 1; padding: 0;
+  background: var(--surface-3); border: 1px solid var(--line); border-radius: 6px;
+  color: var(--text-muted); font-size: 13px; cursor: pointer; opacity: 0;
+  transition: opacity .12s, background .12s, color .12s, border-color .12s;
+}
+/* Hidden until hover: a brief with 130 always-visible affordances reads as a form. */
+.notable:hover > .note-btn,
+.note-btn:focus-visible { opacity: 1; }
+.note-btn:hover { background: var(--warning); border-color: var(--warning); color: var(--surface-1); }
+
+.notable.has-note > .note-btn {
+  opacity: 1; background: var(--warning); border-color: var(--warning);
+  color: var(--surface-1); font-weight: 700;
+}
+.notable.has-note { box-shadow: inset 3px 0 0 var(--warning); }
+tr.notable.has-note > td:first-child { box-shadow: inset 3px 0 0 var(--warning); }
+
+/* Table rows can't host an absolutely-positioned child reliably — inline it. */
+tr.notable .note-btn {
+  position: static; opacity: .35; width: 22px; height: 22px; font-size: 11px;
+  margin-left: 6px; vertical-align: middle; display: inline-block;
+}
+tr.notable:hover .note-btn { opacity: 1; }
+
+/* ---- floating bar ---- */
+.notebar {
+  position: fixed; right: 18px; bottom: 18px; z-index: 900;
+  display: flex; gap: 8px; align-items: center;
+  background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px;
+  padding: 9px 11px; box-shadow: 0 10px 32px rgba(0,0,0,.55);
+  font-family: var(--mono); font-size: 11.5px;
+}
+.notebar .cnt { color: var(--text-muted); padding-right: 4px; }
+.notebar .cnt b { color: var(--warning); font-size: 14px; }
+.notebar button {
+  font-family: var(--mono); font-size: 11px; letter-spacing: .03em; cursor: pointer;
+  background: var(--surface-3); border: 1px solid var(--line); color: var(--text-secondary);
+  border-radius: 6px; padding: 6px 10px;
+  transition: background .12s, color .12s, border-color .12s;
+}
+.notebar button:hover { background: var(--warning); color: var(--surface-1); border-color: var(--warning); }
+.notebar button.primary {
+  background: rgba(250,178,25,.14); border-color: rgba(250,178,25,.45); color: #f5c95f;
+}
+.notebar button:disabled {
+  opacity: .4; cursor: default; background: var(--surface-3);
+  color: var(--text-muted); border-color: var(--line);
+}
+@media (max-width: 640px) {
+  .notebar { right: 8px; bottom: 8px; flex-wrap: wrap; max-width: calc(100vw - 16px); }
+}
+
+/* ---- note dialog ---- */
+dialog#d-note { max-width: 620px; }
+#note-list { margin: 0 0 18px; padding: 0; list-style: none; }
+#note-list li {
+  background: var(--surface-2); border: 1px solid var(--line);
+  border-left: 3px solid var(--warning); border-radius: 0 7px 7px 0;
+  padding: 11px 14px; margin-bottom: 9px; font-size: 14px; color: var(--text-secondary);
+}
+#note-list .nts {
+  font-family: var(--mono); font-size: 10px; color: var(--text-muted);
+  display: flex; justify-content: space-between; gap: 10px; margin-bottom: 6px;
+}
+#note-list .ndel {
+  background: none; border: none; color: var(--text-muted);
+  cursor: pointer; font-size: 11px; padding: 0;
+}
+#note-list .ndel:hover { color: var(--critical); }
+#note-none { color: var(--text-muted); font-size: 13.5px; margin: 0 0 16px; }
+
+#note-text {
+  width: 100%; min-height: 104px; background: var(--surface-0);
+  border: 1px solid var(--line); border-radius: 7px; color: var(--text-primary);
+  padding: 11px 13px; font-family: var(--sans); font-size: 14.5px;
+  resize: vertical; line-height: 1.55;
+}
+#note-text:focus { outline: none; border-color: var(--warning); }
+
+.note-actions { display: flex; gap: 9px; align-items: center; margin-top: 11px; }
+.note-actions button {
+  font-family: var(--mono); font-size: 11.5px; cursor: pointer; border-radius: 6px;
+  padding: 8px 14px; border: 1px solid var(--line);
+  background: var(--surface-3); color: var(--text-secondary);
+}
+.note-actions button.save {
+  background: var(--warning); border-color: var(--warning);
+  color: var(--surface-1); font-weight: 600;
+}
+.note-actions .hintk {
+  font-family: var(--mono); font-size: 10.5px; color: var(--text-muted); margin-left: auto;
+}
+
+/* ---- export dialog ---- */
+dialog#d-export { max-width: 780px; }
+#export-out {
+  width: 100%; min-height: 320px; background: var(--surface-0);
+  border: 1px solid var(--line); border-radius: 7px; color: var(--text-secondary);
+  padding: 13px; font-family: var(--mono); font-size: 12px; line-height: 1.55;
+  resize: vertical; white-space: pre;
+}
+.tokest { font-family: var(--mono); font-size: 11px; color: var(--text-muted); margin: 9px 0 0; }
+</style>
+<style>
+figure { margin: 0 0 22px; border: 1px solid var(--line); border-radius: 10px;
+  background: var(--surface-1); padding: 16px 18px 14px; }
+figure > .lbl { display: block; font-family: var(--mono); font-size: 10.5px; letter-spacing: .1em;
+  text-transform: uppercase; color: var(--text-muted); margin: 0 0 13px; }
+figcaption { margin-top: 13px; font-size: 13.5px; color: var(--text-secondary); }
+figcaption b { color: var(--text-primary); }
+.scroller { overflow-x: auto; }
+svg { display: block; width: 100%; height: auto; }
+
+header.top { border-bottom: 1px solid var(--line); background: var(--surface-1); padding: 34px 0 30px; margin-bottom: 8px; }
+.kicker { font-family: var(--mono); font-size: 11px; letter-spacing: .14em; text-transform: uppercase;
+  color: var(--text-muted); margin: 0 0 14px; }
+.lede { font-size: 17px; line-height: 1.62; color: var(--text-secondary); max-width: 74ch; margin: 0 0 18px; }
+.lede b { color: var(--text-primary); }
+.meta { font-family: var(--mono); font-size: 11.5px; color: var(--text-muted); margin: 0; }
+
+.esc-list { list-style: none; padding: 0; margin: 0 0 10px; counter-reset: ef; }
+.esc-list li { counter-increment: ef; border: 1px solid var(--line); border-radius: 9px;
+  background: var(--surface-1); padding: 14px 17px 13px 50px; margin: 0 0 10px; position: relative; }
+.esc-list li::before { content: counter(ef); position: absolute; left: 16px; top: 14px;
+  font-family: var(--mono); font-size: 15px; color: var(--s1); font-weight: 700; }
+.esc-list h4 { margin: 0 0 5px; font-size: 15px; }
+.esc-list p { margin: 0 0 4px; font-size: 13.5px; color: var(--text-secondary); }
+.esc-list p.cost { color: var(--text-muted); font-size: 12.5px; margin: 0; }
+
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(255px, 1fr)); gap: 12px; margin: 0 0 20px; }
+.card { border: 1px solid var(--line); border-radius: 10px; background: var(--surface-1); padding: 15px 17px; }
+.card.rec { border-color: var(--s3); box-shadow: inset 0 0 0 1px rgba(25,158,112,.25); }
+.card.no { opacity: .72; }
+.card h4 { margin: 0 0 4px; font-size: 15.5px; }
+.card .who { font-family: var(--mono); font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--text-muted); margin: 0 0 9px; display: block; }
+.card p { margin: 0 0 8px; font-size: 13.5px; color: var(--text-secondary); }
+.card p.cost { color: var(--text-muted); font-size: 12.5px; margin: 0; }
+
+.grill { border: 1px solid var(--line); border-radius: 10px; background: var(--surface-1); padding: 4px 18px 6px; }
+.grill .ask { padding: 16px 0; border-bottom: 1px solid var(--line); }
+.grill .ask:last-child { border-bottom: none; }
+.grill .ask h4 { margin: 0 0 7px; font-size: 15.5px; }
+.grill .ask p { margin: 0 0 7px; font-size: 13.5px; color: var(--text-secondary); }
+.grill .ask p.mine { color: var(--s3); font-size: 13px; margin: 0; }
+
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin: 0 0 20px; }
+.tile { border: 1px solid var(--line); border-radius: 9px; background: var(--surface-1); padding: 13px 15px; }
+.tile .n { font-family: var(--mono); font-size: 25px; line-height: 1.1; color: var(--text-primary); display: block; }
+.tile .k { font-size: 12.5px; color: var(--text-secondary); display: block; margin-top: 4px; }
+.tile .s { font-family: var(--mono); font-size: 10px; color: var(--text-muted); display: block; margin-top: 5px;
+  letter-spacing: .06em; text-transform: uppercase; }
+
+.btn { background: var(--surface-3); border: 1px solid var(--line); color: var(--text-secondary);
+  border-radius: 6px; padding: 5px 11px; font-family: var(--mono); font-size: 11px; cursor: pointer;
+  letter-spacing: .06em; text-transform: uppercase; }
+.btn:hover { border-color: var(--s1); color: var(--text-primary); }
+
+/* ---- mockup chrome: the bench and the terminal, drawn plainly ---- */
+.mock { font-family: var(--mono); font-size: 10.5px; line-height: 1.5; border: 1px solid var(--line);
+  border-radius: 7px; background: #0d0d0c; padding: 0; overflow: hidden; }
+.mock .bar { background: var(--surface-2); border-bottom: 1px solid var(--line); padding: 5px 9px;
+  color: var(--text-muted); font-size: 9.5px; letter-spacing: .09em; text-transform: uppercase;
+  display: flex; justify-content: space-between; gap: 8px; }
+.mock .in { padding: 10px 11px; }
+.mock .q { color: #dcdad0; font-size: 11px; line-height: 1.45; margin: 0 0 9px; }
+.mock .opt { border: 1px solid #33332f; border-radius: 5px; padding: 5px 8px; margin: 0 0 5px; color: #a9a89e; }
+.mock .opt.lit { border-color: #d03b3b; color: #e8e6da; background: rgba(208,59,59,.07); }
+.mock .opt.cur { border-color: #3987e5; color: #e8e6da; }
+.mock .opt b { color: #fff; font-weight: 600; }
+.mock .dim { color: #6e6d66; }
+.mock .strip { display: flex; gap: 5px; align-items: center; flex-wrap: wrap; margin: 0 0 10px;
+  padding-bottom: 8px; border-bottom: 1px solid #2b2b28; }
+.mock .step { border: 1px solid #33332f; border-radius: 4px; padding: 2px 7px; color: #8b8a80; }
+.mock .step.done { border-color: #199e70; color: #7fd3b4; }
+.mock .step.here { border-color: #d03b3b; color: #fff; background: rgba(208,59,59,.14); }
+.mock .step.sub { border-color: #33332f; color: #6e6d66; }
+.mock .segs { display: flex; gap: 3px; margin: 9px 0 4px; }
+.mock .segs i { height: 5px; flex: 1; border-radius: 2px; background: rgba(208,59,59,.22); }
+.mock .segs i.on { background: #d03b3b; }
+.twoup { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+@media (max-width: 720px) { .twoup { grid-template-columns: 1fr; } }
+.capk { font-family: var(--mono); font-size: 9.5px; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--text-muted); margin: 0 0 5px; }
+
+/* ---- architecture step frames ---- */
+.arch { border: 1px solid var(--line); border-radius: 8px; background: #0d0d0c; padding: 13px;
+  font-family: var(--mono); font-size: 10.5px; }
+.arch .zone { border: 1px solid #3a3a36; border-radius: 7px; padding: 20px 11px 11px; position: relative; margin: 0 0 9px; }
+.arch .zone.out { border-style: dashed; }
+.arch .zone > .zl { position: absolute; top: 5px; left: 10px; font-size: 9px; letter-spacing: .1em;
+  text-transform: uppercase; color: var(--text-muted); }
+.arch .node { border: 1px solid #3a3a36; border-radius: 5px; padding: 6px 9px; background: var(--surface-1);
+  color: #c3c2b7; margin: 0 0 6px; }
+.arch .node.new { border-color: #3987e5; color: #dbe7f7; background: rgba(57,135,229,.08); }
+.arch .node.est { border-color: #199e70; color: #cfe8df; background: rgba(25,158,112,.07); }
+.arch .node.mine { border-color: #c98500; color: #f0e0bd; background: rgba(201,133,0,.09); }
+.arch .node b { color: #fff; }
+.arch .pill { float: right; font-size: 9px; color: var(--text-muted); }
+.arch .row { display: grid; gap: 7px; }
+.arch .row.two { grid-template-columns: 1fr 1fr; }
+.arch .lnk { text-align: center; color: #57565080; font-size: 13px; line-height: 1; margin: -2px 0 5px; }
+.arch .leg { font-size: 9.5px; color: var(--text-muted); margin-top: 8px; letter-spacing: .04em; }
+.gut { font-family: var(--mono); font-size: 10.5px; color: var(--text-muted); margin: 9px 0 0;
+  padding-top: 8px; border-top: 1px dotted #3a3a36; }
+
+/* ---- fence ---- */
+.fence { display: grid; grid-template-columns: 1fr 1fr; gap: 0; border: 1px solid var(--line);
+  border-radius: 8px; overflow: hidden; }
+@media (max-width: 660px) { .fence { grid-template-columns: 1fr; } }
+.fence > div { padding: 13px 15px; }
+.fence .has { background: rgba(25,158,112,.06); border-right: 1px solid var(--line); }
+.fence .hasnt { background: rgba(208,59,59,.05); }
+.fence h5 { font-family: var(--mono); font-size: 10px; letter-spacing: .1em; text-transform: uppercase;
+  margin: 0 0 9px; color: var(--text-muted); }
+.fence ul { margin: 0; padding-left: 17px; font-size: 12.5px; color: var(--text-secondary); }
+.fence li { margin-bottom: 6px; }
+
+table.wide { font-size: 12.5px; }
+table.wide td code { font-size: 11px; }
+.yes { color: #6cd46c; } .nope { color: #f08a8a; } .unk { color: var(--text-muted); }
+.slices { list-style: none; padding: 0; margin: 0; }
+.slices li { border-left: 2px solid var(--line); padding: 0 0 18px 18px; position: relative; margin: 0; }
+.slices li:last-child { padding-bottom: 0; }
+.slices li::before { content: ''; position: absolute; left: -6px; top: 3px; width: 10px; height: 10px;
+  border-radius: 50%; background: var(--surface-3); border: 2px solid var(--line); }
+.slices li.now::before { background: var(--s3); border-color: var(--s3); }
+.slices li.next::before { background: var(--s1); border-color: var(--s1); }
+.slices li.later::before { background: var(--surface-0); border-color: var(--s4); }
+.slices h4 { margin: 0 0 3px; font-size: 14.5px; }
+.slices p { margin: 0; font-size: 13px; color: var(--text-secondary); }
+.slices .w { font-family: var(--mono); font-size: 10px; color: var(--text-muted); letter-spacing: .08em;
+  text-transform: uppercase; display: block; margin-bottom: 3px; }
+</style>
+</head>
+<body>
+
+<header class="top"><div class="wrap">
+  <p class="kicker">Terminal Delight &middot; workbench &middot; 21 September 2026</p>
+  <h1>The bench cannot see a question it is not standing on</h1>
+  <p class="lede">You asked for a navigator across the top and a work area that follows it. The navigator
+  is the easy half &mdash; the picker's own tab bar is already parsed into labels, and the bench throws
+  the labels away at the last step before drawing. <b>The work area is the hard half, and it is hard for
+  one reason: while a question is pending, the only copy of it that Terminal&nbsp;Delight can reach is
+  the pixels on the screen, and the screen paints one question at a time.</b> Your instinct about going
+  async is the right shape. What it actually needs is a source for the whole round that exists during
+  the ten minutes you are deciding.</p>
+  <p class="meta">Difficulty 6/10 &mdash; splits cleanly: the drawing half is a 3, the
+  compose-then-submit half is a 7. Read time ~10 min.</p>
+</div></header>
+
+<div class="wrap">
+
+<h2 class="sec">Read first</h2>
+<ol class="esc-list">
+  <li>
+    <h4><span class="tag v">measured</span>The whole round is in the transcript &mdash; ten minutes too late</h4>
+    <p>The ask you photographed is line 312 of pane&nbsp;12's transcript, written at 14:09:06; its answer
+    is line 313, at 14:19:10. Two adjacent lines, ten minutes and four seconds apart. Both questions, all
+    six options, every description and a 659-character preview per option &mdash; all of it lands
+    <em>after</em> you have already decided.</p>
+    <p class="cost">What it would take: a source that exists while pending. One hook, or one MCP call from the agent.</p>
+  </li>
+  <li>
+    <h4><span class="tag v">measured</span>The navigator you want is parsed already, then discarded</h4>
+    <p><code>round_on_screen</code> reads the picker's tab bar into <code>Step&nbsp;{&nbsp;label, done&nbsp;}</code>
+    &mdash; "Ended state" done, "Orphans" open, plus Submit. <code>round_progress</code> then draws grey
+    segments and the words "1 of 2 answered", and never draws a label.</p>
+    <p class="cost">What it would take: render the labels you already hold. Half a day, no new plumbing.</p>
+  </li>
+  <li>
+    <h4><span class="tag v">measured</span>It does auto-advance. It takes eight seconds</h4>
+    <p><code>READING_WINDOW_MS = 8_000</code>. After the bench types an answer into the pseudoterminal it
+    deliberately stops reading the screen for eight seconds, so a picker still repainting is not misread as
+    a fresh question. Click an answer and the bench sits on the old one for eight seconds, then jumps.
+    That is what "jammed" feels like.</p>
+    <p class="cost">What it would take: make the window end on evidence rather than on a clock.</p>
+  </li>
+  <li>
+    <h4><span class="tag v">measured</span>Two surfaces for one decision, and nothing joins them</h4>
+    <p>In your screenshot the agent had <em>also</em> declared a <code>decision</code> surface covering
+    question one. So the bench held a rich Q1 (weights, IF WE DO, approve/reject) while the terminal had
+    moved to Q2. They are unrelated rows that happen to be about the same thing.</p>
+    <p class="cost">What it would take: a round key both halves carry, so a declared brief can dock to a live step.</p>
+  </li>
+  <li>
+    <h4><span class="tag w">inferred</span>Async is what it already is &mdash; the choice is relay or compose</h4>
+    <p>Every click on the bench becomes keystrokes into the picker: <code>Hit::Choose</code> &rarr;
+    <code>nav_index</code> &rarr; <code>Dispatch::Keys</code> &rarr; the pseudoterminal. The bench is a
+    remote control on a one-second poll. What you are describing is the bench becoming the place the
+    answer is composed, with the terminal driven once, at submit.</p>
+    <p class="cost">What it would take: the bench holding the set (above), plus a rule for who wins when you type in both.</p>
+  </li>
+</ol>
+
+<h2 class="sec">What you photographed</h2>
+
+<div class="tiles">
+  <div class="tile"><span class="n">10:04</span><span class="k">between the ask being written and its answer landing on disk</span><span class="s">measured &middot; pane 12</span></div>
+  <div class="tile"><span class="n">0 / 43</span><span class="k">AskUserQuestion calls readable while still pending</span><span class="s">measured &middot; 120 transcripts</span></div>
+  <div class="tile"><span class="n">8.0 s</span><span class="k">the bench is blind after it answers</span><span class="s">measured &middot; READING_WINDOW_MS</span></div>
+  <div class="tile"><span class="n">19</span><span class="k">multi-question rounds in the same 120 transcripts</span><span class="s">measured &middot; this is not an edge case</span></div>
+</div>
+
+<figure>
+  <span class="lbl">01 &middot; The two faces, at the moment you flipped between them</span>
+  <div class="twoup">
+    <div>
+      <p class="capk">Terminal face &mdash; the picker</p>
+      <div class="mock">
+        <div class="bar"><span>TERM &middot; pane 12</span><span>asking</span></div>
+        <div class="in">
+          <div class="strip">
+            <span class="step done">&#x22a0; Ended state</span>
+            <span class="step here">&#x22a1; Orphans</span>
+            <span class="step sub">&#x2714; Submit</span>
+          </div>
+          <p class="q">A surface no conversation can claim &mdash; a file dropped by a script, or
+          anything already on disk from before this change. Where does it go?</p>
+          <div class="opt cur">&rsaquo; 1. Below a line, marked <b>unknown</b> <span class="dim">(Recommended)</span></div>
+          <div class="opt">2. Hidden entirely</div>
+          <div class="opt">3. Adopted by the live agent</div>
+          <p class="dim" style="margin:9px 0 0">Enter to select &middot; Tab to switch questions &middot; Esc to cancel</p>
+        </div>
+      </div>
+    </div>
+    <div>
+      <p class="capk">Workbench face &mdash; what it showed</p>
+      <div class="mock">
+        <div class="bar"><span>BENCH &middot; pane 12</span><span>decisions</span></div>
+        <div class="in">
+          <p class="dim" style="margin:0 0 8px">leaf &middot; workbench empty state &nbsp; inferred</p>
+          <p class="q">Ending an agent wipes its bench. The eleven surfaces it made are kept on disk.
+          Does the wiped screen say so, and how loudly?</p>
+          <div class="opt lit"><b>B</b> &mdash; wipe, plus one line back to the work <span class="dim">recommended</span></div>
+          <div class="opt"><b>A</b> &mdash; bare wipe, exactly as asked</div>
+          <div class="opt"><b>C</b> &mdash; wipe, plus every resumable conversation</div>
+          <p class="dim" style="margin:10px 0 0">approve &nbsp; reject &nbsp; comment</p>
+        </div>
+      </div>
+    </div>
+  </div>
+  <figcaption><b>These are two different objects, and only one of them is the round.</b>
+  The left is the live question read off the screen; the right is a <code>decision</code> surface the agent
+  declared separately, which happens to restate question one. Nothing in the data says they belong to the
+  same round, so nothing moves the right pane when the left one advances.</figcaption>
+</figure>
+
+<figure>
+  <span class="lbl">02 &middot; When each copy of the question exists</span>
+  <div class="scroller">
+  <svg viewBox="0 0 760 214" role="img" aria-label="Timeline showing the question visible on screen for ten minutes while the transcript stays empty until the answer lands">
+    <defs><marker id="ar" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0 L8 4 L0 8 z" fill="#8b8a80"/></marker></defs>
+    <g font-family="ui-monospace, monospace" font-size="11">
+      <line x1="96" y1="186" x2="742" y2="186" stroke="#3a3a36" stroke-width="1" marker-end="url(#ar)"/>
+      <line x1="150" y1="30" x2="150" y2="192" stroke="#3a3a36" stroke-dasharray="3 3"/>
+      <line x1="600" y1="30" x2="600" y2="192" stroke="#3a3a36" stroke-dasharray="3 3"/>
+      <text x="150" y="203" fill="#8b8a80" text-anchor="middle">14:09:06</text>
+      <text x="600" y="203" fill="#8b8a80" text-anchor="middle">14:19:10</text>
+      <text x="375" y="203" fill="#8b8a80" text-anchor="middle">&#x2190; 10 min 04 s &#x2192;</text>
+
+      <text x="8" y="53" fill="#c3c2b7">the picker</text>
+      <rect x="150" y="40" width="450" height="20" rx="4" fill="#d03b3b" fill-opacity=".22" stroke="#d03b3b"/>
+      <text x="375" y="54" fill="#f0b6b6" text-anchor="middle">on screen, one question at a time</text>
+
+      <text x="8" y="90" fill="#c3c2b7">the bench</text>
+      <rect x="150" y="77" width="450" height="20" rx="4" fill="#3987e5" fill-opacity=".16" stroke="#3987e5"/>
+      <text x="375" y="91" fill="#b9d3f5" text-anchor="middle">scraping that screen once a second</text>
+
+      <text x="8" y="127" fill="#c3c2b7">the transcript</text>
+      <rect x="150" y="114" width="450" height="20" rx="4" fill="#232321" stroke="#3a3a36" stroke-dasharray="4 3"/>
+      <text x="375" y="128" fill="#8b8a80" text-anchor="middle">nothing &mdash; the ask is not on disk yet</text>
+      <rect x="600" y="114" width="142" height="20" rx="4" fill="#199e70" fill-opacity=".2" stroke="#199e70"/>
+      <text x="671" y="128" fill="#8fd9bd" text-anchor="middle">lines 312 + 313</text>
+
+      <text x="8" y="164" fill="#c3c2b7">what a hook sees</text>
+      <rect x="150" y="151" width="592" height="20" rx="4" fill="#c98500" fill-opacity=".16" stroke="#c98500"/>
+      <text x="446" y="165" fill="#f0d79a" text-anchor="middle">both questions, all six options, every preview &mdash; from the first millisecond</text>
+    </g>
+  </svg>
+  </div>
+  <p class="gut">yellow is the proposal, not the code &mdash; nothing writes that file today</p>
+  <figcaption><b>The transcript row is empty for the whole time the answer is being made, and that is the
+  entire reason the bench reads pixels.</b> Measured on your own pane: the tool call and its result are
+  adjacent lines written together when you pressed submit. Across 120 transcripts, not one pending ask was
+  readable on disk.</figcaption>
+</figure>
+
+<h2 class="sec">Where the change lands</h2>
+
+<p>Four frames. Nothing moves between them; each one adds a piece.</p>
+
+<figure>
+  <span class="lbl">03 &middot; Today, step one &mdash; the bench is a remote control</span>
+  <div class="arch">
+    <div class="zone"><span class="zl">&#x25a3; one pane</span>
+      <div class="row two">
+        <div><div class="node est"><b>picker</b><span class="pill">source of truth</span></div></div>
+        <div><div class="node est"><b>bench</b><span class="pill">second face</span></div></div>
+      </div>
+      <p class="lnk">&#x2193;&nbsp;&nbsp;keystrokes&nbsp;&nbsp;&#x2191;&nbsp;&nbsp;pixels</p>
+      <div class="node est">pseudoterminal</div>
+    </div>
+    <p class="leg">green = already built</p>
+  </div>
+  <figcaption><b>A click on the bench is a keystroke, not a decision.</b>
+  <code>Hit::Choose(i)</code> converts the option index to a navigation index, then
+  <code>Dispatch::Keys</code> writes bytes straight into the pane's pseudoterminal &mdash; the same path a
+  real keypress takes. The picker never learns the press came from elsewhere.</figcaption>
+</figure>
+
+<figure>
+  <span class="lbl">04 &middot; Step two &mdash; the clock that makes it feel jammed</span>
+  <div class="arch">
+    <div class="zone"><span class="zl">&#x25a3; one pane</span>
+      <div class="row two">
+        <div><div class="node est"><b>picker</b><span class="pill">source of truth</span></div></div>
+        <div><div class="node est"><b>bench</b><span class="pill">second face</span></div></div>
+      </div>
+      <p class="lnk">&#x2193;&nbsp;&nbsp;keystrokes&nbsp;&nbsp;&#x2191;&nbsp;&nbsp;pixels</p>
+      <div class="node est">pseudoterminal</div>
+      <div class="row two" style="margin-top:8px">
+        <div><div class="node new">sweep &mdash; every 1000 ms</div></div>
+        <div><div class="node new">blind for 8000 ms after a press</div></div>
+      </div>
+    </div>
+    <p class="leg">blue = what this frame adds</p>
+  </div>
+  <figcaption><b>Two clocks stand between your click and the next question appearing.</b> The sweep polls
+  the screen once a second; the reading window suppresses that poll entirely for eight seconds after the
+  bench types, so a picker mid-repaint is not read back as a fresh unanswered question. The suppression is
+  correct and the duration is a guess &mdash; it is a fixed number where an observation would do.</figcaption>
+</figure>
+
+<figure>
+  <span class="lbl">05 &middot; Step three &mdash; a source that exists while pending</span>
+  <div class="arch">
+    <div class="zone"><span class="zl">&#x25a3; one pane</span>
+      <div class="row two">
+        <div><div class="node est"><b>picker</b><span class="pill">source of truth</span></div></div>
+        <div><div class="node est"><b>bench</b><span class="pill">second face</span></div></div>
+      </div>
+      <p class="lnk">&#x2193;&nbsp;&nbsp;keystrokes&nbsp;&nbsp;&#x2191;&nbsp;&nbsp;pixels</p>
+      <div class="node est">pseudoterminal</div>
+      <div class="row two" style="margin-top:8px">
+        <div><div class="node est">sweep &mdash; every 1000 ms</div></div>
+        <div><div class="node est">blind for 8000 ms after a press</div></div>
+      </div>
+    </div>
+    <div class="zone out"><span class="zl">&#x2601; the harness, outside Terminal Delight</span>
+      <div class="node mine"><b>PreToolUse hook</b> on AskUserQuestion<span class="pill">unverified</span></div>
+      <p class="lnk">&#x2193;</p>
+      <div class="node new">pending-round file &mdash; every question, option, preview</div>
+    </div>
+    <p class="leg">blue = added &middot; yellow = mine to argue with, and unproven</p>
+  </div>
+  <figcaption><b>The hook is what changes the set of facts the bench can hold.</b> It fires before the
+  picker opens and writes the tool's own input somewhere the pane watches, so the bench stops being limited
+  to the question currently painted. Everything else in your ask is drawing; this is
+  plumbing.</figcaption>
+</figure>
+
+<figure>
+  <span class="lbl">06 &middot; Step four &mdash; compose on the bench, drive the terminal once</span>
+  <div class="arch">
+    <div class="zone"><span class="zl">&#x25a3; one pane</span>
+      <div class="row two">
+        <div><div class="node est"><b>picker</b><span class="pill">still the committer</span></div></div>
+        <div><div class="node new"><b>bench</b><span class="pill">where the answer is made</span></div></div>
+      </div>
+      <p class="lnk">&#x2193;&nbsp;&nbsp;one replay at submit&nbsp;&nbsp;&#x2191;&nbsp;&nbsp;pixels</p>
+      <div class="node est">pseudoterminal</div>
+      <div class="row two" style="margin-top:8px">
+        <div><div class="node est">sweep &mdash; every 1000 ms</div></div>
+        <div><div class="node new">blind once, at submit</div></div>
+      </div>
+      <div class="node mine" style="margin-top:8px">draft answers, held until you press submit<span class="pill">new state</span></div>
+      <div class="node mine">reconcile &mdash; the terminal moved while you were composing</div>
+    </div>
+    <div class="zone out"><span class="zl">&#x2601; the harness, outside Terminal Delight</span>
+      <div class="node est"><b>PreToolUse hook</b> on AskUserQuestion</div>
+      <p class="lnk">&#x2193;</p>
+      <div class="node est">pending-round file &mdash; every question, option, preview</div>
+    </div>
+    <p class="leg">blue = added &middot; yellow = mine to argue with</p>
+  </div>
+  <p class="gut">the reconcile box is the real cost of this frame &mdash; you can answer in both faces, and both are you</p>
+  <figcaption><b>The picker stays the committer, which is what keeps this safe.</b> The bench holds drafts
+  and replays them as one keystroke sequence at submit, so the eight-second blackout happens once per round
+  instead of once per question. The new expense is deciding what happens when the terminal has advanced
+  underneath a draft.</figcaption>
+</figure>
+
+<h2 class="sec">What the bench can reach</h2>
+
+<figure>
+  <span class="lbl">07 &middot; The fence around a pending round</span>
+  <div class="fence">
+    <div class="has">
+      <h5>&#x2713; reachable today, off the screen</h5>
+      <ul>
+        <li>The current question's text</li>
+        <li>Its options, and one description line each</li>
+        <li>Where the picker's cursor is sitting</li>
+        <li>Where its Submit or Next row sits</li>
+        <li>Every step's <b>short label</b>, and whether it is done</li>
+        <li>Whether the round has reached Submit</li>
+      </ul>
+    </div>
+    <div class="hasnt">
+      <h5>&#x2715; exists, and the bench cannot reach it</h5>
+      <ul>
+        <li>The <b>other</b> questions' text</li>
+        <li>The other questions' options</li>
+        <li>Full descriptions &mdash; the screen truncates at 120 characters</li>
+        <li>The option <b>previews</b> &mdash; 659 characters each on your Q1, deliberately cut off by <code>without_side_panel</code></li>
+        <li>Whether a question allows multiple answers</li>
+        <li>What was already answered on an earlier step, in words</li>
+      </ul>
+    </div>
+  </div>
+  <figcaption><b>The left column is why the navigator is nearly free, and the right column is why the work
+  area is not.</b> You asked for the bench to know "the entire text of the question set and options" &mdash;
+  every item on the right is in the tool call, and none of it is on the screen at the moment it is
+  needed.</figcaption>
+</figure>
+
+<figure>
+  <span class="lbl">08 &middot; The navigator, as drawn now and as asked for</span>
+  <div class="twoup">
+    <div>
+      <p class="capk">Today &mdash; round_progress</p>
+      <div class="mock"><div class="in">
+        <p class="q">A surface no conversation can claim &mdash; a file dropped by a script&hellip;</p>
+        <div class="opt cur">&rsaquo; Below a line, marked unknown</div>
+        <div class="opt">Hidden entirely</div>
+        <div class="opt">Adopted by the live agent</div>
+        <div class="segs"><i class="on"></i><i></i></div>
+        <p class="dim" style="margin:0">1 of 2 answered</p>
+      </div></div>
+    </div>
+    <div>
+      <p class="capk">Asked for &mdash; the labels, on top</p>
+      <div class="mock"><div class="in">
+        <div class="strip">
+          <span class="step done">&#x2713; Ended state</span>
+          <span class="step here">Orphans</span>
+          <span class="step sub">Submit</span>
+        </div>
+        <p class="q">A surface no conversation can claim &mdash; a file dropped by a script&hellip;</p>
+        <div class="opt cur">&rsaquo; Below a line, marked unknown</div>
+        <div class="opt">Hidden entirely</div>
+        <div class="opt">Adopted by the live agent</div>
+      </div></div>
+    </div>
+  </div>
+  <figcaption><b>The same data, drawn twice.</b> Both pictures are rendered from
+  <code>Round&nbsp;{&nbsp;steps:&nbsp;[Step&nbsp;{&nbsp;label, done&nbsp;}], submitting&nbsp;}</code>, which
+  the bench already parses on every sweep. The left throws the labels away and puts the bar underneath; the
+  right keeps them and moves them on top, where you asked for them. No new source is needed for this
+  change.</figcaption>
+</figure>
+
+<h2 class="sec">The async question</h2>
+
+<p>It is already async, which is the part worth getting straight before choosing. The agent is blocked on
+the picker for as long as you take, whichever face you use. What your message is really proposing is a
+change of <em>role</em>: the bench stops relaying each press and starts holding a draft of the whole round.</p>
+
+<figure>
+  <span class="lbl">09 &middot; Relay versus compose, over one round of two</span>
+  <div class="scroller">
+  <svg viewBox="0 0 760 250" role="img" aria-label="Two sequence diagrams comparing per-press relay against composing a whole round and submitting once">
+    <g font-family="ui-monospace, monospace" font-size="10.5">
+      <text x="0" y="14" fill="#8b8a80">RELAY &mdash; today</text>
+      <line x1="0" y1="24" x2="360" y2="24" stroke="#3a3a36"/>
+      <text x="0" y="45" fill="#c3c2b7">click Q1</text>
+      <rect x="70" y="34" width="52" height="15" rx="3" fill="#3987e5" fill-opacity=".2" stroke="#3987e5"/>
+      <text x="96" y="45" fill="#b9d3f5" text-anchor="middle">keys</text>
+      <rect x="126" y="34" width="150" height="15" rx="3" fill="#d03b3b" fill-opacity=".18" stroke="#d03b3b"/>
+      <text x="201" y="45" fill="#f0b6b6" text-anchor="middle">bench blind &mdash; 8 s</text>
+      <rect x="280" y="34" width="60" height="15" rx="3" fill="#199e70" fill-opacity=".2" stroke="#199e70"/>
+      <text x="310" y="45" fill="#8fd9bd" text-anchor="middle">Q2 up</text>
+      <text x="0" y="72" fill="#c3c2b7">click Q2</text>
+      <rect x="70" y="61" width="52" height="15" rx="3" fill="#3987e5" fill-opacity=".2" stroke="#3987e5"/>
+      <text x="96" y="72" fill="#b9d3f5" text-anchor="middle">keys</text>
+      <rect x="126" y="61" width="150" height="15" rx="3" fill="#d03b3b" fill-opacity=".18" stroke="#d03b3b"/>
+      <text x="201" y="72" fill="#f0b6b6" text-anchor="middle">bench blind &mdash; 8 s</text>
+      <rect x="280" y="61" width="72" height="15" rx="3" fill="#199e70" fill-opacity=".2" stroke="#199e70"/>
+      <text x="316" y="72" fill="#8fd9bd" text-anchor="middle">Submit up</text>
+      <text x="0" y="99" fill="#c3c2b7">click submit</text>
+      <rect x="70" y="88" width="52" height="15" rx="3" fill="#3987e5" fill-opacity=".2" stroke="#3987e5"/>
+      <text x="96" y="99" fill="#b9d3f5" text-anchor="middle">keys</text>
+      <rect x="126" y="88" width="150" height="15" rx="3" fill="#d03b3b" fill-opacity=".18" stroke="#d03b3b"/>
+      <text x="201" y="99" fill="#f0b6b6" text-anchor="middle">bench blind &mdash; 8 s</text>
+      <text x="0" y="125" fill="#f5c95f">24 seconds of the round spent with the bench unable to read its own screen</text>
+
+      <text x="400" y="14" fill="#8b8a80">COMPOSE &mdash; proposed</text>
+      <line x1="400" y1="24" x2="760" y2="24" stroke="#3a3a36"/>
+      <text x="400" y="45" fill="#c3c2b7">pick Q1</text>
+      <rect x="470" y="34" width="120" height="15" rx="3" fill="#c98500" fill-opacity=".2" stroke="#c98500"/>
+      <text x="530" y="45" fill="#f0d79a" text-anchor="middle">held on the bench</text>
+      <text x="400" y="72" fill="#c3c2b7">pick Q2</text>
+      <rect x="470" y="61" width="120" height="15" rx="3" fill="#c98500" fill-opacity=".2" stroke="#c98500"/>
+      <text x="530" y="72" fill="#f0d79a" text-anchor="middle">held on the bench</text>
+      <text x="400" y="99" fill="#c3c2b7">submit</text>
+      <rect x="470" y="88" width="74" height="15" rx="3" fill="#3987e5" fill-opacity=".2" stroke="#3987e5"/>
+      <text x="507" y="99" fill="#b9d3f5" text-anchor="middle">replay</text>
+      <rect x="548" y="88" width="110" height="15" rx="3" fill="#d03b3b" fill-opacity=".18" stroke="#d03b3b"/>
+      <text x="603" y="99" fill="#f0b6b6" text-anchor="middle">blind &mdash; 8 s</text>
+      <text x="400" y="125" fill="#f5c95f">8 seconds, once, after you have finished deciding</text>
+
+      <line x1="0" y1="146" x2="760" y2="146" stroke="#3a3a36" stroke-dasharray="3 3"/>
+      <text x="0" y="168" fill="#c3c2b7">Needed for the right-hand column to be possible at all:</text>
+      <rect x="0" y="178" width="240" height="26" rx="4" fill="#c98500" fill-opacity=".12" stroke="#c98500"/>
+      <text x="120" y="195" fill="#f0d79a" text-anchor="middle">the whole set, while pending</text>
+      <rect x="256" y="178" width="240" height="26" rx="4" fill="#c98500" fill-opacity=".12" stroke="#c98500"/>
+      <text x="376" y="195" fill="#f0d79a" text-anchor="middle">a replay that survives a moved cursor</text>
+      <rect x="512" y="178" width="248" height="26" rx="4" fill="#c98500" fill-opacity=".12" stroke="#c98500"/>
+      <text x="636" y="195" fill="#f0d79a" text-anchor="middle">a rule for answering in both faces</text>
+      <text x="0" y="232" fill="#8b8a80">The 24 s and 8 s are arithmetic on READING_WINDOW_MS, not stopwatch readings.</text>
+    </g>
+  </svg>
+  </div>
+  <figcaption><b>The round takes just as long to decide either way; what changes is the dead air in the
+  middle of it.</b> The relay path spends most of a three-step round with the bench unable to read the
+  screen it is mirroring, and every one of those gaps looks exactly like the surface having
+  frozen.</figcaption>
+</figure>
+
+<figure>
+  <span class="lbl">10 &middot; Both faces are you, and both can answer</span>
+  <table class="wide">
+    <thead><tr><th>You do this</th><th>Then this</th><th>Relay &mdash; today</th><th>Compose &mdash; proposed</th></tr></thead>
+    <tbody>
+      <tr><td>Answer Q1 on the bench</td><td>Answer Q2 on the bench</td><td class="yes">Works, with two 8 s gaps</td><td class="yes">Works, one gap</td></tr>
+      <tr><td>Answer Q1 on the bench</td><td>Answer Q2 in the terminal</td><td class="yes">Works &mdash; the picker is the only state</td><td class="nope">The draft and the picker now disagree</td></tr>
+      <tr><td>Answer Q1 in the terminal</td><td>Open the bench</td><td class="yes">Bench catches up within a second</td><td class="unk">Undecided: adopt the picker, or discard the draft</td></tr>
+      <tr><td>Press Tab in the terminal</td><td>Look at the bench</td><td class="nope">Bench follows the cursor, loses nothing &mdash; but shows no other question</td><td class="yes">Bench shows the step you moved to, in full</td></tr>
+      <tr><td>Press Escape in the terminal</td><td>Look at the bench</td><td class="yes">Question retires on the next sweep</td><td class="unk">Undecided: is a composed draft worth keeping?</td></tr>
+      <tr><td>Answer on the bench</td><td>Agent crashes mid-round</td><td class="yes">Nothing was held, nothing is lost</td><td class="nope">The draft is the only copy of a decision you made</td></tr>
+    </tbody>
+  </table>
+  <figcaption><b>Every row where composing loses is a row where the draft is a second copy of the truth.</b>
+  That is the whole price of the change, and it is not paid by the drawing half &mdash; which is the
+  argument for doing the drawing half first and on its own.</figcaption>
+</figure>
+
+<h2 class="sec">Four ways to get there</h2>
+
+<div class="cards">
+  <div class="card rec">
+    <h4>C &mdash; draw what is already parsed</h4>
+    <span class="who">recommended first &middot; ~half a day</span>
+    <p>Labels in a navigator across the top, replacing the grey bar. End the blind window on evidence
+    &mdash; the screen having changed &mdash; rather than on an eight-second clock.</p>
+    <p class="cost">Gets: your point 1, and most of point 2. Does not get: the other questions' text.</p>
+  </div>
+  <div class="card rec">
+    <h4>A &mdash; a hook publishes the pending round</h4>
+    <span class="who">recommended next &middot; the real change</span>
+    <p>A <code>PreToolUse</code> hook on <code>AskUserQuestion</code> writes the tool's own input to a file
+    the pane watches. Every question, every option, every preview, from before the picker paints.</p>
+    <p class="cost">Cost: one machine-global hook. Risk: unverified that it fires for this tool.</p>
+  </div>
+  <div class="card">
+    <h4>B &mdash; the agent declares the round</h4>
+    <span class="who">complementary, not a substitute</span>
+    <p>The agent presents one <code>question</code> surface carrying all the steps before it asks. Nearly
+    what already happened in your screenshot &mdash; it declared a decision for step one and stopped.</p>
+    <p class="cost">Cost: nothing in the app but a join key. Limit: an agent that has not heard of the protocol gets nothing.</p>
+  </div>
+  <div class="card no">
+    <h4>D &mdash; harvest by driving the picker</h4>
+    <span class="who">rejected</span>
+    <p>Press Tab through every step, read each screen, Tab back. It is the only way to get the whole set
+    with no new plumbing at all.</p>
+    <p class="cost">Rejected: it moves a cursor you may be holding, and it writes to the terminal to perform a read.</p>
+  </div>
+</div>
+
+<figure>
+  <span class="lbl">11 &middot; The order I would build it in</span>
+  <ol class="slices">
+    <li class="now"><span class="w">slice 1 &middot; no new sources</span>
+      <h4>The navigator carries its labels</h4>
+      <p>Round steps drawn on top as named tabs, current step marked from the cursor, Submit as its own
+      terminal step. The grey bar goes away.</p></li>
+    <li class="now"><span class="w">slice 2 &middot; no new sources</span>
+      <h4>The blind window ends when the screen moves</h4>
+      <p>Replace the fixed eight seconds with "suppressed until the screen differs from what we typed into",
+      capped at eight. Auto-advance stops feeling like a freeze.</p></li>
+    <li class="next"><span class="w">slice 3 &middot; the plumbing</span>
+      <h4>A hook publishes the pending round, and the bench reads it</h4>
+      <p>Prove the hook fires first, on a throwaway matcher. Then the bench merges: the file for content,
+      the screen for where the cursor is.</p></li>
+    <li class="next"><span class="w">slice 4 &middot; drawing again</span>
+      <h4>Clicking a step shows that step</h4>
+      <p>With the content in hand, a tab click renders that question and its options &mdash; read-only for
+      steps you are not standing on, until slice 5.</p></li>
+    <li class="later"><span class="w">slice 5 &middot; the role change</span>
+      <h4>Compose the round, submit once</h4>
+      <p>Only after the case table above has an answer in every row. This is the slice that can be wrong
+      for weeks without anyone noticing.</p></li>
+  </ol>
+  <figcaption><b>The first two slices need no new plumbing and deliver most of what you described.</b> The
+  split is deliberate: slices 1 and 2 cannot be wrong for long, because a wrong label is visible
+  immediately. Slice 5 can hold a stale draft for a week before anybody catches it.</figcaption>
+</figure>
+
+<h2 class="sec">What I need from you</h2>
+
+<div class="grill">
+  <div class="ask">
+    <h4>Does the navigator replace the progress bar, or sit above it?</h4>
+    <p>You have named tabs on top in your description. The bar underneath currently says "1 of 2 answered"
+    in words, which the tabs would make redundant &mdash; but the bar is also the only thing that reads at
+    a glance when a round has eight steps and the labels stop fitting.</p>
+    <p class="mine">Mine: replace it, and let the tabs scroll. Bring the bar back if a real round ever
+    exceeds about five steps.</p>
+  </div>
+  <div class="ask">
+    <h4>When you click a step you have already answered, what should it show?</h4>
+    <p>The picker will happily Tab back to it and let you change the answer. The bench could do the same
+    &mdash; or it could show it read-only, as a record of what you said. The first is more useful and the
+    second cannot lie.</p>
+    <p class="mine">Mine: read-only until the content source lands (slice 3), then editable &mdash; because
+    a step you can change but whose options the bench has not read is a button that guesses.</p>
+  </div>
+  <div class="ask">
+    <h4>If you answer in the terminal while the bench holds a draft, who wins?</h4>
+    <p>This is the row the case table leaves undecided, and it is the one genuinely new problem here. The
+    picker is always right about what was committed, the draft is right about what you intended, and both
+    of them are you.</p>
+    <p class="mine">Mine: the picker wins without asking, and the bench says out loud that it dropped a
+    draft &mdash; naming which step. A surface that silently discards a decision you made is worse than one
+    that never held it.</p>
+  </div>
+  <div class="ask">
+    <h4>Is the eight-second blind window mine to change, or is it load-bearing for something I have not found?</h4>
+    <p>Its comment explains the failure it prevents &mdash; a picker still repainting read back as a fresh
+    unanswered question &mdash; but not why eight. Nothing else in the codebase references the constant
+    except the state ladder.</p>
+    <p class="mine">Mine: it is a stand-in for an observation nobody had time to build, and slice 2 builds
+    the observation.</p>
+  </div>
+</div>
+
+<h2 class="sec">Evidence and limits</h2>
+
+<p>
+  <button class="btn" data-dlg="d-prov">what each picture is drawn from</button>
+  <button class="btn" data-dlg="d-meth">method, and what stays unknown</button>
+  <button class="btn" data-dlg="d-inval">how to prove each finding wrong</button>
+  <button class="btn" data-dlg="d-build">the build you photographed</button>
+</p>
+
+<dialog id="d-prov">
+  <div class="dlg-head"><div><h3>What each picture is drawn from</h3>
+    <p class="repo">their design &middot; the code &middot; mine</p></div>
+    <button class="x" data-close>&times;</button></div>
+  <div class="dlg-body">
+    <h4>Drawn from the code</h4>
+    <ul>
+      <li><b>Figure 1, left</b> &mdash; the picker's shape, from <code>collect_options</code> and
+      <code>round_on_screen</code> in <code>app/src/screenread.rs</code>, plus the real strings out of pane
+      12's transcript line 312.</li>
+      <li><b>Figure 2</b> &mdash; timestamps read from that transcript:
+      <code>2026-09-21T14:09:06.056Z</code> and <code>2026-09-21T14:19:10.859Z</code>, lines 312 and 313.</li>
+      <li><b>Figures 3 and 4</b> &mdash; <code>bench_choose</code> &rarr; <code>nav_index</code> &rarr;
+      <code>Dispatch::Keys</code> in <code>app/src/pane/bench.rs</code>; the 1000 ms sweep in
+      <code>main.rs</code>; <code>READING_WINDOW_MS</code> in <code>app/src/workbench.rs</code>.</li>
+      <li><b>Figure 7</b> &mdash; the left column is the fields of
+      <code>surface::Question</code> as <code>question_on_screen</code> fills them; the right column is the
+      keys present in the tool call and absent from those fields.</li>
+      <li><b>Figure 8, left</b> &mdash; <code>round_progress</code> in <code>app/src/benchdraw.rs</code>,
+      drawn from what that function emits.</li>
+    </ul>
+    <h4>Drawn from your message</h4>
+    <ul>
+      <li><b>Figure 8, right</b> &mdash; "the top here has the navigator for WHAT question is being
+      answered". Tab styling is mine; the content is yours.</li>
+      <li><b>Figure 9, right column</b> &mdash; "should it BECOME async&hellip; THEN AFTER SUBMIT".</li>
+    </ul>
+    <h4>Mine, and unbuilt</h4>
+    <ul>
+      <li><b>Figures 5 and 6</b>, the yellow boxes. No hook exists; no file is written; nothing reads one.</li>
+      <li><b>Figure 10</b>, the two <span class="unk">undecided</span> cells. Nobody has chosen, and I have
+      drawn them undecided rather than assuming the safe-looking answer.</li>
+      <li><b>Figure 11</b>, the slice order and the claim that slices 1 and 2 need nothing new.</li>
+    </ul>
+    <h4>The estimated numbers</h4>
+    <p>The "24 seconds" and "8 seconds" in figure 9 are arithmetic: three presses times
+    <code>READING_WINDOW_MS</code>, against one. No round was timed with a stopwatch. The real figure is
+    lower whenever the agent starts working inside the window, which ends the suppression early.</p>
+  </div>
+</dialog>
+
+<dialog id="d-meth">
+  <div class="dlg-head"><div><h3>Method, and what stays unknown</h3>
+    <p class="repo">what was run, and where it stops</p></div>
+    <button class="x" data-close>&times;</button></div>
+  <div class="dlg-body">
+    <h4>What was actually run</h4>
+    <ul>
+      <li>120 transcripts under <code>~/.claude/projects/</code>, newest first, scanned for
+      <code>AskUserQuestion</code> tool-use blocks and their matching results: 43 calls, 19 with more than
+      one question, <b>0</b> written to disk without their answer.</li>
+      <li>Pane 12's own transcript read directly for the ask in your screenshot.</li>
+      <li>The code read from <code>origin/main</code> via <code>git show</code>, not from this worktree
+      &mdash; this checkout is 63 commits behind.</li>
+    </ul>
+    <h4>What is inferred rather than measured</h4>
+    <ul>
+      <li><b>That the harness buffers the ask until it is answered.</b> Zero pending asks across 120 files
+      is consistent with buffering, but it is negative evidence: every ask in those files was eventually
+      answered, so an orphan would only appear if one were abandoned mid-flight. The code comment in
+      <code>derive.rs</code> asserts the same thing, and the whole screen-reading subsystem exists because
+      of it &mdash; nobody writes a pixel scraper when the data is on disk.</li>
+      <li><b>That a <code>PreToolUse</code> hook fires for <code>AskUserQuestion</code>.</b> Not tested.
+      Your <code>settings.json</code> has <code>PreToolUse</code> entries, but all of them match file and
+      shell tools, so there is no existing log that would show it either way.</li>
+    </ul>
+    <h4>What stays unknown</h4>
+    <ul>
+      <li>Whether the picker repaints the whole tab strip when you Tab between steps, or only the changed
+      tab. If only the changed tab, the labels the bench holds can go stale mid-round.</li>
+      <li>Whether Terminal Delight can watch a file cheaply enough to do this without another poll.</li>
+      <li>Nothing here was built or rendered by the app. The mockups are hand-drawn HTML, not
+      screenshots.</li>
+    </ul>
+  </div>
+</dialog>
+
+<dialog id="d-inval">
+  <div class="dlg-head"><div><h3>How to prove each finding wrong</h3>
+    <p class="repo">run these first, before changing anything</p></div>
+    <button class="x" data-close>&times;</button></div>
+  <div class="dlg-body">
+    <h4>"The transcript has no pending question"</h4>
+    <p><b>Confirm:</b> start a pane, have it ask a multi-question round, and while the picker is open
+    <code>grep AskUserQuestion</code> its transcript.<br>
+    <b>Invalidates it:</b> the tool-use block is there before you answer. Then option A collapses to
+    "watch the transcript", the hook is unnecessary, and slice 3 gets much cheaper.</p>
+    <h4>"The navigator needs no new source"</h4>
+    <p><b>Confirm:</b> add the step labels to <code>round_progress</code> and watch a real two-question
+    round.<br>
+    <b>Invalidates it:</b> the labels come back empty or stale on the second step &mdash; meaning the
+    picker does not repaint the strip on Tab, and the strip is a snapshot rather than a live reading.</p>
+    <h4>"Auto-advance takes eight seconds"</h4>
+    <p><b>Confirm:</b> answer question one from the bench and time the next question appearing.<br>
+    <b>Invalidates it:</b> it appears in about a second, which means the agent starts working inside the
+    window and <code>agent_state</code> ends the suppression early &mdash; and the jam you saw is something
+    else, most likely figure 1's two-unrelated-surfaces problem on its own.</p>
+    <h4>"A declared decision and a live question are unjoined"</h4>
+    <p><b>Confirm:</b> present a decision surface and start a round in the same pane; check whether either
+    surface carries a key naming the other.<br>
+    <b>Invalidates it:</b> a join already exists somewhere I did not look, in which case slice 4 is mostly
+    wiring rather than design.</p>
+  </div>
+</dialog>
+
+<dialog id="d-build">
+  <div class="dlg-head"><div><h3>The build you photographed</h3>
+    <p class="repo">a screenshot is of a process, not a repository</p></div>
+    <button class="x" data-close>&times;</button></div>
+  <div class="dlg-body">
+    <h4>Which window</h4>
+    <p>The pane in your images is pane 12, in the window running
+    <code>td-7f70c34-keylayer</code> &mdash; five commits behind <code>origin/main</code> at the time of
+    writing. That build <em>does</em> have <code>round_on_screen</code> and
+    <code>round_progress</code>, so the grey segment bar and the "1 of 2 answered" line were live for you;
+    they are simply not in your screenshots because the card on screen was the declared decision, not the
+    live question.</p>
+    <h4>The other two windows</h4>
+    <p>Two further hosts are running on this machine: <code>td-fc6957f-main</code>, which is 261 commits
+    behind and predates <code>benchdraw.rs</code> entirely, and
+    <code>td-8404884-attention</code>. A pane in the first of those would have shown no round handling of
+    any kind. Worth checking which window a future report is about before diagnosing from a picture.</p>
+    <h4>This worktree</h4>
+    <p><code>~/Work/terminal-delight</code> is on
+    <code>fix/the-second-click-backs-out-to-your-branch</code>, 63 commits behind <code>origin/main</code>.
+    Everything quoted here was read out of <code>origin/main</code>.</p>
+  </div>
+</dialog>
+
+<footer>
+  <p>Terminal Delight &middot; workbench &middot; 2026-09-21</p>
+  <p>Notes save into this file. Add them anywhere, press save, then say: read my notes in
+  2026-09-21-multiple-questions-jam-the-bench.html</p>
+</footer>
+
+</div>
+
+<div class="notebar" id="notebar">
+  <span class="cnt"><b id="note-count">0</b> notes</span>
+  <button id="btn-export" class="primary" data-note-action="export"
+          title="Anchored note map for pasting into a prompt">&#x1F4CB; copy map</button>
+  <button id="btn-embed" data-note-action="embed"
+          title="Download this file with your notes baked in">&#x1F4BE; save into file</button>
+  <button id="btn-clear" data-note-action="clear" title="Delete every note">&#x2715;</button>
+</div>
+
+<dialog id="d-note">
+  <div class="dlg-head">
+    <div>
+      <h3 id="note-title">Note</h3>
+      <p class="repo" id="note-anchor">&nbsp;</p>
+    </div>
+    <button class="x" data-close>&times;</button>
+  </div>
+  <div class="dlg-body">
+    <ul id="note-list"></ul>
+    <p id="note-none">No notes on this yet.</p>
+    <textarea id="note-text"
+      placeholder="Your note. Saved against this element and readable by an agent once you save into the file."></textarea>
+    <div class="note-actions">
+      <button class="save" data-note-action="add">Add note</button>
+      <button data-close>Close</button>
+      <span class="hintk">Ctrl+Enter to add</span>
+    </div>
+  </div>
+</dialog>
+
+<dialog id="d-export">
+  <div class="dlg-head">
+    <div>
+      <h3>Note map</h3>
+      <p class="repo">Anchored to element ids in this file &middot; paste straight into a prompt</p>
+    </div>
+    <button class="x" data-close>&times;</button>
+  </div>
+  <div class="dlg-body">
+    <p style="margin-bottom:12px">
+      Each line is anchored to an element id, so an agent can locate the passage without you
+      pasting the file. Prompt shape: <em>"read my notes in <code>&lt;filename&gt;</code> and act
+      on them."</em>
+    </p>
+    <textarea id="export-out" readonly></textarea>
+    <p class="tokest" id="export-est"></p>
+    <div class="note-actions">
+      <button class="save" data-note-action="copy">Copy to clipboard</button>
+      <button data-close>Close</button>
+    </div>
+  </div>
+</dialog>
+
+<!-- Notes are baked in here by "save into file". Leave it empty and leave it in. -->
+<script type="application/json" id="report-notes">{}</script>
+
+<script>
+  document.querySelectorAll('[data-dlg]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      var d = document.getElementById(b.dataset.dlg);
+      if (d) d.showModal();
+    });
+  });
+  document.querySelectorAll('[data-close]').forEach(function (b) {
+    b.addEventListener('click', function () { b.closest('dialog').close(); });
+  });
+</script>
+<script>window.NOTES_FILE = '2026-09-21-multiple-questions-jam-the-bench.html';</script>
+<script>/* decision-brief — reader notes.
+ *
+ * Drop-in. No build step, no dependencies. Paste this file's contents inline inside a
+ * script element, after the document body — a decision brief must survive being emailed
+ * as one file, so never load it with a src attribute.
+ *
+ * NOTHING IN THIS FILE MAY CONTAIN THE LITERAL CLOSING SCRIPT TAG, not even inside a
+ * comment or a string: an HTML parser ends the script element at the first one it sees,
+ * and everything after it silently becomes page content. Write it broken up, e.g.
+ * "<\/script>", if you ever need to emit one.
+ *
+ * Three outputs, in the order they matter:
+ *   1. copy map    — anchored note map, ~1% of the tokens of the whole document
+ *   2. save into   — bakes notes into a downloadable copy so an agent can READ them
+ *   3. localStorage — live persistence between reloads
+ *
+ * Why the map exists: pasting a whole annotated report into a prompt costs thousands of
+ * tokens; pasting bare notes loses which passage each one is about. The map is the third
+ * option — [element-id] + note, so the agent greps the id and finds the passage itself.
+ *
+ * Configure before this script runs (all optional):
+ *   window.NOTES_FILE    — filename used for the storage key and the download. Default: location basename.
+ *   window.NOTES_TARGETS — [[selector, prefix], ...] overriding what gets an affordance.
+ */
+(function () {
+  'use strict';
+
+  var FILE = window.NOTES_FILE ||
+    (location.pathname.split('/').pop() || 'decision-brief.html');
+  var KEY = 'notes:' + FILE;
+
+  /* Default targets. A prefix keeps exported anchors readable and grouped.
+     Override wholesale with window.NOTES_TARGETS if a brief's shape differs.
+
+     THE GRILL COMES FIRST, AND IT IS NOT OPTIONAL. Until 2026-09-02 this list
+     covered five of the seven components layout.md tells you to build and
+     omitted the grill — so the one section whose entire purpose is a decision
+     the reader has to make was the one section the reader could not comment on.
+     Two briefs shipped that way, each having invented its own class name
+     (`grill-q`, then `q`) because nothing here named one. Both spellings are
+     matched below; `.ask` is the name to use going forward. If you add a
+     component, add it here in the same commit.
+
+     FIGURES ARE SECOND, for the same reason. The 2026-09-15 attention-spine
+     brief carried eleven pictures and had to override NOTES_TARGETS wholesale
+     to make any of them annotatable, because `figure` was not here — a fork of
+     this list living in one report, where nothing else would inherit it. The
+     pictures are the part a reader argues with, so they are in the default list
+     now. `titleOf()` already reads `.lbl`, so a figure labelled `03 · What
+     opening costs` anchors as `fig-03-what-opening-costs`. */
+  var TARGETS = window.NOTES_TARGETS || [
+    ['.grill .q, .grill-q, .ask', 'ask'],
+    ['figure', 'fig'],
+    ['.card', 'verdict'],
+    ['.esc-list li', 'readfirst'],
+    ['.finding', 'finding'],
+    ['.tile', 'stat'],
+    ['table.wide tr', 'row'],
+    ['.bar-row', 'chart'],
+    ['.callout', 'callout'],
+    ['dialog .dlg-body > h4', 'sub']
+  ];
+
+  /* Notes baked into the file win on first load — a fresh browser should see what the
+     author saved. After that localStorage is the live copy. */
+  var baked = {};
+  try {
+    var island = document.getElementById('report-notes');
+    if (island) baked = JSON.parse(island.textContent || '{}');
+  } catch (e) { /* a malformed island must not break the page */ }
+
+  var N;
+  try { N = JSON.parse(localStorage.getItem(KEY) || 'null') || baked; }
+  catch (e) { N = baked; }
+
+  var active = null, activeTitle = '';
+
+  function save() {
+    try { localStorage.setItem(KEY, JSON.stringify(N)); } catch (e) {}
+  }
+  function esc(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+  function slug(s) {
+    return String(s || 'x').toLowerCase().replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '').slice(0, 44) || 'x';
+  }
+  function titleOf(el) {
+    var h = el.querySelector('h2,h3,h4,.bar-lab,.k,.lbl,td:first-child,th:first-child');
+    var t = ((h ? h.textContent : el.textContent) || 'item').replace(/\s+/g, ' ').trim();
+    return t.length > 72 ? t.slice(0, 69) + '…' : t;
+  }
+
+  /* ---- give every target a stable anchor id and a note affordance ---- */
+  function tag() {
+    var used = {};
+    TARGETS.forEach(function (pair) {
+      var sel = pair[0], pre = pair[1];
+      Array.prototype.forEach.call(document.querySelectorAll(sel), function (el, i) {
+        if (el.classList.contains('notable')) return;
+        if (el.tagName === 'TR' && el.querySelector('th')) return;   // header rows
+        if (el.closest('#d-note, #d-export, .notebar')) return;
+
+        /* Numbered lists anchor by position; everything else by a SHORT title slug.
+           Long slugs make the exported map unreadable, which defeats the map. */
+        var id;
+        var num = el.querySelector('.esc-n');
+        if (num) id = pre + '-' + num.textContent.trim();
+        else id = pre + '-' + slug(titleOf(el)).split('-').slice(0, 4).join('-');
+
+        var base = id, n = 2;
+        while (used[id]) id = base + '-' + (n++);
+        used[id] = 1;
+
+        el.classList.add('notable');
+        el.dataset.nid = id;
+        el.dataset.ntitle = titleOf(el);
+        if (!el.id) el.id = id;                      // a real anchor in the file
+
+        var b = document.createElement('button');
+        b.className = 'note-btn';
+        b.type = 'button';
+        b.title = 'Add a note';
+        b.innerHTML = '&#x1F4AC;';
+        b.addEventListener('click', function (ev) {
+          ev.preventDefault(); ev.stopPropagation(); open(el);
+        });
+        el.appendChild(b);
+      });
+    });
+  }
+
+  function badges() {
+    var total = 0;
+    Array.prototype.forEach.call(document.querySelectorAll('.notable'), function (el) {
+      var n = (N[el.dataset.nid] || []).length;
+      total += n;
+      el.classList.toggle('has-note', n > 0);
+      var b = el.querySelector(':scope > .note-btn');
+      if (b) b.innerHTML = n ? String(n) : '&#x1F4AC;';
+    });
+    var c = document.getElementById('note-count');
+    if (c) c.textContent = total;
+    ['btn-export', 'btn-embed', 'btn-clear'].forEach(function (id) {
+      var b = document.getElementById(id);
+      if (b) b.disabled = total === 0;
+    });
+  }
+
+  function render() {
+    var list = N[active] || [];
+    var ul = document.getElementById('note-list');
+    document.getElementById('note-none').style.display = list.length ? 'none' : 'block';
+    ul.innerHTML = list.map(function (n, i) {
+      return '<li><div class="nts"><span>' + esc(n.ts) + '</span>' +
+        '<button class="ndel" data-i="' + i + '">delete</button></div>' + esc(n.text) + '</li>';
+    }).join('');
+    Array.prototype.forEach.call(ul.querySelectorAll('.ndel'), function (b) {
+      b.addEventListener('click', function () { del(+b.dataset.i); });
+    });
+  }
+
+  function open(el) {
+    active = el.dataset.nid;
+    activeTitle = el.dataset.ntitle;
+    document.getElementById('note-title').textContent = activeTitle;
+    document.getElementById('note-anchor').textContent = '#' + active;
+    render();
+    document.getElementById('d-note').showModal();
+    document.getElementById('note-text').focus();
+  }
+
+  function add() {
+    var ta = document.getElementById('note-text');
+    var t = ta.value.trim();
+    if (!t || !active) return;
+    (N[active] = N[active] || []).push({
+      text: t,
+      title: activeTitle,
+      ts: new Date().toISOString().slice(0, 16).replace('T', ' ')
+    });
+    ta.value = '';
+    save(); render(); badges();
+  }
+
+  function del(i) {
+    N[active].splice(i, 1);
+    if (!N[active].length) delete N[active];
+    save(); render(); badges();
+  }
+
+  /* ---- the map: anchored, compact, prompt-ready ---- */
+  function buildMap() {
+    var count = 0, els = 0;
+    for (var k in N) { if (N.hasOwnProperty(k)) { els++; count += N[k].length; } }
+    var out = [
+      'NOTES — ' + FILE,
+      count + ' notes on ' + els + ' elements.',
+      'Each [anchor] is an element id in that file — search it to find the passage.',
+      ''
+    ];
+    /* Document order, not object order: the map should read the way the brief reads. */
+    Array.prototype.forEach.call(document.querySelectorAll('.notable'), function (el) {
+      var list = N[el.dataset.nid];
+      if (!list || !list.length) return;
+      out.push('[' + el.dataset.nid + '] ' + el.dataset.ntitle);
+      list.forEach(function (n) { out.push('  · ' + n.text.replace(/\n+/g, ' ')); });
+      out.push('');
+    });
+    return out.join('\n');
+  }
+
+  function exportNotes() {
+    var txt = buildMap();
+    document.getElementById('export-out').value = txt;
+    var est = document.getElementById('export-est');
+    if (est) {
+      est.textContent = txt.length + ' characters ≈ ' + Math.ceil(txt.length / 4) +
+        ' tokens — versus ~' + Math.ceil(document.body.innerText.length / 4) +
+        ' for the whole document.';
+    }
+    document.getElementById('d-export').showModal();
+  }
+
+  function copyExport(btn) {
+    var ta = document.getElementById('export-out');
+    ta.select();
+    try { document.execCommand('copy'); } catch (e) {}
+    if (btn) {
+      var o = btn.textContent;
+      btn.textContent = 'Copied';
+      setTimeout(function () { btn.textContent = o; }, 1400);
+    }
+  }
+
+  /* ---- bake notes into a downloadable copy of this file ----
+     localStorage is invisible to an agent. This is what makes
+     "read my notes in <file>" work. */
+  function embedNotes() {
+    var doc = document.documentElement.cloneNode(true);
+    Array.prototype.forEach.call(doc.querySelectorAll('.note-btn'), function (n) { n.remove(); });
+    Array.prototype.forEach.call(doc.querySelectorAll('.notable'), function (n) {
+      n.classList.remove('notable', 'has-note');
+    });
+    var island = doc.querySelector('#report-notes');
+    if (island) island.textContent = JSON.stringify(N, null, 1);
+    /* A plain-text mirror as well, so grep and ctx_read find the notes
+       without anyone having to parse JSON out of a script tag. */
+    var body = doc.querySelector('body');
+    if (body) body.appendChild(document.createComment('\nREADER NOTES —\n' + buildMap() + '\n'));
+
+    var blob = new Blob(['<!DOCTYPE html>\n' + doc.outerHTML], { type: 'text/html' });
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = FILE;
+    a.click();
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 4000);
+
+    var b = document.getElementById('btn-embed');
+    if (b) { var o = b.innerHTML; b.innerHTML = 'saved &#x2713;'; setTimeout(function () { b.innerHTML = o; }, 2200); }
+  }
+
+  function clearNotes() {
+    if (!confirm('Delete every note in this brief?')) return;
+    N = {}; save(); badges();
+  }
+
+  /* ---- wiring ---- */
+  function init() {
+    var ta = document.getElementById('note-text');
+    if (ta) {
+      ta.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); add(); }
+      });
+    }
+    document.addEventListener('click', function (e) {
+      var t = e.target.closest('[data-note-action]');
+      if (!t) return;
+      var a = t.dataset.noteAction;
+      if (a === 'add') add();
+      else if (a === 'export') exportNotes();
+      else if (a === 'embed') embedNotes();
+      else if (a === 'clear') clearNotes();
+      else if (a === 'copy') copyExport(t);
+    });
+    ['d-note', 'd-export'].forEach(function (id) {
+      var d = document.getElementById(id);
+      if (!d) return;
+      Array.prototype.forEach.call(d.querySelectorAll('[data-close]'), function (x) {
+        x.addEventListener('click', function () { d.close(); });
+      });
+      d.addEventListener('click', function (e) { if (e.target === d) d.close(); });
+    });
+    tag();
+    badges();
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+  else init();
+})();
+</script>
+</body>
+</html>

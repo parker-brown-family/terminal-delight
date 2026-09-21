@@ -2262,6 +2262,21 @@ pub struct TerminalView {
     /// Set on the agent→pane arrival edge and never cleared, because it is a
     /// fact about the pane's history rather than about its present.
     wb_had_agent: bool,
+    /// This pane's agent channel: the rounds a hook has carried, what has been
+    /// pressed on them, and whether the harness has spoken through it at all.
+    /// See [`crate::channel`].
+    wb_channel: crate::channel::State,
+    /// The overview's caption came through the channel, in the harness's own
+    /// words. While true the screen latch stops overwriting it.
+    wb_asked_by_hook: bool,
+    /// What this bench has sent, oldest first, for the up key to recall.
+    wb_sent: Vec<String>,
+    /// Which sent message the composer is showing, if the person is walking
+    /// back through them. `None` is the ordinary state: a fresh draft.
+    wb_recall: Option<usize>,
+    /// The last liveness marker this pane wrote: whether its bench was open,
+    /// and when. `None` until the first one goes.
+    wb_beacon: Option<(bool, u64)>,
 }
 
 /// Click on the header's theme icon — the workspace opens the breakout menu.
@@ -2994,20 +3009,48 @@ impl TerminalView {
             // must never be.
             self.wb_dial_sent = None;
             self.wb_asked.clear();
-            // And the surfaces, for the same reason one step further on. The
-            // ask was already cleared here because captioning a new agent's
-            // reply with the old agent's question is wrong; leaving the old
-            // agent's SURFACES is the same error with nothing cleared at all.
+            // And the channel: the next agent is a different process with
+            // different rounds, and a card waiting on the one that left would
+            // route its answer to a hook that is no longer there. The sent
+            // history is the person's own and stays.
+            self.wb_channel = crate::channel::State::new();
+            self.wb_asked_by_hook = false;
+            self.wb_recall = None;
+            // And the surfaces, which is the same argument one step further
+            // on. The ask above is cleared because captioning a new agent's
+            // reply with the old agent's question is wrong; the channel is
+            // cleared because an answer would route to a hook that has gone.
+            // Leaving the departed conversation's SURFACES on the bench is
+            // that error with nothing cleared at all — the next agent inherits
+            // a stranger's diagrams and answered questions as its own.
             //
-            // Only on a pane that is becoming a shell after holding an agent.
-            // A shell pane that never held one keeps its bench, because the
-            // script and demo drop paths write into a pane with no conversation
-            // anywhere in the picture and that is the rig this feature is
-            // verified with.
+            // Only reached by a pane that HELD an agent. A shell pane that
+            // never did keeps its bench, because the script and demo drop
+            // paths write into a pane with no conversation anywhere in the
+            // picture, and that is the rig this feature is verified with.
             //
             // Nothing on disk is touched: the conversation's record outlives
             // the process it belonged to.
             self.bench.clear_surfaces();
+            // And the two pieces of per-surface state that live on the PANE
+            // rather than in the bench, which the exhaustive destructure in
+            // `clear_surfaces` therefore cannot reach.
+            //
+            // `wb_live_q` names the live screen-read question. Clearing the
+            // bench without it is worse than not clearing at all: the question
+            // card goes, the flag stays, and `bench_agent_state` passes
+            // `wb_live_q.is_some()` as `asking` — which `agent_state` tests
+            // BEFORE `Exited`. The pane would report that it is waiting on the
+            // person, with nothing on the bench to answer and the agent's
+            // departure hidden, and nothing could clear it because the only
+            // writer returns early on a non-agent pane.
+            self.wb_live_q = None;
+            // `wb_queued` holds keystrokes typed while the bench could not
+            // write — an off-screen pane, mostly — and the ARRIVED edge above
+            // drains it into whatever agent is now here. A line the person
+            // aimed at the conversation that left, carriage return included,
+            // would be typed into the next agent as its first input.
+            self.wb_queued.clear();
         }
         cx.notify();
     }
@@ -3251,9 +3294,14 @@ impl TerminalView {
                             // it the scan re-asserts the prompt 120ms after the
                             // person answers, because an answered prompt is still
                             // the visible tail on a quiet pane.
-                            let needs = view.mode.is_agent()
+                            // A question the channel carried never paints a
+                            // picker for the screen to see, so the channel is
+                            // asked beside the screen — and it is the one
+                            // reading here that is not a reading at all.
+                            let needs = (view.mode.is_agent()
                                 && !thinking
-                                && wants_human_unless_answered(&recent, view.answered_on);
+                                && wants_human_unless_answered(&recent, view.answered_on))
+                                || view.wb_channel.has_open_question();
                             if needs != view.needs_input {
                                 view.needs_input = needs;
                                 cx.emit(AgentWorkingChanged);
@@ -3498,6 +3546,11 @@ impl TerminalView {
             wb_model: None,
             wb_effort: None,
             wb_had_agent: false,
+            wb_channel: crate::channel::State::new(),
+            wb_asked_by_hook: false,
+            wb_sent: Vec::new(),
+            wb_recall: None,
+            wb_beacon: None,
         }
     }
 
@@ -3631,7 +3684,10 @@ impl TerminalView {
             Some(rows) => crate::screenread::human_message(rows, crate::screenread::ASKED_LINES),
             None => self.last_human_message(crate::screenread::ASKED_LINES),
         };
-        if !seen.is_empty() {
+        // Once the harness has handed this pane the person's exact words, a
+        // screen reading of the same turn is the lesser record and never
+        // overwrites them — see `channel_events`.
+        if !seen.is_empty() && !self.wb_asked_by_hook {
             self.wb_asked = seen;
         }
     }
@@ -7130,6 +7186,15 @@ impl TerminalView {
                 };
             }
         }
+        // A reply the agent presented itself means the hook's copy of the same
+        // turn is not wanted — see [`crate::channel::State::saw_response`].
+        if let Some(s) = post.surface.as_ref() {
+            if matches!(s.kind, crate::surface::Kind::Response(_))
+                && s.origin != crate::surface::Origin::Hook
+            {
+                self.wb_channel.saw_response();
+            }
+        }
         if self.bench.apply(post).is_some() {
             cx.notify();
         }
@@ -7725,7 +7790,6 @@ impl Render for TerminalView {
         // and BENCH — combine into a single bordered slider toggler, also pretty
         // unreadable"*. See [`skin::Skin::slider`].
         let face_now = self.bench.face();
-        let unseen = self.bench_unseen();
         let queued = self.bench_queued();
         let face_toggle = {
             let half = |face: crate::workbench::Face, cx: &mut Context<Self>| {
@@ -7774,20 +7838,21 @@ impl Render for TerminalView {
                             .child(why),
                     )
                 })
-                // The count of work objects nobody has looked at — the only
-                // number on the header, and it is absent rather than zero when
-                // there is nothing waiting.
-                .when(
-                    unseen > 0 && face_now == crate::workbench::Face::Terminal,
-                    |d| {
-                        d.child(
-                            div()
-                                .text_size(px((hicon * 0.40).max(8.)))
-                                .text_color(th.complement)
-                                .child(format!("{unseen}")),
-                        )
-                    },
-                )
+            // NO BARE NUMBER LIVES HERE.
+            //
+            // A second badge used to sit beside that one holding the count of
+            // surfaces nobody had opened, drawn as the digit alone. Parker, on
+            // seeing a `2` next to BENCH: *"the little 2 up here beside bench
+            // needs to go away - not sure what that is"* — and not knowing what
+            // it is IS the defect. The badge above it counts the same kind of
+            // thing and says `2 answers waiting`, which anybody can read once
+            // and never wonder about again.
+            //
+            // The rule this leaves behind: **a number on the chrome says what
+            // it counts, or it does not go on the chrome.** An unread count is
+            // not worth a word here, because arriving unread is the normal
+            // state of a feed — the shelf rows already carry an unseen dot
+            // each, which is where a person is when the distinction matters.
         };
 
         // The bench is built here, before the element tree that will hold it,

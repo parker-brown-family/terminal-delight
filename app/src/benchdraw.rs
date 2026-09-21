@@ -1367,34 +1367,92 @@ fn section_body(body: &Body, register: Register, sk: &Skin, th: &Theme) -> Div {
 /// separate waiting rows, which is true of the data and wrong about the work —
 /// Parker: *"it should feel more like progress along a workflow, but be a
 /// SINGLE DECISION NODE even if we are making multiple decisions"*.
-pub fn round_progress(round: &crate::surface::Round, sk: &Skin, th: &Theme) -> Div {
+/// NAMED, because the names are the whole point and we already have them.
+///
+/// The first version of this drew one blank segment per question and the words
+/// "1 of 2 answered". Both facts were true and neither said *which* question —
+/// so a person looking at the bench mid-round could not tell what the other
+/// questions were, or that the one on screen was the second of them. Parker,
+/// with the picker's own strip beside the bench: *"at the top here has the
+/// navigator for WHAT question is being answered: ended state - orphans -
+/// submit"*.
+///
+/// The labels were being parsed and thrown away one step before drawing:
+/// [`crate::surface::Step::label`] has been populated the whole time, by the
+/// screen reader from the picker's tab bar and now by the channel from the
+/// tool's own `header`.
+///
+/// `zones` makes the steps pressable. Pass [`None`] where there is nothing to
+/// press into — the strip still names every step, because knowing a question
+/// exists is worth more than being able to jump to it.
+pub fn round_progress(
+    round: &crate::surface::Round,
+    zones: Option<&std::rc::Rc<std::cell::RefCell<Vec<crate::workbench::Zone>>>>,
+    sk: &Skin,
+    th: &Theme,
+) -> Div {
     let done = round.answered();
     let total = round.total();
-    let tint = if round.submitting {
-        ink(crate::workbench::Tint::Settled, th)
-    } else {
-        ink(crate::workbench::Tint::Waiting, th)
-    };
+    let settled = ink(crate::workbench::Tint::Settled, th);
     div()
         .flex()
         .flex_col()
-        .gap(px(5.))
-        .child(
-            div()
-                .flex()
-                .flex_row()
-                .gap(px(3.))
-                .children(round.steps.iter().map(|step| {
-                    div()
-                        .h(px(5.))
-                        .flex_1()
-                        .rounded(sk.rad_raw(2.))
-                        // An unanswered segment is DRAWN, dim, rather than
-                        // left out: an empty slot is how a person sees there
-                        // is more to come.
-                        .bg(if step.done { tint } else { tint.alpha(0.22) })
-                })),
-        )
+        .gap(px(6.))
+        .child(div().flex().flex_row().flex_wrap().gap(px(4.)).children(
+            round.steps.iter().enumerate().map(|(i, step)| {
+                let here = round.current == Some(i);
+                // THE SAME TAB A REGISTER IS, and deliberately not a chip of
+                // this function's own invention. The registers a reader unfolds
+                // on a response card — reading, evidence, next — are underlined
+                // text with a muted rest, and a round's questions are the same
+                // gesture over the same kind of thing: several readings of one
+                // card, one of which you are in. Parker, seeing the first cut:
+                // *"we should have tabs along the top of the questions for
+                // multiple questions — similar to the response: reading -
+                // evidence - next"*. Two vocabularies for one gesture is how a
+                // surface stops feeling like one surface.
+                let facet = crate::emphasis::facet(
+                    if here {
+                        crate::emphasis::Emphasis::Active
+                    } else {
+                        crate::emphasis::Emphasis::Reading
+                    },
+                    th,
+                );
+                // A tick is the one thing a register tab has no use for and a
+                // question tab needs: a register is never *finished*, and a
+                // step that has been answered is. Drawn in the settled hue so
+                // done reads as done even on the tab you are standing on —
+                // being here does not un-answer it.
+                let label = if step.done {
+                    format!("\u{2713} {}", step.label)
+                } else {
+                    step.label.clone()
+                };
+                let tab = div()
+                    .px(px(sk.tpx(5.)))
+                    .text_size(px(sk.pt(Step::Note)))
+                    .font_family(th.font_family.clone())
+                    .text_color(match (here, step.done) {
+                        (true, _) => facet.ink,
+                        (false, true) => settled.alpha(0.85),
+                        (false, false) => crate::emphasis::meta(th),
+                    })
+                    .when(here, |x| x.border_b_1().border_color(facet.tint.alpha(0.8)))
+                    .child(sel(label));
+                // Pressable only where BOTH are true: we have somewhere to
+                // send the press, and this step has a card of its own. A
+                // screen-read step has no surface and must not look like a
+                // button that does nothing.
+                match (zones, step.id.as_ref()) {
+                    (Some(z), Some(id)) if !here => tab
+                        .cursor_pointer()
+                        .relative()
+                        .child(zone(z.clone(), crate::workbench::Hit::OpenRow(id.clone()))),
+                    _ => tab,
+                }
+            }),
+        ))
         .child(micro(
             if round.submitting {
                 format!("{done} of {total} answered \u{b7} ready to submit")
@@ -1595,7 +1653,10 @@ fn question(q: &crate::surface::Question, sk: &Skin, th: &Theme) -> Div {
             )),
         })
         .when_some(q.round.as_ref(), |d, round| {
-            d.child(round_progress(round, sk, th))
+            // No zones: the card body is drawn in several places, not all of
+            // them a pane collecting presses. It names every step; the block
+            // the pane assembles is where they can be pressed.
+            d.child(round_progress(round, None, sk, th))
         })
 }
 
@@ -2921,10 +2982,13 @@ pub fn composer(
                 background_color: Some(th.human.alpha(if live { 0.34 } else { 0.18 })),
                 ..Default::default()
             };
-            let spans = if l.marked() {
-                vec![(0..l.text().len(), selection)]
-            } else {
-                vec![(at..next, caret)]
+            // The SELECTED RUN, not the whole string. It was
+            // `0..l.text().len()` while select-all was the only selection
+            // there was; with a range that would paint the entire draft the
+            // moment one character was highlighted.
+            let spans = match l.sel_bytes() {
+                Some(r) => vec![(r, selection)],
+                None => vec![(at..next, caret)],
             };
             let styled = gpui::StyledText::new(text).with_highlights(spans);
             // The layout handle is filled in during prepaint and shared by
@@ -3168,10 +3232,11 @@ pub fn note_box(
         background_color: Some(mine.alpha(if focused { 0.34 } else { 0.18 })),
         ..Default::default()
     };
-    let spans = if line.marked() {
-        vec![(0..line.text().len(), selection)]
-    } else {
-        vec![(at..next, caret)]
+    // The selected run only — see the composer above for why this is not
+    // the whole string any more.
+    let spans = match line.sel_bytes() {
+        Some(r) => vec![(r, selection)],
+        None => vec![(at..next, caret)],
     };
     raised(
         sk.panel()
@@ -3319,7 +3384,12 @@ pub fn conversation(tail: &[String], sk: &Skin, th: &Theme) -> Div {
 /// continue without a person is the one thing on this surface nobody should
 /// have to go looking for. The chips are attached by the pane, because
 /// pressing one reaches a pseudoterminal.
-pub fn waiting_block(q: &crate::surface::Question, sk: &Skin, th: &Theme) -> Div {
+pub fn waiting_block(
+    q: &crate::surface::Question,
+    zones: Option<&std::rc::Rc<std::cell::RefCell<Vec<crate::workbench::Zone>>>>,
+    sk: &Skin,
+    th: &Theme,
+) -> Div {
     aglow(
         sk.panel()
             .flex()
@@ -3339,32 +3409,34 @@ pub fn waiting_block(q: &crate::surface::Question, sk: &Skin, th: &Theme) -> Div
         sk,
         th,
     ))
+    // THE NAVIGATOR SITS ABOVE THE QUESTION, not under the options, because it
+    // answers "which of these am I on" and that is the first thing a person
+    // needs — Parker: *"at the top here has the navigator for WHAT question is
+    // being answered"*. Under the options it was a progress bar you checked
+    // afterwards; a round of two had already reached the bench with the wrong
+    // question on it by then.
+    .when_some(q.round.as_ref(), |d, round| {
+        d.child(round_progress(round, zones, sk, th))
+    })
     .child(
         div()
             .text_size(px(sk.pt(Step::Head)))
             .text_color(th.text)
             .child(sel(q.question.clone())),
     )
-    .child(
-        div()
-            .flex()
-            .flex_col()
-            .gap(px(5.))
-            .children(q.options.iter().enumerate().filter_map(|(i, o)| {
-                o.what_happens.as_ref().map(|what| {
-                    micro(
-                        format!("{} \u{b7} {}", i + 1, what),
-                        Step::Note,
-                        th.text.alpha(0.55),
-                        sk,
-                        th,
-                    )
-                })
-            })),
-    )
-    .when_some(q.round.as_ref(), |d, round| {
-        d.child(round_progress(round, sk, th))
-    })
+    .child(div().flex().flex_col().gap(px(5.)).children(
+        q.options.iter().enumerate().filter_map(|(i, o)| {
+            o.what_happens.as_ref().map(|what| {
+                micro(
+                    format!("{} \u{b7} {}", i + 1, what),
+                    Step::Note,
+                    th.text.alpha(0.55),
+                    sk,
+                    th,
+                )
+            })
+        }),
+    ))
 }
 
 /// The collapse handle on the rail's inner edge.

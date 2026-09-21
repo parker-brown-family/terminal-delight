@@ -28,6 +28,42 @@
 //! to a directory-wide guess. That is the whole repair: the old code could not
 //! tell *I do not know which conversation this is* from *here is a conversation*.
 //!
+//! # Falsifying the guards
+//!
+//! Four rules in this module and its neighbours are load-bearing, and each has a
+//! test that is supposed to notice when it is removed. Two of those tests did
+//! not, the first time they were asked — one because its scenario never reached
+//! the rung it policed, one because it called the pure function directly and so
+//! never touched the wiring. **Break the rule, run the test, expect red.** Any
+//! of these coming back green means the guard has gone to sleep:
+//!
+//! | break this | and this must fail |
+//! |---|---|
+//! | `Bond::is_certain` returns `true` always | `two_unidentifiable_panes_in_one_directory_are_told_nothing` |
+//! | the `wanted_by == 1` check in the elimination rung | `elimination_refuses_a_transcript_two_panes_could_own` |
+//! | add `newest_jsonl` to any reader | `no_reader_resolves_a_pane_by_the_newest_file_in_a_directory` |
+//! | drop the `/proc` check in `declared_for`'s last rung | `a_live_process_is_asked_rather_than_believed_about_itself` |
+//! | drop the `foreground_pid` call in `agent_under` | `the_agent_lookup_still_asks_the_kernel_which_process_is_in_front` |
+//!
+//! # Branches with no specimen
+//!
+//! Two places still choose, and neither choice has ever been exercised on a real
+//! machine. Counted across 44 live agents on 2026-09-19: **zero** held two
+//! scratchpad descriptors, and **zero** panes had several agents with none of
+//! them in the foreground. They are written down rather than hardened, because
+//! code for a case nobody has seen is a guess with a test beside it:
+//!
+//! * `scratchpad_session_from_fds` takes the HIGHEST descriptor when a process
+//!   holds two scratchpads, on the theory that a `/clear` opens the later one.
+//!   If you ever meet a pane stuck on a conversation it left, this is the first
+//!   thing to distrust — and the honest repair is probably to return nothing,
+//!   since "which rotation is current" is exactly the kind of question this
+//!   module answers with silence everywhere else.
+//! * `agent_under` falls back to the first agent child when the foreground
+//!   process is not an agent — every agent under that pane is backgrounded. The
+//!   first child is the oldest; the most recently started one is more likely the
+//!   one a person means.
+//!
 //! # What is deliberately not an input
 //!
 //! A pane's `claude --resume <id>` line looks like the obvious shortcut and is

@@ -775,62 +775,81 @@ impl TerminalView {
                 self.bench_paste(cx);
                 return true;
             }
-            // Everything else straight through, byte for byte. The echo
-            // comes back from the agent itself, which is why this needs
-            // no local editing model at all.
-            if let Some(mut bytes) = keystroke_bytes(ks) {
-                // The bytes have already gone; this applies the SAME edit
-                // to the local mirror so the box can draw where the
-                // agent's caret now is. See [`crate::workbench::Line`] for
-                // why a mirror and not a model.
-                if let Some(line) = self.wb_compose.as_mut() {
-                    let selected = line.marked();
-                    // One table, in `workbench`, so the conventions can be
-                    // asserted: word motion, the kills, and the readline
-                    // chords the agent's own editor answers to. A key that
-                    // is not an edit is a character, and characters go in
-                    // at the caret.
-                    let replaced = match crate::workbench::line_edit(
-                        &ks.key,
-                        ks.modifiers.control,
+            // THE COMPOSER IS A DOCUMENT, NOT A MIRROR. Nothing typed here
+            // reaches the agent until SEND, and then it goes as ONE message
+            // through the channel (`docs/spec/td-agent-channel.md` §6). The
+            // mirror inherited the terminal's meaning for every key, which is
+            // how ctrl+c in a text box ended a person's session — Parker:
+            // *"the person will SHUT DOWN THEIR SESSION ACCIDENTALLy — I ahve
+            // had this painpoint in the past!"*
+            let ctrl = ks.modifiers.control;
+            let key = ks.key.as_str();
+            // ctrl+c COPIES, ctrl+x CUTS: the two chords every text box on
+            // this desk answers to, and the first one is the reason for the
+            // whole rework.
+            if ctrl && !ks.modifiers.alt && key.eq_ignore_ascii_case("c") {
+                self.bench_copy_draft(false, cx);
+                return true;
+            }
+            if ctrl && !ks.modifiers.alt && key.eq_ignore_ascii_case("x") {
+                self.bench_copy_draft(true, cx);
+                return true;
+            }
+            // The interrupt is a key you AIM: ctrl+g here, and the strip's
+            // stop control. Not the copy chord, ever again.
+            if ctrl && !ks.modifiers.alt && key.eq_ignore_ascii_case("g") {
+                self.bench_interrupt(cx);
+                return true;
+            }
+            // Up on an empty draft recalls what this bench last sent — the
+            // history the mirror used to borrow from the agent, kept here.
+            let recalling =
+                self.wb_recall.is_some() || self.wb_compose.as_ref().is_some_and(|l| l.is_empty());
+            if crate::workbench::recalls_history(
+                key,
+                ctrl,
+                ks.modifiers.alt,
+                ks.modifiers.shift,
+                recalling,
+            ) {
+                self.bench_recall(key == "up", cx);
+                return true;
+            }
+            // One table, in `workbench`, so the conventions can be asserted:
+            // word motion, the kills, the line break, undo. A key that is not
+            // an edit is a character, and characters go in at the caret.
+            match crate::workbench::line_edit(key, ctrl, ks.modifiers.alt, ks.modifiers.shift) {
+                Some(crate::workbench::Edit::Submit) => {
+                    self.bench_send(cx);
+                    return true;
+                }
+                Some(edit) => {
+                    if let Some(line) = self.wb_compose.as_mut() {
+                        line.apply(edit);
+                    }
+                    // A recalled message that has been edited is a draft of
+                    // its own; up and down walk its rows from here, not the
+                    // history, or the edit would be thrown away by an arrow.
+                    self.wb_recall = None;
+                }
+                None => {
+                    if crate::workbench::types_a_character(
+                        ks.key_char.as_deref(),
                         ks.modifiers.alt,
+                        ctrl,
+                        ks.modifiers.platform,
                     ) {
-                        Some(edit) => {
-                            line.apply(edit);
-                            selected
-                                && matches!(
-                                    edit,
-                                    crate::workbench::Edit::Backspace
-                                        | crate::workbench::Edit::Delete
-                                )
+                        if let (Some(line), Some(c)) =
+                            (self.wb_compose.as_mut(), ks.key_char.as_deref())
+                        {
+                            line.insert(c);
+                            self.wb_recall = None;
                         }
-                        None => {
-                            let mut typed = false;
-                            if let Some(c) = ks.key_char.as_deref() {
-                                if !c.is_empty() && !c.chars().any(char::is_control) {
-                                    line.insert(c);
-                                    typed = true;
-                                }
-                            }
-                            selected && typed
-                        }
-                    };
-                    // A selected draft is REPLACED, and the far end has to be
-                    // told so in bytes it already understands: its caret is at
-                    // column zero (the ctrl+a that made the selection put it
-                    // there), so one kill-to-end empties the line ahead of
-                    // whatever this keystroke is. Without it the mirror would
-                    // show the replacement and the agent would receive the
-                    // replacement APPENDED to what was there.
-                    if replaced {
-                        let mut pre = crate::workbench::replace_bytes();
-                        pre.append(&mut bytes);
-                        bytes = pre;
                     }
                 }
-                self.composer_follows();
-                self.bench_keystroke(bytes, cx);
             }
+            self.composer_follows();
+            cx.notify();
             return true;
         }
         // The rules themselves are a table in `workbench`, so they can be
@@ -920,38 +939,29 @@ impl TerminalView {
                 // Nobody to talk to. The bench keeps the key rather than
                 // starting a sentence into a shell.
                 //
-                // The composer is a MIRROR of the agent's own line editor and
-                // not a buffer of our own, so a pane with no agent has nothing
-                // for it to mirror: `shows()` draws no composer there, and
-                // typing anyway opened an invisible one and put every character
-                // down the pseudoterminal, where the shell gathered them into a
-                // command line and the return key ran it (#509).
+                // A pane with no agent has nobody to SEND to: `shows()` draws
+                // no composer there, and a draft that could only ever land in
+                // a shell — where the return key runs it as a command line
+                // (#509) — is not offered.
                 if !self.mode.is_agent() {
                     return true;
                 }
                 // Start talking, carrying the character that started it —
-                // so there is no "click here first".
+                // so there is no "click here first". Locally: the draft is
+                // a document, and nothing leaves it until SEND.
                 self.wb_compose = Some(crate::workbench::Line::new());
-                if let Some(bytes) = keystroke_bytes(ks) {
-                    if let (Some(line), Some(c)) =
-                        (self.wb_compose.as_mut(), ks.key_char.as_deref())
-                    {
-                        line.insert(c);
-                    }
-                    self.composer_follows();
-                    self.bench_keystroke(bytes, cx);
+                self.wb_recall = None;
+                if let (Some(line), Some(c)) = (self.wb_compose.as_mut(), ks.key_char.as_deref()) {
+                    line.insert(c);
                 }
+                self.composer_follows();
+                cx.notify();
             }
             // NOT OURS. The terminal underneath gets it — see the note on
             // `false` at the top of this function.
             crate::workbench::Reading::Pass => return false,
         }
         true
-    }
-
-    /// How many surfaces this pane is holding that nobody has looked at.
-    pub fn bench_unseen(&self) -> usize {
-        self.bench.unseen_total()
     }
 
     /// What the agent is doing, in the header's own words.
@@ -982,7 +992,7 @@ impl TerminalView {
         // answer within the window and nothing has moved since.
         let _ = AgentState::Idle;
         crate::workbench::agent_state(
-            self.needs_input || self.wb_live_q.is_some(),
+            self.needs_input || self.wb_live_q.is_some() || self.wb_channel.has_open_question(),
             self.bell_blocked(),
             self.bell,
             self.exited,
@@ -1015,8 +1025,286 @@ impl TerminalView {
         // Two, not one. A single interrupt cancels the turn; the second is
         // what quits, and sending them as one write keeps them inside the
         // harness's own double-press window rather than racing a paint.
+        //
+        // Recorded first: this is the channel's one impure verb besides
+        // `keys`, and the journal is what makes it visible in the record.
+        self.journal_out(&crate::channel::Outbound::End);
         self.bench_deliver(vec![0x03, 0x03], cx);
         self.wb_dial = None;
+    }
+
+    /// Interrupt the agent's turn — the strip's stop and `ctrl+g` on the
+    /// composer. One `0x03`, recorded first. Never the copy chord.
+    fn bench_interrupt(&mut self, cx: &mut Context<Self>) {
+        self.journal_out(&crate::channel::Outbound::Interrupt);
+        self.bench_deliver(vec![0x03], cx);
+    }
+
+    /// Put the SELECTION on the clipboard — or the whole draft when nothing
+    /// is selected — and take it out of the box when `cut`.
+    ///
+    /// The fallback to the whole draft is deliberate and is the older
+    /// behaviour: a person who pressed ctrl+c with nothing highlighted meant
+    /// the words in front of them, and a copy that silently did nothing would
+    /// be the worse answer. What changed is that "nothing highlighted" is now
+    /// a real question — until `Line` grew an anchor, select-all was the only
+    /// selection there was, so this always took everything.
+    fn bench_copy_draft(&mut self, cut: bool, cx: &mut Context<Self>) {
+        let Some(line) = self.wb_compose.as_mut() else {
+            return;
+        };
+        if line.is_empty() {
+            return;
+        }
+        let partial = line.selected_text().map(str::to_string);
+        let text = partial.clone().unwrap_or_else(|| line.text().to_string());
+        cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
+        if cut {
+            if partial.is_some() {
+                // Delete consumes the selection and leaves the rest standing.
+                line.apply(crate::workbench::Edit::Delete);
+            } else {
+                line.apply(crate::workbench::Edit::SelectAll);
+                line.apply(crate::workbench::Edit::Delete);
+            }
+        }
+        cx.notify();
+    }
+
+    /// Walk back (`up`) or forward (`down`) through what this bench has sent.
+    ///
+    /// The history the mirror used to get for free from the agent's own
+    /// editor, kept here instead: the bench knows exactly what it sent. Walking
+    /// past the newest entry lands on a fresh, empty draft.
+    fn bench_recall(&mut self, up: bool, cx: &mut Context<Self>) {
+        if self.wb_sent.is_empty() {
+            return;
+        }
+        let n = self.wb_sent.len();
+        let next = match (self.wb_recall, up) {
+            (None, true) => Some(n - 1),
+            (None, false) => None,
+            (Some(i), true) => Some(i.saturating_sub(1)),
+            (Some(i), false) if i + 1 < n => Some(i + 1),
+            (Some(_), false) => None,
+        };
+        self.wb_recall = next;
+        self.wb_compose = Some(match next {
+            Some(i) => crate::workbench::Line::holding(self.wb_sent[i].clone()),
+            None => crate::workbench::Line::new(),
+        });
+        self.composer_follows();
+        cx.notify();
+    }
+
+    /// Record one thing this bench is about to do through the channel.
+    ///
+    /// Best effort and before the act: a line typed into a terminal can be
+    /// eaten by whatever the program is doing at that instant, and the file is
+    /// what makes the record recoverable when it is.
+    fn journal_out(&self, record: &crate::channel::Outbound) {
+        if let (Some(key), Some(pane)) = (crate::surfacefeed::session(), self.pane_id) {
+            let _ = crate::surfacefeed::journal_event(
+                &crate::surfacefeed::outbound_path(key, pane),
+                &record.to_json(crate::surfacefeed::now_ms(), key, pane),
+            );
+        }
+    }
+
+    /// Records this pane's inbound journal gained since the last sweep, and
+    /// what each one changes on the bench. See [`crate::channel::State::take`].
+    pub fn channel_events(&mut self, events: Vec<crate::channel::Inbound>, cx: &mut Context<Self>) {
+        use crate::channel::Effect;
+        use crate::surface::{Op, Post};
+        if events.is_empty() {
+            return;
+        }
+        let now = crate::surfacefeed::now_ms();
+        for ev in events {
+            match self.wb_channel.take(ev, now) {
+                Effect::Asked { text } => {
+                    // The harness's own words outrank anything read off the
+                    // screen, and once a pane has heard them the screen latch
+                    // stops overwriting the caption — see `latch_asked`.
+                    self.wb_asked = text
+                        .lines()
+                        .map(str::to_string)
+                        .take(crate::screenread::ASKED_LINES)
+                        .collect();
+                    self.wb_asked_by_hook = true;
+                }
+                Effect::Present(surfaces) => {
+                    for s in surfaces {
+                        let id = s.id.clone();
+                        self.present(
+                            Post {
+                                op: Op::Present,
+                                id,
+                                pane: None,
+                                surface: Some(s),
+                            },
+                            cx,
+                        );
+                    }
+                }
+                Effect::Reply { text, n } => {
+                    if let Some(s) = crate::channel::reply_surface(&text, now, n) {
+                        let id = s.id.clone();
+                        self.present(
+                            Post {
+                                op: Op::Present,
+                                id,
+                                pane: None,
+                                surface: Some(s),
+                            },
+                            cx,
+                        );
+                    }
+                }
+                Effect::Nothing => {}
+            }
+        }
+        cx.notify();
+    }
+
+    /// Refresh this pane's liveness marker, which a hook reads before it holds
+    /// a picker for the bench (`docs/spec/td-agent-channel.md` §7).
+    ///
+    /// About once a second, and at once when the answer changes: a bench that
+    /// just closed must release the picker promptly. "Open" means the bench is
+    /// the face on screen — a bench on a tab nobody is looking at does not hold
+    /// an agent's menu for them.
+    pub fn bench_beacon(&mut self) {
+        if !self.mode.is_agent() {
+            return;
+        }
+        let Some(dir) = self.bench_dir() else {
+            return;
+        };
+        let open = self.bench.face() == crate::workbench::Face::Workbench && self.wb_on_screen;
+        let now = crate::surfacefeed::now_ms();
+        if !crate::channel::beacon_due(self.wb_beacon, open, now) {
+            return;
+        }
+        if let Err(err) = crate::surfacefeed::write_marker(&dir, open, now) {
+            // Said once rather than at one hertz per pane.
+            if self.wb_beacon.is_none() {
+                eprintln!(
+                    "terminal-delight: could not write the bench marker for pane {:?}: {err}",
+                    self.pane_id
+                );
+            }
+        }
+        self.wb_beacon = Some((open, now));
+    }
+
+    /// A press on a card the channel carried: record it, then take whichever
+    /// road the hook left open — the answer file, the picker's keys, or a
+    /// sentence. See [`crate::channel::State::press`].
+    fn bench_hook_press(
+        &mut self,
+        id: &crate::surface::SurfaceId,
+        nav: usize,
+        cx: &mut Context<Self>,
+    ) {
+        use crate::channel::{Outbound, Press, Route};
+        use crate::surface::{Op, Post};
+        let now = crate::surfacefeed::now_ms();
+        match self.wb_channel.press(id, nav, now) {
+            Press::WriteAnswers {
+                tool_use_id,
+                answers,
+            } => {
+                self.journal_out(&Outbound::Answer {
+                    tool_use_id: tool_use_id.clone(),
+                    answers: answers.clone(),
+                    route: Route::File,
+                });
+                match self.bench_dir() {
+                    Some(dir) => {
+                        if let Err(err) =
+                            crate::surfacefeed::write_answers(&dir, &tool_use_id, &answers)
+                        {
+                            eprintln!(
+                                "terminal-delight: the answer was recorded but not delivered: {err}"
+                            );
+                        }
+                    }
+                    None => eprintln!(
+                        "terminal-delight: this pane has no surfaces directory, so the answer has nowhere to go"
+                    ),
+                }
+            }
+            Press::Keys { bytes, note } => {
+                self.journal_out(&Outbound::Keys {
+                    bytes: bytes.clone(),
+                    why: format!("the picker had painted: {note}"),
+                });
+                self.bench_deliver(bytes, cx);
+            }
+            Press::Sentence { label } => {
+                let report = crate::surface::ActionReport {
+                    surface: id.clone(),
+                    action: crate::surface::Action::Choose,
+                    target: Some(label),
+                    comment: None,
+                };
+                if let (Some(key), Some(pane)) = (crate::surfacefeed::session(), self.pane_id) {
+                    let _ = crate::surfacefeed::journal(
+                        &crate::surfacefeed::actions_path(key, pane),
+                        &report,
+                    );
+                }
+                let line = report.to_prompt(crate::surfacefeed::tag());
+                self.bench_deliver(crate::workbench::typed_line(&line), cx);
+            }
+            Press::Recorded | Press::Refused(_) => {}
+        }
+        // Whatever the road, the cards say what was pressed.
+        let surfaces = self.wb_channel.round_surfaces(id, now);
+        // WHERE TO STAND NEXT, decided from the cards we are about to present
+        // rather than from the ones already on the bench: the press just landed
+        // and the bench's copy is one moment stale.
+        //
+        // Answering a question of a round and being left looking at it is the
+        // jam Parker photographed from the other side — the terminal had moved
+        // on to `Orphans` and the bench was still showing `Ended state`, with no
+        // way to tell and nowhere to press. Parker: *"the workbench will AUTO
+        // navigate if a person clicks an answer"*. It could not, while the only
+        // question the bench could see was the one the picker was painting.
+        //
+        // A round that has just been completed moves nowhere: the last press
+        // sent the answers, and throwing the person onto another card at that
+        // moment would hide the thing they just did.
+        let advance = surfaces
+            .iter()
+            .find(|s| s.id == *id)
+            .and_then(|s| match &s.kind {
+                crate::surface::Kind::Question(q) => q.round.as_ref(),
+                _ => None,
+            })
+            .and_then(|r| {
+                let here = r.current?;
+                r.steps.get(here)?.done.then_some(())?;
+                let next = r.next_open(here)?;
+                r.steps.get(next)?.id.clone()
+            });
+        for s in surfaces {
+            let sid = s.id.clone();
+            self.present(
+                Post {
+                    op: Op::Present,
+                    id: sid,
+                    pane: None,
+                    surface: Some(s),
+                },
+                cx,
+            );
+        }
+        if let Some(next) = advance {
+            self.bench.select(&next);
+        }
+        cx.notify();
     }
 
     /// The strip's right-hand run: the two dials, then the one verb.
@@ -1217,24 +1505,20 @@ impl TerminalView {
             }
         }
         self.wb_dial = None;
-        let draft = self.wb_compose.clone().unwrap_or_default();
-        let bytes = crate::workbench::dial_bytes(&format!("{} {value}", which.command()), &draft);
-        // The erase takes any pasted image with it, and nothing this side can
-        // type one back. Say so in the only place that can: the mirror stops
-        // counting attachments the agent is no longer holding.
-        if draft.pasted() > 0 {
-            if let Some(line) = self.wb_compose.as_mut() {
-                line.forget_pastes();
-            }
-        }
-        // The command goes FIRST and the hold goes on after it, because the
-        // hold is on everything the person does next — including the draft
-        // this press just took off their screen.
+        // The far end's line is EMPTY now: the composer is a document and
+        // nothing in it has been typed at the agent, so there is nothing to
+        // move aside and nothing to type back. `dial_bytes` beside an empty
+        // line is just the command. The hold below still matters — it keeps
+        // SEND out of the harness's own confirmation picker.
+        let bytes = crate::workbench::dial_bytes(
+            &format!("{} {value}", which.command()),
+            &crate::workbench::Line::new(),
+        );
         self.bench_deliver(bytes, cx);
         self.wb_dial_sent = Some(crate::workbench::DialSent {
             which,
-            text: draft.text().to_string(),
-            caret: draft.caret(),
+            text: String::new(),
+            caret: 0,
             sent_ms: crate::surfacefeed::now_ms(),
             answered: false,
         });
@@ -1319,6 +1603,25 @@ impl TerminalView {
             .needs_input
             .then(|| crate::screenread::question_on_screen(&self.live_rows()))
             .flatten();
+        // A question the HOOK already carried whole must not arrive a second
+        // time as a screen reading. The reading still has the one thing the
+        // hook does not — where the picker's highlight is — so it is merged
+        // into the hook's card as a cursor, and that card answers by keys.
+        let asking = asking.and_then(|q| match self.wb_channel.matching(&q.question) {
+            Some(id) => {
+                if let Some(cursor) = q.cursor {
+                    // The cursor onto the card; the picker's own Submit
+                    // position stays beside it in the channel, because the
+                    // card's Submit slot is the round's and not the screen's.
+                    self.wb_channel.saw_cursor(&id, cursor, q.submit);
+                    self.bench.with_question_mut(&id, |hq| {
+                        hq.cursor = Some(cursor);
+                    });
+                }
+                None
+            }
+            None => Some(q),
+        });
         let now_id = asking.as_ref().map(crate::screenread::screen_question_id);
         let was = self.wb_live_q.clone();
         // Counted here rather than in the rule, because the rule is a pure
@@ -1734,8 +2037,21 @@ impl TerminalView {
         // this`, so from option five onward the two lists disagree by one and
         // an answer sent by option index lands on the wrong row. See
         // [`crate::workbench::nav_index`].
-        let submit = match self.bench.selected().map(|s| &s.kind) {
-            Some(crate::surface::Kind::Question(q)) => q.submit,
+        //
+        // NOT for a card the channel carried. Its Submit sits after the
+        // options by construction, so option index and navigation index are
+        // the same list, and `nav_index` would push the Submit slot one past
+        // the end — `ctl bench choose 4` on a three-option multi-select was
+        // refused as "no option 5".
+        let card = self
+            .bench
+            .selected()
+            .or_else(|| self.bench.waiting_question());
+        let hook = card
+            .map(|s| s.id.clone())
+            .is_some_and(|id| self.wb_channel.owns(&id).is_some());
+        let submit = match card.map(|s| &s.kind) {
+            Some(crate::surface::Kind::Question(q)) if !hook => q.submit,
             _ => None,
         };
         let nav = crate::workbench::nav_index(index, submit);
@@ -1744,11 +2060,9 @@ impl TerminalView {
 
     /// A click in the composer: arm it, and put the caret where the pointer is.
     ///
-    /// The caret does not merely move here — the agent's own line editor is
-    /// told to move too, one arrow per column, because ITS caret is the one
-    /// that decides where the next character lands. Moving only the drawing
-    /// would put the block where the person clicked and the text somewhere
-    /// else, which is worse than not offering the gesture at all.
+    /// The caret is ours alone: the draft is a document, so there is no far-end
+    /// editor to walk with arrow keys, and a click into a selection drops the
+    /// selection the way every text box on this desk does (#615).
     pub(super) fn bench_click(&mut self, at: gpui::Point<gpui::Pixels>, cx: &mut Context<Self>) {
         if self.wb_compose.is_none() {
             self.wb_compose = Some(crate::workbench::Line::new());
@@ -1774,11 +2088,9 @@ impl TerminalView {
             .position(|(i, _)| i >= byte)
             .unwrap_or(line.chars())
             .min(line.chars());
-        let bytes = crate::workbench::caret_move(line.caret(), to);
         line.seek(to);
-        if !bytes.is_empty() {
-            self.bench_keystroke(bytes, cx);
-        }
+        line.clear_mark();
+        cx.notify();
     }
 
     /// Press a row of the agent's menu by its NAVIGATION index.
@@ -1848,10 +2160,12 @@ impl TerminalView {
         for entry in item.entries() {
             match entry {
                 ClipboardEntry::String(text) => {
-                    // A pasted newline would SUBMIT, mid-paste, and send half
-                    // of what was pasted. Spaces instead — the agent gets the
-                    // words and the person keeps the turn.
-                    parts.push(text.text().replace(['\n', '\r'], " "));
+                    // Line breaks STAY line breaks. They used to become
+                    // spaces because a newline typed at the agent submitted
+                    // half a paste; the draft is a document now and the send
+                    // is a bracketed paste, so a break inside it is just a
+                    // break (Gate 1, "pasted line breaks stay line breaks").
+                    parts.push(text.text().replace("\r\n", "\n").replace('\r', "\n"));
                 }
                 ClipboardEntry::ExternalPaths(paths) => {
                     // The same rule a DROP follows, from the same function: a
@@ -1935,20 +2249,25 @@ impl TerminalView {
         self.bench_typed(text, cx);
     }
 
-    /// Put text into the agent's line as though it had been typed.
+    /// Put text into the draft as though it had been typed.
     ///
-    /// No trailing return: what is pasted is material for a sentence, not the
-    /// sentence. The local copy is only so the box has something to draw
-    /// before the agent's echo arrives.
+    /// Into the DRAFT, and nowhere else: what is pasted is material for a
+    /// sentence, and the sentence goes when the person sends it. A paste into
+    /// a composer that was not open opens one — the words have to land
+    /// somewhere the person can see.
     pub(super) fn bench_typed(&mut self, text: String, cx: &mut Context<Self>) {
         if text.is_empty() {
             return;
         }
+        if self.wb_compose.is_none() {
+            self.wb_compose = Some(crate::workbench::Line::new());
+        }
         if let Some(line) = self.wb_compose.as_mut() {
             line.insert(&text);
         }
+        self.wb_recall = None;
         self.composer_follows();
-        self.bench_keystroke(text.into_bytes(), cx);
+        cx.notify();
     }
 
     /// Does the clipboard hold an image at all?
@@ -2058,38 +2377,22 @@ impl TerminalView {
         Some(dir.join(&name).display().to_string())
     }
 
-    /// Type a line into the composer and into the agent — without sending it.
+    /// Type a line into the composer — without sending it.
     ///
-    /// The bytes go down the pseudoterminal exactly as a person's keystrokes
-    /// would, so the agent's own line editor holds the same text and its caret
-    /// sits where ours does; what is missing is the return. See
-    /// [`crate::workbench::Line`] on why the two are mirrored rather than one
-    /// owning the other.
+    /// The scripted half of typing, for `ctl bench type`: a caret in a
+    /// half-typed line can be photographed without borrowing somebody's
+    /// keyboard. It APPENDS, and no space is inserted — the caller controls
+    /// spacing exactly as a person typing does, and a verb that quietly added
+    /// one would make `bench type "half"` then `bench type "way"` unable to
+    /// spell a word. Nothing reaches the agent: the draft is a document.
     pub fn bench_type(&mut self, line: &str, cx: &mut Context<Self>) {
-        let text = line.replace(['\n', '\r'], " ");
-        // APPEND to the mirror, because the bytes append on the far end.
-        //
-        // This REPLACED the shadow with the new text while sending the bytes
-        // down a pseudoterminal whose line editor added them to what was
-        // already there — so after a second call the box showed one fragment
-        // and the agent held two, and the caret was wrong by the length of
-        // the first. The composer diagnostic saw the result as three seams in
-        // one submission, `sentencehalf` and `grow.Spin` and `Delight.I'm`,
-        // and read them as a missing separator. They are not: a keystroke
-        // stream has no separators either, and the verb is a keystroke
-        // stream. What was missing was the mirror keeping up.
-        //
-        // No space is inserted. The caller controls spacing exactly as a
-        // person typing does, and a verb that quietly added one would make
-        // `bench type "half"` then `bench type "way"` unable to spell a word.
+        let text = line.replace("\r\n", "\n").replace('\r', "\n");
         match self.wb_compose.as_mut() {
             Some(existing) => existing.insert(&text),
-            None => self.wb_compose = Some(crate::workbench::Line::holding(text.clone())),
+            None => self.wb_compose = Some(crate::workbench::Line::holding(text)),
         }
+        self.wb_recall = None;
         self.composer_follows();
-        // The same rules as a submitted line: keystrokes into a pane nobody is
-        // looking at, or into one with no agent to read them, wait.
-        self.bench_keystroke(text.into_bytes(), cx);
         cx.notify();
     }
 
@@ -2297,6 +2600,7 @@ impl TerminalView {
                         &ks.key,
                         ks.modifiers.control,
                         ks.modifiers.alt,
+                        ks.modifiers.shift,
                     ) {
                         Some(edit) => line.apply(edit),
                         None => {
@@ -2421,7 +2725,15 @@ impl TerminalView {
         cx.notify();
     }
 
-    /// Send whatever is in the composer to the agent, as if typed.
+    /// Send whatever is in the composer to the agent — as ONE message.
+    ///
+    /// A bracketed paste and a return, when the terminal has bracketed paste on
+    /// (every agent TUI this house runs does), so the draft's own line breaks
+    /// survive and nothing inside it can submit early; flattened to one line
+    /// otherwise, which is what the terminal face's own paste does there. The
+    /// record goes first — `outbound.jsonl` — and the delivery rules are the
+    /// bench's usual three (on screen, an agent in the pane, no dial press in
+    /// flight), so a held message is recorded as held and goes when it can.
     pub(super) fn bench_send(&mut self, cx: &mut Context<Self>) {
         let Some(text) = self
             .wb_compose
@@ -2430,10 +2742,38 @@ impl TerminalView {
             .filter(|t| !t.trim().is_empty())
         else {
             self.wb_compose = None;
+            self.wb_recall = None;
             cx.notify();
             return;
         };
-        self.bench_deliver(crate::workbench::typed_line(&text), cx);
+        let bracketed = self
+            .session
+            .term
+            .lock()
+            .mode()
+            .contains(alacritty_terminal::term::TermMode::BRACKETED_PASTE);
+        let (bytes, delivery) = crate::channel::say_bytes(&text, bracketed);
+        let delivery = if self.bench_may_write() {
+            delivery
+        } else {
+            crate::channel::Delivery::Held
+        };
+        let id = format!(
+            "say-{}-{}",
+            crate::surfacefeed::now_ms(),
+            self.wb_sent.len()
+        );
+        self.journal_out(&crate::channel::Outbound::Say {
+            id,
+            text: text.clone(),
+            delivery,
+        });
+        self.wb_sent.push(text);
+        if self.wb_sent.len() > crate::channel::HISTORY_KEPT {
+            self.wb_sent.remove(0);
+        }
+        self.wb_recall = None;
+        self.bench_deliver(bytes, cx);
         // Stay on the bench. Flipping to the terminal on send was the first
         // thing that felt wrong about this surface: a person who just asked
         // something wants to watch the answer arrive where they asked it, and
@@ -2466,6 +2806,22 @@ impl TerminalView {
         target: Option<String>,
         cx: &mut Context<Self>,
     ) {
+        // A question the channel carried answers THROUGH the channel. Decided
+        // before `Bench::act`, which knows nothing about hooks and must not:
+        // it would drive a menu that never painted.
+        if action == crate::surface::Action::Choose {
+            let id = self
+                .bench
+                .selected()
+                .or_else(|| self.bench.waiting_question())
+                .map(|s| s.id.clone());
+            if let Some(id) = id.filter(|id| self.wb_channel.owns(id).is_some()) {
+                if let Some(nav) = target.as_deref().and_then(|t| t.parse::<usize>().ok()) {
+                    self.bench_hook_press(&id, nav, cx);
+                }
+                return;
+            }
+        }
         let comment = self
             .wb_compose
             .take()
@@ -2913,7 +3269,8 @@ impl TerminalView {
             })
             .map(|q| {
                 let chips = self.answer_chips(&q, sk, th);
-                crate::benchdraw::waiting_block(&q, sk, th).child(chips)
+                let zones = self.wb_zones.clone();
+                crate::benchdraw::waiting_block(&q, Some(&zones), sk, th).child(chips)
             });
 
         // ── the note box ────────────────────────────────────────────────────

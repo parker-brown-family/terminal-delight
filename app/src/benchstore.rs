@@ -83,6 +83,31 @@ pub fn safe_segment(s: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
 
+/// The same question for a SURFACE id, whose alphabet is wider than a root's.
+///
+/// A root is a session id — a uuid, so `[A-Za-z0-9_-]` covers all of it. A
+/// surface id is whatever the agent called its document, and
+/// `SurfaceId::sanitise` deliberately keeps `.` and `:` too. Applying the
+/// root's alphabet to an id refuses `plan.v2` and `decision:1`, which are legal
+/// surfaces an agent can present today.
+///
+/// **That refusal would not merely lose the surface, it would loop.** [`file`]
+/// is the thing the caller drains the mailbox AFTER, so a surface rejected here
+/// is never recorded and never removed — re-swept and re-delivered on every
+/// pass, forever.
+///
+/// What has to be refused is a name that can leave its directory or hide from
+/// the sweep: `..` anywhere, a leading `.`, and anything outside the
+/// sanitiser's alphabet.
+pub fn safe_id(s: &str) -> bool {
+    !s.is_empty()
+        && s.len() <= 128
+        && !s.starts_with('.')
+        && !s.contains("..")
+        && s.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b':'))
+}
+
 impl ConvKey {
     /// `<root_dir>/<root>/<seq>/`, or [`None`] when the root could name
     /// something other than a directory under `root_dir`.
@@ -189,12 +214,18 @@ impl Turn {
 ///
 /// Beside `surfaces/`, not inside it, and named by nothing that belongs to a
 /// window — a conversation outlives the window that hosted it.
+/// Resolved the same way as [`crate::surfacefeed::surfaces_root`], and that is
+/// not a stylistic choice: the two are a pair. A relative `XDG_STATE_HOME` —
+/// or an unset `HOME`, which `unwrap_or_default` turns into an empty string —
+/// would put the store under whatever directory the window happened to be
+/// launched from while the mailbox it is paired with sits under `$HOME`, and
+/// `terminal-delight conversation <root>` run from elsewhere would then read a
+/// different store and truthfully report "no record".
 pub fn store_root() -> PathBuf {
     let base = std::env::var_os("XDG_STATE_HOME")
         .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".local/state")
-        });
+        .filter(|p| p.is_absolute())
+        .unwrap_or_else(|| crate::session::home_dir().join(".local/state"));
     base.join("terminal-delight/conversations")
 }
 
@@ -278,22 +309,31 @@ pub fn file(
     bond: Bond,
     at_ms: u64,
 ) -> io::Result<()> {
-    if !safe_segment(id) {
+    if !safe_id(id) {
         return Err(io::Error::new(io::ErrorKind::InvalidInput, "unsafe id"));
     }
     let dir = key
         .dir(root_dir)
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "unsafe conversation root"))?;
-    // The id inside the document and the name on disk are the same thing, the
-    // way the mailbox already does it — a surface filed under a name nobody put
-    // inside it comes back answering to something else.
+    // The id inside the document and the name on disk are the same thing, and
+    // the filing id is the one that wins — it is the name the record is keyed
+    // by and the name the turn journal points at. A document carrying a
+    // DIFFERENT id is the case that matters: left alone it is written to
+    // `named.json` still calling itself something else, so the stem and the
+    // parsed id disagree and a retire aimed at one of them misses.
+    //
+    // A payload that is not an object carries no id and cannot be given one.
+    // It is stored as it came rather than refused — the parser downstream is
+    // lenient by design and turns an unusable document into a visible
+    // `Unclassified` card, which is a better answer than a surface that
+    // silently never arrives.
     let body = match value.as_object() {
-        Some(m) if !m.contains_key("id") => {
+        Some(m) => {
             let mut owned: Map<String, Value> = m.clone();
             owned.insert("id".into(), json!(id));
             Value::Object(owned)
         }
-        _ => value.clone(),
+        None => value.clone(),
     };
     write_atomic(
         &dir.join("surfaces"),
@@ -340,28 +380,101 @@ fn segments(root_dir: &Path, root: &str) -> Vec<(u32, PathBuf)> {
 /// Returns the raw documents rather than parsed surfaces, because that is what
 /// the mailbox holds and what the bench's own parser already takes — a
 /// round trip through a typed struct would be a second format to keep in step.
-pub fn load(root_dir: &Path, root: &str) -> Vec<(String, Value)> {
-    let mut out: Vec<(String, Value)> = Vec::new();
+pub fn load(root_dir: &Path, root: &str) -> Loaded {
+    // When each surface arrived, from the turn journal. This is the ordering
+    // fact, and it is the only one that survives a caller choosing its own ids.
+    let mut when: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
+    for t in asks(root_dir, root) {
+        if let Turn::Said { id, at_ms, .. } = t {
+            // A surface re-presented under one id keeps the LATEST stamp: it is
+            // one row that was updated, not two rows.
+            let slot = when.entry(id).or_insert(at_ms);
+            *slot = (*slot).max(at_ms);
+        }
+    }
+
+    let mut unreadable = 0usize;
+    // Keyed by id so a surface updated after a compaction — written into a new
+    // segment rather than over the old file — is ONE row and spends ONE slot of
+    // the cap, rather than coming back twice under the same name.
+    let mut newest: std::collections::HashMap<String, (Option<u64>, Value)> =
+        std::collections::HashMap::new();
+
     for (_, seg) in segments(root_dir, root) {
         let Ok(rd) = fs::read_dir(seg.join("surfaces")) else {
             continue;
         };
-        let mut here: Vec<(String, Value)> = rd
-            .flatten()
-            .filter(|e| e.path().extension().is_some_and(|x| x == "json"))
-            .filter_map(|e| {
-                let stem = e.path().file_stem()?.to_str()?.to_string();
-                let body = fs::read_to_string(e.path()).ok()?;
-                Some((stem, serde_json::from_str(&body).ok()?))
-            })
-            .collect();
-        here.sort_by(|a, b| a.0.cmp(&b.0));
-        out.append(&mut here);
+        for e in rd.flatten() {
+            let path = e.path();
+            if !path.extension().is_some_and(|x| x == "json") {
+                continue;
+            }
+            let Some(stem) = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .map(str::to_string)
+            else {
+                unreadable += 1;
+                continue;
+            };
+            let parsed = fs::read_to_string(&path)
+                .ok()
+                .and_then(|b| serde_json::from_str::<Value>(&b).ok());
+            let Some(v) = parsed else {
+                // Counted rather than dropped in silence. `write_atomic` does
+                // no fsync before its rename, so a truncated file is a
+                // reachable post-crash state — and a bench that comes back one
+                // card short with nothing saying so is indistinguishable from
+                // a conversation that presented one card fewer.
+                unreadable += 1;
+                continue;
+            };
+            // Record first, file mtime second. Both are real measurements; the
+            // record is preferred because the mtime moves if anything ever
+            // rewrites the file.
+            let at = when.get(&stem).copied().or_else(|| mtime_ms(&path));
+            // Later segment wins: it is the current copy of that id.
+            newest.insert(stem, (at, v));
+        }
     }
+
+    let mut out: Vec<(String, Option<u64>, Value)> =
+        newest.into_iter().map(|(k, (at, v))| (k, at, v)).collect();
+    // Oldest first, by WHEN — never by id. Ids are not monotonic: `derive.rs`
+    // mints `ask-<hash>`, `surface.rs` mints `anon-<hash>`, and an agent may
+    // supply any slug it likes, so sorting by the filename stem is sorting by
+    // nothing. A surface whose arrival cannot be established sorts LAST, so the
+    // cap below drops something whose age is known rather than something whose
+    // age is not.
+    out.sort_by(|a, b| {
+        (a.1.is_none(), a.1, &a.0)
+            .partial_cmp(&(b.1.is_none(), b.1, &b.0))
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     if out.len() > PANE_HISTORY_CAP {
         out.drain(..out.len() - PANE_HISTORY_CAP);
     }
-    out
+    Loaded {
+        surfaces: out.into_iter().map(|(k, _, v)| (k, v)).collect(),
+        unreadable,
+    }
+}
+
+/// What a conversation's surfaces came back as, including what did not.
+#[derive(Debug, Default)]
+pub struct Loaded {
+    /// Oldest first, deduplicated by id, capped at [`PANE_HISTORY_CAP`].
+    pub surfaces: Vec<(String, Value)>,
+    /// Files that are there and could not be read or parsed. **Not folded into
+    /// the count above**: "this conversation presented four things" and "it
+    /// presented five and one of them is corrupt" are different answers, and
+    /// only one of them tells a reader to go and look.
+    pub unreadable: usize,
+}
+
+fn mtime_ms(path: &Path) -> Option<u64> {
+    let t = fs::metadata(path).ok()?.modified().ok()?;
+    Some(t.duration_since(std::time::UNIX_EPOCH).ok()?.as_millis() as u64)
 }
 
 /// The turn record for a whole conversation, oldest first.
@@ -411,7 +524,12 @@ pub fn next_turn(root_dir: &Path, root: &str) -> u32 {
 /// and this one decides what a person sees on a bench. It is also how the
 /// wiring slice will be checked — file a surface, run this, see it.
 pub fn run_cli(args: &[String]) -> i32 {
-    let Some(root) = args.first() else {
+    // The first NON-FLAG argument. `--json` passes `safe_segment` — hyphens are
+    // legal in a session id — so reading `args.first()` blind makes
+    // `conversation --json` report on a conversation called `--json`, print
+    // "no record" and exit 0. A reader chasing a missing record would get a
+    // confident wrong answer with a successful exit.
+    let Some(root) = args.iter().find(|a| !a.starts_with('-')) else {
         eprintln!("usage: terminal-delight conversation <root> [--json]");
         return 2;
     };
@@ -420,7 +538,10 @@ pub fn run_cli(args: &[String]) -> i32 {
         return 2;
     }
     let dir = store_root();
-    let surfaces = load(&dir, root);
+    let Loaded {
+        surfaces,
+        unreadable,
+    } = load(&dir, root);
     let turns = asks(&dir, root);
     if args.iter().any(|a| a == "--json") {
         println!(
@@ -429,6 +550,7 @@ pub fn run_cli(args: &[String]) -> i32 {
                 "root": root,
                 "dir": conversation_dir(&dir, root).map(|p| p.to_string_lossy().into_owned()),
                 "next_turn": next_turn(&dir, root),
+                "unreadable": unreadable,
                 "surfaces": surfaces.iter().map(|(id, v)| json!({
                     "id": id, "title": v.get("title"), "kind": v.get("kind"),
                 })).collect::<Vec<_>>(),
@@ -457,7 +579,11 @@ pub fn run_cli(args: &[String]) -> i32 {
             }
         }
     }
-    println!("{} surfaces", surfaces.len());
+    if unreadable > 0 {
+        println!("{} surfaces ({unreadable} unreadable)", surfaces.len());
+    } else {
+        println!("{} surfaces", surfaces.len());
+    }
     for (id, v) in &surfaces {
         println!(
             "  {id}  {}",
@@ -523,7 +649,7 @@ mod tests {
         )
         .unwrap();
 
-        let got = load(s.path(), "rootA");
+        let got = load(s.path(), "rootA").surfaces;
 
         assert_eq!(got.len(), 2, "both segments load");
         assert_eq!(
@@ -550,8 +676,12 @@ mod tests {
 
         // A clear mints a NEW ROOT, so the cleared work is in a directory this
         // load never opens.
-        assert!(load(s.path(), "rootB").is_empty());
-        assert_eq!(load(s.path(), "rootA").len(), 1, "and is not destroyed");
+        assert!(load(s.path(), "rootB").surfaces.is_empty());
+        assert_eq!(
+            load(s.path(), "rootA").surfaces.len(),
+            1,
+            "and is not destroyed"
+        );
     }
 
     #[test]
@@ -562,14 +692,17 @@ mod tests {
                 s.path(),
                 &key("r", n),
                 n,
-                &format!("s{n:02}"),
+                &format!(
+                    "seg-{n}-{}",
+                    "abcdefghijkl".chars().nth(n as usize).unwrap()
+                ),
                 &doc(&format!("segment {n}")),
                 Bond::Declared,
                 n as u64,
             )
             .unwrap();
         }
-        let got = titles(&load(s.path(), "r"));
+        let got = titles(&load(s.path(), "r").surfaces);
         assert_eq!(got.first().unwrap(), "segment 0");
         assert_eq!(
             got.last().unwrap(),
@@ -595,7 +728,10 @@ mod tests {
         )
         .unwrap();
         // Nothing about the reader names a window, a session or a pane.
-        assert_eq!(titles(&load(s.path(), "r")), vec!["Made in one window"]);
+        assert_eq!(
+            titles(&load(s.path(), "r").surfaces),
+            vec!["Made in one window"]
+        );
     }
 
     /// A root that could name a path yields no directory, rather than a
@@ -748,20 +884,185 @@ mod tests {
                 s.path(),
                 &key("r", (i / 8) as u32),
                 i as u32,
-                &format!("s{i:04}"),
+                // An id that sorts BACKWARDS against time. Sequential
+                // zero-padded ids were the original fixture, and they are the
+                // one shape that makes an id-ordered load look correct — so
+                // this test could not fail against the bug it is named for.
+                &format!("s{:04}", total - 1 - i),
                 &doc(&format!("surface {i:04}")),
                 Bond::Declared,
                 i as u64,
             )
             .unwrap();
         }
-        let got = load(s.path(), "r");
+        let got = load(s.path(), "r").surfaces;
         assert_eq!(got.len(), PANE_HISTORY_CAP);
         assert_eq!(
             got.last().unwrap().1["title"].as_str().unwrap(),
             format!("surface {:04}", total - 1),
             "the newest survives the cap"
         );
+        assert_eq!(
+            got.first().unwrap().1["title"].as_str().unwrap(),
+            format!("surface {:04}", total - PANE_HISTORY_CAP),
+            "and the cap drops the OLDEST, not a lexical slice"
+        );
+    }
+
+    /// Ordering comes from the record, never from the id.
+    ///
+    /// Real ids are not monotonic — `derive.rs` mints `ask-<hash>`,
+    /// `surface.rs` mints `anon-<hash>`, and an agent may supply any slug it
+    /// likes — so a load sorted by the filename stem is sorted by nothing, and
+    /// the bench draws its cards scrambled.
+    #[test]
+    fn ordering_follows_the_record_not_the_id() {
+        let s = Scratch::new("bs-order-by-time");
+        let k = key("r", 0);
+        // Filed oldest first, named so that sorting by id reverses them.
+        file(
+            s.path(),
+            &k,
+            0,
+            "zzz-first",
+            &doc("first"),
+            Bond::Declared,
+            100,
+        )
+        .unwrap();
+        file(
+            s.path(),
+            &k,
+            0,
+            "mmm-second",
+            &doc("second"),
+            Bond::Declared,
+            200,
+        )
+        .unwrap();
+        file(
+            s.path(),
+            &k,
+            0,
+            "aaa-third",
+            &doc("third"),
+            Bond::Declared,
+            300,
+        )
+        .unwrap();
+
+        assert_eq!(
+            titles(&load(s.path(), "r").surfaces),
+            vec!["first", "second", "third"],
+            "by when they arrived, not by what they are called"
+        );
+    }
+
+    /// A surface re-presented after a compaction is ONE row.
+    ///
+    /// `file` writes into the current segment, so an update lands beside the
+    /// old copy rather than over it. Returning both shows a stale document and
+    /// the current one under one name, and spends two slots of the cap on a
+    /// conversation that presented one thing.
+    #[test]
+    fn a_surface_updated_after_a_compaction_is_one_row_not_two() {
+        let s = Scratch::new("bs-dupe");
+        file(
+            s.path(),
+            &key("r", 0),
+            0,
+            "same",
+            &doc("Before"),
+            Bond::Declared,
+            10,
+        )
+        .unwrap();
+        file(
+            s.path(),
+            &key("r", 1),
+            1,
+            "same",
+            &doc("After"),
+            Bond::Declared,
+            20,
+        )
+        .unwrap();
+
+        let got = load(s.path(), "r").surfaces;
+        assert_eq!(got.len(), 1, "one id, one row");
+        assert_eq!(
+            got[0].1["title"].as_str(),
+            Some("After"),
+            "and it is the current copy, not the one from the earlier segment"
+        );
+    }
+
+    /// An id the surface sanitiser allows must be fileable.
+    ///
+    /// A root's alphabet is a uuid's; an id's is wider. Applying the narrow one
+    /// here refuses a legal surface forever: `file` is what the caller drains
+    /// the mailbox after, so a rejected surface is never recorded AND never
+    /// removed, and comes back on every sweep.
+    #[test]
+    fn an_id_the_sanitiser_allows_can_be_filed() {
+        let s = Scratch::new("bs-wide-id");
+        for id in ["plan.v2", "decision:1", "ask-live-9f2c", "anon-0badf00d"] {
+            assert!(safe_id(id), "{id:?} is a legal surface id");
+            file(s.path(), &key("r", 0), 0, id, &doc(id), Bond::Declared, 1)
+                .unwrap_or_else(|e| panic!("{id:?} should file: {e}"));
+        }
+        assert_eq!(load(s.path(), "r").surfaces.len(), 4);
+        for bad in ["../escape", ".hidden", "a..b", "with space", "a/b", ""] {
+            assert!(!safe_id(bad), "{bad:?} must not be an id");
+        }
+    }
+
+    /// The filing id wins over one the document carries.
+    #[test]
+    fn a_document_whose_id_disagrees_is_rewritten_to_the_filed_name() {
+        let s = Scratch::new("bs-id-clash");
+        let mut d = doc("x");
+        d["id"] = json!("something-else");
+        file(s.path(), &key("r", 0), 0, "named", &d, Bond::Declared, 1).unwrap();
+
+        let (stem, v) = load(s.path(), "r").surfaces.pop().unwrap();
+        assert_eq!(stem, "named");
+        assert_eq!(
+            v["id"].as_str(),
+            Some("named"),
+            "the stem and the id inside must agree, or a retire aimed at one misses"
+        );
+    }
+
+    /// A file that is there and cannot be read is counted, not dropped.
+    #[test]
+    fn an_unreadable_surface_is_counted_rather_than_dropped_in_silence() {
+        let s = Scratch::new("bs-corrupt");
+        let k = key("r", 0);
+        file(s.path(), &k, 0, "good", &doc("readable"), Bond::Declared, 1).unwrap();
+        fs::write(
+            k.dir(s.path()).unwrap().join("surfaces/torn.json"),
+            "{\"td\":\"0.4\",\"kin",
+        )
+        .unwrap();
+
+        let got = load(s.path(), "r");
+        assert_eq!(got.surfaces.len(), 1, "the readable one still loads");
+        assert_eq!(
+            got.unreadable, 1,
+            "and the torn one is reported, not hidden"
+        );
+    }
+
+    /// A flag is not a conversation root.
+    ///
+    /// `--json` passes `safe_segment` — hyphens are legal in a session id — so
+    /// reading the first argument blind reports on a conversation called
+    /// `--json`, prints "no record" and exits 0. Someone chasing a missing
+    /// record would get a confident wrong answer with a successful exit.
+    #[test]
+    fn a_leading_flag_is_not_taken_as_the_root() {
+        assert_eq!(run_cli(&["--json".to_string()]), 2);
     }
 
     /// Filing does not touch the mailbox. The caller drains after this returns
@@ -805,7 +1106,7 @@ mod tests {
             1,
         )
         .unwrap();
-        let (stem, v) = load(s.path(), "r").pop().unwrap();
+        let (stem, v) = load(s.path(), "r").surfaces.pop().unwrap();
         assert_eq!(stem, "named");
         assert_eq!(
             v["id"].as_str(),
@@ -822,7 +1123,7 @@ mod tests {
         let k = key("r", 0);
         file(s.path(), &k, 0, "same", &doc("First"), Bond::Declared, 1).unwrap();
         file(s.path(), &k, 0, "same", &doc("Second"), Bond::Declared, 2).unwrap();
-        let got = load(s.path(), "r");
+        let got = load(s.path(), "r").surfaces;
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].1["title"].as_str(), Some("Second"));
     }
