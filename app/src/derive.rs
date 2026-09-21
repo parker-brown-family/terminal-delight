@@ -852,7 +852,7 @@ mod tests {
     fn a_td_fence_in_assistant_prose_becomes_a_surface() {
         let text = "Received. If you're testing the workbench feed, this turn should land \
                     as a response card.\n\n```td\n{\"td\":\"0.3\",\"kind\":\"response\",\
-                    \"title\":\"Test acknowledged\",\"model\":{\"tldr\":\"Got it.\",\
+                    \"title\":\"Test acknowledged\",\"model\":{\"layman\":\"Got it.\",\
                     \"asks\":[\"which test did you mean?\"]}}\n```\n";
         let posts = from_jsonl(&assistant(json!([{ "type": "text", "text": text }])), NOW);
         assert_eq!(posts.len(), 1, "one fence, one surface");
@@ -871,10 +871,10 @@ mod tests {
     /// one wins rather than the first.
     #[test]
     fn every_fence_lands_and_a_repeated_id_takes_its_latest_version() {
-        let fence = |id: &str, tldr: &str| {
+        let fence = |id: &str, brief: &str| {
             format!(
                 "```td\n{{\"td\":\"0.3\",\"kind\":\"response\",\"id\":\"{id}\",\
-                 \"model\":{{\"tldr\":\"{tldr}\"}}}}\n```"
+                 \"model\":{{\"layman\":\"{brief}\"}}}}\n```"
             )
         };
         let body = format!(
@@ -918,7 +918,7 @@ mod tests {
             "Write it inside a fenced td block and it will land on the bench.",
             "```json\n{\"td\":\"0.3\",\"kind\":\"response\"}\n```",
             "```tdx\n{\"td\":\"0.3\",\"kind\":\"response\"}\n```",
-            "```td\n{\"td\":\"0.3\",\"kind\":\"response\",\"model\":{\"tldr\":\"unclosed\"}}",
+            "```td\n{\"td\":\"0.3\",\"kind\":\"response\",\"model\":{\"layman\":\"unclosed\"}}",
         ] {
             assert!(
                 from_jsonl(&assistant(json!([{ "type": "text", "text": text }])), NOW).is_empty(),
@@ -932,7 +932,8 @@ mod tests {
     /// otherwise become a card on the bench of whoever he pasted it to.
     #[test]
     fn a_fence_the_user_typed_is_not_the_agent_presenting() {
-        let text = "```td\n{\"td\":\"0.3\",\"kind\":\"response\",\"model\":{\"tldr\":\"x\"}}\n```";
+        let text =
+            "```td\n{\"td\":\"0.3\",\"kind\":\"response\",\"model\":{\"layman\":\"x\"}}\n```";
         let line = serde_json::to_string(&json!({
             "type": "user",
             "message": { "content": [{ "type": "text", "text": text }] }

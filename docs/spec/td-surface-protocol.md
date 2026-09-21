@@ -1,6 +1,6 @@
 # TDSP — the Terminal Delight Surface Protocol
 
-**Version 0.3 · 2026-09-17 · implemented in `app/src/surface.rs`**
+**Version 0.4 · 2026-09-21 · implemented in `app/src/surface.rs`**
 
 An agent hands Terminal Delight a small JSON object describing **what it made**.
 Terminal Delight decides how that thing looks. This document is the contract
@@ -164,9 +164,7 @@ is the same reply cut for several readers, and the person picks the cut.
 { "kind": "response",
   "title": "What this turn did",
   "model": {
-    "tldr": "One or two sentences that stand for the whole reply.",
-    "eli5": "…",
-    "layman": "…",
+    "layman": "The whole reply in plain English, written for the person.",
     "technical": "…",
     "evidence": ["cargo test --locked, all green", "…"],
     "next": ["install the build", "watch the overview"],
@@ -189,9 +187,7 @@ is the same reply cut for several readers, and the person picks the cut.
 
 | Key | Required | Drawn as | Notes |
 |---|---|---|---|
-| `tldr` | **yes** | the first register, open | Aliases: `tl;dr`, `summary`, `gist`, `headline`. The first sentence titles the row if `title` is absent. |
-| `eli5` | no | a folded register, **ELI5** | |
-| `layman` | no | a folded register, **Plain brief** | Aliases: `plain`, `layman_brief`, `brief`. |
+| `layman` | **yes** | the first register, and what the card opens on | Aliases: `plain`, `plain_brief`, `plain_english`, `layman_brief`, `brief`. The first sentence titles the row if `title` is absent, and the whole thing is the row's subtitle. |
 | `technical` | no | a folded register, **Technical brief** | Aliases: `technical_brief`, `tech`, `detail`. |
 | `evidence` | no | a folded register, **What was verified** | Aliases: `verified`, `proof`, `checks`. |
 | `asks` | no | an **open** register, **Needs from you** — or the escalation, if none was declared | Aliases: `needs`, `questions`, `blocked_on`. |
@@ -199,11 +195,25 @@ is the same reply cut for several readers, and the person picks the cut.
 | `escalation` | no | the card's one interrupt, above the title | See below. `none` and *absent* are different answers. |
 | `doubts` | no | its own strip, never folded, quiet | Aliases: `unsure`, `caveats`, `risks`. |
 | anything else | no | a folded register labelled by the key | `next_steps` → `Next steps`. Never dropped. |
+| `tldr` | no | **nothing — dead as of 2026-09-21** | Aliases: `tl;dr`, `summary`, `gist`, `headline`. Consumed as the plain brief when no `layman` arrived, so a pane still running the old briefing keeps rendering; discarded when a real `layman` is there. Never a section. |
+| `eli5` | no | **dead as a reading as of 2026-09-21** | Files under **Other**, after every register the build lays out, labelled `ELI5`. Kept, because nothing here is dropped; just not one of the lengths the card offers. |
 
-**Every register is a peer.** The tl;dr does not outrank the technical brief: a
-reader who deliberately opened the technical brief is reading the technical
-brief. They share one panel, one type size and one ink, and exactly one of them
-is lit at a time — the one the reader is in. Nothing else on a card glows.
+**Two readings, not four.** The card offers a plain explanation and a technical
+one, and that is the whole of it. `tldr` and `eli5` were registers until
+2026-09-21; three lengths of the same paragraph is one register argued over by a
+committee, and every one of them cost the agent a rewrite of a reply it had
+already written. Parker, on the overview: *"The plain text explanation gets
+promoted to the default. TLDR and LE5 both die, and the technical brief stays."*
+
+**Every register is a peer.** The plain brief does not outrank the technical
+one: a reader who deliberately opened the technical brief is reading the
+technical brief. They share one panel, one type size and one ink, and exactly
+one of them is lit at a time — the one the reader is in. Nothing else on a card
+glows.
+
+**Write the `layman` as the answer, not as a trailer for one.** It is what the
+card is showing before anybody presses anything, so a plain brief written as a
+teaser for a fuller reply somewhere else leaves the reader with the teaser.
 
 **`escalation` — the only thing allowed to interrupt.**
 
@@ -241,9 +251,9 @@ When an escalation is drawn, the `asks` register is **not** drawn beneath it —
 the escalation is that content, promoted. Print the questions once.
 
 **Well defined and very flexible, both.** The known keys get a fixed label and
-a fixed order (ELI5, plain, technical, verified, needs, next, then yours by
-key). Any other key becomes a section too, because a reply shape that dropped
-what it did not expect would be the transcript problem again.
+a fixed order (plain, technical, verified, needs, next, then yours by key). Any
+other key becomes a section too, because a reply shape that dropped what it did
+not expect would be the transcript problem again.
 
 **The value's own shape decides how it is drawn.** A string is prose. An array
 of strings is a list — numbered under `next`, bulleted elsewhere. An object of
@@ -608,6 +618,19 @@ New kinds are additive by design: an older build renders a newer kind as
 the sender can read.
 
 ### What changed
+
+**0.4, 2026-09-21** — the plain brief replaces the tl;dr as the required
+register, and `eli5` stops being a reading. **No payload that parsed before
+fails now**, which is why this is not a major bump: a `tldr` is read as the
+plain brief when no `layman` came with it, and a reply carrying only a `layman`
+— which 0.4 refused — is now the canonical shape. What a build DRAWS changed;
+what it accepts only widened. The number is not bumped again for it, because
+bumping to refuse ~20 agent panes still running the old briefing would break
+every overview on the machine to enforce a spelling.
+
+**0.4** — `escalation`: a declared summons, so the card's one interrupt stops
+being inferred from an `asks` register's spelling. Optional, and *absent* stays
+a different answer from a declared `none`.
 
 **0.3** — the `response` kind, and the overview becomes its feed. A new kind
 is additive: a 0.2 build renders a response as `unclassified` with the reason,
