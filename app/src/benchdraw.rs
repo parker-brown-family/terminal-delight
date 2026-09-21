@@ -1393,11 +1393,6 @@ pub fn round_progress(
 ) -> Div {
     let done = round.answered();
     let total = round.total();
-    let tint = if round.submitting {
-        ink(crate::workbench::Tint::Settled, th)
-    } else {
-        ink(crate::workbench::Tint::Waiting, th)
-    };
     let settled = ink(crate::workbench::Tint::Settled, th);
     div()
         .flex()
@@ -1406,38 +1401,55 @@ pub fn round_progress(
         .child(div().flex().flex_row().flex_wrap().gap(px(4.)).children(
             round.steps.iter().enumerate().map(|(i, step)| {
                 let here = round.current == Some(i);
-                // Three states, drawn apart: where you are, what you have
-                // finished, and what is still owed. A done step keeps its
-                // tick when you are standing on it — being here does not
-                // un-answer it.
-                let (edge, ink_) = match (here, step.done) {
-                    (true, _) => (tint, th.text),
-                    (false, true) => (settled.alpha(0.55), settled),
-                    (false, false) => (th.faint.alpha(0.5), sk.ink.ink_faint),
-                };
+                // THE SAME TAB A REGISTER IS, and deliberately not a chip of
+                // this function's own invention. The registers a reader unfolds
+                // on a response card — reading, evidence, next — are underlined
+                // text with a muted rest, and a round's questions are the same
+                // gesture over the same kind of thing: several readings of one
+                // card, one of which you are in. Parker, seeing the first cut:
+                // *"we should have tabs along the top of the questions for
+                // multiple questions — similar to the response: reading -
+                // evidence - next"*. Two vocabularies for one gesture is how a
+                // surface stops feeling like one surface.
+                let facet = crate::emphasis::facet(
+                    if here {
+                        crate::emphasis::Emphasis::Active
+                    } else {
+                        crate::emphasis::Emphasis::Reading
+                    },
+                    th,
+                );
+                // A tick is the one thing a register tab has no use for and a
+                // question tab needs: a register is never *finished*, and a
+                // step that has been answered is. Drawn in the settled hue so
+                // done reads as done even on the tab you are standing on —
+                // being here does not un-answer it.
                 let label = if step.done {
                     format!("\u{2713} {}", step.label)
                 } else {
                     step.label.clone()
                 };
-                let chip = div()
-                    .px(px(7.))
-                    .py(px(2.))
-                    .rounded(sk.radius())
-                    .border_1()
-                    .border_color(edge)
-                    .text_color(ink_)
-                    .text_size(px(sk.pt(Step::Tag)))
-                    .child(label);
+                let tab = div()
+                    .px(px(sk.tpx(5.)))
+                    .text_size(px(sk.pt(Step::Note)))
+                    .font_family(th.font_family.clone())
+                    .text_color(match (here, step.done) {
+                        (true, _) => facet.ink,
+                        (false, true) => settled.alpha(0.85),
+                        (false, false) => crate::emphasis::meta(th),
+                    })
+                    .when(here, |x| x.border_b_1().border_color(facet.tint.alpha(0.8)))
+                    .child(sel(label));
                 // Pressable only where BOTH are true: we have somewhere to
                 // send the press, and this step has a card of its own. A
                 // screen-read step has no surface and must not look like a
                 // button that does nothing.
                 match (zones, step.id.as_ref()) {
-                    (Some(z), Some(id)) if !here => chip
+                    (Some(z), Some(id)) if !here => tab
+                        .cursor_pointer()
                         .relative()
                         .child(zone(z.clone(), crate::workbench::Hit::OpenRow(id.clone()))),
-                    _ => chip,
+                    _ => tab,
                 }
             }),
         ))
