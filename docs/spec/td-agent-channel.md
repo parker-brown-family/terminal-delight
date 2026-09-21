@@ -1,6 +1,6 @@
-# The agent channel — TDAC 0.1
+# The agent channel — TDAC 0.2
 
-**Version 0.1 · 2026-09-21 · implemented in `app/src/channel.rs`, read by
+**Version 0.2 · 2026-09-21 · implemented in `app/src/channel.rs`, read by
 `app/src/surfacefeed.rs`, written on the harness side by `scripts/td-agent-hooks`**
 
 TDSP (`td-surface-protocol.md`) says how an agent hands the window a thing it
@@ -79,8 +79,8 @@ transcript problem again.
 |---|---|---|---|
 | `prompt` | the person submits a turn (`UserPromptSubmit`) | `prompt_id`, `text` | captions the overview with the EXACT words, and stops trusting the screen latch for this turn |
 | `question` | the agent calls its question tool (`PreToolUse` on `AskUserQuestion`) | `tool_use_id`, `questions[]` verbatim from the tool input, `deadline_ms` | presents one `question` surface per question, whole round, provenance *hook* |
-| `waiting` | the hook has decided to hold the picker and wait for the bench | `tool_use_id`, `until_ms` | routes the answer as a file while `until_ms` is in the future |
-| `released` | the hook stopped waiting | `tool_use_id`, `why` ∈ `answered` `timeout` `stale` `no-bench` | routes any later answer as keys (the picker has painted) |
+| `waiting` | the hook has decided to hold the picker and wait for the bench | `tool_use_id`, `until_ms`, `at_ms` | routes the answer as a file while `until_ms` is in the future |
+| `released` | the hook stopped waiting | `tool_use_id`, `at_ms`, `why` ∈ `answered` (the file arrived) · `missing` (no marker at all) · `closed` (the bench is not the face on screen) · `stale` (the marker's clock is more than four seconds off) · `timeout` (`TD_ASK_WAIT_S` ran out) | routes any later answer as keys (the picker has painted) |
 | `answered` | the tool returned (`PostToolUse`) | `tool_use_id`, `answers` — the map the tool returned, or `null` when the shape was not readable | marks the round's cards answered, whichever route the answer took |
 | `reply` | the agent's turn ends (`Stop`) | `text` — the harness's own `last_assistant_message`, or `null` | if no `response` surface arrived this turn, presents one holding the reply as its plain brief, provenance *hook* |
 | `notify` | the harness raises a notification | `notification_type`, `message` | records it; `permission_prompt` and `agent_needs_input` raise the pane's needs-you state without reading the screen |
@@ -100,7 +100,9 @@ could never see.
 ## 4 · Outbound — what the window records before it acts
 
 Written by the window only, before the delivery it describes. An agent may read
-it; nothing waits on it.
+it; nothing waits on it. Every line carries `td`, `at_ms`, and — since 0.2 —
+`session` and `pane`, so a reader that multiplexes many panes (a relay for
+another device) needs nothing from the path it found the line at.
 
 | `type` | Carries | Delivered as |
 |---|---|---|
@@ -126,8 +128,9 @@ harness's own answer channel takes: **measured 2026-09-21** by driving Claude
 Code 2.1.274 under a pseudoterminal with a `PreToolUse` hook that returned
 `updatedInput` carrying such a map — the picker never painted and the model
 received the label. A multi-select answers with the chosen labels joined by
-`", "`; that half is *inferred* from the tool's own description of its result,
-not yet driven.
+`", "` — **also measured**, later the same day in a live window: the file
+`{"Which colours do you like?": "Red, Blue"}` came back through `PostToolUse`
+unchanged and the model replied `ANSWERS="Red, Blue"`.
 
 An answer takes the first route that is open, and the record says which:
 
@@ -178,11 +181,14 @@ bench.json
 {"td":"0.1","face":"workbench","at_ms":1790006865309,"window":1983471}
 ```
 
-The window refreshes this for every agent pane about once a second. The hook
-reads it before deciding to hold a picker: it waits **only** when `face` is
-`workbench` and `at_ms` is within four seconds of now, and it re-reads it while
-waiting, so a window that dies mid-question releases the picker within four
-seconds rather than at the hook's own timeout. A pane with no bench open, a
+The window refreshes this about once a second **while the bench is the face on
+screen**, and writes it once, on the change, when it is not — a closed face is
+not a claim that ages, and the hook reads the face before it reads the clock.
+The hook waits **only** when `face` is `workbench` and `at_ms` is within four
+seconds of now, and it re-reads the marker once a second while waiting, so a
+window that dies mid-question releases the picker within about four seconds
+(`stale`) and a person who flips the face releases it on the next read
+(`closed`) — never at the hook's own timeout. A pane with no bench open, a
 window older than this protocol, or a machine where no window is running all
 read the same way — not fresh — and the picker paints exactly as it did before
 this protocol existed.
@@ -203,6 +209,11 @@ appends and never clobbers; `--uninstall` reverses it). Its contract:
 - **The wait is bounded twice**: by the marker's freshness (§7) and by
   `TD_ASK_WAIT_S` (default 540, under the harness's 600-second default timeout
   for a command hook, so the harness never kills the hook first).
+- **The journal rotates** at `TD_INBOUND_CAP` bytes (default 2 MiB) to
+  `inbound.jsonl.1`, under the same lock the appends take. The window reads by
+  offset and treats a journal that shrank as a fresh start, so a rotation costs
+  at most one re-read of the new file's first records — every one of which is
+  idempotent to present.
 - **It never reads a screen and never types.** Its output on the pre-answer path
   is the harness's own decision JSON; on every other path it is nothing.
 
@@ -263,6 +274,14 @@ person is looking.
 `major.minor`, the TDSP rule: a minor bump adds optional fields or new record
 types and never re-cuts an existing one; a record naming a newer major is kept
 as unknown and counted. **A field added for a bug is still a version bump.**
+
+**0.2** — `waiting` and `released` carry `at_ms`; `released.why` gains
+`missing` and `closed` (the first cut said `no-bench` for the one and `stale`
+for the other, which hid the difference between a window that died and a
+person who flipped a face); outbound records carry `session` and `pane`; the
+adapter rotates its journal at a cap and re-reads the marker once a second
+rather than four times. A 0.1 reader takes every 0.2 record: the new fields
+are optional and an unfamiliar `why` is a string it already kept.
 
 **0.1** — the first cut: seven inbound types, six outbound, the answer file,
 the marker, the adapter.

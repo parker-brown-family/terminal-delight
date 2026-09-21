@@ -821,6 +821,10 @@ impl TerminalView {
                     if let Some(line) = self.wb_compose.as_mut() {
                         line.apply(edit);
                     }
+                    // A recalled message that has been edited is a draft of
+                    // its own; up and down walk its rows from here, not the
+                    // history, or the edit would be thrown away by an arrow.
+                    self.wb_recall = None;
                 }
                 None => {
                     if crate::workbench::types_a_character(
@@ -833,6 +837,7 @@ impl TerminalView {
                             (self.wb_compose.as_mut(), ks.key_char.as_deref())
                         {
                             line.insert(c);
+                            self.wb_recall = None;
                         }
                     }
                 }
@@ -1090,7 +1095,7 @@ impl TerminalView {
         if let (Some(key), Some(pane)) = (crate::surfacefeed::session(), self.pane_id) {
             let _ = crate::surfacefeed::journal_event(
                 &crate::surfacefeed::outbound_path(key, pane),
-                &record.to_json(crate::surfacefeed::now_ms()),
+                &record.to_json(crate::surfacefeed::now_ms(), key, pane),
             );
         }
     }
@@ -1131,8 +1136,8 @@ impl TerminalView {
                         );
                     }
                 }
-                Effect::Reply { text } => {
-                    if let Some(s) = crate::channel::reply_surface(&text, now) {
+                Effect::Reply { text, n } => {
+                    if let Some(s) = crate::channel::reply_surface(&text, now, n) {
                         let id = s.id.clone();
                         self.present(
                             Post {
@@ -1167,11 +1172,7 @@ impl TerminalView {
         };
         let open = self.bench.face() == crate::workbench::Face::Workbench && self.wb_on_screen;
         let now = crate::surfacefeed::now_ms();
-        let due = match self.wb_beacon {
-            Some((was, at)) => was != open || now.saturating_sub(at) >= 1_000,
-            None => true,
-        };
-        if !due {
+        if !crate::channel::beacon_due(self.wb_beacon, open, now) {
             return;
         }
         if let Err(err) = crate::surfacefeed::write_marker(&dir, open, now) {
@@ -1994,8 +1995,21 @@ impl TerminalView {
         // this`, so from option five onward the two lists disagree by one and
         // an answer sent by option index lands on the wrong row. See
         // [`crate::workbench::nav_index`].
-        let submit = match self.bench.selected().map(|s| &s.kind) {
-            Some(crate::surface::Kind::Question(q)) => q.submit,
+        //
+        // NOT for a card the channel carried. Its Submit sits after the
+        // options by construction, so option index and navigation index are
+        // the same list, and `nav_index` would push the Submit slot one past
+        // the end — `ctl bench choose 4` on a three-option multi-select was
+        // refused as "no option 5".
+        let card = self
+            .bench
+            .selected()
+            .or_else(|| self.bench.waiting_question());
+        let hook = card
+            .map(|s| s.id.clone())
+            .is_some_and(|id| self.wb_channel.owns(&id).is_some());
+        let submit = match card.map(|s| &s.kind) {
+            Some(crate::surface::Kind::Question(q)) if !hook => q.submit,
             _ => None,
         };
         let nav = crate::workbench::nav_index(index, submit);

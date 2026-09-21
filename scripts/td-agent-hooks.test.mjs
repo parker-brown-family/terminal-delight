@@ -73,7 +73,7 @@ test('a prompt, a reply and a notification each become one record', () => {
   assert.equal(got[0].type, 'prompt');
   assert.equal(got[0].text, 'fix the bug');
   assert.equal(got[0].prompt_id, 'p1');
-  assert.equal(got[0].td, '0.1');
+  assert.equal(got[0].td, '0.2');
   assert.equal(typeof got[0].at_ms, 'number');
   assert.equal(got[1].type, 'reply');
   assert.equal(got[1].text, 'done');
@@ -96,7 +96,48 @@ test('a question with no bench open is recorded whole and released at once', () 
   assert.deepEqual(got[0].questions, question.tool_input.questions, 'verbatim, previews included');
   assert.equal(typeof got[0].deadline_ms, 'number');
   assert.equal(got[1].type, 'released');
-  assert.equal(got[1].why, 'no-bench');
+  assert.equal(got[1].why, 'missing', 'no marker at all: no window of this build has the pane');
+  assert.equal(typeof got[1].at_ms, 'number', 'a release says when');
+});
+
+test('a bench that closes mid-wait releases the picker as closed, not stale', async () => {
+  const { env, dir } = scratch();
+  mkdirSync(dir, { recursive: true });
+  const write = (face) => writeFileSync(join(dir, 'bench.json'), JSON.stringify({ td: '0.2', face, at_ms: Date.now(), window: 1 }));
+  write('workbench');
+  const started = Date.now();
+  const child = spawn('bash', [script], { env, stdio: ['pipe', 'pipe', 'pipe'] });
+  let stdout = '';
+  child.stdout.on('data', (d) => { stdout += d; });
+  child.stdin.end(JSON.stringify(question));
+  // The person flips the pane back to the terminal face (or switches tabs):
+  // the window rewrites the marker with a fresh clock and the other face.
+  const keep = setInterval(() => write(Date.now() - started > 600 ? 'terminal' : 'workbench'), 200);
+  const code = await new Promise((r) => child.on('close', r));
+  clearInterval(keep);
+  assert.equal(code, 0);
+  assert.equal(stdout, '');
+  const took = Date.now() - started;
+  assert.ok(took < 3500, `released on the next marker read, not at the age limit: ${took}ms`);
+  const last = lines(dir).at(-1);
+  assert.equal(last.type, 'released');
+  assert.equal(last.why, 'closed');
+});
+
+test('the journal rotates at the cap, under the same lock the appends take', () => {
+  const { env, dir } = scratch();
+  mkdirSync(dir, { recursive: true });
+  const p = join(dir, 'inbound.jsonl');
+  // A journal already past a tiny cap.
+  writeFileSync(p, JSON.stringify({ td: '0.2', type: 'reply', text: 'x'.repeat(600) }) + '\n');
+  const r = run({ session_id: 's1', hook_event_name: 'UserPromptSubmit', prompt: 'after the roll' }, env, { TD_INBOUND_CAP: '500' });
+  assert.equal(r.status, 0);
+  assert.ok(existsSync(p + '.1'), 'the old journal moved aside');
+  const now = lines(dir);
+  assert.equal(now.length, 1, 'the new journal holds only the new record');
+  assert.equal(now[0].text, 'after the roll');
+  const old = readFileSync(p + '.1', 'utf8').trim().split('\n');
+  assert.equal(old.length, 1);
 });
 
 test('with a bench open the hook waits, and the bench\'s answer becomes the pre-answer', async () => {
@@ -168,11 +209,11 @@ test('a terminal-face marker is not a bench, and neither is a marker from the fu
   writeFileSync(join(dir, 'bench.json'), JSON.stringify({ td: '0.1', face: 'terminal', at_ms: Date.now(), window: 1 }));
   assert.equal(lines(dir).length, 0);
   let r = run(question, env);
-  assert.equal(lines(dir).at(-1).why, 'no-bench');
+  assert.equal(lines(dir).at(-1).why, 'closed');
   assert.ok(r.ms < 3000);
   writeFileSync(join(dir, 'bench.json'), JSON.stringify({ td: '0.1', face: 'workbench', at_ms: Date.now() + 60_000, window: 1 }));
   r = run(question, env);
-  assert.equal(lines(dir).at(-1).why, 'no-bench');
+  assert.equal(lines(dir).at(-1).why, 'stale');
   assert.ok(r.ms < 3000);
 });
 

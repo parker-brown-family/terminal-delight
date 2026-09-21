@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # td-agent-hooks — Claude Code hook adapter for Terminal Delight's agent
-# channel (TDAC 0.1, docs/spec/td-agent-channel.md).
+# channel (TDAC 0.2, docs/spec/td-agent-channel.md).
 #
 # One script for five events. It turns what the harness hands a hook into
 # records in the pane's mailbox, and on a question it can HOLD the picker and
@@ -17,11 +17,21 @@
 # mailbox: missing jq, no TD_SESSION, an unwritable directory — silent exit.
 #
 # The wait on a question is bounded twice: by the window's marker
-# (`bench.json`, fresh within four seconds and saying the bench is the face on
-# screen) and by TD_ASK_WAIT_S (default 540, under the harness's own 600-second
-# default timeout for a command hook, so the harness never kills us first).
-# With no fresh marker the hook returns at once and the picker paints exactly
-# as it did before this script existed.
+# (`bench.json`, saying the bench is the face on screen and written within
+# four seconds) and by TD_ASK_WAIT_S (default 540, under the harness's own
+# 600-second default timeout for a command hook, so the harness never kills
+# us first). With no such marker the hook returns at once and the picker
+# paints exactly as it did before this script existed. Every way out is a
+# `released` record with its reason:
+#
+#   answered  the bench wrote the answer file; the pre-answer went to stdout
+#   missing   no marker at all — no window of this build has this pane
+#   closed    the marker says the bench is not the face on screen
+#   stale     the marker's clock is more than four seconds off
+#   timeout   TD_ASK_WAIT_S ran out while the bench stayed open
+#
+# The journal rotates at TD_INBOUND_CAP bytes (default 2 MiB) to `.1`; the
+# window reads by offset and treats a shrunken file as a fresh start.
 #
 # Installed to ~/.local/bin by scripts/install-agent-hooks.sh.
 set -u
@@ -38,17 +48,27 @@ case "$state" in /*) ;; *) state="$HOME/.local/state";; esac
 dir="$state/terminal-delight/surfaces/$session/$TD_PANE_ID"
 mkdir -p "$dir" 2>/dev/null || exit 0
 inbound="$dir/inbound.jsonl"
+cap="${TD_INBOUND_CAP:-2097152}"
+case "$cap" in ''|*[!0-9]*) cap=2097152;; esac
 
 now_ms() { date +%s%3N; }
 
 # One line, under an advisory lock: a question with previews is longer than a
-# pipe buffer, and two hooks can fire inside one second.
+# pipe buffer, and two hooks can fire inside one second. The rotation happens
+# under the same lock, so no writer appends to a file another just moved.
 emit() {
   [ -n "$1" ] || return 0
   (
     flock -w 2 9 2>/dev/null || true
-    printf '%s\n' "$1" >&9
-  ) 9>>"$inbound" 2>/dev/null || true
+    if [ -f "$inbound" ]; then
+      size="$(stat -c %s "$inbound" 2>/dev/null || echo 0)"
+      case "$size" in ''|*[!0-9]*) size=0;; esac
+      if [ "$size" -ge "$cap" ]; then
+        mv -f "$inbound" "$inbound.1" 2>/dev/null || true
+      fi
+    fi
+    printf '%s\n' "$1" >>"$inbound"
+  ) 9>>"$inbound.lock" 2>/dev/null || true
 }
 
 field() { jq -r "$1 // empty" <<<"$payload" 2>/dev/null; }
@@ -61,17 +81,17 @@ at="$(now_ms)"
 case "$ev" in
   UserPromptSubmit)
     emit "$(jq -c --argjson at "$at" --argjson pid "$pid" \
-      '{td:"0.1",type:"prompt",at_ms:$at,pid:$pid,session_id:(.session_id//null),prompt_id:(.prompt_id//null),text:(.prompt//null)}' \
+      '{td:"0.2",type:"prompt",at_ms:$at,pid:$pid,session_id:(.session_id//null),prompt_id:(.prompt_id//null),text:(.prompt//null)}' \
       <<<"$payload" 2>/dev/null)"
     ;;
   Stop)
     emit "$(jq -c --argjson at "$at" --argjson pid "$pid" \
-      '{td:"0.1",type:"reply",at_ms:$at,pid:$pid,session_id:(.session_id//null),text:(.last_assistant_message//null)}' \
+      '{td:"0.2",type:"reply",at_ms:$at,pid:$pid,session_id:(.session_id//null),text:(.last_assistant_message//null)}' \
       <<<"$payload" 2>/dev/null)"
     ;;
   Notification)
     emit "$(jq -c --argjson at "$at" --argjson pid "$pid" \
-      '{td:"0.1",type:"notify",at_ms:$at,pid:$pid,session_id:(.session_id//null),notification_type:(.notification_type//null),message:(.message//null)}' \
+      '{td:"0.2",type:"notify",at_ms:$at,pid:$pid,session_id:(.session_id//null),notification_type:(.notification_type//null),message:(.message//null)}' \
       <<<"$payload" 2>/dev/null)"
     ;;
   PostToolUse)
@@ -79,7 +99,7 @@ case "$ev" in
     tuid="$(field '.tool_use_id')"
     [ -n "$tuid" ] || exit 0
     emit "$(jq -c --argjson at "$at" --argjson pid "$pid" --arg t "$tuid" \
-      '{td:"0.1",type:"answered",at_ms:$at,pid:$pid,tool_use_id:$t,answers:(.tool_response//null)}' \
+      '{td:"0.2",type:"answered",at_ms:$at,pid:$pid,tool_use_id:$t,answers:(.tool_response//null)}' \
       <<<"$payload" 2>/dev/null)"
     ;;
   PreToolUse)
@@ -90,38 +110,42 @@ case "$ev" in
     case "$wait_s" in ''|*[!0-9]*) wait_s=540;; esac
     deadline=$(( at + wait_s * 1000 ))
     emit "$(jq -c --argjson at "$at" --argjson pid "$pid" --arg t "$tuid" --argjson dl "$deadline" \
-      '{td:"0.1",type:"question",at_ms:$at,pid:$pid,session_id:(.session_id//null),tool_use_id:$t,questions:(.tool_input.questions//[]),deadline_ms:$dl}' \
+      '{td:"0.2",type:"question",at_ms:$at,pid:$pid,session_id:(.session_id//null),tool_use_id:$t,questions:(.tool_input.questions//[]),deadline_ms:$dl}' \
       <<<"$payload" 2>/dev/null)"
 
     marker="$dir/bench.json"
-    fresh() {
-      [ -f "$marker" ] || return 1
+    # Why the marker does not license a wait — or "" when it does.
+    unfresh() {
+      [ -f "$marker" ] || { echo missing; return; }
       local face at_ms n
       face="$(jq -r '.face // empty' "$marker" 2>/dev/null)"
-      [ "$face" = workbench ] || return 1
+      [ "$face" = workbench ] || { echo closed; return; }
       at_ms="$(jq -r '.at_ms // empty' "$marker" 2>/dev/null)"
-      case "$at_ms" in ''|*[!0-9]*) return 1;; esac
+      case "$at_ms" in ''|*[!0-9]*) echo stale; return;; esac
       n="$(now_ms)"
-      [ $(( n - at_ms )) -lt 4000 ] && [ $(( at_ms - n )) -lt 4000 ]
+      if [ $(( n - at_ms )) -lt 4000 ] && [ $(( at_ms - n )) -lt 4000 ]; then echo ""; else echo stale; fi
     }
     released() {
-      emit "$(jq -cn --arg t "$tuid" --arg w "$1" '{td:"0.1",type:"released",tool_use_id:$t,why:$w}')"
+      emit "$(jq -cn --argjson at "$(now_ms)" --arg t "$tuid" --arg w "$1" '{td:"0.2",type:"released",at_ms:$at,tool_use_id:$t,why:$w}')"
     }
-    if ! fresh; then
-      released no-bench
+    why="$(unfresh)"
+    if [ -n "$why" ]; then
+      released "$why"
       exit 0
     fi
-    emit "$(jq -cn --arg t "$tuid" --argjson u "$deadline" '{td:"0.1",type:"waiting",tool_use_id:$t,until_ms:$u}')"
+    emit "$(jq -cn --argjson at "$(now_ms)" --arg t "$tuid" --argjson u "$deadline" '{td:"0.2",type:"waiting",at_ms:$at,tool_use_id:$t,until_ms:$u}')"
     # The same filter the window applies to the id, so both sides name one file.
     key="$(printf '%s' "$tuid" | tr -cd 'A-Za-z0-9_-' | cut -c1-96)"
     ans="$dir/answers/$key.json"
+    tick=0
     while :; do
       if [ -f "$ans" ]; then
         answers="$(jq -c '.answers // empty' "$ans" 2>/dev/null)"
         if [ -n "$answers" ] && [ "$answers" != null ]; then
           released answered
           # The harness's own decision shape: the tool input, plus the answers,
-          # and the picker never paints. Measured against Claude Code 2.1.274.
+          # and the picker never paints. Measured against Claude Code 2.1.274,
+          # single- and multi-select (labels joined by ", ").
           jq -c --argjson a "$answers" \
             '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"allow",updatedInput:((.tool_input//{}) + {answers:$a})}}' \
             <<<"$payload" 2>/dev/null
@@ -132,9 +156,16 @@ case "$ev" in
         released timeout
         exit 0
       fi
-      if ! fresh; then
-        released stale
-        exit 0
+      # The marker is re-read once a second; the answer file four times a
+      # second. A window that dies is noticed inside the marker's own four
+      # seconds either way, and this halves the jq spawns while waiting.
+      tick=$(( (tick + 1) % 4 ))
+      if [ "$tick" -eq 0 ]; then
+        why="$(unfresh)"
+        if [ -n "$why" ]; then
+          released "$why"
+          exit 0
+        fi
       fi
       sleep 0.25
     done

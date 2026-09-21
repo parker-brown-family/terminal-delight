@@ -34,7 +34,7 @@
 //! no hooks, an older window — the bench falls back to the screen and to keys
 //! and **says so on the card**.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::{json, Map, Value};
 
@@ -43,7 +43,17 @@ use crate::surface::{
 };
 
 /// The channel's own version, carried on every record the window writes.
-pub const TDAC_VERSION: &str = "0.1";
+///
+/// 0.2 (2026-09-21): `at_ms` on the hook's `waiting` and `released` records,
+/// `released.why` gains `closed` and `missing`, outbound records carry
+/// `session` and `pane`, and the adapter rotates its journal. All additive.
+pub const TDAC_VERSION: &str = "0.2";
+
+/// How often the window refreshes a pane's marker while its bench is OPEN.
+/// Closed benches write once, on the change, and never again: a closed face
+/// is not a claim that ages, and twenty panes at one hertz was disk churn for
+/// a fact that only changes when a person flips a face.
+pub const BEACON_MS: u64 = 1_000;
 
 /// How recently the window must have refreshed a pane's marker for a hook to
 /// hold a picker on the strength of it — and for how long a hook keeps
@@ -331,10 +341,15 @@ pub enum Outbound {
 }
 
 impl Outbound {
-    pub fn to_json(&self, at_ms: u64) -> Value {
+    /// The journal line. `session` and `pane` name the mailbox it was written
+    /// in, so a reader that multiplexes many panes — a relay for another
+    /// device, say — needs nothing from the path the line was found at.
+    pub fn to_json(&self, at_ms: u64, session: &str, pane: u64) -> Value {
         let mut m = Map::new();
         m.insert("td".into(), json!(TDAC_VERSION));
         m.insert("at_ms".into(), json!(at_ms));
+        m.insert("session".into(), json!(session));
+        m.insert("pane".into(), json!(pane));
         match self {
             Outbound::Say { id, text, delivery } => {
                 m.insert("type".into(), json!("say"));
@@ -412,6 +427,20 @@ pub fn route_for(
 // ---------------------------------------------------------------------------
 // the marker
 // ---------------------------------------------------------------------------
+
+/// Is it time to write the marker again?
+///
+/// `prev` is the last marker this pane wrote — whether its bench was open,
+/// and when. An open bench refreshes every [`BEACON_MS`] so a hook can tell a
+/// live window from a dead one; a closed bench writes on the change only,
+/// because "terminal" does not go stale — the hook reads the face before it
+/// reads the clock.
+pub fn beacon_due(prev: Option<(bool, u64)>, open: bool, now_ms: u64) -> bool {
+    match prev {
+        None => true,
+        Some((was, at)) => was != open || (open && now_ms.saturating_sub(at) >= BEACON_MS),
+    }
+}
 
 /// The window's liveness marker for one pane.
 pub fn marker(bench_open: bool, at_ms: u64, window_pid: u32) -> Value {
@@ -623,7 +652,8 @@ pub enum Effect {
     /// Put these on the bench (present, or re-present with new state).
     Present(Vec<Surface>),
     /// Present the agent's reply as a response, because none arrived itself.
-    Reply { text: String },
+    /// `n` counts this pane's hook replies, so two in one millisecond are two.
+    Reply { text: String, n: u32 },
     /// Recorded; nothing to draw.
     Nothing,
 }
@@ -662,6 +692,12 @@ pub struct State {
     /// Screen cursors the reader has supplied for open hook questions, so the
     /// keys road knows where the picker's highlight is.
     cursors: BTreeMap<SurfaceId, (usize, Option<usize>)>,
+    /// Rounds the harness reported answered BEFORE their question reached us —
+    /// a journal replayed from an offset, two hooks racing. The question, when
+    /// it arrives, is presented already closed rather than as a live ask.
+    closed_early: BTreeSet<String>,
+    /// How many hook replies this pane has presented, for their ids.
+    replies: u32,
 }
 
 impl State {
@@ -691,11 +727,24 @@ impl State {
                 if let Some(r) = self.rounds.iter().find(|r| r.tool_use_id == tool_use_id) {
                     return Effect::Present(r.surfaces(now_ms));
                 }
-                let round = Round::new(tool_use_id, at_ms, questions);
+                let mut round = Round::new(tool_use_id, at_ms, questions);
+                // Its answer got here first: a settled question, not a live one.
+                if self.closed_early.remove(&round.tool_use_id) {
+                    round.closed = true;
+                }
                 let surfaces = round.surfaces(now_ms);
                 self.rounds.push(round);
                 if self.rounds.len() > ROUNDS_KEPT {
-                    let gone = self.rounds.remove(0);
+                    // Make room by dropping the oldest SETTLED round. Only when
+                    // every round is still open does the oldest open one go —
+                    // a bench holding sixteen unanswered questions has a
+                    // different problem than this cap can solve.
+                    let at = self
+                        .rounds
+                        .iter()
+                        .position(|r| r.closed || r.sent)
+                        .unwrap_or(0);
+                    let gone = self.rounds.remove(at);
                     for i in 0..gone.questions.len() {
                         self.cursors.remove(&gone.surface_id(i));
                     }
@@ -723,6 +772,10 @@ impl State {
                 answers,
             } => {
                 let Some(r) = self.round_mut(&tool_use_id) else {
+                    // Answered before asked, as far as this reader has seen.
+                    // Remembered, so the question is not presented live when
+                    // its record catches up.
+                    self.closed_early.insert(tool_use_id);
                     return Effect::Nothing;
                 };
                 r.closed = true;
@@ -751,7 +804,11 @@ impl State {
             }
             Inbound::Reply { text, .. } => match text {
                 Some(t) if !t.trim().is_empty() && self.responses_since_prompt == 0 => {
-                    Effect::Reply { text: t }
+                    self.replies += 1;
+                    Effect::Reply {
+                        text: t,
+                        n: self.replies,
+                    }
                 }
                 _ => Effect::Nothing,
             },
@@ -943,7 +1000,10 @@ fn fold(s: &str) -> String {
 }
 
 /// A hook-carried reply as a TDSP `response`, when the agent sent none.
-pub fn reply_surface(text: &str, now_ms: u64) -> Option<Surface> {
+///
+/// `n` is the pane's own count of these (see [`Effect::Reply`]); with the
+/// clock it makes the id unique even when two replies land in one millisecond.
+pub fn reply_surface(text: &str, now_ms: u64, n: u32) -> Option<Surface> {
     let title: String = text
         .lines()
         .map(str::trim)
@@ -955,7 +1015,7 @@ pub fn reply_surface(text: &str, now_ms: u64) -> Option<Surface> {
     let value = json!({
         "td": crate::surface::TDSP_VERSION,
         "kind": "response",
-        "id": format!("reply-hook-{now_ms}"),
+        "id": format!("reply-hook-{now_ms}-{n}"),
         "title": title,
         "model": { "layman": text },
     });
@@ -1380,10 +1440,11 @@ mod tests {
                 4
             ),
             Effect::Reply {
-                text: "done again".into()
+                text: "done again".into(),
+                n: 1
             }
         );
-        let s = reply_surface("done again\nwith detail", 4).expect("a response");
+        let s = reply_surface("done again\nwith detail", 4, 1).expect("a response");
         assert_eq!(s.origin, Origin::Hook);
         assert_eq!(s.title, "done again");
         assert!(matches!(s.kind, Kind::Response(_)));
@@ -1421,25 +1482,30 @@ mod tests {
             text: "hi".into(),
             delivery: Delivery::Paste,
         }
-        .to_json(9);
+        .to_json(9, "attention", 22);
         assert_eq!(say["type"], "say");
         assert_eq!(say["delivery"], "paste");
         assert_eq!(say["at_ms"], 9);
+        // The mailbox it was written in travels on the line, so a reader that
+        // multiplexes panes needs nothing from the path it found it at.
+        assert_eq!(say["session"], "attention");
+        assert_eq!(say["pane"], 22);
+        assert_eq!(say["td"], TDAC_VERSION);
         let keys = Outbound::Keys {
             bytes: vec![0x1b, b'[', b'B', b'\r'],
             why: "picker painted".into(),
         }
-        .to_json(9);
+        .to_json(9, "attention", 22);
         assert_eq!(keys["bytes_hex"], "1b5b420d");
         assert_eq!(keys["why"], "picker painted");
-        assert_eq!(Outbound::End.to_json(1)["type"], "end");
-        assert_eq!(Outbound::Interrupt.to_json(1)["type"], "interrupt");
+        assert_eq!(Outbound::End.to_json(1, "s", 1)["type"], "end");
+        assert_eq!(Outbound::Interrupt.to_json(1, "s", 1)["type"], "interrupt");
         let ans = Outbound::Answer {
             tool_use_id: "t".into(),
             answers: Map::new(),
             route: Route::File,
         }
-        .to_json(1);
+        .to_json(1, "s", 1);
         assert_eq!(ans["route"], "file");
     }
 
@@ -1448,5 +1514,359 @@ mod tests {
         assert_eq!(file_key("toolu_01ABC"), "toolu_01ABC");
         assert_eq!(file_key("../../etc/passwd"), "etcpasswd");
         assert_eq!(file_key("a b"), "ab");
+    }
+
+    #[test]
+    fn an_answer_that_arrives_before_its_question_closes_the_round_on_arrival() {
+        // A journal replayed from an offset, or two hooks racing: the harness's
+        // `answered` can reach the reader before the `question` it answers.
+        // Presenting that question live would ask a person something already
+        // settled, so the answer is remembered and the question arrives closed.
+        let mut st = State::new();
+        assert_eq!(
+            st.take(
+                Inbound::Answered {
+                    tool_use_id: "toolu_01ABC".into(),
+                    answers: Some(json!({"answers": {"Which drink?": "Tea"}})),
+                },
+                1
+            ),
+            Effect::Nothing
+        );
+        assert!(!st.has_open_question());
+        let Effect::Present(cards) = st.take(Inbound::parse(&question_event()).unwrap(), 2) else {
+            panic!()
+        };
+        assert_eq!(cards.len(), 2);
+        assert!(!st.has_open_question(), "closed on arrival");
+        assert!(matches!(st.press(&cards[0].id, 0, 3), Press::Refused(_)));
+        assert_eq!(
+            st.matching("Which drink?"),
+            None,
+            "not the screen reader's either"
+        );
+    }
+
+    #[test]
+    fn the_cap_evicts_a_settled_round_before_an_open_one() {
+        let mut st = State::new();
+        let round = |id: &str| Inbound::Question {
+            at_ms: None,
+            tool_use_id: id.into(),
+            questions: vec![Asked {
+                question: format!("Q for {id}?"),
+                header: None,
+                multi: false,
+                options: vec![
+                    AskedOption {
+                        label: "a".into(),
+                        description: None,
+                        preview: None,
+                    },
+                    AskedOption {
+                        label: "b".into(),
+                        description: None,
+                        preview: None,
+                    },
+                ],
+            }],
+            deadline_ms: None,
+        };
+        // The oldest round stays OPEN; the second is answered by the harness.
+        st.take(round("open-0"), 1);
+        st.take(round("done-1"), 2);
+        st.take(
+            Inbound::Answered {
+                tool_use_id: "done-1".into(),
+                answers: None,
+            },
+            3,
+        );
+        for i in 2..=ROUNDS_KEPT {
+            st.take(round(&format!("r-{i}")), 10 + i as u64);
+        }
+        // One past the cap: the settled one goes, the open one is still here.
+        let open = SurfaceId("ask-hook-open-0-0".into());
+        let done = SurfaceId("ask-hook-done-1-0".into());
+        assert!(
+            st.owns(&open).is_some(),
+            "an open question outlives the cap"
+        );
+        assert!(st.owns(&done).is_none(), "the settled round made room");
+    }
+
+    #[test]
+    fn replaying_the_journal_leaves_the_state_where_it_was() {
+        // A window that restarts re-reads the journal from the start. Every
+        // record is idempotent: the same question is one round, a waiting
+        // whose deadline has passed opens no file road, and a round the bench
+        // already answered refuses a second press.
+        let journal = |st: &mut State, now: u64| {
+            st.take(Inbound::parse(&question_event()).unwrap(), now);
+            st.take(
+                Inbound::Waiting {
+                    tool_use_id: "toolu_01ABC".into(),
+                    until_ms: 5_000,
+                },
+                now,
+            );
+        };
+        let mut st = State::new();
+        journal(&mut st, 1_000);
+        let single = SurfaceId("ask-hook-toolu_01ABC-0".into());
+        let multi = SurfaceId("ask-hook-toolu_01ABC-1".into());
+        assert_eq!(st.press(&single, 1, 2_000), Press::Recorded);
+        assert_eq!(st.press(&multi, 0, 2_000), Press::Recorded);
+        assert!(matches!(
+            st.press(&multi, 2, 2_000),
+            Press::WriteAnswers { .. }
+        ));
+        let before = st.round_surfaces(&single, 0);
+        st.take(
+            Inbound::Answered {
+                tool_use_id: "toolu_01ABC".into(),
+                answers: None,
+            },
+            3_000,
+        );
+        // The restart: the same records again, long after the hook's deadline.
+        journal(&mut st, 9_000);
+        assert!(
+            !st.has_open_question(),
+            "a replayed question is not a new one"
+        );
+        assert!(matches!(st.press(&single, 0, 9_001), Press::Refused(_)));
+        let after = st.round_surfaces(&single, 0);
+        assert_eq!(before.len(), after.len());
+        for (b, a) in before.iter().zip(&after) {
+            assert_eq!(b.kind, a.kind, "the same cards, answered the same way");
+        }
+        // A fresh reader that only ever saw the replay: the waiting is stale
+        // (its deadline is behind it), so a press would not take the file road.
+        let mut cold = State::new();
+        journal(&mut cold, 9_000);
+        // A single choice with no road but the sentence goes out at once, per
+        // question — there is no round to wait for on that road.
+        assert_eq!(
+            cold.press(&single, 1, 9_001),
+            Press::Sentence {
+                label: "Coffee".into()
+            }
+        );
+        assert_eq!(cold.press(&multi, 0, 9_001), Press::Recorded);
+        assert_eq!(
+            cold.press(&multi, 2, 9_001),
+            Press::Sentence {
+                label: String::new()
+            },
+            "no hook is waiting and no picker painted: a sentence"
+        );
+    }
+
+    #[test]
+    fn two_questions_with_one_text_in_a_round_are_matched_in_order() {
+        // The screen reader matches by words. Two questions that read the
+        // same — an agent asking "Are you sure?" twice — must resolve to the
+        // FIRST unanswered card, then the next once that one is answered.
+        let mut st = State::new();
+        let q = |label: &str| Asked {
+            question: "Are you sure?".into(),
+            header: Some(label.into()),
+            multi: false,
+            options: vec![
+                AskedOption {
+                    label: "yes".into(),
+                    description: None,
+                    preview: None,
+                },
+                AskedOption {
+                    label: "no".into(),
+                    description: None,
+                    preview: None,
+                },
+            ],
+        };
+        st.take(
+            Inbound::Question {
+                at_ms: None,
+                tool_use_id: "twice".into(),
+                questions: vec![q("first"), q("second")],
+                deadline_ms: None,
+            },
+            1,
+        );
+        let first = SurfaceId("ask-hook-twice-0".into());
+        let second = SurfaceId("ask-hook-twice-1".into());
+        assert_eq!(st.matching("Are you sure"), Some(first.clone()));
+        st.saw_cursor(&first, 0, None);
+        assert!(matches!(st.press(&first, 0, 2), Press::Keys { .. }));
+        assert_eq!(st.matching("Are you sure?"), Some(second));
+    }
+
+    #[test]
+    fn the_beacon_refreshes_an_open_bench_and_writes_a_closed_one_once() {
+        assert!(beacon_due(None, false, 0), "the first marker always goes");
+        assert!(beacon_due(None, true, 0));
+        // Open: every BEACON_MS, so a hook can tell a live window from a dead one.
+        assert!(!beacon_due(
+            Some((true, 1_000)),
+            true,
+            1_000 + BEACON_MS - 1
+        ));
+        assert!(beacon_due(Some((true, 1_000)), true, 1_000 + BEACON_MS));
+        // Closed: on the change, and then never — "terminal" does not age.
+        assert!(
+            beacon_due(Some((true, 1_000)), false, 1_001),
+            "the close is written at once"
+        );
+        assert!(!beacon_due(Some((false, 1_000)), false, 1_000 + 60_000));
+        assert!(
+            beacon_due(Some((false, 1_000)), true, 1_001),
+            "and so is the open"
+        );
+    }
+
+    #[test]
+    fn hook_replies_get_distinct_ids_inside_one_millisecond() {
+        let mut st = State::new();
+        let reply = |st: &mut State| {
+            st.take(
+                Inbound::Prompt {
+                    at_ms: None,
+                    prompt_id: None,
+                    text: Some("go".into()),
+                },
+                7,
+            );
+            match st.take(
+                Inbound::Reply {
+                    at_ms: None,
+                    text: Some("done".into()),
+                },
+                7,
+            ) {
+                Effect::Reply { text, n } => reply_surface(&text, 7, n).unwrap().id,
+                other => panic!("{other:?}"),
+            }
+        };
+        let a = reply(&mut st);
+        let b = reply(&mut st);
+        assert_ne!(a, b, "two replies at the same clock are two surfaces");
+        assert_eq!(a.as_str(), "reply-hook-7-1");
+        assert_eq!(b.as_str(), "reply-hook-7-2");
+    }
+
+    /// The real adapter, driven the way the harness drives it, read the way
+    /// the window reads it, answered the way a press answers it. Bash, jq and
+    /// flock have to be on the path — they are on this machine and on CI's
+    /// runner; anywhere else the test says so rather than failing for a reason
+    /// that is not the code's.
+    #[test]
+    fn a_question_round_trips_through_the_real_adapter_and_the_reader() {
+        use std::io::Write;
+        use std::process::{Command, Stdio};
+        let have = Command::new("bash")
+            .args([
+                "-c",
+                "command -v jq >/dev/null && command -v flock >/dev/null",
+            ])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if !have {
+            eprintln!("skipping the adapter round trip: jq or flock is not on the path");
+            return;
+        }
+        let script =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../scripts/td-agent-hooks");
+        let state = std::env::temp_dir().join(format!(
+            "tdac-rt-{}-{}",
+            std::process::id(),
+            crate::surfacefeed::now_ms()
+        ));
+        let dir = state.join("terminal-delight/surfaces/attention/22");
+        std::fs::create_dir_all(&dir).unwrap();
+        let payload = json!({
+            "session_id": "s1", "hook_event_name": "PreToolUse",
+            "tool_name": "AskUserQuestion", "tool_use_id": "toolu_RT1",
+            "tool_input": { "questions": [ { "question": "Which drink?", "header": "Drink",
+                "multiSelect": false,
+                "options": [ {"label": "Tea", "description": "leaves"},
+                             {"label": "Coffee", "description": "beans"} ] } ] }
+        });
+        // The window says its bench is open on this pane, before the hook looks.
+        crate::surfacefeed::write_marker(&dir, true, crate::surfacefeed::now_ms()).unwrap();
+        let mut child = Command::new("bash")
+            .arg(&script)
+            .env_clear()
+            .env("PATH", std::env::var("PATH").unwrap_or_default())
+            .env("HOME", std::env::var("HOME").unwrap_or_default())
+            .env("XDG_STATE_HOME", &state)
+            .env("TD_SESSION", "attention")
+            .env("TD_PANE_ID", "22")
+            .env("TD_ASK_WAIT_S", "20")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn the adapter");
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(payload.to_string().as_bytes())
+            .unwrap();
+        // The window's side: sweep the journal until the question and the
+        // hook's `waiting` are both there, keeping the marker fresh meanwhile.
+        let mut feed = crate::surfacefeed::Feed::new();
+        let mut st = State::new();
+        let mut card = None;
+        let mut waiting = false;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while std::time::Instant::now() < deadline && !(card.is_some() && waiting) {
+            crate::surfacefeed::write_marker(&dir, true, crate::surfacefeed::now_ms()).unwrap();
+            for ev in feed.tail_inbound(&dir) {
+                waiting |= matches!(ev, Inbound::Waiting { .. });
+                if let Effect::Present(cards) = st.take(ev, crate::surfacefeed::now_ms()) {
+                    card = cards.first().map(|c| c.id.clone());
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        let card = card.expect("the question reached the reader");
+        assert!(waiting, "the hook held the picker");
+        assert!(st.has_open_question());
+        // The press takes the file road, because the hook is waiting.
+        match st.press(&card, 1, crate::surfacefeed::now_ms()) {
+            Press::WriteAnswers {
+                tool_use_id,
+                answers,
+            } => {
+                crate::surfacefeed::write_answers(&dir, &tool_use_id, &answers).unwrap();
+            }
+            other => panic!("{other:?}"),
+        }
+        let out = child.wait_with_output().unwrap();
+        assert!(out.status.success(), "the adapter exits 0");
+        let decision: Value =
+            serde_json::from_slice(&out.stdout).expect("the pre-answer on stdout");
+        assert_eq!(
+            decision["hookSpecificOutput"]["permissionDecision"],
+            "allow"
+        );
+        assert_eq!(
+            decision["hookSpecificOutput"]["updatedInput"]["answers"]["Which drink?"],
+            "Coffee"
+        );
+        // And the reader sees the release, with its reason and its clock.
+        let mut released = None;
+        for ev in feed.tail_inbound(&dir) {
+            if let Inbound::Released { why, .. } = &ev {
+                released = Some(why.clone());
+            }
+            st.take(ev, 0);
+        }
+        assert_eq!(released.as_deref(), Some("answered"));
+        let _ = std::fs::remove_dir_all(&state);
     }
 }
