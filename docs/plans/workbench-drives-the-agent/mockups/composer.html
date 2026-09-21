@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Mockup — the workbench composer as a text box</title>
+<style>
+  :root { color-scheme: dark; --bg:#111110; --surface:#1a1a19; --line:#3a3a36;
+          --text:#c3c2b7; --bright:#ffffff; --faint:#55544d; --human:#3987e5;
+          --accent:#c98500; --stop:#d03b3b; --ok:#199e70;
+          --mono: ui-monospace, "JetBrains Mono", Menlo, monospace; }
+  body { margin:0; background:#0b0b0a; color:var(--text); font-family:var(--mono);
+         font-size:13px; padding:26px 22px 70px; }
+  h1 { font-size:17px; color:var(--bright); font-weight:600; margin:0 0 4px; }
+  .sub { color:var(--faint); font-size:11px; margin:0 0 26px; }
+  h2 { font-size:10.5px; letter-spacing:.12em; text-transform:uppercase; color:var(--faint);
+       margin:34px 0 4px; font-weight:500; }
+  .note { color:var(--faint); font-size:11.5px; margin:0 0 12px; max-width:60em; line-height:1.6; }
+  .note b { color:var(--text); }
+
+  /* a pane, drawn at the width Parker reads one */
+  .pane { width:640px; max-width:100%; background:var(--bg); border:1px solid var(--line);
+          border-radius:7px; padding:11px; }
+  .convo { color:var(--faint); font-size:11px; line-height:1.7; padding:4px 4px 12px; }
+
+  .box { border:1px solid rgba(57,135,229,.9); border-radius:7px; background:var(--surface);
+         padding:14px 16px; position:relative; }
+  .draft { line-height:1.62; white-space:pre-wrap; word-break:break-word; color:var(--text); }
+  .sel  { background:rgba(57,135,229,.34); }
+  .caret{ background:rgba(57,135,229,.9); color:var(--bg); }
+  .grip { position:absolute; top:-4px; left:50%; transform:translateX(-50%); width:44px; height:4px;
+          border-radius:3px; background:rgba(57,135,229,.55); cursor:ns-resize; }
+  .foot { display:flex; align-items:center; gap:8px; margin-top:11px;
+          border-top:1px solid rgba(58,58,54,.8); padding-top:9px; font-size:10px; }
+  .pill { padding:2px 7px; border-radius:3px; letter-spacing:.09em; }
+  .pill.live { background:rgba(57,135,229,.16); color:#7fb3f2; }
+  .pill.img  { background:rgba(201,133,0,.18); color:#f0b95f; }
+  .pill.stop { background:rgba(208,59,59,.16); color:#f08a8a; margin-left:auto; }
+  .pill.send { background:rgba(25,158,112,.18); color:#5fd0a4; }
+  .rows { color:var(--faint); }
+
+  /* the completion menu, over the box */
+  .menu { position:absolute; left:16px; bottom:calc(100% + 6px); width:300px; background:#232321;
+          border:1px solid rgba(57,135,229,.6); border-radius:6px; padding:5px 0; font-size:11.5px;
+          box-shadow:0 6px 22px rgba(0,0,0,.6); }
+  .menu .row { padding:4px 11px; display:flex; gap:10px; }
+  .menu .row.on { background:rgba(57,135,229,.22); color:var(--bright); }
+  .menu .row .d { color:var(--faint); margin-left:auto; }
+  .menu .src { padding:4px 11px 2px; color:var(--accent); font-size:9.5px; letter-spacing:.09em; }
+
+  .tag { display:inline-block; font-size:9px; letter-spacing:.09em; padding:2px 6px; border-radius:3px;
+         background:rgba(201,133,0,.18); color:#f0b95f; margin-left:7px; vertical-align:2px; }
+  .cols { display:flex; gap:22px; flex-wrap:wrap; margin-top:14px; }
+  /* the completion menu opens UPWARD out of the box, so its pane needs headroom
+     or it lands on the paragraph above */
+  .cols .pane { padding-top:74px; }
+</style>
+</head>
+<body>
+
+<h1>The workbench composer, once it holds the draft itself</h1>
+<p class="sub">Gate 1 mockup &middot; plain HTML, throwaway &middot; amber = the part that is a proposal rather than a decision</p>
+
+<h2>1 &middot; Resting — a two-line draft, selection live, caret after it</h2>
+<p class="note">Shift+Enter made the second line and the box grew to hold it. The phrase is highlighted by
+a <b>mouse drag</b>; ctrl+c copies it and the agent hears nothing. <b>The whole point of the picture:</b> this is
+an ordinary text box and there is no second copy of these words anywhere.</p>
+<div class="pane">
+  <div class="convo">&nbsp;&nbsp;⏺ Read app/src/workbench.rs (5,619 lines)<br>&nbsp;&nbsp;⏺ The lane mapping is in <i>attention.rs</i>, not the rail…</div>
+  <div class="box">
+    <div class="grip" title="drag to open the box taller"></div>
+    <div class="draft">Look at the attention rail code and tell me whether <span class="sel">the lane mapping can ever report two panes</span> for one agent.
+Check the held-pane case too.<span class="caret">&nbsp;</span></div>
+    <div class="foot">
+      <span class="pill live">DRAFT &middot; NOT SENT</span>
+      <span class="rows">2 lines &middot; 23 words</span>
+      <span class="pill stop">■ STOP THE AGENT</span>
+    </div>
+  </div>
+</div>
+
+<h2>2 &middot; Opened — a thousand words, with room for them</h2>
+<p class="note">Two ways in and they are not alternatives. <b>Drag the grip</b>, or <b>paste a pile of text and it opens
+on its own</b> — Parker: <i>"CLick drag to expand is neat, but it should definitely also AUTO expand if someone is
+dumping a PILE of text in…."</i> It releases on send or escape, and the conversation is underneath the whole time,
+never scrolled away. The ceiling is a number Gate 2 picks; <span class="tag">75% is a guess</span></p>
+<div class="pane">
+  <div class="convo">&nbsp;&nbsp;⏺ The lane mapping is in <i>attention.rs</i>…</div>
+  <div class="box" style="min-height:230px">
+    <div class="grip"></div>
+    <div class="draft">Look at the attention rail code and tell me whether the lane mapping can ever report two panes for one agent.
+
+Specifically: <span class="sel">a pane that has been closed but whose process is still alive</span> — the held state we added in the client-server work. I think the rail reads the live table and the badge reads the saved layout, which would make them disagree exactly for held panes and agree everywhere else, which is why nobody has seen it.
+
+Check the held-pane case, then check whether the tab badge and the row can ever be computed from the same call. If they can't, say why, because that's the finding rather than the fix.<span class="caret">&nbsp;</span></div>
+    <div class="foot">
+      <span class="pill live">DRAFT &middot; NOT SENT</span>
+      <span class="pill img">🖇 1 IMAGE</span>
+      <span class="rows">8 lines &middot; 104 words &middot; all of it on screen</span>
+      <span class="pill stop">■ STOP THE AGENT</span>
+    </div>
+  </div>
+</div>
+
+<h2>3 &middot; The two things the decouple costs, and where they come back</h2>
+<p class="note">Today <code>/mod</code> raises Claude Code's own menu because Claude Code is hearing the keys. It will not be.
+This draws the <b>first</b> of the three shapes in the product doc: the workbench <b>asks</b> the agent for candidates over
+the new channel and draws them itself, so the menu is ours and the answers are the agent's. Gate 2 decides whether
+this is the shape, whether it is worth a round trip, and what happens when the agent does not answer.
+<span class="tag">whole panel is a proposal</span></p>
+<div class="cols">
+  <div class="pane" style="width:370px">
+    <div class="convo">&nbsp;</div>
+    <div class="box">
+      <div class="menu">
+        <div class="src">▲ ASKED THE AGENT · 31ms</div>
+        <div class="row on"><span>/model</span><span class="d">opus 5</span></div>
+        <div class="row"><span>/modified</span><span class="d">files this turn</span></div>
+      </div>
+      <div class="draft">/mod<span class="caret">&nbsp;</span></div>
+      <div class="foot"><span class="pill live">DRAFT &middot; NOT SENT</span><span class="rows">completion is ours, list is theirs</span></div>
+    </div>
+  </div>
+  <div class="pane" style="width:370px">
+    <div class="convo">&nbsp;</div>
+    <div class="box">
+      <div class="menu">
+        <div class="src">▲ YOUR LAST PROMPTS ON THIS PANE</div>
+        <div class="row on"><span>tell me whether the lane mapping…</span></div>
+        <div class="row"><span>run the gates CI runs</span></div>
+      </div>
+      <div class="draft"><span class="caret">&nbsp;</span></div>
+      <div class="foot"><span class="pill live">EMPTY DRAFT &middot; ↑ RECALLS</span><span class="rows">ours, not the agent's history</span></div>
+    </div>
+  </div>
+</div>
+<p class="note">Note the asymmetry, and it is deliberate. <b>Completion has to be the agent's</b> — only it knows its own
+commands. <b>History can be ours</b>, because what we sent is a thing we know, and a history the workbench owns is one
+fewer round trip and one fewer way to hang. If Gate 2 disagrees, this is the panel to argue with.</p>
+
+<h2>4 &middot; What ctrl+c does now</h2>
+<p class="note">Copy. The interrupt is the red control on the strip, which already exists, plus one chord that is not the
+copy chord. Parker: <i>"the person will SHUT DOWN THEIR SESSION ACCIDENTALLy — I ahve had this painpoint in the past!"</i>
+An interrupt you have to aim at is better than a copy that cannot be performed.</p>
+<div class="pane">
+  <div class="box">
+    <div class="draft">the lane mapping can ever report <span class="sel">two panes for one agent</span><span class="caret">&nbsp;</span></div>
+    <div class="foot">
+      <span class="pill send">✓ COPIED — 24 CHARACTERS</span>
+      <span class="rows">the agent heard nothing</span>
+      <span class="pill stop">■ STOP THE AGENT</span>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>
