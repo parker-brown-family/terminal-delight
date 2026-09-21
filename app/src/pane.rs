@@ -2269,6 +2269,16 @@ pub struct TerminalView {
     /// The overview's caption came through the channel, in the harness's own
     /// words. While true the screen latch stops overwriting it.
     wb_asked_by_hook: bool,
+    /// What opened the NEWEST turn, when it was not the person — a background
+    /// task finishing, a peer session talking. `None` is the ordinary state
+    /// and means the newest turn was theirs.
+    ///
+    /// Held beside [`Self::wb_asked`] rather than inside it because the two
+    /// answer different questions and only one of them is about their voice.
+    /// Cleared by the next real prompt, which is the only thing that can
+    /// supersede it: every turn a person types fires the same hook, so a pane
+    /// cannot get stuck saying it was woken once they speak again.
+    wb_woken: Option<crate::channel::Woken>,
     /// What this bench has sent, oldest first, for the up key to recall.
     wb_sent: Vec<String>,
     /// Which sent message the composer is showing, if the person is walking
@@ -3015,6 +3025,7 @@ impl TerminalView {
             // history is the person's own and stays.
             self.wb_channel = crate::channel::State::new();
             self.wb_asked_by_hook = false;
+            self.wb_woken = None;
             self.wb_recall = None;
             // And the surfaces, which is the same argument one step further
             // on. The ask above is cleared because captioning a new agent's
@@ -3548,6 +3559,7 @@ impl TerminalView {
             wb_had_agent: false,
             wb_channel: crate::channel::State::new(),
             wb_asked_by_hook: false,
+            wb_woken: None,
             wb_sent: Vec::new(),
             wb_recall: None,
             wb_beacon: None,
@@ -3700,6 +3712,15 @@ impl TerminalView {
     /// nothing.
     pub fn asked_latched(&self) -> Vec<String> {
         self.wb_asked.clone()
+    }
+
+    /// What woke this pane's agent, when the newest turn was not the person's.
+    ///
+    /// `None` means they opened it themselves — the ordinary case, and the
+    /// only one in which [`Self::asked_latched`] is a caption for the reply
+    /// standing underneath it.
+    pub fn woken_latched(&self) -> Option<crate::channel::Woken> {
+        self.wb_woken.clone()
     }
 
     /// Parse this pane's live status line into an [`crate::hud::AgentStatus`] for

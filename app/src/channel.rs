@@ -659,11 +659,120 @@ impl Round {
     }
 }
 
+/// A turn the HARNESS opened, in nobody's voice but its own.
+///
+/// Claude Code fires `UserPromptSubmit` for turns the person never typed — a
+/// background task finishing, a sibling session's message, a scheduled
+/// wake-up — and hands the hook the whole envelope as `prompt`. The hook
+/// cannot tell those from typing, so the bench drew a tool-use id and a
+/// `/tmp` path under the word YOU. Parker, on a pane doing exactly that:
+/// *"BUG! I can be certain that I did not type any of this crazy machine
+/// talk!"*
+///
+/// Counted across this box's mailboxes the day it was found: of 126 records
+/// typed `prompt`, 59 were task notifications and 10 were a peer session
+/// talking. More than half of everything the bench called YOU was written by
+/// a machine.
+///
+/// The envelope is KEPT rather than dropped. Something did open the turn, and
+/// a caption that fell back to the person's older words would be the same lie
+/// pointing the other way — the reply underneath is real, and it is an answer
+/// to this.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum Woken {
+    /// A background task or command this agent started has finished.
+    /// `summary` is the harness's own sentence for it, where it gave one.
+    Task { summary: Option<String> },
+    /// Another session sent this one a message. `from` is the peer's NAME
+    /// where the envelope carried one, never the socket path — an address is
+    /// not a who.
+    Peer { from: Option<String> },
+    /// An envelope this build has no name for. The tag travels, because a
+    /// wake-up shape nobody here has met is itself worth drawing: a variant
+    /// carrying nothing would be indistinguishable from not having looked.
+    Other { tag: String },
+}
+
+/// The text inside the first `<name>…</name>` of an envelope, trimmed.
+/// `None` when it is absent OR empty — an element that said nothing and an
+/// element that was not there are both "the harness gave no sentence".
+fn element(t: &str, name: &str) -> Option<String> {
+    let open = format!("<{name}>");
+    let close = format!("</{name}>");
+    let from = t.find(&open)? + open.len();
+    let to = t[from..].find(&close)? + from;
+    let v = t[from..to].trim();
+    (!v.is_empty()).then(|| v.to_string())
+}
+
+/// A double-quoted attribute off an envelope's opening tag.
+fn attribute(t: &str, name: &str) -> Option<String> {
+    let key = format!("{name}=\"");
+    let from = t.find(&key)? + key.len();
+    let to = t[from..].find('"')? + from;
+    let v = t[from..to].trim();
+    (!v.is_empty()).then(|| v.to_string())
+}
+
+/// Did the HARNESS open this turn rather than the person? The envelope, if so.
+///
+/// The whole text must BE one element — it opens with a tag and ends with that
+/// tag's close — because a person QUOTING a notification inside a message of
+/// their own is still the person talking, and a substring match would eat
+/// their words. Everything this rule gets wrong should cost a label, never a
+/// sentence.
+///
+/// Two envelopes are known by name; any other whose tag is KEBAB is taken as
+/// one this build has not met. The hyphen is the entire discriminator and it
+/// is deliberately crude: every wrapper the harness injects carries one
+/// (`task-notification`, `cross-session-message`, `system-reminder`,
+/// `local-command-stdout`), and no bare HTML element a person might paste
+/// does. A wake-up spelled as a single word is therefore MISSED — which
+/// leaves the behaviour that was already shipping instead of swallowing a
+/// real message, and missing is the safe direction for a rule about whose
+/// words these are.
+pub fn woken_by(text: &str) -> Option<Woken> {
+    let t = text.trim();
+    let rest = t.strip_prefix('<')?;
+    let tag: String = rest
+        .chars()
+        .take_while(|c| c.is_ascii_lowercase() || *c == '-')
+        .collect();
+    if !tag.contains('-') {
+        return None;
+    }
+    // The tag has to END where it stops being the tag: `>` closes the element,
+    // whitespace opens its attributes. Without this, `<task-notifications>`
+    // and `<task-notification-v2>` would both read as the name they merely
+    // begin with, and the summary drawn would be another envelope's.
+    let after = &rest[tag.len()..];
+    if !(after.starts_with('>') || after.starts_with(char::is_whitespace)) {
+        return None;
+    }
+    if !t.ends_with(&format!("</{tag}>")) {
+        return None;
+    }
+    Some(match tag.as_str() {
+        "task-notification" => Woken::Task {
+            summary: element(t, "summary"),
+        },
+        "cross-session-message" => Woken::Peer {
+            from: attribute(t, "from-name").or_else(|| attribute(t, "from")),
+        },
+        _ => Woken::Other { tag },
+    })
+}
+
 /// What the bench should do about one inbound record.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Effect {
     /// Caption the overview with the person's exact words.
     Asked { text: String },
+    /// The harness opened this turn, not the person. Caption the reply with
+    /// what woke it, and leave whatever they last said alone — including the
+    /// screen latch, which is a pane's only caption when no real prompt has
+    /// come through the channel yet.
+    Woken(Woken),
     /// Put these on the bench (present, or re-present with new state).
     Present(Vec<Surface>),
     /// Present the agent's reply as a response, because none arrived itself.
@@ -727,7 +836,13 @@ impl State {
             Inbound::Prompt { text, .. } => {
                 self.responses_since_prompt = 0;
                 match text {
-                    Some(t) if !t.trim().is_empty() => Effect::Asked { text: t },
+                    // A turn is a turn whoever opened it, so the counter above
+                    // resets either way — what changes is whose voice the
+                    // caption is drawn in.
+                    Some(t) if !t.trim().is_empty() => match woken_by(&t) {
+                        Some(w) => Effect::Woken(w),
+                        None => Effect::Asked { text: t },
+                    },
                     _ => Effect::Nothing,
                 }
             }
@@ -1057,6 +1172,127 @@ mod tests {
             ],
             "deadline_ms": 600000
         })
+    }
+
+    /// Verbatim off this box's own mailboxes, newlines and all — the record
+    /// that put a tool-use id under the word YOU.
+    const A_REAL_TASK_NOTIFICATION: &str = "<task-notification>\n<task-id>b8owss7vp</task-id>\n<tool-use-id>toolu_01NfPEhjaXvPWkCWWBhMS7Mn</tool-use-id>\n<output-file>/tmp/claude-1000/-home-parker-Work-terminal-delight/55584eab/tasks/b8owss7vp.output</output-file>\n<status>completed</status>\n<summary>Background command \"Wait for PR 627 CI checks to complete\" completed (exit code 0)</summary>\n</task-notification>";
+
+    /// Also verbatim: a sibling session talking, which arrives at the same
+    /// hook by the same road and is equally not the person typing.
+    const A_REAL_PEER_MESSAGE: &str = "<cross-session-message from=\"uds:/run/user/1000/cc-socks/2073136.sock\" from-name=\"terminal-delight-05\" from-mode=\"prompting\">\nIf you are the pane in docs/plans/workbench-drives-the-agent — Parker has told me to form the bench-tenancy work into your architecture.\n</cross-session-message>";
+
+    #[test]
+    fn a_turn_the_harness_opened_is_never_drawn_as_the_persons_own_words() {
+        // The bug, in one assertion. The hook cannot tell a wake-up from
+        // typing, so the classifier is the only thing standing between a
+        // `/tmp` path and the word YOU.
+        assert_eq!(
+            woken_by(A_REAL_TASK_NOTIFICATION),
+            Some(Woken::Task {
+                summary: Some(
+                    "Background command \"Wait for PR 627 CI checks to complete\" completed (exit code 0)"
+                        .into()
+                )
+            }),
+            "the harness's own sentence is what the block has to draw"
+        );
+        assert_eq!(
+            woken_by(A_REAL_PEER_MESSAGE),
+            Some(Woken::Peer {
+                // The NAME, not the socket path that sits in front of it in
+                // the same tag. An address is not a who.
+                from: Some("terminal-delight-05".into())
+            })
+        );
+
+        // An envelope with no `summary` is still a wake-up. `None` here is the
+        // harness having said nothing, which the block draws as such — it is
+        // not an excuse to fall back to calling it theirs.
+        assert_eq!(
+            woken_by("<task-notification><status>completed</status></task-notification>"),
+            Some(Woken::Task { summary: None })
+        );
+        // A shape this build has never met is still not the person. It is
+        // carried by NAME so that what arrived can be chased.
+        assert_eq!(
+            woken_by("<scheduled-wake>at 0600</scheduled-wake>"),
+            Some(Woken::Other {
+                tag: "scheduled-wake".into()
+            })
+        );
+
+        // ── and everything that IS them, which must survive untouched ──────
+        for theirs in [
+            "BUG! I can be certain that I did not type any of this crazy machine talk!",
+            "/code-review high 627",
+            // The case the whole-element rule exists for: a person QUOTING a
+            // notification is a person talking, and a substring match would
+            // have eaten this entire message.
+            "why did <task-notification> show up under YOU? fix it",
+            // Ends with a close tag but does not open with one.
+            "here is the envelope I mean: </task-notification>",
+            // Opens with one and runs on into their own words.
+            "<task-notification>ignore that, I typed this myself",
+            // A tag with no hyphen is not a harness envelope — pasted markup
+            // stays the person's.
+            "<div>hand me the markup for this</div>",
+            // A near-miss on the name. It must not read as the tag it merely
+            // begins with, or the summary drawn would be another envelope's.
+            "<task-notifications>two of them</task-notifications>ish",
+            "",
+            "   ",
+        ] {
+            assert_eq!(
+                woken_by(theirs),
+                None,
+                "this is the person talking: {theirs:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_wake_up_captions_the_reply_without_ever_claiming_the_person_spoke() {
+        let mut st = State::new();
+        let prompt = |t: &str| Inbound::Prompt {
+            at_ms: None,
+            prompt_id: None,
+            text: Some(t.into()),
+        };
+
+        // What the bench used to do with this: caption the overview with it.
+        match st.take(prompt(A_REAL_TASK_NOTIFICATION), 1) {
+            Effect::Woken(Woken::Task { summary }) => {
+                assert!(summary.is_some(), "the harness gave a sentence")
+            }
+            other => panic!("a task notification is not a person asking: {other:?}"),
+        }
+        // Their own next turn is theirs again, exactly as before — the
+        // classifier must not cost a real prompt its caption.
+        assert_eq!(
+            st.take(prompt("now merge it"), 2),
+            Effect::Asked {
+                text: "now merge it".into()
+            }
+        );
+        // A peer session is the other half of the same defect.
+        assert!(matches!(
+            st.take(prompt(A_REAL_PEER_MESSAGE), 3),
+            Effect::Woken(Woken::Peer { .. })
+        ));
+        // And a turn the harness handed over with no words at all is still
+        // nothing to draw, rather than an empty wake-up.
+        assert_eq!(
+            st.take(
+                Inbound::Prompt {
+                    at_ms: None,
+                    prompt_id: None,
+                    text: None
+                },
+                4
+            ),
+            Effect::Nothing
+        );
     }
 
     #[test]
