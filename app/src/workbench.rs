@@ -3066,6 +3066,34 @@ impl Bench {
         Bench::default()
     }
 
+    /// Empty the bench, keeping what the READER chose about it.
+    ///
+    /// Called on the agent-departed edge. A surface belongs to the conversation
+    /// that made it, so when that conversation ends the bench it was on stops
+    /// being this pane's history — the next agent launched here is a different
+    /// conversation and would otherwise inherit a stranger's diagrams. Until
+    /// this existed there was no caller anywhere that emptied a `Bench`, which
+    /// is why the one pane an agent had actually worked in was the one pane
+    /// that could never offer a clean start.
+    ///
+    /// **The face, the shelf and the rail preference survive.** Those are
+    /// settings the person made about this pane, not facts about the agent that
+    /// left: someone reading on the workbench face when their agent exits
+    /// should still be on the workbench face, looking at an empty rail. The
+    /// per-surface state goes with the surfaces, because selection, unseen
+    /// marks and the chosen tab and register are each keyed by a `SurfaceId`
+    /// that no longer names anything.
+    ///
+    /// Nothing on disk is touched. The conversation's record outlives the
+    /// process, which is the whole reason for keeping one.
+    pub fn clear_surfaces(&mut self) {
+        self.surfaces.clear();
+        self.selected = None;
+        self.unseen.clear();
+        self.tab.clear();
+        self.reg.clear();
+    }
+
     pub fn face(&self) -> Face {
         self.face
     }
@@ -4051,6 +4079,46 @@ mod tests {
         b.apply(doc("same", "Second"));
         assert_eq!(b.all_newest_first().count(), 1);
         assert_eq!(b.rows_for(Shelf::Artifacts)[0].title, "Second");
+    }
+
+    /// The departed edge, as a property of the type rather than of the pane.
+    ///
+    /// Two halves, and they pull opposite ways on purpose. Everything keyed by
+    /// a `SurfaceId` goes, because those ids no longer name anything — a
+    /// selection pointing at a surface that is gone is how a bench ends up
+    /// drawing a card nobody can dismiss. Everything the READER chose about the
+    /// pane stays, because an agent leaving is not a reason to move somebody to
+    /// a different face.
+    #[test]
+    fn clearing_a_bench_empties_it_and_keeps_what_the_reader_chose() {
+        let mut b = Bench::new();
+        b.apply(doc("one", "First"));
+        b.apply(doc("two", "Second"));
+        b.set_face(Face::Workbench);
+        b.set_shelf(Shelf::Artifacts);
+        let chosen = b.rows_for(Shelf::Artifacts)[0].id.clone();
+        b.select(&chosen);
+        b.pick_register(&chosen, "technical");
+        assert!(!b.is_empty(), "the fixture has to start non-empty");
+
+        b.clear_surfaces();
+
+        assert!(b.is_empty(), "the surfaces are gone");
+        assert_eq!(b.all_newest_first().count(), 0);
+        assert!(
+            b.selected().is_none(),
+            "a selection cannot outlive its surface"
+        );
+        assert!(
+            b.picked_tab(&chosen).is_none(),
+            "per-surface state is keyed by an id that no longer names anything"
+        );
+        assert_eq!(
+            b.face(),
+            Face::Workbench,
+            "the face is the reader's, not the agent's"
+        );
+        assert_eq!(b.shelf(), Shelf::Artifacts, "and so is the shelf");
     }
 
     /// A surface presented over MCP is now written to disk on its way past, so

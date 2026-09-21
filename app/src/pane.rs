@@ -2994,6 +2994,20 @@ impl TerminalView {
             // must never be.
             self.wb_dial_sent = None;
             self.wb_asked.clear();
+            // And the surfaces, for the same reason one step further on. The
+            // ask was already cleared here because captioning a new agent's
+            // reply with the old agent's question is wrong; leaving the old
+            // agent's SURFACES is the same error with nothing cleared at all.
+            //
+            // Only on a pane that is becoming a shell after holding an agent.
+            // A shell pane that never held one keeps its bench, because the
+            // script and demo drop paths write into a pane with no conversation
+            // anywhere in the picture and that is the rig this feature is
+            // verified with.
+            //
+            // Nothing on disk is touched: the conversation's record outlives
+            // the process it belonged to.
+            self.bench.clear_surfaces();
         }
         cx.notify();
     }
