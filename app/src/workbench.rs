@@ -3381,6 +3381,64 @@ impl Bench {
         Bench::default()
     }
 
+    /// Empty the bench, keeping what the READER chose about it.
+    ///
+    /// Called on the agent-departed edge. A surface belongs to the conversation
+    /// that made it, so when that conversation ends the bench it was on stops
+    /// being this pane's history — the next agent launched here is a different
+    /// conversation and would otherwise inherit a stranger's diagrams. Until
+    /// this existed there was no caller anywhere that emptied a `Bench`, which
+    /// is why the one pane an agent had actually worked in was the one pane
+    /// that could never offer a clean start.
+    ///
+    /// **The face, the shelf and the rail preference survive.** Those are
+    /// settings the person made about this pane, not facts about the agent that
+    /// left: someone reading on the workbench face when their agent exits
+    /// should still be on the workbench face, looking at an empty rail. The
+    /// per-surface state goes with the surfaces, because selection, unseen
+    /// marks and the chosen tab and register are each keyed by a `SurfaceId`
+    /// that no longer names anything.
+    ///
+    /// Nothing on disk is touched. The conversation's record outlives the
+    /// process, which is the whole reason for keeping one.
+    ///
+    /// # Why this destructures instead of assigning through `self`
+    ///
+    /// The failure this function exists to prevent is a surface outliving the
+    /// conversation that made it, and the way it would come back is a FUTURE
+    /// field: somebody adds a seventh map keyed by `SurfaceId` — a pinned set,
+    /// a scroll offset per card, a per-surface note — and does not think to
+    /// clear it here. Nothing would fail. The bench would look empty and hold
+    /// one agent's state against the next agent's surfaces, which is the exact
+    /// defect in a smaller and much harder-to-see form.
+    ///
+    /// An exhaustive destructuring pattern makes that a **compile error at this
+    /// line**, naming the field. The `_` bindings are the ones that survive on
+    /// purpose, so adding a field forces a decision about which group it is in
+    /// rather than letting silence pick.
+    ///
+    /// A test cannot do this job: a test can only assert about fields that
+    /// existed when it was written.
+    pub fn clear_surfaces(&mut self) {
+        let Bench {
+            surfaces,
+            selected,
+            unseen,
+            tab,
+            reg,
+            // Kept — the reader's settings about this pane, not facts about the
+            // agent that left.
+            face: _,
+            shelf: _,
+            rail_wanted: _,
+        } = self;
+        surfaces.clear();
+        *selected = None;
+        unseen.clear();
+        tab.clear();
+        reg.clear();
+    }
+
     pub fn face(&self) -> Face {
         self.face
     }
@@ -4429,6 +4487,115 @@ mod tests {
         b.apply(doc("same", "Second"));
         assert_eq!(b.all_newest_first().count(), 1);
         assert_eq!(b.rows_for(Shelf::Artifacts)[0].title, "Second");
+    }
+
+    /// The departed edge, as a property of the type rather than of the pane.
+    ///
+    /// Two halves, and they pull opposite ways on purpose. Everything keyed by
+    /// a `SurfaceId` goes, because those ids no longer name anything — a
+    /// selection pointing at a surface that is gone is how a bench ends up
+    /// drawing a card nobody can dismiss. Everything the READER chose about the
+    /// pane stays, because an agent leaving is not a reason to move somebody to
+    /// a different face.
+    #[test]
+    fn clearing_a_bench_empties_it_and_keeps_what_the_reader_chose() {
+        let mut b = Bench::new();
+        b.apply(doc("one", "First"));
+        b.apply(doc("two", "Second"));
+        b.set_face(Face::Workbench);
+        b.set_shelf(Shelf::Artifacts);
+        let chosen = b.rows_for(Shelf::Artifacts)[0].id.clone();
+        b.select(&chosen);
+        b.pick_register(&chosen, "technical");
+        assert!(!b.is_empty(), "the fixture has to start non-empty");
+
+        b.clear_surfaces();
+
+        assert!(b.is_empty(), "the surfaces are gone");
+        assert_eq!(b.all_newest_first().count(), 0);
+        assert!(
+            b.selected().is_none(),
+            "a selection cannot outlive its surface"
+        );
+        assert!(
+            b.picked_tab(&chosen).is_none(),
+            "per-surface state is keyed by an id that no longer names anything"
+        );
+        // Read through the fields directly, not through accessors. `unseen` and
+        // `reg` have no public reader, so an accessor-only assertion would call
+        // this clean while either still held the departed conversation's ids —
+        // and `unseen` is the one that would show, as a badge counting surfaces
+        // nobody can open.
+        assert!(
+            b.unseen.is_empty(),
+            "unseen marks name surfaces that are gone"
+        );
+        assert!(
+            b.reg.is_empty(),
+            "register choices are keyed by the same ids"
+        );
+        assert!(b.tab.is_empty(), "and so are tab choices");
+        assert!(b.surfaces.is_empty(), "the store behind is_empty()");
+        assert_eq!(
+            b.face(),
+            Face::Workbench,
+            "the face is the reader's, not the agent's"
+        );
+        assert_eq!(b.shelf(), Shelf::Artifacts, "and so is the shelf");
+        assert!(
+            b.rail_wanted(),
+            "the rail preference is the reader's too — and its default is true, \
+             so a clear that reset it would look correct on a fresh bench and \
+             only show on one where the reader had folded the rail"
+        );
+    }
+
+    /// Clearing a bench that is already clear changes nothing.
+    ///
+    /// Worth a test rather than an assumption because the caller is an EDGE.
+    /// `set_mode` returns early when the mode is unchanged today, so the
+    /// departed edge fires once — but "once" is a property of a caller three
+    /// files away, and the pane's mode is derived from two sensors that can
+    /// disagree (the host's classification, and the kernel through our own
+    /// descriptor). If a flap ever makes it fire twice, the second call must be
+    /// free rather than destructive.
+    #[test]
+    fn clearing_a_bench_twice_is_the_same_as_clearing_it_once() {
+        let mut b = Bench::new();
+        b.apply(doc("one", "First"));
+        b.set_face(Face::Workbench);
+        b.clear_surfaces();
+        let once = format!("{b:?}");
+        b.clear_surfaces();
+        assert_eq!(once, format!("{b:?}"), "the second clear took something");
+    }
+
+    /// A clear must not be reachable from anything except an agent leaving, and
+    /// the bench must still work afterwards.
+    ///
+    /// The case this pins is the pane that gets its agent BACK. A cleared bench
+    /// is not a dead bench: the next conversation presents into the same
+    /// `Bench`, and if a clear left `selected` pointing at nothing while the
+    /// rail repopulated, the first surface of the new conversation would arrive
+    /// into a bench that believes something else is open.
+    #[test]
+    fn a_cleared_bench_accepts_the_next_conversations_surfaces() {
+        let mut b = Bench::new();
+        b.apply(doc("old", "The agent that left"));
+        b.clear_surfaces();
+
+        b.apply(doc("new", "The agent that arrived"));
+
+        assert_eq!(b.all_newest_first().count(), 1);
+        assert_eq!(
+            b.rows_for(Shelf::Artifacts)[0].title,
+            "The agent that arrived"
+        );
+        assert!(
+            b.showing().is_none()
+                || b.showing().map(|s| s.title.as_str()) != Some("The agent that left"),
+            "nothing from the departed conversation is still standing"
+        );
     }
 
     /// A surface presented over MCP is now written to disk on its way past, so

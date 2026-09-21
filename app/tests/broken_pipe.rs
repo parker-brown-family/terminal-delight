@@ -87,6 +87,16 @@ const CASES: &[Case] = &[
         args: &["not-a-verb"],
         stream: Stream::Stderr,
     },
+    // The root is one nothing has been filed under, deliberately. The verb
+    // writes its answer before it knows whether the conversation exists, so
+    // this is a real write on any machine — whereas naming a real conversation
+    // would make the case pass or fail on what happens to be on the disk of
+    // whoever runs the suite, which is the reason `bindings` is ungatable.
+    Case {
+        label: "conversation, on a root nothing has been filed under",
+        args: &["conversation", "zzz-no-such-conversation"],
+        stream: Stream::Stdout,
+    },
 ];
 
 /// A sacrificial HOME with the display stripped, so a regression cannot paint a

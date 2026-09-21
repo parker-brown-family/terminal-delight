@@ -5,7 +5,14 @@ it landed in" to "the conversation that made it". A wrong answer shows one
 agent's work on another agent's bench; that defect ran across fourteen benches
 on 2026-09-18 and a person caught it by eye, not a test. Four gates.
 
-**Turned out to be:** _(filled in at the end)_
+**Turned out to be: 7/10, and the score was right for the wrong reason.** I
+justified it on the identity re-keying being expensive to unwind. That half was
+mostly settled by an existing resolver. What actually earned the seven was the
+number of ways a *silently wrong* answer could be produced and look correct —
+four amendments landed on the gates after approval, and a self-review before
+merge found nine more defects, seven of them in code already tested and
+mutation-tested. Every one was a value that was plausible, cheap and wrong.
+See `05-retro.md`.
 
 - Gate 1 — Product: **APPROVED 2026-09-21**, with two amendments taken at approval
   (agent-unique store key with no cross-agent access; a persistent per-turn

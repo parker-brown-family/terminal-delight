@@ -31,6 +31,7 @@ mod art;
 mod attention;
 mod bell;
 mod benchdraw;
+mod benchstore;
 mod channel;
 mod crt;
 mod csd;
@@ -32709,7 +32710,10 @@ mod tests {
             .collect();
         assert_eq!(
             streams,
-            [("skin", &["--list"][..])],
+            [
+                ("skin", &["--list"][..]),
+                ("conversation", &["zzz-no-such-conversation"][..]),
+            ],
             "a verb's piping changed: add, remove or re-argue its case in \
              app/tests/broken_pipe.rs, then update this list"
         );
@@ -34715,6 +34719,12 @@ enum Verb {
     /// environment. Three writers, one format, and this is the one that needs
     /// nothing from the agent but the ability to run a command.
     Surface,
+    /// Read one conversation's bench back without a window: the surfaces it
+    /// presented, the turns it took, and which ask each surface answered. The
+    /// read-back verb for [`benchstore`], for the same reason `bindings` is one
+    /// for the resolver — a record nobody can inspect is a record nobody can
+    /// debug, and this one decides what a person sees on a bench.
+    Conversation,
 }
 
 /// Whether the broken-pipe gate in `tests/broken_pipe.rs` can run a verb — and
@@ -34813,6 +34823,18 @@ const VERBS: &[VerbSpec] = &[
         typed: true,
         piping: Piping::Ungated("reads a TDSP document from stdin; with none it refuses on stderr"),
     },
+    VerbSpec {
+        word: "conversation",
+        verb: Verb::Conversation,
+        typed: true,
+        // One of the few that genuinely reaches a closed reader: given any
+        // well-formed root it writes to stdout before it knows whether the
+        // conversation exists, so the gate runs it for real rather than
+        // decoratively. A root nothing has been filed under is deliberate —
+        // the gate must not depend on this machine having a conversation on
+        // disk, which is what makes `bindings` ungatable.
+        piping: Piping::Streams(&["zzz-no-such-conversation"]),
+    },
 ];
 
 /// One row of [`VERBS`].
@@ -34836,6 +34858,10 @@ struct VerbSpec {
 
 impl Verb {
     fn parse(word: &str) -> Option<Self> {
+        // Theirs, whole. The hand-written match this replaced is exactly the
+        // drift that table was written to end, and `conversation` now reaches
+        // the dispatch test, the usage roster and the broken-pipe gate by
+        // being a row in it rather than by being copied into four lists.
         VERBS.iter().find(|s| s.word == word).map(|s| s.verb)
     }
 }
@@ -34950,6 +34976,7 @@ fn main() {
                 Verb::Serve => host::run_cli(&argv[2..]),
                 Verb::Skin => skin::run_cli(&argv[2..]),
                 Verb::Surface => surfacefeed::run_cli(&argv[2..]),
+                Verb::Conversation => benchstore::run_cli(&argv[2..]),
             };
             std::process::exit(code);
         }

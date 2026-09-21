@@ -151,6 +151,90 @@ keystroke from the right one.
 
 ---
 
+# Second pass: what the self-review found
+
+Added after running `/code-review` at high effort against the branch, before
+merging. Nine findings. **The review was worth more than everything above it**,
+and the reason is in the first entry.
+
+## 9 · Two of my tests used the one fixture shape that hid the bug
+
+`load` sorted surfaces by the filename stem, the doc comment promised *oldest
+first*, and the cap then kept a lexically-arbitrary subset. Real ids are not
+monotonic — `derive.rs` mints `ask-<hash>`, `surface.rs` mints `anon-<hash>`, an
+agent may supply any slug — so a restored bench would have drawn its cards
+scrambled and silently dropped the wrong ones.
+
+The ordering fact was **in the record the whole time**: `Turn::Said` carries
+`at_ms` and `load` never consulted it.
+
+What makes this the entry that matters: both tests naming the property —
+`segments_load_in_numeric_not_lexical_order` and
+`the_history_cap_applies_across_the_whole_root` — used ids like `s0000`, `s0001`.
+Sequential and zero-padded is the one id shape where sorting by name and sorting
+by time agree. **The tests passed against the broken code and would have kept
+passing forever.** I wrote those fixtures to be tidy, and tidy is what made them
+blind. Both are rebuilt with ids that sort backwards against time.
+
+That is my own *the construction decides the coverage* lesson, arriving from the
+direction I was not watching: I had been careful that each test could fail, and
+not careful that its **fixture** could expose the thing it named.
+
+## 10 · Clearing the bench stranded a flag and made the pane lie
+
+`wb_live_q` holds the id of a live screen-read question and lives on the pane,
+not in the `Bench` — so the exhaustive destructure that guards `clear_surfaces`
+could not reach it. An agent showing a question and then exiting left the card
+cleared and the flag set, and `agent_state` tests `Asking` **before** `Exited`:
+the pane would report *waiting on you* forever, with nothing on the bench to
+answer and the agent's departure hidden. Nothing could clear it, because the only
+writer returns early on a non-agent pane.
+
+Before my change that state was at least self-consistent. **I made a
+half-clearing worse than no clearing**, and the guard I was proud of does not
+cover state that lives one level up. `wb_queued` was the same shape — the arrival
+edge drains it into whatever agent is next, so a line typed at the conversation
+that left would be typed into its replacement.
+
+## 11 · A guard copied from the wrong neighbour refuses legal work forever
+
+`safe_segment` is right for a root, which is a uuid. I applied it to surface ids
+too, and `SurfaceId::sanitise` deliberately allows `.` and `:` — so `plan.v2` and
+`decision:1` could never be filed. Because `file` is documented as the thing the
+caller drains the mailbox *after*, such a surface would be never recorded, never
+removed, and **re-swept on every pass forever**.
+
+A stricter guard felt safer and was not. The two names needed two alphabets.
+
+## 12 · The rest, briefly
+
+- `store_root` diverged from `surfaces_root` — no absolute-path filter, and
+  `HOME` unset collapsing to `""` — so the store could land beside a launch
+  directory while its mailbox sat under `$HOME`.
+- A surface updated after a compaction was returned twice and spent two slots of
+  the cap.
+- A document whose embedded id disagreed with its filename was stored unchanged,
+  which is precisely what the comment above it said could not happen. **A comment
+  that promises is a contract**, and that one was already broken when I wrote it.
+- An unreadable file vanished from the load with nothing saying so — a corrupt
+  record indistinguishable from a conversation that presented one thing fewer.
+- `conversation --json` reported on a conversation named `--json` and exited 0.
+
+## The honest reading
+
+Seven of the nine are in code I had already tested, mutation-tested and
+described as verified. The mutation testing was real and it proved the tests
+catch the mutations I thought of; it says nothing about the cases I did not
+think of, and every finding above is one of those. **A review by something that
+did not write the code found in five minutes what two careful passes of my own
+did not.**
+
+The cheapest change to make next time is the order: this review ran *after* I had
+called the work done and asked for a merge. Running it before the first push
+costs the same and would have kept three of these out of the branch entirely.
+
+---
+
 ## What went right, and is worth keeping
 
 - **Every peer claim was checked before it was acted on**, and checking was cheap

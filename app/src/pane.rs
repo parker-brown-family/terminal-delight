@@ -3016,6 +3016,41 @@ impl TerminalView {
             self.wb_channel = crate::channel::State::new();
             self.wb_asked_by_hook = false;
             self.wb_recall = None;
+            // And the surfaces, which is the same argument one step further
+            // on. The ask above is cleared because captioning a new agent's
+            // reply with the old agent's question is wrong; the channel is
+            // cleared because an answer would route to a hook that has gone.
+            // Leaving the departed conversation's SURFACES on the bench is
+            // that error with nothing cleared at all — the next agent inherits
+            // a stranger's diagrams and answered questions as its own.
+            //
+            // Only reached by a pane that HELD an agent. A shell pane that
+            // never did keeps its bench, because the script and demo drop
+            // paths write into a pane with no conversation anywhere in the
+            // picture, and that is the rig this feature is verified with.
+            //
+            // Nothing on disk is touched: the conversation's record outlives
+            // the process it belonged to.
+            self.bench.clear_surfaces();
+            // And the two pieces of per-surface state that live on the PANE
+            // rather than in the bench, which the exhaustive destructure in
+            // `clear_surfaces` therefore cannot reach.
+            //
+            // `wb_live_q` names the live screen-read question. Clearing the
+            // bench without it is worse than not clearing at all: the question
+            // card goes, the flag stays, and `bench_agent_state` passes
+            // `wb_live_q.is_some()` as `asking` — which `agent_state` tests
+            // BEFORE `Exited`. The pane would report that it is waiting on the
+            // person, with nothing on the bench to answer and the agent's
+            // departure hidden, and nothing could clear it because the only
+            // writer returns early on a non-agent pane.
+            self.wb_live_q = None;
+            // `wb_queued` holds keystrokes typed while the bench could not
+            // write — an off-screen pane, mostly — and the ARRIVED edge above
+            // drains it into whatever agent is now here. A line the person
+            // aimed at the conversation that left, carriage return included,
+            // would be typed into the next agent as its first input.
+            self.wb_queued.clear();
         }
         cx.notify();
     }
