@@ -19817,6 +19817,25 @@ fn dispatch(first: Option<&str>, is_dir: impl Fn(&str) -> bool) -> Launch {
     }
 }
 
+/// Whether this launch shows terminals a session host owns.
+///
+/// Hosted is the default as of the flip, on measured numbers rather than on
+/// confidence — see `docs/plans/client-server/02-architecture.md` under "Flip
+/// gate". `TD_SESSIOND=0` is the way out, and what it opts out to is not a
+/// fallback written for the occasion: it is the serverless path this terminal
+/// shipped with for years, still built by `term::spawn_in`, still exercised by
+/// the suite and by the harness's floor-control leg. Somebody who hits
+/// something strange has a one-word way back, and a bug report can say which
+/// side of the seam it came from.
+///
+/// Only the exact string `0` opts out. An unset variable, an empty one, and
+/// anything else all mean hosted — because the failure that matters here is a
+/// launch that quietly does the old thing while everyone believes the flip
+/// happened, and a typo in a shell profile should not be able to cause it.
+fn hosted_by_default(setting: Option<&str>) -> bool {
+    setting != Some("0")
+}
+
 fn main() {
     // What this process is, decided before anything else runs: the headless
     // verbs are plain subprocesses the desktop and agents shell out to, so they
@@ -19882,12 +19901,15 @@ fn main() {
     // A scratch window never writes, so it only borrows a key to read the local
     // theme. A real one ADOPTS: the most-recently-saved session nobody holds,
     // preferring the one last saved on this workspace.
-    // Behind a flag, and only behind a flag: a window that shows terminals a
-    // session host owns, so that closing it — or losing it — stops being the
-    // same thing as ending the work inside it. Everything else on this path is
-    // byte-for-byte what it was, because the day this becomes the default is a
-    // day decided by measurements, not by this line.
-    let hosted = std::env::var("TD_SESSIOND").is_ok_and(|v| v == "1");
+    // A window shows terminals a session host owns, so that closing it — or
+    // losing it — stops being the same thing as ending the work inside it.
+    // This is the default now, on measured numbers rather than on confidence:
+    // an attached keystroke costs 30µs more at p99 than a local one under an
+    // eight-pane flood heavier than a build, none of a thousand over a
+    // millisecond, and twenty window kills out of twenty lost nothing. The
+    // numbers and what they do not cover are in
+    // docs/plans/client-server/02-architecture.md under "Flip gate".
+    let hosted = hosted_by_default(std::env::var("TD_SESSIOND").ok().as_deref());
     let (key, claim, host) = if explicit_scratch || !hosted {
         let (key, claim) = if explicit_scratch {
             (
@@ -20180,6 +20202,31 @@ fn neighbour_in_dir(from: Rect, others: &[(usize, Rect)], dir: &str) -> Option<u
                 .then(a.3.cmp(&b.3))
         })
         .map(|c| c.3)
+}
+
+#[cfg(test)]
+mod the_flip {
+    use super::hosted_by_default;
+
+    #[test]
+    fn hosted_is_what_a_launch_does_unless_it_is_told_not_to() {
+        // The whole of the flip, and the reason it is a function rather than a
+        // condition inline: the first draft of this line read
+        // `var("TD_SESSIOND").is_ok_and(|v| v != "0")`, which is false when the
+        // variable is unset — every ordinary launch would have quietly kept the
+        // old path while the commit message said the default had changed.
+        assert!(hosted_by_default(None), "an ordinary launch is hosted");
+        assert!(hosted_by_default(Some("1")));
+        assert!(
+            hosted_by_default(Some("")),
+            "an empty setting is not an opt-out — a typo in a profile must not \
+             silently undo the flip"
+        );
+        assert!(hosted_by_default(Some("yes")));
+
+        // And the one string that means no.
+        assert!(!hosted_by_default(Some("0")));
+    }
 }
 
 #[cfg(test)]
