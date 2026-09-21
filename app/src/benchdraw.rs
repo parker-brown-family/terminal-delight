@@ -22,8 +22,15 @@
 //!
 //! No literal `rounded(px(…))`, no `px(9. * s)`, no branching on which skin is
 //! active. A workbench drawn with hand-rolled corners would be the one surface
-//! in this window that stays round under a square skin, and the guard test in
-//! [`crate::skin`] exists because that has happened before.
+//! in this window that stays round under a square skin.
+//!
+//! This paragraph claimed a guard test in `crate::skin` for weeks and there was
+//! none — and two literal corners went in underneath the claim, in the
+//! composer, where they stayed round while the rest of the window squared. The
+//! gate is real now and it is `every_corner_on_the_bench_goes_through_the_skin`,
+//! at the bottom of THIS file beside the three other source scans. A promise
+//! pointing somewhere else is how the first one went unnoticed, so it points
+//! here.
 
 use gpui::prelude::FluentBuilder;
 use gpui::{
@@ -94,6 +101,8 @@ fn role_of(tint: Tint) -> Role {
         // Grey, and deliberately not a hue: an unknown that arrives in a
         // colour looks like a claim, and no claim has been made.
         Tint::Unknown => Role::Faint,
+        // Yours. The one role in the palette that already means "you".
+        Tint::Mine => Role::Human,
     }
 }
 
@@ -189,8 +198,20 @@ pub fn spine_frame<E: Styled>(el: E, tint: Hsla, strength: f32, sk: &Skin, th: &
 /// too much ... glow should MEAN something, this is noise"*.
 ///
 /// The budget is one per REGION — the head of the rail, the thing waiting on
-/// you in the body, the primary action on a card — and everything else takes
-/// depth, which separates surfaces without making a claim about attention.
+/// you in the body, the card that is asking — and everything else takes depth,
+/// which separates surfaces without making a claim about attention.
+///
+/// **A REGION is the unit, and a control is not one.** This is 22 pixels of
+/// blur at `th.glow × 0.45`, sized for a card; [`crate::skin::Skin::halo`] is
+/// the same idea at a control's scale, five and a quarter at 0.11. Handing this
+/// to a button the size of one word closes the bloom over the glyphs from every
+/// side — the exact failure the crisp spread-ring was removed from `Skin::ring`
+/// for — and the tube's own bloom pass then multiplies it again. APPROVE and
+/// the strip's launch verb were both drawn this way until 2026-09-18.
+///
+/// [`launch_button`] keeps it on purpose and is the only control that does: it
+/// is alone on an empty workbench, so there is nothing for the bloom to close
+/// over and nothing else competing for the one budget.
 pub fn aglow<E: Styled>(el: E, tint: Hsla, th: &Theme) -> E {
     aglow_at(el, tint, 1.0, th)
 }
@@ -269,11 +290,23 @@ pub fn rail_row(row: &Row, sk: &Skin, th: &Theme) -> Div {
     // shelf shapes demanding at most one row claims it — so this can never be
     // the emphasis on two rows at once.
     let on_cursor = row.selected || row.standing.lit();
-    let lane = match row.standing {
-        Standing::Waiting => Some("WAITING ON YOU"),
-        Standing::Queued => Some("ALSO WAITING"),
-        Standing::Current => Some("STANDS NOW"),
-        Standing::Past => match (row.tint, row.kind) {
+    let lane = match (row.standing, row.kind) {
+        // A note does not STAND. The standing vocabulary is about work a person
+        // has to resolve — what is waiting, what the answer currently is, how it
+        // got there — and none of those questions apply to something you wrote
+        // to yourself. `STANDS NOW` on a comment would be the rail claiming an
+        // opinion the comment never held.
+        //
+        // The head of the board still earns a word, because the head of a shelf
+        // is where a reader who has not moved the cursor is meant to start, and
+        // `Standing::lit` already gives it the weight. LATEST is what that word
+        // is on a chronological board. Parker: *"LATEST is nice."*
+        (Standing::Current, "comment") => Some("LATEST"),
+        (_, "comment") => None,
+        (Standing::Waiting, _) => Some("WAITING ON YOU"),
+        (Standing::Queued, _) => Some("ALSO WAITING"),
+        (Standing::Current, _) => Some("STANDS NOW"),
+        (Standing::Past, _) => match (row.tint, row.kind) {
             (Tint::Settled, "question") | (Tint::Settled, "decision") => Some("ANSWERED"),
             (Tint::Settled, _) => Some("DONE"),
             _ => None,
@@ -303,7 +336,7 @@ pub fn rail_row(row: &Row, sk: &Skin, th: &Theme) -> Div {
             div()
                 .flex_none()
                 .text_size(px(sk.pt(Step::Fine)))
-                .text_color(th.faint)
+                .text_color(sk.ink.ink_faint)
                 .child(b)
         }))
         // No age on the row. The spine puts one on every queue row because each
@@ -344,10 +377,81 @@ pub fn rail_row(row: &Row, sk: &Skin, th: &Theme) -> Div {
             d.child(
                 div()
                     .text_size(px(sk.pt(Step::Tag)))
-                    .text_color(th.faint)
+                    .text_color(sk.ink.ink_faint)
                     .child(clip(&row.subtitle, 44)),
             )
         })
+}
+
+/// The `+ write a note` row, at the head of the comments board.
+///
+/// # Why it exists at all
+///
+/// A note is opened on purpose or not at all — typing on the board used to
+/// open one under the first character and that took the keystroke away from the
+/// agent, which is where typing goes on every other shelf. Taking that back out
+/// left `alt+m` as the only door, and a feature reachable by one undiscoverable
+/// chord is a feature most people never find. This is the chord's visible twin.
+///
+/// # Why it is outlined rather than filled
+///
+/// Every real row on this rail is a filled box with a solid colour edge. This
+/// one is a dashed outline over nothing, which is the oldest honest signal in
+/// the vocabulary: a filled box is a THING, an outlined box is a SLOT where a
+/// thing would go. It needs no icon to explain it and no label saying "button",
+/// and it cannot be misread as the newest note — which a filled row at the top
+/// of a newest-first list absolutely would be.
+///
+/// # Why it wears its own shortcut
+///
+/// `ALT+M` sits on the right of the row, quiet, permanently. The affordance
+/// teaches the faster way to use it every time somebody reaches for the slower
+/// one, so the mouse path trains the keyboard path out of existence instead of
+/// competing with it.
+///
+/// The geometry is [`rail_row`]'s — the same 7-point left inset, the same
+/// vertical padding, the same corner from the skin — so it sits IN the list
+/// rather than on top of it, and a restyle moves both.
+pub fn add_note_row(sk: &Skin, th: &Theme) -> Div {
+    let mine = ink(Tint::Mine, th);
+    sk.row()
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap(px(7.))
+        .pl(px(7.))
+        .pr(px(6.))
+        .py(px(6.))
+        .border_l(px(2.))
+        .border_color(mine.alpha(0.45))
+        .border_t(px(1.))
+        .border_r(px(1.))
+        .border_b(px(1.))
+        .border_dashed()
+        .rounded(sk.radius())
+        .bg(mine.alpha(0.05))
+        .hover(move |st| st.bg(mine.alpha(0.14)))
+        .cursor_pointer()
+        // The plus sits in the same 7-point column the unseen dot occupies on a
+        // real row, so the two line up down the list instead of the affordance
+        // hanging off the side of it.
+        .child(
+            div()
+                .w(px(7.))
+                .flex_none()
+                .text_size(px(sk.pt(Step::Small)))
+                .text_color(mine)
+                .child("\u{2b}"),
+        )
+        .child(
+            div()
+                .flex_1()
+                .min_w(px(0.))
+                .text_size(px(sk.pt(Step::Small)))
+                .text_color(mine.alpha(0.92))
+                .child("write a note"),
+        )
+        .child(micro("ALT+M", Step::Tag, sk.ink.ink_faint, sk, th))
 }
 
 /// The rail collapsed: one tick per surface, newest at the top.
@@ -392,44 +496,49 @@ pub fn shelf_tab(
         .child(shelf.label().to_string())
 }
 
-/// The weights strip: effort, complexity, depth, confidence.
+/// The weights: effort, complexity, depth, confidence.
 ///
 /// A surface the agent did not weigh says so in one word rather than showing
 /// four empty slots — four `unavailable`s in a row is noise, and one honest
 /// sentence is the same fact.
+///
+/// **NOT CHIPS.** These were four `sk.chip(false)` pills sitting directly above
+/// the tab strip, which is a row of chips you press — so the card offered eight
+/// identical-looking controls of which four did nothing at all. Parker: *"the
+/// TASK STATS row … cards need to be bordered and grouped together and made
+/// obvious they are NOT CLICKABLE BUTTONS … these are read only"*.
+///
+/// So: one border around the group rather than one border per value, and every
+/// value wears its own name. Naming them is what makes them unmistakably a
+/// readout — `involved` and `measured` are bare words that could be anything,
+/// and `complexity involved` could not be a button. It also says two things the
+/// old row never did, because nothing but the ordering distinguished a
+/// complexity from a confidence.
+///
+/// Colour survives the change: depth and confidence are the two weights that
+/// carry an argument, and they keep their inks.
 pub fn weights(w: &Weight, sk: &Skin, th: &Theme) -> Div {
-    let row = div()
-        .flex()
-        .flex_row()
-        .flex_wrap()
-        .gap(px(6.))
-        .items_center();
     if w.is_silent() {
-        return row.child(micro("unweighed", Step::Note, th.faint, sk, th));
+        return div().child(micro("unweighed", Step::Note, sk.ink.ink_faint, sk, th));
     }
-    let pill = |text: String, colour: Hsla| {
-        sk.chip(false)
-            .text_size(px(sk.pt(Step::Fine)))
-            .font_family(th.font_family.clone())
-            .text_color(colour)
-            .child(text)
-    };
-    row.when_some(w.effort, |d, e| {
-        d.child(pill(
-            format!(
-                "effort {}",
-                match e {
-                    crate::surface::Effort::Small => "S",
-                    crate::surface::Effort::Medium => "M",
-                    crate::surface::Effort::Large => "L",
-                    crate::surface::Effort::Epic => "XL",
-                }
-            ),
+    // name, value, and the value's ink.
+    let mut facts: Vec<(&'static str, String, Hsla)> = Vec::new();
+    if let Some(e) = w.effort {
+        facts.push((
+            "effort",
+            match e {
+                crate::surface::Effort::Small => "S",
+                crate::surface::Effort::Medium => "M",
+                crate::surface::Effort::Large => "L",
+                crate::surface::Effort::Epic => "XL",
+            }
+            .to_string(),
             th.text,
-        ))
-    })
-    .when_some(w.complexity, |d, c| {
-        d.child(pill(
+        ));
+    }
+    if let Some(c) = w.complexity {
+        facts.push((
+            "complexity",
             match c {
                 crate::surface::Complexity::Trivial => "trivial",
                 crate::surface::Complexity::Moderate => "moderate",
@@ -438,9 +547,9 @@ pub fn weights(w: &Weight, sk: &Skin, th: &Theme) -> Div {
             }
             .to_string(),
             th.text,
-        ))
-    })
-    .when_some(w.foundation.clone(), |d, f| {
+        ));
+    }
+    if let Some(f) = w.foundation.clone() {
         // Depth is the field a reviewer actually wants, so bedrock is the one
         // weight allowed to shout.
         let colour = match f.depth {
@@ -448,9 +557,10 @@ pub fn weights(w: &Weight, sk: &Skin, th: &Theme) -> Div {
             Depth::Subsystem => th.accent,
             _ => th.text,
         };
-        d.child(pill(
+        facts.push((
+            "depth",
             format!(
-                "{} · {}",
+                "{} \u{b7} {}",
                 match f.depth {
                     Depth::Leaf => "leaf",
                     Depth::Component => "component",
@@ -460,18 +570,44 @@ pub fn weights(w: &Weight, sk: &Skin, th: &Theme) -> Div {
                 clip(&f.system, 22)
             ),
             colour,
-        ))
-    })
-    .when_some(w.confidence, |d, c| {
+        ));
+    }
+    if let Some(c) = w.confidence {
         let colour = match c {
             Confidence::Measured => th.text,
             // Amber — yours to argue with. The same ink the doubts use, because
             // it is the same fact said about a different thing.
             Confidence::Inferred | Confidence::Hunch => ink(crate::workbench::Tint::Pending, th),
-            Confidence::Unknown => th.faint,
+            Confidence::Unknown => sk.ink.ink_faint,
         };
-        d.child(pill(c.label().to_string(), colour))
-    })
+        facts.push(("confidence", c.label().to_string(), colour));
+    }
+    div()
+        .flex()
+        .flex_row()
+        .flex_wrap()
+        .items_center()
+        .gap(px(13.))
+        .px(px(10.))
+        .py(px(5.))
+        .rounded(sk.radius())
+        .border_1()
+        .border_color(sk.ink.rule)
+        .children(facts.into_iter().map(|(name, value, colour)| {
+            div()
+                .flex()
+                .flex_row()
+                .items_baseline()
+                .gap(px(4.))
+                .child(micro(sk.caps(name), Step::Tag, sk.ink.ink_faint, sk, th))
+                .child(
+                    div()
+                        .text_size(px(sk.pt(Step::Fine)))
+                        .font_family(th.font_family.clone())
+                        .text_color(colour)
+                        .child(value),
+                )
+        }))
 }
 
 /// The body of whatever is selected, at the size this pane can honestly show.
@@ -491,7 +627,16 @@ pub fn body(
     // neither is worth a line in front of somebody who has been asked a
     // question. Parker: *"2 options (we can see it is 2 options, no need to
     // show this... if the machine needs it fine, but don't show user)"*.
-    let asking = matches!(surface.kind, Kind::Question(_));
+    //
+    // A COMMENT skips the weights for a stronger reason: there is nothing that
+    // could ever fill them. Effort, complexity, depth and confidence are an
+    // AGENT's estimate of work it did, and a note is a person writing a
+    // sentence to themselves. `unweighed` on every comment card would be a
+    // permanent report of an absence nobody could ever fill — the same line on
+    // every row of the shelf, which is a line that has stopped carrying
+    // anything. Its subtitle stays, because the stamp under a note is the one
+    // fact a chronological board is sorted by.
+    let unweighable = matches!(surface.kind, Kind::Question(_) | Kind::Comment(_));
     // ABOVE THE TITLE, and above everything.
     //
     // The position is the point, not the colour: an escalation sorted among six
@@ -518,7 +663,7 @@ pub fn body(
         Embodiment::Compact => frame
             .child(heading(surface, sk, th))
             .child(compact(surface, picks, sk, th)),
-        Embodiment::Full if asking => frame
+        Embodiment::Full if unweighable => frame
             .child(heading(surface, sk, th))
             .child(full(surface, picks, sk, th)),
         Embodiment::Full => frame
@@ -537,7 +682,7 @@ fn summary_line(surface: &Surface, sk: &Skin, th: &Theme) -> Div {
         .child(micro(
             surface.kind.id().to_string(),
             Step::Note,
-            th.faint,
+            sk.ink.ink_faint,
             sk,
             th,
         ))
@@ -642,7 +787,7 @@ fn compact(surface: &Surface, picks: Option<&Picks>, sk: &Skin, th: &Theme) -> D
             micro(
                 format!("{}  +{} −{}", clip(&h.file, 28), h.added, h.removed),
                 Step::Small,
-                verdict_ink(h.verdict, th),
+                verdict_ink(h.verdict, sk, th),
                 sk,
                 th,
             )
@@ -651,7 +796,11 @@ fn compact(surface: &Surface, picks: Option<&Picks>, sk: &Skin, th: &Theme) -> D
             micro(
                 format!("{} {}", if o.recommended { "◉" } else { "○" }, o.name),
                 Step::Small,
-                if o.recommended { th.text } else { th.faint },
+                if o.recommended {
+                    th.text
+                } else {
+                    sk.ink.ink_faint
+                },
                 sk,
                 th,
             )
@@ -666,7 +815,9 @@ fn compact(surface: &Surface, picks: Option<&Picks>, sk: &Skin, th: &Theme) -> D
         // missed, so it now DELEGATES: one renderer for a question at
         // either size, and no second list of kinds to keep in step.
         Kind::Question(q) => question(q, sk, th),
-        Kind::Artifact(a) => list.child(micro(a.href.clone(), Step::Small, th.faint, sk, th)),
+        Kind::Artifact(a) => {
+            list.child(micro(a.href.clone(), Step::Small, sk.ink.ink_faint, sk, th))
+        }
         // DELEGATES, for the same reason the question does and then some.
         //
         // The compact form was a list of one-line section summaries: the right
@@ -681,7 +832,18 @@ fn compact(surface: &Surface, picks: Option<&Picks>, sk: &Skin, th: &Theme) -> D
         // that is missing, which is what the reader reads as a broken feature
         // rather than as a small screen.
         Kind::Response(r) => response(r, picks, sk, th),
-        Kind::Unclassified(u) => list.child(micro(u.reason.clone(), Step::Small, th.faint, sk, th)),
+        // DELEGATES, and belongs on the list the delegation test walks: a
+        // comment is short by nature, so there is nothing a narrow pane could
+        // usefully show LESS of. A second renderer here would exist only to
+        // drift from the first one.
+        Kind::Comment(_) => comment(surface, sk, th),
+        Kind::Unclassified(u) => list.child(micro(
+            u.reason.clone(),
+            Step::Small,
+            sk.ink.ink_faint,
+            sk,
+            th,
+        )),
     }
 }
 
@@ -696,6 +858,7 @@ fn full(surface: &Surface, picks: Option<&Picks>, sk: &Skin, th: &Theme) -> Div 
         Kind::Decision(d) => decision(d, sk, th),
         Kind::Question(q) => question(q, sk, th),
         Kind::Response(r) => response(r, picks, sk, th),
+        Kind::Comment(_) => comment(surface, sk, th),
         Kind::Unclassified(u) => unclassified(u, sk, th),
     }
 }
@@ -776,7 +939,7 @@ fn escalation(
                 // declared a level, and a red frame it did not ask for is a
                 // claim the bench is making on its own behalf.
                 .when(e.inferred, |d| {
-                    d.child(micro("inferred", Step::Tag, th.faint, sk, th))
+                    d.child(micro("inferred", Step::Tag, sk.ink.ink_faint, sk, th))
                 }),
         )
         .when_some(e.why.clone(), |d, why| {
@@ -880,28 +1043,23 @@ fn response(r: &Response, picks: Option<&Picks>, sk: &Skin, th: &Theme) -> Div {
     let picked_key = open_group.and_then(|g| picks.and_then(|p| (p.reg)(g)));
     let shown = crate::workbench::resolve_leaf(picked_key.as_deref(), leaves);
 
-    let frame = div().flex().flex_col().gap(px(6.));
+    let frame = div().flex().flex_col().gap(px(4.));
+    // Whether the tabs are drawn at all decides whether there is a PANEL to
+    // draw under them — a bare gist keeps its no-chrome shape.
+    let stripped = crate::workbench::draws_strip(&tabs);
 
     // THE STRIP — one tab per group, and never a strip of one. A single tab
     // says nothing a reader did not already know and costs a row on the card
     // that most replies are: a gist and nothing else.
-    let frame = frame.when(crate::workbench::draws_strip(&tabs), |d| {
+    let frame = frame.when(stripped, |d| {
         d.child(
             div()
                 .flex()
                 .flex_row()
                 .flex_wrap()
                 .gap(px(3.))
-                .children(tabs.iter().map(|(g, mine)| {
+                .children(tabs.iter().map(|(g, _leaves)| {
                     let active = open_group == Some(*g);
-                    // The doubts never leave the strip. They are a click away
-                    // and the count says they are there, which is the one
-                    // treatment that neither buries them nor charges every card
-                    // with a permanent block — see figure 07 of the brief.
-                    let doubts = mine
-                        .iter()
-                        .any(|l| matches!(l, Leaf::Doubts))
-                        .then_some(r.doubts.len());
                     // The tier vocabulary, not a hand-picked colour: the open
                     // tab IS the Active thing on this card now, which is what
                     // `emphasis::shelf()` used to decide for a row of panels.
@@ -927,15 +1085,7 @@ fn response(r: &Response, picks: Option<&Picks>, sk: &Skin, th: &Theme) -> Div {
                             crate::emphasis::meta(th)
                         })
                         .when(active, |x| x.border_b_1().border_color(facet.tint))
-                        .child(sk.caps(g.label()))
-                        .when_some(doubts, |x, n| {
-                            x.child(
-                                div()
-                                    .text_size(px(sk.pt(Step::Tag)))
-                                    .text_color(ink(crate::workbench::Tint::Pending, th))
-                                    .child(format!("\u{b7}{n}")),
-                            )
-                        });
+                        .child(sk.caps(g.label()));
                     match picks {
                         Some(p) => tab.cursor_pointer().relative().child(zone(
                             p.zones.clone(),
@@ -950,10 +1100,33 @@ fn response(r: &Response, picks: Option<&Picks>, sk: &Skin, th: &Theme) -> Div {
         )
     });
 
+    // THE PANEL — a border around WHAT THE OPEN TAB IS SHOWING, in the tab's
+    // own lit colour, so the strip reads as tabs on a folder rather than as
+    // three words floating above some prose. Parker, on the chip row and the
+    // body under it: *"which should be BORDERED around their associated
+    // section … that changes per what user clicks"*.
+    //
+    // It is the ACTIVE facet's tint because that is the ink the lit tab
+    // already underlines itself with — the border and the tab are the same
+    // colour because they are the same thing. Alpha, not a second token: a
+    // full-strength box around body text competes with the body.
+    //
+    // Only when there IS a strip. A reply that is a gist and nothing else
+    // draws no tabs, and boxing two sentences that nobody chose to see would
+    // put the chrome back that removing the accordion took away.
+    let lit = crate::emphasis::facet(crate::emphasis::Emphasis::Active, th);
+    let panel = div().flex().flex_col().gap(px(6.)).when(stripped, |d| {
+        d.px(px(11.))
+            .py(px(9.))
+            .rounded(sk.radius_lg())
+            .border_1()
+            .border_color(lit.tint.alpha(0.45))
+    });
+
     // THE CHIP ROW — quieter than the strip, and absent when the open tab holds
     // one thing. Two rows of chrome over a single register is the chrome this
     // change exists to remove.
-    let frame = frame.when(crate::workbench::draws_chips(leaves), |d| {
+    let panel = panel.when(crate::workbench::draws_chips(leaves), |d| {
         d.child(
             div()
                 .flex()
@@ -1000,7 +1173,7 @@ fn response(r: &Response, picks: Option<&Picks>, sk: &Skin, th: &Theme) -> Div {
     // ONE BODY. The shown register IS the lit one now — which is what took
     // `emphasis::shelf()`'s only caller away: there is no row of things to tier
     // when only one of them is on screen.
-    let frame = frame.when_some(shown, |d, leaf| match leaf {
+    let panel = panel.when_some(shown, |d, leaf| match leaf {
         Leaf::Brief => d.child(section_body(
             &crate::surface::Body::Prose(r.brief.clone()),
             Register::Layman,
@@ -1013,7 +1186,7 @@ fn response(r: &Response, picks: Option<&Picks>, sk: &Skin, th: &Theme) -> Div {
 
     // The doubts block, drawn when the doubts are what is being read.
     let showing_doubts = matches!(shown, Some(Leaf::Doubts));
-    frame.when(showing_doubts && !r.doubts.is_empty(), |d| {
+    let panel = panel.when(showing_doubts && !r.doubts.is_empty(), |d| {
         // The doubts are neither reading nor a summons: they are present, and
         // they make no claim on the reader's attention. The only colour in the
         // block is each claim's own confidence, which is the information in it.
@@ -1036,8 +1209,20 @@ fn response(r: &Response, picks: Option<&Picks>, sk: &Skin, th: &Theme) -> Div {
                         .flex_row()
                         .gap(px(8.))
                         .items_baseline()
-                        .child(micro("ARTICLES OF DOUBT", Step::Tag, th.faint, sk, th))
-                        .child(micro(doubts_measure(r), Step::Note, th.faint, sk, th)),
+                        .child(micro(
+                            "ARTICLES OF DOUBT",
+                            Step::Tag,
+                            sk.ink.ink_faint,
+                            sk,
+                            th,
+                        ))
+                        .child(micro(
+                            doubts_measure(r),
+                            Step::Note,
+                            sk.ink.ink_faint,
+                            sk,
+                            th,
+                        )),
                 )
                 .children(r.doubts.iter().map(|doubt| {
                     div()
@@ -1072,7 +1257,7 @@ fn response(r: &Response, picks: Option<&Picks>, sk: &Skin, th: &Theme) -> Div {
                                     // like a claim, and no claim has been made.
                                     match doubt.confidence {
                                         Some(Confidence::Measured) => th.text,
-                                        Some(Confidence::Unknown) | None => th.faint,
+                                        Some(Confidence::Unknown) | None => sk.ink.ink_faint,
                                         Some(_) => ink(crate::workbench::Tint::Pending, th),
                                     },
                                     sk,
@@ -1090,7 +1275,10 @@ fn response(r: &Response, picks: Option<&Picks>, sk: &Skin, th: &Theme) -> Div {
                         })
                 })),
         )
-    })
+    });
+
+    // The strip, then everything the strip is about, inside one boundary.
+    frame.child(panel)
 }
 
 /// A section's contents by its shape: prose as lines, a list as bullets —
@@ -1118,7 +1306,7 @@ fn section_body(body: &Body, register: Register, sk: &Skin, th: &Theme) -> Div {
                         .child(div().w(px(sk.tpx(18.))).flex_none().child(micro(
                             mark,
                             Step::Small,
-                            th.faint,
+                            sk.ink.ink_faint,
                             sk,
                             th,
                         )))
@@ -1145,7 +1333,7 @@ fn section_body(body: &Body, register: Register, sk: &Skin, th: &Theme) -> Div {
                     .child(div().w(px(sk.tpx(110.))).flex_none().child(micro(
                         name.clone(),
                         Step::Note,
-                        th.faint,
+                        sk.ink.ink_faint,
                         sk,
                         th,
                     )))
@@ -1211,7 +1399,7 @@ pub fn round_progress(round: &crate::surface::Round, sk: &Skin, th: &Theme) -> D
                 format!("{done} of {total} answered")
             },
             Step::Fine,
-            th.faint,
+            sk.ink.ink_faint,
             sk,
             th,
         ))
@@ -1283,7 +1471,7 @@ pub fn review_flyout(
             .child(micro(
                 format!("{} of {}", at + 1, total.max(1)),
                 Step::Fine,
-                th.faint,
+                sk.ink.ink_faint,
                 sk,
                 th,
             )),
@@ -1354,7 +1542,11 @@ fn question(q: &crate::surface::Question, sk: &Skin, th: &Theme) -> Div {
                     .child(micro(
                         format!("{}", i + 1),
                         Step::Note,
-                        th.faint.alpha(if dim { 0.5 } else { 1.0 }),
+                        if dim {
+                            sk.ink.ink_ghost
+                        } else {
+                            sk.ink.ink_faint
+                        },
                         sk,
                         th,
                     ))
@@ -1377,7 +1569,13 @@ fn question(q: &crate::surface::Question, sk: &Skin, th: &Theme) -> Div {
         // this card was drowning in.
         .children(match &q.answer {
             Answered::Waiting => None,
-            Answered::Chose(_) => Some(micro("answered".to_string(), Step::Note, th.faint, sk, th)),
+            Answered::Chose(_) => Some(micro(
+                "answered".to_string(),
+                Step::Note,
+                sk.ink.ink_faint,
+                sk,
+                th,
+            )),
             Answered::Typed(said) => Some(micro(
                 format!("answered in the terminal \u{b7} \u{201c}{said}\u{201d}"),
                 Step::Note,
@@ -1388,7 +1586,7 @@ fn question(q: &crate::surface::Question, sk: &Skin, th: &Theme) -> Div {
             Answered::ChoseUnknown => Some(micro(
                 "answered in the terminal \u{b7} how is unavailable".to_string(),
                 Step::Note,
-                th.faint,
+                sk.ink.ink_faint,
                 sk,
                 th,
             )),
@@ -1399,45 +1597,116 @@ fn question(q: &crate::surface::Question, sk: &Skin, th: &Theme) -> Div {
 }
 
 fn artifact(a: &crate::surface::Artifact, sk: &Skin, th: &Theme) -> Div {
-    field_grid(
-        vec![
-            ("target", Some(a.href.clone())),
-            ("type", a.mime.clone()),
-            ("about", a.summary.clone()),
-        ],
-        sk,
-        th,
-    )
+    // The three that make it an artifact, then everything else the agent sent
+    // about it. The extra keys used to be lost at the parse and are now kept
+    // (see [`crate::surface::Artifact::notes`]) — a `finding`, a `measured`, a
+    // `decide` is the reason the document is worth opening, and a card that
+    // showed only its path made every artifact look identical.
+    let mut fields: Vec<(&str, Option<String>)> = vec![
+        ("target", Some(a.href.clone())),
+        ("type", a.mime.clone()),
+        ("about", a.summary.clone()),
+    ];
+    fields.extend(a.notes.iter().map(|(k, v)| (k.as_str(), Some(v.clone()))));
+    field_grid(fields, sk, th)
+}
+
+/// How wide each column wants to be, as a share of the row.
+///
+/// A table of four columns drawn as four equal columns is four columns of the
+/// wrong width: an issue number needs nine characters and the verdict beside
+/// it needs sixty, and splitting the row evenly gives the short one an acre
+/// and clips the long one. Parker, on a four-column follow-up table: *"not
+/// readable due to overflow... should be formatted smartly"*.
+///
+/// The demand of a column is its widest cell, header included, CLAMPED at both
+/// ends before anything is divided: without the ceiling one essay-length cell
+/// takes the whole row and leaves its neighbours a sliver, and without the
+/// floor a column of one-character cells becomes unreadable at any width.
+/// Shares are what a caller gets, not pixels — the row does not know how wide
+/// it is, and a fraction survives the pane being resized.
+fn column_shares(t: &crate::surface::Table) -> Vec<f32> {
+    /// Below this a column cannot hold a word, whatever its content.
+    const FLOOR: f32 = 10.0;
+    /// Above this a column is wrapping anyway, so more demand buys nothing.
+    const CEILING: f32 = 48.0;
+    let demand: Vec<f32> = t
+        .columns
+        .iter()
+        .enumerate()
+        .map(|(i, head)| {
+            let widest = t
+                .rows
+                .iter()
+                .filter_map(|r| r.get(i))
+                .map(|cell| match cell {
+                    Some(text) => text.chars().count(),
+                    // `unavailable` is what the cell will DRAW, so it is what
+                    // the column has to be wide enough for.
+                    None => "unavailable".len(),
+                })
+                .max()
+                .unwrap_or(0)
+                .max(head.chars().count());
+            (widest as f32).clamp(FLOOR, CEILING)
+        })
+        .collect();
+    let total: f32 = demand.iter().sum();
+    if total <= 0.0 {
+        return vec![1.0; t.columns.len().max(1)];
+    }
+    demand.iter().map(|d| d / total).collect()
 }
 
 fn table(t: &crate::surface::Table, sk: &Skin, th: &Theme) -> Div {
-    let header = div()
-        .flex()
-        .flex_row()
-        .gap(px(10.))
-        .children(t.columns.iter().map(|c| {
-            div()
-                .flex_1()
-                .child(micro(c.to_uppercase(), Step::Fine, th.faint, sk, th))
-        }));
+    let shares = column_shares(t);
+    // `min_w_0` on every cell and nothing anywhere allowed to grow past its
+    // share. A flex child's floor is its CONTENT by default, so a long cell
+    // pushed the row wider than the card and the last column was drawn off the
+    // right edge of the pane — visible in a photograph and in nothing else.
+    // With the floor removed the share is binding and the text wraps inside
+    // it, which is why no cell is clipped to a character count any more.
+    let cell = |share: f32| div().w(gpui::relative(share)).min_w_0();
+    let header =
+        div()
+            .flex()
+            .flex_row()
+            .w_full()
+            .gap(px(10.))
+            .children(t.columns.iter().enumerate().map(|(i, c)| {
+                cell(shares.get(i).copied().unwrap_or(0.0)).child(micro(
+                    c.to_uppercase(),
+                    Step::Fine,
+                    sk.ink.ink_faint,
+                    sk,
+                    th,
+                ))
+            }));
     let rows = t.rows.iter().map(|row| {
         div()
             .flex()
             .flex_row()
+            .w_full()
+            .items_start()
             .gap(px(10.))
             .py(px(2.))
-            .children(row.iter().map(|cell| {
-                div().flex_1().child(match cell {
-                    Some(text) => micro(clip(text, 40), Step::Small, th.text, sk, th),
+            .children(row.iter().enumerate().map(|(i, c)| {
+                cell(shares.get(i).copied().unwrap_or(0.0)).child(match c {
+                    // Clipped at a budget no pane can show rather than at a
+                    // width: the wrap decides what fits, and the cap is only
+                    // here so one pathological cell cannot make a row taller
+                    // than the window.
+                    Some(text) => micro(clip(text, 600), Step::Small, th.text, sk, th),
                     // A cell nobody filled says so, rather than being blank and
                     // reading as a value of nothing.
-                    None => micro("unavailable", Step::Small, th.faint, sk, th),
+                    None => micro("unavailable", Step::Small, sk.ink.ink_faint, sk, th),
                 })
             }))
     });
     sk.panel()
         .flex()
         .flex_col()
+        .w_full()
         .gap(px(2.))
         .child(header)
         .child(sk.rule_h())
@@ -1493,7 +1762,13 @@ fn architecture(a: &crate::surface::Architecture, sk: &Skin, th: &Theme) -> Div 
                 .flex()
                 .flex_col()
                 .gap(px(5.))
-                .child(micro(name.to_uppercase(), Step::Tag, th.faint, sk, th))
+                .child(micro(
+                    name.to_uppercase(),
+                    Step::Tag,
+                    sk.ink.ink_faint,
+                    sk,
+                    th,
+                ))
                 .child(inner)
         }
     });
@@ -1539,7 +1814,7 @@ fn changeset(c: &crate::surface::Changeset, sk: &Skin, th: &Theme) -> Div {
         .flex_col()
         .gap(px(7.))
         .when_some(c.repository.clone(), |d, r| {
-            d.child(micro(r, Step::Note, th.faint, sk, th))
+            d.child(micro(r, Step::Note, sk.ink.ink_faint, sk, th))
         })
         .children(c.hunks.iter().map(|h| {
             sk.panel()
@@ -1547,7 +1822,7 @@ fn changeset(c: &crate::surface::Changeset, sk: &Skin, th: &Theme) -> Div {
                 .flex_col()
                 .gap(px(3.))
                 .border_l(px(3.))
-                .border_color(verdict_ink(h.verdict, th))
+                .border_color(verdict_ink(h.verdict, sk, th))
                 .child(
                     div()
                         .flex()
@@ -1558,14 +1833,14 @@ fn changeset(c: &crate::surface::Changeset, sk: &Skin, th: &Theme) -> Div {
                         .child(micro(
                             format!("+{} −{}", h.added, h.removed),
                             Step::Note,
-                            th.faint,
+                            sk.ink.ink_faint,
                             sk,
                             th,
                         ))
                         .child(micro(
                             verdict_word(h.verdict).to_string(),
                             Step::Fine,
-                            verdict_ink(h.verdict, th),
+                            verdict_ink(h.verdict, sk, th),
                             sk,
                             th,
                         )),
@@ -1580,7 +1855,7 @@ fn patch(text: &str, sk: &Skin, th: &Theme) -> Div {
     let lines = text.lines().take(24);
     div().flex().flex_col().children(lines.map(|line| {
         let colour = if line.starts_with("+++") || line.starts_with("---") {
-            th.faint
+            sk.ink.ink_faint
         } else if line.starts_with('+') {
             th.accent
         } else if line.starts_with('-') {
@@ -1641,7 +1916,7 @@ fn decision(d: &crate::surface::Decision, sk: &Skin, th: &Theme) -> Div {
                     x.child(micro(
                         format!("cost · {cost}"),
                         Step::Small,
-                        th.faint,
+                        sk.ink.ink_faint,
                         sk,
                         th,
                     ))
@@ -1653,12 +1928,64 @@ fn decision(d: &crate::surface::Decision, sk: &Skin, th: &Theme) -> Div {
                     .flex()
                     .flex_col()
                     .gap(px(2.))
-                    .child(micro("IF WE DO", Step::Tag, th.faint, sk, th))
+                    .child(micro("IF WE DO", Step::Tag, sk.ink.ink_faint, sk, th))
                     .children(d.consequences.iter().map(|c| {
                         micro(format!("· {c}"), Step::Small, th.text.alpha(0.85), sk, th)
                     })),
             )
         })
+}
+
+/// A note the person left, drawn as the note and nothing else.
+///
+/// It takes the whole [`Surface`] rather than the payload, which none of its
+/// neighbours do, and the reason is the TITLE. A comment's title is derived
+/// from its own first line, so drawing both would print that line twice — once
+/// large in the heading and once again as the opening of the body, three lines
+/// apart. Comparing the two is the only way to know whether that has happened,
+/// and the payload alone cannot: a dropped file may carry a title that is
+/// nothing to do with its body, and there the first line is real content that
+/// must not be swallowed.
+///
+/// So: show what the heading has not already said. A one-line note draws as a
+/// heading with its provenance and an empty body, which is the whole note; a
+/// note with more draws the rest underneath.
+fn comment(surface: &Surface, sk: &Skin, th: &Theme) -> Div {
+    let body = match &surface.kind {
+        Kind::Comment(c) => c.body.as_str(),
+        // Unreachable through `compact`/`full`, which match the kind before
+        // calling. Drawing nothing beats a panic on a surface.
+        _ => "",
+    };
+    let (first, rest) = match body.split_once('\n') {
+        Some((head, tail)) => (head, tail),
+        None => (body, ""),
+    };
+    // The heading already carries the first line IF it is the title. Where the
+    // two differ the first line is the payload's own, and it stays.
+    let shown = if first.trim() == surface.title.trim() {
+        rest
+    } else {
+        body
+    };
+    let panel = sk.panel().flex().flex_col().gap(px(6.));
+    if shown.trim().is_empty() {
+        // Not an error, and not empty in a way worth apologising for: a
+        // one-line note IS the heading above. The card says what the shelf is
+        // for instead of leaving a blank panel that reads as a failure.
+        return panel.child(micro(
+            "A NOTE TO YOURSELF \u{b7} THE AGENT WAS NOT TOLD",
+            Step::Tag,
+            // `ink_faint`, not `th.faint` — the chrome legibility pass moved
+            // every quiet line onto the foreground at low alpha because the
+            // palette's grey on a grey panel was not readable at all. A line
+            // added after that pass has no business reintroducing it.
+            sk.ink.ink_faint,
+            sk,
+            th,
+        ));
+    }
+    panel.child(paragraph(shown.trim().to_string(), sk, th))
 }
 
 /// Something arrived that this build cannot type.
@@ -1680,7 +2007,7 @@ fn unclassified(u: &crate::surface::Unclassified, sk: &Skin, th: &Theme) -> Div 
         .child(micro(
             "NOTHING IS CLAIMED ABOUT THIS",
             Step::Tag,
-            th.faint,
+            sk.ink.ink_faint,
             sk,
             th,
         ))
@@ -1722,7 +2049,7 @@ fn field_grid(fields: Vec<(&str, Option<String>)>, sk: &Skin, th: &Theme) -> Div
                 .child(div().w(px(sk.tpx(76.))).flex_none().child(micro(
                     name.to_uppercase(),
                     Step::Fine,
-                    th.faint,
+                    sk.ink.ink_faint,
                     sk,
                     th,
                 )))
@@ -1738,7 +2065,7 @@ fn field_grid(fields: Vec<(&str, Option<String>)>, sk: &Skin, th: &Theme) -> Div
                     None => div().flex_1().min_w(px(0.)).child(micro(
                         "unavailable",
                         Step::Body,
-                        th.faint,
+                        sk.ink.ink_faint,
                         sk,
                         th,
                     )),
@@ -1759,9 +2086,14 @@ fn paragraph(text: String, sk: &Skin, th: &Theme) -> Div {
         }))
 }
 
-fn verdict_ink(v: Verdict, th: &Theme) -> Hsla {
+/// The colour of a hunk's verdict — drawn as a WORD beside it and as the edge
+/// down its left side, which is why this takes the skin as well as the palette.
+/// Undecided used to answer the palette's `faint` role, and that role is
+/// furniture: as a word it was unreadable and as an edge it was a line you had
+/// to hunt for. The meta ink is both readable and findable.
+fn verdict_ink(v: Verdict, sk: &Skin, th: &Theme) -> Hsla {
     match v {
-        Verdict::Undecided => th.faint,
+        Verdict::Undecided => sk.ink.ink_faint,
         Verdict::Accepted => th.accent,
         Verdict::Rejected => th.complement,
     }
@@ -1831,7 +2163,7 @@ pub fn title_card(
         sk,
         th,
     )
-    .child(micro("AGENT", Step::Fine, th.faint, sk, th))
+    .child(micro("AGENT", Step::Fine, sk.ink.ink_faint, sk, th))
     .child(
         // A LAMP, not a bullet. Ringed rather than merely bigger: a filled
         // circle reads as punctuation at any size, and a ring around it reads
@@ -1866,7 +2198,7 @@ pub fn title_card(
         micro(
             crate::attention::age_label(Some(std::time::Duration::from_millis(in_state_ms))),
             Step::Note,
-            th.faint,
+            sk.ink.ink_faint,
             sk,
             th,
         ),
@@ -1883,7 +2215,7 @@ pub fn title_card(
             return d.child(micro(
                 "turn \u{b7} unread",
                 Step::Note,
-                th.faint.alpha(0.7),
+                sk.ink.ink_faint,
                 sk,
                 th,
             ));
@@ -1927,7 +2259,7 @@ pub fn title_card(
     })
     .child(div().flex_1())
     .when_some(tool.map(str::to_string), |d, t| {
-        d.child(micro(t, Step::Fine, th.faint, sk, th))
+        d.child(micro(t, Step::Fine, sk.ink.ink_faint, sk, th))
     })
     // THE SLOT. It has been here since the bar became one line — a spacer
     // above whose only job is pushing a trailing element to the right edge —
@@ -1995,7 +2327,11 @@ pub fn dial(value: &str, known: bool, open: bool, live: bool, sk: &Skin, th: &Th
                 // The affordance, and the only part of the chip that is allowed
                 // to answer to `live`: this arrow says a press would open a
                 // list, and while the agent is working it would not.
-                .text_color(th.faint.alpha(if live { 0.9 } else { 0.35 }))
+                .text_color(if live {
+                    sk.ink.ink_faint
+                } else {
+                    sk.ink.ink_ghost
+                })
                 .child("\u{25be}"),
         )
 }
@@ -2094,7 +2430,10 @@ pub fn strip_button(label: &str, glyph: &str, primary: bool, sk: &Skin, th: &The
         .when(!glyph.is_empty(), |d| d.child(glyph.to_string()))
         .child(sk.caps(&label.to_uppercase()));
     if primary {
-        aglow(el, th.human, th)
+        // A CONTROL's halo, not a region's. This is a two-word button; it took
+        // [`aglow`], which is sized for a whole card, and came out as a cloud
+        // with something written in it. See [`Skin::halo`].
+        sk.halo(el, th.human)
     } else {
         el
     }
@@ -2138,21 +2477,25 @@ pub fn option_button<E: Styled>(el: E, primary: bool, chosen: bool, sk: &Skin, t
 /// Kept here rather than at the call site so that every future verb row —
 /// changesets, decisions, whatever arrives next — gets the same shape by
 /// asking for it.
-pub fn verb_button<E: Styled>(el: E, primary: bool, sk: &Skin, th: &Theme) -> E {
-    let el = el
-        .px(px(if primary { 18. } else { 12. }))
+///
+/// **The size is ALL it adds.** The lit border, the seat and the halo already
+/// arrived with [`Skin::chip`], which both call sites hand in, and this used to
+/// paint a second border in a second hue over the first and then REPLACE the
+/// chip's halo with [`aglow`] — the bloom meant for a whole region. A region's
+/// bloom is 22 pixels of blur at `glow × 0.45`; on the hacker palette that is
+/// 0.38, against the ring's five and a quarter at 0.11. Four times the spread
+/// and three and a half times the heat, on a box the size of one word, and
+/// then multiplied again by the tube's own bloom pass. Parker, on APPROVE:
+/// *"about 3x or 4 to much extra!!!! dial it WAY back"* — and the ratio he
+/// eyeballed is the ratio that was in the file.
+pub fn verb_button<E: Styled>(el: E, primary: bool, sk: &Skin) -> E {
+    el.px(px(if primary { 18. } else { 12. }))
         .py(px(if primary { 10. } else { 6. }))
         .text_size(px(if primary {
             sk.pt(Step::Lead)
         } else {
             sk.pt(Step::Small)
-        }));
-    if primary {
-        // The primary action on a card — one per card.
-        aglow(el.border_color(th.accent.alpha(0.75)), th.accent, th)
-    } else {
-        el
-    }
+        }))
 }
 
 /// The places the composer writes down where it ended up.
@@ -2261,9 +2604,14 @@ pub fn probe(
 /// room, and one line underneath says what the keys do, because the three
 /// things it names (type without clicking first, enter sends, paste takes an
 /// image) are each invisible otherwise.
+/// `hot` is a dragged file hovering over this box, and it is drawn in the
+/// person's own colour at full strength: a drop is the same act as typing,
+/// aimed at the same line, so it would be strange for it to arrive in a
+/// colour that means anything else.
 pub fn composer(
     line: Option<&crate::workbench::Line>,
     focused: bool,
+    hot: bool,
     shows: &crate::workbench::Shows,
     slots: &Slots,
     sk: &Skin,
@@ -2370,8 +2718,21 @@ pub fn composer(
             // Lit whether or not it is armed. The border was the only thing
             // saying "this is an input" and it only said so AFTER the first
             // click, which is the wrong way round: the invitation has to be
-            // legible before anyone has accepted it.
-            .border_color(th.human.alpha(if live { 0.9 } else { 0.5 })),
+            // legible before anyone has accepted it. A file hovering over it
+            // takes the border to full strength and tints the box, because
+            // "let go here" has to beat "you may type here" while a person is
+            // holding something.
+            .border_color(th.human.alpha(if hot {
+                1.0
+            } else if live {
+                0.9
+            } else {
+                0.5
+            }))
+            // Blended rather than laid over: `bg` replaces, so a translucent
+            // wash here would drop the panel's own surface and let the pane
+            // behind it through.
+            .when(hot, |d| d.bg(th.surface.blend(th.human.alpha(0.14)))),
         th.human,
         th,
     )
@@ -2447,7 +2808,7 @@ pub fn composer(
                         .flex_none()
                         .px(px(7.))
                         .py(px(2.))
-                        .rounded(px(3.))
+                        .rounded(sk.rad_raw(3.))
                         .bg(th.accent.alpha(0.18))
                         .child(micro(
                             if n == 1 {
@@ -2464,16 +2825,39 @@ pub fn composer(
             })
             // Only while it is armed, and then unmissable. This is the answer
             // to the question the surface kept failing: *am I typing to the
-            // agent right now, or do I have to click something first?*
-            .when(live, |d| {
+            // agent right now, or do I have to click something first?* While
+            // a file is over the box it gives up its place: what happens when
+            // you let go is the more urgent question, and two chips side by
+            // side would be competing for the same corner.
+            .when(live && !hot, |d| {
                 d.child(
                     div()
                         .flex_none()
                         .px(px(7.))
                         .py(px(2.))
-                        .rounded(px(3.))
+                        .rounded(sk.rad_raw(3.))
                         .bg(th.human.alpha(0.16))
                         .child(micro("LIVE \u{2192} AGENT", Step::Tag, th.human, sk, th)),
+                )
+            })
+            // No count of files. The drag's value is parked on the app until
+            // the drop and the hover only knows that SOMETHING is being
+            // carried, so saying "1 file" here would be inventing a number.
+            .when(hot, |d| {
+                d.child(
+                    div()
+                        .flex_none()
+                        .px(px(7.))
+                        .py(px(2.))
+                        .rounded(sk.rad_raw(3.))
+                        .bg(th.human.alpha(0.24))
+                        .child(micro(
+                            "\u{2913} DROP TO INSERT THE PATH",
+                            Step::Tag,
+                            th.human,
+                            sk,
+                            th,
+                        )),
                 )
             }),
     )
@@ -2486,7 +2870,7 @@ pub fn composer(
         d.child(micro(
             format!("\u{2191} {n} more characters above"),
             Step::Fine,
-            th.faint,
+            sk.ink.ink_faint,
             sk,
             th,
         ))
@@ -2502,6 +2886,109 @@ pub fn composer(
     })
 }
 
+/// The box a note is typed into, and a box with no wire to the agent.
+///
+/// A separate renderer rather than a mode on [`composer`], for the same reason
+/// the note is a separate field on the pane: the two boxes do opposite things
+/// and look alike, and the cost of confusing them is a private sentence
+/// arriving in somebody's prompt. Nothing here reads `Shows`, `Slots` or the
+/// scroll handle, because none of them apply — a note is not mirroring a remote
+/// editor, so there is no caret to chase across a wrap that somebody else owns.
+///
+/// It SAYS what it is, in a line above the text. That label is the only thing
+/// standing between the two boxes for a person who has just pressed `alt+m` out
+/// of muscle memory, so it names the destination rather than the feature: not
+/// `NOTE`, but where the words are going and who will not see them.
+pub fn note_box(
+    line: &crate::workbench::Line,
+    focused: bool,
+    durable: bool,
+    sk: &Skin,
+    th: &Theme,
+) -> Div {
+    let mine = ink(Tint::Mine, th);
+    // The caret rides IN the text as a highlight on the character it is on —
+    // the composer's technique, and the reason is the same one written out at
+    // length there: a line wraps, and anything that positions a caret by
+    // arithmetic is computing a column on a single axis that does not exist.
+    let text = format!("{} ", line.text());
+    let at = text
+        .char_indices()
+        .nth(line.caret())
+        .map(|(i, _)| i)
+        .unwrap_or(line.text().len());
+    let next = text[at..]
+        .chars()
+        .next()
+        .map(|c| at + c.len_utf8())
+        .unwrap_or(text.len());
+    let caret = gpui::HighlightStyle {
+        background_color: Some(mine.alpha(if focused { 0.85 } else { 0.35 })),
+        color: Some(if focused { th.bg } else { th.text }),
+        ..Default::default()
+    };
+    let selection = gpui::HighlightStyle {
+        background_color: Some(mine.alpha(if focused { 0.34 } else { 0.18 })),
+        ..Default::default()
+    };
+    let spans = if line.marked() {
+        vec![(0..line.text().len(), selection)]
+    } else {
+        vec![(at..next, caret)]
+    };
+    raised(
+        sk.panel()
+            .flex()
+            .flex_col()
+            .gap(px(7.))
+            .flex_none()
+            .px(px(14.))
+            .py(px(12.))
+            .bg(th.surface)
+            .border_color(mine.alpha(if focused { 0.9 } else { 0.5 })),
+        mine,
+        th,
+    )
+    .child(micro(
+        "A NOTE ON THIS PANE \u{b7} THE AGENT IS NOT TOLD",
+        Step::Tag,
+        mine,
+        sk,
+        th,
+    ))
+    .child(
+        div()
+            .text_size(px(sk.pt(Step::Body)))
+            .text_color(th.text)
+            .child(gpui::StyledText::new(text).with_highlights(spans)),
+    )
+    .child(if durable {
+        micro(
+            "return posts \u{b7} shift+return a new line \u{b7} esc discards",
+            Step::Tag,
+            sk.ink.ink_faint,
+            sk,
+            th,
+        )
+    } else {
+        // SAID BEFORE THE NOTE IS WRITTEN, not after return does nothing.
+        //
+        // A pane with no surfaces directory — a scratch window, which has no
+        // pane id to name one with — has nowhere durable to put a note. The
+        // first version of this refused on `return` and reported it to stderr,
+        // where nobody is looking, so the key just appeared to be broken. An
+        // absence a person can act on has to be on the face of the thing while
+        // they still have the choice not to type into it.
+        micro(
+            "THIS PANE CANNOT SAVE NOTES \u{b7} NOTHING HERE WILL SURVIVE",
+            Step::Tag,
+            ink(Tint::Waiting, th),
+            sk,
+            th,
+        )
+    })
+}
+
 /// WHAT YOU SAID, over the reply that answers it.
 ///
 /// Its own block, in the human ink, above the card and outside its scroll —
@@ -2514,6 +3001,15 @@ pub fn composer(
 /// may simply have scrolled out of the pane's history, and a block that
 /// vanished in that case would say "you asked nothing", which is a different
 /// fact and never the true one.
+///
+/// It is now RARE, and that is the point of the sentence being this specific.
+/// The pane latches every human turn it sees ([`crate::pane::TerminalView`]'s
+/// `wb_asked`), so the only way to reach this line is for the message to have
+/// left the scrollback before the window ever read it — a pane adopted
+/// mid-conversation, or a turn that scrolled past between two sweeps. Parker,
+/// on the old behaviour, which hit it every long turn: *"the user message
+/// prompt... not available because of scrollback limitation... TOTALLY
+/// unacceptable, this is EXACTLY important"*.
 pub fn asked(lines: &[String], sk: &Skin, th: &Theme) -> Div {
     sk.panel()
         .flex()
@@ -2532,9 +3028,15 @@ pub fn asked(lines: &[String], sk: &Skin, th: &Theme) -> Div {
         .child(micro("YOU", Step::Fine, th.human, sk, th))
         .when(lines.is_empty(), |d| {
             d.child(micro(
-                "your message is no longer in this pane\u{2019}s scrollback",
+                "your message left this pane\u{2019}s history before the bench read it",
                 Step::Note,
-                th.faint,
+                // `ink_faint`, not `th.faint`. The palette's `faint` is the
+                // colour a DIVIDER is mixed from — measured at 1.22:1 to
+                // 1.62:1 against the surfaces this block sits on, where 1.0 is
+                // two identical colours — so a sentence painted in it is a
+                // sentence nobody can read. Parker, of this exact line: *"The
+                // text here is very hard to read... get it readable"*.
+                sk.ink.ink_faint,
                 sk,
                 th,
             ))
@@ -2736,7 +3238,7 @@ pub fn empty(is_agent: bool, dir: &str, action: Option<Div>, sk: &Skin, th: &The
                 micro(
                     format!("drop a .json here: {dir}"),
                     Step::Note,
-                    th.faint,
+                    sk.ink.ink_faint,
                     sk,
                     th,
                 )
@@ -2960,6 +3462,72 @@ mod tests {
     /// caught at. The unmutated file passes, so this is a guard and not an
     /// alarm; a scan that cries wolf gets switched off, and then nothing is
     /// enforced.
+    /// Every corner on the bench is the skin's to decide.
+    ///
+    /// This file's own header has promised this since it was written — *"the
+    /// guard test in `crate::skin` exists because that has happened before"* —
+    /// and there was no such test in `skin.rs` or anywhere else. Two literal
+    /// corners went in underneath that sentence and sat there: the paste chip
+    /// and the `LIVE -> AGENT` chip in the composer, both `rounded(px(3.))`,
+    /// both of which would have stayed round under a square skin while every
+    /// other corner in the window squared. A comment promising a gate is worse
+    /// than no comment, because it stops the next reader looking.
+    ///
+    /// Two shapes are caught. A `rounded()` whose argument is not a skin verb
+    /// is a radius decided here; and gpui's own `rounded_sm`/`_md`/`_lg`/
+    /// `_full` are fixed numbers wearing names, which is the same bypass with
+    /// better manners.
+    ///
+    /// Comments are stripped first, or this file's header would trip its own
+    /// scan on the word it uses to describe the rule.
+    ///
+    /// Mutation-tested: it FAILED on the two real literals before they were
+    /// fixed, which is the only way to know a scan matches anything; and
+    /// `.gap(px(8.))`, `.w(px(6.))` and `sk.rad_raw(3.)` were checked to pass
+    /// untouched, because a check that fires on innocent lines gets switched
+    /// off and then nothing is enforced.
+    #[test]
+    fn every_corner_on_the_bench_goes_through_the_skin() {
+        let src = include_str!("benchdraw.rs");
+        let (code, _tests) = src.split_once("\n#[cfg(test)]").expect("a test module");
+        let lines: Vec<&str> = code.lines().collect();
+        let mut found = Vec::new();
+        for (n, raw) in lines.iter().enumerate() {
+            let line = raw.split("//").next().unwrap_or("");
+            for fixed in ["rounded_sm(", "rounded_md(", "rounded_lg(", "rounded_full("] {
+                if line.contains(fixed) {
+                    found.push(format!(
+                        "{}: {fixed} is a fixed radius, not the skin's: {}",
+                        n + 1,
+                        raw.trim()
+                    ));
+                }
+            }
+            let Some(at) = line.find(".rounded(") else {
+                continue;
+            };
+            let mut arg = line[at + ".rounded(".len()..].trim_start();
+            // rustfmt may put the argument on the next line. Follow it rather
+            // than flagging a wrap, which is not a decision anybody made.
+            if arg.is_empty() {
+                arg = lines
+                    .get(n + 1)
+                    .map(|l| l.split("//").next().unwrap_or("").trim_start())
+                    .unwrap_or("");
+            }
+            if !arg.starts_with("sk.") {
+                found.push(format!("{}: a hand-rolled corner: {}", n + 1, raw.trim()));
+            }
+        }
+        assert!(
+            found.is_empty(),
+            "corners decided in the renderer instead of by the skin. A square \
+             skin cannot square these, so they stay round while everything \
+             around them changes shape:\n{}",
+            found.join("\n")
+        );
+    }
+
     #[test]
     fn a_renderer_contains_no_decisions() {
         let src = include_str!("benchdraw.rs");
@@ -3094,6 +3662,10 @@ mod tests {
         for (kind, renderer) in [
             ("Kind::Question(q)", "question("),
             ("Kind::Response(r)", "response("),
+            // A comment joins the list for the same reason, one step earlier:
+            // it is short enough that a compact form could only be the same
+            // thing, so a second renderer would exist purely to drift.
+            ("Kind::Comment(_)", "comment("),
         ] {
             for (which, body) in [("compact", compact_body), ("full", full_body)] {
                 let arm = body
@@ -3115,6 +3687,125 @@ mod tests {
         assert_eq!(clip("abcdefghij", 5), "abcd…");
         // A multi-byte title must not be cut mid-character.
         assert_eq!(clip("→→→→→→", 3), "→→…");
+    }
+
+    /// The function body, with its comments stripped and its own tests cut off.
+    ///
+    /// Comments go first so neither the explanation above a line nor the prose
+    /// in this test can satisfy a gate that is looking for the line itself —
+    /// a source grep has passed on a comment in this repository before.
+    fn body_of<'a>(src: &'a str, signature: &str) -> String {
+        let code: String = src
+            .split_once("\n#[cfg(test)]")
+            .map_or(src, |(before, _)| before)
+            .lines()
+            .map(|l| l.split("//").next().unwrap_or(""))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let at = code
+            .find(signature)
+            .unwrap_or_else(|| panic!("{signature} is gone"));
+        let rest = &code[at..];
+        // A top-level fn ends at the first brace in column zero; a method, at
+        // the first one at the impl's own indent.
+        let end = rest
+            .find("\n}")
+            .or_else(|| rest.find("\n    }"))
+            .map_or(rest.len(), |i| i + 2);
+        rest[..end].to_string()
+    }
+
+    /// Two pieces of chrome a person asked to be rid of, kept gone.
+    ///
+    /// Both are drawing, so nothing in a headless suite can see them. What CAN
+    /// be seen is the call that would bring each one back, and in both cases
+    /// the regression is a single familiar line somebody reaches for without
+    /// knowing it was removed on purpose.
+    #[test]
+    fn the_read_only_weights_are_not_chips_and_the_routing_lines_stay_off() {
+        // A weight is a READOUT. Drawn with `sk.chip` it is the same object as
+        // the tab strip immediately under it, so the card offered eight
+        // identical controls and four of them did nothing. Parker: *"made
+        // obvious they are NOT CLICKABLE BUTTONS … these are read only"*.
+        let weights = body_of(include_str!("benchdraw.rs"), "pub fn weights(");
+        assert!(
+            !weights.contains("sk.chip("),
+            "the weights are wearing the chip again:\n{weights}"
+        );
+        assert!(
+            weights.contains("border_color("),
+            "the weights lost the one border that groups them:\n{weights}"
+        );
+
+        // And the verb previews — the routing line and the tagged prompt text
+        // under every card — are a diagnostic rather than something a reader
+        // is shown. Parker: *"that machine stuff at the bottom … human does
+        // not need to see that"*.
+        let verbs = body_of(include_str!("pane/bench.rs"), "fn bench_verbs(");
+        assert!(
+            verbs.contains("TD_VERB_PREVIEW"),
+            "the verb previews are on for everybody again:\n{verbs}"
+        );
+        assert!(
+            verbs.contains("when(auditing"),
+            "the preview block is built but no longer gated on the flag:\n{verbs}"
+        );
+    }
+
+    #[test]
+    fn a_tables_columns_are_as_wide_as_what_is_in_them() {
+        // The real one, from a follow-up rollup on Parker's bench: a short
+        // issue number, a sentence, a size and a verdict. Drawn in four equal
+        // columns it gave the number an acre, clipped the verdict at forty
+        // characters and still ran off the right edge of the card.
+        let t = crate::surface::Table {
+            columns: vec![
+                "issue".into(),
+                "what it is".into(),
+                "size".into(),
+                "verdict just now".into(),
+            ],
+            rows: vec![vec![
+                Some("#410".into()),
+                Some("Rust turns a broken-pipe write into a panic, so the CLI dies".into()),
+                Some("One line".into()),
+                Some("STILL REAL — piping it exited 101 on today's build".into()),
+            ]],
+        };
+        let shares = column_shares(&t);
+        assert_eq!(shares.len(), 4);
+        let total: f32 = shares.iter().sum();
+        assert!(
+            (total - 1.0).abs() < 0.001,
+            "shares are a whole row: {total}"
+        );
+        assert!(
+            shares[1] > shares[0] * 2.0,
+            "the sentence gets more of the row than the number: {shares:?}"
+        );
+        assert!(
+            shares[0] >= 0.08,
+            "and the number still gets enough to be read: {shares:?}"
+        );
+        // A column of essays does not take the whole row. Without the
+        // ceiling one long cell leaves its neighbours a sliver each, which is
+        // the same unreadable table wearing different proportions.
+        let long = "x".repeat(4000);
+        let t = crate::surface::Table {
+            columns: vec!["a".into(), "b".into()],
+            rows: vec![vec![Some("short".into()), Some(long)]],
+        };
+        let shares = column_shares(&t);
+        assert!(
+            shares[0] > 0.15,
+            "a four-thousand-character neighbour crushed the short column: {shares:?}"
+        );
+        // And a table with no rows at all is still drawable.
+        let empty = crate::surface::Table {
+            columns: vec!["a".into(), "b".into()],
+            rows: Vec::new(),
+        };
+        assert_eq!(column_shares(&empty), vec![0.5, 0.5]);
     }
 
     #[test]

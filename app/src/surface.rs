@@ -408,6 +408,18 @@ pub enum Action {
     AskAgent,
     /// Go to where this came from — a file, a line, a turn.
     OpenSource,
+    /// Put this surface's own text on the system clipboard.
+    ///
+    /// Local, like [`Action::Open`]: the window does it and no agent hears
+    /// about it. It exists because a comment deliberately has no verb that
+    /// hands it to the agent, and the person still has to be able to move the
+    /// words when they decide the agent should have them. Parker, declining the
+    /// automatic route and asking for this one: *"Highlight text and copy
+    /// should be a thing though... in case someone ELSE thinks the agent should
+    /// have the comment contents."* A button rather than a text selection
+    /// because the bench draws its body as gpui elements and has no selection
+    /// model yet; a whole-body copy is the part that can be honest today.
+    Copy,
     /// A verb this build has never heard of. Offered anyway, labelled as the
     /// agent spelled it, because refusing to show it would make the agent's
     /// vocabulary silently smaller than it said it was.
@@ -426,6 +438,7 @@ impl Action {
             "choose" => Action::Choose,
             "ask_agent" => Action::AskAgent,
             "open_source" => Action::OpenSource,
+            "copy" => Action::Copy,
             other => Action::Custom(other.to_string()),
         }
     }
@@ -442,6 +455,7 @@ impl Action {
             Action::Choose => "choose",
             Action::AskAgent => "ask_agent",
             Action::OpenSource => "open_source",
+            Action::Copy => "copy",
             Action::Custom(s) => s,
         }
     }
@@ -458,6 +472,7 @@ impl Action {
             Action::Choose => "choose".into(),
             Action::AskAgent => "ask".into(),
             Action::OpenSource => "source".into(),
+            Action::Copy => "copy".into(),
             Action::Custom(s) => s.replace('_', " "),
         }
     }
@@ -473,7 +488,7 @@ impl Action {
     /// business. Keeping the two apart is what stops the workbench from waking
     /// an agent up to do something the desktop could have done.
     pub fn is_local(&self) -> bool {
-        matches!(self, Action::Open | Action::OpenSource)
+        matches!(self, Action::Open | Action::OpenSource | Action::Copy)
     }
 }
 
@@ -584,11 +599,37 @@ pub struct Artifact {
     pub mime: Option<String>,
     /// One line about what it is.
     pub summary: Option<String>,
+    /// Everything else the payload carried, in the order the document named
+    /// it: `finding`, `measured`, `served`, `decide` — whatever the agent
+    /// thought a person should know about the thing it made.
+    ///
+    /// Kept rather than dropped. Three fields is what an artifact needs to be
+    /// OPENED; it is not what an agent writes, and a struct that silently
+    /// keeps three keys of nine loses the six that say why the document is
+    /// worth opening. The renderer draws them as facts under the target.
+    pub notes: Vec<(String, String)>,
 }
 
 /// Prose with structure — the register most agent output already has.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Markdown {
+    pub body: String,
+}
+
+/// A note the person left themselves, on the pane they left it on.
+///
+/// One field on purpose. Everything a note needs beyond its words — when it
+/// arrived, who wrote it, where it sits in the order — is already on the
+/// [`Surface`] that carries it, and inventing a second home for any of those
+/// would mean a comment that disagrees with itself about its own age.
+///
+/// See [`Shelf::Comments`] for why this is a kind rather than a store of its
+/// own: as a surface it inherits the file transport, the reload when a window
+/// opens, the history cap, the unseen mark and the rail's whole row vocabulary.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct Comment {
+    /// The note, whole. Its first line becomes the title if the payload named
+    /// none, the way a commit's subject comes off its message.
     pub body: String,
 }
 
@@ -1017,7 +1058,15 @@ impl Group {
         match self {
             Group::Reading => "reading",
             Group::Evidence => "evidence",
-            Group::Next => "next",
+            // `steps`, not `next`. In a row of three tabs the word `next` is
+            // read as a NAVIGATION control — the thing that takes you to the
+            // following tab — rather than as the name of what is inside this
+            // one. Parker: *"next is wrong because that is nav — should read
+            // STEPS"*. The register keys underneath are untouched: an agent
+            // still sends `next`, and `asks` still lands here too, which is
+            // the other reason a verb-ish word was the wrong name for a tab
+            // holding both.
+            Group::Next => "steps",
             Group::Other => "other",
         }
     }
@@ -1244,6 +1293,7 @@ pub enum Kind {
     Decision(Decision),
     Question(Question),
     Response(Response),
+    Comment(Comment),
     Unclassified(Unclassified),
 }
 
@@ -1259,6 +1309,7 @@ impl Kind {
             Kind::Decision(_) => "decision",
             Kind::Question(_) => "question",
             Kind::Response(_) => "response",
+            Kind::Comment(_) => "comment",
             Kind::Unclassified(_) => "unclassified",
         }
     }
@@ -1283,6 +1334,8 @@ impl Kind {
             | Kind::Unclassified(_) => Shelf::Artifacts,
             // The overview is the feed of what the agent SAID, and only that.
             Kind::Response(_) => Shelf::Overview,
+            // And the one shelf that is not about the agent at all.
+            Kind::Comment(_) => Shelf::Comments,
         }
     }
 
@@ -1306,11 +1359,21 @@ impl Kind {
             // something other than one of the answers still can.
             Kind::Question(_) => vec![Action::Comment],
             Kind::Unclassified(_) => vec![Action::AskAgent],
+            // NO verb that hands this to the agent, and that absence is the
+            // feature. Every other kind here offers `Comment` or `AskAgent`,
+            // both of which type a line into the agent's own terminal; a
+            // comment offers neither, so there is no path from this shelf to
+            // the pty that a mis-click could take. `Copy` is local — the window
+            // puts the words on the clipboard and nothing else happens.
+            Kind::Comment(_) => vec![Action::Copy],
         }
     }
 }
 
-/// The three shelves of a pane's own rail.
+/// The shelves of a pane's own rail.
+///
+/// Three of them are the agent's work, sorted by what a person has to do about
+/// it. The fourth is not the agent's at all — see [`Shelf::Comments`].
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash, Default)]
 pub enum Shelf {
     /// The agent's replies, newest first — the shelf you land on.
@@ -1329,16 +1392,48 @@ pub enum Shelf {
     Overview,
     Artifacts,
     Decisions,
+    /// What the PERSON wrote, newest first — and the one shelf the agent has
+    /// no part in.
+    ///
+    /// The other three are an account of a conversation: what was said, what
+    /// was made, what is being asked. None of them is anywhere to put your own
+    /// thinking down, and the only place that existed was the sticky note on
+    /// the pane's glass — one slot, handwritten, deliberately loud, and built
+    /// to be read at a glance from across a wall of panes. Parker wanted
+    /// something quieter and plural: *"we don't want the garish sticky note
+    /// from the terminal... we want a DISTINCT ELEMENT... a 4th tab at the top
+    /// — COMMENTS!!!! These exist EXTERNAL to the agentic workflow."*
+    ///
+    /// **External is the defining property, not a default.** Writing a comment
+    /// sends nothing down the pseudoterminal, appends nothing to the action
+    /// journal, and tells the agent nothing. There is deliberately no verb on a
+    /// comment that hands it to the agent either — Parker: *"NO — I have a
+    /// vision of DRAGGING a comment into an agent prompt... but OUT OF SCOPE
+    /// RIGHT NOW! so no."* What a comment does carry is [`Action::Copy`], so
+    /// the text can be lifted by hand when somebody decides the agent should
+    /// have it after all.
+    ///
+    /// What it is NOT is private. The board persists as ordinary `.json` in the
+    /// pane's own directory, which anything running as this user can read or
+    /// write. That is why a comment carries its writer on its face — see
+    /// [`Origin::Person`], which only this window ever stamps.
+    Comments,
 }
 
 impl Shelf {
-    pub const ALL: [Shelf; 3] = [Shelf::Overview, Shelf::Artifacts, Shelf::Decisions];
+    pub const ALL: [Shelf; 4] = [
+        Shelf::Overview,
+        Shelf::Artifacts,
+        Shelf::Decisions,
+        Shelf::Comments,
+    ];
 
     pub fn label(self) -> &'static str {
         match self {
             Shelf::Artifacts => "artifacts",
             Shelf::Decisions => "decisions",
             Shelf::Overview => "overview",
+            Shelf::Comments => "comments",
         }
     }
 
@@ -1378,6 +1473,13 @@ impl Shelf {
             },
             (Shelf::Artifacts, Kind::Artifact(a)) => Some(a.format_word()),
             (Shelf::Overview, Kind::Artifact(a)) if lettered => Some(a.format_word()),
+            // On the comments board every row is a comment, so the word says
+            // nothing. What the row wears instead is WHEN — the one fact that
+            // orders a chronological board, and the one a reader actually wants
+            // from a note they wrote days ago. It is built by the row rather
+            // than here, because it needs the arrival stamp and a `Kind` does
+            // not carry one.
+            (Shelf::Comments, Kind::Comment(_)) => None,
             _ => Some(kind.id().to_string()),
         }
     }
@@ -1394,6 +1496,7 @@ impl Shelf {
             Shelf::Artifacts => "artifacts yet",
             Shelf::Decisions => "decisions yet",
             Shelf::Overview => "responses yet",
+            Shelf::Comments => "comments yet",
         }
     }
 }
@@ -1425,6 +1528,18 @@ pub enum Origin {
     /// Read off this pane's own transcript or screen by the window itself: a
     /// question the agent asked, a `Deliverable:` line it printed.
     Derived,
+    /// Typed by the person, in this window, on this pane's own bench.
+    ///
+    /// The only origin no payload can ask for and no transport can forge: it is
+    /// set at the point the window writes the file, and the parser cannot
+    /// produce it from JSON. That matters because the comments board lives in
+    /// the pane's directory like everything else, and anything running as this
+    /// user can drop a file there claiming `"kind": "comment"`. Such a file is
+    /// not refused — refusing it silently would be worse, and there is no way to
+    /// tell a hostile writer from a helpful script — it simply arrives as
+    /// [`Origin::FileDrop`] and says `writer unknown` on its own face, beside
+    /// the notes that say `you`.
+    Person,
 }
 
 impl Origin {
@@ -1443,6 +1558,32 @@ impl Origin {
             } => format!("presented over MCP by pid {pid} \u{2014} not this pane's agent"),
             Origin::Mcp { pid, own: None } => format!("presented over MCP by pid {pid}"),
             Origin::Derived => "read from this agent's own record".into(),
+            Origin::Person => "written here, by you".into(),
+        }
+    }
+
+    /// How much this origin actually knows about who wrote the surface.
+    ///
+    /// Needed because one surface can now arrive twice. `present_surface`
+    /// persists on its way to the window, so the watcher sees the file it just
+    /// wrote and re-delivers the same id moments later — and that second
+    /// arrival is a [`Origin::FileDrop`], which by design cannot name its
+    /// writer at all: any process running as this user can drop a `.json` into
+    /// a pane's directory. Without an order to compare them by, the vaguer of
+    /// the two would win simply for being later, and a card that said *"not
+    /// this pane's agent"* would quietly become *"writer unknown"*.
+    ///
+    /// The order is how much the transport could actually establish, not how
+    /// much anyone trusts it: `Person` is the window watching a human type,
+    /// which is the only one it witnessed itself.
+    pub fn precision(&self) -> u8 {
+        match self {
+            Origin::Unknown => 0,
+            Origin::FileDrop => 1,
+            Origin::Derived => 2,
+            Origin::Mcp { own: None, .. } => 3,
+            Origin::Mcp { own: Some(_), .. } => 4,
+            Origin::Person => 5,
         }
     }
 
@@ -1521,6 +1662,29 @@ impl Surface {
             // counted.
             Kind::Response(r) => r.brief.clone(),
             Kind::Unclassified(u) => u.reason.clone(),
+            // WHEN, and WHO only where who is knowable.
+            //
+            // The row signs `you` when this window watched the person type it,
+            // and says nothing about the writer otherwise — never `writer
+            // unknown`, which would put a small alarm on every row of a board
+            // read back off disk after a restart, and never `you` on a note
+            // whose author nothing can actually vouch for. The full account is
+            // one click away and always drawn: `heading` puts
+            // [`Origin::label`] on every card, where `dropped as a file ·
+            // writer unknown` is the loud one.
+            //
+            // The stamp is absolute, so it is still true tomorrow. See
+            // [`stamp_local`].
+            Kind::Comment(_) => {
+                let when = stamp_local(self.arrived_ms)
+                    // Unknown is not the epoch. A clock this machine could not
+                    // resolve says so rather than reading `1 Jan 1970`.
+                    .unwrap_or_else(|| "time unavailable".into());
+                match self.origin {
+                    Origin::Person => format!("you \u{b7} {when}"),
+                    _ => when,
+                }
+            }
         }
     }
 
@@ -1545,7 +1709,20 @@ impl Surface {
         // The latest writer is the origin. An update that arrived as a file
         // drop onto a surface first presented over MCP is now a surface a file
         // drop last touched, and the card should say so.
-        self.origin = other.origin;
+        //
+        // ONE EXCEPTION, and it is not a softening of that rule but the same
+        // rule applied to a writer the window can actually see. A note typed on
+        // the comments board is put on the bench directly, stamped
+        // [`Origin::Person`], and written to a file in the same breath — and
+        // the ordinary sweep reads that file back a moment later as what it
+        // literally is, a drop. Without this the note you just typed would
+        // relabel itself `writer unknown` within the second, while you were
+        // still looking at it. It holds for the session and no longer: after a
+        // restart the file is the only evidence there is, and it says so.
+        self.origin = match (&self.origin, &other.origin) {
+            (Origin::Person, Origin::FileDrop) => Origin::Person,
+            _ => other.origin,
+        };
     }
 }
 
@@ -1734,6 +1911,18 @@ fn default_title(kind: &Kind) -> String {
             .take(TITLE_MAX_CHARS)
             .collect(),
         Kind::Unclassified(_) => "unclassified".into(),
+        // The first LINE, not the first sentence: a note is written the way a
+        // commit message is, and its opening line is already the summary the
+        // writer chose. Splitting on a full stop would cut "check the bleed at
+        // 40%. it might be the chip" in the wrong place.
+        Kind::Comment(c) => {
+            let first = c.body.lines().next().unwrap_or("").trim();
+            if first.is_empty() {
+                "note".into()
+            } else {
+                first.chars().take(TITLE_MAX_CHARS).collect()
+            }
+        }
     }
 }
 
@@ -1753,6 +1942,59 @@ fn first_sentence(text: &str) -> &str {
     &text[..end]
 }
 
+/// A surface's arrival as a wall-clock stamp, in this machine's local time.
+///
+/// ABSOLUTE, where the rest of this window says `4m ago`. Both are right for
+/// what they carry: an agent's state is only interesting relative to now, and a
+/// note you wrote is a thing that happened at a time. A relative stamp on a
+/// comments board also has to be recomputed to stay true, which means either a
+/// clock read inside a renderer — forbidden, and for good reason — or a `now`
+/// threaded through `Bench::rows_for` and every one of its callers. An absolute
+/// stamp is correct the moment it is written and stays correct.
+///
+/// [`None`] rather than a fallback date when the C library cannot resolve the
+/// value. A comment stamped `1 Jan 1970` would be a clock failure wearing a
+/// plausible answer, and the row says `time unavailable` instead.
+fn stamp_local(ms: u64) -> Option<String> {
+    const MONTH: [&str; 12] = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
+    let secs: libc::time_t = (ms / 1000).try_into().ok()?;
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    // SAFETY: `localtime_r` is the reentrant form — it writes into the `tm` we
+    // own and returns a pointer to it, holding no global state a second thread
+    // could race us for. Both pointers are valid for the duration of the call.
+    if unsafe { libc::localtime_r(&secs, &mut tm) }.is_null() {
+        return None;
+    }
+    let month = MONTH.get(usize::try_from(tm.tm_mon).ok()?)?;
+    let year = 1900i32.checked_add(tm.tm_year)?;
+    // A YEAR THAT IS NOT A YEAR IS NOT A STAMP.
+    //
+    // `localtime_r` does not refuse absurd input: handed `u64::MAX` milliseconds
+    // it returns, cheerfully and without error, `3 Apr 584556019`. That is the
+    // failure this whole function was written against wearing better clothes —
+    // not a missing value, but an invented one with the right shape, which every
+    // later reader would take for a measurement. `arrived_ms` is stamped from a
+    // system clock, so anything outside a range a clock could plausibly hold is
+    // corruption, and corruption reads as `time unavailable` rather than as a
+    // date nobody can argue with.
+    //
+    // Caught by the test that asserts this, which is the whole argument for
+    // writing a test that has to fail before it is believed.
+    // The bound is `1900`, not `1970`, and that is not slack. West of UTC the
+    // epoch itself is 31 December 1969 in local time, so a lower bound of 1970
+    // refuses a real instant on this very machine — which the test caught, in
+    // the timezone this is written in.
+    if !(1900..=2999).contains(&year) {
+        return None;
+    }
+    Some(format!(
+        "{} {month} {year}, {:02}:{:02}",
+        tm.tm_mday, tm.tm_hour, tm.tm_min
+    ))
+}
+
 /// A parse failure that knows how to be both strict and lenient.
 struct KindError {
     strict: String,
@@ -1766,14 +2008,35 @@ fn parse_kind(name: &str, model: Option<&Value>) -> Result<Kind, KindError> {
 
     Ok(match name {
         "artifact" => {
-            let href = text("href").ok_or_else(|| {
-                err("an artifact needs a `href` — an absolute path or a full URL".into())
-            })?;
+            // WHERE IT IS, under whichever word the agent used for it.
+            //
+            // `href` is the contract and it is still first. The rest were read
+            // off real benches: an agent handed a document to a person writes
+            // `open` for the local file beside `served` for the same page over
+            // http, because that is the shape the house rules ask it to hand
+            // back, and the strict read turned every one of those into an
+            // `unclassified` card that showed its own JSON and could not be
+            // opened by any click. Parker: *"the artifacts tab seem totally
+            // broken... I cannot single click to open the artifact from the
+            // spine... i cannot open the artifact from the full view"*. Both
+            // halves of that were this line.
+            //
+            // The order is a PREFERENCE, not a fallback chain to be reordered
+            // casually: the local document beats the URL serving it, because a
+            // file on this disk outlives the server that was pointed at it.
+            let (href_key, href) = HREF_KEYS
+                .iter()
+                .find_map(|k| text(k).map(|v| (*k, v)))
+                .ok_or_else(|| {
+                    err("an artifact needs a `href` — an absolute path or a full URL".into())
+                })?;
             check_href(&href).map_err(err)?;
+            let summary_key = SUMMARY_KEYS.iter().copied().find(|k| text(k).is_some());
             Kind::Artifact(Artifact {
                 href,
                 mime: text("mime"),
-                summary: text("summary"),
+                summary: summary_key.and_then(&text),
+                notes: leftover_notes(m, &[href_key, "mime", summary_key.unwrap_or("")]),
             })
         }
         "markdown" => Kind::Markdown(Markdown {
@@ -1937,6 +2200,14 @@ fn parse_kind(name: &str, model: Option<&Value>) -> Result<Kind, KindError> {
             })
         }
         "response" => Kind::Response(parse_response(m).map_err(err)?),
+        // Parsed, but deliberately absent from `catalogue_names` — a comment is
+        // the person's own voice, and advertising it to agents would be
+        // inviting them to speak in it. Parker, on keeping it out: *"concur.
+        // Meta - human facing"*. Anything that writes one anyway still lands,
+        // and lands labelled with whoever dropped it.
+        "comment" => Kind::Comment(Comment {
+            body: text("body").ok_or_else(|| err("a comment needs a `body` string".into()))?,
+        }),
         other => {
             return Err(err(format!(
                 "unknown kind {other:?} — this build renders {}",
@@ -2372,6 +2643,40 @@ fn parse_option(index: usize, v: &Value) -> Option<Choice> {
     })
 }
 
+/// The words an agent uses for "where the thing is", in preference order.
+///
+/// `href` is the spelled contract; the rest are what arrives. Each one here
+/// has been seen on a bench in this window rather than imagined — widening a
+/// parser on a guess is how a key nobody sends comes to look supported.
+const HREF_KEYS: [&str; 6] = ["href", "open", "path", "file", "url", "link"];
+
+/// The words an agent uses for "what it is", in preference order.
+const SUMMARY_KEYS: [&str; 3] = ["summary", "what", "about"];
+
+/// The keys an artifact carried that its own three fields have no room for.
+///
+/// `taken` is the keys already spoken for — the one the location came from,
+/// the mime, the one the summary came from — so a fact is never drawn twice.
+/// An empty name is impossible in JSON, which is what makes `""` a safe
+/// stand-in for "no summary key was matched".
+///
+/// Order is the DOCUMENT'S — this build of `serde_json` carries
+/// `preserve_order`, measured by the test below rather than assumed, so the
+/// facts read down the card in the order the agent wrote them. That is a
+/// better order than any this could impose: an agent puts the finding before
+/// the footnote.
+fn leftover_notes(m: &Map<String, Value>, taken: &[&str]) -> Vec<(String, String)> {
+    m.iter()
+        .filter(|(k, _)| !taken.contains(&k.as_str()))
+        .filter_map(|(k, v)| {
+            cell_text(v)
+                .map(|t| plain(t.trim()))
+                .filter(|t| !t.is_empty())
+                .map(|t| (k.clone(), t))
+        })
+        .collect()
+}
+
 /// Refuse what would appear to work and be wrong.
 fn check_href(href: &str) -> Result<(), String> {
     if href.starts_with("http://") || href.starts_with("https://") || href.starts_with("file://") {
@@ -2562,12 +2867,23 @@ mod tests {
         for (register, group) in table {
             assert_eq!(Group::of(register), group, "{register:?}");
         }
-        // The labels are lowercase single nouns, like the rail's own strip.
+        // The labels are lowercase single NOUNS, like the rail's own strip.
+        //
+        // A noun names what is behind the tab. A word that reads as a movement
+        // — `next`, `back`, `more` — names what the CONTROL does, and in a row
+        // of three tabs a reader takes it for the button that advances them.
+        // Parker: *"next is wrong because that is nav — should read STEPS"*.
         for g in Group::ALL {
             let l = g.label();
             assert_eq!(l, l.to_lowercase(), "{g:?} is lowercase");
             assert!(!l.contains(' '), "{g:?} is one word");
+            assert!(
+                !matches!(l, "next" | "back" | "more" | "previous" | "forward"),
+                "{g:?} is labelled {l:?}, which reads as navigation rather than as \
+                 the name of what is inside the tab"
+            );
         }
+        assert_eq!(Group::Next.label(), "steps");
     }
 
     #[test]
@@ -2633,6 +2949,80 @@ mod tests {
             "an untitled artifact wears its filename"
         );
         assert!(s.actions.contains(&Action::Open));
+    }
+
+    #[test]
+    fn an_artifact_that_named_its_document_open_is_still_an_artifact() {
+        // Transcribed from a card on Parker's own bench. The agent wrote the
+        // local file under `open` and the served copy under `served`, because
+        // that is the pair the house rules ask it to hand a person — and the
+        // strict read turned it into an `unclassified` card showing its own
+        // JSON, which no click could open from the spine or from the card.
+        let s = surface(json!({
+            "td": "0.4",
+            "kind": "artifact",
+            "title": "Typing into the pane's rename box",
+            "model": {
+                "what": "A drawn decision brief on why the workbench swallows the keystrokes.",
+                "open": "file:///home/parker/Work/terminal-delight/reports/2026-09-19-keys.html",
+                "served": "http://127.0.0.1:8731/2026-09-19-keys.html",
+                "finding": "bench_key runs at pane.rs:4662 and every exit from it stops the event.",
+                "measured": "21 of 27 chords are swallowed on the workbench face.",
+            }
+        }));
+        let Kind::Artifact(a) = &s.kind else {
+            panic!("still not an artifact: {:?}", s.kind);
+        };
+        assert_eq!(
+            a.href, "file:///home/parker/Work/terminal-delight/reports/2026-09-19-keys.html",
+            "the local document is what a click opens"
+        );
+        assert!(s.actions.contains(&Action::Open), "and there is a verb");
+        assert_eq!(
+            a.summary.as_deref(),
+            Some("A drawn decision brief on why the workbench swallows the keystrokes."),
+            "`what` is what it is"
+        );
+        // NOTHING SENT IS DROPPED. Fixing the parse by keeping three keys of
+        // six would trade a card that cannot be opened for a card with
+        // nothing on it.
+        let notes: Vec<&str> = a.notes.iter().map(|(k, _)| k.as_str()).collect();
+        assert_eq!(
+            notes,
+            vec!["served", "finding", "measured"],
+            "the rest of the payload is kept, in the order it was written, and the \
+             three that are spoken for are not repeated"
+        );
+        assert!(a.notes.iter().any(|(_, v)| v.contains("21 of 27")));
+    }
+
+    #[test]
+    fn the_spelled_key_wins_over_every_word_that_arrives() {
+        // The aliases are a widening, not a reordering: a payload carrying
+        // both is still opened at the one the protocol names.
+        let s = surface(json!({
+            "td": "0.4",
+            "kind": "artifact",
+            "model": { "href": "/the/contract.html", "open": "/the/alias.html" }
+        }));
+        let Kind::Artifact(a) = &s.kind else {
+            panic!("not an artifact")
+        };
+        assert_eq!(a.href, "/the/contract.html");
+        assert_eq!(
+            a.notes.iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>(),
+            vec!["open"],
+            "the one that lost is still shown rather than swallowed"
+        );
+        // And a location that cannot be opened is refused under its alias
+        // with the reason, exactly as `href` is — silently ignoring the key
+        // was the old behaviour and it produced the useless complaint.
+        let refused = parse(
+            &json!({ "td": "0.1", "kind": "artifact", "model": { "open": "report.html" } }),
+            NOW,
+        )
+        .expect_err("a relative path cannot be resolved, whatever it is called");
+        assert!(refused.contains("relative"), "{refused}");
     }
 
     #[test]
@@ -2861,6 +3251,200 @@ mod tests {
         assert!(s.actions.contains(&Action::Custom("publish".into())));
     }
 
+    /// A comment carries WHO only where who is knowable, and WHEN always.
+    ///
+    /// The three cases are the whole attribution story of the board, and two of
+    /// them are the reason it is a story at all: anything running as this user
+    /// can drop a file into a pane's directory claiming `"kind": "comment"`, so
+    /// a row that signed everything `you` would be signing somebody else's
+    /// words with the reader's name.
+    ///
+    /// The third case is the one that is easy to read as a bug later: after a
+    /// restart the file is all the evidence there is, and it says nothing about
+    /// who typed it — so a note you wrote yesterday comes back unsigned. That
+    /// is correct and it is also why issue 483's claimed-writer field exists.
+    /// Pinned here so changing it is a decision somebody makes rather than a
+    /// line somebody edits.
+    #[test]
+    fn a_comment_signs_itself_only_when_the_window_watched_it_being_typed() {
+        let note = |origin: Origin| {
+            let mut s = Surface {
+                id: SurfaceId("n".into()),
+                title: "x".into(),
+                kind: Kind::Comment(Comment { body: "x".into() }),
+                weight: Weight::default(),
+                actions: vec![],
+                source: None,
+                // 18 Sep 2026, 22:14 UTC. The stamp resolves in LOCAL time, so
+                // the assertions below check the shape and the signature rather
+                // than a wall-clock string this test cannot know.
+                arrived_ms: 1_789_863_240_000,
+                origin,
+            };
+            s.title = default_title(&s.kind);
+            s.subtitle()
+        };
+        let mine = note(Origin::Person);
+        assert!(
+            mine.starts_with("you \u{b7} "),
+            "a note this window watched being typed signs itself: {mine}"
+        );
+        for anonymous in [Origin::FileDrop, Origin::Unknown, Origin::Derived] {
+            let sub = note(anonymous.clone());
+            assert!(
+                !sub.contains("you"),
+                "{anonymous:?} is not evidence that you wrote it: {sub}"
+            );
+            // And it does not shout about it either — the alarm belongs on the
+            // card, where `Origin::label` already draws `writer unknown` at
+            // full strength. A row that says so on every line after a restart
+            // is a warning nobody can act on.
+            assert!(
+                !sub.contains("unknown"),
+                "the row is not the place for the alarm: {sub}"
+            );
+            assert_eq!(sub, mine.trim_start_matches("you \u{b7} "), "same stamp");
+        }
+    }
+
+    /// The window's own stamp survives the sweep reading back the file it wrote.
+    ///
+    /// Posting a note puts it on the bench AND writes it to the pane's
+    /// directory, and the ordinary file sweep reads that file a moment later as
+    /// exactly what it is — a drop. Without the rule in [`Surface::merge`] the
+    /// note would relabel itself `writer unknown` within the second, while the
+    /// person was still looking at it.
+    ///
+    /// The second half of the test is the part that keeps the rule narrow: a
+    /// file drop landing on a surface that was NOT typed here still wins, which
+    /// is the behaviour every other kind depends on.
+    #[test]
+    fn a_note_typed_here_is_not_downgraded_by_the_file_it_wrote() {
+        let make = |origin: Origin| Surface {
+            id: SurfaceId("n".into()),
+            title: "x".into(),
+            kind: Kind::Comment(Comment { body: "x".into() }),
+            weight: Weight::default(),
+            actions: vec![],
+            source: None,
+            arrived_ms: 1_789_863_240_000,
+            origin,
+        };
+        let mut typed_here = make(Origin::Person);
+        typed_here.merge(make(Origin::FileDrop));
+        assert_eq!(
+            typed_here.origin,
+            Origin::Person,
+            "the sweep re-reading our own file must not unsign the note"
+        );
+
+        let mut from_mcp = make(Origin::Mcp {
+            pid: 42,
+            own: Some(true),
+        });
+        from_mcp.merge(make(Origin::FileDrop));
+        assert_eq!(
+            from_mcp.origin,
+            Origin::FileDrop,
+            "the exception is for Person alone; every other origin still yields \
+             to the latest writer"
+        );
+    }
+
+    /// A note's title is its first LINE, and its card shows only the rest.
+    ///
+    /// The commit-message split. Without it a one-line note draws its own words
+    /// twice on the card — once large as the heading and once again as the
+    /// opening of the body, three lines apart — which reads as a bug rather
+    /// than as a summary.
+    #[test]
+    fn a_notes_title_is_its_first_line_and_never_the_whole_paragraph() {
+        let one_liner = Kind::Comment(Comment {
+            body: "check the phosphor bleed at 40% contrast".into(),
+        });
+        assert_eq!(
+            default_title(&one_liner),
+            "check the phosphor bleed at 40% contrast"
+        );
+
+        let with_body = Kind::Comment(Comment {
+            body: "check the bleed. it might be the chip\n\nlook before touching the skin".into(),
+        });
+        assert_eq!(
+            default_title(&with_body),
+            "check the bleed. it might be the chip",
+            "split on the newline, not on the full stop"
+        );
+
+        // Whitespace is not a title, and neither is an empty note. The board
+        // would otherwise grow a row with nothing on its face.
+        assert_eq!(
+            default_title(&Kind::Comment(Comment {
+                body: "   \n  ".into()
+            })),
+            "note"
+        );
+    }
+
+    /// A comment is the person's, all the way down.
+    ///
+    /// Four properties in one place because they are one decision, and because
+    /// the fifth thing this asserts is an absence: a comment offers no verb
+    /// that reaches an agent. Every other kind on this bench offers `Comment`
+    /// or `AskAgent`, both of which type a line into somebody's terminal.
+    #[test]
+    fn a_comment_offers_nothing_that_reaches_an_agent() {
+        let kind = Kind::Comment(Comment { body: "x".into() });
+        assert_eq!(kind.id(), "comment");
+        assert_eq!(kind.shelf(), Shelf::Comments);
+        assert_eq!(
+            crate::workbench::tint_of(&kind),
+            crate::workbench::Tint::Mine
+        );
+        assert_eq!(kind.default_actions(), vec![Action::Copy]);
+        for verb in kind.default_actions() {
+            assert!(
+                verb.is_local(),
+                "{verb:?} leaves this window; a comment is external to the agent"
+            );
+            assert!(
+                !verb.wants_comment(),
+                "{verb:?} would open a composer that types at the agent"
+            );
+        }
+        // And it is NOT advertised to agents. Parker: *"concur. Meta - human
+        // facing"*. The parser still accepts one, because refusing silently
+        // would be worse than labelling whoever dropped it.
+        assert!(
+            !catalogue_names().contains(&"comment"),
+            "the catalogue invites agents to write in the person's own voice"
+        );
+        assert!(
+            parse_kind("comment", Some(&json!({ "body": "hi" }))).is_ok(),
+            "an undocumented kind is still parsed, and arrives labelled"
+        );
+    }
+
+    /// An unresolvable clock says so rather than reading 1 Jan 1970.
+    #[test]
+    fn a_stamp_this_machine_cannot_resolve_is_absent_not_the_epoch() {
+        let ok = stamp_local(1_789_863_240_000).expect("a resolvable stamp");
+        assert!(ok.contains("2026"), "{ok}");
+        assert!(ok.contains("Sep"), "{ok}");
+        // `localtime_r` does NOT refuse this: it answers `3 Apr 584556019`,
+        // which is a confident, correctly-shaped, entirely invented date. An
+        // absent stamp is the honest answer and the row prints `time
+        // unavailable` for it.
+        assert_eq!(stamp_local(u64::MAX), None, "a garbage clock is not a date");
+        // The boundary, from both sides, so the range is a decision and not an
+        // accident: the epoch itself resolves, and a year past 2999 does not.
+        assert!(
+            stamp_local(0).is_some(),
+            "the epoch is a real instant, and west of UTC it falls in 1969"
+        );
+        assert_eq!(stamp_local(33_000_000_000_000_000), None, "year 3015");
+    }
+
     #[test]
     fn every_kind_files_under_exactly_one_shelf() {
         let kinds = [
@@ -2868,6 +3452,7 @@ mod tests {
                 href: "/x".into(),
                 mime: None,
                 summary: None,
+                notes: Vec::new(),
             }),
             Kind::Markdown(Markdown {
                 body: String::new(),

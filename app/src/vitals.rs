@@ -1342,10 +1342,70 @@ pub struct FleetPane {
     pub cands: Vec<usize>,
 }
 
-/// Assign each pane a transcript, at most one pane per transcript. Pure, so the
-/// two real collisions from #272 can be replayed as tests.
+/// How well evidenced a pane→transcript binding is.
+///
+/// The rung that produced a binding is part of the answer, not an implementation
+/// detail: a reader that must never show one agent's work to another (a bench, a
+/// tool glyph) has to be able to refuse the weak rung, and it can only refuse
+/// what it can see. Ordered weakest-last so `>=` comparisons read the way they
+/// sound.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Bond {
+    /// The agent named the session itself — a ledger entry it pushed, a
+    /// descriptor it holds open, or `--resume <id>` on its own command line.
+    /// Not a guess and not a match: a claim.
+    Declared,
+    /// The process started when the conversation opened, within
+    /// [`BIRTH_TOLERANCE`]. A near-identification.
+    Birth,
+    /// Forced by elimination: the only transcript left in that directory, and
+    /// the only pane left that could hold it.
+    Sole,
+    /// The last conversation spoken into, among those that began after the
+    /// process did. Where an agent probably is, never where it provably is —
+    /// and the rung that put one pane's deliverable on another pane's bench.
+    Guess,
+}
+
+impl Bond {
+    /// One word for a log line or the `bindings` verb.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Bond::Declared => "declared",
+            Bond::Birth => "birth",
+            Bond::Sole => "sole",
+            Bond::Guess => "guess",
+        }
+    }
+
+    /// May a reader act on this binding when being wrong means attributing one
+    /// agent's work to another?
+    ///
+    /// Everything but [`Bond::Guess`]. The three certain rungs each rest on
+    /// something the pane itself did — said its id, started with the file, or
+    /// was the last one standing.
+    pub fn is_certain(self) -> bool {
+        self != Bond::Guess
+    }
+}
+
+/// [`assign_bonded`] with the evidence dropped — what every caller wanted until
+/// one of them needed to refuse the weakest rung, and what the collision tests
+/// from #272 are still written against.
+///
+/// Test-only: production code reads the bond, because production code is
+/// deciding with it whether to attribute one agent's work to another.
+#[cfg(test)]
 pub fn assign(panes: &[FleetPane], cands: &[Cand]) -> HashMap<u32, usize> {
-    let mut out: HashMap<u32, usize> = HashMap::new();
+    assign_bonded(panes, cands)
+        .into_iter()
+        .map(|(pid, (ci, _))| (pid, ci))
+        .collect()
+}
+
+/// [`assign`], keeping the rung each binding came from.
+pub fn assign_bonded(panes: &[FleetPane], cands: &[Cand]) -> HashMap<u32, (usize, Bond)> {
+    let mut out: HashMap<u32, (usize, Bond)> = HashMap::new();
     let mut claimed: HashSet<usize> = HashSet::new();
 
     // Declared wins outright. An agent naming its own session is not a guess.
@@ -1354,9 +1414,15 @@ pub fn assign(panes: &[FleetPane], cands: &[Cand]) -> HashMap<u32, usize> {
             continue;
         };
         if let Some(&ci) = p.cands.iter().find(|&&ci| cands[ci].id == id) {
-            if claimed.insert(ci) {
-                out.insert(p.pid, ci);
-            }
+            // Two panes naming ONE session both get it. Exclusivity is a rule
+            // about inference — two panes may not be *guessed* onto one
+            // conversation — and enforcing it here would take a transcript away
+            // from a pane that said, correctly, that it was in it. Resuming the
+            // same id twice really is two agents on one transcript; the host
+            // refuses to spawn that, a person can still do it by hand, and the
+            // honest answer then is that they are both there.
+            claimed.insert(ci);
+            out.insert(p.pid, (ci, Bond::Declared));
         }
     }
 
@@ -1389,28 +1455,23 @@ pub fn assign(panes: &[FleetPane], cands: &[Cand]) -> HashMap<u32, usize> {
             continue;
         }
         claimed.insert(ci);
-        out.insert(pid, ci);
+        out.insert(pid, (ci, Bond::Birth));
     }
 
-    // Recency. A /clear mints a new conversation while the process runs on, so
-    // an agent's current transcript can begin hours after it started and match
-    // no birth. Among what began after the process did, the one last spoken into
-    // is where it is now.
-    for p in panes {
-        if out.contains_key(&p.pid) {
-            continue;
-        }
+    // Elimination. One pane left unbound in a directory, one transcript left
+    // free in it: nothing else can own either, so the pairing is forced rather
+    // than preferred. This is the rung that keeps a single-agent directory —
+    // the overwhelmingly common case — working exactly as it always did, while
+    // the rung below it stops being trusted.
+    let eligible_for = |p: &FleetPane, claimed: &HashSet<usize>| -> Vec<usize> {
         let free: Vec<usize> = p
             .cands
             .iter()
             .copied()
             .filter(|ci| !claimed.contains(ci) && cands[*ci].spoke.is_some())
             .collect();
-        if free.is_empty() {
-            continue;
-        }
         let floor = p.started_at.map(|s| s - BIRTH_TOLERANCE);
-        let eligible: Vec<usize> = match floor {
+        let began_after: Vec<usize> = match floor {
             Some(f) => free
                 .iter()
                 .copied()
@@ -1418,17 +1479,67 @@ pub fn assign(panes: &[FleetPane], cands: &[Cand]) -> HashMap<u32, usize> {
                 .collect(),
             None => free.clone(),
         };
-        let pool = if eligible.is_empty() {
-            &free
+        if began_after.is_empty() {
+            free
         } else {
-            &eligible
-        };
+            began_after
+        }
+    };
+    loop {
+        // One round: every unbound pane's eligible set, and how many panes each
+        // transcript is eligible FOR. Built once per round rather than per pair,
+        // because a window with forty panes over a directory holding hundreds of
+        // transcripts is a real shape and the pairwise form is cubic in it.
+        let open: Vec<(u32, Vec<usize>)> = panes
+            .iter()
+            .filter(|p| !out.contains_key(&p.pid))
+            .map(|p| (p.pid, eligible_for(p, &claimed)))
+            .collect();
+        let mut wanted_by: HashMap<usize, usize> = HashMap::new();
+        for (_, elig) in &open {
+            for ci in elig {
+                *wanted_by.entry(*ci).or_default() += 1;
+            }
+        }
+        // Forced means both ways round: this pane has one candidate left, and
+        // that candidate has no other pane that could take it.
+        let forced = open.iter().find_map(|(pid, elig)| match elig[..] {
+            [only] if wanted_by.get(&only) == Some(&1) => Some((*pid, only)),
+            _ => None,
+        });
+        // Taking one forced pairing can leave another pane with a single
+        // candidate, so the round repeats until nothing more is forced.
+        let Some((pid, ci)) = forced else { break };
+        claimed.insert(ci);
+        out.insert(pid, (ci, Bond::Sole));
+    }
+
+    // Recency. A /clear mints a new conversation while the process runs on, so
+    // an agent's current transcript can begin hours after it started and match
+    // no birth. Among what began after the process did, the one last spoken into
+    // is where it is now.
+    //
+    // Everything that reaches here is a preference between several live
+    // conversations, which is why it is bonded [`Bond::Guess`] and why a reader
+    // that would attribute work to the wrong agent must decline it.
+    //
+    // By pid rather than in the order the window happened to hand its panes
+    // over: when two panes want one transcript, SOMEBODY gets it, and which one
+    // must not depend on tab order — a binding that flaps between sweeps is a
+    // second bug wearing the first one's clothes.
+    let mut rest: Vec<&FleetPane> = panes.iter().collect();
+    rest.sort_by_key(|p| p.pid);
+    for p in rest {
+        if out.contains_key(&p.pid) {
+            continue;
+        }
+        let pool = eligible_for(p, &claimed);
         if let Some(&pick) = pool
             .iter()
             .max_by_key(|ci| cands[**ci].spoke.unwrap_or(i64::MIN))
         {
             claimed.insert(pick);
-            out.insert(p.pid, pick);
+            out.insert(p.pid, (pick, Bond::Guess));
         }
     }
     out
@@ -1549,10 +1660,30 @@ fn line_ts(line: &str) -> Option<String> {
         .map(str::to_string)
 }
 
-/// The `claude` process under a pane's shell. TD reports the shell's pid; the
-/// agent is a child of it, and it is the child's start time that dates the
-/// conversation.
+/// The agent process behind a pane, given the pane's shell pid.
+///
+/// **The one the terminal is attached to, before the one that happens to be
+/// oldest.** A pane can hold more than one agent at a time: suspend a session
+/// with ctrl+Z and start another, or background one that is wedged, and two
+/// live `claude` processes sit under one shell. The child walk finds the FIRST,
+/// which is the one left behind — so a pane would show the suspended agent's
+/// conversation while its owner typed into the new one. Observed on this
+/// machine: a pane whose foreground group was the live agent and whose bench,
+/// wall and tool glyph all read the stopped one.
+///
+/// The kernel already knows which is which. `tpgid` on the shell's own stat line
+/// is the foreground process group of its terminal — the process a keystroke
+/// reaches — and that is the definition of "this pane's agent" every reader
+/// wants. The child walk stays as the fallback for a pane whose foreground group
+/// is something else entirely (a `git` command, a pager) with an agent still
+/// running behind it.
 pub fn agent_under(shell_pid: u32) -> Option<u32> {
+    fn comm(pid: u32) -> String {
+        std::fs::read_to_string(format!("/proc/{pid}/comm"))
+            .unwrap_or_default()
+            .trim()
+            .to_string()
+    }
     fn kids(pid: u32) -> Vec<u32> {
         let mut out = Vec::new();
         let Ok(tasks) = std::fs::read_dir(format!("/proc/{pid}/task")) else {
@@ -1571,16 +1702,36 @@ pub fn agent_under(shell_pid: u32) -> Option<u32> {
         }
         let children = kids(pid);
         for k in &children {
-            if std::fs::read_to_string(format!("/proc/{k}/comm"))
-                .map(|c| c.trim() == "claude")
-                .unwrap_or(false)
-            {
+            if is_agent(&comm(*k)) {
                 return Some(*k);
             }
         }
         children.iter().find_map(|k| walk(*k, depth + 1))
     }
-    walk(shell_pid, 0)
+    let fg = crate::session::foreground_pid(shell_pid);
+    pick_agent(fg.map(|p| (p, comm(p))), || walk(shell_pid, 0))
+}
+
+/// Is this the command name of an agent we resolve conversations for?
+fn is_agent(comm: &str) -> bool {
+    matches!(comm, "claude" | "codex")
+}
+
+/// Pure: the foreground process when it is an agent, otherwise whatever the
+/// child walk finds.
+///
+/// Split out because the rule is the whole point and `/proc` is not testable:
+/// "the process this terminal is attached to" beats "the first agent I can find
+/// under this shell" whenever the two disagree, and they disagree exactly when a
+/// person has left one agent suspended and started another.
+pub(crate) fn pick_agent(
+    fg: Option<(u32, String)>,
+    walk: impl FnOnce() -> Option<u32>,
+) -> Option<u32> {
+    match fg {
+        Some((pid, comm)) if is_agent(&comm) => Some(pid),
+        _ => walk(),
+    }
 }
 
 // ─── the fleet sweep ───────────────────────────────────────────────────────
@@ -1589,8 +1740,12 @@ pub fn agent_under(shell_pid: u32) -> Option<u32> {
 pub struct PaneReq {
     /// The pane's shell pid — the card's identity.
     pub shell_pid: u32,
+    /// Mode label — `CLAUDE` / `CODEX`. Codex panes used to be looked for in
+    /// the claude project directory, which is a directory they are never in.
+    pub mode: String,
     pub cwd: Option<String>,
-    /// The pane's launch/resume command, if it carried one.
+    /// The pane's resume command, if it carried one — a last resort for a pane
+    /// whose agent process has gone.
     pub resume: Option<String>,
     /// The stamp of whatever vitals the wall already holds for this pane.
     pub known: Option<(u64, u64)>,
@@ -1605,94 +1760,39 @@ pub enum Update {
     Set(Box<Vitals>),
 }
 
-/// The session id out of a `claude --resume <uuid>` command line.
-///
-/// Anchored on the flag, never "the first uuid in the string": every scratchpad
-/// under `/tmp/claude-<uid>/` is named after a session, so a loose scan reported
-/// a bash process as a live agent.
-fn declared_id(resume: Option<&str>) -> Option<String> {
-    let s = resume?;
-    let at = s.find("--resume")?;
-    let rest = s[at + "--resume".len()..].trim_start_matches(['=', ' ']);
-    let id: String = rest
-        .chars()
-        .take_while(|c| c.is_ascii_hexdigit() || *c == '-')
-        .collect();
-    (id.len() == 36).then_some(id)
-}
-
 /// Measure every agent pane in one pass. Runs on the background executor: the
 /// whole seventeen-agent fleet was measured at 560ms, and only transcripts that
 /// have grown are re-read.
 ///
-/// One pass rather than a per-pane lookup because the binding has to be
-/// mutually exclusive — see [`assign`] and terminal-delight#272.
+/// One pass rather than a per-pane lookup because the binding has to be mutually
+/// exclusive — see [`assign`] and terminal-delight#272. The binding itself is
+/// [`crate::paneident`]'s: the wall used to gather its own candidates and call
+/// [`assign`] directly, which left two copies of "which conversation is this
+/// pane in" in the tree, and the other copy was the one that went wrong (#564).
+///
+/// Only a binding the evidence supports draws bars. A card's bars are an
+/// attribution — this agent is this tired, this far through its context, this
+/// deep into its budget — and the note above [`assign`] is explicit that a wrong
+/// FATIGUE reading is a shutdown decision taken on another agent's evidence. A
+/// pane bound only by preference between live conversations therefore draws
+/// nothing, which is what [`Update::Clear`] already meant.
 pub fn sweep(reqs: &[PaneReq], home: &Path) -> Vec<(u32, Update)> {
-    // Candidate transcripts, per project directory, read once even when several
-    // panes share a cwd.
-    let mut cands: Vec<Cand> = Vec::new();
-    let mut paths: Vec<std::path::PathBuf> = Vec::new();
-    let mut by_dir: HashMap<String, Vec<usize>> = HashMap::new();
-
-    for r in reqs {
-        let Some(cwd) = r.cwd.as_deref() else {
-            continue;
-        };
-        let slug = crate::session::claude_slug(cwd);
-        if by_dir.contains_key(&slug) {
-            continue;
-        }
-        let dir = home.join(".claude/projects").join(&slug);
-        let mut idx = Vec::new();
-        if let Ok(rd) = std::fs::read_dir(&dir) {
-            for e in rd.flatten() {
-                let p = e.path();
-                if p.extension().is_some_and(|x| x == "jsonl") {
-                    idx.push(cands.len());
-                    cands.push(edges_cached(&p));
-                    paths.push(p);
-                }
-            }
-        }
-        by_dir.insert(slug, idx);
-    }
-
-    let panes: Vec<FleetPane> = reqs
+    let facts: Vec<crate::paneident::PaneFacts> = reqs
         .iter()
-        .map(|r| {
-            // The pane pid is the shell; the agent is a child, and it is the
-            // CHILD's start time that dates the conversation.
-            let agent = r
-                .cwd
-                .as_deref()
-                .and_then(|_| agent_under(r.shell_pid))
-                .unwrap_or(r.shell_pid);
-            FleetPane {
-                pid: r.shell_pid,
-                declared: declared_id(r.resume.as_deref()),
-                started_at: crate::session::proc_start_unix(agent).map(|s| s as i64),
-                cands: r
-                    .cwd
-                    .as_deref()
-                    .map(|c| {
-                        by_dir
-                            .get(&crate::session::claude_slug(c))
-                            .cloned()
-                            .unwrap_or_default()
-                    })
-                    .unwrap_or_default(),
-            }
+        .map(|r| crate::paneident::PaneFacts {
+            shell_pid: r.shell_pid,
+            mode: r.mode.clone(),
+            cwd: r.cwd.clone(),
+            resume: r.resume.clone(),
         })
         .collect();
-
-    let bound = assign(&panes, &cands);
+    let bound = crate::paneident::certain(&facts, home);
 
     reqs.iter()
         .map(|r| {
-            let Some(&ci) = bound.get(&r.shell_pid) else {
+            let Some(path) = bound.get(&r.shell_pid) else {
                 return (r.shell_pid, Update::Clear);
             };
-            let path = &paths[ci];
             if !is_stale_stamp(r.known, path) {
                 return (r.shell_pid, Update::Keep);
             }

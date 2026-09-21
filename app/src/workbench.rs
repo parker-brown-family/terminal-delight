@@ -160,6 +160,19 @@ pub enum Tint {
     Settled,
     /// Nothing is claimed about it.
     Unknown,
+    /// YOURS. Not a state of the work at all — a statement about whose voice
+    /// this is.
+    ///
+    /// Every other tint here answers *what should happen to this thing*, and a
+    /// comment has no answer to that question: it is not waiting, not pending,
+    /// not settled, and `Unknown` would be a claim that nobody has looked. What
+    /// distinguishes it is authorship, so that is what it says.
+    ///
+    /// It resolves to the palette's `human` role — the colour your own typing
+    /// is already drawn in inside an agent session, and dialable from the
+    /// wheel's own pip. A comments board is then legible as yours before a word
+    /// of it is read, and it moves with the palette like everything else.
+    Mine,
 }
 
 /// Sort a shelf into waiting, then what stands, then the record.
@@ -228,6 +241,8 @@ pub fn tint_of(kind: &Kind) -> Tint {
         // own colour inside the card rather than tinting the whole row.
         Kind::Response(_) => Tint::Ident,
         Kind::Unclassified(_) => Tint::Unknown,
+        // The person's own voice, in the person's own colour.
+        Kind::Comment(_) => Tint::Mine,
     }
 }
 
@@ -814,6 +829,9 @@ pub struct Reviewed {
 /// The ways out of the bench are alt+k and the TERM chip, both deliberate.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Peel {
+    /// An open dial menu, which is drawn over everything and is the newest
+    /// thing on the screen.
+    Dial,
     /// The review gallery, drawn over everything.
     Gallery,
     /// A half-typed line in the composer.
@@ -825,7 +843,14 @@ pub enum Peel {
     Nothing,
 }
 
-pub fn peel(gallery: bool, typing: bool, card_open: bool, card_waits: bool) -> Peel {
+pub fn peel(dial: bool, gallery: bool, typing: bool, card_open: bool, card_waits: bool) -> Peel {
+    // ABOVE THE GALLERY, because it is above everything: a dial menu is the
+    // last thing opened and the smallest thing to lose. Escape reaching past
+    // it to empty the composer would take the person's sentence to close a
+    // list of five words — which is what it did before this rung existed.
+    if dial {
+        return Peel::Dial;
+    }
     if gallery {
         return Peel::Gallery;
     }
@@ -892,6 +917,15 @@ pub enum Hit {
         key: String,
     },
     Shelf(crate::surface::Shelf),
+    /// The `+ write a note` row at the head of the comments board.
+    ///
+    /// A note is now only ever opened on purpose — `alt+m`, or this. Typing on
+    /// the board used to open one under the first character and that took the
+    /// keystroke away from the agent, which is where typing goes everywhere
+    /// else on the bench. Removing it left the feature reachable by one chord
+    /// and nothing else, so the chord needed a visible twin: the row teaches
+    /// `alt+m` by wearing it, and is the thing a hand reaches for meanwhile.
+    AddNote,
     OpenRow(crate::surface::SurfaceId),
     GalleryBack,
     GalleryForward,
@@ -914,6 +948,16 @@ impl Hit {
             _ => Pointer::Hand,
         }
     }
+}
+
+/// Does this click close an open dial menu instead of doing what it says?
+///
+/// `None` is a click that reached no control — the bench's own background,
+/// which is most of it — and that is a dismissal like any other. The menu's
+/// two controls are the exception: the dial itself toggles, and a value on
+/// the list is the press the menu was opened for.
+pub fn dial_dismisses(open: bool, hit: Option<&Hit>) -> bool {
+    open && !matches!(hit, Some(Hit::Dial(_)) | Some(Hit::DialPick(..)))
 }
 
 /// Which of the AGENT strip's two dials.
@@ -949,6 +993,27 @@ impl Dial {
         match self {
             Dial::Model => "/model",
             Dial::Effort => "/effort",
+        }
+    }
+
+    /// The word that has to appear in the harness's own confirmation for it to
+    /// be THIS dial's.
+    ///
+    /// Claude Code 2.1.274 heads the two pickers `Switch model?` and `Change
+    /// effort level?` (both read out of the shipped binary, not guessed), so
+    /// one word each separates them — and separates either from every other
+    /// question a terminal might be showing. The window presses Yes on its own
+    /// question and on nothing else: a permission gate is also a two-option
+    /// picker with a Yes in it, and auto-answering one of those would approve
+    /// a tool call nobody looked at.
+    ///
+    /// A harness that words it differently is not matched, the window never
+    /// presses anything, and the person answers the picker themselves — which
+    /// is exactly today's behaviour and is why this can be a plain word match.
+    pub fn confirm_word(self) -> &'static str {
+        match self {
+            Dial::Model => "model",
+            Dial::Effort => "effort",
         }
     }
 }
@@ -1409,20 +1474,129 @@ pub fn replace_bytes() -> Vec<u8> {
 /// retyping brings it back. The caller answers for that by clearing the mirror's
 /// count (see [`Line::forget_pastes`]) rather than leaving the box claiming an
 /// attachment the agent no longer holds.
-pub fn aside_bytes(command: &str, draft: &Line) -> Vec<u8> {
+///
+/// **It is now TWO writes, not one, and the second one waits.** Typing
+/// `/effort max` does not change the effort — the harness answers it with a
+/// modal picker of its own, *"Change effort level?"*, and until somebody
+/// presses Yes nothing has happened. Everything written after the command
+/// therefore lands in that picker rather than in a line editor, which is
+/// where the retyped draft was going: into a menu, where its digits pick
+/// options. Parker: *"all that happens is the /effort <value> is pre-pended
+/// to the prompt and not PUSHED THROUGH and CONFIRMED... the prompt in
+/// progress should be saved, deleted, then the effort value pushed through to
+/// the prompt, confirmed, and then the user's prompt pasted back in, all
+/// seamlessly"*. So this half erases and commands; [`restore_bytes`] is the
+/// other half, and [`dial_step`] decides when it is safe to send.
+pub fn dial_bytes(command: &str, draft: &Line) -> Vec<u8> {
     let mut out = Vec::new();
     let text = draft.text();
-    let end = text.chars().count();
-    if end > 0 {
+    if text.chars().count() > 0 {
         out.extend(caret_move(draft.caret(), 0));
         out.extend(replace_bytes());
     }
     out.extend(typed_line(command));
-    if end > 0 {
-        out.extend_from_slice(text.as_bytes());
-        out.extend(caret_move(end, draft.caret()));
-    }
     out
+}
+
+/// The draft, typed back where it was, with the caret where it was.
+///
+/// Types the text the person had at the moment of the press — NOT the text
+/// the mirror is holding now. Anything they typed while the harness was being
+/// answered was held in the bench's own queue (see `bench_may_write`) and is
+/// drained straight after this, so replaying the original and then the held
+/// keystrokes reproduces exactly what the far end would have had if the dial
+/// had never been touched. Restoring the CURRENT text instead would apply
+/// every one of those edits twice.
+pub fn restore_bytes(text: &str, caret: usize) -> Vec<u8> {
+    let end = text.chars().count();
+    if end == 0 {
+        return Vec::new();
+    }
+    let mut out = text.as_bytes().to_vec();
+    out.extend(caret_move(end, caret.min(end)));
+    out
+}
+
+/// A dial press that has been typed and is waiting on the harness.
+///
+/// The draft is carried here rather than read back off the composer because
+/// the composer keeps moving: the person goes on typing into a box whose
+/// keystrokes are being held, and the text that has to be typed back is the
+/// one that was erased.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct DialSent {
+    /// Which dial was pressed — it decides which confirmation is OURS.
+    pub which: Dial,
+    /// The draft at the moment of the press.
+    pub text: String,
+    /// Where their caret was in it.
+    pub caret: usize,
+    /// When the command went out.
+    pub sent_ms: u64,
+    /// Has the window already pressed Yes on the harness's picker?
+    pub answered: bool,
+}
+
+/// What to do about a dial press that is in flight.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum DialStep {
+    /// Nothing yet — the harness has not put its question up.
+    Wait,
+    /// Its picker is up: walk from `from` to `to` and press return.
+    Answer { to: usize, from: usize },
+    /// Over. Type the draft back and let the held keystrokes go.
+    Settle,
+}
+
+/// How long to wait for the harness to ask before deciding it never will.
+///
+/// Generous against a redraw, short against a person: the dials are pressable
+/// only from a state where the harness is at its prompt ([`dials_live`]), so
+/// the picker — when there is one — is drawn on the next frame, and the only
+/// reason to wait a second and a half is that a frame can be slow. A harness
+/// that simply applies the command (Codex, or an effort level the harness
+/// does not think is worth asking about) never asks at all, and the draft
+/// must not be held hostage to a question nobody is going to pose.
+pub const DIAL_ASK_MS: u64 = 1500;
+
+/// The dial's state machine, over what is on the bottom of the screen.
+///
+/// Pure, so its cases can be asserted without a terminal — and they are the
+/// cases that decide whether a person ever sees their sentence again.
+///
+/// **A MENU ON SCREEN IS THE STOP CONDITION, not a clock.** There is
+/// deliberately no give-up while [`crate::screenread::Picker`] says something
+/// is up: typing a draft into a picker is the harm this whole mechanism
+/// exists to avoid, and a keystroke that lands in one cannot be taken back.
+/// Holding, by contrast, costs nothing that is not already lost — the far end
+/// is a modal picker and will not read a sentence from anybody until it is
+/// answered. So the draft waits, visible in the composer the whole time, and
+/// goes in the moment the screen is a line editor again. The person answering
+/// the question themselves ends it exactly as our own keypress does.
+pub fn dial_step(sent: &DialSent, picker: crate::screenread::Picker, now_ms: u64) -> DialStep {
+    use crate::screenread::Picker;
+    match (picker, sent.answered) {
+        // Its question is up and nobody has answered it. This is the press
+        // the person already made, arriving where the harness can hear it.
+        (Picker::Confirm { yes, cursor }, false) => DialStep::Answer {
+            to: yes,
+            from: cursor,
+        },
+        // Anything still up — ours after we pressed, or somebody else's — is
+        // a screen with no line editor on it. Wait.
+        (Picker::Confirm { .. } | Picker::Other, _) => DialStep::Wait,
+        // Answered and gone. Done.
+        (Picker::None, true) => DialStep::Settle,
+        // Never asked. Either the harness took the command outright or it is
+        // never going to ask, and both end the same way.
+        (Picker::None, false) => {
+            if now_ms.saturating_sub(sent.sent_ms) >= DIAL_ASK_MS {
+                DialStep::Settle
+            } else {
+                DialStep::Wait
+            }
+        }
+    }
 }
 
 /// The value of a flag in a launch or resume command, if it carries one.
@@ -1560,6 +1734,52 @@ pub fn ext_of_image_mime(mime: &str) -> Option<&'static str> {
         "image/svg+xml" => "svg",
         _ => return None,
     })
+}
+
+/// The text a set of dropped — or pasted — file paths becomes.
+///
+/// A path is typed rather than the file being read, on the same terms as the
+/// clipboard's image paste: a pseudoterminal carries bytes, and every agent
+/// worth dropping a file into already opens a filename.
+///
+/// **One path is one word.** A path is quoted the moment it holds whitespace
+/// or anything a shell would act on, because the far end is a line editor: an
+/// unquoted `Screenshot 2026-09-18.png` arrives as two arguments and nothing
+/// downstream can put it back together. Quoting is single-quote and an
+/// embedded quote closes, escapes and reopens (`'\''`), which is the one form
+/// every POSIX shell agrees on and which an agent reading the line also
+/// understands.
+///
+/// A newline inside a filename is legal and would SUBMIT the line half-typed,
+/// so control characters become spaces — the same trade
+/// [`crate::pane::TerminalView::bench_paste`] already makes for pasted text.
+/// The path is then wrong, and it was unusable either way; what it no longer
+/// does is send half a sentence to the agent.
+pub fn paths_as_words(paths: &[std::path::PathBuf]) -> String {
+    paths
+        .iter()
+        .map(|p| path_word(&p.to_string_lossy()))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// One path, as one word on the far end's line.
+fn path_word(raw: &str) -> String {
+    let flat: String = raw
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect();
+    // Bare when nothing in it can be misread. The list is what a shell acts
+    // on plus the quotes themselves; `-` and `.` and `/` are left alone, so
+    // an ordinary path still reads as an ordinary path.
+    let plain = !flat.is_empty()
+        && !flat
+            .chars()
+            .any(|c| c.is_whitespace() || "\"'\\$`&|;<>()[]{}*?!#~^".contains(c));
+    if plain {
+        return flat;
+    }
+    format!("'{}'", flat.replace('\'', r"'\''"))
 }
 
 /// What a bench of this size, on a pane of this kind, actually shows.
@@ -2282,64 +2502,53 @@ pub enum Dispatch {
         /// What it did, for whoever is looking at the surface afterwards.
         note: String,
     },
+    /// Put text on the system clipboard, and do nothing else.
+    ///
+    /// Local like [`Dispatch::Open`], and separate from it because the desktop
+    /// handler is the wrong instrument: `Open` hands a path to whatever the
+    /// machine has registered for it, and this carries the surface's own words
+    /// with no file in the story at all. It exists because a comment has no
+    /// verb that reaches the agent, so lifting the words by hand is the only
+    /// route there is — see [`crate::surface::Action::Copy`].
+    Clipboard(String),
     /// Nothing to do, and a reason worth showing rather than a silent no-op.
     Refused(String),
 }
 
-/// What a keystroke means on the bench while it is READING.
+// Chords the WINDOW owns are `crate::keylayer::window_chord`. They moved there
+// with the rest of the question *who owns this keystroke*, and the window is the
+// top of that ladder. A pointer rather than a re-export: a second name for one
+// table is the shape of the drift the table exists to prevent.
+
+/// `alt+<n>` selects the nth shelf outright, rather than cycling to it.
 ///
-/// Extracted from the pane's key handler so the mode rules are a table rather
-/// than a branch inside a gpui closure. The rules are small and easy to get
-/// subtly wrong — a digit means "answer" only when there is a question to
-/// answer, and any ordinary character has to start talking rather than being
-/// swallowed — and neither of those can be tested through a render.
-/// Chords the WINDOW owns — never a pane's content, on either of its faces.
+/// `tab` already walks the shelves and will keep doing so; this is for landing
+/// on one directly. Parker asked for it on the bench's existing `alt+<key>`
+/// pattern after `alt+m` shipped, and proposed the four keys sitting under the
+/// right hand in tab order — `alt+v b n m` for overview, artifacts, decisions,
+/// comments. The idea is right and two of those keys are already spoken for:
 ///
-/// # Why this is one table and not two
+/// - **`alt+v` splits the focused pane**, Tilix-style, alongside `alt+h`. It is
+///   in [`crate::keylayer::window_chord`], in the module header and on the keybindings sheet.
+/// - **`alt+b` is readline's word-back**, which reaches the agent's own prompt
+///   from the bench composer — `keystroke_bytes` passes it through deliberately.
 ///
-/// A pane can be showing a terminal or a bench, and both of those are *content
-/// inside a window*. The window's own gestures — close this pane, split it,
-/// open the FOCUS reader, move the highlight — have to survive whichever one is
-/// on top, and the way they survive is that the thing on top declines to take
-/// them.
+/// So the keys are the DIGITS, which are positional in the same way the letter
+/// row would have been, free on both faces, and — unlike four hand-picked
+/// letters — they extend on their own the day a fifth shelf appears. The
+/// mapping is `Shelf::ALL`'s own order, so there is no second list to keep in
+/// step with the tab strip.
 ///
-/// The terminal face has always done this, in `pane::keystroke_bytes`: a short
-/// list of alt chords it refuses to encode, so they bubble up to the workspace
-/// instead of arriving at somebody's shell as `ESC w`. **The bench never got
-/// one**, and it ends both of its key paths by stopping propagation — so on the
-/// workbench face every chord in that list was dead. `alt+w` did nothing at
-/// all, which is worse than the state it replaced, because the face toggle that
-/// used to sit on `alt+w` was at least handled upstream (#524).
-///
-/// Extracting the list rather than copying it is the point. Two lists drift,
-/// and the drift is invisible: nothing fails to compile, nothing fails a test,
-/// a chord just quietly stops working on one face.
-///
-/// # What is deliberately NOT here
-///
-/// Only chords carrying `alt` (or `control`+`alt`) qualify, and that boundary
-/// is doing real work in both directions:
-///
-/// - `ctrl+c` must reach a running agent. A bench that refused it would take
-///   away the only way to interrupt a turn.
-/// - `alt+b` / `alt+f` are readline's word motion, which the composer mirrors
-///   through [`line_edit`] — so a blanket "the window takes every alt chord"
-///   would break typing.
-/// - A PLAIN arrow walks the bench's rail and a PLAIN escape peels its
-///   overlays. Only the modified forms leave.
-pub fn window_chord(key: &str, alt: bool, control: bool) -> bool {
-    // ctrl+alt+<anything> walks the left bar's tree. Matched on the modifiers
-    // alone, because that pair is not an editing chord anywhere.
-    if control && alt {
-        return true;
+/// Modifiers are checked here rather than at the call site because getting them
+/// wrong is silent: [`reading_key`] reads a bare digit as ANSWERING option `n`
+/// of a waiting question, so a chord that let an unmodified `2` through would
+/// answer somebody's picker instead of changing tab.
+pub fn shelf_chord(key: &str, alt: bool, control: bool) -> Option<Shelf> {
+    if !alt || control {
+        return None;
     }
-    if !alt {
-        return false;
-    }
-    matches!(
-        key,
-        "left" | "right" | "up" | "down" | "r" | "v" | "h" | "w" | "k"
-    )
+    let n: usize = key.parse().ok()?;
+    Shelf::ALL.get(n.checked_sub(1)?).copied()
 }
 
 /// Does this keystroke put a CHARACTER in front of a person?
@@ -2372,8 +2581,15 @@ pub enum Reading {
     Choose(usize),
     /// Start talking to the agent, carrying this keystroke through.
     Talk,
-    /// Not ours; swallowed so it cannot reach a working agent.
-    Ignore,
+    /// Not ours. **The terminal underneath gets it** — `ctrl+c` interrupts the
+    /// turn you are watching, a function key reaches the app that binds it.
+    ///
+    /// It used to be called `Ignore` and it was a swallow: `bench_key` ended
+    /// every path in `stop_propagation`, so a key with no meaning here died on
+    /// the workbench face instead of reaching the agent whose conversation was on
+    /// the screen. Renamed rather than re-documented, because the old name is
+    /// what made the swallow look deliberate at the one call site that mattered.
+    Pass,
 }
 
 /// Decide what a key does on a reading bench.
@@ -2399,7 +2615,7 @@ pub fn reading_key(key: &str, printable: bool, answerable: Option<usize>) -> Rea
     if printable {
         Reading::Talk
     } else {
-        Reading::Ignore
+        Reading::Pass
     }
 }
 
@@ -2466,6 +2682,12 @@ pub fn verb_preview(
         Action::OpenSource => match surface.source.as_ref().and_then(|s| s.files.first()) {
             Some(f) => format!("opens {f}"),
             None => "opens nothing \u{2014} this surface names no source".to_string(),
+        },
+        Action::Copy => match &surface.kind {
+            Kind::Comment(_) | Kind::Markdown(_) => {
+                "copies the text \u{2014} the agent is not told".to_string()
+            }
+            _ => "copies nothing \u{2014} this surface is not text".to_string(),
         },
         _ => ActionReport {
             surface: surface.id.clone(),
@@ -2785,6 +3007,18 @@ impl Bench {
                 match self.surfaces.iter_mut().find(|s| s.id == id) {
                     Some(existing) if post.op == Op::Update => existing.merge(incoming),
                     Some(existing) => {
+                        // A second arrival must not blur who wrote this. Since
+                        // `present_surface` persists on its way past, the
+                        // watcher re-delivers every verb-sent surface as a
+                        // FileDrop seconds later — and FileDrop cannot name a
+                        // writer at all. Keeping the more precise origin means
+                        // the round trip through disk costs the card nothing;
+                        // without it, "presented by this pane's agent" decays
+                        // into "writer unknown" on its own.
+                        let mut incoming = incoming;
+                        if incoming.origin.precision() < existing.origin.precision() {
+                            incoming.origin = existing.origin.clone();
+                        }
                         // The same surface presented again is not a change.
                         // The derived half re-presents every sweep with a
                         // fresh clock, and taking that as new work reset every
@@ -2951,6 +3185,14 @@ impl Bench {
                 Action::OpenSource => match surface.source.as_ref().and_then(|s| s.files.first()) {
                     Some(f) => Dispatch::Open(f.clone()),
                     None => Dispatch::Refused("this surface names no source".into()),
+                },
+                // Only the kinds that ARE text. A refusal naming what is
+                // missing beats copying a rendering of a diagram that nobody
+                // would recognise when they pasted it.
+                Action::Copy => match &surface.kind {
+                    Kind::Comment(c) => Dispatch::Clipboard(c.body.clone()),
+                    Kind::Markdown(m) => Dispatch::Clipboard(m.body.clone()),
+                    _ => Dispatch::Refused("this surface has no text to copy".into()),
                 },
                 other => Dispatch::Refused(format!(
                     "{} is marked local but nothing here performs it",
@@ -3471,6 +3713,61 @@ mod tests {
         assert_eq!(b.rows_for(Shelf::Artifacts)[0].title, "Second");
     }
 
+    /// A surface presented over MCP is now written to disk on its way past, so
+    /// the watcher reads the file back and re-delivers the same id as a
+    /// `FileDrop` moments later. That second arrival knows strictly less — the
+    /// file transport cannot name a writer at all — and it must not be allowed
+    /// to overwrite what the verb established.
+    ///
+    /// Without the precision rule this passes silently in the wrong direction:
+    /// the card keeps its title and its body and quietly stops saying whose
+    /// agent wrote it, which is the one thing `Origin` exists to carry.
+    #[test]
+    fn a_file_rearrival_does_not_blur_who_presented_it() {
+        let mut b = Bench::new();
+
+        let mut first = doc("carried", "By the verb");
+        let named = crate::surface::Origin::Mcp {
+            pid: 4242,
+            own: Some(false),
+        };
+        first.surface.as_mut().unwrap().origin = named.clone();
+        b.apply(first);
+
+        // the same document, read back off the disk it was just written to
+        let mut echo = doc("carried", "By the verb");
+        echo.surface.as_mut().unwrap().origin = crate::surface::Origin::FileDrop;
+        let changed = b.apply(echo);
+
+        assert!(
+            changed.is_none(),
+            "a round trip through disk is not new work and must not repaint"
+        );
+        let row = b.surfaces.iter().find(|s| s.id.as_str() == "carried");
+        assert_eq!(
+            row.map(|s| s.origin.clone()),
+            Some(named),
+            "the file echo overwrote a more precise origin"
+        );
+
+        // …and the rule is one-way: a genuinely better origin still wins.
+        let mut upgraded = doc("carried", "By the verb");
+        let own = crate::surface::Origin::Mcp {
+            pid: 4242,
+            own: Some(true),
+        };
+        upgraded.surface.as_mut().unwrap().origin = own.clone();
+        b.apply(upgraded);
+        assert_eq!(
+            b.surfaces
+                .iter()
+                .find(|s| s.id.as_str() == "carried")
+                .map(|s| s.origin.clone()),
+            Some(own),
+            "a more precise origin must still be able to replace a weaker one"
+        );
+    }
+
     /// The derived half re-presents whatever it read from the transcript on
     /// every sweep. A present that changes nothing must answer `None`, or every
     /// agent pane repaints once a second for as long as it lives — and a
@@ -3942,43 +4239,57 @@ mod tests {
     /// the list was written out inside `keystroke_bytes` and nowhere else, so
     /// the bench — which ends every key path by stopping propagation — took all
     /// of them and `alt+w` did nothing at all on the workbench face (#524).
+    /// Every shelf has a chord, the chord is its place in the strip, and no
+    /// chord is one the WINDOW has already claimed.
+    ///
+    /// The last clause is the one worth having. The obvious keys for this were
+    /// the four sitting under the right hand in tab order — `alt+v b n m` — and
+    /// `alt+v` is the pane split, advertised in the module header and on the
+    /// keybindings sheet. Nothing would have failed if it had been taken: the
+    /// bench would simply have stopped splitting, on one face, and the report
+    /// would have been "the split key broke" weeks later. A collision between
+    /// two chord tables is invisible to a compiler and to every test that does
+    /// not go looking, so this goes looking.
+    ///
+    /// It walks `Shelf::ALL` rather than a list of digits, so a fifth shelf
+    /// arrives already bound — and if its chord ever collides with a window
+    /// chord, this fails on the day the shelf is added rather than on the day
+    /// somebody notices their split is gone.
     #[test]
-    fn the_windows_chords_are_never_a_panes_to_take() {
-        // The workspace's own bindings, each read off the handler that binds
-        // it: close (main.rs `if ks.key.as_str() == "w"`), the FOCUS reader
-        // ("r"), the two splits, and directional pane focus.
-        for key in ["w", "r", "v", "h", "left", "right", "up", "down"] {
+    fn every_shelf_has_a_chord_and_no_chord_belongs_to_the_window() {
+        for (i, shelf) in Shelf::ALL.iter().enumerate() {
+            let key = (i + 1).to_string();
+            assert_eq!(
+                shelf_chord(&key, true, false),
+                Some(*shelf),
+                "alt+{key} should land on {shelf:?}"
+            );
             assert!(
-                window_chord(key, true, false),
-                "alt+{key} is the window's and must leave the pane"
+                !crate::keylayer::window_chord(&key, true, false),
+                "alt+{key} is a WINDOW chord as well as a shelf chord. One of \
+                 them will silently stop working — this is exactly what ruled \
+                 out alt+v for the overview."
             );
         }
-        // ctrl+alt+<anything> walks the left bar's tree, on the modifiers alone.
-        assert!(window_chord("up", true, true));
-        assert!(window_chord("q", true, true), "the pair, not the letter");
-
-        // …and the boundary, which is the half that keeps typing working. Each
-        // of these reaching the workspace would break something a person does
-        // constantly.
-        assert!(
-            !window_chord("c", false, true),
-            "ctrl+c interrupts an agent"
+        // The modifier IS the chord. A bare digit answers a waiting question in
+        // `reading_key`, so letting one through here would change tab instead
+        // of answering somebody's picker — or worse, do both.
+        assert_eq!(shelf_chord("1", false, false), None, "a bare digit answers");
+        assert_eq!(
+            shelf_chord("1", true, true),
+            None,
+            "ctrl+alt walks the tree"
         );
-        assert!(
-            !window_chord("b", true, false),
-            "alt+b is readline's word-back"
+        // And nothing outside the strip resolves, including the off-by-one that
+        // an index-from-zero reading would produce.
+        assert_eq!(shelf_chord("0", true, false), None);
+        let past_the_end = (Shelf::ALL.len() + 1).to_string();
+        assert_eq!(shelf_chord(&past_the_end, true, false), None);
+        assert_eq!(
+            shelf_chord("m", true, false),
+            None,
+            "the note box, not a shelf"
         );
-        assert!(!window_chord("f", true, false), "alt+f is word-forward");
-        assert!(
-            !window_chord("up", false, false),
-            "a plain arrow walks the rail"
-        );
-        assert!(
-            !window_chord("escape", false, false),
-            "plain esc peels overlays"
-        );
-        assert!(!window_chord("a", false, false));
-        assert!(!window_chord("enter", false, false));
     }
 
     /// A modified keystroke is not a character, whatever `key_char` says.
@@ -4029,8 +4340,8 @@ mod tests {
 
     #[test]
     fn a_non_printable_key_is_swallowed_so_it_cannot_reach_a_working_agent() {
-        assert_eq!(reading_key("f5", false, None), Reading::Ignore);
-        assert_eq!(reading_key("home", false, None), Reading::Ignore);
+        assert_eq!(reading_key("f5", false, None), Reading::Pass);
+        assert_eq!(reading_key("home", false, None), Reading::Pass);
     }
 
     #[test]
@@ -4321,18 +4632,23 @@ mod tests {
 
     #[test]
     fn escape_peels_overlays_and_stops_at_a_question() {
-        // Outermost first.
-        assert_eq!(peel(true, true, true, true), Peel::Gallery);
-        assert_eq!(peel(false, true, true, true), Peel::Typing);
+        // Outermost first. The dial menu is above the gallery because it is
+        // the newest thing on the glass and the cheapest thing to lose — and
+        // because without this rung escape reached past an open menu and
+        // emptied the composer, trading somebody's sentence for a list of
+        // five words that stayed on screen anyway.
+        assert_eq!(peel(true, true, true, true, true), Peel::Dial);
+        assert_eq!(peel(false, true, true, true, true), Peel::Gallery);
+        assert_eq!(peel(false, false, true, true, true), Peel::Typing);
 
         // THE FLOOR. A card holding a question somebody is being waited on is
         // not something escape may take away — every other meaning of the key
         // here removes the thing the agent is waiting with.
-        assert_eq!(peel(false, false, true, true), Peel::Nothing);
+        assert_eq!(peel(false, false, false, true, true), Peel::Nothing);
 
         // An ANSWERED card is a record, and a record closes like anything
         // else.
-        assert_eq!(peel(false, false, true, false), Peel::Card);
+        assert_eq!(peel(false, false, false, true, false), Peel::Card);
     }
 
     /// The bench is a base surface, and escape does not leave one.
@@ -4345,12 +4661,12 @@ mod tests {
     #[test]
     fn escape_with_nothing_left_stays_on_the_bench() {
         assert_eq!(
-            peel(false, false, false, false),
+            peel(false, false, false, false, false),
             Peel::Nothing,
             "a quiet bench is still the surface you are on"
         );
         assert_eq!(
-            peel(false, false, false, true),
+            peel(false, false, false, false, true),
             Peel::Nothing,
             "a waiting question with no card open is on the rail, not under escape"
         );
@@ -4738,13 +5054,17 @@ mod tests {
         // are the ones this has always sent — which is what keeps the ordinary
         // case (press a dial, type nothing) exactly as it was.
         assert_eq!(
-            aside_bytes("/model opus", &Line::new()),
+            dial_bytes("/model opus", &Line::new()),
             typed_line("/model opus")
+        );
+        assert!(
+            restore_bytes("", 0).is_empty(),
+            "nothing was taken away, so nothing is typed back"
         );
     }
 
     #[test]
-    fn a_command_beside_a_draft_erases_it_first_and_types_it_back() {
+    fn a_command_beside_a_draft_erases_it_first_and_types_it_back_after() {
         // The bug this exists for: the command used to be typed at the END of
         // the person's unsent prompt, and the return key sent both as one — the
         // prompt answered at the strength it was being changed away from.
@@ -4755,32 +5075,110 @@ mod tests {
         let caret = draft.caret();
         assert_eq!(caret, 10, "ten characters in, mid-word");
 
-        let bytes = aside_bytes("/effort max", &draft);
+        let sent = dial_bytes("/effort max", &draft);
         let mut want = Vec::new();
         want.extend(caret_move(caret, 0)); // to column zero...
         want.extend(replace_bytes()); // ...and kill what is ahead
         want.extend(typed_line("/effort max")); // the command, sent alone
-        want.extend_from_slice(b"count the tests"); // the draft, back again
-        want.extend(caret_move(15, caret)); // and the caret where it was
-        assert_eq!(bytes, want);
+        assert_eq!(sent, want);
 
-        // The two orderings that make it a fix rather than a rearrangement: the
-        // erase happens before the command, and the draft is retyped after the
-        // command's return — never before it, which is the old bug exactly.
-        let kill = bytes.iter().position(|b| *b == 0x0b).expect("the kill");
-        let submit = bytes.iter().position(|b| *b == b'\r').expect("the return");
-        let back = bytes
-            .windows(5)
-            .position(|w| w == b"count")
-            .expect("the draft goes back");
+        // The erase happens before the command. That ordering is the fix.
+        let kill = sent.iter().position(|b| *b == 0x0b).expect("the kill");
+        let submit = sent.iter().position(|b| *b == b'\r').expect("the return");
         assert!(
             kill < submit,
             "the line is cleared before the command is sent"
         );
+        // And the draft is NOT in this write at all. It used to be, in the
+        // same breath as the command — which put it into the harness's
+        // confirmation picker, where the digits in somebody's sentence pick
+        // options. It comes back in its own write, once that picker is gone.
         assert!(
-            submit < back,
-            "the draft is retyped after the command, not into it"
+            !sent.windows(5).any(|w| w == b"count"),
+            "the draft went out beside the command again: {:?}",
+            String::from_utf8_lossy(&sent)
         );
+        let mut back = Vec::new();
+        back.extend_from_slice(b"count the tests");
+        back.extend(caret_move(15, caret));
+        assert_eq!(restore_bytes("count the tests", caret), back);
+    }
+
+    #[test]
+    fn a_dial_waits_for_the_harnesss_own_question_then_answers_it() {
+        use crate::screenread::Picker;
+        // The four screens a press can be looking at, and what each one is
+        // worth. Claude Code 2.1.274 answers `/effort max` with a picker
+        // headed "Change effort level?" — so the press is not the change, and
+        // everything written before that picker is answered lands IN it.
+        let sent = DialSent {
+            which: Dial::Effort,
+            text: "the draft".into(),
+            caret: 3,
+            sent_ms: 1_000,
+            answered: false,
+        };
+        // Nothing on screen yet, and no time gone: hold.
+        assert_eq!(dial_step(&sent, Picker::None, 1_100), DialStep::Wait);
+        // Its picker, with the cursor on the second row and Yes on the first.
+        assert_eq!(
+            dial_step(&sent, Picker::Confirm { yes: 0, cursor: 1 }, 1_200),
+            DialStep::Answer { to: 0, from: 1 }
+        );
+        // Answered, still up: give the keypress a moment.
+        let answered = DialSent {
+            answered: true,
+            ..sent.clone()
+        };
+        assert_eq!(
+            dial_step(&answered, Picker::Confirm { yes: 0, cursor: 0 }, 1_300),
+            DialStep::Wait
+        );
+        // Answered and gone. The draft goes back.
+        assert_eq!(dial_step(&answered, Picker::None, 1_300), DialStep::Settle);
+        // NEVER ASKED, and the window is up: a harness that simply applies
+        // the command must not cost the person their sentence. This is the
+        // case that makes the hold safe to have at all.
+        assert_eq!(
+            dial_step(&sent, Picker::None, 1_000 + DIAL_ASK_MS),
+            DialStep::Settle
+        );
+        // SOMEBODY ELSE'S MENU, long past every deadline, is still a menu.
+        //
+        // This is the case a clock gets wrong. The draft is held rather than
+        // typed, because typing it into a picker is the harm — its digits are
+        // option numbers — and holding costs nothing that is not already
+        // lost: no picker reads a sentence from anybody. It ends when the
+        // screen is a line editor again, whoever answers.
+        for waited in [1_100, 1_000 + DIAL_ASK_MS, 1_000 + 600_000] {
+            assert_eq!(
+                dial_step(&sent, Picker::Other, waited),
+                DialStep::Wait,
+                "a draft was typed into a menu after {waited}ms"
+            );
+            assert_eq!(dial_step(&answered, Picker::Other, waited), DialStep::Wait);
+        }
+    }
+
+    #[test]
+    fn an_open_dial_menu_takes_the_next_click_wherever_it_lands() {
+        // The complaint: a menu opened to look at, not picked from, stayed on
+        // the glass over everything. Its own two controls are what it is, and
+        // everything else — including the bench's bare background, which
+        // reaches no control at all — closes it.
+        assert!(dial_dismisses(true, None), "the empty background dismisses");
+        assert!(dial_dismisses(true, Some(&Hit::CloseCard)));
+        assert!(dial_dismisses(true, Some(&Hit::Composer)));
+        assert!(!dial_dismisses(true, Some(&Hit::Dial(Dial::Effort))));
+        assert!(
+            !dial_dismisses(true, Some(&Hit::Dial(Dial::Model))),
+            "the OTHER dial opens its own list rather than dismissing this one"
+        );
+        assert!(!dial_dismisses(true, Some(&Hit::DialPick(Dial::Effort, 2))));
+        // And with nothing open, nothing is ever swallowed.
+        for hit in [None, Some(&Hit::CloseCard), Some(&Hit::Composer)] {
+            assert!(!dial_dismisses(false, hit));
+        }
     }
 
     /// The dial's command goes in beside the draft, not through the composer.
@@ -4808,12 +5206,21 @@ mod tests {
         let end = body.find("\n    }").map(|i| i + 6).unwrap_or(body.len());
         let body = &body[..end];
         assert!(
-            body.contains("aside_bytes("),
+            body.contains("dial_bytes("),
             "the dial no longer types beside the draft:\n{body}"
         );
         assert!(
             !body.contains("bench_say("),
             "the dial types through the composer, which holds the person's prompt:\n{body}"
+        );
+        // And it ARMS. The erase is only half a fix: without the wait, the
+        // draft is typed back into the harness's confirmation picker, and the
+        // dial never gets confirmed at all. `wb_dial_sent` is what makes the
+        // rest of the press happen, and a call site that drops it would leave
+        // a composer that erases your sentence and changes nothing.
+        assert!(
+            body.contains("wb_dial_sent = Some("),
+            "the press does not wait for the harness to confirm it:\n{body}"
         );
     }
 
@@ -5555,6 +5962,56 @@ mod tests {
             );
         }
         assert_eq!(ext_of_image_mime("text/plain"), None);
+    }
+
+    #[test]
+    fn a_dropped_path_arrives_as_one_word() {
+        use std::path::PathBuf;
+        let p = |s: &str| PathBuf::from(s);
+
+        // The ordinary case stays bare: a quoted path in the middle of a
+        // sentence to an agent reads as a quotation, so quotes are spent only
+        // where they buy something.
+        assert_eq!(
+            paths_as_words(&[p("/home/parker/notes.md")]),
+            "/home/parker/notes.md"
+        );
+
+        // The case this function exists for. Unquoted, the far end's line
+        // editor sees two words and the file cannot be found.
+        assert_eq!(
+            paths_as_words(&[p("/home/parker/Screenshot 2026-09-18.png")]),
+            "'/home/parker/Screenshot 2026-09-18.png'"
+        );
+
+        // Several files: one word each, separated by one space.
+        assert_eq!(
+            paths_as_words(&[p("/tmp/a.png"), p("/tmp/b c.png")]),
+            "/tmp/a.png '/tmp/b c.png'"
+        );
+
+        // A quote inside the name closes, escapes and reopens.
+        assert_eq!(paths_as_words(&[p("/tmp/it's.txt")]), r"'/tmp/it'\''s.txt'");
+
+        // Anything a shell would act on is quoted even without a space —
+        // `$HOME` in a filename is a real filename, not a variable.
+        for hostile in ["/tmp/$HOME", "/tmp/a;rm -rf b", "/tmp/a|b", "/tmp/*"] {
+            let out = paths_as_words(&[p(hostile)]);
+            assert!(
+                out.starts_with('\'') && out.ends_with('\''),
+                "{hostile} went out unquoted as {out}"
+            );
+        }
+
+        // A newline in a filename would SUBMIT the line half-written. It
+        // becomes a space, inside quotes, which is wrong about the file and
+        // right about the sentence.
+        let out = paths_as_words(&[p("/tmp/two\nlines.txt")]);
+        assert!(!out.contains('\n'), "a newline reached the line: {out}");
+        assert_eq!(out, "'/tmp/two lines.txt'");
+
+        // Nothing dropped is not an empty word; it is nothing typed.
+        assert_eq!(paths_as_words(&[]), "");
     }
 
     #[test]

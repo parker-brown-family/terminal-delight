@@ -142,6 +142,19 @@ fn fg_pgid(master: &File) -> Option<u32> {
     (pgid > 0).then_some(pgid as u32)
 }
 
+/// The foreground process group of `pid`'s terminal — `tpgid`, field 8 of its
+/// stat line, and the pid a keystroke typed into that pane reaches.
+///
+/// `None` when the process has no controlling terminal or its stat cannot be
+/// read. Public because the question "which of these processes is the pane's"
+/// is asked in two places, and the kernel's answer beats both of the guesses
+/// that were being made instead.
+pub fn foreground_pid(pid: u32) -> Option<u32> {
+    let stat = proc_read(pid, "stat");
+    let tpgid = stat_field_after_comm(&stat, 6)?;
+    (tpgid > 0).then_some(tpgid as u32)
+}
+
 fn proc_cwd(pid: u32) -> Option<String> {
     std::fs::read_link(format!("/proc/{pid}/cwd"))
         .ok()
@@ -223,29 +236,26 @@ fn agent_resume(
 ) -> Option<String> {
     let c = comm.trim();
     if c == "claude" || cmdline.contains("/claude") || cmdline.starts_with("claude ") {
-        // Both sources (a cmdline arg, a transcript filename stem) end up typed
-        // into a shell, so reject anything that isn't a plain id before use.
-        let id = ledger_session_for(pid, home)
-            // The push-style ledger names the CURRENT id even across a
-            // /clear-rotation — when present it beats every forensic source.
-            .or_else(|| claude_session_from_fds(pid, cwd, home))
-            // The transcript the live process holds OPEN was the ground truth —
-            // but Claude Code >= 2.1.195 opens-appends-closes and never keeps it
-            // open, so this is usually None now and the matches below carry it.
-            .or_else(|| arg_after(cmdline, &["--resume", "-r", "--session-id"]).map(str::to_string))
-            // A FRESH `claude` has no id on its cmdline: bind by the transcript
-            // BORN at this process's start (a new session's <id>.jsonl is created
-            // when the process starts). This restores the per-pane binding the
-            // open-fd scan gave us, so two fresh panes in one cwd never collapse
-            // onto the same newest file (issue #157).
-            .or_else(|| cwd.and_then(|d| claude_session_by_start(pid, d, home)))
-            // ~/.claude/history.jsonl NAMES the newest conversation for a cwd
-            // outright, where the file scans can only infer one from timestamps.
-            .or_else(|| cwd.and_then(|d| history_session_for(d, home, proc_start_unix(pid))))
-            // Last resort: newest transcript for this cwd — ambiguous if several
-            // share a cwd (the collision the start-time match above prevents).
-            .or_else(|| cwd.and_then(|d| claude_session_for(d, home, proc_start_unix(pid))))
-            .filter(|id| safe_resume_id(id));
+        let id = pick_session(
+            // Everything the process itself says about which conversation it is
+            // in: a pushed ledger entry, a descriptor it holds, its own command
+            // line. Both sources end up typed into a shell, so anything that is
+            // not a plain id is rejected before use.
+            declared_session(pid, cwd, cmdline, home),
+            // A FRESH `claude` names nothing: bind by the transcript BORN at
+            // this process's start (issue #157). Still evidence about THIS
+            // process, so it is safe to ask with neighbours around.
+            || cwd.and_then(|d| claude_session_by_start(pid, d, home)),
+            // Both of these answer "the newest conversation in this directory",
+            // and that is the same answer for every pane sharing one.
+            || {
+                cwd.and_then(|d| {
+                    history_session_for(d, home, proc_start_unix(pid))
+                        .or_else(|| claude_session_for(d, home, proc_start_unix(pid)))
+                })
+            },
+            cwd.is_some_and(|d| another_agent_shares("claude", pid, d)),
+        );
         // `--resume` restores the conversation but not flag-specified modes —
         // re-assert the allowlisted flags the live process was launched with.
         let flags = carried_flags(cmdline);
@@ -255,14 +265,19 @@ fn agent_resume(
             None => format!("claude --continue{flags}"),
         })
     } else if c == "codex" || cmdline.contains("/codex") || cmdline.starts_with("codex ") {
-        let id = codex_session_from_fds(pid, home)
-            .or_else(|| {
+        let id = pick_session(
+            codex_session_from_fds(pid, home).or_else(|| {
                 arg_after(cmdline, &["resume", "--resume"])
                     .filter(|v| looks_like_uuid(v))
                     .map(str::to_string)
-            })
-            .or_else(|| cwd.and_then(|d| codex_session_for(d, home)))
-            .filter(|id| safe_resume_id(id));
+            }),
+            || None,
+            // Newest rollout whose header mentions this cwd — one answer for
+            // every codex pane in that directory, so the same hazard reached
+            // another way, and gated the same way.
+            || cwd.and_then(|d| codex_session_for(d, home)),
+            cwd.is_some_and(|d| another_agent_shares("codex", pid, d)),
+        );
         Some(match id {
             Some(id) => format!("codex resume {id}"),
             None => "codex resume --last".to_string(),
@@ -270,6 +285,32 @@ fn agent_resume(
     } else {
         None
     }
+}
+
+/// The rung order, with the one rule that matters kept where it can be read and
+/// tested: a DIRECTORY-WIDE answer may not be given to a pane that has company.
+///
+/// `declared` is what the process said. `own` is evidence about this process
+/// (its start time against a transcript's birth). `dir_wide` is "the newest
+/// conversation in this directory" — true for the directory, not about this
+/// pane, and identical for every pane in it. When `shared` is true that last
+/// rung is not asked at all, and the caller falls back to `--continue`, which
+/// puts the question to the agent itself at restore time, when it can answer.
+///
+/// Pure and generic over the two closures so the decision can be tested without
+/// `/proc`, a `HOME`, or a single file on disk. The closures are lazy because
+/// each one is a directory scan nobody should pay for once an earlier rung has
+/// answered.
+fn pick_session(
+    declared: Option<String>,
+    own: impl FnOnce() -> Option<String>,
+    dir_wide: impl FnOnce() -> Option<String>,
+    shared: bool,
+) -> Option<String> {
+    declared
+        .or_else(own)
+        .or_else(|| if shared { None } else { dir_wide() })
+        .filter(|id| safe_resume_id(id))
 }
 
 /// The value following any of `keys` in a space-joined cmdline.
@@ -509,33 +550,21 @@ fn codex_rollout_for(cwd: &str, home: &Path) -> Option<PathBuf> {
     })
 }
 
-/// Path to the Claude Code transcript JSONL a pane is actually using. Prefers
-/// the exact session id carried in the pane's `resume` command — that id was
-/// resolved from the agent's open file descriptor in [`capture`], so it points
-/// at the *right* conversation even when several share a cwd or a newer-but-
-/// unrelated transcript exists. Falls back to newest-by-mtime only when there's
-/// no usable id (e.g. a bare `claude --continue`). Public for the MCP tailer.
-pub fn claude_transcript(cwd: &str, resume: Option<&str>, home: &Path) -> Option<PathBuf> {
-    let dir = home.join(".claude/projects").join(claude_slug(cwd));
-    if let Some(id) = resume.and_then(claude_resume_id) {
-        let exact = dir.join(format!("{id}.jsonl"));
-        if exact.is_file() {
-            return Some(exact);
-        }
-    }
-    newest_jsonl(&dir)
-}
+// `claude_transcript(cwd, resume, home)` used to live here: the pane's session
+// id if its resume command carried one, and otherwise the newest `.jsonl` in
+// that project directory. It is deleted rather than guarded, because the
+// fallback half was not a weaker answer, it was a wrong one — the same file
+// handed to every pane sharing a directory, which is how eight benches came to
+// read one conversation (#564). Nothing may ask that question per pane again:
+// [`crate::paneident`] answers it for the whole window at once, and answers
+// "unknown" where the evidence stops.
+//
+// A regression test in `paneident` fails the build if a reader reaches for
+// `newest_jsonl` again.
 
-/// The session id embedded in a `claude --resume <id>` / `-r <id>` command, if
-/// it's a plain (shell-safe) id — the transcript's filename stem.
-fn claude_resume_id(resume: &str) -> Option<String> {
-    arg_after(resume, &["--resume", "-r"])
-        .map(str::to_string)
-        .filter(|id| safe_resume_id(id))
-}
-
-/// Path to the newest Codex rollout JSONL for `cwd`, or None. Companion to
-/// [`claude_transcript`] for the MCP event tailer.
+/// Path to the newest Codex rollout JSONL for `cwd`, or None. The codex half of
+/// [`crate::paneident`]'s binding — same hazard, so the caller there bonds it by
+/// how many codex panes share the directory.
 pub fn codex_transcript(cwd: &str, home: &Path) -> Option<PathBuf> {
     codex_rollout_for(cwd, home)
 }
@@ -576,12 +605,111 @@ fn claude_session_from_fds(pid: u32, cwd: Option<&str>, home: &Path) -> Option<S
         .and_then(|p| p.file_stem().map(|s| s.to_string_lossy().into_owned()))
 }
 
+/// The session id from the per-process scratchpad directory Claude Code holds
+/// open: `/tmp/claude-<uid>/<project-slug>/<session-id>/…`.
+///
+/// This is the replacement for the transcript descriptor that
+/// [`claude_session_from_fds`] used to find. Claude Code >= 2.1.195 opens,
+/// appends and closes the transcript, so that scan answers None on every live
+/// agent on this machine — measured across 40 of them, not one hit. The
+/// scratchpad is different: it is opened once and held, so it binds a session id
+/// to a *pid*, which is the one thing no amount of file-time forensics can do.
+///
+/// Confined to the pane's own cwd slug when we know it. An agent that started in
+/// one repository and `cd`-ed into another keeps a descriptor naming the first —
+/// right about the session, wrong about which project directory holds its
+/// transcript — so a mismatched slug is refused rather than believed. Observed
+/// live: a pane in `td-comments-app` holding a `terminal-delight` scratchpad.
+///
+/// The highest descriptor wins. A `/clear` mints a new session and opens a
+/// second scratchpad while the first may still be held; the later open is the
+/// live one.
+fn scratchpad_session_from_fds(pid: u32, cwd: Option<&str>) -> Option<String> {
+    let want = cwd.map(claude_slug);
+    let mut best: Option<(u32, String)> = None;
+    for e in std::fs::read_dir(format!("/proc/{pid}/fd")).ok()?.flatten() {
+        let Ok(target) = std::fs::read_link(e.path()) else {
+            continue;
+        };
+        let Some((slug, id)) = scratchpad_parts(&target.to_string_lossy()) else {
+            continue;
+        };
+        if want.as_deref().is_some_and(|w| w != slug) {
+            continue;
+        }
+        let fd: u32 = e.file_name().to_string_lossy().parse().unwrap_or(0);
+        if best.as_ref().is_none_or(|(seen, _)| fd > *seen) {
+            best = Some((fd, id));
+        }
+    }
+    best.map(|(_, id)| id).filter(|id| safe_resume_id(id))
+}
+
+/// Split `/tmp/claude-<uid>/<project-slug>/<session-id>[/…]` into its slug and
+/// session id. Pure, because the shape IS the rung: tested without `/proc`.
+///
+/// Anchored on the `/tmp/claude-<digits>/` prefix and on a 36-character id, so a
+/// path that merely contains the word claude cannot be read as a session.
+fn scratchpad_parts(target: &str) -> Option<(String, String)> {
+    let rest = target.strip_prefix("/tmp/claude-")?;
+    let (uid, rest) = rest.split_once('/')?;
+    if uid.is_empty() || !uid.chars().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    let (slug, rest) = rest.split_once('/')?;
+    let id = rest.split('/').next().unwrap_or(rest);
+    if id.len() != 36 || !looks_like_uuid(id) {
+        return None;
+    }
+    Some((slug.to_string(), id.to_string()))
+}
+
+/// Every source that amounts to an agent NAMING its own session, in order of how
+/// directly it says so. No file times, no directory scans, no preference between
+/// live conversations: either something on this machine records which
+/// conversation THIS PROCESS is in, or the answer is None and the caller has to
+/// treat that as unknown.
+///
+/// Shared by the resume line and by [`crate::paneident`] so the two can never
+/// disagree about what counts as a claim.
+pub fn declared_session(
+    agent_pid: u32,
+    cwd: Option<&str>,
+    cmdline: &str,
+    home: &Path,
+) -> Option<String> {
+    ledger_session_for(agent_pid, home)
+        .or_else(|| claude_session_from_fds(agent_pid, cwd, home))
+        .or_else(|| scratchpad_session_from_fds(agent_pid, cwd))
+        .or_else(|| arg_after(cmdline, &["--resume", "-r", "--session-id"]).map(str::to_string))
+        .filter(|id| safe_resume_id(id))
+}
+
 /// Codex equivalent: the rollout `<uuid>.jsonl` the live process holds open.
 fn codex_session_from_fds(pid: u32, home: &Path) -> Option<String> {
     let root = home.join(".codex/sessions");
     open_jsonl_under(pid, &root)
         .as_deref()
         .and_then(rollout_uuid)
+}
+
+/// [`declared_session`] for codex: the rollout the process holds open, or the
+/// uuid it was resumed with. Same contract — a claim or nothing.
+pub fn codex_declared_session(agent_pid: u32, home: &Path) -> Option<String> {
+    codex_session_from_fds(agent_pid, home)
+        .or_else(|| {
+            arg_after(&proc_cmdline_of(agent_pid), &["resume", "--resume"])
+                .filter(|v| looks_like_uuid(v))
+                .map(str::to_string)
+        })
+        .filter(|id| safe_resume_id(id))
+}
+
+/// A live process's command line, space-joined. Exposed so a caller that has a
+/// pid can ask what the process was started with rather than trusting a
+/// command string this module itself synthesised.
+pub fn proc_cmdline_of(pid: u32) -> String {
+    proc_cmdline(pid)
 }
 
 /// First open file descriptor of `pid` that resolves to a `*.jsonl` under
@@ -598,6 +726,106 @@ fn open_jsonl_under(pid: u32, root: &Path) -> Option<PathBuf> {
         }
     }
     None
+}
+
+// ---- who else is in this directory ----
+
+/// One live agent process, as the sibling scan sees it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AgentProc {
+    pid: u32,
+    comm: String,
+    cwd: Option<String>,
+}
+
+/// Pure: is some process other than `me` running `comm` in `cwd`?
+///
+/// The question every directory-wide rung has to ask before it answers. "The
+/// newest conversation in this directory" is a fine answer for the only agent
+/// there and a coin-flip for the fourteenth.
+fn shares_cwd(procs: &[AgentProc], comm: &str, me: u32, cwd: &str) -> bool {
+    procs
+        .iter()
+        .any(|p| p.pid != me && p.comm == comm && p.cwd.as_deref() == Some(cwd))
+}
+
+/// How long a sibling census is reused. `capture` runs per pane on a ~2s sweep,
+/// so without this a twenty-pane window would walk `/proc` twenty times a tick
+/// for an answer that changes when a pane is opened, not between panes.
+const SIBLING_TTL: Duration = Duration::from_secs(2);
+
+type Census = std::sync::Mutex<Option<(SystemTime, std::sync::Arc<Vec<AgentProc>>)>>;
+static CENSUS: std::sync::OnceLock<Census> = std::sync::OnceLock::new();
+
+/// Every live `claude` / `codex` process, memoised for [`SIBLING_TTL`].
+fn live_agents() -> std::sync::Arc<Vec<AgentProc>> {
+    let cell = CENSUS.get_or_init(|| std::sync::Mutex::new(None));
+    let now = SystemTime::now();
+    // A poisoned lock means another thread panicked mid-update; the census is
+    // only ever a cache, so fall through and scan.
+    if let Ok(guard) = cell.lock() {
+        if let Some((at, list)) = guard.as_ref() {
+            if now.duration_since(*at).unwrap_or(SIBLING_TTL) < SIBLING_TTL {
+                return list.clone();
+            }
+        }
+    }
+    let list = std::sync::Arc::new(scan_agents());
+    if let Ok(mut guard) = cell.lock() {
+        *guard = Some((now, list.clone()));
+    }
+    list
+}
+
+fn scan_agents() -> Vec<AgentProc> {
+    let Ok(rd) = std::fs::read_dir("/proc") else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for e in rd.flatten() {
+        let Ok(pid) = e.file_name().to_string_lossy().parse::<u32>() else {
+            continue;
+        };
+        let comm = proc_read(pid, "comm").trim().to_string();
+        if comm != "claude" && comm != "codex" {
+            continue;
+        }
+        out.push(AgentProc {
+            pid,
+            comm,
+            cwd: proc_cwd(pid),
+        });
+    }
+    out
+}
+
+/// How many live agents of one kind are sitting in this directory, machine-wide.
+///
+/// The census is not scoped to a window, and that is the point: a resolver can
+/// only see the panes of the window it runs in, while the directory is shared by
+/// every window on the machine. A pane that looks like the only agent in a
+/// repository to its own window, and is not, would otherwise be bound by
+/// elimination to a conversation belonging to somebody else's pane.
+///
+/// Zero means the scan could not read `/proc` at all — callers must treat that
+/// as unknown rather than as an empty machine, since the asking process is
+/// itself an agent's child and can never legitimately count nothing.
+pub fn live_agents_in(comm: &str, cwd: &str) -> usize {
+    live_agents()
+        .iter()
+        .filter(|p| p.comm == comm && p.cwd.as_deref() == Some(cwd))
+        .count()
+}
+
+/// Is another agent of the same kind sitting in this directory?
+///
+/// An unreadable `/proc` answers false — not because that means "alone", but
+/// because a machine that cannot be asked cannot be told, and on one of those
+/// the pane list itself is already broken. Every caller is a rung that was
+/// unconditional before this existed, so failing this way is never worse than
+/// the behaviour it guards.
+fn another_agent_shares(comm: &str, me: u32, cwd: &str) -> bool {
+    shares_cwd(&live_agents(), comm, me, cwd)
 }
 
 fn newest_jsonl(dir: &Path) -> Option<PathBuf> {
@@ -737,6 +965,140 @@ mod tests {
         assert_eq!(
             agent_resume("claude", "claude", Some("/tmp"), home, 0).as_deref(),
             Some("claude --continue")
+        );
+    }
+
+    /// #564, at the rung where it starts. A directory-wide answer is the same
+    /// answer for everyone in that directory, so a pane with company must not be
+    /// given it — however confidently the scan produces one.
+    #[test]
+    fn a_directory_wide_answer_is_refused_to_a_pane_that_has_company() {
+        let dir_wide = || Some("newest-in-the-folder".to_string());
+        // Alone: the scan is the best available answer and is taken.
+        assert_eq!(
+            pick_session(None, || None, dir_wide, false).as_deref(),
+            Some("newest-in-the-folder"),
+        );
+        // With a neighbour: nothing, which the caller turns into `--continue`.
+        assert_eq!(pick_session(None, || None, dir_wide, true), None);
+        // A claim is unaffected by the company a pane keeps.
+        assert_eq!(
+            pick_session(Some("mine".into()), || None, dir_wide, true).as_deref(),
+            Some("mine"),
+        );
+        // So is evidence about this process in particular.
+        assert_eq!(
+            pick_session(None, || Some("born-with-me".into()), dir_wide, true).as_deref(),
+            Some("born-with-me"),
+        );
+    }
+
+    /// The gate is not allowed to be free: an earlier rung answering must stop
+    /// the later scans from running at all, or every pane pays for a directory
+    /// walk it never uses on every sweep.
+    #[test]
+    fn a_settled_rung_stops_the_ones_below_it_from_running() {
+        let mut asked = 0;
+        let id = pick_session(
+            Some("mine".into()),
+            || {
+                asked += 1;
+                None
+            },
+            || None,
+            false,
+        );
+        assert_eq!(id.as_deref(), Some("mine"));
+        assert_eq!(asked, 0, "the later rungs were never asked");
+    }
+
+    /// An id that would be typed into a shell is still filtered at the end,
+    /// whichever rung produced it.
+    #[test]
+    fn no_rung_can_smuggle_an_unsafe_id_through() {
+        assert_eq!(
+            pick_session(Some("a;rm -rf ~".into()), || None, || None, false),
+            None
+        );
+        assert_eq!(
+            pick_session(None, || Some("$(x)".into()), || None, false),
+            None
+        );
+        assert_eq!(
+            pick_session(None, || None, || Some("../../etc".into()), false),
+            None
+        );
+    }
+
+    #[test]
+    fn a_sibling_is_another_process_of_the_same_kind_in_the_same_directory() {
+        let procs = vec![
+            AgentProc {
+                pid: 1,
+                comm: "claude".into(),
+                cwd: Some("/work/a".into()),
+            },
+            AgentProc {
+                pid: 2,
+                comm: "claude".into(),
+                cwd: Some("/work/a".into()),
+            },
+            AgentProc {
+                pid: 3,
+                comm: "codex".into(),
+                cwd: Some("/work/a".into()),
+            },
+            AgentProc {
+                pid: 4,
+                comm: "claude".into(),
+                cwd: Some("/work/b".into()),
+            },
+            AgentProc {
+                pid: 5,
+                comm: "claude".into(),
+                cwd: None,
+            },
+        ];
+        assert!(shares_cwd(&procs, "claude", 1, "/work/a"), "pid 2 is there");
+        // Itself is never its own company — the bug this would cause is a pane
+        // that can never resolve.
+        assert!(!shares_cwd(&procs, "claude", 4, "/work/b"));
+        // A codex pane is not a claude pane's company: they read different
+        // directories and cannot collide.
+        assert!(!shares_cwd(&procs, "codex", 3, "/work/a"));
+        // An unreadable cwd is nobody's neighbour.
+        assert!(!shares_cwd(&procs, "claude", 9, "/work/c"));
+    }
+
+    #[test]
+    fn a_scratchpad_path_names_a_session_and_a_lookalike_does_not() {
+        let id = "9b44c0c1-555d-442a-bfc2-2ab703f93b64";
+        let good = format!("/tmp/claude-1000/-home-parker-Work-terminal-delight/{id}/tasks");
+        assert_eq!(
+            scratchpad_parts(&good),
+            Some(("-home-parker-Work-terminal-delight".into(), id.into()))
+        );
+        // The directory itself, with nothing under it, still names the session.
+        assert_eq!(
+            scratchpad_parts(&format!("/tmp/claude-1000/-proj/{id}")).map(|(_, i)| i),
+            Some(id.to_string())
+        );
+        // Not a uid.
+        assert_eq!(
+            scratchpad_parts(&format!("/tmp/claude-abc/-proj/{id}")),
+            None
+        );
+        // Not a session id: the shape is the whole rung, so a short or
+        // non-hex tail must not be read as one.
+        assert_eq!(scratchpad_parts("/tmp/claude-1000/-proj/scratchpad"), None);
+        assert_eq!(
+            scratchpad_parts(&format!("/tmp/claude-1000/-proj/{}", &id[..30])),
+            None
+        );
+        // A path that merely contains the word.
+        assert_eq!(
+            scratchpad_parts(&format!("/home/me/claude-1000/-proj/{id}")),
+            None
         );
     }
 
@@ -910,23 +1272,27 @@ mod tests {
         std::fs::remove_dir_all(&tmp).ok();
     }
 
+    /// What `claude_transcript_follows_the_panes_own_session_not_newest` used to
+    /// assert, inverted. That test pinned BOTH halves of the old resolver: follow
+    /// the pane's own id when it has one, and take the directory's newest file
+    /// when it does not — and the second half is the defect. The id half now
+    /// lives in [`declared_session`], and the fallback half has no function left
+    /// to test because it has no caller left to serve.
     #[test]
-    fn claude_transcript_follows_the_panes_own_session_not_newest() {
-        // The MCP tailer must read the conversation a pane is actually in. Given
-        // the pane's resume id, follow THAT file even when a newer, unrelated
-        // transcript exists in the same cwd; only `--continue` falls back to it.
+    fn the_newest_file_in_a_directory_is_nobody_s_session() {
         let tmp = std::env::temp_dir().join(format!("td-tx-{}", std::process::id()));
         let proj = tmp.join(".claude/projects").join(claude_slug("/work/y"));
         std::fs::create_dir_all(&proj).unwrap();
         std::fs::write(proj.join("aaaa-mine.jsonl"), "{}").unwrap();
         std::thread::sleep(std::time::Duration::from_millis(20));
-        std::fs::write(proj.join("bbbb-newer.jsonl"), "{}").unwrap(); // newest by mtime
-        let mine = claude_transcript("/work/y", Some("claude --resume aaaa-mine"), &tmp).unwrap();
-        assert!(mine.ends_with("aaaa-mine.jsonl"), "followed my own session");
-        let cont = claude_transcript("/work/y", Some("claude --continue"), &tmp).unwrap();
-        assert!(
-            cont.ends_with("bbbb-newer.jsonl"),
-            "no id ⇒ newest fallback"
+        std::fs::write(proj.join("bbbb-newer.jsonl"), "{}").unwrap();
+        // The scan still exists — the fleet resolver needs a directory listing —
+        // but nothing turns it into "this pane's conversation" any more.
+        assert!(newest_jsonl(&proj).is_some_and(|p| p.ends_with("bbbb-newer.jsonl")));
+        // A claim, on the other hand, is still followed exactly.
+        assert_eq!(
+            declared_session(0, Some("/work/y"), "claude --resume aaaa-mine", &tmp).as_deref(),
+            Some("aaaa-mine"),
         );
         std::fs::remove_dir_all(&tmp).ok();
     }

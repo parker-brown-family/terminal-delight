@@ -1,0 +1,1205 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Five tokens carry the age in the chrome</title>
+<style>
+/* decision-brief — surfaces, ink, and the three structural components.
+ *
+ * ONE palette. No theme system, no theme toggle. tps-report shipped four themes and
+ * 165 theme-related rules; nobody ever switched. A brief is read once, quickly, to make
+ * a decision — the reader is not shopping for a skin.
+ *
+ * Categorical colours are the validated dataviz default palette (dark steps), which
+ * clears the CVD, chroma, lightness and contrast gates on the adjacent pairlist.
+ * If you change them, re-run the validator; do not eyeball it.
+ *
+ * What is here: tokens, the modal shell, tables, callouts, code. Everything else —
+ * cards, escalation lists, stat tiles, charts — is the brief's own business.
+ * Build what the material needs.
+ */
+:root {
+  color-scheme: dark;
+
+  --surface-0: #111110;   /* page */
+  --surface-1: #1a1a19;   /* panel */
+  --surface-2: #232321;   /* raised */
+  --surface-3: #2e2e2b;   /* control */
+  --line:      #3a3a36;
+
+  --text-primary:   #ffffff;
+  --text-secondary: #c3c2b7;
+  --text-muted:     #8b8a80;
+
+  /* categorical — assign in fixed order, never cycle */
+  --s1: #3987e5;  --s2: #d95926;  --s3: #199e70;  --s4: #c98500;
+  --s5: #d55181;  --s6: #008300;  --s7: #9085e9;  --s8: #e66767;
+
+  /* status — reserved. Never reuse as "series 5". Always ship with a label. */
+  --good:     #0ca30c;
+  --warning:  #fab219;
+  --serious:  #ec835a;
+  --critical: #d03b3b;
+
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, "JetBrains Mono", Menlo, Consolas, monospace;
+  --sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif;
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0; background: var(--surface-0); color: var(--text-primary);
+  font-family: var(--sans); font-size: 15px; line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+.wrap { max-width: 1180px; margin: 0 auto; padding: 0 24px 120px; }
+header.top .wrap { padding-bottom: 0; }   /* the wrap's bottom padding is for the page, not the header */
+
+/* ---- headings ----
+   A heading names the thing. It does not explain it — an em-dash gloss after a
+   heading breaks the heading. The body does the explaining. */
+h1 { font-size: 34px; line-height: 1.18; margin: 0 0 16px; letter-spacing: -.02em; font-weight: 650; }
+h2.sec {
+  font-size: 13px; font-family: var(--mono); letter-spacing: .13em; text-transform: uppercase;
+  color: var(--text-muted); margin: 56px 0 18px; padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+/* ---- modal shell: where depth lives ---- */
+dialog {
+  border: 1px solid var(--line); border-radius: 12px;
+  background: var(--surface-1); color: var(--text-primary);
+  max-width: 880px; width: calc(100vw - 44px); max-height: 86vh; padding: 0; overflow: hidden;
+}
+dialog::backdrop { background: rgba(0,0,0,.76); backdrop-filter: blur(3px); }
+.dlg-head {
+  position: sticky; top: 0; background: var(--surface-2);
+  border-bottom: 1px solid var(--line); padding: 20px 26px;
+  display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; z-index: 2;
+}
+.dlg-head h3 { margin: 0 0 5px; font-size: 20px; letter-spacing: -.015em; }
+.dlg-head .repo { font-family: var(--mono); font-size: 11.5px; color: var(--text-muted); margin: 0; }
+.x {
+  background: var(--surface-3); border: 1px solid var(--line); color: var(--text-secondary);
+  border-radius: 6px; width: 30px; height: 30px; font-size: 17px; line-height: 1;
+  cursor: pointer; flex: none;
+}
+.x:hover { background: var(--critical); color: #fff; border-color: var(--critical); }
+.dlg-body { padding: 24px 26px 34px; overflow-y: auto; max-height: calc(86vh - 78px); }
+.dlg-body h4 {
+  font-family: var(--mono); font-size: 11.5px; letter-spacing: .12em; text-transform: uppercase;
+  color: var(--text-muted); margin: 30px 0 12px; padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+}
+.dlg-body h4:first-child { margin-top: 0; }
+.dlg-body p  { margin: 0 0 13px; color: var(--text-secondary); font-size: 14.5px; }
+.dlg-body ul { margin: 0 0 15px; padding-left: 20px; color: var(--text-secondary); font-size: 14.5px; }
+.dlg-body li { margin-bottom: 8px; }
+.dlg-body strong { color: var(--text-primary); font-weight: 600; }
+
+/* ---- prose furniture ---- */
+code {
+  font-family: var(--mono); font-size: 12.5px; background: var(--surface-3);
+  padding: 1.5px 5px; border-radius: 4px; color: #e8d9a8; word-break: break-word;
+}
+pre {
+  background: var(--surface-0); border: 1px solid var(--line); border-radius: 7px;
+  padding: 15px 17px; overflow-x: auto; margin: 0 0 15px;
+}
+pre code { background: none; padding: 0; color: var(--text-secondary); font-size: 12.5px; line-height: 1.65; }
+
+table { width: 100%; border-collapse: collapse; margin: 0 0 17px; font-size: 13.5px; }
+th, td { text-align: left; padding: 9px 11px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th {
+  font-family: var(--mono); font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--text-muted); font-weight: 500; background: var(--surface-2);
+}
+td { color: var(--text-secondary); }
+td b, td strong { color: var(--text-primary); }
+
+blockquote {
+  margin: 0 0 15px; padding: 12px 18px; border-left: 3px solid var(--s1);
+  background: var(--surface-2); border-radius: 0 7px 7px 0;
+  color: var(--text-secondary); font-size: 14px; font-style: italic;
+}
+
+.callout {
+  border-left: 3px solid var(--warning); background: rgba(250,178,25,.07);
+  padding: 14px 18px; border-radius: 0 7px 7px 0; margin: 0 0 17px;
+}
+.callout.crit { border-color: var(--critical); background: rgba(208,59,59,.08); }
+.callout.good { border-color: var(--good);     background: rgba(12,163,12,.08); }
+.callout p:last-child { margin-bottom: 0; }
+.callout .lbl {
+  font-family: var(--mono); font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--text-muted); margin: 0 0 7px; display: block;
+}
+
+/* ---- confidence labels. Never assert without one. ---- */
+.tag {
+  display: inline-block; font-family: var(--mono); font-size: 10px; letter-spacing: .07em;
+  text-transform: uppercase; padding: 2.5px 7px; border-radius: 4px;
+  margin-right: 6px; font-weight: 600;
+}
+.tag.v { background: rgba(12,163,12,.18);  color: #6cd46c; border: 1px solid rgba(12,163,12,.4); }   /* measured */
+.tag.w { background: rgba(250,178,25,.14); color: #f5c95f; border: 1px solid rgba(250,178,25,.38); } /* inferred */
+.tag.c { background: rgba(208,59,59,.16);  color: #f08a8a; border: 1px solid rgba(208,59,59,.4); }   /* contradicted / hunch */
+
+footer {
+  margin-top: 70px; padding-top: 26px; border-top: 1px solid var(--line);
+  font-family: var(--mono); font-size: 11.5px; color: var(--text-muted);
+}
+footer p { margin: 0 0 7px; }
+
+@media (max-width: 640px) {
+  h1 { font-size: 26px; }
+  .wrap { padding: 0 16px 80px; }
+}
+/* decision-brief — reader notes, styling.
+   Depends on the surface/ink/status custom properties in base.css. */
+
+.notable { position: relative; }
+
+.note-btn {
+  position: absolute; top: 8px; right: 8px; z-index: 6;
+  width: 26px; height: 26px; line-height: 1; padding: 0;
+  background: var(--surface-3); border: 1px solid var(--line); border-radius: 6px;
+  color: var(--text-muted); font-size: 13px; cursor: pointer; opacity: 0;
+  transition: opacity .12s, background .12s, color .12s, border-color .12s;
+}
+/* Hidden until hover: a brief with 130 always-visible affordances reads as a form. */
+.notable:hover > .note-btn,
+.note-btn:focus-visible { opacity: 1; }
+.note-btn:hover { background: var(--warning); border-color: var(--warning); color: var(--surface-1); }
+
+.notable.has-note > .note-btn {
+  opacity: 1; background: var(--warning); border-color: var(--warning);
+  color: var(--surface-1); font-weight: 700;
+}
+.notable.has-note { box-shadow: inset 3px 0 0 var(--warning); }
+tr.notable.has-note > td:first-child { box-shadow: inset 3px 0 0 var(--warning); }
+
+/* Table rows can't host an absolutely-positioned child reliably — inline it. */
+tr.notable .note-btn {
+  position: static; opacity: .35; width: 22px; height: 22px; font-size: 11px;
+  margin-left: 6px; vertical-align: middle; display: inline-block;
+}
+tr.notable:hover .note-btn { opacity: 1; }
+
+/* ---- floating bar ---- */
+.notebar {
+  position: fixed; right: 18px; bottom: 18px; z-index: 900;
+  display: flex; gap: 8px; align-items: center;
+  background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px;
+  padding: 9px 11px; box-shadow: 0 10px 32px rgba(0,0,0,.55);
+  font-family: var(--mono); font-size: 11.5px;
+}
+.notebar .cnt { color: var(--text-muted); padding-right: 4px; }
+.notebar .cnt b { color: var(--warning); font-size: 14px; }
+.notebar button {
+  font-family: var(--mono); font-size: 11px; letter-spacing: .03em; cursor: pointer;
+  background: var(--surface-3); border: 1px solid var(--line); color: var(--text-secondary);
+  border-radius: 6px; padding: 6px 10px;
+  transition: background .12s, color .12s, border-color .12s;
+}
+.notebar button:hover { background: var(--warning); color: var(--surface-1); border-color: var(--warning); }
+.notebar button.primary {
+  background: rgba(250,178,25,.14); border-color: rgba(250,178,25,.45); color: #f5c95f;
+}
+.notebar button:disabled {
+  opacity: .4; cursor: default; background: var(--surface-3);
+  color: var(--text-muted); border-color: var(--line);
+}
+@media (max-width: 640px) {
+  .notebar { right: 8px; bottom: 8px; flex-wrap: wrap; max-width: calc(100vw - 16px); }
+}
+
+/* ---- note dialog ---- */
+dialog#d-note { max-width: 620px; }
+#note-list { margin: 0 0 18px; padding: 0; list-style: none; }
+#note-list li {
+  background: var(--surface-2); border: 1px solid var(--line);
+  border-left: 3px solid var(--warning); border-radius: 0 7px 7px 0;
+  padding: 11px 14px; margin-bottom: 9px; font-size: 14px; color: var(--text-secondary);
+}
+#note-list .nts {
+  font-family: var(--mono); font-size: 10px; color: var(--text-muted);
+  display: flex; justify-content: space-between; gap: 10px; margin-bottom: 6px;
+}
+#note-list .ndel {
+  background: none; border: none; color: var(--text-muted);
+  cursor: pointer; font-size: 11px; padding: 0;
+}
+#note-list .ndel:hover { color: var(--critical); }
+#note-none { color: var(--text-muted); font-size: 13.5px; margin: 0 0 16px; }
+
+#note-text {
+  width: 100%; min-height: 104px; background: var(--surface-0);
+  border: 1px solid var(--line); border-radius: 7px; color: var(--text-primary);
+  padding: 11px 13px; font-family: var(--sans); font-size: 14.5px;
+  resize: vertical; line-height: 1.55;
+}
+#note-text:focus { outline: none; border-color: var(--warning); }
+
+.note-actions { display: flex; gap: 9px; align-items: center; margin-top: 11px; }
+.note-actions button {
+  font-family: var(--mono); font-size: 11.5px; cursor: pointer; border-radius: 6px;
+  padding: 8px 14px; border: 1px solid var(--line);
+  background: var(--surface-3); color: var(--text-secondary);
+}
+.note-actions button.save {
+  background: var(--warning); border-color: var(--warning);
+  color: var(--surface-1); font-weight: 600;
+}
+.note-actions .hintk {
+  font-family: var(--mono); font-size: 10.5px; color: var(--text-muted); margin-left: auto;
+}
+
+/* ---- export dialog ---- */
+dialog#d-export { max-width: 780px; }
+#export-out {
+  width: 100%; min-height: 320px; background: var(--surface-0);
+  border: 1px solid var(--line); border-radius: 7px; color: var(--text-secondary);
+  padding: 13px; font-family: var(--mono); font-size: 12px; line-height: 1.55;
+  resize: vertical; white-space: pre;
+}
+.tokest { font-family: var(--mono); font-size: 11px; color: var(--text-muted); margin: 9px 0 0; }
+/* ---- this brief's own furniture ---- */
+figure { margin: 0 0 22px; border: 1px solid var(--line); border-radius: 10px;
+  background: var(--surface-1); padding: 16px 18px 14px; }
+figure > .lbl { display: block; font-family: var(--mono); font-size: 10.5px; letter-spacing: .1em;
+  text-transform: uppercase; color: var(--text-muted); margin: 0 0 13px; }
+figcaption { margin-top: 13px; font-size: 13.5px; color: var(--text-secondary); }
+figcaption b { color: var(--text-primary); }
+.scroller { overflow-x: auto; }
+svg { display: block; width: 100%; height: auto; }
+.gutter { font-family: var(--mono); font-size: 10.5px; color: var(--text-muted);
+  margin-top: 10px; border-top: 1px dashed var(--line); padding-top: 8px; }
+
+.pin { display: inline-flex; align-items: center; justify-content: center; width: 15px; height: 15px;
+  border-radius: 50%; background: var(--s1); color: #fff; font-family: var(--mono); font-size: 9px;
+  vertical-align: middle; margin-right: 5px; flex: none; }
+.pin.a { background: var(--s4); }
+.pinlist { list-style: none; margin: 12px 0 0; padding: 0; font-size: 13px; color: var(--text-secondary); }
+.pinlist li { margin-bottom: 7px; }
+
+.lede { font-size: 17px; color: var(--text-secondary); margin: 0 0 8px; max-width: 74ch; }
+.meta { font-family: var(--mono); font-size: 11.5px; color: var(--text-muted); margin: 0 0 26px; }
+
+.esc-list { list-style: none; padding: 0; margin: 0 0 10px; counter-reset: rf; }
+.esc-list li { counter-increment: rf; position: relative; padding: 13px 16px 13px 46px;
+  border: 1px solid var(--line); border-radius: 9px; background: var(--surface-1); margin-bottom: 9px; }
+.esc-list li::before { content: counter(rf); position: absolute; left: 15px; top: 13px;
+  font-family: var(--mono); font-size: 12px; color: var(--surface-0); background: var(--text-secondary);
+  width: 19px; height: 19px; border-radius: 50%; display: grid; place-items: center; }
+.esc-list b { display: block; color: var(--text-primary); margin-bottom: 3px; font-size: 14.5px; }
+.esc-list p { margin: 0; font-size: 13.5px; color: var(--text-secondary); }
+.esc-list .cost { font-family: var(--mono); font-size: 11px; color: var(--text-muted); display: block; margin-top: 5px; }
+
+.grill { margin: 0 0 20px; }
+.ask { border: 1px solid var(--line); border-left: 3px solid var(--critical); border-radius: 0 9px 9px 0;
+  background: var(--surface-1); padding: 15px 18px; margin-bottom: 11px; }
+.ask h3 { margin: 0 0 8px; font-size: 16px; }
+.ask p { margin: 0 0 8px; font-size: 14px; color: var(--text-secondary); }
+.ask .rec { font-size: 13.5px; color: var(--text-primary); background: rgba(25,158,112,.1);
+  border: 1px solid rgba(25,158,112,.35); border-radius: 7px; padding: 9px 12px; margin: 0; }
+.ask .rec b { color: #5ed3a6; }
+
+.finding { border: 1px solid var(--line); border-radius: 9px; background: var(--surface-1);
+  padding: 15px 18px; margin-bottom: 12px; }
+.finding h3 { margin: 0 0 7px; font-size: 16px; }
+.finding p { margin: 0 0 9px; font-size: 14px; color: var(--text-secondary); }
+.finding p:last-child { margin-bottom: 0; }
+
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin: 0 0 18px; }
+.tile { border: 1px solid var(--line); border-radius: 9px; background: var(--surface-1); padding: 13px 15px; }
+.tile .n { font-family: var(--mono); font-size: 25px; color: var(--text-primary); display: block; line-height: 1.1; }
+.tile .k { font-size: 12.5px; color: var(--text-muted); display: block; margin-top: 5px; }
+
+button.more { background: var(--surface-3); border: 1px solid var(--line); color: var(--text-secondary);
+  font-family: var(--mono); font-size: 11px; letter-spacing: .06em; text-transform: uppercase;
+  border-radius: 6px; padding: 6px 11px; cursor: pointer; }
+button.more:hover { border-color: var(--s1); color: #fff; }
+
+/* ---- mockups: the window's own chrome, drawn ---- */
+.trip { display: grid; grid-template-columns: repeat(3, minmax(210px, 1fr)); gap: 14px; min-width: 660px; }
+.mk { background: #0e1214; border: 1px solid #1f2b30; padding: 10px; }
+.mk.r { border-radius: 8px; }
+.mk .hd { font-family: var(--mono); font-size: 10px; color: #8fa85f; letter-spacing: 0; margin-bottom: 9px; }
+.mk .hd.tr { text-transform: uppercase; letter-spacing: .18em; }
+.mk .row { font-family: var(--mono); font-size: 10px; color: #cfdad9; padding: 3px 6px; margin-bottom: 3px;
+  display: flex; justify-content: space-between; align-items: center; background: #172024; }
+.mk.dflt .row { border-radius: 4px; background: linear-gradient(#1b252a, #141d21); }
+.mk.dflt .row.on { background: #8fa85f; color: #0e1214; }
+.mk.cons .row { border-radius: 0; border-left: 3px solid transparent; padding-left: 8px; }
+.mk.cons .row.on { border-left-color: #8fa85f; background: rgba(143,168,95,.10); }
+.mk.sig { background: #0b0f10; border-color: rgba(143,168,95,.22); }
+.mk.sig .row { border-radius: 2px; background: transparent; border: 1px solid transparent; padding: 6px 8px; margin-bottom: 5px; }
+.mk.sig .row.on { border-color: rgba(143,168,95,.55); box-shadow: 0 0 0 1px rgba(143,168,95,.30), 0 0 9px rgba(143,168,95,.30); }
+.mk .chip { font-family: var(--mono); font-size: 8.5px; padding: 1px 5px; border-radius: 3px;
+  background: rgba(67,198,195,.16); color: #43c6c3; }
+.mk.sig .chip { border-radius: 2px; letter-spacing: .12em; text-transform: uppercase; }
+.mk .cap { font-family: var(--mono); font-size: 9.5px; color: var(--text-muted); margin-top: 9px; display: block; }
+.mk .hd.sq { color: #cfdad9; }
+.mkname { font-family: var(--mono); font-size: 10px; letter-spacing: .12em; text-transform: uppercase;
+  color: var(--text-muted); margin: 0 0 6px; }
+.mkname.mine { color: #f5c95f; }
+
+/* ---- architecture frames ---- */
+.arch { border: 1px solid var(--line); border-radius: 8px; padding: 12px; background: var(--surface-0); margin-bottom: 12px; }
+.arch .step { font-family: var(--mono); font-size: 10px; letter-spacing: .12em; text-transform: uppercase;
+  color: var(--text-muted); margin-bottom: 10px; }
+.arch .grid { display: grid; grid-template-columns: 200px 1fr; gap: 12px; align-items: start; }
+.box { border: 1px solid var(--s3); border-radius: 6px; padding: 9px 11px; background: rgba(25,158,112,.06); margin-bottom: 8px; }
+.box.new { border-color: var(--s1); background: rgba(57,135,229,.08); }
+.box.mine { border-color: var(--s4); background: rgba(201,133,0,.08); border-style: dashed; }
+.box.gone { border-color: var(--critical); border-style: dashed; background: rgba(208,59,59,.07); }
+.box.unk { border-color: var(--text-muted); border-style: dashed; background: repeating-linear-gradient(
+    45deg, rgba(139,138,128,.08) 0 6px, transparent 6px 12px); }
+.box .t { font-family: var(--mono); font-size: 11px; color: var(--text-primary); display: block; }
+.box .d { font-size: 11.5px; color: var(--text-muted); display: block; margin-top: 3px; }
+.legend { font-family: var(--mono); font-size: 10px; color: var(--text-muted); margin-top: 6px; }
+.legend i { font-style: normal; }
+
+table.wide { font-size: 13px; }
+table.wide td .tag { margin-right: 4px; }
+.num { font-family: var(--mono); }
+@media (max-width: 700px) { .arch .grid { grid-template-columns: 1fr; } .tiles { grid-template-columns: 1fr 1fr; } }
+</style></head><body>
+<header class="top"><div class="wrap">
+<h1>Five tokens carry the age in the chrome, and the skin file that would change them was never written</h1>
+<p class="lede">The palettes are already where they should be: six of them sit on near-black grounds with one restrained accent, the same
+ground the diagram you sent is drawn on. What separates the two is corner radius, gradient lift, row
+height, label case and how much air a row is given. All five of those are tokens in a file we already
+ship, and the file reaches everything except the two surfaces you open by hand.</p>
+<p class="meta">terminal-delight &middot; 2026-09-18 &middot; measured against <code>origin/main</code> at 8dacd98 &middot; ~12 min</p>
+</div></header>
+
+<main class="wrap">
+
+<h2 class="sec">Read first</h2>
+<ul class="esc-list">
+  <li><b>The seam is in the two surfaces you open most</b>
+    <p>The overlays (usage, savings, find, plugins, the logo and lang pickers) and the theme tray still
+    hand-roll their corners — <span class="num">63</span> bare <code>.rounded_*()</code> calls in
+    <code>main.rs</code>, zero skin calls among them. Any square or tight-radius skin shows round
+    corners exactly where you look.</p>
+    <span class="cost">issue #408 &middot; a day of conversion &middot; blocks everything below</span></li>
+
+  <li><b>A modern skin would be one <code>.toml</code> file, and we have not written it</b>
+    <p>Three ship: <code>default</code> (today's chrome stated as tokens), <code>console</code> (flat,
+    square, rail), <code>deco</code> (square, double-ruled, gold). None of them is the hairline-and-glow
+    look you pointed at. A fourth <code>.toml</code> plus one line in <code>BUILTIN_SKINS</code> is the
+    whole delivery mechanism.</p>
+    <span class="cost">half a day for the file &middot; no new render code where the skin already reaches</span></li>
+
+  <li><b>Label case is the oldest tell, and it is one token</b>
+    <p>The skin has <code>caps = off | upper | tracked</code> and a <code>Skin::caps()</code> helper.
+    All three shipped skins leave it <code>off</code>, so every label in the window is 9pt sentence case.
+    The reference aesthetic is almost entirely tiny tracked uppercase mono.</p>
+    <span class="cost">one line per skin &middot; changes every label at once, which is why it wants a look before a commit</span></li>
+
+  <li><b>Three surfaces have never been looked at on a screen</b>
+    <p>The bench response card and the launcher panel (#505), the DESIGN tray's three-per-row fit
+    (#516), and the type ramp that resolves display text to 30pt at a high gauge (#528). The last
+    attempt to photograph them failed on DPMS-off outputs, not on the code.</p>
+    <span class="cost">an hour with a woken monitor &middot; their state is unknown</span></li>
+
+  <li><b>Spend the new palettes last — the grounds are already right</b>
+    <p>Three new theme <em>designs</em> sit in the backlog (#404: art deco, canvas, techno-clay). Colour
+    is the part already working: <code>#0e1214</code>, <code>#03100a</code>, <code>#061015</code>,
+    <code>#0a0e10</code> grounds with a single accent each. New palettes on today's shapes would land
+    looking like today.</p>
+    <span class="cost">defer &middot; the shape work makes the palettes look new for free</span></li>
+</ul>
+
+<h2 class="sec">What the skin already reaches</h2>
+
+<div class="tiles">
+  <div class="tile"><span class="n">112</span><span class="k"><code>sk.*</code> calls in main.rs</span></div>
+  <div class="tile"><span class="n">63</span><span class="k">hand-rolled corners left, all in overlays + tray</span></div>
+  <div class="tile"><span class="n">89</span><span class="k"><code>sk.*</code> calls in benchdraw.rs — and zero hand-rolled</span></div>
+  <div class="tile"><span class="n">3</span><span class="k">skins ship; the picker draws them already</span></div>
+</div>
+
+<figure>
+  <span class="lbl">01 &middot; The fence the skin layer stopped at</span>
+  <div class="scroller">
+  <svg viewBox="0 0 700 320" role="img" aria-label="Fence diagram: surfaces converted to the skin layer on the left, surfaces still drawing their own corners on the right">
+    <text x="0" y="14" font-family="ui-monospace, monospace" font-size="11" fill="#199e70">▣ ON THE SKIN — a token file changes these</text>
+    <text x="392" y="14" font-family="ui-monospace, monospace" font-size="11" fill="#d03b3b">▢ STILL HAND-ROLLED — a token file changes nothing</text>
+    <line x1="376" y1="24" x2="376" y2="300" stroke="#3a3a36" stroke-width="1" stroke-dasharray="4 4"/>
+
+    <g font-family="ui-monospace, monospace" font-size="11" fill="#c3c2b7">
+      <rect x="0" y="28" width="356" height="24" fill="rgba(25,158,112,.07)" stroke="#199e70" rx="3"/><text x="10" y="44">mother bar</text>
+      <rect x="0" y="58" width="356" height="24" fill="rgba(25,158,112,.07)" stroke="#199e70" rx="3"/><text x="10" y="74">tab strip</text>
+      <rect x="0" y="88" width="356" height="24" fill="rgba(25,158,112,.07)" stroke="#199e70" rx="3"/><text x="10" y="104">left bar + its rows</text>
+      <rect x="0" y="118" width="356" height="24" fill="rgba(25,158,112,.07)" stroke="#199e70" rx="3"/><text x="10" y="134">usage slot</text>
+      <rect x="0" y="148" width="356" height="24" fill="rgba(25,158,112,.07)" stroke="#199e70" rx="3"/><text x="10" y="164">pane header + frame</text>
+      <rect x="0" y="178" width="356" height="24" fill="rgba(25,158,112,.07)" stroke="#199e70" rx="3"/><text x="10" y="194">workspace body</text>
+      <rect x="0" y="208" width="356" height="34" fill="rgba(25,158,112,.07)" stroke="#199e70" rx="3"/>
+        <text x="10" y="223">the whole workbench — benchdraw, workbench,</text><text x="10" y="236">launcher, pane/bench</text>
+      <text x="10" y="262" fill="#8b8a80">0 bare corners across 11,004 lines</text>
+
+      <rect x="392" y="28" width="308" height="86" fill="rgba(208,59,59,.06)" stroke="#d03b3b" stroke-dasharray="4 3" rx="3"/>
+      <text x="402" y="46">the overlays</text>
+      <text x="402" y="63" fill="#8b8a80">usage · savings · find · plugins</text>
+      <text x="402" y="79" fill="#8b8a80">logo picker · lang picker</text>
+      <text x="402" y="100" fill="#8b8a80">rounded_sm / rounded_full, literal</text>
+
+      <rect x="392" y="124" width="308" height="62" fill="rgba(208,59,59,.06)" stroke="#d03b3b" stroke-dasharray="4 3" rx="3"/>
+      <text x="402" y="142">the theme tray and its menus</text>
+      <text x="402" y="159" fill="#8b8a80">the surface a look is chosen from —</text>
+      <text x="402" y="175" fill="#8b8a80">and the one that cannot follow the choice</text>
+
+      <text x="392" y="212" fill="#d03b3b" font-size="12">63 bare radius calls today</text>
+      <text x="392" y="230" fill="#8b8a80">57 when #408 was filed, five days ago</text>
+      <text x="392" y="248" fill="#8b8a80">main.rs over the same five days: 24,346 → 34,439 lines</text>
+    </g>
+  </svg>
+  </div>
+  <figcaption><b>The skin reaches the window's structure and misses its interruptions.</b> Every surface
+  that sits there permanently is on tokens; every surface that opens over the top of it is not — which is
+  the opposite of what a look wants, because an overlay is the thing you are staring straight at.
+  <span class="tag v">measured</span> counts from <code>git grep</code> on <code>origin/main</code>.
+  <div class="gutter">the seam grew by six in five days while the file grew by ten thousand lines — new chrome is still being written with literal corners, just more slowly than the file grows</div></figcaption>
+</figure>
+
+<figure>
+  <span class="lbl">02 02 &middot; The same tray, in the three skins that ship and the one that does notmiddot; The same tray, in the three skins that ship and in one that does not exist</span>
+  <div class="scroller">
+    <div class="trip">
+      <div>
+        <p class="mkname">default — today</p>
+        <div class="mk dflt r">
+          <div class="hd">Themes</div>
+          <div class="row on"><span>field-command</span><span>▣</span></div>
+          <div class="row"><span>hacker</span><span>▢</span></div>
+          <div class="row"><span>gamba</span><span class="chip">live</span></div>
+          <span class="cap">radius 4 · row 15 · pad 6×4<br>gradient lift · accent fill</span>
+        </div>
+      </div>
+      <div>
+        <p class="mkname">console</p>
+        <div class="mk cons">
+          <div class="hd sq">Themes</div>
+          <div class="row on"><span>field-command</span><span>▣</span></div>
+          <div class="row"><span>hacker</span><span>▢</span></div>
+          <div class="row"><span>gamba</span><span class="chip">live</span></div>
+          <span class="cap">radius 0 · row 17 · pad 10×6<br>flat · rail marks the active row</span>
+        </div>
+      </div>
+      <div>
+        <p class="mkname mine">signal — proposed</p>
+        <div class="mk sig">
+          <div class="hd tr">Themes</div>
+          <div class="row on"><span>field-command</span><span>▣</span></div>
+          <div class="row"><span>hacker</span><span>▢</span></div>
+          <div class="row"><span>gamba</span><span class="chip">live</span></div>
+          <span class="cap">radius 2 · row 18 · pad 11×7<br>flat · hairline at .18 · glow ring · tracked caps</span>
+        </div>
+      </div>
+    </div>
+  </div>
+  <figcaption><b>Nothing in the third column needs a renderer that does not exist</b> — every difference
+  is a token <code>skin.rs</code> already resolves, and the glow ring is the emphasis strategy the default
+  skin was switched to on 12 September. The colours are held constant on purpose: all three columns are
+  <code>field-command</code>.
+  <span class="tag w">inferred</span> drawn in CSS at roughly the tray's proportions, not rendered by the app.
+  <div class="gutter">amber name = mine to argue with; the other two are transcriptions of shipped files</div></figcaption>
+</figure>
+
+<figure>
+  <span class="lbl">03 &middot; Where the age actually sits</span>
+  <div class="scroller">
+    <div class="trip" style="grid-template-columns: minmax(230px, 300px) 1fr; min-width:560px">
+      <div class="mk dflt r">
+        <div class="hd">Themes</div>
+        <div class="row on"><span>field-command</span><span>▣</span></div>
+        <div class="row"><span>hacker</span><span>▢</span></div>
+        <div class="row"><span>gamba</span><span class="chip">live</span></div>
+      </div>
+      <ol class="pinlist">
+        <li><span class="pin">1</span><b>radius 4 on a 15px row.</b> A corner that big on a row that short is the 2014 desktop signature; the reference draws 0–2 and lets the border carry the shape.</li>
+        <li><span class="pin">2</span><b>gradient lift.</b> <code>shine = gradient</code> in the default skin and in deco — 14 <code>linear_gradient</code> call sites in <code>main.rs</code>. A lit raised surface is the single most dated device on the page.</li>
+        <li><span class="pin">3</span><b>accent fill for selection.</b> The active row is painted the accent and the text inverts; a modern chrome lights an edge and leaves the ground alone.</li>
+        <li><span class="pin">4</span><b>sentence case, 9pt, one size.</b> <code>label_size</code> is the only type metric a skin owns outside the bench ramp, and <code>caps</code> is off everywhere.</li>
+        <li><span class="pin">5</span><b>pad 6×4.</b> Slickness in the picture you sent is mostly air: nested frames with 14–20px of it. Ours is four.</li>
+      </ol>
+    </div>
+  </div>
+  <figcaption><b>Five tokens carry the whole impression</b>, and four of them already have a settable name.
+  Only the gradient needs a code path to be taught anything, and it already has one —
+  <code>shine = flat</code>, which <code>console</code> uses.
+  <span class="tag v">measured</span> token names and defaults read from <code>app/skins/*.toml</code> and <code>app/src/skin.rs</code>.</figcaption>
+</figure>
+<h2 class="sec">Where a new look lands</h2>
+
+<figure>
+  <span class="lbl">04 &middot; The same system, three times — what a skin touches, and what it cannot</span>
+
+  <div class="arch">
+    <div class="step">step 1 &middot; what exists: a token layer and the chrome it converted</div>
+    <div class="grid">
+      <div>
+        <div class="box"><span class="t">app/src/skin.rs</span><span class="d">ink_tokens! · metric_tokens! · shape strategies</span></div>
+        <div class="box"><span class="t">skins/default · console · deco</span><span class="d">three .toml files, embedded in the binary</span></div>
+      </div>
+      <div>
+        <div class="box"><span class="t">the chrome — six surfaces</span><span class="d">mother bar · tab strip · left bar · usage slot · pane header + frame · workspace body &nbsp;·&nbsp; 112 sk.* calls</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="arch">
+    <div class="step">step 2 &middot; the palettes feed it, and the workbench was born on it</div>
+    <div class="grid">
+      <div>
+        <div class="box"><span class="t">app/src/skin.rs</span><span class="d">ink_tokens! · metric_tokens! · shape strategies</span></div>
+        <div class="box"><span class="t">skins/default · console · deco</span><span class="d">three .toml files, embedded in the binary</span></div>
+        <div class="box new"><span class="t">6 themes → Role</span><span class="d">bg surface text accent complement human faint — a recipe reads roles, so 6 palettes × 3 skins is 18 working looks</span></div>
+      </div>
+      <div>
+        <div class="box"><span class="t">the chrome — six surfaces</span><span class="d">112 sk.* calls</span></div>
+        <div class="box new"><span class="t">the workbench</span><span class="d">benchdraw · workbench · launcher · pane/bench — 89 sk.* calls, 0 literal corners, secondary inks by table</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="arch">
+    <div class="step">step 3 &middot; where a fourth skin would appear, and the island it would not reach</div>
+    <div class="grid">
+      <div>
+        <div class="box"><span class="t">app/src/skin.rs</span><span class="d">ink_tokens! · metric_tokens! · shape strategies</span></div>
+        <div class="box"><span class="t">skins/default · console · deco</span><span class="d">three .toml files, embedded in the binary</span></div>
+        <div class="box"><span class="t">6 themes → Role</span><span class="d">recipes read roles, not colours</span></div>
+        <div class="box mine"><span class="t">skins/signal.toml</span><span class="d">one file + one line in BUILTIN_SKINS — the picker, the CLI and ctl all enumerate that table, so nothing else needs editing</span></div>
+      </div>
+      <div>
+        <div class="box"><span class="t">the chrome — six surfaces</span><span class="d">112 sk.* calls</span></div>
+        <div class="box"><span class="t">the workbench</span><span class="d">89 sk.* calls, 0 literal corners</span></div>
+        <div class="box new"><span class="t">the selectors, already built</span><span class="d">skin picker in the tray (main.rs:22305) · <code>terminal-delight skin --list</code> · ctl <code>known</code> · geometry gated on <code>picker_max_count()</code></span></div>
+        <div class="box gone"><span class="t">the overlays + the theme tray</span><span class="d">63 literal corners — a new skin file changes none of them, and this is the surface the picker lives on</span></div>
+      </div>
+    </div>
+    <p class="legend"><i style="color:#199e70">green</i> already there &nbsp; <i style="color:#3987e5">blue</i> what this step adds &nbsp; <i style="color:#c98500">amber</i> mine, argue with it &nbsp; <i style="color:#d03b3b">red dashed</i> where it stops</p>
+  </div>
+
+  <figcaption><b>The delivery mechanism for a new look is one file; the obstacle is one island.</b> A
+  <code>signal.toml</code> reaches the bar, the tabs, the left bar, the panes and the entire workbench the
+  day it lands — and stops at the overlays and the tray, which is where you would go to select it.
+  <span class="tag v">measured</span> call sites and enumeration paths read from <code>origin/main</code>.
+  <div class="gutter">the picker was already built — the chrome-skin gates said "no skin picker, revisit at four skins", and by the time <code>console</code> landed somebody revisited it; a fourth skin now costs one button that already draws itself</div></figcaption>
+</figure>
+
+<figure>
+  <span class="lbl">05 &middot; What nobody has seen on a screen</span>
+  <div class="scroller">
+    <div class="trip" style="grid-template-columns:repeat(3,minmax(200px,1fr));min-width:620px">
+      <div class="box unk"><span class="t">the response card</span><span class="d">TDSP 0.3's Overview feed with folding registers, plus the launcher panel height. Proved by tests and arithmetic, never photographed — #505</span></div>
+      <div class="box unk"><span class="t">DESIGN, three per row</span><span class="d">the four-pixel slack fix is committed; whether the tray actually lays out three buttons per row is unobserved — #516</span></div>
+      <div class="box unk"><span class="t">display type at 30.2pt</span><span class="d">the bench ramp resolves display to 30.2pt and title to 25.7pt at a 1.51 gauge. Measured with the CLI, judged by nobody — #528</span></div>
+    </div>
+  </div>
+  <figcaption><b>Nobody has seen these three on a screen.</b> The 17 September attempt to photograph
+  the first one died before it reached the code: both outputs were DPMS-off, every <code>grim</code> call
+  hung to its timeout, and <code>hl.dsp.dpms</code> answered <code>ok</code> three ways without waking
+  anything. <span class="tag v">measured</span> recorded in #505.
+  <div class="gutter">a look review that skips these is a review of the half of the app that has a photograph</div></figcaption>
+</figure>
+
+<h2 class="sec">The style work we are carrying</h2>
+
+<p class="lede" style="font-size:15px">Nineteen open issues touch how the window looks. They are not one
+backlog. They fall into five groups, and only the first two stand in the way of what you noticed.</p>
+
+<table class="wide">
+  <thead><tr><th style="width:86px">Issue</th><th style="width:120px">Group</th><th>What it is</th></tr></thead>
+  <tbody>
+    <tr><td class="num">#408</td><td>the seam</td><td><b>Overlays and the theme tray are round on a square skin.</b> 63 literal corners. Everything else on this page waits behind it.</td></tr>
+    <tr><td class="num">#407</td><td>the seam</td><td>Chamfered corners — the one deco shape the skin layer cannot draw. Parked at your request, expected back.</td></tr>
+    <tr><td class="num">#480</td><td>the seam</td><td>Three full-window modals never learned the render-band rule the trays did.</td></tr>
+    <tr><td class="num">#485</td><td>the seam</td><td>The bench's wheel and hover are still hit-tested flat under the warp; the click inverse has one centre sample of proof.</td></tr>
+    <tr><td class="num">#505</td><td>unlooked-at</td><td>The response card and the fixed launcher panel have never been on a screen.</td></tr>
+    <tr><td class="num">#516</td><td>unlooked-at</td><td>Does DESIGN render three buttons per row after the four-pixel slack?</td></tr>
+    <tr><td class="num">#528</td><td>unlooked-at</td><td>The bench type ramp at a high gauge resolves display to 30pt, and nobody has looked at it.</td></tr>
+    <tr><td class="num">#491</td><td>unlooked-at</td><td>The smoke harness photographs whatever Hyprland tiles the window into — twice a 609px sliver.</td></tr>
+    <tr><td class="num">#236</td><td>unlooked-at</td><td>No way to render a synthetic agent state, so every tab-badge change is verified by photograph.</td></tr>
+    <tr><td class="num">#404</td><td>palette</td><td>Three new theme designs: modern art deco, multi-thread canvas, techno-clay. Seeded palettes, no shapes.</td></tr>
+    <tr><td class="num">#172</td><td>palette</td><td>The registry holds only one user theme (<code>custom</code>) — blocks per-pane individuation across the ten Omarchy variants.</td></tr>
+    <tr><td class="num">#406</td><td>palette</td><td>The tray shows an untranslated label for any theme <code>lang.rs</code> has no <code>thm_</code> key for.</td></tr>
+    <tr><td class="num">#362</td><td>type &amp; glyphs</td><td>Chrome glyphs are chosen without checking any installed font can draw them.</td></tr>
+    <tr><td class="num">#363</td><td>type &amp; glyphs</td><td>A font change lands only on relaunch, though Omarchy fires a font-set hook.</td></tr>
+    <tr><td class="num">#205</td><td>type &amp; glyphs</td><td><code>font_diagnostic</code> goes silent when no fallback resolves either — the case it exists for.</td></tr>
+    <tr><td class="num">#375</td><td>polish</td><td>Both config trays lost their rename button with no sign the gesture moved to right-click.</td></tr>
+    <tr><td class="num">#376</td><td>polish</td><td>The pane header is the only rename box with no caret, selection or word-nav.</td></tr>
+    <tr><td class="num">#324</td><td>polish</td><td>The favourites shelf is reachable only from the paint overlay.</td></tr>
+    <tr><td class="num">#296</td><td>polish</td><td>The campfire in the menu bar is undocumented everywhere a user would look.</td></tr>
+  </tbody>
+</table>
+
+<div class="callout">
+  <span class="lbl">the one that is not on this list</span>
+  <p>There is no issue asking for a modern skin. #404 asks for three <em>palettes</em>; nothing in the
+  tracker asks for the shape language you reacted to, which is why five days of style work has not moved
+  the thing you are looking at.</p>
+</div>
+
+<h2 class="sec">What I would do</h2>
+
+<div class="finding">
+  <h3>One week, in this order</h3>
+  <p><b>1 · Close the seam (#408).</b> 63 call sites onto <code>sk.rad()</code>, <code>sk.panel()</code>,
+  <code>sk.row()</code>, <code>sk.chip()</code>. Mechanical, already precedented by the six surfaces that
+  went first, and gated by <code>default_skin_reproduces_todays_chrome</code> so a mistake shows up as a
+  failing test rather than as a look nobody questions.</p>
+  <p><b>2 · Write <code>skins/signal.toml</code>.</b> The hairline-and-air language, as tokens. One line in
+  <code>BUILTIN_SKINS</code>; the picker, the CLI and ctl pick it up by enumeration.</p>
+  <p><b>3 · Look at it on a woken screen</b>, with the response card, the DESIGN tray and the 30pt ramp in the same sitting (#505, #516, #528) — they are all
+  the same photograph.</p>
+  <p><b>4 · Then the new palettes (#404).</b> On the new shapes, where they will read as new.</p>
+  <p><button class="more" data-dlg="d-signal">the proposed token file</button></p>
+</div>
+
+<h2 class="sec">Yours to decide</h2>
+<div class="grill">
+
+  <div class="ask">
+    <h3>Is "modern" a fourth skin, or does the default move?</h3>
+    <p>The default skin is under a gate — <code>default_skin_reproduces_todays_chrome</code> asserts it
+    equals what <code>main.rs</code> draws. Changing the house look means retiring that gate and
+    accepting that the old chrome is no longer reproducible.</p>
+    <p class="rec"><b>Recommend: a fourth skin, named <code>signal</code>.</b> It is the decision you
+    already made for deco — one skin among several until it has been lived in — and it costs nothing to
+    promote later by changing which id is default.</p>
+  </div>
+
+  <div class="ask">
+    <h3>Does the seam conversion go first, or the skin file?</h3>
+    <p>Writing the file first gives you something to look at in two hours, on the bar, the tabs and the
+    whole workbench. But the tray you select it from stays round, so the first thing you see is the seam.</p>
+    <p class="rec"><b>Recommend: the seam first, same week (#408).</b> The conversion is mechanical and the file is
+    the fun part; doing the fun part first is how the seam survives another month.</p>
+  </div>
+
+  <div class="ask">
+    <h3>Tracked uppercase labels — everywhere, or only region headers?</h3>
+    <p><code>caps = tracked</code> is one token and it hits every label the skin draws. The reference
+    aesthetic uses it on almost everything; at 9pt with real tracking it can also read as shouting on a
+    row that already has an icon and a count.</p>
+    <p class="rec"><b>Recommend: tracked in <code>signal</code> only, and looked at before it is
+    committed to.</b> It is the change most likely to want a size bump with it — 9pt tracked reads smaller
+    than 9pt sentence case.</p>
+  </div>
+
+  <div class="ask">
+    <h3>Does the gradient lift go, or stay as a skin's choice?</h3>
+    <p>Fourteen <code>linear_gradient</code> sites in <code>main.rs</code>; <code>shine</code> already
+    switches them and <code>console</code> already sets <code>flat</code>. deco inherits
+    <code>gradient</code> — likely by omission rather than by decision.</p>
+    <p class="rec"><b>Recommend: flat in <code>signal</code>, and check whether deco meant to be
+    gradient.</b> An art-deco skin with a 2010s lift on its buttons is the kind of thing that stays wrong
+    for months because nothing fails.</p>
+  </div>
+
+  <div class="ask">
+    <h3>Do the three new theme designs (#404) wait?</h3>
+    <p>They are seeded and ready to drop in. On today's shapes they will land looking like today, and the
+    work will read as spent.</p>
+    <p class="rec"><b>Recommend: hold them until the shapes land</b>, then draw at least one of them
+    against <code>signal</code> rather than against <code>default</code>.</p>
+  </div>
+
+</div>
+
+<h2 class="sec">Provenance</h2>
+<p><button class="more" data-dlg="d-drawn">what each picture is drawn from</button>
+   <button class="more" data-dlg="d-method">method and limits</button></p>
+
+<footer>
+  <p>terminal-delight &middot; reports/2026-09-18-chrome-reads-dated.html</p>
+  <p>measured against origin/main at 8dacd98, 2026-09-18. The working checkout on spine/instance-identity is behind main and does not contain the workbench sources; every count here comes from git objects on origin/main, not from the worktree.</p>
+</footer>
+</main>
+
+<dialog id="d-signal">
+  <div class="dlg-head"><div><h3>skins/signal.toml</h3><p class="repo">proposed &middot; every key already exists in skin.rs</p></div><button class="x" data-close>&times;</button></div>
+  <div class="dlg-body">
+    <h4>The file</h4>
+<pre><code>name = "signal"
+icon = "◇"
+
+[shape]
+corner   = "round"      # at radius 2 it reads as a softened square
+boundary = "hairline"
+emphasis = "glow"       # compounds with the CRT pass instead of fighting it
+divider  = "line"
+caps     = "tracked"
+shine    = "flat"
+
+[metric]
+radius     = 2.0
+radius_lg  = 6.0
+pad_x      = 11.0
+pad_y      = 7.0
+gap        = 7.0
+row_h      = 18.0
+chip_px    = 7.0
+chip_py    = 2.0
+label_size = 9.5
+glow       = 6.0
+glow_a     = 0.34
+
+[ink]
+rule         = { from = "faint", a = 0.18 }
+rule_strong  = { from = "faint", a = 0.34 }
+edge         = { from = "accent", a = 0.28 }
+edge_strong  = { from = "accent", a = 0.46 }
+mark_wash    = { from = "accent", a = 0.06 }
+row_active   = { from = "human", a = 0.06 }
+panel_raised = { from = "surface", l = 1.08, max_l = 0.24 }
+btn_face     = { from = "surface", l = 1.05, max_l = 0.22 }</code></pre>
+    <h4>Why these numbers</h4>
+    <p>They are one step off <code>console</code>, which is the closest shipped skin: console's air with a
+    2px corner instead of a hard square, a glow edge instead of a rail, and inks pulled down to the
+    low-alpha hairlines the reference uses. <span class="tag w">inferred</span> — nothing here has been
+    rendered; the alphas in particular are the numbers most likely to be wrong on a real GPU pass, because
+    the CRT bloom adds light the CSS mockup does not.</p>
+    <h4>What it does not touch</h4>
+    <p>The overlays and the theme tray, until #408 lands. And the terminal grid itself, which is the
+    theme's business rather than the skin's — a skin has never coloured a cell.</p>
+  </div>
+</dialog>
+
+<dialog id="d-drawn">
+  <div class="dlg-head"><div><h3>What each picture is drawn from</h3><p class="repo">their design · the code · mine</p></div><button class="x" data-close>&times;</button></div>
+  <div class="dlg-body">
+    <h4>Drawn from the code</h4>
+    <ul>
+      <li><b>01 · the fence.</b> Left column from the six surfaces named in #408's problem statement, cross-checked against <code>git grep -c '\.rounded_'</code> returning 0 for <code>benchdraw.rs</code>, <code>workbench.rs</code>, <code>launcher.rs</code> and <code>pane/bench.rs</code> (11,004 lines). Right column and the count of 63 from the same grep on <code>main.rs</code>. The 57 is the same grep at <code>ffe15b4</code>, the last commit before #408 was filed.</li>
+      <li><b>02 · the first two columns.</b> Transcriptions of <code>app/skins/default.toml</code> and <code>app/skins/console.toml</code> — radius, row height, padding and emphasis are the files' own numbers.</li>
+      <li><b>03 · the pins.</b> Token names and defaults from <code>skin.rs</code>'s <code>metric_tokens!</code> table and the three skin files. The 14 gradients from <code>git grep -c linear_gradient</code>.</li>
+      <li><b>04 · steps 1 and 2.</b> Call-site counts (112 and 89) from <code>git grep -c 'sk\.[a-z_]*('</code>; the selector paths from <code>all_skins</code>, <code>picker_max_count</code> and their call sites.</li>
+      <li><b>05 · the three unknowns.</b> Quoted from #505, #516 and #528, including the DPMS failure.</li>
+    </ul>
+    <h4>Mine — argue with it</h4>
+    <ul>
+      <li><b>02 · the <code>signal</code> column</b> and the whole of the token file in the other modal. No file exists; the numbers are a proposal.</li>
+      <li><b>04 · step 3's amber box.</b> That a fourth skin costs one <code>.toml</code> and one line is read off the enumeration code, but nobody has done it.</li>
+      <li>The grouping of nineteen issues into five backlogs. The issues are real; the grouping is my reading.</li>
+    </ul>
+    <h4>The estimated numbers</h4>
+    <p>"A day" for #408 comes from 63 call sites against the six surfaces already converted, which took one
+    sitting for a comparable count. "Half a day" for the skin file is the writing plus one look. Neither is
+    a measurement, and both assume the seam conversion needs no new strategy — which #407 (chamfers) says
+    is not guaranteed.</p>
+  </div>
+</dialog>
+
+<dialog id="d-method">
+  <div class="dlg-head"><div><h3>Method and limits</h3><p class="repo">what would prove this wrong</p></div><button class="x" data-close>&times;</button></div>
+  <div class="dlg-body">
+    <h4>Nothing here was rendered</h4>
+    <p>Every mockup is CSS in this file. The app was not launched, no screenshot was taken, and no monitor
+    was woken — deliberately, because probing a live compositor surfaces toasts in other agents' panes.
+    Font metrics, the warp and the CRT bloom will all change how these rows feel.</p>
+    <h4>The counts are branch-scoped</h4>
+    <p>The checkout this was written from is on <code>spine/instance-identity</code>, which predates the
+    workbench sources entirely — <code>benchdraw.rs</code> does not exist in the working tree. Every number
+    was read from <code>origin/main</code> objects. If main has moved since 8dacd98, re-run the greps
+    before acting.</p>
+    <h4>Invalidation</h4>
+    <ul>
+      <li><b>If <code>git grep -cE '\.rounded_(sm|md|lg|full|xl)\(\)' origin/main -- app/src/main.rs</code> returns 0</b>, #408 has landed and the whole ordering argument above is stale — write the skin file first.</li>
+      <li><b>If the 63 are not all in the overlays and the tray</b> — check by line number against the overlay and tray render functions — then the conversion is larger than a day and the estimate is wrong.</li>
+      <li><b>If a skin file cannot set <code>caps</code> per-surface</b> and tracked uppercase turns out to be all-or-nothing on a look, the type recommendation needs a code change, not a token.</li>
+      <li><b>If you look at <code>console</code> on a live session and it already reads modern</b>, then the missing piece is a theme to pair with it rather than a fourth skin, and this brief overstated the work.</li>
+    </ul>
+    <h4>What was not investigated</h4>
+    <p>Animation and motion — the reference image is static and so is this brief. Whether the window has a
+    motion vocabulary at all, and whether its absence is part of what reads dated, is unexamined.</p>
+  </div>
+</dialog>
+<!-- decision-brief — the markup the notes system needs.
+     Paste immediately before the closing </body>. notes.js finds these by id.
+     Nothing here needs editing except NOTES_FILE. -->
+
+<div class="notebar" id="notebar">
+  <span class="cnt"><b id="note-count">0</b> notes</span>
+  <button id="btn-export" class="primary" data-note-action="export"
+          title="Anchored note map for pasting into a prompt">&#x1F4CB; copy map</button>
+  <button id="btn-embed" data-note-action="embed"
+          title="Download this file with your notes baked in">&#x1F4BE; save into file</button>
+  <button id="btn-clear" data-note-action="clear" title="Delete every note">&#x2715;</button>
+</div>
+
+<dialog id="d-note">
+  <div class="dlg-head">
+    <div>
+      <h3 id="note-title">Note</h3>
+      <p class="repo" id="note-anchor">&nbsp;</p>
+    </div>
+    <button class="x" data-close>&times;</button>
+  </div>
+  <div class="dlg-body">
+    <ul id="note-list"></ul>
+    <p id="note-none">No notes on this yet.</p>
+    <textarea id="note-text"
+      placeholder="Your note. Saved against this element and readable by an agent once you save into the file."></textarea>
+    <div class="note-actions">
+      <button class="save" data-note-action="add">Add note</button>
+      <button data-close>Close</button>
+      <span class="hintk">Ctrl+Enter to add</span>
+    </div>
+  </div>
+</dialog>
+
+<dialog id="d-export">
+  <div class="dlg-head">
+    <div>
+      <h3>Note map</h3>
+      <p class="repo">Anchored to element ids in this file &middot; paste straight into a prompt</p>
+    </div>
+    <button class="x" data-close>&times;</button>
+  </div>
+  <div class="dlg-body">
+    <p style="margin-bottom:12px">
+      Each line is anchored to an element id, so an agent can locate the passage without you
+      pasting the file. Prompt shape: <em>"read my notes in <code>&lt;filename&gt;</code> and act
+      on them."</em>
+    </p>
+    <textarea id="export-out" readonly></textarea>
+    <p class="tokest" id="export-est"></p>
+    <div class="note-actions">
+      <button class="save" data-note-action="copy">Copy to clipboard</button>
+      <button data-close>Close</button>
+    </div>
+  </div>
+</dialog>
+
+<!-- Notes are baked in here by "save into file". Leave it empty and leave it in. -->
+<script type="application/json" id="report-notes">{}</script>
+
+<script>
+  /* Set before notes.js runs. Used for the storage key and the download filename. */
+  window.NOTES_FILE = '2026-09-18-chrome-reads-dated.html';
+</script>
+<!-- then paste the contents of assets/notes.js inline, inside a <script> tag -->
+<script>
+/* decision-brief — reader notes.
+ *
+ * Drop-in. No build step, no dependencies. Paste this file's contents inline inside a
+ * script element, after the document body — a decision brief must survive being emailed
+ * as one file, so never load it with a src attribute.
+ *
+ * NOTHING IN THIS FILE MAY CONTAIN THE LITERAL CLOSING SCRIPT TAG, not even inside a
+ * comment or a string: an HTML parser ends the script element at the first one it sees,
+ * and everything after it silently becomes page content. Write it broken up, e.g.
+ * "<\/script>", if you ever need to emit one.
+ *
+ * Three outputs, in the order they matter:
+ *   1. copy map    — anchored note map, ~1% of the tokens of the whole document
+ *   2. save into   — bakes notes into a downloadable copy so an agent can READ them
+ *   3. localStorage — live persistence between reloads
+ *
+ * Why the map exists: pasting a whole annotated report into a prompt costs thousands of
+ * tokens; pasting bare notes loses which passage each one is about. The map is the third
+ * option — [element-id] + note, so the agent greps the id and finds the passage itself.
+ *
+ * Configure before this script runs (all optional):
+ *   window.NOTES_FILE    — filename used for the storage key and the download. Default: location basename.
+ *   window.NOTES_TARGETS — [[selector, prefix], ...] overriding what gets an affordance.
+ */
+(function () {
+  'use strict';
+
+  var FILE = window.NOTES_FILE ||
+    (location.pathname.split('/').pop() || 'decision-brief.html');
+  var KEY = 'notes:' + FILE;
+
+  /* Default targets. A prefix keeps exported anchors readable and grouped.
+     Override wholesale with window.NOTES_TARGETS if a brief's shape differs.
+
+     THE GRILL COMES FIRST, AND IT IS NOT OPTIONAL. Until 2026-09-02 this list
+     covered five of the seven components layout.md tells you to build and
+     omitted the grill — so the one section whose entire purpose is a decision
+     the reader has to make was the one section the reader could not comment on.
+     Two briefs shipped that way, each having invented its own class name
+     (`grill-q`, then `q`) because nothing here named one. Both spellings are
+     matched below; `.ask` is the name to use going forward. If you add a
+     component, add it here in the same commit.
+
+     FIGURES ARE SECOND, for the same reason. The 2026-09-15 attention-spine
+     brief carried eleven pictures and had to override NOTES_TARGETS wholesale
+     to make any of them annotatable, because `figure` was not here — a fork of
+     this list living in one report, where nothing else would inherit it. The
+     pictures are the part a reader argues with, so they are in the default list
+     now. `titleOf()` already reads `.lbl`, so a figure labelled `03 · What
+     opening costs` anchors as `fig-03-what-opening-costs`. */
+  var TARGETS = window.NOTES_TARGETS || [
+    ['.grill .q, .grill-q, .ask', 'ask'],
+    ['figure', 'fig'],
+    ['.card', 'verdict'],
+    ['.esc-list li', 'readfirst'],
+    ['.finding', 'finding'],
+    ['.tile', 'stat'],
+    ['table.wide tr', 'row'],
+    ['.bar-row', 'chart'],
+    ['.callout', 'callout'],
+    ['dialog .dlg-body > h4', 'sub']
+  ];
+
+  /* Notes baked into the file win on first load — a fresh browser should see what the
+     author saved. After that localStorage is the live copy. */
+  var baked = {};
+  try {
+    var island = document.getElementById('report-notes');
+    if (island) baked = JSON.parse(island.textContent || '{}');
+  } catch (e) { /* a malformed island must not break the page */ }
+
+  var N;
+  try { N = JSON.parse(localStorage.getItem(KEY) || 'null') || baked; }
+  catch (e) { N = baked; }
+
+  var active = null, activeTitle = '';
+
+  function save() {
+    try { localStorage.setItem(KEY, JSON.stringify(N)); } catch (e) {}
+  }
+  function esc(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+  function slug(s) {
+    return String(s || 'x').toLowerCase().replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '').slice(0, 44) || 'x';
+  }
+  function titleOf(el) {
+    var h = el.querySelector('h2,h3,h4,.bar-lab,.k,.lbl,td:first-child,th:first-child');
+    var t = ((h ? h.textContent : el.textContent) || 'item').replace(/\s+/g, ' ').trim();
+    return t.length > 72 ? t.slice(0, 69) + '…' : t;
+  }
+
+  /* ---- give every target a stable anchor id and a note affordance ---- */
+  function tag() {
+    var used = {};
+    TARGETS.forEach(function (pair) {
+      var sel = pair[0], pre = pair[1];
+      Array.prototype.forEach.call(document.querySelectorAll(sel), function (el, i) {
+        if (el.classList.contains('notable')) return;
+        if (el.tagName === 'TR' && el.querySelector('th')) return;   // header rows
+        if (el.closest('#d-note, #d-export, .notebar')) return;
+
+        /* Numbered lists anchor by position; everything else by a SHORT title slug.
+           Long slugs make the exported map unreadable, which defeats the map. */
+        var id;
+        var num = el.querySelector('.esc-n');
+        if (num) id = pre + '-' + num.textContent.trim();
+        else id = pre + '-' + slug(titleOf(el)).split('-').slice(0, 4).join('-');
+
+        var base = id, n = 2;
+        while (used[id]) id = base + '-' + (n++);
+        used[id] = 1;
+
+        el.classList.add('notable');
+        el.dataset.nid = id;
+        el.dataset.ntitle = titleOf(el);
+        if (!el.id) el.id = id;                      // a real anchor in the file
+
+        var b = document.createElement('button');
+        b.className = 'note-btn';
+        b.type = 'button';
+        b.title = 'Add a note';
+        b.innerHTML = '&#x1F4AC;';
+        b.addEventListener('click', function (ev) {
+          ev.preventDefault(); ev.stopPropagation(); open(el);
+        });
+        el.appendChild(b);
+      });
+    });
+  }
+
+  function badges() {
+    var total = 0;
+    Array.prototype.forEach.call(document.querySelectorAll('.notable'), function (el) {
+      var n = (N[el.dataset.nid] || []).length;
+      total += n;
+      el.classList.toggle('has-note', n > 0);
+      var b = el.querySelector(':scope > .note-btn');
+      if (b) b.innerHTML = n ? String(n) : '&#x1F4AC;';
+    });
+    var c = document.getElementById('note-count');
+    if (c) c.textContent = total;
+    ['btn-export', 'btn-embed', 'btn-clear'].forEach(function (id) {
+      var b = document.getElementById(id);
+      if (b) b.disabled = total === 0;
+    });
+  }
+
+  function render() {
+    var list = N[active] || [];
+    var ul = document.getElementById('note-list');
+    document.getElementById('note-none').style.display = list.length ? 'none' : 'block';
+    ul.innerHTML = list.map(function (n, i) {
+      return '<li><div class="nts"><span>' + esc(n.ts) + '</span>' +
+        '<button class="ndel" data-i="' + i + '">delete</button></div>' + esc(n.text) + '</li>';
+    }).join('');
+    Array.prototype.forEach.call(ul.querySelectorAll('.ndel'), function (b) {
+      b.addEventListener('click', function () { del(+b.dataset.i); });
+    });
+  }
+
+  function open(el) {
+    active = el.dataset.nid;
+    activeTitle = el.dataset.ntitle;
+    document.getElementById('note-title').textContent = activeTitle;
+    document.getElementById('note-anchor').textContent = '#' + active;
+    render();
+    document.getElementById('d-note').showModal();
+    document.getElementById('note-text').focus();
+  }
+
+  function add() {
+    var ta = document.getElementById('note-text');
+    var t = ta.value.trim();
+    if (!t || !active) return;
+    (N[active] = N[active] || []).push({
+      text: t,
+      title: activeTitle,
+      ts: new Date().toISOString().slice(0, 16).replace('T', ' ')
+    });
+    ta.value = '';
+    save(); render(); badges();
+  }
+
+  function del(i) {
+    N[active].splice(i, 1);
+    if (!N[active].length) delete N[active];
+    save(); render(); badges();
+  }
+
+  /* ---- the map: anchored, compact, prompt-ready ---- */
+  function buildMap() {
+    var count = 0, els = 0;
+    for (var k in N) { if (N.hasOwnProperty(k)) { els++; count += N[k].length; } }
+    var out = [
+      'NOTES — ' + FILE,
+      count + ' notes on ' + els + ' elements.',
+      'Each [anchor] is an element id in that file — search it to find the passage.',
+      ''
+    ];
+    /* Document order, not object order: the map should read the way the brief reads. */
+    Array.prototype.forEach.call(document.querySelectorAll('.notable'), function (el) {
+      var list = N[el.dataset.nid];
+      if (!list || !list.length) return;
+      out.push('[' + el.dataset.nid + '] ' + el.dataset.ntitle);
+      list.forEach(function (n) { out.push('  · ' + n.text.replace(/\n+/g, ' ')); });
+      out.push('');
+    });
+    return out.join('\n');
+  }
+
+  function exportNotes() {
+    var txt = buildMap();
+    document.getElementById('export-out').value = txt;
+    var est = document.getElementById('export-est');
+    if (est) {
+      est.textContent = txt.length + ' characters ≈ ' + Math.ceil(txt.length / 4) +
+        ' tokens — versus ~' + Math.ceil(document.body.innerText.length / 4) +
+        ' for the whole document.';
+    }
+    document.getElementById('d-export').showModal();
+  }
+
+  function copyExport(btn) {
+    var ta = document.getElementById('export-out');
+    ta.select();
+    try { document.execCommand('copy'); } catch (e) {}
+    if (btn) {
+      var o = btn.textContent;
+      btn.textContent = 'Copied';
+      setTimeout(function () { btn.textContent = o; }, 1400);
+    }
+  }
+
+  /* ---- bake notes into a downloadable copy of this file ----
+     localStorage is invisible to an agent. This is what makes
+     "read my notes in <file>" work. */
+  function embedNotes() {
+    var doc = document.documentElement.cloneNode(true);
+    Array.prototype.forEach.call(doc.querySelectorAll('.note-btn'), function (n) { n.remove(); });
+    Array.prototype.forEach.call(doc.querySelectorAll('.notable'), function (n) {
+      n.classList.remove('notable', 'has-note');
+    });
+    var island = doc.querySelector('#report-notes');
+    if (island) island.textContent = JSON.stringify(N, null, 1);
+    /* A plain-text mirror as well, so grep and ctx_read find the notes
+       without anyone having to parse JSON out of a script tag. */
+    var body = doc.querySelector('body');
+    if (body) body.appendChild(document.createComment('\nREADER NOTES —\n' + buildMap() + '\n'));
+
+    var blob = new Blob(['<!DOCTYPE html>\n' + doc.outerHTML], { type: 'text/html' });
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = FILE;
+    a.click();
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 4000);
+
+    var b = document.getElementById('btn-embed');
+    if (b) { var o = b.innerHTML; b.innerHTML = 'saved &#x2713;'; setTimeout(function () { b.innerHTML = o; }, 2200); }
+  }
+
+  function clearNotes() {
+    if (!confirm('Delete every note in this brief?')) return;
+    N = {}; save(); badges();
+  }
+
+  /* ---- wiring ---- */
+  function init() {
+    var ta = document.getElementById('note-text');
+    if (ta) {
+      ta.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); add(); }
+      });
+    }
+    document.addEventListener('click', function (e) {
+      var t = e.target.closest('[data-note-action]');
+      if (!t) return;
+      var a = t.dataset.noteAction;
+      if (a === 'add') add();
+      else if (a === 'export') exportNotes();
+      else if (a === 'embed') embedNotes();
+      else if (a === 'clear') clearNotes();
+      else if (a === 'copy') copyExport(t);
+    });
+    ['d-note', 'd-export'].forEach(function (id) {
+      var d = document.getElementById(id);
+      if (!d) return;
+      Array.prototype.forEach.call(d.querySelectorAll('[data-close]'), function (x) {
+        x.addEventListener('click', function () { d.close(); });
+      });
+      d.addEventListener('click', function (e) { if (e.target === d) d.close(); });
+    });
+    tag();
+    badges();
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+  else init();
+})();
+</script>
+<script>
+  (function () {
+    document.addEventListener('click', function (e) {
+      var b = e.target.closest ? e.target.closest('[data-dlg]') : null;
+      if (b) { var d = document.getElementById(b.dataset.dlg); if (d) d.showModal(); return; }
+      var c = e.target.closest ? e.target.closest('dialog [data-close]') : null;
+      if (c) { c.closest('dialog').close(); }
+    });
+    Array.prototype.forEach.call(document.querySelectorAll('dialog'), function (d) {
+      d.addEventListener('click', function (e) { if (e.target === d) d.close(); });
+    });
+  })();
+</script>
+</body>
+</html>

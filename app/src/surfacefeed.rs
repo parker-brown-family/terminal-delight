@@ -350,6 +350,24 @@ pub fn drop_surface(dir: &Path, name: &str, value: &Value) -> std::io::Result<Pa
     fs::create_dir_all(dir)?;
     let safe = sanitise(name);
     let path = dir.join(format!("{safe}.json"));
+    // THE FILE'S NAME AND THE DOCUMENT'S ID ARE THE SAME THING, so make it so
+    // on the way out. `parse` invents an `anon-<hash>` id for a document that
+    // carries none — and invents it from the content, so the same surface
+    // written twice is fine but a surface filed under a name nobody put inside
+    // it comes back from disk answering to something else. The row it was
+    // meant to update becomes a second row, and a retire aimed at the id it
+    // had while it was live no longer matches the file holding it.
+    //
+    // Only fills a gap: a document that names itself is left exactly as the
+    // agent sent it, because the id is the agent's to choose.
+    let value = &match value.as_object() {
+        Some(map) if !map.contains_key("id") => {
+            let mut owned = map.clone();
+            owned.insert("id".into(), Value::String(safe.clone()));
+            Value::Object(owned)
+        }
+        _ => value.clone(),
+    };
     // Written beside and renamed into place, so a sweep can never read half a
     // file. The parse guard above would survive it; this means it never has to.
     //
@@ -383,6 +401,17 @@ pub fn drop_surface(dir: &Path, name: &str, value: &Value) -> std::io::Result<Pa
         return Err(err);
     }
     Ok(path)
+}
+
+/// Take a surface off the disk, by the id it was written under.
+///
+/// The counterpart to [`drop_surface`], and it exists for the same reason the
+/// write does: a retire that only reached the live window would come straight
+/// back on the next restart, because the restore path reads this directory.
+/// Returns whether a file was actually there — absent is the normal case for a
+/// surface that was never persisted, not a failure.
+pub fn retire_surface(dir: &Path, name: &str) -> bool {
+    fs::remove_file(dir.join(format!("{}.json", sanitise(name)))).is_ok()
 }
 
 // ---------------------------------------------------------------------------
@@ -469,28 +498,47 @@ pub fn demo_surfaces() -> Vec<(&'static str, Value)> {
             }),
         ),
         (
+            // WRITTEN THE WAY AGENTS ACTUALLY WRITE ONE, which this fixture
+            // was not. It said `href` and nothing else, so the demo — the one
+            // screen anybody looks at on purpose — exercised the single
+            // spelling that already worked, while the cards arriving on real
+            // benches (`open` for the file, `served` for the same page over
+            // http, the finding underneath) were landing as `unclassified`
+            // with their JSON on show and no click that could open them. A
+            // fixture that covers only the working case is how a broken one
+            // goes unseen.
             "04-report",
             serde_json::json!({
                 "td": TDSP_DEMO_VERSION, "kind": "artifact", "id": "demo-report",
                 "title": "The Workbench brief",
                 "weight": { "confidence": "measured" },
-                "model": { "href": "/home/parker/Work/reports/2026-09-17-the-workbench.html",
+                "model": { "what": "Why the agent describes meaning and the window owns the pixels",
+                           "open": "/home/parker/Work/reports/2026-09-17-the-workbench.html",
+                           "served": "http://127.0.0.1:8731/2026-09-17-the-workbench.html",
                            "mime": "text/html",
-                           "summary": "Why the agent describes meaning and the window owns the pixels" }
+                           "finding": "Eleven figures — and the only one of three briefs on the same plan that got a reaction." }
             }),
         ),
         (
+            // AS WIDE AS A REAL ONE. The cells here were two words each, so
+            // the demo's table fitted any pane at any width and the fixture
+            // could not show what a table does to a card: four equal columns,
+            // every cell clipped at forty characters, and the last one drawn
+            // off the right edge of the pane.
             "05-table",
             serde_json::json!({
                 "td": TDSP_DEMO_VERSION, "kind": "table", "id": "demo-table",
                 "title": "Transports, compared",
                 "model": {
-                    "columns": ["transport", "needs", "durable", "crosses the split"],
+                    "columns": ["transport", "what it needs", "durable", "how it behaves when the window is not there"],
                     "rows": [
-                        ["MCP verb", "a connection", "no", "yes"],
-                        ["file drop", "a filesystem", "yes", "yes"],
-                        ["```td fence", "nothing", "yes", "yes"],
-                        ["escape sequence", "an encoder change", "no", null]
+                        ["MCP verb", "a live connection to this window", "no",
+                         "The call fails, and the agent finds out immediately."],
+                        ["file drop", "a filesystem and the pane's own directory", "yes",
+                         "The document waits on disk and lands when a window opens."],
+                        ["```td fence", "nothing at all", "yes",
+                         "It stays in the transcript, where a later reader still finds it."],
+                        ["escape sequence", "a change to the encoder on both ends", "no", null]
                     ]
                 }
             }),
@@ -526,6 +574,25 @@ pub fn demo_surfaces() -> Vec<(&'static str, Value)> {
                         { "claim": "Codex accepts xhigh", "why": "read off the binary's strings, not its documentation", "confidence": "inferred" },
                         { "claim": "the chrome height holds on a 720-pixel window", "confidence": "hunch" }
                     ]
+                }
+            }),
+        ),
+        // The comments board, and the demo is the one place it can be seeded
+        // at all: everywhere else a comment is typed by a person, and there is
+        // nobody to type one into a screenshot.
+        //
+        // It arrives through the file transport like the rest of this list,
+        // which means it arrives as a DROP and not as `Origin::Person` — so
+        // the card reads `dropped as a file · writer unknown` and the row
+        // carries its stamp with no `you`. That is not the demo cheating; it is
+        // exactly what a board looks like when it is read back off disk after a
+        // restart, which is the state a screenshot is most likely to catch.
+        (
+            "08-comment",
+            serde_json::json!({
+                "td": TDSP_DEMO_VERSION, "kind": "comment", "id": "demo-comment",
+                "model": {
+                    "body": "check the phosphor bleed on the LIVE chip at 40% contrast\n\nMight be the chip's own background alpha rather than the border. Look at it before touching the skin file — the two corners in the composer are literals, so a square skin would not square them either."
                 }
             }),
         ),
@@ -933,6 +1000,41 @@ mod tests {
         json!({ "td": "0.1", "kind": "markdown", "title": title, "model": { "body": "b" } })
     }
 
+    /// What `present_surface` now relies on: a surface written by id can be
+    /// read straight back by the path a window opening runs, and retiring it
+    /// takes it off the disk rather than only off the live bench.
+    ///
+    /// The second half is the one worth having. A retire that reached only the
+    /// window would look right for the rest of the session and put the surface
+    /// back on the next restart, which is the same shape of fault as #567 and
+    /// would be found the same slow way.
+    #[test]
+    fn a_presented_surface_survives_a_sweep_and_a_retire_removes_it() {
+        let scratch = Scratch::new("persist");
+
+        let path = drop_surface(scratch.path(), "carried", &a_doc("By the verb")).unwrap();
+        assert!(path.exists(), "the verb's surface must reach the disk");
+
+        // the path a window opening takes
+        let posts = Feed::new().sweep_pane(scratch.path(), NOW);
+        assert_eq!(posts.len(), 1, "a fresh window reads it back");
+        assert_eq!(posts[0].id.as_str(), "carried");
+
+        assert!(
+            retire_surface(scratch.path(), "carried"),
+            "retire must find the file it wrote"
+        );
+        assert!(!path.exists());
+        assert!(
+            Feed::new().sweep_pane(scratch.path(), NOW).is_empty(),
+            "a retired surface must not come back when a window opens"
+        );
+
+        // Retiring something that was never persisted is the normal case for a
+        // surface an older build presented, and is not a failure.
+        assert!(!retire_surface(scratch.path(), "never-here"));
+    }
+
     #[test]
     fn a_dropped_file_is_taken_once_and_not_again() {
         let scratch = Scratch::new("once");
@@ -1163,10 +1265,18 @@ mod tests {
 
     #[test]
     fn every_demo_payload_is_one_this_build_actually_renders() {
-        // A demo is a screenshot waiting to happen, and a screenshot of six
-        // `unclassified` blocks would be a protocol bump nobody noticed. Five
-        // of the six must parse strictly; the sixth is the unknown-kind
-        // specimen and must NOT, or it has stopped demonstrating anything.
+        // A demo is a screenshot waiting to happen, and a screenshot full of
+        // `unclassified` blocks would be a protocol bump nobody noticed. Every
+        // payload must parse strictly except one — the unknown-kind specimen,
+        // which must NOT, or it has stopped demonstrating anything.
+        //
+        // Counted against the LIST rather than against a literal. It was `6`
+        // and `1`, which meant adding the comments board's demo failed this
+        // test for the one reason it is not meant to catch: the list got
+        // longer. The property is `all but the specimen`, and written that way
+        // it still fails the moment a payload silently degrades — which is the
+        // regression this exists for.
+        let total = demo_surfaces().len();
         let mut typed = 0;
         let mut unclassified = 0;
         for (name, doc) in demo_surfaces() {
@@ -1182,8 +1292,42 @@ mod tests {
                 }
             }
         }
-        assert_eq!(typed, 6);
-        assert_eq!(unclassified, 1);
+        assert_eq!(unclassified, 1, "exactly one unknown-kind specimen");
+        assert_eq!(typed, total - 1, "every other demo payload must parse");
+    }
+
+    #[test]
+    fn the_demos_artifact_is_shaped_like_the_ones_that_broke() {
+        // The fixture is the verification. A demo artifact written the one
+        // way that always worked is a screen nobody can learn anything from,
+        // and it is why an artifact card that could not be opened survived on
+        // real benches: the thing people look at was not the thing people
+        // send. Reverting this payload to a bare `href` passes every other
+        // test in this file, so the assertion has to be here.
+        let (_, doc) = demo_surfaces()
+            .into_iter()
+            .find(|(name, _)| name.contains("report"))
+            .expect("the demo artifact");
+        let model = doc
+            .get("model")
+            .and_then(Value::as_object)
+            .expect("a model");
+        assert!(
+            !model.contains_key("href"),
+            "the demo artifact went back to the spelling that never failed"
+        );
+        let s = crate::surface::parse(&doc, NOW)
+            .expect("it still parses")
+            .surface
+            .expect("a surface");
+        let crate::surface::Kind::Artifact(a) = &s.kind else {
+            panic!("the demo artifact is no longer an artifact: {:?}", s.kind);
+        };
+        assert!(a.href.ends_with(".html"), "{}", a.href);
+        assert!(
+            !a.notes.is_empty(),
+            "and it carries the keys that are drawn under it"
+        );
     }
 
     #[test]

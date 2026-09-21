@@ -7,8 +7,237 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Standing on the comments board no longer swallows a keystroke meant for the
+  agent.** For one build, typing while the board was on screen opened a note
+  under the first character — the reasoning being that the bench already works
+  that way and the board should too. It is the wrong extension of that idea:
+  "just type" is valuable because there is ONE place a character goes and you
+  never have to aim at it, and letting the shelf you happen to be READING choose
+  the destination turns reading into a mode nobody entered on purpose. Typing
+  goes to the agent on every shelf. A note is opened deliberately — `alt+m`, or
+  the new row — and catches keys only once it is open. (#XXX)
+
 ### Added
 
+- **A `+ write a note` row sits at the head of the comments board.** With
+  type-to-open gone, `alt+m` was the only door, and a feature reachable by one
+  undiscoverable chord is one most people never find. The row is a dashed
+  outline rather than a filled box, because every real row on the rail is filled
+  and a filled affordance at the top of a newest-first list reads as the newest
+  note. It carries `ALT+M` on its right, so the mouse path teaches the keyboard
+  path instead of competing with it, and it is drawn whether or not the board
+  has anything on it. (#XXX)
+
+### Added
+
+- **`alt+1` … `alt+4` land on a workbench tab without reaching for the mouse.**
+  `tab` already cycled the shelves and still does; this is for going straight to
+  one. The keys are the digits rather than four hand-picked letters because the
+  obvious letters were taken — `alt+v` splits the focused pane and `alt+b` is
+  readline's word-back, which reaches the agent's own prompt from the bench
+  composer — and because digits extend on their own the day a fifth shelf
+  appears. The mapping is `Shelf::ALL`'s own order, so there is no second list to
+  keep in step with the tab strip, and a test fails if any shelf's chord is ever
+  one the window has already claimed. `alt+m` still opens the note box, which
+  moves to the comments board on its way. (#574)
+
+- **A pane's rail has a fourth tab, COMMENTS, and the agent has no wire to it.**
+  The bench held an agent's replies, its artifacts and what it was asking, and
+  nowhere to put your own thinking — the only answer was the sticky note on the
+  glass, which is one slot in handwriting built to be read across a wall of
+  panes rather than written into. The board is the quiet plural version: notes
+  in the palette's `human` colour, newest first, persisted through the same file
+  transport every surface uses so they survive a restart. `alt+m` opens the box,
+  and on the comments shelf simply typing opens it, the way typing anywhere else
+  on the bench already starts talking. Nothing you write there reaches the agent
+  — no bytes down the pseudoterminal, no line in the action journal, and
+  deliberately no verb that hands a note over. `copy` is the whole escape hatch,
+  so the words move when you decide they should. A comment is a ninth surface
+  kind rather than a store of its own, which is why it arrived with persistence,
+  restore, the history cap and the unseen mark already working. (#566)
+
+- **ctrl+wheel sizes exactly what you are pointing at — four dials, one chord.**
+  It used to size the cabinet from anywhere in the window, which meant the
+  things a person most wants bigger — the terminal they are reading, the
+  workbench they are reading — were the two it could not touch. There are now
+  four separate answers and the pointer picks between them: over the **outer
+  chrome** (menu bar, tabs, left bar, the gaps) it scrubs the cabinet exactly as
+  before; over a **pane's own header** it scrubs that one pane's header chrome;
+  over the **terminal grid** it scrubs that pane's terminal text, so the font
+  and cell height move together and the shell reflows; over the **workbench**
+  it scrubs the bench's type ramp. Only the dial actually turned becomes that
+  pane's own — every other one keeps following the outer theme — and each is
+  written into the layout like any other appearance change. The keyboard help
+  has advertised `A──A · Ctrl+wheel` under "Text size" all along; it is true now.
+
+- **The workbench has its own size dial.** A new `bench_size` grade channel,
+  beside the existing text-size one on the DISPLAY tray and in the MCP
+  `set_pane_config` API. It starts **unset**, which is not the same as `1.0`:
+  unset means the bench follows the terminal's dial, which is what the two faces
+  did before they were split and what every session already on disk describes.
+  So nothing shrinks on upgrade, and the two only come apart once somebody
+  turns one of them.
+- **Drag a file onto the bench and its path lands in the line you are
+  writing.** The composer lights up in your own colour while the file is over
+  it, and letting go types the path at the caret — mid-sentence, with the rest
+  of the sentence intact, because placing a caret already sends the agent's
+  line editor the matching arrows. Several files come in as several words, and
+  a name with a space in it arrives quoted, so `Screenshot 2026-09-18.png`
+  stays one filename instead of two arguments nothing downstream can rejoin.
+  A drop on the terminal face pastes the path the way every other terminal
+  does. Files only: the renderer discards a drag whose contents are not local
+  files before the app is told, so an image dragged straight off a web page
+  still does nothing. (#561)
+
+### Fixed
+
+- **ctrl+wheel sizes the workbench when you are standing on the workbench.** The
+  chord reached the terminal grid, a pane's header and the outer cabinet, and
+  did nothing at all on the one face that had just been given a dial of its own.
+  The bench paints a capture-phase wheel hook — it has to, because under the
+  curved tube gpui hit-tests flat and cannot tell which box a turn is over — and
+  that hook runs ahead of every bubble listener and swallows the turn, so the
+  pane's own handler never saw it. It looked like it worked from the outside:
+  sizing the terminal and flipping back showed a resized bench, because an unset
+  bench dial follows the grid's. The chord is now one method both handlers ask,
+  and a test enumerates every wheel handler on a pane and fails when a new one
+  appears without answering it — which is the shape of this bug rather than this
+  instance of it.
+
+- **A surface presented over MCP now reaches the disk, so the bench survives a
+  restart.** `present_surface` handed the document to the live window and
+  stopped there, while this module's own header drew all three transports
+  converging on `surfaces/<session>/<pane>/*.json` and promised the directory is
+  re-read when a window opens. The file drop kept that promise and the verb did
+  not, so everything an agent sent through MCP died with the window — a pane
+  that had presented four surfaces had no directory at all, and the overview
+  came back reading "No responses yet". Three things had to be true at once for
+  the round trip to cost nothing: the document is written under the id it was
+  filed as, because `parse` invents a fresh `anon-…` for a document that names
+  no id and the surface would otherwise return from disk as a stranger; a
+  retire takes the file with it, or it reappears on the next restart; and a
+  second arrival cannot blur who wrote the first — the watcher re-reads the
+  file the verb just wrote and delivers it as a `FileDrop`, which by design
+  cannot name a writer, so an origin now only ever gets more specific. (#567)
+
+- **One pane, one conversation.** A bench, a tool glyph, a pane's tool-call feed
+  and a desktop recap all asked the same question — *which conversation is this
+  pane in?* — and all asked it one pane at a time, ending in "the newest
+  `.jsonl` in that project directory". That is the same answer for every pane
+  sharing a directory. With fourteen agents in one repository, eight of them with
+  nothing on this machine naming their session, eight benches read one
+  conversation and each showed that agent's deliverable as its own. The wall
+  already did this properly — one pass, every transcript claimable once — so its
+  resolver is now the only one: `paneident` binds the whole window at once and
+  labels each binding with the rung that produced it (a claim the agent pushed, a
+  process that started when the conversation opened, elimination, or a
+  preference between live conversations). Readers that attribute work take the
+  first three and refuse the fourth, which means a pane that cannot be placed
+  shows nothing rather than its neighbour's work. The per-pane resolver is
+  deleted rather than deprecated, and a source scan fails the build if one comes
+  back. Two rungs were added on the way: the session id Claude Code's own
+  scratchpad descriptor names, which is the only thing left that binds a
+  conversation to a *pid* now that transcripts are opened and closed per write;
+  and the ledger the SessionStart hook pushes, which the wall was not consulting.
+  Codex panes have no fleet pass yet and get the honest half of one — a pane
+  alone in its directory is bound by elimination, a crowded one only by naming
+  its own session, and two panes pointing at one rollout are both demoted, which
+  is not theoretical: the rollout lookup matches a cwd as a SUBSTRING, so a pane
+  in `/home/parker` and a pane in `/home/parker/PROJECT` selected the same file
+  while each looked alone. (#564)
+- **A ledger entry with a space in it is still a ledger entry.** The JSON reader
+  behind the agent-session ledger matched the literal `"session_id":"` — the
+  shape a compact writer emits, and not the one any pretty-printer does — so a
+  valid hand-written entry parsed as *no id at all* and the reader fell through
+  to forensics as though the file were absent. Whitespace around the colon is
+  allowed now, and a non-string value is still refused. (#564)
+- **Two numbers that said nothing are gone.** A pane header carried its own
+  grid size — `194×50` — in among the controls, and a response's group tab
+  carried a doubt count as `·2`. Neither is a number anybody acts on: the grid
+  size is a fact about the window you are already looking at, and the count
+  sits on a tab whose own label is one click from the doubts themselves.
+  Parker, on the pair: *"that -2 shouldn't be there"*, and *"the number 194x50
+  for the pane resolution in the pane header - can go away also"*. The doubts
+  are untouched and still one click away; only the badge in front of them is
+  gone.
+
+- **Pasting a filename with a space in it no longer breaks it in two.** The
+  clipboard's file arm joined paths raw, so a copied `Screenshot
+  2026-09-18.png` arrived as two words. It now goes through the same quoting a
+  dropped file does. (#561)
+- **The shelf strip wraps, so a fourth tab does not fall off the rail.** The rail
+  is a share of the pane, clamped between 132 and 208 points, and four tabs
+  measure about 161 of them. The strip sat in an `overflow_hidden` frame, so the
+  overflow would not have read as a layout problem — the last tab would simply
+  have stopped being drawn, and a tab nobody can see is a shelf nobody can
+  reach. The three-tab strip was fine at every width. (#566)
+
+- **Two corners on the bench stopped ignoring the skin.** `benchdraw.rs` has
+  promised since it was written that a guard test caught literal corner radii.
+  There was no such test anywhere, and two `rounded(px(3.))` had gone in
+  underneath the promise — the paste chip and the `LIVE → AGENT` chip in the
+  composer — both of which would have stayed round under a square skin while
+  every other corner squared. The gate is real now, it lives beside the three
+  other source scans in the file it guards, and the module's header points at it
+  instead of at another module. (#566)
+
+- **A note stamped from a broken clock says so instead of inventing a date.**
+  `localtime_r` does not refuse absurd input: handed a garbage millisecond count
+  it answers `3 Apr 584556019` without an error, which is an invented value with
+  the right shape — the kind every later reader takes for a measurement. A year
+  outside 1900–2999 now resolves to `time unavailable`. (#566)
+
+- **The small print on a card is small, not invisible.** Every subtitle, cost
+  line, consequence, section tag and provenance line on the workbench was drawn
+  in the palette's `faint` role. `faint` is furniture — it is what a divider is
+  mixed from — and a word painted in it lands between **1.22:1 and 1.62:1**
+  against the ground under it on the six palettes we ship. 1.0 is two identical
+  colours. Forty-two sites now take the skin's meta ink instead, and that ink
+  moves from 0.45 to 0.60 of the foreground, which is the first rung on which
+  every builtin palette clears the 4.5:1 small-text floor — the worst of them at
+  4.54:1. A new test walks all six and goes red under either of the old inks.
+  (#555)
+- **A panel holds its contents off its own border.** The inset lived at the call
+  sites, and seven of the bench's fourteen panels forgot it: an eleven-point line
+  of text sat with its descenders on a lit border and a ten-pixel corner arcing
+  through its first word. The inset is the skin's own `pad_x`/`pad_y` now and it
+  is applied in `Skin::panel`, so a region has to opt OUT rather than remember to
+  opt in. The seven that already padded are untouched — their own padding still
+  overwrites it — and the double rule still hugs the edge, because taffy resolves
+  an absolute child's insets against the border box and never subtracts padding.
+  (#555)
+- **The primary button on a card stops shouting.** APPROVE arrives as a chip,
+  which already carries a lit border, a seat and a halo, and was then given a
+  second border in a second hue plus `aglow` — the bloom sized for a whole
+  region, 22 pixels of blur at `glow × 0.45`, against the ring's 5.25 at 0.11.
+  Four times the spread at three and a half times the heat on a box the width of
+  one word, and the tube's own bloom pass multiplies whatever the chrome emits.
+  `verb_button` now adds only the size, which is what makes a button a button;
+  the strip's launch verb takes the new control-scale `Skin::halo` rather than a
+  region's. The empty workbench's launch button keeps the big bloom on purpose —
+  it is alone on the surface, with nothing for it to close over. (#555)
+- **A tab you can read.** Every tab in the window — the bench's shelf strip, the
+  strip across the top, the rows in the left bar — drew the lit one's label in
+  the selection colour, inside a border in the selection colour, on a seat mixed
+  from it, under a bloom of it: four devices, one hue, and the word was the only
+  one of the four anybody had to read. The unlit ones took the "not in effect"
+  ink, which is Faint, and came out as grey words floating beside a glowing pill.
+  Measured on the `quiet-command` palette, the lit label ran at **1.38:1**
+  against its own seat and the resting one at **1.08:1** against its face; 1.0 is
+  two identical colours. The hue now goes on the edge, the seat and the halo and
+  the label stays the foreground, at two weights; a tab at rest keeps a quiet
+  bordered face, because a control is a control whether or not you are standing
+  on it. The phosphor is dialled from 0.41 to 0.11 and the crisp spread-ring is
+  gone — on a box five pixels wider than its own word it closed over the glyphs
+  from every side. A new test walks every palette we ship and fails under either
+  of the old inks. (#555)
+- **TERM ⇄ BENCH is one switch.** It was two chips with two pixels between them,
+  each reserving its own ring, so one binary choice put four vertical edges on
+  the pane header and the lit half was a pill you could not read the word inside.
+  One bordered track now, with the half you are on filled and carrying the
+  control's whole phosphor budget, so throwing the switch moves the glow. (#555)
 - **The overview shows what YOU said, over the reply to it.** The bench's
   overview is the feed of what the agent said, and for a while it was only
   that: the newest reply stood in the room with nothing above it, so the one

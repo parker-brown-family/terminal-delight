@@ -195,6 +195,10 @@ pub struct GradeReport {
     pub menu_bar: f32,
     /// Terminal grid text size.
     pub text_size: f32,
+    /// Workbench type size. Reported as the size the bench is ACTUALLY
+    /// drawn at, which is `text_size` on a pane whose two faces nobody has
+    /// split — reading it back and posting it is what splits them.
+    pub bench_size: f32,
     /// CRT barrel-warp amount.
     pub warp: f32,
     /// Star-Wars text-crawl toggle (a bool, not a percent).
@@ -221,6 +225,7 @@ pub struct ConfigPatch {
     pub gamma: Option<f32>,
     pub menu_bar: Option<f32>,
     pub text_size: Option<f32>,
+    pub bench_size: Option<f32>,
     pub warp: Option<f32>,
     pub crawl: Option<bool>,
     pub crawl_angle: Option<f32>,
@@ -802,7 +807,7 @@ fn tool_defs() -> Value {
                 "Read the appearance (monitor grade) of one or more panes, or the \
                  window-level `outer` scope. Every channel is reported as a \
                  0..100 percent (brightness, contrast, colour, text, background, \
-                 gamma, menu_bar, text_size, warp, crawl_angle, crawl_depth) plus \
+                 gamma, menu_bar, text_size, bench_size, warp, crawl_angle, crawl_depth) plus \
                  a `crawl` boolean. Omit `targets` to report every exposed pane \
                  plus `outer`. Read-only. To change a value, GET it, compute the \
                  new absolute number yourself, then POST it with set_pane_config.",
@@ -850,7 +855,7 @@ fn tool_defs() -> Value {
                                 },
                                 "config": {
                                     "type": "object",
-                                    "description": "partial grade — any of brightness/contrast/colour/text/background/gamma/menu_bar/text_size/warp/crawl_angle/crawl_depth (0..100) and crawl (bool) — AND `logo`: an absolute path to an image file (png/jpg/jpeg/svg/webp) to ATTACH as this pane's card logo (the agent wall portrait); an empty string clears it. Pane targets only."
+                                    "description": "partial grade — any of brightness/contrast/colour/text/background/gamma/menu_bar/text_size/bench_size/warp/crawl_angle/crawl_depth (0..100) and crawl (bool) — AND `logo`: an absolute path to an image file (png/jpg/jpeg/svg/webp) to ATTACH as this pane's card logo (the agent wall portrait); an empty string clears it. Pane targets only."
                                 }
                             },
                             "required": ["target", "config"],
@@ -1289,11 +1294,12 @@ fn summarise_config(c: &Value) -> String {
     let g = &c["grade"];
     let pct = |k: &str| g.get(k).and_then(Value::as_f64).unwrap_or(0.0).round() as i64;
     format!(
-        "{label}: brightness {} · contrast {} · text {} · text-size {} · warp {}{}",
+        "{label}: brightness {} · contrast {} · text {} · text-size {} · bench-size {} · warp {}{}",
         pct("brightness"),
         pct("contrast"),
         pct("text"),
         pct("text_size"),
+        pct("bench_size"),
         pct("warp"),
         if g.get("crawl").and_then(Value::as_bool).unwrap_or(false) {
             " · crawl on"
@@ -1563,6 +1569,52 @@ where
     // a replacement rather than an addition, and an agent that meant to update
     // should be able to see from the reply which of the two it just did.
     let op = post.op.as_str();
+
+    // PERSIST ON THE WAY PAST, so the bench survives a restart.
+    //
+    // This module used to hand the surface to the live window and stop there,
+    // while `surfacefeed`'s own header drew all three transports converging on
+    // `surfaces/<session>/<pane>/*.json` and promised the directory is re-read
+    // when a window opens. The file drop kept that promise; the verb did not,
+    // so everything an agent sent through MCP died with the window — a pane
+    // that had presented four surfaces had no directory at all. Filed as #567.
+    //
+    // Written before the apply rather than after: the window is the thing that
+    // can fail, and a surface a person can see but that is not on disk is the
+    // failure being fixed here. `drop_surface` names the file by surface id and
+    // writes-then-renames, so a re-send updates the same row instead of
+    // stacking, and the watcher re-reading its own file is a no-op the origin
+    // rule in `Workbench::apply` already absorbs.
+    //
+    // `pane_id: None` is a window-owned pane with no host — it has no
+    // directory, and inventing one would write into a path nothing watches.
+    let pane_dir = snap
+        .panes
+        .iter()
+        .find(|p| p.pid == pid as u32)
+        .and_then(|p| p.pane_id)
+        .zip(snap.instance.as_ref())
+        .map(|(pane, inst)| crate::surfacefeed::pane_dir(&inst.session, pane));
+    if let Some(dir) = pane_dir.as_ref() {
+        match post.op {
+            crate::surface::Op::Retire => {
+                crate::surfacefeed::retire_surface(dir, post.id.as_str());
+            }
+            // A failure here is not worth refusing the call over: the surface
+            // still reaches the bench, and the person sees it. It costs the
+            // restart, which is what the log line is for.
+            _ => {
+                if let Err(err) = crate::surfacefeed::drop_surface(dir, post.id.as_str(), &doc) {
+                    eprintln!(
+                        "terminal-delight mcp: presented {:?} but could not persist it into {}: {err}",
+                        post.id.as_str(),
+                        dir.display()
+                    );
+                }
+            }
+        }
+    }
+
     let patch = ConfigPatch {
         surface: Some(post),
         ..Default::default()
@@ -1910,6 +1962,7 @@ mod tests {
         s.outer_grade = GradeReport {
             brightness: 40.0,
             text_size: 50.0,
+            bench_size: 50.0,
             ..GradeReport::default()
         };
         s

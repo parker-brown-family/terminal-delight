@@ -287,8 +287,9 @@ pub enum Row {
         index: usize,
         depth: u8,
     },
-    /// The divider above the loose tasks. Only drawn when there is something
-    /// for it to be loose FROM (see [`rows`]).
+    /// The divider above the loose tasks. Drawn whenever there is something for
+    /// a task to be loose FROM, whether or not any task currently is — it is
+    /// the target that means "out of every branch" (see [`rows`]).
     Unfiled { depth: u8 },
 }
 
@@ -310,9 +311,15 @@ pub enum Row {
 ///   `Workspace::reveal_active_branch`: opened when the active task CHANGES,
 ///   not while you are looking at it. See [`Scope::widened_for`], which is the
 ///   strip's half of exactly the same decision.
-/// - **The unfiled divider is suppressed when the tree has no other sections.**
-///   A session that has never been organised is a flat list of tasks, and
-///   labelling it "unfiled" says nothing while costing a line.
+/// - **The unfiled divider is drawn whenever anything above it is filed, empty
+///   below or not.** It is the only row that means "out of every branch", so
+///   the drag that takes a tab OUT of a group needs it on screen. It used to
+///   wait until some other tab was already loose, which made leaving a group
+///   the one gesture a fully-filed session could not perform: the target only
+///   existed once you no longer needed it. The single case that still
+///   suppresses it is a tree with nothing else in it — a session that has never
+///   been organised is a flat list of tasks, and labelling the whole window
+///   "unfiled" says nothing while costing a line.
 pub fn rows(projects: &[ProjectRef], initiatives: &[InitiativeRef], tasks: &[TaskRef]) -> Vec<Row> {
     let live_projects: Vec<u32> = projects.iter().map(|p| p.id).collect();
     let known = |p: Option<u32>| p.filter(|id| live_projects.contains(id));
@@ -402,14 +409,16 @@ pub fn rows(projects: &[ProjectRef], initiatives: &[InitiativeRef], tasks: &[Tas
         })
         .map(|(i, _)| i)
         .collect();
-    if !loose.is_empty() {
-        // A divider only earns its line when it divides something.
-        if !out.is_empty() {
-            out.push(Row::Unfiled { depth: 0 });
-        }
-        for i in loose {
-            out.push(Row::Task { index: i, depth: 0 });
-        }
+    // The divider separates what is filed from what is not, and the half that
+    // earns it is the one ABOVE: with nothing filed there is nothing to be
+    // loose from, and with something filed the line is where a drag goes to
+    // leave a branch. A target that appears only once it is no longer needed is
+    // not a target.
+    if !out.is_empty() {
+        out.push(Row::Unfiled { depth: 0 });
+    }
+    for i in loose {
+        out.push(Row::Task { index: i, depth: 0 });
     }
     out
 }
@@ -1096,7 +1105,44 @@ mod tests {
                 ("task", 1),
                 ("project", 0),
                 ("task", 1),
+                // Nothing is loose here, and the line is drawn anyway: it is
+                // where a task goes to STOP being filed.
+                ("unfiled", 0),
             ]
+        );
+    }
+
+    #[test]
+    fn a_fully_filed_session_still_draws_the_line_you_drag_out_to() {
+        // The bug this pins: with every tab in a group the divider was
+        // suppressed, and the only drop target meaning "out of the group" was
+        // the one row that only existed once a tab was already out. Leaving a
+        // group needed a tab that had already left.
+        let tasks = vec![task(None, Some(7)), task(None, Some(7))];
+        let rows = rows(&[], &[initiative(7, None, false)], &tasks);
+        assert_eq!(
+            rows.last(),
+            Some(&Row::Unfiled { depth: 0 }),
+            "the line is the bottom of the tree: {rows:?}"
+        );
+        // ...and it is still scenery. An empty loose section must not park the
+        // keyboard cursor on a hairline with nothing under it.
+        assert_eq!(
+            stops(&rows),
+            vec![RowId::Initiative(7), RowId::Task(0), RowId::Task(1)]
+        );
+        // The walk stays a ring over the stops, so ↑ from nowhere enters on the
+        // last TASK rather than falling off the divider.
+        assert_eq!(walk(&rows, None, 9, false), Some(RowId::Task(1)));
+        // Dropping on it is the ungroup: no project, no initiative.
+        let places: Vec<Place> = tasks.iter().map(|t| t.place).collect();
+        let inis = [initiative(7, None, false)];
+        assert_eq!(
+            land_task(&places, &inis, Drop::Into(RowId::Unfiled))
+                .expect("the divider is a landing")
+                .place,
+            Place::default(),
+            "a release on the line files under nothing"
         );
     }
 
@@ -1112,17 +1158,21 @@ mod tests {
         );
         assert_eq!(
             rows,
-            vec![Row::Project {
-                id: 1,
-                depth: 0,
-                roll: Roll {
-                    needs_input: 3,
-                    panes: 2,
-                    tasks: 2,
-                    ..Default::default()
+            vec![
+                Row::Project {
+                    id: 1,
+                    depth: 0,
+                    roll: Roll {
+                        needs_input: 3,
+                        panes: 2,
+                        tasks: 2,
+                        ..Default::default()
+                    },
+                    collapsed: true,
                 },
-                collapsed: true,
-            }]
+                // The fold hides the tasks, not the place a task goes to leave.
+                Row::Unfiled { depth: 0 },
+            ]
         );
     }
 
@@ -1143,17 +1193,21 @@ mod tests {
         );
         assert_eq!(
             rows,
-            vec![Row::Project {
-                id: 1,
-                depth: 0,
-                roll: Roll {
-                    panes: 1,
-                    tasks: 1,
-                    ..Default::default()
+            vec![
+                Row::Project {
+                    id: 1,
+                    depth: 0,
+                    roll: Roll {
+                        panes: 1,
+                        tasks: 1,
+                        ..Default::default()
+                    },
+                    collapsed: true,
                 },
-                collapsed: true,
-            }],
-            "a folded project draws one row whoever is active inside it"
+                Row::Unfiled { depth: 0 },
+            ],
+            "a folded project draws one branch row whoever is active inside it, \
+             over the line every branch can be left by"
         );
     }
 
@@ -1191,7 +1245,8 @@ mod tests {
                 collapsed: false,
             })
         );
-        assert_eq!(rows.last(), Some(&Row::Task { index: 0, depth: 1 }));
+        assert_eq!(rows.get(1), Some(&Row::Task { index: 0, depth: 1 }));
+        assert_eq!(rows.last(), Some(&Row::Unfiled { depth: 0 }));
     }
 
     #[test]

@@ -80,6 +80,35 @@ impl TerminalView {
         Some((hit?, flat))
     }
 
+    /// An open dial menu takes the next click, wherever it lands — including
+    /// on nothing at all. Answers whether it took this one.
+    ///
+    /// Closing the menu used to be a second press on the dial and nothing
+    /// else, so a person who opened one to look and then went back to reading
+    /// left a list of effort levels floating over the card they were reading,
+    /// over the spine, over everything, with no way out they would think to
+    /// try. Parker, with one open across a whole screenshot: *"effort is stuck
+    /// to the workbench after I clicked it open and did not change it"*.
+    ///
+    /// It is resolved BEFORE the zone lookup because most of the screen is not
+    /// a zone: a click on the bench's empty background reaches no control at
+    /// all, and that is the click most likely to mean *go away*. And it is
+    /// SWALLOWED rather than passed through, which is what every other menu on
+    /// this desk does — the press that dismisses a popup is not also a press
+    /// on what the popup was covering.
+    pub(super) fn bench_dismiss_dial(
+        &mut self,
+        hit: Option<&crate::workbench::Hit>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if !crate::workbench::dial_dismisses(self.wb_dial.is_some(), hit) {
+            return false;
+        }
+        self.wb_dial = None;
+        cx.notify();
+        true
+    }
+
     /// Act on a bench click. One `match`, so a control added to [`Hit`] is a
     /// control the compiler makes this handle.
     pub(super) fn bench_hit(
@@ -104,6 +133,7 @@ impl TerminalView {
                 self.bench.close_card();
             }
             Hit::Launch => cx.emit(OpenAgentLauncher),
+            Hit::AddNote => self.bench_note_open(cx),
             Hit::EndAgent => self.bench_end_agent(cx),
             // A second press on the open dial closes it. A menu with no way
             // back out except picking something is a menu that has taken a
@@ -152,6 +182,15 @@ impl TerminalView {
     /// whenever the pointer is on the bench, so neither of those ever runs
     /// flat. What it moves is [`crate::workbench::wheel_target`]'s call; how
     /// far, [`crate::workbench::wheel_offset`]'s.
+    ///
+    /// Running first is also why the SIZE chord has to be answered here.
+    /// ctrl+wheel is never a scroll anywhere in this window, and this handler
+    /// consumes every turn on the bench — so until it asked, the workbench was
+    /// the one surface whose own size dial could not be turned from it. The
+    /// question is asked through [`TerminalView::size_by_wheel`] rather than
+    /// answered locally, so the region under the pointer decides the dial here
+    /// exactly as it does at the pane root: the header above the bench is
+    /// still chrome, and still takes the chrome dial.
     pub(super) fn bench_wheel(
         &mut self,
         ev: &ScrollWheelEvent,
@@ -159,6 +198,10 @@ impl TerminalView {
         cx: &mut Context<Self>,
     ) {
         if self.bench.face() != crate::workbench::Face::Workbench {
+            return;
+        }
+        if self.size_by_wheel(ev, cx) {
+            cx.stop_propagation();
             return;
         }
         let Some((hit, _)) = self.bench_flat(ev.position) else {
@@ -212,12 +255,30 @@ impl TerminalView {
     /// change, so ordinary mousing costs nothing; [`Self::pointer_hook`]
     /// paints whatever this last decided.
     pub(super) fn bench_hover(&mut self, at: gpui::Point<gpui::Pixels>, cx: &mut Context<Self>) {
-        let pointer = self
-            .bench_flat(at)
-            .and_then(|(hit, _)| hit)
+        let hit = self.bench_flat(at).and_then(|(hit, _)| hit);
+        let pointer = hit
+            .as_ref()
             .map_or(crate::workbench::Pointer::Arrow, |h| h.pointer());
-        if pointer != self.wb_pointer {
+        // A dragged file crossing the composer, which arrives here as an
+        // ordinary mouse move: gpui turns the drag's motion into one, with
+        // the paths parked on the app until the drop. A target that gives no
+        // sign while you hover over it teaches people it does not work.
+        //
+        // `has_active_drag` says only that SOMETHING is being carried, not
+        // what — and that is exact today, because the only drag this app
+        // takes part in is a file drop (its tab, pane and slider drags are
+        // hand-rolled state machines, not gpui drags). Add a real gpui drag
+        // and this lights for it too while the drop does nothing; the fix
+        // then is `on_drag_move::<ExternalPaths>`, which is scoped to the
+        // type and fires on every pane rather than only the hovered one.
+        let drop = cx.has_active_drag()
+            && matches!(
+                hit,
+                Some(crate::workbench::Hit::Composer | crate::workbench::Hit::Arm)
+            );
+        if pointer != self.wb_pointer || drop != self.wb_drop {
             self.wb_pointer = pointer;
+            self.wb_drop = drop;
             cx.notify();
         }
     }
@@ -243,12 +304,35 @@ impl TerminalView {
             |bounds, window, _cx| window.insert_hitbox(bounds, gpui::HitboxBehavior::Normal),
             move |_bounds, hitbox, window, _cx| {
                 window.set_cursor_style(pointer, &hitbox);
+                let wheel_weak = weak.clone();
                 window.on_mouse_event(move |ev: &ScrollWheelEvent, phase, window, cx| {
                     if phase != gpui::DispatchPhase::Capture || !hitbox.is_hovered(window) {
                         return;
                     }
                     let line_height = window.line_height();
-                    let _ = weak.update(cx, |view, cx| view.bench_wheel(ev, line_height, cx));
+                    let _ = wheel_weak.update(cx, |view, cx| view.bench_wheel(ev, line_height, cx));
+                });
+                // Putting the drag DOWN, and taking it out of the window, are
+                // the two ways the box stops being a target — and neither of
+                // them is a mouse move over this pane, which is the only
+                // event `on_mouse_move` delivers. A drop on a sibling pane
+                // would otherwise leave this one lit, because a pane stops
+                // hearing moves the moment the pointer is over its
+                // neighbour. Deliberately no hitbox test on either: the drag
+                // is over wherever it ended.
+                let up_weak = weak.clone();
+                window.on_mouse_event(move |_: &MouseUpEvent, phase, _window, cx| {
+                    if phase == gpui::DispatchPhase::Bubble {
+                        clear_drop(&up_weak, cx);
+                    }
+                });
+                // Leaving the window is the one event in a drag that arrives
+                // as itself: gpui turns enter, motion and drop into mouse
+                // events and passes this one through.
+                window.on_mouse_event(move |_: &gpui::FileDropEvent, phase, _window, cx| {
+                    if phase == gpui::DispatchPhase::Bubble {
+                        clear_drop(&weak, cx);
+                    }
                 });
             },
         )
@@ -271,35 +355,27 @@ impl TerminalView {
         }
     }
 
-    /// The bench's own keys, ahead of the terminal's.
+    /// The bench's own keys, and only its own.
     ///
-    /// `true` when the bench took the keystroke — the gallery, the escape
-    /// ladder, the composer in talking mode, and the reading-mode chords —
-    /// and `false` when it is the terminal's after all. Moved out of `on_key`
-    /// whole, so that the one function which decides where a key goes is the
-    /// one function a person opens to find out.
+    /// `true` when the bench took the keystroke — the gallery, the shelf chords,
+    /// the note buffer, the escape ladder, the composer in talking mode, and the
+    /// reading-mode chords — and **`false` when it is the terminal's after all**,
+    /// which [`super::TerminalView::on_key`] answers by handing the key to the
+    /// pseudoterminal underneath.
+    ///
+    /// That `false` is the whole of the fix this function was rewritten for.
+    /// Every path out of it used to end in `cx.stop_propagation()`, so a key the
+    /// bench had no use for died here: `ctrl+c` could not interrupt the agent
+    /// whose turn was on the screen, and nothing below this call in `on_key`
+    /// — the rename box, the note, the pane's own chords — ran at all.
+    ///
+    /// Two things it no longer does, because they are decided before it is
+    /// called. It does not check the face: [`crate::keylayer::Layer::Bench`] is
+    /// claimed only when the workbench is showing. And it does not hand back the
+    /// window's chords: `keylayer` routes those to the workspace without asking.
+    /// Nor does it stop propagation — `on_key` does that in one place, from what
+    /// this returns.
     pub(super) fn bench_key(&mut self, ks: &Keystroke, cx: &mut Context<Self>) -> bool {
-        if self.bench.face() != crate::workbench::Face::Workbench {
-            return false;
-        }
-        // THE WINDOW'S CHORDS LEAVE FIRST, ahead of everything below — the
-        // gallery included.
-        //
-        // Every path out of this function ends in `cx.stop_propagation()`, so
-        // anything not declined here can never reach the workspace. That is
-        // what stranded `alt+w`, `alt+r`, the split chords and the directional
-        // focus keys on the workbench face: not a collision in any table, just
-        // this handler running first and keeping what it could not use (#524).
-        //
-        // Above the gallery rather than below it, because "the gallery takes
-        // every key" was a rule about NAVIGATION — an arrow falling through to
-        // a composer hidden behind the overlay — and the window's chords were
-        // never the gallery's to take. A plain arrow still reaches it:
-        // [`crate::workbench::window_chord`] answers only for the modified
-        // forms.
-        if crate::workbench::window_chord(ks.key.as_str(), ks.modifiers.alt, ks.modifiers.control) {
-            return false;
-        }
         // The GALLERY next, and it takes every key.
         //
         // It is drawn over everything and it was opened by a deliberate
@@ -325,10 +401,46 @@ impl TerminalView {
                 Gallery::Ignore => {}
             }
             cx.notify();
-            cx.stop_propagation();
+            return true;
+        }
+        // ALT+<n> LANDS ON A SHELF, above everything that could swallow a digit.
+        //
+        // Above `reading_key` in particular, which reads a bare digit as
+        // answering option `n` of a waiting question — so this has to be the
+        // thing that consumes the keystroke, not a branch further down that
+        // happens to agree. The rule itself is [`crate::workbench::shelf_chord`],
+        // where the modifiers are checked and the reasoning lives.
+        if let Some(shelf) =
+            crate::workbench::shelf_chord(ks.key.as_str(), ks.modifiers.alt, ks.modifiers.control)
+        {
+            self.bench.set_shelf(shelf);
+            cx.notify();
+            return true;
+        }
+        // A NOTE, on `alt+m`. Never on a bare `m`, which is a character.
+        //
+        // `m` is not in [`crate::keylayer::window_chord`]'s list, so the chord
+        // reaches this handler rather than leaving for the workspace. It also
+        // moves the board into view: asking for a note while looking at the
+        // decisions shelf and then typing into a box on a different tab would be
+        // writing somewhere the person cannot see.
+        if ks.modifiers.alt && !ks.modifiers.control && ks.key.as_str() == "m" {
+            self.bench_note_open(cx);
             return true;
         }
         let talking = self.wb_compose.is_some();
+        // THE NOTE BUFFER TAKES ITS KEYS BEFORE `talking` IS EVEN ASKED.
+        //
+        // Order, not politeness. The branch below this one sends every
+        // keystroke it receives straight down the pseudoterminal before
+        // applying it locally, so a note falling through to it would type the
+        // person's private words into the agent's prompt — the exact failure
+        // this whole shelf is defined against. Both composers can be open at
+        // once (a note started while a reply was half-written), and when they
+        // are, the note is the one in front.
+        if self.wb_note.is_some() {
+            return self.bench_note_key(ks, cx);
+        }
         if ks.key.as_str() == "escape" {
             // One layer at a time, and a question waiting on a person is
             // the floor — see [`crate::workbench::peel`] for why escape is
@@ -340,11 +452,16 @@ impl TerminalView {
                     if q.answer == crate::surface::Answered::Waiting
             );
             match crate::workbench::peel(
+                self.wb_dial.is_some(),
                 self.wb_review.is_some(),
                 talking,
                 self.bench.selected().is_some(),
                 card_waits,
             ) {
+                Peel::Dial => {
+                    self.wb_dial = None;
+                    cx.notify();
+                }
                 Peel::Gallery => {
                     self.wb_review = None;
                     cx.notify();
@@ -364,7 +481,6 @@ impl TerminalView {
                 // dismissing overlays with.
                 Peel::Nothing => {}
             }
-            cx.stop_propagation();
             return true;
         }
         if talking {
@@ -373,7 +489,6 @@ impl TerminalView {
             // See [`Self::bench_paste`].
             if crate::workbench::is_paste_chord(&ks.key, ks.modifiers.control, ks.modifiers.shift) {
                 self.bench_paste(cx);
-                cx.stop_propagation();
                 return true;
             }
             // Everything else straight through, byte for byte. The echo
@@ -432,7 +547,6 @@ impl TerminalView {
                 self.composer_follows();
                 self.bench_keystroke(bytes, cx);
             }
-            cx.stop_propagation();
             return true;
         }
         // The rules themselves are a table in `workbench`, so they can be
@@ -498,6 +612,27 @@ impl TerminalView {
             }
             crate::workbench::Reading::Choose(i) => self.bench_choose(i, cx),
             crate::workbench::Reading::Talk => {
+                // WHICH SHELF YOU ARE READING DOES NOT CHANGE WHERE TYPING GOES.
+                //
+                // It did, for one build. Standing on the comments board opened
+                // a note under the first character, on the reasoning that the
+                // bench already works that way and the board should too —
+                // Parker had praised the reply composer for exactly that: *"the
+                // functionality of JUST TYPE (withough click sleecting the
+                // prompt area) is SUPPPPER nice!"*. The extension was wrong and
+                // he found it in a minute: *"if COMMENTS is selected and I type
+                // ... the keystroke gets caught in the COMMENT instead of the
+                // prompt --- this is WRONG! --- comment MUST require alt+m"*.
+                //
+                // The reason it is wrong is what "just type" was ever for. It
+                // means there is ONE place a character goes and you never have
+                // to aim at it. A shelf is a thing you are LOOKING at; making
+                // it decide where your typing lands turns reading into a mode,
+                // and a mode you entered by reading is one nobody chose. The
+                // note box is opened on purpose — `alt+m`, or the `+ write a
+                // note` row on the board — and it catches keys only once it is
+                // open, which is [`Self::bench_note_key`]'s whole job.
+                //
                 // Nobody to talk to. The bench keeps the key rather than
                 // starting a sentence into a shell.
                 //
@@ -508,7 +643,6 @@ impl TerminalView {
                 // down the pseudoterminal, where the shell gathered them into a
                 // command line and the return key ran it (#509).
                 if !self.mode.is_agent() {
-                    cx.stop_propagation();
                     return true;
                 }
                 // Start talking, carrying the character that started it —
@@ -524,9 +658,10 @@ impl TerminalView {
                     self.bench_keystroke(bytes, cx);
                 }
             }
-            crate::workbench::Reading::Ignore => {}
+            // NOT OURS. The terminal underneath gets it — see the note on
+            // `false` at the top of this function.
+            crate::workbench::Reading::Pass => return false,
         }
-        cx.stop_propagation();
         true
     }
 
@@ -799,7 +934,7 @@ impl TerminalView {
         }
         self.wb_dial = None;
         let draft = self.wb_compose.clone().unwrap_or_default();
-        let bytes = crate::workbench::aside_bytes(&format!("{} {value}", which.command()), &draft);
+        let bytes = crate::workbench::dial_bytes(&format!("{} {value}", which.command()), &draft);
         // The erase takes any pasted image with it, and nothing this side can
         // type one back. Say so in the only place that can: the mirror stops
         // counting attachments the agent is no longer holding.
@@ -808,7 +943,55 @@ impl TerminalView {
                 line.forget_pastes();
             }
         }
+        // The command goes FIRST and the hold goes on after it, because the
+        // hold is on everything the person does next — including the draft
+        // this press just took off their screen.
         self.bench_deliver(bytes, cx);
+        self.wb_dial_sent = Some(crate::workbench::DialSent {
+            which,
+            text: draft.text().to_string(),
+            caret: draft.caret(),
+            sent_ms: crate::surfacefeed::now_ms(),
+            answered: false,
+        });
+    }
+
+    /// Carry a dial press through the harness's own confirmation, then give
+    /// the person their sentence back.
+    ///
+    /// Called from the pane's 120ms clock with the bottom of the screen, and
+    /// only while a press is in flight. The judgement is
+    /// [`crate::workbench::dial_step`] and the reading is
+    /// [`crate::screenread::harness_confirm`]; what is left here is the
+    /// writing, which is the part that cannot be tested without a terminal.
+    pub(super) fn dial_watch(&mut self, rows: &[String], cx: &mut Context<Self>) {
+        use crate::workbench::DialStep;
+        let Some(sent) = self.wb_dial_sent.clone() else {
+            return;
+        };
+        let picker = crate::screenread::harness_confirm(rows, sent.which.confirm_word());
+        match crate::workbench::dial_step(&sent, picker, crate::surfacefeed::now_ms()) {
+            DialStep::Wait => {}
+            DialStep::Answer { to, from } => {
+                if let Some(live) = self.wb_dial_sent.as_mut() {
+                    live.answered = true;
+                }
+                self.dial_answer(crate::workbench::menu_keys(to, from), cx);
+            }
+            DialStep::Settle => {
+                // Cleared BEFORE the write, so the write is not held by the
+                // hold it is ending.
+                self.wb_dial_sent = None;
+                let bytes = crate::workbench::restore_bytes(&sent.text, sent.caret);
+                if !bytes.is_empty() {
+                    self.bench_deliver(bytes, cx);
+                }
+                // Then everything they typed while it was in flight, in the
+                // order they typed it.
+                self.bench_drain(cx);
+                cx.notify();
+            }
+        }
     }
 
     /// Did the bench type into this pane recently enough that the agent is
@@ -1073,7 +1256,6 @@ impl TerminalView {
                             sk.chip(true).child(format!("\u{2714} {submit_word}")),
                             true,
                             sk,
-                            th,
                         )
                         .relative()
                         .child(crate::benchdraw::zone(
@@ -1103,6 +1285,16 @@ impl TerminalView {
         // and they are printed whole: an elided command that looks copyable
         // is a trap, and an elided instruction that looks readable is the
         // same trap.
+        //
+        // **OFF BY DEFAULT since 2026-09-21.** All of that is about what
+        // happens when somebody looks; what shipped was four lines of routing
+        // and tagged prompt text under every card on every frame, whether or
+        // not anybody was auditing anything. Parker: *"that machine stuff at
+        // the bottom … human does not need to see that"*. So it is a
+        // diagnostic — `TD_VERB_PREVIEW=1` — and the guarantee it was built
+        // for survives where it actually lives: `verb_preview` is the same
+        // function the typed line comes out of, and a test says so.
+        let auditing = std::env::var_os("TD_VERB_PREVIEW").is_some();
         let tag = crate::surfacefeed::tag();
         let comment = self
             .wb_compose
@@ -1119,39 +1311,49 @@ impl TerminalView {
                 .as_deref()
                 .map_or(String::new(), |c| format!(" \u{b7} {c}")),
         );
-        let previews: Vec<(String, String)> = actions
-            .iter()
-            .flat_map(|action| {
-                let needs_part = matches!(
-                    action,
-                    crate::surface::Action::AcceptPart | crate::surface::Action::RejectPart
-                );
-                let targets: Vec<Option<String>> = if needs_part {
-                    hunks.iter().map(|id| Some(id.clone())).collect()
-                } else {
-                    vec![None]
-                };
-                targets
-                    .into_iter()
-                    .map(|target| {
-                        let chip = match &target {
-                            Some(t) => {
-                                format!("{} {}", action.label(), t.rsplit('/').next().unwrap_or(t))
-                            }
-                            None => action.label(),
-                        };
-                        let what = crate::workbench::verb_preview(
-                            surface,
-                            action,
-                            target.as_deref(),
-                            comment.as_deref(),
-                            tag,
-                        );
-                        (chip, what)
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .collect();
+        let previews: Vec<(String, String)> = if !auditing {
+            // Not built at all rather than built and hidden: this calls
+            // `verb_preview` once per verb per frame.
+            Vec::new()
+        } else {
+            actions
+                .iter()
+                .flat_map(|action| {
+                    let needs_part = matches!(
+                        action,
+                        crate::surface::Action::AcceptPart | crate::surface::Action::RejectPart
+                    );
+                    let targets: Vec<Option<String>> = if needs_part {
+                        hunks.iter().map(|id| Some(id.clone())).collect()
+                    } else {
+                        vec![None]
+                    };
+                    targets
+                        .into_iter()
+                        .map(|target| {
+                            let chip = match &target {
+                                Some(t) => {
+                                    format!(
+                                        "{} {}",
+                                        action.label(),
+                                        t.rsplit('/').next().unwrap_or(t)
+                                    )
+                                }
+                                None => action.label(),
+                            };
+                            let what = crate::workbench::verb_preview(
+                                surface,
+                                action,
+                                target.as_deref(),
+                                comment.as_deref(),
+                                tag,
+                            );
+                            (chip, what)
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .collect()
+        };
         let shown = div()
             .flex()
             .flex_col()
@@ -1159,13 +1361,13 @@ impl TerminalView {
             .pt(px(2.))
             .font_family(th.font_family.clone())
             .text_size(px(sk.pt(Step::Fine)))
-            .child(div().text_color(th.faint).child(where_to))
+            .child(div().text_color(sk.ink.ink_faint).child(where_to))
             .children(previews.into_iter().map(|(chip, what)| {
                 div()
                     .flex()
                     .flex_row()
                     .gap(px(8.))
-                    .child(div().flex_none().text_color(th.faint).child(chip))
+                    .child(div().flex_none().text_color(sk.ink.ink_faint).child(chip))
                     .child(div().text_color(th.text.alpha(0.72)).child(what))
             }));
         let row = div()
@@ -1215,7 +1417,6 @@ impl TerminalView {
                                 .child(text),
                             primary,
                             sk,
-                            th,
                         )
                         .relative()
                         .child(crate::benchdraw::zone(
@@ -1228,7 +1429,14 @@ impl TerminalView {
                     })
                     .collect::<Vec<_>>()
             }));
-        Some(div().flex().flex_col().gap(px(6.)).child(row).child(shown))
+        Some(
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(6.))
+                .child(row)
+                .when(auditing, |d| d.child(shown)),
+        )
     }
 
     /// Press one of the selected question's answers, by zero-based index.
@@ -1362,7 +1570,16 @@ impl TerminalView {
                     parts.push(text.text().replace(['\n', '\r'], " "));
                 }
                 ClipboardEntry::ExternalPaths(paths) => {
-                    parts.extend(paths.paths().iter().map(|p| p.display().to_string()));
+                    // The same rule a DROP follows, from the same function: a
+                    // path is one word. This arm used to join the paths raw,
+                    // so copying `Screenshot 2026-09-18.png` pasted two words
+                    // and nothing downstream could put them back together.
+                    let words = crate::workbench::paths_as_words(paths.paths());
+                    // An entry carrying no path at all adds nothing, rather
+                    // than a stray space in the middle of the sentence.
+                    if !words.is_empty() {
+                        parts.push(words);
+                    }
                 }
                 ClipboardEntry::Image(image) => match self.save_pasted_image(image) {
                     Some(path) => parts.push(path),
@@ -1371,6 +1588,66 @@ impl TerminalView {
             }
         }
         let text = parts.join(" ");
+        self.bench_typed(text, cx);
+    }
+
+    /// A file dropped on the pane: its path typed where it landed.
+    ///
+    /// The compositor's half of this is gpui's and costs us nothing — its
+    /// Wayland client asks the drag for `text/uri-list`, turns the URIs into
+    /// paths, and hands them over as an ordinary mouse-up with the value
+    /// attached. It also DESTROYS any drag whose URIs are not local files, so
+    /// an image dragged off a web page never reaches this function and there
+    /// is nothing here that could serve it. Files, and only files.
+    ///
+    /// The listener sits on the pane's root rather than on the composer,
+    /// because the bench is bent by the barrel pass and gpui hit-tests the
+    /// flat tree — a drop target hung on the composer element would catch
+    /// drops beside where the composer appears. So this un-bends the pointer
+    /// through [`Self::bench_hit_at`], the same inverse every bench click goes
+    /// through, and the composer's own zone answers.
+    pub(super) fn bench_drop(
+        &mut self,
+        paths: &gpui::ExternalPaths,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.wb_drop = false;
+        let text = crate::workbench::paths_as_words(paths.paths());
+        if text.is_empty() {
+            return;
+        }
+        // On the TERMINAL face there is no composer to aim at and no mirror to
+        // keep: the path goes to the process as a paste, which is what every
+        // other terminal on this machine does with a dropped file.
+        if self.bench.face() != crate::workbench::Face::Workbench {
+            window.focus(&self.focus_handle, cx);
+            self.paste_text(&text);
+            cx.notify();
+            return;
+        }
+        let Some((hit, flat)) = self.bench_hit_at(window.mouse_position()) else {
+            return;
+        };
+        // The composer and the field around it, which is the gesture people
+        // will actually make — the box is the biggest thing on the bench. A
+        // drop on a card is not a drop on the line and does nothing, on the
+        // same terms as a click there.
+        if !matches!(
+            hit,
+            crate::workbench::Hit::Composer | crate::workbench::Hit::Arm
+        ) {
+            return;
+        }
+        // Arm FIRST. `bench_click` arms a cold line and returns without
+        // moving anything, so calling it on an unarmed composer would place
+        // no caret and the path would land at the end of a line nobody could
+        // see yet.
+        if self.wb_compose.is_none() {
+            self.wb_compose = Some(crate::workbench::Line::new());
+        }
+        self.bench_click(flat, cx);
+        window.focus(&self.focus_handle, cx);
         self.bench_typed(text, cx);
     }
 
@@ -1554,14 +1831,35 @@ impl TerminalView {
     /// flash, so a write is something a person sees happen.
     pub(super) fn bench_deliver(&mut self, bytes: Vec<u8>, cx: &mut Context<Self>) {
         if self.bench_may_write() {
-            let now = crate::surfacefeed::now_ms();
-            self.session.notifier.notify(bytes);
-            self.wb_delivered_ms = Some(now);
-            self.wb_flash_until_ms = Some(now + 450);
+            self.write_through(bytes);
         } else {
             self.wb_queued.push(bytes);
         }
         cx.notify();
+    }
+
+    /// The bytes, into the pseudoterminal, stamped. No rules — the callers
+    /// above own those, and each of them owns a different set.
+    fn write_through(&mut self, bytes: Vec<u8>) {
+        let now = crate::surfacefeed::now_ms();
+        self.session.notifier.notify(bytes);
+        self.wb_delivered_ms = Some(now);
+        self.wb_flash_until_ms = Some(now + 450);
+    }
+
+    /// The window pressing Yes on the picker its own dial press raised.
+    ///
+    /// The one write that goes past the dial hold, because the hold exists to
+    /// keep the PERSON's keystrokes out of that picker and this keystroke is
+    /// what the picker is for. It is not queued either: a queue would press
+    /// Yes on a question that had gone, and the two visibility rules still
+    /// apply — a picker on a pane nobody is looking at is a picker nobody
+    /// asked us to answer.
+    fn dial_answer(&mut self, bytes: Vec<u8>, cx: &mut Context<Self>) {
+        if self.bench_channel_open() {
+            self.write_through(bytes);
+            cx.notify();
+        }
     }
 
     /// Both conditions on a bench write, in one place.
@@ -1578,8 +1876,24 @@ impl TerminalView {
     ///
     /// `Unknown` is not an agent either. A host-owned pane is born unread, and
     /// "we have not looked" must not be the state that lets a write through.
-    fn bench_may_write(&self) -> bool {
+    fn bench_channel_open(&self) -> bool {
         self.wb_on_screen && self.mode.is_agent()
+    }
+
+    /// …and the third rule, which is about WHAT IS LISTENING rather than
+    /// whether anything is.
+    ///
+    /// A dial press leaves the harness showing a modal picker, and for as long
+    /// as it is up the pane's line editor is not reading: every byte sent
+    /// there is a menu keystroke, and a digit in somebody's half-typed
+    /// sentence chooses an option. So the bench holds — in the same queue and
+    /// with the same promise as the other two rules — until
+    /// [`Self::dial_watch`] has seen the picker answered and typed the draft
+    /// back. Held, never dropped: the person goes on typing into a composer
+    /// that keeps drawing their words, and the keystrokes land in order the
+    /// moment the far end is a line editor again.
+    fn bench_may_write(&self) -> bool {
+        self.bench_channel_open() && self.wb_dial_sent.is_none()
     }
 
     /// One keystroke from the composer, under the same two rules as a line.
@@ -1637,6 +1951,192 @@ impl TerminalView {
         self.wb_flash_until_ms.is_some_and(|until| now_ms < until)
     }
 
+    /// Open the note buffer, and bring the board it writes to into view.
+    ///
+    /// Moving the shelf is part of the gesture rather than a courtesy. Asking
+    /// for a note while reading the decisions tab and then typing into a box
+    /// whose output lands on a tab you are not looking at is a surface writing
+    /// somewhere the person cannot see it land.
+    pub(super) fn bench_note_open(&mut self, cx: &mut Context<Self>) {
+        if self.wb_note.is_none() {
+            self.wb_note = Some(crate::workbench::Line::new());
+        }
+        self.bench.set_shelf(crate::surface::Shelf::Comments);
+        cx.notify();
+    }
+
+    /// Every keystroke while a note is being written — and not one of them
+    /// leaves this function.
+    ///
+    /// This is the whole difference between the comments board and the rest of
+    /// the bench, so it is written as one function with no call to
+    /// [`Self::bench_keystroke`] or [`Self::bench_deliver`] anywhere inside it.
+    /// The composer twenty lines below does the opposite by design: it puts
+    /// every byte down the pseudoterminal FIRST and applies the edit locally
+    /// afterwards, because it is mirroring an editor that lives in the agent's
+    /// process. Reusing it here would have typed a person's private note into
+    /// their agent's prompt, which is the one outcome this shelf exists to
+    /// prevent.
+    ///
+    /// `escape` discards the draft. That is the same bargain the reply composer
+    /// makes — a composer is a mode you can see you are in — and unlike a posted
+    /// note there is nothing here anybody else has seen yet.
+    fn bench_note_key(&mut self, ks: &Keystroke, cx: &mut Context<Self>) -> bool {
+        match ks.key.as_str() {
+            "escape" => {
+                self.wb_note = None;
+                cx.notify();
+            }
+            // Return posts it; shift+return puts a line break in. A note long
+            // enough to want paragraphs is exactly the note worth keeping, and
+            // the card already draws the first line as its title and the rest
+            // as its body — see [`crate::benchdraw::comment`].
+            "enter" if !ks.modifiers.shift => self.bench_note_post(cx),
+            "enter" => {
+                if let Some(line) = self.wb_note.as_mut() {
+                    line.insert("\n");
+                }
+                cx.notify();
+            }
+            _ => {
+                if crate::workbench::is_paste_chord(
+                    &ks.key,
+                    ks.modifiers.control,
+                    ks.modifiers.shift,
+                ) {
+                    self.bench_note_paste(cx);
+                } else if let Some(line) = self.wb_note.as_mut() {
+                    // The same editing table the reply composer uses, so word
+                    // motion and the kills behave identically in both boxes.
+                    // Only the destination differs, and that is the point.
+                    match crate::workbench::line_edit(
+                        &ks.key,
+                        ks.modifiers.control,
+                        ks.modifiers.alt,
+                    ) {
+                        Some(edit) => line.apply(edit),
+                        None => {
+                            if let Some(c) = ks.key_char.as_deref() {
+                                if !c.is_empty() && !c.chars().any(char::is_control) {
+                                    line.insert(c);
+                                }
+                            }
+                        }
+                    }
+                    cx.notify();
+                }
+            }
+        }
+        true
+    }
+
+    /// Clipboard text into the note, and text only.
+    ///
+    /// No image branch. The agent composer has one because an agent can be
+    /// handed a picture and do something with it; a note is words a person will
+    /// read later, and saving a PNG into the pane's directory to paste its path
+    /// into a sentence is a feature nobody asked this shelf for. Newlines
+    /// survive here, unlike in the reply composer where a pasted one would
+    /// submit mid-paste — posting is `enter` and a paste is not a keystroke.
+    fn bench_note_paste(&mut self, cx: &mut Context<Self>) {
+        use gpui::ClipboardEntry;
+        let Some(item) = cx.read_from_clipboard() else {
+            return;
+        };
+        let mut parts: Vec<String> = Vec::new();
+        for entry in item.entries() {
+            match entry {
+                ClipboardEntry::String(text) => parts.push(text.text().to_string()),
+                ClipboardEntry::ExternalPaths(paths) => {
+                    parts.extend(paths.paths().iter().map(|p| p.display().to_string()));
+                }
+                // Named rather than ignored: a person who copied a picture and
+                // pasted it into a note should be told nothing happened, not
+                // left wondering whether the paste worked.
+                ClipboardEntry::Image(_) => {
+                    eprintln!(
+                        "terminal-delight: a note holds words; the clipboard image was not pasted"
+                    );
+                }
+            }
+        }
+        let text = parts.join(" ");
+        if text.is_empty() {
+            return;
+        }
+        if let Some(line) = self.wb_note.as_mut() {
+            line.insert(&text);
+        }
+        cx.notify();
+    }
+
+    /// Post the note: onto this bench, and into this pane's directory.
+    ///
+    /// Both, in that order, and the order matters. Putting it on the bench
+    /// first means the row appears under the caret immediately rather than
+    /// whenever the next sweep happens to run; writing the file is what makes
+    /// it still be there on Thursday. The sweep then reads back the file this
+    /// window just wrote and delivers it as an ordinary drop — which is true,
+    /// and which [`crate::surface::Surface::merge`] declines to let overwrite
+    /// the [`crate::surface::Origin::Person`] stamp for the life of the session.
+    ///
+    /// Nothing here touches the pseudoterminal, the action journal, or the
+    /// agent. A note is not an answer to anything.
+    fn bench_note_post(&mut self, cx: &mut Context<Self>) {
+        let Some(text) = self
+            .wb_note
+            .as_ref()
+            .map(|l| l.text().trim().to_string())
+            .filter(|t| !t.is_empty())
+        else {
+            // An empty draft closes rather than posting a blank row. The
+            // buffer is only dropped here, so an accidental return on a note
+            // that had content never loses it.
+            self.wb_note = None;
+            cx.notify();
+            return;
+        };
+        let Some(dir) = self.bench_dir() else {
+            // No pane directory means no durable home, and posting a note that
+            // would vanish at the next restart while looking exactly like one
+            // that would not is worse than refusing. The draft is KEPT so the
+            // words are not lost with the keystroke that tried to save them.
+            eprintln!(
+                "terminal-delight: this pane has no surfaces directory, so the note was not saved"
+            );
+            return;
+        };
+        self.wb_note = None;
+        // Unique by construction, and sortable. `drop_surface` writes
+        // `<id>.json`, so two notes posted in the same millisecond would
+        // otherwise be one note — which is rarer than it sounds and still
+        // possible with a paste and a fast return.
+        let id = crate::surface::SurfaceId(format!(
+            "comment-{}-{}",
+            crate::surfacefeed::now_ms(),
+            self.bench.counts(crate::surface::Shelf::Comments).0
+        ));
+        let value = serde_json::json!({
+            "td": crate::surface::TDSP_VERSION,
+            "kind": "comment",
+            "id": id.0,
+            "model": { "body": text },
+        });
+        let mut post = crate::surface::parse_lenient(&value, crate::surfacefeed::now_ms(), &id.0);
+        if let Some(s) = post.surface.as_mut() {
+            // The one place this origin is ever set. See `surface::Origin::Person`.
+            s.origin = crate::surface::Origin::Person;
+        }
+        self.present(post, cx);
+        if let Err(err) = crate::surfacefeed::drop_surface(&dir, &id.0, &value) {
+            // The note is on the bench either way, so this is a durability
+            // failure and not a loss — and it is said out loud rather than
+            // swallowed, because the row will look identical to one that saved.
+            eprintln!("terminal-delight: the note is on the bench but was not saved: {err}");
+        }
+        cx.notify();
+    }
+
     /// Send whatever is in the composer to the agent, as if typed.
     pub(super) fn bench_send(&mut self, cx: &mut Context<Self>) {
         let Some(text) = self
@@ -1689,6 +2189,13 @@ impl TerminalView {
             .filter(|c| !c.trim().is_empty());
         match self.bench.act(&action, target, comment) {
             crate::workbench::Dispatch::Open(href) => open_with_system(&href),
+            // No journal entry and no line typed anywhere. A copy is a person
+            // moving their own words with their own hands, and the agent has
+            // no business hearing about it — which is the entire reason this
+            // verb exists on a comment instead of an `ask agent` one.
+            crate::workbench::Dispatch::Clipboard(text) => {
+                cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
+            }
             crate::workbench::Dispatch::Tell(report) => {
                 // The journal first: a line typed into a terminal can be eaten
                 // by whatever the program is doing at that instant, and the
@@ -1704,17 +2211,30 @@ impl TerminalView {
                 // inside it can. See [`crate::hostproto::session_tag`].
                 let line = report.to_prompt(crate::surfacefeed::tag());
                 self.bench_deliver(crate::workbench::typed_line(&line), cx);
-                // Answering is looking: the person has dealt with this surface,
-                // so the pane turns back to the conversation it just fed,
-                // where the reply to what they said will appear.
+                // AND THE FACE DOES NOT MOVE. Answering used to be read as
+                // "the person has dealt with this surface", and an agent pane
+                // was turned back to face its conversation so the reply would
+                // land in front of them. Parker, having picked an option:
+                // *"when I am in workbench and I make a choice the focus SNAPS
+                // back to TERM ... if I am in workbench I should stay locked
+                // in unless I specifically step out"*.
                 //
-                // Only when there IS one. A shell pane has nothing to turn
-                // back to, and facing it at a prompt that has just printed
-                // "command not found" reads as the bench falling over rather
-                // than as an answer being delivered.
-                if self.mode.is_agent() {
-                    self.bench.set_face(crate::workbench::Face::Terminal);
-                }
+                // It was also the surface disagreeing with itself. The same
+                // click on a question we OBSERVED in the terminal takes the
+                // `Keys` arm below, which has never moved the face — so two
+                // cards that draw identically answered identically and only
+                // one of them threw you out of the room.
+                //
+                // Fourth in a line. Escape's last rung flipped the face and
+                // was deleted ([`crate::workbench::Peel`]); escape over a
+                // waiting question retired it and was floored; sending from
+                // the composer flipped the face and was stopped
+                // ([`Self::bench_send`]). Each was found by Parker, one at a
+                // time, because each call site decided the exit for itself.
+                // Now none of them do: leaving the bench is alt+k, the TERM
+                // chip, or a scripted `bench off`, and
+                // `nothing_in_the_bench_half_flips_the_pane_off_the_bench`
+                // fails the build for the fifth.
             }
             crate::workbench::Dispatch::Keys { bytes, note } => {
                 // Straight into the pane's pseudoterminal, because whatever is
@@ -1873,6 +2393,15 @@ impl TerminalView {
         // this composer, and a copy this side would be a second truth that
         // could disagree with the first. [`crate::workbench::ask_lines`] owns
         // whether it is drawn at all.
+        //
+        // What changed is WHEN it is read, not where from. The read happened
+        // here, at paint, and answered nothing once the message had scrolled
+        // past the history — so the block went blank on exactly the long
+        // turns a person most wants it on. It is now latched off the same
+        // scrollback by the pane's own clocks
+        // ([`crate::pane::TerminalView::latch_asked`]) and this draws what was
+        // last seen, which is still the terminal's record and no longer a
+        // question about whether the terminal still has it.
         let asked_above = crate::workbench::ask_lines(
             self.bench.shelf(),
             self.bench.standing_in(),
@@ -1881,8 +2410,10 @@ impl TerminalView {
         )
         .map(|n| {
             // Read one line longer than the block draws, so a message that ran
-            // on can say so rather than stopping mid-word.
-            let lines = crate::workbench::ask_clipped(self.last_human_message(n + 1), n);
+            // on can say so rather than stopping mid-word — the latch keeps
+            // [`crate::screenread::ASKED_LINES`], which is more than any
+            // caller here asks for.
+            let lines = crate::workbench::ask_clipped(self.asked_latched(), n);
             crate::benchdraw::asked(&lines, sk, th)
         });
 
@@ -2004,7 +2535,7 @@ impl TerminalView {
                             .right(px(10.))
                             .top(px(8.))
                             .text_size(px(sk.pt(Step::Lead)))
-                            .text_color(th.faint)
+                            .text_color(sk.ink.ink_faint)
                             .child("\u{2715}")
                             .relative()
                             .child(crate::benchdraw::zone(
@@ -2082,11 +2613,24 @@ impl TerminalView {
                 crate::benchdraw::waiting_block(&q, sk, th).child(chips)
             });
 
+        // ── the note box ────────────────────────────────────────────────────
+        //
+        // Not gated on `shows.composer`, which asks whether there is an agent
+        // worth drawing an input for. A note has nothing to do with an agent,
+        // so this box is drawn on a plain shell pane too, and its absence is
+        // decided by one thing only: whether a note is being written.
+        let durable = self.bench_dir().is_some();
+        let note = self
+            .wb_note
+            .as_ref()
+            .map(|line| crate::benchdraw::note_box(line, focused, durable, sk, th));
+
         // ── the composer ────────────────────────────────────────────────────
         let composer = shows.composer.then(|| {
             crate::benchdraw::composer(
                 self.wb_compose.as_ref(),
                 focused,
+                self.wb_drop,
                 &shows,
                 &self.wb_slots,
                 sk,
@@ -2143,7 +2687,33 @@ impl TerminalView {
             }
             RailFit::Open(w) => {
                 let shelf_now = self.bench.shelf();
-                let tabs = div().flex().flex_row().gap(px(3.)).children(
+                // THE ROW WRAPS, because a fourth tab does not fit.
+                //
+                // The rail is a SHARE of the pane (`RAIL_SHARE`, clamped into
+                // `RAIL_MIN_W..=RAIL_W`), so the strip gets between 118 and 194
+                // points of room. Four tabs measure about 161 of those —
+                // measured off the running build at the 208-point cap, not
+                // computed from a glyph width — so they fit at a wide rail and
+                // run over it well before the rail reaches its floor. The frame
+                // is `overflow_hidden`, so the overflow would not have shown up
+                // as a squeeze or a scrollbar: the last tab simply stops being
+                // drawn, and a tab nobody can see is a shelf nobody can reach.
+                //
+                // THE THREE-TAB ROW WAS FINE. A plan for this feature claimed
+                // `decisions` was already being clipped on a 500-point pane, on
+                // an estimate of 6.0 points per character that turns out to be
+                // about a third too fat. Three tabs are roughly 121 points and
+                // fitted at every width an open rail can have. This is a
+                // prerequisite for the fourth tab, then, and not a bug fix — and
+                // it is written down here because the more flattering version of
+                // that sentence was already in a document.
+                //
+                // Wrapping rather than shrinking the type, abbreviating the
+                // labels or scrolling the row. Parker: *"Concur on going
+                // 2dimensional"*. Two rows of two costs about sixteen points of
+                // rail height and only when the width demands it; the other
+                // three answers all cost a word or a gesture, permanently.
+                let tabs = div().flex().flex_row().flex_wrap().gap(px(3.)).children(
                     crate::surface::Shelf::ALL.into_iter().map(|shelf| {
                         let (count, unseen) = self.bench.counts(shelf);
                         crate::benchdraw::shelf_tab(
@@ -2216,15 +2786,36 @@ impl TerminalView {
                     // artifacts' -- 'No decisions' etc."*. The path lives
                     // in the protocol doc, which is where somebody asking
                     // that question is already standing.
-                    .when(rows.is_empty(), |d| {
-                        d.child(
-                            div()
-                                .text_size(px(sk.pt(Step::Small)))
-                                .text_color(th.faint)
-                                .font_family(th.font_family.clone())
-                                .child(format!("No {}", shelf_now.empty_word())),
-                        )
+                    // The board's own affordance, ABOVE the empty line and
+                    // above the rows, because on a newest-first list the top is
+                    // where the next thing goes. It is drawn whether or not the
+                    // shelf has anything on it: an empty comments board with no
+                    // way to start one would be the only shelf on this rail
+                    // that tells you it is empty and not what to do about it.
+                    .when(shelf_now == crate::surface::Shelf::Comments, |d| {
+                        d.child(crate::benchdraw::add_note_row(sk, th).relative().child(
+                            crate::benchdraw::zone(
+                                self.wb_zones.clone(),
+                                crate::workbench::Hit::AddNote,
+                            ),
+                        ))
                     })
+                    // "No comments yet" is still worth saying underneath it,
+                    // but only on the shelves whose emptiness is the whole
+                    // message. The board now has a thing to press, so the
+                    // sentence would be explaining a slot that explains itself.
+                    .when(
+                        rows.is_empty() && shelf_now != crate::surface::Shelf::Comments,
+                        |d| {
+                            d.child(
+                                div()
+                                    .text_size(px(sk.pt(Step::Small)))
+                                    .text_color(sk.ink.ink_faint)
+                                    .font_family(th.font_family.clone())
+                                    .child(format!("No {}", shelf_now.empty_word())),
+                            )
+                        },
+                    )
                     .children(rows.into_iter().map(|row| {
                         let id = row.id.clone();
                         crate::benchdraw::rail_row(&row, sk, th).relative().child(
@@ -2458,6 +3049,12 @@ impl TerminalView {
                     // open above it, and a person must not have to scroll back
                     // to a thing that is holding the session up.
                     .children(waiting)
+                    // ABOVE the agent's composer, and both may be open at once.
+                    // A note started while a reply was half-written must not
+                    // discard the reply, and the one being typed into is the one
+                    // nearest the eye — `bench_key` hands keystrokes to the note
+                    // while it exists, so the drawing and the key routing agree.
+                    .children(note)
                     .children(composer),
             )
             .children(handle)
@@ -2472,4 +3069,18 @@ impl TerminalView {
             .child(self.pointer_hook(weak))
             .into_any_element()
     }
+}
+
+/// Put the composer's drop target out.
+///
+/// A free function because the two listeners that call it are window-level
+/// and hold a weak handle rather than a `self`: a pane can be closed with a
+/// drag still in the air, and both listeners outlive the frame that made
+/// them.
+fn clear_drop(weak: &gpui::WeakEntity<TerminalView>, cx: &mut gpui::App) {
+    let _ = weak.update(cx, |view, cx| {
+        if std::mem::take(&mut view.wb_drop) {
+            cx.notify();
+        }
+    });
 }

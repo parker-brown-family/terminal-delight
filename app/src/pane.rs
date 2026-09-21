@@ -884,6 +884,15 @@ const HEADER_H: f32 = 40.0;
 /// flat or tiny pane the 2% term falls below this and the floor takes over.
 const PAD_MIN: f32 = 4.0;
 
+/// How far up the scrollback the once-a-second latch looks for the person's
+/// own last turn.
+///
+/// A floor on the cost of NOT finding one: the walk is cheap when it hits,
+/// and the length of the whole history when it misses. Two thousand rows is
+/// several screens of tool output above the message being answered, and a
+/// turn further up than that is not the one on the bench.
+const DEEP_ASK_ROWS: i32 = 2000;
+
 /// Padding (px) that frames the terminal grid inside its tube, returned as
 /// `(pad_x, pad_y)` for the left/right and top/bottom insets. Two terms add up:
 ///
@@ -2076,6 +2085,20 @@ pub struct TerminalView {
     /// same as empty: a composer that is open and holding nothing is a person
     /// who has started answering, and closing it under them loses that.
     wb_compose: Option<crate::workbench::Line>,
+    /// A NOTE being typed for the comments board.
+    ///
+    /// Deliberately a second field rather than a mode on `wb_compose`, because
+    /// the two are opposite things wearing the same shape. `wb_compose` is a
+    /// MIRROR: its bytes have already gone down the pseudoterminal and the local
+    /// copy exists only so the caret can be drawn. This is a BUFFER: nothing
+    /// leaves it until the person presses return, and then it goes to a file and
+    /// never to the agent.
+    ///
+    /// A flag on one field would have made every keystroke path ask which mode
+    /// it was in, and the cost of getting that branch wrong is not a glitch —
+    /// it is a private note typed into somebody's agent. Two fields make the
+    /// wrong path fail to compile instead.
+    wb_note: Option<crate::workbench::Line>,
     /// Where layout actually put the composer, in the three forms different
     /// readers need. See [`crate::benchdraw::Slots`].
     ///
@@ -2134,6 +2157,12 @@ pub struct TerminalView {
     /// What the pointer looks like over the bench, decided from the un-bent
     /// position on every mouse move and painted by the bench's pointer hook.
     wb_pointer: crate::workbench::Pointer,
+    /// Whether a dragged file is over the composer right now, so the box can
+    /// say it will take it. Set from the same un-bent hover that decides the
+    /// pointer, and cleared when the drag leaves the window — which arrives
+    /// as a `FileDropEvent`, not as a mouse move, and so is listened for in
+    /// [`TerminalView::pointer_hook`].
+    wb_drop: bool,
     /// Whether the bench is showing the agent's own scrollback this frame —
     /// `shows.mirror`, kept for the wheel handler that runs between frames.
     wb_mirror: bool,
@@ -2158,6 +2187,26 @@ pub struct TerminalView {
     wb_card_at: Option<crate::surface::SurfaceId>,
     /// Which of the strip's dials has its list open, if either.
     wb_dial: Option<crate::workbench::Dial>,
+    /// A dial press that has typed its command and is waiting on the harness.
+    ///
+    /// See [`crate::workbench::DialSent`]. While this is `Some`, the bench
+    /// holds every write instead of sending it: the person's line editor is
+    /// under a modal picker that belongs to the harness, and a keystroke sent
+    /// into that picker chooses something.
+    wb_dial_sent: Option<crate::workbench::DialSent>,
+    /// The last turn this window WATCHED the person send, in this pane.
+    ///
+    /// The overview draws the person's own words above the reply to them, and
+    /// it used to read them off the scrollback at every paint. That read
+    /// answers nothing the moment the message scrolls past the history, which
+    /// on a long turn is most of the time — and the block then said so, which
+    /// is honest and useless. Latched at one hertz instead, so the sentence is
+    /// kept by whoever saw it rather than re-derived by whoever needs it.
+    ///
+    /// EMPTY is still a real state: a pane adopted mid-conversation was never
+    /// watched, and inventing a message for it would be worse than the line
+    /// that admits nothing was seen.
+    wb_asked: Vec<String>,
     /// The model this pane's agent was TOLD to use — by the launcher, or by a
     /// press on the strip's dial since.
     ///
@@ -2301,7 +2350,33 @@ enum PaintKey {
     /// it. Bare arrows walk the wall, and only the Workspace knows the geometry.
     Bubble,
     /// Not a paint key at all — fall through to the rest of `on_key`.
+    ///
+    /// Unreachable through [`TerminalView::on_key`]: `keylayer` only routes here
+    /// for the keys this overlay claims, and its claim is written to match.
     Pass,
+}
+
+/// Whether the pane consumed a keystroke, and therefore whether the event may
+/// keep travelling to the Workspace.
+///
+/// **INVARIANT: a key this pane DECLINES must bubble.** Every workspace chord —
+/// alt+arrows (pane nav), alt+v/h and ctrl+alt+r/d (split), ctrl+pgup/pgdn
+/// (tabs) — reaches the Workspace only by bubbling out of a focused pane, so
+/// swallowing the fall-through kills all of them at once with no compile error
+/// and nothing else failing.
+///
+/// Consuming a key is different from swallowing one, and the difference used to
+/// be a rule about where `cx.stop_propagation()` was allowed to appear, enforced
+/// by a source scan counting characters after each call. It is a value now:
+/// [`TerminalView::on_key`] stops in exactly one place, on `Consumed`, and every
+/// handler says which it did in its return type.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Handled {
+    /// The pane acted on it. Nothing above may see this key.
+    Consumed,
+    /// The pane did not, or acted on it in a way the Workspace should still see.
+    /// The event keeps travelling.
+    Declined,
 }
 
 /// The inclusive grid line range a [`RowBudget`] selects: the newest `lines`
@@ -2508,6 +2583,39 @@ pub struct MirrorSnapshot {
     pub k1: f32,
     pub k2: f32,
     pub glare: f32,
+}
+
+/// Which size dial a ctrl+wheel at `pos` is turning, given where this pane's
+/// CONTENT area was last painted and which face it is showing.
+///
+/// A pane is two regions and the gesture means a different thing in each. The
+/// header is chrome and answers to [`theme::GradeKey::Scale`], the same dial
+/// the outer cabinet uses and the reason a pane's header can be sized on its
+/// own. Below it is content, and which content depends on the face: the
+/// terminal grid takes [`theme::GradeKey::TextSize`], the workbench takes
+/// [`theme::GradeKey::BenchSize`]. `content` is the rect below the header — it
+/// is captured by the canvas inside the pane's content div, so "not in it" is
+/// exactly "in the header or on the pane's own frame".
+///
+/// `None` when the pane has never been painted and there is therefore no rect
+/// to compare against. That is not the header: it is *we have not measured this
+/// pane*, and answering with a dial would size whatever the guess landed on.
+/// One frame later the answer exists; until then the gesture does nothing.
+fn size_dial_at(
+    pos: gpui::Point<Pixels>,
+    content: Option<Bounds<Pixels>>,
+    on_bench: bool,
+) -> Option<theme::GradeKey> {
+    let content = content?;
+    Some(if content.contains(&pos) {
+        if on_bench {
+            theme::GradeKey::BenchSize
+        } else {
+            theme::GradeKey::TextSize
+        }
+    } else {
+        theme::GradeKey::Scale
+    })
 }
 
 impl TerminalView {
@@ -2848,6 +2956,13 @@ impl TerminalView {
             self.wb_model = None;
             self.wb_effort = None;
             self.wb_dial = None;
+            // And the conversation with it. The next agent in this pane is a
+            // different conversation, and the last thing said to the one that
+            // left would be drawn over its first reply as if it had been the
+            // question — a caption that is wrong in the one way a caption
+            // must never be.
+            self.wb_dial_sent = None;
+            self.wb_asked.clear();
         }
         cx.notify();
     }
@@ -3036,6 +3151,16 @@ impl TerminalView {
                         // the live status line every tick (independent of the bell's
                         // scroll-settle gate below, which would otherwise skip it).
                         view.accrue_tokens();
+                        // A dial press waiting on the harness's own "are you
+                        // sure" — answered here, at the clock's own rate,
+                        // because the person's composer is held until it is.
+                        // Outside the scroll gate below for the same reason
+                        // the token accrual is: a held draft must not wait on
+                        // somebody having stopped scrolling.
+                        if view.wb_dial_sent.is_some() {
+                            let rows = view.recent_lines(crate::screenread::PROMPT_TAIL_ROWS);
+                            view.dial_watch(&rows, cx);
+                        }
                         // Scroll-settle debounce: Alt+up/down scrollback navigation
                         // moves the "esc to interrupt" line off-screen and would trip
                         // a false agent-done bell. Only run the thinking-scan once the
@@ -3099,6 +3224,11 @@ impl TerminalView {
                             view.needs_input_line = needs
                                 .then(|| wants_human_row(&recent).and_then(clip_evidence))
                                 .flatten();
+                            // The person's own turn, off the rows already
+                            // read. Free, and eight times a second, which is
+                            // what catches a message that a fast turn scrolls
+                            // out of sight before the slow latch comes round.
+                            view.latch_asked(Some(&recent));
                             // One grid walk per pane per tick, not per frame.
                             // Inside the scroll gate with the rest of the
                             // screen-reading: a parse taken mid-scroll reads a
@@ -3295,6 +3425,7 @@ impl TerminalView {
             tok_was_working: false,
             bench: crate::workbench::Bench::new(),
             wb_compose: None,
+            wb_note: None,
             wb_slots: crate::benchdraw::Slots::default(),
             wb_review: None,
             wb_quiet: 0,
@@ -3306,11 +3437,14 @@ impl TerminalView {
             wb_zones: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
             wb_bench_rect: std::rc::Rc::new(std::cell::RefCell::new(None)),
             wb_pointer: crate::workbench::Pointer::Arrow,
+            wb_drop: false,
             wb_mirror: false,
             wb_live_q: None,
             wb_card_scroll: gpui::ScrollHandle::new(),
             wb_card_at: None,
             wb_dial: None,
+            wb_dial_sent: None,
+            wb_asked: Vec::new(),
             wb_model: None,
             wb_effort: None,
             wb_had_agent: false,
@@ -3396,7 +3530,14 @@ impl TerminalView {
         let grid = term.grid();
         let cols = grid.columns();
         let screen = grid.screen_lines() as i32;
-        let hist = grid.history_size() as i32;
+        // BOUNDED, where it used to be the whole history.
+        //
+        // This is no longer read at paint — it is a once-a-second latch (see
+        // [`Self::latch_asked`]) — and a walk with no floor costs the length
+        // of the scrollback every time it finds nothing, which is precisely
+        // the case it is called in. A turn that is two thousand rows above the
+        // bottom is not the turn being answered anyway.
+        let hist = (grid.history_size() as i32).min(DEEP_ASK_ROWS);
         // Read a grid line by absolute index — NEGATIVE indices are SCROLLBACK, so
         // the prompt is found even when the agent's reply has scrolled it off the
         // visible screen (the whole point: an idle agent's last ask).
@@ -3412,39 +3553,47 @@ impl TerminalView {
             }
             s.trim_end().to_string()
         };
-        let strip = |t: &str| -> String {
-            t.trim_start()
-                .trim_start_matches(|c| {
-                    matches!(c, '\u{276f}' | '>' | '\u{258c}' | '\u{00b7}' | ' ')
-                })
-                .trim()
-                .to_string()
+        // The rule for which rows are a turn of theirs lives ONCE, in
+        // `screenread`, because the pane's fast clock reads the same thing out
+        // of the fourteen rows it already has in hand. Two walks would be two
+        // answers to one question.
+        let rows: Vec<String> = (-hist..screen).map(read).collect();
+        crate::screenread::human_message(&rows, max_lines)
+    }
+
+    /// Remember the newest turn of the person's that this window has SEEN.
+    ///
+    /// The overview draws their own words above the reply to them, and it read
+    /// them off the scrollback at every paint — so the block went blank the
+    /// moment a long turn scrolled the message past the history, which is most
+    /// of the time and is exactly when a person most wants to see what they
+    /// asked. Parker: *"the user message prompt... not available because of
+    /// scrollback limitation... TOTALLY unacceptable, this is EXACTLY
+    /// important"*.
+    ///
+    /// Kept by whoever watched it rather than re-derived by whoever needs it.
+    /// Called from two clocks with two windows — the tail at 120ms, the deep
+    /// walk at one hertz — and an EMPTY read never overwrites a full one: not
+    /// finding a message is not the same as there not being one, and this is
+    /// the field where that difference is the whole feature.
+    pub fn latch_asked(&mut self, rows: Option<&[String]>) {
+        let seen = match rows {
+            Some(rows) => crate::screenread::human_message(rows, crate::screenread::ASKED_LINES),
+            None => self.last_human_message(crate::screenread::ASKED_LINES),
         };
-        // walk UP from the bottom (incl. scrollback) to the last human-input line
-        // that actually carries text (skip the empty live input box).
-        let start = (-hist..screen)
-            .rev()
-            .find(|&l| is_human_input_line(&read(l)) && !strip(&read(l)).is_empty());
-        let Some(start) = start else {
-            return Vec::new();
-        };
-        let mut out = vec![strip(&read(start))];
-        for l in (start + 1)..screen {
-            let s = read(l);
-            let t = s.trim();
-            if t.is_empty()
-                || is_human_input_line(&s)
-                || t.starts_with('?')
-                || t.starts_with("esc ")
-            {
-                break;
-            }
-            if out.len() >= max_lines {
-                break;
-            }
-            out.push(t.to_string());
+        if !seen.is_empty() {
+            self.wb_asked = seen;
         }
-        out
+    }
+
+    /// What the person last said in this pane, as far as this window knows.
+    ///
+    /// Empty means nobody here watched them say anything — a pane adopted
+    /// mid-conversation, or a turn that had already left the history. The
+    /// block that draws this says so in those words rather than drawing
+    /// nothing.
+    pub fn asked_latched(&self) -> Vec<String> {
+        self.wb_asked.clone()
     }
 
     /// Parse this pane's live status line into an [`crate::hud::AgentStatus`] for
@@ -4466,18 +4615,28 @@ impl TerminalView {
         }
     }
 
-    // INVARIANT: a key this handler DECLINES must bubble to the Workspace.
-    // Every workspace chord — alt+arrows (pane nav), alt+v/h and ctrl+alt+r/d
-    // (split), ctrl+pgup/pgdn (tabs) — reaches the Workspace only by bubbling out of
-    // here while a pane holds focus, so swallowing the fall-through kills all
-    // of them at once with no compile error and nothing else failing.
-    //
-    // Consuming a key is different from swallowing one: `cx.stop_propagation()`
-    // is correct where this handler OWNS the key and returns immediately (F1
-    // does exactly that — the workspace root also binds it, and a bubbled F1
-    // toggled the modal twice in one frame). The rule is therefore not "never
-    // stop propagation" but "never stop it without returning".
-    // Guarded by `pane_on_key_only_stops_propagation_when_it_consumes_the_key`.
+    /// Every keystroke this pane receives, routed once.
+    ///
+    /// # One decision, in one place
+    ///
+    /// This function used to be the decision: twenty-odd `if`s in an order that
+    /// nothing observed, each testing a key name and returning. Escape was lifted
+    /// out of it into [`crate::keylayer`] and the rest was left behind with a
+    /// sentence admitting as much — *"Only ESCAPE goes through here. Every other
+    /// key keeps the path it had."*
+    ///
+    /// The path it had ran `bench_key` in the middle, and every exit from that
+    /// function stopped the event, so on the workbench face nothing below it ran
+    /// at all. The inline rename box took no letters; `alt+s` stuck no note;
+    /// `ctrl+shift+b` opened no left bar; `ctrl+c` could not interrupt the agent
+    /// whose conversation was on the screen. Twenty-one of twenty-seven chords
+    /// were dead there, and every one of them was the same bug: a handler that
+    /// runs early and keeps a key it cannot use.
+    ///
+    /// So the whole decision is [`crate::keylayer::route`] now, and this function
+    /// is a `match` over its answer. **It never looks at a key itself** — guarded
+    /// by `on_key_decides_nothing_it_can_decide_in_the_table`, because a single
+    /// `if ks.key.as_str() == …` added here is how the order grows back.
     fn on_key(&mut self, ev: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
         let ks = &ev.keystroke;
         // Typing into the pane is attention too — covers the frozen-badge case
@@ -4490,390 +4649,315 @@ impl TerminalView {
         // re-arms the flag on the very next scan. What it cannot do is keep
         // asserting a question the person has already dealt with.
         self.ack_needs_input(cx);
-        // F1 opens the help modal (handled by the workspace), never the PTY.
-        // STOP the event here: the workspace root also binds F1 (its no-pane-
-        // focused fallback), and a bubbled F1 toggled `help_open` a SECOND time
-        // in the same frame — the modal opened and closed instantly, so F1 read
-        // as dead everywhere except the outer bar's `?` button.
-        if ks.key.as_str() == "f1" {
-            cx.emit(OpenHelp);
-            cx.stop_propagation();
-            return;
-        }
-        // alt+k flips this pane between its two faces, from either side.
-        //
-        // It was alt+w for one day, and alt+w was already taken: it is the
-        // middle rung of the close ladder (ctrl+w the tab, super+w the tile,
-        // alt+w the focused PANE). Because this handler runs before the
-        // workspace's, the bench quietly ate the only chord that closes a pane
-        // — a binding that does not collide in any table, only in the order the
-        // handlers happen to run. The face toggle moves; the close stays where
-        // it was, and `keystroke_bytes` is told about `k` so the letter cannot
-        // reach a shell as ESC k on the way past.
-        if ks.key.as_str() == "k" && ks.modifiers.alt && !ks.modifiers.control {
-            self.toggle_face(cx);
-            cx.stop_propagation();
-            return;
-        }
-        // ── ESCAPE IS RESOLVED ONCE, AGAINST A TABLE ────────────────────────
-        //
-        // Every surface a pane can stack wants this key, and which of them gets
-        // it used to be decided by the order of the branches below. That order
-        // has no runtime signal: swapping two correct blocks compiles and leaves
-        // the whole suite green, and it went wrong exactly that way four times
-        // over. `bench_key` consumes every escape on the workbench face and ends
-        // in `stop_propagation`, and it sat above the paint block, the
-        // right-click tray, the header's ⋯ menu and the rename box — all four of
-        // which are drawn on that face and none of which escape could reach.
-        //
-        // [`crate::keylayer::escape_target`] is now the only thing that decides,
-        // the way every gpui-kit control routes through one `resolve_style` so
-        // the layering cannot drift apart again. The precedence is the
-        // declaration order of [`crate::keylayer::EscTarget`], a new surface is
-        // a new variant the compiler makes this match handle, and the ladder is
-        // table-tested over all 128 combinations in a module that imports
-        // nothing and so tests in about a second.
-        //
-        // Only ESCAPE goes through here. Every other key keeps the path it had.
-        if ks.key.as_str() == "escape" {
-            use crate::keylayer::{escape_target, EscTarget, Up};
-            let up = Up {
-                paint: theme::paint_mode(cx),
-                ctx_menu: self.ctx_menu.is_some(),
-                header_menu: self.hdr_overflow.is_some(),
-                reader: self.being_read,
-                sticky: self.sticky_composing(),
-                rename: self.renaming.is_some(),
-                bench: self.bench.face() == crate::workbench::Face::Workbench,
-            };
-            match escape_target(up) {
-                EscTarget::Paint => {
-                    // `paint_key` folds the overlay and BUBBLES, so the
-                    // workspace sees the same press and can close anything of
-                    // its own underneath.
-                    match self.paint_key(ks, cx) {
-                        PaintKey::Took => {
-                            cx.stop_propagation();
-                            return;
-                        }
-                        PaintKey::Bubble => return,
-                        PaintKey::Pass => {}
-                    }
-                }
-                EscTarget::CtxMenu => {
-                    self.ctx_menu = None;
-                    cx.notify();
-                    return;
-                }
-                EscTarget::HeaderMenu => {
-                    self.hdr_overflow = None;
-                    cx.notify();
-                    return;
-                }
-                EscTarget::Reader => {
-                    // The workspace owns the modal; this is the pane asking it
-                    // to close. Left in place because the workspace's own
-                    // capture-phase handler does not run when no popup is open.
-                    cx.emit(CloseFocusRead);
-                    return;
-                }
-                EscTarget::Sticky => {
-                    // `sticky_key` reads escape as Press::Revert.
-                    if self.sticky_key(ks, cx) {
-                        cx.stop_propagation();
-                    }
-                    return;
-                }
-                EscTarget::Rename => {
-                    // Cancel: the half-typed name is dropped, as the inline box
-                    // has always done.
-                    self.renaming = None;
-                    cx.notify();
-                    return;
-                }
-                EscTarget::Bench => {
-                    // The bench's own ladder — [`crate::workbench::peel`] — which
-                    // decides what escape takes off WITHIN the bench and refuses
-                    // to take the bench itself.
-                    if self.bench_key(ks, cx) {
-                        return;
-                    }
-                }
-                // Nothing is up. Fall through: this escape is the shell's, and
-                // it reaches the PTY as 0x1b at the bottom of this function.
-                EscTarget::Terminal => {}
+
+        let k = keylayer_key(ks);
+        let up = self.layers_up(cx);
+        let handled = match crate::keylayer::route(&k, &up) {
+            // F1 opens the help modal, never the PTY. CONSUMED: the workspace
+            // root also binds F1 (its no-pane-focused fallback), and a bubbled
+            // F1 toggled `help_open` a SECOND time in the same frame — the modal
+            // opened and closed instantly, so F1 read as dead everywhere except
+            // the outer bar's `?` button.
+            crate::keylayer::Layer::Help => {
+                cx.emit(OpenHelp);
+                Handled::Consumed
             }
-        }
-        // PAINT mode owns the keyboard while it is up — it is the topmost
-        // surface across ALL panes at once, so nothing it handles may reach the
-        // PTY underneath (an ESC byte into a running agent kills it; a stray
-        // `w` lands in someone's shell).
-        //
-        // Only the FOCUSED pane runs this handler, which is what makes "the
-        // letter paints the selected terminal" true without any selection state
-        // to keep: the spotlight in the overlay and the focus this handler
-        // rides are the same fact.
-        //
-        // AHEAD OF THE BENCH, and that ordering is the whole of the escape
-        // complaint this branch answers (PR #532). This
-        // block used to sit BELOW `bench_key`, which consumes every escape on
-        // the workbench face and ends in `stop_propagation` — so with the paint
-        // cards up over a pane showing its bench, the first press flipped that
-        // pane to the terminal and left the overlay standing. The comment above
-        // already claimed paint owned the keyboard; only the line order
-        // disagreed. Parker: *"pressing escape a single time should always
-        // target that overlay"*. Same shape as #524, where `bench_key` kept the
-        // window's alt chords for the same reason: a handler that runs early
-        // and keeps a key it cannot use.
-        //
-        // Nothing moves on the terminal face, where `bench_key` declines
-        // immediately — guarded by
-        // `paint_mode_is_consulted_before_the_bench_can_swallow_a_key`.
-        if theme::paint_mode(cx) {
-            match self.paint_key(ks, cx) {
-                PaintKey::Took => {
-                    cx.stop_propagation();
-                    return;
-                }
-                PaintKey::Bubble => return,
-                PaintKey::Pass => {}
+            // alt+k flips this pane between its two faces, from either side. It
+            // was alt+w for one day, and alt+w was already taken: it is the
+            // middle rung of the close ladder (ctrl+w the tab, super+w the tile,
+            // alt+w the focused PANE). `keystroke_bytes` is told about `k` too,
+            // so the letter cannot reach a shell as ESC k on the way past.
+            crate::keylayer::Layer::Face => {
+                self.toggle_face(cx);
+                Handled::Consumed
             }
-        }
-        // ── the WORKBENCH face owns the keyboard, in one of two modes ───────
-        //
-        // READING: arrows walk the rail, digits answer a question, enter takes
-        // the surface's first action. Nothing reaches the agent.
-        //
-        // TALKING: every keystroke goes STRAIGHT to the pseudoterminal, encoded
-        // by [`keystroke_bytes`] — the same function the terminal face uses, so
-        // there is one encoder and the bench cannot drift from it. Slash
-        // commands complete, history works, ctrl+c interrupts, because the
-        // agent's own line editor is doing all of it. This is the difference
-        // between a text box that imitates a terminal and a person typing at
-        // one.
-        //
-        // Typing any ordinary character in reading mode starts talking, with
-        // that character — so there is no "click here first", which is what
-        // made the first version feel like a form rather than a terminal.
-        //
-        // `esc` is the one key talking mode keeps: it returns to reading
-        // rather than travelling, because esc into a working agent kills its
-        // turn and a person leaving a text box does not mean that.
-        if self.bench_key(ks, cx) {
-            return;
-        }
-        // The right-click tray, the ⋯ header menu and the FOCUS modal each used
-        // to test for escape here, in this order, and each is now a row in
-        // [`crate::keylayer::EscTarget`] answered at the top of this function.
-        // Their branches are gone rather than left unreachable: three `if`s that
-        // can never be true read exactly like three that can.
-        //
-        // While this pane is mirrored in the FOCUS modal, every keystroke OTHER
-        // than escape still flows straight to this terminal, so you keep
-        // directing the agent while you read it big.
-        //
-        // Same contract for the paging keys: while the modal is up they drive the
-        // READER's view (page through the mirrored convo, jump to its ends), not
-        // the pane's own scrollback — that's the surface you are actually reading.
-        // Every other keystroke still flows to the PTY below.
-        if self.being_read {
-            if let Some(nav) = read_nav_key(ks.key.as_str(), &ks.modifiers) {
-                cx.emit(FocusReadNav(nav));
-                return;
+            // Not ours on either face. Declining IS the handling.
+            crate::keylayer::Layer::Window => Handled::Declined,
+            crate::keylayer::Layer::Paint => match self.paint_key(ks, cx) {
+                PaintKey::Took => Handled::Consumed,
+                // `paint_key` folds the overlay and BUBBLES, so the workspace
+                // sees the same press and can close anything of its own
+                // underneath.
+                PaintKey::Bubble => Handled::Declined,
+                PaintKey::Pass => {
+                    debug_assert!(
+                        false,
+                        "keylayer routed a key to the paint overlay that paint_key passes on — \
+                         `paints` and `paint_key` have drifted apart"
+                    );
+                    Handled::Declined
+                }
+            },
+            crate::keylayer::Layer::CtxMenu => {
+                self.ctx_menu = None;
+                cx.notify();
+                Handled::Declined
             }
-        }
-        // The note's OWN chords, ahead of the composer that would otherwise eat
-        // them. A composer that swallows the chord for "put the pen down" leaves
-        // Enter as the only way out, which is exactly the bug this ordering
-        // exists to prevent: alt+s reached `EditBuffer::apply`, which drops
-        // alt-modified keys, so pressing it again did nothing at all.
-        //
-        // Alt+S sticks a note to this pane, picks the pen back up on the one
-        // already there, and — pressed again while writing — posts it. Taken in
-        // the pane rather than at the Workspace because the note belongs to the
-        // pane and the pane's handler runs first: routing it through the
-        // Workspace would let `keystroke_bytes` send `ESC s` on the way past. It
-        // costs the shell alt+s, which nothing standard binds.
-        if ks.modifiers.alt
-            && !ks.modifiers.control
-            && !ks.modifiers.shift
-            && ks.key.as_str() == "s"
-        {
-            self.sticky_toggle(cx);
-            cx.stop_propagation();
-            return;
-        }
-        // Alt+Backspace peels it off — but ONLY when a note is actually stuck
-        // here. With no note the chord falls through untouched and readline still
-        // gets its backward-kill-word, so the shell loses the binding exactly
-        // when the pane is visibly carrying a note and not otherwise. Peeling by
-        // accident costs one keystroke: alt+s brings the text straight back.
-        if ks.modifiers.alt
-            && !ks.modifiers.control
-            && ks.key.as_str() == "backspace"
-            && self.sticky_peel(cx)
-        {
-            cx.stop_propagation();
-            return;
-        }
-        // A note holding the cursor owns the keyboard, rename-box style: every
-        // OTHER keystroke writes on the paper instead of reaching the PTY, Enter
-        // posts it, Esc reverts it. This runs ONLY while composing — see
-        // `sticky_key` for why a posted note must never see a key.
-        if self.sticky_composing() && self.sticky_key(ks, cx) {
-            cx.stop_propagation();
-            return;
-        }
-        // The inline rename box owns the keyboard while open — keystrokes edit
-        // the name instead of reaching the PTY. Mirrors the main-tab rename.
-        if let Some(mut buf) = self.renaming.take() {
-            match ks.key.as_str() {
-                "enter" => {
-                    self.renaming = Some(buf);
-                    self.commit_rename(cx);
+            crate::keylayer::Layer::HeaderMenu => {
+                self.hdr_overflow = None;
+                cx.notify();
+                Handled::Declined
+            }
+            crate::keylayer::Layer::Reader => self.reader_key(&k, cx),
+            crate::keylayer::Layer::Sticky => {
+                // A note holding the cursor owns the keyboard, rename-box style:
+                // every keystroke writes on the paper instead of reaching the
+                // PTY, Enter posts it, Esc reverts it. This runs ONLY while
+                // composing — see `sticky_key` for why a posted note must never
+                // see a key.
+                self.sticky_key(ks, cx);
+                Handled::Consumed
+            }
+            crate::keylayer::Layer::Rename => self.rename_key(&k, ks, cx),
+            crate::keylayer::Layer::PaneChord => self.pane_chord_key(&k, ks, cx),
+            // ── the WORKBENCH face, in one of its modes ─────────────────────
+            //
+            // READING: arrows walk the rail, digits answer a question, enter
+            // takes the surface's first action.
+            //
+            // TALKING: every keystroke goes STRAIGHT to the pseudoterminal,
+            // encoded by [`keystroke_bytes`] — the same function the terminal
+            // face uses, so there is one encoder and the bench cannot drift from
+            // it. Slash commands complete, history works, ctrl+c interrupts,
+            // because the agent's own line editor is doing all of it.
+            //
+            // Typing any ordinary character in reading mode starts talking, with
+            // that character — so there is no "click here first".
+            //
+            // AND IT MAY DECLINE. A key the bench has no use for falls to the
+            // terminal underneath it rather than dying here, which is what makes
+            // `ctrl+c` reach a working agent from the face that is showing you
+            // its turn.
+            crate::keylayer::Layer::Bench => {
+                if self.bench_key(ks, cx) {
+                    Handled::Consumed
+                } else {
+                    self.terminal_key(&k, ks, cx)
                 }
-                // Escape is answered at the top of `on_key`, by the escape
-                // table. Kept as an explicit no-op rather than deleted, because
-                // the fall-through arm below would otherwise push the key's
-                // `key_char` into the name — a silent wrong behaviour if any
-                // future path ever reaches here with an escape in hand.
-                "escape" => {}
-                "backspace" => {
-                    buf.pop();
-                    self.renaming = Some(buf);
-                }
-                _ => {
+            }
+            crate::keylayer::Layer::Terminal => self.terminal_key(&k, ks, cx),
+        };
+        if handled == Handled::Consumed {
+            cx.stop_propagation();
+        }
+    }
+
+    /// Which of this pane's surfaces are up, for [`crate::keylayer::route`].
+    ///
+    /// One read per keystroke, so every layer is judged against the same instant
+    /// — the alternative is a ladder whose rungs disagree about what is open.
+    fn layers_up(&self, cx: &mut Context<Self>) -> crate::keylayer::Up {
+        crate::keylayer::Up {
+            paint: theme::paint_mode(cx),
+            ctx_menu: self.ctx_menu.is_some(),
+            header_menu: self.hdr_overflow.is_some(),
+            reader: self.being_read,
+            sticky: self.sticky_composing(),
+            rename: self.renaming.is_some(),
+            note: self.note.is_some(),
+            bench: self.bench.face() == crate::workbench::Face::Workbench,
+        }
+    }
+
+    /// This pane, mirrored large in the FOCUS modal.
+    ///
+    /// The workspace owns the modal; this is the pane asking it to close, and it
+    /// is left in place because the workspace's own capture-phase handler does
+    /// not run when no popup is open. The paging keys drive the READER's view —
+    /// page through the mirrored convo, jump to its ends — rather than the pane's
+    /// own scrollback, because that is the surface you are actually reading.
+    /// Every other keystroke flows past to the terminal, so you keep directing
+    /// the agent while you read it big.
+    fn reader_key(&mut self, k: &crate::keylayer::Key, cx: &mut Context<Self>) -> Handled {
+        match read_nav(k) {
+            Some(nav) => cx.emit(FocusReadNav(nav)),
+            None => cx.emit(CloseFocusRead),
+        }
+        Handled::Declined
+    }
+
+    /// The inline rename box in the header, which owns the keyboard while open.
+    ///
+    /// Mirrors the main-tab rename: ↵ commits, esc drops the half-typed name, and
+    /// a click anywhere outside the box commits too (see `commit_rename`).
+    fn rename_key(
+        &mut self,
+        k: &crate::keylayer::Key,
+        ks: &Keystroke,
+        cx: &mut Context<Self>,
+    ) -> Handled {
+        let Some(mut buf) = self.renaming.take() else {
+            return Handled::Declined;
+        };
+        match k.key {
+            "enter" => {
+                self.renaming = Some(buf);
+                self.commit_rename(cx);
+            }
+            // Cancel: `take` above already dropped it.
+            "escape" => {}
+            "backspace" => {
+                buf.pop();
+                self.renaming = Some(buf);
+            }
+            _ => {
+                // A MODIFIED KEYSTROKE IS NOT A CHARACTER, however gpui fills
+                // its `key_char` — the same rule the bench learned when `alt+r`
+                // opened a composer and typed nothing into it. This arm used to
+                // push `key_char` unconditionally, so every chord that reached
+                // the box put a letter in the name: `ctrl+w` typed a `w`,
+                // `alt+w` typed another. Now the chords have owners above this
+                // one and the guard is here as well, because the arm cannot tell
+                // on its own.
+                if k.types_char {
                     if let Some(ch) = ks.key_char.as_ref() {
                         if buf.chars().count() < 24 {
                             buf.push_str(ch);
                         }
                     }
-                    self.renaming = Some(buf);
+                }
+                self.renaming = Some(buf);
+            }
+        }
+        cx.notify();
+        Handled::Declined
+    }
+
+    /// The pane's own chords, on either of its faces.
+    ///
+    /// These live HERE, not in `Workspace::on_key`, and the difference is the
+    /// whole feature: a focused terminal takes the keystroke first, so the
+    /// workspace handler only ever runs when no pane has focus — which is almost
+    /// never. A chord added there compiles, tests green, and does nothing when
+    /// you press it.
+    ///
+    /// Which chords reach this function is [`crate::keylayer::pane_chord`]'s
+    /// call, and the conditional ones are conditional there: `ctrl+x` only with a
+    /// selection, `alt+backspace` only with a note stuck.
+    fn pane_chord_key(
+        &mut self,
+        k: &crate::keylayer::Key,
+        ks: &Keystroke,
+        cx: &mut Context<Self>,
+    ) -> Handled {
+        if k.alt {
+            match k.key {
+                // Alt+S sticks a note to this pane, picks the pen back up on the
+                // one already there, and — pressed again while writing — posts
+                // it. Taken in the pane because the note belongs to the pane: at
+                // the Workspace, `keystroke_bytes` would send `ESC s` on the way
+                // past. It costs the shell alt+s, which nothing standard binds.
+                "s" => self.sticky_toggle(cx),
+                // Alt+Backspace peels it off. The shell loses the binding exactly
+                // when the pane is visibly carrying a note and not otherwise, and
+                // peeling by accident costs one keystroke: alt+s brings the text
+                // straight back.
+                _ => {
+                    self.sticky_peel(cx);
                 }
             }
-            cx.notify();
-            return;
+            return Handled::Consumed;
         }
-        if self.exited || self.spawned.elapsed() < Duration::from_millis(150) {
-            return;
-        }
-        let m = &ks.modifiers;
-        // Ctrl+W closes the whole tab (always confirmed by the workspace). We
-        // intercept it here so it never reaches the PTY as werase (^W) — the
-        // workspace owns this chord, like new-tab/copy/paste below.
-        if m.control && !m.shift && !m.alt && ks.key.as_str() == "w" {
-            cx.emit(RequestCloseTab);
-            return;
-        }
-        // Ctrl+X = CUT the selection: copy it, and when it's the trailing run on
-        // the live input line, erase it there too (see `cut_selection`). Gated on
-        // an actual selection so a bare Ctrl+X still reaches the shell as the
-        // readline prefix key (C-x C-e, etc.).
-        if m.control && !m.shift && !m.alt && ks.key.as_str() == "x" && self.has_selection() {
-            self.cut_selection(cx);
-            return;
-        }
-        // Ctrl+F = find in THIS pane; Ctrl+Shift+F = find across ALL panes. Both
-        // open a workspace-owned find panel (so it can search siblings and centre
-        // itself); intercepted here so the chord never reaches the PTY.
-        if m.control && !m.alt && ks.key.as_str() == "f" {
-            cx.emit(OpenFind { global: m.shift });
-            return;
-        }
-        if m.control && m.shift {
-            match ks.key.as_str() {
-                // workspace chords: new tab
-                "t" => return,
-                "c" => {
-                    self.copy_selection(cx);
-                    return;
-                }
-                "v" => {
-                    self.paste_clipboard(cx);
-                    return;
-                }
-                "k" => {
-                    self.clear_scrollback(cx);
-                    return;
-                }
-                // Ctrl+Shift+A → agent-watch (MCP) panel; Ctrl+Shift+U → Σ usage;
-                // Ctrl+Shift+D → this pane's DESIGN menu (theme); Ctrl+Shift+G →
-                // this pane's GAUGES tray (display). The Shift guard keeps raw
-                // Ctrl+A/D/G/U (line-start / EOF / BEL / kill-line) reaching the
-                // PTY. The menus anchor at this pane's top-right, under the
-                // header, where the icon click opens them.
-                //
-                // These live HERE, not in `Workspace::on_key`, and the difference
-                // is the whole feature: a focused terminal takes the keystroke
-                // first, so the workspace handler only ever runs when no pane has
-                // focus — which is almost never. A chord added there compiles,
-                // tests green, and does nothing when you press it.
-                "a" => {
-                    cx.emit(OpenAgentPanel);
-                    return;
-                }
-                // Ctrl+Shift+B → the left bar (the session's tree). B for bar,
-                // and the chord an editor user already has in their fingers.
-                // Here rather than in `Workspace::on_key` for the reason the
-                // comment above gives: the focused terminal takes the key
-                // first, so a chord added there would never fire.
-                "b" => {
-                    cx.emit(ToggleLeftBar);
-                    return;
-                }
-                // Ctrl+Shift+N → the attention rail's queue. N for "needs me".
-                // Here for the same reason as the arms above: a focused terminal
-                // takes the chord first, so a workspace-level binding would
-                // compile, test green, and do nothing when pressed.
-                "n" => {
-                    cx.emit(ToggleRail);
-                    return;
-                }
-                // Ctrl+Shift+Z → the most recently closed thing comes back.
-                // Same reason as the arms above for living here: the pane has
-                // the keyboard, so this is the only place the chord is seen.
-                "z" => {
-                    cx.emit(ReopenClosed);
-                    return;
-                }
+        if k.shift {
+            match k.key {
+                // Ctrl+Shift+T is the workspace's new-tab chord: taken from the
+                // PTY here, acted on there.
+                "t" => {}
+                "c" => self.copy_selection(cx),
+                "v" => self.paste_clipboard(cx),
+                "k" => self.clear_scrollback(cx),
+                // Ctrl+Shift+F finds across ALL panes; plain Ctrl+F in this one.
+                // Both open a workspace-owned panel, so it can search siblings
+                // and centre itself.
+                "f" => cx.emit(OpenFind { global: true }),
+                // Ctrl+Shift+A → agent-watch (MCP) panel; Ctrl+Shift+D → this
+                // pane's DESIGN menu (theme); Ctrl+Shift+G → its GAUGES tray. The
+                // Shift guard keeps raw Ctrl+A/D/G/U (line-start / EOF / BEL /
+                // kill-line) reaching the PTY. The menus anchor at this pane's
+                // top-right, under the header, where the icon click opens them.
+                "a" => cx.emit(OpenAgentPanel),
+                // B for bar — the chord an editor user already has in their
+                // fingers.
+                "b" => cx.emit(ToggleLeftBar),
+                // N for "needs me": the attention rail's queue.
+                "n" => cx.emit(ToggleRail),
+                // The most recently closed thing comes back.
+                "z" => cx.emit(ReopenClosed),
                 // Two keys for one panel, and the second is not redundant.
-                //
                 // fcitx5's Unicode addon binds Ctrl+Shift+U — `libunicode.so`
                 // carries both `Control+Shift+U` and `Control+Alt+Shift+U` — and
                 // an input method takes the chord before the compositor hands it
-                // on, so on a box running fcitx or ibus this arm never runs. It
-                // is kept because U is the obvious key for usage and most
-                // machines have nothing claiming it; Y is the one that always
-                // arrives. Verified by logging what the pane actually receives:
-                // Ctrl+Shift+A landed seven times, Ctrl+Shift+U never once.
-                "u" | "y" => {
-                    cx.emit(OpenUsagePanel);
-                    return;
-                }
-                "d" => {
-                    cx.emit(OpenThemeMenu {
-                        at: self.header_anchor(),
-                    });
-                    return;
-                }
-                "g" => {
-                    cx.emit(OpenDisplayMenu {
-                        at: self.header_anchor(),
-                    });
-                    return;
-                }
+                // on, so on a box running fcitx or ibus that arm never runs. U is
+                // the obvious key for usage and most machines have nothing
+                // claiming it; Y is the one that always arrives. Verified by
+                // logging what the pane actually receives: Ctrl+Shift+A landed
+                // seven times, Ctrl+Shift+U never once.
+                "u" | "y" => cx.emit(OpenUsagePanel),
+                "d" => cx.emit(OpenThemeMenu {
+                    at: self.header_anchor(),
+                }),
+                "g" => cx.emit(OpenDisplayMenu {
+                    at: self.header_anchor(),
+                }),
                 _ => {}
             }
+            return Handled::Declined;
+        }
+        match k.key {
+            // Ctrl+W closes the whole tab (always confirmed by the workspace).
+            // Intercepted here so it never reaches the PTY as werase (^W).
+            "w" => cx.emit(RequestCloseTab),
+            "f" => cx.emit(OpenFind { global: false }),
+            // Ctrl+X = CUT the selection: copy it, and when it is the trailing
+            // run on the live input line, erase it there too (see
+            // `cut_selection`).
+            //
+            // THE ONE CHORD THE TABLE CANNOT FINISH DECIDING. With nothing
+            // selected this is readline's prefix key — `C-x C-e` opens your
+            // editor — and asking whether anything is selected means rendering
+            // the selection to a string, which is not a thing to do on every
+            // keystroke of the session to settle one chord. So the claim is
+            // unconditional and the answer is here, one layer down, where it is
+            // paid for only when the chord actually arrives.
+            "x" => {
+                if !self.has_selection() {
+                    return self.terminal_key(k, ks, cx);
+                }
+                self.cut_selection(cx);
+            }
+            _ => {}
+        }
+        Handled::Declined
+    }
+
+    /// The terminal: its own selection and scrollback keys, then the PTY.
+    ///
+    /// The floor of the ladder, and where both surfaces that own an internal
+    /// stack — the paint overlay and the workbench — hand back what they have no
+    /// use for.
+    fn terminal_key(
+        &mut self,
+        k: &crate::keylayer::Key,
+        ks: &Keystroke,
+        cx: &mut Context<Self>,
+    ) -> Handled {
+        // Nothing reaches a dead pseudoterminal, or one that has not finished
+        // being born. Scoped to the terminal rather than the whole handler,
+        // which is where it used to sit: an exited pane still closes its tab and
+        // still opens the left bar, because neither of those is a write.
+        if self.exited || self.spawned.elapsed() < Duration::from_millis(150) {
+            return Handled::Declined;
         }
         // Keyboard-driven visual selection: shift+←/→ extends TD's own selection
         // by a character, shift+ctrl+←/→ by a word — combinative (anchor fixed,
-        // active end moves), seeded from the cursor or an existing mouse selection.
-        // Shells don't bind shift-arrows, so this never steals shell word-nav
-        // (plain ctrl+arrow still reaches the PTY) or ordinary typing. Works in the
-        // FOCUS reader too (the mirror repaints the highlight via the pane notify).
-        if m.shift && !m.alt && matches!(ks.key.as_str(), "left" | "right") {
-            self.extend_kbd_selection(ks.key.as_str() == "right", m.control, cx);
-            return;
+        // active end moves), seeded from the cursor or an existing mouse
+        // selection. Shells don't bind shift-arrows, so this never steals shell
+        // word-nav (plain ctrl+arrow still reaches the PTY) or ordinary typing.
+        // Works in the FOCUS reader too (the mirror repaints the highlight via
+        // the pane notify).
+        if k.shift && !k.alt && matches!(k.key, "left" | "right") {
+            self.extend_kbd_selection(k.key == "right", k.control, cx);
+            return Handled::Declined;
         }
         // Paging the pane itself. PageUp/PageDown page the scrollback in AGENT
         // panes — a Claude/Codex session keeps its whole convo in our history and
@@ -4887,7 +4971,7 @@ impl TerminalView {
         // steps toward older, ctrl+Home is the oldest row — wherever older is
         // painted; the wheel's per-gesture flip is about physical direction,
         // which a named key doesn't have.
-        if let Some(nav) = read_nav_key(ks.key.as_str(), m) {
+        if let Some(nav) = read_nav(k) {
             let paging = matches!(nav, ReadNav::PageUp | ReadNav::PageDown);
             if !paging || self.mode.is_agent() {
                 let tmode = *self.session.term.lock().mode();
@@ -4901,13 +4985,14 @@ impl TerminalView {
                     };
                     self.session.term.lock().scroll_display(scroll);
                     cx.notify();
-                    return;
+                    return Handled::Declined;
                 }
             }
         }
         if let Some(bytes) = keystroke_bytes(ks) {
             self.send(bytes, cx);
         }
+        Handled::Declined
     }
 
     /// Grow TD's visual selection one step from the keyboard. `right` picks the
@@ -4989,13 +5074,85 @@ impl TerminalView {
         self.scroll_by_wheel(ev, cx);
     }
 
+    /// Step one of THIS pane's size dials by `notches` wheel notches — the
+    /// ctrl+wheel gesture, after [`size_dial_at`] has decided which dial the
+    /// cursor was standing on.
+    ///
+    /// Only `key` becomes the pane's own; every other dial keeps tracking
+    /// outer, which is what makes sizing one region of one pane a local act
+    /// rather than a detachment from the mother theme.
+    ///
+    /// A notch that changes nothing — the channel is already at its stop —
+    /// leaves the pane exactly as it found it, pin included. Sizing past the end
+    /// must not silently detach a pane from outer: nothing about its size was
+    /// chosen here, and a pane that quietly stopped following would only be
+    /// noticed the next time outer moved and this one did not.
+    pub fn nudge_size(&mut self, key: theme::GradeKey, notches: f32, cx: &mut Context<Self>) {
+        let outer = theme::outer_choice(cx);
+        let mut grade = self.appearance.effective(&outer).grade;
+        let from = grade.get(key);
+        let next = key.nudged(from, notches);
+        if (next - from).abs() < f32::EPSILON {
+            return;
+        }
+        grade.set(key, next);
+        self.appearance
+            .pin_grade(grade, theme::GradePins::only(key.into()));
+        // Same contract as a paint pick: the pane has already changed, the
+        // workspace just writes the layout down so the size survives a restart.
+        cx.emit(PaintApplied);
+        cx.notify();
+    }
+
+    /// Which of this pane's size dials sits under `pos`, if the pane has been
+    /// painted yet. Sugar over [`size_dial_at`] with the pane's own geometry.
+    fn size_dial_under(&self, pos: gpui::Point<Pixels>) -> Option<theme::GradeKey> {
+        size_dial_at(
+            pos,
+            *self.content_bounds.lock().unwrap(),
+            self.bench.face() == crate::workbench::Face::Workbench,
+        )
+    }
+
+    /// Take a wheel turn AS THE SIZE CHORD, if ctrl is held: resolve which of
+    /// this pane's dials the pointer is standing on and turn it. Answers
+    /// whether the turn WAS the chord, so every caller knows to stop there.
+    ///
+    /// The one place that decision lives, because a pane has more than one
+    /// handler that sees a wheel and the chord has to mean the same thing in
+    /// all of them. It did not: the bench paints a CAPTURE-phase hook
+    /// ([`Self::bench_wheel`]) that runs ahead of every bubble listener and
+    /// swallows the turn, so ctrl+wheel over the workbench scrolled the
+    /// composer and never reached the pane root at all. The workbench was the
+    /// one surface in the window whose own size dial could not be turned from
+    /// it — and it still looked like it worked, because sizing the terminal
+    /// and flipping back showed a resized bench.
+    ///
+    /// Sizing nothing is still taking the turn. A pane with no measured rect
+    /// yet resolves no dial, and letting that fall through would size whatever
+    /// happened to be behind it.
+    pub fn size_by_wheel(&mut self, ev: &ScrollWheelEvent, cx: &mut Context<Self>) -> bool {
+        if !ev.modifiers.control {
+            return false;
+        }
+        if let Some(key) = self.size_dial_under(ev.position) {
+            self.nudge_size(key, theme::wheel_notches(ev.delta), cx);
+        }
+        true
+    }
+
     /// Scroll the terminal scrollback from a wheel event. Public so the FOCUS
     /// reading modal (rendered by the Workspace) can route its wheel events here:
     /// the modal's locking scrim `.occlude()`s the pane behind it and would
     /// otherwise swallow the wheel, leaving the mirror un-scrollable.
     pub fn scroll_by_wheel(&mut self, ev: &ScrollWheelEvent, cx: &mut Context<Self>) {
-        if ev.modifiers.control {
-            return; // workspace handles ctrl+wheel = text-size scrub
+        // ctrl+wheel is the SIZE gesture, not a scroll. The Workspace binds the
+        // same chord to the outer cabinet; both handlers are bubble-phase, a
+        // pane's is registered deeper, and gpui runs the deepest first — so
+        // halting here is what keeps one flick from doing both jobs at once.
+        if self.size_by_wheel(ev, cx) {
+            cx.stop_propagation();
+            return;
         }
         let dy = match ev.delta {
             gpui::ScrollDelta::Lines(l) => l.y * 3.0,
@@ -5562,19 +5719,29 @@ impl TerminalView {
     /// Paste the clipboard into the PTY, honouring bracketed-paste mode.
     fn paste_clipboard(&self, cx: &mut Context<Self>) {
         if let Some(text) = cx.read_from_clipboard().and_then(|i| i.text()) {
-            let bracketed = self
-                .session
-                .term
-                .lock()
-                .mode()
-                .contains(TermMode::BRACKETED_PASTE);
-            let bytes = if bracketed {
-                [b"\x1b[200~", text.as_bytes(), b"\x1b[201~"].concat()
-            } else {
-                text.into_bytes()
-            };
-            self.session.notifier.notify(bytes);
+            self.paste_text(&text);
         }
+    }
+
+    /// Paste text that did not come from the clipboard — a dropped file's
+    /// path — into the PTY on the same terms, bracketing included.
+    ///
+    /// Bracketed because the far end asked to be told: an editor that turns
+    /// paste bracketing on is an editor that will treat these bytes as
+    /// content rather than as keys, which is exactly what a dropped path is.
+    fn paste_text(&self, text: &str) {
+        let bracketed = self
+            .session
+            .term
+            .lock()
+            .mode()
+            .contains(TermMode::BRACKETED_PASTE);
+        let bytes = if bracketed {
+            [b"\x1b[200~", text.as_bytes(), b"\x1b[201~"].concat()
+        } else {
+            text.as_bytes().to_vec()
+        };
+        self.session.notifier.notify(bytes);
     }
     fn has_selection(&self) -> bool {
         self.session
@@ -5720,7 +5887,16 @@ impl TerminalView {
         // element carries a gpui click handler of its own any more.
         if ev.button == MouseButton::Left && self.bench.face() == crate::workbench::Face::Workbench
         {
-            if let Some((hit, flat)) = self.bench_hit_at(ev.position) {
+            let landed = self.bench_hit_at(ev.position);
+            // An open dial menu eats this click first — see
+            // [`TerminalView::bench_dismiss_dial`]. Before the `if let`,
+            // because a click on the bench's empty background lands on no
+            // zone and would otherwise never be seen at all.
+            if self.bench_dismiss_dial(landed.as_ref().map(|(hit, _)| hit), cx) {
+                cx.stop_propagation();
+                return;
+            }
+            if let Some((hit, flat)) = landed {
                 self.bench_hit(hit, flat, window, cx);
                 cx.stop_propagation();
                 return;
@@ -6719,21 +6895,44 @@ fn wheel_step_bytes(up: bool, sgr: bool) -> Vec<u8> {
     }
 }
 
-/// Map a paging keystroke to a [`ReadNav`], or `None` for anything else. Plain
-/// PageUp/PageDown page; ctrl+Home / ctrl+End jump to the ends. Any other
-/// modifier combination is someone else's chord (ctrl+PageUp switches tabs,
-/// plain Home/End belong to the shell), so it must NOT match here.
-fn read_nav_key(key: &str, m: &gpui::Modifiers) -> Option<ReadNav> {
-    if m.alt || m.shift || m.platform || m.function {
-        return None;
+/// A `gpui` keystroke in the terms [`crate::keylayer`] decides with.
+///
+/// The one place a `Keystroke` is translated, so that the question *does this
+/// keystroke type a character* is answered once. gpui fills `key_char` for
+/// `alt+r` with `"r"`, which is how a chord came to read as a letter in two
+/// different surfaces before [`crate::workbench::types_a_character`] existed.
+fn keylayer_key(ks: &Keystroke) -> crate::keylayer::Key<'_> {
+    let m = &ks.modifiers;
+    crate::keylayer::Key {
+        key: ks.key.as_str(),
+        alt: m.alt,
+        control: m.control,
+        shift: m.shift,
+        platform: m.platform,
+        function: m.function,
+        types_char: crate::workbench::types_a_character(
+            ks.key_char.as_deref(),
+            m.alt,
+            m.control,
+            m.platform,
+        ),
     }
-    match (key, m.control) {
-        ("pageup", false) => Some(ReadNav::PageUp),
-        ("pagedown", false) => Some(ReadNav::PageDown),
-        ("home", true) => Some(ReadNav::Top),
-        ("end", true) => Some(ReadNav::Bottom),
-        _ => None,
-    }
+}
+
+/// Map a paging keystroke to a [`ReadNav`], or `None` for anything else.
+///
+/// The gesture itself is [`crate::keylayer::paging`]'s table, because the FOCUS
+/// modal's claim on these four keys and the pane's own scrollback binding are the
+/// same four keys — and a second copy is how one of them quietly stops matching.
+/// This is the naming layer over it.
+fn read_nav(k: &crate::keylayer::Key) -> Option<ReadNav> {
+    use crate::keylayer::Paging;
+    Some(match crate::keylayer::paging(k)? {
+        Paging::PageUp => ReadNav::PageUp,
+        Paging::PageDown => ReadNav::PageDown,
+        Paging::Top => ReadNav::Top,
+        Paging::Bottom => ReadNav::Bottom,
+    })
 }
 
 /// gpui Keystroke → PTY bytes.
@@ -6765,8 +6964,8 @@ fn keystroke_bytes(ks: &Keystroke) -> Option<Vec<u8>> {
         // the same one: a terminal and a bench are both content inside a pane,
         // and the window's gestures have to survive whichever is on top. It was
         // written out here and nowhere else, so the bench competed for all of
-        // them and won — see [`crate::workbench::window_chord`] (#524).
-        if crate::workbench::window_chord(ks.key.as_str(), m.alt, m.control) {
+        // them and won — see [`crate::keylayer::window_chord`] (#524).
+        if crate::keylayer::window_chord(ks.key.as_str(), m.alt, m.control) {
             return None;
         }
         // other alt+<char>: ESC prefix for readline (alt+b, alt+f, alt+.)
@@ -7103,15 +7302,20 @@ impl Render for TerminalView {
         // grade is detached, else the live outer (Mother) scale. This scrubber
         // sizes the HEADER (height + glyphs/icons), never the terminal grid.
         //
-        // Its neighbour on the tray is a DIFFERENT dial with a different job, and
-        // both are read here off the one resolved grade: `text_size` sizes what a
-        // person reads — the terminal's grid, and now the bench, which is the
-        // other thing that pane can be showing. Chrome takes `scale`, content
-        // takes `text_size`, on both faces, so a pane sized to somebody's eyes
-        // stays that size when it is flipped.
+        // Its neighbours on the tray are DIFFERENT dials with different jobs,
+        // and all three are read here off the one resolved grade. Chrome takes
+        // `scale`; the terminal grid takes `text_size`; the bench takes its own
+        // `bench_gauge`, which is `text_size` until somebody splits them.
+        //
+        // The two faces used to share `text_size` outright, so flipping a pane
+        // kept the size somebody had chosen. They are separate now because they
+        // are read differently — a grid at arm's length for hours against a
+        // feed of replies — and because ctrl+wheel resolves to whichever one is
+        // under the cursor, which needs somewhere distinct to land. `None` keeps
+        // the old behaviour for every pane nobody has split.
         let grade = self.appearance.effective(&theme::outer_choice(cx)).grade;
         let scale = grade.scale;
-        let text_k = grade.text_size;
+        let bench_k = grade.bench_gauge();
         // This pane's chrome shape. Baked against THIS pane's palette rather than
         // the window's — a pane wearing its own theme has to have its own header
         // edge, or the two disagree by exactly the amount the pane was retinted.
@@ -7267,7 +7471,6 @@ impl Render for TerminalView {
         } else {
             ps.ph_live.to_string()
         };
-        let grid_label = format!("{}×{}", self.grid.cols, self.grid.rows);
         let glow = th.glow;
 
         // ── Responsive header ────────────────────────────────────────────────
@@ -7427,17 +7630,22 @@ impl Render for TerminalView {
         // nobody has. The × is the only other control with that standing, and
         // for the same reason — both answer "what is this pane even doing".
         //
-        // Two chips rather than one switch, because a switch has to be read
-        // ("is it on? on meaning what?") while two labelled chips say which
-        // face is showing and what the other one is called, in one glance.
+        // BOTH labels stay visible, because a switch with one word on it has to
+        // be read twice ("is it on? on meaning what?") and a pane header is not
+        // a place anyone reads twice. What changed on 2026-09-18 is that the two
+        // words now share ONE bordered track instead of being two chips with a
+        // gap: two adjacent buttons, each reserving its own ring, put four
+        // vertical edges on the header for one binary choice, and the lit one
+        // was a glowing pill you could not read the word inside. Parker: *"TERM
+        // and BENCH — combine into a single bordered slider toggler, also pretty
+        // unreadable"*. See [`skin::Skin::slider`].
         let face_now = self.bench.face();
         let unseen = self.bench_unseen();
         let queued = self.bench_queued();
         let face_toggle = {
-            let chip = |face: crate::workbench::Face, cx: &mut Context<Self>| {
+            let half = |face: crate::workbench::Face, cx: &mut Context<Self>| {
                 let lit = face_now == face;
-                sk.chip(lit)
-                    .cursor_pointer()
+                sk.slider_half(lit, sk.ink.select)
                     .text_size(px((hicon * 0.42).max(8.5)))
                     .child(face.chip())
                     .on_mouse_down(
@@ -7453,8 +7661,11 @@ impl Render for TerminalView {
                 .flex_row()
                 .items_center()
                 .gap(px(2.))
-                .child(chip(crate::workbench::Face::Terminal, cx))
-                .child(chip(crate::workbench::Face::Workbench, cx))
+                .child(
+                    sk.slider()
+                        .child(half(crate::workbench::Face::Terminal, cx))
+                        .child(half(crate::workbench::Face::Workbench, cx)),
+                )
                 // What the bench is holding, and WHY it is holding it. Nobody
                 // looking at this pane is the old reason and lands the moment
                 // it is on screen; no agent to receive it is the other, and
@@ -7513,7 +7724,7 @@ impl Render for TerminalView {
             // because chrome answers to the menu-bar scale and content answers to
             // these. See [`graded_palette`] and [`crate::skin::Skin::ty`].
             let bench_th = graded_palette(&th);
-            let bench_sk = crate::skin::for_theme(cx, &bench_th, scale).with_type(text_k);
+            let bench_sk = crate::skin::for_theme(cx, &bench_th, scale).with_type(bench_k);
             self.bench_el(
                 &bench_th,
                 &bench_sk,
@@ -7716,7 +7927,6 @@ impl Render for TerminalView {
                     .flex_shrink_0()
                     // roomier spacing between the header glyphs — scales with the bar
                     .gap(hpad)
-                    .child(grid_label)
                     .child(face_toggle)
                     // Part 1: only in an agent (claude/codex) pane — jump between
                     // *your own* messages. Coloured like your input (`th.human`).
@@ -8031,6 +8241,14 @@ impl Render for TerminalView {
             .on_mouse_down(MouseButton::Right, cx.listener(Self::on_mouse_down))
             .on_mouse_move(cx.listener(Self::on_mouse_move))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
+            // A FILE DROPPED ON THIS PANE, and it is registered HERE for the
+            // same reason every other bench gesture is: gpui hit-tests the
+            // flat layout tree, the bench is drawn bent, and a drop target
+            // hung on the composer would catch drops beside where the
+            // composer appears. `bench_drop` un-bends the pointer and asks
+            // the composer's own zone. Guarded by
+            // `the_pane_root_takes_a_file_drop`.
+            .on_drop::<gpui::ExternalPaths>(cx.listener(Self::bench_drop))
             .size_full()
             // Grade the base background too (not just cells): the DISPLAY brightness
             // / contrast / colour sliders dim the whole pane like a dimmer light —
@@ -8227,6 +8445,426 @@ impl Render for TerminalView {
 
 #[cfg(test)]
 mod tests {
+    /// [`read_nav`], from the parts these tests have to hand.
+    ///
+    /// Inside the test module on purpose: a file-scope `#[cfg(test)]` item above
+    /// `mod tests` truncates every source scan in here that cuts at the first
+    /// `#[cfg(test)]`, and `the_pane_root_takes_a_file_drop` goes red without
+    /// anything being wrong with the drop listener.
+    fn read_nav_key(key: &str, m: &gpui::Modifiers) -> Option<ReadNav> {
+        read_nav(&crate::keylayer::Key {
+            key,
+            alt: m.alt,
+            control: m.control,
+            shift: m.shift,
+            platform: m.platform,
+            function: m.function,
+            types_char: false,
+        })
+    }
+
+    /// This file's shipped code with every comment line removed.
+    ///
+    /// A source-grep gate its own explanation can satisfy is not a gate: one in
+    /// this repository passed on the comment describing the line it was meant to
+    /// find, while the line itself was gone. Scans below run against code only.
+    fn shipped_code() -> String {
+        let here = include_str!("pane.rs");
+        let (code, _tests) = here.split_once("\n#[cfg(test)]").expect("a test module");
+        code.lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// The bench's source, comments stripped, the same way [`shipped_code`]
+    /// treats this file. A pane's wheel handling lives in two files.
+    fn bench_code() -> String {
+        let there = include_str!("pane/bench.rs");
+        let (code, _tests) = there
+            .split_once("\n#[cfg(test)]")
+            .unwrap_or((there, "no test module yet"));
+        code.lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// EVERY wheel handler on a pane offers the turn to the size chord first.
+    ///
+    /// This is the shape of the bug that shipped, not a restatement of the
+    /// feature. ctrl+wheel was wired at the pane root, which was correct and
+    /// was not enough: the bench paints a CAPTURE-phase hook that runs ahead
+    /// of every bubble listener and consumes the turn, so the workbench became
+    /// the one surface in the window whose own size dial could not be turned
+    /// from it. It looked like it worked, too — sizing the terminal and
+    /// flipping back showed a resized bench, because an unset bench dial
+    /// follows the grid's.
+    ///
+    /// So the invariant is about the SET of handlers, not about any one of
+    /// them: adding a third place that reads a wheel and forgetting the chord
+    /// is the same defect again, and nothing else would notice. The handlers
+    /// are enumerated here on purpose — a new one fails this test by existing,
+    /// which is the moment to decide what the chord means there.
+    #[test]
+    fn every_wheel_handler_on_a_pane_answers_the_size_chord() {
+        // (file, source) for the two files a pane's wheel handling lives in.
+        let files = [("pane.rs", shipped_code()), ("pane/bench.rs", bench_code())];
+
+        let mut found: Vec<(String, String)> = Vec::new();
+        for (name, code) in &files {
+            let lines: Vec<&str> = code.lines().collect();
+            for (i, line) in lines.iter().enumerate() {
+                // A named handler: a `fn` whose parameter list — which may
+                // wrap over several lines — takes a wheel event.
+                if let Some(rest) = line.trim_start().strip_prefix("fn ").or_else(|| {
+                    line.trim_start()
+                        .strip_prefix("pub fn ")
+                        .or_else(|| line.trim_start().strip_prefix("pub(super) fn "))
+                        .or_else(|| line.trim_start().strip_prefix("pub(crate) fn "))
+                }) {
+                    let sig: String = lines[i..(i + 6).min(lines.len())].join("\n");
+                    let sig = &sig[..sig.find(" {\n").map_or(sig.len(), |e| e + 2)];
+                    if sig.contains("&ScrollWheelEvent") {
+                        let fname = rest.split('(').next().unwrap_or(rest).to_string();
+                        found.push((name.to_string(), fname));
+                    }
+                }
+                // An anonymous handler: a closure taking a wheel event.
+                if line.contains("|ev: &ScrollWheelEvent") {
+                    found.push((name.to_string(), format!("<closure L{}>", i + 1)));
+                }
+            }
+        }
+
+        let names: Vec<&str> = found.iter().map(|(_, f)| f.as_str()).collect();
+        assert!(
+            names.contains(&"size_by_wheel"),
+            "the chord itself is gone; every assertion below is vacuous"
+        );
+        assert!(
+            names.contains(&"scroll_by_wheel") && names.contains(&"bench_wheel"),
+            "the two handlers that actually consume a turn are {names:?}"
+        );
+
+        // Four named handlers and one closure. A fifth is not forbidden — it
+        // is unreviewed, and the chord is what it has to be reviewed against.
+        let named: Vec<&str> = names
+            .iter()
+            .copied()
+            .filter(|n| !n.starts_with("<closure"))
+            .collect();
+        assert_eq!(
+            named,
+            vec![
+                "on_wheel",
+                "size_by_wheel",
+                "scroll_by_wheel",
+                "bench_wheel"
+            ],
+            "the set of wheel handlers on a pane changed. Whatever was added \
+             has to decide what ctrl+wheel means where it sits — the bench's \
+             capture hook did not, and the workbench silently lost its size \
+             dial. Wire it through `size_by_wheel` and add it here."
+        );
+
+        // Each of them ASKS THE CHORD BY NAME. "Or forwards to something that
+        // does" was the first draft of this rule and it let the shipped bug
+        // straight back through: `bench_wheel` hands one narrow arm
+        // (`Wheel::Mirror`) to `scroll_by_wheel`, so a scan for "mentions
+        // another wheel handler" passed on a branch that almost never runs
+        // while the chord itself was gone. The only forwarder allowed is a
+        // handler that does nothing else, and it is checked as such below.
+        let body_of = |code: &str, fname: &str, file: &str| -> String {
+            let at = code
+                .find(&format!("fn {fname}("))
+                .unwrap_or_else(|| panic!("{fname} in {file}"));
+            let end = code[at..]
+                .find("\n    }\n")
+                .unwrap_or_else(|| panic!("end of {fname}"));
+            // Past the signature, so a handler cannot satisfy a scan for its
+            // own name with its own declaration — which is exactly how the
+            // first draft of this test missed `scroll_by_wheel` losing the
+            // chord.
+            let sig_end = code[at..at + end].find(" {\n").map_or(0, |e| e + 3);
+            code[at + sig_end..at + end].to_string()
+        };
+
+        for (file, code) in &files {
+            for (_, fname) in found.iter().filter(|(f, _)| f == file) {
+                if fname == "size_by_wheel" || fname.starts_with("<closure") {
+                    continue;
+                }
+                let body = body_of(code, fname, file);
+                // The one exemption: a pure forwarder, which owns no policy
+                // because it does nothing but hand the turn on. Asserted to
+                // BE one rather than assumed — a forwarder that grows a branch
+                // stops being exempt in the same edit.
+                if body.trim().lines().count() == 1 {
+                    assert!(
+                        body.contains("scroll_by_wheel(") || body.contains("bench_wheel("),
+                        "{file}::{fname} is a one-line wheel handler that hands \
+                         the turn nowhere"
+                    );
+                    continue;
+                }
+                assert!(
+                    body.contains("size_by_wheel("),
+                    "{file}::{fname} reads a wheel event and never offers it to \
+                     the size chord, so ctrl+wheel does the wrong thing — or \
+                     nothing — wherever this handler is the one that runs. That \
+                     is not hypothetical: the bench's capture hook shipped \
+                     without it and the workbench lost its own size dial"
+                );
+            }
+        }
+    }
+
+    /// The bench answers the chord BEFORE it can decide it has nothing to do.
+    ///
+    /// `bench_wheel` bails when the un-bent pointer resolves to no bench
+    /// element, and it consumes the turn in the capture phase either way. A
+    /// chord asked after that bail is a chord the bench drops on every part of
+    /// itself that is not a card or a composer — which is most of it.
+    ///
+    /// Mutation-tested: moving the chord below the `bench_flat` bail, and
+    /// removing it, each fail this test.
+    #[test]
+    fn the_bench_takes_the_size_chord_before_it_bails() {
+        let code = bench_code();
+        let at = code.find("fn bench_wheel(").expect("fn bench_wheel");
+        let end = code[at..].find("\n    }\n").expect("end of bench_wheel");
+        let body = &code[at..at + end];
+
+        let chord = body
+            .find("self.size_by_wheel(ev, cx)")
+            .expect("bench_wheel must offer the turn to the size chord");
+        let bail = body
+            .find("self.bench_flat(ev.position)")
+            .expect("bench_wheel still resolves what the pointer is over");
+        assert!(
+            chord < bail,
+            "the chord is asked after the bail, so ctrl+wheel over the bare \
+             bench does nothing at all"
+        );
+        // BETWEEN the chord and the bail, not merely somewhere after it.
+        // `bench_wheel` already ends in a halt for the scrolling arms, so
+        // "contains a halt below the chord" was satisfied by a stop the chord
+        // branch returns before ever reaching — the gate passed while the
+        // pane root and then the cabinet resized off the same notch.
+        assert!(
+            body[chord..bail].contains("cx.stop_propagation();"),
+            "the chord branch returns without halting, so the turn it answered \
+             carries on to the pane root and then the cabinet"
+        );
+    }
+
+    /// The four size dials are four dials, and a pane owns three of them.
+    ///
+    /// ctrl+wheel means "size what is under the pointer", and inside one pane
+    /// that is three different answers: the header is chrome and takes the same
+    /// `Scale` the outer cabinet uses, the terminal grid takes `TextSize`, and
+    /// the workbench takes `BenchSize`. Collapsing any two of them would make
+    /// the gesture size something the person was not pointing at, which is the
+    /// single way this feature can be wrong and still look like it works.
+    #[test]
+    fn each_region_of_a_pane_turns_its_own_dial() {
+        use crate::theme::GradeKey;
+        use gpui::{point, px, size, Bounds};
+
+        // The content rect is what the canvas below the header measured, so
+        // "outside it" is the header band and the pane's own frame.
+        let content = Bounds {
+            origin: point(px(100.), px(140.)),
+            size: size(px(400.), px(300.)),
+        };
+        let in_content = point(px(300.), px(280.));
+        let in_header = point(px(300.), px(120.));
+
+        assert_eq!(
+            size_dial_at(in_content, Some(content), false),
+            Some(GradeKey::TextSize),
+            "over the grid, the chord sizes the terminal's text"
+        );
+        assert_eq!(
+            size_dial_at(in_content, Some(content), true),
+            Some(GradeKey::BenchSize),
+            "the SAME point on the workbench face sizes the bench instead — the \
+             face decides, because the two are different things to read"
+        );
+        assert_eq!(
+            size_dial_at(in_header, Some(content), false),
+            Some(GradeKey::Scale),
+            "over the pane's own header, the chord sizes that header"
+        );
+        assert_eq!(
+            size_dial_at(in_header, Some(content), true),
+            Some(GradeKey::Scale),
+            "the header is chrome on both faces, so the face must not change \
+             this answer"
+        );
+
+        // The boundary belongs to the content: the rect is half-open, and the
+        // first row of pixels the canvas measured is content, not header.
+        assert_eq!(
+            size_dial_at(content.origin, Some(content), false),
+            Some(GradeKey::TextSize)
+        );
+        assert_eq!(
+            size_dial_at(point(px(500.), px(440.)), Some(content), false),
+            Some(GradeKey::Scale),
+            "the far corner is one pixel PAST the rect and so is not in it"
+        );
+
+        // A pane that has never been painted has no rect, and that is not the
+        // same as the pointer being on its header. Answering anything here
+        // would size whatever the guess landed on.
+        assert_eq!(size_dial_at(in_content, None, false), None);
+        assert_eq!(size_dial_at(in_header, None, true), None);
+
+        // Three dials, three channels. A rename that pointed two of these at
+        // one channel would leave every assertion above passing.
+        let dials = [GradeKey::Scale, GradeKey::TextSize, GradeKey::BenchSize];
+        for (i, a) in dials.iter().enumerate() {
+            for b in &dials[i + 1..] {
+                assert_ne!(
+                    crate::theme::GradeChannel::from(*a),
+                    crate::theme::GradeChannel::from(*b),
+                    "{a:?} and {b:?} pin the same channel, so sizing one region \
+                     would size the other"
+                );
+            }
+        }
+    }
+
+    /// One ctrl+wheel flick is answered once, by the pane under the cursor.
+    ///
+    /// The pane and the Workspace bind the same chord — the pane sizes one of
+    /// its own three regions, the Workspace sizes the cabinet — and gpui hands
+    /// a wheel event to the deepest bubble listener first. Everything rests on
+    /// the pane HALTING the turn it answered: without the stop, standing over
+    /// a pane and scrolling would grow that pane AND the whole menu bar, on
+    /// every notch, and the two would drift apart with no way to put them back.
+    ///
+    /// Halting is the CALLER's job, and both callers do it, because
+    /// `size_by_wheel` answers a question and the two handlers that ask it are
+    /// in different dispatch phases. What it returns is "this turn was the
+    /// chord", not "something was resized" — a pane with no measured rect yet
+    /// resolves no dial and must still swallow the turn, or the gesture
+    /// silently resizes the menu bar on exactly the panes it cannot size.
+    ///
+    /// Behaviour a running window is needed to see, so it is guarded at the
+    /// source. Mutation-tested: making the chord answer `false` when no dial
+    /// resolves, dropping either caller's halt, and leaving a halt behind as a
+    /// commented-out line each fail this test.
+    #[test]
+    fn ctrl_wheel_over_a_pane_sizes_that_pane_and_goes_no_further() {
+        let code = shipped_code();
+        let at = code
+            .find("pub fn size_by_wheel")
+            .expect("pub fn size_by_wheel");
+        let end = code[at..].find("\n    }\n").expect("end of fn");
+        let chord = &code[at..at + end];
+
+        assert!(
+            chord.contains("if !ev.modifiers.control {"),
+            "the chord is ctrl+wheel and nothing else — a plain turn has to \
+             fall through to the scroll it has always been"
+        );
+        assert!(
+            chord.contains("self.size_dial_under(ev.position)"),
+            "it must resolve WHICH of the pane's dials the pointer is on; one \
+             dial for the whole pane is the bug this replaced"
+        );
+        assert!(
+            chord.contains("self.nudge_size(") && chord.contains("theme::wheel_notches("),
+            "…and turn it, through the shared notch conversion, so a flick \
+             steps the same amount here as it does on the cabinet"
+        );
+
+        // The `true` that says "taken" sits OUTSIDE the lookup. Inside it, an
+        // unmeasured pane answers `false` and the turn walks to the cabinet.
+        let lookup = chord.find("if let Some(key)").expect("the dial lookup");
+        let taken = chord
+            .rfind("true")
+            .expect("the chord must report it took the turn");
+        let lookup_end = chord[lookup..]
+            .find("\n        }")
+            .expect("end of the lookup block")
+            + lookup;
+        assert!(
+            taken > lookup_end,
+            "the chord reports `taken` only when a dial resolved, so a pane \
+             with no measured rect yet leaks the flick to the cabinet"
+        );
+
+        // Both callers halt on it. They are in different dispatch phases and
+        // neither can rely on the other having run.
+        for (file, code, caller) in [
+            ("pane.rs", shipped_code(), "pub fn scroll_by_wheel"),
+            ("pane/bench.rs", bench_code(), "fn bench_wheel("),
+        ] {
+            let at = code
+                .find(caller)
+                .unwrap_or_else(|| panic!("{caller} in {file}"));
+            let end = code[at..].find("\n    }\n").expect("end of fn");
+            let body = &code[at..at + end];
+            let ask = body
+                .find("self.size_by_wheel(ev, cx)")
+                .unwrap_or_else(|| panic!("{file}::{caller} must ask the chord"));
+            assert!(
+                body[ask..].contains("cx.stop_propagation();"),
+                "{file}::{caller} answers the chord and does not halt — the \
+                 handler after it sizes something else off the same notch"
+            );
+        }
+    }
+
+    /// Sizing past the end of a dial is not a decision, so it must not pin.
+    ///
+    /// `nudge_size` compares the nudged value against the one it started from
+    /// and returns early when they match. Drop that and a pane parked at the
+    /// maximum quietly stops following outer the first time somebody keeps
+    /// scrolling — invisible until the cabinet's own size moves and that one
+    /// pane does not (and it writes the layout to disk on every notch besides).
+    ///
+    /// It pins the ONE dial it was handed, never the whole grade: the three
+    /// regions of a pane are sized independently, and a person who grew the
+    /// bench has said nothing about the grid.
+    ///
+    /// Mutation-tested: deleting the bail, widening the pin to every channel,
+    /// and dropping the persist each fail this test.
+    #[test]
+    fn sizing_a_pane_past_its_stop_leaves_it_following_outer() {
+        let code = shipped_code();
+        let at = code.find("pub fn nudge_size").expect("pub fn nudge_size");
+        let end = code[at..].find("\n    }\n").expect("end of fn");
+        let body = &code[at..at + end];
+
+        let guard = body.find("if (next - from).abs() < f32::EPSILON").expect(
+            "nudge_size must compare the nudged value against the current one \
+             and bail when the channel is already at its stop",
+        );
+        let pin = body
+            .find("pin_grade")
+            .expect("nudge_size must pin the channel it turned");
+        assert!(
+            guard < pin,
+            "the no-change bail has to come BEFORE the pin, or a notch at the \
+             stop still detaches the pane from outer"
+        );
+        assert!(
+            body.contains("GradePins::only(key.into())"),
+            "only the dial that was actually turned becomes the pane's own — \
+             every other one must keep tracking outer, which is what makes \
+             sizing one region of one pane a local act and not a detachment"
+        );
+        assert!(
+            body.contains("cx.emit(PaintApplied)"),
+            "the new size has to be persisted like any other appearance change, \
+             or it is gone on the next restart"
+        );
+    }
 
     /// The bench does not grow back into this file.
     ///
@@ -8284,8 +8922,17 @@ mod tests {
                 }
             }
             let writes = t.contains("self.send(") || t.contains("notifier.notify(");
-            let allowed = matches!(owner, "bench_keystroke" | "bench_deliver");
+            // `write_through` is the stamping half of `bench_deliver`, split
+            // out so the dial's own answer can reach the pseudoterminal
+            // without the queue. It is a write site and it is allowed to be
+            // one; what keeps it honest is the caller scan below.
+            let allowed = matches!(owner, "bench_keystroke" | "write_through");
             if writes && !allowed {
+                strays.push((owner, t));
+            }
+            if t.contains("self.write_through(")
+                && !matches!(owner, "bench_deliver" | "dial_answer")
+            {
                 strays.push((owner, t));
             }
         }
@@ -8294,13 +8941,338 @@ mod tests {
             "bench writes to the pseudoterminal outside the gate — route these through \
              bench_keystroke (a keystroke) or bench_deliver (a line): {strays:?}"
         );
-        // And the gate itself still asks both questions.
+        // And the gate itself still asks all THREE questions. The third
+        // arrived with the dials: a press leaves the harness showing a modal
+        // picker, and a keystroke sent into a picker chooses something.
+        let at = code.find("fn bench_channel_open").expect("the two rules");
+        let end = code[at..].find("\n    }\n").expect("end of fn") + at;
+        let two = &code[at..end];
+        assert!(
+            two.contains("wb_on_screen") && two.contains("is_agent()"),
+            "the bench gate stopped asking one of its two questions: {two}"
+        );
         let at = code.find("fn bench_may_write").expect("the gate");
         let end = code[at..].find("\n    }\n").expect("end of fn") + at;
         let gate = &code[at..end];
         assert!(
-            gate.contains("wb_on_screen") && gate.contains("is_agent()"),
-            "the bench gate stopped asking one of its two questions: {gate}"
+            gate.contains("bench_channel_open()") && gate.contains("wb_dial_sent"),
+            "the bench gate stopped asking one of its three questions: {gate}"
+        );
+        // The one write that goes around the hold answers the picker and
+        // nothing else — and it still asks the other two, because a picker on
+        // a pane nobody is looking at is not ours to press.
+        let at = code.find("fn dial_answer").expect("the dial's own answer");
+        let end = code[at..].find("\n    }\n").expect("end of fn") + at;
+        let answer = &code[at..end];
+        assert!(
+            answer.contains("bench_channel_open()"),
+            "the dial's answer writes to a pane that may not be on screen: {answer}"
+        );
+    }
+
+    /// The bench says what it took, and never decides propagation itself.
+    ///
+    /// Two halves of one rule, and the bug was in both. `bench_key` used to end
+    /// every path in `cx.stop_propagation()`, so a key it had no use for died
+    /// there: `ctrl+c` could not interrupt the agent whose turn was on the
+    /// screen, `ctrl+shift+b` opened no left bar, and the inline rename box —
+    /// drawn on that same face — took no letters, because nothing below the call
+    /// in `on_key` ran at all. Twenty-one of twenty-seven chords were dead on the
+    /// workbench face and each one was this.
+    ///
+    /// So the bench reports and `on_key` decides. Scanned rather than trusted,
+    /// because the failure is silent in both directions: a `stop_propagation`
+    /// added back here kills chords with nothing failing, and a not-ours arm that
+    /// stops returning `false` swallows keys with nothing failing.
+    ///
+    /// Mutation-tested: re-adding a `cx.stop_propagation()` to `bench_key` fails
+    /// this, and so does changing the `Reading::Pass` arm to a no-op.
+    #[test]
+    fn the_bench_says_what_it_took_and_never_stops_the_event() {
+        let bench = include_str!("pane/bench.rs");
+        let (code, _tests) = bench
+            .split_once("#[cfg(test)]")
+            .unwrap_or((bench, "no test module yet"));
+        let at = code.find("fn bench_key(").expect("bench_key");
+        let end = code[at..].find("\n    }\n").expect("end of bench_key") + at;
+        // COMMENTS STRIPPED FIRST, like every scan in this file: this function's
+        // doc comment explains the very call it must not contain, and a scan that
+        // cannot tell code from a description of code fails at whatever is best
+        // documented.
+        let body: String = code[at..end]
+            .lines()
+            .map(|l| l.split("//").next().unwrap_or(""))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(
+            !body.contains("stop_propagation"),
+            "bench_key stops the event itself. Propagation is `on_key`'s one \
+             decision, taken from what this returns — a stop in here is a key \
+             nothing below the bench can ever see, which is how the rename box, \
+             alt+s and ctrl+c all went dead on the workbench face"
+        );
+        assert!(
+            body.contains("Reading::Pass => return false"),
+            "the reading table's not-ours arm no longer hands the key back. It has \
+             to `return false`, or a key the bench has no use for is swallowed \
+             instead of reaching the agent underneath it"
+        );
+    }
+
+    /// A note never reaches the agent, checked by WHAT it calls and by WHEN.
+    ///
+    /// Both halves are needed and neither implies the other.
+    ///
+    /// The first is the obvious one: no function that handles a note may call
+    /// anything that writes to the pseudoterminal. Scanned rather than listed,
+    /// because the write sites are several and the next one will be added by
+    /// somebody who has not read this — the same reasoning as
+    /// [`every_bench_write_goes_through_the_gate`], and stricter, since
+    /// `bench_keystroke` and `bench_deliver` are *allowed* writers there and
+    /// forbidden here.
+    ///
+    /// The second is the one that would actually have bitten. `bench_key` has a
+    /// branch that puts every keystroke it receives down the pseudoterminal
+    /// BEFORE applying it locally, because the reply composer is mirroring an
+    /// editor in the agent's process. A note routed after that branch would be
+    /// clean by inspection — calling nothing forbidden — and would still have
+    /// its every character typed into somebody's prompt on the way past. So the
+    /// order is asserted, not just the contents.
+    ///
+    /// Mutation-tested: deleting the note's routing, and moving it below the
+    /// composer branch, each fail this; so does calling `bench_keystroke` from
+    /// `bench_note_post`.
+    #[test]
+    fn writing_a_note_sends_nothing_to_the_agent() {
+        let bench = include_str!("pane/bench.rs");
+        let (code, _tests) = bench
+            .split_once("#[cfg(test)]")
+            .unwrap_or((bench, "no test module yet"));
+        // Comments stripped first. This file explains at length that a note
+        // must not call `bench_keystroke`, and a scan that its own explanation
+        // can satisfy — or trip — is not a gate.
+        let stripped: String = code
+            .lines()
+            .map(|l| l.split("//").next().unwrap_or(""))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let mut owner = "<file>";
+        let mut strays: Vec<String> = Vec::new();
+        for line in stripped.lines() {
+            let t = line.trim_start();
+            if let Some(rest) = t.split_once("fn ").map(|(_, r)| r) {
+                if t.starts_with("fn ") || t.starts_with("pub fn ") || t.starts_with("pub(") {
+                    owner = rest.split('(').next().unwrap_or(rest);
+                }
+            }
+            if !owner.starts_with("bench_note") {
+                continue;
+            }
+            for writer in [
+                "bench_keystroke(",
+                "bench_deliver(",
+                "bench_typed(",
+                "bench_type(",
+                "self.send(",
+                "journal(",
+            ] {
+                if t.contains(writer) {
+                    strays.push(format!("{owner}: {t}"));
+                }
+            }
+        }
+        assert!(
+            strays.is_empty(),
+            "a note reached the agent. The comments board is defined by the fact \
+             that it does not, so this is the feature failing and not a lint: {strays:?}"
+        );
+
+        let routed = stripped
+            .find("self.wb_note.is_some()")
+            .expect("the note's key routing in bench_key");
+        let composer = stripped
+            .find("if talking {")
+            .expect("the composer's send-first branch");
+        assert!(
+            routed < composer,
+            "the note buffer is consulted AFTER the branch that sends every \
+             keystroke down the pseudoterminal, so every character of a note is \
+             typed into the agent on its way to the note."
+        );
+    }
+
+    /// WHICH SHELF YOU ARE READING NEVER DECIDES WHERE A CHARACTER GOES.
+    ///
+    /// For one build it did. Standing on the comments board opened a note under
+    /// the first character typed, so the keystroke that everywhere else on the
+    /// bench starts a sentence to the agent instead landed in a private note.
+    /// Parker found it within a minute of the board shipping: *"if COMMENTS is
+    /// selected and I type ... the keystroke gets caught in the COMMENT instead
+    /// of the prompt --- this is WRONG! --- comment MUST require alt+m"*.
+    ///
+    /// The rule is not "do not check for the comments shelf". It is that the
+    /// TALK arm — the one that fires on an ordinary printable character — takes
+    /// no interest in which shelf is showing. A shelf is a thing you are
+    /// LOOKING at; letting it choose the destination of your typing turns
+    /// reading into a mode, and a mode nobody entered on purpose.
+    ///
+    /// Scanned structurally rather than by naming `Shelf::Comments`, because
+    /// the next version of this mistake will be a different shelf, or a count,
+    /// or whether the board happens to be empty. Any shelf-dependent branch in
+    /// that arm is the bug, whatever it is keyed on.
+    ///
+    /// Mutation-tested: re-inserting the branch that opened a note on the
+    /// comments shelf fails this.
+    #[test]
+    fn what_shelf_you_are_on_never_catches_a_keystroke() {
+        let bench = include_str!("pane/bench.rs");
+        let (code, _tests) = bench
+            .split_once("#[cfg(test)]")
+            .unwrap_or((bench, "no test module yet"));
+        // Comments stripped, or the paragraph explaining this rule — which
+        // names the shelf it used to check — would trip the scan guarding it.
+        let stripped: String = code
+            .lines()
+            .map(|l| l.split("//").next().unwrap_or(""))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let at = stripped
+            .find("Reading::Talk =>")
+            .expect("the arm that fires on an ordinary character");
+        let arm = &stripped[at..];
+        let end = arm
+            .find("Reading::Pass")
+            .expect("the end of the reading table");
+        let arm = &arm[..end];
+        for shelf_ish in ["shelf()", "Shelf::", "set_shelf", "bench_note_open"] {
+            assert!(
+                !arm.contains(shelf_ish),
+                "typing consults `{shelf_ish}`. Which shelf is on screen must not \
+                 decide where a character goes — that is how the comments board \
+                 came to swallow keystrokes meant for the agent. A note is opened \
+                 on purpose: alt+m, or the `+ write a note` row."
+            );
+        }
+    }
+
+    /// The shelf strip wraps, because four tabs do not fit on one line.
+    ///
+    /// The rail is a SHARE of the pane — `RAIL_SHARE`, clamped into
+    /// `RAIL_MIN_W..=RAIL_W` — so the strip gets between about 118 and 194
+    /// points of room. Four tabs measure about 161, read off the running build
+    /// at the 208-point cap: comfortable at a wide rail, over the edge well
+    /// before the rail reaches its floor. The strip sits inside a frame that is
+    /// `overflow_hidden`, so the overflow never shows up as a squeeze or a
+    /// scrollbar — the last tab simply stops being drawn, and a tab nobody can
+    /// see is a shelf nobody can reach.
+    ///
+    /// The three-tab strip was FINE, at every width. A plan for this feature
+    /// said otherwise on an estimated glyph width that measured a third too
+    /// fat; the estimate was wrong and the finding died on the check written
+    /// beside it.
+    ///
+    /// Structural rather than a width calculation, because the layout is gpui's
+    /// and a unit test cannot measure a glyph. What it can do is hold the
+    /// container to the property that makes the arithmetic stop mattering.
+    ///
+    /// Found by the SHELF STRIP itself rather than by a variable name: the
+    /// nearest `div()` above the one call that builds the tabs IS the container,
+    /// whatever it ends up being called. Comments are stripped first — a scan
+    /// that can be satisfied by the prose explaining the line it guards is not a
+    /// gate.
+    ///
+    /// Mutation-tested: deleting `.flex_wrap()` fails this; so does moving it
+    /// onto the frame outside the strip, which is the plausible wrong fix.
+    #[test]
+    fn the_shelf_strip_wraps_so_every_shelf_stays_reachable() {
+        let bench = include_str!("pane/bench.rs");
+        let (code, _tests) = bench
+            .split_once("#[cfg(test)]")
+            .unwrap_or((bench, "no test module yet"));
+        let stripped: String = code
+            .lines()
+            .map(|l| l.split("//").next().unwrap_or(""))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let at = stripped
+            .find("Shelf::ALL.into_iter().map(|shelf|")
+            .expect("the shelf strip");
+        let open = stripped[..at]
+            .rfind("div()")
+            .expect("the strip's container");
+        assert!(
+            stripped[open..at].contains(".flex_wrap()"),
+            "the shelf strip no longer wraps, and there are {} shelves to fit in \
+             as little as {} points of rail — against about 161 points of tabs, \
+             measured on the running build. The strip is inside an overflow_hidden \
+             frame, so this does not look like a layout bug: the last tab just \
+             stops being drawn, and the shelf behind it becomes unreachable.",
+            crate::surface::Shelf::ALL.len(),
+            crate::workbench::RAIL_MIN_W,
+        );
+    }
+
+    /// Nothing in the bench half moves the pane's face.
+    ///
+    /// Four separate ways off the workbench were built and then taken back
+    /// out, one at a time, each found by Parker in use: escape's last rung
+    /// flipped the face (deleted, [`crate::workbench::Peel`]); escape over a
+    /// question an agent was waiting on retired it (floored); sending from the
+    /// composer flipped the face (stopped in `bench_send`); and answering a
+    /// surface flipped the face, which is this one — *"if I am in workbench I
+    /// should stay locked in unless I specifically step out"*.
+    ///
+    /// They were four bugs and not one because the exit was decided at each
+    /// call site. That is the same shape escape had before `peel` became a
+    /// single table, and the repair is the same: one rule, in one place, and
+    /// the place is this FILE. `pane/bench.rs` is everything the bench does
+    /// with a click, a key or a wheel, and none of it may move the face. The
+    /// two gestures that legitimately do are alt+k and the TERM chip, both in
+    /// `pane.rs`; a script says so through `ctl`'s `bench off`.
+    ///
+    /// Scanned rather than listed, because the fifth auto-exit will be added
+    /// to a function nobody has written yet. Comments are stripped first: the
+    /// paragraph in `bench_act` explaining why the flip was removed names both
+    /// `set_face` and `Face::Terminal`, and a scan that cannot tell code from
+    /// a description of code is satisfied by its own gravestone.
+    ///
+    /// The rule this enforces is `0001 — The machine does not decide that an
+    /// interaction is over`, in `docs/decisions/`, which carries the other
+    /// eight instances of the same shape in this repository.
+    #[test]
+    fn nothing_in_the_bench_half_flips_the_pane_off_the_bench() {
+        let bench = include_str!("pane/bench.rs");
+        let (code, _tests) = bench
+            .split_once("#[cfg(test)]")
+            .unwrap_or((bench, "no test module yet"));
+        let code: String = code
+            .lines()
+            .map(|l| l.split("//").next().unwrap_or(""))
+            .collect::<Vec<_>>()
+            .join("\n");
+        // Which function each call sits in, by the nearest `fn` above it.
+        let mut owner = "<file>".to_string();
+        let mut strays: Vec<(String, String)> = Vec::new();
+        for line in code.lines() {
+            let t = line.trim_start();
+            if let Some(rest) = t.split_once("fn ").map(|(_, r)| r) {
+                if t.starts_with("fn ") || t.starts_with("pub fn ") || t.starts_with("pub(") {
+                    owner = rest.split('(').next().unwrap_or(rest).to_string();
+                }
+            }
+            if t.contains("set_face(") || t.contains("toggle_face(") {
+                strays.push((owner.clone(), t.to_string()));
+            }
+        }
+        assert!(
+            strays.is_empty(),
+            "the bench half moves the pane's face. Answering, sending and dismissing each \
+             tried this and each was taken back out: a person on the workbench stays on it \
+             until they press alt+k or the TERM chip. If this really is a new deliberate \
+             gesture it belongs in pane.rs beside those two, and this test changes in the \
+             same commit with the reasoning: {strays:?}"
         );
     }
 
@@ -8338,83 +9310,27 @@ mod tests {
         );
     }
 
-    /// `bench_key` declines the window's chords BEFORE it can swallow one.
+    /// `on_key` decides nothing it could decide in the table.
     ///
-    /// Structural, because the thing that goes wrong is structural. Every path
-    /// out of `bench_key` ends in `cx.stop_propagation()`, so a chord it does
-    /// not explicitly hand back can never reach the workspace — and a new
-    /// branch added at the top of that function inherits the same property
-    /// without anybody noticing. That is how `alt+w`, `alt+r`, the splits and
-    /// the directional focus keys all came to do nothing on the workbench face
-    /// (#524): no table collided, the handler simply ran first.
+    /// Two source scans used to live here, one asserting `paint_mode` was read
+    /// before `bench_key` and one asserting the bench declined a window chord
+    /// before its first `stop_propagation`. Both guarded an ORDER OF BRANCHES,
+    /// which is the thing that has now stopped existing: every one of those
+    /// branches is a rung in [`crate::keylayer`], where the order is a value and
+    /// is table-tested over every combination of state without reading a line of
+    /// source.
     ///
-    /// So the assertion is about ORDER, not about a list: the `window_chord`
-    /// check has to sit above the first `stop_propagation` in the function.
-    /// A list would guard only the chords on it, and the next binding will be
-    /// added by somebody who has not read this.
+    /// What is left to guard is the shape that makes that true. `on_key` looks at
+    /// the keystroke in exactly one place — to build a
+    /// [`crate::keylayer::Key`] — and everything after is a `match` on the
+    /// answer. One `if ks.key.as_str() == …` added back here is a decision the
+    /// table cannot see, cannot test, and cannot order, and that is how twenty
+    /// branches grew the first time.
     ///
-    /// Mutation-tested: moving the check below the gallery block, and deleting
-    /// it outright, each failed this test.
+    /// Mutation-tested: re-inserting the old F1 branch at the top of `on_key`
+    /// fails this, and so does deleting the `route` call.
     #[test]
-    fn the_bench_declines_a_window_chord_before_it_can_swallow_one() {
-        let bench = include_str!("pane/bench.rs");
-        let (code, _tests) = bench
-            .split_once("#[cfg(test)]")
-            .unwrap_or((bench, "no test module yet"));
-        let at = code.find("fn bench_key(").expect("bench_key");
-        // To the end of the function: the first line that is a closing brace at
-        // method indentation.
-        let end = code[at..].find("\n    }\n").expect("end of bench_key") + at;
-        // COMMENTS STRIPPED FIRST, like every other scan in this codebase. The
-        // first draft of this test did not, and failed on its own prose: the
-        // doc comment at the top of `bench_key` explains that every path out of
-        // it ends in `cx.stop_propagation()`, and the scan read that sentence
-        // as the call it was describing. A source scan that cannot tell code
-        // from a description of code fails at whatever is best documented.
-        let body: String = code[at..end]
-            .lines()
-            .map(|l| l.split("//").next().unwrap_or(""))
-            .collect::<Vec<_>>()
-            .join("\n");
-        let body = body.as_str();
-
-        let declines = body
-            .find("window_chord(")
-            .expect("bench_key no longer consults workbench::window_chord at all");
-        let swallows = body
-            .find("stop_propagation()")
-            .expect("bench_key stopped swallowing anything, which would be a bigger change");
-        assert!(
-            declines < swallows,
-            "bench_key can swallow a key before it has asked whether the chord is the \
-             window's — every exit below that point stops propagation, so the workspace \
-             never sees it"
-        );
-        // …and it hands the chord BACK rather than eating it silently.
-        let after = &body[declines..];
-        let ret = after.find("return false").unwrap_or(usize::MAX);
-        assert!(
-            ret < after.find("stop_propagation()").unwrap_or(usize::MAX),
-            "the window_chord branch must `return false` so the event keeps bubbling"
-        );
-    }
-
-    /// PAINT mode is asked BEFORE the bench can swallow a key.
-    ///
-    /// **Narrower than it looks, and deliberately so.** Escape no longer depends
-    /// on this order at all — it is resolved against [`crate::keylayer`]'s table
-    /// before either block runs, and that table is where the precedence argument
-    /// now lives, tested over all 128 combinations without reading any source.
-    /// What is left here is the ordering for every OTHER key: paint's letters
-    /// and digits paint the selected terminal, and the bench's reading mode
-    /// would otherwise take the same letters to start a composer. That is still
-    /// a property of line order and still has no runtime signal, which is why a
-    /// source scan is still the only thing that observes it.
-    ///
-    /// Mutation-tested: swapping the two blocks back fails this test, and
-    /// deleting the paint block fails it on the `expect`.
-    #[test]
-    fn paint_mode_is_consulted_before_the_bench_can_swallow_a_key() {
+    fn on_key_decides_nothing_it_can_decide_in_the_table() {
         let src = include_str!("pane.rs");
         let (code, _tests) = src
             .split_once("#[cfg(test)]")
@@ -8423,25 +9339,42 @@ mod tests {
             .find("fn on_key(&mut self, ev: &KeyDownEvent")
             .expect("TerminalView::on_key");
         let end = code[at..].find("\n    }\n").expect("end of on_key") + at;
-        // Comments stripped, for the reason the test above gives at length:
-        // both blocks are documented in prose that names the other one.
+        // COMMENTS STRIPPED FIRST, as in every source scan here: this function is
+        // documented in prose that names the very keys it must not test for.
         let body: String = code[at..end]
             .lines()
             .map(|l| l.split("//").next().unwrap_or(""))
             .collect::<Vec<_>>()
             .join("\n");
 
-        let paint = body
-            .find("theme::paint_mode(cx)")
-            .expect("on_key no longer consults paint mode at all");
-        let bench = body
-            .find("self.bench_key(ks, cx)")
-            .expect("on_key no longer calls bench_key, which would be a bigger change");
+        assert_eq!(
+            body.matches("keylayer::route(").count(),
+            1,
+            "on_key must route exactly once — every key, through the one table"
+        );
+        for peek in ["ks.key", "key.as_str()", "modifiers.", "key_char"] {
+            assert!(
+                !body.contains(peek),
+                "on_key looks at `{peek}` itself. Whatever it is deciding belongs in \
+                 keylayer::route, where the order is a value and every combination is \
+                 tested — see the module header for the five times a branch order here \
+                 went wrong with nothing failing."
+            );
+        }
+        // …and it consumes in one place, from what the handlers returned.
+        assert_eq!(
+            body.matches("stop_propagation").count(),
+            1,
+            "on_key must stop propagation exactly once, on Handled::Consumed — a key \
+             this pane DECLINES has to bubble, or every workspace chord dies at once \
+             with nothing failing"
+        );
+        let stop = body.find("stop_propagation").expect("the one stop");
+        let before = &body[..stop];
         assert!(
-            paint < bench,
-            "the bench takes escape before paint mode is asked for it — with the paint \
-             cards up over a pane showing its bench, one press flips the face and leaves \
-             the overlay standing (PR #532)"
+            before.ends_with("if handled == Handled::Consumed {\n            cx.")
+                || before.contains("if handled == Handled::Consumed"),
+            "the one stop_propagation must be the one guarded by Handled::Consumed"
         );
     }
 
@@ -10069,51 +11002,6 @@ mod tests {
     }
 
     #[test]
-    fn pane_on_key_only_stops_propagation_when_it_consumes_the_key() {
-        // The bubbling invariant above has no compile-time or runtime signal —
-        // break it and every workspace chord silently dies while all other
-        // tests stay green. The source is the only place it is observable.
-        //
-        // Stopping propagation is legitimate where the handler owns the key and
-        // returns on the spot; it is a bug on the fall-through path, where a
-        // chord this handler declined would never reach the Workspace. So the
-        // assertion is not "no stop_propagation" — that would reject the
-        // correct F1 fix — but "every stop_propagation returns".
-        //
-        // COMMENTS ARE STRIPPED FIRST, as in every other source scan here. This
-        // test did not strip them and failed on prose the moment a comment in
-        // `on_key` explained what another handler does — a sentence naming the
-        // call, with no `return` in the sixty characters after it. Its sibling
-        // `the_bench_declines_a_window_chord_before_it_can_swallow_one` had
-        // already been bitten by exactly this and already carries the fix; the
-        // rule is the one written there, that a scan which cannot tell code
-        // from a description of code fails at whatever is best documented. The
-        // assertion itself is unchanged, and it still fails on a bare
-        // `cx.stop_propagation();` with no return — mutation-tested.
-        let src = include_str!("pane.rs");
-        let at = src
-            .find("fn on_key(&mut self, ev: &KeyDownEvent")
-            .expect("TerminalView::on_key");
-        let body = &src[at..];
-        let end = body.find("\n    }\n").expect("end of on_key");
-        let body: String = body[..end]
-            .lines()
-            .map(|l| l.split("//").next().unwrap_or(""))
-            .collect::<Vec<_>>()
-            .join("\n");
-        let body = body.as_str();
-        for (i, _) in body.match_indices("stop_propagation") {
-            let tail = &body[i..(i + 120).min(body.len())];
-            assert!(
-                tail.contains("return"),
-                "stop_propagation in TerminalView::on_key must belong to a \
-                 branch that returns, or the chords the handler declines never \
-                 reach the Workspace — see the INVARIANT comment above on_key"
-            );
-        }
-    }
-
-    #[test]
     fn pane_registers_every_button_its_mouse_handler_branches_on() {
         // gpui hands a `on_mouse_down(button, ..)` listener only the events for
         // THAT button. So a branch inside the handler testing for a button the
@@ -10145,6 +11033,33 @@ mod tests {
                  register it beside the others in `render`"
             );
         }
+    }
+
+    #[test]
+    fn the_pane_root_takes_a_file_drop() {
+        // gpui delivers a dropped file as a mouse-up carrying the paths, and
+        // only to an element that registered `on_drop` for that exact type.
+        // Nothing about `bench_drop` existing makes it reachable: it would
+        // compile, read as live, and never run — the same hole the pane's
+        // right-click tray sat in for months, asserted two tests above.
+        //
+        // Two things make this gate honest rather than decorative. The source
+        // is cut at the test module, so this assertion cannot satisfy itself
+        // with its own needle; and comment lines are dropped, because the
+        // registration is explained in a comment beside it and a gate its own
+        // explanation can pass is a gate that passes on a deleted line.
+        let src = include_str!("pane.rs");
+        let code: String = src[..src.find("\n#[cfg(test)]").unwrap_or(src.len())]
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            code.contains(".on_drop::<gpui::ExternalPaths>(cx.listener(Self::bench_drop))"),
+            "TerminalView::bench_drop exists but the root div never registers a drop \
+             listener for gpui::ExternalPaths, so a dropped file reaches nothing — \
+             register it beside the mouse listeners in `render`"
+        );
     }
 
     #[test]
