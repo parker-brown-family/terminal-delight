@@ -254,8 +254,9 @@ pub fn tint_of(kind: &Kind) -> Tint {
 /// other and the renderer switches on which kind it drew.
 #[derive(Clone, Copy, Debug)]
 pub enum Leaf<'a> {
-    /// The gist. Always present: a response without one does not parse.
-    Gist,
+    /// The reply in plain English. Always present: a response without one does
+    /// not parse, and it is what the card opens on.
+    Brief,
     Section(&'a crate::surface::Section),
     /// Present only when the reply carries doubts.
     Doubts,
@@ -270,7 +271,7 @@ impl<'a> Leaf<'a> {
     /// was sitting in, which is what lets a caller map over a list of them.
     pub fn key(self) -> &'a str {
         match self {
-            Leaf::Gist => "tldr",
+            Leaf::Brief => "layman",
             Leaf::Section(s) => &s.key,
             Leaf::Doubts => "doubts",
         }
@@ -279,7 +280,7 @@ impl<'a> Leaf<'a> {
     /// The word on its chip.
     pub fn label(self) -> &'a str {
         match self {
-            Leaf::Gist => "tl;dr",
+            Leaf::Brief => "Plain brief",
             Leaf::Section(s) => &s.label,
             Leaf::Doubts => "doubts",
         }
@@ -287,7 +288,7 @@ impl<'a> Leaf<'a> {
 
     pub fn group(self) -> crate::surface::Group {
         match self {
-            Leaf::Gist => crate::surface::Group::Reading,
+            Leaf::Brief => crate::surface::Group::Reading,
             Leaf::Section(s) => crate::surface::Group::of(s.register),
             // The doubts are evidence: they are what the agent could not
             // establish, filed beside what it did.
@@ -314,7 +315,7 @@ pub fn tabbed(
     r: &crate::surface::Response,
     promoted_asks: bool,
 ) -> Vec<(crate::surface::Group, Vec<Leaf<'_>>)> {
-    let mut leaves: Vec<Leaf<'_>> = vec![Leaf::Gist];
+    let mut leaves: Vec<Leaf<'_>> = vec![Leaf::Brief];
     leaves.extend(
         r.sections
             .iter()
@@ -3265,7 +3266,7 @@ impl Bench {
     /// guessed from the key's spelling — except for the two keys that have no
     /// section to look up.
     fn group_of_key(&self, id: &SurfaceId, key: &str) -> crate::surface::Group {
-        if crate::surface::Register::is_tldr(key) {
+        if crate::surface::Register::is_brief(key) {
             return crate::surface::Group::Reading;
         }
         if crate::surface::Register::is_doubts(key) {
@@ -3588,12 +3589,11 @@ mod tests {
         }))
     }
 
-    fn response(id: &str, tldr: &str) -> Post {
+    fn response(id: &str, brief: &str) -> Post {
         post(json!({
-            "td": "0.3", "kind": "response", "id": id, "title": tldr,
+            "td": "0.3", "kind": "response", "id": id, "title": brief,
             "model": {
-                "tldr": tldr,
-                "eli5": "small words",
+                "layman": brief,
                 "technical": "big words",
                 "asks": ["pick one"],
                 "doubts": ["maybe"]
@@ -3804,7 +3804,7 @@ mod tests {
         let tabs = tabbed(r, false);
         assert_eq!(
             tabs.iter().map(|(g, l)| (*g, l.len())).collect::<Vec<_>>(),
-            vec![(Group::Reading, 4), (Group::Evidence, 2), (Group::Next, 1)],
+            vec![(Group::Reading, 2), (Group::Evidence, 2), (Group::Next, 1)],
         );
         assert_eq!(b.picked_tab(&showing.id), None, "nobody has pressed");
         assert_eq!(
@@ -3814,8 +3814,8 @@ mod tests {
         );
         assert_eq!(
             resolve_leaf(None, &tabs[0].1).map(|l| l.key()),
-            Some("tldr"),
-            "…on the gist"
+            Some("layman"),
+            "…on the plain brief"
         );
     }
 
@@ -3882,10 +3882,10 @@ mod tests {
     fn a_reply_only_gets_the_chrome_it_needs_and_the_commonest_reply_gets_none() {
         use crate::surface::Group;
         let mut b = Bench::new();
-        // The commonest reply there is: a gist and nothing else.
+        // The commonest reply there is: a plain brief and nothing else.
         b.apply(post(json!({
             "td": "0.3", "kind": "response", "id": "a", "title": "t",
-            "model": { "tldr": "Just the gist." }
+            "model": { "layman": "Just the brief." }
         })));
         b.apply(response("b", "Gist."));
         let tabs_of =
@@ -3920,7 +3920,7 @@ mod tests {
             !groups.contains(&Group::Other),
             "the other tab appears only when it holds something"
         );
-        assert_eq!(full[0].1[0], "tldr", "the gist leads its group");
+        assert_eq!(full[0].1[0], "layman", "the plain brief leads its group");
         assert!(full[0].1.iter().any(|k| k == "technical"));
         assert!(
             full[1].1.iter().any(|k| k == "doubts"),
@@ -3946,7 +3946,7 @@ mod tests {
         let reading = &bench_tabs[0].1;
         assert!(
             draws_strip(&bench_tabs) && draws_chips(reading),
-            "a reply with three groups and four readings gets both rows"
+            "a reply with three groups and two readings gets both rows"
         );
         assert!(
             !draws_chips(&bench_tabs[1].1),
@@ -3961,14 +3961,21 @@ mod tests {
             resolve_tab(Some(Group::Next), &bench_tabs),
             Some(Group::Next)
         );
-        assert_eq!(resolve_leaf(None, reading).map(|l| l.key()), Some("tldr"));
+        assert_eq!(resolve_leaf(None, reading).map(|l| l.key()), Some("layman"));
         assert_eq!(
             resolve_leaf(Some("technical"), reading).map(|l| l.key()),
-            Some("technical")
+            Some("technical"),
+            "the technical brief stays, one chip away"
+        );
+        assert!(
+            !reading
+                .iter()
+                .any(|l| l.key() == "tldr" || l.key() == "eli5"),
+            "the tl;dr and the ELI5 are not readings any more"
         );
         assert_eq!(
             resolve_leaf(Some("gone"), reading).map(|l| l.key()),
-            Some("tldr"),
+            Some("layman"),
             "a key that is not there any more falls back to the first"
         );
     }

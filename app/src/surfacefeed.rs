@@ -559,8 +559,6 @@ pub fn demo_surfaces() -> Vec<(&'static str, Value)> {
                 "weight": { "effort": "medium", "complexity": "moderate", "confidence": "measured",
                             "foundation": { "system": "workbench", "depth": "component" } },
                 "model": {
-                    "tldr": "The effort chips now say what the flag says, the project list is no longer squeezed out of the panel, and this shelf is a feed of replies like this one.",
-                    "eli5": "The buttons said one thing and the program heard nothing. Now the button word is the program word. And the list of projects was being squashed flat by the buttons under it, so it looked empty.",
                     "layman": "Two bugs in the launch panel. One: the effort row offered invented words that were turned into a polite sentence instead of a real setting — now it offers the harness's own levels and passes them as a flag. Two: the panel's height was computed for one row of buttons and it has four, so a short list of matches got no room at all.",
                     "technical": "launcher::Effort is now the union of the harnesses' own levels, ordered; Harness::efforts lists what each takes and clamp_effort finds the nearest when the harness changes. Recipe::command_line emits --effort <id> for Claude and -c model_reasoning_effort=<id> for Codex, and the briefing carries no effort prose. launcher::panel_height sums the chrome the render actually draws (PANEL_CHROME_H) and adds a row per match; a test holds every count up to the cap gets its rows on top of the chrome.",
                     "evidence": {
