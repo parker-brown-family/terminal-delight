@@ -1222,6 +1222,16 @@ pub struct Round {
     pub steps: Vec<Step>,
     /// Whether the picker has reached its Submit step.
     pub submitting: bool,
+    /// Which step THIS card is, when the round is drawn on one of its own
+    /// questions.
+    ///
+    /// [`None`] is not step zero and must not be drawn as one: it means the
+    /// round was read off a picker's tab bar, where the current step is marked
+    /// by a colour that does not survive being read off a character grid
+    /// ([`crate::screenread::round_on_screen`]). A navigator that guessed would
+    /// point at the wrong question on exactly the screens where a person most
+    /// needs it to be right.
+    pub current: Option<usize>,
 }
 
 impl Round {
@@ -1232,6 +1242,20 @@ impl Round {
     pub fn total(&self) -> usize {
         self.steps.len()
     }
+
+    /// The next step with nothing committed, starting after `from`, wrapping
+    /// once to catch an earlier one left open.
+    ///
+    /// What the navigator moves to when a question is answered and the round is
+    /// not finished. Wrapping matters because a person may jump back to step
+    /// one, answer it, and have the only open question be behind them — walking
+    /// forward alone would strand them on a finished card.
+    pub fn next_open(&self, from: usize) -> Option<usize> {
+        let n = self.steps.len();
+        (1..=n)
+            .map(|d| (from + d) % n)
+            .find(|&i| !self.steps[i].done)
+    }
 }
 
 /// One question in a round, as its tab reports it.
@@ -1241,6 +1265,15 @@ pub struct Step {
     pub label: String,
     /// Answered already.
     pub done: bool,
+    /// The surface this step draws, when the round arrived whole and each of
+    /// its questions became a card of its own.
+    ///
+    /// [`None`] means the step is REAL but not reachable: the screen-read path
+    /// knows a question exists because the tab bar names it, and has nothing to
+    /// open, because only the question the picker is painting was ever read. A
+    /// navigator draws those as present and not pressable rather than hiding
+    /// them — an omitted step would say the round is shorter than it is.
+    pub id: Option<SurfaceId>,
 }
 
 /// Three states, because "answered" and "answered with option 2" are not the

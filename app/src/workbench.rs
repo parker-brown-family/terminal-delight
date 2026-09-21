@@ -3469,11 +3469,41 @@ impl Bench {
     /// Drawn inline in the conversation rather than needing to be found and
     /// clicked: an agent that has stopped and cannot continue is the one
     /// thing on this surface a person must not have to go looking for.
+    /// **The selection wins when it is itself a question still owed an answer.**
+    /// Without that, pressing a step of the round navigator selected a surface
+    /// nothing read, and answering one question of a round left the block on the
+    /// card just answered — both gestures the navigator exists for did nothing
+    /// a person could see.
+    ///
+    /// Otherwise the newest waiting question, and then a correction that only
+    /// appears on rounds: `rev()` takes the LAST arrival, which was right while
+    /// questions arrived one at a time and the newest was the live one. A round
+    /// arrives whole, so its last arrival is its LAST question — a round of two
+    /// opened on `Orphans` with `Ended state` unanswered behind it. Where the
+    /// newest waiting question belongs to a round, the block starts at that
+    /// round's first open step instead.
     pub fn waiting_question(&self) -> Option<&Surface> {
-        self.surfaces.iter().rev().find(|s| {
+        fn waiting(s: &Surface) -> bool {
             matches!(&s.kind, Kind::Question(q)
                 if q.answer == crate::surface::Answered::Waiting)
-        })
+        }
+        if let Some(sel) = self.selected().filter(|s| waiting(s)) {
+            return Some(sel);
+        }
+        let newest = self.surfaces.iter().rev().find(|s| waiting(s))?;
+        let first_open = match &newest.kind {
+            Kind::Question(q) => q.round.as_ref().and_then(|r| {
+                // `next_open` wraps, so starting at the last step lands on the
+                // first open one from the top.
+                let at = r.next_open(r.steps.len().checked_sub(1)?)?;
+                r.steps.get(at)?.id.clone()
+            }),
+            _ => None,
+        };
+        match first_open {
+            Some(id) => self.surfaces.iter().find(|s| s.id == id).or(Some(newest)),
+            None => Some(newest),
+        }
     }
 
     /// Move the selection within the active shelf. `+1` is down the rail.
@@ -4670,6 +4700,105 @@ mod tests {
             }
         }
         p
+    }
+
+    /// A round of two, as the channel presents it: two cards, each carrying the
+    /// same steps and its own `current`.
+    fn round_of_two(done_first: bool) -> (Post, Post) {
+        let steps = |cur: usize| crate::surface::Round {
+            steps: vec![
+                crate::surface::Step {
+                    label: "Ended state".into(),
+                    done: done_first,
+                    id: Some(SurfaceId("ask-hook-t-0".into())),
+                },
+                crate::surface::Step {
+                    label: "Orphans".into(),
+                    done: false,
+                    id: Some(SurfaceId("ask-hook-t-1".into())),
+                },
+            ],
+            submitting: false,
+            current: Some(cur),
+        };
+        let one = |id: &str, cur: usize, answered: bool| {
+            let mut p = question(id, None);
+            if let Some(s) = p.surface.as_mut() {
+                if let Kind::Question(q) = &mut s.kind {
+                    q.round = Some(steps(cur));
+                    if answered {
+                        q.answer = crate::surface::Answered::Chose(0);
+                    }
+                }
+            }
+            p
+        };
+        (
+            one("ask-hook-t-0", 0, done_first),
+            one("ask-hook-t-1", 1, false),
+        )
+    }
+
+    #[test]
+    fn a_round_opens_on_its_first_open_step_not_its_last_arrival() {
+        // `rev()` was right while questions arrived one at a time and the newest
+        // was the live one. A round arrives WHOLE, so the last arrival is its
+        // LAST question — the bench opened a round of two on `Orphans` with
+        // `Ended state` unanswered behind it, which is the jam Parker
+        // photographed from the terminal side.
+        let mut b = Bench::new();
+        let (first, second) = round_of_two(false);
+        b.apply(first);
+        b.apply(second);
+        assert_eq!(
+            b.waiting_question().map(|s| s.id.0.clone()),
+            Some("ask-hook-t-0".into()),
+            "a fresh round starts at step one"
+        );
+    }
+
+    #[test]
+    fn the_selection_decides_which_step_of_a_round_the_block_draws() {
+        // Both gestures the navigator exists for come through here: pressing a
+        // step selects that card, and answering one advances the selection to
+        // the next. If the block ignored the selection, both would select
+        // something nothing drew and appear to do nothing at all.
+        let mut b = Bench::new();
+        let (first, second) = round_of_two(false);
+        b.apply(first);
+        b.apply(second);
+        b.select(&SurfaceId("ask-hook-t-1".into()));
+        assert_eq!(
+            b.waiting_question().map(|s| s.id.0.clone()),
+            Some("ask-hook-t-1".into()),
+            "pressing a step must move the block to it"
+        );
+        // A selection that is NOT an open question does not hijack the block —
+        // selecting a changeset while a question waits still draws the question.
+        b.apply(changeset("c1"));
+        b.select(&SurfaceId("c1".into()));
+        assert_eq!(
+            b.waiting_question().map(|s| s.id.0.clone()),
+            Some("ask-hook-t-0".into()),
+            "a non-question selection falls back to the round's first open step"
+        );
+    }
+
+    #[test]
+    fn an_answered_step_stops_being_where_the_block_stands() {
+        // After step one is answered the round's first OPEN step is step two,
+        // which is where a person is sent. The answered card is still on the
+        // bench and still reachable from the navigator; it is simply no longer
+        // what the block opens on.
+        let mut b = Bench::new();
+        let (first, second) = round_of_two(true);
+        b.apply(first);
+        b.apply(second);
+        assert_eq!(
+            b.waiting_question().map(|s| s.id.0.clone()),
+            Some("ask-hook-t-1".into()),
+            "an answered first step hands the block to the second"
+        );
     }
 
     #[test]
