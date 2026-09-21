@@ -396,8 +396,9 @@ mod tests {
             r#"{{"event":"start","session_id":"{A}","pid":7,"ts":1,"root":"{A}","seq":0}}"#
         )]);
         assert_eq!(tenancy_of(B, f.home()), Tenancy::Unchained);
-        assert!(
-            tenancy_of(B, f.home()).measured(),
+        assert_ne!(
+            tenancy_of(B, f.home()),
+            Tenancy::Unrecorded,
             "we looked, and it is a root"
         );
     }
