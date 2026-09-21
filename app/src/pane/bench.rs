@@ -3429,6 +3429,7 @@ impl TerminalView {
             // position in the frame where every run above is guaranteed to
             // have been laid out. See `benchdraw::resolve`.
             .child(crate::benchdraw::atom_probe(
+                std::env::var_os("TD_SELDEBUG").is_some(),
                 self.wb_drawn.clone(),
                 self.wb_atoms.clone(),
                 self.wb_regions.clone(),

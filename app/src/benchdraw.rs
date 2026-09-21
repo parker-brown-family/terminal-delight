@@ -370,7 +370,7 @@ pub fn rail_row(row: &Row, sk: &Skin, th: &Theme) -> Div {
             div()
                 .text_size(px(sk.pt(Step::Small)))
                 .text_color(th.text)
-                .child(row.title.clone()),
+                .child(sel(row.title.clone())),
         )
         // Where this fact came from, and when. A surface that shows a state
         // without its provenance is asking to be trusted on nothing — the
@@ -381,7 +381,7 @@ pub fn rail_row(row: &Row, sk: &Skin, th: &Theme) -> Div {
                 div()
                     .text_size(px(sk.pt(Step::Tag)))
                     .text_color(sk.ink.ink_faint)
-                    .child(clip(&row.subtitle, 44)),
+                    .child(sel(clip(&row.subtitle, 44))),
             )
         })
 }
@@ -693,7 +693,7 @@ fn summary_line(surface: &Surface, sk: &Skin, th: &Theme) -> Div {
             div()
                 .text_size(px(sk.pt(Step::Lead)))
                 .text_color(th.text)
-                .child(clip(&surface.title, 60)),
+                .child(sel(clip(&surface.title, 60))),
         )
 }
 
@@ -725,7 +725,7 @@ fn heading(surface: &Surface, sk: &Skin, th: &Theme) -> Div {
                         .min_w(px(0.))
                         .text_size(px(sk.pt(Step::Title)))
                         .text_color(th.text)
-                        .child(surface.title.clone()),
+                        .child(sel(surface.title.clone())),
                 ),
         )
         // The subtitle, for the kinds whose subtitle says something a reader
@@ -975,7 +975,7 @@ fn escalation(
                         .min_w(px(0.))
                         .text_size(px(sk.pt(Step::Body)))
                         .text_color(th.text)
-                        .child(a.ask.clone()),
+                        .child(sel(a.ask.clone())),
                 )
         }))
 }
@@ -1158,7 +1158,7 @@ fn response(r: &Response, picks: Option<&Picks>, sk: &Skin, th: &Theme) -> Div {
                         .when(active, |x| {
                             x.border_b_1().border_color(facet.tint.alpha(0.8))
                         })
-                        .child(leaf.label().to_string());
+                        .child(sel(leaf.label().to_string()));
                     match picks {
                         Some(p) => chip.cursor_pointer().relative().child(zone(
                             p.zones.clone(),
@@ -1242,7 +1242,7 @@ fn response(r: &Response, picks: Option<&Picks>, sk: &Skin, th: &Theme) -> Div {
                                     div()
                                         .text_size(px(sk.pt(Step::Body)))
                                         .text_color(th.text)
-                                        .child(format!("\u{b7} {}", doubt.claim)),
+                                        .child(sel(format!("\u{b7} {}", doubt.claim))),
                                 )
                                 .child(micro(
                                     // Undeclared and unknown are different
@@ -1319,7 +1319,7 @@ fn section_body(body: &Body, register: Register, sk: &Skin, th: &Theme) -> Div {
                                 .min_w(px(0.))
                                 .text_size(px(sk.pt(Step::Body)))
                                 .text_color(th.text.alpha(0.9))
-                                .child(item.clone()),
+                                .child(sel(item.clone())),
                         )
                 }))
         }
@@ -1483,13 +1483,13 @@ pub fn review_flyout(
         div()
             .text_size(px(sk.pt(Step::Head)))
             .text_color(th.text)
-            .child(title.to_string()),
+            .child(sel(title.to_string())),
     )
     .child(
         div()
             .text_size(px(sk.pt(Step::Lead)))
             .text_color(tint)
-            .child(answer.to_string()),
+            .child(sel(answer.to_string())),
     )
 }
 
@@ -1752,7 +1752,7 @@ fn architecture(a: &crate::surface::Architecture, sk: &Skin, th: &Theme) -> Div 
                             div()
                                 .text_size(px(sk.pt(Step::Small)))
                                 .text_color(th.text)
-                                .child(n.label.clone()),
+                                .child(sel(n.label.clone())),
                         )
                         .when_some(n.state.clone(), |d, s| {
                             d.child(micro(s, Step::Tag, th.accent, sk, th))
@@ -1870,7 +1870,7 @@ fn patch(text: &str, sk: &Skin, th: &Theme) -> Div {
             .text_size(px(sk.pt(Step::Small)))
             .text_color(colour)
             .font_family(th.font_family.clone())
-            .child(line.to_string())
+            .child(sel(line.to_string()))
     }))
 }
 
@@ -1883,7 +1883,7 @@ fn decision(d: &crate::surface::Decision, sk: &Skin, th: &Theme) -> Div {
             div()
                 .text_size(px(sk.pt(Step::Lead)))
                 .text_color(th.text)
-                .child(d.question.clone()),
+                .child(sel(d.question.clone())),
         )
         .children(d.options.iter().map(|o| {
             // Exactly one option is lit, and the parser has already made sure of
@@ -1906,7 +1906,7 @@ fn decision(d: &crate::surface::Decision, sk: &Skin, th: &Theme) -> Div {
                             div()
                                 .text_size(px(sk.pt(Step::Body)))
                                 .text_color(th.text)
-                                .child(o.name.clone()),
+                                .child(sel(o.name.clone())),
                         )
                         .when(o.recommended, |x| {
                             x.child(micro("recommended", Step::Tag, th.accent, sk, th))
@@ -2085,7 +2085,7 @@ fn paragraph(text: String, sk: &Skin, th: &Theme) -> Div {
             div()
                 .text_size(px(sk.pt(Step::Body)))
                 .text_color(th.text.alpha(0.9))
-                .child(line.to_string())
+                .child(sel(line.to_string()))
         }))
 }
 
@@ -2649,11 +2649,18 @@ pub fn resolve(
 
 /// The element that resolves the run list, once the frame has painted.
 ///
+/// `debug` arrives as a parameter rather than being read from the environment
+/// here, because `a_renderer_contains_no_decisions` forbids this module from
+/// reading `std::env` at all — and it is right to: the decision to log is the
+/// pane's, and a renderer that consults the environment is one whose output
+/// cannot be reproduced from its arguments.
+///
 /// Goes LAST in the bench's tree, beside the pointer hook and for a related
 /// reason: both need every sibling to have been through the frame already.
 /// See [`resolve`] for why reading a `TextLayout` any earlier is a panic
 /// waiting for a narrow pane.
 pub fn atom_probe(
+    debug: bool,
     drawn: std::rc::Rc<std::cell::RefCell<Vec<Drawn>>>,
     into: std::rc::Rc<std::cell::RefCell<(Vec<crate::workbench::Atom>, Vec<gpui::TextLayout>)>>,
     regions: std::rc::Rc<
@@ -2664,9 +2671,55 @@ pub fn atom_probe(
         |_, _, _| {},
         move |_, _, _window, _cx| {
             let rs = regions.borrow();
-            *into.borrow_mut() = resolve(&drawn.borrow(), |x, y, w, h| {
+            let resolved = resolve(&drawn.borrow(), |x, y, w, h| {
                 crate::workbench::region_of(&rs, x, y, w, h)
             });
+            // THE TRACER BULLET, and the reason it counts per region rather
+            // than in total. A run that never registered is absent from every
+            // copy afterwards and has no symptom on screen — the text is
+            // drawn, it simply cannot be dragged over. A total would go up
+            // when the strip gained a label and say nothing about whether the
+            // card did. Printed only when the shape changes, so a moving
+            // pointer does not fill the log.
+            if debug {
+                use crate::workbench::Region;
+                let n = |r: Region| resolved.0.iter().filter(|a| a.region == r).count();
+                let shape = (
+                    n(Region::Body),
+                    n(Region::Rail),
+                    n(Region::Composer),
+                    n(Region::Chrome),
+                );
+                thread_local! {
+                    static LAST: std::cell::Cell<(usize, usize, usize, usize)> =
+                        const { std::cell::Cell::new((usize::MAX, 0, 0, 0)) };
+                }
+                LAST.with(|l| {
+                    if l.get() != shape {
+                        l.set(shape);
+                        eprintln!(
+                            "[bench-sel] runs: body={} rail={} composer={} chrome={} regions={}",
+                            shape.0,
+                            shape.1,
+                            shape.2,
+                            shape.3,
+                            rs.len()
+                        );
+                        // And WHAT they say, because a count alone cannot
+                        // tell "the bench is drawing almost nothing" from
+                        // "the collector is dropping almost everything", and
+                        // those two want opposite repairs.
+                        for a in resolved.0.iter().take(12) {
+                            eprintln!(
+                                "[bench-sel]   {:?} {:?}",
+                                a.region,
+                                a.text.chars().take(56).collect::<String>()
+                            );
+                        }
+                    }
+                });
+            }
+            *into.borrow_mut() = resolved;
         },
     )
     .absolute()
@@ -3230,7 +3283,7 @@ pub fn asked(lines: &[String], sk: &Skin, th: &Theme) -> Div {
                 .text_size(px(sk.pt(Step::Body)))
                 .font_family(th.font_family.clone())
                 .text_color(th.human)
-                .child(line.clone())
+                .child(sel(line.clone()))
         }))
 }
 
@@ -3256,7 +3309,7 @@ pub fn conversation(tail: &[String], sk: &Skin, th: &Theme) -> Div {
                 .text_size(px(sk.pt(Step::Body)))
                 .font_family(th.font_family.clone())
                 .text_color(if mine { th.human } else { th.text.alpha(0.62) })
-                .child(line.clone())
+                .child(sel(line.clone()))
         }))
 }
 
@@ -3290,7 +3343,7 @@ pub fn waiting_block(q: &crate::surface::Question, sk: &Skin, th: &Theme) -> Div
         div()
             .text_size(px(sk.pt(Step::Head)))
             .text_color(th.text)
-            .child(q.question.clone()),
+            .child(sel(q.question.clone())),
     )
     .child(
         div()
