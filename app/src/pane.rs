@@ -2277,6 +2277,20 @@ pub struct TerminalView {
     /// The last liveness marker this pane wrote: whether its bench was open,
     /// and when. `None` until the first one goes.
     wb_beacon: Option<(bool, u64)>,
+    /// Which conversation this pane's bench belongs to, once the window has
+    /// bound it. `None` means nobody has established it — a shell pane, an
+    /// agent whose binding is not certain, or a sweep that has not run yet —
+    /// and **nothing is filed while it is `None`**. A guess here would write
+    /// one conversation's surfaces into another's record, which is the defect
+    /// this whole key exists to prevent.
+    wb_conv: Option<crate::benchstore::ConvKey>,
+    /// How strongly the pane was bound when [`Self::wb_conv`] was set, kept so
+    /// every line filed can say what it was attributed on.
+    wb_conv_bond: crate::vitals::Bond,
+    /// The ordinal the NEXT ask will carry. Read from the record when the
+    /// conversation is adopted, so a window restart mid-conversation does not
+    /// start counting again and file this turn's reply under the first one.
+    wb_turn: u32,
 }
 
 /// Click on the header's theme icon — the workspace opens the breakout menu.
@@ -3016,6 +3030,14 @@ impl TerminalView {
             self.wb_channel = crate::channel::State::new();
             self.wb_asked_by_hook = false;
             self.wb_recall = None;
+            // And the conversation key, which is the same argument as the
+            // channel's: the next agent in this pane is a different
+            // conversation, and filing its surfaces into the departed one's
+            // record is the cross-conversation write this key exists to stop.
+            // Nothing on disk is touched — the record outlives the process.
+            self.wb_conv = None;
+            self.wb_conv_bond = crate::vitals::Bond::Guess;
+            self.wb_turn = 0;
             // And the surfaces, which is the same argument one step further
             // on. The ask above is cleared because captioning a new agent's
             // reply with the old agent's question is wrong; the channel is
@@ -3551,6 +3573,9 @@ impl TerminalView {
             wb_sent: Vec::new(),
             wb_recall: None,
             wb_beacon: None,
+            wb_conv: None,
+            wb_conv_bond: crate::vitals::Bond::Guess,
+            wb_turn: 0,
         }
     }
 

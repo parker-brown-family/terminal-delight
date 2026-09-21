@@ -5531,30 +5531,51 @@ impl Workspace {
                 // Bind the whole window once, off the main thread, and answer
                 // with the transcript AND its stamp so the main thread's only
                 // job is the cheap "has this moved since last sweep" test.
-                let bound = cx
+                let (bound, keys) = cx
                     .background_executor()
                     .spawn(async move {
                         let home = session::home_dir();
-                        let certain = paneident::certain(&facts, &home);
-                        reqs.into_iter()
-                            .filter_map(|(shell_pid, pane)| {
-                                let path = certain.get(&shell_pid)?.clone();
-                                let stamp = std::fs::metadata(&path).ok().map(|m| {
-                                    let modified = m
-                                        .modified()
-                                        .ok()
-                                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                                        .map(|d| d.as_millis() as u64)
-                                        .unwrap_or(0);
-                                    (modified, m.len())
-                                });
-                                Some((pane, path, stamp))
-                            })
-                            .collect::<Vec<_>>()
+                        // One binding, two readers. The transcript path is what
+                        // the derived half parses; the session id it is named
+                        // by is what the conversation's record is keyed on. The
+                        // bond comes with them because a line in that record
+                        // says what it was attributed on, and `certain` throws
+                        // it away.
+                        let bound_panes = paneident::resolve(&facts, &home);
+                        let mut bound: Vec<BoundTranscript> = Vec::new();
+                        let mut keys: Vec<(u64, benchstore::ConvKey, vitals::Bond)> = Vec::new();
+                        for (shell_pid, pane) in reqs {
+                            let Some(b) = bound_panes.get(&shell_pid).filter(|b| b.is_certain())
+                            else {
+                                // Not certain is not a weaker yes. Two agents
+                                // under one shell bind to one identity and
+                                // nobody is certain, which is the case this
+                                // refusal exists for: no derived surfaces, and
+                                // no filing either.
+                                continue;
+                            };
+                            if let Some(key) = benchstore::key_for_session(&b.session_id, &home) {
+                                keys.push((pane, key, b.bond));
+                            }
+                            let path = b.path.clone();
+                            let stamp = std::fs::metadata(&path).ok().map(|m| {
+                                let modified = m
+                                    .modified()
+                                    .ok()
+                                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                                    .map(|d| d.as_millis() as u64)
+                                    .unwrap_or(0);
+                                (modified, m.len())
+                            });
+                            bound.push((pane, path, stamp));
+                        }
+                        (bound, keys)
                     })
                     .await;
-                let Ok(moved) = this.update(cx, |ws: &mut Workspace, _cx| ws.take_moved(bound))
-                else {
+                let Ok(moved) = this.update(cx, |ws: &mut Workspace, cx| {
+                    ws.adopt_conversations(keys, cx);
+                    ws.take_moved(bound)
+                }) else {
                     break;
                 };
                 let found = cx
@@ -5567,6 +5588,15 @@ impl Workspace {
                                 pane,
                                 posts: derive::from_transcript(&path, now),
                                 events: Vec::new(),
+                                // Derived surfaces have no document of their
+                                // own: they are read out of the agent's
+                                // transcript, which is durable, keyed by the
+                                // same session and re-read wherever the
+                                // conversation is resumed. Filing a
+                                // reconstruction of one would put a second
+                                // copy in the record that the first sweep of
+                                // the next window would disagree with.
+                                docs: Vec::new(),
                             })
                             .filter(|a| !a.posts.is_empty())
                             .collect::<Vec<_>>()
@@ -7512,6 +7542,29 @@ impl Workspace {
     /// pane per sweep replaces one 256 KiB read and parse per agent pane per
     /// sweep. A stat that fails (the file is gone, or mid-rotation) falls
     /// through and lets the parse decide, exactly as before.
+    /// Hand each pane the conversation the window bound it to.
+    ///
+    /// The binding is made once for the whole window and pushed down, rather
+    /// than asked for per pane, because it is only correct collectively: two
+    /// panes may not hold one conversation, and that is a fact about the pair.
+    /// A pane the window could not bind with certainty is simply not in this
+    /// list, and keeps whatever it had — which for a fresh pane is nothing, and
+    /// nothing is what gets filed.
+    fn adopt_conversations(
+        &mut self,
+        keys: Vec<(u64, benchstore::ConvKey, vitals::Bond)>,
+        cx: &mut Context<Self>,
+    ) {
+        for (pane, key, bond) in keys {
+            let Some(leaf) = self.leaf_with_pane_id(pane, cx) else {
+                continue;
+            };
+            leaf.update(cx, |view, cx| {
+                view.bench_adopt_conversation(key, bond, cx);
+            });
+        }
+    }
+
     fn take_moved(&mut self, bound: Vec<BoundTranscript>) -> Vec<(u64, PathBuf)> {
         let mut out = Vec::new();
         for (pane, path, stamp) in bound {
@@ -7577,6 +7630,12 @@ impl Workspace {
                 continue;
             };
             leaf.update(cx, |view, cx| {
+                // Filed BEFORE it is drawn, and the mailbox copy is left
+                // alone. The order matters the day the drain lands beside
+                // this: a crash between the record and the removal costs a
+                // surface delivered twice, and the other order costs the
+                // surface.
+                view.bench_file_docs(&arrival.docs);
                 for post in arrival.posts {
                     view.present(post, cx);
                 }

@@ -203,6 +203,12 @@ pub struct Arrivals {
     pub posts: Vec<Post>,
     /// What the pane's inbound journal gained — the agent channel's half.
     pub events: Vec<crate::channel::Inbound>,
+    /// The document behind each surface, for the conversation's record.
+    ///
+    /// Empty for arrivals the window synthesised rather than read: those have
+    /// no bytes to keep, and they rebuild from the agent's own transcript or
+    /// from the channel journal. See [`Feed::sweep_pane_with_docs`].
+    pub docs: Vec<(String, Value)>,
 }
 
 impl Feed {
@@ -231,13 +237,14 @@ impl Feed {
             else {
                 continue; // not a pane directory; leave whatever it is alone
             };
-            let posts = self.sweep_pane(&path, now);
+            let (posts, docs) = self.sweep_pane_with_docs(&path, now);
             let events = self.tail_inbound(&path);
             if !posts.is_empty() || !events.is_empty() {
                 out.push(Arrivals {
                     pane,
                     posts,
                     events,
+                    docs,
                 });
             }
         }
@@ -292,9 +299,34 @@ impl Feed {
     /// One pane directory, oldest file first so the bench sees arrivals in the
     /// order they were made rather than in whatever order the directory hands
     /// them over.
+    /// The window takes [`Feed::sweep_pane_with_docs`] instead: every arrival
+    /// it draws it also files, so a caller that wanted only the posts would be
+    /// a caller quietly dropping the conversation's record.
+    #[cfg(test)]
     pub fn sweep_pane(&mut self, dir: &Path, now: u64) -> Vec<Post> {
+        self.sweep_pane_with_docs(dir, now).0
+    }
+
+    /// The same sweep, and the document each surface was parsed from.
+    ///
+    /// The raw document is what [`crate::benchstore`] files. A `Surface` is a
+    /// parse of one and there is no serializer back, so the bytes that arrived
+    /// are the only faithful thing to keep — and they are what a later read
+    /// hands to the same lenient parser, which is how a restored bench draws
+    /// exactly what the live one did.
+    ///
+    /// Returned beside the posts rather than carried on one, because a retire
+    /// has no document and a synthesised surface — the channel's cards, the
+    /// transcript's — never had one. Those two rebuild from their own durable
+    /// inputs instead, and a `Post` field would invite a caller to believe
+    /// every surface has bytes behind it.
+    pub fn sweep_pane_with_docs(
+        &mut self,
+        dir: &Path,
+        now: u64,
+    ) -> (Vec<Post>, Vec<(String, Value)>) {
         let Ok(entries) = fs::read_dir(dir) else {
-            return Vec::new();
+            return (Vec::new(), Vec::new());
         };
         let mut candidates: Vec<(PathBuf, Stamp)> = Vec::new();
         for entry in entries.flatten() {
@@ -329,6 +361,7 @@ impl Feed {
         candidates.sort_by_key(|(path, stamp)| (stamp.modified_ms, path.clone()));
 
         let mut posts = Vec::new();
+        let mut docs: Vec<(String, Value)> = Vec::new();
         for (path, stamp) in candidates {
             let Ok(text) = fs::read_to_string(&path) else {
                 continue;
@@ -350,9 +383,15 @@ impl Feed {
             if let Some(s) = post.surface.as_mut() {
                 s.origin = crate::surface::Origin::FileDrop;
             }
+            // Only a document that became a surface is worth filing. A retire
+            // says to take one away, and filing it would put the removal in
+            // the record as a thing the conversation showed.
+            if post.surface.is_some() {
+                docs.push((post.id.as_str().to_string(), value));
+            }
             posts.push(post);
         }
-        posts
+        (posts, docs)
     }
 }
 
@@ -1130,6 +1169,93 @@ mod tests {
         // Retiring something that was never persisted is the normal case for a
         // surface an older build presented, and is not a failure.
         assert!(!retire_surface(scratch.path(), "never-here"));
+    }
+
+    /// The JOIN between the mailbox and the conversation's record.
+    ///
+    /// Both halves have their own tests — the sweep parses, the store files and
+    /// loads — and neither of those says the restored bench draws what the live
+    /// one drew. This walks the whole road: a surface arrives, is filed under a
+    /// conversation, and is read back by the path a window takes when it opens
+    /// on that conversation somewhere else entirely.
+    #[test]
+    fn a_swept_surface_comes_back_from_the_record_as_the_same_surface() {
+        let mailbox = Scratch::new("join-mailbox");
+        let store = Scratch::new("join-store");
+        let root = "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa";
+
+        // A dotted id is legal in a document and legal in the record, and
+        // this is not the place to prove it: `drop_surface` names the FILE
+        // after the id, so the dot goes to keep the `.json` test meaning what
+        // it says, and the stem is what the sweep reports back. The store's
+        // own alphabet is tested where it is enforced, in `benchstore`.
+        drop_surface(mailbox.path(), "plan-v2", &a_doc("The plan")).unwrap();
+        let (posts, docs) = Feed::new().sweep_pane_with_docs(mailbox.path(), NOW);
+        assert_eq!(posts.len(), 1);
+        assert_eq!(docs.len(), 1, "a surface hands back the document behind it");
+        assert_eq!(docs[0].0, "plan-v2", "keyed by the id it was filed under");
+        assert_eq!(
+            docs[0].0,
+            posts[0].id.as_str(),
+            "the record's key and the drawn surface's id are one thing"
+        );
+
+        for (id, doc) in &docs {
+            crate::benchstore::file(
+                store.path(),
+                root,
+                0,
+                id,
+                doc,
+                crate::vitals::Bond::Declared,
+                NOW,
+            )
+            .unwrap();
+        }
+
+        // A different window, a different pane, the same conversation.
+        let back = crate::benchstore::load(store.path(), root);
+        assert_eq!(back.surfaces.len(), 1);
+        let (id, value) = &back.surfaces[0];
+        let restored = crate::surface::parse_lenient(value, NOW + 1, id);
+        let live = posts[0].surface.as_ref().unwrap();
+        let restored = restored.surface.as_ref().unwrap();
+        assert_eq!(restored.title, live.title);
+        assert_eq!(restored.id, live.id);
+        assert_eq!(
+            std::mem::discriminant(&restored.kind),
+            std::mem::discriminant(&live.kind),
+            "and it is the same kind of thing, not an unclassified block"
+        );
+        assert_eq!(
+            restored.origin,
+            crate::surface::Origin::Unknown,
+            "who sent it was never in the document, so a later reader says so \
+             rather than repeating the transport's claim"
+        );
+    }
+
+    /// A retire is an instruction to take something away, and the record is of
+    /// what the conversation showed.
+    #[test]
+    fn a_retire_hands_back_no_document_to_file() {
+        let scratch = Scratch::new("join-retire");
+        drop_surface(scratch.path(), "going", &a_doc("Going")).unwrap();
+        let mut feed = Feed::new();
+        assert_eq!(feed.sweep_pane_with_docs(scratch.path(), NOW).1.len(), 1);
+
+        std::fs::write(
+            scratch.path().join("gone.json"),
+            serde_json::json!({ "td": "0.4", "op": "retire", "id": "going" }).to_string(),
+        )
+        .unwrap();
+        let (posts, docs) = feed.sweep_pane_with_docs(scratch.path(), NOW + 1);
+        assert_eq!(posts.len(), 1, "the retire is still delivered");
+        assert!(
+            posts[0].surface.is_none(),
+            "a retire carries nothing to draw"
+        );
+        assert!(docs.is_empty(), "and nothing to file");
     }
 
     #[test]
