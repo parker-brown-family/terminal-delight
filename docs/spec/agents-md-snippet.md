@@ -52,16 +52,17 @@ theme and at whatever size the pane is. A kind it does not know is shown as
 `unclassified` rather than dropped, so it is always safe to send.
 
 **End every turn with a `response`.** The bench's OVERVIEW is a feed of these
-and shows nothing else. A response is a `tldr` (one or two sentences,
-required) plus registers a person unfolds by name — `eli5`, `layman`,
-`technical`, `evidence`, `asks`, `next` — and `doubts`, where you are not sure,
-each with a `claim`, a `why` and a `confidence`. Any other key becomes a
-section labelled by its key; a string is prose, an array is a list, an object
-is facts. Write the tldr for the person, not for yourself.
+and shows nothing else. A response is a `layman` (required): the whole reply in
+plain English, written for the person and not for yourself. It is what the card
+opens on, so write it as the answer rather than as a trailer for one. Then
+registers a person unfolds by name — `technical`, `evidence`, `asks`, `next` —
+and `doubts`, where you are not sure, each with a `claim`, a `why` and a
+`confidence`. Any other key becomes a section labelled by its key; a string is
+prose, an array is a list, an object is facts.
 
 ```json
-{ "td": "0.3", "kind": "response", "title": "What this turn did",
-  "model": { "tldr": "The gist.", "eli5": "…", "technical": "…",
+{ "td": "0.4", "kind": "response", "title": "What this turn did",
+  "model": { "layman": "The reply, in plain English.", "technical": "…",
              "evidence": ["…"], "next": ["…"],
              "doubts": [ { "claim": "…", "why": "…", "confidence": "hunch" } ] } }
 ```

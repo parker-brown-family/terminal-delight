@@ -36,7 +36,12 @@ Three things in one message with two screenshots:
 
 - **The registers are keys under `model`**, not a nested `response` object — but the nested
   shape Parker drew is accepted as an alias, so both land.
-- **Known keys and their labels:** `tldr` (required), `eli5` → ELI5, `layman` → Plain brief,
+- ~~**Known keys and their labels:** `tldr` (required), `eli5` → ELI5, `layman` → Plain brief,~~
+  **Amended 2026-09-21 — argued with, exactly as invited.** Parker, on the overview:
+  *"The plain text explanation gets promoted to the default. TLDR and LE5 both die, and
+  the technical brief stays."* `layman` is now the required, always-shown register;
+  `tldr` is read only as a legacy filler for it and is never a section; `eli5` files
+  under Other. The rest of this line stands:
   `technical` → Technical brief, `evidence` → What was verified, `asks` → Needs from you,
   `next` → What's next, `doubts` → its own strip. Aliases for each. Unknown keys are kept as
   sections labelled by their key, sorted after the known ones.

@@ -928,14 +928,16 @@ fn tool_defs() -> Value {
                  face, toggled from its header beside the terminal. Describe what \
                  the thing MEANS and Terminal Delight renders it natively. END \
                  EVERY TURN with a `response`: the workbench's OVERVIEW is a feed \
-                 of these and shows nothing else. A response is a `tldr` (one or \
-                 two sentences, required) plus registers a person unfolds by name \
-                 — `eli5`, `layman`, `technical`, `evidence`, `asks`, `next` — and \
-                 `doubts`, where you are not sure, each a `claim` with a `why` and \
-                 a `confidence`. Any other key becomes a section labelled by its \
-                 key; a string is prose, an array a list, an object facts. Every \
-                 register is a PEER and the reader lights the one they are in, so \
-                 do not try to emphasise one. The one thing that interrupts is \
+                 of these and shows nothing else. A response is a `layman` \
+                 (required) — the whole reply in plain English, written for the \
+                 person and not for yourself, and the register the card opens on \
+                 — plus registers a person unfolds by name: `technical`, \
+                 `evidence`, `asks`, `next`, and `doubts`, where you are not \
+                 sure, each a `claim` with a `why` and a `confidence`. Any other \
+                 key becomes a section labelled by its key; a string is prose, an \
+                 array a list, an object facts. Every register is a PEER and the \
+                 reader lights the one they are in, so do not try to emphasise \
+                 one. The one thing that interrupts is \
                  `escalation`: {\"level\":\"blocking|wanted|none\", \"why\":\"…\", \
                  \"items\":[{\"ask\":\"…\",\"answered\":false}]}. Declare `none` \
                  when you need nothing — leaving it out means you never said, \
@@ -945,7 +947,7 @@ fn tool_defs() -> Value {
                  widths, no colours, no components; the window owns all of that. \
                  `surface` is one TDSP document: \
                  {\"td\":\"0.4\", \"kind\":\"response\", \"title\":\"…\", \
-                 \"model\":{\"tldr\":\"…\",\"technical\":\"…\",\"doubts\":[…]}}. \
+                 \"model\":{\"layman\":\"…\",\"technical\":\"…\",\"doubts\":[…]}}. \
                  Send the same `id` again to update it in place, or op \"retire\" \
                  to take it off the bench. An unknown kind is shown as \
                  unclassified rather than dropped, so it is always safe to send. \
@@ -2159,10 +2161,20 @@ mod tests {
             blurb.contains(&format!("\"td\":\"{}\"", crate::surface::TDSP_VERSION)),
             "the example names a version this build does not speak: {blurb}"
         );
-        for word in ["response", "tldr", "doubts"] {
+        for word in ["response", "layman", "doubts"] {
             assert!(
                 blurb.contains(word),
                 "the blurb never says {word:?}: {blurb}"
+            );
+        }
+        // The same gate the launch briefing carries: an agent must not be asked
+        // over MCP for a register the window retired. The two texts drifted
+        // apart once already — the briefing is in `surface`, the blurb is here,
+        // and nothing but a test joins them.
+        for dead in ["tldr", "tl;dr", "eli5", "ELI5"] {
+            assert!(
+                !blurb.contains(dead),
+                "the blurb still asks for {dead:?}: {blurb}"
             );
         }
     }

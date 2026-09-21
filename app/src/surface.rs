@@ -710,9 +710,17 @@ pub struct Choice_ {
 /// the technical brief, and the person who wants the technical brief has to
 /// skim the gist. Parker: *"ELI5, tl;dr, technical brief, layman brief,
 /// other ideas ... articles of doubt where the agent is maybe unconfident."*
-/// So a response is a `tldr` that is always shown, a set of sections a person
+/// So a response is a plain brief that is always shown, a set of sections a person
 /// unfolds by name, and the doubts kept apart from the claims because they
 /// are the part a reader most needs and prose most often buries.
+///
+/// **The always-shown register is the PLAIN BRIEF**, as of 2026-09-21. It was
+/// the `tldr` until Parker looked at the overview and said: *"The plain text
+/// explanation gets promoted to the default. TLDR and LE5 both die, and the
+/// technical brief stays."* Three lengths of the same reply is two too many —
+/// a gist, a plain brief and an ELI5 are one register argued over by a
+/// committee, and the reader picks between a plain explanation and a technical
+/// one or between nothing at all.
 ///
 /// **Well defined and very flexible, both.** The registers this build knows
 /// get a fixed label and a fixed order; any other key the agent sends becomes
@@ -723,10 +731,14 @@ pub struct Choice_ {
 /// the JSON will allow it to be flexible."*
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Response {
-    /// The one or two sentences that stand for the whole reply. Required,
-    /// and drawn open: a response whose gist is folded is a response nobody
-    /// reads.
-    pub tldr: String,
+    /// The reply in plain English — the register that is always on screen.
+    /// Required, and never folded: a response whose explanation is folded is a
+    /// response nobody reads.
+    ///
+    /// Named `brief` rather than `tldr` because it is no longer a tl;dr. A
+    /// field holding a paragraph under a name that promises one sentence is a
+    /// comment that lies, and the next reader would write to the promise.
+    pub brief: String,
     /// The registers, known ones first in their canonical order and then
     /// whatever else the agent sent, by key.
     pub sections: Vec<Section>,
@@ -837,21 +849,27 @@ pub struct Section {
 /// Ordered as they are drawn: easiest reading first, then what the agent
 /// checked, then what it wants from you, then what comes next. `Other` sorts
 /// last and keeps the agent's own key as its label.
+///
+/// **Two readings, not four.** `Tldr` and `Eli5` were variants here until
+/// 2026-09-21. A reply cut four ways is a reply written four times, and the
+/// reader was being asked to choose between three that say the same thing.
+/// What survives is the pair that genuinely differ in what they contain: the
+/// plain brief and the technical one.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, PartialOrd, Ord)]
 pub enum Register {
-    /// The gist — a register like any other, and first.
+    /// The reply in plain English — a register like any other, and first.
     ///
-    /// It used to be drawn as a banner: bigger type, its own raised floor, the
-    /// accent down its edge. That made it outrank a technical brief the reader
-    /// had deliberately opened, which is backwards. Parker: *"ALL THE READING
-    /// will ONLY be phosphor highlighted when ACTIVE — all the reading will be
-    /// attentionally equal, eli5 or tl;dr does not get escalated."*
+    /// The gist used to sit in this slot and used to be drawn as a banner:
+    /// bigger type, its own raised floor, the accent down its edge. That made
+    /// it outrank a technical brief the reader had deliberately opened, which
+    /// is backwards. Parker: *"ALL THE READING will ONLY be phosphor
+    /// highlighted when ACTIVE — all the reading will be attentionally equal,
+    /// eli5 or tl;dr does not get escalated."* Both of those are now gone
+    /// entirely and this is what the card opens on.
     ///
-    /// It never appears in [`Response::sections`] — the wire keeps `tldr` as its
-    /// own required member — but it is a first-class register everywhere the
-    /// bench reasons about folds and order.
-    Tldr,
-    Eli5,
+    /// It never appears in [`Response::sections`] — the wire keeps the plain
+    /// brief as [`Response::brief`], its own required member — but it is a
+    /// first-class register everywhere the bench reasons about folds and order.
     Layman,
     Technical,
     Evidence,
@@ -862,12 +880,20 @@ pub enum Register {
 
 impl Register {
     /// The key a register is folded to, and the label it wears.
+    ///
+    /// The plain brief is absent from this table on purpose: it is
+    /// [`Response::brief`], pulled out before the section loop ever runs, so a
+    /// row for it here would build a second copy of the one register that must
+    /// not have one.
     pub fn known(key: &str) -> Option<(Register, &'static str, &'static str)> {
         let k = key.trim().to_ascii_lowercase().replace(['-', ' '], "_");
         Some(match k.as_str() {
-            "eli5" | "explain_like_im_five" | "simple" => (Register::Eli5, "eli5", "ELI5"),
-            "layman" | "layman_brief" | "laymans" | "plain" | "plain_brief" | "plain_english"
-            | "brief" => (Register::Layman, "layman", "Plain brief"),
+            // ELI5 is no longer a READING — it is not one of the lengths the
+            // card offers. It keeps a row only so that an agent still sending
+            // it lands under its own acronym rather than as `humanise`'s
+            // "Eli5", and it files under `Other`, last, like any key this build
+            // does not lay out.
+            "eli5" | "explain_like_im_five" | "simple" => (Register::Other, "eli5", "ELI5"),
             "technical" | "technical_brief" | "tech" | "engineering" | "detail" | "details" => {
                 (Register::Technical, "technical", "Technical brief")
             }
@@ -882,8 +908,35 @@ impl Register {
         })
     }
 
-    /// The keys that are the `tldr`, however the agent spelled it.
-    pub fn is_tldr(key: &str) -> bool {
+    /// The keys that are the plain brief, however the agent spelled it.
+    pub fn is_brief(key: &str) -> bool {
+        matches!(
+            key.trim()
+                .to_ascii_lowercase()
+                .replace(['-', ' '], "_")
+                .as_str(),
+            "layman"
+                | "layman_brief"
+                | "laymans"
+                | "plain"
+                | "plain_brief"
+                | "plain_english"
+                | "brief"
+        )
+    }
+
+    /// The keys that USED to be the gist, and now fill the plain brief when
+    /// nothing better arrived.
+    ///
+    /// The tl;dr is dead as a register: it is never a section, never a chip,
+    /// never named in the briefing. It is still read, because ~20 agent panes
+    /// on this machine are running with the old briefing in their context and
+    /// refusing their replies would have emptied every overview on the box
+    /// until each one was relaunched. A legacy gist is CONSUMED, not dropped —
+    /// it fills [`Response::brief`] only when no real plain brief came with it,
+    /// and loses to one that did. Drawing it as a section of its own would be
+    /// the tl;dr back on the card under a different name.
+    pub fn is_legacy_gist(key: &str) -> bool {
         matches!(
             key.trim()
                 .to_ascii_lowercase()
@@ -923,11 +976,11 @@ impl Register {
 /// inventing a requirement.
 ///
 /// The cut is Parker's, approved 2026-09-18 on the brief: *"I go with 100%
-/// recommendations - lgtm. SHIP!"* Four lengths of one reply are alternatives
+/// recommendations - lgtm. SHIP!"* Two depths of one reply are alternatives
 /// rather than a checklist, which is the whole argument for grouping them.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
 pub enum Group {
-    /// The reply, at whatever length you want it: tl;dr, ELI5, plain, technical.
+    /// The reply, at whichever depth you want it: plain, or technical.
     Reading,
     /// What was checked, and what the agent is unsure of. The doubts live here
     /// and carry their count on the tab.
@@ -949,9 +1002,7 @@ impl Group {
     /// Where a register is read. Total, and a pure function.
     pub fn of(register: Register) -> Group {
         match register {
-            Register::Tldr | Register::Eli5 | Register::Layman | Register::Technical => {
-                Group::Reading
-            }
+            Register::Layman | Register::Technical => Group::Reading,
             Register::Evidence => Group::Evidence,
             Register::Asks | Register::Next => Group::Next,
             Register::Other => Group::Other,
@@ -1466,8 +1517,9 @@ impl Surface {
                 Answered::ChoseUnknown => "answered · how is unavailable".into(),
                 Answered::Waiting => format!("{} options · waiting on you", q.options.len()),
             },
-            // The gist IS the subtitle: a reply's row is read, not counted.
-            Kind::Response(r) => r.tldr.clone(),
+            // The plain brief IS the subtitle: a reply's row is read, not
+            // counted.
+            Kind::Response(r) => r.brief.clone(),
             Kind::Unclassified(u) => u.reason.clone(),
         }
     }
@@ -1675,9 +1727,9 @@ fn default_title(kind: &Kind) -> String {
         Kind::Changeset(c) => format!("{} hunks", c.hunks.len()),
         Kind::Decision(d) => d.question.chars().take(TITLE_MAX_CHARS).collect(),
         Kind::Question(q) => q.question.chars().take(TITLE_MAX_CHARS).collect(),
-        // The first sentence of the gist, which is what a person would have
-        // typed as the title had they been asked.
-        Kind::Response(r) => first_sentence(&r.tldr)
+        // The first sentence of the plain brief, which is what a person would
+        // have typed as the title had they been asked.
+        Kind::Response(r) => first_sentence(&r.brief)
             .chars()
             .take(TITLE_MAX_CHARS)
             .collect(),
@@ -1894,7 +1946,7 @@ fn parse_kind(name: &str, model: Option<&Value>) -> Result<Kind, KindError> {
     })
 }
 
-/// A response's model: a `tldr` plus registers, known and otherwise.
+/// A response's model: a `layman` brief plus registers, known and otherwise.
 ///
 /// The registers may sit directly in the model or one level down under a
 /// `response` key — Parker drew it nested (*"`{xyz: <value>, abc: <value>,
@@ -1902,7 +1954,11 @@ fn parse_kind(name: &str, model: Option<&Value>) -> Result<Kind, KindError> {
 /// flat example will send it flat, and neither of them is wrong.
 fn parse_response(m: &Map<String, Value>) -> Result<Response, String> {
     let inner = m.get("response").and_then(Value::as_object).unwrap_or(m);
-    let mut tldr: Option<String> = None;
+    let mut brief: Option<String> = None;
+    // Kept in its own slot rather than written straight into `brief`, because
+    // the two arrive in whatever order the map iterates and the plain brief has
+    // to win regardless of which was seen first.
+    let mut legacy_gist: Option<String> = None;
     let mut doubts: Vec<Doubt> = Vec::new();
     let mut sections: Vec<Section> = Vec::new();
     let mut escalation: Option<Escalation> = None;
@@ -1916,9 +1972,18 @@ fn parse_response(m: &Map<String, Value>) -> Result<Response, String> {
             }
             continue;
         }
-        if Register::is_tldr(key) {
-            if tldr.is_none() {
-                tldr = value
+        if Register::is_brief(key) {
+            if brief.is_none() {
+                brief = value
+                    .as_str()
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty());
+            }
+            continue;
+        }
+        if Register::is_legacy_gist(key) {
+            if legacy_gist.is_none() {
+                legacy_gist = value
                     .as_str()
                     .map(|s| s.trim().to_string())
                     .filter(|s| !s.is_empty());
@@ -1952,9 +2017,8 @@ fn parse_response(m: &Map<String, Value>) -> Result<Response, String> {
             body,
         });
     }
-    let tldr = tldr.ok_or_else(|| {
-        "a response needs a `tldr` — the one or two sentences that stand for the whole reply"
-            .to_string()
+    let brief = brief.or(legacy_gist).ok_or_else(|| {
+        "a response needs a `layman` — the plain-English explanation of the whole reply".to_string()
     })?;
     // Known registers in their canonical order, then the rest by key. Stable,
     // so two `Other`s keep the order they arrived in.
@@ -1973,7 +2037,7 @@ fn parse_response(m: &Map<String, Value>) -> Result<Response, String> {
     // which is undeclared and NOT the same as a declared `none`.
     let escalation = escalation.or_else(|| infer_escalation(&sections));
     Ok(Response {
-        tldr,
+        brief,
         sections,
         doubts,
         escalation,
@@ -2425,16 +2489,17 @@ pub fn launch_briefing(dir: &str) -> String {
          surface beside this terminal — a WORKBENCH face on this pane, toggled from its header.\n\
          \n\
          END EVERY TURN by presenting your reply as a `response` surface — the bench's OVERVIEW \
-         is a feed of these and shows nothing else. A response is a `tldr` (one or two \
-         sentences, required) plus registers a person unfolds by name: `eli5`, `layman` (a \
-         plain brief), `technical` (the technical brief), `evidence` (what you verified), \
-         `asks` (what you need from them), `next` (what comes next), and `doubts` — where you \
-         are not sure, each with a `claim`, a `why` and a `confidence`. Any other key you send \
-         becomes a section labelled by its key. A string is prose, an array is a list, an \
-         object is facts. Write the tldr for the person, not for yourself.\n\
+         is a feed of these and shows nothing else. A response is a `layman` (required): the \
+         whole reply in plain English, written for the person and not for yourself. It is what \
+         the card opens on, so write it as the answer rather than as a trailer for one. Then \
+         registers a person unfolds by name: `technical` (the same reply for someone who reads \
+         the code), `evidence` (what you verified), `asks` (what you need from them), `next` \
+         (what comes next), and `doubts` — where you are not sure, each with a `claim`, a \
+         `why` and a `confidence`. Any other key you send becomes a section labelled by its \
+         key. A string is prose, an array is a list, an object is facts.\n\
          \n\
          {{\"td\":\"{TDSP_VERSION}\",\"kind\":\"response\",\"title\":\"<what this turn did>\",\
-         \"model\":{{\"tldr\":\"<the gist>\",\"eli5\":\"<…>\",\"layman\":\"<…>\",\
+         \"model\":{{\"layman\":\"<the reply, in plain English>\",\
          \"technical\":\"<…>\",\"evidence\":[\"<…>\"],\"next\":[\"<…>\"],\
          \"doubts\":[{{\"claim\":\"<…>\",\"why\":\"<…>\",\"confidence\":\"hunch\"}}]}}}}\n\
          \n\
@@ -2477,16 +2542,16 @@ mod tests {
 
     /// Every register has a home, and the table says which.
     ///
-    /// A table test over all eight rather than a spot check: the mapping is the
+    /// A table test over all six rather than a spot check: the mapping is the
     /// navigation every reply is read through, and a register quietly landing
     /// in the wrong tab is a thing a person would work around for weeks before
-    /// reporting it.
+    /// reporting it. The table is exhaustive on purpose — a variant added here
+    /// without a row is a register with no tab, and the count in this sentence
+    /// is the thing that notices.
     #[test]
     fn every_register_has_exactly_one_group_and_the_table_says_which() {
         use super::{Group, Register};
         let table = [
-            (Register::Tldr, Group::Reading),
-            (Register::Eli5, Group::Reading),
             (Register::Layman, Group::Reading),
             (Register::Technical, Group::Reading),
             (Register::Evidence, Group::Evidence),
@@ -2826,7 +2891,7 @@ mod tests {
                 consequences: vec![],
             }),
             Kind::Response(Response {
-                tldr: "x".into(),
+                brief: "x".into(),
                 sections: vec![],
                 doubts: vec![],
                 escalation: None,
@@ -2867,7 +2932,10 @@ mod tests {
         json!({
             "td": "0.3", "kind": "response", "id": "r1", "title": "The launcher",
             "model": {
-                "tl;dr": "Two bugs fixed and a new kind. The chips now say what the flag says.",
+                "plain": "Two bugs fixed and a new kind. The chips now say what the flag says.",
+                // A legacy gist alongside a real plain brief: it loses, and it
+                // does not come back as a section.
+                "tl;dr": "The old one-liner, from an agent on the old briefing.",
                 "technical_brief": "The panel height counted one chip row.\nIt now counts four.",
                 "eli5": "The list was squashed flat.",
                 "next_steps": ["install the build", "watch the overview"],
@@ -2888,19 +2956,30 @@ mod tests {
         let Kind::Response(r) = &s.kind else {
             panic!("not a response: {:?}", s.kind)
         };
-        assert!(r.tldr.starts_with("Two bugs fixed"));
+        assert!(
+            r.brief.starts_with("Two bugs fixed"),
+            "the plain brief is the reply, and a legacy tl;dr beside it loses: {:?}",
+            r.brief
+        );
         let keys: Vec<&str> = r.sections.iter().map(|s| s.key.as_str()).collect();
         assert_eq!(
             keys,
-            ["eli5", "technical", "evidence", "next", "zebra_notes"],
+            ["technical", "evidence", "next", "eli5", "zebra_notes"],
             "known registers in canonical order, then the agent's own keys"
         );
-        assert_eq!(r.sections[1].label, "Technical brief");
+        assert_eq!(r.sections[0].label, "Technical brief");
         assert_eq!(r.sections[4].label, "Zebra notes", "a key becomes words");
         assert_eq!(r.sections[4].register, Register::Other);
-        assert!(matches!(&r.sections[3].body, Body::Items(i) if i.len() == 2));
+        // ELI5 is dead as a READING: it files under `Other`, after every
+        // register this build lays out, and it is not in `Group::Reading`.
+        assert_eq!(r.sections[3].register, Register::Other);
+        assert_eq!(
+            r.sections[3].label, "ELI5",
+            "dead as a reading, still spelled as its own acronym"
+        );
+        assert!(matches!(&r.sections[2].body, Body::Items(i) if i.len() == 2));
         assert!(
-            matches!(&r.sections[2].body, Body::Facts(f) if f[1] == ("Clippy".into(), "unavailable".into()))
+            matches!(&r.sections[1].body, Body::Facts(f) if f[1] == ("Clippy".into(), "unavailable".into()))
         );
         assert_eq!(r.doubts.len(), 2);
         assert_eq!(r.doubts[0].confidence, Some(Confidence::Inferred));
@@ -2912,7 +2991,7 @@ mod tests {
             !keys.contains(&"empty"),
             "an empty section is a section the agent wrote nothing in"
         );
-        assert_eq!(s.subtitle(), r.tldr, "the gist is the row");
+        assert_eq!(s.subtitle(), r.brief, "the plain brief is the row");
         assert_eq!(s.kind.shelf(), Shelf::Overview);
         assert_eq!(
             Shelf::Overview.badge(&s.kind, false).as_deref(),
@@ -2936,7 +3015,7 @@ mod tests {
         // facts, and the type keeps them apart all the way to the card.
         let silent = response_of(json!({
             "td": "0.4", "kind": "response",
-            "model": { "tldr": "Nothing to report." }
+            "model": { "layman": "Nothing to report." }
         }));
         assert_eq!(
             silent.escalation, None,
@@ -2945,7 +3024,7 @@ mod tests {
 
         let clear = response_of(json!({
             "td": "0.4", "kind": "response",
-            "model": { "tldr": "All done.", "escalation": { "level": "none" } }
+            "model": { "layman": "All done.", "escalation": { "level": "none" } }
         }));
         let clear = clear
             .escalation
@@ -2958,7 +3037,7 @@ mod tests {
     fn an_asks_register_infers_a_wanted_summons_and_says_so() {
         let r = response_of(json!({
             "td": "0.4", "kind": "response",
-            "model": { "tldr": "Two open questions.",
+            "model": { "layman": "Two open questions.",
                        "asks": ["Which root wins?", "Ship the affordance too?"] }
         }));
         let e = r.escalation.expect("an asks register still summons");
@@ -2979,7 +3058,7 @@ mod tests {
         let r = response_of(json!({
             "td": "0.4", "kind": "response",
             "model": {
-                "tldr": "Stopped.",
+                "layman": "Stopped.",
                 "asks": ["this one is only a register now"],
                 "escalation": {
                     "level": "blocking",
@@ -3028,24 +3107,56 @@ mod tests {
         // flat. Both land as the same surface.
         let nested = surface(json!({
             "td": "0.3", "kind": "response", "id": "r2",
-            "model": { "response": { "tldr": "Nested.", "eli5": "still found" } }
+            "model": { "response": { "layman": "Nested.", "technical": "still found" } }
         }));
         let Kind::Response(r) = &nested.kind else {
             panic!()
         };
-        assert_eq!(r.tldr, "Nested.");
-        assert_eq!(r.sections[0].key, "eli5");
+        assert_eq!(r.brief, "Nested.");
+        assert_eq!(r.sections[0].key, "technical");
         assert_eq!(
             nested.title, "Nested.",
-            "the first sentence of the gist titles it"
+            "the first sentence of the plain brief titles it"
         );
     }
 
+    /// A tl;dr is no longer a register, and it is still READ.
+    ///
+    /// The two halves are the whole migration. Every agent pane on this machine
+    /// was launched with a briefing that asked for a `tldr`, and they keep that
+    /// briefing until they are relaunched — so refusing it would have emptied
+    /// every overview on the box at once. It fills the plain brief when nothing
+    /// better came, loses to a real one when both arrive, and is never a
+    /// section either way.
     #[test]
-    fn a_response_without_a_gist_is_refused_by_the_verb_and_kept_by_the_file() {
+    fn a_legacy_gist_fills_the_plain_brief_and_never_becomes_a_register() {
+        let old = response_of(json!({
+            "td": "0.4", "kind": "response",
+            "model": { "tldr": "From an agent still on the old briefing." }
+        }));
+        assert_eq!(old.brief, "From an agent still on the old briefing.");
+        assert!(
+            old.sections.is_empty(),
+            "consumed, not drawn: {:?}",
+            old.sections
+        );
+
+        // Order-independent: the plain brief wins whichever was seen first.
+        for model in [
+            json!({ "tldr": "the old one", "layman": "the plain one" }),
+            json!({ "layman": "the plain one", "tldr": "the old one" }),
+        ] {
+            let both = response_of(json!({ "td": "0.4", "kind": "response", "model": model }));
+            assert_eq!(both.brief, "the plain one");
+            assert!(both.sections.is_empty(), "the loser is not a section");
+        }
+    }
+
+    #[test]
+    fn a_response_without_a_plain_brief_is_refused_by_the_verb_and_kept_by_the_file() {
         let bare = json!({ "td": "0.3", "kind": "response", "model": { "eli5": "only this" } });
         let err = parse(&bare, NOW).err().expect("refused");
-        assert!(err.contains("tldr"), "{err}");
+        assert!(err.contains("layman"), "{err}");
         let landed = parse_lenient(&bare, NOW, "x.json").surface.unwrap();
         assert!(
             matches!(landed.kind, Kind::Unclassified(_)),
@@ -3212,6 +3323,28 @@ mod tests {
             text.contains("[workbench]"),
             "it says how an answer will arrive"
         );
+    }
+
+    /// The briefing asks for the registers this build actually draws.
+    ///
+    /// A gate rather than a note, because the failure is invisible from either
+    /// side: an agent told to write a `tldr` writes one, the parser reads it
+    /// without complaint as the plain brief, and nothing anywhere reports that
+    /// the window is asking for a register it retired. The briefing is the only
+    /// place the two halves are stated together, so it is where they are
+    /// checked. Reads the returned STRING, never this file — an assertion that
+    /// its own source satisfies is a gate that never fires.
+    #[test]
+    fn the_briefing_asks_for_the_registers_this_build_draws() {
+        let text = launch_briefing("/run/td/7").to_lowercase();
+        assert!(text.contains("layman"), "the required register is named");
+        assert!(text.contains("technical"), "and the one that survived");
+        for dead in ["tldr", "tl;dr", "eli5"] {
+            assert!(
+                !text.contains(dead),
+                "the briefing still asks for {dead:?}, which this build no longer draws"
+            );
+        }
     }
 
     /// **The transports are RANKED, and the fence is last.**

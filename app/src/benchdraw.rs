@@ -700,11 +700,11 @@ fn full(surface: &Surface, picks: Option<&Picks>, sk: &Skin, th: &Theme) -> Div 
     }
 }
 
-// `gist_section()` used to synthesize a `Section` for the tl;dr so the accordion
-// could treat it as a row like any other. The tabbed card has
-// `workbench::Leaf::Gist` instead — a variant rather than a fabricated struct,
-// because the gist has no key on the wire and inventing one made it possible for
-// a real section keyed `tldr` to collide with it.
+// `gist_section()` used to synthesize a `Section` for the always-shown register
+// so the accordion could treat it as a row like any other. The tabbed card has
+// `workbench::Leaf::Brief` instead — a variant rather than a fabricated struct,
+// because the plain brief has no section on the wire and inventing one made it
+// possible for a real section to collide with it.
 
 /// What this response's escalation earns, or `None` for one that draws nothing.
 ///
@@ -1001,9 +1001,9 @@ fn response(r: &Response, picks: Option<&Picks>, sk: &Skin, th: &Theme) -> Div {
     // `emphasis::shelf()`'s only caller away: there is no row of things to tier
     // when only one of them is on screen.
     let frame = frame.when_some(shown, |d, leaf| match leaf {
-        Leaf::Gist => d.child(section_body(
-            &crate::surface::Body::Prose(r.tldr.clone()),
-            Register::Tldr,
+        Leaf::Brief => d.child(section_body(
+            &crate::surface::Body::Prose(r.brief.clone()),
+            Register::Layman,
             sk,
             th,
         )),
