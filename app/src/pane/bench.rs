@@ -1285,6 +1285,16 @@ impl TerminalView {
         // and they are printed whole: an elided command that looks copyable
         // is a trap, and an elided instruction that looks readable is the
         // same trap.
+        //
+        // **OFF BY DEFAULT since 2026-09-21.** All of that is about what
+        // happens when somebody looks; what shipped was four lines of routing
+        // and tagged prompt text under every card on every frame, whether or
+        // not anybody was auditing anything. Parker: *"that machine stuff at
+        // the bottom … human does not need to see that"*. So it is a
+        // diagnostic — `TD_VERB_PREVIEW=1` — and the guarantee it was built
+        // for survives where it actually lives: `verb_preview` is the same
+        // function the typed line comes out of, and a test says so.
+        let auditing = std::env::var_os("TD_VERB_PREVIEW").is_some();
         let tag = crate::surfacefeed::tag();
         let comment = self
             .wb_compose
@@ -1301,39 +1311,49 @@ impl TerminalView {
                 .as_deref()
                 .map_or(String::new(), |c| format!(" \u{b7} {c}")),
         );
-        let previews: Vec<(String, String)> = actions
-            .iter()
-            .flat_map(|action| {
-                let needs_part = matches!(
-                    action,
-                    crate::surface::Action::AcceptPart | crate::surface::Action::RejectPart
-                );
-                let targets: Vec<Option<String>> = if needs_part {
-                    hunks.iter().map(|id| Some(id.clone())).collect()
-                } else {
-                    vec![None]
-                };
-                targets
-                    .into_iter()
-                    .map(|target| {
-                        let chip = match &target {
-                            Some(t) => {
-                                format!("{} {}", action.label(), t.rsplit('/').next().unwrap_or(t))
-                            }
-                            None => action.label(),
-                        };
-                        let what = crate::workbench::verb_preview(
-                            surface,
-                            action,
-                            target.as_deref(),
-                            comment.as_deref(),
-                            tag,
-                        );
-                        (chip, what)
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .collect();
+        let previews: Vec<(String, String)> = if !auditing {
+            // Not built at all rather than built and hidden: this calls
+            // `verb_preview` once per verb per frame.
+            Vec::new()
+        } else {
+            actions
+                .iter()
+                .flat_map(|action| {
+                    let needs_part = matches!(
+                        action,
+                        crate::surface::Action::AcceptPart | crate::surface::Action::RejectPart
+                    );
+                    let targets: Vec<Option<String>> = if needs_part {
+                        hunks.iter().map(|id| Some(id.clone())).collect()
+                    } else {
+                        vec![None]
+                    };
+                    targets
+                        .into_iter()
+                        .map(|target| {
+                            let chip = match &target {
+                                Some(t) => {
+                                    format!(
+                                        "{} {}",
+                                        action.label(),
+                                        t.rsplit('/').next().unwrap_or(t)
+                                    )
+                                }
+                                None => action.label(),
+                            };
+                            let what = crate::workbench::verb_preview(
+                                surface,
+                                action,
+                                target.as_deref(),
+                                comment.as_deref(),
+                                tag,
+                            );
+                            (chip, what)
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .collect()
+        };
         let shown = div()
             .flex()
             .flex_col()
@@ -1409,7 +1429,14 @@ impl TerminalView {
                     })
                     .collect::<Vec<_>>()
             }));
-        Some(div().flex().flex_col().gap(px(6.)).child(row).child(shown))
+        Some(
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(6.))
+                .child(row)
+                .when(auditing, |d| d.child(shown)),
+        )
     }
 
     /// Press one of the selected question's answers, by zero-based index.
