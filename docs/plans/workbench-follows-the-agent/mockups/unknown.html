@@ -1,0 +1,159 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Mockup — a bench that cannot name its agent</title>
+<style>
+  :root { --ink:#cfe3e0; --dim:#7d918f; --faint:#4d5c5b; --cyan:#67d8f4;
+          --amber:#e0a33c; --grey:#5a6a69; --bg:#0d100f; }
+  body { margin:0; padding:28px 20px 60px; background:#070908; color:var(--ink);
+         font:14px/1.5 ui-monospace,"JetBrains Mono",Menlo,monospace; }
+  h1 { font-size:15px; letter-spacing:.14em; text-transform:uppercase; color:var(--cyan); margin:0 0 6px; }
+  h2 { font-size:13px; letter-spacing:.12em; text-transform:uppercase; margin:34px 0 4px;
+       border-top:1px solid #1d2423; padding-top:14px; }
+  p.note { color:var(--dim); max-width:860px; margin:4px 0 14px; }
+  p.claim { color:var(--amber); max-width:860px; margin:8px 0 0; }
+  .pane { width:860px; max-width:100%; height:268px; background:var(--bg); position:relative;
+          border:1px solid #1b2221; overflow:hidden;
+          background-image:repeating-linear-gradient(0deg,rgba(255,255,255,.028) 0 1px,transparent 1px 3px); }
+  .strip { position:relative; display:flex; align-items:center; gap:14px; padding:9px 14px;
+           border-bottom:1px solid #1b2221; font-size:12px; letter-spacing:.08em; }
+  .strip .lbl { color:var(--dim); text-transform:uppercase; }
+  .spacer { flex:1 }
+  .btn { border:1px solid #33403f; color:var(--dim); padding:6px 16px; font-size:12px;
+         letter-spacing:.16em; text-transform:uppercase; border-radius:3px; }
+  .rail { position:relative; padding:10px 14px; display:flex; flex-direction:column; gap:1px; }
+  .row { display:flex; gap:12px; align-items:baseline; padding:7px 10px; border-left:2px solid transparent;
+         background:rgba(255,255,255,.015); }
+  .row .k { color:var(--faint); font-size:11px; letter-spacing:.14em; text-transform:uppercase; width:96px; }
+  .row .t { color:var(--ink); flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .row .m { font-size:11px; letter-spacing:.1em; text-transform:uppercase; }
+  .row.own { border-left-color:var(--cyan); }
+  .row.orphan { border-left-color:var(--grey); border-left-style:dashed; }
+  .row.orphan .t { color:var(--dim); }
+  .row.orphan .m { color:var(--grey); }
+  .centre { position:absolute; inset:36px 0 0; display:flex; align-items:center; justify-content:center; }
+  .card { border:1px solid #1e2726; border-radius:6px; padding:22px 26px; text-align:center;
+          background:rgba(255,255,255,.012); min-width:480px; }
+  .card .head { color:var(--dim); font-size:12px; letter-spacing:.2em; text-transform:uppercase; margin-bottom:10px; }
+  .card .why { color:var(--faint); font-size:12px; line-height:1.7; }
+  .card .why code { color:var(--dim); }
+  .sepa { color:var(--faint); font-size:11px; letter-spacing:.18em; text-transform:uppercase;
+          padding:12px 10px 4px; border-top:1px dashed #232c2b; margin-top:6px; }
+  .fold { color:var(--grey); font-size:11px; padding:10px 10px 0; margin-top:4px;
+          border-top:1px dashed #1b2221; }
+  .legend { color:var(--faint); font-size:12px; max-width:860px; margin:26px 0 0;
+            border-top:1px solid #1d2423; padding-top:12px; }
+  .legend b { color:var(--amber); font-weight:400; }
+  .legend i { color:var(--grey); font-style:normal; }
+</style>
+
+<h1>Screen — when the window cannot name the conversation</h1>
+<p class="note">
+  Two cases the wipe rule creates, and neither of them is "no agent". Same 860&nbsp;px.
+  <b style="color:var(--amber);font-weight:400">All titles and counts are invented.</b>
+</p>
+
+<h2>D · A live agent the window cannot bind — show nothing, and say why</h2>
+<div class="pane">
+  <div class="strip">
+    <span class="lbl">Agent ⊙ Working · 2m</span>
+    <span style="color:var(--faint)">turn 1m · ↓ 4.1k tokens</span>
+    <span class="spacer"></span>
+    <span class="btn">End session</span>
+  </div>
+  <div class="centre"><div class="card">
+    <div class="head">Which conversation this is, is unknown</div>
+    <div class="why">
+      An agent is running here and the window cannot tell which of the four<br>
+      conversations open in this directory it is. Nothing is shown rather than<br>
+      the wrong agent's work.<br>
+      <code>terminal-delight bindings</code> says why.
+    </div>
+  </div></div>
+</div>
+<p class="claim">
+  The resolver already ships this rule for every other reader — <em>show nothing rather than
+  fall back to a directory-wide guess</em> — and extending it to the bench is what makes the
+  wipe safe. It costs something: an agent presenting work into an unbindable pane looks
+  broken, so the screen has to name the refusal and point at the command that explains it.
+</p>
+
+<h2>E · Surfaces nobody can attribute — kept, below a line, never mixed in</h2>
+<div class="pane">
+  <div class="strip">
+    <span class="lbl">Agent ⊙ Idle · 6s</span>
+    <span style="color:var(--faint)">turn — · ↓ 812 tokens</span>
+    <span class="spacer"></span>
+    <span class="btn">End session</span>
+  </div>
+  <div class="rail">
+    <div class="row own"><span class="k">Response</span><span class="t">The strip backs out to the branch you are in</span><span class="m" style="color:var(--cyan)">this agent</span></div>
+    <div class="row own"><span class="k">Changeset</span><span class="t">A guard refuses the shape, not just the answer</span><span class="m" style="color:var(--cyan)">this agent</span></div>
+    <div class="sepa">Arrived while this agent was here, writer unknown — 1</div>
+    <div class="row orphan"><span class="k">Artifact</span><span class="t">2026-09-19-overseer-the-pass.html</span><span class="m">file drop · 2m ago</span></div>
+  </div>
+</div>
+<p class="claim">
+  Any process running as this user can drop a file into a pane's directory, so the file
+  itself can never say who wrote it. What the window <em>did</em> witness is when it
+  appeared — during this conversation — and that is enough to draw it, below a line, on
+  its own terms. Nothing else appears below that line: surfaces from before this change
+  are not read at all, which is screen G.
+</p>
+
+<h2>G · A session from before the change</h2>
+<div class="pane" style="height:236px">
+  <div class="strip">
+    <span class="lbl">Agent ⊙ Idle · 4m</span>
+    <span style="color:var(--faint)">turn — · ↓ 2.2k tokens</span>
+    <span class="spacer"></span>
+    <span class="btn">End session</span>
+  </div>
+  <div class="centre" style="inset:36px 0 0"><div class="card" style="border-color:#4a3a1c">
+    <div class="head" style="color:var(--amber)">This session is from a stale version</div>
+    <div class="why">
+      Terminal Delight cannot say which conversation the work in this pane<br>
+      belongs to, because it was written before benches had one.<br>
+      Nothing here will be attributed, and nothing will be migrated.<br>
+      <span style="color:var(--dim)">Starting a new session is the way forward.</span>
+    </div>
+  </div></div>
+</div>
+<p class="claim">
+  Parker, on the annotated brief: <em>"Treat them all as essentially old data that will
+  never be migrated… WE DO NOT WANT GARBAGE CODE THAT IS TAKING OUT OF DATE AGENTS /
+  PANES AND THEN MAINTAINING THAT CODE."</em> An earlier draft folded this work behind a
+  count you could open, and the objection lands exactly there — <em>visible on demand</em>
+  needs a reader for the old shape, and that reader is the code being refused. One screen,
+  no reader, no fold, no count.
+</p>
+
+<h2>F · A brand-new agent in a pane that has held three before it</h2>
+<div class="pane" style="height:236px">
+  <div class="strip">
+    <span class="lbl">Agent ⊙ Idle · 3s</span>
+    <span style="color:var(--faint)">turn — · ↓ 0 tokens</span>
+    <span class="spacer"></span>
+    <span class="btn">End session</span>
+  </div>
+  <div class="centre" style="inset:36px 0 0"><div class="card">
+    <div class="head">Nothing on the workbench yet</div>
+    <div class="why">
+      This conversation has not presented anything.<br>
+      37 surfaces sit in this pane's directory from three earlier<br>
+      conversations. None of them are shown, and none are counted here.
+    </div>
+  </div></div>
+</div>
+<p class="claim">
+  Parker: <em>"We need to be sure that a FRESH NEW workbench doesn't show this nonsense!"</em>
+  A new conversation starts on an empty rail whatever the pane has been used for, and the
+  fold from screen E is absent as well — a bench that opened with "4 surfaces belong to no
+  conversation" would be the old bug in smaller type. The fold appears only once this
+  conversation has a bench of its own to hang it under.
+</p>
+
+<p class="legend">
+  <b>Amber is mine to argue with</b>: the counts, the wording, and each claim.
+  Cyan is <i>attributed to the live conversation</i>. <i>Grey dashed is unknown —
+  drawn, labelled, and never collapsed into either "this agent" or "no surfaces".</i>
+</p>

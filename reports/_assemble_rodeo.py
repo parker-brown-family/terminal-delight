@@ -76,7 +76,56 @@ def live_windows():
     return sorted(out, key=lambda w: w["ticks"])
 
 
+def live_hosts():
+    """Every session host — a THIRD build each, and the one nothing here reported.
+
+    `serve --session <n>` owns every pane's pseudoterminal, is parented by systemd
+    rather than by any window, and therefore survives a window restart. Which is
+    the point of it: the window is swappable and the host is not. The consequence
+    is that it only ever upgrades by dying, and it cannot die without taking every
+    pane with it — so it drifts, quietly, for days.
+
+    This page compared the window against the installed binary and against main and
+    called that the answer. It was two thirds of one. On 2026-09-19 the window was
+    exactly main and its host was 76 merges behind it, and nothing on the page said so.
+
+    Returns ALL of them, each tagged with the session it serves, because there is one
+    host per session and taking the first match answers for the wrong one: the live
+    session's host and the `tdclip` and `attention` hosts are three different builds
+    on this box, and the first `pgrep` hit was none of the one being asked about.
+    """
+    out = []
+    try:
+        pids = subprocess.run(["pgrep", "-f", "serve --session"],
+                              capture_output=True, text=True, timeout=30).stdout.split()
+    except Exception:
+        return out
+    for pid in pids:
+        try:
+            exe = os.path.realpath(f"/proc/{pid}/exe")
+            with open(f"/proc/{pid}/cmdline", "rb") as f:
+                args = [a for a in f.read().decode().split("\0") if a]
+        except OSError:
+            continue
+        if "terminal-delight" not in exe or "serve" not in args:
+            continue
+        session = args[args.index("--session") + 1] if "--session" in args[:-1] else "?"
+        base = os.path.basename(exe).replace(" (deleted)", "")
+        started = subprocess.run(["ps", "-o", "lstart=", "-p", pid],
+                                 capture_output=True, text=True).stdout.strip()
+        sha = base.split("-")[1] if base.count("-") >= 1 else ""
+        behind = git("rev-list", "--count", "--merges", f"{sha}..origin/main") if sha else ""
+        out.append({"pid": int(pid), "exe": exe, "build": base, "started": started,
+                    "session": session, "behind": behind or "?",
+                    "installed": exe.startswith(LIB) and base.startswith("td-")})
+    return sorted(out, key=lambda h: h["session"])
+
+
 WINDOWS = live_windows()
+# Which session is the one being asked about. The window's own instance names it;
+# $TD_SESSION names the pane this script is running in, which is the same thing here
+# and the honest fallback when there is no window to ask.
+OUR_SESSION = os.environ.get("TD_SESSION", "1")
 # Which window is drawing THIS page's reader? The newest one, unless told otherwise.
 _want = os.environ.get("TD_WINDOW_PID")
 _mine = ([w for w in WINDOWS if str(w["pid"]) == _want] or
@@ -120,6 +169,7 @@ def merges_clean(branch):
 
 
 git("fetch", "origin", "-q", "--prune")
+HOSTS = live_hosts()          # needs git(), so it runs after the fetch, not at import
 items_cfg = json.loads((HERE / "_rodeo_items.json").read_text())
 PANES = items_cfg.get("_panes", {})
 
@@ -558,6 +608,25 @@ sub = {
         f'</tr>' for w in WINDOWS) or
         '<tr><td colspan="4" class="mut">no window process found — this page was generated '
         'somewhere without one</td></tr>',
+    # The host is a THIRD build and it is not a window. It owns every pane's
+    # pseudoterminal, survives a window restart by design, and therefore only
+    # upgrades by dying — which it cannot do without taking every pane with it.
+    # Reporting the window alone made a page that said "you are current" while a
+    # third of the running program was days old.
+    "__HOSTROW__": "\n      ".join(
+        f'<tr><td><code>{h["pid"]}</code> '
+        f'<span class="mut">host &middot; {E(h["session"])}</span>'
+        f'{" &larr; yours" if h["session"] == OUR_SESSION else ""}</td>'
+        f'<td class="mut">{E(h["started"][4:20] if len(h["started"]) > 20 else h["started"])}</td>'
+        f'<td class="{"ok" if h["behind"] == "0" else "warn"}"><code>{E(h["build"])}</code></td>'
+        f'<td class="{"ok" if h["behind"] == "0" else "warn"}">'
+        + ("current" if h["behind"] == "0" else
+           f'<b>{E(h["behind"])} merges behind</b> — owns every PTY in session '
+           f'<code>{E(h["session"])}</code>, so it only upgrades by killing every pane '
+           f'in it. A window restart does not touch it.')
+        + '</td></tr>' for h in HOSTS) or
+        '<tr><td colspan="4" class="mut">no <code>serve --session</code> process — either '
+        'this window owns its panes directly, or the host could not be read</td></tr>',
     "__NWINDOWS__": str(len(WINDOWS)),
     "__WINVERDICT__": ("the window drawing your panes is an installed build" if RUNNING_OK else
                        "the window drawing your panes is NOT an installed build"),

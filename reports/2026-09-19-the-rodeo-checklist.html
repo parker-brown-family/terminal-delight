@@ -413,7 +413,7 @@ pre.cmd code { color: var(--text-secondary); }
 
 <header class="top">
   <div class="wrap">
-    <p class="repo">terminal-delight &middot; live-test checklist &middot; overseer, pane 91 &middot; regenerated 2026-09-19 06:28 UTC</p>
+    <p class="repo">terminal-delight &middot; live-test checklist &middot; overseer, pane 91 &middot; regenerated 2026-09-19 06:50 UTC</p>
     <h1>The rodeo</h1>
     <p class="lede">Every feature the fleet has built that nobody has put a finger on. Each item says
       <b>what to do</b>, <b>what passing looks like</b>, and <b>which pane built it</b>. Mark it with the
@@ -430,13 +430,13 @@ pre.cmd code { color: var(--text-secondary); }
 
 <div class="stamp">
   <b>This page has a shelf life.</b> The board below was read from git and GitHub at
-  <code>2026-09-19 06:28 UTC</code>, and this repository merges a pull request every few minutes — the last sweep
-  counted <b>127 commits onto main in twenty-four hours</b>. Regenerate it with
+  <code>2026-09-19 06:50 UTC</code>, and this repository merges a pull request every few minutes — the last sweep
+  counted <b>131 commits onto main in twenty-four hours</b>. Regenerate it with
   <code>python3 reports/_assemble_rodeo.py</code>; your notes live in the browser and survive the rebuild.
 </div>
 
 <h2 class="sec">The board, read live</h2>
-<div class="tiles"><div class="tile r"><div class="n">c63d95b</div><div class="k">the build this window is running</div></div><div class="tile g"><div class="n">7a70018</div><div class="k">installed on disk, one relaunch away</div></div><div class="tile b"><div class="n">7a70018</div><div class="k">tip of main</div></div><div class="tile g"><div class="n">0</div><div class="k">open pull requests that merge clean</div></div><div class="tile a"><div class="n">0</div><div class="k">blocked on a conflict</div></div><div class="tile m"><div class="n">127</div><div class="k">commits onto main in 24h</div></div></div>
+<div class="tiles"><div class="tile r"><div class="n">569f452</div><div class="k">the build this window is running</div></div><div class="tile g"><div class="n">569f452</div><div class="k">installed on disk, one relaunch away</div></div><div class="tile b"><div class="n">569f452</div><div class="k">tip of main</div></div><div class="tile g"><div class="n">0</div><div class="k">open pull requests that merge clean</div></div><div class="tile a"><div class="n">0</div><div class="k">blocked on a conflict</div></div><div class="tile m"><div class="n">131</div><div class="k">commits onto main in 24h</div></div></div>
 
 <figure>
   <span class="lbl">01 &middot; Three builds, and which one you are looking at</span>
@@ -447,21 +447,21 @@ pre.cmd code { color: var(--text-secondary); }
 
     <rect x="0" y="16" width="214" height="60" rx="7" fill="rgba(208,59,59,.10)" stroke="#d03b3b"/>
     <text x="107" y="36" font-size="11" fill="#f08a8a" text-anchor="middle">THE WINDOW YOU SEE</text>
-    <text x="107" y="53" font-size="12" fill="#ffffff" text-anchor="middle">td-c63d95b-glow</text>
-    <text x="107" y="68" font-size="9.5" fill="#8b8a80" text-anchor="middle">21 merges behind</text>
+    <text x="107" y="53" font-size="12" fill="#ffffff" text-anchor="middle">td-569f452-allin</text>
+    <text x="107" y="68" font-size="9.5" fill="#8b8a80" text-anchor="middle">0 merges behind</text>
 
     <line x1="214" y1="46" x2="240" y2="46" stroke="#3a3a36" marker-end="url(#a3)"/>
 
     <rect x="244" y="16" width="214" height="60" rx="7" fill="rgba(25,158,112,.11)" stroke="#199e70"/>
     <text x="351" y="36" font-size="11" fill="#6cd46c" text-anchor="middle">ALREADY ON DISK</text>
-    <text x="351" y="53" font-size="12" fill="#ffffff" text-anchor="middle">td-7a70018-crunch</text>
+    <text x="351" y="53" font-size="12" fill="#ffffff" text-anchor="middle">td-569f452-allin</text>
     <text x="351" y="68" font-size="9.5" fill="#8b8a80" text-anchor="middle">one relaunch away</text>
 
     <line x1="458" y1="46" x2="484" y2="46" stroke="#3a3a36" marker-end="url(#a3)"/>
 
     <rect x="488" y="16" width="212" height="60" rx="7" fill="rgba(25,158,112,.11)" stroke="#199e70"/>
     <text x="594" y="36" font-size="11" fill="#6cd46c" text-anchor="middle">TIP OF MAIN</text>
-    <text x="594" y="53" font-size="12" fill="#ffffff" text-anchor="middle">7a70018</text>
+    <text x="594" y="53" font-size="12" fill="#ffffff" text-anchor="middle">569f452</text>
     <text x="594" y="68" font-size="9.5" fill="#8b8a80" text-anchor="middle">same program as installed</text>
 
     <path d="M351,76 L351,96 L594,96 L594,76" fill="none" stroke="#199e70" stroke-dasharray="3 3"/>
@@ -483,10 +483,19 @@ pre.cmd code { color: var(--text-secondary); }
   kernel says rather than what anything reports about itself — <b>the window drawing your panes is an installed build</b>.</p>
 <div class="scroller">
 <table class="wide" style="min-width:560px">
-  <thead><tr><th>Window pid</th><th>Started</th><th>The binary it is</th><th>Where it came from</th></tr></thead>
-  <tbody><tr><td><code>646747</code> &larr; yours</td><td class="mut">Sep 18 22:17:06 </td><td class="ok"><code>td-c63d95b-glow</code></td><td class="ok">from the launcher</td></tr></tbody>
+  <thead><tr><th>pid</th><th>Started</th><th>The binary it is</th><th>Where it came from</th></tr></thead>
+  <tbody><tr><td><code>2570322</code> &larr; yours</td><td class="mut">Sep 18 23:47:23 </td><td class="ok"><code>td-569f452-allin</code></td><td class="ok">from the launcher</td></tr>
+      <tr><td><code>876777</code> <span class="mut">host &middot; 1</span> &larr; yours</td><td class="mut">Sep 16 10:31:57 </td><td class="warn"><code>td-fc6957f-main</code></td><td class="warn"><b>76 merges behind</b> — owns every PTY in session <code>1</code>, so it only upgrades by killing every pane in it. A window restart does not touch it.</td></tr>
+      <tr><td><code>1994643</code> <span class="mut">host &middot; attention</span></td><td class="mut">Sep 18 12:06:11 </td><td class="warn"><code>td-8404884-attention</code></td><td class="warn"><b>55 merges behind</b> — owns every PTY in session <code>attention</code>, so it only upgrades by killing every pane in it. A window restart does not touch it.</td></tr>
+      <tr><td><code>714673</code> <span class="mut">host &middot; tdclip</span></td><td class="mut">Sep 16 15:35:32 </td><td class="warn"><code>td-d1f0a79-paint-the-outer</code></td><td class="warn"><b>76 merges behind</b> — owns every PTY in session <code>tdclip</code>, so it only upgrades by killing every pane in it. A window restart does not touch it.</td></tr></tbody>
 </table>
 </div>
+<p class="sub"><b>The host is the third build, and restarting the window does not touch it.</b>
+  <code>serve --session</code> owns every pane's pseudoterminal and is parented by systemd, which
+  is what lets a window be rebuilt and swapped under live agents. The price is that it upgrades
+  only by dying, and it cannot die without taking every pane with it — so it drifts for days while
+  everything else is current. Anything that needs a <i>new field from the host</i> is inert until
+  someone is willing to kill the session; anything window-side is live the moment you reopen.</p>
 
 <figure>
   <span class="lbl">02 &middot; Two ways to start, and only one of them obeys the symlink</span>
@@ -504,7 +513,7 @@ pre.cmd code { color: var(--text-secondary); }
     <text x="356" y="44" font-size="9.5" fill="#8b8a80" text-anchor="middle">the symlink</text>
     <line x1="460" y1="32" x2="504" y2="32" stroke="#199e70" marker-end="url(#a9)"/>
     <rect x="508" y="12" width="192" height="40" rx="6" fill="rgba(25,158,112,.14)" stroke="#199e70"/>
-    <text x="604" y="30" font-size="10.5" fill="#6cd46c" text-anchor="middle">td-7a70018-crunch</text>
+    <text x="604" y="30" font-size="10.5" fill="#6cd46c" text-anchor="middle">td-569f452-allin</text>
     <text x="604" y="44" font-size="9.5" fill="#8b8a80" text-anchor="middle">the build you meant</text>
 
     <rect x="0" y="86" width="196" height="40" rx="6" fill="rgba(208,59,59,.11)" stroke="#d03b3b"/>
@@ -538,7 +547,7 @@ pre.cmd code { color: var(--text-secondary); }
   <div class="gutter">the MCP helpers are NOT affected — they spawn through the launcher, so they were the correct build the whole time the window was wrong. That disagreement is the cheapest signal there is.</div>
 </figure>
 
-<h3 class="mini">The open queue, as of 2026-09-19 06:28 UTC</h3>
+<h3 class="mini">The open queue, as of 2026-09-19 06:50 UTC</h3>
 <div class="scroller">
 <table class="wide" style="min-width:600px">
   <thead><tr><th>PR</th><th>Branch</th><th>Merges onto main</th><th>Touches</th></tr></thead>
@@ -632,8 +641,8 @@ pre.cmd code { color: var(--text-secondary); }
   <div class="gutter">the same session file carries the agent's real sessionId — which is the fix for pane_events answering for the wrong pane, filed as terminal-delight#416</div>
 </figure>
 
-<h2 class="sec">A &middot; Quit and reopen, then test these</h2>
-<p class="sub">Already built, already installed. The only thing between you and these 14 is a restart.</p>
+<h2 class="sec">A &middot; Nothing is hiding behind a restart</h2>
+<p class="sub">Your window is running <code>td-569f452-allin</code>, which is the tip of main — same tree, compared by oid rather than by sha. <b>Every merged feature is in front of you right now</b>, so go to section D, which is the 28 things you can put a finger on this second. This section keeps one item: the check that the sentence above is still true.</p>
 <div class="finding live">
   <div class="hd"><span class="num">1</span><div>
     <h4>Reopen the window <em>from the launcher</em>, not from a worktree</h4>
@@ -646,221 +655,15 @@ pre.cmd code { color: var(--text-secondary); }
       <code>~/.local/lib/terminal-delight</code> can hold your panes:</p>
     <div class="scroller"><table class="wide" style="min-width:460px"><thead><tr>
       <th>pid</th><th>which</th><th>build</th><th>binary</th></tr></thead>
-      <tbody><tr><td><code>646747</code></td><td><b>measured as yours</b></td><td class="ok">td-c63d95b-glow</td><td class="mut"><code>/home/parker/.local/lib/terminal-delight/td-c63d95b-glow</code></td></tr></tbody></table></div>
+      <tbody><tr><td><code>2570322</code></td><td><b>measured as yours</b></td><td class="ok">td-569f452-allin</td><td class="mut"><code>/home/parker/.local/lib/terminal-delight/td-569f452-allin</code></td></tr></tbody></table></div>
     
     <div class="do"><b>Do:</b> quit Terminal Delight, then start it again <b>by running
       <code>terminal-delight</code> on your PATH</b> — never <code>./target/debug/terminal-delight</code>
       or any path inside a worktree. The session host owns the PTYs, so your agent panes survive it.</div>
     <p class="pass"><b>Pass:</b> ask any pane's agent for a Terminal Delight MCP call and read the
-      <code>instance.build</code> it answers with. It must read <code>td-7a70018-crunch</code>.
+      <code>instance.build</code> it answers with. It must read <code>td-569f452-allin</code>.
       <b>If it reads the bare word <code>terminal-delight</code> with no sha, a worktree build has
       the session</b> and nothing below this line is testing what you think it is.</p>
-  </div>
-  <div class="verdicts">
-    <button class="vp" data-v="PASS">&#10003; pass</button><button class="vf" data-v="FAIL &mdash; ">&#10007; fail</button><button class="vo" data-v="ODD &mdash; ">~ odd</button><button class="vs" data-v="SKIPPED &mdash; ">skip</button>
-    <span class="mark"></span>
-  </div>
-</div>
-<div class="finding live">
-  <div class="hd"><span class="num">2</span><div>
-    <h4>A tab can be dragged out of a group even when nothing is loose yet</h4>
-    <p class="who"><b>OUTER SPINE LINES</b> &middot; FEATURES &middot; pid 3263593 <span class="tag v">measured</span> &middot; merged as #558 &middot; installed, waiting on your restart</p>
-  </div></div>
-  <div class="bd">
-    <p>The UNFILED hairline is the only drop target meaning <i>out of every group</i>, and it was drawn only when something was already out there. So the first tab could never leave.</p>
-    <div class="do"><b>Do:</b> Put every tab into a group so nothing is loose, then drag one tab toward the bottom of the left bar.</div>
-    <p class="pass"><b>Pass:</b> The hairline appears as you drag, the tab drops onto it, and it leaves its group. Then check the hairline is <b>not</b> a keyboard stop — ctrl+alt+down through the bar should never park on an empty divider.</p>
-  </div>
-  <div class="verdicts">
-    <button class="vp" data-v="PASS">&#10003; pass</button><button class="vf" data-v="FAIL &mdash; ">&#10007; fail</button><button class="vo" data-v="ODD &mdash; ">~ odd</button><button class="vs" data-v="SKIPPED &mdash; ">skip</button>
-    <span class="mark"></span>
-  </div>
-</div>
-<div class="finding live">
-  <div class="hd"><span class="num">3</span><div>
-    <h4>Answering on the workbench keeps you on the workbench</h4>
-    <p class="who"><b>choose snaps term</b> &middot; BUGS &middot; pid 3415342 <span class="tag v">measured</span> &middot; merged as #559 &middot; installed, waiting on your restart</p>
-  </div></div>
-  <div class="bd">
-    <p>Your own complaint: picking an option on the bench spun the pane round to face the terminal.</p>
-    <div class="do"><b>Do:</b> Open a pane's workbench on a question surface and click an option.</div>
-    <p class="pass"><b>Pass:</b> The pane is still showing its workbench. The answer still reaches the agent as a typed line and still lands in the actions journal. <b>Then try to leave on purpose</b> — alt+k, the TERM chip, and a scripted <code>bench off</code> should all still work, and nothing else should take you off.</p>
-  </div>
-  <div class="verdicts">
-    <button class="vp" data-v="PASS">&#10003; pass</button><button class="vf" data-v="FAIL &mdash; ">&#10007; fail</button><button class="vo" data-v="ODD &mdash; ">~ odd</button><button class="vs" data-v="SKIPPED &mdash; ">skip</button>
-    <span class="mark"></span>
-  </div>
-</div>
-<div class="finding live">
-  <div class="hd"><span class="num">4</span><div>
-    <h4>Ctrl+wheel sizes exactly the surface under the pointer, and there are four of them</h4>
-    <p class="who"><b>text resize live</b> &middot; FEATURES &middot; pid 266933 <span class="tag v">measured</span> &middot; merged as #549 &middot; installed, waiting on your restart</p>
-  </div></div>
-  <div class="bd">
-    <div class="do"><b>Do:</b> Hold ctrl and turn the wheel over four places in turn — the outer chrome (menu bar, tabs, left bar, the gaps), a pane's <b>header</b>, a pane's <b>terminal body</b>, and a pane's <b>workbench</b>.</div>
-    <p class="pass"><b>Pass:</b> Four things resize independently and nothing else moves with them. The workbench has a dial of its own that does not drag the terminal's text size along.</p>
-  </div>
-  <div class="verdicts">
-    <button class="vp" data-v="PASS">&#10003; pass</button><button class="vf" data-v="FAIL &mdash; ">&#10007; fail</button><button class="vo" data-v="ODD &mdash; ">~ odd</button><button class="vs" data-v="SKIPPED &mdash; ">skip</button>
-    <span class="mark"></span>
-  </div>
-</div>
-<div class="finding live">
-  <div class="hd"><span class="num">5</span><div>
-    <h4>Marks, not words — a measured UX pass over all six palettes</h4>
-    <p class="who"><b>style</b> &middot; BUGS &middot; pid 3604902 <span class="tag v">measured</span> &middot; merged as #562 &middot; installed, waiting on your restart</p>
-  </div></div>
-  <div class="bd">
-    <div class="do"><b>Do:</b> Nothing in the app — this pull request is a report and changes no code.</div>
-    <p class="pass"><b>Pass:</b> n/a. Read it if you want the argument; there is nothing to click.</p>
-  </div>
-  <div class="verdicts">
-    <button class="vp" data-v="PASS">&#10003; pass</button><button class="vf" data-v="FAIL &mdash; ">&#10007; fail</button><button class="vo" data-v="ODD &mdash; ">~ odd</button><button class="vs" data-v="SKIPPED &mdash; ">skip</button>
-    <span class="mark"></span>
-  </div>
-</div>
-<div class="finding live">
-  <div class="hd"><span class="num">6</span><div>
-    <h4>A pane's rail grows a comments board that the agent never reads</h4>
-    <p class="who"><b>human note</b> &middot; FEATURES &middot; pid 3117137 <span class="tag w">inferred</span> &middot; merged as #566 &middot; installed, waiting on your restart</p>
-  </div></div>
-  <div class="bd">
-    <p>A fourth tab on the rail, newest first, drawn in the palette's <code>human</code> role so the board reads as <b>yours</b> before a word of it is read. <code>Kind::Comment</code> is a ninth surface kind, so it inherits the file transport, the reload when a window opens, and the history cap for free. It also carries a DRY audit of the spine it had to live inside, which found one real hole.</p>
-    <div class="do"><b>Do:</b> Open a pane's rail and find the fourth tab. Write a comment on it. Then open a new window and check the board is still there. Then confirm the agent in that pane has no idea you wrote it — ask it.</div>
-    <p class="pass"><b>Pass:</b> Your comments are there, newest first, visibly yours rather than the agent's, and they survive a window opening. The agent cannot see them. The corners of the board go through the skin rather than being drawn beside it.</p>
-    <p class="mut">Its plan brief carries your own annotations in the branch — all four questions answered as recommended, with three amendments folded in.</p>
-  </div>
-  <div class="verdicts">
-    <button class="vp" data-v="PASS">&#10003; pass</button><button class="vf" data-v="FAIL &mdash; ">&#10007; fail</button><button class="vo" data-v="ODD &mdash; ">~ odd</button><button class="vs" data-v="SKIPPED &mdash; ">skip</button>
-    <span class="mark"></span>
-  </div>
-</div>
-<div class="finding live">
-  <div class="hd"><span class="num">7</span><div>
-    <h4>The plan brief carries its own correction</h4>
-    <p class="who"><b>human note</b> &middot; FEATURES &middot; pid 3117137 <span class="tag w">inferred</span> &middot; merged as #572 &middot; installed, waiting on your restart</p>
-  </div></div>
-  <div class="bd">
-    <div class="do"><b>Do:</b> Nothing in the app — a document change.</div>
-    <p class="pass"><b>Pass:</b> n/a.</p>
-  </div>
-  <div class="verdicts">
-    <button class="vp" data-v="PASS">&#10003; pass</button><button class="vf" data-v="FAIL &mdash; ">&#10007; fail</button><button class="vo" data-v="ODD &mdash; ">~ odd</button><button class="vs" data-v="SKIPPED &mdash; ">skip</button>
-    <span class="mark"></span>
-  </div>
-</div>
-<div class="finding live">
-  <div class="hd"><span class="num">8</span><div>
-    <h4>The file drop and the launch defaults, folded past the changelog that blocked them</h4>
-    <p class="who"><b>OVERSEER!</b> &middot; pid 3643282 <span class="tag v">measured</span> &middot; merged as #571 &middot; installed, waiting on your restart</p>
-  </div></div>
-  <div class="bd">
-    <p>Two finished pull requests that could not merge. Nothing in the code disagreed; the whole conflict was <code>CHANGELOG.md</code>. Folding them also surfaced a semantic conflict neither had alone — the comments shelf added a test asserting every corner goes through the skin, and the file drop's hover pill was rounded with a bare <code>px(3.)</code>.</p>
-    <div class="do"><b>Do:</b> Nothing of its own — what it carries is tested as the file drop and the launch defaults above. Worth one look at a bench card's corners on a square skin, since that is the guard the fold had to satisfy.</div>
-    <p class="pass"><b>Pass:</b> Corners follow the skin rather than staying round when everything around them changes shape.</p>
-  </div>
-  <div class="verdicts">
-    <button class="vp" data-v="PASS">&#10003; pass</button><button class="vf" data-v="FAIL &mdash; ">&#10007; fail</button><button class="vo" data-v="ODD &mdash; ">~ odd</button><button class="vs" data-v="SKIPPED &mdash; ">skip</button>
-    <span class="mark"></span>
-  </div>
-</div>
-<div class="finding live">
-  <div class="hd"><span class="num">9</span><div>
-    <h4>A file dropped on the bench types its path into the line you are writing</h4>
-    <p class="who"><b>Drag and drop</b> &middot; FEATURES &middot; pid 3091536 <span class="tag v">measured</span> &middot; merged as #561 &middot; installed, waiting on your restart</p>
-  </div></div>
-  <div class="bd">
-    <div class="do"><b>Do:</b> Drag a file from a file manager onto a pane's workbench while a prompt is half-written.</div>
-    <p class="pass"><b>Pass:</b> The path is inserted into the line you were writing, at the cursor, and nothing is sent.</p>
-  </div>
-  <div class="verdicts">
-    <button class="vp" data-v="PASS">&#10003; pass</button><button class="vf" data-v="FAIL &mdash; ">&#10007; fail</button><button class="vo" data-v="ODD &mdash; ">~ odd</button><button class="vs" data-v="SKIPPED &mdash; ">skip</button>
-    <span class="mark"></span>
-  </div>
-</div>
-<div class="finding live">
-  <div class="hd"><span class="num">10</span><div>
-    <h4>A new agent opens on defaults you set, and the bench's dials say what they are on</h4>
-    <p class="who"><b>agent wall</b> &middot; BUGS &middot; pid 3457182 <span class="tag v">measured</span> &middot; merged as #560 &middot; installed, waiting on your restart</p>
-  </div></div>
-  <div class="bd">
-    <p>This is the work that was loose in the shared worktree with no branch under it at the first sweep. It now has a branch and a pull request — the hazard closed itself.</p>
-    <div class="do"><b>Do:</b> Launch a new agent pane and check it opens on the model and effort you set as defaults. Then read the bench's dials.</div>
-    <p class="pass"><b>Pass:</b> The new pane wears your defaults, and the dials name what they are on rather than leaving you to guess.</p>
-  </div>
-  <div class="verdicts">
-    <button class="vp" data-v="PASS">&#10003; pass</button><button class="vf" data-v="FAIL &mdash; ">&#10007; fail</button><button class="vo" data-v="ODD &mdash; ">~ odd</button><button class="vs" data-v="SKIPPED &mdash; ">skip</button>
-    <span class="mark"></span>
-  </div>
-</div>
-<div class="finding live">
-  <div class="hd"><span class="num">11</span><div>
-    <h4>Two numbers that said nothing are gone</h4>
-    <p class="who"><b>OVERSEER!</b> &middot; pid 3643282 <span class="tag v">measured</span> &middot; merged as #573 &middot; installed, waiting on your restart</p>
-  </div></div>
-  <div class="bd">
-    <p>You flagged both while testing tonight's build: a pane header printing its own grid size as <code>194×50</code> among the controls, and a response's group tab wearing a doubt count as <code>·2</code>.</p>
-    <div class="do"><b>Do:</b> Look at a pane header — no grid size in the control cluster. Open a response on a bench that has doubts and look at the group tabs.</div>
-    <p class="pass"><b>Pass:</b> Neither number is there. <b>The doubts themselves are untouched</b> — same tab, same click — so check you can still reach them; only the badge in front of them went.</p>
-  </div>
-  <div class="verdicts">
-    <button class="vp" data-v="PASS">&#10003; pass</button><button class="vf" data-v="FAIL &mdash; ">&#10007; fail</button><button class="vo" data-v="ODD &mdash; ">~ odd</button><button class="vs" data-v="SKIPPED &mdash; ">skip</button>
-    <span class="mark"></span>
-  </div>
-</div>
-<div class="finding live">
-  <div class="hd"><span class="num">12</span><div>
-    <h4>alt+1 to alt+4 land on a workbench tab without the mouse</h4>
-    <p class="who"><b>human note</b> &middot; FEATURES &middot; pid 3117137 <span class="tag w">inferred</span> &middot; merged as #574 &middot; installed, waiting on your restart</p>
-  </div></div>
-  <div class="bd">
-    <p>Digits rather than letters because the obvious letters were taken — <code>alt+v</code> splits a pane and <code>alt+b</code> is readline's word-back, which reaches the agent's own prompt from the bench composer — and because digits extend on their own the day a fifth shelf appears.</p>
-    <div class="do"><b>Do:</b> On a pane's workbench press alt+1, alt+2, alt+3, alt+4. Then press tab a few times. Then alt+m.</div>
-    <p class="pass"><b>Pass:</b> Each digit goes straight to its shelf in the strip's own order; tab still cycles; alt+m still opens the note box, now on the comments board.</p>
-  </div>
-  <div class="verdicts">
-    <button class="vp" data-v="PASS">&#10003; pass</button><button class="vf" data-v="FAIL &mdash; ">&#10007; fail</button><button class="vo" data-v="ODD &mdash; ">~ odd</button><button class="vs" data-v="SKIPPED &mdash; ">skip</button>
-    <span class="mark"></span>
-  </div>
-</div>
-<div class="finding live">
-  <div class="hd"><span class="num">13</span><div>
-    <h4>One pane, one conversation — a bench stops showing its neighbour's work</h4>
-    <p class="who"><b>artifacts jumble</b> &middot; BUGS &middot; pid 3893967 <span class="tag w">inferred</span> &middot; merged as #576 &middot; installed, waiting on your restart</p>
-  </div></div>
-  <div class="bd">
-    <p>Four separate readers each asked <i>which conversation is this pane in?</i> one pane at a time, and each fell through to "the newest <code>.jsonl</code> in that project directory" — the same answer for every pane sharing a directory. With fourteen agents in one repository, eight benches read one conversation and each showed that agent's deliverable as its own.</p>
-    <div class="do"><b>Do:</b> Look across several panes in the same repository — their benches, their tool glyphs, their deliverables. This is the one to check on the crowded tabs, not a lone pane.</div>
-    <p class="pass"><b>Pass:</b> Each pane shows its own agent's work. <b>A pane that cannot be placed shows nothing rather than a neighbour's</b> — that is the fix, and an empty bench here is the correct answer, not a failure.</p>
-  </div>
-  <div class="verdicts">
-    <button class="vp" data-v="PASS">&#10003; pass</button><button class="vf" data-v="FAIL &mdash; ">&#10007; fail</button><button class="vo" data-v="ODD &mdash; ">~ odd</button><button class="vs" data-v="SKIPPED &mdash; ">skip</button>
-    <span class="mark"></span>
-  </div>
-</div>
-<div class="finding live">
-  <div class="hd"><span class="num">14</span><div>
-    <h4>Every door into the savings face reads the same rollup</h4>
-    <p class="who"><b>button glow</b> &middot; WORKBENCH &middot; pid 2032003 <span class="tag w">inferred</span> &middot; merged as #575 &middot; installed, waiting on your restart</p>
-  </div></div>
-  <div class="bd">
-    <div class="do"><b>Do:</b> Open the subscription usage panel and reach the savings face from each route into it — the chip, and whatever else opens it.</div>
-    <p class="pass"><b>Pass:</b> The same numbers however you got there.</p>
-  </div>
-  <div class="verdicts">
-    <button class="vp" data-v="PASS">&#10003; pass</button><button class="vf" data-v="FAIL &mdash; ">&#10007; fail</button><button class="vo" data-v="ODD &mdash; ">~ odd</button><button class="vs" data-v="SKIPPED &mdash; ">skip</button>
-    <span class="mark"></span>
-  </div>
-</div>
-<div class="finding live">
-  <div class="hd"><span class="num">15</span><div>
-    <h4>The workbench keeps its history across a restart</h4>
-    <p class="who"><b>OVERSEER!</b> &middot; pid 3643282 <span class="tag v">measured</span> &middot; merged as #578 &middot; installed, waiting on your restart</p>
-  </div></div>
-  <div class="bd">
-    <p>This is the bug you found: the overview read <b>"No responses yet"</b> after you relaunched. <code>present_surface</code> handed a surface to the live window and never wrote it to disk, while the module that owns the feature documented all three transports as landing in the same directory.</p>
-    <div class="do"><b>Do:</b> Watch a pane's agent put a response on its bench. Quit the window and reopen it. Then look at the same pane's OVERVIEW. For the other half: retire a surface, restart again, and check it stays gone.</div>
-    <p class="pass"><b>Pass:</b> The response is still there, and the card still says <b>who</b> presented it — "presented by this pane's agent", not "writer unknown". A retired surface does not come back.</p>
   </div>
   <div class="verdicts">
     <button class="vp" data-v="PASS">&#10003; pass</button><button class="vf" data-v="FAIL &mdash; ">&#10007; fail</button><button class="vo" data-v="ODD &mdash; ">~ odd</button><button class="vs" data-v="SKIPPED &mdash; ">skip</button>
@@ -877,9 +680,201 @@ pre.cmd code { color: var(--text-secondary); }
 <p class="sub">Nothing blocked. Every open pull request merges onto main without help.</p>
 
 <h2 class="sec">D &middot; Spot-checks on what is already running</h2>
-<p class="sub">14 things that landed earlier and are in the window you have. If the rodeo turns up nothing here, that is a result — the last day of merges did not regress them.</p>
+<p class="sub">28 things that landed earlier and are in the window you have. If the rodeo turns up nothing here, that is a result — the last day of merges did not regress them.</p>
 <div class="finding">
-  <div class="hd"><span class="num">16</span><div>
+  <div class="hd"><span class="num">2</span><div>
+    <h4>The workbench keeps its history across a restart</h4>
+    <p class="who"><b>OVERSEER!</b> &middot; pid 3643282 <span class="tag v">measured</span> &middot; pull request 578 &middot; already in the build you are running</p>
+  </div></div>
+  <div class="bd">
+    <p>This is the bug you found: the overview read <b>"No responses yet"</b> after you relaunched. <code>present_surface</code> handed a surface to the live window and never wrote it to disk, while the module that owns the feature documented all three transports as landing in the same directory.</p>
+    <div class="do"><b>Do:</b> Watch a pane's agent put a response on its bench. Quit the window and reopen it. Then look at the same pane's OVERVIEW. For the other half: retire a surface, restart again, and check it stays gone.</div>
+    <p class="pass"><b>Pass:</b> The response is still there, and the card still says <b>who</b> presented it — "presented by this pane's agent", not "writer unknown". A retired surface does not come back.</p>
+  </div>
+  <div class="verdicts">
+    <button class="vp" data-v="PASS">&#10003; pass</button><button class="vf" data-v="FAIL &mdash; ">&#10007; fail</button><button class="vo" data-v="ODD &mdash; ">~ odd</button><button class="vs" data-v="SKIPPED &mdash; ">skip</button>
+    <span class="mark"></span>
+  </div>
+</div>
+<div class="finding">
+  <div class="hd"><span class="num">3</span><div>
+    <h4>One pane, one conversation — a bench stops showing its neighbour's work</h4>
+    <p class="who"><b>artifacts jumble</b> &middot; BUGS &middot; pid 3893967 <span class="tag w">inferred</span> &middot; pull request 576 &middot; already in the build you are running</p>
+  </div></div>
+  <div class="bd">
+    <p>Four separate readers each asked <i>which conversation is this pane in?</i> one pane at a time, and each fell through to "the newest <code>.jsonl</code> in that project directory" — the same answer for every pane sharing a directory. With fourteen agents in one repository, eight benches read one conversation and each showed that agent's deliverable as its own.</p>
+    <div class="do"><b>Do:</b> Look across several panes in the same repository — their benches, their tool glyphs, their deliverables. This is the one to check on the crowded tabs, not a lone pane.</div>
+    <p class="pass"><b>Pass:</b> Each pane shows its own agent's work. <b>A pane that cannot be placed shows nothing rather than a neighbour's</b> — that is the fix, and an empty bench here is the correct answer, not a failure.</p>
+  </div>
+  <div class="verdicts">
+    <button class="vp" data-v="PASS">&#10003; pass</button><button class="vf" data-v="FAIL &mdash; ">&#10007; fail</button><button class="vo" data-v="ODD &mdash; ">~ odd</button><button class="vs" data-v="SKIPPED &mdash; ">skip</button>
+    <span class="mark"></span>
+  </div>
+</div>
+<div class="finding">
+  <div class="hd"><span class="num">4</span><div>
+    <h4>Every door into the savings face reads the same rollup</h4>
+    <p class="who"><b>button glow</b> &middot; WORKBENCH &middot; pid 2032003 <span class="tag w">inferred</span> &middot; pull request 575 &middot; already in the build you are running</p>
+  </div></div>
+  <div class="bd">
+    <div class="do"><b>Do:</b> Open the subscription usage panel and reach the savings face from each route into it — the chip, and whatever else opens it.</div>
+    <p class="pass"><b>Pass:</b> The same numbers however you got there.</p>
+  </div>
+  <div class="verdicts">
+    <button class="vp" data-v="PASS">&#10003; pass</button><button class="vf" data-v="FAIL &mdash; ">&#10007; fail</button><button class="vo" data-v="ODD &mdash; ">~ odd</button><button class="vs" data-v="SKIPPED &mdash; ">skip</button>
+    <span class="mark"></span>
+  </div>
+</div>
+<div class="finding">
+  <div class="hd"><span class="num">5</span><div>
+    <h4>alt+1 to alt+4 land on a workbench tab without the mouse</h4>
+    <p class="who"><b>human note</b> &middot; FEATURES &middot; pid 3117137 <span class="tag w">inferred</span> &middot; pull request 574 &middot; already in the build you are running</p>
+  </div></div>
+  <div class="bd">
+    <p>Digits rather than letters because the obvious letters were taken — <code>alt+v</code> splits a pane and <code>alt+b</code> is readline's word-back, which reaches the agent's own prompt from the bench composer — and because digits extend on their own the day a fifth shelf appears.</p>
+    <div class="do"><b>Do:</b> On a pane's workbench press alt+1, alt+2, alt+3, alt+4. Then press tab a few times. Then alt+m.</div>
+    <p class="pass"><b>Pass:</b> Each digit goes straight to its shelf in the strip's own order; tab still cycles; alt+m still opens the note box, now on the comments board.</p>
+  </div>
+  <div class="verdicts">
+    <button class="vp" data-v="PASS">&#10003; pass</button><button class="vf" data-v="FAIL &mdash; ">&#10007; fail</button><button class="vo" data-v="ODD &mdash; ">~ odd</button><button class="vs" data-v="SKIPPED &mdash; ">skip</button>
+    <span class="mark"></span>
+  </div>
+</div>
+<div class="finding">
+  <div class="hd"><span class="num">6</span><div>
+    <h4>Two numbers that said nothing are gone</h4>
+    <p class="who"><b>OVERSEER!</b> &middot; pid 3643282 <span class="tag v">measured</span> &middot; pull request 573 &middot; already in the build you are running</p>
+  </div></div>
+  <div class="bd">
+    <p>You flagged both while testing tonight's build: a pane header printing its own grid size as <code>194×50</code> among the controls, and a response's group tab wearing a doubt count as <code>·2</code>.</p>
+    <div class="do"><b>Do:</b> Look at a pane header — no grid size in the control cluster. Open a response on a bench that has doubts and look at the group tabs.</div>
+    <p class="pass"><b>Pass:</b> Neither number is there. <b>The doubts themselves are untouched</b> — same tab, same click — so check you can still reach them; only the badge in front of them went.</p>
+  </div>
+  <div class="verdicts">
+    <button class="vp" data-v="PASS">&#10003; pass</button><button class="vf" data-v="FAIL &mdash; ">&#10007; fail</button><button class="vo" data-v="ODD &mdash; ">~ odd</button><button class="vs" data-v="SKIPPED &mdash; ">skip</button>
+    <span class="mark"></span>
+  </div>
+</div>
+<div class="finding">
+  <div class="hd"><span class="num">7</span><div>
+    <h4>The plan brief carries its own correction</h4>
+    <p class="who"><b>human note</b> &middot; FEATURES &middot; pid 3117137 <span class="tag w">inferred</span> &middot; pull request 572 &middot; already in the build you are running</p>
+  </div></div>
+  <div class="bd">
+    <div class="do"><b>Do:</b> Nothing in the app — a document change.</div>
+    <p class="pass"><b>Pass:</b> n/a.</p>
+  </div>
+  <div class="verdicts">
+    <button class="vp" data-v="PASS">&#10003; pass</button><button class="vf" data-v="FAIL &mdash; ">&#10007; fail</button><button class="vo" data-v="ODD &mdash; ">~ odd</button><button class="vs" data-v="SKIPPED &mdash; ">skip</button>
+    <span class="mark"></span>
+  </div>
+</div>
+<div class="finding">
+  <div class="hd"><span class="num">8</span><div>
+    <h4>The file drop and the launch defaults, folded past the changelog that blocked them</h4>
+    <p class="who"><b>OVERSEER!</b> &middot; pid 3643282 <span class="tag v">measured</span> &middot; pull request 571 &middot; already in the build you are running</p>
+  </div></div>
+  <div class="bd">
+    <p>Two finished pull requests that could not merge. Nothing in the code disagreed; the whole conflict was <code>CHANGELOG.md</code>. Folding them also surfaced a semantic conflict neither had alone — the comments shelf added a test asserting every corner goes through the skin, and the file drop's hover pill was rounded with a bare <code>px(3.)</code>.</p>
+    <div class="do"><b>Do:</b> Nothing of its own — what it carries is tested as the file drop and the launch defaults above. Worth one look at a bench card's corners on a square skin, since that is the guard the fold had to satisfy.</div>
+    <p class="pass"><b>Pass:</b> Corners follow the skin rather than staying round when everything around them changes shape.</p>
+  </div>
+  <div class="verdicts">
+    <button class="vp" data-v="PASS">&#10003; pass</button><button class="vf" data-v="FAIL &mdash; ">&#10007; fail</button><button class="vo" data-v="ODD &mdash; ">~ odd</button><button class="vs" data-v="SKIPPED &mdash; ">skip</button>
+    <span class="mark"></span>
+  </div>
+</div>
+<div class="finding">
+  <div class="hd"><span class="num">9</span><div>
+    <h4>A pane's rail grows a comments board that the agent never reads</h4>
+    <p class="who"><b>human note</b> &middot; FEATURES &middot; pid 3117137 <span class="tag w">inferred</span> &middot; pull request 566 &middot; already in the build you are running</p>
+  </div></div>
+  <div class="bd">
+    <p>A fourth tab on the rail, newest first, drawn in the palette's <code>human</code> role so the board reads as <b>yours</b> before a word of it is read. <code>Kind::Comment</code> is a ninth surface kind, so it inherits the file transport, the reload when a window opens, and the history cap for free. It also carries a DRY audit of the spine it had to live inside, which found one real hole.</p>
+    <div class="do"><b>Do:</b> Open a pane's rail and find the fourth tab. Write a comment on it. Then open a new window and check the board is still there. Then confirm the agent in that pane has no idea you wrote it — ask it.</div>
+    <p class="pass"><b>Pass:</b> Your comments are there, newest first, visibly yours rather than the agent's, and they survive a window opening. The agent cannot see them. The corners of the board go through the skin rather than being drawn beside it.</p>
+    <p class="mut">Its plan brief carries your own annotations in the branch — all four questions answered as recommended, with three amendments folded in.</p>
+  </div>
+  <div class="verdicts">
+    <button class="vp" data-v="PASS">&#10003; pass</button><button class="vf" data-v="FAIL &mdash; ">&#10007; fail</button><button class="vo" data-v="ODD &mdash; ">~ odd</button><button class="vs" data-v="SKIPPED &mdash; ">skip</button>
+    <span class="mark"></span>
+  </div>
+</div>
+<div class="finding">
+  <div class="hd"><span class="num">10</span><div>
+    <h4>Marks, not words — a measured UX pass over all six palettes</h4>
+    <p class="who"><b>style</b> &middot; BUGS &middot; pid 3604902 <span class="tag v">measured</span> &middot; pull request 562 &middot; already in the build you are running</p>
+  </div></div>
+  <div class="bd">
+    <div class="do"><b>Do:</b> Nothing in the app — this pull request is a report and changes no code.</div>
+    <p class="pass"><b>Pass:</b> n/a. Read it if you want the argument; there is nothing to click.</p>
+  </div>
+  <div class="verdicts">
+    <button class="vp" data-v="PASS">&#10003; pass</button><button class="vf" data-v="FAIL &mdash; ">&#10007; fail</button><button class="vo" data-v="ODD &mdash; ">~ odd</button><button class="vs" data-v="SKIPPED &mdash; ">skip</button>
+    <span class="mark"></span>
+  </div>
+</div>
+<div class="finding">
+  <div class="hd"><span class="num">11</span><div>
+    <h4>A file dropped on the bench types its path into the line you are writing</h4>
+    <p class="who"><b>Drag and drop</b> &middot; FEATURES &middot; pid 3091536 <span class="tag v">measured</span> &middot; pull request 561 &middot; already in the build you are running</p>
+  </div></div>
+  <div class="bd">
+    <div class="do"><b>Do:</b> Drag a file from a file manager onto a pane's workbench while a prompt is half-written.</div>
+    <p class="pass"><b>Pass:</b> The path is inserted into the line you were writing, at the cursor, and nothing is sent.</p>
+  </div>
+  <div class="verdicts">
+    <button class="vp" data-v="PASS">&#10003; pass</button><button class="vf" data-v="FAIL &mdash; ">&#10007; fail</button><button class="vo" data-v="ODD &mdash; ">~ odd</button><button class="vs" data-v="SKIPPED &mdash; ">skip</button>
+    <span class="mark"></span>
+  </div>
+</div>
+<div class="finding">
+  <div class="hd"><span class="num">12</span><div>
+    <h4>A new agent opens on defaults you set, and the bench's dials say what they are on</h4>
+    <p class="who"><b>agent wall</b> &middot; BUGS &middot; pid 3457182 <span class="tag v">measured</span> &middot; pull request 560 &middot; already in the build you are running</p>
+  </div></div>
+  <div class="bd">
+    <p>This is the work that was loose in the shared worktree with no branch under it at the first sweep. It now has a branch and a pull request — the hazard closed itself.</p>
+    <div class="do"><b>Do:</b> Launch a new agent pane and check it opens on the model and effort you set as defaults. Then read the bench's dials.</div>
+    <p class="pass"><b>Pass:</b> The new pane wears your defaults, and the dials name what they are on rather than leaving you to guess.</p>
+  </div>
+  <div class="verdicts">
+    <button class="vp" data-v="PASS">&#10003; pass</button><button class="vf" data-v="FAIL &mdash; ">&#10007; fail</button><button class="vo" data-v="ODD &mdash; ">~ odd</button><button class="vs" data-v="SKIPPED &mdash; ">skip</button>
+    <span class="mark"></span>
+  </div>
+</div>
+<div class="finding">
+  <div class="hd"><span class="num">13</span><div>
+    <h4>Answering on the workbench keeps you on the workbench</h4>
+    <p class="who"><b>choose snaps term</b> &middot; BUGS &middot; pid 3415342 <span class="tag v">measured</span> &middot; pull request 559 &middot; already in the build you are running</p>
+  </div></div>
+  <div class="bd">
+    <p>Your own complaint: picking an option on the bench spun the pane round to face the terminal.</p>
+    <div class="do"><b>Do:</b> Open a pane's workbench on a question surface and click an option.</div>
+    <p class="pass"><b>Pass:</b> The pane is still showing its workbench. The answer still reaches the agent as a typed line and still lands in the actions journal. <b>Then try to leave on purpose</b> — alt+k, the TERM chip, and a scripted <code>bench off</code> should all still work, and nothing else should take you off.</p>
+  </div>
+  <div class="verdicts">
+    <button class="vp" data-v="PASS">&#10003; pass</button><button class="vf" data-v="FAIL &mdash; ">&#10007; fail</button><button class="vo" data-v="ODD &mdash; ">~ odd</button><button class="vs" data-v="SKIPPED &mdash; ">skip</button>
+    <span class="mark"></span>
+  </div>
+</div>
+<div class="finding">
+  <div class="hd"><span class="num">14</span><div>
+    <h4>A tab can be dragged out of a group even when nothing is loose yet</h4>
+    <p class="who"><b>OUTER SPINE LINES</b> &middot; FEATURES &middot; pid 3263593 <span class="tag v">measured</span> &middot; pull request 558 &middot; already in the build you are running</p>
+  </div></div>
+  <div class="bd">
+    <p>The UNFILED hairline is the only drop target meaning <i>out of every group</i>, and it was drawn only when something was already out there. So the first tab could never leave.</p>
+    <div class="do"><b>Do:</b> Put every tab into a group so nothing is loose, then drag one tab toward the bottom of the left bar.</div>
+    <p class="pass"><b>Pass:</b> The hairline appears as you drag, the tab drops onto it, and it leaves its group. Then check the hairline is <b>not</b> a keyboard stop — ctrl+alt+down through the bar should never park on an empty divider.</p>
+  </div>
+  <div class="verdicts">
+    <button class="vp" data-v="PASS">&#10003; pass</button><button class="vf" data-v="FAIL &mdash; ">&#10007; fail</button><button class="vo" data-v="ODD &mdash; ">~ odd</button><button class="vs" data-v="SKIPPED &mdash; ">skip</button>
+    <span class="mark"></span>
+  </div>
+</div>
+<div class="finding">
+  <div class="hd"><span class="num">15</span><div>
     <h4>Changing the model or the effort no longer sends your half-written prompt</h4>
     <p class="who"><b>workbench</b> &middot; BUGS &middot; pid 1370093 <span class="tag w">inferred</span> &middot; pull request 556 &middot; already in the build you are running</p>
   </div></div>
@@ -894,7 +889,7 @@ pre.cmd code { color: var(--text-secondary); }
   </div>
 </div>
 <div class="finding">
-  <div class="hd"><span class="num">17</span><div>
+  <div class="hd"><span class="num">16</span><div>
     <h4>A tab is a thing you can read, and TERM ⇄ BENCH is one switch</h4>
     <p class="who"><b>style</b> &middot; BUGS &middot; pid 3604902 <span class="tag v">measured</span> &middot; pull request 555 &middot; already in the build you are running</p>
   </div></div>
@@ -910,7 +905,7 @@ pre.cmd code { color: var(--text-secondary); }
   </div>
 </div>
 <div class="finding">
-  <div class="hd"><span class="num">18</span><div>
+  <div class="hd"><span class="num">17</span><div>
     <h4>The response card is a strip of group tabs over one body</h4>
     <p class="who"><b>WORKBENCH RESTYLE!</b> &middot; WORKBENCH &middot; pid 450284 <span class="tag v">measured</span> &middot; pull request 554 &middot; already in the build you are running</p>
   </div></div>
@@ -924,13 +919,27 @@ pre.cmd code { color: var(--text-secondary); }
   </div>
 </div>
 <div class="finding">
-  <div class="hd"><span class="num">19</span><div>
+  <div class="hd"><span class="num">18</span><div>
     <h4>The model and effort a pane is running stay readable while it is working</h4>
     <p class="who"><span class="mut">owner not established</span> &middot; pull request 553 &middot; already in the build you are running</p>
   </div></div>
   <div class="bd">
     <div class="do"><b>Do:</b> Give a pane a long task so it goes busy, then read its model and effort gauges while the spinner turns. Check a dark palette and a light one.</div>
     <p class="pass"><b>Pass:</b> Both values readable at a glance in every state, working or idle.</p>
+  </div>
+  <div class="verdicts">
+    <button class="vp" data-v="PASS">&#10003; pass</button><button class="vf" data-v="FAIL &mdash; ">&#10007; fail</button><button class="vo" data-v="ODD &mdash; ">~ odd</button><button class="vs" data-v="SKIPPED &mdash; ">skip</button>
+    <span class="mark"></span>
+  </div>
+</div>
+<div class="finding">
+  <div class="hd"><span class="num">19</span><div>
+    <h4>Ctrl+wheel sizes exactly the surface under the pointer, and there are four of them</h4>
+    <p class="who"><b>text resize live</b> &middot; FEATURES &middot; pid 266933 <span class="tag v">measured</span> &middot; pull request 549 &middot; already in the build you are running</p>
+  </div></div>
+  <div class="bd">
+    <div class="do"><b>Do:</b> Hold ctrl and turn the wheel over four places in turn — the outer chrome (menu bar, tabs, left bar, the gaps), a pane's <b>header</b>, a pane's <b>terminal body</b>, and a pane's <b>workbench</b>.</div>
+    <p class="pass"><b>Pass:</b> Four things resize independently and nothing else moves with them. The workbench has a dial of its own that does not drag the terminal's text size along.</p>
   </div>
   <div class="verdicts">
     <button class="vp" data-v="PASS">&#10003; pass</button><button class="vf" data-v="FAIL &mdash; ">&#10007; fail</button><button class="vo" data-v="ODD &mdash; ">~ odd</button><button class="vs" data-v="SKIPPED &mdash; ">skip</button>
@@ -1085,18 +1094,18 @@ pre.cmd code { color: var(--text-secondary); }
   <div class="scroller">
   <table class="wide" style="min-width:560px">
     <thead><tr><th>Items</th><th>Pane, as you named it</th><th>Group</th><th>pid</th><th>Peer name</th><th>How I reach it</th><th>Address from</th></tr></thead>
-    <tbody><tr><td>4</td><td><b>text resize live</b></td><td class="mut">FEATURES</td><td><code>266933</code></td><td><code>terminal-delight-be</code></td><td>note, surface, or a prompt</td><td><span class="tag v">measured</span></td></tr>
-      <tr><td>9</td><td><b>Drag and drop</b></td><td class="mut">FEATURES</td><td><code>3091536</code></td><td><code>terminal-delight-d0</code></td><td>note, surface, or a prompt</td><td><span class="tag v">measured</span></td></tr>
-      <tr><td>6, 7, 12</td><td><b>human note</b></td><td class="mut">FEATURES</td><td><code>3117137</code></td><td><code>terminal-delight-43</code></td><td>note, surface, or a prompt</td><td><span class="tag w">inferred</span></td></tr>
-      <tr><td>2</td><td><b>OUTER SPINE LINES</b></td><td class="mut">FEATURES</td><td><code>3263593</code></td><td><code>terminal-delight-40</code></td><td>note, surface, or a prompt</td><td><span class="tag v">measured</span></td></tr>
-      <tr><td>18</td><td><b>WORKBENCH RESTYLE!</b></td><td class="mut">WORKBENCH</td><td><code>450284</code></td><td><code>terminal-delight-7c</code></td><td>note, surface, or a prompt</td><td><span class="tag v">measured</span></td></tr>
-      <tr><td>14</td><td><b>button glow</b></td><td class="mut">WORKBENCH</td><td><code>2032003</code></td><td><code>terminal-delight-d9</code></td><td>note, surface, or a prompt</td><td><span class="tag w">inferred</span></td></tr>
-      <tr><td>16, 21</td><td><b>workbench</b></td><td class="mut">BUGS</td><td><code>1370093</code></td><td><code>terminal-delight-0d</code></td><td>note, surface, or a prompt</td><td><span class="tag w">inferred</span></td></tr>
-      <tr><td>3</td><td><b>choose snaps term</b></td><td class="mut">BUGS</td><td><code>3415342</code></td><td><code>terminal-delight-81</code> <span class="tag c">shared by 2</span></td><td>note + surface only</td><td><span class="tag v">measured</span></td></tr>
-      <tr><td>10</td><td><b>agent wall</b></td><td class="mut">BUGS</td><td><code>3457182</code></td><td><code>terminal-delight-0b</code></td><td>note, surface, or a prompt</td><td><span class="tag v">measured</span></td></tr>
-      <tr><td>5, 17</td><td><b>style</b></td><td class="mut">BUGS</td><td><code>3604902</code></td><td><code>terminal-delight-81</code> <span class="tag c">shared by 2</span></td><td>note + surface only</td><td><span class="tag v">measured</span></td></tr>
-      <tr><td>13</td><td><b>artifacts jumble</b></td><td class="mut">BUGS</td><td><code>3893967</code></td><td><code>terminal-delight-a2</code></td><td>note, surface, or a prompt</td><td><span class="tag w">inferred</span></td></tr>
-      <tr><td class="mut">19, 20, 22, 23, 24, 25, 26, 27, 28, 29</td><td class="mut">no pane established</td><td class="mut">—</td><td class="mut">—</td><td class="mut">—</td><td class="mut">a falsifiable issue</td><td><span class="tag c">unattributed</span></td></tr></tbody>
+    <tbody><tr><td>19</td><td><b>text resize live</b></td><td class="mut">FEATURES</td><td><code>266933</code></td><td><code>terminal-delight-be</code></td><td>note, surface, or a prompt</td><td><span class="tag v">measured</span></td></tr>
+      <tr><td>11</td><td><b>Drag and drop</b></td><td class="mut">FEATURES</td><td><code>3091536</code></td><td><code>terminal-delight-d0</code></td><td>note, surface, or a prompt</td><td><span class="tag v">measured</span></td></tr>
+      <tr><td>5, 7, 9</td><td><b>human note</b></td><td class="mut">FEATURES</td><td><code>3117137</code></td><td><code>terminal-delight-43</code></td><td>note, surface, or a prompt</td><td><span class="tag w">inferred</span></td></tr>
+      <tr><td>14</td><td><b>OUTER SPINE LINES</b></td><td class="mut">FEATURES</td><td><code>3263593</code></td><td><code>terminal-delight-40</code></td><td>note, surface, or a prompt</td><td><span class="tag v">measured</span></td></tr>
+      <tr><td>17</td><td><b>WORKBENCH RESTYLE!</b></td><td class="mut">WORKBENCH</td><td><code>450284</code></td><td><code>terminal-delight-7c</code></td><td>note, surface, or a prompt</td><td><span class="tag v">measured</span></td></tr>
+      <tr><td>4</td><td><b>button glow</b></td><td class="mut">WORKBENCH</td><td><code>2032003</code></td><td><code>terminal-delight-d9</code></td><td>note, surface, or a prompt</td><td><span class="tag w">inferred</span></td></tr>
+      <tr><td>15, 21</td><td><b>workbench</b></td><td class="mut">BUGS</td><td><code>1370093</code></td><td><code>terminal-delight-0d</code></td><td>note, surface, or a prompt</td><td><span class="tag w">inferred</span></td></tr>
+      <tr><td>13</td><td><b>choose snaps term</b></td><td class="mut">BUGS</td><td><code>3415342</code></td><td><code>terminal-delight-81</code> <span class="tag c">shared by 2</span></td><td>note + surface only</td><td><span class="tag v">measured</span></td></tr>
+      <tr><td>12</td><td><b>agent wall</b></td><td class="mut">BUGS</td><td><code>3457182</code></td><td><code>terminal-delight-0b</code></td><td>note, surface, or a prompt</td><td><span class="tag v">measured</span></td></tr>
+      <tr><td>10, 16</td><td><b>style</b></td><td class="mut">BUGS</td><td><code>3604902</code></td><td><code>terminal-delight-81</code> <span class="tag c">shared by 2</span></td><td>note + surface only</td><td><span class="tag v">measured</span></td></tr>
+      <tr><td>3</td><td><b>artifacts jumble</b></td><td class="mut">BUGS</td><td><code>3893967</code></td><td><code>terminal-delight-a2</code></td><td>note, surface, or a prompt</td><td><span class="tag w">inferred</span></td></tr>
+      <tr><td class="mut">18, 20, 22, 23, 24, 25, 26, 27, 28, 29</td><td class="mut">no pane established</td><td class="mut">—</td><td class="mut">—</td><td class="mut">—</td><td class="mut">a falsifiable issue</td><td><span class="tag c">unattributed</span></td></tr></tbody>
   </table>
   </div>
   <figcaption>These are the names <b>you</b> typed in the left bar, which is how you point at a pane — and the pid beside each, which is the only thing that reliably addresses one. <b>A row with no pane is not an idle agent and not an absent one</b>; it is work I could not trace to anyone, so its verdicts become falsifiable issues rather than messages to nobody.</figcaption>
@@ -1111,7 +1120,7 @@ pre.cmd code { color: var(--text-secondary); }
     <span><i style="background:#d03b3b"></i>open and conflicting</span>
     <span><i style="background:#8b8a80"></i>landed earlier, or nothing on this page</span>
   </div>
-  <div class="scroller"><div class="fleet"><div class="fl-g"><div class="fl-gh">FEATURES</div><div class="fl-tab s-a"><span class="fl-n">text resize live</span><span class="fl-s">shipped &middot; 4</span></div><div class="fl-tab s-a"><span class="fl-n">Drag and drop</span><span class="fl-s">shipped &middot; 9</span></div><div class="fl-tab s-a"><span class="fl-n">human note</span><span class="fl-s">shipped &middot; 6, 7, 12</span></div><div class="fl-tab s-a"><span class="fl-n">OUTER SPINE LINES</span><span class="fl-s">shipped &middot; 2</span></div></div><div class="fl-g"><div class="fl-gh">WORKBENCH</div><div class="fl-tab s-d"><span class="fl-n">WORKBENCH RESTYLE!</span><span class="fl-s">landed &middot; 18</span></div><div class="fl-tab s-a"><span class="fl-n">button glow</span><span class="fl-s">shipped &middot; 14</span></div></div><div class="fl-g"><div class="fl-gh">BUGS</div><div class="fl-tab s-d"><span class="fl-n">workbench</span><span class="fl-s">landed &middot; 16, 21</span></div><div class="fl-tab s-a"><span class="fl-n">choose snaps term</span><span class="fl-s">shipped &middot; 3</span></div><div class="fl-tab s-a"><span class="fl-n">agent wall</span><span class="fl-s">shipped &middot; 10</span></div><div class="fl-tab s-a"><span class="fl-n">style</span><span class="fl-s">shipped &middot; 5, 17</span></div><div class="fl-tab s-a"><span class="fl-n">artifacts jumble</span><span class="fl-s">shipped &middot; 13</span></div><div class="fl-tab s-none"><span class="fl-n">hman message overv</span><span class="fl-s">nothing on this page</span></div></div><div class="fl-g"><div class="fl-gh">— ungrouped</div><div class="fl-tab s-me"><span class="fl-n">OVERSEER!</span><span class="fl-s">you are here</span></div></div></div></div>
+  <div class="scroller"><div class="fleet"><div class="fl-g"><div class="fl-gh">FEATURES</div><div class="fl-tab s-d"><span class="fl-n">text resize live</span><span class="fl-s">landed &middot; 19</span></div><div class="fl-tab s-d"><span class="fl-n">Drag and drop</span><span class="fl-s">landed &middot; 11</span></div><div class="fl-tab s-d"><span class="fl-n">human note</span><span class="fl-s">landed &middot; 5, 7, 9</span></div><div class="fl-tab s-d"><span class="fl-n">OUTER SPINE LINES</span><span class="fl-s">landed &middot; 14</span></div></div><div class="fl-g"><div class="fl-gh">WORKBENCH</div><div class="fl-tab s-d"><span class="fl-n">WORKBENCH RESTYLE!</span><span class="fl-s">landed &middot; 17</span></div><div class="fl-tab s-d"><span class="fl-n">button glow</span><span class="fl-s">landed &middot; 4</span></div></div><div class="fl-g"><div class="fl-gh">BUGS</div><div class="fl-tab s-d"><span class="fl-n">workbench</span><span class="fl-s">landed &middot; 15, 21</span></div><div class="fl-tab s-d"><span class="fl-n">choose snaps term</span><span class="fl-s">landed &middot; 13</span></div><div class="fl-tab s-d"><span class="fl-n">agent wall</span><span class="fl-s">landed &middot; 12</span></div><div class="fl-tab s-d"><span class="fl-n">style</span><span class="fl-s">landed &middot; 10, 16</span></div><div class="fl-tab s-d"><span class="fl-n">artifacts jumble</span><span class="fl-s">landed &middot; 3</span></div><div class="fl-tab s-none"><span class="fl-n">hman message overv</span><span class="fl-s">nothing on this page</span></div></div><div class="fl-g"><div class="fl-gh">— ungrouped</div><div class="fl-tab s-me"><span class="fl-n">OVERSEER!</span><span class="fl-s">you are here</span></div></div></div></div>
   <figcaption>The same bar you were pointing at, with each tab carrying the item numbers on this
     page that came out of it. <b>This is the join doing its real job</b> — every row is a name you
     typed, a pid I can write to, and a peer I can now prompt. A tab marked <i>nothing on this

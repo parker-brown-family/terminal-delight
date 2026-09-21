@@ -1,0 +1,689 @@
+<header class="top">
+  <div class="wrap">
+    <p class="kicker">terminal-delight &middot; decision brief &middot; 2026-09-19 &middot; difficulty 4/10</p>
+    <h1>Typing into the pane's rename box</h1>
+    <p class="headline">Right-click the pane title while the workbench is showing and the box opens, takes
+      focus, and accepts nothing: the workbench sits above it in the pane's one key handler and
+      keeps every key. <b>The letters are not lost — on an agent pane they open the composer and go
+      to the agent's prompt.</b> Escape already lands correctly, because escape is the only key
+      routed by a table. The fix is to give the other keys the same table.</p>
+    <p class="meta">
+      <span>branch <b>fix/the-second-click-backs-out-to-your-branch</b></span>
+      <span>head <b>a6b04e6</b></span>
+      <span>reading time <b>~11 min</b></span>
+      <span>decision <b>which of three cuts</b></span>
+    </p>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <div class="callout good" style="margin-bottom:22px">
+    <span class="lbl">as built &middot; pull request 609</span>
+    <p><b>Built past option B, to the structural cut.</b> You asked for the class rather than the
+      case, so the whole decision moved into one ordered table: <code>keylayer::route</code> answers
+      for every key, <code>on_key</code> is a <code>match</code> on it and never inspects a keystroke
+      itself, and the bench hands back what it has no use for instead of stopping the event. Twenty-one
+      of the twenty-seven chords come back, <code>ctrl+c</code> among them.</p>
+    <p>Two orderings below changed in the building, and both are argued in the pull request: the
+      pane's chords ended up <em>above</em> the two text fields, because <code>alt+s</code> is how you
+      put the pen down on a note and a composer that swallowed it would leave Enter as the only way
+      out; and <code>ctrl+x</code> is claimed unconditionally, because asking whether anything is
+      selected renders the selection to a string and this handler runs on every keystroke.</p>
+    <p>Everything below is the analysis the decision was taken from, unchanged.
+      <a href="https://github.com/parker-brown-family/terminal-delight/pull/609">The pull request</a>
+      carries the as-built argument, the guards and the twelve mutations.</p>
+  </div>
+
+  <div class="tiles">
+    <div class="tile bad"><span class="n">21/27</span><span class="l">chords swallowed on the workbench face</span><span class="s">measured — the real tables, run</span></div>
+    <div class="tile bad"><span class="n">~100</span><span class="l">lines of <code>on_key</code> unreachable while the bench is up</span><span class="s">pane.rs:4662 → 4960</span></div>
+    <div class="tile good"><span class="n">1</span><span class="l">key already routed by a table, and it works</span><span class="s">escape, via keylayer.rs</span></div>
+    <div class="tile est"><span class="n">~110</span><span class="l">lines to the recommended fix, tests included</span><span class="s">estimate — mine to argue with</span></div>
+  </div>
+
+  <h2 class="sec">The verdict</h2>
+
+  <div class="finding crit">
+    <h4><span class="tag v">measured</span>The bench keeps every key it cannot use, and the rename box is below it</h4>
+    <p><code>TerminalView::on_key</code> (<code>app/src/pane.rs:4481</code>) is the pane's only key handler.
+      It calls <code>bench_key</code> at line 4662; every path out of that function ends in
+      <code>cx.stop_propagation()</code>, so on the workbench face nothing below line 4662 ever runs.
+      The inline rename box is handled at line 4729.</p>
+    <p class="inv"><b>Invalidate:</b> press <kbd>Esc</kbd> on the open box with the bench showing. It
+      should cancel the rename. If it does not, the key never reaches <code>on_key</code> at all and
+      this whole reading is wrong — the problem would then be focus, and none of the three options apply.</p>
+  </div>
+
+  <div class="finding warn">
+    <h4><span class="tag v">measured</span>The keystrokes go somewhere, and it is the agent</h4>
+    <p>A printable key on a reading bench resolves to <code>Reading::Talk</code>: the composer opens
+      carrying that character and the byte is written to the pseudoterminal. So typing a pane name on
+      an agent pane starts a message to the agent. On a pane with no agent the same key is swallowed
+      and nothing happens.</p>
+    <p class="inv"><b>Invalidate:</b> if typing into the box leaves the bench's composer empty on an
+      agent pane, <code>bench_key</code> is not being reached and the trace is wrong.</p>
+  </div>
+
+  <div class="finding warn">
+    <h4><span class="tag v">measured</span>This is the unfinished half of an issue that is still open</h4>
+    <p>Issue 524 — <em>the workbench face swallows every one of the window's alt chords</em> — was
+      answered with <code>workbench::window_chord</code>, a table the bench consults before it can
+      swallow, plus a structural guard. That fixed the <em>window's</em> chords. The <em>pane's</em>
+      own chords and its two text fields never got the same treatment, and they are what is dead now.</p>
+    <p class="inv"><b>Invalidate:</b> press <kbd>ctrl+shift+b</kbd> on a bench pane. If the left bar
+      toggles, the pane's chords are reaching the workspace some other way and only the rename box is broken.</p>
+  </div>
+
+  <h2 class="sec">Read first</h2>
+
+  <ol class="esc-list">
+    <li>
+      <h4>Escape is the discriminator — press it before anything else</h4>
+      <p>Escape already cancels the rename on the bench face, because <code>keylayer::escape_target</code>
+        ranks the rename box above the bench. Everything in this brief follows from escape working and
+        the letters not. One keystroke, ten seconds, and it decides whether the rest is worth reading.</p>
+    </li>
+    <li>
+      <h4>Twenty-one of twenty-seven chords are swallowed there, not one</h4>
+      <p><kbd>ctrl+w</kbd>, <kbd>ctrl+f</kbd>, <kbd>ctrl+c</kbd>, every <kbd>ctrl+shift+…</kbd> panel,
+        the scrollback keys, <kbd>alt+s</kbd> for a sticky note. The rename box is the one you happened
+        to reach for. Fixing only it leaves nineteen.</p>
+    </li>
+    <li>
+      <h4>The precedence already exists, as a value, tested over all 128 combinations</h4>
+      <p><code>app/src/keylayer.rs</code> says the rename box outranks the bench and proves it. Only
+        escape consults it. Every other key is ordered by which <code>if</code> was written first,
+        which is the failure mode that module was written to end.</p>
+    </li>
+    <li>
+      <h4>The recommended fix adds no new rule, it reuses the one that is there</h4>
+      <p>The bench already declines the window's chords before it can swallow one. The change teaches
+        it to decline the pane's chords and its text fields the same way. Nothing is reordered, so
+        nothing that works today can break.</p>
+    </li>
+    <li>
+      <h4>Issue 524's "done when" is already satisfied — it can be closed as this lands</h4>
+      <p>Its five acceptance bullets are all met by the shipped <code>window_chord</code> work. Leaving
+        it open makes the remaining half invisible: the rollup shows one ticket that looks half-fixed
+        rather than one fixed and one filed.</p>
+    </li>
+  </ol>
+
+  <h2 class="sec">What you see</h2>
+
+  <figure>
+    <span class="lbl">01 &middot; The same gesture on each face</span>
+    <div class="faces">
+      <div>
+        <div class="pane">
+          <div class="hdr"><span class="ttl">&#9656; claude &middot; deploy-wa<span class="caret"></span></span><span class="ctl">&#9634; &#9881; &times;</span></div>
+          <div class="body">
+            <div class="grid-line">$ claude</div>
+            <div class="grid-line">&#9608; ready</div>
+            <div class="grid-line">&nbsp;</div>
+            <div class="grid-line">&nbsp;</div>
+            <div class="grid-line">&nbsp;</div>
+          </div>
+        </div>
+        <p class="meta" style="margin-top:8px"><span><span class="badge-face">terminal face</span> &nbsp;typed <b>deploy-wa</b> — it is in the box</span></p>
+      </div>
+      <div>
+        <div class="pane lit">
+          <div class="hdr"><span class="ttl">&#9656; claude &middot; <span class="caret"></span></span><span class="ctl">&#9634; &#9881; &times;</span></div>
+          <div class="body">
+            <div class="surfcard"><span class="k">changeset</span><br>keylayer &mdash; one table for every key</div>
+            <div class="surfcard"><span class="k">question</span><br>Which cut do you want?</div>
+            <div class="composer"><span class="lb">composer &mdash; to the agent</span>deploy-wa<span class="caret"></span></div>
+          </div>
+        </div>
+        <p class="meta" style="margin-top:8px"><span><span class="badge-face">workbench face</span> &nbsp;typed <b>deploy-wa</b> — it is in the agent's prompt</span></p>
+      </div>
+    </div>
+    <figcaption>Both panes received the same nine keystrokes after the same right-click. <b>Something above
+      the box answered first</b>, and on an agent pane that something forwards what you typed.</figcaption>
+    <div class="gutter">drawn from the code paths, not from a screenshot &middot; on a pane with no agent
+      the right-hand composer never appears and the keys go nowhere at all, which looks like a dead box</div>
+  </figure>
+
+  <figure>
+    <span class="lbl">02 &middot; Where the letter m actually goes</span>
+    <div class="scroller">
+      <svg viewBox="0 0 920 290" role="img" aria-label="Flow of one keystroke: the live path reaches the agent through the bench, the dead path to the rename box is never taken" style="min-width:760px">
+        <defs>
+          <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="#8b8a80"/>
+          </marker>
+          <marker id="ahr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="#d03b3b"/>
+          </marker>
+        </defs>
+        <g font-family="ui-monospace, monospace" font-size="11">
+          <rect x="6" y="34" width="104" height="40" rx="5" fill="#232321" stroke="#3a3a36"/>
+          <text x="58" y="50" fill="#ffffff" text-anchor="middle">KeyDown</text>
+          <text x="58" y="64" fill="#8b8a80" text-anchor="middle">the letter m</text>
+
+          <rect x="140" y="34" width="150" height="40" rx="5" fill="#232321" stroke="#3987e5"/>
+          <text x="215" y="50" fill="#ffffff" text-anchor="middle">pane::on_key</text>
+          <text x="215" y="64" fill="#8b8a80" text-anchor="middle">pane.rs:4481</text>
+
+          <rect x="320" y="34" width="150" height="40" rx="5" fill="rgba(208,59,59,.14)" stroke="#d03b3b"/>
+          <text x="395" y="50" fill="#f08a8a" text-anchor="middle">bench_key</text>
+          <text x="395" y="64" fill="#8b8a80" text-anchor="middle">pane.rs:4662</text>
+
+          <rect x="500" y="34" width="166" height="40" rx="5" fill="#232321" stroke="#3a3a36"/>
+          <text x="583" y="50" fill="#ffffff" text-anchor="middle">reading_key &#8594; Talk</text>
+          <text x="583" y="64" fill="#8b8a80" text-anchor="middle">bench.rs:456</text>
+
+          <rect x="696" y="34" width="120" height="40" rx="5" fill="#232321" stroke="#c98500"/>
+          <text x="756" y="50" fill="#f5c95f" text-anchor="middle">composer</text>
+          <text x="756" y="64" fill="#8b8a80" text-anchor="middle">opens, carries m</text>
+
+          <rect x="822" y="34" width="92" height="40" rx="5" fill="#232321" stroke="#3a3a36"/>
+          <text x="868" y="50" fill="#ffffff" text-anchor="middle">the agent</text>
+          <text x="868" y="64" fill="#8b8a80" text-anchor="middle">via the PTY</text>
+
+          <line x1="112" y1="54" x2="136" y2="54" stroke="#8b8a80" marker-end="url(#ah)"/>
+          <line x1="292" y1="54" x2="316" y2="54" stroke="#8b8a80" marker-end="url(#ah)"/>
+          <line x1="472" y1="54" x2="496" y2="54" stroke="#8b8a80" marker-end="url(#ah)"/>
+          <line x1="668" y1="54" x2="692" y2="54" stroke="#8b8a80" marker-end="url(#ah)"/>
+          <line x1="818" y1="54" x2="820" y2="54" stroke="#8b8a80" marker-end="url(#ah)"/>
+
+          <text x="500" y="24" fill="#5fcfa5" font-size="10" letter-spacing="1">WHAT HAPPENS</text>
+
+          <path d="M 395 74 L 395 128" stroke="#d03b3b" stroke-dasharray="4 4" marker-end="url(#ahr)"/>
+          <text x="405" y="106" fill="#f08a8a" font-size="10">stop_propagation() &mdash; nothing below runs</text>
+
+          <text x="140" y="152" fill="#8b8a80" font-size="10" letter-spacing="1">WHAT IS DOWN THERE</text>
+          <g opacity="0.55">
+            <rect x="140" y="162" width="176" height="34" rx="5" fill="#1a1a19" stroke="#3a3a36" stroke-dasharray="3 3"/>
+            <text x="228" y="183" fill="#8b8a80" text-anchor="middle">the rename box &middot; 4729</text>
+
+            <rect x="330" y="162" width="176" height="34" rx="5" fill="#1a1a19" stroke="#3a3a36" stroke-dasharray="3 3"/>
+            <text x="418" y="183" fill="#8b8a80" text-anchor="middle">the sticky note &middot; 4723</text>
+
+            <rect x="520" y="162" width="200" height="34" rx="5" fill="#1a1a19" stroke="#3a3a36" stroke-dasharray="3 3"/>
+            <text x="620" y="183" fill="#8b8a80" text-anchor="middle">nineteen pane chords &middot; 4764+</text>
+
+            <rect x="734" y="162" width="180" height="34" rx="5" fill="#1a1a19" stroke="#3a3a36" stroke-dasharray="3 3"/>
+            <text x="824" y="183" fill="#8b8a80" text-anchor="middle">the PTY encoder &middot; 4960</text>
+
+            <rect x="140" y="206" width="176" height="34" rx="5" fill="#1a1a19" stroke="#3a3a36" stroke-dasharray="3 3"/>
+            <text x="228" y="227" fill="#8b8a80" text-anchor="middle">reader paging &middot; 4679</text>
+
+            <rect x="330" y="206" width="176" height="34" rx="5" fill="#1a1a19" stroke="#3a3a36" stroke-dasharray="3 3"/>
+            <text x="418" y="227" fill="#8b8a80" text-anchor="middle">selection keys &middot; 4874</text>
+
+            <rect x="520" y="206" width="200" height="34" rx="5" fill="#1a1a19" stroke="#3a3a36" stroke-dasharray="3 3"/>
+            <text x="620" y="227" fill="#8b8a80" text-anchor="middle">scrollback paging &middot; 4890</text>
+          </g>
+          <text x="140" y="262" fill="#f08a8a" font-size="10.5">none of these is reached while the workbench face is up</text>
+        </g>
+      </svg>
+    </div>
+    <figcaption>The live path is four hops and ends at the agent. <b>The key never arrives at the dead region
+      at all</b> — the exit above it stops the event, so those branches are never asked.</figcaption>
+    <div class="gutter">drawn from the code &middot; line numbers are this working tree at a6b04e6 &middot;
+      the composer step is skipped on a pane with no agent, and the key is dropped instead</div>
+  </figure>
+
+  <h2 class="sec">Why it happens</h2>
+
+  <p class="lede">The pane stacks surfaces — paint across every pane, a context tray, the header's
+    menu and rename box, the FOCUS reader, a sticky note, and under all of it either a terminal or a
+    workbench. One handler decides which of them gets a key. For escape, that decision is a table in
+    <code>keylayer.rs</code>. For every other key it is the order the <code>if</code> statements
+    happen to be written in.</p>
+
+  <figure>
+    <span class="lbl">03 &middot; One handler, and what the bench rung costs</span>
+    <div class="ladder">
+      <div class="rung"><span class="ln">4498</span><span class="wh"><b>F1</b> — the help modal</span><span class="tagr">works on both faces</span></div>
+      <div class="rung"><span class="ln">4513</span><span class="wh"><b>alt+k</b> — flip the face</span><span class="tagr">works on both faces</span></div>
+      <div class="rung"><span class="ln">4538</span><span class="wh"><b>escape</b> — resolved against <code>keylayer::escape_target</code></span><span class="tagr">works on both faces</span></div>
+      <div class="rung"><span class="ln">4632</span><span class="wh"><b>paint mode</b> — the overlay owns the keyboard</span><span class="tagr">works on both faces</span></div>
+      <div class="rung bench"><span class="ln">4662</span><span class="wh"><b>bench_key</b> — and every exit from it stops the event</span><span class="tagr">the rung</span></div>
+      <div class="rung dead"><span class="ln">4679</span><span class="wh">the FOCUS reader's paging keys</span><span class="tagr">unreachable</span></div>
+      <div class="rung dead text"><span class="ln">4697</span><span class="wh"><b>alt+s</b> / <b>alt+backspace</b> — the sticky note</span><span class="tagr">unreachable</span></div>
+      <div class="rung dead text"><span class="ln">4723</span><span class="wh">the sticky note holding the pen</span><span class="tagr">unreachable</span></div>
+      <div class="rung dead text"><span class="ln">4729</span><span class="wh"><b>the inline rename box</b></span><span class="tagr">unreachable</span></div>
+      <div class="rung dead"><span class="ln">4764</span><span class="wh"><b>ctrl+w</b>, <b>ctrl+f</b>, <b>ctrl+x</b> and every <b>ctrl+shift</b> panel</span><span class="tagr">unreachable</span></div>
+      <div class="rung dead"><span class="ln">4874</span><span class="wh">shift-arrow selection, scrollback paging, the ends</span><span class="tagr">unreachable</span></div>
+      <div class="rung dead"><span class="ln">4960</span><span class="wh">the PTY encoder — <code>ctrl+c</code> among them</span><span class="tagr">unreachable</span></div>
+      <div class="deadnote">everything hatched is pane chrome that has nothing to do with which face is showing</div>
+    </div>
+    <figcaption>The rung is in the middle of the handler, and the handler is not sorted into
+      face-independent and face-specific halves. <b>Anything written below line 4662 is a terminal-face
+      feature whether its author meant it to be or not.</b></figcaption>
+    <div class="gutter">drawn from the code &middot; the hatched rungs were confirmed by running the
+      routing tables, not by reading alone &mdash; see the case table</div>
+  </figure>
+
+  <figure>
+    <span class="lbl">04 &middot; Escape has a table; every other key has a line number</span>
+    <div class="twoup">
+      <div class="col">
+        <h5>Escape <span class="pill ok">tested &mdash; all 128 combinations</span></h5>
+        <p class="src">app/src/keylayer.rs &middot; EscTarget, declaration order is precedence</p>
+        <div class="stack">
+          <div>1 &nbsp;Paint</div>
+          <div>2 &nbsp;CtxMenu</div>
+          <div>3 &nbsp;HeaderMenu</div>
+          <div>4 &nbsp;Reader</div>
+          <div>5 &nbsp;Sticky</div>
+          <div class="hi">6 &nbsp;Rename</div>
+          <div class="bn">7 &nbsp;Bench</div>
+          <div>8 &nbsp;Terminal</div>
+        </div>
+      </div>
+      <div class="col">
+        <h5>Every other key <span class="pill no">no test, no value</span></h5>
+        <p class="src">app/src/pane.rs &middot; the order the branches are written in</p>
+        <div class="stack">
+          <div>4632 &nbsp;Paint</div>
+          <div class="bn">4662 &nbsp;Bench</div>
+          <div>4679 &nbsp;Reader</div>
+          <div>4697 &nbsp;Sticky</div>
+          <div class="hi">4729 &nbsp;Rename</div>
+          <div>4764 &nbsp;the pane's chords</div>
+          <div>4960 &nbsp;Terminal</div>
+          <div style="color:#6f6e66">CtxMenu and HeaderMenu take no ordinary keys</div>
+        </div>
+      </div>
+    </div>
+    <figcaption>The same surfaces, two orders. <b>The rename box is sixth on the left and fifth on the
+      right, and the bench moved from seventh to second</b> — which is the entire bug. The module's own
+      doc comment says so: <em>"Only ESCAPE goes through here. Every other key keeps the path it had."</em></figcaption>
+    <div class="gutter">the two ladders are not required to be identical &mdash; a menu wants escape and
+      no letters &mdash; but where both name a surface, they must agree, and nothing checks that today</div>
+  </figure>
+
+  <h2 class="sec">How far it goes</h2>
+
+  <figure>
+    <span class="lbl">05 &middot; Twenty-seven chords, on the workbench face</span>
+    <div class="chips">
+      <span class="chip dead">a letter</span><span class="chip dead">backspace</span>
+      <span class="chip dead">alt+s</span><span class="chip dead">alt+backspace</span>
+      <span class="chip dead">ctrl+w</span><span class="chip dead">ctrl+f</span>
+      <span class="chip dead">ctrl+x</span><span class="chip dead">ctrl+c</span>
+      <span class="chip dead">ctrl+shift+c</span><span class="chip dead">ctrl+shift+v</span>
+      <span class="chip dead">ctrl+shift+b</span><span class="chip dead">ctrl+shift+n</span>
+      <span class="chip dead">ctrl+shift+z</span><span class="chip dead">ctrl+shift+k</span>
+      <span class="chip dead">ctrl+shift+a</span><span class="chip dead">ctrl+shift+d</span>
+      <span class="chip dead">ctrl+shift+g</span><span class="chip dead">ctrl+shift+y</span>
+      <span class="chip dead">shift+left</span><span class="chip dead">pageup</span>
+      <span class="chip dead">ctrl+home</span>
+      <span class="chip live">escape</span><span class="chip live">alt+w</span>
+      <span class="chip live">alt+r</span><span class="chip live">alt+k</span>
+      <span class="chip own">up / down</span><span class="chip own">tab</span>
+    </div>
+    <div class="legend">
+      <span><i style="background:#d03b3b"></i>swallowed — 21</span>
+      <span><i style="background:#199e70"></i>reaches its handler — 4</span>
+      <span><i style="background:#3987e5"></i>the bench's own — 2</span>
+    </div>
+    <figcaption><b>The four that work are the four that were deliberately made to work.</b> Escape has
+      its table; <code>alt+k</code> is handled two rungs above the bench; <code>alt+w</code> and
+      <code>alt+r</code> are on the <code>window_chord</code> decline list that closed the alt-chord
+      complaint. Nothing else was given a way past.</figcaption>
+    <div class="gutter">measured, not read: the three routing functions were extracted verbatim from
+      workbench.rs and run over this list &middot; the wiring around them is read from source &middot;
+      <code>ctrl+shift+v</code> does work once the composer is already open</div>
+  </figure>
+
+  <div class="morerow">
+    <button class="more" data-dlg="d-cases">The full case table, and how it was produced</button>
+    <button class="more" data-dlg="d-524">What issue 524 fixed, and what it left</button>
+  </div>
+
+  <div class="callout crit">
+    <span class="lbl">ctrl+c, on the bench</span>
+    <p><b><code>ctrl+c</code> does not reach an agent from its own workbench.</b> In reading mode it
+      resolves to <code>Reading::Ignore</code> and is dropped. <code>workbench.rs</code>'s own doc
+      comment says the opposite — <em>"ctrl+c must reach a running agent. A bench that refused it would
+      take away the only way to interrupt a turn"</em> — and it is describing why the chord is kept off
+      the decline list, which is true and not sufficient. <b>Invalidate:</b> start a long turn, flip to
+      the bench, press <kbd>ctrl+c</kbd>. If the turn stops, this reading is wrong.</p>
+  </div>
+
+  <h2 class="sec">Three ways to cut it</h2>
+
+  <div class="cards">
+    <div class="card">
+      <span class="badge">narrow</span>
+      <h3>A &middot; One more table, text fields only</h3>
+      <p>Add <code>typing_owner</code> beside <code>escape_target</code> in <code>keylayer.rs</code>:
+        the topmost surface that owns <em>characters</em>, which is a shorter ladder than escape's
+        because menus want escape and no letters. <code>bench_key</code> declines when the answer is
+        not the bench.</p>
+      <p class="why">Fixes exactly what you hit, plus the sticky note's composer. The precedence stays
+        one value, and the new ladder can be asserted to agree with the escape ladder wherever both
+        name a surface.</p>
+      <p class="cost">Leaves nineteen chords dead, including <code>ctrl+c</code>. You would be back
+        here.</p>
+      <p class="sz">~55 lines &middot; keylayer.rs, bench.rs, pane.rs</p>
+    </div>
+
+    <div class="card rec">
+      <span class="badge">recommended</span>
+      <h3>B &middot; A, plus the pane's own chord list</h3>
+      <p>Everything in A, and a <code>pane_chord</code> table sitting beside the existing
+        <code>window_chord</code> one: the chords the <em>pane</em> owns, declined before the bench can
+        swallow them, exactly as the window's already are.</p>
+      <p class="why">It adds no new mechanism — the bench has declined a class of chords since issue
+        524, and this is a second class through the same door. <b>Nothing is reordered</b>, so no key
+        that works today can change. Twenty-one of the twenty-seven come back.</p>
+      <p class="cost">Two lists that can drift: a chord added to <code>on_key</code> later and not to
+        the table stays dead. Needs a scan test, and <code>alt+backspace</code> has to stay off the
+        list because the composer uses it for kill-word.</p>
+      <p class="sz">~110 lines &middot; three files, all additive</p>
+    </div>
+
+    <div class="card">
+      <span class="badge">structural</span>
+      <h3>C &middot; Cut <code>on_key</code> into chrome and content</h3>
+      <p>Sort the handler into the half that is true on both faces — the pane's chords, its text
+        fields, the reader — and the half that belongs to whichever face is showing. The bench rung
+        moves to the seam, and the terminal's own guards move with it.</p>
+      <p class="why">The only version where a chord added later is right by construction rather than by
+        remembering to add it to a list. It is where B ends up if this keeps happening.</p>
+      <p class="cost">It reorders a 480-line handler on the hottest path in the app. The
+        exited-pane guard at 4757 currently sits above those chords, so a dead pane's bench is one of
+        the cases whose behaviour changes and nobody has decided what it should be.</p>
+      <p class="sz">~300 lines moved &middot; behaviour change across ~30 keys</p>
+    </div>
+  </div>
+
+  <p class="lede" style="margin-top:18px">B, because it buys nineteen chords back for fifty lines more
+    than A and cannot break anything that works, and because C is the same change with the risk front-loaded
+    — it is worth doing when the list has drifted once and not before. If you only want your rename box,
+    A is the small version; say so and it ships today.</p>
+
+  <figure>
+    <span class="lbl">06 &middot; Where each cut lands, and what it touches</span>
+    <div class="frames">
+      <div class="frame">
+        <span class="fno">frame 1 &middot; the pane today</span>
+        <div class="bx pane-b"><span class="bt">&#9635; pane</span>
+          one key handler &middot; one focus handle
+          <div class="leaf">on_key &mdash; 480 lines, one order</div>
+          <div class="leaf">face: terminal &nbsp;|&nbsp; workbench</div>
+        </div>
+        <div class="bx ghost"><span class="bt">x</span>x<div class="leaf">x</div></div>
+        <div class="bx ghost"><span class="bt">x</span>x<div class="leaf">x</div><div class="leaf">x</div></div>
+      </div>
+      <div class="frame">
+        <span class="fno">frame 2 &middot; the table that exists</span>
+        <div class="bx pane-b"><span class="bt">&#9635; pane</span>
+          one key handler &middot; one focus handle
+          <div class="leaf">on_key &mdash; 480 lines, one order</div>
+          <div class="leaf">face: terminal &nbsp;|&nbsp; workbench</div>
+        </div>
+        <div class="wire">&#8593; escape only &#8595;</div>
+        <div class="bx new"><span class="bt">&#9635; keylayer.rs</span>
+          escape_target &mdash; 8 rungs, 128 cases
+          <div class="leaf">A and B add typing_owner here</div>
+        </div>
+        <div class="bx ghost"><span class="bt">x</span>x<div class="leaf">x</div><div class="leaf">x</div></div>
+      </div>
+      <div class="frame">
+        <span class="fno">frame 3 &middot; what D would reach</span>
+        <div class="bx pane-b"><span class="bt">&#9635; pane</span>
+          one key handler &middot; one focus handle
+          <div class="leaf">on_key &mdash; 480 lines, one order</div>
+          <div class="leaf">face: terminal &nbsp;|&nbsp; workbench</div>
+        </div>
+        <div class="wire">&#8593; escape only &#8595;</div>
+        <div class="bx new"><span class="bt">&#9635; keylayer.rs</span>
+          escape_target &mdash; 8 rungs, 128 cases
+          <div class="leaf">A and B add typing_owner here</div>
+        </div>
+        <div class="bx amber"><span class="bt">&#9635; workspace</span>
+          overlay_owns_keyboard &middot; plan_focus
+          <div class="leaf">restores focus to the pane every render</div>
+          <div class="leaf">cannot see a pane's own rename box</div>
+        </div>
+      </div>
+    </div>
+    <figcaption>A and B stay inside the first two boxes. <b>Only the parked option — giving the rename
+      box its own focus handle — reaches the third</b>, and that box is the one carrying a documented
+      focus-back race. Yellow is mine to argue with.</figcaption>
+    <div class="gutter">the frames do not move &mdash; frame 1 reserves the space the later boxes take
+      &middot; drawn from main.rs:14233 and main.rs:21823</div>
+  </figure>
+
+  <div class="morerow">
+    <button class="more" data-dlg="d-focus">Why the focus-handle fix is parked, not chosen</button>
+    <button class="more" data-dlg="d-guards">The guard, and the three mutations it has to fail</button>
+  </div>
+
+  <h2 class="sec">Scope</h2>
+
+  <figure>
+    <span class="lbl">07 &middot; What B includes, and what it deliberately does not</span>
+    <div class="fence">
+      <div class="in">
+        <h5>inside</h5>
+        <ul>
+          <li>The inline rename box takes its keys on both faces</li>
+          <li>The sticky note's composer does too</li>
+          <li><code>alt+s</code> sticks and posts a note from the bench</li>
+          <li>The pane's <code>ctrl</code> and <code>ctrl+shift</code> chords reach their handlers</li>
+          <li><code>ctrl+c</code> reaches a working agent from its own bench</li>
+          <li>The scrollback and selection keys behave the same on both faces</li>
+          <li>A scan test that fails when a chord is added below the rung and not to the table</li>
+          <li>Issue 524 closed, with the residue filed as its own falsifiable ticket</li>
+        </ul>
+      </div>
+      <div class="out">
+        <h5>outside</h5>
+        <ul>
+          <li><code>alt+backspace</code> — it is the composer's kill-word on the bench and the note-peel
+            on the terminal, and which one wins is a decision, not a bug</li>
+          <li>The rename box's missing caret, selection and word-nav (issue 376) — same box, different
+            complaint, and the fix for it is option D</li>
+          <li>Reordering <code>on_key</code> — that is option C</li>
+          <li>The reader's paging keys while FOCUS is open over a bench pane — currently swallowed,
+            and what they <em>should</em> do is undecided</li>
+        </ul>
+      </div>
+    </div>
+    <figcaption><b>The refusals carry as much as the inclusions here.</b> Two of the four are open
+      questions rather than deferred work, and answering them in a fix commit is how a decision gets
+      made by accident.</figcaption>
+  </figure>
+
+  <h2 class="sec">What is yours to decide</h2>
+
+  <div class="grill">
+    <div class="ask">
+      <h4>1 &middot; Which cut?</h4>
+      <p>A is your rename box and the sticky composer, and stops there. B is those plus nineteen
+        chords, for about fifty lines more and no reordering. C is the structural version and reorders
+        the handler.</p>
+      <p class="rec">recommended: B &mdash; and if you want it smaller today, A ships and B becomes the
+        next ticket rather than a rewrite of A</p>
+    </div>
+    <div class="ask">
+      <h4>2 &middot; Does <code>ctrl+c</code> go in this change or get its own ticket?</h4>
+      <p>It is one row of the same table, and it is the one whose absence can cost a running turn. It
+        is also the row most likely to be argued with, because passing it through means the bench stops
+        protecting the pseudoterminal from one chord.</p>
+      <p class="rec">recommended: in this change, called out in the commit's second paragraph</p>
+    </div>
+    <div class="ask">
+      <h4>3 &middot; Close issue 524, or reopen it to cover the residue?</h4>
+      <p>Its acceptance bullets are all met. Leaving it open makes the rollup show one half-done ticket
+        instead of one done and one filed, and its invalidation criterion — <em>"bench_key already
+        consults a list of window-owned chords"</em> — has fired.</p>
+      <p class="rec">recommended: close it as done, file the pane-chord residue as a new falsifiable
+        issue linking back to it</p>
+    </div>
+    <div class="ask">
+      <h4>4 &middot; Do you want the drawn brief for option C before it is ever written?</h4>
+      <p>C changes what about thirty keys do on the bench face, including on a pane whose process has
+        exited. That is a case table somebody should approve before a line moves, not after.</p>
+      <p class="rec">recommended: not yet &mdash; take B, and let the first drift in its table be what
+        buys C</p>
+    </div>
+  </div>
+
+  <footer>
+    <p>terminal-delight &middot; reports/2026-09-19-the-bench-keeps-your-keystrokes.html</p>
+    <p>evidence: app/src/pane.rs:4481-4960 &middot; app/src/pane/bench.rs:281-531 &middot;
+      app/src/keylayer.rs &middot; app/src/workbench.rs:1451,2329-2403 &middot; app/src/main.rs:11392,14233,21823</p>
+    <p>the routing tables were extracted verbatim and executed; everything else on this page is read from source</p>
+  </footer>
+</div>
+
+<dialog id="d-cases">
+  <div class="dlg-head">
+    <div><h3>The case table</h3><p class="repo">27 chords &middot; the real functions, run</p></div>
+    <button class="x" data-close>&times;</button>
+  </div>
+  <div class="dlg-body">
+    <h4>How this was produced</h4>
+    <p>The three functions that decide a key's fate on a reading bench —
+      <code>window_chord</code>, <code>types_a_character</code> and <code>reading_key</code> — were cut
+      out of <code>app/src/workbench.rs</code> by line range, compiled standalone, and driven over the
+      chord list. The bodies are the repository's, byte for byte, not retyped.</p>
+    <p><b>What that proves and what it does not.</b> It proves what the tables answer. It does not
+      prove that <code>bench_key</code> is reached, or that nothing above it intercepts first — those
+      are read from <code>on_key</code>, where the only key handler on the pane is registered at
+      <code>pane.rs:8019</code> and every exit from <code>bench_key</code> ends in
+      <code>cx.stop_propagation()</code>. The ten-second physical check that settles it is in the
+      first finding.</p>
+    <p>Reading mode only. Once the composer is open the talking branch takes over and a few of these
+      change — <code>ctrl+shift+v</code> pastes, <code>alt+backspace</code> kills a word.</p>
+
+    <h4>Every chord</h4>
+    <table class="wide">
+      <thead><tr><th>chord</th><th>on the workbench face</th><th>what the pane would have done</th></tr></thead>
+      <tbody>
+        <tr><td>a letter</td><td><b>swallowed</b> — composer opens, byte to the agent</td><td>appends to the name</td></tr>
+        <tr><td>backspace</td><td><b>swallowed</b> — nothing at all</td><td>pops a character</td></tr>
+        <tr><td>enter</td><td>the bench acts on the selected surface</td><td>commits the rename</td></tr>
+        <tr><td>escape</td><td>cancels the rename — the escape table decides</td><td>cancels the rename</td></tr>
+        <tr><td>alt+s</td><td><b>swallowed</b></td><td>sticks or posts a note</td></tr>
+        <tr><td>alt+backspace</td><td><b>swallowed</b></td><td>peels the note</td></tr>
+        <tr><td>ctrl+w</td><td><b>swallowed</b></td><td>closes the tab</td></tr>
+        <tr><td>ctrl+f</td><td><b>swallowed</b></td><td>opens find</td></tr>
+        <tr><td>ctrl+x</td><td><b>swallowed</b></td><td>cuts the selection</td></tr>
+        <tr><td>ctrl+c</td><td><b>swallowed</b></td><td>interrupts the agent</td></tr>
+        <tr><td>ctrl+shift+c / v</td><td><b>swallowed</b></td><td>copy / paste</td></tr>
+        <tr><td>ctrl+shift+b</td><td><b>swallowed</b></td><td>toggles the left bar</td></tr>
+        <tr><td>ctrl+shift+n</td><td><b>swallowed</b></td><td>toggles the attention rail</td></tr>
+        <tr><td>ctrl+shift+z</td><td><b>swallowed</b></td><td>reopens the last closed thing</td></tr>
+        <tr><td>ctrl+shift+k</td><td><b>swallowed</b></td><td>clears the scrollback</td></tr>
+        <tr><td>ctrl+shift+a / d / g / y</td><td><b>swallowed</b></td><td>agent panel, design, gauges, usage</td></tr>
+        <tr><td>shift+left / right</td><td><b>swallowed</b></td><td>extends the selection</td></tr>
+        <tr><td>pageup / pagedown</td><td><b>swallowed</b></td><td>pages the scrollback</td></tr>
+        <tr><td>ctrl+home / ctrl+end</td><td><b>swallowed</b></td><td>jumps to the ends</td></tr>
+        <tr><td>alt+w / alt+r / alt+v / alt+h / alt+arrows</td><td>declined — bubbles to the window</td><td>close, FOCUS, split, move focus</td></tr>
+        <tr><td>alt+k</td><td>flips the face — handled two rungs above the bench</td><td>flips the face</td></tr>
+        <tr><td>up / down / tab / a digit</td><td>the bench's own — rail, shelf, answer a question</td><td>—</td></tr>
+      </tbody>
+    </table>
+  </div>
+</dialog>
+
+<dialog id="d-524">
+  <div class="dlg-head">
+    <div><h3>Issue 524</h3><p class="repo">the workbench face swallows every one of the window's alt chords</p></div>
+    <button class="x" data-close>&times;</button>
+  </div>
+  <div class="dlg-body">
+    <h4>What it asked for</h4>
+    <p>Five acceptance bullets: one pure, table-tested answer to <em>"is this chord the window's?"</em>;
+      both <code>bench_key</code> exits consulting it; <code>printable</code> never true for a modified
+      keystroke; a test that fails when a new <code>stop_propagation</code> skips the table; and
+      <code>alt+w</code>, <code>alt+r</code>, <code>alt+v</code>, <code>alt+h</code> and the arrows
+      behaving the same on both faces.</p>
+    <h4>What shipped</h4>
+    <p><code>workbench::window_chord</code>, consulted at the top of <code>bench_key</code> above the
+      gallery; <code>types_a_character</code> refusing alt, control and platform;
+      <code>the_bench_declines_a_window_chord_before_it_can_swallow_one</code> asserting the decline sits
+      above the first <code>stop_propagation</code>, comments stripped first, mutation-tested both ways.
+      All five are met. The issue's own invalidation criterion — <em>"bench_key already consults a list
+      of window-owned chords and returns false for them, then this is fixed and the issue is
+      stale"</em> — has fired.</p>
+    <h4>What it did not cover, and could not have</h4>
+    <p>It was written about the <em>window's</em> chords, and the fix is scoped to them:
+      <code>window_chord</code> answers <code>true</code> only for alt and ctrl+alt forms. The pane's own
+      chords are ctrl and ctrl+shift, so they fall straight past it, and the pane's two text fields are
+      not chords at all. 524 is one class narrower than the problem, and nothing in it is wrong.</p>
+  </div>
+</dialog>
+
+<dialog id="d-focus">
+  <div class="dlg-head">
+    <div><h3>The focus-handle fix</h3><p class="repo">option D</p></div>
+    <button class="x" data-close>&times;</button>
+  </div>
+  <div class="dlg-body">
+    <h4>What it would be</h4>
+    <p>The workspace's own editors — the tab rename, the group rename, the left bar's branch rename,
+      the find box — do not fight for order inside another handler. They take the keyboard: the
+      workspace root focuses itself, and <code>overlay_owns_keyboard()</code> lists every surface that
+      legitimately holds it. The pane's rename box is the odd one out. It sets
+      <code>renaming = Some(..)</code>, focuses the <em>pane</em>, and relies on being reached by a
+      branch a hundred lines further down.</p>
+    <p>Giving it its own focus handle and the shared <code>EditBuffer</code> would end the ordering
+      question outright, and would also close issue 376 — the pane header being the only rename box
+      with no caret, no selection and no word navigation.</p>
+
+    <h4>Why it is not the recommendation</h4>
+    <p>Focus on this window is watched. Every workspace render calls <code>plan_focus</code>
+      (<code>main.rs:21823</code>) and, unless an overlay owns the keyboard, defers a restore back to
+      the active pane. <code>overlay_owns_keyboard</code> enumerates workspace state; a pane's own
+      rename buffer is not in it and cannot be without the workspace reaching into the focused pane
+      every frame.</p>
+    <p>The race is documented rather than theoretical. <code>open_find</code> carries this line:
+      <em>"Deferred focus dodges the focus-back race the rename editors hit (the pane's own focus would
+      otherwise grab it back)."</em> Somebody has already been bitten moving focus off a pane, and the
+      workaround was a deferred focus call.</p>
+    <p>So D is a real improvement that lands on the focus system, fixes a second issue, and wants its
+      own brief. It is not the cheapest route to typing a name.</p>
+  </div>
+</dialog>
+
+<dialog id="d-guards">
+  <div class="dlg-head">
+    <div><h3>The guard</h3><p class="repo">what has to fail before the fix is believable</p></div>
+    <button class="x" data-close>&times;</button>
+  </div>
+  <div class="dlg-body">
+    <h4>Three tests, and what each one is for</h4>
+    <p><b>The table, in <code>keylayer.rs</code>.</b> That module imports nothing and compiles
+      standalone, so its tests run in about a second and mutating the table is cheap enough to
+      actually do. <code>typing_owner</code> gets the same treatment
+      <code>escape_target</code> already has: every flag alone, the exhaustive sweep over every
+      combination, and the pairwise probe that catches two adjacent rows being swapped.</p>
+    <p><b>The two ladders agree.</b> A test asserting that the typing ladder is a subsequence of the
+      escape ladder — wherever both name a surface, they name it in the same order. This is the one
+      that prevents the next drift, because the two are allowed to differ in <em>membership</em> and
+      never in <em>order</em>.</p>
+    <p><b>The decline sits above the swallow.</b> The structural scan that already guards
+      <code>window_chord</code>, extended to the new call. Comments stripped before the scan — the
+      first draft of the existing one failed on its own doc comment, which described the call it was
+      looking for.</p>
+
+    <h4>The mutations it has to fail</h4>
+    <ul>
+      <li>Move the new decline below the gallery block. The scan must go red.</li>
+      <li>Delete the decline outright. The scan must go red.</li>
+      <li>Swap <code>Rename</code> and <code>Bench</code> in the typing ladder. The pairwise probe must
+        go red — not just the exhaustive one, which passes a swap of adjacent rows when only one flag
+        is raised at a time.</li>
+      <li>Return <code>Bench</code> unconditionally from <code>typing_owner</code>. Everything must go red.</li>
+    </ul>
+    <p>A guard nobody has watched fail is a guard nobody should trust. Each of these gets run and the
+      result named in the commit.</p>
+
+    <h4>And the behavioural check</h4>
+    <p>The tables are pure and the wiring is not. Before the commit closes: right-click a pane title on
+      the workbench face, type a name, press enter, and read it back off the header. Then
+      <kbd>ctrl+shift+b</kbd> from the same face.</p>
+  </div>
+</dialog>
