@@ -15,10 +15,22 @@
 #
 # Safety, in the order it matters:
 #   * refuses to run against a sleeping output — grim hangs to its timeout
-#   * its own TD_SESSION and TD_NO_SESSIOND, so it cannot touch live panes
+#   * its own TD_SESSION, and cleanup kills the session HOST as well as the
+#     window: the host is parented to systemd, so killing the window alone
+#     orphans it and everything inside it
+#   * the stand-in is launched by ABSOLUTE PATH and then verified, because
+#     PATH is not ours to control — see below
 #   * EVERY keystroke gated on `activewindow` being the window we launched,
 #     because wtype types into whatever has focus, and that guard has already
 #     caught focus drifting onto a real agent's prompt once
+#
+# THE PATH TRAP, paid for once. The pane's shell inherits our PATH, and then
+# its interactive rc REBUILDS PATH and appends the inherited part at the END.
+# So `claude` resolved to ~/.local/bin/claude — the real one — and the rig
+# started an actual Claude Code session with six MCP servers under it, left
+# the host orphaned when it exited, and still produced correct screenshots,
+# because a real agent draws a composer too. It passed by luck. Hence both
+# the absolute path and the assertion that the child is the one we meant.
 #
 # Usage:  scripts/shift-select-manual.sh [path-to-terminal-delight]
 set -euo pipefail
@@ -38,6 +50,14 @@ focus_addr() { dispatch "hl.dsp.focus({ window = 'address:$1' })"; }
 
 cleanup() {
   [ -n "$WPID" ] && kill "$WPID" 2>/dev/null || true
+  sleep 1
+  # THE HOST TOO. It is parented to systemd, not to the window, so killing
+  # the window alone leaves it running with every pane still inside it.
+  # Matched on our own TD_SESSION, which no other host can carry.
+  for h in $(pgrep -u "$(id -u)" -f "serve --session ${TD_SESSION:-nope}" 2>/dev/null); do
+    [ "$h" = "$$" ] && continue      # pgrep -f matches this very shell
+    kill "$h" 2>/dev/null || true
+  done
   sleep 1
   # hand the screen back to whatever had it
   [ -n "$WAS" ] && focus_addr "$WAS" 2>/dev/null || true
@@ -99,10 +119,32 @@ ours || { echo "could not focus our own window" >&2; exit 6; }
 echo "0. a fresh shell pane"
 shot 0-pane
 echo "1. run the stand-in so the pane classifies as an agent"
-press -- "claude $RIG/agent.sh"
+# ABSOLUTE PATH. `claude` alone resolves through the pane shell's own rebuilt
+# PATH, which puts ~/.local/bin ahead of ours — see the header.
+press -- "$RIG/claude $RIG/agent.sh"
 press -k Return
 sleep 4
 shot 1-agent-running
+
+# …and prove it. A real Claude Code session also draws a composer, so without
+# this the run passes on the wrong binary and nothing says so.
+imposter=""
+for p in $(pgrep -u "$(id -u)" -f "agent.sh" 2>/dev/null); do
+  [ "$p" = "$$" ] && continue
+  line="$(tr '\0' ' ' < "/proc/$p/cmdline" 2>/dev/null)"
+  case "$line" in
+    "$RIG/claude"*) found=1 ;;
+    *claude*agent.sh*) imposter="$p: $line" ;;
+  esac
+done
+if [ -n "$imposter" ]; then
+  echo "a REAL claude is running the stand-in script, not ours:" >&2
+  echo "  $imposter" >&2
+  echo "killing it now; the rig's PATH lost to the pane shell's own." >&2
+  kill "${imposter%%:*}" 2>/dev/null || true
+  exit 9
+fi
+[ -n "${found:-}" ] || { echo "the stand-in never started; see 1-agent-running.png" >&2; exit 10; }
 echo "2. alt+k to the workbench, then type a draft"
 press -M alt -k k -m alt
 sleep 2
