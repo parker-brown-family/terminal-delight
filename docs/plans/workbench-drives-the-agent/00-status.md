@@ -75,6 +75,26 @@ order to read them in; the first is the one to overrule if any.
    paints exactly as today. `scripts/install-agent-hooks.sh --uninstall` takes
    it all back out.
 
+## The afternoon: merged, demonstrated, hardened (2026-09-21)
+
+- **#624 merged** into main at `be60bf2` on Parker's instruction, after CI.
+- **Demonstrated live** in a hosted window on the new build (`TD_SESSION=decouple-demo`,
+  Parker's own opus agent in pane 3): round one fell back to keys when the
+  face changed mid-wait and was journaled as such; round two took the file
+  road (`You chose Autumn`, no picker); round three measured the multi-select
+  join (`ANSWERS="Red, Blue"`). The demo window and its host were left running
+  for him.
+- **Hardened** as TDAC 0.2 in PR #635 (`72408ea`): the release reasons, the
+  marker schedule, answered-before-asked, the cap, reply ids, recall edits,
+  `session`/`pane` on outbound lines, journal rotation, `ctl bench choose`
+  reaching a channel card's Submit. Twenty channel tests including the real
+  adapter driven end to end; twelve adapter tests. Installed beside the others
+  as `td-72408ea-decouple`; the symlink still points at `td-7d41cb5-main`.
+- **The retro** is `05-hindsight-burndown.md`; the week's APES burndown is
+  `CEREMONIES/burndowns/2026-09-21.md` in the registered tree. Follow-ups
+  #628–#633. The round navigator is #634, by the pane that filed #619, on top
+  of this work.
+
 **AMENDED at approval, 2026-09-21 — the PTY side-channel.** Raised by the pane
 building bench tenancy and verified here against `origin/main`. `bench_deliver`
 writes raw bytes into the pane's pseudoterminal, and two gestures that are not
