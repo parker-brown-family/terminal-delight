@@ -1176,6 +1176,237 @@ impl TerminalView {
 
     /// Records this pane's inbound journal gained since the last sweep, and
     /// what each one changes on the bench. See [`crate::channel::State::take`].
+    /// Bind this bench to a conversation, and show that conversation's record.
+    ///
+    /// Called from the window's sweep, which is the only place that knows the
+    /// answer: binding a pane to a conversation is a fact about the whole
+    /// window — two panes may not hold one — and it is established once there
+    /// and handed down.
+    ///
+    /// Idempotent by key. The sweep calls this every pass, so the work below
+    /// happens on the edge where the key actually changes: a pane arriving at
+    /// an agent, a conversation compacting into a new segment, a window opening
+    /// on a conversation that already has a record.
+    ///
+    /// **Restored surfaces come back with [`crate::surface::Origin::Unknown`]**,
+    /// and that is the honest word rather than a gap. Origin is stamped by the
+    /// transport that accepted a document — which process sent it, and whether
+    /// it was this pane's own agent — and none of that is in the document. A
+    /// window reading a record days later has not re-established any of it, so
+    /// it says so instead of repeating a claim it cannot check.
+    pub(crate) fn bench_adopt_conversation(
+        &mut self,
+        key: crate::benchstore::ConvKey,
+        bond: crate::vitals::Bond,
+        cx: &mut Context<Self>,
+    ) {
+        self.wb_conv_bond = bond;
+        if self.wb_conv.as_ref() == Some(&key) {
+            return;
+        }
+        let dir = crate::benchstore::store_root();
+        let recs = crate::benchstore::records(&dir, &key.root);
+        self.wb_turn = recs
+            .iter()
+            .filter_map(crate::benchstore::Rec::n)
+            .max()
+            .map_or(0, |n| n + 1);
+        // A boundary is written once per segment. The sweep hands the same key
+        // down every pass and a window restart hands down one it has seen
+        // before, so writing unconditionally would put a `segment` line in the
+        // file on every restart and make the record's own history of
+        // compactions a history of window launches instead.
+        let already = recs
+            .iter()
+            .any(|r| matches!(r, crate::benchstore::Rec::Segment { seq, .. } if *seq == key.seq));
+        if !already {
+            let _ = crate::benchstore::segment(
+                &dir,
+                &key,
+                crate::surfacefeed::now_ms(),
+                if key.seq == 0 { "startup" } else { "continued" },
+                self.mode.label(),
+                self.shell_pid().unwrap_or(0),
+            );
+        }
+        // Everything said before the window could name this conversation,
+        // in the order it was said, shifted onto the end of what the record
+        // already had. Written before the load below, so the load sees them.
+        let base = self.wb_turn;
+        let held = std::mem::take(&mut self.wb_unfiled);
+        for rec in held {
+            if let Some(n) = rec.n() {
+                self.wb_turn = self.wb_turn.max(base + n + 1);
+            }
+            let _ = crate::benchstore::append(&dir, &key.root, &rec.shifted(base));
+        }
+        let loaded = crate::benchstore::load(&dir, &key.root);
+        self.wb_conv = Some(key);
+        let now = crate::surfacefeed::now_ms();
+        for (id, doc) in loaded.surfaces {
+            // `bench.apply` rather than `present`: the two things `present`
+            // adds are about a LIVE arrival — deciding whether an MCP caller
+            // was this pane's own agent, and telling the channel a reply has
+            // already been seen so the hook's copy of the same turn is
+            // dropped. Replaying yesterday's record through either would
+            // answer a question about today with an old fact.
+            let post = crate::surface::parse_lenient(&doc, now, &id);
+            if post.surface.is_some() {
+                self.bench.apply(post);
+            }
+        }
+        cx.notify();
+    }
+
+    /// Put this sweep's documents into the conversation's record.
+    ///
+    /// The mailbox copy is **not** removed: draining it is a separate change
+    /// that needs a sentinel to tell a file this build has already filed from
+    /// one that was there before it existed. Until then a restart re-delivers
+    /// what it re-loads, and the two land on one row because the bench keys
+    /// surfaces by id — the cost of not draining is a duplicate write, and the
+    /// cost of draining too early is a surface that existed and then did not.
+    pub(crate) fn bench_file_docs(&mut self, docs: &[(String, serde_json::Value)]) {
+        if docs.is_empty() {
+            return;
+        }
+        let dir = crate::benchstore::store_root();
+        // The turn these answer is the one that is open: `wb_turn` is the ask
+        // that has not been made yet. Before any ask has been recorded there is
+        // no open turn and everything belongs to the first one.
+        let turn = self.wb_turn.saturating_sub(1);
+        let now = crate::surfacefeed::now_ms();
+        let _ = dir;
+        for (id, doc) in docs {
+            // `None` is an id that must never become a record key. Skipped
+            // rather than repaired: a filing under a name nobody chose is
+            // worse than a surface that is only on the bench.
+            if let Some(rec) = crate::benchstore::said(turn, id, doc, self.wb_conv_bond, now) {
+                self.bench_write(rec);
+            }
+        }
+    }
+
+    /// Put one line in the conversation's record, or hold it until there is a
+    /// conversation to put it in.
+    ///
+    /// **The hold is the point.** A pane's first prompt arrives within a second
+    /// of its agent starting, and the window cannot bind a pane to a
+    /// conversation until that agent's process is far enough along to be
+    /// identified — so on a fresh pane the binding is a sweep or two behind the
+    /// first thing said. The channel journal is read by byte offset and the
+    /// mailbox by mtime, so neither is delivered twice: a line dropped for want
+    /// of a key is dropped for good, and the record would begin at whatever the
+    /// window happened to notice first. Measured on a live demo window before
+    /// this existed — the file opened with its segment line and no first ask,
+    /// while the prompt sat in the mailbox unfiled.
+    ///
+    /// Held lines count their turns from zero and are shifted onto the end of
+    /// whatever the conversation already had, when the key lands.
+    fn bench_write(&mut self, rec: crate::benchstore::Rec) {
+        match self.wb_conv.clone() {
+            Some(key) => {
+                let _ =
+                    crate::benchstore::append(&crate::benchstore::store_root(), &key.root, &rec);
+            }
+            // Bounded, because a pane that never binds must not grow a list
+            // forever: a shell pane with a drop box, or an agent whose siblings
+            // make it unidentifiable. What the cap costs is the OLDEST held
+            // line, so the run that survives is the one nearest the moment a
+            // key could arrive.
+            None => {
+                const HELD_CAP: usize = 256;
+                if self.wb_unfiled.len() >= HELD_CAP {
+                    self.wb_unfiled.remove(0);
+                }
+                self.wb_unfiled.push(rec);
+            }
+        }
+    }
+
+    /// Record what the person said, in their own words.
+    ///
+    /// Only from the channel, so only when the harness itself reported the
+    /// prompt — that is what makes [`crate::benchstore::Origin::Hook`] true.
+    /// The screen latch has no writer here on purpose: a caption read off a
+    /// rendered terminal is a good enough thing to draw and not a good enough
+    /// thing to keep.
+    fn bench_record_ask(&mut self, text: &str) {
+        let n = self.wb_turn;
+        self.bench_write(crate::benchstore::Rec::Ask {
+            n,
+            at_ms: crate::surfacefeed::now_ms(),
+            origin: crate::benchstore::Origin::Hook,
+            kind: crate::benchstore::prompt_kind(text),
+            text: text.to_string(),
+            // The hook hands over no image bytes on any agent this build has
+            // measured, so there is nothing to reference. Empty here is "this
+            // ask carried none", which is what was observed.
+            images: Vec::new(),
+        });
+        self.wb_turn = n + 1;
+    }
+
+    /// Record a question round and how it was answered.
+    ///
+    /// From the raw event, before the channel folds it into bench state: the
+    /// record is of what the conversation was asked, and the channel's own
+    /// view of a round — which step is open, which press is pending — is
+    /// working state that belongs to the live pane and to nothing else.
+    fn bench_record_round(&mut self, ev: &crate::channel::Inbound) {
+        use crate::channel::Inbound;
+        let n = self.wb_turn.saturating_sub(1);
+        let now = crate::surfacefeed::now_ms();
+        match ev {
+            Inbound::Question {
+                tool_use_id,
+                questions,
+                ..
+            } => {
+                let qs = serde_json::Value::Array(
+                    questions
+                        .iter()
+                        .map(|q| {
+                            serde_json::json!({
+                                "question": q.question,
+                                "header": q.header,
+                                "multi": q.multi,
+                                "options": q.options.iter().map(|o| serde_json::json!({
+                                    "label": o.label,
+                                    "description": o.description,
+                                })).collect::<Vec<_>>(),
+                            })
+                        })
+                        .collect(),
+                );
+                self.bench_write(crate::benchstore::Rec::Asked {
+                    n,
+                    at_ms: now,
+                    tool_use_id: tool_use_id.clone(),
+                    questions: qs,
+                });
+            }
+            Inbound::Answered {
+                tool_use_id,
+                answers,
+            } => {
+                // `None` is recorded as JSON null rather than as an empty
+                // object: the tool returned and this build could not read what
+                // it carried, which is a different thing from a round answered
+                // with nothing.
+                let a = answers.clone().unwrap_or(serde_json::Value::Null);
+                self.bench_write(crate::benchstore::Rec::Answered {
+                    n,
+                    at_ms: now,
+                    tool_use_id: tool_use_id.clone(),
+                    answers: a,
+                    road: "result".into(),
+                });
+            }
+            _ => {}
+        }
+    }
+
     pub fn channel_events(&mut self, events: Vec<crate::channel::Inbound>, cx: &mut Context<Self>) {
         use crate::channel::Effect;
         use crate::surface::{Op, Post};
@@ -1184,8 +1415,13 @@ impl TerminalView {
         }
         let now = crate::surfacefeed::now_ms();
         for ev in events {
+            self.bench_record_round(&ev);
             match self.wb_channel.take(ev, now) {
                 Effect::Asked { text } => {
+                    // Into the record first, in full. What the caption keeps
+                    // below is the first few lines of it, which is a drawing
+                    // decision and not what the conversation should remember.
+                    self.bench_record_ask(&text);
                     // The harness's own words outrank anything read off the
                     // screen, and once a pane has heard them the screen latch
                     // stops overwriting the caption — see `latch_asked`.
