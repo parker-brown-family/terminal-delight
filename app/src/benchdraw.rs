@@ -817,7 +817,7 @@ fn compact(surface: &Surface, picks: Option<&Picks>, sk: &Skin, th: &Theme) -> D
         // The full renderer was trimmed for exactly this and this one was
         // missed, so it now DELEGATES: one renderer for a question at
         // either size, and no second list of kinds to keep in step.
-        Kind::Question(q) => question(q, sk, th),
+        Kind::Question(q) => question(q, picks, sk, th),
         Kind::Artifact(a) => {
             list.child(micro(a.href.clone(), Step::Small, sk.ink.ink_faint, sk, th))
         }
@@ -859,7 +859,7 @@ fn full(surface: &Surface, picks: Option<&Picks>, sk: &Skin, th: &Theme) -> Div 
         Kind::Architecture(a) => architecture(a, sk, th),
         Kind::Changeset(c) => changeset(c, sk, th),
         Kind::Decision(d) => decision(d, sk, th),
-        Kind::Question(q) => question(q, sk, th),
+        Kind::Question(q) => question(q, picks, sk, th),
         Kind::Response(r) => response(r, picks, sk, th),
         Kind::Comment(_) => comment(surface, sk, th),
         Kind::Unclassified(u) => unclassified(u, sk, th),
@@ -1577,7 +1577,18 @@ pub fn review_flyout(
 /// settled. On a question with no descriptions and no answer — which is what
 /// `Ready to submit your answers?` is — it renders nothing at all, and the
 /// card is a question and two buttons.
-fn question(q: &crate::surface::Question, sk: &Skin, th: &Theme) -> Div {
+///
+/// **It takes `picks` for the zones alone**, and the reason is that this card
+/// is now the ONLY copy of a question opened from the rail — the pin that used
+/// to be drawn under it as well is gone (see
+/// [`crate::workbench::draws_waiting_block`]). The round navigator was
+/// pressable in the pin and merely readable here, so removing the pin without
+/// this would have taken the step-to-step gesture away with it. Where there
+/// are no picks — a shelf row, a gallery, anywhere that is not a pane
+/// collecting presses — the navigator still names every step and simply
+/// cannot be pressed, which is what `None` has always meant to
+/// [`round_progress`].
+fn question(q: &crate::surface::Question, picks: Option<&Picks>, sk: &Skin, th: &Theme) -> Div {
     use crate::surface::Answered;
     let chosen = match q.answer {
         Answered::Chose(i) => Some(i),
@@ -1653,10 +1664,12 @@ fn question(q: &crate::surface::Question, sk: &Skin, th: &Theme) -> Div {
             )),
         })
         .when_some(q.round.as_ref(), |d, round| {
-            // No zones: the card body is drawn in several places, not all of
-            // them a pane collecting presses. It names every step; the block
-            // the pane assembles is where they can be pressed.
-            d.child(round_progress(round, None, sk, th))
+            // Pressable wherever a pane is collecting presses, and merely
+            // readable everywhere else. It used to be readable in both, on
+            // the reasoning that the pin below carried the pressable copy —
+            // and that reasoning expired the day the pin stopped being drawn
+            // under its own card.
+            d.child(round_progress(round, picks.map(|p| &p.zones), sk, th))
         })
 }
 
@@ -2227,7 +2240,13 @@ pub fn title_card(
         sk,
         th,
     )
-    .child(micro("AGENT", Step::Fine, sk.ink.ink_faint, sk, th))
+    // NO WORD "AGENT" HERE. It was the first thing on the bar and it named
+    // the subject of a sentence the rest of the bar was already saying: a
+    // lamp in a state's colour and that state written out in the largest type
+    // on the strip. Parker: *"putting AGENT on the far left is redundant ---
+    // the dot and state written out is enough"*. Nothing else on this surface
+    // announces its own category before saying anything, and the label cost
+    // the strip its leftmost fifty pixels on every pane in the window.
     .child(
         // A LAMP, not a bullet. Ringed rather than merely bigger: a filled
         // circle reads as punctuation at any size, and a ring around it reads

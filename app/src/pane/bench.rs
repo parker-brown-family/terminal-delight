@@ -419,6 +419,8 @@ impl TerminalView {
             Hit::Launch => cx.emit(OpenAgentLauncher),
             Hit::AddNote => self.bench_note_open(cx),
             Hit::EndAgent => self.bench_end_agent(cx),
+            Hit::PauseTurn => self.bench_pause(cx),
+            Hit::ResumeTurn => self.bench_resume(cx),
             // A second press on the open dial closes it. A menu with no way
             // back out except picking something is a menu that has taken a
             // decision hostage.
@@ -796,9 +798,15 @@ impl TerminalView {
                 return true;
             }
             // The interrupt is a key you AIM: ctrl+g here, and the strip's
-            // stop control. Not the copy chord, ever again.
+            // PAUSE TURN. Not the copy chord, ever again.
+            //
+            // Both routes land on the same verb, so a turn stopped by the
+            // chord reads as Paused and offers the resume exactly as one
+            // stopped by the button does. Two gestures with one meaning that
+            // left the pane in two different states would be the same bug as
+            // two renderers drawing one question.
             if ctrl && !ks.modifiers.alt && key.eq_ignore_ascii_case("g") {
-                self.bench_interrupt(cx);
+                self.bench_pause(cx);
                 return true;
             }
             // Up on an empty draft recalls what this bench last sent — the
@@ -998,6 +1006,7 @@ impl TerminalView {
             self.exited,
             self.agent_is_thinking(),
             self.reading_answer(crate::surfacefeed::now_ms()),
+            self.wb_paused_ms.is_some(),
         )
     }
 
@@ -1031,13 +1040,67 @@ impl TerminalView {
         self.journal_out(&crate::channel::Outbound::End);
         self.bench_deliver(vec![0x03, 0x03], cx);
         self.wb_dial = None;
+        // Nothing left to resume. The pane is about to demote to a shell and
+        // the strip is about to offer LAUNCH; a latch still down would put
+        // RESUME TURN on a bench with no agent in it.
+        self.wb_paused_ms = None;
     }
 
-    /// Interrupt the agent's turn — the strip's stop and `ctrl+g` on the
-    /// composer. One `0x03`, recorded first. Never the copy chord.
-    fn bench_interrupt(&mut self, cx: &mut Context<Self>) {
+    /// Stop the turn that is running, and remember having stopped it.
+    ///
+    /// The strip's PAUSE TURN and `ctrl+g` on the composer — one `0x03`,
+    /// recorded first, never the copy chord. This is the gesture Parker
+    /// reaches for with his own hands: *"ctrl+c is the terminal command I
+    /// usually use for this"*, and what it is for is not stopping the agent
+    /// but stopping a turn that went out on the wrong model or the wrong
+    /// effort.
+    ///
+    /// **One byte, not two.** [`Self::bench_end_agent`] sends the pair inside
+    /// the harness's own double-press window, and that is the difference
+    /// between the two controls: one interrupt cancels the turn, the second
+    /// quits the session. Sending one and stopping is the whole feature.
+    ///
+    /// The stamp is what makes the pane readable afterwards. See
+    /// [`crate::workbench::AgentState::Paused`] — a harness back at its prompt
+    /// after an interrupt looks exactly like one that finished, and nothing on
+    /// the screen can tell them apart.
+    fn bench_pause(&mut self, cx: &mut Context<Self>) {
         self.journal_out(&crate::channel::Outbound::Interrupt);
         self.bench_deliver(vec![0x03], cx);
+        self.wb_paused_ms = Some(crate::surfacefeed::now_ms());
+    }
+
+    /// Tell a paused turn to carry on — the strip's RESUME TURN.
+    ///
+    /// An ordinary message down the ordinary path, which is the point:
+    /// Parker asked for a resume that *"just sends the message to the agent"*,
+    /// and a bespoke pipe for one sentence would be a second way of talking to
+    /// a harness that already has one. It is journalled as a `say` like any
+    /// other, it joins the bench's own sent history, and it is held and
+    /// drained under the same three rules if the pane is off screen.
+    ///
+    /// Whatever the dials were told while the turn was stopped has already
+    /// gone down the same wire ahead of it, in order. The latch comes down in
+    /// [`Self::bench_send`], which is where every message ends a pause.
+    fn bench_resume(&mut self, cx: &mut Context<Self>) {
+        self.bench_say(crate::workbench::RESUME_SAY, cx);
+    }
+
+    /// Let go of the pause when the turn has started again without us.
+    ///
+    /// Called from the workspace sweep, once a second, and it exists for the
+    /// route the bench cannot see: a person pauses from the bench, flips to
+    /// the TERM face, and types there. That turn is running and
+    /// [`crate::workbench::agent_state`]'s `!thinking` guard already reports
+    /// it correctly — but the latch would still be down when the turn ended,
+    /// and the strip would offer to resume a turn that had just finished.
+    ///
+    /// Reading the sensor is the whole rule: a turn is running, so whatever
+    /// was stopped is over.
+    pub fn bench_pause_settle(&mut self) {
+        if self.wb_paused_ms.is_some() && self.agent_is_thinking() {
+            self.wb_paused_ms = None;
+        }
     }
 
     /// Put the SELECTION on the clipboard — or the whole draft when nothing
@@ -1333,8 +1396,29 @@ impl TerminalView {
         sk: &crate::skin::Skin,
         th: &Theme,
     ) -> Vec<gpui::Div> {
-        use crate::workbench::{Dial, Hit, StripVerb};
+        use crate::workbench::{Dial, Hit, StripVerb, TurnControl};
         let mut out: Vec<gpui::Div> = Vec::new();
+        // THE TURN'S OWN CONTROL, ahead of the dials, and absent far more
+        // often than it is there — see `workbench::turn_control`, which owns
+        // the whole rule. It leads the run because it acts on the turn the
+        // state beside it is describing, and because END SESSION keeps the far
+        // edge: the control nobody should press by accident does not move
+        // around under a hand that is reaching for the one next to it.
+        //
+        // RESUME takes the primary face, the one the launch wears. It is the
+        // only control on this strip that offers rather than takes, and a
+        // paused pane should look like it is waiting to be let go.
+        if let Some(control) = crate::workbench::turn_control(state, agent_now) {
+            let (label, hit) = match control {
+                TurnControl::Pause => ("PAUSE TURN", Hit::PauseTurn),
+                TurnControl::Resume => ("RESUME TURN", Hit::ResumeTurn),
+            };
+            out.push(
+                crate::benchdraw::strip_button(label, "", control == TurnControl::Resume, sk, th)
+                    .relative()
+                    .child(crate::benchdraw::zone(self.wb_zones.clone(), hit)),
+            );
+        }
         let pressable = agent_now && crate::workbench::dials_live(state);
         if agent_now {
             for which in [Dial::Model, Dial::Effort] {
@@ -2758,6 +2842,17 @@ impl TerminalView {
             cx.notify();
             return;
         };
+        // ANY message ends a pause, whatever it says and wherever it came
+        // from — the composer, `ctl bench say`, or the strip's own resume,
+        // which is `bench_say` with one sentence in it. The person is talking
+        // to the agent again, so the turn they stopped is behind them, and a
+        // strip still offering RESUME after a fresh instruction would be
+        // offering to send a second one on top of it.
+        //
+        // Here rather than in `bench_resume`, because this is the funnel every
+        // route already goes through. A clear beside the one caller that
+        // prompted it would have repaired that caller and armed the next.
+        self.wb_paused_ms = None;
         let bracketed = self
             .session
             .term
@@ -3272,9 +3367,18 @@ impl TerminalView {
         // It sits BELOW the body and outside its scroll, because being asked
         // something is not part of the document you happen to be reading and
         // must not be scrolled away from. See `terminal-delight#533`.
+        //
+        // ...and NOT when the document you happen to be reading IS the
+        // question. `waiting_question` hands back the selection when the
+        // selection is itself unanswered — deliberately, so the round
+        // navigator moves the block — so opening a decision from the rail drew
+        // it twice, once as the card with its verbs and once pinned
+        // underneath. The rule is `workbench::draws_waiting_block`, held there
+        // rather than here so it has a test.
         let waiting = self
             .bench
             .waiting_question()
+            .filter(|s| crate::workbench::draws_waiting_block(showing_id.as_ref(), &s.id))
             .and_then(|s| match &s.kind {
                 crate::surface::Kind::Question(q) => Some(q.clone()),
                 _ => None,

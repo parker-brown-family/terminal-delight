@@ -2136,6 +2136,19 @@ pub struct TerminalView {
     /// "Reading your answer" until the agent's own state moves, and the live
     /// question is not re-presented as waiting inside that window.
     wb_delivered_ms: Option<u64>,
+    /// When the bench last stopped a turn on purpose — the one fact behind
+    /// [`crate::workbench::AgentState::Paused`].
+    ///
+    /// **`None` is "nobody stopped anything", which is not the same as "the
+    /// turn is running".** Every other rung of the state ladder is a sensor
+    /// reading and this one is not readable at all: a harness back at its
+    /// prompt after an interrupt is pixel-for-pixel a harness that finished,
+    /// and the only thing in the world that knows the difference is the
+    /// process that sent the interrupt. So it is held here, stamped, and
+    /// cleared by the three things that end it — a resume, any other message
+    /// from the bench, and a turn starting again by any route
+    /// ([`TerminalView::bench_pause_settle`]).
+    wb_paused_ms: Option<u64>,
     /// Until when the bench draws that it just typed — a border pulse, so a
     /// write into a pane is something a person sees happen.
     wb_flash_until_ms: Option<u64>,
@@ -3526,6 +3539,7 @@ impl TerminalView {
             wb_on_screen: true,
             wb_queued: Vec::new(),
             wb_delivered_ms: None,
+            wb_paused_ms: None,
             wb_flash_until_ms: None,
             wb_zones: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
             wb_drawn: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),

@@ -7438,6 +7438,10 @@ impl Workspace {
                 // The channel's liveness marker, which a hook reads before it
                 // holds a picker for this bench. See `bench_beacon`.
                 view.bench_beacon();
+                // Drop the pause latch if a turn has started again by a route
+                // the bench never saw — the TERM face, most often. See
+                // `bench_pause_settle`.
+                view.bench_pause_settle();
                 for post in view.live_questions(now) {
                     view.present(post, cx);
                 }
