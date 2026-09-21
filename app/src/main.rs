@@ -31,6 +31,7 @@ mod art;
 mod attention;
 mod bell;
 mod benchdraw;
+mod benchstore;
 mod crt;
 mod csd;
 mod ctl;
