@@ -8790,6 +8790,17 @@ mod tests {
             "wb_live_q",
             "wb_queued",
             "wb_paused_ms",
+            // The four the transcript store brought, added when this branch
+            // met main. They were already cleared correctly by the author who
+            // added them — the point is that the LIST did not know, and a list
+            // that only grows when somebody remembers is the thing this gate
+            // exists to replace. It went stale on the day it was written, from
+            // a branch merging in parallel, which is the argument rather than
+            // an embarrassment.
+            "wb_conv",
+            "wb_conv_bond",
+            "wb_turn",
+            "wb_unfiled",
         ] {
             assert!(
                 cleared(field),
