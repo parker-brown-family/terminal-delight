@@ -34624,6 +34624,12 @@ enum Verb {
     /// environment. Three writers, one format, and this is the one that needs
     /// nothing from the agent but the ability to run a command.
     Surface,
+    /// Read one conversation's bench back without a window: the surfaces it
+    /// presented, the turns it took, and which ask each surface answered. The
+    /// read-back verb for [`benchstore`], for the same reason `bindings` is one
+    /// for the resolver — a record nobody can inspect is a record nobody can
+    /// debug, and this one decides what a person sees on a bench.
+    Conversation,
 }
 
 impl Verb {
@@ -34638,6 +34644,7 @@ impl Verb {
             "bindings" => Self::Bindings,
             "serve" => Self::Serve,
             "skin" => Self::Skin,
+            "conversation" => Self::Conversation,
             "surface" => Self::Surface,
             _ => return None,
         })
@@ -34711,6 +34718,7 @@ fn main() {
                 Verb::Serve => host::run_cli(&argv[2..]),
                 Verb::Skin => skin::run_cli(&argv[2..]),
                 Verb::Surface => surfacefeed::run_cli(&argv[2..]),
+                Verb::Conversation => benchstore::run_cli(&argv[2..]),
             };
             std::process::exit(code);
         }

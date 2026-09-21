@@ -84,13 +84,6 @@ pub fn safe_segment(s: &str) -> bool {
 }
 
 impl ConvKey {
-    pub fn new(root: impl Into<String>, seq: u32) -> ConvKey {
-        ConvKey {
-            root: root.into(),
-            seq,
-        }
-    }
-
     /// `<root_dir>/<root>/<seq>/`, or [`None`] when the root could name
     /// something other than a directory under `root_dir`.
     ///
@@ -192,14 +185,29 @@ impl Turn {
     }
 }
 
+/// Where conversations live: `$XDG_STATE_HOME/terminal-delight/conversations`.
+///
+/// Beside `surfaces/`, not inside it, and named by nothing that belongs to a
+/// window — a conversation outlives the window that hosted it.
+pub fn store_root() -> PathBuf {
+    let base = std::env::var_os("XDG_STATE_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".local/state")
+        });
+    base.join("terminal-delight/conversations")
+}
+
 /// A monotonic counter for temp file names.
 ///
 /// **Not a timestamp.** `drop_surface` learned this the expensive way: threads
 /// starting together read the clock too close to be separated by it, and three
 /// writes in sixteen were still lost with nanosecond names. A counter is unique
 /// by construction rather than by luck.
+#[allow(dead_code)] // see the note on `ask`
 static TEMP_SEQ: AtomicU64 = AtomicU64::new(0);
 
+#[allow(dead_code)] // see the note on `ask`: write path, wiring slice
 fn write_atomic(dir: &Path, name: &str, body: &[u8]) -> io::Result<()> {
     fs::create_dir_all(dir)?;
     let temp = dir.join(format!(
@@ -217,6 +225,7 @@ fn write_atomic(dir: &Path, name: &str, body: &[u8]) -> io::Result<()> {
     }
 }
 
+#[allow(dead_code)] // see the note on `ask`
 fn append_turn(root_dir: &Path, key: &ConvKey, turn: &Turn) -> io::Result<()> {
     let dir = key
         .dir(root_dir)
@@ -232,6 +241,14 @@ fn append_turn(root_dir: &Path, key: &ConvKey, turn: &Turn) -> io::Result<()> {
 }
 
 /// Open a turn: record what the person said.
+///
+/// `allow(dead_code)`, narrowly and temporarily: the WRITE path's only caller is
+/// the sweep that files an arrival, which is the wiring slice and is not on this
+/// branch. The read path below has a real caller ([`run_cli`]) and carries no
+/// allowance. **Delete this attribute in the slice that calls it** — if it is
+/// still here once `present` files a surface, it is hiding something rather than
+/// waiting for something.
+#[allow(dead_code)]
 pub fn ask(root_dir: &Path, key: &ConvKey, n: u32, at_ms: u64, lines: &[String]) -> io::Result<()> {
     append_turn(
         root_dir,
@@ -251,6 +268,7 @@ pub fn ask(root_dir: &Path, key: &ConvKey, n: u32, at_ms: u64, lines: &[String])
 /// surface in the mailbox and the worst case is one surface delivered twice.
 /// Reversing the order makes the worst case a surface that existed and then did
 /// not.
+#[allow(dead_code)] // see the note on `ask`
 pub fn file(
     root_dir: &Path,
     key: &ConvKey,
@@ -385,10 +403,82 @@ pub fn next_turn(root_dir: &Path, root: &str) -> u32 {
         .map_or(0, |n| n + 1)
 }
 
+/// `terminal-delight conversation <root>` — read a conversation's bench back
+/// without a window.
+///
+/// The headless instrument for this store, and the same argument `bindings` is
+/// for the resolver: a record nobody can inspect is a record nobody can debug,
+/// and this one decides what a person sees on a bench. It is also how the
+/// wiring slice will be checked — file a surface, run this, see it.
+pub fn run_cli(args: &[String]) -> i32 {
+    let Some(root) = args.first() else {
+        eprintln!("usage: terminal-delight conversation <root> [--json]");
+        return 2;
+    };
+    if !safe_segment(root) {
+        eprintln!("not a conversation root: {root:?}");
+        return 2;
+    }
+    let dir = store_root();
+    let surfaces = load(&dir, root);
+    let turns = asks(&dir, root);
+    if args.iter().any(|a| a == "--json") {
+        println!(
+            "{}",
+            json!({
+                "root": root,
+                "dir": conversation_dir(&dir, root).map(|p| p.to_string_lossy().into_owned()),
+                "next_turn": next_turn(&dir, root),
+                "surfaces": surfaces.iter().map(|(id, v)| json!({
+                    "id": id, "title": v.get("title"), "kind": v.get("kind"),
+                })).collect::<Vec<_>>(),
+                "turns": turns.iter().map(Turn::to_json).collect::<Vec<_>>(),
+            })
+        );
+        return 0;
+    }
+    match conversation_dir(&dir, root) {
+        Some(p) if p.exists() => println!("{}", p.display()),
+        // Said rather than left blank: "no such conversation" and "a
+        // conversation that presented nothing" are different answers and the
+        // empty listing below looks identical for both.
+        Some(p) => {
+            println!("{} (no record — nothing has been filed here)", p.display());
+            return 0;
+        }
+        None => return 2,
+    }
+    println!("next turn: {}", next_turn(&dir, root));
+    for t in &turns {
+        match t {
+            Turn::Ask { n, lines, .. } => println!("  {n:>3}  you    {}", lines.join(" ")),
+            Turn::Said { n, id, bond, .. } => {
+                println!("  {n:>3}  agent  {id}  [{}]", bond.as_str())
+            }
+        }
+    }
+    println!("{} surfaces", surfaces.len());
+    for (id, v) in &surfaces {
+        println!(
+            "  {id}  {}",
+            v.get("title").and_then(Value::as_str).unwrap_or("—")
+        );
+    }
+    0
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::testsync::Scratch;
+
+    /// A key, briefly. The struct has public fields; this is only shorter.
+    fn key(root: &str, seq: u32) -> ConvKey {
+        ConvKey {
+            root: root.into(),
+            seq,
+        }
+    }
 
     fn doc(title: &str) -> Value {
         json!({ "td": "0.4", "kind": "markdown", "title": title,
@@ -410,8 +500,8 @@ mod tests {
     #[test]
     fn a_compaction_keeps_the_whole_conversation() {
         let s = Scratch::new("bs-compact");
-        let a0 = ConvKey::new("rootA", 0);
-        let a1 = ConvKey::new("rootA", 1);
+        let a0 = key("rootA", 0);
+        let a1 = key("rootA", 1);
         file(
             s.path(),
             &a0,
@@ -449,7 +539,7 @@ mod tests {
         let s = Scratch::new("bs-clear");
         file(
             s.path(),
-            &ConvKey::new("rootA", 0),
+            &key("rootA", 0),
             0,
             "old",
             &doc("Before the clear"),
@@ -470,7 +560,7 @@ mod tests {
         for n in 0..12u32 {
             file(
                 s.path(),
-                &ConvKey::new("r", n),
+                &key("r", n),
                 n,
                 &format!("s{n:02}"),
                 &doc(&format!("segment {n}")),
@@ -496,7 +586,7 @@ mod tests {
         let s = Scratch::new("bs-outlive");
         file(
             s.path(),
-            &ConvKey::new("r", 0),
+            &key("r", 0),
             0,
             "a",
             &doc("Made in one window"),
@@ -524,20 +614,11 @@ mod tests {
         ] {
             assert!(!safe_segment(bad), "{bad:?} must not be a segment");
             assert!(
-                ConvKey::new(bad, 0).dir(s.path()).is_none(),
+                key(bad, 0).dir(s.path()).is_none(),
                 "{bad:?} must not resolve to a directory"
             );
             assert!(
-                file(
-                    s.path(),
-                    &ConvKey::new(bad, 0),
-                    0,
-                    "x",
-                    &doc("x"),
-                    Bond::Declared,
-                    1
-                )
-                .is_err(),
+                file(s.path(), &key(bad, 0), 0, "x", &doc("x"), Bond::Declared, 1).is_err(),
                 "{bad:?} must not be filed under"
             );
         }
@@ -550,7 +631,7 @@ mod tests {
         let s = Scratch::new("bs-id");
         assert!(file(
             s.path(),
-            &ConvKey::new("r", 0),
+            &key("r", 0),
             0,
             "../escape",
             &doc("x"),
@@ -565,7 +646,7 @@ mod tests {
     #[test]
     fn every_surface_records_the_turn_it_answered() {
         let s = Scratch::new("bs-turns");
-        let k = ConvKey::new("r", 0);
+        let k = key("r", 0);
         ask(s.path(), &k, 0, 10, &["what is the key".into()]).unwrap();
         file(
             s.path(),
@@ -608,12 +689,12 @@ mod tests {
     #[test]
     fn the_next_turn_is_counted_from_the_record_not_from_memory() {
         let s = Scratch::new("bs-next");
-        let k = ConvKey::new("r", 0);
+        let k = key("r", 0);
         assert_eq!(next_turn(s.path(), "r"), 0, "nothing said yet");
         ask(s.path(), &k, 0, 10, &["one".into()]).unwrap();
         assert_eq!(next_turn(s.path(), "r"), 1);
         // A compaction moves to a new segment and the count carries across it.
-        let k1 = ConvKey::new("r", 1);
+        let k1 = key("r", 1);
         ask(s.path(), &k1, 1, 20, &["two".into()]).unwrap();
         assert_eq!(next_turn(s.path(), "r"), 2, "counted across the whole root");
     }
@@ -622,7 +703,7 @@ mod tests {
     #[test]
     fn a_torn_last_line_does_not_lose_the_turns_before_it() {
         let s = Scratch::new("bs-torn");
-        let k = ConvKey::new("r", 0);
+        let k = key("r", 0);
         ask(s.path(), &k, 0, 10, &["kept".into()]).unwrap();
         let p = k.dir(s.path()).unwrap().join("turns.jsonl");
         let mut body = fs::read_to_string(&p).unwrap();
@@ -639,7 +720,7 @@ mod tests {
     #[test]
     fn an_unknown_bond_word_reads_as_the_weakest_rung() {
         let s = Scratch::new("bs-bond");
-        let k = ConvKey::new("r", 0);
+        let k = key("r", 0);
         file(s.path(), &k, 0, "a", &doc("x"), Bond::Declared, 1).unwrap();
         let p = k.dir(s.path()).unwrap().join("turns.jsonl");
         let body = fs::read_to_string(&p)
@@ -665,7 +746,7 @@ mod tests {
         for i in 0..total {
             file(
                 s.path(),
-                &ConvKey::new("r", (i / 8) as u32),
+                &key("r", (i / 8) as u32),
                 i as u32,
                 &format!("s{i:04}"),
                 &doc(&format!("surface {i:04}")),
@@ -694,7 +775,7 @@ mod tests {
 
         file(
             s.path(),
-            &ConvKey::new("r", 0),
+            &key("r", 0),
             0,
             "a",
             &doc("filed"),
@@ -716,7 +797,7 @@ mod tests {
         let s = Scratch::new("bs-id-fill");
         file(
             s.path(),
-            &ConvKey::new("r", 0),
+            &key("r", 0),
             0,
             "named",
             &doc("x"),
@@ -738,7 +819,7 @@ mod tests {
     #[test]
     fn filing_one_id_twice_leaves_one_surface() {
         let s = Scratch::new("bs-twice");
-        let k = ConvKey::new("r", 0);
+        let k = key("r", 0);
         file(s.path(), &k, 0, "same", &doc("First"), Bond::Declared, 1).unwrap();
         file(s.path(), &k, 0, "same", &doc("Second"), Bond::Declared, 2).unwrap();
         let got = load(s.path(), "r");
