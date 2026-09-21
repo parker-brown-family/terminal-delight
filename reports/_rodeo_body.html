@@ -79,10 +79,17 @@
   kernel says rather than what anything reports about itself — <b>__WINVERDICT__</b>.</p>
 <div class="scroller">
 <table class="wide" style="min-width:560px">
-  <thead><tr><th>Window pid</th><th>Started</th><th>The binary it is</th><th>Where it came from</th></tr></thead>
-  <tbody>__WINDOWROWS__</tbody>
+  <thead><tr><th>pid</th><th>Started</th><th>The binary it is</th><th>Where it came from</th></tr></thead>
+  <tbody>__WINDOWROWS__
+      __HOSTROW__</tbody>
 </table>
 </div>
+<p class="sub"><b>The host is the third build, and restarting the window does not touch it.</b>
+  <code>serve --session</code> owns every pane's pseudoterminal and is parented by systemd, which
+  is what lets a window be rebuilt and swapped under live agents. The price is that it upgrades
+  only by dying, and it cannot die without taking every pane with it — so it drifts for days while
+  everything else is current. Anything that needs a <i>new field from the host</i> is inert until
+  someone is willing to kill the session; anything window-side is live the moment you reopen.</p>
 
 <figure>
   <span class="lbl">02 &middot; Two ways to start, and only one of them obeys the symlink</span>

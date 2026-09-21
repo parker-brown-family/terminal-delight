@@ -1,0 +1,957 @@
+<header class="top">
+  <div class="wrap">
+    <p class="meta">terminal-delight &middot; 2026-09-21 &middot; architecture &amp; gap analysis &middot; difficulty 7/10</p>
+    <h1>Bench tenancy</h1>
+    <p class="lede">A workbench is currently a property of the square it is drawn in. End the agent
+    and its diagrams, replies and answered questions stay on the glass for whoever comes next; resume
+    that conversation tomorrow in a different pane and none of it follows. This is what it would take
+    to make a bench belong to the conversation instead, what already exists for it, and the four
+    things it would get wrong if built from the obvious design.</p>
+  </div>
+</header>
+
+<div class="wrap">
+
+<blockquote>ending a session from workbench or killing the agent process really feels like it should
+wipe the history back down to the launch agent screan&hellip; it IS possible to associate the OWRKBENCH
+with the AGENT ID ITSELF! &hellip; so that if a pane has NO agent - we show NO workbench. If a workbench
+resumes a DIFFERENT agent (if available) that agents' workbench transcript / history / comments /
+everyhtign workbench is RE-LOADED back in.</blockquote>
+
+<div class="callout crit">
+  <span class="lbl">Corrected 08:40, after you read it</span>
+  <p>The measurement this brief opened with said four of sixteen live agents had their session id
+  <em>re-minted</em> under them. Chasing your question about <code>/clear</code> showed that reading
+  to be wrong. <code>SessionStart</code> did fire again for those four, 10 to 48 hours into their
+  lives &mdash; but the id it wrote names a transcript file born within three minutes of the process
+  starting, so nothing was replaced. <b>A session id looks stable for the life of a process</b>, which
+  makes the store key simpler and safer than this brief originally argued. Read-first item two, picture
+  eight and the rotation sub-report all now say so; the lineage in pictures three and four survives as
+  the thing that turns the remaining unknown into a measurement.</p>
+</div>
+
+<div class="callout">
+  <span class="lbl">Somebody else is already in here</span>
+  <p>A sibling agent owns <code>docs/plans/workbench-follows-the-agent/</code>. You approved its
+  Gate&nbsp;1 in its own pane with two amendments, and its Gate&nbsp;2 was written at 07:50 &mdash;
+  four minutes after you saved your notes on this page, so it could not have seen them. It has the
+  material now and is folding in the two answers that were gaps in its plan; it has asked you to
+  settle one where your note here and its approved Gate&nbsp;1 differ. <b>That folder is the plan of
+  record and I have not written into it</b> &mdash; this page is the evidence underneath it.</p>
+</div>
+
+<h2 class="sec">01 &middot; Read first</h2>
+
+<ul class="esc-list">
+  <li>
+    <h3>The identity half is already merged, and it already refuses to guess</h3>
+    <p><code>app/src/paneident.rs</code> landed on <code>main</code> on 2026-09-19 and binds every pane
+    in one pass to the conversation it is in, labelling each binding by the evidence that made it. Its
+    <code>certain()</code> filter is the exact question a bench has to ask. This feature is wiring an
+    existing resolver to a store key.</p>
+    <p class="cost"><span class="tag v">measured</span> present on <code>origin/main</code>, 1055 lines, called from five sites</p>
+  </li>
+  <li>
+    <h3>A session id holds still for the life of its process, on every agent here</h3>
+    <p>Four of the sixteen agents with a ledger entry had <code>SessionStart</code> fire again 10 to 48
+    hours in, which looked like a rotation. It was not: in all four the id in the ledger names a
+    transcript born within three minutes of the process starting. The id is a sound store key on the
+    evidence available, and the chain below is insurance rather than a rescue.</p>
+    <p class="cost"><span class="tag v">measured</span> this box, 07:15 today &middot; <button data-dlg="d-rot">the numbers</button></p>
+  </li>
+  <li>
+    <h3>The ledger throws away the one field that would tell a <code>/clear</code> from a compaction</h3>
+    <p>Claude Code hands <code>SessionStart</code> a <code>source</code> saying which of
+    <code>startup</code>, <code>resume</code>, <code>clear</code> or <code>compact</code> caused the
+    mint. <code>scripts/td-agent-ledger</code> read <code>session_id</code> and dropped the rest, so
+    the one question left open here had no instrument. It records all of it now.</p>
+    <p class="cost"><span class="tag v">measured</span> all four words are string literals in the 2.1.274 bundle, and <code>source:&quot;startup&quot;</code> appears verbatim</p>
+  </li>
+  <li>
+    <h3>&ldquo;No agent, no workbench&rdquo; would switch off the shell-pane drop path</h3>
+    <p>A plain shell pane gets a bench today &mdash; <code>shows()</code> gates only the composer on
+    <code>is_agent</code> &mdash; and a script in that pane can write a surface into it from
+    <code>$TD_PANE_ID</code>. The demo seeder and <code>workbench-smoke.sh</code> both run that way.
+    Nobody has asked what happens to them.</p>
+    <p class="cost"><span class="tag v">measured</span> <code>shows()</code> on main &middot; needs a decision, not a design</p>
+  </li>
+  <li>
+    <h3>The comments are the only part that is new storage rather than re-keying</h3>
+    <p>Which tab you had open, which register you were reading, what you had already seen, and the
+    comments you left all live in memory on the pane's view and die with the window. Everything else
+    in this feature moves a key; this part has to be written down for the first time.</p>
+    <p class="cost"><span class="tag v">measured</span> <code>Bench</code> has no serialisation &middot; one slice of its own</p>
+  </li>
+</ul>
+
+<h2 class="sec">02 &middot; Where a surface lives</h2>
+
+<p>Three writers put a work object on a bench and they all end at the same place on disk. An agent
+calls <code>present_surface</code> over MCP, or writes a <code>.json</code> file into the directory
+its own environment names, or prints a fenced block the window reads off the transcript. A sweep
+every second walks <code>surfaces/&lt;td-session&gt;/</code>, maps each subdirectory name to a pane
+id, and hands what it found to the pane with that number.</p>
+
+<figure>
+  <span class="lbl">01 &middot; The path a surface takes today</span>
+  <div class="scroller">
+    <div class="frame">
+      <span class="edge">&#9635; your workstation</span>
+      <div class="arch">
+        <div class="col">
+          <div class="colhead">writers</div>
+          <div class="node est"><b>present_surface</b>MCP verb, stamped with the caller's pid</div>
+          <div class="node est"><b>a .json file</b><code>$TD_SESSION/$TD_PANE_ID</code></div>
+          <div class="node est"><b>a fenced td block</b>read off the transcript</div>
+        </div>
+        <div class="col">
+          <div class="colhead">where it is kept</div>
+          <div class="node est"><b>the pane's drop box</b><code>surfaces/&lt;session&gt;/&lt;pane&gt;/*.json</code><span class="pill ok">durable</span></div>
+          <div class="node est"><b>actions.jsonl</b>what you answered, beside it</div>
+        </div>
+        <div class="col">
+          <div class="colhead">who decides</div>
+          <div class="slot"></div>
+        </div>
+        <div class="col">
+          <div class="colhead">who reads it</div>
+          <div class="node est"><b>Bench &middot; pane 7</b>64 surfaces in memory, keyed by pane<span class="pill ok">survives a restart</span></div>
+        </div>
+      </div>
+      <div class="archlegend">
+        <i><span class="sw" style="background:#199e70"></span>already built and merged</i>
+        <i>the third column is empty on purpose &mdash; nothing decides anything yet</i>
+      </div>
+    </div>
+  </div>
+  <figcaption>The declared half, drawn from <code>surfacefeed.rs</code> and the sweep in
+  <code>main.rs</code>. <b>A pane number is the only key anywhere in this path</b>, which is why a
+  bench outlives the conversation that filled it.</figcaption>
+  <p class="gutter">the drop directory is stamped into the pane's environment at spawn, when no agent
+  exists yet &mdash; that is why the inbox cannot be keyed by agent</p>
+</figure>
+
+<p>The derived half already works differently, and the difference is recent. On 2026-09-18 fourteen
+agents were working in one repository, eight of them could not be bound to a conversation, and eight
+benches showed a neighbour's deliverables as their own. The repair was a resolver that answers with
+evidence attached and declines to answer at all when the evidence is weak.</p>
+
+<figure>
+  <span class="lbl">02 &middot; What landed on main two days ago</span>
+  <div class="scroller">
+    <div class="frame">
+      <span class="edge">&#9635; your workstation</span>
+      <div class="arch">
+        <div class="col">
+          <div class="colhead">writers</div>
+          <div class="node est"><b>present_surface</b>MCP verb, stamped with the caller's pid</div>
+          <div class="node est"><b>a .json file</b><code>$TD_SESSION/$TD_PANE_ID</code></div>
+          <div class="node est"><b>a fenced td block</b>read off the transcript</div>
+        </div>
+        <div class="col">
+          <div class="colhead">where it is kept</div>
+          <div class="node est"><b>the pane's drop box</b><code>surfaces/&lt;session&gt;/&lt;pane&gt;/*.json</code><span class="pill ok">durable</span></div>
+          <div class="node est"><b>actions.jsonl</b>what you answered, beside it</div>
+        </div>
+        <div class="col">
+          <div class="colhead">who decides</div>
+          <div class="node new"><b>paneident::certain</b>binds the whole window at once; Declared &rsaquo; Birth &rsaquo; Sole &rsaquo; Guess<span class="pill wait">derived half only</span></div>
+        </div>
+        <div class="col">
+          <div class="colhead">who reads it</div>
+          <div class="node est"><b>Bench &middot; pane 7</b>64 surfaces in memory, keyed by pane<span class="pill bad">still ungated</span></div>
+        </div>
+      </div>
+      <div class="archlegend">
+        <i><span class="sw" style="background:#199e70"></span>was already there</i>
+        <i><span class="sw" style="background:#3987e5"></span>what this step adds</i>
+      </div>
+    </div>
+  </div>
+  <figcaption>The resolver sits between the transcript and the bench and nowhere else.
+  <b>A derived question is refused when the pane cannot be bound; a dropped file is delivered
+  regardless</b> &mdash; the same bench, two different standards of proof.</figcaption>
+  <p class="gutter">a pane the resolver cannot bind gets no entry at all, and its module doc already
+  says a caller finding no entry must show nothing</p>
+</figure>
+
+<h2 class="sec">03 &middot; Where the change lands</h2>
+
+<p>The inbox stays exactly where it is. Every agent on this machine, the <code>terminal-delight
+surface</code> command, the launch briefing and the published house file all name
+<code>$TD_SESSION/$TD_PANE_ID</code>, and the variables are stamped into the pane's environment at
+spawn &mdash; before any agent exists to be named. What changes is what happens to a file after the
+window picks it up: instead of being remembered as something that landed in pane seven, it is filed
+under the conversation the pane was bound to at that moment.</p>
+
+<figure>
+  <span class="lbl">03 &middot; The store moves; the inbox does not</span>
+  <div class="scroller">
+    <div class="frame">
+      <span class="edge">&#9635; your workstation</span>
+      <div class="arch">
+        <div class="col">
+          <div class="colhead">writers</div>
+          <div class="node est"><b>present_surface</b>MCP verb, stamped with the caller's pid</div>
+          <div class="node est"><b>a .json file</b><code>$TD_SESSION/$TD_PANE_ID</code></div>
+          <div class="node est"><b>a fenced td block</b>read off the transcript</div>
+        </div>
+        <div class="col">
+          <div class="colhead">where it is kept</div>
+          <div class="node est"><b>the pane's drop box</b>now an inbox: swept, then emptied into the store<span class="pill ok">contract unchanged</span></div>
+          <div class="node new"><b>conversations/&lt;id&gt;/</b>surfaces, actions, and what you had read<span class="pill wait">the durable store</span></div>
+          <div class="node mine"><b>_unattributed/&lt;pane&gt;/</b>arrived with no certain binding &mdash; kept, never shown as somebody's</div>
+        </div>
+        <div class="col">
+          <div class="colhead">who decides</div>
+          <div class="node est"><b>paneident::certain</b>binds the whole window at once</div>
+          <div class="node new"><b>lineage</b>which mints continue a conversation and which begin one</div>
+        </div>
+        <div class="col">
+          <div class="colhead">who reads it</div>
+          <div class="node new"><b>Bench &middot; the conversation</b>loaded on bind, emptied on unbind<span class="pill wait">no agent, nothing on it</span></div>
+        </div>
+      </div>
+      <div class="archlegend">
+        <i><span class="sw" style="background:#199e70"></span>was already there</i>
+        <i><span class="sw" style="background:#3987e5"></span>what this step adds</i>
+        <i><span class="sw" style="background:#c98500"></span>yellow = mine to argue with</i>
+      </div>
+    </div>
+  </div>
+  <figcaption>Two writes where there was one: the sweep files into the conversation store and clears
+  the inbox. <b>The quarantine in amber is the whole unknown-is-not-zero position</b> &mdash; a
+  surface nobody can attribute is kept and reachable, and never drawn as the current agent's.</figcaption>
+  <p class="gutter">the inbox is now a place things pass through, so a crash between the read and the
+  file has to leave the file in the inbox rather than nowhere</p>
+</figure>
+
+<figure>
+  <span class="lbl">04 &middot; The whole board, once the key has moved</span>
+  <div class="scroller">
+    <div class="frame">
+      <span class="edge">&#9635; your workstation</span>
+      <div class="arch">
+        <div class="col">
+          <div class="colhead">writers</div>
+          <div class="node est"><b>present_surface</b>MCP verb, stamped with the caller's pid</div>
+          <div class="node est"><b>a .json file</b><code>$TD_SESSION/$TD_PANE_ID</code></div>
+          <div class="node est"><b>a fenced td block</b>read off the transcript</div>
+          <div class="node new"><b>a second window</b>its own session key, its own panes<span class="pill wait">reads the same store</span></div>
+        </div>
+        <div class="col">
+          <div class="colhead">where it is kept</div>
+          <div class="node est"><b>the pane's drop box</b>an inbox, per window</div>
+          <div class="node new"><b>conversations/&lt;id&gt;/</b>one per conversation, shared by every window</div>
+          <div class="node mine"><b>_unattributed/&lt;pane&gt;/</b>kept, never attributed</div>
+          <div class="node new"><b>retention</b>ages conversations, not window sessions</div>
+        </div>
+        <div class="col">
+          <div class="colhead">who decides</div>
+          <div class="node est"><b>paneident::certain</b>binds the whole window at once</div>
+          <div class="node new"><b>lineage</b>from the ledger's <code>source</code></div>
+          <div class="node est"><b>td-agent-ledger</b>a SessionStart hook, per agent pid</div>
+        </div>
+        <div class="col">
+          <div class="colhead">who reads it</div>
+          <div class="node new"><b>Bench &middot; pane 7</b>conversation B, launched after A ended</div>
+          <div class="node new"><b>Bench &middot; pane 12</b>conversation A, resumed &mdash; its surfaces and comments back</div>
+          <div class="node est"><b>terminal-delight bindings</b>the instrument for the success metric</div>
+        </div>
+      </div>
+      <div class="archlegend">
+        <i><span class="sw" style="background:#199e70"></span>already built</i>
+        <i><span class="sw" style="background:#3987e5"></span>added by this feature</i>
+        <i><span class="sw" style="background:#c98500"></span>yellow = mine to argue with</i>
+      </div>
+    </div>
+  </div>
+  <figcaption>Where this touches other systems: the retention pass, the recovery manifest, the MCP
+  event feed and the ledger hook all key on something this change re-points.
+  <b>A conversation store outlives the window that hosted it</b>, so the thirty-day rule that ages a
+  dead window's directory would delete work the feature exists to bring back.</figcaption>
+  <p class="gutter">two windows reading one conversation directory at once is not designed here &mdash;
+  see the fence</p>
+</figure>
+
+<h2 class="sec">04 &middot; What the bench shows</h2>
+
+<figure>
+  <span class="lbl">05 &middot; Three states, one of which does not exist yet</span>
+  <div class="triptych">
+    <div class="bench">
+      <div class="hdr"><span>pane 7 &middot; CLAUDE</span><span class="face">WORKBENCH</span></div>
+      <div class="body">
+        <div class="row w">decision &middot; Cache eviction policy<br>waiting on you</div>
+        <div class="row">response &middot; The strip backs out&hellip;</div>
+        <div class="row g">artifact &middot; bench-rodeo.html</div>
+        <div class="row">architecture &middot; the surface feed</div>
+      </div>
+      <div class="strip"><span>Waiting on you</span><span class="verb end">END SESSION</span></div>
+    </div>
+    <div class="bench">
+      <div class="hdr"><span>pane 7 &middot; shell</span><span class="face">WORKBENCH</span></div>
+      <div class="body">
+        <div class="empty"><span class="big">Nothing on this bench.</span>
+        The conversation that was here has ended.<br>Its four surfaces are kept.</div>
+      </div>
+      <div class="strip"><span>&mdash;</span><span class="verb">LAUNCH AGENT &#9089;</span></div>
+    </div>
+    <div class="bench">
+      <div class="hdr"><span>pane 7 &middot; CLAUDE</span><span class="face">WORKBENCH</span></div>
+      <div class="body">
+        <div class="empty"><span class="big warn">Not sure whose bench this is.</span>
+        An agent is running here, but Terminal&nbsp;Delight cannot tell which conversation it is in,
+        so it is showing you nothing rather than someone else's work.</div>
+      </div>
+      <div class="strip"><span>Working</span><span class="verb end">END SESSION</span></div>
+    </div>
+  </div>
+  <figcaption>Left is today and is unchanged. Middle is what ending an agent would do. Right is the
+  state the rule creates and nobody has drawn: a live agent whose conversation cannot be named.
+  <b>Without the sentence on the right, a refusal to guess reads as the feature being broken.</b></figcaption>
+  <p class="gutter">drawn by me from the described rule, at roughly a third of a tiled pane's width
+  &mdash; no build renders any of these three</p>
+</figure>
+
+<figure>
+  <span class="lbl">06 &middot; What ending an agent does, and what resuming one undoes</span>
+  <div class="scroller">
+    <svg viewBox="0 0 700 250" role="img" aria-label="Timeline of two panes: pane 7 holds conversation A until it is ended, then holds conversation B; conversation A reappears on pane 12 when it is resumed there">
+      <defs>
+        <marker id="ar" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">
+          <path d="M0,0 L7,3.5 L0,7 z" fill="#8b8a80"/>
+        </marker>
+      </defs>
+      <text x="0" y="14" font-family="ui-monospace, monospace" font-size="10" fill="#8b8a80">09:00</text>
+      <text x="228" y="14" font-family="ui-monospace, monospace" font-size="10" fill="#8b8a80">12:00 &mdash; you press END SESSION</text>
+      <text x="470" y="14" font-family="ui-monospace, monospace" font-size="10" fill="#8b8a80">15:00 &mdash; you resume A elsewhere</text>
+      <line x1="0" y1="22" x2="700" y2="22" stroke="#3a3a36"/>
+      <line x1="238" y1="22" x2="238" y2="230" stroke="#3a3a36" stroke-dasharray="3 3"/>
+      <line x1="470" y1="22" x2="470" y2="230" stroke="#3a3a36" stroke-dasharray="3 3"/>
+
+      <text x="0" y="56" font-family="ui-monospace, monospace" font-size="11" fill="#c3c2b7">pane 7</text>
+      <rect x="60" y="42" width="178" height="26" rx="4" fill="#199e70" fill-opacity="0.22" stroke="#199e70"/>
+      <text x="69" y="59" font-family="ui-monospace, monospace" font-size="10" fill="#4cc79a">conversation A &middot; 4 surfaces</text>
+      <rect x="246" y="42" width="60" height="26" rx="4" fill="#232321" stroke="#3a3a36" stroke-dasharray="3 3"/>
+      <text x="252" y="59" font-family="ui-monospace, monospace" font-size="9" fill="#8b8a80">empty</text>
+      <rect x="314" y="42" width="386" height="26" rx="4" fill="#3987e5" fill-opacity="0.18" stroke="#3987e5"/>
+      <text x="323" y="59" font-family="ui-monospace, monospace" font-size="10" fill="#7db3f0">conversation B &middot; its own surfaces, from zero</text>
+
+      <text x="0" y="112" font-family="ui-monospace, monospace" font-size="11" fill="#c3c2b7">pane 12</text>
+      <rect x="60" y="98" width="410" height="26" rx="4" fill="#232321" stroke="#3a3a36" stroke-dasharray="3 3"/>
+      <text x="69" y="115" font-family="ui-monospace, monospace" font-size="9" fill="#8b8a80">a shell &mdash; no agent, no bench contents</text>
+      <rect x="478" y="98" width="222" height="26" rx="4" fill="#199e70" fill-opacity="0.22" stroke="#199e70"/>
+      <text x="487" y="115" font-family="ui-monospace, monospace" font-size="10" fill="#4cc79a">conversation A &middot; 4 surfaces, back</text>
+
+      <path d="M149,68 L149,160 L560,160 L560,124" fill="none" stroke="#199e70" stroke-width="1.2"
+            stroke-dasharray="4 3" marker-end="url(#ar)"/>
+      <text x="200" y="175" font-family="ui-monospace, monospace" font-size="10" fill="#4cc79a">the store keeps A's surfaces, its answers, and the comments you left on them</text>
+
+      <rect x="0" y="196" width="700" height="44" rx="6" fill="#1a1a19" stroke="#3a3a36"/>
+      <text x="12" y="213" font-family="ui-monospace, monospace" font-size="10" fill="#8b8a80">Today, both lanes are wrong: pane 7 keeps A's four surfaces under B, and pane 12 shows nothing</text>
+      <text x="12" y="229" font-family="ui-monospace, monospace" font-size="10" fill="#8b8a80">when A comes back, because what A made was filed under the pane it happened to be sitting in.</text>
+    </svg>
+  </div>
+  <figcaption>The two halves of the ask are one mechanism seen from either end.
+  <b>Nothing is deleted at 12:00</b> &mdash; the wipe is a change of what the bench is reading, which
+  is what makes the 15:00 reappearance free.</figcaption>
+  <p class="gutter">times and counts are illustrative; the mechanism is not</p>
+</figure>
+
+<h2 class="sec">05 &middot; What decides the key</h2>
+
+<p>The obvious key is the agent's session id, and it is close to right. <code>paneident</code> already
+produces one per pane, with the evidence that produced it, and the rungs are ordered so a reader can
+refuse the weakest.</p>
+
+<figure>
+  <span class="lbl">07 &middot; The four rungs, and where the cut falls</span>
+  <div class="scroller">
+    <svg viewBox="0 0 700 226" role="img" aria-label="The four binding rungs from strongest to weakest: Declared, Birth, Sole, Guess, with a certainty cut drawn between Sole and Guess">
+      <rect x="0" y="8" width="700" height="34" rx="5" fill="#199e70" fill-opacity="0.16" stroke="#199e70"/>
+      <text x="12" y="24" font-family="ui-monospace, monospace" font-size="11" fill="#4cc79a">DECLARED</text>
+      <text x="100" y="24" font-family="ui-monospace, monospace" font-size="10" fill="#c3c2b7">the agent named its own session &mdash; a ledger entry, a held descriptor, or its own --resume flag</text>
+      <text x="100" y="37" font-family="ui-monospace, monospace" font-size="10" fill="#4cc79a">24 of 24 conversational agents on this machine, 07:15 today &mdash; 16 by ledger, 8 by command line</text>
+
+      <rect x="0" y="48" width="700" height="30" rx="5" fill="#199e70" fill-opacity="0.10" stroke="#199e70" stroke-opacity="0.6"/>
+      <text x="12" y="63" font-family="ui-monospace, monospace" font-size="11" fill="#4cc79a">BIRTH</text>
+      <text x="100" y="63" font-family="ui-monospace, monospace" font-size="10" fill="#c3c2b7">the process started when the conversation opened, inside the tolerance</text>
+      <text x="100" y="75" font-family="ui-monospace, monospace" font-size="9.5" fill="#8b8a80">0 panes today &mdash; every one of them declared instead</text>
+
+      <rect x="0" y="84" width="700" height="30" rx="5" fill="#199e70" fill-opacity="0.06" stroke="#199e70" stroke-opacity="0.4"/>
+      <text x="12" y="99" font-family="ui-monospace, monospace" font-size="11" fill="#4cc79a">SOLE</text>
+      <text x="100" y="99" font-family="ui-monospace, monospace" font-size="10" fill="#c3c2b7">forced by elimination &mdash; the last transcript and the last pane that could hold it</text>
+      <text x="100" y="111" font-family="ui-monospace, monospace" font-size="9.5" fill="#8b8a80">0 panes today</text>
+
+      <line x1="0" y1="124" x2="700" y2="124" stroke="#d03b3b" stroke-width="1.4" stroke-dasharray="6 4"/>
+      <text x="0" y="138" font-family="ui-monospace, monospace" font-size="10" fill="#f08a8a">certain() cuts here &mdash; above it a reader may say &ldquo;this agent made this&rdquo;</text>
+
+      <rect x="0" y="146" width="700" height="34" rx="5" fill="#2e2e2b" stroke="#8b8a80" stroke-dasharray="3 3"/>
+      <text x="12" y="162" font-family="ui-monospace, monospace" font-size="11" fill="#8b8a80">GUESS</text>
+      <text x="100" y="162" font-family="ui-monospace, monospace" font-size="10" fill="#8b8a80">the last conversation spoken into, among those that began after the process did</text>
+      <text x="100" y="175" font-family="ui-monospace, monospace" font-size="9.5" fill="#f08a8a">the rung that put eight panes' deliverables on the wrong benches on 2026-09-18</text>
+
+      <rect x="0" y="190" width="700" height="32" rx="5" fill="#1a1a19" stroke="#3a3a36" stroke-dasharray="3 3"/>
+      <text x="12" y="206" font-family="ui-monospace, monospace" font-size="11" fill="#8b8a80">NO ENTRY</text>
+      <text x="100" y="206" font-family="ui-monospace, monospace" font-size="10" fill="#8b8a80">not a rung and not zero &mdash; the resolver was asked and could not answer</text>
+      <text x="100" y="218" font-family="ui-monospace, monospace" font-size="9.5" fill="#8b8a80">a pane in this state is the right-hand mockup in picture five</text>
+    </svg>
+  </div>
+  <figcaption>The ladder is <code>vitals::Bond</code>, drawn from its own doc comments; the counts are
+  mine, from this machine this morning. <b>Every live agent here lands on the top rung today</b>,
+  which says the ledger and the command line between them are doing the work &mdash; and says nothing
+  about a machine where the hook is not installed.</figcaption>
+  <p class="gutter">the bottom row is the case a picture of four rungs would have left out</p>
+</figure>
+
+<p>What could break that key is underneath it. The ledger hook's own comment says Claude Code mints a
+new id on <code>/clear</code>, on an in-pane <code>/resume</code> and on compaction, and the hook
+overwrites its entry every time one fires. So the last write time against the process start time says
+how often something happened mid-life to a person who never left the pane &mdash; and the transcript
+named by the id says whether that something replaced it.</p>
+
+<figure>
+  <span class="lbl">08 &middot; A second mint, and the file it did not replace</span>
+  <div class="scroller">
+    <svg viewBox="0 0 700 312" role="img" aria-label="Sixteen live agents; four had SessionStart fire again 10 to 48 hours in, and in all four the transcript named by the resulting id was born at the process start, so the id was not replaced">
+      <line x1="72" y1="30" x2="72" y2="272" stroke="#3a3a36"/>
+      <line x1="72" y1="272" x2="690" y2="272" stroke="#3a3a36"/>
+      <g font-family="ui-monospace, monospace" font-size="9" fill="#8b8a80">
+        <text x="72" y="286" text-anchor="middle">0</text>
+        <text x="226" y="286" text-anchor="middle">12h</text>
+        <text x="380" y="286" text-anchor="middle">24h</text>
+        <text x="534" y="286" text-anchor="middle">36h</text>
+        <text x="688" y="286" text-anchor="middle">48h</text>
+      </g>
+      <line x1="226" y1="30" x2="226" y2="272" stroke="#2e2e2b"/>
+      <line x1="380" y1="30" x2="380" y2="272" stroke="#2e2e2b"/>
+      <line x1="534" y1="30" x2="534" y2="272" stroke="#2e2e2b"/>
+
+      <rect x="72" y="34" width="613" height="12" rx="3" fill="#3987e5" fill-opacity="0.5"/>
+      <circle cx="685" cy="40" r="4" fill="#7db3f0"/>
+      <path d="M72,34 L78,40 L72,46 L66,40 z" fill="#4cc79a"/>
+      <text x="0" y="44" font-family="ui-monospace, monospace" font-size="9.5" fill="#c3c2b7">agent 01</text>
+      <text x="640" y="30" font-family="ui-monospace, monospace" font-size="9.5" fill="#7db3f0" text-anchor="end">47.7 h</text>
+
+      <rect x="72" y="52" width="439" height="12" rx="3" fill="#3987e5" fill-opacity="0.5"/>
+      <circle cx="511" cy="58" r="4" fill="#7db3f0"/>
+      <path d="M72,52 L78,58 L72,64 L66,58 z" fill="#4cc79a"/>
+      <text x="0" y="62" font-family="ui-monospace, monospace" font-size="9.5" fill="#c3c2b7">agent 02</text>
+      <text x="505" y="48" font-family="ui-monospace, monospace" font-size="9.5" fill="#7db3f0" text-anchor="end">34.2 h</text>
+
+      <rect x="72" y="70" width="431" height="12" rx="3" fill="#3987e5" fill-opacity="0.5"/>
+      <circle cx="503" cy="76" r="4" fill="#7db3f0"/>
+      <path d="M72,70 L78,76 L72,82 L66,76 z" fill="#4cc79a"/>
+      <text x="0" y="80" font-family="ui-monospace, monospace" font-size="9.5" fill="#c3c2b7">agent 03</text>
+      <text x="497" y="66" font-family="ui-monospace, monospace" font-size="9.5" fill="#7db3f0" text-anchor="end">33.6 h</text>
+
+      <rect x="72" y="88" width="128" height="12" rx="3" fill="#3987e5" fill-opacity="0.5"/>
+      <circle cx="200" cy="94" r="4" fill="#7db3f0"/>
+      <path d="M72,88 L78,94 L72,100 L66,94 z" fill="#4cc79a"/>
+      <text x="0" y="98" font-family="ui-monospace, monospace" font-size="9.5" fill="#c3c2b7">agent 04</text>
+      <text x="208" y="98" font-family="ui-monospace, monospace" font-size="9.5" fill="#7db3f0">10.0 h</text>
+
+      <g>
+        <text x="0" y="122" font-family="ui-monospace, monospace" font-size="9.5" fill="#c3c2b7">agent 05</text>
+        <circle cx="73" cy="118" r="4" fill="#7db3f0"/>
+        <text x="0" y="140" font-family="ui-monospace, monospace" font-size="9.5" fill="#c3c2b7">agent 06</text>
+        <circle cx="73" cy="136" r="4" fill="#7db3f0"/>
+        <text x="0" y="158" font-family="ui-monospace, monospace" font-size="9.5" fill="#c3c2b7">agent 07</text>
+        <circle cx="73" cy="154" r="4" fill="#7db3f0"/>
+        <text x="0" y="176" font-family="ui-monospace, monospace" font-size="9.5" fill="#c3c2b7">agent 08</text>
+        <circle cx="73" cy="172" r="4" fill="#7db3f0"/>
+        <text x="0" y="194" font-family="ui-monospace, monospace" font-size="9.5" fill="#c3c2b7">agent 09</text>
+        <circle cx="73" cy="190" r="4" fill="#7db3f0"/>
+        <text x="0" y="212" font-family="ui-monospace, monospace" font-size="9.5" fill="#c3c2b7">agent 10</text>
+        <circle cx="73" cy="208" r="4" fill="#7db3f0"/>
+        <text x="0" y="230" font-family="ui-monospace, monospace" font-size="9.5" fill="#c3c2b7">agent 11</text>
+        <circle cx="73" cy="226" r="4" fill="#7db3f0"/>
+        <text x="0" y="248" font-family="ui-monospace, monospace" font-size="9.5" fill="#c3c2b7">agent 12</text>
+        <circle cx="73" cy="244" r="4" fill="#7db3f0"/>
+        <text x="0" y="266" font-family="ui-monospace, monospace" font-size="9.5" fill="#c3c2b7">13&ndash;16</text>
+        <circle cx="73" cy="262" r="4" fill="#7db3f0"/>
+      </g>
+      <text x="90" y="192" font-family="ui-monospace, monospace" font-size="10" fill="#7db3f0">twelve agents: one mint, within 1&ndash;3 seconds of the process starting</text>
+      <text x="90" y="206" font-family="ui-monospace, monospace" font-size="10" fill="#8b8a80">a dot on the axis is an agent whose id has not moved &mdash; not one that was not measured</text>
+
+      <g font-family="ui-monospace, monospace" font-size="10">
+        <circle cx="78" cy="300" r="4" fill="#7db3f0"/>
+        <text x="90" y="304" fill="#8b8a80">SessionStart fired here</text>
+        <path d="M264,300 L270,306 L264,312 L258,306 z" transform="translate(0,-6)" fill="#4cc79a"/>
+        <text x="278" y="304" fill="#4cc79a">the transcript that id names was born here &mdash; all sixteen</text>
+      </g>
+    </svg>
+  </div>
+  <figcaption>The blue bars are real and were the reason for the lineage; the green diamonds are what
+  they turned out to mean. <b>Every one of the sixteen ids names a transcript born within three
+  minutes of its process</b>, so the four late mints wrote the id that was already there rather than
+  a new one.</figcaption>
+  <p class="gutter">this says a mint happened and does not say why &mdash; the hook discarded the field
+  that would, which is what slice 0 repairs</p>
+</figure>
+
+<p>The instrument was where the field was being thrown away. The hook read <code>session_id</code> out
+of the <code>SessionStart</code> payload and wrote it; the payload also carries a <code>source</code>,
+and recording that alongside the id it displaced turns a sequence of overwrites into a chain. A
+compaction and an in-pane resume continue the conversation the bench is showing, a <code>/clear</code>
+and a fresh launch begin a new one, and a mint whose source cannot be read continues the chain and
+says in <code>join</code> that nothing evidenced it &mdash; because a bench that keeps too much can be
+cleared by hand and one that empties itself during a compaction cannot be got back.</p>
+
+<div class="callout good">
+  <span class="lbl">Built, 08:30</span>
+  <p><code>scripts/td-agent-ledger</code> now records <code>source</code>, a <code>root</code> naming
+  the conversation, a <code>seq</code> saying how deep the chain runs, the <code>prev</code> id each
+  mint displaced, and a <code>join</code> of <code>declared</code> or <code>unknown</code>. Beside it
+  sits an append-only <code>lineage.jsonl</code> that outlives the process, because the per-pid entry
+  is deleted at <code>SessionEnd</code> and recognising that conversation tomorrow is the whole point.
+  Eighteen tests in <code>scripts/td-agent-ledger.test.mjs</code>, and the script was mutated three
+  ways to check they bite: a false <code>declared</code> join, a <code>/clear</code> that fails to
+  break the chain, and an unvalidated source word reaching a reader. Each mutation failed the suite;
+  the unmutated script passes it.</p>
+</div>
+
+<div class="callout crit">
+  <span class="lbl">The question this still cannot answer</span>
+  <p>Whether a <code>/clear</code> mints a new id is <b>unmeasured, not inferred</b>. Across the 600
+  most recently written transcripts on this machine there is not one genuine <code>/clear</code>
+  invocation &mdash; the feature is unexercised here, so nothing in the corpus can settle it. The hook
+  now records the answer the first time anyone types it, anywhere on this box.
+  <span class="tag c">unknown</span></p>
+</div>
+
+<h2 class="sec">06 &middot; Every case</h2>
+
+<figure>
+  <span class="lbl">09 &middot; What the bench shows, in every state a pane can be in</span>
+  <div class="tblwrap">
+    <table class="wide">
+      <thead>
+        <tr><th>The pane</th><th>Binding</th><th>The store holds</th><th>The bench shows</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Never used &mdash; a fresh shell</td><td class="unk">n/a</td><td>nothing</td><td>empty panel, LAUNCH AGENT<span class="yes"> &nbsp;unchanged</span></td></tr>
+        <tr><td>Agent live, id declared</td><td class="yes">certain</td><td>its surfaces</td><td>its surfaces<span class="yes"> &nbsp;unchanged</span></td></tr>
+        <tr><td>Agent live, bound by birth or elimination</td><td class="yes">certain</td><td>its surfaces</td><td>its surfaces</td></tr>
+        <tr><td>Agent live, only a guess available</td><td class="no">refused</td><td>unknown which</td><td>nothing, with the sentence saying why<span class="part"> &nbsp;new screen</span></td></tr>
+        <tr><td>Agent live, first second &mdash; no transcript yet</td><td class="unk">not yet</td><td>nothing</td><td>empty, and it must not read as a wipe<span class="part"> &nbsp;new screen</span></td></tr>
+        <tr><td>Agent ended from the strip</td><td class="unk">gone</td><td>its surfaces, kept</td><td>empty, LAUNCH AGENT<span class="part"> &nbsp;the ask</span></td></tr>
+        <tr><td>Agent killed, or its pane crashed</td><td class="unk">gone</td><td>its surfaces, kept</td><td>the same &mdash; no separate path</td></tr>
+        <tr><td>Same conversation resumed in this pane</td><td class="yes">certain</td><td>its surfaces</td><td>they return<span class="part"> &nbsp;the ask</span></td></tr>
+        <tr><td>Same conversation resumed in a different pane</td><td class="yes">certain</td><td>its surfaces</td><td>they appear there<span class="part"> &nbsp;the ask</span></td></tr>
+        <tr><td>A new conversation launched where one ended</td><td class="yes">certain</td><td>empty for it</td><td>empty, then its own<span class="part"> &nbsp;the ask</span></td></tr>
+        <tr><td>Compaction, or an in-pane <code>/resume</code></td><td class="yes">certain, new id</td><td>same lineage</td><td>unchanged &mdash; requires the lineage<span class="no"> &nbsp;wipes without it</span></td></tr>
+        <tr><td>A file already in the inbox when the window opened, writer unnameable</td><td class="unk">never witnessed</td><td>counted, not parsed</td><td>the stale-version screen &mdash; and a fresh <code>Feed</code> cannot tell this row from the next one<span class="no"> &nbsp;needs one bit</span></td></tr>
+        <tr><td>A file landing in the inbox now, writer unnameable</td><td class="no">refused</td><td>held for this window only</td><td>one row saying something arrived that nobody can claim</td></tr>
+        <tr><td>A surface presented over MCP by a stranger's pid</td><td class="no">not this agent's</td><td>quarantine</td><td>not on this bench<span class="part"> &nbsp;undecided</span></td></tr>
+        <tr><td>Every surface already on disk, written before this change</td><td class="unk">no conversation recorded</td><td>left exactly where it is</td><td>a stale-version screen, and no migration code<span class="yes"> &nbsp;decided</span></td></tr>
+        <tr><td>A shell pane a script drops a surface into</td><td class="unk">no agent at all</td><td>quarantine, under the rule as stated</td><td>nothing &mdash; which breaks the demo seeder<span class="no"> &nbsp;needs a decision</span></td></tr>
+        <tr><td>A Codex pane</td><td class="yes">by rollout file</td><td>its surfaces</td><td>its surfaces; whether Codex re-mints is <span class="unk">unmeasured</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <figcaption>Fifteen states, of which four have no answer yet and one is a regression.
+  <b>The shell-pane row is the case the rule as written would break</b> &mdash; a script with no agent
+  behind it is a legitimate writer today, and &ldquo;no agent, no workbench&rdquo; switches it off.</figcaption>
+  <p class="gutter">the fifth row is the one most likely to ship wrong: an empty bench during binding
+  looks exactly like an empty bench after a wipe &middot; rows eleven and twelve are one bit apart and
+  the window does not hold it yet &mdash; <code>Feed::seen</code> is in-memory, so on a fresh window
+  every pre-existing file looks like it just arrived</p>
+</figure>
+
+<h2 class="sec">07 &middot; The gap</h2>
+
+<p>Half of this feature is already on <code>main</code> and was built for a different reason. What
+follows is every moving part, what it does today, and what it would have to do instead.</p>
+
+<div class="tblwrap">
+  <table class="wide">
+    <thead>
+      <tr><th>Part</th><th>Today</th><th>Needs to</th><th>State</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Pane &rarr; conversation binding</td><td><code>paneident::resolve</code>, four rungs, evidence attached</td><td>nothing &mdash; it already answers this</td><td class="yes">merged</td></tr>
+      <tr><td>Derived surfaces</td><td>gated on <code>certain()</code>; a pane that cannot be bound gets none</td><td>nothing</td><td class="yes">merged</td></tr>
+      <tr><td><code>terminal-delight bindings</code></td><td>prints which conversation each pane is in, and how strongly</td><td>print the lineage too</td><td class="part">small</td></tr>
+      <tr><td>Dropped files</td><td>delivered to the pane whose number names the directory</td><td>be filed under the bound conversation on arrival</td><td class="no">missing</td></tr>
+      <tr><td><code>present_surface</code></td><td>delivered by pane; already knows whether the caller is the pane's own agent</td><td>use that flag to decide filing vs quarantine</td><td class="part">half there</td></tr>
+      <tr><td>The durable store</td><td><code>surfaces/&lt;window-session&gt;/&lt;pane&gt;/</code></td><td>a directory per conversation, readable from any window</td><td class="no">missing</td></tr>
+      <tr><td>The bench's contents</td><td>accumulate in memory per pane; never loaded, never cleared</td><td>load on bind, empty on unbind</td><td class="no">missing</td></tr>
+      <tr><td>Reader state &mdash; tabs, registers, what you had seen, comments</td><td>in memory on the pane's view; dies with the window</td><td>written down, per conversation</td><td class="no">new storage</td></tr>
+      <tr><td>The action journal</td><td><code>actions.jsonl</code> beside the pane's drop box</td><td>follow the conversation, or the record of what you told it splits</td><td class="no">missing</td></tr>
+      <tr><td>Retention</td><td>deletes a window session's directory after thirty idle days</td><td>age conversations instead, or it deletes what this feature restores</td><td class="no">re-point</td></tr>
+      <tr><td>Session-id rotation</td><td>the ledger overwrites; nothing records why</td><td>record <code>source</code> and the previous id</td><td class="no">five lines of shell</td></tr>
+      <tr><td>Surfaces already on disk</td><td>every pane directory on this machine, no conversation recorded against any of them</td><td>a migration, or a quarantine, or a deletion &mdash; pick one</td><td class="no">undecided</td></tr>
+      <tr><td>Codex lineage</td><td>bound by rollout file; no hook, no ledger</td><td>whether a Codex id ever rotates is <span class="unk">unmeasured</span></td><td class="unk">unknown</td></tr>
+      <tr><td>The <code>Bench</code> doc comment</td><td>&ldquo;Per pane, deliberately&rdquo;</td><td>say the opposite, in the commit that makes it true</td><td class="part">one line</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<figure>
+  <span class="lbl">10 &middot; What is inside the fence</span>
+  <div class="scroller">
+    <svg viewBox="0 0 700 250" role="img" aria-label="Two columns: what this feature does, and what it deliberately does not do">
+      <rect x="0" y="0" width="338" height="250" rx="8" fill="#199e70" fill-opacity="0.07" stroke="#199e70" stroke-opacity="0.5"/>
+      <rect x="352" y="0" width="348" height="250" rx="8" fill="#1a1a19" stroke="#3a3a36" stroke-dasharray="4 3"/>
+      <text x="14" y="22" font-family="ui-monospace, monospace" font-size="10.5" fill="#4cc79a" letter-spacing="1">INSIDE</text>
+      <text x="366" y="22" font-family="ui-monospace, monospace" font-size="10.5" fill="#8b8a80" letter-spacing="1">OUTSIDE, AND SAID SO</text>
+      <g font-family="ui-monospace, monospace" font-size="10" fill="#c3c2b7">
+        <text x="14" y="48">a conversation-keyed store on disk</text>
+        <text x="14" y="70">the bench loading and emptying on bind</text>
+        <text x="14" y="92">a lineage so a compaction is not a wipe</text>
+        <text x="14" y="114">a stale-version screen for older work</text>
+        <text x="14" y="136">reader state and comments made durable</text>
+        <text x="14" y="158">the action journal following the store</text>
+        <text x="14" y="180">retention re-pointed at conversations</text>
+        <text x="14" y="202">the screen a refusal to guess needs</text>
+        <text x="14" y="224">the two screens in picture five</text>
+      </g>
+      <g font-family="ui-monospace, monospace" font-size="10" fill="#8b8a80">
+        <text x="366" y="48">the drop-box path and its two variables</text>
+        <text x="366" y="70">the surface format &mdash; nothing gains a field</text>
+        <text x="366" y="92">two windows writing one conversation at once</text>
+        <text x="366" y="114">a picker for &ldquo;which conversation, here&rdquo;</text>
+        <text x="366" y="136">merging two conversations' benches</text>
+        <text x="366" y="158">the attention rail, which is per turn by design</text>
+        <text x="366" y="180">anything that rewrites an agent's own file</text>
+        <text x="366" y="202">Codex lineage &mdash; measured first, then decided</text>
+        <text x="366" y="224">migrating or deleting what exists today</text>
+      </g>
+    </svg>
+  </div>
+  <figcaption>The refusals carry as much as the inclusions. <b>Nothing here changes what an agent
+  writes or where it writes it</b>, so no agent, script or published contract has to learn
+  anything.</figcaption>
+  <p class="gutter">two windows on one conversation is left outside because nothing today makes it
+  safe, and pretending otherwise would be the next bug</p>
+</figure>
+
+<h2 class="sec">08 &middot; Slices</h2>
+
+<figure>
+  <span class="lbl">11 &middot; Five slices, and what each one buys</span>
+  <div class="scroller">
+    <svg viewBox="0 0 700 218" role="img" aria-label="Five slices in order: the lineage tracer, the conversation store, the wipe, durable reader state, and retention with migration">
+      <line x1="16" y1="40" x2="592" y2="40" stroke="#3a3a36"/>
+      <g>
+        <circle cx="16" cy="40" r="7" fill="#199e70"/>
+        <text x="4" y="66" font-family="ui-monospace, monospace" font-size="10" fill="#4cc79a">slice 0 &#10003;</text>
+        <text x="4" y="82" font-family="ui-monospace, monospace" font-size="10" fill="#c3c2b7">the lineage</text>
+        <text x="4" y="98" font-family="ui-monospace, monospace" font-size="9" fill="#8b8a80">hook records source</text>
+        <text x="4" y="110" font-family="ui-monospace, monospace" font-size="9" fill="#8b8a80">+ previous id;</text>
+        <text x="4" y="122" font-family="ui-monospace, monospace" font-size="9" fill="#8b8a80">bindings prints it.</text>
+        <text x="4" y="140" font-family="ui-monospace, monospace" font-size="9" fill="#4cc79a">BUILT &middot; 18 tests</text>
+      </g>
+      <g>
+        <circle cx="160" cy="40" r="7" fill="#3987e5"/>
+        <text x="148" y="66" font-family="ui-monospace, monospace" font-size="10" fill="#7db3f0">slice 1</text>
+        <text x="148" y="82" font-family="ui-monospace, monospace" font-size="10" fill="#c3c2b7">the store</text>
+        <text x="148" y="98" font-family="ui-monospace, monospace" font-size="9" fill="#8b8a80">file on arrival by</text>
+        <text x="148" y="110" font-family="ui-monospace, monospace" font-size="9" fill="#8b8a80">conversation; bench</text>
+        <text x="148" y="122" font-family="ui-monospace, monospace" font-size="9" fill="#8b8a80">reads from it.</text>
+        <text x="148" y="140" font-family="ui-monospace, monospace" font-size="9" fill="#4cc79a">nothing wipes yet</text>
+      </g>
+      <g>
+        <circle cx="304" cy="40" r="7" fill="#c98500"/>
+        <text x="292" y="66" font-family="ui-monospace, monospace" font-size="10" fill="#f5c95f">slice 2</text>
+        <text x="292" y="82" font-family="ui-monospace, monospace" font-size="10" fill="#c3c2b7">the wipe</text>
+        <text x="292" y="98" font-family="ui-monospace, monospace" font-size="9" fill="#8b8a80">unbind empties;</text>
+        <text x="292" y="110" font-family="ui-monospace, monospace" font-size="9" fill="#8b8a80">the two new screens;</text>
+        <text x="292" y="122" font-family="ui-monospace, monospace" font-size="9" fill="#8b8a80">resume restores.</text>
+        <text x="292" y="140" font-family="ui-monospace, monospace" font-size="9" fill="#f5c95f">the ask, visible</text>
+      </g>
+      <g>
+        <circle cx="448" cy="40" r="7" fill="#3987e5"/>
+        <text x="436" y="66" font-family="ui-monospace, monospace" font-size="10" fill="#7db3f0">slice 3</text>
+        <text x="436" y="82" font-family="ui-monospace, monospace" font-size="10" fill="#c3c2b7">your reading</text>
+        <text x="436" y="98" font-family="ui-monospace, monospace" font-size="9" fill="#8b8a80">comments, tabs, seen;</text>
+        <text x="436" y="110" font-family="ui-monospace, monospace" font-size="9" fill="#8b8a80">the action journal</text>
+        <text x="436" y="122" font-family="ui-monospace, monospace" font-size="9" fill="#8b8a80">follows the store.</text>
+        <text x="436" y="140" font-family="ui-monospace, monospace" font-size="9" fill="#4cc79a">new storage</text>
+      </g>
+      <g>
+        <circle cx="592" cy="40" r="7" fill="#3987e5"/>
+        <text x="580" y="66" font-family="ui-monospace, monospace" font-size="10" fill="#7db3f0" text-anchor="start">slice 4</text>
+        <text x="580" y="82" font-family="ui-monospace, monospace" font-size="10" fill="#c3c2b7">the old files</text>
+        <text x="580" y="98" font-family="ui-monospace, monospace" font-size="9" fill="#8b8a80">retention re-pointed;</text>
+        <text x="580" y="110" font-family="ui-monospace, monospace" font-size="9" fill="#8b8a80">a stale-version</text>
+        <text x="580" y="122" font-family="ui-monospace, monospace" font-size="9" fill="#8b8a80">screen, no migration.</text>
+        <text x="580" y="140" font-family="ui-monospace, monospace" font-size="9" fill="#4cc79a">nothing deleted</text>
+      </g>
+      <rect x="0" y="160" width="700" height="54" rx="6" fill="#1a1a19" stroke="#3a3a36"/>
+      <text x="12" y="178" font-family="ui-monospace, monospace" font-size="10" fill="#8b8a80">Slice 0 is the tracer bullet: it writes one extra field, changes no screen, and answers the</text>
+      <text x="12" y="192" font-family="ui-monospace, monospace" font-size="10" fill="#8b8a80">question the whole design rests on &mdash; whether a re-mint can be told apart from a new</text>
+      <text x="12" y="206" font-family="ui-monospace, monospace" font-size="10" fill="#8b8a80">conversation. If it cannot, slice 2 needs redesigning before it is written.</text>
+    </svg>
+  </div>
+  <figcaption>Order chosen so the risky answer arrives first and the visible change arrives third.
+  <b>Slice 2 is the only one a person would notice</b>, and by then the store underneath it has been
+  running unobserved for two slices.</figcaption>
+</figure>
+
+<h2 class="sec">09 &middot; Yours to decide</h2>
+
+<div class="grill">
+  <div class="ask">
+    <h3>1 &middot; Does a <code>/clear</code> wipe the bench?</h3>
+    <p>It mints a new session id, so under a literal reading it is a new conversation and the bench
+    goes. A compaction mints one too, and wiping there would throw away work mid-turn. The two are
+    only separable if the ledger records why the mint happened.</p>
+    <p class="rec"><b>Recommendation:</b> yes on <code>clear</code> and <code>startup</code>, no on
+    <code>compact</code> and <code>resume</code> &mdash; and where the source cannot be read, continue
+    the chain. A bench that keeps too much is recoverable; one that empties during a compaction is not.</p>
+    <p class="rec"><b>Answered 07:46 &mdash;</b> yes, and with a question back: <i>&ldquo;is this going
+    to be under the same agent id &mdash; ie does /clear change the agent ID? If it is the same agent
+    ID &mdash; I imagine enumerating into a different file &mdash; {agent-id}-n.wb&hellip; if you have a
+    pattern SIMILAR AND BETTER - 100% go with yours!&rdquo;</i> The enumerator is the right shape for
+    the case it was drawn for, and that case has not been observed: no <code>/clear</code> exists in
+    600 transcripts here, so whether the id is reused is unmeasured. One directory per id until the
+    hook catches a real <code>/clear</code>; the <code>seq</code> it now records is that enumerator,
+    sitting in the chain rather than in the filename, so a segment can join its conversation without
+    the name having to be parsed.</p>
+  </div>
+  <div class="ask">
+    <h3>2 &middot; What happens to every surface already on disk?</h3>
+    <p>None of them has a conversation recorded against it, and there is no way to work out
+    retroactively which agent wrote which file. Showing them as the current agent's is the defect
+    this feature removes; hiding them silently loses work that is sitting right there.</p>
+    <p class="rec"><b>Recommendation:</b> move them into the quarantine, unchanged, and put one line
+    on the empty bench that opens them.</p>
+    <p class="rec"><b>Answered 07:46 &mdash;</b> no migration at all. <i>&ldquo;Treat them all as
+    essentially old data that will never be migrated&hellip; WE DO NOT WANT GARBAGE CODE THAT IS TAKING
+    OUT OF DATE AGENTS / PANES AND THEN MAINTAINING THAT CODE&hellip; so all old (pre-whatever is
+    current!) panes and agents will simply take this as an unknown and give a BIG MESSAGE: &lsquo;this
+    session is from a stale version of TERMINAL DELIGHT, suggest starting a new session.&rsquo;&rdquo;</i>
+    That deletes the migration slice and replaces it with a screen.</p>
+  </div>
+  <div class="ask">
+    <h3>3 &middot; Does a live agent that cannot be bound show nothing?</h3>
+    <p>Every other reader in the app already refuses at that point. Extending the refusal to the bench
+    means an agent presenting into a screen that stays empty, which reads as the feature being broken
+    unless the screen says otherwise.</p>
+    <p class="rec"><b>Recommendation:</b> show nothing, and draw the right-hand screen in picture five
+    so the refusal is legible. On this machine today the case does not arise &mdash; every live agent
+    binds on the top rung &mdash; so this is a screen for a machine without the ledger hook.</p>
+    <p class="rec"><b>Answered 07:46 &mdash;</b> <i>&ldquo;Great - concur.&rdquo;</i></p>
+  </div>
+  <div class="ask">
+    <h3>4 &middot; What happens to a shell pane that a script drops a surface into?</h3>
+    <p>Not in the sibling's list, and the rule as stated switches it off. A pane with no agent has no
+    conversation to file under, so the demo seeder, <code>workbench-smoke.sh</code> and any script
+    using <code>terminal-delight surface</code> would write into a bench that now refuses to show
+    anything.</p>
+    <p class="rec"><b>Recommendation:</b> a pane that has never held an agent keeps a pane-keyed
+    bench, and the wipe applies only once a conversation has been bound to it. That keeps the script
+    path alive and still gives you the empty bench you asked for, because the panes you mean have all
+    held an agent.</p>
+    <p class="rec"><b>Answered 07:46 &mdash;</b> <i>&ldquo;Sure - concur.&rdquo;</i></p>
+  </div>
+  <div class="ask">
+    <h3>5 &middot; Do the comments move with the conversation?</h3>
+    <p>Your words name them &mdash; transcript, history, comments, everything workbench &mdash; and
+    they are the one part that has never been written to disk at all. Including them turns one slice
+    of re-keying into two slices, one of which is new storage with its own format.</p>
+    <p class="rec"><b>Recommendation:</b> yes, as slice 3, after the wipe is working. A conversation
+    that comes back without the notes you left on it comes back diminished, and the notes are cheap
+    to store beside the surfaces they annotate.</p>
+    <p class="rec"><b>Answered 07:46 &mdash;</b> <i>&ldquo;100% - yes comments stay with taht exact
+    agent - session.&rdquo;</i></p>
+  </div>
+</div>
+
+<h2 class="sec">10 &middot; Behind the pictures</h2>
+
+<p>
+  <button data-dlg="d-drawn">What each picture is drawn from</button>
+  <button data-dlg="d-rot">The rotation measurement</button>
+  <button data-dlg="d-method">Method and limits</button>
+  <button data-dlg="d-sib">The sibling agent</button>
+</p>
+
+<footer>
+  <p>terminal-delight &middot; <code>~/Work/terminal-delight</code> &middot; read against
+  <code>origin/main</code>, which this worktree is 63 commits behind</p>
+  <p>Notes save into the file. Then: &ldquo;read my notes in
+  <code>2026-09-21-bench-tenancy.html</code>&rdquo;</p>
+</footer>
+
+</div>
+
+<dialog id="d-drawn">
+  <div class="dlg-head">
+    <div><h3>What each picture is drawn from</h3>
+    <p class="repo">their plan &middot; the code &middot; mine</p></div>
+    <button class="x" data-close>&times;</button>
+  </div>
+  <div class="dlg-body">
+    <h4>Drawn from the code</h4>
+    <p>Pictures one and two are the real path, read out of <code>surfacefeed.rs</code> (the module
+    doc's own diagram, <code>pane_dir</code>, <code>Feed::sweep</code>) and the sweep loop in
+    <code>main.rs</code> around line 5400. The gating in picture two is
+    <code>paneident::certain</code> called from <code>derive_requests</code>.</p>
+    <p>Picture seven is <code>vitals::Bond</code>, rung for rung, including the wording of what each
+    rung rests on and the <code>is_certain</code> cut. The bottom row &mdash; a pane with no entry at
+    all &mdash; is from the <code>paneident</code> module doc, not from the enum.</p>
+    <p>Picture eight is measured, described in its own modal.</p>
+    <p>The state of every row in the two tables is read from <code>origin/main</code>, not from this
+    worktree, which is 63 commits behind and does not contain <code>paneident.rs</code>.</p>
+
+    <h4>Mine, and therefore arguable</h4>
+    <p>Pictures three, four, ten and eleven are a proposed design. Nothing in them exists. The amber
+    boxes are the parts I would expect to be argued first: the quarantine directory, and putting
+    reader state in the conversation store.</p>
+    <p>Picture five is drawn by me from the rule as stated, at roughly a third of a tiled pane's
+    width. The middle and right panels are screens nobody has built. A sibling agent drew its own
+    versions of the middle one at <code>docs/plans/workbench-follows-the-agent/mockups/ended.html</code>,
+    in three treatments; if those disagree with mine, theirs were drawn for the product gate and
+    should win.</p>
+    <p>Picture six's clock times and the count of four surfaces are illustrative. The lanes and the
+    arrow are the mechanism and are not.</p>
+    <p>Picture nine's fifteen rows are mine. Four of them have no answer in any document, which is
+    the reason the table is in the brief.</p>
+  </div>
+</dialog>
+
+<dialog id="d-rot">
+  <div class="dlg-head">
+    <div><h3>The rotation measurement</h3>
+    <p class="repo">2026-09-21, 07:15 and again at 08:20, this machine</p></div>
+    <button class="x" data-close>&times;</button>
+  </div>
+  <div class="dlg-body">
+    <h4>What was counted</h4>
+    <p>Every process on this box whose <code>/proc/&lt;pid&gt;/comm</code> is exactly
+    <code>claude</code>: twenty-five. One is <code>--chrome-native-host</code> and holds no
+    conversation, leaving twenty-four.</p>
+    <p>Sixteen of the twenty-four have an entry in
+    <code>~/.local/state/terminal-delight/agent-ledger/</code>, and every one of those sixteen
+    processes is alive. The other eight carry <code>--resume &lt;uuid&gt;</code> on their own command
+    line, which is the third clause of the same <code>Declared</code> rung &mdash; so all twenty-four
+    resolve without a guess.</p>
+
+    <h4>The late mints</h4>
+    <p>The hook rewrites <code>&lt;pid&gt;.json</code> on every <code>SessionStart</code>, so its
+    <code>ts</code> is the <em>last</em> mint for that process. Against each process's start time from
+    <code>ps -o lstart=</code>:</p>
+    <ul>
+      <li>Twelve: 1&ndash;3 seconds. Written at launch and never again.</li>
+      <li>One: 35&nbsp;911&nbsp;s &mdash; 10.0 hours.</li>
+      <li>One: 121&nbsp;040&nbsp;s &mdash; 33.6 hours.</li>
+      <li>One: 123&nbsp;122&nbsp;s &mdash; 34.2 hours.</li>
+      <li>One: 171&nbsp;674&nbsp;s &mdash; 47.7 hours.</li>
+    </ul>
+
+    <h4>What the second pass changed</h4>
+    <p>The first reading of those four was that the session id had been replaced, and it was wrong.
+    Taking each one's current ledger id, finding the transcript it names in that process's own project
+    directory, and asking the filesystem for the file's birth time gives, for all four, a file born
+    between 2 and 176 seconds after the process started &mdash; while the process has been alive for
+    another 67 hours since. An id that had been minted at the 10-hour mark would name a file born at
+    the 10-hour mark. <b>Nothing was replaced; the same id was written again.</b>
+    <span class="tag v">measured</span></p>
+    <p>Pid reuse would produce the same time gap in the other direction &mdash; the process would have
+    started <em>after</em> the ledger wrote. All four started well before, so reuse is ruled out.</p>
+
+    <h4>What it still does not say</h4>
+    <p>Which of <code>/clear</code>, in-pane <code>/resume</code> or compaction fired each late mint.
+    The payload carries that in <code>source</code> and the hook was discarding it; it records it now.</p>
+    <p>Whether a <code>/clear</code> mints a new id. Scanning the 600 most recently written transcripts
+    for a user message that is exactly <code>/clear</code>, or carries a
+    <code>&lt;command-name&gt;/clear&lt;/command-name&gt;</code>, finds none at all &mdash; so the
+    behaviour cannot be observed on this machine's history. <span class="tag c">unknown</span></p>
+    <p>Whether compaction writes a new transcript file. Forty-two transcripts in this repository's
+    project directory each carry exactly one session id equal to their filename, and none contains an
+    <code>isCompactSummary</code> marker, so this corpus cannot answer it either way.
+    <span class="tag c">unknown</span></p>
+  </div>
+</dialog>
+
+<dialog id="d-method">
+  <div class="dlg-head">
+    <div><h3>Method and limits</h3>
+    <p class="repo">what was and was not established</p></div>
+    <button class="x" data-close>&times;</button>
+  </div>
+  <div class="dlg-body">
+    <h4>Nothing here was built</h4>
+    <p>No code was written, no build was run, and no screen in this brief was rendered by the app.
+    Every mockup is hand-drawn HTML at approximate proportions; real font metrics and the compositor
+    will change how they feel.</p>
+
+    <h4>Where the code was read</h4>
+    <p>Two trees. This worktree is on <code>fix/the-second-click-backs-out-to-your-branch</code>,
+    two commits ahead of <code>origin/main</code> and sixty-three behind, and does not contain
+    <code>paneident.rs</code>. Everything about the identity resolver was read from
+    <code>origin/main</code> with <code>git show</code>. Everything about the surface feed was read
+    from both and agrees.</p>
+
+    <h4>Established since the first draft</h4>
+    <ul>
+      <li><code>SessionStart</code> carries a <code>source</code>. All four values are string literals
+      in the 2.1.274 bundle and <code>source:"startup"</code> appears verbatim.
+      <span class="tag v">measured</span></li>
+      <li>A session id is stable for the life of its process, on all sixteen agents here.
+      <span class="tag v">measured</span></li>
+    </ul>
+
+    <h4>Unestablished</h4>
+    <ul>
+      <li>Whether a <code>/clear</code> mints a new id. Zero genuine invocations in the 600 most
+      recent transcripts on this machine, so the corpus cannot say.
+      <span class="tag c">unknown</span></li>
+      <li>Whether compaction starts a new transcript file or appends to the existing one.
+      <span class="tag c">unknown</span></li>
+      <li>Whether a Codex conversation's id ever rotates. No hook, no ledger, not measured.
+      <span class="tag c">unknown</span></li>
+      <li>Whether two windows ever hold the same conversation in practice. Assumed rare and fenced
+      out; not measured. <span class="tag w">inferred</span></li>
+    </ul>
+
+    <h4>The difficulty score</h4>
+    <p>Seven out of ten, matching the sibling's. The number is driven by how long this can be wrong
+    before anyone notices: a bench showing the wrong conversation looks exactly like a bench showing
+    the right one, and the last time that happened across fourteen panes it was caught by eye rather
+    than by any of the tests.</p>
+  </div>
+</dialog>
+
+<dialog id="d-sib">
+  <div class="dlg-head">
+    <div><h3>The sibling agent</h3>
+    <p class="repo">docs/plans/workbench-follows-the-agent/ &middot; the plan of record</p></div>
+    <button class="x" data-close>&times;</button>
+  </div>
+  <div class="dlg-body">
+    <h4>Who owns what</h4>
+    <p>It owns the plan folder: status, product, architecture and both mockup files. Its Gate&nbsp;1 is
+    approved by you directly, with two amendments it took in its own pane &mdash; a per-agent key no
+    other agent can reach, and a persistent per-turn record of your own prompts. I own this page and
+    the ledger hook. Neither of us has written into the other's files.</p>
+
+    <h4>The four minutes that matter</h4>
+    <p>You saved your notes on this page at 07:46:43. Its Gate&nbsp;2 was written at 07:50:50, without
+    them &mdash; the annotations live in the copy the save button put in <code>~/Downloads</code>, not
+    in the served file, which is why a grep of the repository copy finds nothing. It has since asked me
+    to confirm that, and I have.</p>
+
+    <h4>Where the two plans disagree</h4>
+    <p>On what happens to work that predates the change. Its approved Gate&nbsp;1 folds it into
+    uncounted orphans, visible on demand and never attributed. Your note here says never migrate
+    anything and show one stale-version message instead. Both refuse to attribute old work, so the
+    disagreement is narrow: whether the old work is quietly reachable or announced. Yours is the later
+    statement by four minutes; it is asking you rather than assuming.</p>
+
+    <h4>Two things it found that are not in this page</h4>
+    <ul>
+      <li>The YOU block is <em>absent</em> rather than collapsed: <code>ask_lines</code> is gated on
+      <code>standing_in()</code>, so opening any card off the rail removes your own message entirely
+      and there is nothing behind it to open.</li>
+      <li>Your window is not running <code>main</code>. The live windows are two builds from
+      2026-09-19, the launcher symlink points at a third, and the session host serving its pane is
+      from 2026-09-18 &mdash; older than the YOU block. Worth knowing before either of us diagnoses
+      anything from what is on your screen.</li>
+    </ul>
+  </div>
+</dialog>

@@ -1,0 +1,119 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Mockup — the bench after its agent ends</title>
+<style>
+  :root { --ink:#cfe3e0; --dim:#7d918f; --faint:#4d5c5b; --cyan:#67d8f4; --amber:#e0a33c; --bg:#0d100f; }
+  body { margin:0; padding:28px 20px 60px; background:#070908; color:var(--ink);
+         font:14px/1.5 ui-monospace,"JetBrains Mono",Menlo,monospace; }
+  h1 { font-size:15px; letter-spacing:.14em; text-transform:uppercase; color:var(--cyan); margin:0 0 6px; }
+  h2 { font-size:13px; letter-spacing:.12em; text-transform:uppercase; color:var(--ink);
+       margin:34px 0 4px; border-top:1px solid #1d2423; padding-top:14px; }
+  p.note { color:var(--dim); max-width:860px; margin:4px 0 14px; }
+  p.claim { color:var(--amber); max-width:860px; margin:8px 0 0; }
+  .pane { width:860px; max-width:100%; height:300px; background:var(--bg); position:relative;
+          border:1px solid #1b2221; overflow:hidden;
+          background-image:repeating-linear-gradient(0deg,rgba(255,255,255,.028) 0 1px,transparent 1px 3px); }
+  .glow { position:absolute; inset:0; background:radial-gradient(60% 45% at 14% 6%,rgba(90,200,150,.10),transparent 70%); }
+  .strip { position:relative; display:flex; align-items:center; gap:14px; padding:9px 14px;
+           border-bottom:1px solid #1b2221; font-size:12px; letter-spacing:.08em; }
+  .strip .lbl { color:var(--dim); text-transform:uppercase; }
+  .spacer { flex:1 }
+  .btn { border:1px solid var(--cyan); color:#dff6ff; padding:6px 16px; font-size:12px;
+         letter-spacing:.16em; text-transform:uppercase; border-radius:3px;
+         box-shadow:0 0 14px rgba(103,216,244,.35), inset 0 0 12px rgba(103,216,244,.12); }
+  .btn.quiet { border-color:#33403f; color:var(--dim); box-shadow:none; }
+  .centre { position:absolute; inset:36px 0 0; display:flex; align-items:center; justify-content:center; }
+  .card { border:1px solid #1e2726; border-radius:6px; padding:22px 26px; text-align:center;
+          background:rgba(255,255,255,.012); min-width:420px; }
+  .card .head { color:var(--dim); font-size:12px; letter-spacing:.2em; text-transform:uppercase; margin-bottom:14px; }
+  .card .sub { color:var(--faint); font-size:12px; margin-top:13px; }
+  .card .sub b { color:var(--dim); font-weight:400; }
+  a.inline { color:var(--cyan); text-decoration:none; border-bottom:1px dotted rgba(103,216,244,.5); }
+  ul.dead { list-style:none; margin:14px 0 0; padding:0; text-align:left; font-size:12px; }
+  ul.dead li { display:flex; gap:10px; padding:5px 8px; border-top:1px solid #161d1c; align-items:baseline; }
+  ul.dead li .t { color:var(--ink); flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  ul.dead li .n { color:var(--faint); }
+  ul.dead li .a { color:var(--faint); width:52px; text-align:right; }
+  .legend { color:var(--faint); font-size:12px; max-width:860px; margin:26px 0 0; border-top:1px solid #1d2423; padding-top:12px; }
+  .legend b { color:var(--amber); font-weight:400; }
+</style>
+
+<h1>Screen — the bench the moment its agent ends</h1>
+<p class="note">
+  Drawn at 860&nbsp;px, the width of the pane in Parker's screenshot. The strip, the
+  panel and the button are traced from that screenshot; <b style="color:var(--amber);font-weight:400">every
+  count and title below is invented</b> — there is no measurement here, only a shape to argue with.
+</p>
+
+<h2>A · Bare wipe — exactly what was asked for</h2>
+<div class="pane">
+  <div class="glow"></div>
+  <div class="strip">
+    <span class="lbl">Agent ○ Ended · 40s</span>
+    <span style="color:var(--faint)">claude · exit 0</span>
+    <span class="spacer"></span>
+    <span class="btn">⌁ Launch agent</span>
+  </div>
+  <div class="centre"><div class="card">
+    <div class="head">Nothing on the workbench</div>
+    <div class="btn" style="display:inline-block">⌁ Launch agent</div>
+  </div></div>
+</div>
+<p class="claim">
+  This is a dead end. The eleven surfaces that agent made still exist on disk, and this
+  screen gives no sign they ever did, so the only way back to them is knowing to go to the
+  graveyard and guess which of four conversations it was.
+</p>
+
+<h2>B · Wipe, with one line saying where the work went</h2>
+<div class="pane">
+  <div class="glow"></div>
+  <div class="strip">
+    <span class="lbl">Agent ○ Ended · 40s</span>
+    <span style="color:var(--faint)">claude · exit 0</span>
+    <span class="spacer"></span>
+    <span class="btn">⌁ Launch agent</span>
+  </div>
+  <div class="centre"><div class="card">
+    <div class="head">Nothing on the workbench</div>
+    <div class="btn" style="display:inline-block">⌁ Launch agent</div>
+    <div class="sub">The agent that worked here left <b>11 surfaces</b> ·
+      <a class="inline" href="#">bring it back</a></div>
+  </div></div>
+</div>
+<p class="claim">
+  One line buys the whole undo. The bench is as clean as A and the work is one press away,
+  which is what makes wiping safe to do on its own without a confirmation first.
+</p>
+
+<h2>C · Wipe, with every conversation this pane could open</h2>
+<div class="pane">
+  <div class="glow"></div>
+  <div class="strip">
+    <span class="lbl">Agent ○ Ended · 40s</span>
+    <span style="color:var(--faint)">claude · exit 0</span>
+    <span class="spacer"></span>
+    <span class="btn">⌁ Launch agent</span>
+  </div>
+  <div class="centre"><div class="card" style="min-width:520px">
+    <div class="head">Nothing on the workbench</div>
+    <div class="btn" style="display:inline-block">⌁ Launch agent</div>
+    <ul class="dead">
+      <li><span class="t">the strip backs out to your branch</span><span class="n">11</span><span class="a">40s</span></li>
+      <li><span class="t">bench defaults and dials</span><span class="n">6</span><span class="a">2h</span></li>
+      <li><span class="t">one table decides every keystroke</span><span class="n">3</span><span class="a">yest.</span></li>
+    </ul>
+    <div class="sub">Resumable conversations in this directory</div>
+  </div></div>
+</div>
+<p class="claim">
+  This is the graveyard wearing the empty state's clothes, and it is more screen than the
+  moment deserves. It suits a pane that never held an agent. On the pane you just ended,
+  the conversation you want is the one you were in a second ago.
+</p>
+
+<p class="legend">
+  <b>Amber is the part that is mine to argue with</b> — the invented counts, and the claim
+  under each picture. Cyan is the accent already on the button in the live build. Nothing
+  here is measured.
+</p>
