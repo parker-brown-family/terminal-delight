@@ -177,29 +177,48 @@ publish the whole question set without the agent knowing the protocol exists —
 which is the only path that works for an agent `derive.rs` was written to serve,
 i.e. one that will never speak TDSP.
 
-**Verified here, read-only, 2026-09-21 — and it is still open:**
+**Answered on 2026-09-21, read-only, by looking at what the wildcard hook has
+already been handed rather than by adding one.** Two `PostToolUse` hooks are
+registered with matcher `.*` — `herd hook` and `lean-ctx hook observe` — and a
+wildcard fires for every tool in the dispatch path, so a hookable
+`AskUserQuestion` has been reaching them since they were installed. No
+`settings.json` change was needed to find out.
 
-- Their reading of the config is exact. Every `PreToolUse` matcher on this
-  machine is `Bash|bash` or the `Read|Grep|Glob` family. Nothing shows whether
-  the tool is hookable.
-- The lean-ctx session store cannot answer it. It records 10 distinct tool
-  names across the 40 newest sessions and every one is a `ctx_*` tool, so its
-  silence about `AskUserQuestion` is not evidence.
-- The 36 files under `~/.lean-ctx/agents/shared/` that contain the string are
-  cross-agent message payloads carrying skill prose. No `tool_name` field, no
-  hook keys. Not hook records.
+`~/.lean-ctx/context_radar.jsonl` is the store that answers. **An
+`AskUserQuestion` record is in it, carrying the complete question set** — its
+`content` parses to `{annotations, answers, questions}`, with every question,
+every option and every option's preview text intact. So whatever observes that
+tool is handed everything the bench would need, previews included.
 
-**A cheaper experiment than the one proposed, needing no config change at all:**
-two `PostToolUse` hooks are already registered with matcher `.*` — `herd hook`
-and `lean-ctx hook observe`. A wildcard matcher fires for every tool in the
-dispatch path, so if `AskUserQuestion` is hookable those two have been receiving
-it all along. lean-ctx's side is checked above and does not record it. **herd's
-store is the unchecked half**, and looking at it settles the question without
-touching `settings.json`.
+The control that makes this readable: the radar is **unfiltered**, unlike
+lean-ctx's three other stores. 25 distinct `tool_name` values in one window —
+`Edit` 158, `Bash` 107, `Write` 68, `SendMessage` 28, `Read` 25. The
+`sessions/`, `tool-calls.log` and `events.jsonl` stores are `ctx_*`-only, which
+is why an earlier pass here concluded lean-ctx could not answer and **was
+wrong**. herd's store does exist, at `~/.local/state/herd/state.json` rather
+than under `share/`, and genuinely cannot answer: 25KB, live, and no tool names
+at any level.
 
-If it turns out a matcher must be added to test this, that is a change to
-Parker's own hook configuration and it is his to make — not something to slip in
-under a plan doc.
+**What this does and does not prove.** It proves the tool is observable with its
+full payload. It does **not** prove which hook phase delivered it, because the
+radar does not record one: `event_type` is `mcp_call` for all 720 tool records
+in the window, and the only other values are `user_message` and `session`. There
+is no hook-phase field anywhere in it. The payload carrying `answers` says it
+was written after the person answered, which is the `PostToolUse` signature —
+but inferred from the payload's shape, not read off a label.
+
+**So the open question narrows rather than closes:** does `PreToolUse` fire for
+this tool, and hand `tool_input` *before* the picker paints? That is the only
+part that matters for the bench, and it is the only part that needs a matcher in
+Parker's `settings.json`. **That is his change to make** — it goes to him with
+the evidence, not into a plan doc and not into a peer's worktree.
+
+**Cite this with care: the radar is a ring buffer.** It rotates into `.prev`,
+and the two sessions that looked at it an hour apart saw *disjoint* records —
+theirs had 2 questions and 6 options, the one read here had 1 question and 3
+options, and `.prev` had already vanished by the second read. A later zero means
+the window rolled, not that the finding was wrong. The reproducer is
+`reports/_askhook.py`; snapshot anything you intend to quote.
 
 Note what option 2 costs beyond the gesture: **ending the agent from the bench
 is the gesture that starts the feature the tenancy work is building.** That is
