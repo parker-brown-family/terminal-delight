@@ -1,0 +1,129 @@
+/* the bench rodeo — local styles.
+   Figures, mockups and the three-step architecture. Nothing here is a theme. */
+
+header.top { border-bottom: 1px solid var(--line); background: var(--surface-1); padding: 34px 0 30px; margin-bottom: 8px; }
+.kicker { font-family: var(--mono); font-size: 11.5px; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--text-muted); margin: 0 0 14px; }
+.kicker a { color: var(--s1); text-decoration: none; }
+.lede { font-size: 17px; line-height: 1.62; color: var(--text-secondary); max-width: 76ch; margin: 0 0 18px; }
+.lede b { color: var(--text-primary); font-weight: 600; }
+.standing { margin: 0; display: flex; flex-wrap: wrap; gap: 8px; }
+
+/* ---- figures ---- */
+figure { margin: 0 0 22px; border: 1px solid var(--line); border-radius: 10px;
+  background: var(--surface-1); padding: 16px 18px 14px; }
+figure > .lbl { display: block; font-family: var(--mono); font-size: 10.5px; letter-spacing: .1em;
+  text-transform: uppercase; color: var(--text-muted); margin: 0 0 13px; }
+figcaption { margin-top: 13px; font-size: 13.5px; color: var(--text-secondary); }
+/* The reconstruction line, in the colour reserved for what is Parker's to argue
+   with. A drawing reads as a measurement, so a drawing has to say when it is not
+   one — and saying it in the caption is too late, because the picture has already
+   been believed. */
+.recon { margin: -6px 0 12px; font-family: var(--mono); font-size: 10.5px; line-height: 1.5;
+  color: var(--s4); border-left: 2px solid var(--s4); padding-left: 9px; }
+.recon code { font-size: 10.5px; color: var(--s4); background: none; padding: 0; }
+figcaption b { color: var(--text-primary); }
+.scroller { overflow-x: auto; }
+svg { display: block; width: 100%; height: auto; }
+
+/* ---- read-first ---- */
+.esc-list { list-style: none; counter-reset: e; margin: 0; padding: 0; }
+.esc-list li { counter-increment: e; position: relative; border: 1px solid var(--line);
+  border-left: 3px solid var(--s1); border-radius: 0 9px 9px 0; background: var(--surface-1);
+  padding: 15px 18px 12px 52px; margin-bottom: 10px; }
+.esc-list li::before { content: counter(e); position: absolute; left: 16px; top: 15px;
+  font-family: var(--mono); font-size: 16px; color: var(--s1); font-weight: 600; }
+.esc-list h3 { margin: 0 0 8px; font-size: 16px; letter-spacing: -.01em; }
+.esc-list p { margin: 0 0 5px; font-size: 13.5px; color: var(--text-secondary); }
+.esc-list p b { color: var(--text-primary); font-weight: 600; }
+
+/* ---- the three-step architecture ---- */
+.steps { display: grid; grid-template-columns: repeat(3, minmax(230px, 1fr)); gap: 12px; min-width: 720px; }
+.step { border: 1px solid var(--line); border-radius: 8px; background: var(--surface-0); padding: 13px 14px 10px; position: relative; }
+.stepn { position: absolute; top: -9px; left: 12px; background: var(--s1); color: #fff;
+  font-family: var(--mono); font-size: 10px; width: 18px; height: 18px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center; }
+.step p { font-size: 12.5px; color: var(--text-secondary); margin: 10px 0 0; }
+.step p b { color: var(--text-primary); }
+.arch { display: flex; flex-direction: column; gap: 6px; padding-top: 6px; }
+.abox { border: 1px solid var(--s3); border-radius: 6px; background: var(--surface-2); padding: 7px 9px;
+  font-family: var(--mono); font-size: 11.5px; color: var(--text-primary);
+  display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.aside { border: 1px dashed var(--line); border-radius: 6px; background: var(--surface-1); padding: 6px 9px;
+  font-family: var(--mono); font-size: 11px; color: var(--text-secondary);
+  display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.aside.new { border-color: var(--s1); color: var(--s1); }
+.aside.hold { border-color: var(--s4); color: var(--s4); }
+.pill { font-size: 9.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--text-muted);
+  border: 1px solid var(--line); border-radius: 20px; padding: 1px 7px; white-space: nowrap; }
+.wire { height: 14px; border-left: 1px solid var(--s3); margin-left: 18px; }
+.wire.held { border-left: 2px dashed var(--s4); }
+
+/* ---- mockups ---- */
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; min-width: 700px; }
+.mock { border: 1px solid var(--line); border-radius: 8px; padding: 11px 12px 12px; background: var(--surface-0); }
+.mock.bad { border-color: rgba(208, 59, 59, .45); }
+.mock.good { border-color: rgba(25, 158, 112, .45); }
+.mocklbl { display: block; font-family: var(--mono); font-size: 10px; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--text-muted); margin-bottom: 9px; }
+.mnote { font-size: 12px; color: var(--text-secondary); margin: 9px 0 0; }
+.mnote b { color: var(--text-primary); }
+
+.card-m { border: 1px solid var(--line); border-radius: 7px; background: var(--surface-1); padding: 11px 12px; }
+.chips { display: flex; gap: 5px; margin-bottom: 7px; }
+.chip { font-family: var(--mono); font-size: 9.5px; text-transform: uppercase; letter-spacing: .07em;
+  border: 1px solid var(--line); border-radius: 4px; padding: 1px 6px; color: var(--text-muted); }
+.chip.grey { color: var(--text-muted); }
+.chip.blue { color: var(--s1); border-color: var(--s1); }
+.mtitle { font-size: 15px; color: var(--text-primary); margin-bottom: 4px; }
+.msub { font-size: 12px; color: var(--text-secondary); font-style: italic; margin-bottom: 9px; }
+.mmeta { font-family: var(--mono); font-size: 9.5px; letter-spacing: .08em; color: var(--text-muted); margin-bottom: 6px; }
+.mjson { font-family: var(--mono); font-size: 10.5px; color: var(--text-muted); background: var(--surface-0);
+  border: 1px solid var(--line); border-radius: 5px; padding: 8px 9px; margin: 0 0 8px; white-space: pre; overflow: hidden; }
+.mno { font-size: 11.5px; color: var(--critical); font-family: var(--mono); }
+.frow { display: flex; gap: 9px; border-top: 1px solid var(--line); padding: 5px 0; font-size: 12px; }
+.fk { font-family: var(--mono); font-size: 10px; text-transform: uppercase; letter-spacing: .07em;
+  color: var(--text-muted); flex: none; width: 66px; padding-top: 2px; }
+.fv { color: var(--text-secondary); }
+.mverb { margin-top: 9px; display: inline-block; font-family: var(--mono); font-size: 11px; color: var(--s3);
+  border: 1px solid var(--s3); border-radius: 5px; padding: 3px 9px; }
+
+/* ---- the table mockups ---- */
+.tbl-m { border: 1px solid var(--line); border-radius: 6px; background: var(--surface-1); padding: 7px 8px; }
+.tbl-m .tr { display: flex; gap: 8px; padding: 3px 0; font-size: 10.5px; color: var(--text-secondary);
+  border-bottom: 1px solid rgba(58,58,54,.5); }
+.tbl-m .tr.th span { font-family: var(--mono); font-size: 9px; letter-spacing: .08em; color: var(--text-muted); }
+.tbl-m.old { overflow: hidden; }
+.tbl-m.old .tr span { flex: 1 1 0; white-space: nowrap; overflow: hidden; }
+.tbl-m.new .tr span:nth-child(1) { flex: 0 0 22%; }
+.tbl-m.new .tr span:nth-child(2) { flex: 0 0 30%; }
+.tbl-m.new .tr span:nth-child(3) { flex: 0 0 14%; }
+.tbl-m.new .tr span:nth-child(4) { flex: 1 1 0; }
+.tbl-m.new .tr span { min-width: 0; }
+.edge { display: block; text-align: right; font-family: var(--mono); font-size: 9.5px; color: var(--critical); margin-top: 5px; }
+
+/* ---- the YOU block ---- */
+.you-m { border-left: 3px solid var(--s1); background: rgba(57,135,229,.07); padding: 9px 12px; border-radius: 0 6px 6px 0; }
+.youlbl { font-family: var(--mono); font-size: 9.5px; letter-spacing: .1em; color: var(--s1); margin-bottom: 4px; }
+.youfaint { font-size: 12px; color: #2a2a28; }
+.youtext { font-size: 12.5px; color: #cfe1fb; }
+
+/* ---- grill + cards ---- */
+.grill .ask { border: 1px solid var(--line); border-left: 3px solid var(--s4); border-radius: 0 9px 9px 0;
+  background: var(--surface-1); padding: 14px 18px 12px; margin-bottom: 10px; }
+.grill .ask h3 { margin: 0 0 7px; font-size: 16px; }
+.grill .ask p { margin: 0; font-size: 13.5px; color: var(--text-secondary); }
+.grill .ask p b { color: var(--text-primary); }
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+.card { border: 1px solid var(--line); border-radius: 9px; background: var(--surface-1); padding: 15px 16px 13px; }
+.card h3 { margin: 0 0 7px; font-size: 15px; }
+.card p { margin: 0 0 11px; font-size: 13px; color: var(--text-secondary); }
+.more { background: var(--surface-3); border: 1px solid var(--line); color: var(--text-primary);
+  border-radius: 6px; padding: 5px 12px; font-size: 12px; cursor: pointer; font-family: var(--mono); }
+.more:hover { border-color: var(--s1); color: var(--s1); }
+
+table.wide td:first-child { width: 34%; }
+
+@media (max-width: 760px) {
+  .two, .steps { min-width: 0; grid-template-columns: 1fr; }
+}

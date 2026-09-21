@@ -1,0 +1,1383 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Escape vectors for a live question</title>
+<style>/* decision-brief — surfaces, ink, and the three structural components.
+ *
+ * ONE palette. No theme system, no theme toggle. tps-report shipped four themes and
+ * 165 theme-related rules; nobody ever switched. A brief is read once, quickly, to make
+ * a decision — the reader is not shopping for a skin.
+ *
+ * Categorical colours are the validated dataviz default palette (dark steps), which
+ * clears the CVD, chroma, lightness and contrast gates on the adjacent pairlist.
+ * If you change them, re-run the validator; do not eyeball it.
+ *
+ * What is here: tokens, the modal shell, tables, callouts, code. Everything else —
+ * cards, escalation lists, stat tiles, charts — is the brief's own business.
+ * Build what the material needs.
+ */
+:root {
+  color-scheme: dark;
+
+  --surface-0: #111110;   /* page */
+  --surface-1: #1a1a19;   /* panel */
+  --surface-2: #232321;   /* raised */
+  --surface-3: #2e2e2b;   /* control */
+  --line:      #3a3a36;
+
+  --text-primary:   #ffffff;
+  --text-secondary: #c3c2b7;
+  --text-muted:     #8b8a80;
+
+  /* categorical — assign in fixed order, never cycle */
+  --s1: #3987e5;  --s2: #d95926;  --s3: #199e70;  --s4: #c98500;
+  --s5: #d55181;  --s6: #008300;  --s7: #9085e9;  --s8: #e66767;
+
+  /* status — reserved. Never reuse as "series 5". Always ship with a label. */
+  --good:     #0ca30c;
+  --warning:  #fab219;
+  --serious:  #ec835a;
+  --critical: #d03b3b;
+
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, "JetBrains Mono", Menlo, Consolas, monospace;
+  --sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif;
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0; background: var(--surface-0); color: var(--text-primary);
+  font-family: var(--sans); font-size: 15px; line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+.wrap { max-width: 1180px; margin: 0 auto; padding: 0 24px 120px; }
+header.top .wrap { padding-bottom: 0; }   /* the wrap's bottom padding is for the page, not the header */
+
+/* ---- headings ----
+   A heading names the thing. It does not explain it — an em-dash gloss after a
+   heading breaks the heading. The body does the explaining. */
+h1 { font-size: 34px; line-height: 1.18; margin: 0 0 16px; letter-spacing: -.02em; font-weight: 650; }
+h2.sec {
+  font-size: 13px; font-family: var(--mono); letter-spacing: .13em; text-transform: uppercase;
+  color: var(--text-muted); margin: 56px 0 18px; padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+/* ---- modal shell: where depth lives ---- */
+dialog {
+  border: 1px solid var(--line); border-radius: 12px;
+  background: var(--surface-1); color: var(--text-primary);
+  max-width: 880px; width: calc(100vw - 44px); max-height: 86vh; padding: 0; overflow: hidden;
+}
+dialog::backdrop { background: rgba(0,0,0,.76); backdrop-filter: blur(3px); }
+.dlg-head {
+  position: sticky; top: 0; background: var(--surface-2);
+  border-bottom: 1px solid var(--line); padding: 20px 26px;
+  display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; z-index: 2;
+}
+.dlg-head h3 { margin: 0 0 5px; font-size: 20px; letter-spacing: -.015em; }
+.dlg-head .repo { font-family: var(--mono); font-size: 11.5px; color: var(--text-muted); margin: 0; }
+.x {
+  background: var(--surface-3); border: 1px solid var(--line); color: var(--text-secondary);
+  border-radius: 6px; width: 30px; height: 30px; font-size: 17px; line-height: 1;
+  cursor: pointer; flex: none;
+}
+.x:hover { background: var(--critical); color: #fff; border-color: var(--critical); }
+.dlg-body { padding: 24px 26px 34px; overflow-y: auto; max-height: calc(86vh - 78px); }
+.dlg-body h4 {
+  font-family: var(--mono); font-size: 11.5px; letter-spacing: .12em; text-transform: uppercase;
+  color: var(--text-muted); margin: 30px 0 12px; padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+}
+.dlg-body h4:first-child { margin-top: 0; }
+.dlg-body p  { margin: 0 0 13px; color: var(--text-secondary); font-size: 14.5px; }
+.dlg-body ul { margin: 0 0 15px; padding-left: 20px; color: var(--text-secondary); font-size: 14.5px; }
+.dlg-body li { margin-bottom: 8px; }
+.dlg-body strong { color: var(--text-primary); font-weight: 600; }
+
+/* ---- prose furniture ---- */
+code {
+  font-family: var(--mono); font-size: 12.5px; background: var(--surface-3);
+  padding: 1.5px 5px; border-radius: 4px; color: #e8d9a8; word-break: break-word;
+}
+pre {
+  background: var(--surface-0); border: 1px solid var(--line); border-radius: 7px;
+  padding: 15px 17px; overflow-x: auto; margin: 0 0 15px;
+}
+pre code { background: none; padding: 0; color: var(--text-secondary); font-size: 12.5px; line-height: 1.65; }
+
+table { width: 100%; border-collapse: collapse; margin: 0 0 17px; font-size: 13.5px; }
+th, td { text-align: left; padding: 9px 11px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th {
+  font-family: var(--mono); font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--text-muted); font-weight: 500; background: var(--surface-2);
+}
+td { color: var(--text-secondary); }
+td b, td strong { color: var(--text-primary); }
+
+blockquote {
+  margin: 0 0 15px; padding: 12px 18px; border-left: 3px solid var(--s1);
+  background: var(--surface-2); border-radius: 0 7px 7px 0;
+  color: var(--text-secondary); font-size: 14px; font-style: italic;
+}
+
+.callout {
+  border-left: 3px solid var(--warning); background: rgba(250,178,25,.07);
+  padding: 14px 18px; border-radius: 0 7px 7px 0; margin: 0 0 17px;
+}
+.callout.crit { border-color: var(--critical); background: rgba(208,59,59,.08); }
+.callout.good { border-color: var(--good);     background: rgba(12,163,12,.08); }
+.callout p:last-child { margin-bottom: 0; }
+.callout .lbl {
+  font-family: var(--mono); font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--text-muted); margin: 0 0 7px; display: block;
+}
+
+/* ---- confidence labels. Never assert without one. ---- */
+.tag {
+  display: inline-block; font-family: var(--mono); font-size: 10px; letter-spacing: .07em;
+  text-transform: uppercase; padding: 2.5px 7px; border-radius: 4px;
+  margin-right: 6px; font-weight: 600;
+}
+.tag.v { background: rgba(12,163,12,.18);  color: #6cd46c; border: 1px solid rgba(12,163,12,.4); }   /* measured */
+.tag.w { background: rgba(250,178,25,.14); color: #f5c95f; border: 1px solid rgba(250,178,25,.38); } /* inferred */
+.tag.c { background: rgba(208,59,59,.16);  color: #f08a8a; border: 1px solid rgba(208,59,59,.4); }   /* contradicted / hunch */
+
+footer {
+  margin-top: 70px; padding-top: 26px; border-top: 1px solid var(--line);
+  font-family: var(--mono); font-size: 11.5px; color: var(--text-muted);
+}
+footer p { margin: 0 0 7px; }
+
+@media (max-width: 640px) {
+  h1 { font-size: 26px; }
+  .wrap { padding: 0 16px 80px; }
+}
+</style>
+<style>/* decision-brief — reader notes, styling.
+   Depends on the surface/ink/status custom properties in base.css. */
+
+.notable { position: relative; }
+
+.note-btn {
+  position: absolute; top: 8px; right: 8px; z-index: 6;
+  width: 26px; height: 26px; line-height: 1; padding: 0;
+  background: var(--surface-3); border: 1px solid var(--line); border-radius: 6px;
+  color: var(--text-muted); font-size: 13px; cursor: pointer; opacity: 0;
+  transition: opacity .12s, background .12s, color .12s, border-color .12s;
+}
+/* Hidden until hover: a brief with 130 always-visible affordances reads as a form. */
+.notable:hover > .note-btn,
+.note-btn:focus-visible { opacity: 1; }
+.note-btn:hover { background: var(--warning); border-color: var(--warning); color: var(--surface-1); }
+
+.notable.has-note > .note-btn {
+  opacity: 1; background: var(--warning); border-color: var(--warning);
+  color: var(--surface-1); font-weight: 700;
+}
+.notable.has-note { box-shadow: inset 3px 0 0 var(--warning); }
+tr.notable.has-note > td:first-child { box-shadow: inset 3px 0 0 var(--warning); }
+
+/* Table rows can't host an absolutely-positioned child reliably — inline it. */
+tr.notable .note-btn {
+  position: static; opacity: .35; width: 22px; height: 22px; font-size: 11px;
+  margin-left: 6px; vertical-align: middle; display: inline-block;
+}
+tr.notable:hover .note-btn { opacity: 1; }
+
+/* ---- floating bar ---- */
+.notebar {
+  position: fixed; right: 18px; bottom: 18px; z-index: 900;
+  display: flex; gap: 8px; align-items: center;
+  background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px;
+  padding: 9px 11px; box-shadow: 0 10px 32px rgba(0,0,0,.55);
+  font-family: var(--mono); font-size: 11.5px;
+}
+.notebar .cnt { color: var(--text-muted); padding-right: 4px; }
+.notebar .cnt b { color: var(--warning); font-size: 14px; }
+.notebar button {
+  font-family: var(--mono); font-size: 11px; letter-spacing: .03em; cursor: pointer;
+  background: var(--surface-3); border: 1px solid var(--line); color: var(--text-secondary);
+  border-radius: 6px; padding: 6px 10px;
+  transition: background .12s, color .12s, border-color .12s;
+}
+.notebar button:hover { background: var(--warning); color: var(--surface-1); border-color: var(--warning); }
+.notebar button.primary {
+  background: rgba(250,178,25,.14); border-color: rgba(250,178,25,.45); color: #f5c95f;
+}
+.notebar button:disabled {
+  opacity: .4; cursor: default; background: var(--surface-3);
+  color: var(--text-muted); border-color: var(--line);
+}
+@media (max-width: 640px) {
+  .notebar { right: 8px; bottom: 8px; flex-wrap: wrap; max-width: calc(100vw - 16px); }
+}
+
+/* ---- note dialog ---- */
+dialog#d-note { max-width: 620px; }
+#note-list { margin: 0 0 18px; padding: 0; list-style: none; }
+#note-list li {
+  background: var(--surface-2); border: 1px solid var(--line);
+  border-left: 3px solid var(--warning); border-radius: 0 7px 7px 0;
+  padding: 11px 14px; margin-bottom: 9px; font-size: 14px; color: var(--text-secondary);
+}
+#note-list .nts {
+  font-family: var(--mono); font-size: 10px; color: var(--text-muted);
+  display: flex; justify-content: space-between; gap: 10px; margin-bottom: 6px;
+}
+#note-list .ndel {
+  background: none; border: none; color: var(--text-muted);
+  cursor: pointer; font-size: 11px; padding: 0;
+}
+#note-list .ndel:hover { color: var(--critical); }
+#note-none { color: var(--text-muted); font-size: 13.5px; margin: 0 0 16px; }
+
+#note-text {
+  width: 100%; min-height: 104px; background: var(--surface-0);
+  border: 1px solid var(--line); border-radius: 7px; color: var(--text-primary);
+  padding: 11px 13px; font-family: var(--sans); font-size: 14.5px;
+  resize: vertical; line-height: 1.55;
+}
+#note-text:focus { outline: none; border-color: var(--warning); }
+
+.note-actions { display: flex; gap: 9px; align-items: center; margin-top: 11px; }
+.note-actions button {
+  font-family: var(--mono); font-size: 11.5px; cursor: pointer; border-radius: 6px;
+  padding: 8px 14px; border: 1px solid var(--line);
+  background: var(--surface-3); color: var(--text-secondary);
+}
+.note-actions button.save {
+  background: var(--warning); border-color: var(--warning);
+  color: var(--surface-1); font-weight: 600;
+}
+.note-actions .hintk {
+  font-family: var(--mono); font-size: 10.5px; color: var(--text-muted); margin-left: auto;
+}
+
+/* ---- export dialog ---- */
+dialog#d-export { max-width: 780px; }
+#export-out {
+  width: 100%; min-height: 320px; background: var(--surface-0);
+  border: 1px solid var(--line); border-radius: 7px; color: var(--text-secondary);
+  padding: 13px; font-family: var(--mono); font-size: 12px; line-height: 1.55;
+  resize: vertical; white-space: pre;
+}
+.tokest { font-family: var(--mono); font-size: 11px; color: var(--text-muted); margin: 9px 0 0; }
+</style>
+<style>
+figure { margin: 0 0 22px; border: 1px solid var(--line); border-radius: 10px;
+  background: var(--surface-1); padding: 16px 18px 14px; }
+figure > .lbl { display: block; font-family: var(--mono); font-size: 10.5px; letter-spacing: .1em;
+  text-transform: uppercase; color: var(--text-muted); margin: 0 0 13px; }
+figcaption { margin-top: 13px; font-size: 13.5px; color: var(--text-secondary); }
+figcaption b { color: var(--text-primary); }
+.scroller { overflow-x: auto; }
+svg { display: block; width: 100%; height: auto; }
+
+.lede { font-size: 18.5px; line-height: 1.55; color: var(--text-secondary); margin: 0 0 20px; }
+.lede b { color: var(--text-primary); font-weight: 600; }
+.meta { font-family: var(--mono); font-size: 11.5px; color: var(--text-muted); margin: 0 0 30px; }
+
+.pin { display: inline-flex; align-items: center; justify-content: center; width: 15px; height: 15px;
+  border-radius: 50%; background: var(--s1); color: #fff; font-family: var(--mono); font-size: 9px;
+  vertical-align: middle; margin-right: 5px; flex: none; }
+
+/* read-first */
+.esc-list { list-style: none; margin: 0; padding: 0; counter-reset: ef; }
+.esc-list li { counter-increment: ef; border: 1px solid var(--line); border-left: 3px solid var(--critical);
+  border-radius: 0 8px 8px 0; background: var(--surface-1); padding: 13px 17px; margin: 0 0 11px; }
+.esc-list li.mid { border-left-color: var(--serious); }
+.esc-list li.low { border-left-color: var(--warning); }
+.esc-list li h4 { margin: 0 0 6px; font-size: 15px; letter-spacing: -.01em; }
+.esc-list li h4::before { content: counter(ef); font-family: var(--mono); font-size: 11px;
+  color: var(--text-muted); margin-right: 9px; }
+.esc-list li p { margin: 0 0 5px; font-size: 13.5px; color: var(--text-secondary); }
+.esc-list li p:last-child { margin-bottom: 0; }
+.esc-list .cost { font-family: var(--mono); font-size: 11.5px; color: var(--text-muted); }
+
+/* terminal + bench mockups */
+.mock { font-family: var(--mono); font-size: 11.5px; line-height: 1.55; border-radius: 7px;
+  border: 1px solid var(--line); overflow: hidden; background: #0c0c0b; }
+.mock .bar { background: var(--surface-2); color: var(--text-muted); padding: 5px 10px;
+  font-size: 10px; letter-spacing: .09em; text-transform: uppercase; border-bottom: 1px solid var(--line); }
+.mock .body { padding: 11px 12px; color: var(--text-secondary); white-space: pre-wrap; }
+.mock .sel { color: #fff; }
+.mock .dim { color: var(--text-muted); }
+.mock .foot { color: var(--text-muted); border-top: 1px dashed var(--line); margin-top: 8px; padding-top: 7px; }
+.twoup { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+@media (max-width: 760px) { .twoup { grid-template-columns: 1fr; } }
+
+.chiprow { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 9px; }
+.chip { font-family: var(--mono); font-size: 10.5px; padding: 4px 9px; border-radius: 5px;
+  border: 1px solid var(--line); background: var(--surface-3); color: var(--text-secondary); }
+.chip.hot { border-color: var(--s3); color: #7fd9b6; }
+.chip.warn { border-color: var(--s4); color: #f5c95f; }
+.chip.ghost { border-style: dashed; color: var(--text-muted); }
+
+/* architecture frames */
+.arch { border: 1px solid var(--line); border-radius: 9px; background: var(--surface-0);
+  padding: 14px; margin: 0 0 12px; }
+.arch .step { font-family: var(--mono); font-size: 10px; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--text-muted); margin: 0 0 10px; }
+.grid4 { display: grid; grid-template-columns: repeat(4, 1fr); grid-template-rows: auto auto auto;
+  gap: 9px; align-items: stretch; }
+.node { border: 1px solid var(--line); border-radius: 7px; background: var(--surface-2);
+  padding: 8px 9px; font-family: var(--mono); font-size: 10.5px; color: var(--text-secondary);
+  display: flex; flex-direction: column; gap: 3px; min-height: 44px; justify-content: center; }
+.node b { color: var(--text-primary); font-weight: 600; font-size: 10.5px; }
+.node .st { font-size: 9px; color: var(--text-muted); }
+.node.blue { border-color: var(--s1); }
+.node.blue b { color: #8fbdf3; }
+.node.green { border-color: var(--s3); }
+.node.green b { color: #7fd9b6; }
+.node.amber { border-color: var(--s4); border-style: dashed; }
+.node.amber b { color: #f5c95f; }
+.node.ghost { border-style: dashed; border-color: #26262380; background: none; color: transparent; }
+.node.muted { border-color: var(--line); color: var(--text-muted); }
+.wire { font-family: var(--mono); font-size: 9.5px; color: var(--text-muted);
+  display: flex; align-items: center; justify-content: center; min-height: 44px; }
+.wire.blue { color: #8fbdf3; }
+.wire.amber { color: #f5c95f; }
+.gut { font-family: var(--mono); font-size: 10.5px; color: var(--text-muted); margin: 10px 0 0;
+  padding-top: 9px; border-top: 1px dashed var(--line); }
+@media (max-width: 700px) { .grid4 { grid-template-columns: repeat(2, 1fr); } }
+
+/* the wide case table */
+table.wide { font-size: 12.5px; }
+table.wide td:first-child { font-family: var(--mono); font-size: 11.5px; color: var(--text-primary); white-space: nowrap; }
+table.wide code { font-size: 11px; }
+.v-bad { color: #f08a8a; font-weight: 600; }
+.v-unk { color: var(--text-muted); font-weight: 600; }
+.v-ok  { color: #7fd9b6; font-weight: 600; }
+
+/* grill */
+.grill { border: 1px solid var(--line); border-radius: 10px; background: var(--surface-1); padding: 4px 18px 6px; }
+.grill .ask { padding: 16px 0; border-bottom: 1px solid var(--line); }
+.grill .ask:last-child { border-bottom: none; }
+.grill .ask h4 { margin: 0 0 7px; font-size: 15.5px; }
+.grill .ask p { margin: 0 0 6px; font-size: 13.5px; color: var(--text-secondary); }
+.grill .rec { font-family: var(--mono); font-size: 11.5px; color: #7fd9b6; }
+
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; margin: 0 0 18px; }
+.card { border: 1px solid var(--line); border-radius: 9px; background: var(--surface-1); padding: 13px 15px; }
+.card h4 { margin: 0 0 7px; font-size: 14.5px; }
+.card p { margin: 0; font-size: 13px; color: var(--text-secondary); }
+.card.pick { border-color: var(--s3); }
+
+button.why { background: var(--surface-3); border: 1px solid var(--line); color: var(--text-secondary);
+  font-family: var(--mono); font-size: 11px; padding: 5px 11px; border-radius: 6px; cursor: pointer; }
+button.why:hover { border-color: var(--s1); color: #8fbdf3; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>Escape vectors for a live question</h1>
+  <p class="meta">terminal-delight &middot; 2026-09-19 &middot; audit of the workbench question surface &middot; read in ~15 min</p>
+  <p class="lede">A question on the bench is a modal dialog with no cancel, and the rest of the window
+  stays live behind it. <b>Every control on the bench types raw bytes into whatever is on screen</b> —
+  so while a picker is up, the composer, both dials and END&nbsp;SESSION all land inside it. Escape is
+  nailed shut on purpose, and that decision is the one to reopen.</p>
+</header>
+
+<h2>Read first</h2>
+<ol class="esc-list">
+  <li>
+    <h4>END SESSION during a live question does something nobody has established</h4>
+    <p>The button delivers <code>0x03 0x03</code> straight down the pseudoterminal
+    (<code>bench.rs:599</code>) and is offered whenever an agent is present — <code>strip_verb</code>
+    never looks at whether a question is up. Whether the picker eats the first interrupt or both fall
+    through decides between <em>the button silently did nothing</em> and <em>the session died with a
+    tool call still open</em>. Both are bad and they are different bugs.</p>
+    <p class="cost">What it would take: one transcribed run, then a guard. <span class="tag c">hunch</span> which branch fires.</p>
+  </li>
+  <li>
+    <h4>Escape is deliberately refused, and that floor is the defect</h4>
+    <p><code>peel()</code> returns <code>Peel::Nothing</code> when a card holds a waiting question, with
+    the comment <em>&ldquo;THE FLOOR&rdquo;</em>. The intent was protective. The consequence is that the
+    workbench face is the only face of this pane with no way out of a modal — the terminal face prints
+    <code>Esc to cancel</code> in the picker's own footer.</p>
+    <p class="cost">What it would take: an ABANDON verb on the question card. <span class="tag v">measured</span></p>
+  </li>
+  <li class="mid">
+    <h4>Commenting on a question answers it instead</h4>
+    <p><code>Kind::Question</code> ships <code>Action::Comment</code> specifically so &ldquo;a person who
+    wants to say something other than one of the answers still can&rdquo; (<code>surface.rs:1256</code>).
+    The comment becomes <code>typed_line()</code> — the prose, then <code>\r</code>. Into an open picker
+    that carriage return commits whichever row the cursor is on.</p>
+    <p class="cost">What it would take: the same guard as #1. <span class="tag w">inferred</span></p>
+  </li>
+  <li class="mid">
+    <h4>The dials and the composer are one defect wearing three chips</h4>
+    <p><code>bench_deliver</code> is the single write path and it checks exactly two things: the pane is
+    on screen, and an agent is in it. Not what that agent is doing. <code>/model opus</code> and a typed
+    message are the same shape of byte stream as a comment, and land the same way.</p>
+    <p class="cost">What it would take: one gate, in the one place the rule already lives. <span class="tag v">measured</span></p>
+  </li>
+  <li class="low">
+    <h4>This pane's answer channel is unauthenticated</h4>
+    <p>The bench stamps <code>[workbench:&lt;tag&gt;]</code> in front of every line it types so an agent
+    can tell its operator from page content. <code>TD_TAG</code> is unset in the pane that wrote this
+    brief, while <code>session-1.tag</code> exists on disk — the host predates the export and a host
+    only upgrades by dying. Documented seam, not a new bug, but the guarantee is off here today.</p>
+    <p class="cost">What it would take: restart the host, or say so in the strip. <span class="tag v">measured</span></p>
+  </li>
+</ol>
+
+<h2>What is actually on screen</h2>
+
+<figure>
+  <span class="lbl">01 &middot; The same question, on both faces of one pane</span>
+  <div class="twoup">
+    <div>
+      <div class="mock">
+        <div class="bar">Terminal face</div>
+        <div class="body"><span class="dim">□ The Ring</span>
+
+The Ring is in your hand at the Cracks
+of Doom. What do you actually do?
+
+<span class="sel">❯ 1. Cast it into the fire</span>
+<span class="dim">     Destroy the thing itself.</span>
+  2. Claim it
+  3. Give it to the Wise
+  4. Carry it, undecided
+  5. Type something.
+
+  6. Chat about this
+<span class="foot">Enter to select · ↑/↓ navigate · <span class="sel">Esc to cancel</span></span></div>
+      </div>
+      <p style="font-size:12.5px;color:var(--text-muted);margin:8px 0 0">
+        <span class="pin">1</span> the picker names its own way out, in its footer.</p>
+    </div>
+    <div>
+      <div class="mock">
+        <div class="bar">Workbench face</div>
+        <div class="body"><span class="dim">DECISIONS</span>
+
+<span class="sel">The Ring is in your hand at the
+Cracks of Doom. What do you
+actually do?</span>
+</div>
+        <div style="padding:0 12px 12px">
+          <div class="chiprow">
+            <span class="chip hot">1 · Cast it into the fire</span>
+            <span class="chip">2 · Claim it</span>
+            <span class="chip">3 · Give it to the Wise</span>
+            <span class="chip">4 · Carry it, undecided</span>
+            <span class="chip">5 · Type something</span>
+            <span class="chip">6 · Chat about this</span>
+            <span class="chip">SUBMIT</span>
+            <span class="chip">💬 comment</span>
+          </div>
+        </div>
+      </div>
+      <p style="font-size:12.5px;color:var(--text-muted);margin:8px 0 0">
+        <span class="pin">2</span> no footer, no Esc, no cancel. <span class="pin">3</span> the comment
+        chip is the one that answers the question by accident.</p>
+    </div>
+  </div>
+  <figcaption>Drawn from the test fixture the screen parser is built against
+  (<code>screenread.rs:695</code>) and the chip builder at <code>bench.rs:947</code>.
+  <b>The terminal face documents an escape and the bench face drops it</b> — the bench reads the
+  picker's option rows and discards the footer that says how to leave.</figcaption>
+</figure>
+
+<h2>Why every control lands in the picker</h2>
+
+<figure>
+  <span class="lbl">02 &middot; One wire, built up in four steps</span>
+
+  <div class="arch">
+    <p class="step">Step 1 — the agent and its screen</p>
+    <div class="grid4">
+      <div class="node green"><b>claude</b><span class="st">tool call open</span></div>
+      <div class="wire">──▶</div>
+      <div class="node green"><b>pty</b><span class="st">bytes both ways</span></div>
+      <div class="node green"><b>alt screen</b><span class="st">picker drawn</span></div>
+      <div class="node ghost">.</div><div class="node ghost">.</div><div class="node ghost">.</div><div class="node ghost">.</div>
+      <div class="node ghost">.</div><div class="node ghost">.</div><div class="node ghost">.</div><div class="node ghost">.</div>
+    </div>
+    <p class="gut">The tool call is blocked here until bytes arrive. Nothing else in the agent runs.</p>
+  </div>
+
+  <div class="arch">
+    <p class="step">Step 2 — the window reads the screen, once a second</p>
+    <div class="grid4">
+      <div class="node green"><b>claude</b><span class="st">tool call open</span></div>
+      <div class="wire">──▶</div>
+      <div class="node green"><b>pty</b><span class="st">bytes both ways</span></div>
+      <div class="node green"><b>alt screen</b><span class="st">picker drawn</span></div>
+      <div class="node ghost">.</div><div class="node ghost">.</div>
+      <div class="wire blue">▲ 1&nbsp;Hz</div>
+      <div class="node blue"><b>screenread</b><span class="st">parses the rows</span></div>
+      <div class="node ghost">.</div><div class="node ghost">.</div><div class="node ghost">.</div>
+      <div class="node blue"><b>bench card</b><span class="st">Kind::Question</span></div>
+    </div>
+    <p class="gut">A pending question exists only as pixels — it is absent from the transcript until it is answered, which is why this leg had to be built at all.</p>
+  </div>
+
+  <div class="arch">
+    <p class="step">Step 3 — and every control types back down the same wire</p>
+    <div class="grid4">
+      <div class="node green"><b>claude</b><span class="st">tool call open</span></div>
+      <div class="wire">──▶</div>
+      <div class="node green"><b>pty</b><span class="st">bytes both ways</span></div>
+      <div class="node green"><b>alt screen</b><span class="st">picker drawn</span></div>
+      <div class="node blue"><b>bench_deliver</b><span class="st">on screen? agent?</span></div>
+      <div class="wire blue">──▶</div>
+      <div class="wire blue">▲ ▼</div>
+      <div class="node blue"><b>screenread</b><span class="st">parses the rows</span></div>
+      <div class="node blue"><b>chips · composer<br>dials · END</b><span class="st">every gesture</span></div>
+      <div class="wire blue">──▶</div>
+      <div class="node ghost">.</div>
+      <div class="node blue"><b>bench card</b><span class="st">Kind::Question</span></div>
+    </div>
+    <p class="gut">Arrow keys, prose, slash commands and interrupts are one byte stream to the picker. It reads them by position, not by intent.</p>
+  </div>
+
+  <div class="arch">
+    <p class="step">Step 4 — the two transports that never touch the picker, and the piece that is missing</p>
+    <div class="grid4">
+      <div class="node green"><b>claude</b><span class="st">tool call open</span></div>
+      <div class="wire">──▶</div>
+      <div class="node green"><b>pty</b><span class="st">bytes both ways</span></div>
+      <div class="node green"><b>alt screen</b><span class="st">picker drawn</span></div>
+      <div class="node amber"><b>no gate here</b><span class="st">what is on screen?</span></div>
+      <div class="wire amber">──▶</div>
+      <div class="wire blue">▲ ▼</div>
+      <div class="node blue"><b>screenread</b><span class="st">parses the rows</span></div>
+      <div class="node blue"><b>chips · composer<br>dials · END</b><span class="st">every gesture</span></div>
+      <div class="wire blue">──▶</div>
+      <div class="node muted"><b>jsonl · files</b><span class="st">other surfaces</span></div>
+      <div class="node blue"><b>bench card</b><span class="st">Kind::Question</span></div>
+    </div>
+    <p class="gut">yellow = mine to argue with. Surfaces that arrive by transcript or file drop never go near the picker, which is why this failure is confined to the one kind the window reads off the glass.</p>
+  </div>
+
+  <figcaption>Drawn from the code: <code>bench_deliver</code> (<code>bench.rs:1555</code>),
+  <code>live_questions</code> (<code>bench.rs:829</code>), <code>menu_keys</code>
+  (<code>workbench.rs:2413</code>). <b>The bench has no model of what the terminal is showing</b> —
+  it has a once-a-second reading of it, used to draw the card and never consulted before a write.
+  That asymmetry is the whole bug, and the fix is one gate in the amber box.</figcaption>
+</figure>
+
+<h2>The audit</h2>
+
+<figure>
+  <span class="lbl">03 &middot; Every gesture available while a question is live</span>
+  <div class="scroller">
+  <table class="wide">
+    <thead><tr><th>Gesture</th><th>Bytes it sends</th><th>What the picker does with them</th><th>Verdict</th></tr></thead>
+    <tbody>
+      <tr><td>Answer chip</td><td><code>ESC[B</code> ×n then <code>\r</code></td>
+        <td>Moves the cursor and presses the row. The one gesture built for this screen.</td>
+        <td class="v-ok">works</td></tr>
+      <tr><td>SUBMIT / NEXT</td><td><code>ESC[B</code> ×n then <code>\r</code></td>
+        <td>Same, aimed at the picker's own button. <code>nav_index</code> already corrects for Submit sitting mid-list.</td>
+        <td class="v-ok">works</td></tr>
+      <tr><td>Comment</td><td>prose then <code>\r</code></td>
+        <td>Characters are swallowed or filter; the carriage return presses whatever row is lit. The note is journalled to disk and lost from the conversation.</td>
+        <td class="v-bad">answers the wrong thing</td></tr>
+      <tr><td>Composer send</td><td>prose then <code>\r</code></td>
+        <td>Identical. The person believes they asked a question; the agent receives an option.</td>
+        <td class="v-bad">answers the wrong thing</td></tr>
+      <tr><td>Model dial</td><td><code>/model opus</code> then <code>\r</code></td>
+        <td>Identical. The slash command never reaches a prompt.</td>
+        <td class="v-bad">answers the wrong thing</td></tr>
+      <tr><td>Effort dial</td><td><code>/effort high</code> then <code>\r</code></td>
+        <td>Identical.</td>
+        <td class="v-bad">answers the wrong thing</td></tr>
+      <tr><td>END SESSION</td><td><code>0x03 0x03</code></td>
+        <td>Unestablished. Either the picker claims the first interrupt and the session survives, or both reach the harness and it quits with the tool call open.</td>
+        <td class="v-unk">undecided — see 05</td></tr>
+      <tr><td>Escape key</td><td>nothing</td>
+        <td><code>peel()</code> returns <code>Nothing</code> by design. The key is consumed and no byte is sent.</td>
+        <td class="v-bad">no way out</td></tr>
+      <tr><td>Switch tab / pane</td><td>nothing, queued</td>
+        <td>Writes are held until the pane is back on screen, then drained in order. The question stays up and stays waiting.</td>
+        <td class="v-ok">safe</td></tr>
+      <tr><td>Close the card</td><td>nothing</td>
+        <td>The card closes; the question is still live on the rail and the agent is still blocked. Nothing tells the person that.</td>
+        <td class="v-unk">silent</td></tr>
+      <tr><td>Wait 3 sweeps</td><td>nothing</td>
+        <td><code>live_move</code> retires the surface once the agent has looked idle for three seconds. A question that scrolled off screen is retired without ever being answered.</td>
+        <td class="v-unk">silent</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <figcaption>Every row read out of the source today. <b>Four of eleven gestures commit an answer the
+  person did not choose</b>, and three more change the world without saying so. Only the two chips
+  built for the picker treat it as a picker.</figcaption>
+</figure>
+
+<figure>
+  <span class="lbl">04 &middot; The escape ladder, and the floor it stops at</span>
+  <div class="scroller">
+  <svg viewBox="0 0 900 250" role="img" aria-label="Decision tree of the escape key handler, ending at a floor when a question is waiting">
+    <defs><marker id="ar" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 z" fill="#8b8a80"/></marker></defs>
+    <g font-family="ui-monospace, monospace" font-size="11.5">
+      <rect x="8" y="14" width="150" height="34" rx="6" fill="#232321" stroke="#3a3a36"/>
+      <text x="83" y="35" fill="#ffffff" text-anchor="middle">escape pressed</text>
+
+      <line x1="158" y1="31" x2="196" y2="31" stroke="#8b8a80" marker-end="url(#ar)"/>
+      <rect x="200" y="14" width="150" height="34" rx="6" fill="#232321" stroke="#3987e5"/>
+      <text x="275" y="35" fill="#8fbdf3" text-anchor="middle">gallery open?</text>
+      <line x1="275" y1="48" x2="275" y2="72" stroke="#8b8a80" marker-end="url(#ar)"/>
+      <text x="285" y="66" fill="#8b8a80">yes</text>
+      <rect x="200" y="76" width="150" height="30" rx="6" fill="#1a1a19" stroke="#199e70"/>
+      <text x="275" y="95" fill="#7fd9b6" text-anchor="middle">close it</text>
+
+      <line x1="350" y1="31" x2="388" y2="31" stroke="#8b8a80" marker-end="url(#ar)"/>
+      <rect x="392" y="14" width="150" height="34" rx="6" fill="#232321" stroke="#3987e5"/>
+      <text x="467" y="35" fill="#8fbdf3" text-anchor="middle">half-typed line?</text>
+      <line x1="467" y1="48" x2="467" y2="72" stroke="#8b8a80" marker-end="url(#ar)"/>
+      <text x="477" y="66" fill="#8b8a80">yes</text>
+      <rect x="392" y="76" width="150" height="30" rx="6" fill="#1a1a19" stroke="#199e70"/>
+      <text x="467" y="95" fill="#7fd9b6" text-anchor="middle">clear it</text>
+
+      <line x1="542" y1="31" x2="580" y2="31" stroke="#8b8a80" marker-end="url(#ar)"/>
+      <rect x="584" y="14" width="160" height="34" rx="6" fill="#232321" stroke="#3987e5"/>
+      <text x="664" y="35" fill="#8fbdf3" text-anchor="middle">card open?</text>
+      <line x1="664" y1="48" x2="664" y2="72" stroke="#8b8a80" marker-end="url(#ar)"/>
+      <text x="674" y="66" fill="#8b8a80">yes</text>
+
+      <rect x="560" y="76" width="150" height="34" rx="6" fill="#232321" stroke="#3a3a36"/>
+      <text x="635" y="97" fill="#c3c2b7" text-anchor="middle">is it waiting?</text>
+
+      <line x1="600" y1="110" x2="560" y2="140" stroke="#8b8a80" marker-end="url(#ar)"/>
+      <text x="530" y="130" fill="#8b8a80">no</text>
+      <rect x="440" y="144" width="150" height="30" rx="6" fill="#1a1a19" stroke="#199e70"/>
+      <text x="515" y="163" fill="#7fd9b6" text-anchor="middle">close the card</text>
+
+      <line x1="680" y1="110" x2="720" y2="140" stroke="#d03b3b" marker-end="url(#ar)"/>
+      <text x="726" y="130" fill="#f08a8a">yes</text>
+      <rect x="660" y="144" width="200" height="46" rx="6" fill="#1a1a19" stroke="#d03b3b"/>
+      <text x="760" y="163" fill="#f08a8a" text-anchor="middle">THE FLOOR</text>
+      <text x="760" y="180" fill="#8b8a80" text-anchor="middle" font-size="10">nothing happens</text>
+
+      <text x="8" y="222" fill="#8b8a80" font-size="10.5">the key is consumed and no byte is sent — the agent never learns anyone pressed it</text>
+      <text x="8" y="240" fill="#f5c95f" font-size="10.5">yellow elsewhere = mine; this picture is the code as written, peel() at workbench.rs:827</text>
+    </g>
+  </svg>
+  </div>
+  <figcaption>Every other rung of this ladder removes something. <b>The last rung was written to protect
+  the question and instead removed the person's way out</b> — and the protection it buys is
+  already provided by the picker itself, which is the thing that would receive the escape.</figcaption>
+</figure>
+
+<figure>
+  <span class="lbl">05 &middot; What END SESSION does is a branch nobody has walked</span>
+  <div class="scroller">
+  <svg viewBox="0 0 900 260" role="img" aria-label="Two possible outcomes of sending two interrupts into an open picker, neither established">
+    <defs><marker id="ar2" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 z" fill="#8b8a80"/></marker></defs>
+    <g font-family="ui-monospace, monospace" font-size="11.5">
+      <rect x="8" y="16" width="230" height="46" rx="6" fill="#232321" stroke="#3a3a36"/>
+      <text x="123" y="36" fill="#ffffff" text-anchor="middle">END SESSION pressed</text>
+      <text x="123" y="52" fill="#8b8a80" text-anchor="middle" font-size="10">delivers 0x03 0x03, one write</text>
+
+      <line x1="238" y1="39" x2="284" y2="39" stroke="#8b8a80" marker-end="url(#ar2)"/>
+      <rect x="288" y="16" width="230" height="46" rx="6" fill="#1a1a19" stroke="#8b8a80" stroke-dasharray="5 4"/>
+      <text x="403" y="36" fill="#8b8a80" text-anchor="middle">does the picker claim</text>
+      <text x="403" y="52" fill="#8b8a80" text-anchor="middle">the first interrupt?</text>
+
+      <line x1="403" y1="62" x2="300" y2="108" stroke="#8b8a80" marker-end="url(#ar2)"/>
+      <text x="316" y="96" fill="#8b8a80">yes</text>
+      <rect x="120" y="112" width="290" height="76" rx="6" fill="#1a1a19" stroke="#ec835a"/>
+      <text x="265" y="132" fill="#f0a882" text-anchor="middle">the question is cancelled</text>
+      <text x="265" y="149" fill="#c3c2b7" text-anchor="middle" font-size="10.5">the second interrupt cancels the turn</text>
+      <text x="265" y="165" fill="#c3c2b7" text-anchor="middle" font-size="10.5">the agent is still running</text>
+      <text x="265" y="182" fill="#f0a882" text-anchor="middle" font-size="10.5">the button did not do what it says</text>
+
+      <line x1="403" y1="62" x2="600" y2="108" stroke="#8b8a80" marker-end="url(#ar2)"/>
+      <text x="530" y="96" fill="#8b8a80">no</text>
+      <rect x="470" y="112" width="290" height="76" rx="6" fill="#1a1a19" stroke="#d03b3b"/>
+      <text x="615" y="132" fill="#f08a8a" text-anchor="middle">the harness quits</text>
+      <text x="615" y="149" fill="#c3c2b7" text-anchor="middle" font-size="10.5">with a tool call still open</text>
+      <text x="615" y="165" fill="#c3c2b7" text-anchor="middle" font-size="10.5">no result is ever written for it</text>
+      <text x="615" y="182" fill="#f08a8a" text-anchor="middle" font-size="10.5">the resumed transcript has a hole</text>
+
+      <rect x="120" y="200" width="640" height="30" rx="6" fill="#111110" stroke="#8b8a80" stroke-dasharray="5 4"/>
+      <text x="440" y="219" fill="#8b8a80" text-anchor="middle">UNDECIDED — this has not been run, and the two branches are different bugs</text>
+
+      <text x="8" y="252" fill="#8b8a80" font-size="10.5">grey = unknown. The cheap experiment: open a question, press the button, read the transcript for a tool_result.</text>
+    </g>
+  </svg>
+  </div>
+  <figcaption>The branch is drawn rather than guessed, because picking one would make the audit read as
+  measured when it is not. <b>Both outcomes justify the same guard</b>, so the fix does not wait on the
+  experiment — but which issue gets filed does.</figcaption>
+</figure>
+
+<h2>What the person is actually trying to do</h2>
+
+<figure>
+  <span class="lbl">06 &middot; Five intents arrive at one question; one is served</span>
+  <div class="scroller">
+  <svg viewBox="0 0 900 300" role="img" aria-label="Five user intents mapped to what the bench offers for each">
+    <g font-family="ui-monospace, monospace" font-size="11.5">
+      <text x="8" y="16" fill="#8b8a80" font-size="10">INTENT</text>
+      <text x="330" y="16" fill="#8b8a80" font-size="10">WHAT THE BENCH OFFERS TODAY</text>
+      <text x="700" y="16" fill="#8b8a80" font-size="10">RESULT</text>
+
+      <rect x="8" y="26" width="300" height="42" rx="6" fill="#232321" stroke="#199e70"/>
+      <text x="20" y="44" fill="#7fd9b6">Answer it</text>
+      <text x="20" y="60" fill="#8b8a80" font-size="10">&ldquo;option two&rdquo;</text>
+      <rect x="330" y="26" width="340" height="42" rx="6" fill="#1a1a19" stroke="#199e70"/>
+      <text x="342" y="50" fill="#c3c2b7">a chip per option, and SUBMIT</text>
+      <text x="700" y="50" fill="#7fd9b6">served</text>
+
+      <rect x="8" y="76" width="300" height="42" rx="6" fill="#232321" stroke="#c98500"/>
+      <text x="20" y="94" fill="#f5c95f">Answer in my own words</text>
+      <text x="20" y="110" fill="#8b8a80" font-size="10">&ldquo;none of these — do X instead&rdquo;</text>
+      <rect x="330" y="76" width="340" height="42" rx="6" fill="#1a1a19" stroke="#c98500"/>
+      <text x="342" y="100" fill="#c3c2b7">a chip that opens a field only the TUI can see</text>
+      <text x="700" y="100" fill="#f5c95f">half served</text>
+
+      <rect x="8" y="126" width="300" height="42" rx="6" fill="#232321" stroke="#d03b3b"/>
+      <text x="20" y="144" fill="#f08a8a">Say something that is not an answer</text>
+      <text x="20" y="160" fill="#8b8a80" font-size="10">&ldquo;why are you asking me this?&rdquo;</text>
+      <rect x="330" y="126" width="340" height="42" rx="6" fill="#1a1a19" stroke="#d03b3b"/>
+      <text x="342" y="150" fill="#c3c2b7">a comment chip that commits option one</text>
+      <text x="700" y="150" fill="#f08a8a">wrong</text>
+
+      <rect x="8" y="176" width="300" height="42" rx="6" fill="#232321" stroke="#8b8a80" stroke-dasharray="5 4"/>
+      <text x="20" y="194" fill="#8b8a80">Defer it</text>
+      <text x="20" y="210" fill="#8b8a80" font-size="10">&ldquo;not now, I am mid-thought&rdquo;</text>
+      <rect x="330" y="176" width="340" height="42" rx="6" fill="#111110" stroke="#8b8a80" stroke-dasharray="5 4"/>
+      <text x="342" y="200" fill="#8b8a80">nothing — and nothing can, the agent is blocked</text>
+      <text x="700" y="200" fill="#8b8a80">no state for it</text>
+
+      <rect x="8" y="226" width="300" height="42" rx="6" fill="#232321" stroke="#d03b3b"/>
+      <text x="20" y="244" fill="#f08a8a">Abandon it</text>
+      <text x="20" y="260" fill="#8b8a80" font-size="10">&ldquo;forget the question, I want out&rdquo;</text>
+      <rect x="330" y="226" width="340" height="42" rx="6" fill="#1a1a19" stroke="#d03b3b"/>
+      <text x="342" y="250" fill="#c3c2b7">nothing. Escape is refused, the card just closes</text>
+      <text x="700" y="250" fill="#f08a8a">missing</text>
+
+      <text x="8" y="290" fill="#8b8a80" font-size="10.5">grey = a state the design has no shape for, which is not the same as a state nobody wants</text>
+    </g>
+  </svg>
+  </div>
+  <figcaption>The picker itself serves four of these — options, <em>Type something</em>,
+  <em>Chat about this</em>, and <code>Esc</code>. <b>The bench reads the first two off the screen and
+  drops the other two</b>, so the face with more room offers strictly less than the face it mirrors.
+  Defer is drawn grey because it has no answer yet, not because nobody wants it.</figcaption>
+</figure>
+
+<h2>What it should do</h2>
+
+<div class="cards">
+  <div class="card">
+    <h4>A · Go modal</h4>
+    <p>Freeze every other control while a question is live, and add a cancel. Matches the terminal
+    exactly. But a bench that greys out END SESSION while an agent is stuck asking is the trap it was
+    built to avoid.</p>
+  </div>
+  <div class="card pick">
+    <h4>B · Cancel, then act</h4>
+    <p>Every gesture stays live. Anything that is not an answer sends <code>ESC</code> first, lets the
+    picker close, then does what it was going to do. The agent receives a clean tool rejection — the
+    path it already handles.</p>
+  </div>
+  <div class="card">
+    <h4>C · Queue it</h4>
+    <p>Hold non-answer gestures until the question resolves. Rejected: the question resolves when the
+    person answers it, so this makes them wait on themselves.</p>
+  </div>
+</div>
+
+<div class="callout good">
+  <span class="lbl">Why B, and the evidence for it</span>
+  <p>This brief exists because a question was cancelled mid-session. The agent received
+  <em>&ldquo;The user doesn't want to proceed with this tool use. The tool use was rejected&rdquo;</em>,
+  followed by the interruption notice, and carried straight on into the next instruction. <b>The
+  abandon path is already well-formed on the agent's side</b> — nothing needs building there, and the
+  window is the only half that cannot reach it. <span class="tag v">measured</span> in this session's
+  own transcript.</p>
+</div>
+
+<figure>
+  <span class="lbl">07 &middot; One gate, in the place the rule already lives</span>
+  <div class="scroller">
+  <svg viewBox="0 0 900 270" role="img" aria-label="The proposed gate inside bench_deliver, with the amendments in amber">
+    <defs><marker id="ar3" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 z" fill="#8b8a80"/></marker></defs>
+    <g font-family="ui-monospace, monospace" font-size="11.5">
+      <rect x="8" y="14" width="200" height="30" rx="6" fill="#232321" stroke="#3a3a36"/>
+      <text x="108" y="34" fill="#ffffff" text-anchor="middle">answer chip</text>
+      <rect x="8" y="50" width="200" height="30" rx="6" fill="#232321" stroke="#3a3a36"/>
+      <text x="108" y="70" fill="#ffffff" text-anchor="middle">composer · comment</text>
+      <rect x="8" y="86" width="200" height="30" rx="6" fill="#232321" stroke="#3a3a36"/>
+      <text x="108" y="106" fill="#ffffff" text-anchor="middle">model · effort dial</text>
+      <rect x="8" y="122" width="200" height="30" rx="6" fill="#232321" stroke="#3a3a36"/>
+      <text x="108" y="142" fill="#ffffff" text-anchor="middle">END SESSION</text>
+      <rect x="8" y="158" width="200" height="30" rx="6" fill="#232321" stroke="#c98500" stroke-dasharray="5 4"/>
+      <text x="108" y="178" fill="#f5c95f" text-anchor="middle">ABANDON chip (new)</text>
+
+      <line x1="208" y1="100" x2="256" y2="100" stroke="#8b8a80" marker-end="url(#ar3)"/>
+
+      <rect x="260" y="40" width="240" height="120" rx="8" fill="#1a1a19" stroke="#c98500" stroke-dasharray="5 4"/>
+      <text x="380" y="62" fill="#f5c95f" text-anchor="middle">bench_deliver</text>
+      <text x="380" y="82" fill="#c3c2b7" text-anchor="middle" font-size="10.5">on screen?  · agent present?</text>
+      <text x="380" y="102" fill="#f5c95f" text-anchor="middle" font-size="10.5">is a question live, and</text>
+      <text x="380" y="118" fill="#f5c95f" text-anchor="middle" font-size="10.5">are these bytes an answer?</text>
+      <text x="380" y="142" fill="#8b8a80" text-anchor="middle" font-size="10">if not: send 0x1b, wait a beat, then send</text>
+
+      <line x1="500" y1="100" x2="548" y2="100" stroke="#8b8a80" marker-end="url(#ar3)"/>
+      <rect x="552" y="72" width="150" height="56" rx="6" fill="#232321" stroke="#199e70"/>
+      <text x="627" y="96" fill="#7fd9b6" text-anchor="middle">pty</text>
+      <text x="627" y="114" fill="#8b8a80" text-anchor="middle" font-size="10">picker already closed</text>
+
+      <line x1="702" y1="100" x2="750" y2="100" stroke="#8b8a80" marker-end="url(#ar3)"/>
+      <rect x="754" y="60" width="138" height="80" rx="6" fill="#232321" stroke="#199e70"/>
+      <text x="823" y="84" fill="#7fd9b6" text-anchor="middle">claude</text>
+      <text x="823" y="102" fill="#c3c2b7" text-anchor="middle" font-size="10">tool rejected,</text>
+      <text x="823" y="118" fill="#c3c2b7" text-anchor="middle" font-size="10">turn continues</text>
+
+      <text x="8" y="216" fill="#f5c95f" font-size="10.5">yellow = the amendments; green = already there and already correct</text>
+      <text x="8" y="234" fill="#8b8a80" font-size="10.5">send the 0x1b ALONE — an escape followed immediately by a printable byte reads as alt+that-key,</text>
+      <text x="8" y="252" fill="#8b8a80" font-size="10.5">and 0x1b 5b 42 is the down arrow the answer chips already use. The beat is not optional.</text>
+    </g>
+  </svg>
+  </div>
+  <figcaption><code>bench_deliver</code> already carries the doctrine that a write happens only under
+  conditions checked in one place. <b>This is a third condition on the same gate, not a new
+  mechanism</b> — and the ABANDON chip is that gate with an empty payload.</figcaption>
+</figure>
+
+<h2>Decisions</h2>
+
+<div class="grill">
+  <div class="ask">
+    <h4>Cancel-then-act, or refuse-while-waiting?</h4>
+    <p>B lets you press anything and takes the question down first. A freezes the bench until you deal
+    with the question. A is more honest about the modal; B is what every modern surface actually does
+    when you click Log Out with a dialog open.</p>
+    <p class="rec">Recommend B. A bench that disables its own kill switch while an agent is stuck is
+    the shape of trap this window keeps finding.</p>
+  </div>
+  <div class="ask">
+    <h4>Does END SESSION confirm while a question is live?</h4>
+    <p>It is the one gesture here that cannot be undone, and today it is also the one whose behaviour
+    is unknown. A confirm costs a click on the rarest press.</p>
+    <p class="rec">Recommend yes, and only in this state — a confirm on every press would be noise.</p>
+  </div>
+  <div class="ask">
+    <h4>Is DEFER real, or is it abandon with a note?</h4>
+    <p>A blocked tool call cannot be parked. The closest honest thing is cancel plus a typed line
+    saying come back to it, which leaves the agent free and the intent recorded.</p>
+    <p class="rec">Recommend abandon-with-a-note, drawn as its own chip so it does not read as a
+    dismissal.</p>
+  </div>
+  <div class="ask">
+    <h4>Run the END SESSION experiment before or after the guard?</h4>
+    <p>The guard is justified either way. The experiment decides whether a second issue gets filed
+    about a button that silently lies, or about a transcript that loses a tool result.</p>
+    <p class="rec">Recommend after. The guard is cheap and the experiment costs a live session.</p>
+  </div>
+  <div class="ask">
+    <h4>Do the pictures match what you had in your head?</h4>
+    <p>Figure 02 is the one to check — whether the four steps land where you expect the change to
+    touch, and whether the amber box is in the right place.</p>
+    <p class="rec">No recommendation. This one is yours.</p>
+  </div>
+</div>
+
+<h2>Behind the brief</h2>
+<p style="margin-bottom:18px">
+  <button class="why" data-dlg="d-drawn">What each picture is drawn from</button>
+  <button class="why" data-dlg="d-method">Method and limits</button>
+  <button class="why" data-dlg="d-tag">The unauthenticated answer channel</button>
+</p>
+
+<dialog id="d-drawn">
+  <div class="dlg-head"><div><h3>What each picture is drawn from</h3>
+    <p class="repo">code · this session · mine</p></div>
+    <button class="x" data-close>&times;</button></div>
+  <div class="dlg-body">
+    <h4>Drawn from the code</h4>
+    <ul>
+      <li><strong>01</strong> — the terminal half is the test fixture at <code>screenread.rs:695</code>,
+      transcribed from a real pane on 2026-09-17, including its footer. The bench half is the chip
+      builder at <code>bench.rs:947</code> plus <code>default_actions</code> at
+      <code>surface.rs:1256</code>.</li>
+      <li><strong>02</strong> — <code>bench_deliver</code> and <code>bench_may_write</code>
+      (<code>bench.rs:1555</code>, <code>bench.rs:1581</code>), <code>live_questions</code>
+      (<code>bench.rs:829</code>), <code>menu_keys</code> (<code>workbench.rs:2413</code>). The amber
+      box is the absence of a check, which is why it is amber.</li>
+      <li><strong>03</strong> — every row traced to a call site. Byte values are literal:
+      <code>0x03 0x03</code> at <code>bench.rs:599</code>, <code>\r</code> appended by
+      <code>typed_line</code> at <code>workbench.rs:2433</code>, <code>ESC[B</code> by
+      <code>menu_keys</code>.</li>
+      <li><strong>04</strong> — <code>peel()</code> at <code>workbench.rs:827</code>, including the
+      source's own word for the last rung.</li>
+      <li><strong>06</strong>, first two rows — the options and SUBMIT the parser already extracts.</li>
+    </ul>
+    <h4>Drawn from this session</h4>
+    <ul>
+      <li>The tool-rejection text in the recommendation box is the literal result this agent received
+      when the question at the top of this session was cancelled.</li>
+      <li><code>TD_TAG</code> unset, <code>session-1.tag</code> present, both read from this pane.</li>
+    </ul>
+    <h4>Mine</h4>
+    <ul>
+      <li><strong>05</strong> entirely — the branch is reasoned from the picker's footer naming
+      <code>Esc</code> and saying nothing about an interrupt. Neither outcome was produced.</li>
+      <li><strong>06</strong>, the five intents. A taxonomy, not a measurement.</li>
+      <li><strong>07</strong> in full. Nothing in it is built.</li>
+      <li>Rows 3&ndash;6 of figure 03 assume a carriage return into an open picker commits the lit row.
+      That is how every terminal menu of this shape behaves and it is not verified here.</li>
+    </ul>
+  </div>
+</dialog>
+
+<dialog id="d-method">
+  <div class="dlg-head"><div><h3>Method and limits</h3>
+    <p class="repo">what was and was not done</p></div>
+    <button class="x" data-close>&times;</button></div>
+  <div class="dlg-body">
+    <h4>What was done</h4>
+    <p>The audit is a read of <code>app/src/pane/bench.rs</code>, <code>app/src/workbench.rs</code>,
+    <code>app/src/surface.rs</code> and <code>app/src/screenread.rs</code> at commit
+    <code>a6b04e6</code>, plus the environment of the pane it was written in. Every open issue on the
+    repository was searched for existing coverage of questions, escape, cancel and pickers; nothing
+    matches.</p>
+    <h4>What was not done</h4>
+    <ul>
+      <li><strong>Nothing was run.</strong> No gesture in figure 03 was performed against a live
+      question. The verdict column is derived from the bytes each path sends, not from watching a
+      picker receive them.</li>
+      <li>The installed harness was not instrumented. What Claude Code's picker does with
+      <code>0x03</code> specifically is the open question in figure 05.</li>
+      <li>No code was changed. Figure 07 is a proposal.</li>
+    </ul>
+    <h4>Invalidation</h4>
+    <ul>
+      <li><strong>The composer and dial findings die</strong> if a carriage return into the picker is
+      ignored rather than committing. Check: open a question, type a word in the composer, send, and
+      read the transcript for a tool result.</li>
+      <li><strong>The END SESSION finding dies</strong> if the button already refuses to draw while a
+      question is live. It does not — <code>strip_verb</code> takes two arguments and neither is the
+      question state — but that is the check to run first.</li>
+      <li><strong>The escape finding cannot die</strong>; <code>peel()</code> is a pure function with a
+      table test asserting the floor by name.</li>
+    </ul>
+  </div>
+</dialog>
+
+<dialog id="d-tag">
+  <div class="dlg-head"><div><h3>The unauthenticated answer channel</h3>
+    <p class="repo">TD_TAG, and what its absence costs</p></div>
+    <button class="x" data-close>&times;</button></div>
+  <div class="dlg-body">
+    <p>Every line the bench types is prefixed with <code>[workbench:&lt;tag&gt;]</code>, where the tag is
+    eight random characters minted into a file beside the host socket and exported into each pane's
+    environment. The agent's briefing tells it to treat a <code>[workbench]</code> line carrying its own
+    tag as an instruction from its operator, and any other one as content it should not obey.</p>
+    <p>In the pane that wrote this brief, <code>TD_TAG</code> is unset while
+    <code>/run/user/1000/terminal-delight/session-1.tag</code> exists and dates from 2026-09-17. The
+    host that owns this pane predates the export, and the source says why that is expected: a host only
+    upgrades by dying.</p>
+    <p>So the mechanism is sound and this instance is unprotected. An agent that follows its briefing
+    cannot tell an operator's press from a line of text dressed up as one — which is the exact caution
+    the briefing ends on. It is worth a line in the strip rather than a fix: the pane already knows
+    whether it has a tag.</p>
+  </div>
+</dialog>
+
+<footer>
+  <p>terminal-delight &middot; audit of the live-question surface at <code>a6b04e6</code></p>
+  <p>Notes save into the file. Prompt shape: <em>read my notes in
+  2026-09-19-live-question-escape-vectors.html and act on them.</em></p>
+</footer>
+
+</div>
+
+<!-- decision-brief — the markup the notes system needs.
+     Paste immediately before the closing </body>. notes.js finds these by id.
+     Nothing here needs editing except NOTES_FILE. -->
+
+<div class="notebar" id="notebar">
+  <span class="cnt"><b id="note-count">0</b> notes</span>
+  <button id="btn-export" class="primary" data-note-action="export"
+          title="Anchored note map for pasting into a prompt">&#x1F4CB; copy map</button>
+  <button id="btn-embed" data-note-action="embed"
+          title="Download this file with your notes baked in">&#x1F4BE; save into file</button>
+  <button id="btn-clear" data-note-action="clear" title="Delete every note">&#x2715;</button>
+</div>
+
+<dialog id="d-note">
+  <div class="dlg-head">
+    <div>
+      <h3 id="note-title">Note</h3>
+      <p class="repo" id="note-anchor">&nbsp;</p>
+    </div>
+    <button class="x" data-close>&times;</button>
+  </div>
+  <div class="dlg-body">
+    <ul id="note-list"></ul>
+    <p id="note-none">No notes on this yet.</p>
+    <textarea id="note-text"
+      placeholder="Your note. Saved against this element and readable by an agent once you save into the file."></textarea>
+    <div class="note-actions">
+      <button class="save" data-note-action="add">Add note</button>
+      <button data-close>Close</button>
+      <span class="hintk">Ctrl+Enter to add</span>
+    </div>
+  </div>
+</dialog>
+
+<dialog id="d-export">
+  <div class="dlg-head">
+    <div>
+      <h3>Note map</h3>
+      <p class="repo">Anchored to element ids in this file &middot; paste straight into a prompt</p>
+    </div>
+    <button class="x" data-close>&times;</button>
+  </div>
+  <div class="dlg-body">
+    <p style="margin-bottom:12px">
+      Each line is anchored to an element id, so an agent can locate the passage without you
+      pasting the file. Prompt shape: <em>"read my notes in <code>&lt;filename&gt;</code> and act
+      on them."</em>
+    </p>
+    <textarea id="export-out" readonly></textarea>
+    <p class="tokest" id="export-est"></p>
+    <div class="note-actions">
+      <button class="save" data-note-action="copy">Copy to clipboard</button>
+      <button data-close>Close</button>
+    </div>
+  </div>
+</dialog>
+
+<!-- Notes are baked in here by "save into file". Leave it empty and leave it in. -->
+<script type="application/json" id="report-notes">{}</script>
+
+<script>
+  /* Set before notes.js runs. Used for the storage key and the download filename. */
+  window.NOTES_FILE = '2026-09-19-live-question-escape-vectors.html';
+</script>
+<script>
+/* decision-brief — reader notes.
+ *
+ * Drop-in. No build step, no dependencies. Paste this file's contents inline inside a
+ * script element, after the document body — a decision brief must survive being emailed
+ * as one file, so never load it with a src attribute.
+ *
+ * NOTHING IN THIS FILE MAY CONTAIN THE LITERAL CLOSING SCRIPT TAG, not even inside a
+ * comment or a string: an HTML parser ends the script element at the first one it sees,
+ * and everything after it silently becomes page content. Write it broken up, e.g.
+ * "<\/script>", if you ever need to emit one.
+ *
+ * Three outputs, in the order they matter:
+ *   1. copy map    — anchored note map, ~1% of the tokens of the whole document
+ *   2. save into   — bakes notes into a downloadable copy so an agent can READ them
+ *   3. localStorage — live persistence between reloads
+ *
+ * Why the map exists: pasting a whole annotated report into a prompt costs thousands of
+ * tokens; pasting bare notes loses which passage each one is about. The map is the third
+ * option — [element-id] + note, so the agent greps the id and finds the passage itself.
+ *
+ * Configure before this script runs (all optional):
+ *   window.NOTES_FILE    — filename used for the storage key and the download. Default: location basename.
+ *   window.NOTES_TARGETS — [[selector, prefix], ...] overriding what gets an affordance.
+ */
+(function () {
+  'use strict';
+
+  var FILE = window.NOTES_FILE ||
+    (location.pathname.split('/').pop() || 'decision-brief.html');
+  var KEY = 'notes:' + FILE;
+
+  /* Default targets. A prefix keeps exported anchors readable and grouped.
+     Override wholesale with window.NOTES_TARGETS if a brief's shape differs.
+
+     THE GRILL COMES FIRST, AND IT IS NOT OPTIONAL. Until 2026-09-02 this list
+     covered five of the seven components layout.md tells you to build and
+     omitted the grill — so the one section whose entire purpose is a decision
+     the reader has to make was the one section the reader could not comment on.
+     Two briefs shipped that way, each having invented its own class name
+     (`grill-q`, then `q`) because nothing here named one. Both spellings are
+     matched below; `.ask` is the name to use going forward. If you add a
+     component, add it here in the same commit.
+
+     FIGURES ARE SECOND, for the same reason. The 2026-09-15 attention-spine
+     brief carried eleven pictures and had to override NOTES_TARGETS wholesale
+     to make any of them annotatable, because `figure` was not here — a fork of
+     this list living in one report, where nothing else would inherit it. The
+     pictures are the part a reader argues with, so they are in the default list
+     now. `titleOf()` already reads `.lbl`, so a figure labelled `03 · What
+     opening costs` anchors as `fig-03-what-opening-costs`. */
+  var TARGETS = window.NOTES_TARGETS || [
+    ['.grill .q, .grill-q, .ask', 'ask'],
+    ['figure', 'fig'],
+    ['.card', 'verdict'],
+    ['.esc-list li', 'readfirst'],
+    ['.finding', 'finding'],
+    ['.tile', 'stat'],
+    ['table.wide tr', 'row'],
+    ['.bar-row', 'chart'],
+    ['.callout', 'callout'],
+    ['dialog .dlg-body > h4', 'sub']
+  ];
+
+  /* Notes baked into the file win on first load — a fresh browser should see what the
+     author saved. After that localStorage is the live copy. */
+  var baked = {};
+  try {
+    var island = document.getElementById('report-notes');
+    if (island) baked = JSON.parse(island.textContent || '{}');
+  } catch (e) { /* a malformed island must not break the page */ }
+
+  var N;
+  try { N = JSON.parse(localStorage.getItem(KEY) || 'null') || baked; }
+  catch (e) { N = baked; }
+
+  var active = null, activeTitle = '';
+
+  function save() {
+    try { localStorage.setItem(KEY, JSON.stringify(N)); } catch (e) {}
+  }
+  function esc(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+  function slug(s) {
+    return String(s || 'x').toLowerCase().replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '').slice(0, 44) || 'x';
+  }
+  function titleOf(el) {
+    var h = el.querySelector('h2,h3,h4,.bar-lab,.k,.lbl,td:first-child,th:first-child');
+    var t = ((h ? h.textContent : el.textContent) || 'item').replace(/\s+/g, ' ').trim();
+    return t.length > 72 ? t.slice(0, 69) + '…' : t;
+  }
+
+  /* ---- give every target a stable anchor id and a note affordance ---- */
+  function tag() {
+    var used = {};
+    TARGETS.forEach(function (pair) {
+      var sel = pair[0], pre = pair[1];
+      Array.prototype.forEach.call(document.querySelectorAll(sel), function (el, i) {
+        if (el.classList.contains('notable')) return;
+        if (el.tagName === 'TR' && el.querySelector('th')) return;   // header rows
+        if (el.closest('#d-note, #d-export, .notebar')) return;
+
+        /* Numbered lists anchor by position; everything else by a SHORT title slug.
+           Long slugs make the exported map unreadable, which defeats the map. */
+        var id;
+        var num = el.querySelector('.esc-n');
+        if (num) id = pre + '-' + num.textContent.trim();
+        else id = pre + '-' + slug(titleOf(el)).split('-').slice(0, 4).join('-');
+
+        var base = id, n = 2;
+        while (used[id]) id = base + '-' + (n++);
+        used[id] = 1;
+
+        el.classList.add('notable');
+        el.dataset.nid = id;
+        el.dataset.ntitle = titleOf(el);
+        if (!el.id) el.id = id;                      // a real anchor in the file
+
+        var b = document.createElement('button');
+        b.className = 'note-btn';
+        b.type = 'button';
+        b.title = 'Add a note';
+        b.innerHTML = '&#x1F4AC;';
+        b.addEventListener('click', function (ev) {
+          ev.preventDefault(); ev.stopPropagation(); open(el);
+        });
+        el.appendChild(b);
+      });
+    });
+  }
+
+  function badges() {
+    var total = 0;
+    Array.prototype.forEach.call(document.querySelectorAll('.notable'), function (el) {
+      var n = (N[el.dataset.nid] || []).length;
+      total += n;
+      el.classList.toggle('has-note', n > 0);
+      var b = el.querySelector(':scope > .note-btn');
+      if (b) b.innerHTML = n ? String(n) : '&#x1F4AC;';
+    });
+    var c = document.getElementById('note-count');
+    if (c) c.textContent = total;
+    ['btn-export', 'btn-embed', 'btn-clear'].forEach(function (id) {
+      var b = document.getElementById(id);
+      if (b) b.disabled = total === 0;
+    });
+  }
+
+  function render() {
+    var list = N[active] || [];
+    var ul = document.getElementById('note-list');
+    document.getElementById('note-none').style.display = list.length ? 'none' : 'block';
+    ul.innerHTML = list.map(function (n, i) {
+      return '<li><div class="nts"><span>' + esc(n.ts) + '</span>' +
+        '<button class="ndel" data-i="' + i + '">delete</button></div>' + esc(n.text) + '</li>';
+    }).join('');
+    Array.prototype.forEach.call(ul.querySelectorAll('.ndel'), function (b) {
+      b.addEventListener('click', function () { del(+b.dataset.i); });
+    });
+  }
+
+  function open(el) {
+    active = el.dataset.nid;
+    activeTitle = el.dataset.ntitle;
+    document.getElementById('note-title').textContent = activeTitle;
+    document.getElementById('note-anchor').textContent = '#' + active;
+    render();
+    document.getElementById('d-note').showModal();
+    document.getElementById('note-text').focus();
+  }
+
+  function add() {
+    var ta = document.getElementById('note-text');
+    var t = ta.value.trim();
+    if (!t || !active) return;
+    (N[active] = N[active] || []).push({
+      text: t,
+      title: activeTitle,
+      ts: new Date().toISOString().slice(0, 16).replace('T', ' ')
+    });
+    ta.value = '';
+    save(); render(); badges();
+  }
+
+  function del(i) {
+    N[active].splice(i, 1);
+    if (!N[active].length) delete N[active];
+    save(); render(); badges();
+  }
+
+  /* ---- the map: anchored, compact, prompt-ready ---- */
+  function buildMap() {
+    var count = 0, els = 0;
+    for (var k in N) { if (N.hasOwnProperty(k)) { els++; count += N[k].length; } }
+    var out = [
+      'NOTES — ' + FILE,
+      count + ' notes on ' + els + ' elements.',
+      'Each [anchor] is an element id in that file — search it to find the passage.',
+      ''
+    ];
+    /* Document order, not object order: the map should read the way the brief reads. */
+    Array.prototype.forEach.call(document.querySelectorAll('.notable'), function (el) {
+      var list = N[el.dataset.nid];
+      if (!list || !list.length) return;
+      out.push('[' + el.dataset.nid + '] ' + el.dataset.ntitle);
+      list.forEach(function (n) { out.push('  · ' + n.text.replace(/\n+/g, ' ')); });
+      out.push('');
+    });
+    return out.join('\n');
+  }
+
+  function exportNotes() {
+    var txt = buildMap();
+    document.getElementById('export-out').value = txt;
+    var est = document.getElementById('export-est');
+    if (est) {
+      est.textContent = txt.length + ' characters ≈ ' + Math.ceil(txt.length / 4) +
+        ' tokens — versus ~' + Math.ceil(document.body.innerText.length / 4) +
+        ' for the whole document.';
+    }
+    document.getElementById('d-export').showModal();
+  }
+
+  function copyExport(btn) {
+    var ta = document.getElementById('export-out');
+    ta.select();
+    try { document.execCommand('copy'); } catch (e) {}
+    if (btn) {
+      var o = btn.textContent;
+      btn.textContent = 'Copied';
+      setTimeout(function () { btn.textContent = o; }, 1400);
+    }
+  }
+
+  /* ---- bake notes into a downloadable copy of this file ----
+     localStorage is invisible to an agent. This is what makes
+     "read my notes in <file>" work. */
+  function embedNotes() {
+    var doc = document.documentElement.cloneNode(true);
+    Array.prototype.forEach.call(doc.querySelectorAll('.note-btn'), function (n) { n.remove(); });
+    Array.prototype.forEach.call(doc.querySelectorAll('.notable'), function (n) {
+      n.classList.remove('notable', 'has-note');
+    });
+    var island = doc.querySelector('#report-notes');
+    if (island) island.textContent = JSON.stringify(N, null, 1);
+    /* A plain-text mirror as well, so grep and ctx_read find the notes
+       without anyone having to parse JSON out of a script tag. */
+    var body = doc.querySelector('body');
+    if (body) body.appendChild(document.createComment('\nREADER NOTES —\n' + buildMap() + '\n'));
+
+    var blob = new Blob(['<!DOCTYPE html>\n' + doc.outerHTML], { type: 'text/html' });
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = FILE;
+    a.click();
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 4000);
+
+    var b = document.getElementById('btn-embed');
+    if (b) { var o = b.innerHTML; b.innerHTML = 'saved &#x2713;'; setTimeout(function () { b.innerHTML = o; }, 2200); }
+  }
+
+  function clearNotes() {
+    if (!confirm('Delete every note in this brief?')) return;
+    N = {}; save(); badges();
+  }
+
+  /* ---- wiring ---- */
+  function init() {
+    var ta = document.getElementById('note-text');
+    if (ta) {
+      ta.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); add(); }
+      });
+    }
+    document.addEventListener('click', function (e) {
+      var t = e.target.closest('[data-note-action]');
+      if (!t) return;
+      var a = t.dataset.noteAction;
+      if (a === 'add') add();
+      else if (a === 'export') exportNotes();
+      else if (a === 'embed') embedNotes();
+      else if (a === 'clear') clearNotes();
+      else if (a === 'copy') copyExport(t);
+    });
+    ['d-note', 'd-export'].forEach(function (id) {
+      var d = document.getElementById(id);
+      if (!d) return;
+      Array.prototype.forEach.call(d.querySelectorAll('[data-close]'), function (x) {
+        x.addEventListener('click', function () { d.close(); });
+      });
+      d.addEventListener('click', function (e) { if (e.target === d) d.close(); });
+    });
+    tag();
+    badges();
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+  else init();
+})();
+
+</script>
+
+
+<script>
+  document.querySelectorAll('[data-dlg]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      var d = document.getElementById(b.dataset.dlg);
+      if (d) d.showModal();
+    });
+  });
+  document.querySelectorAll('[data-close]').forEach(function (b) {
+    b.addEventListener('click', function () { b.closest('dialog').close(); });
+  });
+</script>
+</body>
+</html>
