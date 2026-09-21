@@ -230,10 +230,52 @@ Which hook events it is wired to, and what each yields:
 The ledger hook (`td-agent-ledger`, `SessionStart`/`SessionEnd`) is a separate
 script with a separate job and is not folded in.
 
-Other harnesses: Codex CLI and Gemini CLI both have tool-lifecycle hooks; neither
-has been driven against this adapter, and a question tool that can be
-pre-answered has not been established for either. An agent with no adapter is a
-**screen-only** agent, and the bench draws it as one.
+Other harnesses: Codex CLI and Gemini CLI both have tool-lifecycle hooks. Gemini
+remains undriven. **Codex was driven on 2026-09-21 and can ask a round**, so the
+sentence that stood here — that a pre-answerable question tool had not been
+established for either — is now half false and is corrected below. An agent with
+no adapter is a **screen-only** agent, and the bench draws it as one.
+
+### Codex, measured
+
+`request_user_input` (codex 0.151.0) asked **three questions in one call** in a
+live TUI, drew `Question 1/3`, auto-advanced on each answer and closed
+`Questions 3/3 answered`. Its shape is this spec's shape:
+
+```json
+{ "questions": [ { "header": "…", "id": "…", "question": "…",
+                   "options": [ { "label": "…", "description": "…" } ] } ] }
+```
+
+Claude's minus `multiSelect` and `preview`, plus `id` — so `Asked::parse` reads
+it verbatim, with `multi` false and `preview` absent as honest readings.
+
+Three things stand between that and a Codex round on the bench, none of them in
+this protocol:
+
+1. **No Codex `PreToolUse` matcher reaches the tool.** They are `Bash|Read|Grep|Glob`
+   and a Read-family list, so only the `.*` `PostToolUse` hook fires — and its
+   payload carried `{"answers": …}` with **zero questions**. The question is not
+   withheld; nobody asks for it.
+2. **The adapter matches `AskUserQuestion` only**, so it would skip the tool even
+   once a matcher reached it.
+3. **Codex keys its answers by question `id`** (`{"colour":{"answers":["Red …"]}}`)
+   where Claude keys by question text, so §5's answer map needs the id where one
+   exists.
+
+Two constraints to design around rather than against: the tool is **off by
+default** (`[tools.experimental_request_user_input]`, a struct not a boolean) and
+**Plan mode only** — `default_mode_request_user_input` reports *under
+development*, which is OpenAI's to ship.
+
+**Still unmeasured, and load-bearing:** Codex's `PreToolUse` payload has never
+been captured, because no matcher reached the tool. That it carries `tool_input`
+is inferred from Codex using the same event names and envelope elsewhere. And
+`codex exec` is not a substitute for a TTY — `request_user_input` is refused
+there and `PreToolUse` does not fire, though `Stop` does.
+
+Reproducer: `reports/_codexask.py`. Full write-up:
+`reports/2026-09-21-can-codex-ask-a-round.html`.
 
 ---
 

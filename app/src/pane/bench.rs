@@ -1311,7 +1311,17 @@ impl TerminalView {
     ///
     /// Built here rather than in [`crate::benchdraw`] because every element in
     /// it carries a click zone, and a zone is a statement about what a press
-    /// MEANS — which is the one thing that file is asserted not to contain.
+    /// MEANS — which belongs with the pane that dispatches it.
+    ///
+    /// **This used to say the renderer is "asserted not to contain" press
+    /// meanings, and no such assertion exists.** The guard next door,
+    /// `a_renderer_contains_no_decisions`, refuses clocks, environment reads and
+    /// numeric thresholds; it has never looked at `Hit`, and `benchdraw::zone`
+    /// takes one as a parameter. A sentence claiming a problem is already
+    /// policed is worse than no sentence: it stops the next reader checking, and
+    /// it cost one this afternoon, who went looking for a guard they were about
+    /// to break and found it did not exist. The convention is real and worth
+    /// keeping — it is simply a convention, held by people, not a test.
     ///
     /// The dials are drawn only while an agent is actually in the pane. A dial
     /// on an ended pane would be a control for changing the mind of something
