@@ -1007,7 +1007,15 @@ impl Group {
         match self {
             Group::Reading => "reading",
             Group::Evidence => "evidence",
-            Group::Next => "next",
+            // `steps`, not `next`. In a row of three tabs the word `next` is
+            // read as a NAVIGATION control — the thing that takes you to the
+            // following tab — rather than as the name of what is inside this
+            // one. Parker: *"next is wrong because that is nav — should read
+            // STEPS"*. The register keys underneath are untouched: an agent
+            // still sends `next`, and `asks` still lands here too, which is
+            // the other reason a verb-ish word was the wrong name for a tab
+            // holding both.
+            Group::Next => "steps",
             Group::Other => "other",
         }
     }
@@ -2794,12 +2802,23 @@ mod tests {
         for (register, group) in table {
             assert_eq!(Group::of(register), group, "{register:?}");
         }
-        // The labels are lowercase single nouns, like the rail's own strip.
+        // The labels are lowercase single NOUNS, like the rail's own strip.
+        //
+        // A noun names what is behind the tab. A word that reads as a movement
+        // — `next`, `back`, `more` — names what the CONTROL does, and in a row
+        // of three tabs a reader takes it for the button that advances them.
+        // Parker: *"next is wrong because that is nav — should read STEPS"*.
         for g in Group::ALL {
             let l = g.label();
             assert_eq!(l, l.to_lowercase(), "{g:?} is lowercase");
             assert!(!l.contains(' '), "{g:?} is one word");
+            assert!(
+                !matches!(l, "next" | "back" | "more" | "previous" | "forward"),
+                "{g:?} is labelled {l:?}, which reads as navigation rather than as \
+                 the name of what is inside the tab"
+            );
         }
+        assert_eq!(Group::Next.label(), "steps");
     }
 
     #[test]

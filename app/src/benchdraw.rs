@@ -496,44 +496,49 @@ pub fn shelf_tab(
         .child(shelf.label().to_string())
 }
 
-/// The weights strip: effort, complexity, depth, confidence.
+/// The weights: effort, complexity, depth, confidence.
 ///
 /// A surface the agent did not weigh says so in one word rather than showing
 /// four empty slots — four `unavailable`s in a row is noise, and one honest
 /// sentence is the same fact.
+///
+/// **NOT CHIPS.** These were four `sk.chip(false)` pills sitting directly above
+/// the tab strip, which is a row of chips you press — so the card offered eight
+/// identical-looking controls of which four did nothing at all. Parker: *"the
+/// TASK STATS row … cards need to be bordered and grouped together and made
+/// obvious they are NOT CLICKABLE BUTTONS … these are read only"*.
+///
+/// So: one border around the group rather than one border per value, and every
+/// value wears its own name. Naming them is what makes them unmistakably a
+/// readout — `involved` and `measured` are bare words that could be anything,
+/// and `complexity involved` could not be a button. It also says two things the
+/// old row never did, because nothing but the ordering distinguished a
+/// complexity from a confidence.
+///
+/// Colour survives the change: depth and confidence are the two weights that
+/// carry an argument, and they keep their inks.
 pub fn weights(w: &Weight, sk: &Skin, th: &Theme) -> Div {
-    let row = div()
-        .flex()
-        .flex_row()
-        .flex_wrap()
-        .gap(px(6.))
-        .items_center();
     if w.is_silent() {
-        return row.child(micro("unweighed", Step::Note, sk.ink.ink_faint, sk, th));
+        return div().child(micro("unweighed", Step::Note, sk.ink.ink_faint, sk, th));
     }
-    let pill = |text: String, colour: Hsla| {
-        sk.chip(false)
-            .text_size(px(sk.pt(Step::Fine)))
-            .font_family(th.font_family.clone())
-            .text_color(colour)
-            .child(text)
-    };
-    row.when_some(w.effort, |d, e| {
-        d.child(pill(
-            format!(
-                "effort {}",
-                match e {
-                    crate::surface::Effort::Small => "S",
-                    crate::surface::Effort::Medium => "M",
-                    crate::surface::Effort::Large => "L",
-                    crate::surface::Effort::Epic => "XL",
-                }
-            ),
+    // name, value, and the value's ink.
+    let mut facts: Vec<(&'static str, String, Hsla)> = Vec::new();
+    if let Some(e) = w.effort {
+        facts.push((
+            "effort",
+            match e {
+                crate::surface::Effort::Small => "S",
+                crate::surface::Effort::Medium => "M",
+                crate::surface::Effort::Large => "L",
+                crate::surface::Effort::Epic => "XL",
+            }
+            .to_string(),
             th.text,
-        ))
-    })
-    .when_some(w.complexity, |d, c| {
-        d.child(pill(
+        ));
+    }
+    if let Some(c) = w.complexity {
+        facts.push((
+            "complexity",
             match c {
                 crate::surface::Complexity::Trivial => "trivial",
                 crate::surface::Complexity::Moderate => "moderate",
@@ -542,9 +547,9 @@ pub fn weights(w: &Weight, sk: &Skin, th: &Theme) -> Div {
             }
             .to_string(),
             th.text,
-        ))
-    })
-    .when_some(w.foundation.clone(), |d, f| {
+        ));
+    }
+    if let Some(f) = w.foundation.clone() {
         // Depth is the field a reviewer actually wants, so bedrock is the one
         // weight allowed to shout.
         let colour = match f.depth {
@@ -552,9 +557,10 @@ pub fn weights(w: &Weight, sk: &Skin, th: &Theme) -> Div {
             Depth::Subsystem => th.accent,
             _ => th.text,
         };
-        d.child(pill(
+        facts.push((
+            "depth",
             format!(
-                "{} · {}",
+                "{} \u{b7} {}",
                 match f.depth {
                     Depth::Leaf => "leaf",
                     Depth::Component => "component",
@@ -564,9 +570,9 @@ pub fn weights(w: &Weight, sk: &Skin, th: &Theme) -> Div {
                 clip(&f.system, 22)
             ),
             colour,
-        ))
-    })
-    .when_some(w.confidence, |d, c| {
+        ));
+    }
+    if let Some(c) = w.confidence {
         let colour = match c {
             Confidence::Measured => th.text,
             // Amber — yours to argue with. The same ink the doubts use, because
@@ -574,8 +580,34 @@ pub fn weights(w: &Weight, sk: &Skin, th: &Theme) -> Div {
             Confidence::Inferred | Confidence::Hunch => ink(crate::workbench::Tint::Pending, th),
             Confidence::Unknown => sk.ink.ink_faint,
         };
-        d.child(pill(c.label().to_string(), colour))
-    })
+        facts.push(("confidence", c.label().to_string(), colour));
+    }
+    div()
+        .flex()
+        .flex_row()
+        .flex_wrap()
+        .items_center()
+        .gap(px(13.))
+        .px(px(10.))
+        .py(px(5.))
+        .rounded(sk.radius())
+        .border_1()
+        .border_color(sk.ink.rule)
+        .children(facts.into_iter().map(|(name, value, colour)| {
+            div()
+                .flex()
+                .flex_row()
+                .items_baseline()
+                .gap(px(4.))
+                .child(micro(sk.caps(name), Step::Tag, sk.ink.ink_faint, sk, th))
+                .child(
+                    div()
+                        .text_size(px(sk.pt(Step::Fine)))
+                        .font_family(th.font_family.clone())
+                        .text_color(colour)
+                        .child(value),
+                )
+        }))
 }
 
 /// The body of whatever is selected, at the size this pane can honestly show.
@@ -1011,12 +1043,15 @@ fn response(r: &Response, picks: Option<&Picks>, sk: &Skin, th: &Theme) -> Div {
     let picked_key = open_group.and_then(|g| picks.and_then(|p| (p.reg)(g)));
     let shown = crate::workbench::resolve_leaf(picked_key.as_deref(), leaves);
 
-    let frame = div().flex().flex_col().gap(px(6.));
+    let frame = div().flex().flex_col().gap(px(4.));
+    // Whether the tabs are drawn at all decides whether there is a PANEL to
+    // draw under them — a bare gist keeps its no-chrome shape.
+    let stripped = crate::workbench::draws_strip(&tabs);
 
     // THE STRIP — one tab per group, and never a strip of one. A single tab
     // says nothing a reader did not already know and costs a row on the card
     // that most replies are: a gist and nothing else.
-    let frame = frame.when(crate::workbench::draws_strip(&tabs), |d| {
+    let frame = frame.when(stripped, |d| {
         d.child(
             div()
                 .flex()
@@ -1065,10 +1100,33 @@ fn response(r: &Response, picks: Option<&Picks>, sk: &Skin, th: &Theme) -> Div {
         )
     });
 
+    // THE PANEL — a border around WHAT THE OPEN TAB IS SHOWING, in the tab's
+    // own lit colour, so the strip reads as tabs on a folder rather than as
+    // three words floating above some prose. Parker, on the chip row and the
+    // body under it: *"which should be BORDERED around their associated
+    // section … that changes per what user clicks"*.
+    //
+    // It is the ACTIVE facet's tint because that is the ink the lit tab
+    // already underlines itself with — the border and the tab are the same
+    // colour because they are the same thing. Alpha, not a second token: a
+    // full-strength box around body text competes with the body.
+    //
+    // Only when there IS a strip. A reply that is a gist and nothing else
+    // draws no tabs, and boxing two sentences that nobody chose to see would
+    // put the chrome back that removing the accordion took away.
+    let lit = crate::emphasis::facet(crate::emphasis::Emphasis::Active, th);
+    let panel = div().flex().flex_col().gap(px(6.)).when(stripped, |d| {
+        d.px(px(11.))
+            .py(px(9.))
+            .rounded(sk.radius_lg())
+            .border_1()
+            .border_color(lit.tint.alpha(0.45))
+    });
+
     // THE CHIP ROW — quieter than the strip, and absent when the open tab holds
     // one thing. Two rows of chrome over a single register is the chrome this
     // change exists to remove.
-    let frame = frame.when(crate::workbench::draws_chips(leaves), |d| {
+    let panel = panel.when(crate::workbench::draws_chips(leaves), |d| {
         d.child(
             div()
                 .flex()
@@ -1115,7 +1173,7 @@ fn response(r: &Response, picks: Option<&Picks>, sk: &Skin, th: &Theme) -> Div {
     // ONE BODY. The shown register IS the lit one now — which is what took
     // `emphasis::shelf()`'s only caller away: there is no row of things to tier
     // when only one of them is on screen.
-    let frame = frame.when_some(shown, |d, leaf| match leaf {
+    let panel = panel.when_some(shown, |d, leaf| match leaf {
         Leaf::Gist => d.child(section_body(
             &crate::surface::Body::Prose(r.tldr.clone()),
             Register::Tldr,
@@ -1128,7 +1186,7 @@ fn response(r: &Response, picks: Option<&Picks>, sk: &Skin, th: &Theme) -> Div {
 
     // The doubts block, drawn when the doubts are what is being read.
     let showing_doubts = matches!(shown, Some(Leaf::Doubts));
-    frame.when(showing_doubts && !r.doubts.is_empty(), |d| {
+    let panel = panel.when(showing_doubts && !r.doubts.is_empty(), |d| {
         // The doubts are neither reading nor a summons: they are present, and
         // they make no claim on the reader's attention. The only colour in the
         // block is each claim's own confidence, which is the information in it.
@@ -1217,7 +1275,10 @@ fn response(r: &Response, picks: Option<&Picks>, sk: &Skin, th: &Theme) -> Div {
                         })
                 })),
         )
-    })
+    });
+
+    // The strip, then everything the strip is about, inside one boundary.
+    frame.child(panel)
 }
 
 /// A section's contents by its shape: prose as lines, a list as bullets —
@@ -3626,6 +3687,69 @@ mod tests {
         assert_eq!(clip("abcdefghij", 5), "abcd…");
         // A multi-byte title must not be cut mid-character.
         assert_eq!(clip("→→→→→→", 3), "→→…");
+    }
+
+    /// The function body, with its comments stripped and its own tests cut off.
+    ///
+    /// Comments go first so neither the explanation above a line nor the prose
+    /// in this test can satisfy a gate that is looking for the line itself —
+    /// a source grep has passed on a comment in this repository before.
+    fn body_of<'a>(src: &'a str, signature: &str) -> String {
+        let code: String = src
+            .split_once("\n#[cfg(test)]")
+            .map_or(src, |(before, _)| before)
+            .lines()
+            .map(|l| l.split("//").next().unwrap_or(""))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let at = code
+            .find(signature)
+            .unwrap_or_else(|| panic!("{signature} is gone"));
+        let rest = &code[at..];
+        // A top-level fn ends at the first brace in column zero; a method, at
+        // the first one at the impl's own indent.
+        let end = rest
+            .find("\n}")
+            .or_else(|| rest.find("\n    }"))
+            .map_or(rest.len(), |i| i + 2);
+        rest[..end].to_string()
+    }
+
+    /// Two pieces of chrome a person asked to be rid of, kept gone.
+    ///
+    /// Both are drawing, so nothing in a headless suite can see them. What CAN
+    /// be seen is the call that would bring each one back, and in both cases
+    /// the regression is a single familiar line somebody reaches for without
+    /// knowing it was removed on purpose.
+    #[test]
+    fn the_read_only_weights_are_not_chips_and_the_routing_lines_stay_off() {
+        // A weight is a READOUT. Drawn with `sk.chip` it is the same object as
+        // the tab strip immediately under it, so the card offered eight
+        // identical controls and four of them did nothing. Parker: *"made
+        // obvious they are NOT CLICKABLE BUTTONS … these are read only"*.
+        let weights = body_of(include_str!("benchdraw.rs"), "pub fn weights(");
+        assert!(
+            !weights.contains("sk.chip("),
+            "the weights are wearing the chip again:\n{weights}"
+        );
+        assert!(
+            weights.contains("border_color("),
+            "the weights lost the one border that groups them:\n{weights}"
+        );
+
+        // And the verb previews — the routing line and the tagged prompt text
+        // under every card — are a diagnostic rather than something a reader
+        // is shown. Parker: *"that machine stuff at the bottom … human does
+        // not need to see that"*.
+        let verbs = body_of(include_str!("pane/bench.rs"), "fn bench_verbs(");
+        assert!(
+            verbs.contains("TD_VERB_PREVIEW"),
+            "the verb previews are on for everybody again:\n{verbs}"
+        );
+        assert!(
+            verbs.contains("when(auditing"),
+            "the preview block is built but no longer gated on the flag:\n{verbs}"
+        );
     }
 
     #[test]
