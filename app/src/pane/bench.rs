@@ -805,7 +805,13 @@ impl TerminalView {
             // history the mirror used to borrow from the agent, kept here.
             let recalling =
                 self.wb_recall.is_some() || self.wb_compose.as_ref().is_some_and(|l| l.is_empty());
-            if !ctrl && !ks.modifiers.alt && recalling && matches!(key, "up" | "down") {
+            if crate::workbench::recalls_history(
+                key,
+                ctrl,
+                ks.modifiers.alt,
+                ks.modifiers.shift,
+                recalling,
+            ) {
                 self.bench_recall(key == "up", cx);
                 return true;
             }
@@ -1039,11 +1045,15 @@ impl TerminalView {
         self.bench_deliver(vec![0x03], cx);
     }
 
-    /// Put the draft on the clipboard — and take it out of the box when `cut`.
+    /// Put the SELECTION on the clipboard — or the whole draft when nothing
+    /// is selected — and take it out of the box when `cut`.
     ///
-    /// The whole draft, because select-all is the only selection the composer
-    /// has (see [`crate::workbench::Line`]); a person who pressed ctrl+c with
-    /// nothing marked meant the words in front of them.
+    /// The fallback to the whole draft is deliberate and is the older
+    /// behaviour: a person who pressed ctrl+c with nothing highlighted meant
+    /// the words in front of them, and a copy that silently did nothing would
+    /// be the worse answer. What changed is that "nothing highlighted" is now
+    /// a real question — until `Line` grew an anchor, select-all was the only
+    /// selection there was, so this always took everything.
     fn bench_copy_draft(&mut self, cut: bool, cx: &mut Context<Self>) {
         let Some(line) = self.wb_compose.as_mut() else {
             return;
@@ -1051,11 +1061,17 @@ impl TerminalView {
         if line.is_empty() {
             return;
         }
-        let text = line.text().to_string();
+        let partial = line.selected_text().map(str::to_string);
+        let text = partial.clone().unwrap_or_else(|| line.text().to_string());
         cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
         if cut {
-            line.apply(crate::workbench::Edit::SelectAll);
-            line.apply(crate::workbench::Edit::Delete);
+            if partial.is_some() {
+                // Delete consumes the selection and leaves the rest standing.
+                line.apply(crate::workbench::Edit::Delete);
+            } else {
+                line.apply(crate::workbench::Edit::SelectAll);
+                line.apply(crate::workbench::Edit::Delete);
+            }
         }
         cx.notify();
     }
