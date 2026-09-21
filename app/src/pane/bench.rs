@@ -2088,8 +2088,10 @@ impl TerminalView {
             .position(|(i, _)| i >= byte)
             .unwrap_or(line.chars())
             .min(line.chars());
-        line.seek(to);
-        line.clear_mark();
+        // One call, both halves: the caret moves and the selection goes.
+        // See [`crate::workbench::Line::place`] — this was a `seek` with a
+        // `clear_mark` remembered beside it, and `seek` was public.
+        line.place(to);
         cx.notify();
     }
 

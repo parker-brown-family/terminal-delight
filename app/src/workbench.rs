@@ -667,7 +667,7 @@ impl Line {
     /// composer owns the draft — so the convention wins. Parker, on the box
     /// not answering the chord at all: *"Ctrl+a does not highlight all in the
     /// workbench text area"*.
-    pub fn mark_all(&mut self) {
+    fn mark_all(&mut self) {
         self.anchor = (!self.text.is_empty()).then_some(0);
         self.caret = self.chars();
     }
@@ -717,14 +717,14 @@ impl Line {
 
     /// Drop the selection without touching the text — any unshifted motion
     /// does this.
-    pub fn clear_mark(&mut self) {
+    fn clear_mark(&mut self) {
         self.anchor = None;
     }
 
     /// Delete what is selected and report that something went. The caret
     /// lands where the selection started, which is where the replacement for
     /// it belongs.
-    pub fn take_marked(&mut self) -> bool {
+    fn take_marked(&mut self) -> bool {
         let Some((lo, hi)) = self.sel_range() else {
             return false;
         };
@@ -809,24 +809,38 @@ impl Line {
         true
     }
 
-    /// Put the caret at a character index, clamped to the line.
-    pub fn seek(&mut self, to: usize) {
-        self.caret = to.min(self.chars());
+    /// Put the caret somewhere by index — a click — and drop the selection.
+    ///
+    /// **The only way in from outside this type.** The four movers below are
+    /// private because each moves the caret and leaves the anchor alone,
+    /// which is right inside [`Line::apply`] — where the rule about what a
+    /// selection survives is applied once, for all of them — and is a trap
+    /// anywhere else.
+    ///
+    /// It was a trap. `seek` was public, `bench_click` called it, and a click
+    /// into a select-all left the highlight standing while the caret moved
+    /// (#615), found by reading rather than by a test. The first fix put a
+    /// `clear_mark()` beside the call, which repairs the instance and leaves
+    /// the next caller to remember. This is the shape that needs no
+    /// remembering: there is one door, and it does both halves.
+    pub fn place(&mut self, at: usize) {
+        self.caret = at.min(self.chars());
+        self.anchor = None;
     }
 
-    pub fn left(&mut self) {
+    fn left(&mut self) {
         self.caret = self.caret.saturating_sub(1);
     }
 
-    pub fn right(&mut self) {
+    fn right(&mut self) {
         self.caret = (self.caret + 1).min(self.chars());
     }
 
-    pub fn home(&mut self) {
+    fn home(&mut self) {
         self.caret = 0;
     }
 
-    pub fn end(&mut self) {
+    fn end(&mut self) {
         self.caret = self.chars();
     }
 
@@ -5429,7 +5443,7 @@ mod tests {
             // line break in it so `up`/`down` are doing real work.
             let seed = || {
                 let mut l = Line::holding("alpha beta\ngamma delta");
-                l.seek(6);
+                l.place(6);
                 l
             };
             let (mut moved, mut extended) = (seed(), seed());
@@ -5446,7 +5460,7 @@ mod tests {
     #[test]
     fn the_anchor_stays_put_while_the_caret_walks() {
         let mut l = Line::holding("alpha beta gamma");
-        l.seek(6);
+        l.place(6);
         for _ in 0..4 {
             l.apply(Edit::Extend(Motion::Right));
         }
@@ -5465,7 +5479,7 @@ mod tests {
     #[test]
     fn a_selection_walked_back_onto_its_anchor_is_no_selection() {
         let mut l = Line::holding("alpha");
-        l.seek(2);
+        l.place(2);
         l.apply(Edit::Extend(Motion::Right));
         assert_eq!(l.sel_range(), Some((2, 3)));
         l.apply(Edit::Extend(Motion::Left));
@@ -5476,12 +5490,46 @@ mod tests {
         );
     }
 
+    /// The exact sequence from #615, pinned so it cannot come back.
+    ///
+    /// Select all, click into the middle, type. The old model left the
+    /// highlight standing through the click — `seek` was public and moved
+    /// only the caret — so the next character replaced the whole draft on
+    /// one side and appended on the other. `place` is now the only way in
+    /// and it does both halves, and there is no second copy to disagree.
+    #[test]
+    fn a_click_into_a_selection_drops_it_and_types_where_you_clicked() {
+        let mut l = Line::holding("alpha beta gamma");
+        l.apply(Edit::SelectAll);
+        assert_eq!(l.sel_range(), Some((0, 16)), "the whole draft is selected");
+
+        l.place(9);
+        assert_eq!(l.sel_range(), None, "the click dropped the selection");
+        assert_eq!(l.caret(), 9, "and left the caret where it landed");
+
+        l.insert("X");
+        assert_eq!(
+            l.text(),
+            "alpha betXa gamma",
+            "typing inserts at the click rather than replacing the draft"
+        );
+    }
+
+    #[test]
+    fn place_clamps_past_the_end_rather_than_panicking() {
+        let mut l = Line::holding("short");
+        l.apply(Edit::SelectAll);
+        l.place(9_999);
+        assert_eq!(l.caret(), 5);
+        assert_eq!(l.sel_range(), None);
+    }
+
     #[test]
     fn typing_over_a_selection_replaces_only_the_selected_run() {
         // The bit could not do this: `insert` wiped the whole draft, because
         // select-all was the only selection that existed.
         let mut l = Line::holding("alpha beta gamma");
-        l.seek(6);
+        l.place(6);
         for _ in 0..4 {
             l.apply(Edit::Extend(Motion::Right));
         }
@@ -5495,7 +5543,7 @@ mod tests {
     fn backspace_and_delete_take_the_selected_run_and_leave_the_rest() {
         for edit in [Edit::Backspace, Edit::Delete] {
             let mut l = Line::holding("alpha beta gamma");
-            l.seek(5);
+            l.place(5);
             for _ in 0..5 {
                 l.apply(Edit::Extend(Motion::Right));
             }
@@ -5510,7 +5558,7 @@ mod tests {
     #[test]
     fn a_shift_selection_survives_being_extended_by_a_different_motion() {
         let mut l = Line::holding("alpha beta gamma");
-        l.seek(0);
+        l.place(0);
         l.apply(Edit::Extend(Motion::WordRight));
         let after_word = l.sel_range().expect("a word is selected");
         l.apply(Edit::Extend(Motion::End));
@@ -5524,7 +5572,7 @@ mod tests {
     #[test]
     fn shift_selects_across_a_line_break() {
         let mut l = Line::holding("alpha\nbeta");
-        l.seek(3);
+        l.place(3);
         l.apply(Edit::Extend(Motion::Down));
         let (lo, hi) = l.sel_range().expect("down selected into the next row");
         assert_eq!(lo, 3);
@@ -5536,7 +5584,7 @@ mod tests {
     fn the_selection_is_byte_correct_over_multibyte_text() {
         // A char range read as bytes would slice an em dash in half and panic.
         let mut l = Line::holding("é—ü ascii");
-        l.seek(0);
+        l.place(0);
         for _ in 0..3 {
             l.apply(Edit::Extend(Motion::Right));
         }
@@ -5548,13 +5596,13 @@ mod tests {
     #[test]
     fn undo_and_submit_and_clear_all_drop_the_selection() {
         let mut l = Line::holding("alpha beta");
-        l.seek(0);
+        l.place(0);
         l.apply(Edit::Extend(Motion::WordRight));
         l.apply(Edit::Undo);
         assert_eq!(l.sel_range(), None, "undo leaves no stale highlight");
 
         let mut l = Line::holding("alpha beta");
-        l.seek(0);
+        l.place(0);
         l.apply(Edit::Extend(Motion::WordRight));
         l.apply(Edit::Submit);
         assert_eq!(l.sel_range(), None);
@@ -5659,10 +5707,10 @@ mod tests {
 
         // ctrl+u and ctrl+k, from the middle.
         let mut l = Line::holding("the quick brown fox");
-        l.seek(10);
+        l.place(10);
         l.apply(Edit::KillToStart);
         assert_eq!((l.text(), l.caret()), ("brown fox", 0));
-        l.seek(5);
+        l.place(5);
         l.apply(Edit::KillToEnd);
         assert_eq!((l.text(), l.caret()), ("brown", 5));
 
