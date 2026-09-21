@@ -7755,7 +7755,6 @@ impl Render for TerminalView {
         // and BENCH — combine into a single bordered slider toggler, also pretty
         // unreadable"*. See [`skin::Skin::slider`].
         let face_now = self.bench.face();
-        let unseen = self.bench_unseen();
         let queued = self.bench_queued();
         let face_toggle = {
             let half = |face: crate::workbench::Face, cx: &mut Context<Self>| {
@@ -7804,20 +7803,21 @@ impl Render for TerminalView {
                             .child(why),
                     )
                 })
-                // The count of work objects nobody has looked at — the only
-                // number on the header, and it is absent rather than zero when
-                // there is nothing waiting.
-                .when(
-                    unseen > 0 && face_now == crate::workbench::Face::Terminal,
-                    |d| {
-                        d.child(
-                            div()
-                                .text_size(px((hicon * 0.40).max(8.)))
-                                .text_color(th.complement)
-                                .child(format!("{unseen}")),
-                        )
-                    },
-                )
+            // NO BARE NUMBER LIVES HERE.
+            //
+            // A second badge used to sit beside that one holding the count of
+            // surfaces nobody had opened, drawn as the digit alone. Parker, on
+            // seeing a `2` next to BENCH: *"the little 2 up here beside bench
+            // needs to go away - not sure what that is"* — and not knowing what
+            // it is IS the defect. The badge above it counts the same kind of
+            // thing and says `2 answers waiting`, which anybody can read once
+            // and never wonder about again.
+            //
+            // The rule this leaves behind: **a number on the chrome says what
+            // it counts, or it does not go on the chrome.** An unread count is
+            // not worth a word here, because arriving unread is the normal
+            // state of a feed — the shelf rows already carry an unseen dot
+            // each, which is where a person is when the distinction matters.
         };
 
         // The bench is built here, before the element tree that will hold it,
