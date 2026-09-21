@@ -154,8 +154,27 @@ So the product question, in the person's terms:
    gesture away from a person who has it today.
 3. **Make the agent ask over the channel instead of over stdin.** The real fix
    and the most expensive one: a question becomes a surface with a reply address
-   rather than a menu drawn on a terminal. It cannot be done unilaterally — the
-   agent has to participate — so it is a direction, not a slice.
+   rather than a menu drawn on a terminal.
+
+   **This option was written as needing the agent's cooperation, and that is no
+   longer true.** The sentence here read *"It cannot be done unilaterally — the
+   agent has to participate — so it is a direction, not a slice."* Measured
+   2026-09-21, after Parker approved the matcher: a `PreToolUse` hook on
+   `AskUserQuestion` fires before the picker paints and is handed `tool_input`
+   complete — every question, every option, every preview (633/451/393 characters
+   on the round that proved it). The pre-phase is read off the payload rather than
+   inferred: it carries `questions` and **no `answers`**, where the post-phase
+   record carries both.
+
+   So the whole round can reach the workbench with the agent knowing nothing about
+   any protocol, which is precisely the agent `derive.rs` was written to serve.
+   What the hook does **not** give is a reply path — it is a read, not a channel —
+   so option 3's expense moves from *getting the question out* to *getting an
+   answer back*. Still a direction rather than a slice, for a different and
+   smaller reason than the one originally written here.
+
+   Evidence and the fail-safe construction are in #619; the hook lives in
+   `~/.claude/settings.json` and writes `~/.claude/askhook.log`.
 
 #### Evidence for option 3, and a fourth participant nobody has costed
 
