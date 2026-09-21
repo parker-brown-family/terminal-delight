@@ -1367,7 +1367,30 @@ fn section_body(body: &Body, register: Register, sk: &Skin, th: &Theme) -> Div {
 /// separate waiting rows, which is true of the data and wrong about the work —
 /// Parker: *"it should feel more like progress along a workflow, but be a
 /// SINGLE DECISION NODE even if we are making multiple decisions"*.
-pub fn round_progress(round: &crate::surface::Round, sk: &Skin, th: &Theme) -> Div {
+/// NAMED, because the names are the whole point and we already have them.
+///
+/// The first version of this drew one blank segment per question and the words
+/// "1 of 2 answered". Both facts were true and neither said *which* question —
+/// so a person looking at the bench mid-round could not tell what the other
+/// questions were, or that the one on screen was the second of them. Parker,
+/// with the picker's own strip beside the bench: *"at the top here has the
+/// navigator for WHAT question is being answered: ended state - orphans -
+/// submit"*.
+///
+/// The labels were being parsed and thrown away one step before drawing:
+/// [`crate::surface::Step::label`] has been populated the whole time, by the
+/// screen reader from the picker's tab bar and now by the channel from the
+/// tool's own `header`.
+///
+/// `zones` makes the steps pressable. Pass [`None`] where there is nothing to
+/// press into — the strip still names every step, because knowing a question
+/// exists is worth more than being able to jump to it.
+pub fn round_progress(
+    round: &crate::surface::Round,
+    zones: Option<&std::rc::Rc<std::cell::RefCell<Vec<crate::workbench::Zone>>>>,
+    sk: &Skin,
+    th: &Theme,
+) -> Div {
     let done = round.answered();
     let total = round.total();
     let tint = if round.submitting {
@@ -1375,26 +1398,49 @@ pub fn round_progress(round: &crate::surface::Round, sk: &Skin, th: &Theme) -> D
     } else {
         ink(crate::workbench::Tint::Waiting, th)
     };
+    let settled = ink(crate::workbench::Tint::Settled, th);
     div()
         .flex()
         .flex_col()
-        .gap(px(5.))
-        .child(
-            div()
-                .flex()
-                .flex_row()
-                .gap(px(3.))
-                .children(round.steps.iter().map(|step| {
-                    div()
-                        .h(px(5.))
-                        .flex_1()
-                        .rounded(sk.rad_raw(2.))
-                        // An unanswered segment is DRAWN, dim, rather than
-                        // left out: an empty slot is how a person sees there
-                        // is more to come.
-                        .bg(if step.done { tint } else { tint.alpha(0.22) })
-                })),
-        )
+        .gap(px(6.))
+        .child(div().flex().flex_row().flex_wrap().gap(px(4.)).children(
+            round.steps.iter().enumerate().map(|(i, step)| {
+                let here = round.current == Some(i);
+                // Three states, drawn apart: where you are, what you have
+                // finished, and what is still owed. A done step keeps its
+                // tick when you are standing on it — being here does not
+                // un-answer it.
+                let (edge, ink_) = match (here, step.done) {
+                    (true, _) => (tint, th.text),
+                    (false, true) => (settled.alpha(0.55), settled),
+                    (false, false) => (th.faint.alpha(0.5), sk.ink.ink_faint),
+                };
+                let label = if step.done {
+                    format!("\u{2713} {}", step.label)
+                } else {
+                    step.label.clone()
+                };
+                let chip = div()
+                    .px(px(7.))
+                    .py(px(2.))
+                    .rounded(sk.radius())
+                    .border_1()
+                    .border_color(edge)
+                    .text_color(ink_)
+                    .text_size(px(sk.pt(Step::Tag)))
+                    .child(label);
+                // Pressable only where BOTH are true: we have somewhere to
+                // send the press, and this step has a card of its own. A
+                // screen-read step has no surface and must not look like a
+                // button that does nothing.
+                match (zones, step.id.as_ref()) {
+                    (Some(z), Some(id)) if !here => chip
+                        .relative()
+                        .child(zone(z.clone(), crate::workbench::Hit::OpenRow(id.clone()))),
+                    _ => chip,
+                }
+            }),
+        ))
         .child(micro(
             if round.submitting {
                 format!("{done} of {total} answered \u{b7} ready to submit")
@@ -1595,7 +1641,10 @@ fn question(q: &crate::surface::Question, sk: &Skin, th: &Theme) -> Div {
             )),
         })
         .when_some(q.round.as_ref(), |d, round| {
-            d.child(round_progress(round, sk, th))
+            // No zones: the card body is drawn in several places, not all of
+            // them a pane collecting presses. It names every step; the block
+            // the pane assembles is where they can be pressed.
+            d.child(round_progress(round, None, sk, th))
         })
 }
 
@@ -3319,7 +3368,12 @@ pub fn conversation(tail: &[String], sk: &Skin, th: &Theme) -> Div {
 /// continue without a person is the one thing on this surface nobody should
 /// have to go looking for. The chips are attached by the pane, because
 /// pressing one reaches a pseudoterminal.
-pub fn waiting_block(q: &crate::surface::Question, sk: &Skin, th: &Theme) -> Div {
+pub fn waiting_block(
+    q: &crate::surface::Question,
+    zones: Option<&std::rc::Rc<std::cell::RefCell<Vec<crate::workbench::Zone>>>>,
+    sk: &Skin,
+    th: &Theme,
+) -> Div {
     aglow(
         sk.panel()
             .flex()
@@ -3339,32 +3393,34 @@ pub fn waiting_block(q: &crate::surface::Question, sk: &Skin, th: &Theme) -> Div
         sk,
         th,
     ))
+    // THE NAVIGATOR SITS ABOVE THE QUESTION, not under the options, because it
+    // answers "which of these am I on" and that is the first thing a person
+    // needs — Parker: *"at the top here has the navigator for WHAT question is
+    // being answered"*. Under the options it was a progress bar you checked
+    // afterwards; a round of two had already reached the bench with the wrong
+    // question on it by then.
+    .when_some(q.round.as_ref(), |d, round| {
+        d.child(round_progress(round, zones, sk, th))
+    })
     .child(
         div()
             .text_size(px(sk.pt(Step::Head)))
             .text_color(th.text)
             .child(sel(q.question.clone())),
     )
-    .child(
-        div()
-            .flex()
-            .flex_col()
-            .gap(px(5.))
-            .children(q.options.iter().enumerate().filter_map(|(i, o)| {
-                o.what_happens.as_ref().map(|what| {
-                    micro(
-                        format!("{} \u{b7} {}", i + 1, what),
-                        Step::Note,
-                        th.text.alpha(0.55),
-                        sk,
-                        th,
-                    )
-                })
-            })),
-    )
-    .when_some(q.round.as_ref(), |d, round| {
-        d.child(round_progress(round, sk, th))
-    })
+    .child(div().flex().flex_col().gap(px(5.)).children(
+        q.options.iter().enumerate().filter_map(|(i, o)| {
+            o.what_happens.as_ref().map(|what| {
+                micro(
+                    format!("{} \u{b7} {}", i + 1, what),
+                    Step::Note,
+                    th.text.alpha(0.55),
+                    sk,
+                    th,
+                )
+            })
+        }),
+    ))
 }
 
 /// The collapse handle on the rail's inner edge.

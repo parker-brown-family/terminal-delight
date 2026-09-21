@@ -493,7 +493,14 @@ pub fn round_on_screen(rows: &[String]) -> Option<Round> {
         if let Some(done) = cur.take() {
             let text = label.trim().to_string();
             if !text.is_empty() {
-                steps.push(Step { label: text, done });
+                // No id: the tab bar NAMES this step and only the question the
+                // picker is painting was ever read, so the step is real and has
+                // no card to open. See [`crate::surface::Step::id`].
+                steps.push(Step {
+                    label: text,
+                    done,
+                    id: None,
+                });
             }
         }
         label.clear();
@@ -526,7 +533,17 @@ pub fn round_on_screen(rows: &[String]) -> Option<Round> {
     }
     // A round of one is a question with a Submit button, not a workflow, and
     // the bench should draw it as the former.
-    (steps.len() > 1).then_some(Round { steps, submitting })
+    //
+    // `current` stays `None` and is NOT guessed. The picker marks its current
+    // step with a colour, and colour does not survive being read off a
+    // character grid — the glyphs say only which steps are answered. Guessing
+    // "the first unanswered one" would be right most of the time and wrong
+    // exactly where a person had jumped back to change an answer.
+    (steps.len() > 1).then_some(Round {
+        steps,
+        submitting,
+        current: None,
+    })
 }
 
 /// What is on the bottom of this agent's screen, for a dial press that is

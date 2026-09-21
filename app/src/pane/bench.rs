@@ -1250,7 +1250,35 @@ impl TerminalView {
             Press::Recorded | Press::Refused(_) => {}
         }
         // Whatever the road, the cards say what was pressed.
-        for s in self.wb_channel.round_surfaces(id, now) {
+        let surfaces = self.wb_channel.round_surfaces(id, now);
+        // WHERE TO STAND NEXT, decided from the cards we are about to present
+        // rather than from the ones already on the bench: the press just landed
+        // and the bench's copy is one moment stale.
+        //
+        // Answering a question of a round and being left looking at it is the
+        // jam Parker photographed from the other side — the terminal had moved
+        // on to `Orphans` and the bench was still showing `Ended state`, with no
+        // way to tell and nowhere to press. Parker: *"the workbench will AUTO
+        // navigate if a person clicks an answer"*. It could not, while the only
+        // question the bench could see was the one the picker was painting.
+        //
+        // A round that has just been completed moves nowhere: the last press
+        // sent the answers, and throwing the person onto another card at that
+        // moment would hide the thing they just did.
+        let advance = surfaces
+            .iter()
+            .find(|s| s.id == *id)
+            .and_then(|s| match &s.kind {
+                crate::surface::Kind::Question(q) => q.round.as_ref(),
+                _ => None,
+            })
+            .and_then(|r| {
+                let here = r.current?;
+                r.steps.get(here)?.done.then_some(())?;
+                let next = r.next_open(here)?;
+                r.steps.get(next)?.id.clone()
+            });
+        for s in surfaces {
             let sid = s.id.clone();
             self.present(
                 Post {
@@ -1261,6 +1289,9 @@ impl TerminalView {
                 },
                 cx,
             );
+        }
+        if let Some(next) = advance {
+            self.bench.select(&next);
         }
         cx.notify();
     }
@@ -3227,7 +3258,8 @@ impl TerminalView {
             })
             .map(|q| {
                 let chips = self.answer_chips(&q, sk, th);
-                crate::benchdraw::waiting_block(&q, sk, th).child(chips)
+                let zones = self.wb_zones.clone();
+                crate::benchdraw::waiting_block(&q, Some(&zones), sk, th).child(chips)
             });
 
         // ── the note box ────────────────────────────────────────────────────

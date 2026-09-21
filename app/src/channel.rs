@@ -574,15 +574,23 @@ impl Round {
                 .questions
                 .iter()
                 .zip(&self.picked)
-                .map(|(q, p)| Step {
+                .enumerate()
+                .map(|(i, (q, p))| Step {
                     label: q
                         .header
                         .clone()
                         .unwrap_or_else(|| q.question.chars().take(12).collect()),
                     done: p.as_ref().is_some_and(|v| !v.is_empty()),
+                    // Every question of a hook-carried round IS a card, so
+                    // every step of the navigator can be pressed. The screen
+                    // path cannot say that and leaves it `None`.
+                    id: Some(self.surface_id(i)),
                 })
                 .collect(),
             submitting: false,
+            // Filled per card by [`Self::surfaces`], which knows which question
+            // it is drawing. A ROUND has no single current step; a CARD does.
+            current: None,
         })
     }
 
@@ -626,7 +634,14 @@ impl Round {
                     // picker's own would take. A single choice commits on the
                     // press.
                     submit: q.multi.then_some(q.options.len()),
-                    round: round.clone(),
+                    // The same steps on every card of the round, each one
+                    // knowing which step it is. That is what lets the navigator
+                    // mark where you are standing without the renderer having
+                    // to work out which surface it is inside.
+                    round: round.clone().map(|mut r| {
+                        r.current = Some(i);
+                        r
+                    }),
                 });
                 let actions = kind.default_actions();
                 Surface {
@@ -1233,6 +1248,126 @@ mod tests {
             panic!()
         };
         assert!(q.round.is_none());
+    }
+
+    #[test]
+    fn every_card_of_a_round_knows_which_step_it_is_and_how_to_reach_the_others() {
+        // The navigator is drawn on EVERY card of the round, so each copy has
+        // to say two different things: the same list of steps, and a different
+        // "you are here". A shared `Round` with one `current` would mark the
+        // same step on all of them, which is the bug this asserts against.
+        let Some(Inbound::Question {
+            tool_use_id,
+            questions,
+            ..
+        }) = Inbound::parse(&question_event())
+        else {
+            panic!()
+        };
+        let round = Round::new(tool_use_id, Some(1000), questions);
+        let cards = round.surfaces(5);
+        for (i, c) in cards.iter().enumerate() {
+            let Kind::Question(q) = &c.kind else { panic!() };
+            let r = q.round.as_ref().expect("two questions make a round");
+            assert_eq!(r.current, Some(i), "card {i} should know it is step {i}");
+            // Every step reaches a real card, and the ids are the ones the
+            // bench will look those cards up by.
+            for (n, step) in r.steps.iter().enumerate() {
+                assert_eq!(
+                    step.id.as_ref(),
+                    Some(&round.surface_id(n)),
+                    "step {n} on card {i} must point at question {n}'s card"
+                );
+                assert!(
+                    cards.iter().any(|c| c.id == *step.id.as_ref().unwrap()),
+                    "step {n} points at a card that is not in the round"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn answering_a_step_marks_it_done_and_names_the_next_one_still_open() {
+        // The whole auto-advance move, at the level that decides it: answer one
+        // question and the round must say which one is owed next. Before the
+        // channel this could not be asked at all — the bench only ever held the
+        // question the picker was painting.
+        let Some(Inbound::Question {
+            tool_use_id,
+            questions,
+            ..
+        }) = Inbound::parse(&question_event())
+        else {
+            panic!()
+        };
+        let mut st = State::new();
+        st.take(
+            Inbound::Question {
+                tool_use_id: tool_use_id.clone(),
+                questions,
+                at_ms: Some(1000),
+                deadline_ms: None,
+            },
+            1_000,
+        );
+        // The hook has to be HOLDING the picker for a press to be recorded
+        // rather than said in a sentence. Without this the press takes the
+        // sentence road, which is a different feature and answers the whole
+        // round in one line — it would have passed a weaker assertion.
+        st.take(
+            Inbound::Waiting {
+                tool_use_id: tool_use_id.clone(),
+                until_ms: 600_000,
+            },
+            1_001,
+        );
+        let first = SurfaceId(format!("ask-hook-{}-0", file_key(&tool_use_id)));
+        assert_eq!(st.press(&first, 0, 2_000), Press::Recorded);
+        let cards = st.round_surfaces(&first, 3_000);
+        let Kind::Question(q) = &cards[0].kind else {
+            panic!()
+        };
+        let r = q.round.as_ref().expect("a round of two");
+        assert!(r.steps[0].done, "the step just answered is done");
+        assert!(!r.steps[1].done, "the other one is still owed");
+        assert_eq!(
+            r.next_open(0),
+            Some(1),
+            "answering step 0 should send a person to step 1"
+        );
+        // And the far side of the wrap: with only step 0 open, standing on the
+        // last step still finds it rather than walking off the end.
+        let back = crate::surface::Round {
+            steps: vec![
+                crate::surface::Step {
+                    label: "a".into(),
+                    done: false,
+                    id: None,
+                },
+                crate::surface::Step {
+                    label: "b".into(),
+                    done: true,
+                    id: None,
+                },
+            ],
+            submitting: false,
+            current: Some(1),
+        };
+        assert_eq!(back.next_open(1), Some(0), "the search wraps");
+        let all_done = crate::surface::Round {
+            steps: vec![crate::surface::Step {
+                label: "a".into(),
+                done: true,
+                id: None,
+            }],
+            submitting: false,
+            current: Some(0),
+        };
+        assert_eq!(
+            all_done.next_open(0),
+            None,
+            "a finished round moves nobody anywhere"
+        );
     }
 
     #[test]
