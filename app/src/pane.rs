@@ -3045,7 +3045,7 @@ impl TerminalView {
             // Nothing on disk is touched: the conversation's record outlives
             // the process it belonged to.
             self.bench.clear_surfaces();
-            // And the two pieces of per-surface state that live on the PANE
+            // And the three pieces of per-surface state that live on the PANE
             // rather than in the bench, which the exhaustive destructure in
             // `clear_surfaces` therefore cannot reach.
             //
@@ -3064,6 +3064,22 @@ impl TerminalView {
             // aimed at the conversation that left, carriage return included,
             // would be typed into the next agent as its first input.
             self.wb_queued.clear();
+            // `wb_paused_ms` is the third, and the only one of them that no
+            // sensor can correct. It says a PERSON stopped a turn, and
+            // `agent_state` tests it before every other rung — so a latch left
+            // down here outlives the conversation it belonged to and the NEXT
+            // agent in this pane is born reading as `Paused`, with the strip
+            // offering RESUME TURN on a turn it has never run. Pressing that
+            // sends `RESUME_SAY` as the new conversation's first message.
+            //
+            // Nothing else would have caught it. `bench_pause_settle` is the
+            // designed escape hatch and it cannot reach this case, because the
+            // sweep that calls it returns early on a pane that is no longer an
+            // agent — the same reason given for `wb_live_q` four lines up.
+            // `bench_end_agent` clears the latch for exactly this hazard, but
+            // it is one of four ways an agent leaves a pane and the only one
+            // that goes through the strip.
+            self.wb_paused_ms = None;
         }
         cx.notify();
     }
@@ -8652,6 +8668,88 @@ mod tests {
             .filter(|l| !l.trim_start().starts_with("//"))
             .collect::<Vec<_>>()
             .join("\n")
+    }
+
+    /// The `departed` branch of [`TerminalView::set_mode`], code only.
+    ///
+    /// Brace-matched from `if departed {` rather than cut at the first closing
+    /// brace. The branch holds nested blocks, and a slice that stopped at the
+    /// first `}` would end above most of what it is meant to be reading — a
+    /// gate that passes because it never looked.
+    fn departed_branch() -> String {
+        let code = shipped_code();
+        let at = code
+            .find("if departed {")
+            .expect("the departure edge is gone");
+        let mut depth = 0usize;
+        for (i, c) in code[at..].char_indices() {
+            match c {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return code[at..at + i + 1].to_string();
+                    }
+                }
+                _ => {}
+            }
+        }
+        panic!("the departure branch never closes");
+    }
+
+    /// Every piece of per-pane state that names the conversation is let go when
+    /// the conversation goes.
+    ///
+    /// The bench's own half is safe without a test: `clear_surfaces`
+    /// destructures exhaustively, so a field added there and not handled will
+    /// not compile. These live on the PANE, outside that struct, where the
+    /// compiler has nothing to say — and the only thing standing between a new
+    /// one and the next agent inheriting it is this list.
+    ///
+    /// That is not hypothetical. `wb_paused_ms` arrived with the strip's pause
+    /// control and was cleared in the three places a TURN ends, then missed in
+    /// the one place an AGENT ends. A fresh agent launched into a pane that had
+    /// been paused was born reading as `Paused`, with the strip offering RESUME
+    /// TURN on a turn it had never run; pressing it would have sent
+    /// `RESUME_SAY` as that conversation's first message. Two comments on this
+    /// same screen warn about exactly this and it happened anyway, which is the
+    /// argument for a gate rather than a third comment.
+    ///
+    /// **Adding a field here is the whole point.** If you add per-pane state
+    /// that belongs to one conversation, clear it in the departure branch and
+    /// name it below.
+    #[test]
+    fn the_departure_lets_go_of_every_field_that_names_the_conversation() {
+        let departed = departed_branch();
+        // The assignment form, not the bare name: `wb_dial` is a prefix of
+        // `wb_dial_sent`, so a substring test would report a field cleared on
+        // the strength of a different field's line.
+        let cleared = |f: &str| {
+            departed.contains(&format!("self.{f} = ")) || departed.contains(&format!("self.{f}."))
+        };
+        for field in [
+            "wb_model",
+            "wb_effort",
+            "wb_dial",
+            "wb_dial_sent",
+            "wb_asked",
+            "wb_channel",
+            "wb_asked_by_hook",
+            "wb_recall",
+            "wb_live_q",
+            "wb_queued",
+            "wb_paused_ms",
+        ] {
+            assert!(
+                cleared(field),
+                "{field} names the conversation that left, and the next agent \
+                 in this pane inherits it unless the departure lets it go"
+            );
+        }
+        assert!(
+            departed.contains("clear_surfaces"),
+            "the departed conversation's surfaces stay on the bench"
+        );
     }
 
     /// EVERY wheel handler on a pane offers the turn to the size chord first.
