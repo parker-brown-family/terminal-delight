@@ -157,6 +157,50 @@ So the product question, in the person's terms:
    rather than a menu drawn on a terminal. It cannot be done unilaterally — the
    agent has to participate — so it is a direction, not a slice.
 
+#### Evidence for option 3, and a fourth participant nobody has costed
+
+Filed as **#619** by the pane working on the live-question path, and the
+measurement is independently corroborated: during a multi-question round the
+bench can only show the question the picker is currently painting, because
+`live_questions` reads the terminal grid and the harness does not flush a
+pending ask to disk. Their corpus: 44 `AskUserQuestion` calls across the 120
+newest transcripts, 19 of them multi-question, **0 readable while pending** —
+which matches an earlier independent finding of 0 of 43. The ask and its result
+land as *adjacent lines* in the transcript, ten minutes apart in their specimen.
+
+So option 3 is not only about a nicer answer path. **Today the workbench cannot
+see the whole question**, and no amount of asynchrony fixes that by itself.
+
+Their constraint, and it is a good one: option 3's "the agent has to
+participate" may be false. A **PreToolUse hook on `AskUserQuestion`** could
+publish the whole question set without the agent knowing the protocol exists —
+which is the only path that works for an agent `derive.rs` was written to serve,
+i.e. one that will never speak TDSP.
+
+**Verified here, read-only, 2026-09-21 — and it is still open:**
+
+- Their reading of the config is exact. Every `PreToolUse` matcher on this
+  machine is `Bash|bash` or the `Read|Grep|Glob` family. Nothing shows whether
+  the tool is hookable.
+- The lean-ctx session store cannot answer it. It records 10 distinct tool
+  names across the 40 newest sessions and every one is a `ctx_*` tool, so its
+  silence about `AskUserQuestion` is not evidence.
+- The 36 files under `~/.lean-ctx/agents/shared/` that contain the string are
+  cross-agent message payloads carrying skill prose. No `tool_name` field, no
+  hook keys. Not hook records.
+
+**A cheaper experiment than the one proposed, needing no config change at all:**
+two `PostToolUse` hooks are already registered with matcher `.*` — `herd hook`
+and `lean-ctx hook observe`. A wildcard matcher fires for every tool in the
+dispatch path, so if `AskUserQuestion` is hookable those two have been receiving
+it all along. lean-ctx's side is checked above and does not record it. **herd's
+store is the unchecked half**, and looking at it settles the question without
+touching `settings.json`.
+
+If it turns out a matcher must be added to test this, that is a change to
+Parker's own hook configuration and it is his to make — not something to slip in
+under a plan doc.
+
 Note what option 2 costs beyond the gesture: **ending the agent from the bench
 is the gesture that starts the feature the tenancy work is building.** That is
 not a reason to pick a different answer; it is a reason to pick one on purpose.
