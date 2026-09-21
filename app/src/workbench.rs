@@ -6591,6 +6591,48 @@ mod tests {
     }
 
     #[test]
+    fn a_rail_row_level_with_a_paragraph_still_starts_a_block() {
+        // The sharp version of the test above, which the geometry answered on
+        // its own: there the two runs sat fifty pixels apart, so the region
+        // rule never fired and deleting it outright left every test green.
+        // Here the mids are IDENTICAL — every geometric rule says "one line,
+        // join with a space" — so the region is the only thing that can
+        // produce a break.
+        let a = |x: f32, text: &str, region| Atom {
+            x,
+            y: 40.0,
+            w: 150.0,
+            h: 14.0,
+            text: text.to_string(),
+            region,
+        };
+        let p = vec![
+            a(10.0, "the card says this", Region::Body),
+            a(400.0, "the rail says this", Region::Rail),
+        ];
+        let s = Sel {
+            anchor: caret(0, 0),
+            head: caret(1, 18),
+        };
+        assert_eq!(
+            copy_text(&p, &s),
+            "the card says this\n\nthe rail says this",
+            "a rail row drawn level with a paragraph is not the same line as \
+             it, whatever the geometry says"
+        );
+        // The control: same geometry, same region, still one line.
+        let one = vec![
+            a(10.0, "the card says this", Region::Body),
+            a(400.0, "and so does this", Region::Body),
+        ];
+        let s = Sel {
+            anchor: caret(0, 0),
+            head: caret(1, 16),
+        };
+        assert_eq!(copy_text(&one, &s), "the card says this and so does this");
+    }
+
+    #[test]
     fn a_chrome_run_between_two_body_runs_is_skipped_not_truncated() {
         let p = page();
         let s = Sel {
