@@ -143,6 +143,64 @@ fn next_split_id() -> u64 {
     SPLIT_IDS.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
+/// One queue row's flat geometry, recorded during paint so a click can be
+/// resolved after the barrel map is undone.
+#[derive(Clone, Copy, Debug)]
+struct RailHit {
+    index: usize,
+    top: f32,
+    bottom: f32,
+    left: f32,
+    /// The deliverable line inside the row, when the row has one.
+    deliverable: Option<(f32, f32)>,
+}
+
+/// What a click on the queue meant, once the curve was undone.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RailAction {
+    /// Go to the pane this row is about.
+    Focus(usize),
+    /// Open what the turn produced. Never also focuses: two acts, two clicks.
+    Open(usize),
+}
+
+/// Every surface that can be drawn OVER the terminal area, and what it does
+/// about the barrel warp.
+///
+/// **Why this list exists.** The warp is a pixel post-pass over the panes, so
+/// anything laid on top of them is drawn FLAT unless it says otherwise — and it
+/// then reads as a sticker stuck on curved glass, with its click boxes sitting
+/// where the pixels are not. That is two bugs from one omission, and it has been
+/// the same two bugs on element after element here.
+///
+/// So it is a list, and [`every_overlay_over_panes_decides_about_the_warp`] is
+/// the gate: add a surface that covers the pane area, add a row, or the suite
+/// fails. A row may say the surface is deliberately flat — some things should be
+/// — but it has to say WHY, in the row, where the next person will read it.
+#[cfg(test)]
+const OVERLAYS_OVER_PANES: [(&str, Warped); 4] = [
+    ("render_rail", Warped::Tube("register_overlay_tube")),
+    ("mcp_menu panel", Warped::Tube("register_focus_tube")),
+    ("pane ghost", Warped::Tube("register_overlay_tube")),
+    (
+        "sticky note",
+        Warped::PreWarped("drawn through the pane's own map; hit-tested flat"),
+    ),
+];
+
+/// How a surface over the panes handles the curve.
+#[cfg(test)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Warped {
+    /// Registers its painted rect so the post-pass bends it with the glass.
+    Tube(&'static str),
+    /// Draws itself through the map so the pass undoes it — the note's way.
+    PreWarped(&'static str),
+    /// Deliberately flat, with the reason. Allowed, never silent.
+    #[allow(dead_code)]
+    FlatByDesign(&'static str),
+}
+
 /// The tiling tree: splits divide only the targeted leaf. Generic over the
 /// leaf payload so the structural logic is testable without live terminals.
 enum Tree<L> {
@@ -2803,6 +2861,16 @@ struct Workspace {
     /// The queue is open over the panes. The closed spine is the steady state
     /// and this never opens itself.
     rail_open: bool,
+    /// The queue's painted rect, captured each frame. This is the SAME rect
+    /// registered as its warp tube, so a click normalises into it and applies
+    /// the identical barrel map the shader gathers with — the curve-aware
+    /// hit-test the live pane and the FOCUS reader already use.
+    rail_bounds: Arc<Mutex<Option<Bounds<Pixels>>>>,
+    /// Each row's box in FLAT window space, plus the deliverable's box inside it
+    /// when it has one. Flat, because the warp is undone before anything is
+    /// compared: what the pointer is asked about is the plain box, exactly as
+    /// the sticky note does it.
+    rail_hits: Arc<Mutex<Vec<RailHit>>>,
     /// On-screen box of the FOCUS reading area (the clip box below the header),
     /// captured each frame. This is the SAME rect registered as the warp tube, so a
     /// click normalises into it and applies the identical barrel map the shader
@@ -3771,6 +3839,8 @@ impl Workspace {
             pending_jump: None,
             rail_on: std::env::var("TD_SPINE").is_ok_and(|v| v != "0"),
             rail_open: false,
+            rail_bounds: Arc::new(Mutex::new(None)),
+            rail_hits: Arc::new(Mutex::new(Vec::new())),
             focus_body_bounds: Arc::new(Mutex::new(None)),
             focus_map: Arc::new(Mutex::new(None)),
             focus_sel: None,
@@ -14278,6 +14348,135 @@ impl Workspace {
     /// nearest explicit setting, the group's project when a tab is grouped — is
     /// Slice 3's, and doing it half-way in a tracer would be the sort of
     /// convincing lie the plan refuses.
+    /// A fixed, fictional queue for looking at the surface.
+    ///
+    /// `TD_SPINE_DEMO=1`. The tracer above needs live agent panes to have
+    /// anything to say, and a freshly opened window has one shell — so without
+    /// this, the demo of an attention surface is an empty list, which shows
+    /// nothing about how it reads.
+    ///
+    /// The origins and reasons are invented, in the house rule for demo data:
+    /// no real prompt, path or business ever ships in capture media. The two
+    /// deliverables are the exception and are deliberate — they point at real
+    /// documents in this checkout so the click can be seen to work, and both are
+    /// public repository files.
+    ///
+    /// Every case is here on purpose: all four lanes, a promoted row and a
+    /// demoted one, a row with no observed time, and both document kinds.
+    fn rail_demo_rows(&self) -> Vec<attention::AttentionItem> {
+        use attention::{AttentionKind, Deliverable, Origin, Priority};
+
+        fn origin(project: &str, initiative: Option<&str>) -> Origin {
+            Origin {
+                project: Some(project.to_string()),
+                initiative: initiative.map(|s| s.to_string()),
+            }
+        }
+        let ago = |secs: u64| Instant::now().checked_sub(Duration::from_secs(secs));
+
+        let plan = Self::tracer_doc("docs/plans/attention-spine/plan.md");
+        let page = Self::tracer_doc("docs/2026-08-31-one-click-copy-affordance.html");
+
+        let rows = vec![
+            (
+                1u64,
+                Priority::Promoted,
+                AttentionKind::Decision,
+                origin("atlas", Some("ingest")),
+                "Choose the token migration path",
+                "pane screen",
+                ago(41 * 60),
+                None,
+            ),
+            (
+                2,
+                Priority::Neutral,
+                AttentionKind::Decision,
+                origin("ledger", Some("invoices")),
+                "Overwrite the July export?",
+                "pane screen",
+                ago(9 * 60),
+                None,
+            ),
+            (
+                3,
+                Priority::Promoted,
+                AttentionKind::Failure,
+                origin("atlas", Some("packaging")),
+                "AppImage smoke, exit 1",
+                "check",
+                ago(6 * 60),
+                None,
+            ),
+            (
+                4,
+                Priority::Neutral,
+                AttentionKind::ReviewReady,
+                origin("atlas", Some("theme-foundry")),
+                "Finished, not yet seen",
+                "bell",
+                ago(12 * 60),
+                page.map(|href| Deliverable {
+                    label: "One-click copy affordance".into(),
+                    href: href.to_string(),
+                }),
+            ),
+            (
+                5,
+                Priority::Neutral,
+                AttentionKind::ReviewReady,
+                origin("ledger", None),
+                "Finished, not yet seen",
+                "bell",
+                ago(40 * 60),
+                plan.map(|href| Deliverable {
+                    label: "Attention spine plan".into(),
+                    href: href.to_string(),
+                }),
+            ),
+            (
+                6,
+                Priority::Demoted,
+                AttentionKind::Failure,
+                origin("relay", Some("nightly")),
+                "Connection lost, retrying",
+                "check",
+                ago(2 * 60),
+                None,
+            ),
+            (
+                7,
+                Priority::Neutral,
+                AttentionKind::Unknown,
+                origin("relay", None),
+                "Known agent, state unreadable",
+                "pane screen",
+                None,
+                None,
+            ),
+        ];
+
+        let obs: Vec<attention::Observation> = rows
+            .into_iter()
+            .map(
+                |(pane, priority, kind, origin, reason, source, observed_at, deliverable)| {
+                    attention::Observation {
+                        pane,
+                        pane_kind: attention::PaneKind::Agent,
+                        priority,
+                        kind: Some(kind),
+                        origin,
+                        reason: reason.to_string(),
+                        observed_at,
+                        source,
+                        deliverable,
+                    }
+                },
+            )
+            .collect();
+        attention::project(&obs)
+    }
+
     fn rail_rows(
         &self,
         cx: &App,
@@ -14285,6 +14484,28 @@ impl Workspace {
         Vec<attention::AttentionItem>,
         std::collections::HashMap<u64, EntityId>,
     ) {
+        if std::env::var("TD_SPINE_DEMO").is_ok_and(|v| v != "0") {
+            // Demo rows point at whatever panes this window has, round-robin, so
+            // the focus verb still does something real. With one pane, every row
+            // goes to it — which is honest about a demo rather than faking a
+            // fleet that is not there.
+            let mut panes = std::collections::HashMap::new();
+            let mut live: Vec<EntityId> = Vec::new();
+            for tab in self.tabs.iter() {
+                let mut leaves = Vec::new();
+                tab.root.leaves(&mut leaves);
+                for leaf in leaves {
+                    live.push(leaf.entity_id());
+                }
+            }
+            let items = self.rail_demo_rows();
+            for (i, it) in items.iter().enumerate() {
+                if !live.is_empty() {
+                    panes.insert(it.pane, live[i % live.len()]);
+                }
+            }
+            return (items, panes);
+        }
         use attention::{AttentionKind, Observation, PaneKind, Priority};
         let mut obs: Vec<Observation> = Vec::new();
         let mut panes: std::collections::HashMap<u64, EntityId> = std::collections::HashMap::new();
@@ -14374,6 +14595,43 @@ impl Workspace {
             }
         }
         (attention::project(&obs), panes)
+    }
+
+    /// Which part of the queue a click landed on, once the curve is undone.
+    fn rail_hit_at(&self, pos: Point<Pixels>, cx: &App) -> Option<RailAction> {
+        let bounds = (*self.rail_bounds.lock().unwrap())?;
+        let hits = self.rail_hits.lock().unwrap();
+        if hits.is_empty() {
+            return None;
+        }
+        let th = theme::theme(cx);
+        let (k1, k2) = theme::warp_coeffs(th.warp);
+
+        let (bx, by) = (f32::from(bounds.origin.x), f32::from(bounds.origin.y));
+        let bw = f32::from(bounds.size.width).max(1.0);
+        let bh = f32::from(bounds.size.height).max(1.0);
+        let (u, v) = ((f32::from(pos.x) - bx) / bw, (f32::from(pos.y) - by) / bh);
+        // The pointer sees bent glass; everything below is measured flat, so the
+        // shader's map is undone first. With no curvature this is the identity
+        // and the arithmetic disappears.
+        let (lu, lv) = pane::warp_screen_to_content(u, v, k1, k2);
+        if !(0.0..=1.0).contains(&lu) || !(0.0..=1.0).contains(&lv) {
+            return None;
+        }
+        let (x, y) = (bx + lu * bw, by + lv * bh);
+
+        for hit in hits.iter() {
+            if y < hit.top || y > hit.bottom {
+                continue;
+            }
+            if let Some((dt, db)) = hit.deliverable {
+                if y >= dt && y <= db && x >= hit.left {
+                    return Some(RailAction::Open(hit.index));
+                }
+            }
+            return Some(RailAction::Focus(hit.index));
+        }
+        None
     }
 
     /// A document that certainly exists, for the tracer to point a deliverable at.
@@ -14520,8 +14778,12 @@ impl Workspace {
         }
         let s = theme::outer_choice(cx).grade.scale;
         let sk = skin::skin(cx, s);
-        let (items, panes) = self.rail_rows(cx);
+        let (items, _panes) = self.rail_rows(cx);
         let now = Instant::now();
+        let th = theme::theme(cx);
+        let (rail_k1, rail_k2) = theme::warp_coeffs(th.warp);
+        let rail_glare = th.screen_glare;
+        let rail_bounds = self.rail_bounds.clone();
 
         let mut list = div()
             .flex()
@@ -14557,9 +14819,9 @@ impl Workspace {
             );
         }
 
-        for it in &items {
+        self.rail_hits.lock().map(|mut h| h.clear()).ok();
+        for (row_index, it) in items.iter().enumerate() {
             let ink = Self::rail_ink(it.kind, &sk);
-            let target = panes.get(&it.pane).copied();
             let head = div()
                 .flex()
                 .flex_row()
@@ -14656,21 +14918,41 @@ impl Workspace {
                                 cx.notify();
                             }),
                         )
-                }))
-                .when_some(target, |d, id| {
-                    d.on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
-                            cx.stop_propagation();
-                            // Park the jump; the next frame activates the owning
-                            // tab, focuses the pane, and the focus-in edge acks
-                            // its bell.
-                            ws.pending_jump = Some(id);
-                            ws.rail_open = false;
-                            cx.notify();
-                        }),
+                }));
+            // No per-row click handler. The panel takes one click and resolves it
+            // through the inverse barrel map, because these boxes are where the
+            // rows ARE and the curve is where the rows LOOK.
+            let hits = self.rail_hits.clone();
+            let idx = row_index;
+            let has_deliverable = it.deliverable.is_some();
+            let row = row.child(
+                div().absolute().inset_0().child(
+                    gpui::canvas(
+                        move |bounds, _window, _cx| {
+                            let top = f32::from(bounds.origin.y);
+                            let bottom = top + f32::from(bounds.size.height);
+                            let left = f32::from(bounds.origin.x);
+                            // The deliverable sits on the row's last line; its
+                            // band is the bottom third, which is enough to tell
+                            // "open this" from "go there" and needs no second
+                            // canvas inside the row.
+                            let deliverable =
+                                has_deliverable.then_some((top + (bottom - top) * 0.62, bottom));
+                            if let Ok(mut h) = hits.lock() {
+                                h.push(RailHit {
+                                    index: idx,
+                                    top,
+                                    bottom,
+                                    left,
+                                    deliverable,
+                                });
+                            }
+                        },
+                        |_, _, _, _| {},
                     )
-                });
+                    .size_full(),
+                ),
+            );
             list = list.child(row);
         }
 
@@ -14696,7 +14978,68 @@ impl Workspace {
                         .mt(px(58. * s))
                         .mr(px(30. * s))
                         .shadow_lg()
-                        .child(list),
+                        .child(list)
+                        // One click for the whole queue, resolved against the
+                        // flat boxes after the curve is undone.
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|ws, ev: &MouseDownEvent, _w, cx| {
+                                cx.stop_propagation();
+                                match ws.rail_hit_at(ev.position, cx) {
+                                    Some(RailAction::Open(i)) => {
+                                        let (items, _) = ws.rail_rows(cx);
+                                        if let Some(d) =
+                                            items.get(i).and_then(|it| it.deliverable.as_ref())
+                                        {
+                                            pane::open_with_system(&d.href);
+                                        }
+                                    }
+                                    Some(RailAction::Focus(i)) => {
+                                        let (items, panes) = ws.rail_rows(cx);
+                                        if let Some(id) =
+                                            items.get(i).and_then(|it| panes.get(&it.pane)).copied()
+                                        {
+                                            ws.pending_jump = Some(id);
+                                            ws.rail_open = false;
+                                        }
+                                    }
+                                    None => {}
+                                }
+                                cx.notify();
+                            }),
+                        )
+                        // The queue lies on the same bent glass as the panes it
+                        // covers, so it is registered as a tube and the post-pass
+                        // bends it identically. Drawn flat, it reads as a sticker
+                        // on a curved screen — which is exactly what it looked
+                        // like the first time it was put in front of anyone.
+                        .child(
+                            div().absolute().inset_0().child(
+                                gpui::canvas(
+                                    move |bounds, window, _cx| {
+                                        let sf = window.scale_factor();
+                                        // The same rect the click normalises into.
+                                        if let Ok(mut b) = rail_bounds.lock() {
+                                            *b = Some(bounds);
+                                        }
+                                        crate::warp::register_overlay_tube(
+                                            [
+                                                f32::from(bounds.origin.x) * sf,
+                                                f32::from(bounds.origin.y) * sf,
+                                                f32::from(bounds.size.width) * sf,
+                                                f32::from(bounds.size.height) * sf,
+                                            ],
+                                            rail_glare,
+                                            rail_k1,
+                                            rail_k2,
+                                            [0.0, 1.0, 1.0],
+                                        );
+                                    },
+                                    |_, _, _, _| {},
+                                )
+                                .size_full(),
+                            ),
+                        ),
                 ),
         )
     }
@@ -24151,6 +24494,72 @@ mod tests {
             panic!("not a leaf");
         };
         assert_eq!(*pane_id, None);
+    }
+
+    /// The gate on the thing that has gone wrong the most times here.
+    ///
+    /// A surface laid over the panes is drawn flat unless it registers a tube or
+    /// pre-warps itself, and a flat surface on bent glass is wrong twice: it
+    /// looks stuck on, and its click boxes are not where its pixels are. The
+    /// list is the decision record; the counting below is what stops the list
+    /// from drifting away from the code, because a list nobody has to keep true
+    /// is a comment.
+    #[test]
+    fn every_overlay_over_panes_decides_about_the_warp() {
+        for (name, how) in OVERLAYS_OVER_PANES {
+            match how {
+                Warped::Tube(sym) => assert!(
+                    !sym.is_empty(),
+                    "{name} claims a tube and does not name the call"
+                ),
+                Warped::PreWarped(why) | Warped::FlatByDesign(why) => {
+                    assert!(why.len() > 12, "{name} has to say why in more than a word")
+                }
+            }
+        }
+
+        // The teeth: delete a registration and this fails. Both this file's
+        // tubes and the note's pre-warp are counted, so the list cannot quietly
+        // stop describing the code.
+        let src = include_str!("main.rs");
+        let registrations = src.matches("register_overlay_tube(").count()
+            + src.matches("register_focus_tube(").count();
+        let claimed = OVERLAYS_OVER_PANES
+            .iter()
+            .filter(|(_, how)| matches!(how, Warped::Tube(_)))
+            .count();
+        assert!(
+            registrations >= claimed,
+            "{claimed} surfaces claim a warp tube and only {registrations} registrations \
+             exist in main.rs — a surface stopped bending with the glass"
+        );
+
+        let sticky = include_str!("sticky.rs");
+        assert!(
+            sticky.contains("pub fn pre_warp("),
+            "the note claims a pre-warp that no longer exists"
+        );
+    }
+
+    /// The other half of the same bug, stated as a test so it cannot be forgotten
+    /// when somebody adds the next overlay: a bent surface whose clicks are not
+    /// un-bent sends the pointer to the wrong row, and the wrongness grows
+    /// towards the screen edge — which is exactly where the queue lives.
+    #[test]
+    fn a_bent_surface_undoes_the_curve_before_it_hit_tests() {
+        let src = include_str!("main.rs");
+        let at = src
+            .find("fn rail_hit_at(")
+            .expect("the queue's curve-aware hit test");
+        let body = &src[at..at + 1600];
+        assert!(
+            body.contains("warp_screen_to_content"),
+            "rail_hit_at must undo the same map the shader applies"
+        );
+        assert!(
+            body.contains("warp_coeffs"),
+            "and it must use the live curvature, not a constant"
+        );
     }
 
     /// The tree is somebody's organisation of their own work. It has to come
