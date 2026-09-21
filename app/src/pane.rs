@@ -3302,6 +3302,24 @@ impl TerminalView {
                                 if thinking {
                                     view.think_since = Some(Instant::now());
                                     view.not_thinking_since = None;
+                                    // A turn is running, so whatever was paused
+                                    // is over. THE RISING EDGE, at 120ms, rather
+                                    // than the once-a-second level read in
+                                    // `bench_pause_settle` — a turn started from
+                                    // the TERM face that began and ended between
+                                    // two of those samples was never seen, and
+                                    // left the latch down on a completed turn.
+                                    //
+                                    // Both are kept, and the second is not
+                                    // belt-and-braces. This scan is gated on
+                                    // `scroll_settled` above: while somebody is
+                                    // walking the scrollback with alt+up, it does
+                                    // not run at all, and the edge it would have
+                                    // fired is simply not there afterwards. The
+                                    // sweep is ungated and catches that pane.
+                                    // Two clearers of one latch, both saying the
+                                    // same thing, neither able to set it.
+                                    view.wb_paused_ms = None;
                                 } else {
                                     // Transitioned to not-thinking; debounce to avoid false
                                     // positives from transient state changes (error messages, etc).
