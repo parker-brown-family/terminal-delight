@@ -231,12 +231,32 @@ impl Scope {
         })
     }
 
-    /// Clicking the branch you are already scoped to backs out to `All` — the
-    /// toggle that means a scope can always be undone by clicking the same row
-    /// twice, without hunting for a "show everything" control.
+    /// Clicking the branch you are already scoped to backs out to the RESTING
+    /// scope — the toggle that means a pin can always be undone by clicking the
+    /// same row twice, without hunting for a control.
+    ///
+    /// **It used to back out to `All`, and that is how a 31-tab window ended up
+    /// with all 31 across the top.** When this was written the resting scope
+    /// was `All`, so "undo the pin" and "show me everything" were the same
+    /// place and one return value served both. Moving the resting scope to
+    /// `Branch` moved them to opposite ends of the bar and left this pointing
+    /// at the wrong one, which turned an ordinary gesture into the complaint
+    /// the move was made to answer: *"the outer is tab bombed with ALL our tabs
+    /// again"*.
+    ///
+    /// What makes it a trap rather than a surprise is that the FIRST press is
+    /// invisible. Pinning the branch the strip is already resting on draws the
+    /// same tabs under the same chip label — `Branch` and `Initiative(g)` are
+    /// indistinguishable while you are standing in `g` — so the second press is
+    /// made by somebody who believes the first one did nothing. The two states
+    /// differ only in what happens NEXT, and this is that next.
+    ///
+    /// `Scope::default()` rather than `Scope::Branch` by name: the resting
+    /// scope is declared once, on the enum, and a later change to it must not
+    /// have to remember this line.
     pub fn toggled(&self, to: Scope) -> Scope {
         if *self == to {
-            Scope::All
+            Scope::default()
         } else {
             to
         }
@@ -877,6 +897,66 @@ pub fn first_child(rows: &[Row], of: RowId) -> Option<RowId> {
 mod tests {
     use super::*;
 
+    /// This file's source with the test module cut off, and then with every
+    /// comment line removed.
+    ///
+    /// Both cuts are load-bearing and both have been learned the hard way in
+    /// this repository. `include_str!` reads the file holding the assertion, so
+    /// a needle searched for across the WHOLE file is satisfied by the `assert!`
+    /// looking for it. And a gate can be satisfied by its own EXPLANATION: one
+    /// in `main.rs` passed on the comment describing a line that had been
+    /// deleted. The doc comment on [`Scope::toggled`] says `Scope::default()`
+    /// in prose, so the guard below would pass on the prose alone without this.
+    fn shipped_code() -> String {
+        let src = include_str!("tree.rs");
+        src[..src.find("\n#[cfg(test)]").expect("the test module")]
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// **The gate for the mistake itself, not for the bug it caused.**
+    ///
+    /// The bug was one stale return value; the MISTAKE was naming the resting
+    /// scope by its value in a place that means "back out to the resting
+    /// scope". That compiles, passes, and reads correctly right up until the
+    /// resting scope moves — and then it points at the far end of the bar with
+    /// nothing to say so. `toggled` sat in exactly that state for a day and put
+    /// 31 tabs across the top of a window.
+    ///
+    /// The behavioural tests below prove today's answer. This one refuses the
+    /// shape that made today's answer go stale, so the next person to move
+    /// [`Scope::default`] cannot leave this function behind the way the last
+    /// one did.
+    #[test]
+    fn nothing_names_the_resting_scope_by_value_where_it_means_the_default() {
+        let code = shipped_code();
+        let body = {
+            let at = code.find("pub fn toggled").expect("Scope::toggled");
+            let rest = &code[at..];
+            &rest[..rest.find("\n    }").expect("the end of toggled")]
+        };
+        assert!(
+            body.contains("Scope::default()"),
+            "Scope::toggled must back out to the resting scope BY NAME. Naming a \
+             variant instead is what stranded it when the resting scope moved from \
+             All to Branch. Body was:\n{body}"
+        );
+        for named in [
+            "Scope::All",
+            "Scope::Branch",
+            "Scope::Project",
+            "Scope::Initiative",
+        ] {
+            assert!(
+                !body.contains(named),
+                "Scope::toggled names {named} as a value. The only scope it may \
+                 produce that it was not handed is Scope::default(). Body was:\n{body}"
+            );
+        }
+    }
+
     /// The nearest parent, in all four shapes a task can be filed in.
     ///
     /// The grouped case is the one that was wrong on screen: a task under the
@@ -1449,8 +1529,22 @@ mod tests {
     }
 
     #[test]
-    fn scoping_to_the_branch_you_are_already_on_backs_out_to_everything() {
-        assert_eq!(Scope::Project(1).toggled(Scope::Project(1)), Scope::All);
+    fn scoping_to_the_branch_you_are_already_on_backs_out_to_the_branch_you_are_in() {
+        // Unpinning lands on the RESTING scope, not on the widest one. When
+        // `All` was the resting scope those were the same place and this test
+        // asserted `All`; since the strip started resting on `Branch` they are
+        // opposite ends of the bar, and returning the widest one is what put
+        // every tab in the session across the top.
+        assert_eq!(
+            Scope::Project(1).toggled(Scope::Project(1)),
+            Scope::default()
+        );
+        assert_eq!(
+            Scope::Initiative(9).toggled(Scope::Initiative(9)),
+            Scope::default()
+        );
+        // The chip's own "show me everything" press is unaffected: a toggle
+        // from `All` still lands on whatever branch row was pressed.
         assert_eq!(
             Scope::Project(1).toggled(Scope::Project(2)),
             Scope::Project(2)
@@ -1458,6 +1552,59 @@ mod tests {
         assert_eq!(
             Scope::All.toggled(Scope::Initiative(9)),
             Scope::Initiative(9)
+        );
+        // The UNFILED divider asks for `All` by name, so it is a real toggle
+        // rather than a one-way door: press to widen, press again to come back.
+        assert_eq!(Scope::default().toggled(Scope::All), Scope::All);
+        assert_eq!(Scope::All.toggled(Scope::All), Scope::default());
+    }
+
+    #[test]
+    fn clicking_the_group_you_are_already_in_twice_cannot_bomb_the_strip() {
+        // The bug Parker hit twice, in the gesture that causes it: *"the outer
+        // is tab bombed with ALL our tabs again"*, on a 31-tab window whose
+        // strip should have been carrying four.
+        //
+        // The first press PINS the branch the strip was already resting on, so
+        // nothing about the window changes — same tabs, same chip label, same
+        // lit row. The second press is therefore the press of somebody who
+        // believes the first one did nothing, and it used to answer by putting
+        // every tab in the session on the strip.
+        //
+        // Written over the real shape of that window: four tasks in FEATURES,
+        // two in WORKBENCH, both under one project, plus a loose task and an
+        // unfiled one, because a two-task toy cannot tell "the group" from
+        // "the project" from "everything".
+        let places: Vec<Place> = [
+            task(Some(1), Some(11)),
+            task(Some(1), Some(11)),
+            task(Some(1), Some(11)),
+            task(Some(1), Some(11)),
+            task(Some(1), Some(12)),
+            task(Some(1), Some(12)),
+            task(Some(1), None),
+            task(None, None),
+        ]
+        .iter()
+        .map(|t| t.place)
+        .collect();
+        let features = vec![0, 1, 2, 3];
+
+        let resting = Scope::default();
+        assert_eq!(shown(&places, resting, 0), features);
+
+        let once = resting.toggled(Scope::Initiative(11));
+        assert_eq!(
+            shown(&places, once, 0),
+            features,
+            "the arming press must not change the strip — that is why the next one is pressed"
+        );
+
+        let twice = once.toggled(Scope::Initiative(11));
+        assert_eq!(
+            shown(&places, twice, 0),
+            features,
+            "a second press on the group you are in must not carry the whole session"
         );
     }
 

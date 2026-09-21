@@ -17355,6 +17355,13 @@ impl Workspace {
                             });
                         }
                         None => {
+                            // UNFILED is a heading, not a branch — there is no
+                            // scope that means "the loose ones", so the press
+                            // asks for the whole session the way the chip does.
+                            // A real toggle since `toggled` started backing out
+                            // to the resting scope: before that it answered
+                            // `All` whatever it was given, so this row could
+                            // widen the strip and never bring it back.
                             let next = ws.scope.toggled(tree::Scope::All);
                             ws.set_scope(next, window, cx);
                         }
@@ -20102,11 +20109,14 @@ impl Workspace {
                             // first — the press a person reaches for when they
                             // cannot find a tab is "show me everything", never
                             // "show me a different narrowing".
-                            let next = if ws.scope == tree::Scope::All {
-                                tree::Scope::default()
-                            } else {
-                                tree::Scope::All
-                            };
+                            //
+                            // [`tree::Scope::toggled`] and nothing spelled out
+                            // here: this used to be its own copy of the same
+                            // two lines, and the copies disagreed for a day —
+                            // `toggled` answered ALL both ways while this one
+                            // came back. Every control that widens the strip
+                            // now asks the same function which way it goes.
+                            let next = ws.scope.toggled(tree::Scope::All);
                             ws.set_scope(next, window, cx);
                         }),
                     ),
