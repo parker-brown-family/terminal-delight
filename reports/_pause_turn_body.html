@@ -1,0 +1,705 @@
+<header class="top">
+  <div class="wrap">
+    <p class="kicker">terminal&#8209;delight &middot; the bench strip &middot; 2026&#8209;09&#8209;21</p>
+    <h1>Pausing a turn</h1>
+    <p class="standfirst">
+      You sent a turn on <code>OPUS</code> when you wanted <code>MAX</code>, and you noticed
+      about four seconds in. Until this afternoon the bench had one answer for that, and it was
+      <code>END SESSION</code>. The two dials sitting right beside it were grey — correctly, because
+      a dial press types a slash command, and a slash command typed into a running turn waits in the
+      harness&rsquo;s line editor until that turn happens to end, so the change lands at a moment
+      nobody chose. Ctrl+C in the <code>TERM</code> face did work. The bench simply never knew it had
+      happened: a harness back at its prompt after an interrupt is pixel&#8209;for&#8209;pixel a
+      harness that finished.
+    </p>
+    <p class="standfirst">
+      That is the whole of what was awkward here. Every other thing the strip says about an agent is
+      read off its screen, and this one thing cannot be read at all — so the pane has to remember it.
+      The strip now carries <b>PAUSE TURN</b> while a turn is running and <b>RESUME TURN</b> while one
+      is stopped, the dials come alive the moment it stops, and in the six other states an agent pane
+      can be in it draws neither. The word <code>AGENT</code> is off the far left.
+    </p>
+    <div class="meta">
+      <span><b>Built and on a branch.</b> <code>bench/pause-and-resume-the-turn</code></span>
+      <span><b>Gates:</b> clippy <code>-D warnings</code> clean, rustfmt clean, 1500 tests pass</span>
+      <span><b>Reading time:</b> about eight minutes, mostly pictures</span>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+
+<h2 class="sec">Read first</h2>
+<p class="lede">
+  Five things, ranked by how much your answer would change the code. The first is the only one that
+  could change it much.
+</p>
+<ol class="esc-list">
+  <li>
+    <span class="rank">1</span>
+    <div>
+      <h3>The state machine, against the paragraph you wrote</h3>
+      <p>You described the behaviour in words and said a state and decision tree would carry it more
+      succinctly. Figures 02 and 03 are that diagram, drawn back at you from what I built.
+      <b>If a branch is wrong it is one match arm</b> — <code>turn_control</code> is eleven lines and
+      has its own test.</p>
+    </div>
+  </li>
+  <li>
+    <span class="rank">2</span>
+    <div>
+      <h3><code>Reading your answer</code> gets the pause too, and that was my call</h3>
+      <p>The eight seconds after the bench types into the terminal and before the spinner appears.
+      You said &ldquo;unless a turn is running&rdquo;; this is the window where a turn has been sent and
+      has not visibly started. <b>It is the window you would actually notice the wrong model in</b>, so
+      I included it. Being early costs one interrupt arriving at a prompt, which clears a line.</p>
+    </div>
+  </li>
+  <li>
+    <span class="rank">3</span>
+    <div>
+      <h3>Paused outranks Finished, or your rule is not true</h3>
+      <p>A harness may ring its bell on the way back to the prompt, and the bench&rsquo;s
+      &ldquo;done&rdquo; sensor is that bell. Without the ordering in figure 04, an interrupted turn
+      would read <code>Finished</code> and <b>the strip would offer a resume on a turn that ended on
+      purpose</b> — the exact thing you forbade.</p>
+    </div>
+  </li>
+  <li>
+    <span class="rank">4</span>
+    <div>
+      <h3>The second copy of the question is gone, and the card&rsquo;s navigator became pressable to pay for it</h3>
+      <p>The round steps — <code>Morning / Weather / Free night / Sweet&#8239;or&#8239;sav</code> — were
+      clickable only in the pinned copy underneath. Removing the pin without moving that would have
+      taken the step&#8209;to&#8209;step gesture with it. <b>Both halves are in the same change.</b></p>
+    </div>
+  </li>
+  <li>
+    <span class="rank">5</span>
+    <div>
+      <h3>A pause does not survive a window restart</h3>
+      <p>Not built, deliberately. The latch lives in the pane, not on disk, so a relaunched window
+      shows a paused pane as <code>Idle</code> and offers no resume. <b>Saying so is cheap; storing it
+      is a schema.</b> Tell me if it matters and it becomes one.</p>
+    </div>
+  </li>
+</ol>
+
+<h2 class="sec">What the strip draws</h2>
+
+<figure>
+  <span class="lbl">01 &middot; The strip in its three turn states</span>
+  <div class="scroller">
+    <div class="strip-set">
+
+      <div class="strip-row">
+        <span class="strip-when">a turn is running</span>
+        <div class="strip">
+          <span class="lamp pending"></span>
+          <span class="state">Working</span>
+          <span class="mi">12s</span>
+          <span class="mi">turn 24s</span>
+          <span class="mi">&darr; 1.2k tokens</span>
+          <span class="mi acc">asking the boss</span>
+          <span class="gap"></span>
+          <span class="btn new">PAUSE TURN</span>
+          <span class="btn off">OPUS &#9662;</span>
+          <span class="btn off">MAX &#9662;</span>
+          <span class="btn">END SESSION</span>
+        </div>
+      </div>
+
+      <div class="strip-row">
+        <span class="strip-when">you stopped it</span>
+        <div class="strip">
+          <span class="lamp waiting"></span>
+          <span class="state">Paused</span>
+          <span class="mi">6s</span>
+          <span class="gap"></span>
+          <span class="btn primary">RESUME TURN</span>
+          <span class="btn">OPUS &#9662;</span>
+          <span class="btn">MAX &#9662;</span>
+          <span class="btn">END SESSION</span>
+        </div>
+      </div>
+
+      <div class="strip-row">
+        <span class="strip-when">the turn ended by itself</span>
+        <div class="strip">
+          <span class="lamp settled"></span>
+          <span class="state">Finished</span>
+          <span class="mi">1m</span>
+          <span class="gap"></span>
+          <span class="btn">OPUS &#9662;</span>
+          <span class="btn">MAX &#9662;</span>
+          <span class="btn">END SESSION</span>
+        </div>
+      </div>
+
+    </div>
+    <p class="fignote">
+      <span class="key"><i class="sw new"></i> the new control</span>
+      <span class="key"><i class="sw off"></i> drawn, cannot be pressed</span>
+      <span class="key"><i class="sw prim"></i> the one control that offers rather than takes</span>
+    </p>
+  </div>
+  <figcaption>
+    Drawn from the code, at roughly the width of a pane in your two&#8209;column layout.
+    <b>The third row is the requirement</b> — a finished turn carries no turn control at all, so there
+    is nothing there to press and nothing to explain. Note what left: the word <code>AGENT</code>,
+    which named the subject of a sentence the lamp and the state were already saying, and cost the bar
+    its leftmost fifty pixels on every pane in the window.
+  </figcaption>
+</figure>
+
+<figure>
+  <span class="lbl">02 &middot; Where a paused turn can go</span>
+  <div class="scroller">
+    <svg viewBox="0 0 900 350" role="img" aria-label="State diagram: Working and Paused exchange, each drops to a terminal state, and there is no route from Finished back to Paused.">
+      <defs>
+        <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="#c3c2b7"/>
+        </marker>
+        <marker id="ar-b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="#3987e5"/>
+        </marker>
+        <marker id="ar-m" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="#8b8a80"/>
+        </marker>
+      </defs>
+
+      <rect x="48" y="52" width="230" height="70" rx="9" fill="#1a1a19" stroke="#c98500" stroke-width="1.5"/>
+      <text x="163" y="82" text-anchor="middle" font-family="ui-monospace, monospace" font-size="15" fill="#ffffff">Working</text>
+      <text x="163" y="102" text-anchor="middle" font-family="ui-monospace, monospace" font-size="10.5" fill="#8b8a80">the screen says so</text>
+
+      <rect x="622" y="52" width="230" height="70" rx="9" fill="#1a1a19" stroke="#3987e5" stroke-width="1.5"/>
+      <text x="737" y="82" text-anchor="middle" font-family="ui-monospace, monospace" font-size="15" fill="#ffffff">Paused</text>
+      <text x="737" y="102" text-anchor="middle" font-family="ui-monospace, monospace" font-size="10.5" fill="#3987e5">the pane remembers</text>
+
+      <path d="M278,74 L616,74" stroke="#3987e5" stroke-width="1.5" fill="none" marker-end="url(#ar-b)"/>
+      <text x="447" y="64" text-anchor="middle" font-family="ui-monospace, monospace" font-size="11" fill="#3987e5">PAUSE TURN &#183; ctrl+G &#8594; one 0x03</text>
+
+      <path d="M622,104 L284,104" stroke="#c3c2b7" stroke-width="1.5" fill="none" marker-end="url(#ar)"/>
+      <text x="447" y="124" text-anchor="middle" font-family="ui-monospace, monospace" font-size="11" fill="#c3c2b7">RESUME TURN</text>
+      <text x="447" y="140" text-anchor="middle" font-family="ui-monospace, monospace" font-size="11" fill="#c3c2b7">&#183; any other message you send</text>
+      <text x="447" y="156" text-anchor="middle" font-family="ui-monospace, monospace" font-size="11" fill="#c3c2b7">&#183; a turn started from the TERM face</text>
+
+      <path d="M163,122 L163,234" stroke="#c3c2b7" stroke-width="1.5" fill="none" marker-end="url(#ar)"/>
+      <text x="176" y="182" font-family="ui-monospace, monospace" font-size="11" fill="#c3c2b7">the turn ends</text>
+
+      <path d="M737,122 L737,234" stroke="#c3c2b7" stroke-width="1.5" fill="none" marker-end="url(#ar)"/>
+      <text x="750" y="182" font-family="ui-monospace, monospace" font-size="11" fill="#c3c2b7">the process goes</text>
+
+      <rect x="48" y="240" width="230" height="64" rx="9" fill="#1a1a19" stroke="#199e70" stroke-width="1.5"/>
+      <text x="163" y="268" text-anchor="middle" font-family="ui-monospace, monospace" font-size="15" fill="#ffffff">Finished</text>
+      <text x="163" y="288" text-anchor="middle" font-family="ui-monospace, monospace" font-size="10.5" fill="#8b8a80">no turn control</text>
+
+      <rect x="622" y="240" width="230" height="64" rx="9" fill="#1a1a19" stroke="#8b8a80" stroke-width="1.5"/>
+      <text x="737" y="268" text-anchor="middle" font-family="ui-monospace, monospace" font-size="15" fill="#ffffff">Exited</text>
+      <text x="737" y="288" text-anchor="middle" font-family="ui-monospace, monospace" font-size="10.5" fill="#8b8a80">the strip offers LAUNCH</text>
+
+      <path d="M278,272 L616,272" stroke="#8b8a80" stroke-width="1.4" stroke-dasharray="6 5" fill="none" opacity="0.55"/>
+      <g>
+        <circle cx="447" cy="272" r="15" fill="#111110" stroke="#d03b3b" stroke-width="1.6"/>
+        <path d="M441,266 L453,278 M453,266 L441,278" stroke="#d03b3b" stroke-width="1.8"/>
+      </g>
+      <text x="447" y="308" text-anchor="middle" font-family="ui-monospace, monospace" font-size="11" fill="#d03b3b">no route back &#183; a finished turn is never resumable</text>
+    </svg>
+  </div>
+  <figcaption>
+    Drawn from <code>agent_state</code> and <code>turn_control</code>, both in <code>workbench.rs</code>,
+    both with table tests. <b>Blue is the state nothing on the screen can see</b> — every other box here
+    is a sensor reading, and <code>Paused</code> is the pane remembering that it sent an interrupt into
+    a turn that has not started again. The red cross is your rule: there is no edge into
+    <code>Paused</code> except through a deliberate stop.
+  </figcaption>
+</figure>
+
+<figure>
+  <span class="lbl">03 &middot; What the strip asks before it draws anything</span>
+  <div class="scroller">
+    <svg viewBox="0 0 900 430" role="img" aria-label="Decision tree: three questions in sequence decide whether the strip draws RESUME TURN, PAUSE TURN, or nothing.">
+      <defs>
+        <marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="#8b8a80"/>
+        </marker>
+      </defs>
+
+      <rect x="30" y="22" width="420" height="58" rx="8" fill="#232321" stroke="#3a3a36"/>
+      <text x="48" y="57" font-family="ui-monospace, monospace" font-size="13" fill="#ffffff">is there an agent in this pane right now?</text>
+      <path d="M450,51 L640,51" stroke="#8b8a80" stroke-width="1.3" fill="none" marker-end="url(#ar2)"/>
+      <text x="460" y="42" font-family="ui-monospace, monospace" font-size="11" fill="#8b8a80">no</text>
+      <text x="648" y="48" font-family="ui-monospace, monospace" font-size="12.5" fill="#8b8a80">nothing</text>
+      <text x="648" y="66" font-family="ui-monospace, monospace" font-size="10.5" fill="#8b8a80">the strip offers LAUNCH AGENT</text>
+
+      <path d="M240,80 L240,132" stroke="#8b8a80" stroke-width="1.3" fill="none" marker-end="url(#ar2)"/>
+      <text x="250" y="110" font-family="ui-monospace, monospace" font-size="11" fill="#8b8a80">yes</text>
+
+      <rect x="30" y="138" width="420" height="76" rx="8" fill="#232321" stroke="#3a3a36"/>
+      <text x="48" y="168" font-family="ui-monospace, monospace" font-size="13" fill="#ffffff">did the bench stop a turn here</text>
+      <text x="48" y="190" font-family="ui-monospace, monospace" font-size="13" fill="#ffffff">that has not started again?</text>
+      <path d="M450,176 L640,176" stroke="#3987e5" stroke-width="1.5" fill="none" marker-end="url(#ar2)"/>
+      <text x="460" y="167" font-family="ui-monospace, monospace" font-size="11" fill="#3987e5">yes</text>
+      <rect x="648" y="156" width="152" height="34" rx="6" fill="rgba(57,135,229,.14)" stroke="#3987e5"/>
+      <text x="724" y="178" text-anchor="middle" font-family="ui-monospace, monospace" font-size="12" fill="#8fc0f5">RESUME TURN</text>
+      <text x="648" y="206" font-family="ui-monospace, monospace" font-size="10.5" fill="#8b8a80">and PAUSE is not drawn</text>
+
+      <path d="M240,214 L240,266" stroke="#8b8a80" stroke-width="1.3" fill="none" marker-end="url(#ar2)"/>
+      <text x="250" y="244" font-family="ui-monospace, monospace" font-size="11" fill="#8b8a80">no</text>
+
+      <rect x="30" y="272" width="420" height="76" rx="8" fill="#232321" stroke="#3a3a36"/>
+      <text x="48" y="302" font-family="ui-monospace, monospace" font-size="13" fill="#ffffff">is a turn in flight?</text>
+      <text x="48" y="324" font-family="ui-monospace, monospace" font-size="11.5" fill="#8b8a80">Working, or the 8s after the bench typed</text>
+      <path d="M450,310 L640,310" stroke="#c98500" stroke-width="1.5" fill="none" marker-end="url(#ar2)"/>
+      <text x="460" y="301" font-family="ui-monospace, monospace" font-size="11" fill="#c98500">yes</text>
+      <rect x="648" y="290" width="152" height="34" rx="6" fill="rgba(201,133,0,.14)" stroke="#c98500"/>
+      <text x="724" y="312" text-anchor="middle" font-family="ui-monospace, monospace" font-size="12" fill="#e0b45c">PAUSE TURN</text>
+      <text x="648" y="340" font-family="ui-monospace, monospace" font-size="10.5" fill="#8b8a80">and RESUME is not drawn</text>
+
+      <path d="M240,348 L240,386" stroke="#8b8a80" stroke-width="1.3" fill="none" marker-end="url(#ar2)"/>
+      <text x="250" y="374" font-family="ui-monospace, monospace" font-size="11" fill="#8b8a80">no</text>
+
+      <text x="30" y="404" font-family="ui-monospace, monospace" font-size="12.5" fill="#8b8a80">nothing</text>
+      <text x="108" y="404" font-family="ui-monospace, monospace" font-size="11" fill="#8b8a80">Finished &#183; Idle &#183; Waiting on you &#183; Blocked &#183; Exited</text>
+    </svg>
+  </div>
+  <figcaption>
+    Drawn from <code>turn_control</code>, which is the entire rule and lives in one place so the strip
+    and its test cannot disagree. <b>Five of the eight states fall off the bottom</b>, which is the
+    ask rather than a side effect: the control is absent far more often than it is there, and the two
+    halves are never on the strip at the same time in any state at all.
+  </figcaption>
+</figure>
+
+<h2 class="sec">Why the rung sits at the top</h2>
+<p class="lede">
+  <code>Paused</code> is a new rung on a ladder that decides what one word at the top of the bench
+  says. The height is not a preference — it is what the rung had to clear to ever be true.
+</p>
+
+<figure>
+  <span class="lbl">04 &middot; The ladder, and the three rungs Paused had to clear</span>
+  <div class="scroller">
+    <div class="ladder">
+      <div class="rung top">
+        <span class="n">1</span>
+        <span class="nm">Paused</span>
+        <span class="src">the pane remembers an interrupt</span>
+        <span class="note">guarded: not while the screen says Working, never on a dead pane</span>
+      </div>
+      <div class="rung cleared">
+        <span class="n">2</span>
+        <span class="nm">Reading your answer</span>
+        <span class="src">the bench typed within 8s</span>
+        <span class="note">the interrupt is itself a write, and stamps this same clock &mdash; below it, a pause would read as the bench describing its own keystroke for eight seconds</span>
+      </div>
+      <div class="rung">
+        <span class="n">3</span>
+        <span class="nm">Waiting on you</span>
+        <span class="src">a picker is on screen</span>
+        <span class="note cleared-note">the picker that was up outlives the turn by a sweep or two</span>
+      </div>
+      <div class="rung">
+        <span class="n">4</span>
+        <span class="nm">Blocked</span>
+        <span class="src">the error sensor</span>
+        <span class="note"></span>
+      </div>
+      <div class="rung cleared">
+        <span class="n">5</span>
+        <span class="nm">Finished</span>
+        <span class="src">the bell rang</span>
+        <span class="note">a harness may ring on the way back to the prompt &mdash; below it, your rule is false and a stopped turn offers no resume</span>
+      </div>
+      <div class="rung">
+        <span class="n">6</span>
+        <span class="nm">Exited</span>
+        <span class="src">the process is gone</span>
+        <span class="note deny">DENIES the pause &mdash; nothing to resume</span>
+      </div>
+      <div class="rung">
+        <span class="n">7</span>
+        <span class="nm">Working</span>
+        <span class="src">the spinner is up</span>
+        <span class="note deny">DENIES the pause &mdash; an interrupt that did not take is not a pause</span>
+      </div>
+      <div class="rung">
+        <span class="n">8</span>
+        <span class="nm">Idle</span>
+        <span class="src">nothing else matched</span>
+        <span class="note"></span>
+      </div>
+    </div>
+    <p class="fignote">
+      <span class="key"><i class="sw prim"></i> the new rung</span>
+      <span class="key"><i class="sw new"></i> a rung it had to clear, with the reason</span>
+      <span class="key"><i class="sw crit"></i> a sensor that overrides it</span>
+      <span class="gutter">the two denials are what keep this a reading rather than a latch that can lie &mdash; if the interrupt does not take, the screen wins</span>
+    </p>
+  </div>
+  <figcaption>
+    Drawn from <code>agent_state</code> and the table test beside it, one row per line above.
+    <b>Rungs 2 and 5 are the ones that would have shipped a wrong answer</b>, and neither is exotic:
+    an interrupt stamps the write clock because it is a write, and a bell after a stopped turn is
+    ordinary harness behaviour. The two denials at 6 and 7 are why this is a reading of the pane rather
+    than a flag somebody has to remember to lower.
+  </figcaption>
+</figure>
+
+<figure>
+  <span class="lbl">05 &middot; Every state a pane can be in, and what it draws</span>
+  <div class="scroller">
+    <table class="wide">
+      <thead>
+        <tr><th>the bar says</th><th>what that means</th><th>dials</th><th>turn control</th><th>session</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><b>Working</b></td><td>the spinner is up</td><td class="no">grey</td><td class="yes">PAUSE TURN</td><td>END SESSION</td></tr>
+        <tr><td><b>Reading your answer</b></td><td>the bench typed, nothing has moved</td><td class="no">grey</td><td class="yes">PAUSE TURN</td><td>END SESSION</td></tr>
+        <tr><td><b>Paused</b></td><td>you stopped a turn</td><td class="yes">live</td><td class="yes">RESUME TURN</td><td>END SESSION</td></tr>
+        <tr><td><b>Waiting on you</b></td><td>a question is open</td><td class="yes">live</td><td class="dash">&mdash;</td><td>END SESSION</td></tr>
+        <tr><td><b>Blocked</b></td><td>something went wrong</td><td class="yes">live</td><td class="dash">&mdash;</td><td>END SESSION</td></tr>
+        <tr><td><b>Finished</b></td><td>the turn ended by itself</td><td class="yes">live</td><td class="dash">&mdash;</td><td>END SESSION</td></tr>
+        <tr><td><b>Idle</b></td><td>attached, nothing happening</td><td class="yes">live</td><td class="dash">&mdash;</td><td>END SESSION</td></tr>
+        <tr><td><b>Exited</b></td><td>the process is gone</td><td class="no">grey</td><td class="dash">&mdash;</td><td>LAUNCH AGENT</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <figcaption>
+    All eight, because enumeration is the cheapest way to find the case nobody planned for.
+    <b>The only row where a dial changed behaviour is <code>Paused</code></b> — and that row is the
+    reason to stop a turn at all, since the four other live-dial rows were already states where a
+    slash command lands immediately.
+  </figcaption>
+</figure>
+
+<h2 class="sec">What travels, and what puts the pause down</h2>
+
+<figure>
+  <span class="lbl">06 &middot; One pause, end to end</span>
+  <div class="scroller">
+    <div class="seq">
+      <div class="ev"><span class="t">0.0s</span><span class="act">you press <b>PAUSE TURN</b></span><span class="wire"><code>0x03</code></span><span class="jr">journalled <code>interrupt</code></span></div>
+      <div class="ev"><span class="t">~0.3s</span><span class="act">the spinner goes</span><span class="wire state-move">Working &#8594; <b>Paused</b></span><span class="jr">the dials come alive</span></div>
+      <div class="ev"><span class="t">4.1s</span><span class="act">you press <b>MAX</b> on the effort dial</span><span class="wire"><code>/effort max</code> &crarr;</span><span class="jr">journalled <code>keys</code></span></div>
+      <div class="ev"><span class="t">9.6s</span><span class="act">you press <b>RESUME TURN</b></span><span class="wire"><code>&#8971;Proceed with the turn.&#8970;</code> &crarr;</span><span class="jr">journalled <code>say</code></span></div>
+      <div class="ev"><span class="t">10.0s</span><span class="act">the spinner returns</span><span class="wire state-move"><b>Paused</b> &#8594; Working</span><span class="jr">the latch is down</span></div>
+      <div class="ev cmp"><span class="t">&mdash;</span><span class="act">for comparison, <b>END SESSION</b></span><span class="wire"><code>0x03 0x03</code> in one write</span><span class="jr">journalled <code>end</code></span></div>
+    </div>
+    <p class="fignote">
+      <span class="gutter">the times are illustrative; the bytes and the journal names are read from <code>bench_pause</code>, <code>bench_send</code> and <code>bench_end_agent</code></span>
+    </p>
+  </div>
+  <figcaption>
+    <b>One byte is the whole difference between the two controls.</b> Ending a session sends the pair
+    inside the harness&rsquo;s own double&#8209;press window, where the first interrupt cancels the turn
+    and the second quits; pausing sends one and stops. The resume goes down the ordinary message path —
+    bracketed, journalled, held and drained under the same rules as anything you type — because a
+    private pipe for one sentence would be a second way of talking to a harness that already has one.
+  </figcaption>
+</figure>
+
+<figure>
+  <span class="lbl">07 &middot; The three things that put a pause down</span>
+  <div class="scroller">
+    <svg viewBox="0 0 900 250" role="img" aria-label="Three routes converge on clearing the pause latch: any message sent, the session ending, and a once-a-second settle that notices a turn running again.">
+      <defs>
+        <marker id="ar3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="#199e70"/>
+        </marker>
+      </defs>
+      <rect x="24" y="22" width="330" height="56" rx="8" fill="#1a1a19" stroke="#199e70"/>
+      <text x="42" y="46" font-family="ui-monospace, monospace" font-size="12.5" fill="#ffffff">any message leaves the bench</text>
+      <text x="42" y="66" font-family="ui-monospace, monospace" font-size="10.5" fill="#8b8a80">the composer, ctl bench say, or the resume itself</text>
+
+      <rect x="24" y="97" width="330" height="56" rx="8" fill="#1a1a19" stroke="#199e70"/>
+      <text x="42" y="121" font-family="ui-monospace, monospace" font-size="12.5" fill="#ffffff">the session ends</text>
+      <text x="42" y="141" font-family="ui-monospace, monospace" font-size="10.5" fill="#8b8a80">nothing left to resume; the strip turns to LAUNCH</text>
+
+      <rect x="24" y="172" width="330" height="56" rx="8" fill="#1a1a19" stroke="#199e70"/>
+      <text x="42" y="196" font-family="ui-monospace, monospace" font-size="12.5" fill="#ffffff">a turn starts again without us</text>
+      <text x="42" y="216" font-family="ui-monospace, monospace" font-size="10.5" fill="#8b8a80">you flipped to TERM and typed &#183; caught once a second</text>
+
+      <path d="M354,50 L470,50 L470,120" stroke="#199e70" stroke-width="1.4" fill="none"/>
+      <path d="M354,125 L470,125" stroke="#199e70" stroke-width="1.4" fill="none"/>
+      <path d="M354,200 L470,200 L470,130" stroke="#199e70" stroke-width="1.4" fill="none"/>
+      <path d="M470,125 L560,125" stroke="#199e70" stroke-width="1.6" fill="none" marker-end="url(#ar3)"/>
+
+      <rect x="570" y="95" width="306" height="60" rx="8" fill="rgba(25,158,112,.12)" stroke="#199e70" stroke-width="1.6"/>
+      <text x="723" y="121" text-anchor="middle" font-family="ui-monospace, monospace" font-size="13" fill="#ffffff">the latch comes down</text>
+      <text x="723" y="141" text-anchor="middle" font-family="ui-monospace, monospace" font-size="10.5" fill="#8b8a80">the bar stops saying Paused</text>
+
+      <text x="24" y="246" font-family="ui-monospace, monospace" font-size="10.5" fill="#8b8a80">the first two are funnels every route already passes through, not clears bolted beside the one caller that prompted them</text>
+    </svg>
+  </div>
+  <figcaption>
+    Drawn from the three call sites, each of which is a place every route already goes through.
+    <b>The third exists because the bench is not the only way to talk to an agent</b> — you can pause
+    from here, flip to the terminal, and type there, and without a once&#8209;a&#8209;second look at the
+    spinner the strip would offer to resume that turn after it had already finished.
+  </figcaption>
+</figure>
+
+<h2 class="sec">The question that was printed twice</h2>
+
+<figure>
+  <span class="lbl">08 &middot; A decision opened from the rail, before and after</span>
+  <div class="scroller">
+    <div class="ba">
+      <div class="ba-col">
+        <span class="ba-lbl bad">before</span>
+        <div class="bench">
+          <div class="bcard">
+            <span class="bx">&#10005;</span>
+            <span class="bkind">question</span>
+            <p class="bq">It&rsquo;s a Sunday morning with nothing scheduled. What&rsquo;s the first thing you reach for?</p>
+            <p class="bopt">1 &middot; The day doesn&rsquo;t start until the first cup does.</p>
+            <p class="bopt">2 &middot; Kettle on, no rush, ease into it.</p>
+            <div class="bchips"><span>Coffee, immediately</span><span>Tea, slowly</span></div>
+            <div class="bverbs"><span>comment</span><span>ask</span></div>
+          </div>
+          <div class="bpin">
+            <span class="bwait">WAITING ON YOU</span>
+            <p class="bnav">&#8592; Morning &#183; Weather &#183; <b>Free night</b> &#183; Sweet/sav &#183; Submit &#8594;</p>
+            <p class="bq">It&rsquo;s a Sunday morning with nothing scheduled. What&rsquo;s the first thing you reach for?</p>
+            <p class="bopt">1 &middot; The day doesn&rsquo;t start until the first cup does.</p>
+            <p class="bopt">2 &middot; Kettle on, no rush, ease into it.</p>
+            <div class="bchips"><span>Coffee, immediately</span><span>Tea, slowly</span></div>
+          </div>
+          <div class="bcomp">type to the agent</div>
+        </div>
+      </div>
+      <div class="ba-col">
+        <span class="ba-lbl good">after</span>
+        <div class="bench">
+          <div class="bcard">
+            <span class="bx">&#10005;</span>
+            <span class="bkind">question</span>
+            <p class="bq">It&rsquo;s a Sunday morning with nothing scheduled. What&rsquo;s the first thing you reach for?</p>
+            <p class="bopt">1 &middot; The day doesn&rsquo;t start until the first cup does.</p>
+            <p class="bopt">2 &middot; Kettle on, no rush, ease into it.</p>
+            <p class="bnav live">&#8592; Morning &#183; Weather &#183; <b>Free night</b> &#183; Sweet/sav &#183; Submit &#8594;</p>
+            <div class="bchips"><span>Coffee, immediately</span><span>Tea, slowly</span></div>
+            <div class="bverbs"><span>comment</span><span>ask</span></div>
+          </div>
+          <div class="bcomp">type to the agent</div>
+        </div>
+      </div>
+    </div>
+    <p class="fignote">
+      <span class="key"><i class="sw prim"></i> the navigator, now pressable in the card</span>
+      <span class="gutter">the pin is still drawn whenever the open card is a DIFFERENT surface &mdash; that is the case it exists for</span>
+    </p>
+  </div>
+  <figcaption>
+    A reconstruction in HTML from the shipped renderers, not a screenshot &mdash; the option text is
+    from your own screenshot. <b>The pin is not gone, it is no longer drawn under its own card.</b>
+    It exists so that being asked something is never scrolled away from, and it has nothing left to
+    protect when the question is the card on screen. Open a different surface and it comes back.
+  </figcaption>
+</figure>
+
+<h2 class="sec">Yours to settle</h2>
+<div class="grill">
+  <div class="ask">
+    <h3>Does the pause belong in the eight seconds before the spinner appears?</h3>
+    <p>My reading of &ldquo;unless a turn is running&rdquo; includes <code>Reading your answer</code> —
+    you have sent something and the agent has not visibly picked it up. <b>I recommend keeping it</b>,
+    because that is the window in which you notice the model was wrong, and the worst case is one
+    interrupt clearing an empty prompt line. Cutting it is a one&#8209;word change to
+    <code>turn_control</code>.</p>
+  </div>
+  <div class="ask">
+    <h3>Is <q>Proceed with the turn.</q> the sentence you want?</h3>
+    <p>It lands in the transcript directly under the harness&rsquo;s own
+    <code>[Request interrupted by user]</code>, so it is read by a person later as well as by the
+    model now. I avoided &ldquo;continue&rdquo; because it collides with the slash command of the same
+    name. <b>One constant, <code>RESUME_SAY</code>, changes it.</b></p>
+  </div>
+  <div class="ask">
+    <h3>Should ctrl+G and the button stay the same gesture?</h3>
+    <p>Ctrl+G on the composer was already the aimed interrupt and now also sets the latch, so a turn
+    stopped by the chord offers the resume exactly as one stopped by the button does.
+    <b>I recommend this stays</b> — two gestures with one meaning leaving the pane in two states is
+    the same shape of bug as two renderers drawing one question.</p>
+  </div>
+  <div class="ask">
+    <h3>Should a pause survive a window restart?</h3>
+    <p>It does not today. A relaunched window reads a paused pane as <code>Idle</code> and offers no
+    resume, which is a wrong answer rather than a missing one — though a harmless wrong answer, since
+    you can type. <b>I recommend leaving it</b> until a restart with panes mid&#8209;turn is a thing
+    that happens to you; storing it means a schema and a migration.</p>
+  </div>
+</div>
+
+<h2 class="sec">What this is worth believing</h2>
+<div class="ev-row">
+  <div class="tile">
+    <span class="tl">rules with a table test</span>
+    <b>4</b>
+    <span class="tn"><span class="tag v">measured</span>the ladder, the control, the dial rule, the pin</span>
+  </div>
+  <div class="tile">
+    <span class="tl">mutations caught, of five tried</span>
+    <b id="mut-count">5</b>
+    <span class="tn"><span class="tag v">measured</span>each break named the test that noticed</span>
+  </div>
+  <div class="tile">
+    <span class="tl">tests passing on the branch</span>
+    <b>1500</b>
+    <span class="tn"><span class="tag v">measured</span>two unrelated failures pre&#8209;date the branch</span>
+  </div>
+  <div class="tile">
+    <span class="tl">seen running in a window</span>
+    <b>no</b>
+    <span class="tn"><span class="tag c">not established</span>nothing here has been photographed</span>
+  </div>
+</div>
+<p class="lede">
+  The strip has not been looked at in a running Terminal Delight. Every picture above is drawn from
+  the source, and the one thing a drawing cannot tell you is whether <code>PAUSE TURN</code> fits on a
+  narrow pane beside two dials and <code>END SESSION</code>. That is the first thing to check when this
+  is installed, and it is in <button class="lnk" data-dlg="d-limits">method and limits</button>.
+</p>
+
+<div class="dlgs">
+  <button class="lnk" data-dlg="d-prov">where each picture comes from</button>
+  <button class="lnk" data-dlg="d-limits">method and limits</button>
+  <button class="lnk" data-dlg="d-code">the code, by file</button>
+  <button class="lnk" data-dlg="d-mut">the five mutations</button>
+</div>
+
+</main>
+
+<dialog id="d-prov">
+  <div class="dlg-head">
+    <div><h3>Where each picture comes from</h3><p class="repo">terminal-delight &middot; bench/pause-and-resume-the-turn</p></div>
+    <button class="x" data-close>&times;</button>
+  </div>
+  <div class="dlg-body">
+    <h4>Drawn from the code</h4>
+    <ul>
+      <li><b>02, 03, 05</b> &mdash; <code>workbench::turn_control</code> and
+      <code>workbench::agent_state</code>, each with a table test naming every row drawn.</li>
+      <li><b>04</b> &mdash; the branch order inside <code>agent_state</code>, read top to bottom. The
+      two &ldquo;denies&rdquo; marks are its two guards, <code>!thinking</code> and
+      <code>!exited</code>.</li>
+      <li><b>06</b> &mdash; the byte sequences are read from <code>bench_pause</code> (one
+      <code>0x03</code>), <code>bench_end_agent</code> (two in one write) and
+      <code>channel::say_bytes</code>. The journal names are the <code>Outbound</code> variants.</li>
+      <li><b>07</b> &mdash; the three call sites that clear <code>wb_paused_ms</code>.</li>
+    </ul>
+    <h4>Reconstructions &mdash; mine to argue with</h4>
+    <ul>
+      <li><b>01</b> is a hand&#8209;built mockup of the strip, not a screenshot. The controls, their
+      order and their three faces are from the code; the metrics beside the state
+      (<code>turn 24s</code>, <code>&darr; 1.2k tokens</code>, <code>asking the boss</code>) are copied
+      off your own screenshot so the row has a realistic width.</li>
+      <li><b>08</b> is a reconstruction of the bench body from the renderers, with the question and
+      option text taken from your screenshot. Proportions are approximate; it is drawn to show what is
+      printed once and what was printed twice, not to be measured.</li>
+    </ul>
+    <h4>The one estimated number</h4>
+    <p>The strip mockup in figure 01 is drawn at about 780 CSS pixels of content width, chosen to be
+    near a pane in a two&#8209;column tab on your 1999&#8209;pixel window minus a left bar of roughly
+    235. It is an estimate from your screenshot, not a measurement from the app.</p>
+  </div>
+</dialog>
+
+<dialog id="d-limits">
+  <div class="dlg-head">
+    <div><h3>Method and limits</h3><p class="repo">what was and was not established</p></div>
+    <button class="x" data-close>&times;</button>
+  </div>
+  <div class="dlg-body">
+    <h4>What was run</h4>
+    <ul>
+      <li><code>cargo clippy --locked -- -D warnings</code> &mdash; clean. This is the gate CI runs; it
+      does not lint test targets.</li>
+      <li><code>cargo fmt --all</code> &mdash; clean.</li>
+      <li><code>cargo test --locked</code> &mdash; 1500 pass. Two failures in <code>paneident</code>
+      also fail on a clean checkout of <code>main</code>: they walk <code>/proc</code> on a live
+      machine with other agents running.</li>
+      <li>Five mutations, each reverted. See the fourth modal.</li>
+    </ul>
+    <h4>What was not</h4>
+    <ul>
+      <li><b>Nothing here has been seen running.</b> No window was launched, no screenshot taken, no
+      pane photographed. The pictures are drawn from source.</li>
+      <li><b>The width is unchecked.</b> <code>PAUSE TURN</code> is eleven characters joining two dials
+      and <code>END SESSION</code> on one row. On a narrow pane that row may wrap or clip, and only the
+      real thing can say. Dropping the word <code>AGENT</code> bought back some of it.</li>
+      <li><b>The interrupt is trusted, not verified.</b> One <code>0x03</code> stopping a Claude Code
+      turn and leaving the session alive is how the existing ctrl+G behaves and is what the code has
+      always claimed; it was not driven under a pseudoterminal for this change.</li>
+      <li><b>The pause does not persist.</b> A relaunched window reads a paused pane as
+      <code>Idle</code>.</li>
+    </ul>
+    <h4>What would invalidate the main claim</h4>
+    <p>The claim is that a paused pane is distinguishable from a finished one. It would be wrong if a
+    harness came back from an interrupt still printing its spinner rows for more than a second &mdash;
+    the <code>!thinking</code> guard would hold the bar at <code>Working</code> and the resume would
+    never appear. Check by pausing a long turn and watching the bar; if it does not reach
+    <code>Paused</code> within about a second, the sensor and the latch disagree and the guard is the
+    thing to revisit.</p>
+  </div>
+</dialog>
+
+<dialog id="d-code">
+  <div class="dlg-head">
+    <div><h3>The code, by file</h3><p class="repo">one commit &middot; 464 lines added, 24 removed</p></div>
+    <button class="x" data-close>&times;</button>
+  </div>
+  <div class="dlg-body">
+    <h4>app/src/workbench.rs</h4>
+    <p>All four rules, and all four tests. <code>AgentState::Paused</code>;
+    <code>agent_state</code> gains a <code>paused</code> argument and a top rung;
+    <code>dials_live</code> says yes to it; <code>TurnControl</code> and
+    <code>turn_control</code>; <code>RESUME_SAY</code>; <code>draws_waiting_block</code>;
+    two new <code>Hit</code> variants.</p>
+    <h4>app/src/pane/bench.rs</h4>
+    <p><code>bench_pause</code> (one <code>0x03</code> plus the stamp), <code>bench_resume</code>
+    (the existing <code>bench_say</code> with one sentence), <code>bench_pause_settle</code>, the
+    strip&rsquo;s new button, the two hit arms, the latch clear inside <code>bench_send</code>, and
+    the filter that stops the pin being drawn under its own card.</p>
+    <h4>app/src/benchdraw.rs</h4>
+    <p>The <code>AGENT</code> label removed from <code>title_card</code>. The question renderer takes
+    the pane&rsquo;s click zones so the round navigator is pressable in the card.</p>
+    <h4>app/src/pane.rs &middot; app/src/main.rs</h4>
+    <p>The <code>wb_paused_ms</code> field, and the once&#8209;a&#8209;second settle wired into the
+    workspace sweep beside the channel beacon.</p>
+  </div>
+</dialog>
+
+<dialog id="d-mut">
+  <div class="dlg-head">
+    <div><h3>The five mutations</h3><p class="repo">each one a way a rule could be wrong, each reverted</p></div>
+    <button class="x" data-close>&times;</button>
+  </div>
+  <div class="dlg-body">
+    <p>A test that passes says nothing about the test. Each rule was broken on purpose, the suite
+    re&#8209;run, and the break reverted &mdash; so the four tests above are known to be
+    load&#8209;bearing.</p>
+    <table class="wide">
+      <thead><tr><th>the break</th><th>what it would ship</th><th>caught by</th></tr></thead>
+      <tbody id="mut-rows">
+        <tr><td>drop the <code>!thinking</code> guard</td><td>a pane reading <code>Paused</code> while the agent works through the interrupt</td><td class="hit">the ladder table</td></tr>
+        <tr><td>put <code>Paused</code> below <code>Finished</code></td><td>a resume offered on a turn that ended by itself</td><td class="hit">the ladder table</td></tr>
+        <tr><td>offer <code>RESUME</code> on a finished turn</td><td>the thing you forbade, directly</td><td class="hit">the control test</td></tr>
+        <tr><td>leave the dials dead while paused</td><td>a pause that buys nothing</td><td class="hit">two dial tests</td></tr>
+        <tr><td>pin the question unconditionally</td><td>the double print, back</td><td class="hit">the pin test</td></tr>
+      </tbody>
+    </table>
+    <h4>The first run of this was wrong, and in the way that matters</h4>
+    <p>The script classified a result by grepping for a compile error before it looked for a failing
+    test &mdash; and cargo prints <code>error: test failed, to rerun pass &hellip;</code> when a test
+    fails, so all five mutations came back <q>did not compile</q> while every one of them was being
+    caught. A generic check placed ahead of a specific one reads every outcome as the generic case.
+    The order is fixed and the table above is the second run.</p>
+  </div>
+</dialog>
+
+<footer class="wrap">
+  <p>terminal&#8209;delight &middot; <code>bench/pause-and-resume-the-turn</code> &middot; one commit</p>
+  <p>Notes you leave here save into the file. Then: <em>read my notes in 2026-09-21-pausing-a-turn.html</em></p>
+</footer>

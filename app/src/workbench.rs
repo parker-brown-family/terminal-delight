@@ -1133,6 +1133,10 @@ pub enum Hit {
     Launch,
     /// End the agent running in this pane, from the strip.
     EndAgent,
+    /// Stop the running turn without ending the session, from the strip.
+    PauseTurn,
+    /// Tell a paused turn to carry on, from the strip.
+    ResumeTurn,
     /// Open one of the strip's dials, or close it if it is the open one.
     Dial(Dial),
     /// Take the nth value from the open dial's list — indexed as the harness's
@@ -2658,11 +2662,102 @@ pub fn ask_lines(shelf: Shelf, stand_in: bool, agent: bool, how: Embodiment) -> 
 /// two strings interleaving in one line editor.
 ///
 /// `Exited` is grey because there is nothing there to tell.
+///
+/// `Paused` is live, and it is the state this whole rule was getting in the
+/// way of. The paragraph above says a dial press mid-turn lands at a moment
+/// nobody chose — so a person who notices the wrong model mid-turn had, until
+/// now, no move at all except ending the session. Pausing is how they choose
+/// the moment: the harness is back at its prompt, the slash command lands
+/// there, and the turn goes again on the model they meant. Parker: *"we failed
+/// to set the effort or model correctly and need to stop the turn without
+/// stopping the agent running entirely"*.
 pub fn dials_live(state: AgentState) -> bool {
     match state {
-        AgentState::Idle | AgentState::Done | AgentState::Asking | AgentState::Blocked => true,
+        AgentState::Idle
+        | AgentState::Done
+        | AgentState::Asking
+        | AgentState::Blocked
+        | AgentState::Paused => true,
         AgentState::Working | AgentState::Reading | AgentState::Exited => false,
     }
+}
+
+/// What the strip offers to do to the TURN — as opposed to the session.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum TurnControl {
+    /// Stop the running turn, leaving the agent where it is.
+    Pause,
+    /// Tell a stopped turn to carry on.
+    Resume,
+}
+
+/// The message the resume sends. Parker: *"resume turn... just sends the
+/// message to the agent --- proceed with turn (or whatever you think works
+/// best for this)"*.
+///
+/// A sentence rather than a bare word, because it is going into a transcript
+/// somebody reads later, where it lands directly under the harness's own
+/// `[Request interrupted by user]`. "Continue" would also have been ambiguous
+/// with the slash command of the same name, which is the one reading that
+/// would do something entirely different.
+pub const RESUME_SAY: &str = "Proceed with the turn.";
+
+/// Pause, resume, or neither — the whole control, decided here.
+///
+/// **Neither is the common answer, and that is the requirement rather than a
+/// fallback.** Parker: *"this display will be TOTALLY HIDDEN unless a turn is
+/// running... a COMPLETED turn should NOT allow a user to 'resume turn' ...
+/// ONLY a PAUSED turn should allow this!!! and then WHILE a turn is paused the
+/// pause button it TOTALLY HIDDEN"*. So the two are never both drawn, and on
+/// five of the eight states neither is — a strip that offered RESUME beside a
+/// finished turn would be offering to restart something that ended on purpose.
+///
+/// `Reading` gets the pause with `Working`: from the person's side the turn
+/// they just sent is running, and that eight-second window is precisely when
+/// somebody notices they sent it on the wrong model. The cost of being early
+/// is one interrupt arriving at a prompt, which clears a line; the cost of
+/// being late is the turn.
+///
+/// `Asking` and `Blocked` get neither, and they lose nothing by it: they are
+/// already stopped, their dials are already live, and there is no turn in
+/// flight to take back.
+///
+/// `agent_present` is the same question [`strip_verb`] asks — a pane whose
+/// agent has gone reads as an agent pane for a while yet, and there is no turn
+/// in an empty room.
+pub fn turn_control(state: AgentState, agent_present: bool) -> Option<TurnControl> {
+    if !agent_present {
+        return None;
+    }
+    match state {
+        AgentState::Working | AgentState::Reading => Some(TurnControl::Pause),
+        AgentState::Paused => Some(TurnControl::Resume),
+        AgentState::Asking
+        | AgentState::Blocked
+        | AgentState::Done
+        | AgentState::Exited
+        | AgentState::Idle => None,
+    }
+}
+
+/// Does the question pinned above the composer get drawn, given what is
+/// already open in the body?
+///
+/// One question, one place. The waiting block exists so that being asked
+/// something is never scrolled away from — it sits below the body and outside
+/// its scroll for that reason — and when the card in the body IS that same
+/// question, the pin has nothing left to protect: the question, its options
+/// and its chips are all already on screen, six hundred pixels up, in a card
+/// that additionally carries the verbs. Parker, at two copies of one picker:
+/// *"Decisions tab repeats question display --- this SHOULD NOT be double
+/// printed!"*
+///
+/// It is the same failure this file has fixed twice before at smaller scale —
+/// `kind · title` above a heading that said `kind · title`, and a question
+/// asked three times inside one card. The shape of the bug is always two
+/// renderers each correctly drawing the thing they were told to draw.
+pub fn draws_waiting_block(showing: Option<&SurfaceId>, waiting: &SurfaceId) -> bool {
+    showing != Some(waiting)
 }
 
 /// What the strip's trailing verb offers.
@@ -2975,6 +3070,22 @@ pub enum AgentState {
     /// not moved yet. Parker: the on-screen rule *"will need an additional
     /// agent state for 'reading your instructions'"*.
     Reading,
+    /// A turn a PERSON stopped, that has not started again.
+    ///
+    /// The one state on this list that is not read off the screen. Every other
+    /// rung is a sensor — a spinner, a picker, a bell, a dead process — and
+    /// this one is a thing the bench did and remembers doing: it sent an
+    /// interrupt into a running turn and nothing has started since. The
+    /// screen cannot tell it from `Idle`, which is exactly why it has to be
+    /// held here. Parker: *"the primary use case for this is that we failed to
+    /// set the effort or model correctly and need to stop the turn without
+    /// stopping the agent running entirely"*.
+    ///
+    /// It is the reason [`dials_live`] says yes to it. A paused pane is the
+    /// one moment on this surface where the dials are both wanted and safe:
+    /// the harness is back at its prompt, so the slash command lands now
+    /// rather than at the end of a turn nobody chose.
+    Paused,
     /// Attached, nothing happening.
     Idle,
 }
@@ -2992,6 +3103,7 @@ impl AgentState {
             AgentState::Exited => "Exited",
             AgentState::Working => "Working",
             AgentState::Reading => "Reading your answer",
+            AgentState::Paused => "Paused",
             AgentState::Idle => "Idle",
         }
     }
@@ -3000,7 +3112,11 @@ impl AgentState {
     /// table as everything else on the bench.
     pub fn tint(self) -> Tint {
         match self {
-            AgentState::Asking | AgentState::Blocked => Tint::Waiting,
+            // Paused joins the waiting pair for the same reason they are
+            // there: nothing will happen on this pane until a person does
+            // something. That it was the person's own doing changes who is
+            // surprised, not who is holding the turn.
+            AgentState::Asking | AgentState::Blocked | AgentState::Paused => Tint::Waiting,
             AgentState::Done => Tint::Settled,
             AgentState::Working | AgentState::Reading => Tint::Pending,
             // Nothing is being claimed about an idle or departed agent, and
@@ -3010,6 +3126,12 @@ impl AgentState {
     }
 
     /// Does this state want a person to look at it now?
+    ///
+    /// Three states stop an agent and only two shout. `Paused` is the third
+    /// and it is quiet on purpose: a person who pressed pause four seconds ago
+    /// does not need the surface to break the news. It keeps the waiting
+    /// COLOUR, so the pane is findable in a window of twenty; it does not take
+    /// the phosphor, which is this bench's word for *you did not know this*.
     pub fn urgent(self) -> bool {
         matches!(self, AgentState::Asking | AgentState::Blocked)
     }
@@ -3022,12 +3144,36 @@ pub const READING_WINDOW_MS: u64 = 8_000;
 
 /// What the agent is doing, from the pane's sensors, decided in one place.
 ///
-/// The order is the old ladder with one rung added at the top: `reading` —
-/// the bench typed within [`READING_WINDOW_MS`] and the agent has not started
+/// The order is the old ladder with two rungs added above it. `reading` — the
+/// bench typed within [`READING_WINDOW_MS`] and the agent has not started
 /// working — outranks `asking`, because a picker stays on screen for a moment
 /// after the keys land, and a bar saying "Waiting on you" over an answer just
 /// given is the surface lying about its own state. It never outranks a pane
 /// that is blocked or gone: nothing is reading there.
+///
+/// `paused` sits above even that, and the height is not a preference — it is
+/// what the rung has to clear to ever be true at all:
+///
+/// - **Above `reading`,** because pausing IS a write. The interrupt goes down
+///   the same pseudoterminal as a message and stamps the same clock, so a
+///   pause would otherwise read "Reading your answer" for the next eight
+///   seconds — the bench describing its own keystroke instead of the turn it
+///   just stopped.
+/// - **Above `done`,** because a harness may well ring its bell on the way
+///   back to the prompt, and Parker's rule is exactly that the two must not be
+///   confused: *"a COMPLETED turn should NOT allow a user to 'resume turn' ...
+///   ONLY a PAUSED turn should allow this"*. A finished turn and a stopped one
+///   look identical from outside and offer opposite controls.
+/// - **Above `asking`,** because the question that was on screen when the
+///   interrupt landed is still on the bench for a sweep or two after it stops
+///   being real.
+///
+/// The two guards are what make it self-correcting rather than a latch that
+/// can lie. `!thinking`: if the interrupt did not take, or a new turn has
+/// started by any route at all — the terminal face, a hook, the person typing
+/// — the screen says `Working` and the screen wins, because a pause that did
+/// not stop anything is not a pause. `!exited`: there is nothing to resume in
+/// a pane whose process is gone.
 pub fn agent_state(
     asking: bool,
     blocked: bool,
@@ -3035,8 +3181,11 @@ pub fn agent_state(
     exited: bool,
     thinking: bool,
     reading: bool,
+    paused: bool,
 ) -> AgentState {
-    if reading && !thinking && !blocked && !exited {
+    if paused && !thinking && !exited {
+        AgentState::Paused
+    } else if reading && !thinking && !blocked && !exited {
         AgentState::Reading
     } else if asking {
         AgentState::Asking
@@ -4714,7 +4863,7 @@ mod tests {
         ];
         for ((a, b, d, e, t, r), want) in rows {
             assert_eq!(
-                agent_state(a, b, d, e, t, r),
+                agent_state(a, b, d, e, t, r, false),
                 want,
                 "{a} {b} {d} {e} {t} {r}"
             );
@@ -4723,6 +4872,145 @@ mod tests {
         assert!(
             !AgentState::Reading.urgent(),
             "an answer being read is not a demand"
+        );
+    }
+
+    /// Each of these rows is a rung the pause had to clear to be true at all,
+    /// and each of them is a state the OLD ladder would have reported instead.
+    #[test]
+    fn a_turn_a_person_stopped_outranks_every_sensor_but_the_two_that_deny_it() {
+        // (asking, blocked, done, exited, thinking, reading) with paused set
+        let rows = [
+            // The interrupt is a write, so it stamps the reading clock. Its
+            // own keystroke must not be what the bar describes.
+            (
+                (false, false, false, false, false, true),
+                AgentState::Paused,
+                "a pause is not the bench reading itself",
+            ),
+            // The harness rang its bell on the way back to the prompt. This
+            // is the row Parker's rule is about: a finished turn offers no
+            // resume and a stopped one must.
+            (
+                (false, false, true, false, false, false),
+                AgentState::Paused,
+                "a bell after an interrupt is not a finished turn",
+            ),
+            // A question left on the bench from before the interrupt.
+            (
+                (true, false, false, false, false, false),
+                AgentState::Paused,
+                "a stale picker does not outrank the stop",
+            ),
+            (
+                (false, true, false, false, false, false),
+                AgentState::Paused,
+                "the stop is what happened most recently",
+            ),
+            (
+                (false, false, false, false, false, false),
+                AgentState::Paused,
+                "the plain case",
+            ),
+            // ...and the two that deny it. Neither is a preference: a turn
+            // that is running was not stopped, and a pane with no process in
+            // it has nothing to resume.
+            (
+                (false, false, false, false, true, false),
+                AgentState::Working,
+                "an interrupt that did not take is not a pause",
+            ),
+            (
+                (false, false, false, true, false, false),
+                AgentState::Exited,
+                "there is nothing to resume in an empty pane",
+            ),
+        ];
+        for ((a, b, d, e, t, r), want, why) in rows {
+            assert_eq!(agent_state(a, b, d, e, t, r, true), want, "{why}");
+        }
+        // And with the latch down, every one of those rows reads what it
+        // always read — the rung is additive, not a reshuffle.
+        assert_eq!(
+            agent_state(false, false, true, false, false, false, false),
+            AgentState::Done
+        );
+        assert_eq!(
+            agent_state(false, false, false, false, false, true, false),
+            AgentState::Reading
+        );
+    }
+
+    /// The control is hidden far more often than it is drawn, and the states
+    /// where it is hidden are the point of the feature.
+    #[test]
+    fn the_turn_control_is_drawn_only_on_a_turn_that_is_running_or_stopped() {
+        use AgentState::*;
+        assert_eq!(turn_control(Working, true), Some(TurnControl::Pause));
+        assert_eq!(
+            turn_control(Reading, true),
+            Some(TurnControl::Pause),
+            "the window you notice the wrong model in"
+        );
+        assert_eq!(
+            turn_control(Paused, true),
+            Some(TurnControl::Resume),
+            "the only state that may be resumed"
+        );
+        for quiet in [Asking, Blocked, Done, Exited, Idle] {
+            assert_eq!(
+                turn_control(quiet, true),
+                None,
+                "{quiet:?} has no turn to pause and none to resume"
+            );
+        }
+        // The two are never both on the strip, in any state at all.
+        for st in [
+            Asking, Blocked, Done, Exited, Working, Reading, Paused, Idle,
+        ] {
+            assert!(
+                turn_control(st, false).is_none(),
+                "{st:?} with no agent in the pane offers nothing"
+            );
+        }
+        // Pressing pause while paused is not reachable, because the state
+        // that offers resume is the state the pause left behind.
+        assert_ne!(turn_control(Paused, true), Some(TurnControl::Pause));
+    }
+
+    /// A paused pane is the one stopped state whose dials were dead, and
+    /// making them live is the whole reason to stop.
+    #[test]
+    fn pausing_is_what_makes_a_dial_reachable_mid_turn() {
+        assert!(!dials_live(AgentState::Working), "the case being escaped");
+        assert!(
+            dials_live(AgentState::Paused),
+            "a pause that did not free the dials would have bought nothing"
+        );
+        assert_eq!(
+            strip_verb(AgentState::Paused, true),
+            StripVerb::End,
+            "pausing a turn does not change what ends the session"
+        );
+    }
+
+    /// The pin exists to stop a question being scrolled away from. It has
+    /// nothing to protect when the question is the card on screen.
+    #[test]
+    fn a_question_opened_from_the_rail_is_not_also_pinned_under_itself() {
+        let open = SurfaceId("q-1".into());
+        let other = SurfaceId("q-2".into());
+        assert!(
+            !draws_waiting_block(Some(&open), &open),
+            "the open card is the question; pinning a second copy is the bug"
+        );
+        assert!(
+            draws_waiting_block(Some(&other), &open),
+            "reading one card must never hide a different question"
+        );
+        assert!(
+            draws_waiting_block(None, &open),
+            "with nothing open the pin is the only copy there is"
         );
     }
 
@@ -6835,6 +7123,7 @@ mod tests {
             AgentState::Done,
             AgentState::Asking,
             AgentState::Blocked,
+            AgentState::Paused,
         ] {
             assert!(dials_live(live), "{live:?} is a state a person can type in");
         }
@@ -6860,6 +7149,7 @@ mod tests {
             AgentState::Blocked,
             AgentState::Working,
             AgentState::Reading,
+            AgentState::Paused,
         ] {
             assert_eq!(strip_verb(live, true), StripVerb::End, "{live:?}");
         }
@@ -6878,6 +7168,7 @@ mod tests {
             AgentState::Blocked,
             AgentState::Working,
             AgentState::Reading,
+            AgentState::Paused,
             AgentState::Exited,
         ] {
             assert_eq!(
@@ -7054,7 +7345,9 @@ mod tests {
     #[test]
     fn every_agent_state_says_something_a_person_would_say() {
         use AgentState::*;
-        for st in [Asking, Blocked, Done, Exited, Working, Idle] {
+        for st in [
+            Asking, Blocked, Done, Exited, Working, Reading, Paused, Idle,
+        ] {
             let w = st.word();
             assert!(!w.is_empty(), "{st:?} has no word");
             assert!(
@@ -7066,15 +7359,21 @@ mod tests {
                 "{st:?} is not sentence case: {w:?}"
             );
         }
-        // The two that stop an agent are the two that are urgent, and they are
-        // the only two — a "Finished" agent needs nothing from anybody.
+        // The two that SURPRISE a person are the two that are urgent, and they
+        // are the only two — a "Finished" agent needs nothing from anybody,
+        // and a paused one is holding still because somebody told it to.
         assert!(Asking.urgent() && Blocked.urgent());
-        for st in [Done, Exited, Working, Idle] {
+        for st in [Done, Exited, Working, Reading, Paused, Idle] {
             assert!(!st.urgent(), "{st:?} should not be shouting");
         }
         // And the colour comes from the same table as every other meaning on
         // the bench, rather than from parsing the word.
         assert_eq!(Asking.tint(), Tint::Waiting);
+        assert_eq!(
+            Paused.tint(),
+            Tint::Waiting,
+            "quiet is about the phosphor, not about being findable"
+        );
         assert_eq!(Done.tint(), Tint::Settled);
         assert_eq!(Idle.tint(), Tint::Unknown);
     }
