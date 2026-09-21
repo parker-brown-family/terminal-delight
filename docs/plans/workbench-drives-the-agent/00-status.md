@@ -60,12 +60,42 @@ Read `01-product.md` whole, then these three, in this order:
 | focus handle | 4 |
 | `self.mode` (all forms) | 12 |
 
-The tenancy pane's writeup reports the pane's `mode` at 39; measured here it is
-12 `self.mode*` references, 19 occurrences of the bare word, and 18 of
-`is_agent()`/`agent_now` combined. No reading gives 39. It does not change that
-writeup's conclusion — the `bench_deliver` argument stands on its own — but the
-drawing category is smaller than 39 makes it look, and the number is corrected
-here rather than propagated.
+The tenancy pane's writeup first reported the pane's `mode` at 39; measured here
+it is 12 `self.mode*` references. **Settled and corrected at their source**
+2026-09-21: their figure came from `git grep -c mode`, which counts lines
+containing the substring — catching `model` twelve times, `Dial::Model` four and
+`wb_model` three. `self.mode*` is exactly 12 on both readings. Their conclusion
+was never affected; the `bench_deliver` argument stands on its own.
+
+### Line numbers — read these on origin/main, not on this branch
+
+**This branch is 66 commits behind `origin/main`.** Every finding below was
+re-verified against main on 2026-09-21 and all of them still hold, but the line
+numbers in the four captured issues (#614, #615, #616, #617) and in the comment
+on #539 were read from this branch. Whoever picks up Gate 2 will be on main.
+These are main's:
+
+| What | On origin/main |
+|---|---|
+| `line_edit` — still `(key, ctrl, alt)`, no shift, `"enter" => Edit::Submit` | `workbench.rs:1625` |
+| `Line::seek` — still does not clear the mark | `workbench.rs:662` |
+| `Line::apply` — the one path that does clear it | `workbench.rs:685` |
+| `Line::mark_all` — ctrl+a, shipped 2026-09-18 | `workbench.rs:562` |
+| `composer_pt` / `composer_hidden` | `workbench.rs:2228` / `2263` |
+| `COMPOSER_STEPS` / `COMPOSER_MIN_PT` / `COMPOSER_SHARE` — unchanged | `workbench.rs:2251` / `2256` / `2275` |
+| `bench_click` → `line.seek(to)` | `pane/bench.rs:1468` → `1494` |
+| `bench_deliver` → `write_through` (this branch inlines the notifier instead) | `pane/bench.rs:1832` → `1843` |
+| `bench_end_agent`'s two interrupts | `pane/bench.rs:734` |
+| `Dispatch::Keys` — declaration and handler | `workbench.rs:2488`, `pane/bench.rs:2239` |
+| `keystroke_bytes` | `pane.rs:6939` |
+| the bench's left-button-only mouse guard | `pane.rs:5888` |
+| the right-click that opens the terminal's tray | `pane.rs:5942` |
+| `bench_key` called, then copy / find / cut below it | `pane.rs:4732`, then `4866` / `4910` / `4926` |
+
+**One thing main has that this branch does not:** `line_edit` is called from
+**two** sites in `pane/bench.rs` (`509` and `2012`), not one. Check both before
+concluding anything about which keystrokes reach the table — the second is
+likely the reading-mode arrow work filed as #611.
 
 ## Where this came from
 
