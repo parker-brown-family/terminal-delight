@@ -249,7 +249,10 @@ fn micro(text: impl Into<String>, step: Step, colour: Hsla, sk: &Skin, th: &Them
         .text_size(px(sk.pt(step)))
         .text_color(colour)
         .font_family(th.font_family.clone())
-        .child(text.into())
+        // Through `sel`, which is what makes eighty call sites selectable in
+        // one edit. A `StyledText` inherits the size, colour and family set
+        // above exactly as the plain string it replaced did.
+        .child(sel(text.into()))
 }
 
 /// One row of the rail.
@@ -2514,6 +2517,187 @@ pub struct Slots {
     pub layout: std::rc::Rc<std::cell::RefCell<Option<gpui::TextLayout>>>,
     /// Where a long draft has been scrolled to.
     pub scroll: gpui::ScrollHandle,
+}
+
+/// One run of text as it was BUILT, before anything has been laid out.
+///
+/// The layout handle is filled in during prepaint and shared by reference, so
+/// holding it here is holding the real thing — the same trick the composer
+/// already uses to turn a click into a column. [`resolve`] reads the geometry
+/// out of it once the frame has painted.
+pub struct Drawn {
+    layout: gpui::TextLayout,
+    text: gpui::SharedString,
+}
+
+thread_local! {
+    /// Where [`sel`] puts the runs it makes, while a bench is being built.
+    ///
+    /// **A thread-local, and the honest reasons rather than convenience.**
+    /// Twenty-five functions in this file draw text and every one of them
+    /// takes `(sk: &Skin, th: &Theme)` and nothing else. Threading a collector
+    /// through all of them would touch sixty signatures and would make this
+    /// module *less* of what its own header claims it is — "a vocabulary
+    /// rather than a second controller" — by giving every drawing function a
+    /// mutable output parameter it does not otherwise need.
+    ///
+    /// What makes it safe rather than merely cheap:
+    ///
+    /// - The element tree is built in ONE synchronous pass on the main thread,
+    ///   inside `render`. That is a property of gpui, not an assumption about
+    ///   our code.
+    /// - It is armed by [`collecting`], an RAII guard that restores whatever
+    ///   was there before on the way out — so an early return, a `?`, or a
+    ///   panic cannot leave it armed, and a nested build cannot steal the
+    ///   outer one's list.
+    /// - Disarmed, [`sel`] pushes nothing at all. A `StyledText` built outside
+    ///   a bench build is an ordinary `StyledText`.
+    ///
+    /// The other property this buys for free is the one the selection actually
+    /// needs: **build order is reading order.** A list filled at paint would be
+    /// in paint order, which is nearly the same and not exactly, and "nearly"
+    /// is how a selection ends up copying a heading into the middle of a
+    /// paragraph.
+    static SINK: std::cell::RefCell<Option<std::rc::Rc<std::cell::RefCell<Vec<Drawn>>>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Arm the run collector for one bench build. Disarms on drop.
+///
+/// The returned guard borrows nothing and does nothing but restore; hold it
+/// for exactly as long as the tree is being built.
+#[must_use = "the collector disarms the moment this is dropped"]
+pub struct Collecting(Option<std::rc::Rc<std::cell::RefCell<Vec<Drawn>>>>);
+
+pub fn collecting(into: std::rc::Rc<std::cell::RefCell<Vec<Drawn>>>) -> Collecting {
+    into.borrow_mut().clear();
+    Collecting(SINK.with(|s| s.borrow_mut().replace(into)))
+}
+
+impl Drop for Collecting {
+    fn drop(&mut self) {
+        let prev = self.0.take();
+        SINK.with(|s| *s.borrow_mut() = prev);
+    }
+}
+
+/// Text a reader is allowed to drag over.
+///
+/// A `StyledText` rather than a bare string, because a `StyledText` keeps a
+/// [`gpui::TextLayout`] — the one thing that can turn a point inside a run
+/// into a character index and back, exactly, through a wrap and a proportional
+/// font. It inherits its size, colour and family from the parent `div` the way
+/// a plain string child does, so swapping one for the other changes no pixels.
+///
+/// Outside a [`collecting`] scope this is a plain `StyledText` and registers
+/// nothing, which is what makes it safe to use anywhere in this file.
+pub fn sel(text: impl Into<gpui::SharedString>) -> gpui::StyledText {
+    let text = text.into();
+    let styled = gpui::StyledText::new(text.clone());
+    SINK.with(|s| {
+        if let Some(into) = s.borrow().as_ref() {
+            into.borrow_mut().push(Drawn {
+                layout: styled.layout().clone(),
+                text,
+            });
+        }
+    });
+    styled
+}
+
+/// Read the laid-out geometry of every collected run.
+///
+/// **Only ever called from a paint-phase closure at the very bottom of the
+/// bench's tree**, and that placement is load-bearing rather than tidy.
+/// `gpui::TextLayout` panics when asked for bounds it has not measured — the
+/// inner state is an `Option` behind a private field, so there is no way to
+/// ask politely — and gpui runs every child's prepaint before any child's
+/// paint. Reading here is therefore the one position in the frame where every
+/// run in the list is guaranteed to have been measured. See
+/// [`atom_probe`], which is the element that does it.
+///
+/// `region` decides which of the measured regions each run fell in, which is
+/// how scope is enforced: by where a thing was drawn, not by which function
+/// drew it.
+///
+/// The two vectors come out in lockstep and are built in one pass for that
+/// reason — `crate::workbench::Atom` cannot hold a gpui type, and a selection
+/// needs both the geometry and the layout at the same index.
+pub fn resolve(
+    drawn: &[Drawn],
+    region: impl Fn(f32, f32, f32, f32) -> crate::workbench::Region,
+) -> (Vec<crate::workbench::Atom>, Vec<gpui::TextLayout>) {
+    let mut atoms = Vec::with_capacity(drawn.len());
+    let mut layouts = Vec::with_capacity(drawn.len());
+    for d in drawn {
+        let b = d.layout.bounds();
+        let (x, y) = (f32::from(b.origin.x), f32::from(b.origin.y));
+        let (w, h) = (f32::from(b.size.width), f32::from(b.size.height));
+        atoms.push(crate::workbench::Atom {
+            x,
+            y,
+            w,
+            h,
+            text: d.text.to_string(),
+            region: region(x, y, w, h),
+        });
+        layouts.push(d.layout.clone());
+    }
+    debug_assert_eq!(atoms.len(), layouts.len());
+    (atoms, layouts)
+}
+
+/// The element that resolves the run list, once the frame has painted.
+///
+/// Goes LAST in the bench's tree, beside the pointer hook and for a related
+/// reason: both need every sibling to have been through the frame already.
+/// See [`resolve`] for why reading a `TextLayout` any earlier is a panic
+/// waiting for a narrow pane.
+pub fn atom_probe(
+    drawn: std::rc::Rc<std::cell::RefCell<Vec<Drawn>>>,
+    into: std::rc::Rc<std::cell::RefCell<(Vec<crate::workbench::Atom>, Vec<gpui::TextLayout>)>>,
+    regions: std::rc::Rc<
+        std::cell::RefCell<Vec<(crate::workbench::Rect, crate::workbench::Region)>>,
+    >,
+) -> impl gpui::IntoElement {
+    gpui::canvas(
+        |_, _, _| {},
+        move |_, _, _window, _cx| {
+            let rs = regions.borrow();
+            *into.borrow_mut() = resolve(&drawn.borrow(), |x, y, w, h| {
+                crate::workbench::region_of(&rs, x, y, w, h)
+            });
+        },
+    )
+    .absolute()
+    .inset_0()
+}
+
+/// Record a region's flat rectangle, so [`resolve`] can say what fell inside it.
+///
+/// [`probe`]'s sibling: same canvas, same flat bounds, but appending to a list
+/// rather than overwriting one value, because there are several regions and
+/// they are recorded by different parts of the tree.
+pub fn region_probe(
+    into: std::rc::Rc<std::cell::RefCell<Vec<(crate::workbench::Rect, crate::workbench::Region)>>>,
+    region: crate::workbench::Region,
+) -> impl gpui::IntoElement {
+    gpui::canvas(
+        move |bounds, _window, _cx| {
+            into.borrow_mut().push((
+                crate::workbench::Rect {
+                    x: f32::from(bounds.origin.x),
+                    y: f32::from(bounds.origin.y),
+                    w: f32::from(bounds.size.width),
+                    h: f32::from(bounds.size.height),
+                },
+                region,
+            ));
+        },
+        |_, _, _, _| {},
+    )
+    .absolute()
+    .inset_0()
 }
 
 /// Make the element this is a child of a click target under the warp.

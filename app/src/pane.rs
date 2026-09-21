@@ -2144,6 +2144,37 @@ pub struct TerminalView {
     /// elements as they paint, read by the root mouse handler. See
     /// [`crate::benchdraw::zone`].
     wb_zones: std::rc::Rc<std::cell::RefCell<Vec<crate::workbench::Zone>>>,
+    /// Every run of text on the bench this frame, as BUILT — before anything
+    /// has been laid out. Filled by [`crate::benchdraw::sel`] while
+    /// [`crate::benchdraw::collecting`] is armed, in build order, which is
+    /// reading order.
+    wb_drawn: std::rc::Rc<std::cell::RefCell<Vec<crate::benchdraw::Drawn>>>,
+    /// The same runs once the frame has PAINTED: flat rectangles beside the
+    /// text layouts that turn a point into a character. Two vectors rather
+    /// than one because `workbench::Atom` may not hold a gpui type; built in
+    /// one pass at the same indices so they cannot drift.
+    #[allow(clippy::type_complexity)]
+    wb_atoms: std::rc::Rc<std::cell::RefCell<(Vec<crate::workbench::Atom>, Vec<gpui::TextLayout>)>>,
+    /// The measured rectangles that decide which runs a reader may drag over.
+    /// Parker's "not the menus" line, drawn on the surface rather than kept in
+    /// a list by hand.
+    #[allow(clippy::type_complexity)]
+    wb_regions:
+        std::rc::Rc<std::cell::RefCell<Vec<(crate::workbench::Rect, crate::workbench::Region)>>>,
+    /// The live text selection, and the text its anchor was made against.
+    ///
+    /// The text is kept because the atom list is rebuilt every frame and its
+    /// indices are positions in a tree that can change under a live drag — see
+    /// `workbench::Sel::still_valid`, which turns a selection that no longer
+    /// describes what the reader dragged over into no selection at all.
+    wb_sel: Option<(crate::workbench::Sel, String)>,
+    /// A press on something that might turn out to be a drag.
+    ///
+    /// The card body and the rail rows are the two places worth dragging over
+    /// AND already click targets, so their press cannot act until the button
+    /// comes back up — anything else would make every drag also open a card.
+    /// Buttons, tabs and dials are absent from this and still act on push.
+    wb_press: Option<(gpui::Point<gpui::Pixels>, crate::workbench::Hit)>,
     /// Where the bench's outermost box is in the window, as of the last frame
     /// that painted one.
     ///
@@ -3435,6 +3466,11 @@ impl TerminalView {
             wb_delivered_ms: None,
             wb_flash_until_ms: None,
             wb_zones: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
+            wb_drawn: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
+            wb_atoms: std::rc::Rc::new(std::cell::RefCell::new((Vec::new(), Vec::new()))),
+            wb_regions: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
+            wb_sel: None,
+            wb_press: None,
             wb_bench_rect: std::rc::Rc::new(std::cell::RefCell::new(None)),
             wb_pointer: crate::workbench::Pointer::Arrow,
             wb_drop: false,
@@ -4863,7 +4899,16 @@ impl TerminalView {
                 // Ctrl+Shift+T is the workspace's new-tab chord: taken from the
                 // PTY here, acted on there.
                 "t" => {}
-                "c" => self.copy_selection(cx),
+                // The bench's own selection wins when there is one, and
+                // falls through to the grid's copy when there is not — so the
+                // chord keeps working on a bench with nothing dragged over.
+                // `ctrl+c` is untouched either way: it is the only way to
+                // interrupt a running agent (see `workbench::window_chord`).
+                "c" => {
+                    if !self.bench_copy(cx) {
+                        self.copy_selection(cx);
+                    }
+                }
                 "v" => self.paste_clipboard(cx),
                 "k" => self.clear_scrollback(cx),
                 // Ctrl+Shift+F finds across ALL panes; plain Ctrl+F in this one.
@@ -5896,8 +5941,12 @@ impl TerminalView {
                 cx.stop_propagation();
                 return;
             }
-            if let Some((hit, flat)) = landed {
-                self.bench_hit(hit, flat, window, cx);
+            // Every press on the bench goes through here now, including one
+            // that landed on nothing: "on the bench but on nothing" is where
+            // a selection starts, and it used to fall through and begin a
+            // selection in the TERMINAL GRID behind the bench — invisible,
+            // and the slot this takes.
+            if self.bench_press_at(ev.position, landed, window, cx) {
                 cx.stop_propagation();
                 return;
             }
@@ -6019,6 +6068,16 @@ impl TerminalView {
             self.copy_hint = hint;
             cx.notify();
         }
+        // A live bench drag owns the pointer. Ahead of the grid's own drag
+        // below, which must not also run: the two would fight over the same
+        // motion and the terminal would quietly build a selection nobody can
+        // see behind the bench.
+        if ev.pressed_button == Some(MouseButton::Left)
+            && self.bench.face() == crate::workbench::Face::Workbench
+            && self.bench_drag_to(ev.position, cx)
+        {
+            return;
+        }
         if !self.selecting || ev.pressed_button != Some(MouseButton::Left) {
             return;
         }
@@ -6038,6 +6097,12 @@ impl TerminalView {
     }
 
     fn on_mouse_up(&mut self, _ev: &MouseUpEvent, _w: &mut Window, cx: &mut Context<Self>) {
+        // The bench first: a press it deferred either fires now as a click or
+        // settles as a selection. Returns false on the terminal face and on
+        // any press it did not take, so the grid's own release still runs.
+        if self.bench_release_at(_ev.position, _w, cx) {
+            return;
+        }
         self.selecting = false;
         self.autoscroll = 0.;
         // Finishing a drag publishes the selection to the X11 PRIMARY selection

@@ -22,7 +22,271 @@
 use super::*;
 use crate::workbench::Step;
 
+/// How many character positions one run may contribute to the highlight walk.
+///
+/// A guard on a pathological case rather than a tuning knob: a selection over
+/// a pasted ten-thousand-word block would otherwise cost one layout query per
+/// character, every frame, while the pointer is moving. Past this the run's
+/// highlight is short and the copy is still complete — the clipboard does not
+/// go through here.
+const HIGHLIGHT_CAP: usize = 4096;
+
 impl TerminalView {
+    // -- dragging over the bench's text -------------------------------------
+
+    /// How far the pointer may travel before a press stops being a click.
+    ///
+    /// Five pixels, which is the convention every native list on this desk
+    /// uses. It exists because a hand resting on a trackpad moves: a threshold
+    /// of zero turns every click on a rail row into a one-character selection
+    /// and never opens the card.
+    pub(super) const DRAG_SLOP: f32 = 5.0;
+
+    /// Turn a flat point into a caret — which run, and how far into it.
+    ///
+    /// `None` when there is nothing selectable under or near the point, which
+    /// is a real state rather than a failure: an empty bench, a frame that has
+    /// not painted, or a pointer over the strip with the whole card scrolled
+    /// away.
+    pub(super) fn bench_caret_at(
+        &self,
+        flat: gpui::Point<gpui::Pixels>,
+    ) -> Option<crate::workbench::Caret> {
+        let (fx, fy) = (f32::from(flat.x), f32::from(flat.y));
+        let atoms = self.wb_atoms.borrow();
+        let i = crate::workbench::atom_at(&atoms.0, fx, fy)?;
+        // The layout is the only thing that can answer this exactly: it walks
+        // the wrapped lines the text system actually produced, so a click on
+        // the second visual row of a wrapped paragraph lands where the reader
+        // pointed rather than at the end of the first row. `Err` is its answer
+        // for a point past the end of a line, and it carries the index it
+        // would have used, which is the one we want.
+        let byte = match atoms.1[i].index_for_position(flat) {
+            Ok(b) | Err(b) => b,
+        };
+        Some(crate::workbench::Caret {
+            atom: i,
+            byte: crate::workbench::on_boundary(&atoms.0[i].text, byte),
+        })
+    }
+
+    /// Begin a selection at a flat point. `false` when there is nothing there
+    /// to select, so the caller can fall through to whatever it would have
+    /// done.
+    pub(super) fn bench_select_from(&mut self, flat: gpui::Point<gpui::Pixels>) -> bool {
+        let Some(caret) = self.bench_caret_at(flat) else {
+            self.wb_sel = None;
+            return false;
+        };
+        let text = self.wb_atoms.borrow().0[caret.atom].text.clone();
+        self.wb_sel = Some((crate::workbench::Sel::at(caret), text));
+        true
+    }
+
+    /// A press on the bench: either a control that acts now, or the start of
+    /// something that might be a drag.
+    ///
+    /// **The card body and the rail rows act on RELEASE**, and they are the
+    /// only two that do. Both are already click targets and both are the
+    /// places worth dragging over, so a press there cannot be resolved until
+    /// the button comes back up: acting immediately would open a card every
+    /// time somebody selected a sentence on one. Everything else — buttons,
+    /// tabs, dials, the composer's caret — still acts on push, because none of
+    /// them is somewhere a drag begins.
+    ///
+    /// `true` when the press was taken and the caller should stop.
+    pub(super) fn bench_press_at(
+        &mut self,
+        at: gpui::Point<gpui::Pixels>,
+        landed: Option<(crate::workbench::Hit, gpui::Point<gpui::Pixels>)>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some((_, flat)) = self.bench_flat(at) else {
+            return false;
+        };
+        let deferred = matches!(
+            landed.as_ref().map(|(h, _)| h),
+            Some(crate::workbench::Hit::Arm) | Some(crate::workbench::Hit::OpenRow(_)) | None
+        );
+        if !deferred {
+            let (hit, flat) = landed.expect("not deferred means a hit landed");
+            self.wb_sel = None;
+            self.wb_press = None;
+            self.bench_hit(hit, flat, window, cx);
+            cx.notify();
+            return true;
+        }
+        // A modal is up: no selection behind it, and the press keeps whatever
+        // meaning the modal gave it.
+        if self.wb_review.is_some() || self.wb_dial.is_some() {
+            return false;
+        }
+        self.bench_select_from(flat);
+        self.wb_press = Some((
+            at,
+            landed
+                .map(|(h, _)| h)
+                .unwrap_or(crate::workbench::Hit::Nothing),
+        ));
+        cx.notify();
+        true
+    }
+
+    /// Extend a live selection to the pointer. `false` when no drag is in
+    /// flight, so the terminal's own drag handling still runs on that face.
+    pub(super) fn bench_drag_to(
+        &mut self,
+        at: gpui::Point<gpui::Pixels>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if self.wb_press.is_none() {
+            return false;
+        }
+        let Some((_, flat)) = self.bench_flat(at) else {
+            return false;
+        };
+        let Some(head) = self.bench_caret_at(flat) else {
+            return true;
+        };
+        if let Some((sel, _)) = self.wb_sel.as_mut() {
+            if sel.head != head {
+                sel.head = head;
+                cx.notify();
+            }
+        }
+        true
+    }
+
+    /// The button came back up. Either the press was a click after all, or a
+    /// selection just settled.
+    pub(super) fn bench_release_at(
+        &mut self,
+        at: gpui::Point<gpui::Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some((down, hit)) = self.wb_press.take() else {
+            return false;
+        };
+        let moved = f32::from(at.x - down.x).hypot(f32::from(at.y - down.y));
+        if moved <= Self::DRAG_SLOP {
+            // A click after all. Drop the one-character selection the press
+            // seeded — a bare click selects nothing, the way it does anywhere
+            // else — and run what the press would have run.
+            self.wb_sel = None;
+            if !matches!(hit, crate::workbench::Hit::Nothing) {
+                if let Some((_, flat)) = self.bench_flat(at) {
+                    self.bench_hit(hit, flat, window, cx);
+                }
+            }
+            cx.notify();
+            return true;
+        }
+        // A real drag. Publish to the X11 PRIMARY selection, which is what
+        // every other select-to-copy surface on this desk does and what makes
+        // middle-click paste work without a keystroke.
+        if let Some(text) = self.bench_selected_text() {
+            cx.write_to_primary(ClipboardItem::new_string(text));
+        }
+        cx.notify();
+        true
+    }
+
+    /// What the current bench selection would put on the clipboard, if
+    /// anything.
+    ///
+    /// `None` rather than an empty string for an empty selection, so the
+    /// callers can tell "nothing is selected" from "a selection of nothing" —
+    /// and so `ctrl+shift+c` with no selection falls through to the terminal's
+    /// own copy instead of clearing the clipboard.
+    pub(super) fn bench_selected_text(&self) -> Option<String> {
+        let (sel, anchored) = self.wb_sel.as_ref()?;
+        if sel.is_empty() {
+            return None;
+        }
+        let atoms = self.wb_atoms.borrow();
+        if !sel.still_valid(&atoms.0, anchored) {
+            return None;
+        }
+        let text = crate::workbench::copy_text(&atoms.0, sel);
+        (!text.is_empty()).then_some(text)
+    }
+
+    /// Copy the bench selection. `false` when there is none, so the chord
+    /// falls through to the terminal's copy underneath.
+    pub(super) fn bench_copy(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(text) = self.bench_selected_text() else {
+            return false;
+        };
+        cx.write_to_clipboard(ClipboardItem::new_string(text.clone()));
+        cx.write_to_primary(ClipboardItem::new_string(text));
+        true
+    }
+
+    /// The highlight, as rectangles in the bench root's own coordinates.
+    ///
+    /// Built from the PREVIOUS frame's atom list, read at the top of the build
+    /// immediately before that list is cleared — the same one-frame trick that
+    /// places the dial drop-downs, and exact for the same reason: the newest
+    /// measurement any frame can draw with is the one the frame before it
+    /// recorded.
+    ///
+    /// One rectangle per wrapped visual row rather than one per run, because a
+    /// selection that stops at the end of a run's box would draw a single wide
+    /// band across a three-line paragraph instead of following its text.
+    pub(super) fn bench_highlight(&self) -> Vec<crate::workbench::Rect> {
+        let Some((sel, anchored)) = self.wb_sel.as_ref() else {
+            return Vec::new();
+        };
+        if sel.is_empty() {
+            return Vec::new();
+        }
+        let atoms = self.wb_atoms.borrow();
+        if !sel.still_valid(&atoms.0, anchored) {
+            return Vec::new();
+        }
+        let mut out = Vec::new();
+        for (i, range) in crate::workbench::spans(&atoms.0, sel) {
+            let (atom, layout) = (&atoms.0[i], &atoms.1[i]);
+            let line = f32::from(layout.line_height()).max(1.0);
+            // Walk the character boundaries and group them into visual rows by
+            // the y the layout reports. Cheap for a normal selection and
+            // bounded by the cap below for a pathological one.
+            let mut row: Option<(f32, f32, f32)> = None; // (y, left, right)
+            let mut push = |row: &mut Option<(f32, f32, f32)>| {
+                if let Some((y, l, r)) = row.take() {
+                    out.push(crate::workbench::Rect {
+                        x: l,
+                        y,
+                        w: (r - l).max(1.0),
+                        h: line,
+                    });
+                }
+            };
+            for (b, _) in atom.text[range.clone()]
+                .char_indices()
+                .map(|(o, c)| (range.start + o, c))
+                .chain(std::iter::once((range.end, ' ')))
+                .take(HIGHLIGHT_CAP)
+            {
+                let Some(p) = layout.position_for_index(b) else {
+                    continue;
+                };
+                let (x, y) = (f32::from(p.x), f32::from(p.y));
+                match row.as_mut() {
+                    Some((ry, _, r)) if (y - *ry).abs() < line / 2.0 => *r = x.max(*r),
+                    _ => {
+                        push(&mut row);
+                        row = Some((y, x, x));
+                    }
+                }
+            }
+            push(&mut row);
+        }
+        out
+    }
+
     /// Un-bend a pointer and look it up, quietly.
     ///
     /// The half of [`Self::bench_hit_at`] that the wheel and the hover share:
@@ -2303,8 +2567,27 @@ impl TerminalView {
             dial_rect(crate::workbench::Dial::Model),
             dial_rect(crate::workbench::Dial::Effort),
         ];
+        // THE HIGHLIGHT, taken before the run list is emptied — the same
+        // one-frame move the dial drop-downs above are placed by, and exact
+        // for the same reason: a run's position is only known once it has been
+        // laid out, so the newest measurement this frame can draw with is the
+        // one the frame before it recorded. The selection is being dragged, so
+        // a frame of lag is a frame of lag on a thing already following a
+        // hand.
+        let highlight = self.bench_highlight();
+        // Where that root box was, for the same one-frame reason: the
+        // rectangles above are in window space and the overlay is a child of
+        // the root, so one has to be turned into the other.
+        let bench_rect = *self.wb_bench_rect.borrow();
         // A fresh zone list per frame: the elements about to paint fill it.
         self.wb_zones.borrow_mut().clear();
+        // And a fresh run list, armed for the whole build below. The guard
+        // disarms on drop, so nothing built after this function returns can
+        // land in it — and `sel` outside the guard is an ordinary
+        // `StyledText`. The regions are cleared here and refilled by the three
+        // `region_probe`s as their containers lay out.
+        let _collecting = crate::benchdraw::collecting(self.wb_drawn.clone());
+        self.wb_regions.borrow_mut().clear();
         // Every size decision on this surface, resolved in one call and
         // asserted by a table of panes in `workbench`. The render draws what
         // this says; it no longer decides anything itself. Each of these was
@@ -2641,6 +2924,10 @@ impl TerminalView {
                 self.wb_zones.clone(),
                 crate::workbench::Hit::Composer,
             ))
+            .child(crate::benchdraw::region_probe(
+                self.wb_regions.clone(),
+                crate::workbench::Region::Composer,
+            ))
         });
 
         // ── the rail, and the handle that closes it ─────────────────────────
@@ -2773,6 +3060,11 @@ impl TerminalView {
                         sk,
                         th,
                     )
+                    .relative()
+                    .child(crate::benchdraw::region_probe(
+                        self.wb_regions.clone(),
+                        crate::workbench::Region::Rail,
+                    ))
                     .child(tabs)
                     .child(sk.rule_h())
                     // An empty shelf says where work would come from.
@@ -2997,6 +3289,18 @@ impl TerminalView {
                             // unique within one view's tree and this is one
                             // box in one pane.
                             .id("bench-body")
+                            .relative()
+                            // THE CARD'S REGION. Without this the body's runs
+                            // resolve to `Chrome` and the main work surface —
+                            // the thing this feature is for — is the one part
+                            // of the bench nobody can drag over. Clippy's
+                            // dead-code check is what caught its absence: with
+                            // no caller, `Region::Body` was a variant nothing
+                            // constructed.
+                            .child(crate::benchdraw::region_probe(
+                                self.wb_regions.clone(),
+                                crate::workbench::Region::Body,
+                            ))
                             .flex_1()
                             .min_h(px(0.))
                             .flex()
@@ -3059,6 +3363,37 @@ impl TerminalView {
             )
             .children(handle)
             .children(rail)
+            // THE SELECTION, over the text rather than behind it.
+            //
+            // Behind would be nicer and is not available: the runs are
+            // scattered across a flex tree with their own backgrounds, and
+            // there is no single layer underneath all of them to paint on. A
+            // translucent wash over the glyphs is what a terminal does and it
+            // reads correctly — the text stays legible through it because the
+            // alpha is low and the hue is the one already reserved for the
+            // person's own marks.
+            //
+            // Positioned against the bench root's own box, which is why that
+            // box is measured by `probe`: these rectangles are in window
+            // space and an absolutely-positioned child is placed relative to
+            // its padding box.
+            .children(bench_rect.map(|root| {
+                div().absolute().inset_0().children(
+                    highlight
+                        .into_iter()
+                        .map(|r| {
+                            div()
+                                .absolute()
+                                .left(px(r.x - root.x))
+                                .top(px(r.y - root.y))
+                                .w(px(r.w))
+                                .h(px(r.h))
+                                .rounded(px(1.))
+                                .bg(th.human.alpha(0.30))
+                        })
+                        .collect::<Vec<_>>(),
+                )
+            }))
             // After the body, so the list's zones are recorded after the
             // card's and win the lookup — last painted wins. Before the
             // gallery, which is a modal and must win over both.
@@ -3067,6 +3402,17 @@ impl TerminalView {
             // Last, so its hitbox and its cursor request are painted after
             // every control's — see the hook for why that order is the rule.
             .child(self.pointer_hook(weak))
+            // LAST OF ALL, and for a harder reason than the hook's: a
+            // `TextLayout` panics when asked for bounds it has not measured,
+            // and gpui runs every child's prepaint before any child's paint.
+            // A paint-phase closure at the bottom of the tree is the one
+            // position in the frame where every run above is guaranteed to
+            // have been laid out. See `benchdraw::resolve`.
+            .child(crate::benchdraw::atom_probe(
+                self.wb_drawn.clone(),
+                self.wb_atoms.clone(),
+                self.wb_regions.clone(),
+            ))
             .into_any_element()
     }
 }

@@ -1169,6 +1169,346 @@ pub fn hit_at(zones: &[Zone], x: f32, y: f32) -> Option<&Hit> {
         .map(|z| &z.hit)
 }
 
+// ---------------------------------------------------------------------------
+// selecting the bench's text
+// ---------------------------------------------------------------------------
+
+/// Which part of the bench a run of text was drawn in.
+///
+/// Scope is decided by GEOMETRY rather than by call site, and this is the
+/// answer that test produces. Every run on the bench registers itself as it is
+/// built — the strip's dials as much as a card's paragraph — and then a
+/// rectangle test against the two or three measured regions decides which of
+/// them a reader is allowed to drag over. Parker's line was *"I don't care
+/// about the menus, being able to highlight end session or overview or
+/// artifacts is not important"*, and a region test draws that line on the
+/// surface instead of maintaining it by hand in a list somebody has to
+/// remember to update when a new control is added.
+///
+/// `Chrome` is the explicit NOT-selectable answer rather than the absence of
+/// one: a run outside every region has been looked at and rejected, which is a
+/// different fact from a run whose region nobody has computed yet.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Region {
+    /// The card — the surface the agent produced, and everything on it.
+    Body,
+    /// The rail down the right: shelf rows, comment summaries, provenance.
+    Rail,
+    /// The composer's mirror of the line being typed.
+    Composer,
+    /// The strip, the shelf tabs, the gallery, the pane header. Drawn, never
+    /// selectable.
+    Chrome,
+}
+
+impl Region {
+    /// Can a reader drag over text drawn here?
+    pub fn selectable(self) -> bool {
+        !matches!(self, Region::Chrome)
+    }
+}
+
+/// One run of text, as it was actually laid out.
+///
+/// The twin of [`Zone`], and deliberately the same shape: a flat rectangle
+/// recorded by the element itself, in the coordinates gpui lays out in, read
+/// back through the same [`unwarp`]. What differs is the payload — a `Zone`
+/// carries what pressing it MEANS, an `Atom` carries what it SAYS.
+///
+/// Nothing here knows about gpui, on the same terms as the rest of this
+/// module. The `TextLayout` that turns a point inside this rectangle into a
+/// character index lives beside it on the pane's side of the boundary, at the
+/// same index; `crate::benchdraw::resolve` builds the two together in one pass
+/// so they cannot drift.
+#[derive(Clone, PartialEq, Debug)]
+pub struct Atom {
+    pub x: f32,
+    pub y: f32,
+    pub w: f32,
+    pub h: f32,
+    /// What it says. Owned, because the selection has to survive the frame
+    /// that drew it — see [`Sel::still_valid`].
+    pub text: String,
+    pub region: Region,
+}
+
+impl Atom {
+    fn contains(&self, x: f32, y: f32) -> bool {
+        x >= self.x && x < self.x + self.w && y >= self.y && y < self.y + self.h
+    }
+
+    /// The vertical middle, which is what the band comparisons use. A run's
+    /// TOP is not enough on its own: a chip and the sentence beside it are one
+    /// line to the eye and are often a pixel or two apart at the top because
+    /// their font sizes differ.
+    fn mid(&self) -> f32 {
+        self.y + self.h / 2.0
+    }
+}
+
+/// One end of a selection: which run, and how far into it.
+///
+/// `byte` is a BYTE offset into that run's text and is always on a character
+/// boundary — every constructor here goes through a clamp that walks to one.
+/// Bytes rather than characters because that is what gpui's text layout speaks
+/// on both sides (`index_for_position` returns one, `with_highlights` takes a
+/// range of them), and converting at the edges would put two conversions
+/// between the pointer and the highlight instead of none.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Caret {
+    pub atom: usize,
+    pub byte: usize,
+}
+
+/// A selection in progress, or a settled one.
+///
+/// Anchor is where the press landed and never moves; head follows the pointer.
+/// They are stored unordered — `anchor > head` is a backwards drag and is
+/// normal — because the anchor has to stay put for a drag that crosses back
+/// over its own start, and [`Sel::ends`] is the only thing that cares which is
+/// first.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Sel {
+    pub anchor: Caret,
+    pub head: Caret,
+}
+
+impl Sel {
+    /// A selection of nothing, at one point. What a press with no drag leaves.
+    pub fn at(caret: Caret) -> Sel {
+        Sel {
+            anchor: caret,
+            head: caret,
+        }
+    }
+
+    /// Anchor and head in document order.
+    pub fn ends(&self) -> (Caret, Caret) {
+        let back = (self.head.atom, self.head.byte) < (self.anchor.atom, self.anchor.byte);
+        if back {
+            (self.head, self.anchor)
+        } else {
+            (self.anchor, self.head)
+        }
+    }
+
+    /// Does this select nothing? A bare click, or a drag that came back to
+    /// where it started.
+    pub fn is_empty(&self) -> bool {
+        self.anchor == self.head
+    }
+
+    /// Is this selection still describing the text it was made against?
+    ///
+    /// **The atom list is rebuilt every frame, and its indices are positions in
+    /// a tree that can change under a live drag** — a surface arrives, a
+    /// register is switched, a fold opens. An index that pointed at a
+    /// paragraph can then point at a heading, and the selection would silently
+    /// be of something the reader never dragged over.
+    ///
+    /// So the anchor's text is checked, not just its index. Cheap (one string
+    /// compare against a run that is usually short), and it turns a wrong
+    /// selection into no selection, which is the failure a person can see.
+    pub fn still_valid(&self, atoms: &[Atom], anchored_text: &str) -> bool {
+        let Some(a) = atoms.get(self.anchor.atom) else {
+            return false;
+        };
+        if a.text != anchored_text {
+            return false;
+        }
+        atoms
+            .get(self.head.atom)
+            .is_some_and(|h| self.head.byte <= h.text.len())
+            && self.anchor.byte <= a.text.len()
+    }
+}
+
+/// Which region a laid-out run fell in.
+///
+/// Decided on the run's CENTRE rather than its origin. A run whose box starts
+/// a pixel above the body's scroll container — a heading sitting flush against
+/// the top edge — belongs to the body by any reading a person would give it,
+/// and an origin test puts it in `Chrome` and makes it unselectable for
+/// reasons nobody can see. The centre is the point the reader is aiming at.
+///
+/// Later regions win, because they are recorded in tree order and a region
+/// drawn later sits on top — the same rule [`hit_at`] uses. No region contains
+/// the point at all is [`Region::Chrome`]: looked at, and not selectable.
+pub fn region_of(regions: &[(Rect, Region)], x: f32, y: f32, w: f32, h: f32) -> Region {
+    let (cx, cy) = (x + w / 2.0, y + h / 2.0);
+    regions
+        .iter()
+        .rev()
+        .find(|(r, _)| cx >= r.x && cx < r.x + r.w && cy >= r.y && cy < r.y + r.h)
+        .map(|(_, region)| *region)
+        .unwrap_or(Region::Chrome)
+}
+
+/// Walk a byte offset back to the nearest character boundary at or before it.
+///
+/// `index_for_position` answers in bytes against the string it laid out, and a
+/// pointer in the middle of a multi-byte character is an ordinary thing for it
+/// to be handed. Slicing on that offset panics, so every offset this module
+/// produces goes through here first.
+pub fn on_boundary(text: &str, mut byte: usize) -> usize {
+    if byte >= text.len() {
+        return text.len();
+    }
+    while byte > 0 && !text.is_char_boundary(byte) {
+        byte -= 1;
+    }
+    byte
+}
+
+/// Which run a flat point is in, or the nearest one a reader could have meant.
+///
+/// A browser does not stop selecting when the pointer leaves the text — it
+/// keeps extending to whatever is nearest, which is what makes dragging down
+/// the margin work. So a point inside a run answers that run; a point in the
+/// gutter answers by distance.
+///
+/// **The distance is not Euclidean.** A point level with a paragraph but far
+/// to its right should take that paragraph, not the short heading three lines
+/// up that happens to be nearer as the crow flies. So vertical distance to the
+/// run's band dominates, and horizontal distance only settles ties within a
+/// band. Getting this wrong is not a crash; it is a selection that jumps a
+/// line when the reader drags into the margin, which reads as the feature
+/// being flaky.
+///
+/// `None` when nothing is selectable at all — an empty bench, or a frame that
+/// has not painted yet.
+pub fn atom_at(atoms: &[Atom], x: f32, y: f32) -> Option<usize> {
+    let usable = |a: &&Atom| a.region.selectable() && !a.text.is_empty();
+    // Inside one, last wins — later runs paint over earlier ones, the same
+    // rule `hit_at` uses and for the same reason.
+    if let Some(i) = atoms
+        .iter()
+        .enumerate()
+        .rev()
+        .find(|(_, a)| usable(a) && a.contains(x, y))
+        .map(|(i, _)| i)
+    {
+        return Some(i);
+    }
+    atoms
+        .iter()
+        .enumerate()
+        .filter(|(_, a)| usable(a))
+        .min_by(|(_, a), (_, b)| {
+            let key = |m: &Atom| {
+                // Zero while the point is level with the run, so every run on
+                // the reader's line ties here and the horizontal term decides.
+                let dy = (y - m.mid()).abs() - m.h / 2.0;
+                let dy = dy.max(0.0);
+                let dx = if x < m.x {
+                    m.x - x
+                } else if x > m.x + m.w {
+                    x - (m.x + m.w)
+                } else {
+                    0.0
+                };
+                (dy, dx)
+            };
+            let (ay, ax) = key(a);
+            let (by, bx) = key(b);
+            (ay, ax)
+                .partial_cmp(&(by, bx))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+        .map(|(i, _)| i)
+}
+
+/// The byte ranges a selection covers, one per run it touches.
+///
+/// Runs strictly between the two ends are whole; the two ends are partial.
+/// Runs that are not selectable are skipped rather than truncating the walk —
+/// a chrome run cannot be between two body runs in practice, but a rule that
+/// depends on that is a rule waiting to be broken by a layout change.
+///
+/// Empty ranges are dropped, so a caller can treat a non-empty answer as "there
+/// is something to copy".
+pub fn spans(atoms: &[Atom], sel: &Sel) -> Vec<(usize, std::ops::Range<usize>)> {
+    let (from, to) = sel.ends();
+    let mut out = Vec::new();
+    for i in from.atom..=to.atom.min(atoms.len().saturating_sub(1)) {
+        let Some(a) = atoms.get(i) else { break };
+        if !a.region.selectable() {
+            continue;
+        }
+        let start = if i == from.atom {
+            on_boundary(&a.text, from.byte)
+        } else {
+            0
+        };
+        let end = if i == to.atom {
+            on_boundary(&a.text, to.byte)
+        } else {
+            a.text.len()
+        };
+        if start < end {
+            out.push((i, start..end));
+        }
+    }
+    out
+}
+
+/// How far apart two runs have to be, in line heights, before the text between
+/// them reads as a new line rather than a continuation.
+///
+/// Half a line height groups a lane word, a badge and a title into the line
+/// they look like. Two line heights is the other end: past that there is
+/// visible air, which is a paragraph break rather than the next line.
+const SAME_LINE: f32 = 0.5;
+const SAME_BLOCK: f32 = 2.0;
+
+/// What a selection puts on the clipboard.
+///
+/// **A browser gets line breaks for free because it knows which elements are
+/// blocks. Nothing here does** — every run is a sibling in a flex tree, and the
+/// tree says nothing about whether two of them ended up on one line. So the
+/// join is geometric, and it is the part of this feature most able to be wrong
+/// without looking wrong: the highlight on screen stays perfect while the text
+/// on the clipboard runs together.
+///
+/// Four rules, in order of how far apart the runs are:
+///
+/// - same band → one space, because they are one line to the eye
+/// - the next band down → a newline
+/// - further → a blank line, which is a paragraph
+/// - across a region edge → a blank line ALWAYS, whatever the geometry says,
+///   because a rail row can sit level with a paragraph in the card and
+///   geometry alone would call those one line
+pub fn copy_text(atoms: &[Atom], sel: &Sel) -> String {
+    let spans = spans(atoms, sel);
+    let mut out = String::new();
+    let mut prev: Option<&Atom> = None;
+    for (i, range) in spans {
+        let a = &atoms[i];
+        if let Some(p) = prev {
+            out.push_str(gap(p, a));
+        }
+        out.push_str(&a.text[range]);
+        prev = Some(a);
+    }
+    out
+}
+
+/// The separator between two runs, by the rules in [`copy_text`].
+fn gap(prev: &Atom, next: &Atom) -> &'static str {
+    if prev.region != next.region {
+        return "\n\n";
+    }
+    let line = prev.h.max(next.h).max(1.0);
+    let drop = (next.mid() - prev.mid()).abs();
+    if drop <= line * SAME_LINE {
+        " "
+    } else if drop <= line * SAME_BLOCK {
+        "\n"
+    } else {
+        "\n\n"
+    }
+}
+
 /// Undo the tube's barrel warp for one pointer position.
 ///
 /// `rect` is the tube in window pixels, `(px, py)` the pointer in the same
@@ -6072,5 +6412,286 @@ mod tests {
             Face::Terminal,
             "setting the face it already wears is not a flip"
         );
+    }
+
+    // -- selecting the bench's text ----------------------------------------
+
+    /// A card-shaped page: a heading, two wrapped body lines, a three-run
+    /// line of chips, then a rail row beside it. Geometry in the same units
+    /// the real atoms carry, so the band rules are exercised for real.
+    fn page() -> Vec<Atom> {
+        let a = |x: f32, y: f32, w: f32, text: &str, region| Atom {
+            x,
+            y,
+            w,
+            h: 14.0,
+            text: text.to_string(),
+            region,
+        };
+        vec![
+            a(10.0, 10.0, 200.0, "The strip backs out", Region::Body),
+            a(
+                10.0,
+                30.0,
+                300.0,
+                "The undo target was the whole",
+                Region::Body,
+            ),
+            a(
+                10.0,
+                46.0,
+                300.0,
+                "session, so a second click",
+                Region::Body,
+            ),
+            // one line, three runs, tops a pixel or two apart
+            a(10.0, 80.0, 40.0, "WAITING", Region::Body),
+            a(54.0, 81.0, 20.0, "3", Region::Body),
+            a(78.0, 80.0, 120.0, "on you", Region::Body),
+            // the rail, level with the card's second line on purpose
+            a(
+                400.0,
+                30.0,
+                180.0,
+                "Should the undo be per-branch?",
+                Region::Rail,
+            ),
+            // chrome, sitting between two selectable runs in index order
+            a(10.0, 120.0, 90.0, "END SESSION", Region::Chrome),
+            a(10.0, 150.0, 300.0, "A guard now refuses", Region::Body),
+        ]
+    }
+
+    fn caret(atom: usize, byte: usize) -> Caret {
+        Caret { atom, byte }
+    }
+
+    #[test]
+    fn a_point_inside_a_run_takes_that_run() {
+        let p = page();
+        assert_eq!(atom_at(&p, 15.0, 15.0), Some(0));
+        assert_eq!(atom_at(&p, 420.0, 35.0), Some(6), "the rail row");
+    }
+
+    #[test]
+    fn chrome_is_never_the_answer_even_under_the_pointer() {
+        let p = page();
+        // Dead centre of END SESSION.
+        let picked = atom_at(&p, 40.0, 127.0).expect("something selectable");
+        assert_ne!(
+            picked, 7,
+            "a press on the strip must not anchor a selection"
+        );
+        assert!(p[picked].region.selectable());
+    }
+
+    #[test]
+    fn dragging_into_the_margin_stays_on_the_readers_line() {
+        let p = page();
+        // Far to the right of the second body line, level with it. The
+        // heading above is nearer as the crow flies; the band must win.
+        assert_eq!(
+            atom_at(&p, 900.0, 36.0),
+            Some(6),
+            "level with the rail row, which extends furthest right"
+        );
+        // Left of the card entirely, level with the third line.
+        assert_eq!(atom_at(&p, -50.0, 52.0), Some(2));
+    }
+
+    #[test]
+    fn an_empty_list_selects_nothing_rather_than_panicking() {
+        assert_eq!(atom_at(&[], 10.0, 10.0), None);
+        assert_eq!(
+            atom_at(
+                &[Atom {
+                    x: 0.,
+                    y: 0.,
+                    w: 9.,
+                    h: 9.,
+                    text: String::new(),
+                    region: Region::Body
+                }],
+                1.0,
+                1.0
+            ),
+            None,
+            "an empty run is not somewhere a caret can go"
+        );
+    }
+
+    #[test]
+    fn ends_order_a_backwards_drag() {
+        let up = Sel {
+            anchor: caret(5, 2),
+            head: caret(1, 0),
+        };
+        assert_eq!(up.ends(), (caret(1, 0), caret(5, 2)));
+        let within = Sel {
+            anchor: caret(2, 9),
+            head: caret(2, 3),
+        };
+        assert_eq!(within.ends(), (caret(2, 3), caret(2, 9)));
+    }
+
+    #[test]
+    fn a_selection_inside_one_run_is_one_span() {
+        let p = page();
+        let s = Sel {
+            anchor: caret(1, 4),
+            head: caret(1, 8),
+        };
+        assert_eq!(spans(&p, &s), vec![(1, 4..8)]);
+        assert_eq!(copy_text(&p, &s), "undo");
+    }
+
+    #[test]
+    fn a_selection_across_runs_is_partial_whole_partial() {
+        let p = page();
+        let s = Sel {
+            anchor: caret(1, 22),
+            head: caret(3, 4),
+        };
+        assert_eq!(
+            spans(&p, &s),
+            vec![(1, 22..29), (2, 0..26), (3, 0..4)],
+            "the middle run comes whole"
+        );
+    }
+
+    #[test]
+    fn a_wrapped_paragraph_copies_with_newlines_and_a_line_with_spaces() {
+        let p = page();
+        let s = Sel {
+            anchor: caret(1, 0),
+            head: caret(5, 6),
+        };
+        assert_eq!(
+            copy_text(&p, &s),
+            "The undo target was the whole\nsession, so a second click\n\nWAITING 3 on you",
+            "wrapped lines join with a newline, the chip line with spaces, \
+             and the visible gap before it with a blank line"
+        );
+    }
+
+    #[test]
+    fn crossing_into_the_rail_always_breaks_the_line() {
+        let p = page();
+        // The rail row sits level with body run 1 — geometry alone would call
+        // these one line, and the region rule must override it.
+        let s = Sel {
+            anchor: caret(1, 0),
+            head: caret(6, 30),
+        };
+        let out = copy_text(&p, &s);
+        assert!(
+            out.ends_with("\n\nShould the undo be per-branch?"),
+            "a rail row level with a paragraph still starts a block: {out:?}"
+        );
+    }
+
+    #[test]
+    fn a_chrome_run_between_two_body_runs_is_skipped_not_truncated() {
+        let p = page();
+        let s = Sel {
+            anchor: caret(6, 0),
+            head: caret(8, 7),
+        };
+        let picked: Vec<usize> = spans(&p, &s).into_iter().map(|(i, _)| i).collect();
+        assert_eq!(picked, vec![6, 8], "END SESSION is passed over, not a wall");
+        assert!(!copy_text(&p, &s).contains("END SESSION"));
+    }
+
+    #[test]
+    fn selecting_the_whole_page_loses_no_selectable_run() {
+        let p = page();
+        let last = p.len() - 1;
+        let s = Sel {
+            anchor: caret(0, 0),
+            head: caret(last, p[last].text.len()),
+        };
+        let out = copy_text(&p, &s);
+        for a in p.iter().filter(|a| a.region.selectable()) {
+            assert!(
+                out.contains(&a.text),
+                "a whole-page selection dropped {:?} — this is the failure the \
+                 feature cannot show on screen",
+                a.text
+            );
+        }
+    }
+
+    #[test]
+    fn an_empty_selection_copies_nothing() {
+        let p = page();
+        let s = Sel::at(caret(2, 5));
+        assert!(s.is_empty());
+        assert!(spans(&p, &s).is_empty());
+        assert_eq!(copy_text(&p, &s), "");
+    }
+
+    #[test]
+    fn a_multibyte_offset_walks_back_to_a_boundary_instead_of_panicking() {
+        // "café" — the é is two bytes, so 4 is mid-character.
+        let text = "café au lait";
+        assert_eq!(on_boundary(text, 4), 3);
+        assert_eq!(on_boundary(text, 5), 5);
+        assert_eq!(on_boundary(text, 999), text.len());
+
+        let p = vec![Atom {
+            x: 0.,
+            y: 0.,
+            w: 90.,
+            h: 14.,
+            text: text.to_string(),
+            region: Region::Body,
+        }];
+        let s = Sel {
+            anchor: caret(0, 0),
+            head: caret(0, 4),
+        };
+        assert_eq!(
+            copy_text(&p, &s),
+            "caf",
+            "sliced on a boundary, not through é"
+        );
+    }
+
+    #[test]
+    fn a_selection_is_dropped_when_the_tree_moved_under_it() {
+        let p = page();
+        let s = Sel {
+            anchor: caret(1, 0),
+            head: caret(2, 5),
+        };
+        assert!(s.still_valid(&p, "The undo target was the whole"));
+        assert!(
+            !s.still_valid(&p, "something else entirely"),
+            "the anchor's index now points at different text, so the \
+             selection describes something the reader never dragged over"
+        );
+        assert!(!s.still_valid(&[], "The undo target was the whole"));
+    }
+
+    #[test]
+    fn a_head_past_the_end_of_its_run_is_not_valid() {
+        let p = page();
+        let s = Sel {
+            anchor: caret(1, 0),
+            head: caret(2, 9_999),
+        };
+        assert!(!s.still_valid(&p, "The undo target was the whole"));
+    }
+
+    #[test]
+    fn spans_never_index_outside_the_list() {
+        let p = page();
+        // A stale selection pointing past the end must not panic.
+        let s = Sel {
+            anchor: caret(1, 0),
+            head: caret(99, 4),
+        };
+        let _ = spans(&p, &s);
+        let _ = copy_text(&p, &s);
     }
 }
