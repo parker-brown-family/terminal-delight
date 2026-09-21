@@ -1,0 +1,210 @@
+<header class="top"><div class="wrap">
+<h1>The parallel transcript</h1>
+<p class="sub">One <code>.ws</code> file per conversation, written for the workbench to pick up &middot; 2026-09-21 &middot; an amendment to <code>docs/plans/workbench-follows-the-agent/</code>, whose store half is on main and whose wiring is not &middot; difficulty 6/10: one plan page, one approval.</p>
+</div></header>
+
+<main class="wrap">
+
+<section class="headline notable-block">
+<p class="lede"><b>The store you asked for was built this morning and nothing writes to it.</b> Slices 1&ndash;2 of the tenancy plan landed a correct <code>conversations/</code> store with an append-only turn journal; the three slices that connect it to the prompt, the surfaces and the bench are specified and unbuilt, and its write path still carries <code>#[allow(dead_code)]</code>. <span class="tag v">measured</span> Your note is that spec with one change of shape: <b>one file, not a directory</b>. This page proposes the file and the wiring, and asks for one approval.</p>
+</section>
+
+<section>
+<figure>
+<span class="lbl">01 &middot; What exists, what is wired, what is not</span>
+<div class="frames">
+  <div class="frame">
+    <div class="frame-t">A &middot; on main today</div>
+    <div class="arch">
+      <div class="bound"><span class="bl">agent process</span>
+        <div class="node g">claude &middot; UserPromptSubmit hook &rarr; <code>prompt</code> record</div>
+        <div class="node g">AskUserQuestion hook &rarr; <code>question</code> record</div>
+        <div class="node g">present_surface / file drop &rarr; <code>*.json</code></div>
+      </div>
+      <div class="bound files"><span class="bl">mailbox &middot; surfaces/&lt;window&gt;/&lt;pane&gt;/</span>
+        <div class="node g">inbound.jsonl &middot; outbound.jsonl &middot; answers/ &middot; *.json</div>
+      </div>
+      <div class="bound"><span class="bl">window</span>
+        <div class="node g">pane sweeps the mailbox &rarr; Bench (in memory)</div>
+        <div class="node g">the prompt lands in <code>wb_asked</code> &mdash; a latch holding only the newest</div>
+      </div>
+      <div class="bound files"><span class="bl">conversations/&lt;root&gt;/&lt;seq&gt;/</span>
+        <div class="node a">benchstore &middot; turns.jsonl + surfaces/ &middot; <b>no caller</b></div>
+      </div>
+    </div>
+    <p class="fc">Green is built and running. <span class="amber">Amber</span> is built and unreachable: <code>benchstore::ask</code> and <code>::file</code> are dead code by annotation, and <code>load</code> is called only by the <code>conversation</code> CLI verb.</p>
+  </div>
+  <div class="frame">
+    <div class="frame-t">B &middot; proposed</div>
+    <div class="arch">
+      <div class="bound"><span class="bl">agent process</span>
+        <div class="node g">unchanged &mdash; the hooks and the mailbox are the wire</div>
+      </div>
+      <div class="bound files"><span class="bl">mailbox &middot; unchanged</span>
+        <div class="node g">inbound.jsonl &middot; outbound.jsonl &middot; answers/ &middot; *.json</div>
+      </div>
+      <div class="bound"><span class="bl">window</span>
+        <div class="node g">pane sweeps the mailbox</div>
+        <div class="node b">resolves the conversation: ledger first, paneident second</div>
+        <div class="node b">appends to the transcript, THEN drains the mailbox</div>
+        <div class="node b">on agent-arrived: reads the transcript &rarr; Bench</div>
+      </div>
+      <div class="bound files"><span class="bl">conversations/&lt;root&gt;.ws</span>
+        <div class="node b">one append-only file: asks, answers, surfaces, segment marks</div>
+        <div class="node inner b">&lt;root&gt;.ws.d/ &mdash; images by hash, only when a prompt carried one</div>
+      </div>
+    </div>
+    <p class="fc">Blue is the change. Three arrows and one file. The agent side is untouched, so nothing here needs a hook reinstalled or a Claude Code update.</p>
+  </div>
+</div>
+<figcaption>Frame A is drawn from the code (<code>benchstore.rs</code>, <code>channel.rs</code>, <code>pane.rs:3690</code>); frame B is mine. <b>The gap is wiring plus a shape change, not a missing subsystem</b> &mdash; which is why the amber box becomes blue rather than being replaced.</figcaption>
+</figure>
+</section>
+
+<section>
+<h2 class="sec">Read first</h2>
+<ol class="esc-list">
+  <li><span class="esc-n">1</span><div class="esc-t"><b>One file replaces the directory.</b> <code>conversations/&lt;root&gt;.ws</code>, JSON lines, append-only, oldest first. A conversation is one thing you can <code>cat</code>, copy to a phone, or attach to an issue. <em>What it takes:</em> re-shaping <code>benchstore</code>'s writer and loader (20 tests already encode the ordering and compaction rules; they carry over).</div></li>
+  <li><span class="esc-n">2</span><div class="esc-t"><b>The person's exact words come from the hook, and the screen is the fallback.</b> Every <code>prompt</code> record already carries the text verbatim (since #624). The transcript writes it with <code>origin: "hook"</code>; a scrollback latch writes <code>origin: "screen"</code>. Never a guess. <em>What it takes:</em> one call in the channel's <code>Asked</code> effect.</div></li>
+  <li><span class="esc-n">3</span><div class="esc-t"><b>The harness reports system notifications as prompts.</b> Your own mailbox shows a <code>&lt;task-notification&gt;</code> recorded as a prompt this afternoon. <span class="tag v">measured</span> The transcript keeps them &mdash; dropping records is how history goes wrong &mdash; but marks them <code>kind: "system"</code> so the overview shows only what you typed. <em>What it takes:</em> a prefix check, and a test with the real envelope.</div></li>
+  <li><span class="esc-n">4</span><div class="esc-t"><b>Images ride beside the file, not inside it.</b> A pasted screenshot is written once as <code>&lt;root&gt;.ws.d/&lt;sha256&gt;.png</code> and the ask line names the hash. The transcript stays text; the picture is deduplicated; nothing is base64-bloated. <em>What it takes:</em> nothing today &mdash; the hook does not yet hand over image bytes (#631's family); the field is reserved and drawn as <code>unavailable</code> until it does.</div></li>
+  <li><span class="esc-n">5</span><div class="esc-t"><b>Write, then drain; read on arrival.</b> A surface is appended to the transcript before its mailbox copy is removed, so a crash leaves a duplicate, never a hole. On the agent-arrived edge the bench reads the whole root and shows it. <em>What it takes:</em> slices 3&ndash;5 of the existing plan, built as one pull request.</div></li>
+</ol>
+</section>
+
+<section>
+<figure>
+<span class="lbl">02 &middot; The file, at real strings</span>
+<div class="scroller">
+<pre class="mock">conversations/3724dea0-a838-4c10-968a-4a3584ac892c.ws
+
+{"ws":"0.1","t":"segment","seq":0,"at_ms":1790010000000,"source":"startup","agent":"claude","pid":1670080}
+{"ws":"0.1","t":"ask","n":1,"at_ms":1790021348852,"origin":"hook","kind":"person","text":"ok, saved doc big issue on the chat history for workbench...","images":[]}
+{"ws":"0.1","t":"said","n":1,"at_ms":1790021391000,"surface":{"td":"0.4","kind":"response","id":"needle-landing","title":"Retro merged: main is 7f20863…","model":{"layman":"…"}}}
+{"ws":"0.1","t":"asked","n":1,"at_ms":1790021402000,"tool_use_id":"toolu_01J1…","questions":[{"q":"Drink?","options":["Coffee","Tea"]}]}
+{"ws":"0.1","t":"answered","n":1,"at_ms":1790021410000,"tool_use_id":"toolu_01J1…","answers":{"Drink?":"Coffee"},"road":"file"}
+{"ws":"0.1","t":"ask","n":2,"at_ms":1790021500000,"origin":"hook","kind":"system","text":"&lt;task-notification&gt;…"}
+{"ws":"0.1","t":"segment","seq":1,"at_ms":1790022000000,"source":"compact","agent":"claude","pid":1670080}
+{"ws":"0.1","t":"ask","n":3,"at_ms":1790022100000,"origin":"screen","kind":"person","text":"and the new binary","images":[{"sha256":"9f2c…","mime":"image/png","bytes":183220}]}</pre>
+</div>
+<figcaption>Eight record shapes, one per line, every one self-describing and every one carrying <code>at_ms</code> so order never depends on ids. <b>A <code>segment</code> line is where a compaction or a resume happened; a <code>/clear</code> is a different file</b>, because the ledger mints a new root for it &mdash; the branch table quoted in <code>benchstore</code>'s module doc, not paraphrased. <code>origin</code> and <code>kind</code> are the two words that keep unknown from reading as zero: a prompt the screen read is not the person's exact words, and a notification is not a prompt.</figcaption>
+</figure>
+</section>
+
+<section>
+<figure>
+<span class="lbl">03 &middot; The three restarts you named, and what re-finds the record</span>
+<div class="scroller">
+<table class="wide">
+<thead><tr><th>case</th><th>what dies</th><th>what survives</th><th>how the bench comes back</th><th>today</th></tr></thead>
+<tbody>
+<tr><td>host restarted, agent resumed with its id</td><td>PTYs, pane numbering</td><td>the transcript, keyed by the ledger's root</td><td>arrived edge &rarr; <code>tenancy_for(pid)</code> &rarr; root &rarr; read <code>&lt;root&gt;.ws</code></td><td>lost unless the pane number happens to match <span class="tag">measured, 06-persistence</span></td></tr>
+<tr><td>the whole TD instance quits and starts</td><td>host, window, everything in memory</td><td>the transcript</td><td>same road</td><td>same coincidence</td></tr>
+<tr><td>pane dragged to the trash, then restored</td><td>the terminal (an hour later)</td><td>the transcript; the agent, if it was resumed</td><td>same road; a restore that resumes the same session id lands on the same root</td><td>gone &mdash; the mailbox is per pane id</td></tr>
+<tr><td>the same conversation opened in a second window</td><td>nothing</td><td>the transcript</td><td>both read it; only one answers a question (#631)</td><td>one window sees it</td></tr>
+<tr><td>a <code>/clear</code></td><td>the conversation, on purpose</td><td>the old file, unopened</td><td>a new root, a new empty file</td><td>the bench keeps the old surfaces</td></tr>
+</tbody>
+</table>
+</div>
+<figcaption>Every row is the same road, which is the point of keying on the conversation rather than the pane. <b>Nothing in the restore path has to be clever</b>: pane ids can renumber freely once the record is not named by them.</figcaption>
+<p class="gutter">the road needs a ledger; on a box without the hook, paneident's certain answer is the fallback and no certain answer means no filing — never a guess written to disk</p>
+</figure>
+</section>
+
+<section>
+<figure>
+<span class="lbl">04 &middot; The fence</span>
+<div class="fence">
+  <div class="side in">
+    <div class="st-t">in the .ws file</div>
+    <ul>
+      <li>the person's asks, with origin (hook / screen) and kind (person / system)</li>
+      <li>every surface the bench showed, whole, at the moment it was presented</li>
+      <li>every question round and how it was answered, on which road</li>
+      <li>segment marks: startup, resume, compact &mdash; with the agent and its pid</li>
+      <li>image references by hash, bytes beside the file</li>
+    </ul>
+  </div>
+  <div class="side out">
+    <div class="st-t">not in it, said so</div>
+    <ul>
+      <li>the terminal's bytes &mdash; that is the agent's own transcript, which already exists and is not ours to duplicate</li>
+      <li>the bench's view state: which shelf was open, the draft in the composer</li>
+      <li>the agent's replies as text &mdash; only what it presented as a surface; a reply that never became a surface is on the screen, not here</li>
+      <li>migration of anything written before the file existed (R7 &mdash; shown as <em>from a stale version</em>)</li>
+      <li>image bytes inline &mdash; a transcript that is 200 KB of base64 per screenshot stops being a file you open</li>
+    </ul>
+  </div>
+</div>
+<figcaption><b>The right column is the whole argument for &ldquo;as simple as possible&rdquo;.</b> Each refusal keeps the file text, small, and readable by the tools already on this box.</figcaption>
+</figure>
+</section>
+
+<section>
+<h2 class="sec">What I would ask you</h2>
+<div class="grill">
+  <div class="ask">
+    <h3>One .ws file per root, replacing conversations/&lt;root&gt;/&lt;seq&gt;/?</h3>
+    <p>The directory form exists and is tested; the file form is what your note asks for. Same records, same ordering rule, same compaction rule. The loader reads one file instead of walking segments.</p>
+    <p class="rec"><b>Recommendation:</b> yes. Nothing on disk depends on the directory form yet &mdash; the store has no caller &mdash; so this is the last cheap moment to change its shape.</p>
+  </div>
+  <div class="ask">
+    <h3>Images beside the file by hash, not inline?</h3>
+    <p>Inline is one file and no sidecar. Beside is a text transcript plus a directory that only exists when a prompt carried a picture.</p>
+    <p class="rec"><b>Recommendation:</b> beside. Today the hook hands over no image bytes at all, so the field is reserved and empty either way; the choice only decides what a future picture costs the file.</p>
+  </div>
+  <div class="ask">
+    <h3>Build slices 3&ndash;5 now, as one pull request?</h3>
+    <p>Resolver, sentinel-and-drain, wiring. The tenancy reader merged an hour ago (#642), so slice 3's dependency is on main. Estimated at one sitting on the running build, verified by the three restart cases in figure 03 driven live.</p>
+    <p class="rec"><b>Recommendation:</b> yes, after this page has your notes. The score is 6/10 &mdash; one plan page, this one, and one approval.</p>
+  </div>
+</div>
+</section>
+
+<section>
+<h2 class="sec">Why</h2>
+<div class="modals-row">
+  <button class="dlg-open" data-dlg="d-spy">what the other panes intended</button>
+  <button class="dlg-open" data-dlg="d-why-file">why one file and not a directory</button>
+  <button class="dlg-open" data-dlg="d-system">why system notifications are kept</button>
+  <button class="dlg-open" data-dlg="d-drawn">what the pictures are drawn from</button>
+</div>
+
+<dialog id="d-spy"><div class="dlg-body">
+<h3>What the other panes intended</h3>
+<p>Read from their handoff, their plan and their retro on main, and from their pane events &mdash; not from memory of the day.</p>
+<ul>
+  <li><b>The store pane</b> (tab 0) built slices 1&ndash;2: a bench clears when its agent leaves, and <code>benchstore</code> exists with twenty tests. Its handoff lists slices 3&ndash;6 as &ldquo;specified and unbuilt&rdquo; and says slice 5 <em>must delete the dead-code allowance</em>. Its retro's second entry is that it inverted the clear/compact rule once by paraphrasing it; the rule is now quoted in the module doc.</li>
+  <li><b>The tenancy pane</b> built the ledger reader (<code>tenancy_for</code> / <code>tenancy_of</code>, three-state) &mdash; merged this afternoon as #642 after its test binary was found not to compile.</li>
+  <li><b>The decouple pane</b> (this one) wrote the persistence requirements R1&ndash;R7 and measured the three restart cases: window restart survives, full restart survives only by pane-number coincidence, a resume in a new pane loses everything.</li>
+</ul>
+<p>So: no disagreement between the panes on what the record is or how it is keyed. The gap is that nobody has yet wired it, and your note adds one shape decision on top. This is <em>resolve toward the intended behaviour</em>, not <em>bridge a gap in intent</em>.</p>
+<form method="dialog"><button>close</button></form>
+</div></dialog>
+
+<dialog id="d-why-file"><div class="dlg-body">
+<h3>Why one file and not a directory</h3>
+<p>The directory form (<code>&lt;root&gt;/&lt;seq&gt;/surfaces/*.json</code> + <code>turns.jsonl</code>) was designed so a surface re-presented under one id could be overwritten in place. That buys one thing &mdash; a smaller store when an agent updates a card many times &mdash; and costs three: a loader that walks segments, a record split across files that can disagree, and a conversation you cannot hand to anyone as one object.</p>
+<p>In the file form a re-presented surface is a new <code>said</code> line with the same id, and the loader keeps the latest per id &mdash; the same rule <code>load</code> already implements across segments. Size is bounded by the same retention slice 6 owns. A conversation is one file: <code>cat</code>, <code>tail -f</code>, <code>jq</code>, a phone, an issue attachment.</p>
+<p>What the file form gives up: nothing measured. The mailbox stays the wire; the agent side is unchanged; the twenty store tests re-target the file with the same assertions.</p>
+<form method="dialog"><button>close</button></form>
+</div></dialog>
+
+<dialog id="d-system"><div class="dlg-body">
+<h3>Why system notifications are kept</h3>
+<p>Claude Code fires <code>UserPromptSubmit</code> for automated turns too &mdash; task notifications, wake-ups &mdash; and the hook cannot tell them from a person's message; both arrive as <code>prompt</code>. Your own mailbox (<code>surfaces/attention/4/inbound.jsonl</code>) holds a <code>&lt;task-notification&gt;</code> recorded at 12:55 as a prompt.</p>
+<p>Two wrong fixes: drop them (a transcript with holes, and the agent's next reply answers a prompt the file never saw), or show them (an overview of turns that reads like a log). The file keeps every record and marks <code>kind</code>: <code>person</code> by default, <code>system</code> when the text opens with the harness's own envelope. The overview draws only <code>person</code>; the card still shows the reply. A prefix rule is crude, so it is a table in one place with a test per envelope, and an unrecognised envelope reads as <code>person</code> &mdash; the safe direction is to show too much rather than hide a question you asked.</p>
+<form method="dialog"><button>close</button></form>
+</div></dialog>
+
+<dialog id="d-drawn"><div class="dlg-body">
+<h3>What the pictures are drawn from</h3>
+<p><b>Figure 01 frame A</b> is the code: <code>channel.rs</code> parses <code>prompt</code> and <code>question</code>; <code>pane.rs:3690</code> is the <code>wb_asked</code> latch; <code>benchstore.rs</code> carries the <code>#[allow(dead_code)]</code> on <code>ask</code> and <code>file</code>. <b>Frame B</b> is mine.</p>
+<p><b>Figure 02</b> is a hand-written file. The two ask lines are real: the first is your 12:58 prompt from the mailbox, the <code>system</code> one is the 12:55 task notification. The surface line is this afternoon's response card, truncated. Everything else is what the record would hold, not what any file holds today.</p>
+<p><b>Figure 03</b>'s <em>today</em> column is the measurement in <code>06-persistence-requirements.md</code>, taken on <code>td-f7de467-decouple</code> at 11:30; the rest of the row is the design.</p>
+<p><b>Figure 04</b> is drawn from your note and R1&ndash;R7. Nothing in this page was run; the wiring does not exist yet.</p>
+<form method="dialog"><button>close</button></form>
+</div></dialog>
+</section>
+
+</main>
