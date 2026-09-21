@@ -14,15 +14,79 @@
 # Installed to ~/.local/bin by scripts/install-recovery-hook.sh.
 # Requires: jq (the installer checks; if jq vanishes later, exit quietly — a
 # hook must never break an agent session over a missing ledger).
+#
+# # Why the lineage, and what it is for
+#
+# A workbench is being re-keyed from the pane it was drawn in to the
+# conversation that filled it, and that needs an id which does not change
+# under a person who never left the pane. The id alone cannot promise that:
+# SessionStart fires again mid-life, and until now the ledger recorded only
+# that it had, by overwriting. Four of sixteen live agents on this machine on
+# 2026-09-21 had a second mint 10 to 48 hours in.
+#
+# The payload already says why. `source` is one of startup / resume / clear /
+# compact, and the difference decides whether a bench should follow the new id
+# or start empty: a compaction and an in-pane resume CONTINUE a conversation,
+# a launch and a /clear BEGIN one. Recording it turns a sequence of overwrites
+# into a chain — `root` names the conversation, `seq` says how deep, `prev`
+# names what this displaced.
+#
+# **A mint whose source cannot be read continues the chain and says so**, in
+# `join`. Continuing is the recoverable error: a bench that keeps too much can
+# be cleared by hand, and one that empties itself during a compaction cannot be
+# got back. `join` is absent on a fresh conversation, "declared" when the
+# source said which it was, and "unknown" when nothing did — three states,
+# because a join nobody evidenced is not the same as a join nobody needed.
+#
+# # The two files
+#
+#   <pid>.json      the live entry for one agent process; removed at SessionEnd
+#   lineage.jsonl   append-only, every mint and every end, outlives the process
+#
+# The per-pid file cannot carry the history, because it is deleted when the
+# agent exits and the whole point is to recognise that conversation tomorrow.
 set -euo pipefail
 
 command -v jq >/dev/null 2>&1 || exit 0
 
 dir="$HOME/.local/state/terminal-delight/agent-ledger"
+lineage="$dir/lineage.jsonl"
+# The lineage is one line per mint, forever. At this machine's rate — about
+# twenty-five agents, a handful of mints each per day — that is a few thousand
+# lines a year, so the cap is generous rather than tight; it exists to bound a
+# pathological writer, not to decide what is worth keeping.
+LINEAGE_CAP=5000
+
 payload="$(cat)"
 event=$(jq -r '.hook_event_name // empty' <<<"$payload" 2>/dev/null || true)
 sid=$(jq -r '.session_id // empty' <<<"$payload" 2>/dev/null || true)
+src=$(jq -r '.source // empty' <<<"$payload" 2>/dev/null || true)
 pid=$PPID
+
+# A session id reaches a command line through TD's resume path, so anything
+# that is not a plain id is refused here rather than filtered downstream.
+case "$sid" in
+*[!A-Za-z0-9_-]* | "") sid="" ;;
+esac
+# An unrecognised source is not a source. Restricting the vocabulary here means
+# every reader downstream can switch on four words and treat everything else as
+# the unknown it is.
+case "$src" in
+startup | resume | clear | compact) ;;
+*) src="" ;;
+esac
+
+# Append one line to the durable chain, then bound the file. Written to a temp
+# and renamed so a crash mid-trim leaves the old file whole.
+note() {
+  printf '%s\n' "$1" >>"$lineage" 2>/dev/null || return 0
+  local n
+  n=$(wc -l <"$lineage" 2>/dev/null || echo 0)
+  if [[ $n -gt $LINEAGE_CAP ]]; then
+    tail -n "$LINEAGE_CAP" "$lineage" >"$lineage.tmp" 2>/dev/null &&
+      mv -f "$lineage.tmp" "$lineage"
+  fi
+}
 
 case "$event" in
 SessionStart)
@@ -35,10 +99,76 @@ SessionStart)
     p=$(basename "$f" .json)
     [[ -e /proc/$p ]] || rm -f "$f"
   done
-  printf '{"session_id":"%s","pid":%s,"ts":%s}\n' "$sid" "$pid" "$(date +%s)" >"$dir/$pid.json.tmp"
+
+  prev_sid=""
+  prev_root=""
+  prev_seq=0
+  if [[ -f $dir/$pid.json ]]; then
+    prev_sid=$(jq -r '.session_id // empty' "$dir/$pid.json" 2>/dev/null || true)
+    prev_root=$(jq -r '.root // .session_id // empty' "$dir/$pid.json" 2>/dev/null || true)
+    prev_seq=$(jq -r '.seq // 0' "$dir/$pid.json" 2>/dev/null || echo 0)
+    # The previous entry is read back out of a file any process running as this
+    # user can write, and whatever is in it becomes the root this hook carries
+    # forward — so it is filtered on the way IN with the same rule the payload
+    # gets, not merely on the way out. A root reaches a store directory name.
+    case "$prev_sid" in *[!A-Za-z0-9_-]*) prev_sid="" ;; esac
+    case "$prev_root" in *[!A-Za-z0-9_-]*) prev_root="" ;; esac
+    [[ $prev_seq =~ ^[0-9]+$ ]] || prev_seq=0
+  fi
+
+  if [[ -z $prev_sid ]]; then
+    # A pid we have never seen: this is the conversation's first mint.
+    root=$sid
+    seq=0
+    displaced=""
+    join=""
+  elif [[ $sid == "$prev_sid" ]]; then
+    # The same id, minted again. Measured on this machine and the common case
+    # for a long-lived agent — the chain does not advance, only the clock.
+    root=${prev_root:-$sid}
+    seq=$prev_seq
+    displaced=""
+    join=""
+  else
+    case "$src" in
+    clear | startup)
+      root=$sid
+      seq=0
+      displaced=$prev_sid
+      join=""
+      ;;
+    compact | resume)
+      root=${prev_root:-$prev_sid}
+      seq=$((prev_seq + 1))
+      displaced=$prev_sid
+      join="declared"
+      ;;
+    *)
+      root=${prev_root:-$prev_sid}
+      seq=$((prev_seq + 1))
+      displaced=$prev_sid
+      join="unknown"
+      ;;
+    esac
+  fi
+
+  entry=$(jq -nc \
+    --arg sid "$sid" --arg root "$root" --arg src "$src" \
+    --arg prev "$displaced" --arg join "$join" \
+    --argjson pid "$pid" --argjson seq "$seq" --argjson ts "$(date +%s)" \
+    '{session_id:$sid, pid:$pid, ts:$ts, root:$root, seq:$seq}
+     + (if $src  == "" then {} else {source:$src} end)
+     + (if $prev == "" then {} else {prev:$prev}  end)
+     + (if $join == "" then {} else {join:$join}  end)')
+  printf '%s\n' "$entry" >"$dir/$pid.json.tmp"
   mv -f "$dir/$pid.json.tmp" "$dir/$pid.json"
+  note "$(jq -nc --argjson e "$entry" '{event:"start"} + $e')"
   ;;
 SessionEnd)
+  if [[ -f $dir/$pid.json ]]; then
+    note "$(jq -nc --argjson e "$(cat "$dir/$pid.json")" --argjson ts "$(date +%s)" \
+      '{event:"end", ts:$ts, pid:$e.pid, session_id:$e.session_id, root:$e.root, seq:$e.seq}')"
+  fi
   rm -f "$dir/$pid.json"
   ;;
 esac
