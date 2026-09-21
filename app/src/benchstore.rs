@@ -389,6 +389,70 @@ pub enum Rec {
 }
 
 impl Rec {
+    /// The same line, moved `base` turns later.
+    ///
+    /// For records made before the pane knew which conversation it was in.
+    /// They are held counting from turn zero, and the conversation they turn
+    /// out to belong to already has turns of its own — so the whole held run
+    /// shifts by however many, keeping what answered what.
+    pub fn shifted(self, base: u32) -> Rec {
+        match self {
+            Rec::Segment { .. } => self,
+            Rec::Ask {
+                n,
+                at_ms,
+                origin,
+                kind,
+                text,
+                images,
+            } => Rec::Ask {
+                n: n + base,
+                at_ms,
+                origin,
+                kind,
+                text,
+                images,
+            },
+            Rec::Said {
+                n,
+                at_ms,
+                id,
+                bond,
+                surface,
+            } => Rec::Said {
+                n: n + base,
+                at_ms,
+                id,
+                bond,
+                surface,
+            },
+            Rec::Asked {
+                n,
+                at_ms,
+                tool_use_id,
+                questions,
+            } => Rec::Asked {
+                n: n + base,
+                at_ms,
+                tool_use_id,
+                questions,
+            },
+            Rec::Answered {
+                n,
+                at_ms,
+                tool_use_id,
+                answers,
+                road,
+            } => Rec::Answered {
+                n: n + base,
+                at_ms,
+                tool_use_id,
+                answers,
+                road,
+            },
+        }
+    }
+
     /// The turn this line belongs to. `None` for a boundary.
     pub fn n(&self) -> Option<u32> {
         match self {
@@ -565,24 +629,20 @@ pub fn segment(
     )
 }
 
-/// Put one surface into a conversation's record.
+/// The line a surface makes, with the id rules applied — or [`None`] when the
+/// id is one that must never reach the record.
 ///
-/// **This does not remove the mailbox copy, and must not.** The caller drains
-/// the inbox only after this returns `Ok`, so a crash between the two leaves the
-/// surface in the mailbox and the worst case is one surface delivered twice.
-/// Reversing the order makes the worst case a surface that existed and then did
-/// not.
-pub fn file(
-    root_dir: &Path,
-    root: &str,
-    turn: u32,
-    id: &str,
-    value: &Value,
-    bond: Bond,
-    at_ms: u64,
-) -> io::Result<()> {
+/// **A refused id would otherwise loop.** Filing is the thing a caller drains
+/// the mailbox after, so a surface rejected here is never recorded and never
+/// removed, and comes back on every sweep. It is refused all the same: the
+/// alternative is a key a reader greps for that can carry a path in it.
+///
+/// Writing the line is the caller's move, not this function's, because a pane
+/// that does not yet know its conversation holds the line rather than losing
+/// it — and a writer that took a root could not be used that way.
+pub fn said(turn: u32, id: &str, value: &Value, bond: Bond, at_ms: u64) -> Option<Rec> {
     if !safe_id(id) {
-        return Err(io::Error::new(io::ErrorKind::InvalidInput, "unsafe id"));
+        return None;
     }
     // The id the record is keyed by and the id inside the document are the same
     // thing, and the filing id is the one that wins. A document carrying a
@@ -593,8 +653,8 @@ pub fn file(
     // A payload that is not an object carries no id and cannot be given one. It
     // is stored as it came rather than refused — the parser downstream is
     // lenient by design and turns an unusable document into a visible
-    // `Unclassified` card, which is a better answer than a surface that silently
-    // never arrives.
+    // `Unclassified` card, which is a better answer than a surface that
+    // silently never arrives.
     let surface = match value.as_object() {
         Some(m) => {
             let mut owned: Map<String, Value> = m.clone();
@@ -603,61 +663,13 @@ pub fn file(
         }
         None => value.clone(),
     };
-    append(
-        root_dir,
-        root,
-        &Rec::Said {
-            n: turn,
-            at_ms,
-            id: id.to_string(),
-            bond,
-            surface,
-        },
-    )
-}
-
-/// Record a round of questions the agent asked.
-pub fn asked(
-    root_dir: &Path,
-    root: &str,
-    n: u32,
-    at_ms: u64,
-    tool_use_id: &str,
-    questions: &Value,
-) -> io::Result<()> {
-    append(
-        root_dir,
-        root,
-        &Rec::Asked {
-            n,
-            at_ms,
-            tool_use_id: tool_use_id.to_string(),
-            questions: questions.clone(),
-        },
-    )
-}
-
-/// Record how a round was answered.
-pub fn answered(
-    root_dir: &Path,
-    root: &str,
-    n: u32,
-    at_ms: u64,
-    tool_use_id: &str,
-    answers: &Value,
-    road: &str,
-) -> io::Result<()> {
-    append(
-        root_dir,
-        root,
-        &Rec::Answered {
-            n,
-            at_ms,
-            tool_use_id: tool_use_id.to_string(),
-            answers: answers.clone(),
-            road: road.to_string(),
-        },
-    )
+    Some(Rec::Said {
+        n: turn,
+        at_ms,
+        id: id.to_string(),
+        bond,
+        surface,
+    })
 }
 
 /// Every line of one conversation, in the order it was written.
@@ -973,8 +985,25 @@ mod tests {
             .collect()
     }
 
-    fn said(s: &Scratch, root: &str, n: u32, id: &str, title: &str, at: u64) {
-        file(s.path(), root, n, id, &doc(title), Bond::Declared, at).unwrap();
+    fn filed(s: &Scratch, root: &str, n: u32, id: &str, title: &str, at: u64) {
+        let rec = super::said(n, id, &doc(title), Bond::Declared, at).expect("a legal id");
+        append(s.path(), root, &rec).unwrap();
+    }
+
+    /// What `file` used to be: build the line and write it, erroring the same
+    /// way on a root or an id that must not reach the record.
+    fn file(
+        root_dir: &Path,
+        root: &str,
+        n: u32,
+        id: &str,
+        value: &Value,
+        bond: Bond,
+        at: u64,
+    ) -> io::Result<()> {
+        let rec = super::said(n, id, value, bond, at)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "unsafe id"))?;
+        append(root_dir, root, &rec)
     }
 
     fn person(s: &Scratch, root: &str, n: u32, at: u64, text: &str) {
@@ -1001,7 +1030,7 @@ mod tests {
     #[test]
     fn a_compaction_keeps_the_whole_conversation() {
         let s = Scratch::new("bs-compact");
-        said(&s, "rootA", 0, "one", "Before the compaction", 1);
+        filed(&s, "rootA", 0, "one", "Before the compaction", 1);
         segment(
             s.path(),
             &ConvKey {
@@ -1014,7 +1043,7 @@ mod tests {
             42,
         )
         .unwrap();
-        said(&s, "rootA", 1, "two", "After the compaction", 3);
+        filed(&s, "rootA", 1, "two", "After the compaction", 3);
 
         let got = load(s.path(), "rootA").surfaces;
 
@@ -1036,7 +1065,7 @@ mod tests {
     #[test]
     fn a_clear_starts_an_empty_bench() {
         let s = Scratch::new("bs-clear");
-        said(&s, "rootA", 0, "old", "Before the clear", 1);
+        filed(&s, "rootA", 0, "old", "Before the clear", 1);
 
         // A clear mints a NEW ROOT, so the cleared work is in a file this load
         // never opens.
@@ -1053,8 +1082,8 @@ mod tests {
     #[test]
     fn a_conversation_is_one_file_and_two_are_two() {
         let s = Scratch::new("bs-one-file");
-        said(&s, "rootA", 0, "a", "A", 1);
-        said(&s, "rootB", 0, "b", "B", 2);
+        filed(&s, "rootA", 0, "a", "A", 1);
+        filed(&s, "rootB", 0, "b", "B", 2);
 
         let a = transcript_path(s.path(), "rootA").unwrap();
         let b = transcript_path(s.path(), "rootB").unwrap();
@@ -1073,7 +1102,7 @@ mod tests {
     #[test]
     fn a_conversation_outlives_the_window_that_made_it() {
         let s = Scratch::new("bs-outlive");
-        said(&s, "r", 0, "a", "Made in one window", 1);
+        filed(&s, "r", 0, "a", "Made in one window", 1);
         // Nothing about the reader names a window, a session or a pane.
         assert_eq!(
             titles(&load(s.path(), "r").surfaces),
@@ -1122,7 +1151,7 @@ mod tests {
     fn every_surface_records_the_turn_it_answered() {
         let s = Scratch::new("bs-turns");
         person(&s, "r", 0, 10, "what is the key");
-        said(&s, "r", 0, "a", "first answer", 11);
+        filed(&s, "r", 0, "a", "first answer", 11);
         person(&s, "r", 1, 20, "and what about clear");
         file(
             s.path(),
@@ -1197,7 +1226,7 @@ mod tests {
     fn a_torn_last_line_is_told_apart_from_a_corrupt_one() {
         let s = Scratch::new("bs-torn");
         person(&s, "r", 0, 10, "kept");
-        said(&s, "r", 0, "a", "also kept", 11);
+        filed(&s, "r", 0, "a", "also kept", 11);
         let p = transcript_path(s.path(), "r").unwrap();
         let mut body = fs::read_to_string(&p).unwrap();
         body.push_str("{\"t\":\"ask\",\"n\":1,\"at_m");
@@ -1226,7 +1255,7 @@ mod tests {
     #[test]
     fn an_unknown_bond_word_reads_as_the_weakest_rung() {
         let s = Scratch::new("bs-bond");
-        said(&s, "r", 0, "a", "x", 1);
+        filed(&s, "r", 0, "a", "x", 1);
         let p = transcript_path(s.path(), "r").unwrap();
         let body = fs::read_to_string(&p)
             .unwrap()
@@ -1317,7 +1346,7 @@ mod tests {
             // ids were the original fixture, and they are the one shape that
             // makes an id-ordered load look correct — so that test could not
             // fail against the bug it was named for.
-            said(
+            filed(
                 &s,
                 "r",
                 i as u32,
@@ -1349,9 +1378,9 @@ mod tests {
     #[test]
     fn ordering_follows_the_record_not_the_id() {
         let s = Scratch::new("bs-order-by-time");
-        said(&s, "r", 0, "zzz-first", "first", 100);
-        said(&s, "r", 0, "mmm-second", "second", 200);
-        said(&s, "r", 0, "aaa-third", "third", 300);
+        filed(&s, "r", 0, "zzz-first", "first", 100);
+        filed(&s, "r", 0, "mmm-second", "second", 200);
+        filed(&s, "r", 0, "aaa-third", "third", 300);
 
         assert_eq!(
             titles(&load(s.path(), "r").surfaces),
@@ -1365,9 +1394,9 @@ mod tests {
     #[test]
     fn a_surface_updated_later_is_one_row_that_stays_where_it_was() {
         let s = Scratch::new("bs-dupe");
-        said(&s, "r", 0, "same", "Before", 10);
-        said(&s, "r", 0, "later", "Something after it", 20);
-        said(&s, "r", 1, "same", "After", 30);
+        filed(&s, "r", 0, "same", "Before", 10);
+        filed(&s, "r", 0, "later", "Something after it", 20);
+        filed(&s, "r", 1, "same", "After", 30);
 
         let got = load(s.path(), "r").surfaces;
         assert_eq!(got.len(), 2, "one id, one row");
@@ -1430,7 +1459,7 @@ mod tests {
         fs::create_dir_all(&inbox).unwrap();
         fs::write(inbox.join("a.json"), doc("still here").to_string()).unwrap();
 
-        said(&s, "r", 0, "a", "filed", 1);
+        filed(&s, "r", 0, "a", "filed", 1);
 
         assert!(
             inbox.join("a.json").exists(),
@@ -1443,7 +1472,7 @@ mod tests {
     #[test]
     fn a_document_with_no_id_is_filed_carrying_the_one_it_was_given() {
         let s = Scratch::new("bs-id-fill");
-        said(&s, "r", 0, "named", "x", 1);
+        filed(&s, "r", 0, "named", "x", 1);
         let (key, v) = load(s.path(), "r").surfaces.pop().unwrap();
         assert_eq!(key, "named");
         assert_eq!(
@@ -1459,23 +1488,27 @@ mod tests {
     fn an_answered_round_comes_back_answered() {
         let s = Scratch::new("bs-round");
         person(&s, "r", 0, 10, "pick one");
-        asked(
+        append(
             s.path(),
             "r",
-            0,
-            11,
-            "toolu_01J1",
-            &json!([{ "q": "Drink?", "options": ["Coffee", "Tea"] }]),
+            &Rec::Asked {
+                n: 0,
+                at_ms: 11,
+                tool_use_id: "toolu_01J1".into(),
+                questions: json!([{ "q": "Drink?", "options": ["Coffee", "Tea"] }]),
+            },
         )
         .unwrap();
-        answered(
+        append(
             s.path(),
             "r",
-            0,
-            12,
-            "toolu_01J1",
-            &json!({ "Drink?": "Coffee" }),
-            "file",
+            &Rec::Answered {
+                n: 0,
+                at_ms: 12,
+                tool_use_id: "toolu_01J1".into(),
+                answers: json!({ "Drink?": "Coffee" }),
+                road: "result".into(),
+            },
         )
         .unwrap();
 
@@ -1644,6 +1677,87 @@ mod tests {
         for bad in ["../../etc/passwd", "a/b", "", "a b"] {
             assert!(key_for_session(bad, &led.0).is_none(), "{bad:?}");
         }
+    }
+
+    /// Lines held before the pane knew its conversation land in order, after
+    /// what the conversation already had, still pointing at each other.
+    ///
+    /// The defect this is named for was measured on a live window: a demo
+    /// pane's file opened with its segment line and no first ask, because the
+    /// prompt arrived a sweep before the window could bind the pane, and the
+    /// channel journal is read by byte offset so it never came again.
+    #[test]
+    fn lines_held_before_the_key_land_after_what_was_already_there() {
+        let s = Scratch::new("bs-held");
+        // What the conversation already had: one turn, asked and answered.
+        person(&s, "r", 0, 10, "the first thing, from a bound pane");
+        filed(&s, "r", 0, "reply-0", "the first reply", 11);
+        let base = next_turn(s.path(), "r");
+        assert_eq!(base, 1);
+
+        // What a pane held while it had no key: two turns, counted from zero.
+        let held = vec![
+            Rec::Ask {
+                n: 0,
+                at_ms: 20,
+                origin: Origin::Hook,
+                kind: Kind::Person,
+                text: "held one".into(),
+                images: vec![],
+            },
+            super::said(0, "reply-held-0", &doc("held reply one"), Bond::Sole, 21).unwrap(),
+            Rec::Ask {
+                n: 1,
+                at_ms: 22,
+                origin: Origin::Hook,
+                kind: Kind::System,
+                text: "<task-notification>\nheld two\n</task-notification>".into(),
+                images: vec![],
+            },
+        ];
+        for rec in held {
+            append(s.path(), "r", &rec.shifted(base)).unwrap();
+        }
+
+        let recs = records(s.path(), "r");
+        let turns: Vec<Option<u32>> = recs.iter().map(Rec::n).collect();
+        assert_eq!(
+            turns,
+            vec![Some(0), Some(0), Some(1), Some(1), Some(2)],
+            "the held run carries on the numbering rather than restarting it"
+        );
+        // And the reply held with the first held ask still answers it.
+        let ask_n = recs
+            .iter()
+            .filter_map(|r| match r {
+                Rec::Ask { n, text, .. } if text == "held one" => Some(*n),
+                _ => None,
+            })
+            .next()
+            .unwrap();
+        let said_n = recs
+            .iter()
+            .filter_map(|r| match r {
+                Rec::Said { n, id, .. } if id == "reply-held-0" => Some(*n),
+                _ => None,
+            })
+            .next()
+            .unwrap();
+        assert_eq!(ask_n, said_n, "what answered what survives the shift");
+        assert_eq!(next_turn(s.path(), "r"), 3);
+    }
+
+    /// A boundary has no turn, so shifting one moves nothing.
+    #[test]
+    fn a_shifted_segment_is_unchanged() {
+        let seg = Rec::Segment {
+            seq: 3,
+            at_ms: 1,
+            source: "compact".into(),
+            agent: "claude".into(),
+            pid: 9,
+        };
+        assert_eq!(seg.clone().shifted(7), seg);
     }
 
     /// Every record shape survives a write and a read, including the ones with

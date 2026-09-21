@@ -1201,16 +1201,9 @@ mod tests {
         );
 
         for (id, doc) in &docs {
-            crate::benchstore::file(
-                store.path(),
-                root,
-                0,
-                id,
-                doc,
-                crate::vitals::Bond::Declared,
-                NOW,
-            )
-            .unwrap();
+            let rec = crate::benchstore::said(0, id, doc, crate::vitals::Bond::Declared, NOW)
+                .expect("a swept id is a legal record key");
+            crate::benchstore::append(store.path(), root, &rec).unwrap();
         }
 
         // A different window, a different pane, the same conversation.

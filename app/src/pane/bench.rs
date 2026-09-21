@@ -1166,6 +1166,17 @@ impl TerminalView {
                 self.shell_pid().unwrap_or(0),
             );
         }
+        // Everything said before the window could name this conversation,
+        // in the order it was said, shifted onto the end of what the record
+        // already had. Written before the load below, so the load sees them.
+        let base = self.wb_turn;
+        let held = std::mem::take(&mut self.wb_unfiled);
+        for rec in held {
+            if let Some(n) = rec.n() {
+                self.wb_turn = self.wb_turn.max(base + n + 1);
+            }
+            let _ = crate::benchstore::append(&dir, &key.root, &rec.shifted(base));
+        }
         let loaded = crate::benchstore::load(&dir, &key.root);
         self.wb_conv = Some(key);
         let now = crate::surfacefeed::now_ms();
@@ -1196,17 +1207,57 @@ impl TerminalView {
         if docs.is_empty() {
             return;
         }
-        let Some(key) = self.wb_conv.clone() else {
-            return;
-        };
         let dir = crate::benchstore::store_root();
         // The turn these answer is the one that is open: `wb_turn` is the ask
         // that has not been made yet. Before any ask has been recorded there is
         // no open turn and everything belongs to the first one.
         let turn = self.wb_turn.saturating_sub(1);
         let now = crate::surfacefeed::now_ms();
+        let _ = dir;
         for (id, doc) in docs {
-            let _ = crate::benchstore::file(&dir, &key.root, turn, id, doc, self.wb_conv_bond, now);
+            // `None` is an id that must never become a record key. Skipped
+            // rather than repaired: a filing under a name nobody chose is
+            // worse than a surface that is only on the bench.
+            if let Some(rec) = crate::benchstore::said(turn, id, doc, self.wb_conv_bond, now) {
+                self.bench_write(rec);
+            }
+        }
+    }
+
+    /// Put one line in the conversation's record, or hold it until there is a
+    /// conversation to put it in.
+    ///
+    /// **The hold is the point.** A pane's first prompt arrives within a second
+    /// of its agent starting, and the window cannot bind a pane to a
+    /// conversation until that agent's process is far enough along to be
+    /// identified — so on a fresh pane the binding is a sweep or two behind the
+    /// first thing said. The channel journal is read by byte offset and the
+    /// mailbox by mtime, so neither is delivered twice: a line dropped for want
+    /// of a key is dropped for good, and the record would begin at whatever the
+    /// window happened to notice first. Measured on a live demo window before
+    /// this existed — the file opened with its segment line and no first ask,
+    /// while the prompt sat in the mailbox unfiled.
+    ///
+    /// Held lines count their turns from zero and are shifted onto the end of
+    /// whatever the conversation already had, when the key lands.
+    fn bench_write(&mut self, rec: crate::benchstore::Rec) {
+        match self.wb_conv.clone() {
+            Some(key) => {
+                let _ =
+                    crate::benchstore::append(&crate::benchstore::store_root(), &key.root, &rec);
+            }
+            // Bounded, because a pane that never binds must not grow a list
+            // forever: a shell pane with a drop box, or an agent whose siblings
+            // make it unidentifiable. What the cap costs is the OLDEST held
+            // line, so the run that survives is the one nearest the moment a
+            // key could arrive.
+            None => {
+                const HELD_CAP: usize = 256;
+                if self.wb_unfiled.len() >= HELD_CAP {
+                    self.wb_unfiled.remove(0);
+                }
+                self.wb_unfiled.push(rec);
+            }
         }
     }
 
@@ -1218,25 +1269,18 @@ impl TerminalView {
     /// rendered terminal is a good enough thing to draw and not a good enough
     /// thing to keep.
     fn bench_record_ask(&mut self, text: &str) {
-        let Some(key) = self.wb_conv.clone() else {
-            return;
-        };
         let n = self.wb_turn;
-        let _ = crate::benchstore::append(
-            &crate::benchstore::store_root(),
-            &key.root,
-            &crate::benchstore::Rec::Ask {
-                n,
-                at_ms: crate::surfacefeed::now_ms(),
-                origin: crate::benchstore::Origin::Hook,
-                kind: crate::benchstore::prompt_kind(text),
-                text: text.to_string(),
-                // The hook hands over no image bytes on any agent this build
-                // has measured, so there is nothing to reference. Empty here
-                // is "this ask carried none", which is what was observed.
-                images: Vec::new(),
-            },
-        );
+        self.bench_write(crate::benchstore::Rec::Ask {
+            n,
+            at_ms: crate::surfacefeed::now_ms(),
+            origin: crate::benchstore::Origin::Hook,
+            kind: crate::benchstore::prompt_kind(text),
+            text: text.to_string(),
+            // The hook hands over no image bytes on any agent this build has
+            // measured, so there is nothing to reference. Empty here is "this
+            // ask carried none", which is what was observed.
+            images: Vec::new(),
+        });
         self.wb_turn = n + 1;
     }
 
@@ -1248,10 +1292,6 @@ impl TerminalView {
     /// working state that belongs to the live pane and to nothing else.
     fn bench_record_round(&mut self, ev: &crate::channel::Inbound) {
         use crate::channel::Inbound;
-        let Some(key) = self.wb_conv.clone() else {
-            return;
-        };
-        let dir = crate::benchstore::store_root();
         let n = self.wb_turn.saturating_sub(1);
         let now = crate::surfacefeed::now_ms();
         match ev {
@@ -1276,7 +1316,12 @@ impl TerminalView {
                         })
                         .collect(),
                 );
-                let _ = crate::benchstore::asked(&dir, &key.root, n, now, tool_use_id, &qs);
+                self.bench_write(crate::benchstore::Rec::Asked {
+                    n,
+                    at_ms: now,
+                    tool_use_id: tool_use_id.clone(),
+                    questions: qs,
+                });
             }
             Inbound::Answered {
                 tool_use_id,
@@ -1287,8 +1332,13 @@ impl TerminalView {
                 // it carried, which is a different thing from a round answered
                 // with nothing.
                 let a = answers.clone().unwrap_or(serde_json::Value::Null);
-                let _ =
-                    crate::benchstore::answered(&dir, &key.root, n, now, tool_use_id, &a, "result");
+                self.bench_write(crate::benchstore::Rec::Answered {
+                    n,
+                    at_ms: now,
+                    tool_use_id: tool_use_id.clone(),
+                    answers: a,
+                    road: "result".into(),
+                });
             }
             _ => {}
         }

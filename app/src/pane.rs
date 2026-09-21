@@ -2287,6 +2287,10 @@ pub struct TerminalView {
     /// How strongly the pane was bound when [`Self::wb_conv`] was set, kept so
     /// every line filed can say what it was attributed on.
     wb_conv_bond: crate::vitals::Bond,
+    /// Lines made before the window could say which conversation this pane is
+    /// in, oldest first. Drained into the record the moment it can. See
+    /// `bench_write`.
+    wb_unfiled: Vec<crate::benchstore::Rec>,
     /// The ordinal the NEXT ask will carry. Read from the record when the
     /// conversation is adopted, so a window restart mid-conversation does not
     /// start counting again and file this turn's reply under the first one.
@@ -3038,6 +3042,9 @@ impl TerminalView {
             self.wb_conv = None;
             self.wb_conv_bond = crate::vitals::Bond::Guess;
             self.wb_turn = 0;
+            // Anything held for a conversation that never got named belongs to
+            // the agent that left, and the next one in this pane is not it.
+            self.wb_unfiled.clear();
             // And the surfaces, which is the same argument one step further
             // on. The ask above is cleared because captioning a new agent's
             // reply with the old agent's question is wrong; the channel is
@@ -3575,6 +3582,7 @@ impl TerminalView {
             wb_beacon: None,
             wb_conv: None,
             wb_conv_bond: crate::vitals::Bond::Guess,
+            wb_unfiled: Vec::new(),
             wb_turn: 0,
         }
     }
