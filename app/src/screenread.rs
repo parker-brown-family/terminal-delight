@@ -580,11 +580,24 @@ pub fn harness_confirm(rows: &[String], word: &str) -> Picker {
     // which is what [`wants_human`] is: strict, anchored, and already the
     // predicate this window trusts to say an agent has stopped for a person.
     //
-    // The CONFIRM arm below does not take that gate, and that asymmetry is
+    // A SECOND SIGNAL, because the first one is absent on the real screen: the
+    // GUTTER MARK. A live picker draws `❯` on the row its return key would
+    // take, and prose does not.
+    //
+    // The footer alone was the first draft of this, and a photograph of the
+    // actual `Change effort level?` picker killed it — that screen carries no
+    // footer at all, so a permission gate drawn the same way would have read
+    // as NO MENU, and a held draft would have gone into it a second and a half
+    // later. Absence of a footer is not absence of a menu.
+    //
+    // The CONFIRM arm below takes neither gate, and that asymmetry is
     // deliberate: naming the dial in a question is the stronger signal, and
-    // a footer this window failed to recognise must not turn into a draft
+    // a screen this window failed to recognise must not turn into a draft
     // typed into a picker.
-    let live = wants_human(rows);
+    let live = wants_human(rows)
+        || rows
+            .iter()
+            .any(|r| numbered_option(r).is_some_and(|(_, _, marked)| marked));
     if q.options.len() != 2 {
         return if live { Picker::Other } else { Picker::None };
     }
@@ -830,22 +843,68 @@ pub fn screen_question_id(q: &Question) -> SurfaceId {
 mod tests {
     use super::*;
 
-    /// The harness's own confirmation of a dial press.
+    /// The harness's own confirmation of a dial press, **as it really draws**.
     ///
-    /// **Half measured, half inferred, and the halves are worth separating.**
-    /// The four strings are read out of the shipped Claude Code binary
-    /// (2.1.274): `Switch model?`, `Change effort level?`, `Your next response
-    /// will be slower and use more tokens`, `Yes, switch to `, `No, go back`.
-    /// The LAYOUT — a bare question line, a blank, a numbered pair with the
-    /// gutter mark on the cursor — is the same select component every other
-    /// fixture in this file was transcribed from, not a photograph of this
-    /// particular picker.
+    /// Transcribed from a photograph of Parker's own pane on 2026-09-21, taken
+    /// while he was testing a mid-prompt effort change: he pressed the dial,
+    /// this came up, and the effort stayed where it was. It is the screen the
+    /// whole mechanism is aimed at, and it differs in two ways from the shape
+    /// inferred from the other pickers in this file:
     ///
-    /// If the real one differs, [`harness_confirm`] answers `None`, the
-    /// window presses nothing, and the person answers the question with their
-    /// own hand — which is exactly what happens today. The failure of this
-    /// guess is a feature that does not arrive, never a keystroke sent
-    /// somewhere it was not wanted.
+    /// - a SECOND reason paragraph, about the prompt cache. Harmless, but it
+    ///   is what `question_on_screen` takes as the "question" — which is why
+    ///   [`harness_confirm`] scans every row for a line that ends in `?` and
+    ///   names the dial rather than trusting that one.
+    /// - **no `esc to cancel` footer.** [`wants_human`] is false here. Gating
+    ///   the confirm arm on it would have meant the feature never fired at
+    ///   all, and gating "some menu is up" on it alone read this screen as no
+    ///   menu — which is what made the gutter mark a second signal.
+    ///
+    /// Held as a test rather than as a sentence in a report, because a layout
+    /// read off a photograph is exactly the kind of fact that goes stale
+    /// without anybody noticing.
+    fn real_effort_picker() -> Vec<String> {
+        [
+            "Change effort level?",
+            "Your next response will be slower and use more tokens",
+            "",
+            "This conversation is cached for the current effort level. Switching to xhigh means \
+             the full history gets re-read on your next message.",
+            "",
+            "\u{276f} 1. Yes, switch to xhigh",
+            "  2. No, go back",
+        ]
+        .iter()
+        .map(|r| r.to_string())
+        .collect()
+    }
+
+    #[test]
+    fn the_real_picker_off_parkers_own_pane_is_recognised_and_driveable() {
+        let rows = real_effort_picker();
+        assert_eq!(
+            harness_confirm(&rows, "effort"),
+            Picker::Confirm { yes: 0, cursor: 0 },
+            "the screen this feature exists for was not recognised"
+        );
+        // The cursor is already on Yes, so the answer is a bare return.
+        assert_eq!(crate::workbench::menu_keys(0, 0), b"\r".to_vec());
+        // No footer: the window's own "an agent wants a human" predicate says
+        // nothing about this screen. Both halves of the asymmetry depend on
+        // that — the confirm is recognised without it, and "some menu is up"
+        // needs the gutter mark to see it at all.
+        assert!(
+            !wants_human(&rows),
+            "this screen grew a footer; the Other arm can be tightened if so"
+        );
+        // Not the model dial's question — and answered as a MENU rather than
+        // as nothing, which is what keeps a draft out of it.
+        assert_eq!(harness_confirm(&rows, "model"), Picker::Other);
+    }
+
+    /// The same confirmation in the shape inferred before there was a
+    /// photograph of one — kept because it carries the footer and the echoed
+    /// command that the real capture happens not to show.
     fn confirm_rows(head: &str, yes: &str) -> Vec<String> {
         [
             // The echoed command, with the caret this window has MEASURED off
