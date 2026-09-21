@@ -1,0 +1,143 @@
+#!/usr/bin/env bash
+# td-agent-hooks — Claude Code hook adapter for Terminal Delight's agent
+# channel (TDAC 0.1, docs/spec/td-agent-channel.md).
+#
+# One script for five events. It turns what the harness hands a hook into
+# records in the pane's mailbox, and on a question it can HOLD the picker and
+# answer it with what the bench chose — so the agent never draws a menu and
+# the bench never types at one.
+#
+#   UserPromptSubmit               -> prompt
+#   PreToolUse   (AskUserQuestion) -> question, then waiting + the pre-answer, or released
+#   PostToolUse  (AskUserQuestion) -> answered
+#   Stop                           -> reply
+#   Notification                   -> notify
+#
+# Exit 0 on every path. A hook must never break a person's session over a
+# mailbox: missing jq, no TD_SESSION, an unwritable directory — silent exit.
+#
+# The wait on a question is bounded twice: by the window's marker
+# (`bench.json`, fresh within four seconds and saying the bench is the face on
+# screen) and by TD_ASK_WAIT_S (default 540, under the harness's own 600-second
+# default timeout for a command hook, so the harness never kills us first).
+# With no fresh marker the hook returns at once and the picker paints exactly
+# as it did before this script existed.
+#
+# Installed to ~/.local/bin by scripts/install-agent-hooks.sh.
+set -u
+command -v jq >/dev/null 2>&1 || exit 0
+[ -n "${TD_SESSION:-}" ] && [ -n "${TD_PANE_ID:-}" ] || exit 0
+payload="$(cat 2>/dev/null)" || exit 0
+[ -n "$payload" ] || exit 0
+
+case "$TD_PANE_ID" in ''|*[!0-9]*) exit 0;; esac
+session="$(printf '%s' "$TD_SESSION" | tr -cd 'A-Za-z0-9_-' | cut -c1-64)"
+[ -n "$session" ] || session=default
+state="${XDG_STATE_HOME:-$HOME/.local/state}"
+case "$state" in /*) ;; *) state="$HOME/.local/state";; esac
+dir="$state/terminal-delight/surfaces/$session/$TD_PANE_ID"
+mkdir -p "$dir" 2>/dev/null || exit 0
+inbound="$dir/inbound.jsonl"
+
+now_ms() { date +%s%3N; }
+
+# One line, under an advisory lock: a question with previews is longer than a
+# pipe buffer, and two hooks can fire inside one second.
+emit() {
+  [ -n "$1" ] || return 0
+  (
+    flock -w 2 9 2>/dev/null || true
+    printf '%s\n' "$1" >&9
+  ) 9>>"$inbound" 2>/dev/null || true
+}
+
+field() { jq -r "$1 // empty" <<<"$payload" 2>/dev/null; }
+
+ev="$(field '.hook_event_name')"
+[ -n "$ev" ] || exit 0
+pid="$PPID"
+at="$(now_ms)"
+
+case "$ev" in
+  UserPromptSubmit)
+    emit "$(jq -c --argjson at "$at" --argjson pid "$pid" \
+      '{td:"0.1",type:"prompt",at_ms:$at,pid:$pid,session_id:(.session_id//null),prompt_id:(.prompt_id//null),text:(.prompt//null)}' \
+      <<<"$payload" 2>/dev/null)"
+    ;;
+  Stop)
+    emit "$(jq -c --argjson at "$at" --argjson pid "$pid" \
+      '{td:"0.1",type:"reply",at_ms:$at,pid:$pid,session_id:(.session_id//null),text:(.last_assistant_message//null)}' \
+      <<<"$payload" 2>/dev/null)"
+    ;;
+  Notification)
+    emit "$(jq -c --argjson at "$at" --argjson pid "$pid" \
+      '{td:"0.1",type:"notify",at_ms:$at,pid:$pid,session_id:(.session_id//null),notification_type:(.notification_type//null),message:(.message//null)}' \
+      <<<"$payload" 2>/dev/null)"
+    ;;
+  PostToolUse)
+    [ "$(field '.tool_name')" = AskUserQuestion ] || exit 0
+    tuid="$(field '.tool_use_id')"
+    [ -n "$tuid" ] || exit 0
+    emit "$(jq -c --argjson at "$at" --argjson pid "$pid" --arg t "$tuid" \
+      '{td:"0.1",type:"answered",at_ms:$at,pid:$pid,tool_use_id:$t,answers:(.tool_response//null)}' \
+      <<<"$payload" 2>/dev/null)"
+    ;;
+  PreToolUse)
+    [ "$(field '.tool_name')" = AskUserQuestion ] || exit 0
+    tuid="$(field '.tool_use_id')"
+    [ -n "$tuid" ] || exit 0
+    wait_s="${TD_ASK_WAIT_S:-540}"
+    case "$wait_s" in ''|*[!0-9]*) wait_s=540;; esac
+    deadline=$(( at + wait_s * 1000 ))
+    emit "$(jq -c --argjson at "$at" --argjson pid "$pid" --arg t "$tuid" --argjson dl "$deadline" \
+      '{td:"0.1",type:"question",at_ms:$at,pid:$pid,session_id:(.session_id//null),tool_use_id:$t,questions:(.tool_input.questions//[]),deadline_ms:$dl}' \
+      <<<"$payload" 2>/dev/null)"
+
+    marker="$dir/bench.json"
+    fresh() {
+      [ -f "$marker" ] || return 1
+      local face at_ms n
+      face="$(jq -r '.face // empty' "$marker" 2>/dev/null)"
+      [ "$face" = workbench ] || return 1
+      at_ms="$(jq -r '.at_ms // empty' "$marker" 2>/dev/null)"
+      case "$at_ms" in ''|*[!0-9]*) return 1;; esac
+      n="$(now_ms)"
+      [ $(( n - at_ms )) -lt 4000 ] && [ $(( at_ms - n )) -lt 4000 ]
+    }
+    released() {
+      emit "$(jq -cn --arg t "$tuid" --arg w "$1" '{td:"0.1",type:"released",tool_use_id:$t,why:$w}')"
+    }
+    if ! fresh; then
+      released no-bench
+      exit 0
+    fi
+    emit "$(jq -cn --arg t "$tuid" --argjson u "$deadline" '{td:"0.1",type:"waiting",tool_use_id:$t,until_ms:$u}')"
+    # The same filter the window applies to the id, so both sides name one file.
+    key="$(printf '%s' "$tuid" | tr -cd 'A-Za-z0-9_-' | cut -c1-96)"
+    ans="$dir/answers/$key.json"
+    while :; do
+      if [ -f "$ans" ]; then
+        answers="$(jq -c '.answers // empty' "$ans" 2>/dev/null)"
+        if [ -n "$answers" ] && [ "$answers" != null ]; then
+          released answered
+          # The harness's own decision shape: the tool input, plus the answers,
+          # and the picker never paints. Measured against Claude Code 2.1.274.
+          jq -c --argjson a "$answers" \
+            '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"allow",updatedInput:((.tool_input//{}) + {answers:$a})}}' \
+            <<<"$payload" 2>/dev/null
+          exit 0
+        fi
+      fi
+      if [ "$(now_ms)" -ge "$deadline" ]; then
+        released timeout
+        exit 0
+      fi
+      if ! fresh; then
+        released stale
+        exit 0
+      fi
+      sleep 0.25
+    done
+    ;;
+esac
+exit 0

@@ -2262,6 +2262,21 @@ pub struct TerminalView {
     /// Set on the agent→pane arrival edge and never cleared, because it is a
     /// fact about the pane's history rather than about its present.
     wb_had_agent: bool,
+    /// This pane's agent channel: the rounds a hook has carried, what has been
+    /// pressed on them, and whether the harness has spoken through it at all.
+    /// See [`crate::channel`].
+    wb_channel: crate::channel::State,
+    /// The overview's caption came through the channel, in the harness's own
+    /// words. While true the screen latch stops overwriting it.
+    wb_asked_by_hook: bool,
+    /// What this bench has sent, oldest first, for the up key to recall.
+    wb_sent: Vec<String>,
+    /// Which sent message the composer is showing, if the person is walking
+    /// back through them. `None` is the ordinary state: a fresh draft.
+    wb_recall: Option<usize>,
+    /// The last liveness marker this pane wrote: whether its bench was open,
+    /// and when. `None` until the first one goes.
+    wb_beacon: Option<(bool, u64)>,
 }
 
 /// Click on the header's theme icon — the workspace opens the breakout menu.
@@ -2994,6 +3009,13 @@ impl TerminalView {
             // must never be.
             self.wb_dial_sent = None;
             self.wb_asked.clear();
+            // And the channel: the next agent is a different process with
+            // different rounds, and a card waiting on the one that left would
+            // route its answer to a hook that is no longer there. The sent
+            // history is the person's own and stays.
+            self.wb_channel = crate::channel::State::new();
+            self.wb_asked_by_hook = false;
+            self.wb_recall = None;
         }
         cx.notify();
     }
@@ -3237,9 +3259,14 @@ impl TerminalView {
                             // it the scan re-asserts the prompt 120ms after the
                             // person answers, because an answered prompt is still
                             // the visible tail on a quiet pane.
-                            let needs = view.mode.is_agent()
+                            // A question the channel carried never paints a
+                            // picker for the screen to see, so the channel is
+                            // asked beside the screen — and it is the one
+                            // reading here that is not a reading at all.
+                            let needs = (view.mode.is_agent()
                                 && !thinking
-                                && wants_human_unless_answered(&recent, view.answered_on);
+                                && wants_human_unless_answered(&recent, view.answered_on))
+                                || view.wb_channel.has_open_question();
                             if needs != view.needs_input {
                                 view.needs_input = needs;
                                 cx.emit(AgentWorkingChanged);
@@ -3484,6 +3511,11 @@ impl TerminalView {
             wb_model: None,
             wb_effort: None,
             wb_had_agent: false,
+            wb_channel: crate::channel::State::new(),
+            wb_asked_by_hook: false,
+            wb_sent: Vec::new(),
+            wb_recall: None,
+            wb_beacon: None,
         }
     }
 
@@ -3617,7 +3649,10 @@ impl TerminalView {
             Some(rows) => crate::screenread::human_message(rows, crate::screenread::ASKED_LINES),
             None => self.last_human_message(crate::screenread::ASKED_LINES),
         };
-        if !seen.is_empty() {
+        // Once the harness has handed this pane the person's exact words, a
+        // screen reading of the same turn is the lesser record and never
+        // overwrites them — see `channel_events`.
+        if !seen.is_empty() && !self.wb_asked_by_hook {
             self.wb_asked = seen;
         }
     }
@@ -7114,6 +7149,15 @@ impl TerminalView {
                     pid,
                     own: Some(crate::ctl::descends_from(pid, shell)),
                 };
+            }
+        }
+        // A reply the agent presented itself means the hook's copy of the same
+        // turn is not wanted — see [`crate::channel::State::saw_response`].
+        if let Some(s) = post.surface.as_ref() {
+            if matches!(s.kind, crate::surface::Kind::Response(_))
+                && s.origin != crate::surface::Origin::Hook
+            {
+                self.wb_channel.saw_response();
             }
         }
         if self.bench.apply(post).is_some() {

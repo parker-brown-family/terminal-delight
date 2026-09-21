@@ -531,7 +531,14 @@ pub struct Line {
     /// them. The next printable character or delete replaces everything; any
     /// motion drops it.
     marked: bool,
+    /// What the draft was before each change, newest last, so `ctrl+z` can
+    /// walk back through them. A document has an undo; a mirror could not,
+    /// because the far end had already taken the keystroke.
+    undo: Vec<(String, usize)>,
 }
+
+/// How many changes a draft can take back.
+pub const UNDO_KEPT: usize = 200;
 
 impl Line {
     pub fn new() -> Line {
@@ -548,7 +555,94 @@ impl Line {
             caret,
             pasted: 0,
             marked: false,
+            undo: Vec::new(),
         }
+    }
+
+    /// Remember the draft as it is, ahead of a change.
+    fn snapshot(&mut self) {
+        let last = self.undo.last();
+        if last.is_some_and(|(t, c)| *t == self.text && *c == self.caret) {
+            return;
+        }
+        self.undo.push((self.text.clone(), self.caret));
+        if self.undo.len() > UNDO_KEPT {
+            self.undo.remove(0);
+        }
+    }
+
+    /// Take the last change back. `false` when there is nothing to take.
+    pub fn undo(&mut self) -> bool {
+        let Some((text, caret)) = self.undo.pop() else {
+            return false;
+        };
+        self.text = text;
+        self.caret = caret.min(self.chars());
+        self.marked = false;
+        true
+    }
+
+    /// The caret as a row and a column, over the draft's own line breaks.
+    pub fn line_col(&self) -> (usize, usize) {
+        let mut row = 0;
+        let mut col = 0;
+        for (i, c) in self.text.chars().enumerate() {
+            if i == self.caret {
+                break;
+            }
+            if c == '\n' {
+                row += 1;
+                col = 0;
+            } else {
+                col += 1;
+            }
+        }
+        (row, col)
+    }
+
+    /// Up one line, keeping the column where the line allows. On the first
+    /// line the caret goes to the start — the same thing every text box on
+    /// this desk does with an up it cannot honour.
+    pub fn up(&mut self) {
+        let (row, col) = self.line_col();
+        if row == 0 {
+            self.caret = 0;
+            return;
+        }
+        self.caret = self.at_row_col(row - 1, col);
+    }
+
+    /// Down one line; on the last line the caret goes to the end.
+    pub fn down(&mut self) {
+        let (row, col) = self.line_col();
+        let rows = self.text.chars().filter(|c| *c == '\n').count() + 1;
+        if row + 1 >= rows {
+            self.caret = self.chars();
+            return;
+        }
+        self.caret = self.at_row_col(row + 1, col);
+    }
+
+    /// The character index of a row and column, clamped to the row's length.
+    fn at_row_col(&self, row: usize, col: usize) -> usize {
+        let mut r = 0;
+        let mut start = 0;
+        for (i, c) in self.text.chars().enumerate() {
+            if r == row {
+                break;
+            }
+            if c == '\n' {
+                r += 1;
+                start = i + 1;
+            }
+        }
+        let len = self
+            .text
+            .chars()
+            .skip(start)
+            .take_while(|c| *c != '\n')
+            .count();
+        start + col.min(len)
     }
 
     /// Select the whole draft — `ctrl+a`, the convention every text box on this
@@ -575,14 +669,20 @@ impl Line {
         self.marked = false;
     }
 
-    /// Take the selection: empty the line and report that it happened, so the
-    /// caller knows to tell the far end to do the same.
+    /// Take the selection: empty the line and report that it happened.
     pub fn take_marked(&mut self) -> bool {
         if !self.marked {
             return false;
         }
-        self.clear();
+        self.wipe();
         true
+    }
+
+    /// Empty the text and the caret, keeping the undo so it can come back.
+    fn wipe(&mut self) {
+        self.text.clear();
+        self.caret = 0;
+        self.marked = false;
     }
 
     /// Record that an image went to the agent with this line.
@@ -592,11 +692,11 @@ impl Line {
 
     /// The images are no longer on the agent's line, so stop saying they are.
     ///
-    /// One caller: [`aside_bytes`] erases the far end's line to make room for a
-    /// command and types the TEXT back, and an attachment is not text — the
-    /// agent's `[Image #7]` is a reference into something it read from the
-    /// clipboard itself, and nothing this side can retype it. A count that
-    /// outlived the thing it counted would be the mirror lying about the line.
+    /// No live caller since the composer became a document: the dial used to
+    /// erase the far end's line (taking the agent's `[Image #7]` with it) and
+    /// this kept the count honest. The far end's line is empty now, so nothing
+    /// is erased. Kept for the test that pins the count's meaning.
+    #[cfg(test)]
     pub fn forget_pastes(&mut self) {
         self.pasted = 0;
     }
@@ -626,8 +726,9 @@ impl Line {
     /// Insert at the caret and step over it. A selected line is REPLACED,
     /// which is what a person who just pressed `ctrl+a` is expecting.
     pub fn insert(&mut self, s: &str) {
+        self.snapshot();
         if self.marked {
-            self.clear();
+            self.wipe();
         }
         let at = self.byte_at(self.caret);
         self.text.insert_str(at, s);
@@ -690,7 +791,33 @@ impl Line {
         if !matches!(edit, Edit::SelectAll | Edit::Backspace | Edit::Delete) {
             self.clear_mark();
         }
+        // A change is remembered before it is made; a motion is not a change.
+        if matches!(
+            edit,
+            Edit::Backspace
+                | Edit::Delete
+                | Edit::KillWordLeft
+                | Edit::KillWordRight
+                | Edit::KillToStart
+                | Edit::KillToEnd
+                | Edit::Newline
+        ) {
+            self.snapshot();
+        }
         match edit {
+            Edit::Undo => {
+                self.undo();
+            }
+            Edit::Newline => {
+                if self.marked {
+                    self.wipe();
+                }
+                let at = self.byte_at(self.caret);
+                self.text.insert(at, '\n');
+                self.caret += 1;
+            }
+            Edit::Up => self.up(),
+            Edit::Down => self.down(),
             Edit::SelectAll => self.mark_all(),
             Edit::Left => self.left(),
             Edit::Right => self.right(),
@@ -776,6 +903,7 @@ impl Line {
         self.caret = 0;
         self.pasted = 0;
         self.marked = false;
+        self.undo.clear();
     }
 
     fn byte_at(&self, chars: usize) -> usize {
@@ -1754,6 +1882,15 @@ pub enum Edit {
     KillToEnd,
     /// ctrl+a: the whole draft, selected. See [`Line::mark_all`].
     SelectAll,
+    /// shift+enter, alt+enter: a line break IN the draft. It used to be a
+    /// literal newline typed at the agent while the mirror read it as submit
+    /// and emptied itself — Parker: *"ouch - pain"* (#614).
+    Newline,
+    /// up / down: a row of the draft, now that the draft has rows.
+    Up,
+    Down,
+    /// ctrl+z: the last change, taken back.
+    Undo,
     /// Sent, and the line starts again.
     Submit,
 }
@@ -1963,19 +2100,26 @@ pub fn flag_value(cmd: &str, flag: &str) -> Option<String> {
     None
 }
 
-pub fn line_edit(key: &str, ctrl: bool, alt: bool) -> Option<Edit> {
+pub fn line_edit(key: &str, ctrl: bool, alt: bool, shift: bool) -> Option<Edit> {
     Some(match key {
         "left" if ctrl || alt => Edit::WordLeft,
         "right" if ctrl || alt => Edit::WordRight,
         "left" => Edit::Left,
         "right" => Edit::Right,
+        "up" if !ctrl && !alt => Edit::Up,
+        "down" if !ctrl && !alt => Edit::Down,
         "home" => Edit::Home,
         "end" => Edit::End,
         "backspace" if ctrl || alt => Edit::KillWordLeft,
         "backspace" => Edit::Backspace,
         "delete" if ctrl || alt => Edit::KillWordRight,
         "delete" => Edit::Delete,
+        // The table takes SHIFT now, because the one key whose meaning shift
+        // changes is the one that used to empty the box: `shift+enter` is a
+        // line, `enter` alone is the send.
+        "enter" if shift || alt => Edit::Newline,
         "enter" => Edit::Submit,
+        "z" if ctrl => Edit::Undo,
         "a" if ctrl => Edit::SelectAll,
         "e" if ctrl => Edit::End,
         "b" if ctrl => Edit::Left,
@@ -3136,6 +3280,26 @@ impl Bench {
     /// Everything, newest first — what the ticks strip draws.
     pub fn all_newest_first(&self) -> impl Iterator<Item = &Surface> {
         self.surfaces.iter().rev()
+    }
+
+    /// Change one question in place — a cursor the screen reader found, an
+    /// answer the channel recorded. Nothing else about the surface moves, and
+    /// a surface that is not a question is left alone and reported.
+    pub fn with_question_mut(
+        &mut self,
+        id: &SurfaceId,
+        f: impl FnOnce(&mut crate::surface::Question),
+    ) -> bool {
+        match self.surfaces.iter_mut().find(|s| s.id == *id) {
+            Some(Surface {
+                kind: Kind::Question(q),
+                ..
+            }) => {
+                f(q);
+                true
+            }
+            _ => false,
+        }
     }
 
     pub fn get(&self, id: &SurfaceId) -> Option<&Surface> {
@@ -4796,7 +4960,7 @@ mod tests {
             ("enter", false, false, Edit::Submit),
         ] {
             assert_eq!(
-                line_edit(key, ctrl, alt),
+                line_edit(key, ctrl, alt, false),
                 Some(want),
                 "{key} ctrl={ctrl} alt={alt}"
             );
@@ -4804,9 +4968,71 @@ mod tests {
         // A plain letter is a letter. `a` unmodified must reach the line as
         // text, or typing the word "and" would send the caret home twice.
         for key in ["a", "e", "w", "k", "u", "d", "b", "f", "z"] {
-            assert_eq!(line_edit(key, false, false), None, "{key} alone is text");
+            assert_eq!(
+                line_edit(key, false, false, false),
+                None,
+                "{key} alone is text"
+            );
         }
-        assert_eq!(line_edit("f5", false, false), None);
+        assert_eq!(line_edit("f5", false, false, false), None);
+    }
+
+    #[test]
+    fn shift_enter_is_a_line_and_enter_alone_is_the_send() {
+        // #614: `line_edit` took no shift, so `shift+enter` read as Submit
+        // and emptied a box the agent still held the draft of. The table
+        // takes shift now, and the one key it changes is this one.
+        assert_eq!(line_edit("enter", false, false, true), Some(Edit::Newline));
+        assert_eq!(line_edit("enter", false, true, false), Some(Edit::Newline));
+        assert_eq!(line_edit("enter", false, false, false), Some(Edit::Submit));
+        assert_eq!(line_edit("z", true, false, false), Some(Edit::Undo));
+        assert_eq!(line_edit("up", false, false, false), Some(Edit::Up));
+        assert_eq!(line_edit("down", false, false, false), Some(Edit::Down));
+        // Shift on a letter is still a letter.
+        assert_eq!(line_edit("a", false, false, true), None);
+
+        let mut l = Line::holding("first");
+        l.apply(Edit::Newline);
+        l.insert("second");
+        assert_eq!(l.text(), "first\nsecond");
+        assert_eq!(l.line_col(), (1, 6));
+        l.apply(Edit::Up);
+        assert_eq!(l.caret(), 5, "row 0, column clamped to the row");
+        l.apply(Edit::Up);
+        assert_eq!(l.caret(), 0, "up on the first row is home");
+        l.apply(Edit::Down);
+        assert_eq!(l.line_col(), (1, 0));
+        l.apply(Edit::Down);
+        assert_eq!(l.caret(), l.chars(), "down on the last row is end");
+    }
+
+    #[test]
+    fn a_draft_takes_its_changes_back_in_order() {
+        let mut l = Line::new();
+        assert!(!l.undo(), "nothing to take back");
+        l.insert("one");
+        l.insert(" two");
+        l.apply(Edit::KillWordLeft);
+        assert_eq!(l.text(), "one ");
+        assert!(l.undo());
+        assert_eq!(l.text(), "one two");
+        assert!(l.undo());
+        assert_eq!((l.text(), l.caret()), ("one", 3));
+        assert!(l.undo());
+        assert_eq!(l.text(), "");
+        assert!(!l.undo());
+        // A replaced selection comes back whole.
+        let mut r = Line::holding("keep this");
+        r.apply(Edit::SelectAll);
+        r.insert("X");
+        assert_eq!(r.text(), "X");
+        assert!(r.undo());
+        assert_eq!(r.text(), "keep this");
+        // Motion is not a change: undo after arrows takes back the last EDIT.
+        let mut m = Line::holding("abc");
+        m.apply(Edit::Left);
+        m.apply(Edit::Home);
+        assert!(!m.undo(), "arrows leave nothing to undo");
     }
 
     #[test]

@@ -1528,6 +1528,14 @@ pub enum Origin {
     /// Read off this pane's own transcript or screen by the window itself: a
     /// question the agent asked, a `Deliverable:` line it printed.
     Derived,
+    /// Arrived through the agent's own hooks — `docs/spec/td-agent-channel.md`.
+    ///
+    /// Complete and exact: a question with every option and every preview,
+    /// before any picker painted; a reply in the harness's own words. Precise
+    /// the way an MCP call from the pane's own agent is, and for the same
+    /// reason — the process itself said so — which is why it outranks
+    /// [`Origin::Derived`], the screen's partial reading of the same thing.
+    Hook,
     /// Typed by the person, in this window, on this pane's own bench.
     ///
     /// The only origin no payload can ask for and no transport can forge: it is
@@ -1558,6 +1566,7 @@ impl Origin {
             } => format!("presented over MCP by pid {pid} \u{2014} not this pane's agent"),
             Origin::Mcp { pid, own: None } => format!("presented over MCP by pid {pid}"),
             Origin::Derived => "read from this agent's own record".into(),
+            Origin::Hook => "arrived through this agent's own hooks \u{b7} whole".into(),
             Origin::Person => "written here, by you".into(),
         }
     }
@@ -1582,7 +1591,7 @@ impl Origin {
             Origin::FileDrop => 1,
             Origin::Derived => 2,
             Origin::Mcp { own: None, .. } => 3,
-            Origin::Mcp { own: Some(_), .. } => 4,
+            Origin::Mcp { own: Some(_), .. } | Origin::Hook => 4,
             Origin::Person => 5,
         }
     }
@@ -3852,6 +3861,12 @@ mod tests {
         .label()
         .contains("not this pane's agent"));
         assert!(Origin::Derived.label().contains("own record"));
+        assert!(Origin::Hook.label().contains("hooks"));
+        assert!(
+            Origin::Hook.precision() > Origin::Derived.precision(),
+            "a hook carried the whole question; the screen read part of it"
+        );
+        assert!(!Origin::Hook.is_unattributed());
         // A parsed payload carries no origin: the transport stamps it, and a
         // transport that forgets is drawn as the failure it is.
         let s = surface(json!({"td":"0.1","kind":"markdown","model":{"body":"x"}}));

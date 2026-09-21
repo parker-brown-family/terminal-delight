@@ -11,12 +11,62 @@ nothing about whether the new one is correct. → **four gates.**
 - Gate 1 — Product: **APPROVED 2026-09-21** — Parker, in chat: *"Great - love it
   yes."* Approved after the amendment below, which was folded in before the
   approval rather than after it.
-- Gate 2 — Architecture: pending — **and it belongs to a different agent.**
-  Parker: *"the async work will belong to another agent. Let's wrap up our WIP
-  BEFORE we start the ASYSNC"*. This session's job ends at Gate 1 plus the
-  capture.
-- Gate 3 — Program Design: pending
-- Gate 4 — Slice plan: pending
+- Gate 2 — Architecture: **written 2026-09-21 by the DECOUPLE-ASYNC pane**
+  (`02-architecture.md`, with the channel's contract in
+  `docs/spec/td-agent-channel.md`). Parker, before going AFK: *"you go ahead
+  and get this implemented as well — any significant decisions you make can
+  fall into a doc for me to read after — GO FULL SEND and I am fully AFK so you
+  cannot ask me anything!"* So the gate was not approved in chat; the decisions
+  it makes are listed below under **Decisions made while you were away** and
+  drawn in the brief, for him to overrule.
+- Gate 3 — Program Design: **written 2026-09-21**, same pane, same terms
+  (`03-program-design.md`).
+- Gate 4 — Slice plan: **written and built through slice 3 on 2026-09-21**
+  (`04-slices.md`). What was built, what was held, and what the next pane
+  picks up are in that file.
+
+The earlier note stands as history: Parker said *"the async work will belong
+to another agent. Let's wrap up our WIP BEFORE we start the ASYSNC"*, and the
+pane that wrote Gate 1 stopped there. This is that other agent.
+
+## Decisions made while you were away (2026-09-21)
+
+Each of these is drawn and annotatable in
+`reports/2026-09-21-decouple-async-the-agent-channel.html`. The number is the
+order to read them in; the first is the one to overrule if any.
+
+1. **"The third cost" is answered with option 3, and the one impure verb is
+   kept and journaled.** A question travels to the bench through a hook,
+   whole, before the picker paints; the answer travels back as a file the
+   hook is waiting for, and the picker never paints. **Measured, not
+   inferred:** driven under a pseudoterminal against Claude Code 2.1.274 on
+   this machine, a `PreToolUse` hook returning `updatedInput` with `answers`
+   skipped the picker and the model received the answer (the LAST option,
+   chosen deliberately so a default-first pick would have shown). Where the
+   hook is not waiting — no bench open, an older window, a harness with no
+   hooks — the answer goes as keys through the same one gate it always did,
+   and every such write is journaled as `keys` so the fallback is visible.
+2. **The composer is a document, not a mirror.** Nothing leaves it until send.
+   Send is ONE write: a bracketed paste plus a return. Ctrl+C copies; the
+   interrupt is the strip's stop control and `ctrl+g`; shift+enter is a line;
+   up/down walk the draft; undo is `ctrl+z`.
+3. **The two features the mirror gave away are answered:** history is the
+   bench's own sent log (up on an empty draft); slash commands still run
+   (Claude Code parses `/model x` at submit, pasted or typed); completion is
+   not offered and the composer does not pretend to — the terminal face has it.
+4. **The channel is files, not a wire, and it needs no host upgrade.** Two
+   journals, one directory the agent already knows, a marker the hook reads.
+   The host is untouched, on purpose: it only upgrades by dying.
+5. **The bench stays inside the pane for now.** The 124-reference ownership
+   move is the next slice, deliberately after the view coupling is gone, and
+   after the tenancy pane's conversation key has landed — two agents on
+   `Bench` at once is how a merge eats a day.
+6. **Hooks are installed into `~/.claude/settings.json` by a script, and
+   every one of them exits 0 on any error.** The blocking wait on a question
+   happens ONLY while this window says a bench is open on that pane and said
+   so within four seconds; otherwise the hook returns at once and the picker
+   paints exactly as today. `scripts/install-agent-hooks.sh --uninstall` takes
+   it all back out.
 
 **AMENDED at approval, 2026-09-21 — the PTY side-channel.** Raised by the pane
 building bench tenancy and verified here against `origin/main`. `bench_deliver`
