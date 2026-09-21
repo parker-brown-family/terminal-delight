@@ -23090,6 +23090,28 @@ impl Render for Workspace {
                     .text_color(th.text.alpha(0.55))
                     .child(s)
             };
+            // A titled card. Same frame as the untitled filter cards below, so a
+            // titled and an untitled section read as the same kind of thing.
+            let section = |title: &str, inner: gpui::AnyElement| {
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .px_2()
+                    .py_1()
+                    .rounded(sk.rad_raw(8.))
+                    .bg(th.accent.alpha(0.06))
+                    .border_1()
+                    .border_color(th.accent.alpha(0.18))
+                    .child(
+                        div()
+                            .text_size(px(8.))
+                            .font_weight(gpui::FontWeight::BOLD)
+                            .text_color(th.text.alpha(0.4))
+                            .child(title.to_string()),
+                    )
+                    .child(inner)
+            };
             let enable_btn = Self::bezel_btn(
                 &sk,
                 &if cfg.enabled {
@@ -23154,28 +23176,9 @@ impl Render for Workspace {
                     cx.notify();
                 }),
             );
-            // 🎨 inherit toggle: when on, the Agent Wall wears the outer TD
-            // theme as one coherent dashboard instead of mixing every pane's
-            // own colours. The chrome stays flat so hit targets remain honest.
-            let theme_btn = Self::bezel_btn(
-                &sk,
-                &if self.mcp_theme_preview {
-                    format!("\u{1f3a8} {}", t.m_theme_on)
-                } else {
-                    format!("\u{1f3a8} {}", t.m_theme_off)
-                },
-                self.mcp_theme_preview,
-            )
-            .id("mcp-btn-theme")
-            .hover(|s| s.border_color(th.accent))
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                    cx.stop_propagation();
-                    ws.mcp_theme_preview = !ws.mcp_theme_preview;
-                    cx.notify();
-                }),
-            );
+            // The 🎨 inherit toggle has no button: the wall wears its panes' own
+            // colours, and the switch cost a permanent slot in the row to say so.
+            // TD_WALL_THEME=1 still starts it themed (see mcp_theme_preview).
 
             // Writes opt-in: promotes the read-only watch surface to a
             // remote-control one (set_pane_config). A deliberate second switch —
@@ -23206,12 +23209,12 @@ impl Render for Workspace {
             let preview = self.mcp_theme_preview;
             let cs = self.card_scale.clamp(0.7, 1.6);
             let card_slider = self.card_scale_slider(th.accent, th.text, cx);
-            // ---- pre-pass: whole-fleet counts (unfiltered) + context-aware
-            // filter domains. Group chips come from tab groups; program chips
-            // come from live pane modes; state chips only come from matching
-            // agents. ----
-            let (mut n_work, mut n_block, mut n_err, mut n_done, mut n_idle, mut n_unknown) =
-                (0u32, 0u32, 0u32, 0u32, 0u32, 0u32);
+            // ---- pre-pass: context-aware filter domains. Group chips come from
+            // tab groups; program chips come from live pane modes; state chips
+            // only come from matching agents. Agent-state counts are kept ONLY
+            // in the v_* set, which honours the active group and program chips —
+            // a second whole-fleet tally read as a rival answer to the same
+            // question and was always the one nobody wanted. ----
             let mut turn_tok_total = 0u64;
             let mut sess_tok_total = 0u64;
             let mut total_panes = 0u32;
@@ -23252,14 +23255,6 @@ impl Render for Workspace {
                         .is_none_or(|program| program == mode_lbl.as_str());
                     if p.mode.is_agent() {
                         let st = p.agent_status();
-                        match st.state {
-                            hud::AgentState::Working => n_work += 1,
-                            hud::AgentState::Blocked => n_block += 1,
-                            hud::AgentState::Error => n_err += 1,
-                            hud::AgentState::Finished => n_done += 1,
-                            hud::AgentState::Idle => n_idle += 1,
-                            hud::AgentState::Unknown => n_unknown += 1,
-                        }
                         turn_tok_total += st.turn_tokens.unwrap_or(0);
                         sess_tok_total += p.session_tokens();
                         if show_group && program_matches {
@@ -24552,17 +24547,8 @@ impl Render for Workspace {
                     MouseButton::Left,
                     cx.listener(|_, _: &MouseDownEvent, _w, cx| cx.stop_propagation()),
                 )
-                .child(label(format!(
-                    "MCP {} \u{2014} {}",
-                    t.m_control,
-                    if cfg.writable {
-                        t.m_read_write
-                    } else {
-                        t.m_read_only
-                    }
-                )))
                 .child(
-                    // ---- the agent-wall scoreboard rollup ----
+                    // ---- title row: the wall's name, then the token rollup ----
                     div()
                         .flex()
                         .flex_row()
@@ -24575,157 +24561,6 @@ impl Render for Workspace {
                                 .font_weight(gpui::FontWeight::EXTRA_BOLD)
                                 .text_color(th.complement)
                                 .child("AGENT WALL"),
-                        )
-                        .child(
-                            div()
-                                .text_color(th.accent)
-                                .cursor_pointer()
-                                .px_1()
-                                .rounded(sk.radius())
-                                .when(state_filt == Some(hud::AgentState::Working), |d| {
-                                    d.bg(th.accent.alpha(0.22))
-                                })
-                                .hover(|s| s.bg(th.accent.alpha(0.12)))
-                                .child(format!("\u{25b6} {n_work}"))
-                                .on_mouse_down(
-                                    MouseButton::Left,
-                                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                                        cx.stop_propagation();
-                                        ws.mcp_state_filter = (ws.mcp_state_filter
-                                            != Some(hud::AgentState::Working))
-                                        .then_some(hud::AgentState::Working);
-                                        cx.notify();
-                                    }),
-                                ),
-                        )
-                        .child(
-                            div()
-                                .text_color(hsla(0.11, 0.85, 0.60, 1.))
-                                .cursor_pointer()
-                                .px_1()
-                                .rounded(sk.radius())
-                                .when(state_filt == Some(hud::AgentState::Blocked), |d| {
-                                    d.bg(hsla(0.11, 0.85, 0.60, 1.).alpha(0.22))
-                                })
-                                .hover(|s| s.bg(hsla(0.11, 0.85, 0.60, 1.).alpha(0.12)))
-                                .child(format!("\u{23f8} {n_block}"))
-                                .on_mouse_down(
-                                    MouseButton::Left,
-                                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                                        cx.stop_propagation();
-                                        ws.mcp_state_filter = (ws.mcp_state_filter
-                                            != Some(hud::AgentState::Blocked))
-                                        .then_some(hud::AgentState::Blocked);
-                                        cx.notify();
-                                    }),
-                                ),
-                        )
-                        .child(
-                            div()
-                                .text_color(hsla(0., 0.75, 0.60, 1.))
-                                .cursor_pointer()
-                                .px_1()
-                                .rounded(sk.radius())
-                                .when(state_filt == Some(hud::AgentState::Error), |d| {
-                                    d.bg(hsla(0., 0.75, 0.60, 1.).alpha(0.22))
-                                })
-                                .hover(|s| s.bg(hsla(0., 0.75, 0.60, 1.).alpha(0.12)))
-                                .child(format!("\u{2715} {n_err}"))
-                                .on_mouse_down(
-                                    MouseButton::Left,
-                                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                                        cx.stop_propagation();
-                                        ws.mcp_state_filter = (ws.mcp_state_filter
-                                            != Some(hud::AgentState::Error))
-                                        .then_some(hud::AgentState::Error);
-                                        cx.notify();
-                                    }),
-                                ),
-                        )
-                        .child(
-                            div()
-                                .text_color(agent_state_glow(
-                                    &th,
-                                    th.text.alpha(0.45),
-                                    hud::AgentState::Finished,
-                                ))
-                                .cursor_pointer()
-                                .px_1()
-                                .rounded(sk.radius())
-                                .when(state_filt == Some(hud::AgentState::Finished), |d| {
-                                    d.bg(agent_state_glow(
-                                        &th,
-                                        th.text.alpha(0.45),
-                                        hud::AgentState::Finished,
-                                    )
-                                    .alpha(0.22))
-                                })
-                                .hover(|s| {
-                                    s.bg(agent_state_glow(
-                                        &th,
-                                        th.text.alpha(0.45),
-                                        hud::AgentState::Finished,
-                                    )
-                                    .alpha(0.12))
-                                })
-                                .child(format!("\u{2713} {n_done}"))
-                                .on_mouse_down(
-                                    MouseButton::Left,
-                                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                                        cx.stop_propagation();
-                                        ws.mcp_state_filter = (ws.mcp_state_filter
-                                            != Some(hud::AgentState::Finished))
-                                        .then_some(hud::AgentState::Finished);
-                                        cx.notify();
-                                    }),
-                                ),
-                        )
-                        .child(
-                            div()
-                                .text_color(th.text.alpha(0.45))
-                                .cursor_pointer()
-                                .px_1()
-                                .rounded(sk.radius())
-                                .when(state_filt == Some(hud::AgentState::Idle), |d| {
-                                    d.bg(th.text.alpha(0.45).alpha(0.22))
-                                })
-                                .hover(|s| s.bg(th.text.alpha(0.45).alpha(0.12)))
-                                .child(format!("\u{25cb} {n_idle}"))
-                                .on_mouse_down(
-                                    MouseButton::Left,
-                                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                                        cx.stop_propagation();
-                                        ws.mcp_state_filter = (ws.mcp_state_filter
-                                            != Some(hud::AgentState::Idle))
-                                        .then_some(hud::AgentState::Idle);
-                                        cx.notify();
-                                    }),
-                                ),
-                        )
-                        // Panes whose screen matched no rule. Its own chip, so
-                        // the set can be filtered to and looked at — the first
-                        // thing anyone will want when this number is not zero.
-                        .child(
-                            div()
-                                .text_color(th.text.alpha(0.45))
-                                .cursor_pointer()
-                                .px_1()
-                                .rounded(sk.radius())
-                                .when(state_filt == Some(hud::AgentState::Unknown), |d| {
-                                    d.bg(th.text.alpha(0.45).alpha(0.22))
-                                })
-                                .hover(|s| s.bg(th.text.alpha(0.45).alpha(0.12)))
-                                .child(format!("? {n_unknown}"))
-                                .on_mouse_down(
-                                    MouseButton::Left,
-                                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                                        cx.stop_propagation();
-                                        ws.mcp_state_filter = (ws.mcp_state_filter
-                                            != Some(hud::AgentState::Unknown))
-                                        .then_some(hud::AgentState::Unknown);
-                                        cx.notify();
-                                    }),
-                                ),
                         )
                         .child(div().flex_1().min_w(px(0.)))
                         .child(div().text_color(th.text.alpha(0.7)).child(format!(
@@ -24790,21 +24625,37 @@ impl Render for Workspace {
                                 )
                         }),
                 )
-                .child(
+                .child(label(format!(
+                    "MCP {} \u{2014} {}",
+                    t.m_control,
+                    if cfg.writable {
+                        t.m_read_write
+                    } else {
+                        t.m_read_only
+                    }
+                )))
+                .child(section(
+                    "MCP SERVER",
                     div()
                         .flex()
-                        .flex_row()
-                        .flex_wrap()
-                        .items_center()
+                        .flex_col()
                         .gap_1()
-                        .child(enable_btn)
-                        .child(expose_btn)
-                        .child(events_btn)
-                        .child(writes_btn)
-                        .child(theme_btn)
-                        .child(card_slider),
-                )
-                .child(label(format!("{exposed}/{total} {}", t.m_exposed)))
+                        .child(
+                            div()
+                                .flex()
+                                .flex_row()
+                                .flex_wrap()
+                                .items_center()
+                                .gap_1()
+                                .child(enable_btn)
+                                .child(expose_btn)
+                                .child(events_btn)
+                                .child(writes_btn)
+                                .child(card_slider),
+                        )
+                        .child(label(format!("{exposed}/{total} {}", t.m_exposed)))
+                        .into_any_element(),
+                ))
                 .child({
                     // Each filter DIMENSION (group · program · state) lives in its
                     // own lightly-themed card so they read as distinct controls; the
@@ -24832,8 +24683,11 @@ impl Render for Workspace {
                         .gap_3()
                         .child(filter_card(chips.into_any_element()))
                         .child(filter_card(program_chips.into_any_element()))
+                        // The ONLY agent-state tally in the panel, and it is the
+                        // scoped one — titled, because it now has to say on its
+                        // own face that it counts the filtered set and not the fleet.
                         .when(show_state_chips, |d| {
-                            d.child(filter_card(state_chips.into_any_element()))
+                            d.child(section("AGENT STATE", state_chips.into_any_element()))
                         })
                 })
                 .child(list)
