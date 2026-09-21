@@ -213,12 +213,28 @@ part that matters for the bench, and it is the only part that needs a matcher in
 Parker's `settings.json`. **That is his change to make** — it goes to him with
 the evidence, not into a plan doc and not into a peer's worktree.
 
-**Cite this with care: the radar is a ring buffer.** It rotates into `.prev`,
-and the two sessions that looked at it an hour apart saw *disjoint* records —
-theirs had 2 questions and 6 options, the one read here had 1 question and 3
-options, and `.prev` had already vanished by the second read. A later zero means
-the window rolled, not that the finding was wrong. The reproducer is
-`reports/_askhook.py`; snapshot anything you intend to quote.
+**Cite this with care, for two reasons that both produce wrong numbers.**
+
+**It rotates in minutes, not hours.** `context_radar.jsonl` rolls into
+`context_radar.prev.jsonl` at roughly 800 lines, and on 2026-09-21 that happened
+three times inside one exchange: two readers an hour apart saw *disjoint*
+`AskUserQuestion` records, then it rotated again four minutes later — mid-turn,
+while one of them was writing the paragraph about it — so `.prev` took over the
+second reader's record and the first reader's left both files. A third read
+minutes after that found the live file down to **10 lines**. `_askhook.py`
+returning zero is the expected steady state. Quote another reader's number with
+their timestamp rather than re-running to confirm it, and snapshot anything you
+intend to keep.
+
+**Never `grep` it for a tool name.** `content` carries whole payloads including
+prose that mentions tool names, so the bare string over-counts by roughly two
+orders of magnitude. Measured on the same files: in `.prev`, the structured
+`"tool_name":"AskUserQuestion"` count was **1** and the bare string **247** —
+247×. In the live file the structured count was **0** and the bare string
+**13**, so a grep reports thirteen hits in a file holding no records at all.
+Parse the JSON. The reproducer that does it correctly, and that now prints
+`hook phase recorded: NO` on every record so nobody re-derives the overclaim
+from its output, is `reports/_askhook.py`.
 
 Note what option 2 costs beyond the gesture: **ending the agent from the bench
 is the gesture that starts the feature the tenancy work is building.** That is
