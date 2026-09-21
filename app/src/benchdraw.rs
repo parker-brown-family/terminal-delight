@@ -2982,10 +2982,13 @@ pub fn composer(
                 background_color: Some(th.human.alpha(if live { 0.34 } else { 0.18 })),
                 ..Default::default()
             };
-            let spans = if l.marked() {
-                vec![(0..l.text().len(), selection)]
-            } else {
-                vec![(at..next, caret)]
+            // The SELECTED RUN, not the whole string. It was
+            // `0..l.text().len()` while select-all was the only selection
+            // there was; with a range that would paint the entire draft the
+            // moment one character was highlighted.
+            let spans = match l.sel_bytes() {
+                Some(r) => vec![(r, selection)],
+                None => vec![(at..next, caret)],
             };
             let styled = gpui::StyledText::new(text).with_highlights(spans);
             // The layout handle is filled in during prepaint and shared by
@@ -3229,10 +3232,11 @@ pub fn note_box(
         background_color: Some(mine.alpha(if focused { 0.34 } else { 0.18 })),
         ..Default::default()
     };
-    let spans = if line.marked() {
-        vec![(0..line.text().len(), selection)]
-    } else {
-        vec![(at..next, caret)]
+    // The selected run only — see the composer above for why this is not
+    // the whole string any more.
+    let spans = match line.sel_bytes() {
+        Some(r) => vec![(r, selection)],
+        None => vec![(at..next, caret)],
     };
     raised(
         sk.panel()

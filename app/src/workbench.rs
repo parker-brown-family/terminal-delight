@@ -523,14 +523,24 @@ pub struct Line {
     /// on a paste that reached the agent and left the box looking empty: *"The
     /// image is showing up in the terminal mirror, but not in the text area."*
     pasted: usize,
-    /// The WHOLE line is selected — what `ctrl+a` leaves behind.
+    /// Where a selection STARTED, if one is running. The other end is the
+    /// caret.
     ///
-    /// A boolean rather than a range because select-all is the only selection
-    /// this box has: there is no mouse drag over the draft and no shift+arrow
-    /// here, so a range would be three states wide and only ever hold two of
-    /// them. The next printable character or delete replaces everything; any
-    /// motion drops it.
-    marked: bool,
+    /// This was a `bool` until 2026-09-21, because select-all was the only
+    /// selection the box had and one bit held it. The reason recorded at the
+    /// time was that "there is no mouse drag over the draft and no shift+arrow
+    /// here" — true, and the thing being fixed: a bit cannot say WHERE a
+    /// selection began, so the fifth `shift+left` had nowhere to grow from.
+    ///
+    /// [`None`] is no selection, which is not the same as an empty one. An
+    /// anchor equal to the caret is collapsed and normalised back to [`None`]
+    /// by [`Line::apply`], so no caller has to decide whether a zero-width
+    /// range means *nothing is selected* or *a selection of nothing*.
+    ///
+    /// Stored UNORDERED — `anchor > caret` is a backwards selection and is
+    /// ordinary, because the anchor stays put while the caret walks back over
+    /// it and out the other side. [`Line::sel_range`] is the ordered reading.
+    anchor: Option<usize>,
     /// What the draft was before each change, newest last, so `ctrl+z` can
     /// walk back through them. A document has an undo; a mirror could not,
     /// because the far end had already taken the keystroke.
@@ -554,7 +564,7 @@ impl Line {
             text,
             caret,
             pasted: 0,
-            marked: false,
+            anchor: None,
             undo: Vec::new(),
         }
     }
@@ -578,7 +588,7 @@ impl Line {
         };
         self.text = text;
         self.caret = caret.min(self.chars());
-        self.marked = false;
+        self.anchor = None;
         true
     }
 
@@ -648,41 +658,80 @@ impl Line {
     /// Select the whole draft — `ctrl+a`, the convention every text box on this
     /// desk answers to.
     ///
-    /// The caret goes to the START rather than staying where it was, because
-    /// the agent's own line editor is readline-shaped and the keystroke that
-    /// reached it moved ITS caret to column zero. The mirror has to agree, or
-    /// the replacement typed next lands in a different place on each side.
-    /// Parker, on the box not answering the chord: *"Ctrl+a does not highlight
-    /// all in the workbench text area"*.
+    /// The caret ends at the END of the draft, which is where every text box
+    /// on this desk leaves it and where a person expects to carry on typing.
+    ///
+    /// It used to go to the START, because the mirror had to agree with a
+    /// readline-shaped editor on the far end that the same keystroke had
+    /// already moved to column zero. There is no far end any more — the
+    /// composer owns the draft — so the convention wins. Parker, on the box
+    /// not answering the chord at all: *"Ctrl+a does not highlight all in the
+    /// workbench text area"*.
     pub fn mark_all(&mut self) {
-        self.marked = !self.text.is_empty();
-        self.caret = 0;
+        self.anchor = (!self.text.is_empty()).then_some(0);
+        self.caret = self.chars();
     }
 
-    /// Is the whole draft selected?
-    pub fn marked(&self) -> bool {
-        self.marked
+    /// The selection as an ordered half-open range of CHARACTER indices.
+    ///
+    /// [`None`] when nothing is selected, and also when the anchor has
+    /// collapsed onto the caret — a range of nothing is not a selection, and
+    /// making the caller distinguish them would be the same mistake the
+    /// boolean made in the other direction.
+    ///
+    /// **This is the only place that decides it.** `Extend` deliberately does
+    /// not clear an anchor the caret walked back onto, because two rules for
+    /// what a zero-width range means is one rule too many, and a highlight of
+    /// zero characters that also swallows the caret is what it would cost.
+    pub fn sel_range(&self) -> Option<(usize, usize)> {
+        let a = self.anchor?;
+        let (lo, hi) = if a <= self.caret {
+            (a, self.caret)
+        } else {
+            (self.caret, a)
+        };
+        (lo < hi).then_some((lo, hi))
     }
 
-    /// Drop the selection without touching the text — any motion does this.
-    pub fn clear_mark(&mut self) {
-        self.marked = false;
+    /// The same range in BYTES, for a renderer that highlights a span of the
+    /// string it was handed.
+    pub fn sel_bytes(&self) -> Option<std::ops::Range<usize>> {
+        let (lo, hi) = self.sel_range()?;
+        Some(self.byte_at(lo)..self.byte_at(hi))
     }
 
-    /// Take the selection: empty the line and report that it happened.
-    pub fn take_marked(&mut self) -> bool {
-        if !self.marked {
-            return false;
+    /// What is selected, for the clipboard.
+    pub fn selected_text(&self) -> Option<&str> {
+        let r = self.sel_bytes()?;
+        Some(&self.text[r])
+    }
+
+    /// Start a selection here if one is not already running, then let the
+    /// caller move the caret. The anchor is never moved by a second call —
+    /// that is the whole reason it exists.
+    fn anchor_here(&mut self) {
+        if self.anchor.is_none() {
+            self.anchor = Some(self.caret);
         }
-        self.wipe();
-        true
     }
 
-    /// Empty the text and the caret, keeping the undo so it can come back.
-    fn wipe(&mut self) {
-        self.text.clear();
-        self.caret = 0;
-        self.marked = false;
+    /// Drop the selection without touching the text — any unshifted motion
+    /// does this.
+    pub fn clear_mark(&mut self) {
+        self.anchor = None;
+    }
+
+    /// Delete what is selected and report that something went. The caret
+    /// lands where the selection started, which is where the replacement for
+    /// it belongs.
+    pub fn take_marked(&mut self) -> bool {
+        let Some((lo, hi)) = self.sel_range() else {
+            return false;
+        };
+        self.cut(lo, hi);
+        self.caret = lo;
+        self.anchor = None;
+        true
     }
 
     /// Record that an image went to the agent with this line.
@@ -723,13 +772,13 @@ impl Line {
         self.text.is_empty()
     }
 
-    /// Insert at the caret and step over it. A selected line is REPLACED,
-    /// which is what a person who just pressed `ctrl+a` is expecting.
+    /// Insert at the caret and step over it. A SELECTION is replaced — only
+    /// the selected run, which is the difference a range buys over the bit
+    /// that came before it: typing over `beta` in `alpha beta gamma` used to
+    /// take the whole draft with it.
     pub fn insert(&mut self, s: &str) {
         self.snapshot();
-        if self.marked {
-            self.wipe();
-        }
+        self.take_marked();
         let at = self.byte_at(self.caret);
         self.text.insert_str(at, s);
         self.caret += s.chars().count();
@@ -781,14 +830,43 @@ impl Line {
         self.caret = self.chars();
     }
 
+    /// Move the caret, and nothing else.
+    ///
+    /// One mover for both the bare arrows and the shift-held ones, so a
+    /// selection can never extend somewhere a plain arrow would not have
+    /// gone. Two movers would be two word rules and two wrap rules, which is
+    /// exactly how `ctrl+w` nearly ended up meaning different things on the
+    /// two sides of the old mirror.
+    fn move_to(&mut self, m: Motion) {
+        match m {
+            Motion::Left => self.left(),
+            Motion::Right => self.right(),
+            Motion::WordLeft => self.caret = self.word_start(),
+            Motion::WordRight => self.caret = self.word_end(),
+            Motion::Home => self.home(),
+            Motion::End => self.end(),
+            Motion::Up => self.up(),
+            Motion::Down => self.down(),
+        }
+    }
+
     /// Apply an [`Edit`]. The one place a key becomes a change to this line,
     /// so the mirror and the agent's own editor cannot drift by having two
     /// slightly different ideas of what `ctrl+w` does.
     pub fn apply(&mut self, edit: Edit) {
-        // Every edit but the two that USE the selection drops it. Doing it here
-        // rather than in each arm is what stops a new arm silently inheriting a
-        // stale highlight.
-        if !matches!(edit, Edit::SelectAll | Edit::Backspace | Edit::Delete) {
+        // WHAT A SELECTION SURVIVES, in one place.
+        //
+        // `Extend` grows it, `SelectAll` makes it, and backspace/delete
+        // consume it. Everything else drops it — decided here rather than in
+        // each arm, which is what stops a new arm silently inheriting a stale
+        // highlight. The plain Left and Right arms below read the range
+        // BEFORE this runs, because collapsing onto an edge needs to know
+        // which edge.
+        let sel = self.sel_range();
+        if !matches!(
+            edit,
+            Edit::SelectAll | Edit::Backspace | Edit::Delete | Edit::Extend(_)
+        ) {
             self.clear_mark();
         }
         // A change is remembered before it is made; a motion is not a change.
@@ -809,22 +887,40 @@ impl Line {
                 self.undo();
             }
             Edit::Newline => {
-                if self.marked {
-                    self.wipe();
-                }
+                self.take_marked();
                 let at = self.byte_at(self.caret);
                 self.text.insert(at, '\n');
                 self.caret += 1;
             }
-            Edit::Up => self.up(),
-            Edit::Down => self.down(),
+            // Grow the selection. The anchor is set on the FIRST extend and
+            // never again, so the fifth shift+left grows from where the first
+            // one started — the one thing the boolean could not do.
+            // The anchor is NOT cleared when the caret walks back onto it.
+            // Whether that is a selection is [`Line::sel_range`]'s question
+            // and it answers it in one place — a second normalisation here
+            // would be a second rule, and the one that ran first would decide
+            // what a zero-width range means. Keeping the anchor is also more
+            // correct: shift+right, shift+left, shift+right re-selects the
+            // same character rather than re-anchoring at the caret.
+            Edit::Extend(m) => {
+                self.anchor_here();
+                self.move_to(m);
+            }
             Edit::SelectAll => self.mark_all(),
-            Edit::Left => self.left(),
-            Edit::Right => self.right(),
-            Edit::WordLeft => self.caret = self.word_start(),
-            Edit::WordRight => self.caret = self.word_end(),
-            Edit::Home => self.home(),
-            Edit::End => self.end(),
+            // A plain LEFT or RIGHT with a selection up COLLAPSES to the near
+            // edge rather than stepping one character off the caret. Pressing
+            // left after selecting a word puts you at its start, which is
+            // what every text box does and what the hand expects. The other
+            // six motions just move, which is also the convention.
+            Edit::Move(Motion::Left) => match sel {
+                Some((lo, _)) => self.caret = lo,
+                None => self.left(),
+            },
+            Edit::Move(Motion::Right) => match sel {
+                Some((_, hi)) => self.caret = hi,
+                None => self.right(),
+            },
+            Edit::Move(m) => self.move_to(m),
             Edit::Backspace => {
                 if !self.take_marked() {
                     self.backspace();
@@ -902,7 +998,7 @@ impl Line {
         self.text.clear();
         self.caret = 0;
         self.pasted = 0;
-        self.marked = false;
+        self.anchor = None;
         self.undo.clear();
     }
 
@@ -1864,12 +1960,6 @@ pub fn nav_index(option: usize, submit_at: Option<usize>) -> usize {
 /// entry"*.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Edit {
-    Left,
-    Right,
-    WordLeft,
-    WordRight,
-    Home,
-    End,
     Backspace,
     Delete,
     /// ctrl+w and ctrl+backspace: take the word behind the caret.
@@ -1886,13 +1976,39 @@ pub enum Edit {
     /// literal newline typed at the agent while the mirror read it as submit
     /// and emptied itself — Parker: *"ouch - pain"* (#614).
     Newline,
-    /// up / down: a row of the draft, now that the draft has rows.
-    Up,
-    Down,
+    /// A motion with nothing held: move the caret, drop any selection.
+    Move(Motion),
+    /// The SAME motion with shift held: move the caret, and grow the
+    /// selection behind it.
+    ///
+    /// A pair of variants over one [`Motion`] rather than sixteen flat ones.
+    /// A motion added to that enum cannot then ship with a bare form and no
+    /// shift-held one, because there is nowhere to put the omission — which
+    /// is exactly how shift+arrow came to be missing: it needed eight new
+    /// arms and got none.
+    Extend(Motion),
     /// ctrl+z: the last change, taken back.
     Undo,
     /// Sent, and the line starts again.
     Submit,
+}
+
+/// Where a motion puts the caret, independent of whether shift was held.
+///
+/// Split out of [`Edit`] so the bare arrow and the shift-held arrow are the
+/// same movement by construction. A selection that could extend somewhere a
+/// plain arrow would not have gone is a second word rule, a second wrap rule
+/// and a second off-by-one, all of which this file has paid for before.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Motion {
+    Left,
+    Right,
+    WordLeft,
+    WordRight,
+    Home,
+    End,
+    Up,
+    Down,
 }
 
 /// Which edit a keystroke asks for, if any.
@@ -2100,16 +2216,58 @@ pub fn flag_value(cmd: &str, flag: &str) -> Option<String> {
     None
 }
 
-pub fn line_edit(key: &str, ctrl: bool, alt: bool, shift: bool) -> Option<Edit> {
+/// Does this keystroke ask the composer for HISTORY rather than for an edit?
+///
+/// Up and down mean two things in a box that has both rows and a history, and
+/// which one they mean is decided here rather than in the handler, so it can
+/// be asserted. `recalling` is the caller's: a draft that is empty, or a
+/// recall already in flight.
+///
+/// **Shift is excluded.** `shift+up` is *select upward* in every text box and
+/// it has to stay that, even mid-recall — otherwise extending a selection
+/// hands back last week's prompt.
+pub fn recalls_history(key: &str, ctrl: bool, alt: bool, shift: bool, recalling: bool) -> bool {
+    !ctrl && !alt && !shift && recalling && matches!(key, "up" | "down")
+}
+
+/// Which motion a key asks for, before shift is considered.
+///
+/// Split out so every motion gets its shift-held form for free in
+/// [`line_edit`]. Adding an arrow here gives it a selection at the same
+/// moment it gets a move, which is the invariant the flat table could not
+/// hold.
+fn motion_for(key: &str, ctrl: bool, alt: bool) -> Option<Motion> {
     Some(match key {
-        "left" if ctrl || alt => Edit::WordLeft,
-        "right" if ctrl || alt => Edit::WordRight,
-        "left" => Edit::Left,
-        "right" => Edit::Right,
-        "up" if !ctrl && !alt => Edit::Up,
-        "down" if !ctrl && !alt => Edit::Down,
-        "home" => Edit::Home,
-        "end" => Edit::End,
+        "left" if ctrl || alt => Motion::WordLeft,
+        "right" if ctrl || alt => Motion::WordRight,
+        "left" => Motion::Left,
+        "right" => Motion::Right,
+        "up" if !ctrl && !alt => Motion::Up,
+        "down" if !ctrl && !alt => Motion::Down,
+        "home" => Motion::Home,
+        "end" => Motion::End,
+        // The readline letters, which are motions too and have always been
+        // in this table. They take shift the same way.
+        "e" if ctrl => Motion::End,
+        "b" if ctrl => Motion::Left,
+        "f" if ctrl => Motion::Right,
+        _ => return None,
+    })
+}
+
+pub fn line_edit(key: &str, ctrl: bool, alt: bool, shift: bool) -> Option<Edit> {
+    // A MOTION FIRST, then shift decides what it does to the selection.
+    // Written this way rather than as eight more arms because eight arms is
+    // what nobody wrote, and the box went a month with no way to highlight
+    // anything (#625).
+    if let Some(m) = motion_for(key, ctrl, alt) {
+        return Some(if shift {
+            Edit::Extend(m)
+        } else {
+            Edit::Move(m)
+        });
+    }
+    Some(match key {
         "backspace" if ctrl || alt => Edit::KillWordLeft,
         "backspace" => Edit::Backspace,
         "delete" if ctrl || alt => Edit::KillWordRight,
@@ -2121,9 +2279,8 @@ pub fn line_edit(key: &str, ctrl: bool, alt: bool, shift: bool) -> Option<Edit> 
         "enter" => Edit::Submit,
         "z" if ctrl => Edit::Undo,
         "a" if ctrl => Edit::SelectAll,
-        "e" if ctrl => Edit::End,
-        "b" if ctrl => Edit::Left,
-        "f" if ctrl => Edit::Right,
+        // ctrl+e, ctrl+b and ctrl+f are motions and are answered by
+        // `motion_for` above, so they get shift for free like the arrows.
         "w" if ctrl => Edit::KillWordLeft,
         "d" if alt => Edit::KillWordRight,
         "u" if ctrl => Edit::KillToStart,
@@ -5065,27 +5222,27 @@ mod tests {
         // convention is that somebody already knows it, so one of these being
         // wrong is worse than the whole set being absent.
         for (key, ctrl, alt, want) in [
-            ("left", true, false, Edit::WordLeft),
-            ("left", false, true, Edit::WordLeft),
-            ("right", true, false, Edit::WordRight),
-            ("right", false, true, Edit::WordRight),
-            ("left", false, false, Edit::Left),
-            ("right", false, false, Edit::Right),
+            ("left", true, false, Edit::Move(Motion::WordLeft)),
+            ("left", false, true, Edit::Move(Motion::WordLeft)),
+            ("right", true, false, Edit::Move(Motion::WordRight)),
+            ("right", false, true, Edit::Move(Motion::WordRight)),
+            ("left", false, false, Edit::Move(Motion::Left)),
+            ("right", false, false, Edit::Move(Motion::Right)),
             // Readline's own chords, because the far end is readline-shaped —
             // except ctrl+a, which is select-all here: this is a text area on a
             // screen, and start-of-line is on `home`.
             ("a", true, false, Edit::SelectAll),
-            ("e", true, false, Edit::End),
-            ("b", true, false, Edit::Left),
-            ("f", true, false, Edit::Right),
+            ("e", true, false, Edit::Move(Motion::End)),
+            ("b", true, false, Edit::Move(Motion::Left)),
+            ("f", true, false, Edit::Move(Motion::Right)),
             ("w", true, false, Edit::KillWordLeft),
             ("u", true, false, Edit::KillToStart),
             ("k", true, false, Edit::KillToEnd),
             ("d", false, true, Edit::KillWordRight),
             ("backspace", true, false, Edit::KillWordLeft),
             ("delete", true, false, Edit::KillWordRight),
-            ("home", false, false, Edit::Home),
-            ("end", false, false, Edit::End),
+            ("home", false, false, Edit::Move(Motion::Home)),
+            ("end", false, false, Edit::Move(Motion::End)),
             ("enter", false, false, Edit::Submit),
         ] {
             assert_eq!(
@@ -5115,8 +5272,14 @@ mod tests {
         assert_eq!(line_edit("enter", false, true, false), Some(Edit::Newline));
         assert_eq!(line_edit("enter", false, false, false), Some(Edit::Submit));
         assert_eq!(line_edit("z", true, false, false), Some(Edit::Undo));
-        assert_eq!(line_edit("up", false, false, false), Some(Edit::Up));
-        assert_eq!(line_edit("down", false, false, false), Some(Edit::Down));
+        assert_eq!(
+            line_edit("up", false, false, false),
+            Some(Edit::Move(Motion::Up))
+        );
+        assert_eq!(
+            line_edit("down", false, false, false),
+            Some(Edit::Move(Motion::Down))
+        );
         // Shift on a letter is still a letter.
         assert_eq!(line_edit("a", false, false, true), None);
 
@@ -5125,13 +5288,13 @@ mod tests {
         l.insert("second");
         assert_eq!(l.text(), "first\nsecond");
         assert_eq!(l.line_col(), (1, 6));
-        l.apply(Edit::Up);
+        l.apply(Edit::Move(Motion::Up));
         assert_eq!(l.caret(), 5, "row 0, column clamped to the row");
-        l.apply(Edit::Up);
+        l.apply(Edit::Move(Motion::Up));
         assert_eq!(l.caret(), 0, "up on the first row is home");
-        l.apply(Edit::Down);
+        l.apply(Edit::Move(Motion::Down));
         assert_eq!(l.line_col(), (1, 0));
-        l.apply(Edit::Down);
+        l.apply(Edit::Move(Motion::Down));
         assert_eq!(l.caret(), l.chars(), "down on the last row is end");
     }
 
@@ -5159,8 +5322,8 @@ mod tests {
         assert_eq!(r.text(), "keep this");
         // Motion is not a change: undo after arrows takes back the last EDIT.
         let mut m = Line::holding("abc");
-        m.apply(Edit::Left);
-        m.apply(Edit::Home);
+        m.apply(Edit::Move(Motion::Left));
+        m.apply(Edit::Move(Motion::Home));
         assert!(!m.undo(), "arrows leave nothing to undo");
     }
 
@@ -5168,13 +5331,14 @@ mod tests {
     fn ctrl_a_selects_the_whole_draft_and_the_next_key_replaces_it() {
         let mut l = Line::holding("the whole thing");
         l.apply(Edit::SelectAll);
-        assert!(l.marked(), "ctrl+a selects");
-        // The caret sits where the far end's does after the same byte, so the
-        // replacement lands in the same place on both sides.
-        assert_eq!(l.caret(), 0);
+        assert_eq!(l.sel_range(), Some((0, 15)), "ctrl+a selects all of it");
+        // The caret ends at the END now. It sat at zero while the far end's
+        // readline had been moved there by the same byte; the composer owns
+        // the draft, so the convention every text box follows wins.
+        assert_eq!(l.caret(), 15);
         l.insert("x");
         assert_eq!(l.text(), "x", "typing replaces the selection");
-        assert!(!l.marked(), "and the selection is spent");
+        assert_eq!(l.sel_range(), None, "and the selection is spent");
 
         // Delete and backspace take the selection whole rather than one char.
         let mut l = Line::holding("gone");
@@ -5186,21 +5350,258 @@ mod tests {
         l.apply(Edit::Delete);
         assert_eq!(l.text(), "");
 
-        // Any motion drops the selection and leaves the text alone.
+        // Any motion drops the selection and leaves the text alone. A plain
+        // right collapses to the far edge, which is where it already was.
         let mut l = Line::holding("kept");
         l.apply(Edit::SelectAll);
-        l.apply(Edit::Right);
-        assert!(!l.marked(), "a motion drops the selection");
+        l.apply(Edit::Move(Motion::Right));
+        assert_eq!(l.sel_range(), None, "a motion drops the selection");
+        assert_eq!(l.text(), "kept");
+        assert_eq!(l.caret(), 4, "and collapses to the end it was already at");
+
+        // A plain LEFT collapses to the other edge rather than stepping one
+        // character back off the caret.
+        let mut l = Line::holding("kept");
+        l.apply(Edit::SelectAll);
+        l.apply(Edit::Move(Motion::Left));
+        assert_eq!(l.caret(), 0, "left collapses to the selection's start");
         assert_eq!(l.text(), "kept");
 
         // An empty draft has nothing to select — a highlight over nothing is a
         // control that looks armed and does nothing.
         let mut l = Line::new();
         l.apply(Edit::SelectAll);
-        assert!(!l.marked());
+        assert_eq!(l.sel_range(), None);
 
         // The far end is told to kill from the caret ctrl+a just moved.
         assert_eq!(replace_bytes(), vec![0x0b]);
+    }
+
+    // ── shift selects, and the anchor is the whole point ────────────────────
+    //
+    // These fail against the parent commit at the TABLE: `line_edit` had no
+    // shift-held motion arms, so every one of them resolved to the bare move
+    // and `sel_range` did not exist to assert on.
+
+    /// Every motion the table answers has a shift-held form, and the two are
+    /// the same movement. This is the guard on the invariant `Edit::Move` and
+    /// `Edit::Extend` exist to hold: a motion cannot gain a bare form without
+    /// gaining a selecting one.
+    #[test]
+    fn every_motion_key_has_a_shift_held_form_that_moves_identically() {
+        let keys = [
+            ("left", false, false),
+            ("right", false, false),
+            ("left", true, false),
+            ("right", true, false),
+            ("up", false, false),
+            ("down", false, false),
+            ("home", false, false),
+            ("end", false, false),
+            ("e", true, false),
+            ("b", true, false),
+            ("f", true, false),
+        ];
+        for (key, ctrl, alt) in keys {
+            let bare = line_edit(key, ctrl, alt, false)
+                .unwrap_or_else(|| panic!("{key} ctrl={ctrl} is not in the table"));
+            let held = line_edit(key, ctrl, alt, true)
+                .unwrap_or_else(|| panic!("{key} ctrl={ctrl} has no shift form"));
+            let (Edit::Move(a), Edit::Extend(b)) = (bare, held) else {
+                panic!("{key} ctrl={ctrl}: expected Move/Extend, got {bare:?}/{held:?}");
+            };
+            assert_eq!(a, b, "{key} must move the same way with shift held");
+
+            // …and they land the caret in the same place, over a draft with a
+            // line break in it so `up`/`down` are doing real work.
+            let seed = || {
+                let mut l = Line::holding("alpha beta\ngamma delta");
+                l.seek(6);
+                l
+            };
+            let (mut moved, mut extended) = (seed(), seed());
+            moved.apply(bare);
+            extended.apply(held);
+            assert_eq!(
+                moved.caret(),
+                extended.caret(),
+                "{key} ctrl={ctrl}: shift changed WHERE the caret went"
+            );
+        }
+    }
+
+    #[test]
+    fn the_anchor_stays_put_while_the_caret_walks() {
+        let mut l = Line::holding("alpha beta gamma");
+        l.seek(6);
+        for _ in 0..4 {
+            l.apply(Edit::Extend(Motion::Right));
+        }
+        assert_eq!(l.sel_range(), Some((6, 10)), "four rights grew from six");
+        assert_eq!(l.selected_text(), Some("beta"));
+
+        // Back the other way, through the anchor and out the far side. The
+        // anchor does not move, so the range flips rather than collapsing.
+        for _ in 0..6 {
+            l.apply(Edit::Extend(Motion::Left));
+        }
+        assert_eq!(l.sel_range(), Some((4, 6)), "a backwards selection");
+        assert_eq!(l.selected_text(), Some("a "));
+    }
+
+    #[test]
+    fn a_selection_walked_back_onto_its_anchor_is_no_selection() {
+        let mut l = Line::holding("alpha");
+        l.seek(2);
+        l.apply(Edit::Extend(Motion::Right));
+        assert_eq!(l.sel_range(), Some((2, 3)));
+        l.apply(Edit::Extend(Motion::Left));
+        assert_eq!(
+            l.sel_range(),
+            None,
+            "a range of nothing is not a selection, and would eat the caret"
+        );
+    }
+
+    #[test]
+    fn typing_over_a_selection_replaces_only_the_selected_run() {
+        // The bit could not do this: `insert` wiped the whole draft, because
+        // select-all was the only selection that existed.
+        let mut l = Line::holding("alpha beta gamma");
+        l.seek(6);
+        for _ in 0..4 {
+            l.apply(Edit::Extend(Motion::Right));
+        }
+        l.insert("BETA");
+        assert_eq!(l.text(), "alpha BETA gamma");
+        assert_eq!(l.caret(), 10);
+        assert_eq!(l.sel_range(), None);
+    }
+
+    #[test]
+    fn backspace_and_delete_take_the_selected_run_and_leave_the_rest() {
+        for edit in [Edit::Backspace, Edit::Delete] {
+            let mut l = Line::holding("alpha beta gamma");
+            l.seek(5);
+            for _ in 0..5 {
+                l.apply(Edit::Extend(Motion::Right));
+            }
+            assert_eq!(l.selected_text(), Some(" beta"));
+            l.apply(edit);
+            assert_eq!(l.text(), "alpha gamma", "{edit:?} took only the run");
+            assert_eq!(l.caret(), 5, "{edit:?} left the caret where it started");
+            assert_eq!(l.sel_range(), None);
+        }
+    }
+
+    #[test]
+    fn a_shift_selection_survives_being_extended_by_a_different_motion() {
+        let mut l = Line::holding("alpha beta gamma");
+        l.seek(0);
+        l.apply(Edit::Extend(Motion::WordRight));
+        let after_word = l.sel_range().expect("a word is selected");
+        l.apply(Edit::Extend(Motion::End));
+        assert_eq!(
+            l.sel_range(),
+            Some((after_word.0, 16)),
+            "the anchor held across two different motions"
+        );
+    }
+
+    #[test]
+    fn shift_selects_across_a_line_break() {
+        let mut l = Line::holding("alpha\nbeta");
+        l.seek(3);
+        l.apply(Edit::Extend(Motion::Down));
+        let (lo, hi) = l.sel_range().expect("down selected into the next row");
+        assert_eq!(lo, 3);
+        assert!(hi > 5, "the range crossed the newline, hi={hi}");
+        assert!(l.selected_text().expect("text").contains('\n'));
+    }
+
+    #[test]
+    fn the_selection_is_byte_correct_over_multibyte_text() {
+        // A char range read as bytes would slice an em dash in half and panic.
+        let mut l = Line::holding("é—ü ascii");
+        l.seek(0);
+        for _ in 0..3 {
+            l.apply(Edit::Extend(Motion::Right));
+        }
+        assert_eq!(l.sel_range(), Some((0, 3)), "three characters");
+        assert_eq!(l.selected_text(), Some("é—ü"), "not three bytes");
+        assert_eq!(l.sel_bytes(), Some(0..7));
+    }
+
+    #[test]
+    fn undo_and_submit_and_clear_all_drop_the_selection() {
+        let mut l = Line::holding("alpha beta");
+        l.seek(0);
+        l.apply(Edit::Extend(Motion::WordRight));
+        l.apply(Edit::Undo);
+        assert_eq!(l.sel_range(), None, "undo leaves no stale highlight");
+
+        let mut l = Line::holding("alpha beta");
+        l.seek(0);
+        l.apply(Edit::Extend(Motion::WordRight));
+        l.apply(Edit::Submit);
+        assert_eq!(l.sel_range(), None);
+        assert_eq!(l.text(), "");
+    }
+
+    #[test]
+    fn an_unselecting_key_is_not_given_a_shift_meaning_by_accident() {
+        // Everything that is NOT a motion must read the same with shift held,
+        // or a shifted capital letter would silently become an edit. `enter`
+        // is the one deliberate exception and has its own test.
+        for key in ["backspace", "delete", "z", "a", "w", "u", "k", "d"] {
+            for (ctrl, alt) in [(false, false), (true, false), (false, true)] {
+                let bare = line_edit(key, ctrl, alt, false);
+                let held = line_edit(key, ctrl, alt, true);
+                assert_eq!(
+                    bare, held,
+                    "{key} ctrl={ctrl} alt={alt} changed meaning under shift"
+                );
+            }
+        }
+        // …and `enter` is the exception, on purpose.
+        assert_eq!(line_edit("enter", false, false, false), Some(Edit::Submit));
+        assert_eq!(line_edit("enter", false, false, true), Some(Edit::Newline));
+    }
+
+    #[test]
+    fn shift_up_selects_and_never_recalls_history() {
+        // Up and down mean history in an empty box or mid-recall, and a row
+        // otherwise. Shift takes them away from history in every case — the
+        // bug this guards is a person extending a selection and being handed
+        // last week's prompt.
+        assert!(
+            recalls_history("up", false, false, false, true),
+            "a bare up while recalling is history"
+        );
+        assert!(
+            !recalls_history("up", false, false, true, true),
+            "shift+up is a selection even mid-recall"
+        );
+        assert!(
+            !recalls_history("down", false, false, true, true),
+            "and so is shift+down"
+        );
+        assert!(
+            !recalls_history("up", false, false, false, false),
+            "with a draft and no recall in flight, up is a row"
+        );
+        for key in ["left", "right", "home", "a"] {
+            assert!(
+                !recalls_history(key, false, false, false, true),
+                "{key} is not a history key"
+            );
+        }
+        for (ctrl, alt) in [(true, false), (false, true)] {
+            assert!(
+                !recalls_history("up", ctrl, alt, false, true),
+                "a modified up belongs to word motion or the window"
+            );
+        }
     }
 
     #[test]
@@ -5226,12 +5627,12 @@ mod tests {
     fn word_motion_and_the_kills_agree_with_every_editor_on_this_desk() {
         let mut l = Line::holding("the quick brown fox");
         // Back one word from the end.
-        l.apply(Edit::WordLeft);
+        l.apply(Edit::Move(Motion::WordLeft));
         assert_eq!(l.caret(), 16, "start of `fox`");
-        l.apply(Edit::WordLeft);
+        l.apply(Edit::Move(Motion::WordLeft));
         assert_eq!(l.caret(), 10, "start of `brown`");
         // Forward again.
-        l.apply(Edit::WordRight);
+        l.apply(Edit::Move(Motion::WordRight));
         assert_eq!(l.caret(), 15, "end of `brown`");
 
         // ctrl+w takes the word behind and nothing else.
@@ -5255,8 +5656,8 @@ mod tests {
         // Every one of them holds at the ends rather than panicking.
         let mut l = Line::new();
         for edit in [
-            Edit::WordLeft,
-            Edit::WordRight,
+            Edit::Move(Motion::WordLeft),
+            Edit::Move(Motion::WordRight),
             Edit::KillWordLeft,
             Edit::KillWordRight,
             Edit::KillToStart,
@@ -5281,7 +5682,7 @@ mod tests {
             "{}",
             l.text()
         );
-        l.apply(Edit::WordLeft);
+        l.apply(Edit::Move(Motion::WordLeft));
         l.apply(Edit::KillToEnd);
         assert_eq!(l.text(), "caf\u{e9} \u{2014} ");
     }
@@ -5765,7 +6166,7 @@ mod tests {
         // prompt answered at the strength it was being changed away from.
         let mut draft = Line::holding("count the tests");
         for _ in 0..5 {
-            draft.apply(Edit::Left);
+            draft.apply(Edit::Move(Motion::Left));
         }
         let caret = draft.caret();
         assert_eq!(caret, 10, "ten characters in, mid-word");
