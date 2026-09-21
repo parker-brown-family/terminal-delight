@@ -1,0 +1,1373 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dragging over the bench selects its text</title>
+<style>
+/* decision-brief — surfaces, ink, and the three structural components.
+ *
+ * ONE palette. No theme system, no theme toggle. tps-report shipped four themes and
+ * 165 theme-related rules; nobody ever switched. A brief is read once, quickly, to make
+ * a decision — the reader is not shopping for a skin.
+ *
+ * Categorical colours are the validated dataviz default palette (dark steps), which
+ * clears the CVD, chroma, lightness and contrast gates on the adjacent pairlist.
+ * If you change them, re-run the validator; do not eyeball it.
+ *
+ * What is here: tokens, the modal shell, tables, callouts, code. Everything else —
+ * cards, escalation lists, stat tiles, charts — is the brief's own business.
+ * Build what the material needs.
+ */
+:root {
+  color-scheme: dark;
+
+  --surface-0: #111110;   /* page */
+  --surface-1: #1a1a19;   /* panel */
+  --surface-2: #232321;   /* raised */
+  --surface-3: #2e2e2b;   /* control */
+  --line:      #3a3a36;
+
+  --text-primary:   #ffffff;
+  --text-secondary: #c3c2b7;
+  --text-muted:     #8b8a80;
+
+  /* categorical — assign in fixed order, never cycle */
+  --s1: #3987e5;  --s2: #d95926;  --s3: #199e70;  --s4: #c98500;
+  --s5: #d55181;  --s6: #008300;  --s7: #9085e9;  --s8: #e66767;
+
+  /* status — reserved. Never reuse as "series 5". Always ship with a label. */
+  --good:     #0ca30c;
+  --warning:  #fab219;
+  --serious:  #ec835a;
+  --critical: #d03b3b;
+
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, "JetBrains Mono", Menlo, Consolas, monospace;
+  --sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif;
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0; background: var(--surface-0); color: var(--text-primary);
+  font-family: var(--sans); font-size: 15px; line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+.wrap { max-width: 1180px; margin: 0 auto; padding: 0 24px 120px; }
+header.top .wrap { padding-bottom: 0; }   /* the wrap's bottom padding is for the page, not the header */
+
+/* ---- headings ----
+   A heading names the thing. It does not explain it — an em-dash gloss after a
+   heading breaks the heading. The body does the explaining. */
+h1 { font-size: 34px; line-height: 1.18; margin: 0 0 16px; letter-spacing: -.02em; font-weight: 650; }
+h2.sec {
+  font-size: 13px; font-family: var(--mono); letter-spacing: .13em; text-transform: uppercase;
+  color: var(--text-muted); margin: 56px 0 18px; padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+/* ---- modal shell: where depth lives ---- */
+dialog {
+  border: 1px solid var(--line); border-radius: 12px;
+  background: var(--surface-1); color: var(--text-primary);
+  max-width: 880px; width: calc(100vw - 44px); max-height: 86vh; padding: 0; overflow: hidden;
+}
+dialog::backdrop { background: rgba(0,0,0,.76); backdrop-filter: blur(3px); }
+.dlg-head {
+  position: sticky; top: 0; background: var(--surface-2);
+  border-bottom: 1px solid var(--line); padding: 20px 26px;
+  display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; z-index: 2;
+}
+.dlg-head h3 { margin: 0 0 5px; font-size: 20px; letter-spacing: -.015em; }
+.dlg-head .repo { font-family: var(--mono); font-size: 11.5px; color: var(--text-muted); margin: 0; }
+.x {
+  background: var(--surface-3); border: 1px solid var(--line); color: var(--text-secondary);
+  border-radius: 6px; width: 30px; height: 30px; font-size: 17px; line-height: 1;
+  cursor: pointer; flex: none;
+}
+.x:hover { background: var(--critical); color: #fff; border-color: var(--critical); }
+.dlg-body { padding: 24px 26px 34px; overflow-y: auto; max-height: calc(86vh - 78px); }
+.dlg-body h4 {
+  font-family: var(--mono); font-size: 11.5px; letter-spacing: .12em; text-transform: uppercase;
+  color: var(--text-muted); margin: 30px 0 12px; padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+}
+.dlg-body h4:first-child { margin-top: 0; }
+.dlg-body p  { margin: 0 0 13px; color: var(--text-secondary); font-size: 14.5px; }
+.dlg-body ul { margin: 0 0 15px; padding-left: 20px; color: var(--text-secondary); font-size: 14.5px; }
+.dlg-body li { margin-bottom: 8px; }
+.dlg-body strong { color: var(--text-primary); font-weight: 600; }
+
+/* ---- prose furniture ---- */
+code {
+  font-family: var(--mono); font-size: 12.5px; background: var(--surface-3);
+  padding: 1.5px 5px; border-radius: 4px; color: #e8d9a8; word-break: break-word;
+}
+pre {
+  background: var(--surface-0); border: 1px solid var(--line); border-radius: 7px;
+  padding: 15px 17px; overflow-x: auto; margin: 0 0 15px;
+}
+pre code { background: none; padding: 0; color: var(--text-secondary); font-size: 12.5px; line-height: 1.65; }
+
+table { width: 100%; border-collapse: collapse; margin: 0 0 17px; font-size: 13.5px; }
+th, td { text-align: left; padding: 9px 11px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th {
+  font-family: var(--mono); font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--text-muted); font-weight: 500; background: var(--surface-2);
+}
+td { color: var(--text-secondary); }
+td b, td strong { color: var(--text-primary); }
+
+blockquote {
+  margin: 0 0 15px; padding: 12px 18px; border-left: 3px solid var(--s1);
+  background: var(--surface-2); border-radius: 0 7px 7px 0;
+  color: var(--text-secondary); font-size: 14px; font-style: italic;
+}
+
+.callout {
+  border-left: 3px solid var(--warning); background: rgba(250,178,25,.07);
+  padding: 14px 18px; border-radius: 0 7px 7px 0; margin: 0 0 17px;
+}
+.callout.crit { border-color: var(--critical); background: rgba(208,59,59,.08); }
+.callout.good { border-color: var(--good);     background: rgba(12,163,12,.08); }
+.callout p:last-child { margin-bottom: 0; }
+.callout .lbl {
+  font-family: var(--mono); font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--text-muted); margin: 0 0 7px; display: block;
+}
+
+/* ---- confidence labels. Never assert without one. ---- */
+.tag {
+  display: inline-block; font-family: var(--mono); font-size: 10px; letter-spacing: .07em;
+  text-transform: uppercase; padding: 2.5px 7px; border-radius: 4px;
+  margin-right: 6px; font-weight: 600;
+}
+.tag.v { background: rgba(12,163,12,.18);  color: #6cd46c; border: 1px solid rgba(12,163,12,.4); }   /* measured */
+.tag.w { background: rgba(250,178,25,.14); color: #f5c95f; border: 1px solid rgba(250,178,25,.38); } /* inferred */
+.tag.c { background: rgba(208,59,59,.16);  color: #f08a8a; border: 1px solid rgba(208,59,59,.4); }   /* contradicted / hunch */
+
+footer {
+  margin-top: 70px; padding-top: 26px; border-top: 1px solid var(--line);
+  font-family: var(--mono); font-size: 11.5px; color: var(--text-muted);
+}
+footer p { margin: 0 0 7px; }
+
+@media (max-width: 640px) {
+  h1 { font-size: 26px; }
+  .wrap { padding: 0 16px 80px; }
+}
+/* decision-brief — reader notes, styling.
+   Depends on the surface/ink/status custom properties in base.css. */
+
+.notable { position: relative; }
+
+.note-btn {
+  position: absolute; top: 8px; right: 8px; z-index: 6;
+  width: 26px; height: 26px; line-height: 1; padding: 0;
+  background: var(--surface-3); border: 1px solid var(--line); border-radius: 6px;
+  color: var(--text-muted); font-size: 13px; cursor: pointer; opacity: 0;
+  transition: opacity .12s, background .12s, color .12s, border-color .12s;
+}
+/* Hidden until hover: a brief with 130 always-visible affordances reads as a form. */
+.notable:hover > .note-btn,
+.note-btn:focus-visible { opacity: 1; }
+.note-btn:hover { background: var(--warning); border-color: var(--warning); color: var(--surface-1); }
+
+.notable.has-note > .note-btn {
+  opacity: 1; background: var(--warning); border-color: var(--warning);
+  color: var(--surface-1); font-weight: 700;
+}
+.notable.has-note { box-shadow: inset 3px 0 0 var(--warning); }
+tr.notable.has-note > td:first-child { box-shadow: inset 3px 0 0 var(--warning); }
+
+/* Table rows can't host an absolutely-positioned child reliably — inline it. */
+tr.notable .note-btn {
+  position: static; opacity: .35; width: 22px; height: 22px; font-size: 11px;
+  margin-left: 6px; vertical-align: middle; display: inline-block;
+}
+tr.notable:hover .note-btn { opacity: 1; }
+
+/* ---- floating bar ---- */
+.notebar {
+  position: fixed; right: 18px; bottom: 18px; z-index: 900;
+  display: flex; gap: 8px; align-items: center;
+  background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px;
+  padding: 9px 11px; box-shadow: 0 10px 32px rgba(0,0,0,.55);
+  font-family: var(--mono); font-size: 11.5px;
+}
+.notebar .cnt { color: var(--text-muted); padding-right: 4px; }
+.notebar .cnt b { color: var(--warning); font-size: 14px; }
+.notebar button {
+  font-family: var(--mono); font-size: 11px; letter-spacing: .03em; cursor: pointer;
+  background: var(--surface-3); border: 1px solid var(--line); color: var(--text-secondary);
+  border-radius: 6px; padding: 6px 10px;
+  transition: background .12s, color .12s, border-color .12s;
+}
+.notebar button:hover { background: var(--warning); color: var(--surface-1); border-color: var(--warning); }
+.notebar button.primary {
+  background: rgba(250,178,25,.14); border-color: rgba(250,178,25,.45); color: #f5c95f;
+}
+.notebar button:disabled {
+  opacity: .4; cursor: default; background: var(--surface-3);
+  color: var(--text-muted); border-color: var(--line);
+}
+@media (max-width: 640px) {
+  .notebar { right: 8px; bottom: 8px; flex-wrap: wrap; max-width: calc(100vw - 16px); }
+}
+
+/* ---- note dialog ---- */
+dialog#d-note { max-width: 620px; }
+#note-list { margin: 0 0 18px; padding: 0; list-style: none; }
+#note-list li {
+  background: var(--surface-2); border: 1px solid var(--line);
+  border-left: 3px solid var(--warning); border-radius: 0 7px 7px 0;
+  padding: 11px 14px; margin-bottom: 9px; font-size: 14px; color: var(--text-secondary);
+}
+#note-list .nts {
+  font-family: var(--mono); font-size: 10px; color: var(--text-muted);
+  display: flex; justify-content: space-between; gap: 10px; margin-bottom: 6px;
+}
+#note-list .ndel {
+  background: none; border: none; color: var(--text-muted);
+  cursor: pointer; font-size: 11px; padding: 0;
+}
+#note-list .ndel:hover { color: var(--critical); }
+#note-none { color: var(--text-muted); font-size: 13.5px; margin: 0 0 16px; }
+
+#note-text {
+  width: 100%; min-height: 104px; background: var(--surface-0);
+  border: 1px solid var(--line); border-radius: 7px; color: var(--text-primary);
+  padding: 11px 13px; font-family: var(--sans); font-size: 14.5px;
+  resize: vertical; line-height: 1.55;
+}
+#note-text:focus { outline: none; border-color: var(--warning); }
+
+.note-actions { display: flex; gap: 9px; align-items: center; margin-top: 11px; }
+.note-actions button {
+  font-family: var(--mono); font-size: 11.5px; cursor: pointer; border-radius: 6px;
+  padding: 8px 14px; border: 1px solid var(--line);
+  background: var(--surface-3); color: var(--text-secondary);
+}
+.note-actions button.save {
+  background: var(--warning); border-color: var(--warning);
+  color: var(--surface-1); font-weight: 600;
+}
+.note-actions .hintk {
+  font-family: var(--mono); font-size: 10.5px; color: var(--text-muted); margin-left: auto;
+}
+
+/* ---- export dialog ---- */
+dialog#d-export { max-width: 780px; }
+#export-out {
+  width: 100%; min-height: 320px; background: var(--surface-0);
+  border: 1px solid var(--line); border-radius: 7px; color: var(--text-secondary);
+  padding: 13px; font-family: var(--mono); font-size: 12px; line-height: 1.55;
+  resize: vertical; white-space: pre;
+}
+.tokest { font-family: var(--mono); font-size: 11px; color: var(--text-muted); margin: 9px 0 0; }
+/* ---- this brief's own furniture ---- */
+figure { margin: 0 0 22px; border: 1px solid var(--line); border-radius: 10px;
+  background: var(--surface-1); padding: 16px 18px 14px; }
+figure > .lbl { display: block; font-family: var(--mono); font-size: 10.5px; letter-spacing: .1em;
+  text-transform: uppercase; color: var(--text-muted); margin: 0 0 13px; }
+figcaption { margin-top: 13px; font-size: 13.5px; color: var(--text-secondary); }
+figcaption b { color: var(--text-primary); }
+.scroller { overflow-x: auto; }
+svg { display: block; width: 100%; height: auto; }
+
+.lede { font-size: 18px; line-height: 1.55; color: var(--text-secondary); max-width: 74ch; }
+.lede b { color: var(--text-primary); font-weight: 600; }
+.meta { font-family: var(--mono); font-size: 11.5px; color: var(--text-muted); margin: 0 0 22px; }
+header.top { border-bottom: 1px solid var(--line); padding: 40px 0 28px; margin-bottom: 8px; }
+
+.score { display: inline-flex; align-items: baseline; gap: 9px; font-family: var(--mono);
+  font-size: 11px; letter-spacing: .09em; text-transform: uppercase; color: var(--text-muted);
+  border: 1px solid var(--line); border-radius: 6px; padding: 5px 11px; background: var(--surface-2); }
+.score b { color: var(--s4); font-size: 15px; letter-spacing: 0; }
+
+.pin { display: inline-flex; align-items: center; justify-content: center; width: 15px; height: 15px;
+  border-radius: 50%; background: var(--s1); color: #fff; font-family: var(--mono); font-size: 9px;
+  vertical-align: middle; margin-right: 5px; flex: none; }
+
+/* read-first */
+.esc-list { list-style: none; padding: 0; margin: 0; counter-reset: rf; }
+.esc-list li { counter-increment: rf; border: 1px solid var(--line); border-radius: 9px;
+  background: var(--surface-1); padding: 14px 17px 13px 48px; margin: 0 0 11px; position: relative; }
+.esc-list li::before { content: counter(rf); position: absolute; left: 15px; top: 14px;
+  font-family: var(--mono); font-size: 15px; color: var(--s1); font-weight: 600; }
+.esc-list h4 { margin: 0 0 5px; font-size: 15px; letter-spacing: -.01em; }
+.esc-list p { margin: 0 0 4px; font-size: 13.5px; color: var(--text-secondary); }
+.esc-list p.cost { color: var(--text-muted); font-family: var(--mono); font-size: 11.5px; margin: 6px 0 0; }
+
+/* the grill — the decisions that are his */
+.grill { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.grill .q { padding: 17px 19px; border-bottom: 1px solid var(--line); background: var(--surface-1); }
+.grill .q:last-child { border-bottom: 0; }
+.grill h4 { margin: 0 0 8px; font-size: 15.5px; }
+.grill p { margin: 0 0 8px; font-size: 13.5px; color: var(--text-secondary); }
+.grill .rec { font-size: 13.5px; color: var(--text-secondary); border-left: 3px solid var(--s3);
+  background: rgba(25,158,112,.07); padding: 9px 13px; border-radius: 0 6px 6px 0; margin: 0; }
+.grill .rec b { color: #5fd3a8; }
+
+/* the built-up architecture frames */
+.arch { border: 1px solid var(--line); border-radius: 9px; background: var(--surface-0);
+  padding: 15px; min-height: 216px; }
+.arch .boundary { border: 1px dashed var(--line); border-radius: 8px; padding: 22px 13px 13px;
+  position: relative; }
+.arch .boundary > .bl { position: absolute; top: 6px; left: 11px; font-family: var(--mono);
+  font-size: 9px; letter-spacing: .11em; text-transform: uppercase; color: var(--text-muted); }
+.node { border: 1px solid var(--line); border-radius: 7px; background: var(--surface-2);
+  padding: 8px 10px; font-family: var(--mono); font-size: 10.5px; line-height: 1.45;
+  color: var(--text-secondary); }
+.node b { display: block; color: var(--text-primary); font-size: 11px; font-weight: 600; }
+.node.exists { border-color: rgba(25,158,112,.55); }
+.node.adds   { border-color: rgba(57,135,229,.75); background: rgba(57,135,229,.09); }
+.node.mine   { border-color: rgba(201,133,0,.7);  background: rgba(201,133,0,.08); }
+.node.ghost  { border-style: dashed; color: var(--text-muted); background: none; }
+.node .pill { display: inline-block; font-size: 8.5px; letter-spacing: .07em; text-transform: uppercase;
+  border-radius: 3px; padding: 1px 5px; margin-top: 4px; }
+.pill.g { background: rgba(25,158,112,.2); color: #5fd3a8; }
+.pill.b { background: rgba(57,135,229,.2); color: #8fbdf3; }
+.pill.a { background: rgba(201,133,0,.2);  color: #f5c95f; }
+.pill.m { background: var(--surface-3); color: var(--text-muted); }
+.archgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.steprow { display: grid; gap: 9px; }
+.archlegend { font-family: var(--mono); font-size: 10px; color: var(--text-muted); margin-top: 11px;
+  display: flex; gap: 16px; flex-wrap: wrap; }
+.archlegend i { font-style: normal; }
+.archlegend .sw { display: inline-block; width: 9px; height: 9px; border-radius: 2px;
+  margin-right: 5px; vertical-align: -1px; }
+
+/* the bench mockup */
+.bench { font-family: var(--mono); font-size: 10.5px; line-height: 1.55;
+  border: 1px solid var(--line); border-radius: 9px; overflow: hidden; background: #14140f;
+  width: 660px; max-width: 100%; }
+.bench .hdr { display: flex; align-items: center; gap: 10px; padding: 6px 10px;
+  background: #1c1c16; border-bottom: 1px solid #2b2b22; color: #8b8a80; font-size: 9.5px; }
+.bench .hdr .face { border: 1px solid #3a3a2c; border-radius: 4px; padding: 1px 7px; color: #c3c2b7; }
+.bench .hdr .face.on { background: #3987e5; border-color: #3987e5; color: #fff; }
+.bench .cols { display: grid; grid-template-columns: 1fr 208px; min-height: 250px; }
+.bench .main { padding: 12px 13px; border-right: 1px solid #2b2b22; }
+.bench .rail { padding: 9px 8px; background: #17170f; }
+.bench .kindchip { display: inline-block; border: 1px solid #3a3a2c; border-radius: 4px;
+  padding: 0 5px; font-size: 9px; color: #8fbdf3; margin-right: 7px; }
+.bench h5 { margin: 6px 0 3px; font-size: 13px; color: #fff; font-family: var(--sans);
+  font-weight: 600; letter-spacing: -.01em; }
+.bench .sub { color: #6f6e66; font-size: 9.5px; margin-bottom: 9px; }
+.bench p.b { margin: 0 0 8px; color: #c3c2b7; }
+.bench .tabs { display: flex; gap: 5px; margin: 9px 0 8px; }
+.bench .tabs span { border: 1px solid #3a3a2c; border-radius: 4px; padding: 1px 7px; color: #8b8a80; font-size: 9px; }
+.bench .tabs span.on { border-color: #3987e5; color: #8fbdf3; }
+.bench .composer { border: 1px solid #3987e5; border-radius: 6px; margin: 10px 0 0;
+  padding: 8px 10px; background: #191912; }
+.bench .caret { display: inline-block; width: 7px; height: 12px; background: #3987e5;
+  vertical-align: -2px; margin-right: 4px; }
+.bench .composer.out { border-color: #6b5a24; border-style: dashed; opacity: .62; position: relative; }
+.bench .composer.out .caret { background: #6b5a24; }
+.bench .outtag { font-size: 8px; letter-spacing: .06em; text-transform: uppercase;
+  color: #c98500; margin-top: 4px; }
+.bench .railrow { border-left: 2px solid #199e70; background: rgba(255,255,255,.05);
+  border-radius: 4px; padding: 4px 6px; margin-bottom: 6px; }
+.bench .railrow.wait { border-left-color: #d03b3b; border-left-width: 4px; background: rgba(255,255,255,.09); }
+.bench .lane { color: #199e70; font-size: 8.5px; letter-spacing: .08em; }
+.bench .lane.r { color: #d03b3b; }
+.bench .rt { color: #e8e7dd; font-size: 10px; }
+.bench .rs { color: #6f6e66; font-size: 8.5px; }
+.bench .railtabs { display: flex; gap: 4px; margin-bottom: 8px; }
+.bench .railtabs span { font-size: 8.5px; color: #6f6e66; border-bottom: 1px solid transparent; padding-bottom: 2px; }
+.bench .railtabs span.on { color: #c3c2b7; border-bottom-color: #3987e5; }
+.sel { background: rgba(57,135,229,.34); border-radius: 2px; box-shadow: 0 0 0 1px rgba(57,135,229,.22); }
+.nosel { opacity: .95; }
+.pinabs { position: absolute; width: 16px; height: 16px; border-radius: 50%; background: #3987e5;
+  color: #fff; font-family: var(--mono); font-size: 9px; display: flex; align-items: center;
+  justify-content: center; z-index: 3; }
+.mockwrap { position: relative; display: inline-block; max-width: 100%; padding: 0 24px; }
+.legend { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 9px 22px;
+  margin-top: 14px; font-size: 13px; color: var(--text-secondary); }
+.legend div { display: flex; gap: 8px; align-items: flex-start; }
+
+/* the fence */
+.fence { display: grid; grid-template-columns: 1fr 1fr; gap: 0; border: 1px solid var(--line);
+  border-radius: 9px; overflow: hidden; }
+.fence > div { padding: 14px 16px; }
+.fence > div:first-child { border-right: 1px solid var(--line); background: rgba(25,158,112,.06); }
+.fence > div:last-child { background: rgba(139,138,128,.05); }
+.fence h4 { margin: 0 0 10px; font-family: var(--mono); font-size: 10.5px; letter-spacing: .1em;
+  text-transform: uppercase; }
+.fence ul { margin: 0; padding-left: 17px; font-size: 13px; color: var(--text-secondary); }
+.fence li { margin-bottom: 6px; }
+.fence .in h4 { color: #5fd3a8; }
+.fence .out h4 { color: var(--text-muted); }
+
+table.wide { font-size: 13px; }
+table.wide td code { font-size: 11.5px; }
+.gut { font-family: var(--mono); font-size: 10.5px; color: var(--text-muted); margin-top: 11px;
+  padding-top: 9px; border-top: 1px dashed var(--line); }
+
+@media (max-width: 760px) {
+  .archgrid, .fence { grid-template-columns: 1fr; }
+  .fence > div:first-child { border-right: 0; border-bottom: 1px solid var(--line); }
+}
+</style>
+</head>
+<body>
+
+<header class="top"><div class="wrap">
+  <p class="meta">terminal-delight &middot; combined plan page &middot; 2026-09-21 &middot; branch <code>fix/the-second-click-backs-out-to-your-branch</code></p>
+  <h1>Dragging over the bench selects its text</h1>
+  <p class="lede">The workbench draws text nobody can take. A comment summary on the rail, a
+  reply on a card, the line you typed into the composer — all of it is pixels, and the only way
+  to get a sentence out of it today is to retype it. This puts a real selection over the regions
+  that carry reading — the card body and the rail — and leaves the buttons alone. Two things
+  changed since the first draft of this page, and both are yours to settle: <b>the composer is
+  no longer in scope by default, because the mirror it is made of is being replaced</b>, and a
+  press on the card body or a rail row will act when you let go rather than when you push down.</p>
+  <p style="margin:20px 0 0"><span class="score">difficulty <b>6</b> / 10</span></p>
+</div></header>
+
+<div class="wrap">
+
+<h2 class="sec">Read first</h2>
+<ol class="esc-list">
+  <li>
+    <h4>Presses on the card body and rail rows move to mouse-up</h4>
+    <p>They fire on mouse-down today. A drag has to start somewhere, and both of those places
+    are already zones — so the press has to wait to find out whether it was a click or the
+    beginning of a drag. Buttons, tabs and dials keep firing on push.</p>
+    <p class="cost">4&ndash;6px slop threshold &middot; affects <code>Hit::Arm</code> and <code>Hit::OpenRow</code> only</p>
+  </li>
+  <li>
+    <h4>The composer fell out of scope while this page was being written</h4>
+    <p>You asked for it by name. Since then a sibling pane got your ruling that the workbench is
+    being decoupled from the terminal view, and that no more repairs go into the mirror. The
+    composer <em>is</em> the mirror, and the one design decision I made for it — read-only,
+    because it cannot type over a range the far end does not know about — is a constraint the
+    decouple removes. So it is drawn as out, and question one asks whether you want it back.</p>
+    <p class="cost">the other two regions are unaffected either way</p>
+  </li>
+  <li>
+    <h4>Scope is decided by geometry, not by call site</h4>
+    <p>Every text run on the bench registers itself. Which runs are <em>selectable</em> is then
+    a rectangle test against the measured regions — the card body and the rail. Nothing has to be
+    threaded through the twenty-odd drawing functions, and your "not the menus" line is drawn
+    on the surface rather than maintained by hand in a list.</p>
+    <p class="cost">two <code>probe</code> calls, the same element <code>dial_drop</code> already uses</p>
+  </li>
+  <li>
+    <h4>The highlight lags the atom list by one frame, on purpose</h4>
+    <p>A run's position is only known once it has been laid out, so the newest measurement any
+    frame can draw with is the one the frame before it recorded. The dial menu is placed by
+    exactly this trick already and it is exact rather than approximate, for the same reason.</p>
+    <p class="cost">no new machinery &mdash; the atom list is read, then cleared, at the top of the build</p>
+  </li>
+  <li>
+    <h4>A selection that silently drops a line looks identical to one that works</h4>
+    <p>This is the failure mode worth spending the tests on. The selection model is pure
+    functions over a list of rectangles and strings, so the ordering, the partial ends and the
+    line breaks in the copied text are all table-testable without rendering anything.</p>
+    <p class="cost">the invalidation check: drag the whole card, copy, diff against the surface JSON</p>
+  </li>
+</ol>
+
+<h2 class="sec">What the gesture does</h2>
+
+<figure>
+  <span class="lbl">01 &middot; A drag across two paragraphs and into the rail</span>
+  <div class="scroller"><div class="mockwrap">
+    <div class="pinabs" style="left:0;  top:145px">1</div>
+    <div class="pinabs" style="left:0;  top:202px">2</div>
+    <div class="pinabs" style="right:0; top:80px">3</div>
+    <div class="pinabs" style="left:0;  top:266px">4</div>
+    <div class="bench">
+      <div class="hdr">
+        <span>&#9656; claude</span>
+        <span class="face">TERMINAL</span><span class="face on">WORKBENCH</span>
+        <span style="flex:1"></span><span>opus 5</span><span>&middot;</span><span>high</span><span>&#8943;</span>
+      </div>
+      <div class="cols">
+        <div class="main">
+          <span class="kindchip">response</span>
+          <h5>The strip backs out to the branch you are in</h5>
+          <div class="sub">turn &middot; 4m ago &middot; measured</div>
+          <div class="tabs"><span class="on">tldr</span><span>technical</span><span>evidence</span><span>doubts</span></div>
+          <p class="b">The undo target was the whole session, so a <span class="sel">second click on the
+          strip threw away every tab rather than</span> <span class="sel">the branch you were
+          standing in.</span></p>
+          <p class="b"><span class="sel">A guard now refuses the shape that stranded it, not just
+          the answer it gave</span> &mdash; the old test asserted the return value and passed on
+          three rewrites that were still wrong.</p>
+          <div class="composer out">
+            <span class="caret"></span><span class="nosel">check the rail rows too, they carry the</span>
+            <div class="outtag">out — the mirror is being replaced</div>
+          </div>
+        </div>
+        <div class="rail">
+          <div class="railtabs"><span class="on">comments</span><span>artifacts</span><span>decisions</span></div>
+          <div class="railrow wait">
+            <div class="lane r">WAITING ON YOU</div>
+            <div class="rt"><span class="sel">Should the strip's undo be per-branch?</span></div>
+            <div class="rs">from parker &middot; 11m</div>
+          </div>
+          <div class="railrow">
+            <div class="lane">ANSWERED</div>
+            <div class="rt">A guard needs a mutation that passes</div>
+            <div class="rs">from claude &middot; 1h</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div></div>
+  <div class="legend">
+    <div><span class="pin">1</span><span><b>Anchor.</b> Mouse-down lands inside a text run; the
+      byte under the pointer comes from that run's own <code>TextLayout</code>.</span></div>
+    <div><span class="pin">2</span><span><b>Head.</b> Everything between anchor and head in build
+      order is selected, whole runs in the middle, partial at the two ends.</span></div>
+    <div><span class="pin">3</span><span><b>The rail is the same model.</b> A row's title is a
+      run like any other, so a drag reaches it and a copy takes it.</span></div>
+    <div><span class="pin">4</span><span><b>The composer is drawn out.</b> It already keeps a
+      <code>TextLayout</code>, so adding it later is cheap — but it is the mirror, and the
+      mirror is being replaced. Question one.</span></div>
+  </div>
+  <figcaption><b>The selection crosses element boundaries, which is the whole ask</b> &mdash; a
+  per-paragraph selection that stopped at the end of a run would copy one sentence and lose the
+  next. Drawn from the real renderer's structure rather than from the running app: the strings
+  and the proportions are hand-set here, so it shows the intent at roughly the right size.</figcaption>
+</figure>
+
+<figure>
+  <span class="lbl">02 &middot; The fence</span>
+  <div class="fence">
+    <div class="in">
+      <h4>&#10003; Takes a selection</h4>
+      <ul>
+        <li><b>The card body</b> &mdash; title, subtitle, gist, every register, table cells, node
+          labels, the escalation block, the provenance lines</li>
+        <li><b>The rail rows</b> &mdash; lane word, badge, title, the provenance line under it.
+          This is the comment summary you named</li>
+        <li><b>The conversation tail</b> and the empty-bench copy, because they sit in the body
+          region and excluding them would take a rule</li>
+      </ul>
+    </div>
+    <div class="out">
+      <h4>&#10007; Does not, by your line</h4>
+      <ul>
+        <li><b>The agent strip</b> &mdash; END SESSION, the model and effort dials, their drop-down
+          rows</li>
+        <li><b>The shelf tabs</b> &mdash; overview, artifacts, decisions, comments</li>
+        <li><b>The review gallery</b> and any open dial list; while either is up, selection is
+          suspended entirely</li>
+        <li><b>The pane header</b>, the rail's collapse handle, the collapsed ticks</li>
+        <li style="color:#f5c95f"><b>The composer</b> &mdash; <em>out for a different reason,
+          and reversible.</em> Not because you excluded it, but because the mirror it is made
+          of is being replaced by the decouple, and its read-only constraint goes with it</li>
+        <li class="tag-note" style="color:var(--text-muted)"><b>Verb chips inside a card</b>
+          (<code>comment</code>, <code>ask agent</code>) &mdash; <em>undecided</em>. They sit
+          inside the body rectangle, so a drag <em>through</em> one highlights its label the way
+          a browser does. A drag cannot <em>start</em> on one.</li>
+      </ul>
+    </div>
+  </div>
+  <figcaption>Your words: <em>"I don't care about the menus, being able to highlight end session
+  or overview or artifacts is not important."</em> <b>The right column is enforced by geometry,
+  which means it is enforced by where things are drawn rather than by a list somebody has to
+  keep up to date.</b> The grey item is the one case the rule does not cleanly decide; the amber
+  one is not your line at all, and is the first question below.</figcaption>
+</figure>
+<h2 class="sec">Where it lands in what already exists</h2>
+
+<p class="lede" style="font-size:15px;margin-bottom:20px">The bench already has half of this
+built, for a different reason. Because the tube bends the picture and gpui hit-tests the flat
+tree, no bench element carries a click handler of its own: every control records its flat
+rectangle as it paints, and the pane un-bends the pointer and looks it up. A selection needs the
+same list with a different payload.</p>
+
+<figure>
+  <span class="lbl">03 &middot; The change, built up in four frames</span>
+  <div class="archgrid">
+
+    <div class="arch">
+      <div class="boundary"><span class="bl">&#9635; step 1 &mdash; what is there today</span>
+        <div class="steprow">
+          <div class="node exists"><b>benchdraw</b>builds the element tree each frame<span class="pill g">exists</span></div>
+          <div class="archgrid" style="gap:9px">
+            <div class="node exists"><b>wb_zones</b>rect + Hit, per control<span class="pill g">exists</span></div>
+            <div class="node ghost"><b>&nbsp;</b>&nbsp;</div>
+          </div>
+          <div class="archgrid" style="gap:9px">
+            <div class="node exists"><b>workbench::hit_at</b>pure, gpui-free<span class="pill g">exists</span></div>
+            <div class="node ghost"><b>&nbsp;</b>&nbsp;</div>
+          </div>
+          <div class="archgrid" style="gap:9px">
+            <div class="node exists"><b>on_mouse_down</b>unwarp &rarr; bench_hit<span class="pill g">acts on push</span></div>
+            <div class="node ghost"><b>&nbsp;</b>&nbsp;</div>
+          </div>
+          <div class="node ghost"><b>&nbsp;</b>&nbsp;</div>
+        </div>
+      </div>
+      <p class="gut" style="margin-top:9px">A click that hits no zone currently starts a selection
+      in the <em>terminal grid behind the bench</em> &mdash; invisible, and the slot this takes.</p>
+    </div>
+
+    <div class="arch">
+      <div class="boundary"><span class="bl">&#9635; step 2 &mdash; a second list, same shape</span>
+        <div class="steprow">
+          <div class="node exists"><b>benchdraw</b>builds the element tree each frame<span class="pill g">exists</span></div>
+          <div class="archgrid" style="gap:9px">
+            <div class="node exists"><b>wb_zones</b>rect + Hit, per control<span class="pill g">exists</span></div>
+            <div class="node adds"><b>wb_atoms</b>TextLayout + str, per run<span class="pill b">new</span></div>
+          </div>
+          <div class="archgrid" style="gap:9px">
+            <div class="node exists"><b>workbench::hit_at</b>pure, gpui-free<span class="pill g">exists</span></div>
+            <div class="node ghost"><b>&nbsp;</b>&nbsp;</div>
+          </div>
+          <div class="archgrid" style="gap:9px">
+            <div class="node exists"><b>on_mouse_down</b>unwarp &rarr; bench_hit<span class="pill g">acts on push</span></div>
+            <div class="node ghost"><b>&nbsp;</b>&nbsp;</div>
+          </div>
+          <div class="node ghost"><b>&nbsp;</b>&nbsp;</div>
+        </div>
+      </div>
+      <p class="gut" style="margin-top:9px">Filled at <em>build</em> time, not paint &mdash; build
+      order is reading order, and <code>TextLayout</code> carries the geometry anyway.</p>
+    </div>
+
+    <div class="arch">
+      <div class="boundary"><span class="bl">&#9635; step 3 &mdash; the model and the drag</span>
+        <div class="steprow">
+          <div class="node exists"><b>benchdraw</b>builds the element tree each frame<span class="pill g">exists</span></div>
+          <div class="archgrid" style="gap:9px">
+            <div class="node exists"><b>wb_zones</b>rect + Hit, per control<span class="pill g">exists</span></div>
+            <div class="node adds"><b>wb_atoms</b>TextLayout + str, per run<span class="pill b">new</span></div>
+          </div>
+          <div class="archgrid" style="gap:9px">
+            <div class="node exists"><b>workbench::hit_at</b>pure, gpui-free<span class="pill g">exists</span></div>
+            <div class="node adds"><b>workbench::Sel</b>order, spans, copy text<span class="pill b">pure, tested</span></div>
+          </div>
+          <div class="archgrid" style="gap:9px">
+            <div class="node mine"><b>on_mouse_down</b>defers Arm + OpenRow<span class="pill a">changed</span></div>
+            <div class="node adds"><b>move / up</b>extend, settle<span class="pill b">new</span></div>
+          </div>
+          <div class="node adds"><b>highlight overlay</b>rects read from LAST frame's atoms, absolute in the bench root<span class="pill b">new</span></div>
+        </div>
+      </div>
+      <p class="gut" style="margin-top:9px">Yellow is the one thing you are agreeing to: two
+      presses stop acting until you let go.</p>
+    </div>
+
+    <div class="arch">
+      <div class="boundary"><span class="bl">&#9635; step 4 &mdash; getting it off the bench</span>
+        <div class="steprow">
+          <div class="node exists"><b>benchdraw</b>builds the element tree each frame<span class="pill g">exists</span></div>
+          <div class="archgrid" style="gap:9px">
+            <div class="node exists"><b>wb_zones</b>rect + Hit, per control<span class="pill g">exists</span></div>
+            <div class="node adds"><b>wb_atoms</b>TextLayout + str, per run<span class="pill b">new</span></div>
+          </div>
+          <div class="archgrid" style="gap:9px">
+            <div class="node exists"><b>workbench::hit_at</b>pure, gpui-free<span class="pill g">exists</span></div>
+            <div class="node adds"><b>workbench::Sel</b>order, spans, copy text<span class="pill b">pure, tested</span></div>
+          </div>
+          <div class="archgrid" style="gap:9px">
+            <div class="node mine"><b>on_mouse_down</b>defers Arm + OpenRow<span class="pill a">changed</span></div>
+            <div class="node adds"><b>move / up</b>extend, settle<span class="pill b">new</span></div>
+          </div>
+          <div class="archgrid" style="gap:9px">
+            <div class="node adds"><b>PRIMARY on release</b>middle-click paste<span class="pill b">new</span></div>
+            <div class="node adds"><b>ctrl+shift+c</b>and the right-click Copy row<span class="pill b">new</span></div>
+          </div>
+        </div>
+      </div>
+      <p class="gut" style="margin-top:9px"><code>ctrl+c</code> is untouched &mdash; it is the only
+      way to interrupt a running agent, and <code>window_chord</code> already says so.</p>
+    </div>
+
+  </div>
+  <div class="archlegend">
+    <i><span class="sw" style="background:#199e70"></span>already built</i>
+    <i><span class="sw" style="background:#3987e5"></span>what this step adds</i>
+    <i><span class="sw" style="background:#c98500"></span>yellow = mine to argue with</i>
+    <i><span class="sw" style="background:#3a3a36"></span>not yet present</i>
+  </div>
+  <figcaption><b>Nothing new is invented at the transport layer</b> &mdash; the atom list is the
+  zone list with a different payload, and it is read by the same un-warped pointer. The only
+  frame that touches code already in use is the third, and it touches one function.</figcaption>
+</figure>
+
+<figure>
+  <span class="lbl">04 &middot; What a press decides</span>
+  <div class="scroller">
+  <svg viewBox="0 0 955 340" role="img" aria-label="Decision tree for a left mouse press on the workbench face: modal overlays swallow it, buttons act immediately, the card body and rail rows wait for release, and bare space starts a selection.">
+    <defs>
+      <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+        <path d="M0,0 L10,5 L0,10 z" fill="#5a5a52"/>
+      </marker>
+    </defs>
+    <g font-family="ui-monospace, monospace" font-size="11">
+      <rect x="10" y="150" width="150" height="40" rx="6" fill="#232321" stroke="#3987e5"/>
+      <text x="85" y="166" fill="#ffffff" text-anchor="middle">left press</text>
+      <text x="85" y="180" fill="#8b8a80" text-anchor="middle">on the bench face</text>
+
+      <path d="M160,170 H205" stroke="#5a5a52" fill="none" marker-end="url(#ar)"/>
+      <rect x="205" y="150" width="140" height="40" rx="6" fill="#1a1a19" stroke="#3a3a36"/>
+      <text x="275" y="166" fill="#c3c2b7" text-anchor="middle">unwarp the point</text>
+      <text x="275" y="180" fill="#8b8a80" text-anchor="middle">hit_at + atom_at</text>
+
+      <path d="M345,170 H390" stroke="#5a5a52" fill="none" marker-end="url(#ar)"/>
+      <path d="M390,170 V30 H430" stroke="#5a5a52" fill="none" marker-end="url(#ar)"/>
+      <path d="M390,170 V100 H430" stroke="#5a5a52" fill="none" marker-end="url(#ar)"/>
+      <path d="M390,170 V180 H430" stroke="#5a5a52" fill="none" marker-end="url(#ar)"/>
+      <path d="M390,170 V260 H430" stroke="#5a5a52" fill="none" marker-end="url(#ar)"/>
+      <path d="M390,170 V320 H430" stroke="#5a5a52" fill="none" marker-end="url(#ar)"/>
+
+      <rect x="430" y="12" width="200" height="36" rx="6" fill="#1a1a19" stroke="#8b8a80"/>
+      <text x="442" y="27" fill="#c3c2b7">gallery or dial list open</text>
+      <text x="442" y="41" fill="#8b8a80">no selection at all</text>
+      <path d="M630,30 H680" stroke="#5a5a52" fill="none" marker-end="url(#ar)"/>
+      <text x="688" y="34" fill="#8b8a80">unchanged</text>
+
+      <rect x="430" y="82" width="200" height="36" rx="6" fill="#1a1a19" stroke="#199e70"/>
+      <text x="442" y="97" fill="#c3c2b7">a button, tab or dial</text>
+      <text x="442" y="111" fill="#8b8a80">acts on push, as today</text>
+      <path d="M630,100 H680" stroke="#5a5a52" fill="none" marker-end="url(#ar)"/>
+      <text x="688" y="104" fill="#5fd3a8">unchanged</text>
+
+      <rect x="430" y="162" width="200" height="36" rx="6" fill="rgba(201,133,0,.1)" stroke="#c98500"/>
+      <text x="442" y="177" fill="#ffffff">the card body, a rail row</text>
+      <text x="442" y="191" fill="#f5c95f">arm the anchor, wait</text>
+      <path d="M630,180 H680" stroke="#5a5a52" fill="none" marker-end="url(#ar)"/>
+      <text x="688" y="176" fill="#f5c95f">moved &lt;5px &rarr; click on release</text>
+      <text x="688" y="190" fill="#f5c95f">moved more &rarr; a selection, no click</text>
+
+      <rect x="430" y="242" width="200" height="36" rx="6" fill="rgba(57,135,229,.1)" stroke="#3987e5"/>
+      <text x="442" y="257" fill="#ffffff">bare space in a region</text>
+      <text x="442" y="271" fill="#8fbdf3">anchor at the nearest run</text>
+      <path d="M630,260 H680" stroke="#5a5a52" fill="none" marker-end="url(#ar)"/>
+      <text x="688" y="264" fill="#8fbdf3">selection begins</text>
+
+      <rect x="430" y="302" width="200" height="36" rx="6" fill="#1a1a19" stroke="#8b8a80" stroke-dasharray="4 3"/>
+      <text x="442" y="317" fill="#8b8a80">outside all three regions</text>
+      <text x="442" y="331" fill="#8b8a80">strip, header, handle</text>
+      <path d="M630,320 H680" stroke="#5a5a52" fill="none" marker-end="url(#ar)"/>
+      <text x="688" y="324" fill="#8b8a80">nothing &mdash; and it clears any selection</text>
+    </g>
+  </svg>
+  </div>
+  <figcaption><b>Only one branch changes behaviour, and it is the yellow one.</b> The dashed
+  branch is the case that has no natural answer: a press on the agent strip is not a selection
+  and not a button either, and it has to do <em>something</em> &mdash; clearing is the browser's
+  answer and the one proposed here.</figcaption>
+</figure>
+<figure>
+  <span class="lbl">05 &middot; Why a one-frame lag is exact and not approximate</span>
+  <div class="scroller">
+  <svg viewBox="0 0 900 250" role="img" aria-label="Timeline across two frames: frame N builds and clears the atom list, paint fills it with laid-out geometry, a mouse event between frames reads frame N's atoms, and frame N+1 draws the highlight from them before clearing and rebuilding.">
+    <g font-family="ui-monospace, monospace" font-size="11">
+      <line x1="30" y1="40" x2="870" y2="40" stroke="#3a3a36"/>
+      <text x="30" y="26" fill="#8b8a80">time</text>
+
+      <rect x="40" y="55" width="230" height="58" rx="6" fill="#1a1a19" stroke="#3a3a36"/>
+      <text x="54" y="74" fill="#ffffff">frame N &mdash; build</text>
+      <text x="54" y="90" fill="#8b8a80">read last frame's atoms for the</text>
+      <text x="54" y="104" fill="#8b8a80">overlay, THEN clear and refill</text>
+      <line x1="155" y1="40" x2="155" y2="55" stroke="#3a3a36"/>
+
+      <rect x="290" y="55" width="180" height="58" rx="6" fill="#1a1a19" stroke="#199e70"/>
+      <text x="304" y="74" fill="#ffffff">frame N &mdash; paint</text>
+      <text x="304" y="90" fill="#5fd3a8">every TextLayout now</text>
+      <text x="304" y="104" fill="#5fd3a8">carries real geometry</text>
+      <line x1="380" y1="40" x2="380" y2="55" stroke="#3a3a36"/>
+
+      <rect x="490" y="55" width="180" height="58" rx="6" fill="rgba(57,135,229,.1)" stroke="#3987e5"/>
+      <text x="504" y="74" fill="#ffffff">mouse move</text>
+      <text x="504" y="90" fill="#8fbdf3">reads frame N's atoms</text>
+      <text x="504" y="104" fill="#8fbdf3">&mdash; measured, not guessed</text>
+      <line x1="580" y1="40" x2="580" y2="55" stroke="#3a3a36"/>
+
+      <rect x="690" y="55" width="180" height="58" rx="6" fill="#1a1a19" stroke="#3a3a36"/>
+      <text x="704" y="74" fill="#ffffff">frame N+1 &mdash; build</text>
+      <text x="704" y="90" fill="#8b8a80">draws the highlight from</text>
+      <text x="704" y="104" fill="#8b8a80">those same rectangles</text>
+      <line x1="780" y1="40" x2="780" y2="55" stroke="#3a3a36"/>
+
+      <path d="M580,113 V150 H155 V135" stroke="#3987e5" fill="none" stroke-dasharray="4 3"/>
+      <text x="300" y="166" fill="#8fbdf3">the selection the person is dragging</text>
+
+      <rect x="40" y="188" width="830" height="48" rx="6" fill="rgba(201,133,0,.07)" stroke="#c98500"/>
+      <text x="56" y="207" fill="#f5c95f">The one way this is wrong:</text>
+      <text x="196" y="207" fill="#c3c2b7">a frame where the tree changes shape between the press and the release &mdash;</text>
+      <text x="56" y="223" fill="#c3c2b7">a new surface arrives mid-drag, a register is switched. The anchor's index then points at a different run.</text>
+    </g>
+  </svg>
+  </div>
+  <figcaption>The bench already places its dial drop-downs from the previous frame's measured
+  rectangle, and its own comment says why that is exact: the control is drawn every frame, so
+  the only stale case is a reflow in the same frame as the press. <b>A selection has one case
+  the dial does not &mdash; the tree can change under a live drag &mdash; so the anchor carries
+  the run's text and is dropped when it no longer matches.</b></figcaption>
+</figure>
+
+<h2 class="sec">What lands on the clipboard</h2>
+
+<p class="lede" style="font-size:15px;margin-bottom:18px">A browser gets line breaks for free
+because it knows which elements are blocks. Here every run is a sibling in a flex tree and
+nothing says whether two of them were on the same line. The join rule is therefore geometric,
+and a mistake in it would be hard to see: the highlight on screen stays perfect while the text
+on the clipboard runs together.</p>
+
+<table class="wide">
+  <thead><tr><th style="width:26%">Two runs, in build order</th><th style="width:20%">Joined with</th><th>Why, and what it gets wrong</th></tr></thead>
+  <tbody>
+    <tr><td><b>Same vertical band</b><br>tops within half a line height</td><td><code>" "</code> one space</td>
+      <td>A lane word beside a badge beside a title is one line to the eye. <span class="tag w">inferred</span> A run that is deliberately adjacent with no space &mdash; a chip glued to a number &mdash; gains one.</td></tr>
+    <tr><td><b>Next band down</b><br>within about two line heights</td><td><code>"\n"</code></td>
+      <td>A wrapped paragraph and the line after it. <span class="tag w">inferred</span></td></tr>
+    <tr><td><b>A visible gap</b><br>more than two line heights</td><td><code>"\n\n"</code></td>
+      <td>Paragraph break, section break, the jump from a card into the rail. <span class="tag w">inferred</span></td></tr>
+    <tr><td><b>Across a region edge</b><br>the card body into the rail</td><td><code>"\n\n"</code>, always</td>
+      <td>Geometry alone would sometimes call these one line, because a rail row can sit level with a paragraph. The region wins. <span class="tag v">decided</span></td></tr>
+    <tr><td><b>A run whose layout never painted</b></td><td><em>skipped, and said so</em></td>
+      <td>Unknown is not empty. The run is omitted from the copy and the selection count reports it, rather than contributing a silent zero-length string. <span class="tag v">decided</span></td></tr>
+  </tbody>
+</table>
+
+<div class="callout">
+  <span class="lbl">the check that proves it</span>
+  <p>Select an entire card, copy, and diff the result against the surface's own JSON payload
+  rendered as text. Every string the agent sent must appear, in order. <b>That check fails today
+  on any join rule that drops a run</b>, which is the failure this whole table exists to
+  prevent &mdash; a selection that looks right and copies eleven of twelve lines.</p>
+</div>
+
+<h2 class="sec">Slices</h2>
+
+<figure>
+  <span class="lbl">06 &middot; Four slices, and what each one proves</span>
+  <div class="scroller">
+  <svg viewBox="0 0 900 230" role="img" aria-label="Four slices in order: the atom list, the selection model, the drag and overlay, and the clipboard, each with the check that proves it.">
+    <defs>
+      <marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+        <path d="M0,0 L10,5 L0,10 z" fill="#5a5a52"/>
+      </marker>
+    </defs>
+    <g font-family="ui-monospace, monospace" font-size="11">
+      <line x1="20" y1="40" x2="880" y2="40" stroke="#3a3a36" marker-end="url(#ar2)"/>
+
+      <circle cx="80" cy="40" r="6" fill="#3987e5"/>
+      <rect x="20" y="60" width="180" height="130" rx="7" fill="#1a1a19" stroke="#3987e5"/>
+      <text x="34" y="80" fill="#ffffff">1 &middot; the atom list</text>
+      <text x="34" y="98" fill="#8b8a80">benchdraw::sel, micro()</text>
+      <text x="34" y="112" fill="#8b8a80">two region probes</text>
+      <text x="34" y="126" fill="#8b8a80">no gesture yet</text>
+      <text x="34" y="152" fill="#5fd3a8">tracer bullet:</text>
+      <text x="34" y="166" fill="#c3c2b7">TD_SELDEBUG prints</text>
+      <text x="34" y="180" fill="#c3c2b7">the run under the pointer</text>
+
+      <circle cx="300" cy="40" r="6" fill="#3987e5"/>
+      <rect x="240" y="60" width="180" height="130" rx="7" fill="#1a1a19" stroke="#3987e5"/>
+      <text x="254" y="80" fill="#ffffff">2 &middot; the model</text>
+      <text x="254" y="98" fill="#8b8a80">Atom, Caret, Sel</text>
+      <text x="254" y="112" fill="#8b8a80">order, spans, copy text</text>
+      <text x="254" y="126" fill="#8b8a80">pure, in workbench.rs</text>
+      <text x="254" y="152" fill="#5fd3a8">proven by:</text>
+      <text x="254" y="166" fill="#c3c2b7">a table of layouts,</text>
+      <text x="254" y="180" fill="#c3c2b7">no render involved</text>
+
+      <circle cx="520" cy="40" r="6" fill="#3987e5"/>
+      <rect x="460" y="60" width="180" height="130" rx="7" fill="#1a1a19" stroke="#3987e5"/>
+      <text x="474" y="80" fill="#ffffff">3 &middot; the gesture</text>
+      <text x="474" y="98" fill="#8b8a80">down / move / up</text>
+      <text x="474" y="112" fill="#f5c95f">the press deferral</text>
+      <text x="474" y="126" fill="#8b8a80">the highlight overlay</text>
+      <text x="474" y="152" fill="#5fd3a8">proven by:</text>
+      <text x="474" y="166" fill="#c3c2b7">a photographed drag,</text>
+      <text x="474" y="180" fill="#c3c2b7">TD_DEMO_STATE staged</text>
+
+      <circle cx="740" cy="40" r="6" fill="#3987e5"/>
+      <rect x="680" y="60" width="200" height="130" rx="7" fill="#1a1a19" stroke="#3987e5"/>
+      <text x="694" y="80" fill="#ffffff">4 &middot; getting it out</text>
+      <text x="694" y="98" fill="#8b8a80">PRIMARY on release</text>
+      <text x="694" y="112" fill="#8b8a80">ctrl+shift+c</text>
+      <text x="694" y="126" fill="#8b8a80">the right-click Copy row</text>
+      <text x="694" y="152" fill="#5fd3a8">proven by:</text>
+      <text x="694" y="166" fill="#c3c2b7">whole-card copy diffed</text>
+      <text x="694" y="180" fill="#c3c2b7">against the surface JSON</text>
+
+      <text x="20" y="212" fill="#8b8a80">Slice 1 is useful on its own. Nothing selects yet, but the debug print settles whether the atom</text>
+      <text x="20" y="226" fill="#8b8a80">list is complete &mdash; before any gesture is built on top of it.</text>
+    </g>
+  </svg>
+  </div>
+  <figcaption><b>The first slice is the one that can fail silently, so it ships with an
+  instrument rather than a feature.</b> If a text run in the card body does not appear under
+  <code>TD_SELDEBUG</code>, that run will be missing from every copy afterwards and nothing
+  later in the ladder would have caught it.</figcaption>
+</figure>
+
+<h2 class="sec">Yours to decide</h2>
+
+<div class="grill">
+  <div class="q">
+    <h4>You asked for the composer. Do you still want it, knowing the mirror is going?</h4>
+    <p>Your words were <em>"including the text entry user text box"</em>. Since then a sibling
+    pane got your ruling on the decouple &mdash; <em>"no more fixes to the mirror"</em>, the
+    fifteen small repairs cancelled because they would be thrown away. The composer is the
+    mirror. Its selection would be read-only <em>because</em> it is a mirror, and that is the
+    constraint the rework removes; a real editor wants a selection you can type over, which is
+    a different feature.</p>
+    <p class="rec"><b>Recommend: leave it out, and take it in the rework.</b> The other two
+    regions carry what you actually reached for &mdash; a comment summary and a card. If you
+    want it anyway it is roughly a day, its <code>TextLayout</code> already exists, and I will
+    say on the page that it is scaffolding.</p>
+  </div>
+  <div class="q">
+    <h4>Presses on the card body and rail rows act on release. Accept?</h4>
+    <p>A drag has to start on something, and those two places are the two Parker named. The
+    alternative keeps them acting on push and only lets a drag begin on bare space between
+    paragraphs &mdash; which, on a densely packed card, is almost nowhere.</p>
+    <p class="rec"><b>Recommend: accept the deferral.</b> Five pixels of slop, and a click that
+    does not move still feels immediate. Every native list on this desk works this way.</p>
+  </div>
+  <div class="q">
+    <h4>Verb chips inside a card: highlightable, or holes in the selection?</h4>
+    <p>They sit inside the body rectangle, so a drag passing over <code>comment</code> or
+    <code>ask agent</code> would highlight the word and copy it. A browser does exactly this
+    with button labels. Excluding them means a second geometry test and a gap in the middle of
+    a copied paragraph.</p>
+    <p class="rec"><b>Recommend: let them highlight.</b> The chip labels are one word each, and
+    a hole in a selection is stranger than an extra word.</p>
+  </div>
+  <div class="q">
+    <h4>Anything else on the bench you want inside the fence?</h4>
+    <p>The two regions are the card body and the rail. The agent strip, shelf tabs, gallery
+    chrome and pane header are out by your line. The conversation tail and the empty-bench copy
+    are already in, by sitting inside the body region.</p>
+    <p class="rec"><b>Recommend: ship these two</b> and add a third only when something turns
+    out to be unreachable.</p>
+  </div>
+</div>
+
+<h2 class="sec">What the decouple does to this</h2>
+
+<div class="callout">
+  <span class="lbl">read against origin/main, not this worktree</span>
+  <p>This page was first drafted against a checkout <b>66 commits behind <code>origin/main</code></b>
+  — my own branch had been merged as pull request 596 and main had moved on. Across the four
+  files this plan touches, those commits are <b>3,645 insertions and 971 deletions</b>. Every
+  number here has since been re-read with <code>git show origin/main:</code>, and every structure
+  the plan rests on is still there, unchanged in kind: <code>zone</code>, <code>probe</code>,
+  <code>micro</code>, <code>Slots</code>, <code>Zone</code>, <code>hit_at</code>,
+  <code>dial_drop</code>, <code>Hit::Arm</code>, <code>Hit::OpenRow</code>, <code>unwarp</code>.
+  Nobody built a text selection in the meantime. What grew is the number of call sites:
+  <b>80 <code>micro()</code> sites and 75 text-bearing leaves</b>, up from 73 and 71.</p>
+</div>
+
+<table class="wide">
+  <thead><tr><th style="width:30%">This plan's part</th><th style="width:22%">Under the decouple</th><th>Why</th></tr></thead>
+  <tbody>
+    <tr><td><b>The atom list</b><br>a run registering where it landed</td><td><b>survives whole</b></td>
+      <td>It is presentation, and presentation moves with the view. A decoupled workbench still draws runs and still has to know where they went. <span class="tag v">measured</span></td></tr>
+    <tr><td><b>The pure selection model</b><br>order, spans, join, copy text</td><td><b>survives whole</b></td>
+      <td>It touches no gpui, no pane and no pseudoterminal — the same property that makes the sibling's <code>tenancy_for</code> safe across the boundary. <span class="tag v">measured</span></td></tr>
+    <tr><td><b>The drag and the overlay</b></td><td><b>survives</b></td>
+      <td>Hangs off the pane's mouse handlers today. Those move with the view rather than across the new API. <span class="tag w">inferred</span></td></tr>
+    <tr><td><b>Deferring <code>Hit::OpenRow</code></b></td><td><b>survives</b></td>
+      <td>Opening a rail row is a reading gesture; it does not cross to the agent process. <span class="tag w">inferred</span></td></tr>
+    <tr><td><b>Deferring <code>Hit::Arm</code></b></td><td><b>entangled</b></td>
+      <td><code>Arm</code> means "start talking into the mirror". If the mirror goes, the gesture is re-specified by the decouple's Gate 2 rather than by this plan. <span class="tag w">inferred</span></td></tr>
+    <tr><td><b>Selecting the composer</b></td><td><b>thrown away</b></td>
+      <td>Its whole design is shaped by being a mirror of a readline. Question one. <span class="tag v">his ruling</span></td></tr>
+  </tbody>
+</table>
+
+<p class="lede" style="font-size:14.5px">The decouple is scored 9 out of 10 by the pane
+carrying it and gets all four gates; its Gate 1 is written and waiting on you at
+<code>docs/plans/workbench-drives-the-agent/</code>. <b>Nothing in this plan needs to wait for
+it</b> — four of the six rows above are on the presentation side of the seam, which is the side
+that does not move. The one row that does is the one being cut.</p>
+
+<h2 class="sec">Method and limits</h2>
+
+<p class="lede" style="font-size:14.5px">Everything above is read out of the source on
+<code>origin/main</code> — re-read there after the first draft turned out to have been written
+against a checkout 66 commits behind it — and not run. <span class="tag v">measured</span>
+covers what the code says:
+<code>window_chord</code>'s refusal to take <code>ctrl+c</code>, the zone list being cleared at
+the top of the build, the composer already holding a <code>TextLayout</code>, and gpui's
+<code>index_for_position</code> / <code>position_for_index</code> both working in flat window
+space. <span class="tag w">inferred</span> covers the join rules in the clipboard table and the
+five-pixel slop, neither of which has been tried against a real drag.
+<span class="tag c">not established</span>: the cost of turning roughly seventy text runs into
+<code>StyledText</code> on a dense card, which nobody has profiled. The composer already uses
+one every frame, so the per-run cost is known to be affordable; seventy of them is an
+extrapolation. Figure 01's strings and proportions are hand-set, not captured from the running
+app.</p>
+
+</div>
+<div class="wrap">
+<footer>
+  <p>terminal-delight &middot; <code>docs/plans/text-on-the-bench-is-selectable/00-status.md</code> is the gate state; this page is the combined plan.</p>
+  <p>Difficulty 6/10 &mdash; one combined plan page, one approval. Note anything here and save the file; then say <em>read my notes in 2026-09-21-text-on-the-bench-is-selectable.html</em>.</p>
+</footer>
+</div>
+
+<div class="notebar" id="notebar">
+  <span class="cnt"><b id="note-count">0</b> notes</span>
+  <button id="btn-export" class="primary" data-note-action="export"
+          title="Anchored note map for pasting into a prompt">&#x1F4CB; copy map</button>
+  <button id="btn-embed" data-note-action="embed"
+          title="Download this file with your notes baked in">&#x1F4BE; save into file</button>
+  <button id="btn-clear" data-note-action="clear" title="Delete every note">&#x2715;</button>
+</div>
+
+<dialog id="d-note">
+  <div class="dlg-head">
+    <div>
+      <h3 id="note-title">Note</h3>
+      <p class="repo" id="note-anchor">&nbsp;</p>
+    </div>
+    <button class="x" data-close>&times;</button>
+  </div>
+  <div class="dlg-body">
+    <ul id="note-list"></ul>
+    <p id="note-none">No notes on this yet.</p>
+    <textarea id="note-text"
+      placeholder="Your note. Saved against this element and readable by an agent once you save into the file."></textarea>
+    <div class="note-actions">
+      <button class="save" data-note-action="add">Add note</button>
+      <button data-close>Close</button>
+      <span class="hintk">Ctrl+Enter to add</span>
+    </div>
+  </div>
+</dialog>
+
+<dialog id="d-export">
+  <div class="dlg-head">
+    <div>
+      <h3>Note map</h3>
+      <p class="repo">Anchored to element ids in this file &middot; paste straight into a prompt</p>
+    </div>
+    <button class="x" data-close>&times;</button>
+  </div>
+  <div class="dlg-body">
+    <p style="margin-bottom:12px">
+      Each line is anchored to an element id, so an agent can locate the passage without you
+      pasting the file. Prompt shape: <em>"read my notes in <code>&lt;filename&gt;</code> and act
+      on them."</em>
+    </p>
+    <textarea id="export-out" readonly></textarea>
+    <p class="tokest" id="export-est"></p>
+    <div class="note-actions">
+      <button class="save" data-note-action="copy">Copy to clipboard</button>
+      <button data-close>Close</button>
+    </div>
+  </div>
+</dialog>
+
+<script type="application/json" id="report-notes">{}</script>
+
+<script>
+  window.NOTES_FILE = '2026-09-21-text-on-the-bench-is-selectable.html';
+</script>
+<script>
+/* decision-brief — reader notes.
+ *
+ * Drop-in. No build step, no dependencies. Paste this file's contents inline inside a
+ * script element, after the document body — a decision brief must survive being emailed
+ * as one file, so never load it with a src attribute.
+ *
+ * NOTHING IN THIS FILE MAY CONTAIN THE LITERAL CLOSING SCRIPT TAG, not even inside a
+ * comment or a string: an HTML parser ends the script element at the first one it sees,
+ * and everything after it silently becomes page content. Write it broken up, e.g.
+ * "<\/script>", if you ever need to emit one.
+ *
+ * Three outputs, in the order they matter:
+ *   1. copy map    — anchored note map, ~1% of the tokens of the whole document
+ *   2. save into   — bakes notes into a downloadable copy so an agent can READ them
+ *   3. localStorage — live persistence between reloads
+ *
+ * Why the map exists: pasting a whole annotated report into a prompt costs thousands of
+ * tokens; pasting bare notes loses which passage each one is about. The map is the third
+ * option — [element-id] + note, so the agent greps the id and finds the passage itself.
+ *
+ * Configure before this script runs (all optional):
+ *   window.NOTES_FILE    — filename used for the storage key and the download. Default: location basename.
+ *   window.NOTES_TARGETS — [[selector, prefix], ...] overriding what gets an affordance.
+ */
+(function () {
+  'use strict';
+
+  var FILE = window.NOTES_FILE ||
+    (location.pathname.split('/').pop() || 'decision-brief.html');
+  var KEY = 'notes:' + FILE;
+
+  /* Default targets. A prefix keeps exported anchors readable and grouped.
+     Override wholesale with window.NOTES_TARGETS if a brief's shape differs.
+
+     THE GRILL COMES FIRST, AND IT IS NOT OPTIONAL. Until 2026-09-02 this list
+     covered five of the seven components layout.md tells you to build and
+     omitted the grill — so the one section whose entire purpose is a decision
+     the reader has to make was the one section the reader could not comment on.
+     Two briefs shipped that way, each having invented its own class name
+     (`grill-q`, then `q`) because nothing here named one. Both spellings are
+     matched below; `.ask` is the name to use going forward. If you add a
+     component, add it here in the same commit.
+
+     FIGURES ARE SECOND, for the same reason. The 2026-09-15 attention-spine
+     brief carried eleven pictures and had to override NOTES_TARGETS wholesale
+     to make any of them annotatable, because `figure` was not here — a fork of
+     this list living in one report, where nothing else would inherit it. The
+     pictures are the part a reader argues with, so they are in the default list
+     now. `titleOf()` already reads `.lbl`, so a figure labelled `03 · What
+     opening costs` anchors as `fig-03-what-opening-costs`. */
+  var TARGETS = window.NOTES_TARGETS || [
+    ['.grill .q, .grill-q, .ask', 'ask'],
+    ['figure', 'fig'],
+    ['.card', 'verdict'],
+    ['.esc-list li', 'readfirst'],
+    ['.finding', 'finding'],
+    ['.tile', 'stat'],
+    ['table.wide tr', 'row'],
+    ['.bar-row', 'chart'],
+    ['.callout', 'callout'],
+    ['dialog .dlg-body > h4', 'sub']
+  ];
+
+  /* Notes baked into the file win on first load — a fresh browser should see what the
+     author saved. After that localStorage is the live copy. */
+  var baked = {};
+  try {
+    var island = document.getElementById('report-notes');
+    if (island) baked = JSON.parse(island.textContent || '{}');
+  } catch (e) { /* a malformed island must not break the page */ }
+
+  var N;
+  try { N = JSON.parse(localStorage.getItem(KEY) || 'null') || baked; }
+  catch (e) { N = baked; }
+
+  var active = null, activeTitle = '';
+
+  function save() {
+    try { localStorage.setItem(KEY, JSON.stringify(N)); } catch (e) {}
+  }
+  function esc(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+  function slug(s) {
+    return String(s || 'x').toLowerCase().replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '').slice(0, 44) || 'x';
+  }
+  function titleOf(el) {
+    var h = el.querySelector('h2,h3,h4,.bar-lab,.k,.lbl,td:first-child,th:first-child');
+    var t = ((h ? h.textContent : el.textContent) || 'item').replace(/\s+/g, ' ').trim();
+    return t.length > 72 ? t.slice(0, 69) + '…' : t;
+  }
+
+  /* ---- give every target a stable anchor id and a note affordance ---- */
+  function tag() {
+    var used = {};
+    TARGETS.forEach(function (pair) {
+      var sel = pair[0], pre = pair[1];
+      Array.prototype.forEach.call(document.querySelectorAll(sel), function (el, i) {
+        if (el.classList.contains('notable')) return;
+        if (el.tagName === 'TR' && el.querySelector('th')) return;   // header rows
+        if (el.closest('#d-note, #d-export, .notebar')) return;
+
+        /* Numbered lists anchor by position; everything else by a SHORT title slug.
+           Long slugs make the exported map unreadable, which defeats the map. */
+        var id;
+        var num = el.querySelector('.esc-n');
+        if (num) id = pre + '-' + num.textContent.trim();
+        else id = pre + '-' + slug(titleOf(el)).split('-').slice(0, 4).join('-');
+
+        var base = id, n = 2;
+        while (used[id]) id = base + '-' + (n++);
+        used[id] = 1;
+
+        el.classList.add('notable');
+        el.dataset.nid = id;
+        el.dataset.ntitle = titleOf(el);
+        if (!el.id) el.id = id;                      // a real anchor in the file
+
+        var b = document.createElement('button');
+        b.className = 'note-btn';
+        b.type = 'button';
+        b.title = 'Add a note';
+        b.innerHTML = '&#x1F4AC;';
+        b.addEventListener('click', function (ev) {
+          ev.preventDefault(); ev.stopPropagation(); open(el);
+        });
+        el.appendChild(b);
+      });
+    });
+  }
+
+  function badges() {
+    var total = 0;
+    Array.prototype.forEach.call(document.querySelectorAll('.notable'), function (el) {
+      var n = (N[el.dataset.nid] || []).length;
+      total += n;
+      el.classList.toggle('has-note', n > 0);
+      var b = el.querySelector(':scope > .note-btn');
+      if (b) b.innerHTML = n ? String(n) : '&#x1F4AC;';
+    });
+    var c = document.getElementById('note-count');
+    if (c) c.textContent = total;
+    ['btn-export', 'btn-embed', 'btn-clear'].forEach(function (id) {
+      var b = document.getElementById(id);
+      if (b) b.disabled = total === 0;
+    });
+  }
+
+  function render() {
+    var list = N[active] || [];
+    var ul = document.getElementById('note-list');
+    document.getElementById('note-none').style.display = list.length ? 'none' : 'block';
+    ul.innerHTML = list.map(function (n, i) {
+      return '<li><div class="nts"><span>' + esc(n.ts) + '</span>' +
+        '<button class="ndel" data-i="' + i + '">delete</button></div>' + esc(n.text) + '</li>';
+    }).join('');
+    Array.prototype.forEach.call(ul.querySelectorAll('.ndel'), function (b) {
+      b.addEventListener('click', function () { del(+b.dataset.i); });
+    });
+  }
+
+  function open(el) {
+    active = el.dataset.nid;
+    activeTitle = el.dataset.ntitle;
+    document.getElementById('note-title').textContent = activeTitle;
+    document.getElementById('note-anchor').textContent = '#' + active;
+    render();
+    document.getElementById('d-note').showModal();
+    document.getElementById('note-text').focus();
+  }
+
+  function add() {
+    var ta = document.getElementById('note-text');
+    var t = ta.value.trim();
+    if (!t || !active) return;
+    (N[active] = N[active] || []).push({
+      text: t,
+      title: activeTitle,
+      ts: new Date().toISOString().slice(0, 16).replace('T', ' ')
+    });
+    ta.value = '';
+    save(); render(); badges();
+  }
+
+  function del(i) {
+    N[active].splice(i, 1);
+    if (!N[active].length) delete N[active];
+    save(); render(); badges();
+  }
+
+  /* ---- the map: anchored, compact, prompt-ready ---- */
+  function buildMap() {
+    var count = 0, els = 0;
+    for (var k in N) { if (N.hasOwnProperty(k)) { els++; count += N[k].length; } }
+    var out = [
+      'NOTES — ' + FILE,
+      count + ' notes on ' + els + ' elements.',
+      'Each [anchor] is an element id in that file — search it to find the passage.',
+      ''
+    ];
+    /* Document order, not object order: the map should read the way the brief reads. */
+    Array.prototype.forEach.call(document.querySelectorAll('.notable'), function (el) {
+      var list = N[el.dataset.nid];
+      if (!list || !list.length) return;
+      out.push('[' + el.dataset.nid + '] ' + el.dataset.ntitle);
+      list.forEach(function (n) { out.push('  · ' + n.text.replace(/\n+/g, ' ')); });
+      out.push('');
+    });
+    return out.join('\n');
+  }
+
+  function exportNotes() {
+    var txt = buildMap();
+    document.getElementById('export-out').value = txt;
+    var est = document.getElementById('export-est');
+    if (est) {
+      est.textContent = txt.length + ' characters ≈ ' + Math.ceil(txt.length / 4) +
+        ' tokens — versus ~' + Math.ceil(document.body.innerText.length / 4) +
+        ' for the whole document.';
+    }
+    document.getElementById('d-export').showModal();
+  }
+
+  function copyExport(btn) {
+    var ta = document.getElementById('export-out');
+    ta.select();
+    try { document.execCommand('copy'); } catch (e) {}
+    if (btn) {
+      var o = btn.textContent;
+      btn.textContent = 'Copied';
+      setTimeout(function () { btn.textContent = o; }, 1400);
+    }
+  }
+
+  /* ---- bake notes into a downloadable copy of this file ----
+     localStorage is invisible to an agent. This is what makes
+     "read my notes in <file>" work. */
+  function embedNotes() {
+    var doc = document.documentElement.cloneNode(true);
+    Array.prototype.forEach.call(doc.querySelectorAll('.note-btn'), function (n) { n.remove(); });
+    Array.prototype.forEach.call(doc.querySelectorAll('.notable'), function (n) {
+      n.classList.remove('notable', 'has-note');
+    });
+    var island = doc.querySelector('#report-notes');
+    if (island) island.textContent = JSON.stringify(N, null, 1);
+    /* A plain-text mirror as well, so grep and ctx_read find the notes
+       without anyone having to parse JSON out of a script tag. */
+    var body = doc.querySelector('body');
+    if (body) body.appendChild(document.createComment('\nREADER NOTES —\n' + buildMap() + '\n'));
+
+    var blob = new Blob(['<!DOCTYPE html>\n' + doc.outerHTML], { type: 'text/html' });
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = FILE;
+    a.click();
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 4000);
+
+    var b = document.getElementById('btn-embed');
+    if (b) { var o = b.innerHTML; b.innerHTML = 'saved &#x2713;'; setTimeout(function () { b.innerHTML = o; }, 2200); }
+  }
+
+  function clearNotes() {
+    if (!confirm('Delete every note in this brief?')) return;
+    N = {}; save(); badges();
+  }
+
+  /* ---- wiring ---- */
+  function init() {
+    var ta = document.getElementById('note-text');
+    if (ta) {
+      ta.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); add(); }
+      });
+    }
+    document.addEventListener('click', function (e) {
+      var t = e.target.closest('[data-note-action]');
+      if (!t) return;
+      var a = t.dataset.noteAction;
+      if (a === 'add') add();
+      else if (a === 'export') exportNotes();
+      else if (a === 'embed') embedNotes();
+      else if (a === 'clear') clearNotes();
+      else if (a === 'copy') copyExport(t);
+    });
+    ['d-note', 'd-export'].forEach(function (id) {
+      var d = document.getElementById(id);
+      if (!d) return;
+      Array.prototype.forEach.call(d.querySelectorAll('[data-close]'), function (x) {
+        x.addEventListener('click', function () { d.close(); });
+      });
+      d.addEventListener('click', function (e) { if (e.target === d) d.close(); });
+    });
+    tag();
+    badges();
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+  else init();
+})();
+</script>
+</body>
+</html>

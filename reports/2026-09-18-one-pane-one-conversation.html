@@ -33,7 +33,9 @@
 <main>
 
 <h1>One pane, one conversation</h1>
-<p class="sub">What the fix decides, and what its tests actually prove — terminal-delight, pull request 576, green on every check</p>
+<p class="sub">What the fix decides, and what its tests actually prove — terminal-delight.
+<b>Both halves merged</b> (576 and 581) and installed; the running window predates them, so a
+relaunch is the last step.</p>
 
 <p>Your bench was showing another agent's work because five separate parts of Terminal Delight
 each asked <em>which conversation is this pane in?</em> on their own, one pane at a time, and all
@@ -213,6 +215,9 @@ back to it, that is fine now — the pane follows the keyboard.</p>
     <li><b>Nothing here reaches your running window until you relaunch.</b> The live repair from
     earlier tonight — the hook, plus the forty-odd bindings written by hand — is what is holding
     your panes apart right now.</li>
+    <li><b>Both pull requests are merged</b> — the resolver, then the keyboard-follows fix — and the
+    installed launcher already resolves to a build carrying them. The window on your screen is an
+    older build from another branch, so nothing changes there until it is relaunched.</li>
   </ul>
 </div>
 

@@ -1,0 +1,542 @@
+<header class="top">
+  <div class="wrap">
+    <p class="kicker">terminal-delight &middot; 19 September 2026 &middot; <a href="https://github.com/parker-brown-family/terminal-delight/pull/610">pull request 610</a></p>
+    <h1>The bench acts on your click</h1>
+    <p class="lede">The five things you reported are fixed, on a branch that has <code>main</code>
+      merged into it. Four were patches. The fifth needed a decision, and that decision is the thing
+      in here worth your argument: <b>a dial press now waits for the harness's own question and
+      answers it</b>, and it waits until that question is off the screen rather than for a fixed
+      number of seconds.</p>
+    <p class="lede">The figures are in the order you raised them, after the three that carry the
+      dial.</p>
+    <p class="standing">
+      <span class="tag v">1389 tests pass</span>
+      <span class="tag v">clippy &amp; fmt clean</span>
+      <span class="tag v">4 mutations proved the guards</span>
+      <span class="tag c">bench pixels unverified</span>
+      <span class="tag v">the picker, measured off your pane</span>
+    </p>
+  </div>
+</header>
+
+<div class="wrap">
+
+<h2 class="sec">Read first</h2>
+<ol class="esc-list">
+  <li>
+    <h3>What ends the wait is the screen, not a deadline</h3>
+    <p><b>What it is.</b> While a dial press is in flight the bench holds every write, and lets go
+      once no menu is on the screen. No timeout fires while one is up.</p>
+    <p><b>Why it matters.</b> A draft typed into a picker is a menu keystroke, and the digits in
+      somebody's sentence are option numbers. That cannot be taken back; waiting can.</p>
+    <p><b>What it would take to change.</b> One arm of <code>dial_step</code>, and a test that says a
+      draft was typed into a menu.</p>
+  </li>
+  <li>
+    <h3>Your test photographed the one screen I had to guess at</h3>
+    <p><b>What it is.</b> You pressed the dial mid-prompt on today's <code>main</code>, the
+      confirmation came up, the effort stayed put, and the picture showed the picker carries <b>no
+      <code>esc to cancel</code></b> — which was the only thing telling this code a menu was up.</p>
+    <p><b>Why it matters.</b> A permission gate drawn the same way read as no menu, so a held draft
+      would have been typed into it. The gutter mark is now a second signal, and the real screen is a
+      test fixture.</p>
+    <p><b>What is still unphotographed.</b> The bench's own surfaces — the table, the artifact card,
+      the YOU block. One command, in the modal at the bottom.</p>
+  </li>
+  <li>
+    <h3>Six spellings for "where the document is"</h3>
+    <p><b>What it is.</b> <code>href</code>, <code>open</code>, <code>path</code>, <code>file</code>,
+      <code>url</code>, <code>link</code> — in that order of preference, local file before served URL.</p>
+    <p><b>Why it matters.</b> This is a protocol widening. Every spelling added here is one more thing
+      the window promises to keep understanding.</p>
+    <p><b>What it would take.</b> Deleting a string from a six-element array.</p>
+  </li>
+  <li>
+    <h3>The demo now seeds the payloads that break</h3>
+    <p><b>What it is.</b> The demo's artifact used the one spelling that always worked and its table had
+      two-word cells, so the screen people look at on purpose could not show either defect.</p>
+    <p><b>Why it matters.</b> That fixture is why two of today's five survived. It is now the shape that
+      arrives on real benches.</p>
+    <p><b>What it would take.</b> It is one payload in <code>demo_surfaces()</code>, with a test that
+      fails if it goes back.</p>
+  </li>
+  <li>
+    <h3>If the harness never asks, the draft comes back in 1.5 seconds</h3>
+    <p><b>What it is.</b> The only clock left. A harness that applies <code>/effort max</code> outright
+      — Codex, or a level Claude Code does not think is worth asking about — never raises a picker.</p>
+    <p><b>Why it matters.</b> It is the case that makes the hold safe to have at all, and it is the one
+      I could not test against a live harness.</p>
+    <p><b>What it would take.</b> A constant.</p>
+  </li>
+</ol>
+
+<h2 class="sec">The dial</h2>
+
+<p>You reported it twice, and the second time named the mechanism: <i>"all that happens is the
+<code>/effort &lt;value&gt;</code> is pre-pended to the prompt and not PUSHED THROUGH and CONFIRMED…
+the prompt in progress should be saved, deleted, then the effort value pushed through, confirmed, and
+then the user's prompt pasted back in, all seamlessly."</i> That is exactly the shape it now has. What
+was missing was not the erase — that was already there — but the fact that <b>typing the command does
+not change anything</b>. Claude Code answers it with a modal picker, and everything written after the
+command lands in that picker instead of in a line editor.</p>
+
+<figure>
+  <span class="lbl">01 &middot; One write, and what the picker did with the second half of it</span>
+  <div class="scroller">
+    <svg viewBox="0 0 980 300" role="img" aria-label="Two sequences compared. Before: a single write containing erase, command and draft, where the harness's picker appears mid-write and swallows the draft. After: an erase-and-command write, a wait, a Yes keypress, and only then the draft typed back.">
+      <defs>
+        <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="#8b8a80"/>
+        </marker>
+      </defs>
+      <g font-family="ui-monospace, monospace" font-size="11">
+        <text x="0" y="14" fill="#d03b3b" font-size="10.5" letter-spacing="1.4">BEFORE &#183; ONE WRITE</text>
+        <line x1="0" y1="26" x2="980" y2="26" stroke="#3a3a36"/>
+
+        <rect x="0" y="40" width="150" height="34" rx="5" fill="#232321" stroke="#3a3a36"/>
+        <text x="12" y="61" fill="#c3c2b7">ctrl+a  ctrl+k</text>
+        <rect x="158" y="40" width="168" height="34" rx="5" fill="#232321" stroke="#3a3a36"/>
+        <text x="170" y="61" fill="#c3c2b7">/effort max  &#8629;</text>
+        <rect x="334" y="40" width="250" height="34" rx="5" fill="#2e2e2b" stroke="#d03b3b"/>
+        <text x="346" y="61" fill="#ffffff">count the tests &#8592; their draft</text>
+        <line x1="0" y1="86" x2="584" y2="86" stroke="#8b8a80" marker-end="url(#ar)"/>
+        <text x="0" y="102" fill="#8b8a80" font-size="10">one write, no gap, nothing can arrive between the parts</text>
+
+        <rect x="334" y="120" width="330" height="86" rx="6" fill="#1a1a19" stroke="#d03b3b" stroke-dasharray="4 3"/>
+        <text x="346" y="140" fill="#d03b3b" font-size="10" letter-spacing="1.2">THE HARNESS PUTS THIS UP</text>
+        <text x="346" y="158" fill="#ffffff">Change effort level?</text>
+        <text x="346" y="176" fill="#c3c2b7">&#10095; 1. Yes, switch to max</text>
+        <text x="346" y="192" fill="#c3c2b7">  2. No, go back</text>
+        <path d="M 459 78 L 459 116" stroke="#d03b3b" marker-end="url(#ar)" fill="none"/>
+        <text x="680" y="150" fill="#d03b3b" font-size="11">the draft lands in the menu</text>
+        <text x="680" y="168" fill="#8b8a80" font-size="10.5">its digits are option numbers</text>
+        <text x="680" y="190" fill="#d03b3b" font-size="11">the dial is never confirmed</text>
+
+        <text x="0" y="242" fill="#199e70" font-size="10.5" letter-spacing="1.4">AFTER &#183; TWO WRITES, AND A SCREEN READ BETWEEN THEM</text>
+        <line x1="0" y1="252" x2="980" y2="252" stroke="#3a3a36"/>
+        <rect x="0" y="264" width="150" height="30" rx="5" fill="#232321" stroke="#3a3a36"/>
+        <text x="12" y="284" fill="#c3c2b7">erase</text>
+        <rect x="158" y="264" width="168" height="30" rx="5" fill="#232321" stroke="#3a3a36"/>
+        <text x="170" y="284" fill="#c3c2b7">/effort max  &#8629;</text>
+        <rect x="334" y="264" width="160" height="30" rx="5" fill="#1a1a19" stroke="#c98500" stroke-dasharray="4 3"/>
+        <text x="346" y="284" fill="#c98500">watch the screen</text>
+        <rect x="502" y="264" width="120" height="30" rx="5" fill="#232321" stroke="#199e70"/>
+        <text x="514" y="284" fill="#199e70">press Yes</text>
+        <rect x="630" y="264" width="250" height="30" rx="5" fill="#2e2e2b" stroke="#199e70"/>
+        <text x="642" y="284" fill="#ffffff">count the tests, caret restored</text>
+      </g>
+    </svg>
+  </div>
+  <figcaption>Drawn from the code on both sides. <b>Everything after the <code>&#8629;</code> went
+    into a picker the harness had already raised</b> — which is why the prompt appeared to vanish
+    and the effort never changed. The erase was doing its job the whole time.</figcaption>
+</figure>
+
+<figure>
+  <span class="lbl">02 &middot; Three readings of the screen, and what each one permits</span>
+  <div class="scroller">
+    <svg viewBox="0 0 980 250" role="img" aria-label="A three-way split of what the screen can be: no picker, somebody else's picker, or the dial's own confirmation, with what the window is allowed to do in each case.">
+      <g font-family="ui-monospace, monospace" font-size="11">
+        <rect x="380" y="0" width="220" height="30" rx="5" fill="#232321" stroke="#3987e5"/>
+        <text x="392" y="20" fill="#ffffff">read the bottom 14 rows</text>
+
+        <path d="M 490 30 L 490 46 L 130 46 L 130 62" stroke="#3a3a36" fill="none"/>
+        <path d="M 490 30 L 490 46 L 490 62" stroke="#3a3a36" fill="none"/>
+        <path d="M 490 30 L 490 46 L 850 46 L 850 62" stroke="#3a3a36" fill="none"/>
+
+        <rect x="0" y="62" width="260" height="30" rx="5" fill="#232321" stroke="#199e70"/>
+        <text x="12" y="82" fill="#199e70">None &#183; no menu at all</text>
+        <rect x="360" y="62" width="260" height="30" rx="5" fill="#232321" stroke="#8b8a80"/>
+        <text x="372" y="82" fill="#8b8a80">Other &#183; a menu, not ours</text>
+        <rect x="720" y="62" width="260" height="30" rx="5" fill="#232321" stroke="#199e70"/>
+        <text x="732" y="82" fill="#199e70">Confirm &#183; names our dial</text>
+
+        <rect x="0" y="108" width="260" height="76" rx="6" fill="#1a1a19" stroke="#3a3a36"/>
+        <text x="12" y="128" fill="#ffffff">type the draft back</text>
+        <text x="12" y="146" fill="#8b8a80">after 1.5s if it never asked,</text>
+        <text x="12" y="162" fill="#8b8a80">at once if we already pressed</text>
+        <rect x="360" y="108" width="260" height="76" rx="6" fill="#1a1a19" stroke="#8b8a80" stroke-dasharray="4 3"/>
+        <text x="372" y="128" fill="#ffffff">do nothing, keep holding</text>
+        <text x="372" y="146" fill="#8b8a80">no clock runs here at all</text>
+        <text x="372" y="162" fill="#8b8a80">their draft stays in the box</text>
+        <rect x="720" y="108" width="260" height="76" rx="6" fill="#1a1a19" stroke="#3a3a36"/>
+        <text x="732" y="128" fill="#ffffff">walk to Yes, press return</text>
+        <text x="732" y="146" fill="#8b8a80">once, then wait for it to go</text>
+
+        <text x="0" y="214" fill="#8b8a80" font-size="10">a picker is OTHER unless the question names the dial that was pressed &#8212; effort, or model &#8212; and has exactly two options, one of them a yes</text>
+        <text x="0" y="232" fill="#8b8a80" font-size="10">and a numbered list in an agent's own prose is NOT a menu: Other needs the footer the CLI prints only under a live picker</text>
+      </g>
+    </svg>
+  </div>
+  <figcaption>Drawn from <code>screenread::harness_confirm</code> and <code>workbench::dial_step</code>,
+    both unit-tested. <b>The middle case is the decision.</b> Collapsing "a menu that is not ours" into
+    "no menu" would make the safe-looking answer the dangerous one — a permission gate is also a
+    two-option picker with a Yes in it, and the dials are pressable while one is up.</figcaption>
+</figure>
+
+<h2 class="sec">Where the hold sits</h2>
+
+<figure>
+  <span class="lbl">03 &middot; The pane, then the clock, then the queue</span>
+  <div class="scroller">
+    <div class="steps">
+      <div class="step">
+        <span class="stepn">1</span>
+        <div class="arch">
+          <div class="abox">bench<span class="pill">composer</span></div>
+          <div class="wire"></div>
+          <div class="abox">pty<span class="pill">claude</span></div>
+        </div>
+        <p>Every keystroke goes straight down. The composer is a mirror, not a buffer — which is why
+          the dial cannot simply type.</p>
+      </div>
+      <div class="step">
+        <span class="stepn">2</span>
+        <div class="arch">
+          <div class="abox">bench<span class="pill">composer</span></div>
+          <div class="wire"></div>
+          <div class="abox">pty<span class="pill">claude</span></div>
+          <div class="aside new">120ms clock<span class="pill">reads 14 rows</span></div>
+        </div>
+        <p>A clock already reads the bottom of the screen eight times a second, for the spinner, the
+          bell and the &#10067; badge. <b>The dial borrows it.</b> No new thread, no new read.</p>
+      </div>
+      <div class="step">
+        <span class="stepn">3</span>
+        <div class="arch">
+          <div class="abox">bench<span class="pill">composer</span></div>
+          <div class="wire held"></div>
+          <div class="abox">pty<span class="pill">claude</span></div>
+          <div class="aside new">120ms clock<span class="pill">reads 14 rows</span></div>
+          <div class="aside hold">the queue<span class="pill">already there</span></div>
+        </div>
+        <p>The hold is a third rule on a gate that already had two — off screen, and no agent. Held
+          keystrokes drain in order the moment the picker is gone.</p>
+      </div>
+    </div>
+  </div>
+  <figcaption>Drawn from the code; the queue and the clock both predate this change. <b>Nothing new was
+    built.</b> The dial's whole mechanism is one field on the pane, one arm on an existing gate, and
+    fourteen rows that were already being read.</figcaption>
+</figure>
+
+<h2 class="sec">The other four</h2>
+
+<figure>
+  <span class="lbl">04 &middot; The click that closes an open menu</span>
+  <div class="scroller">
+    <svg viewBox="0 0 980 214" role="img" aria-label="A workbench with an open effort menu. Before, only a second press on the dial closed it. Now every click outside it closes it, including one that lands on nothing.">
+      <g font-family="ui-monospace, monospace" font-size="11">
+        <rect x="0" y="0" width="620" height="204" rx="8" fill="#1a1a19" stroke="#3a3a36"/>
+        <text x="14" y="22" fill="#8b8a80" font-size="10" letter-spacing="1.2">THE BENCH</text>
+        <rect x="430" y="12" width="76" height="24" rx="5" fill="#232321" stroke="#c98500"/>
+        <text x="444" y="28" fill="#c98500">MAX &#9662;</text>
+        <rect x="430" y="44" width="110" height="112" rx="6" fill="#232321" stroke="#3987e5"/>
+        <text x="444" y="62" fill="#c3c2b7">low</text>
+        <text x="444" y="82" fill="#c3c2b7">medium</text>
+        <text x="444" y="102" fill="#c3c2b7">high</text>
+        <text x="444" y="122" fill="#c3c2b7">xhigh</text>
+        <text x="444" y="142" fill="#3987e5">max</text>
+        <circle cx="150" cy="110" r="9" fill="none" stroke="#199e70" stroke-width="1.5"/>
+        <path d="M 150 101 L 150 119 M 141 110 L 159 110" stroke="#199e70"/>
+        <text x="170" y="114" fill="#199e70">a click on nothing closes it</text>
+        <circle cx="150" cy="70" r="9" fill="none" stroke="#199e70" stroke-width="1.5"/>
+        <path d="M 150 61 L 150 79 M 141 70 L 159 70" stroke="#199e70"/>
+        <text x="170" y="74" fill="#199e70">a click on a card closes it</text>
+        <text x="14" y="176" fill="#8b8a80" font-size="10">and does not press the card underneath &#8212; the press that dismisses a popup is not also a press</text>
+        <text x="14" y="192" fill="#8b8a80" font-size="10">escape closes it too, above the gallery and above the composer</text>
+
+        <rect x="660" y="0" width="320" height="204" rx="8" fill="#1a1a19" stroke="#d03b3b" stroke-dasharray="4 3"/>
+        <text x="674" y="22" fill="#d03b3b" font-size="10" letter-spacing="1.2">BEFORE</text>
+        <text x="674" y="48" fill="#c3c2b7">one way out: press the same</text>
+        <text x="674" y="66" fill="#c3c2b7">dial again.</text>
+        <text x="674" y="94" fill="#8b8a80">escape reached past it and</text>
+        <text x="674" y="112" fill="#8b8a80">emptied the composer instead,</text>
+        <text x="674" y="130" fill="#8b8a80">while the menu stayed up.</text>
+      </g>
+    </svg>
+  </div>
+  <figcaption>Drawn from the hit dispatcher and the escape ladder. <b>The dismissal is resolved before
+    the zone lookup</b>, because a click on the bench's background reaches no control at all — and that
+    is the click most likely to mean <i>go away</i>.</figcaption>
+</figure>
+
+<figure>
+  <span class="lbl">05 &middot; Your own message, and the ink it apologised in</span>
+  <p class="recon">yellow &#8212; the right-hand side is a RECONSTRUCTION, drawn from the code and
+    the palette. No window was staged, so nothing here was photographed.</p>
+  <div class="scroller">
+    <div class="two">
+      <div class="mock bad">
+        <span class="mocklbl">every long turn</span>
+        <div class="you-m">
+          <div class="youlbl">YOU</div>
+          <div class="youfaint">your message is no longer in this pane&rsquo;s scrollback</div>
+        </div>
+        <p class="mnote"><b>1.22 : 1</b> against the panel behind it, where 1.0 is two identical
+          colours. It was <code>th.faint</code> — the colour a divider is mixed from.</p>
+      </div>
+      <div class="mock good">
+        <span class="mocklbl">now</span>
+        <div class="you-m">
+          <div class="youlbl">YOU</div>
+          <div class="youtext">If we set the effort to max in Workbench, or change the effort level or
+            the model, the terminal would ask a confirmation message&hellip;</div>
+        </div>
+        <p class="mnote">Latched by the pane from the rows it already reads, so the scrollback losing it
+          no longer loses it. The apology survives for the pane nobody watched, at <b>4.7 : 1</b>.</p>
+      </div>
+    </div>
+  </div>
+  <figcaption><b>1.22:1, where 1.0 is two identical colours</b> — computed from the palette, not
+    sampled from a screenshot, and the reason that line could not be read at all. The sentence was
+    also a misdiagnosis: the read happened at every paint, so the block went blank whenever the
+    message had scrolled, and it blamed the scrollback for a matter of timing.</figcaption>
+</figure>
+
+<figure>
+  <span class="lbl">06 &middot; The artifact card, before and after</span>
+  <p class="recon">yellow &#8212; the right-hand card is a RECONSTRUCTION from the parse and the
+    renderer. The left one is transcribed from your screenshot.</p>
+  <div class="scroller">
+    <div class="two">
+      <div class="mock bad">
+        <span class="mocklbl">as it arrived on your bench</span>
+        <div class="card-m">
+          <div class="chips"><span class="chip grey">unclassified</span></div>
+          <div class="mtitle">Typing into the pane's rename box</div>
+          <div class="msub">an artifact needs a `href` &mdash; an absolute path or a full URL</div>
+          <div class="mmeta">NOTHING IS CLAIMED ABOUT THIS</div>
+          <pre class="mjson">{
+  "td": "0.4",
+  "kind": "artifact",
+  "model": {
+    "what": "A drawn decision brief on&hellip;
+    "open": "file:///home/parker/&hellip;</pre>
+          <div class="mno">no verb, no click, no way in</div>
+        </div>
+      </div>
+      <div class="mock good">
+        <span class="mocklbl">now</span>
+        <div class="card-m">
+          <div class="chips"><span class="chip blue">artifact</span><span class="chip">html</span></div>
+          <div class="mtitle">Typing into the pane's rename box</div>
+          <div class="msub">A drawn decision brief on why the workbench swallows the keystrokes</div>
+          <div class="frow"><span class="fk">target</span><span class="fv">&hellip;/reports/2026-09-19-keys.html</span></div>
+          <div class="frow"><span class="fk">served</span><span class="fv">http://127.0.0.1:8731/&hellip;</span></div>
+          <div class="frow"><span class="fk">finding</span><span class="fv">bench_key runs at pane.rs:4662 and every exit stops the event</span></div>
+          <div class="frow"><span class="fk">measured</span><span class="fv">21 of 27 chords are swallowed on the workbench face</span></div>
+          <div class="mverb">&#9654; OPEN</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <figcaption>The left card is transcribed from your screenshot; the right is drawn from the parse and
+    the renderer. <b>One click on the spine row opens it now</b> — the row always called
+    <code>bench_open</code>, and <code>bench_open</code> always opened an artifact's href. There was no
+    href, because the payload said <code>open</code>.</figcaption>
+</figure>
+
+<figure>
+  <span class="lbl">07 &middot; A four-column table in a 900px pane</span>
+  <p class="recon">yellow &#8212; the right-hand table is a RECONSTRUCTION of what
+    <code>column_shares</code> asks for. The widths are its numbers; the wrapping is HTML's, not
+    gpui's.</p>
+  <div class="scroller">
+    <div class="two">
+      <div class="mock bad">
+        <span class="mocklbl">equal columns, clipped at 40 characters</span>
+        <div class="tbl-m old">
+          <div class="tr th"><span>ISSUE</span><span>WHAT IT IS</span><span>SIZE</span><span>VERDICT JUST NOW</span></div>
+          <div class="tr"><span>#410 skin --list panics on a clo&hellip;</span><span>Rust turns a broken-pipe write i&hellip;</span><span>One line (restore SIGPIPE defau&hellip;</span><span>STILL REAL &mdash; piping it exited 1&#9130;</span></div>
+          <div class="tr"><span>#590 option_button paints a sec&hellip;</span><span>The answer chips set border_colo&hellip;</span><span>Delete ~5 lines; the identical f&hellip;</span><span>STILL REAL in source &mdash; both b&#9130;</span></div>
+          <div class="tr"><span>#594 $TD_TAG is unset in agent p&hellip;</span><span>The workbench's anti-forgery che&hellip;</span><span>Was one line at pane spawn</span><span>LIKELY INVALID &mdash; TD_TAG is se&#9130;</span></div>
+        </div>
+        <span class="edge">the pane ends here &#9130;</span>
+      </div>
+      <div class="mock good">
+        <span class="mocklbl">columns sized by content, cells wrap</span>
+        <div class="tbl-m new">
+          <div class="tr th"><span>ISSUE</span><span>WHAT IT IS</span><span>SIZE</span><span>VERDICT JUST NOW</span></div>
+          <div class="tr"><span>#410 skin --list panics on a closed pipe</span><span>Rust turns a broken-pipe write into a panic</span><span>One line</span><span>STILL REAL &mdash; piping it exited 101 on today's build</span></div>
+          <div class="tr"><span>#590 option_button paints a second border</span><span>The answer chips set border_color over a chip that has one</span><span>~5 lines</span><span>STILL REAL in source &mdash; both branches</span></div>
+          <div class="tr"><span>#594 $TD_TAG is unset in agent panes</span><span>The anti-forgery check has nothing to compare</span><span>One line at spawn</span><span>LIKELY INVALID &mdash; TD_TAG is set in this build</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <figcaption>Left transcribed from your screenshot, right drawn from <code>column_shares</code>, which
+    is unit-tested and is not a rendering. <b>The share of each column is its widest cell, floored at
+    ten characters and capped at forty-eight</b> — the cap is what stops one essay-length cell leaving
+    its neighbours a sliver each.</figcaption>
+</figure>
+<h2 class="sec">What was proved, and how it could be wrong</h2>
+
+<table class="wide">
+  <thead>
+    <tr><th>Claim</th><th>Confidence</th><th>What would prove it wrong</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><b>The harness raises a picker for <code>/effort</code> and <code>/model</code></b>, headed
+        <code>Change effort level?</code> and <code>Switch model?</code></td>
+      <td><span class="tag v">measured</span> strings read out of the shipped 2.1.274 binary</td>
+      <td>A build that words them differently. Then nothing is pressed, the draft still comes back, and
+        you answer the picker by hand — today's behaviour.</td>
+    </tr>
+    <tr>
+      <td><b>That picker's layout</b> — a heading, two reason paragraphs, a numbered pair with the
+        gutter mark on Yes, and <b>no footer</b></td>
+      <td><span class="tag v">measured</span> from your own pane, 21 September</td>
+      <td>Nothing — you photographed it. It was <span class="tag w">inferred</span> when this was
+        written, and the capture corrected two things: a second reason paragraph about the prompt
+        cache, and the missing <code>esc to cancel</code>.</td>
+    </tr>
+    <tr>
+      <td><b>A picker with no footer was being read as no menu at all</b>, so a held draft would have
+        been typed into one after 1.5 seconds</td>
+      <td><span class="tag v">measured</span> — the real screen fails the old gate</td>
+      <td>It is fixed: "a menu is up" now reads the gutter mark as well as the footer, and a mutation
+        back to the footer alone fails the new test. What would prove the FIX wrong is a live picker
+        that draws neither.</td>
+    </tr>
+    <tr>
+      <td><b>The prompt caret is <code>❯</code>, U+276F</b></td>
+      <td><span class="tag v">measured</span> across four live panes</td>
+      <td>Nothing — this one was checked because the first draft of the test used <code>›</code>, copied
+        from an older fixture, and failed.</td>
+    </tr>
+    <tr>
+      <td><b>The four new guards can fail</b></td>
+      <td><span class="tag v">measured</span> by mutation</td>
+      <td>Each mutation was confirmed to land in the source before the test was run: the gate dropping
+        its third rule, the press not arming, the answer skipping the on-screen check, and
+        <code>Other</code> settling instead of waiting.</td>
+    </tr>
+    <tr>
+      <td><b>The table wraps inside the card at 968px</b></td>
+      <td><span class="tag c">unverified</span></td>
+      <td>Looking at it. The shares are tested; taffy's shrink behaviour under a 10px gap is not.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 class="sec">Yours to decide</h2>
+
+<div class="grill">
+  <div class="ask">
+    <h3>Is the hold right?</h3>
+    <p>A dial press can hold your composer indefinitely if a picker you never answer stays up.
+      My recommendation: <b>keep it</b>. The far end is not reading a sentence from anybody in that
+      state, so nothing is lost by waiting, and the alternative loses a keystroke into a menu.</p>
+  </div>
+  <div class="ask">
+    <h3>Six spellings, or fewer?</h3>
+    <p><code>href · open · path · file · url · link</code>. Every one of them is a word an agent on this
+      box has actually used for a document. My recommendation: <b>keep all six</b> and treat the list as
+      the protocol's real surface, since a refused artifact is silent from the agent's side.</p>
+  </div>
+  <div class="ask">
+    <h3>Should an artifact's extra keys be on the card?</h3>
+    <p>Its <code>finding</code>, <code>measured</code> and <code>served</code> are drawn as facts under
+      the target, in the order the agent wrote them. The alternative is dropping them, which is what
+      happened before. My recommendation: <b>drawn</b>.</p>
+  </div>
+  <div class="ask">
+    <h3>Want the photographs before this merges?</h3>
+    <p>The pixels are the one leg I could not run. My recommendation: <b>merge, then look</b> — every
+      change is behind a test, the demo now seeds the shapes that break, and the checking command is one
+      line. Say the word and I will stage it the moment your screen is free.</p>
+  </div>
+</div>
+
+<h2 class="sec">Behind this</h2>
+<div class="cards">
+  <div class="card" data-dlg="d-drawn"><h3>What each picture is drawn from</h3><p>Which parts are code, which are your screenshots, and which are mine.</p><button class="more" data-dlg="d-drawn">Open</button></div>
+  <div class="card" data-dlg="d-cases"><h3>The dial's case table</h3><p>Every state a press can be in, and what happens in it.</p><button class="more" data-dlg="d-cases">Open</button></div>
+  <div class="card" data-dlg="d-shoot"><h3>How to photograph it</h3><p>One command, ninety seconds, nothing touching your session.</p><button class="more" data-dlg="d-shoot">Open</button></div>
+</div>
+
+</div>
+
+<dialog id="d-drawn">
+  <div class="dlg-head"><div><h3>What each picture is drawn from</h3><p class="repo">provenance, per figure</p></div><button class="x" data-close>&times;</button></div>
+  <div class="dlg-body">
+    <h4>Drawn from the code</h4>
+    <ul>
+      <li><b>01, 02, 03</b> — <code>workbench::dial_bytes</code>, <code>dial_step</code>,
+        <code>restore_bytes</code>, <code>screenread::harness_confirm</code>, and the pane's 120ms
+        clock. Each has a unit test named in the pull request.</li>
+      <li><b>05 right</b> — <code>benchdraw::column_shares</code>, which is pure and tested. What is
+        <em>not</em> from the code is how the wrap looks: that is taffy's, at a width I could not render.</li>
+      <li><b>07</b> — the hit dispatcher and <code>workbench::peel</code>.</li>
+    </ul>
+    <h4>Transcribed from your screenshots</h4>
+    <ul>
+      <li><b>04 left</b> and <b>05 left</b> — the unclassified card and the clipped table, copied from
+        the two images you sent, including the cut-off text.</li>
+      <li><b>06 left</b> — the faint placeholder.</li>
+    </ul>
+    <h4>Mine, and estimated</h4>
+    <ul>
+      <li><b>The contrast figures in 06.</b> 1.22:1 is the measured range for <code>th.faint</code> on
+        these panel surfaces, recorded when the chrome legibility pass ran; 4.7:1 is computed for
+        <code>ink_faint</code> (foreground at 60% alpha) over <code>surface-1</code>. Neither is sampled
+        from a screenshot.</li>
+      <li><b>Every "after" mockup.</b> No window was staged, so all four are drawings of what the code
+        should produce, not photographs of it.</li>
+    </ul>
+  </div>
+</dialog>
+
+<dialog id="d-cases">
+  <div class="dlg-head"><div><h3>The dial's case table</h3><p class="repo">workbench::dial_step, exhaustively</p></div><button class="x" data-close>&times;</button></div>
+  <div class="dlg-body">
+    <h4>Six states, and every one of them reachable</h4>
+    <table>
+      <thead><tr><th>On screen</th><th>Pressed Yes?</th><th>What happens</th><th>Why</th></tr></thead>
+      <tbody>
+        <tr><td>our confirmation</td><td>no</td><td><b>press Yes</b></td><td>the press the person already made, arriving where the harness can hear it</td></tr>
+        <tr><td>our confirmation</td><td>yes</td><td>wait</td><td>the keypress needs a frame to land</td></tr>
+        <tr><td>somebody else's menu</td><td>either</td><td>wait, with no deadline</td><td>a draft typed into a menu is a menu keystroke</td></tr>
+        <tr><td>nothing</td><td>yes</td><td><b>type the draft back</b></td><td>answered and gone</td></tr>
+        <tr><td>nothing</td><td>no, &lt; 1.5s</td><td>wait</td><td>it may still be drawing</td></tr>
+        <tr><td>nothing</td><td>no, &ge; 1.5s</td><td><b>type the draft back</b></td><td>a harness that was never going to ask has not asked</td></tr>
+      </tbody>
+    </table>
+    <h4>What ends a hold that has no deadline</h4>
+    <p>The menu going away, whoever makes it go — our keypress or your hand. The agent leaving the pane
+      also clears it, because the next agent is a different conversation.</p>
+    <h4>The case this cannot reach</h4>
+    <p>A dial pressed while the pane is off screen. The command is queued rather than written, the hold
+      goes on anyway, and the whole sequence plays out when the pane comes back — which is the existing
+      rule for every bench write and not a new one.</p>
+  </div>
+</dialog>
+
+<dialog id="d-shoot">
+  <div class="dlg-head"><div><h3>How to photograph it</h3><p class="repo">nothing here touches session 1</p></div><button class="x" data-close>&times;</button></div>
+  <div class="dlg-body">
+    <h4>The command</h4>
+    <pre><code>TD_BIN=/home/parker/Work/td-rodeo/app/target/release/terminal-delight \
+  /home/parker/Work/td-rodeo/scripts/workbench-smoke.sh /tmp/rodeo-shots</code></pre>
+    <p>It launches a window on a session of its own, seeds one of every kind of surface through the real
+      file transport, drives the bench with <code>ctl</code>, photographs each step and cleans up after
+      itself. Exit 0 means every step reported ok; it does not mean the pixels are right, which is why
+      the last line it prints is <i>now LOOK at the images</i>.</p>
+    <h4>What to look at, in order</h4>
+    <ul>
+      <li><b>The table.</b> Four columns, sentences in them, nothing past the right edge of the card and
+        no horizontal scrollbar on the pane.</li>
+      <li><b>The artifact.</b> It should say <code>artifact</code>, not <code>unclassified</code>, carry
+        an OPEN verb, and list <code>served</code> and <code>finding</code> under its target.</li>
+      <li><b>The spine.</b> One click on the artifact's row should open the file in your browser and
+        leave the bench where it was.</li>
+    </ul>
+    <h4>The two that need a live agent</h4>
+    <p>The dial and the YOU block cannot be staged this way — the smoke window's panes are shells, and a
+      shell has no harness to raise a picker and no turn to echo. Those want a real pane: type a
+      half-sentence into the composer, press <b>MAX</b>, and watch the sentence come back with the caret
+      where you left it.</p>
+  </div>
+</dialog>

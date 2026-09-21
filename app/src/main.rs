@@ -73,6 +73,7 @@ mod socketpty;
 mod sticky;
 mod surface;
 mod surfacefeed;
+mod tenancy;
 mod term;
 #[cfg(test)]
 mod testsync;
@@ -34490,8 +34491,29 @@ fn probe_cli(args: &[String]) -> i32 {
 /// live conversations — the one readers that attribute work refuse). A pane that
 /// cannot be bound is listed with a null session, because "I do not know" is the
 /// answer this whole module exists to be able to give.
-fn bindings_cli(_args: &[String]) -> i32 {
+fn bindings_cli(args: &[String]) -> i32 {
     let home = session::home_dir();
+    // A session id asks the OTHER question. The no-argument form answers "which
+    // conversation is each live agent in"; naming an id asks "is that id a whole
+    // conversation, or a segment of one" — answered from the durable lineage
+    // rather than from any running process, so it still works for a
+    // conversation whose agent ended days ago. It is also the command that
+    // answers what a `/clear` does, the first time anyone types one.
+    if let Some(id) = args.first() {
+        let t = tenancy::tenancy_of(id, &home);
+        let c = t.chain();
+        println!(
+            "{}",
+            serde_json::json!({
+                "session": id,
+                "tenancy": t.word(),
+                "root": t.root(),
+                "seq": c.map(|c| c.seq),
+                "join": c.and_then(|c| c.join).map(|j| j.as_str()),
+            })
+        );
+        return 0;
+    }
     let mut facts: Vec<paneident::PaneFacts> = Vec::new();
     // The agent process behind each pane row, reported alongside it: two agents
     // started under ONE shell are one pane to every reader in the window, and a
@@ -34548,6 +34570,14 @@ fn bindings_cli(_args: &[String]) -> i32 {
         .zip(agents.iter())
         .map(|(f, (agent_pid, _))| {
             let b = bound.get(&f.shell_pid);
+            // Which conversation the pane is IN, and then whether that id is a
+            // whole conversation or a segment of one. Two questions, two
+            // sources: the binding is read off the process, the chain off the
+            // agent's own ledger entry. Keyed by the AGENT pid rather than the
+            // shell, because the hook runs as the agent's child and stamps
+            // `$PPID`.
+            let t = tenancy::tenancy_for(*agent_pid, &home);
+            let c = t.chain();
             serde_json::json!({
                 "shell_pid": f.shell_pid,
                 "agent_pid": agent_pid,
@@ -34556,6 +34586,15 @@ fn bindings_cli(_args: &[String]) -> i32 {
                 "session": b.map(|b| b.session_id.clone()),
                 "bond": b.map(|b| b.bond.as_str()),
                 "certain": b.map(|b| b.is_certain()).unwrap_or(false),
+                // `tenancy` names WHICH absence when there is no chain:
+                // `unchained` is the ledger having been read and not naming
+                // this agent, `unrecorded` is there being no ledger to read.
+                // The three fields under it are null in both cases rather than
+                // defaulted — a root nobody recorded is not a root.
+                "tenancy": t.word(),
+                "root": c.map(|c| c.root.clone()),
+                "seq": c.map(|c| c.seq),
+                "join": c.and_then(|c| c.join).map(|j| j.as_str()),
             })
         })
         .collect();
@@ -34579,6 +34618,8 @@ Usage:
   terminal-delight agent-usage   refresh this machine's AI subscription usage records
   terminal-delight agent-vitals  the three attention bars for one transcript, as JSON
   terminal-delight bindings      which conversation each live agent is in, as JSON
+  terminal-delight bindings <id> whether that session id is a conversation or a
+                                 segment of one, from the durable lineage
   terminal-delight skin          resolve a chrome skin against a palette, as JSON
   terminal-delight surface [f]   put a work object on this pane's workbench
                                  (a TDSP document, or prose with a ```td block;
