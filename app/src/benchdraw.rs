@@ -499,11 +499,158 @@ pub fn shelf_tab(
         .child(shelf.label().to_string())
 }
 
-/// The weights: effort, complexity, depth, confidence.
+/// One part of the weight sentence that carries an ink of its own.
 ///
-/// A surface the agent did not weigh says so in one word rather than showing
-/// four empty slots — four `unavailable`s in a row is noise, and one honest
-/// sentence is the same fact.
+/// Byte ranges into [`WeightLine::text`] rather than separate elements,
+/// because the sentence is ONE run of text: a highlight follows a wrap and a
+/// row of coloured boxes does not, and this line has to survive a pane narrow
+/// enough to break it across three rows.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Mark {
+    /// The system's own name, in the agent's own words. Full strength — it is
+    /// the proper noun in the sentence, and it is the string that used to be
+    /// the one thing cut off.
+    Named,
+    /// How far down the change reaches.
+    Deep(Depth),
+    /// How much the agent will stand behind any of it.
+    Sure(Confidence),
+}
+
+/// The weights written out as a sentence, and the ranges inside it that are
+/// not plain prose.
+pub struct WeightLine {
+    pub text: String,
+    pub marks: Vec<std::ops::Range<usize>>,
+    pub inks: Vec<Mark>,
+}
+
+/// `A` or `An`, agreeing with what follows it.
+///
+/// Eight adjectives reach this and exactly one of them starts with a vowel,
+/// which is precisely how `A involved job` shipped in the first draft of this
+/// sentence: a case that occurs once is a case nobody writes a branch for.
+fn article(word: &str) -> &'static str {
+    match word.chars().next() {
+        Some('a' | 'e' | 'i' | 'o' | 'u') => "An",
+        _ => "A",
+    }
+}
+
+/// The four weights, said the way a person would say them.
+///
+/// **This is the whole point of the readout and it was the thing it did not
+/// do.** The strip used to print `effort L · complexity moderate · depth
+/// subsystem · terminal-delight — wo… · confidence measured` — four
+/// name-and-token pairs, one of them cut off mid-word with nothing to hover
+/// and no way to see the rest. Parker: *"That depth summary is … with no hover
+/// to reveal — it is also a bit machine legible and not for people"*.
+///
+/// Two defects, one repair. A sentence cannot be truncated without becoming
+/// obviously broken, so the pressure that produced `terminal-delight — wo…` is
+/// gone rather than patched with a tooltip; and the enum tokens are replaced
+/// by what each one MEANS, which the types already say in their own doc
+/// comments and which no reader of the card could otherwise know. `subsystem`
+/// is a word you have to have been told; *several components depend on it* is
+/// the sentence being told.
+///
+/// Every clause drops on its own, because every weight is optional and an
+/// absent one must read as absent rather than as a default. The property test
+/// walks all 625 combinations and demands each one is still a sentence.
+pub fn weight_line(w: &Weight) -> WeightLine {
+    let mut text = String::new();
+    let mut marks: Vec<std::ops::Range<usize>> = Vec::new();
+    let mut inks: Vec<Mark> = Vec::new();
+
+    // HOW BIG and HOW TANGLED, in one noun phrase: they are two adjectives
+    // about the same job and a person says them in one breath. Kept apart in
+    // the type for the reason the type gives — a thousand-line rename is large
+    // and trivial — and that distinction survives here as two adjectives, not
+    // as two rows.
+    let size = w.effort.map(|e| match e {
+        crate::surface::Effort::Small => "small",
+        crate::surface::Effort::Medium => "middling",
+        crate::surface::Effort::Large => "big",
+        crate::surface::Effort::Epic => "huge",
+    });
+    let tangle = w.complexity.map(|c| match c {
+        crate::surface::Complexity::Trivial => "straightforward",
+        crate::surface::Complexity::Moderate => "fiddly",
+        crate::surface::Complexity::Involved => "involved",
+        crate::surface::Complexity::Hairy => "hairy",
+    });
+    match (size, tangle) {
+        (Some(s), Some(t)) => text.push_str(&format!("{} {s}, {t} job", article(s))),
+        (Some(s), None) => text.push_str(&format!("{} {s} job", article(s))),
+        (None, Some(t)) => text.push_str(&format!("{} {t} job", article(t))),
+        (None, None) => {}
+    }
+
+    // WHERE IT LANDS, and what it costs to be wrong there — the field a
+    // reviewer actually wants, per `Foundation`'s own doc: not "how long" but
+    // "if this is wrong, how much else is wrong with it".
+    if let Some(f) = &w.foundation {
+        text.push_str(if text.is_empty() { "In " } else { " in " });
+        // The name is written WHOLE. `clip(&f.system, 22)` is what Parker was
+        // pointing at, and a sentence has nowhere to put an ellipsis: the line
+        // wraps instead, which is what the heading directly above it has done
+        // since a title was cut at "A kind this build has never hea".
+        //
+        // An empty system and the parser's own `unnamed` sentinel both say the
+        // same thing and neither of them says it in English, so they say it
+        // here. Unknown is not zero, and "In , where" is how a renderer admits
+        // it forgot that.
+        let system = match f.system.trim() {
+            "" | "unnamed" => "a system it did not name",
+            named => named,
+        };
+        let at = text.len();
+        text.push_str(system);
+        marks.push(at..text.len());
+        inks.push(Mark::Named);
+        text.push_str(", where ");
+        let at = text.len();
+        text.push_str(match f.depth {
+            Depth::Leaf => "nothing else depends on it",
+            Depth::Component => "other components call it",
+            Depth::Subsystem => "several components depend on it",
+            Depth::Bedrock => "a mistake here is paid for by everything above it",
+        });
+        marks.push(at..text.len());
+        inks.push(Mark::Deep(f.depth));
+    }
+    if !text.is_empty() {
+        text.push('.');
+    }
+
+    // HOW SURE, as its own sentence. It is a statement ABOUT the three above
+    // rather than a fourth thing standing beside them, and a reader who has
+    // just been told how deep something reaches is owed the next sentence
+    // saying whether anybody checked.
+    if let Some(c) = w.confidence {
+        if !text.is_empty() {
+            text.push(' ');
+        }
+        let at = text.len();
+        text.push_str(match c {
+            Confidence::Measured => "Measured",
+            Confidence::Inferred => "Inferred, not measured",
+            Confidence::Hunch => "A hunch",
+            Confidence::Unknown => "The agent looked and could not tell",
+        });
+        marks.push(at..text.len());
+        inks.push(Mark::Sure(c));
+        text.push('.');
+    }
+
+    WeightLine { text, marks, inks }
+}
+
+/// The weights: how big, how tangled, how deep, and how sure.
+///
+/// A surface nobody weighed says so in a sentence rather than showing four
+/// empty slots — four `unavailable`s in a row is noise, and one honest line is
+/// the same fact.
 ///
 /// **NOT CHIPS.** These were four `sk.chip(false)` pills sitting directly above
 /// the tab strip, which is a row of chips you press — so the card offered eight
@@ -511,106 +658,67 @@ pub fn shelf_tab(
 /// TASK STATS row … cards need to be bordered and grouped together and made
 /// obvious they are NOT CLICKABLE BUTTONS … these are read only"*.
 ///
-/// So: one border around the group rather than one border per value, and every
-/// value wears its own name. Naming them is what makes them unmistakably a
-/// readout — `involved` and `measured` are bare words that could be anything,
-/// and `complexity involved` could not be a button. It also says two things the
-/// old row never did, because nothing but the ordering distinguished a
-/// complexity from a confidence.
+/// One border around the group survives that, and is the whole of what is left
+/// of the old layout. The four labelled values inside it are gone: see
+/// [`weight_line`] for why a tuple of enum tokens with one of them truncated
+/// was the wrong object, and what replaced it.
 ///
-/// Colour survives the change: depth and confidence are the two weights that
-/// carry an argument, and they keep their inks.
+/// Colour survives too. Depth and confidence are the two weights that carry an
+/// argument, and they keep their inks — now as highlights on their own clause
+/// of the sentence, which is the same mechanism the composer's caret uses and
+/// the only one that stays correct through a wrap.
 pub fn weights(w: &Weight, sk: &Skin, th: &Theme) -> Div {
     if w.is_silent() {
-        return div().child(micro("unweighed", Step::Note, sk.ink.ink_faint, sk, th));
-    }
-    // name, value, and the value's ink.
-    let mut facts: Vec<(&'static str, String, Hsla)> = Vec::new();
-    if let Some(e) = w.effort {
-        facts.push((
-            "effort",
-            match e {
-                crate::surface::Effort::Small => "S",
-                crate::surface::Effort::Medium => "M",
-                crate::surface::Effort::Large => "L",
-                crate::surface::Effort::Epic => "XL",
-            }
-            .to_string(),
-            th.text,
+        return div().child(micro(
+            "Nobody said how big this is or how deep it goes.",
+            Step::Note,
+            sk.ink.ink_faint,
+            sk,
+            th,
         ));
     }
-    if let Some(c) = w.complexity {
-        facts.push((
-            "complexity",
-            match c {
-                crate::surface::Complexity::Trivial => "trivial",
-                crate::surface::Complexity::Moderate => "moderate",
-                crate::surface::Complexity::Involved => "involved",
-                crate::surface::Complexity::Hairy => "hairy",
-            }
-            .to_string(),
-            th.text,
-        ));
-    }
-    if let Some(f) = w.foundation.clone() {
-        // Depth is the field a reviewer actually wants, so bedrock is the one
-        // weight allowed to shout.
-        let colour = match f.depth {
-            Depth::Bedrock => th.complement,
-            Depth::Subsystem => th.accent,
-            _ => th.text,
-        };
-        facts.push((
-            "depth",
-            format!(
-                "{} \u{b7} {}",
-                match f.depth {
-                    Depth::Leaf => "leaf",
-                    Depth::Component => "component",
-                    Depth::Subsystem => "subsystem",
-                    Depth::Bedrock => "bedrock",
+    let line = weight_line(w);
+    let spans: Vec<(std::ops::Range<usize>, gpui::HighlightStyle)> = line
+        .marks
+        .iter()
+        .zip(line.inks.iter())
+        .map(|(range, mark)| {
+            let colour = match *mark {
+                // Depth is the field a reviewer actually wants, so bedrock is
+                // the one weight allowed to shout.
+                Mark::Deep(Depth::Bedrock) => th.complement,
+                Mark::Deep(Depth::Subsystem) => th.accent,
+                Mark::Named | Mark::Deep(_) | Mark::Sure(Confidence::Measured) => th.text,
+                // Amber — yours to argue with. The same ink the doubts use,
+                // because it is the same fact said about a different thing.
+                Mark::Sure(Confidence::Inferred | Confidence::Hunch) => ink(Tint::Pending, th),
+                Mark::Sure(Confidence::Unknown) => sk.ink.ink_faint,
+            };
+            (
+                range.clone(),
+                gpui::HighlightStyle {
+                    color: Some(colour),
+                    ..Default::default()
                 },
-                clip(&f.system, 22)
-            ),
-            colour,
-        ));
-    }
-    if let Some(c) = w.confidence {
-        let colour = match c {
-            Confidence::Measured => th.text,
-            // Amber — yours to argue with. The same ink the doubts use, because
-            // it is the same fact said about a different thing.
-            Confidence::Inferred | Confidence::Hunch => ink(crate::workbench::Tint::Pending, th),
-            Confidence::Unknown => sk.ink.ink_faint,
-        };
-        facts.push(("confidence", c.label().to_string(), colour));
-    }
+            )
+        })
+        .collect();
+    // A BLOCK, not a flex row. gpui's `Style::default` is `Display::Block`, so
+    // the sentence is a single run of text laid out against the card's width
+    // and it WRAPS — which is the whole reason the four values became one
+    // string. A `flex_row` here would make the sentence a flex item with
+    // `min-width: auto` and it would run off the right edge instead.
     div()
-        .flex()
-        .flex_row()
-        .flex_wrap()
-        .items_center()
-        .gap(px(13.))
+        .w_full()
         .px(px(10.))
-        .py(px(5.))
+        .py(px(6.))
         .rounded(sk.radius())
         .border_1()
         .border_color(sk.ink.rule)
-        .children(facts.into_iter().map(|(name, value, colour)| {
-            div()
-                .flex()
-                .flex_row()
-                .items_baseline()
-                .gap(px(4.))
-                .child(micro(sk.caps(name), Step::Tag, sk.ink.ink_faint, sk, th))
-                .child(
-                    div()
-                        .text_size(px(sk.pt(Step::Fine)))
-                        .font_family(th.font_family.clone())
-                        .text_color(colour)
-                        .child(value),
-                )
-        }))
+        .text_size(px(sk.pt(Step::Fine)))
+        .font_family(th.font_family.clone())
+        .text_color(crate::emphasis::meta(th))
+        .child(sel(line.text).with_highlights(spans))
 }
 
 /// The body of whatever is selected, at the size this pane can honestly show.
@@ -625,7 +733,7 @@ pub fn body(
     // A QUESTION gets neither the subtitle nor the weights strip.
     //
     // `2 options · waiting on you` counts something the reader can see and
-    // repeats what the label already said, and `unweighed` is the agent
+    // repeats what the label already said, and the unweighed line is the agent
     // declining to estimate a picker it did not declare. Both are true and
     // neither is worth a line in front of somebody who has been asked a
     // question. Parker: *"2 options (we can see it is 2 options, no need to
@@ -634,8 +742,9 @@ pub fn body(
     // A COMMENT skips the weights for a stronger reason: there is nothing that
     // could ever fill them. Effort, complexity, depth and confidence are an
     // AGENT's estimate of work it did, and a note is a person writing a
-    // sentence to themselves. `unweighed` on every comment card would be a
-    // permanent report of an absence nobody could ever fill — the same line on
+    // sentence to themselves. *Nobody said how big this is* on every comment
+    // card would be a permanent report of an absence nobody could ever fill —
+    // the same line on
     // every row of the shelf, which is a line that has stopped carrying
     // anything. Its subtitle stays, because the stamp under a note is the one
     // fact a chronological board is sorted by.
@@ -4033,6 +4142,214 @@ mod tests {
                     "{which}'s {kind} arm does not delegate to {renderer}: {arm}"
                 );
             }
+        }
+    }
+
+    /// A weight fixture with everything filled in, so each test can knock one
+    /// field out rather than build the struct again.
+    fn weighed() -> Weight {
+        Weight {
+            effort: Some(crate::surface::Effort::Large),
+            complexity: Some(crate::surface::Complexity::Moderate),
+            foundation: Some(crate::surface::Foundation {
+                system: "terminal-delight — workbench".into(),
+                depth: Depth::Subsystem,
+            }),
+            confidence: Some(Confidence::Measured),
+        }
+    }
+
+    /// The range a mark was put on, read back out of the sentence.
+    fn marked(line: &WeightLine, m: Mark) -> Option<String> {
+        let at = line.inks.iter().position(|i| *i == m)?;
+        Some(line.text[line.marks[at].clone()].to_string())
+    }
+
+    /// The strip is a SENTENCE, and the name in it is written out whole.
+    ///
+    /// The line it replaces read `effort L · complexity moderate · depth
+    /// subsystem · terminal-delight — wo… · confidence measured`. Parker:
+    /// *"That depth summary is … with no hover to reveal — it is also a bit
+    /// machine legible and not for people"*.
+    ///
+    /// Two assertions for two halves of that. The exact string is the
+    /// machine-legibility half — there is no way to write `depth subsystem`
+    /// and still satisfy it. The system name is the truncation half.
+    #[test]
+    fn the_weights_read_as_a_sentence() {
+        let line = weight_line(&weighed());
+        assert_eq!(
+            line.text,
+            "A big, fiddly job in terminal-delight — workbench, \
+             where several components depend on it. Measured."
+        );
+        assert_eq!(
+            marked(&line, Mark::Named).as_deref(),
+            Some("terminal-delight — workbench"),
+            "the system's name is not the thing wearing its own ink"
+        );
+        assert_eq!(
+            marked(&line, Mark::Deep(Depth::Subsystem)).as_deref(),
+            Some("several components depend on it"),
+            "depth's ink is not on depth's clause"
+        );
+        assert_eq!(
+            marked(&line, Mark::Sure(Confidence::Measured)).as_deref(),
+            Some("Measured")
+        );
+    }
+
+    /// No budget, no ellipsis, no hover needed.
+    ///
+    /// Fifty-one characters, against the twenty-two the old strip allowed —
+    /// and the shape of the real string, which is a project and a surface and
+    /// a part of it. A sentence has nowhere to put an ellipsis, which is the
+    /// point: the pressure that produced `terminal-delight — wo…` is gone
+    /// rather than covered with a tooltip.
+    #[test]
+    fn a_long_system_name_is_written_out_whole() {
+        let system = "terminal-delight — workbench — the response card";
+        let line = weight_line(&Weight {
+            foundation: Some(crate::surface::Foundation {
+                system: system.into(),
+                depth: Depth::Bedrock,
+            }),
+            ..weighed()
+        });
+        assert!(
+            line.text.contains(system),
+            "the system's name was cut: {}",
+            line.text
+        );
+        assert!(
+            !line.text.contains('…'),
+            "something in the weight line was elided: {}",
+            line.text
+        );
+    }
+
+    /// Absent is absent — it is never a default, and it is never a hole.
+    ///
+    /// Every weight is an `Option` on purpose, so the renderer has to read as
+    /// English with any of the sixteen subsets missing. This walks all 625
+    /// shapes and demands each one is a sentence: no doubled space where a
+    /// clause dropped out, no orphaned comma, no `In , where`, a capital at
+    /// the front and a full stop at the back.
+    ///
+    /// It also walks the mark ranges, which gpui debug-asserts are char
+    /// boundaries and which `with_highlights` needs sorted and
+    /// non-overlapping. A multi-byte system name is in the fixture precisely
+    /// so a byte-offset slip fails here rather than in a debug build.
+    #[test]
+    fn every_shape_of_weight_is_still_a_sentence() {
+        use crate::surface::{Complexity, Effort, Foundation};
+        let efforts = [
+            None,
+            Some(Effort::Small),
+            Some(Effort::Medium),
+            Some(Effort::Large),
+            Some(Effort::Epic),
+        ];
+        let tangles = [
+            None,
+            Some(Complexity::Trivial),
+            Some(Complexity::Moderate),
+            Some(Complexity::Involved),
+            Some(Complexity::Hairy),
+        ];
+        let depths = [
+            None,
+            Some(Depth::Leaf),
+            Some(Depth::Component),
+            Some(Depth::Subsystem),
+            Some(Depth::Bedrock),
+        ];
+        let sures = [
+            None,
+            Some(Confidence::Measured),
+            Some(Confidence::Inferred),
+            Some(Confidence::Hunch),
+            Some(Confidence::Unknown),
+        ];
+        let mut seen = 0;
+        for effort in efforts {
+            for complexity in tangles {
+                for depth in depths {
+                    for confidence in sures {
+                        let w = Weight {
+                            effort,
+                            complexity,
+                            foundation: depth.map(|depth| Foundation {
+                                system: "terminal-delight — workbench".into(),
+                                depth,
+                            }),
+                            confidence,
+                        };
+                        let line = weight_line(&w);
+                        seen += 1;
+                        if w.is_silent() {
+                            assert!(
+                                line.text.is_empty(),
+                                "an unweighed surface invented a sentence: {}",
+                                line.text
+                            );
+                            continue;
+                        }
+                        let t = &line.text;
+                        for bad in ["  ", " ,", " .", "..", ", where.", "In ,"] {
+                            assert!(!t.contains(bad), "{w:?} reads {t:?} — found {bad:?}");
+                        }
+                        assert!(
+                            t.chars().next().is_some_and(char::is_uppercase),
+                            "{w:?} opens lowercase: {t:?}"
+                        );
+                        assert!(t.ends_with('.'), "{w:?} has no full stop: {t:?}");
+                        assert!(
+                            !t.starts_with("A involved") && !t.contains(" a involved"),
+                            "the article does not agree: {t:?}"
+                        );
+                        assert_eq!(
+                            line.marks.len(),
+                            line.inks.len(),
+                            "a mark with no ink, or an ink with no mark: {t:?}"
+                        );
+                        let mut end = 0;
+                        for range in &line.marks {
+                            assert!(
+                                range.start >= end && range.end <= t.len(),
+                                "marks are not sorted and inside the text: {t:?}"
+                            );
+                            assert!(
+                                t.is_char_boundary(range.start) && t.is_char_boundary(range.end),
+                                "a mark cuts a character in half: {t:?}"
+                            );
+                            end = range.end;
+                        }
+                    }
+                }
+            }
+        }
+        assert_eq!(seen, 625);
+    }
+
+    /// The parser fills a missing `system` with `unnamed`, and an agent can
+    /// send an empty one. Both are the same fact and neither is English.
+    #[test]
+    fn a_system_with_no_name_says_so_in_words() {
+        for raw in ["", "   ", "unnamed"] {
+            let line = weight_line(&Weight {
+                effort: None,
+                complexity: None,
+                foundation: Some(crate::surface::Foundation {
+                    system: raw.into(),
+                    depth: Depth::Leaf,
+                }),
+                confidence: None,
+            });
+            assert_eq!(
+                line.text,
+                "In a system it did not name, where nothing else depends on it."
+            );
         }
     }
 
