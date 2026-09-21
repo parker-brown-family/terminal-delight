@@ -1368,6 +1368,17 @@ impl TerminalView {
                         .take(crate::screenread::ASKED_LINES)
                         .collect();
                     self.wb_asked_by_hook = true;
+                    // The person has spoken, so whatever woke the agent before
+                    // them is no longer what the reply below answers.
+                    self.wb_woken = None;
+                }
+                Effect::Woken(w) => {
+                    // Deliberately NOT `wb_asked`, and deliberately not
+                    // `wb_asked_by_hook` either: a pane whose first channel
+                    // record was a task notification used to latch that flag
+                    // and blind the screen reader for the rest of its life, so
+                    // one background job could cost the caption permanently.
+                    self.wb_woken = Some(w);
                 }
                 Effect::Present(surfaces) => {
                     for s in surfaces {
@@ -3316,12 +3327,21 @@ impl TerminalView {
             how,
         )
         .map(|n| {
-            // Read one line longer than the block draws, so a message that ran
-            // on can say so rather than stopping mid-word — the latch keeps
-            // [`crate::screenread::ASKED_LINES`], which is more than any
-            // caller here asks for.
-            let lines = crate::workbench::ask_clipped(self.asked_latched(), n);
-            crate::benchdraw::asked(&lines, sk, th)
+            // Whoever opened the NEWEST turn owns this block, because what it
+            // captions is the reply standing underneath it. A turn the harness
+            // opened is drawn as itself — see [`crate::benchdraw::woken`] —
+            // and their own words are drawn only when the turn was theirs.
+            match self.woken_latched() {
+                Some(w) => crate::benchdraw::woken(&w, sk, th),
+                // Read one line longer than the block draws, so a message that
+                // ran on can say so rather than stopping mid-word — the latch
+                // keeps [`crate::screenread::ASKED_LINES`], which is more than
+                // any caller here asks for.
+                None => {
+                    let lines = crate::workbench::ask_clipped(self.asked_latched(), n);
+                    crate::benchdraw::asked(&lines, sk, th)
+                }
+            }
         });
 
         // ── the main area ───────────────────────────────────────────────────

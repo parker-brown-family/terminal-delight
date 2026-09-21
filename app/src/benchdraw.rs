@@ -3352,6 +3352,85 @@ pub fn asked(lines: &[String], sk: &Skin, th: &Theme) -> Div {
         }))
 }
 
+/// WHAT WOKE IT, where their own words would otherwise go.
+///
+/// The same block as [`asked`] and pointedly not the same voice. A turn the
+/// harness opened — a background task reporting in, a peer session talking —
+/// arrives at the hook indistinguishably from typing, and was drawn under the
+/// word YOU in the person's own ink: a tool-use id, a `/tmp` path and an XML
+/// tag, attributed to them. Parker, reading one: *"BUG! I can be certain that
+/// I did not type any of this crazy machine talk!"*
+///
+/// Drawn INSTEAD of their last message rather than alongside it, because the
+/// reply underneath answers this and not that. Falling back to the older
+/// human turn would caption a machine's answer with a person's question,
+/// which is the one thing a caption must never do — the same defect as the
+/// bug, pointing the other way.
+///
+/// `Ident` rather than `Mine`: the tint that means structure and identity, so
+/// the block reads as machinery before a word of it is read.
+/// What a wake-up block SAYS: its label, and the sentence underneath it.
+///
+/// Split out of [`woken`] so the words can be read by a test. A `Div` cannot
+/// be asked what text is inside it, and the words are the whole point of this
+/// block — the defect it exists to fix was a caption saying the wrong thing,
+/// not a caption drawn in the wrong box. The other guards in this file scan
+/// the SOURCE for a draw call; a rule about what a person ends up reading
+/// wants the string itself.
+///
+/// The harness's own sentence is used where it gave one. Where it did not,
+/// the block says THAT rather than drawing an empty frame a reader would have
+/// to guess the meaning of — a wake-up nobody described is still a wake-up,
+/// and an absent summary is not an absent turn.
+pub fn woken_says(w: &crate::channel::Woken) -> (String, String) {
+    use crate::channel::Woken;
+    match w {
+        Woken::Task { summary } => (
+            "WOKEN \u{b7} A BACKGROUND TASK FINISHED".to_string(),
+            summary
+                .clone()
+                .unwrap_or_else(|| "the harness named no task".into()),
+        ),
+        Woken::Peer { from } => (
+            match from {
+                Some(name) => format!("WOKEN \u{b7} A MESSAGE FROM {}", name.to_uppercase()),
+                None => "WOKEN \u{b7} A MESSAGE FROM ANOTHER SESSION".to_string(),
+            },
+            "another agent session sent this one a message".to_string(),
+        ),
+        // A shape this build has not met. It says WHICH one, because "some
+        // envelope arrived" and "a `scheduled-wake` arrived" are different
+        // facts and only the second one can be chased.
+        Woken::Other { tag } => (
+            "WOKEN \u{b7} BY THE HARNESS".to_string(),
+            format!("a \u{2039}{tag}\u{203a} this build has no name for"),
+        ),
+    }
+}
+
+pub fn woken(w: &crate::channel::Woken, sk: &Skin, th: &Theme) -> Div {
+    let hue = ink(Tint::Ident, th);
+    let (label, body) = woken_says(w);
+    sk.panel()
+        .flex()
+        .flex_col()
+        .gap(px(4.))
+        .ml(px(18.))
+        .px(px(12.))
+        .py(px(9.))
+        .border_l(px(3.))
+        .border_color(hue)
+        .bg(hue.alpha(0.07))
+        .child(micro(label, Step::Fine, hue, sk, th))
+        .child(
+            div()
+                .text_size(px(sk.pt(Step::Body)))
+                .font_family(th.font_family.clone())
+                .text_color(th.text.alpha(0.78))
+                .child(sel(body)),
+        )
+}
+
 /// The agent, talking. The main area's ordinary state.
 ///
 /// Its own recent output, in its own font, with nothing drawn around it. This
@@ -3674,6 +3753,57 @@ mod tests {
     /// as a literal, which is a renderer choosing its own spacing and is none
     /// of this rule's business. It passed, as it must — a check that fires on
     /// innocent lines gets switched off, and then nothing is enforced.
+    /// The wake-up block says what woke it, and never says nothing.
+    ///
+    /// Reading the STRINGS rather than scanning for the draw call, because
+    /// the bug this block exists for was a caption whose words were wrong —
+    /// a `<task-notification>`, a tool-use id and a `/tmp` path under the
+    /// word YOU. A guard that proved a box was drawn would have passed
+    /// happily on every day that defect shipped.
+    #[test]
+    fn a_wake_up_block_names_what_woke_it_and_is_never_silent() {
+        use crate::channel::Woken;
+        let says = crate::benchdraw::woken_says;
+
+        let (label, body) = says(&Woken::Task {
+            summary: Some("Agent \"/code-review high 627\" finished".into()),
+        });
+        assert!(label.contains("BACKGROUND TASK"), "{label}");
+        assert_eq!(
+            body, "Agent \"/code-review high 627\" finished",
+            "the harness's own sentence is what a person can act on"
+        );
+
+        // The peer's NAME reaches the label, so a pane says who is talking to
+        // it rather than that somebody is.
+        let (label, _) = says(&Woken::Peer {
+            from: Some("terminal-delight-05".into()),
+        });
+        assert!(label.contains("TERMINAL-DELIGHT-05"), "{label}");
+
+        // An unmet envelope is drawn BY NAME. "Something woke it" and "a
+        // `scheduled-wake` woke it" are different facts, and only the second
+        // can be chased to whatever is sending them.
+        let (_, body) = says(&Woken::Other {
+            tag: "scheduled-wake".into(),
+        });
+        assert!(body.contains("scheduled-wake"), "{body}");
+
+        // Every variant the harness can hand over with nothing in it still
+        // produces a sentence. An empty block would read as a bug in the
+        // bench rather than as a wake-up nobody described — and silence is
+        // exactly what an `unwrap_or_default` would have shipped here.
+        for w in [
+            Woken::Task { summary: None },
+            Woken::Peer { from: None },
+            Woken::Other { tag: String::new() },
+        ] {
+            let (label, body) = says(&w);
+            assert!(!label.trim().is_empty(), "a block with no label: {w:?}");
+            assert!(!body.trim().is_empty(), "a block with no sentence: {w:?}");
+        }
+    }
+
     #[test]
     fn every_size_on_the_bench_goes_through_the_gauge() {
         let src = include_str!("benchdraw.rs");
