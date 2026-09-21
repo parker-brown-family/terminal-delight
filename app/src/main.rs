@@ -31,6 +31,7 @@ mod art;
 mod attention;
 mod bell;
 mod benchdraw;
+mod channel;
 mod crt;
 mod csd;
 mod ctl;
@@ -5563,6 +5564,7 @@ impl Workspace {
                             .map(|(pane, path)| surfacefeed::Arrivals {
                                 pane,
                                 posts: derive::from_transcript(&path, now),
+                                events: Vec::new(),
                             })
                             .filter(|a| !a.posts.is_empty())
                             .collect::<Vec<_>>()
@@ -7431,6 +7433,9 @@ impl Workspace {
                 // was not open when it was sent. See
                 // [`TerminalView::latch_asked`].
                 view.latch_asked(None);
+                // The channel's liveness marker, which a hook reads before it
+                // holds a picker for this bench. See `bench_beacon`.
+                view.bench_beacon();
                 for post in view.live_questions(now) {
                     view.present(post, cx);
                 }
@@ -7573,6 +7578,7 @@ impl Workspace {
                 for post in arrival.posts {
                     view.present(post, cx);
                 }
+                view.channel_events(arrival.events, cx);
             });
         }
         cx.notify();

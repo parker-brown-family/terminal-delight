@@ -1,0 +1,1386 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The workbench composer — terminal-delight</title>
+<style>/* decision-brief — surfaces, ink, and the three structural components.
+ *
+ * ONE palette. No theme system, no theme toggle. tps-report shipped four themes and
+ * 165 theme-related rules; nobody ever switched. A brief is read once, quickly, to make
+ * a decision — the reader is not shopping for a skin.
+ *
+ * Categorical colours are the validated dataviz default palette (dark steps), which
+ * clears the CVD, chroma, lightness and contrast gates on the adjacent pairlist.
+ * If you change them, re-run the validator; do not eyeball it.
+ *
+ * What is here: tokens, the modal shell, tables, callouts, code. Everything else —
+ * cards, escalation lists, stat tiles, charts — is the brief's own business.
+ * Build what the material needs.
+ */
+:root {
+  color-scheme: dark;
+
+  --surface-0: #111110;   /* page */
+  --surface-1: #1a1a19;   /* panel */
+  --surface-2: #232321;   /* raised */
+  --surface-3: #2e2e2b;   /* control */
+  --line:      #3a3a36;
+
+  --text-primary:   #ffffff;
+  --text-secondary: #c3c2b7;
+  --text-muted:     #8b8a80;
+
+  /* categorical — assign in fixed order, never cycle */
+  --s1: #3987e5;  --s2: #d95926;  --s3: #199e70;  --s4: #c98500;
+  --s5: #d55181;  --s6: #008300;  --s7: #9085e9;  --s8: #e66767;
+
+  /* status — reserved. Never reuse as "series 5". Always ship with a label. */
+  --good:     #0ca30c;
+  --warning:  #fab219;
+  --serious:  #ec835a;
+  --critical: #d03b3b;
+
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, "JetBrains Mono", Menlo, Consolas, monospace;
+  --sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif;
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0; background: var(--surface-0); color: var(--text-primary);
+  font-family: var(--sans); font-size: 15px; line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+.wrap { max-width: 1180px; margin: 0 auto; padding: 0 24px 120px; }
+header.top .wrap { padding-bottom: 0; }   /* the wrap's bottom padding is for the page, not the header */
+
+/* ---- headings ----
+   A heading names the thing. It does not explain it — an em-dash gloss after a
+   heading breaks the heading. The body does the explaining. */
+h1 { font-size: 34px; line-height: 1.18; margin: 0 0 16px; letter-spacing: -.02em; font-weight: 650; }
+h2.sec {
+  font-size: 13px; font-family: var(--mono); letter-spacing: .13em; text-transform: uppercase;
+  color: var(--text-muted); margin: 56px 0 18px; padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+/* ---- modal shell: where depth lives ---- */
+dialog {
+  border: 1px solid var(--line); border-radius: 12px;
+  background: var(--surface-1); color: var(--text-primary);
+  max-width: 880px; width: calc(100vw - 44px); max-height: 86vh; padding: 0; overflow: hidden;
+}
+dialog::backdrop { background: rgba(0,0,0,.76); backdrop-filter: blur(3px); }
+.dlg-head {
+  position: sticky; top: 0; background: var(--surface-2);
+  border-bottom: 1px solid var(--line); padding: 20px 26px;
+  display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; z-index: 2;
+}
+.dlg-head h3 { margin: 0 0 5px; font-size: 20px; letter-spacing: -.015em; }
+.dlg-head .repo { font-family: var(--mono); font-size: 11.5px; color: var(--text-muted); margin: 0; }
+.x {
+  background: var(--surface-3); border: 1px solid var(--line); color: var(--text-secondary);
+  border-radius: 6px; width: 30px; height: 30px; font-size: 17px; line-height: 1;
+  cursor: pointer; flex: none;
+}
+.x:hover { background: var(--critical); color: #fff; border-color: var(--critical); }
+.dlg-body { padding: 24px 26px 34px; overflow-y: auto; max-height: calc(86vh - 78px); }
+.dlg-body h4 {
+  font-family: var(--mono); font-size: 11.5px; letter-spacing: .12em; text-transform: uppercase;
+  color: var(--text-muted); margin: 30px 0 12px; padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+}
+.dlg-body h4:first-child { margin-top: 0; }
+.dlg-body p  { margin: 0 0 13px; color: var(--text-secondary); font-size: 14.5px; }
+.dlg-body ul { margin: 0 0 15px; padding-left: 20px; color: var(--text-secondary); font-size: 14.5px; }
+.dlg-body li { margin-bottom: 8px; }
+.dlg-body strong { color: var(--text-primary); font-weight: 600; }
+
+/* ---- prose furniture ---- */
+code {
+  font-family: var(--mono); font-size: 12.5px; background: var(--surface-3);
+  padding: 1.5px 5px; border-radius: 4px; color: #e8d9a8; word-break: break-word;
+}
+pre {
+  background: var(--surface-0); border: 1px solid var(--line); border-radius: 7px;
+  padding: 15px 17px; overflow-x: auto; margin: 0 0 15px;
+}
+pre code { background: none; padding: 0; color: var(--text-secondary); font-size: 12.5px; line-height: 1.65; }
+
+table { width: 100%; border-collapse: collapse; margin: 0 0 17px; font-size: 13.5px; }
+th, td { text-align: left; padding: 9px 11px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th {
+  font-family: var(--mono); font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--text-muted); font-weight: 500; background: var(--surface-2);
+}
+td { color: var(--text-secondary); }
+td b, td strong { color: var(--text-primary); }
+
+blockquote {
+  margin: 0 0 15px; padding: 12px 18px; border-left: 3px solid var(--s1);
+  background: var(--surface-2); border-radius: 0 7px 7px 0;
+  color: var(--text-secondary); font-size: 14px; font-style: italic;
+}
+
+.callout {
+  border-left: 3px solid var(--warning); background: rgba(250,178,25,.07);
+  padding: 14px 18px; border-radius: 0 7px 7px 0; margin: 0 0 17px;
+}
+.callout.crit { border-color: var(--critical); background: rgba(208,59,59,.08); }
+.callout.good { border-color: var(--good);     background: rgba(12,163,12,.08); }
+.callout p:last-child { margin-bottom: 0; }
+.callout .lbl {
+  font-family: var(--mono); font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--text-muted); margin: 0 0 7px; display: block;
+}
+
+/* ---- confidence labels. Never assert without one. ---- */
+.tag {
+  display: inline-block; font-family: var(--mono); font-size: 10px; letter-spacing: .07em;
+  text-transform: uppercase; padding: 2.5px 7px; border-radius: 4px;
+  margin-right: 6px; font-weight: 600;
+}
+.tag.v { background: rgba(12,163,12,.18);  color: #6cd46c; border: 1px solid rgba(12,163,12,.4); }   /* measured */
+.tag.w { background: rgba(250,178,25,.14); color: #f5c95f; border: 1px solid rgba(250,178,25,.38); } /* inferred */
+.tag.c { background: rgba(208,59,59,.16);  color: #f08a8a; border: 1px solid rgba(208,59,59,.4); }   /* contradicted / hunch */
+
+footer {
+  margin-top: 70px; padding-top: 26px; border-top: 1px solid var(--line);
+  font-family: var(--mono); font-size: 11.5px; color: var(--text-muted);
+}
+footer p { margin: 0 0 7px; }
+
+@media (max-width: 640px) {
+  h1 { font-size: 26px; }
+  .wrap { padding: 0 16px 80px; }
+}
+</style>
+<style>/* decision-brief — reader notes, styling.
+   Depends on the surface/ink/status custom properties in base.css. */
+
+.notable { position: relative; }
+
+.note-btn {
+  position: absolute; top: 8px; right: 8px; z-index: 6;
+  width: 26px; height: 26px; line-height: 1; padding: 0;
+  background: var(--surface-3); border: 1px solid var(--line); border-radius: 6px;
+  color: var(--text-muted); font-size: 13px; cursor: pointer; opacity: 0;
+  transition: opacity .12s, background .12s, color .12s, border-color .12s;
+}
+/* Hidden until hover: a brief with 130 always-visible affordances reads as a form. */
+.notable:hover > .note-btn,
+.note-btn:focus-visible { opacity: 1; }
+.note-btn:hover { background: var(--warning); border-color: var(--warning); color: var(--surface-1); }
+
+.notable.has-note > .note-btn {
+  opacity: 1; background: var(--warning); border-color: var(--warning);
+  color: var(--surface-1); font-weight: 700;
+}
+.notable.has-note { box-shadow: inset 3px 0 0 var(--warning); }
+tr.notable.has-note > td:first-child { box-shadow: inset 3px 0 0 var(--warning); }
+
+/* Table rows can't host an absolutely-positioned child reliably — inline it. */
+tr.notable .note-btn {
+  position: static; opacity: .35; width: 22px; height: 22px; font-size: 11px;
+  margin-left: 6px; vertical-align: middle; display: inline-block;
+}
+tr.notable:hover .note-btn { opacity: 1; }
+
+/* ---- floating bar ---- */
+.notebar {
+  position: fixed; right: 18px; bottom: 18px; z-index: 900;
+  display: flex; gap: 8px; align-items: center;
+  background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px;
+  padding: 9px 11px; box-shadow: 0 10px 32px rgba(0,0,0,.55);
+  font-family: var(--mono); font-size: 11.5px;
+}
+.notebar .cnt { color: var(--text-muted); padding-right: 4px; }
+.notebar .cnt b { color: var(--warning); font-size: 14px; }
+.notebar button {
+  font-family: var(--mono); font-size: 11px; letter-spacing: .03em; cursor: pointer;
+  background: var(--surface-3); border: 1px solid var(--line); color: var(--text-secondary);
+  border-radius: 6px; padding: 6px 10px;
+  transition: background .12s, color .12s, border-color .12s;
+}
+.notebar button:hover { background: var(--warning); color: var(--surface-1); border-color: var(--warning); }
+.notebar button.primary {
+  background: rgba(250,178,25,.14); border-color: rgba(250,178,25,.45); color: #f5c95f;
+}
+.notebar button:disabled {
+  opacity: .4; cursor: default; background: var(--surface-3);
+  color: var(--text-muted); border-color: var(--line);
+}
+@media (max-width: 640px) {
+  .notebar { right: 8px; bottom: 8px; flex-wrap: wrap; max-width: calc(100vw - 16px); }
+}
+
+/* ---- note dialog ---- */
+dialog#d-note { max-width: 620px; }
+#note-list { margin: 0 0 18px; padding: 0; list-style: none; }
+#note-list li {
+  background: var(--surface-2); border: 1px solid var(--line);
+  border-left: 3px solid var(--warning); border-radius: 0 7px 7px 0;
+  padding: 11px 14px; margin-bottom: 9px; font-size: 14px; color: var(--text-secondary);
+}
+#note-list .nts {
+  font-family: var(--mono); font-size: 10px; color: var(--text-muted);
+  display: flex; justify-content: space-between; gap: 10px; margin-bottom: 6px;
+}
+#note-list .ndel {
+  background: none; border: none; color: var(--text-muted);
+  cursor: pointer; font-size: 11px; padding: 0;
+}
+#note-list .ndel:hover { color: var(--critical); }
+#note-none { color: var(--text-muted); font-size: 13.5px; margin: 0 0 16px; }
+
+#note-text {
+  width: 100%; min-height: 104px; background: var(--surface-0);
+  border: 1px solid var(--line); border-radius: 7px; color: var(--text-primary);
+  padding: 11px 13px; font-family: var(--sans); font-size: 14.5px;
+  resize: vertical; line-height: 1.55;
+}
+#note-text:focus { outline: none; border-color: var(--warning); }
+
+.note-actions { display: flex; gap: 9px; align-items: center; margin-top: 11px; }
+.note-actions button {
+  font-family: var(--mono); font-size: 11.5px; cursor: pointer; border-radius: 6px;
+  padding: 8px 14px; border: 1px solid var(--line);
+  background: var(--surface-3); color: var(--text-secondary);
+}
+.note-actions button.save {
+  background: var(--warning); border-color: var(--warning);
+  color: var(--surface-1); font-weight: 600;
+}
+.note-actions .hintk {
+  font-family: var(--mono); font-size: 10.5px; color: var(--text-muted); margin-left: auto;
+}
+
+/* ---- export dialog ---- */
+dialog#d-export { max-width: 780px; }
+#export-out {
+  width: 100%; min-height: 320px; background: var(--surface-0);
+  border: 1px solid var(--line); border-radius: 7px; color: var(--text-secondary);
+  padding: 13px; font-family: var(--mono); font-size: 12px; line-height: 1.55;
+  resize: vertical; white-space: pre;
+}
+.tokest { font-family: var(--mono); font-size: 11px; color: var(--text-muted); margin: 9px 0 0; }
+</style>
+<style>
+/* ---- figures ---- */
+figure { margin: 0 0 22px; border: 1px solid var(--line); border-radius: 10px;
+  background: var(--surface-1); padding: 16px 18px 14px; }
+figure > .lbl { display: block; font-family: var(--mono); font-size: 10.5px; letter-spacing: .1em;
+  text-transform: uppercase; color: var(--text-muted); margin: 0 0 13px; }
+figcaption { margin-top: 13px; font-size: 13.5px; color: var(--text-secondary); }
+figcaption b { color: var(--text-primary); }
+.scroller { overflow-x: auto; }
+svg { display: block; width: 100%; height: auto; }
+.gutter { margin-top: 10px; font-family: var(--mono); font-size: 10.5px; line-height: 1.55;
+  color: var(--text-muted); border-top: 1px dashed var(--line); padding-top: 9px; }
+
+/* ---- pins ---- */
+.pin { display: inline-flex; align-items: center; justify-content: center; width: 15px; height: 15px;
+  border-radius: 50%; background: var(--s1); color: #fff; font-family: var(--mono); font-size: 9px;
+  vertical-align: middle; margin-right: 5px; flex: none; }
+.pin.bad { background: var(--critical); }
+.pin.mine { background: var(--s4); }
+.pinlist { list-style: none; margin: 14px 0 0; padding: 0; font-size: 13px; color: var(--text-secondary); }
+.pinlist li { margin-bottom: 7px; display: flex; gap: 2px; align-items: flex-start; }
+.pinlist li .pin { margin-top: 3px; }
+
+/* ---- the composer mockup ---- */
+.mock { background: #111110; border: 1px solid #3a3a36; border-radius: 8px; padding: 12px;
+  font-family: var(--mono); font-size: 11px; color: var(--text-secondary); max-width: 660px; }
+.mock .band { font-size: 9px; letter-spacing: .12em; text-transform: uppercase; color: var(--text-muted);
+  margin-bottom: 9px; }
+.mock .box { border: 1px solid rgba(57,135,229,.85); border-radius: 7px; background: #1a1a19;
+  padding: 11px 13px; position: relative; }
+.mock .box.dim { border-color: rgba(57,135,229,.42); }
+.mock .draft { line-height: 1.55; white-space: pre-wrap; word-break: break-word; }
+.mock .caretblk { background: rgba(57,135,229,.85); color: #111110; }
+.mock .selblk { background: rgba(57,135,229,.34); }
+.mock .chip { display: inline-block; font-size: 8.5px; letter-spacing: .1em; padding: 2px 6px;
+  border-radius: 3px; background: rgba(57,135,229,.16); color: #7fb3f2; margin-top: 9px; }
+.mock .above { font-size: 9px; color: var(--text-muted); margin-top: 8px; }
+.mock .ghost { color: #55544d; }
+
+/* ---- read-first ---- */
+.esc-list { list-style: none; margin: 0; padding: 0; counter-reset: none; }
+.esc-list li { border: 1px solid var(--line); border-left: 3px solid var(--critical);
+  border-radius: 0 8px 8px 0; background: var(--surface-1); padding: 13px 16px; margin-bottom: 11px; }
+.esc-list li.warn { border-left-color: var(--warning); }
+.esc-list li h3 { margin: 0 0 6px; font-size: 15.5px; display: flex; gap: 9px; align-items: baseline; }
+.esc-n { font-family: var(--mono); font-size: 12px; color: var(--text-muted); flex: none; }
+.esc-list li p { margin: 0 0 5px; font-size: 13.5px; color: var(--text-secondary); }
+.esc-list li p:last-child { margin-bottom: 0; }
+.esc-list li .cost { font-family: var(--mono); font-size: 11.5px; color: var(--text-muted); }
+
+/* ---- cards ---- */
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(270px, 1fr)); gap: 14px; margin-bottom: 20px; }
+.card { border: 1px solid var(--line); border-radius: 10px; background: var(--surface-1); padding: 16px 18px; }
+.card h3 { margin: 6px 0 9px; font-size: 16px; }
+.card p { margin: 0 0 10px; font-size: 13.5px; color: var(--text-secondary); }
+.card p:last-child { margin-bottom: 0; }
+.card .why { border-top: 1px solid var(--line); padding-top: 10px; }
+.card.rec { border-color: var(--s3); box-shadow: 0 0 0 1px var(--s3) inset; }
+.card .badge { font-family: var(--mono); font-size: 10px; letter-spacing: .09em; text-transform: uppercase;
+  color: var(--text-muted); }
+.card.rec .badge { color: var(--s3); }
+
+/* ---- findings ---- */
+.finding { border: 1px solid var(--line); border-radius: 9px; background: var(--surface-1);
+  padding: 14px 17px; margin-bottom: 11px; }
+.finding h3 { margin: 0 0 7px; font-size: 15px; }
+.finding p { margin: 0 0 7px; font-size: 13.5px; color: var(--text-secondary); }
+.finding p:last-child { margin-bottom: 0; }
+.finding .inv { font-family: var(--mono); font-size: 11.5px; color: var(--text-muted);
+  border-top: 1px dashed var(--line); padding-top: 8px; }
+
+/* ---- tiles ---- */
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 20px; }
+.tile { border: 1px solid var(--line); border-radius: 9px; background: var(--surface-1); padding: 13px 15px; }
+.tile .n { font-family: var(--mono); font-size: 26px; line-height: 1.1; color: var(--text-primary); }
+.tile .n small { font-size: 13px; color: var(--text-muted); }
+.tile .k { font-size: 12px; color: var(--text-secondary); margin-top: 5px; }
+
+/* ---- tables ---- */
+table.wide { font-size: 13px; }
+table.wide td:first-child { font-family: var(--mono); font-size: 11.5px; color: var(--text-primary); white-space: nowrap; }
+table.wide td.ok { color: #6cd46c; }
+table.wide td.no { color: #f08a8a; }
+table.wide td.part { color: #f5c95f; }
+.legend { font-family: var(--mono); font-size: 10.5px; color: var(--text-muted); margin: -8px 0 16px; }
+
+/* ---- the fence ---- */
+.fence { display: grid; grid-template-columns: 1fr 1fr; gap: 0; border: 1px solid var(--line);
+  border-radius: 9px; overflow: hidden; }
+.fence > div { padding: 14px 16px; }
+.fence > div:first-child { border-right: 1px solid var(--line); background: rgba(25,158,112,.06); }
+.fence > div:last-child { background: rgba(208,59,59,.05); }
+.fence h4 { margin: 0 0 10px; font-family: var(--mono); font-size: 10.5px; letter-spacing: .1em;
+  text-transform: uppercase; color: var(--text-muted); }
+.fence ul { margin: 0; padding-left: 17px; font-size: 12.5px; color: var(--text-secondary); }
+.fence li { margin-bottom: 6px; }
+@media (max-width: 620px) { .fence { grid-template-columns: 1fr; }
+  .fence > div:first-child { border-right: none; border-bottom: 1px solid var(--line); } }
+
+/* ---- architecture frames ---- */
+.frames { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 13px; }
+.frame { border: 1px solid var(--line); border-radius: 9px; background: var(--surface-0); padding: 12px; }
+.frame .step { font-family: var(--mono); font-size: 9.5px; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--text-muted); margin-bottom: 9px; }
+.frame .sub { font-size: 11.5px; color: var(--text-secondary); margin-top: 9px; line-height: 1.5; }
+.frame .sub b { color: var(--text-primary); }
+
+/* ---- grill ---- */
+.grill .ask { border: 1px solid var(--line); border-left: 3px solid var(--s1); border-radius: 0 9px 9px 0;
+  background: var(--surface-1); padding: 15px 18px; margin-bottom: 13px; }
+.grill .ask h3 { margin: 0 0 8px; font-size: 15.5px; }
+.grill .ask p { margin: 0 0 9px; font-size: 13.5px; color: var(--text-secondary); }
+.grill .ask p.rec { margin-bottom: 0; border-top: 1px solid var(--line); padding-top: 9px; }
+.grill .ask p.rec b { color: var(--s3); }
+
+button.more { background: var(--surface-3); border: 1px solid var(--line); color: var(--text-secondary);
+  border-radius: 6px; padding: 5px 11px; font-family: var(--mono); font-size: 11px; cursor: pointer; }
+button.more:hover { border-color: var(--s1); color: var(--text-primary); }
+.morerow { margin: 0 0 22px; display: flex; gap: 9px; flex-wrap: wrap; }
+.meta { font-family: var(--mono); font-size: 11.5px; color: var(--text-muted); margin: 0 0 26px; }
+.lede { font-size: 17.5px; line-height: 1.55; color: var(--text-primary); margin: 0 0 18px; }
+p { margin: 0 0 14px; }
+
+/* A phone-width column cannot hold a nowrap mono cell; let the gesture column wrap
+   rather than pushing the whole page sideways. Measured: min-content 408px before this. */
+@media (max-width: 700px) {
+  table.wide td:first-child { white-space: normal; }
+  table.wide { font-size: 12.5px; }
+  .frames { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+
+<header class="top"><div class="wrap">
+  <h1>The workbench composer</h1>
+  <p class="meta">terminal-delight &middot; 2026-09-21 &middot; branch <code>fix/the-second-click-backs-out-to-your-branch</code> &middot; app/src/pane/bench.rs, app/src/workbench.rs, app/src/benchdraw.rs</p>
+</div></header>
+
+<div class="wrap">
+
+<h2 class="sec">The verdict</h2>
+
+<p class="lede">The box you type into on the bench is not a text editor. It is a pipe to the agent's own line editor with a drawing of a line beside it, and that drawing knows three things: a string, one caret, and one bit that says the whole thing is selected. Every complaint you raised is the same fact arriving from a different direction.</p>
+
+<p>Up-arrow does nothing locally because there is no second row in the model to move to. Nothing grows past a third of the pane because that ceiling is a constant. There is no mouse-drag highlight because a highlight needs two numbers and the model holds one boolean. Ctrl+C interrupts the agent because the bench hands the keystroke to the pseudoterminal before the window's copy handler ever runs.</p>
+
+<p>So the decision in front of you is not a list of fixes. It is <b>where the boundary sits between our editor and the agent's</b> — and the answer decides whether the other twelve gestures are cheap or impossible. There are three honest placements and I recommend one of them.</p>
+
+<div class="callout crit">
+  <span class="lbl">the one sentence</span>
+  <p>The mirror can only stay in step with the agent for edits it can express in arrows, backspaces and literal characters. Every gesture outside that set — up-arrow, shift+enter, a click into a selection — silently puts two different strings on the two sides, and nothing in the product tells you it happened.</p>
+</div>
+
+<h2 class="sec">Read first</h2>
+
+<ol class="esc-list">
+  <li>
+    <h3><span class="esc-n">1</span> Up-arrow moves the agent's caret and not ours</h3>
+    <p><span class="tag v">measured</span> <code>line_edit</code> returns <code>None</code> for <code>up</code>, <code>down</code>, <code>pageup</code> and <code>pagedown</code> in all twelve modifier forms, so the mirror never moves. <code>cursor_key_bytes</code> still sends <code>ESC [ A</code> down the pseudoterminal, so the agent's caret does move — or its history recall fires and its whole line changes.</p>
+    <p class="cost">Cost to fix: small. The mechanism already exists — <code>bench_click</code> turns a pixel into a column with <code>TextLayout::index_for_position</code> and walks the far end there with <code>caret_move</code>. Up-arrow is the same operation with a different target.</p>
+  </li>
+  <li>
+    <h3><span class="esc-n">2</span> Shift+Enter empties the box and the agent keeps the draft</h3>
+    <p><span class="tag v">measured</span> <code>line_edit</code> has no <code>shift</code> parameter, so <code>shift+enter</code> resolves to <code>Edit::Submit</code>. Applied to a 31-character draft it leaves zero characters. Meanwhile <code>keystroke_bytes</code> sends a literal <code>\n</code>, which is the one byte that makes a multi-line prompt in Claude Code.</p>
+    <p class="cost">Cost to fix: one line, if the model stays single-line — and the real fix is rows, which is item 3.</p>
+  </li>
+  <li>
+    <h3><span class="esc-n">3</span> A thousand words does not fit, and there is no way to make it fit</h3>
+    <p><span class="tag v">measured</span> At your tiled pane width, 968&times;1080: the composer grows to 356px, 27 rows at 9.5pt, and then stops. A 1,000-word prompt is 5,600 characters; <b>2,427 of them — 43% — are off-screen</b>, reachable only by scrolling. Halve the pane height and it is 73%.</p>
+    <p class="cost">Cost to fix: medium. Growing further needs a rule for what the composer is allowed to cover, which is a design decision and the fourth question in the grill.</p>
+  </li>
+  <li>
+    <h3><span class="esc-n">4</span> Ctrl+C interrupts the agent, and Ctrl+Shift+C cannot reach the copy handler</h3>
+    <p><span class="tag w">inferred</span> <code>bench_key</code> is called at <code>pane.rs:4662</code> and every path out of it ends in <code>stop_propagation</code>. The window's copy, cut and find handlers are at <code>4787</code>, <code>4772</code> and <code>4779</code>. On the workbench face they are dead code. Already filed as the composer copy issue.</p>
+    <p class="cost">Cost to fix: small once there is a selection to copy. Without one there is nothing for the chord to do.</p>
+  </li>
+  <li class="warn">
+    <h3><span class="esc-n">5</span> Ctrl+A then a click leaves the two sides holding different text</h3>
+    <p><span class="tag v">measured</span> <code>Line::apply(Edit::Right)</code> clears the selection bit. <code>Line::seek</code> — which is what a click calls — does not. Select all, click at column nine, type one character: the mirror holds <code>"X"</code>. The far end received a caret walk to column nine and then a kill-to-end, so it is holding <code>"alpha betX"</code>.</p>
+    <p class="cost">Cost to fix: one line today; structurally it is the selection model, which is item 3 of the standard below.</p>
+  </li>
+</ol>
+
+<h2 class="sec">What it is, drawn</h2>
+
+<figure>
+  <span class="lbl">01 &middot; The composer, with its parts named</span>
+  <div class="scroller">
+    <div class="mock">
+      <div class="band">workbench &middot; agent pane &middot; 968px wide</div>
+      <div class="box">
+        <div class="draft">Look at the attention rail code and tell me whether the lane mapping can ever report two panes<span class="caretblk">&nbsp;</span></div>
+        <span class="chip">&#x1F5CE; 1 IMAGE</span>
+        <span class="chip" style="margin-left:6px;background:rgba(57,135,229,.16)">LIVE &rarr; AGENT</span>
+        <div class="above">&uarr; 2427 more characters above</div>
+      </div>
+      <div style="font-size:9px;color:#55544d;margin-top:7px">TYPE ANYWHERE &middot; ENTER SENDS &middot; PASTE TEXT, FILES OR AN IMAGE</div>
+    </div>
+  </div>
+  <ul class="pinlist">
+    <li><span class="pin">1</span><span><b>The draft</b> — a single Rust <code>String</code>. Not rows, not paragraphs, not a document. Wrapping is done by the text system at paint, so the model has never heard of a second line.</span></li>
+    <li><span class="pin">2</span><span><b>The caret</b> — one character index, drawn as a background highlight on the character it sits on rather than as a bar. That choice is right and it is why the caret survives a wrap.</span></li>
+    <li><span class="pin bad">3</span><span><b>The image chip</b> — a <i>count</i>, because the agent writes <code>[Image #7]</code> into its own prompt and we cannot know the number. Correct, and it means the mirror is already knowingly not a copy of the far end.</span></li>
+    <li><span class="pin bad">4</span><span><b>&ldquo;2427 more characters above&rdquo;</b> — the box admitting it cannot show what you wrote. The count assumes the view is parked at the end of the draft, and the wheel can move it.</span></li>
+    <li><span class="pin">5</span><span><b>LIVE &rarr; AGENT</b> — the armed light. Every keystroke from here is already gone down the pseudoterminal by the time this box redraws.</span></li>
+  </ul>
+  <figcaption><b>Four of the five parts exist because the box is a mirror rather than an editor.</b> The image chip and the hidden-character count are both the surface telling you, in its own words, that it is not holding the thing you are looking at.</figcaption>
+  <div class="gutter">drawn from the code: benchdraw.rs <code>composer()</code> L2264&ndash;2495, workbench.rs <code>Line</code> L489&ndash;772. The strings are the real ones.</div>
+</figure>
+
+<figure>
+  <span class="lbl">02 &middot; The mirror, in four frames</span>
+  <div class="frames">
+    <div class="frame">
+      <div class="step">1 &middot; what a terminal is</div>
+      <svg viewBox="0 0 260 150" role="img" aria-label="A person types into a pane; the bytes go down the pseudoterminal to the agent's own line editor, which echoes back">
+        <defs><marker id="ah1" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0,0 L7,3.5 L0,7 z" fill="#199e70"/></marker></defs>
+        <rect x="6" y="16" width="70" height="30" rx="5" fill="none" stroke="#199e70"/>
+        <text x="41" y="35" font-family="ui-monospace, monospace" font-size="10" fill="#c3c2b7" text-anchor="middle">you</text>
+        <rect x="6" y="100" width="248" height="38" rx="5" fill="none" stroke="#199e70"/>
+        <text x="130" y="116" font-family="ui-monospace, monospace" font-size="10" fill="#c3c2b7" text-anchor="middle">the agent's own line editor</text>
+        <text x="130" y="130" font-family="ui-monospace, monospace" font-size="8.5" fill="#8b8a80" text-anchor="middle">history &middot; completion &middot; [Image #7]</text>
+        <path d="M41,46 L41,100" stroke="#199e70" stroke-width="1" marker-end="url(#ah1)"/>
+        <text x="48" y="76" font-family="ui-monospace, monospace" font-size="8.5" fill="#8b8a80">keystroke</text>
+        <path d="M200,100 L200,60 L200,58" stroke="#199e70" stroke-width="1" marker-end="url(#ah1)" transform="rotate(180 200 79)"/>
+        <text x="150" y="76" font-family="ui-monospace, monospace" font-size="8.5" fill="#8b8a80">echo</text>
+      </svg>
+      <p class="sub"><b>One authority.</b> The far end draws the line, so slash-command completion, history and image chips all work because nobody reimplemented them.</p>
+    </div>
+    <div class="frame">
+      <div class="step">2 &middot; the bench adds a drawing</div>
+      <svg viewBox="0 0 260 150" role="img" aria-label="The same pipe, with a local Line model fed by the same keystroke so the bench can draw a caret">
+        <defs><marker id="ah2" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0,0 L7,3.5 L0,7 z" fill="#199e70"/></marker>
+        <marker id="ab2" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0,0 L7,3.5 L0,7 z" fill="#3987e5"/></marker></defs>
+        <rect x="6" y="16" width="70" height="30" rx="5" fill="none" stroke="#199e70"/>
+        <text x="41" y="35" font-family="ui-monospace, monospace" font-size="10" fill="#c3c2b7" text-anchor="middle">you</text>
+        <rect x="6" y="100" width="248" height="38" rx="5" fill="none" stroke="#199e70"/>
+        <text x="130" y="116" font-family="ui-monospace, monospace" font-size="10" fill="#c3c2b7" text-anchor="middle">the agent's own line editor</text>
+        <text x="130" y="130" font-family="ui-monospace, monospace" font-size="8.5" fill="#8b8a80" text-anchor="middle">history &middot; completion &middot; [Image #7]</text>
+        <path d="M41,46 L41,100" stroke="#199e70" stroke-width="1" marker-end="url(#ah2)"/>
+        <rect x="150" y="16" width="104" height="30" rx="5" fill="none" stroke="#3987e5"/>
+        <text x="202" y="29" font-family="ui-monospace, monospace" font-size="9" fill="#7fb3f2" text-anchor="middle">Line { text,</text>
+        <text x="202" y="40" font-family="ui-monospace, monospace" font-size="9" fill="#7fb3f2" text-anchor="middle">caret, marked }</text>
+        <path d="M76,31 L150,31" stroke="#3987e5" stroke-width="1" marker-end="url(#ab2)"/>
+        <text x="96" y="26" font-family="ui-monospace, monospace" font-size="8" fill="#8b8a80">same key</text>
+      </svg>
+      <p class="sub"><b>Two models, one input.</b> They agree only while <code>line_edit</code> and the far end read the keystroke the same way. Nothing checks that they do.</p>
+    </div>
+    <div class="frame">
+      <div class="step">3 &middot; where they come apart</div>
+      <svg viewBox="0 0 260 150" role="img" aria-label="Three keystrokes that the two models read differently: up arrow, shift enter, and a click into a selection">
+        <defs><marker id="ah3" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0,0 L7,3.5 L0,7 z" fill="#d03b3b"/></marker>
+        <marker id="ag3" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0,0 L7,3.5 L0,7 z" fill="#199e70"/></marker></defs>
+        <rect x="6" y="16" width="70" height="30" rx="5" fill="none" stroke="#199e70"/>
+        <text x="41" y="35" font-family="ui-monospace, monospace" font-size="10" fill="#c3c2b7" text-anchor="middle">you</text>
+        <rect x="6" y="100" width="248" height="38" rx="5" fill="none" stroke="#199e70"/>
+        <text x="130" y="116" font-family="ui-monospace, monospace" font-size="10" fill="#c3c2b7" text-anchor="middle">the agent's own line editor</text>
+        <text x="130" y="130" font-family="ui-monospace, monospace" font-size="8.5" fill="#8b8a80" text-anchor="middle">now holds something else</text>
+        <path d="M41,46 L41,100" stroke="#d03b3b" stroke-width="1.4" marker-end="url(#ah3)"/>
+        <rect x="150" y="16" width="104" height="30" rx="5" fill="none" stroke="#3987e5" stroke-dasharray="3 3"/>
+        <text x="202" y="35" font-family="ui-monospace, monospace" font-size="9" fill="#8b8a80" text-anchor="middle">unchanged</text>
+        <path d="M76,31 L150,31" stroke="#8b8a80" stroke-width="1" stroke-dasharray="3 3"/>
+        <text x="132" y="62" font-family="ui-monospace, monospace" font-size="8.5" fill="#f08a8a" text-anchor="middle">&uarr;  shift+enter  ctrl+a then click</text>
+        <text x="132" y="74" font-family="ui-monospace, monospace" font-size="8" fill="#8b8a80" text-anchor="middle">no warning, no marker, no test</text>
+      </svg>
+      <p class="sub"><b>Silent divergence.</b> The box keeps drawing confidently. The next <code>enter</code> sends the agent's string, not the one on screen.</p>
+    </div>
+    <div class="frame" style="border-color:var(--s4)">
+      <div class="step" style="color:#f5c95f">4 &middot; the repair &mdash; mine to argue with</div>
+      <svg viewBox="0 0 260 150" role="img" aria-label="Every edit passes through one function that returns both the local edit and the bytes that make the far end do the same thing">
+        <defs><marker id="ah4" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0,0 L7,3.5 L0,7 z" fill="#c98500"/></marker></defs>
+        <rect x="6" y="16" width="70" height="30" rx="5" fill="none" stroke="#199e70"/>
+        <text x="41" y="35" font-family="ui-monospace, monospace" font-size="10" fill="#c3c2b7" text-anchor="middle">you</text>
+        <rect x="90" y="14" width="164" height="34" rx="5" fill="none" stroke="#c98500"/>
+        <text x="172" y="28" font-family="ui-monospace, monospace" font-size="9" fill="#f5c95f" text-anchor="middle">resolve(key, layout, line)</text>
+        <text x="172" y="40" font-family="ui-monospace, monospace" font-size="8.5" fill="#8b8a80" text-anchor="middle">&rarr; (Edit, Vec&lt;u8&gt;)</text>
+        <path d="M76,31 L90,31" stroke="#c98500" stroke-width="1" marker-end="url(#ah4)"/>
+        <rect x="6" y="100" width="118" height="38" rx="5" fill="none" stroke="#199e70"/>
+        <text x="65" y="123" font-family="ui-monospace, monospace" font-size="9" fill="#c3c2b7" text-anchor="middle">agent's editor</text>
+        <rect x="136" y="100" width="118" height="38" rx="5" fill="none" stroke="#3987e5"/>
+        <text x="195" y="123" font-family="ui-monospace, monospace" font-size="9" fill="#7fb3f2" text-anchor="middle">Line (rows, range)</text>
+        <path d="M130,48 L65,100" stroke="#c98500" stroke-width="1" marker-end="url(#ah4)"/>
+        <path d="M200,48 L195,100" stroke="#c98500" stroke-width="1" marker-end="url(#ah4)"/>
+        <text x="130,90" font-family="ui-monospace, monospace" font-size="8" fill="#8b8a80"></text>
+        <text x="60" y="78" font-family="ui-monospace, monospace" font-size="8" fill="#8b8a80">arrows &middot; del &middot; chars</text>
+      </svg>
+      <p class="sub"><b>One function answers both sides.</b> An edit it cannot express in arrows, backspaces and literal characters is refused rather than half-applied — so divergence becomes a compile-time shape instead of a bug class.</p>
+    </div>
+  </div>
+  <figcaption><b>The pipe was the right call and the drawing beside it is the thing that is under-built.</b> Frame 4 keeps every reason the mirror exists — completion, history, image chips — and moves the correctness question into one function with a return type that cannot be half-satisfied.</figcaption>
+  <div class="gutter">frames 1&ndash;3 are drawn from the code; frame 4 is a proposal and nothing in the repo implements it &middot; yellow = mine to argue with</div>
+</figure>
+
+<h2 class="sec">The standard</h2>
+
+<p>What you asked for: the bar a text entry has to clear. This is that bar, with what the composer does today beside it. The rows are ordered by how loudly a person notices the absence.</p>
+
+<p class="legend">&#x2713; works &middot; &#x25D1; partly &middot; &#x2717; absent or wrong &middot; every &ldquo;today&rdquo; cell is read from source at the line given</p>
+
+<table class="wide">
+<thead><tr><th style="width:23%">Gesture</th><th style="width:38%">What a text entry must do</th><th style="width:39%">The composer today</th></tr></thead>
+<tbody>
+<tr><td>&uarr; &darr;</td><td>Move to the same visual column on the previous or next row. On the first row, up leaves the field or recalls history.</td><td class="no">&#x2717; Nothing locally. <code>ESC [ A</code> reaches the agent and moves <i>its</i> caret. <span class="tag v">measured</span></td></tr>
+<tr><td>&larr; &rarr;</td><td>One grapheme, wrapping across rows.</td><td class="ok">&#x2713; One character, and the far end is walked to match.</td></tr>
+<tr><td>ctrl+&larr; &rarr;</td><td>One word, by the platform's word rule.</td><td class="ok">&#x2713; <code>Edit::WordLeft</code> / <code>WordRight</code>, readline's rule.</td></tr>
+<tr><td>home / end</td><td>Start and end of the <i>visual row</i>; ctrl+home / ctrl+end for the document.</td><td class="part">&#x25D1; Start and end of the whole draft. The far end is sent nothing, so its caret stays put. <span class="tag w">inferred</span></td></tr>
+<tr><td>pageup / pagedown</td><td>Scroll the field by a screen and move the caret with it.</td><td class="no">&#x2717; Not an edit; the bytes go to the agent, which pages its own transcript.</td></tr>
+<tr><td>shift + any motion</td><td>Extend a selection from an anchor. The anchor survives repeated presses.</td><td class="no">&#x2717; No anchor exists. <code>marked</code> is one boolean.</td></tr>
+<tr><td>ctrl+a</td><td>Select the whole document.</td><td class="ok">&#x2713; Added 2026-09-18, with a caret-to-zero trick so a replacement lands in the same place on both sides.</td></tr>
+<tr><td>click</td><td>Place the caret at the nearest grapheme boundary; clear any selection.</td><td class="part">&#x25D1; Caret lands correctly, including across a wrap. <b>The selection is not cleared</b> &mdash; <code>seek</code> skips the mark. <span class="tag v">measured</span></td></tr>
+<tr><td>double / triple click</td><td>Select a word, then a paragraph.</td><td class="no">&#x2717; <code>click_count</code> is read on the terminal face only.</td></tr>
+<tr><td>click and drag</td><td>Select a range, autoscrolling at the edges.</td><td class="no">&#x2717; The bench's mousedown returns before <code>selecting</code> is ever set.</td></tr>
+<tr><td>shift+click</td><td>Extend the selection to the click.</td><td class="no">&#x2717; Falls through to the terminal's link-open branch.</td></tr>
+<tr><td>ctrl+c</td><td>Copy the selection. With no selection, do nothing (or the app's own meaning).</td><td class="no">&#x2717; Sends <code>0x03</code>. Interrupts the agent's turn. <span class="tag w">inferred</span></td></tr>
+<tr><td>ctrl+shift+c</td><td>Copy, in a terminal.</td><td class="no">&#x2717; <code>bench_key</code> returns first; the window's copy handler is unreachable on this face.</td></tr>
+<tr><td>ctrl+x</td><td>Cut the selection.</td><td class="no">&#x2717; Same reason. Reaches the agent as <code>0x18</code>.</td></tr>
+<tr><td>ctrl+v</td><td>Paste text, a file path, or an image.</td><td class="ok">&#x2713; All three, plus <code>ctrl+shift+v</code> and <code>shift+insert</code>. The best-built gesture here.</td></tr>
+<tr><td>pasted newlines</td><td>Insert as line breaks.</td><td class="part">&#x25D1; Replaced with spaces, because a bare <code>\r</code> would submit mid-paste. Defensible today; wrong once rows exist.</td></tr>
+<tr><td>shift+enter</td><td>Insert a line break.</td><td class="no">&#x2717; Agent gets <code>\n</code> and grows its draft; the mirror reads <code>Edit::Submit</code> and empties. <span class="tag v">measured</span></td></tr>
+<tr><td>ctrl+z / ctrl+shift+z</td><td>Undo and redo, at word or burst granularity.</td><td class="no">&#x2717; No history on either side of the mirror.</td></tr>
+<tr><td>auto-grow</td><td>Grow with the content to a stated ceiling, then scroll.</td><td class="part">&#x25D1; Grows to 33% of pane height, then scrolls. No way to ask for more. <span class="tag v">measured</span></td></tr>
+<tr><td>type-size ladder</td><td>Shrink the type to buy rows before scrolling.</td><td class="no">&#x2717; Built, and dead at the default gauge: all three steps clamp up to the 9.5pt floor. <span class="tag v">measured</span></td></tr>
+<tr><td>caret always visible</td><td>Scroll to the caret after every edit, wherever it is.</td><td class="part">&#x25D1; Follows only when the caret is at the very end. A caret parked earlier stays off screen while you type.</td></tr>
+<tr><td>IME / dead keys</td><td>Composition preview, then commit.</td><td class="no">&#x2717; Not established &mdash; there is no composition path, and a dead-key sequence has not been tried. <span class="tag w">not established</span></td></tr>
+<tr><td>accessibility</td><td>Expose the field, its value and its caret to a screen reader.</td><td class="no">&#x2717; Not established. gpui draws styled text; nothing declares a text input role.</td></tr>
+</tbody>
+</table>
+
+<div class="morerow">
+  <button class="more" data-dlg="d-selection">Why a selection is two numbers and not one bit &rarr;</button>
+  <button class="more" data-dlg="d-mirror">Why the composer is a mirror at all &rarr;</button>
+</div>
+
+<figure>
+  <span class="lbl">03 &middot; Highlighting, and the one bit it has to fit in</span>
+  <div class="scroller">
+    <svg viewBox="0 0 700 300" role="img" aria-label="Four states of selection: what ctrl+A draws today, what a drag should draw, the anchor and head model, and the measured divergence when you click into a selection">
+      <text x="0" y="12" font-family="ui-monospace, monospace" font-size="10" fill="#8b8a80">A &mdash; CTRL+A TODAY &middot; the only selection that exists</text>
+      <rect x="0" y="20" width="330" height="46" rx="4" fill="#1a1a19" stroke="#3987e5"/>
+      <rect x="8" y="28" width="260" height="14" fill="#3987e5" opacity="0.34"/>
+      <text x="12" y="39" font-family="ui-monospace, monospace" font-size="10" fill="#c3c2b7">look at the attention rail code and</text>
+      <rect x="8" y="44" width="150" height="14" fill="#3987e5" opacity="0.34"/>
+      <text x="12" y="55" font-family="ui-monospace, monospace" font-size="10" fill="#c3c2b7">tell me whether it can</text>
+      <text x="0" y="82" font-family="ui-monospace, monospace" font-size="9" fill="#8b8a80">marked = true &middot; caret = 0 &middot; no caret drawn, because there is only one place</text>
+      <text x="0" y="94" font-family="ui-monospace, monospace" font-size="9" fill="#8b8a80">the next keystroke can go</text>
+
+      <text x="370" y="12" font-family="ui-monospace, monospace" font-size="10" fill="#f5c95f">B &mdash; WHAT A DRAG OR SHIFT+MOTION NEEDS</text>
+      <rect x="370" y="20" width="330" height="46" rx="4" fill="#1a1a19" stroke="#c98500"/>
+      <rect x="486" y="28" width="182" height="14" fill="#c98500" opacity="0.34"/>
+      <text x="382" y="39" font-family="ui-monospace, monospace" font-size="10" fill="#c3c2b7">look at the attention rail code and</text>
+      <rect x="378" y="44" width="72" height="14" fill="#c98500" opacity="0.34"/>
+      <text x="382" y="55" font-family="ui-monospace, monospace" font-size="10" fill="#c3c2b7">tell me whether it can</text>
+      <circle cx="486" cy="26" r="2.6" fill="#c98500"/>
+      <text x="492" y="24" font-family="ui-monospace, monospace" font-size="8" fill="#f5c95f">anchor</text>
+      <circle cx="450" cy="60" r="2.6" fill="#c98500"/>
+      <text x="400" y="72" font-family="ui-monospace, monospace" font-size="8" fill="#f5c95f">head &mdash; moves, anchor stays</text>
+      <text x="370" y="90" font-family="ui-monospace, monospace" font-size="9" fill="#8b8a80">two character indices. The anchor is what makes</text>
+      <text x="370" y="101" font-family="ui-monospace, monospace" font-size="9" fill="#8b8a80">the fifth shift+&larr; grow from the same place as</text>
+      <text x="370" y="112" font-family="ui-monospace, monospace" font-size="9" fill="#8b8a80">the first. A boolean has nowhere to put it.</text>
+
+      <line x1="0" y1="124" x2="700" y2="124" stroke="#3a3a36"/>
+
+      <text x="0" y="146" font-family="ui-monospace, monospace" font-size="10" fill="#f08a8a">C &mdash; MEASURED: ctrl+a, click at column 9, type one character</text>
+      <rect x="0" y="156" width="330" height="58" rx="4" fill="#1a1a19" stroke="#3987e5"/>
+      <text x="10" y="172" font-family="ui-monospace, monospace" font-size="9" fill="#8b8a80">the composer draws</text>
+      <rect x="10" y="180" width="12" height="15" fill="#3987e5" opacity="0.85"/>
+      <text x="13" y="192" font-family="ui-monospace, monospace" font-size="11" fill="#111110">X</text>
+      <text x="30" y="192" font-family="ui-monospace, monospace" font-size="11" fill="#c3c2b7">&larr; one character. 1 char.</text>
+      <text x="10" y="208" font-family="ui-monospace, monospace" font-size="9" fill="#8b8a80">Line::seek never cleared the mark</text>
+
+      <rect x="370" y="156" width="330" height="58" rx="4" fill="#1a1a19" stroke="#d03b3b"/>
+      <text x="380" y="172" font-family="ui-monospace, monospace" font-size="9" fill="#8b8a80">the agent is holding</text>
+      <text x="380" y="192" font-family="ui-monospace, monospace" font-size="11" fill="#f08a8a">alpha betX</text>
+      <text x="380" y="208" font-family="ui-monospace, monospace" font-size="9" fill="#8b8a80">caret walked to 9, then kill-to-end</text>
+      <path d="M340,185 L366,185" stroke="#d03b3b" stroke-width="1.2"/>
+      <text x="336" y="180" font-family="ui-monospace, monospace" font-size="13" fill="#d03b3b" text-anchor="middle">&#x2260;</text>
+
+      <text x="0" y="240" font-family="ui-monospace, monospace" font-size="10" fill="#8b8a80">D &mdash; MOUSE, TODAY</text>
+      <rect x="0" y="250" width="700" height="40" rx="4" fill="#1a1a19" stroke="#3a3a36"/>
+      <text x="12" y="266" font-family="ui-monospace, monospace" font-size="9.5" fill="#6cd46c">click &rarr; caret lands right, even across a wrap (TextLayout::index_for_position)</text>
+      <text x="12" y="280" font-family="ui-monospace, monospace" font-size="9.5" fill="#f08a8a">drag &middot; double-click &middot; triple-click &middot; shift+click &rarr; nothing; the bench's mousedown returns before `selecting` is set</text>
+      <text x="470" y="266" font-family="ui-monospace, monospace" font-size="9.5" fill="#f08a8a">right-click &rarr; the TERMINAL's tray</text>
+    </svg>
+  </div>
+  <figcaption><b>The click already knows exactly which character you pointed at — the drag is missing, not the geometry.</b> Panel C is the case to fix first whatever else is decided: it is one unchecked line, it is reachable by an ordinary gesture, and it leaves the two sides holding different sentences with nothing on screen saying so.</figcaption>
+  <div class="gutter">A, C and D are drawn from the code and C's left half was run &middot; B is the proposal &middot; yellow = mine to argue with &middot; the far-end string in C is inferred from the bytes sent, not observed on a pty</div>
+</figure>
+
+<h2 class="sec">The growth ceiling</h2>
+
+<div class="tiles">
+  <div class="tile"><div class="n">356<small>px</small></div><div class="k">The tallest the composer gets in a 1080px-tall pane. A third, by <code>COMPOSER_SHARE</code>.</div></div>
+  <div class="tile"><div class="n">27<small> rows</small></div><div class="k">What that buys at the 9.5pt floor, at 968px pane width.</div></div>
+  <div class="tile"><div class="n">43<small>%</small></div><div class="k">Of a 1,000-word prompt that is off-screen there. 2,427 characters of 5,600.</div></div>
+  <div class="tile"><div class="n">73<small>%</small></div><div class="k">The same prompt in a half-height pane, where most of your panes live.</div></div>
+</div>
+
+<figure>
+  <span class="lbl">04 &middot; What 1,000 words does to a 968-pixel pane</span>
+  <div class="scroller">
+    <svg viewBox="0 0 700 250" role="img" aria-label="A pane drawn to scale showing the composer capped at a third of its height, with the visible and hidden portions of a 1000 word draft">
+      <text x="0" y="12" font-family="ui-monospace, monospace" font-size="10" fill="#8b8a80">TODAY &mdash; ceiling at COMPOSER_SHARE = 0.33</text>
+      <rect x="0" y="22" width="180" height="200" rx="4" fill="#1a1a19" stroke="#3a3a36"/>
+      <rect x="4" y="26" width="46" height="192" rx="3" fill="#232321" stroke="#3a3a36"/>
+      <text x="27" y="122" font-family="ui-monospace, monospace" font-size="8" fill="#55544d" text-anchor="middle">rail</text>
+      <rect x="54" y="26" width="122" height="122" rx="3" fill="#111110" stroke="#3a3a36"/>
+      <text x="115" y="90" font-family="ui-monospace, monospace" font-size="8.5" fill="#55544d" text-anchor="middle">the conversation</text>
+      <rect x="54" y="152" width="122" height="66" rx="3" fill="#1a1a19" stroke="#3987e5"/>
+      <text x="115" y="180" font-family="ui-monospace, monospace" font-size="8.5" fill="#7fb3f2" text-anchor="middle">composer</text>
+      <text x="115" y="192" font-family="ui-monospace, monospace" font-size="8" fill="#8b8a80" text-anchor="middle">356px &middot; 27 rows</text>
+
+      <text x="230" y="12" font-family="ui-monospace, monospace" font-size="10" fill="#8b8a80">THE DRAFT &mdash; 1,000 words = 5,600 characters</text>
+      <rect x="230" y="22" width="470" height="30" rx="3" fill="#199e70" opacity="0.30" stroke="#199e70"/>
+      <rect x="230" y="22" width="266" height="30" rx="3" fill="#199e70" opacity="0.55"/>
+      <text x="363" y="41" font-family="ui-monospace, monospace" font-size="10" fill="#111110" text-anchor="middle">3,173 visible</text>
+      <text x="598" y="41" font-family="ui-monospace, monospace" font-size="10" fill="#c3c2b7" text-anchor="middle">2,427 above the fold</text>
+
+      <text x="230" y="80" font-family="ui-monospace, monospace" font-size="10" fill="#8b8a80">SAME DRAFT, HALF-HEIGHT PANE (968&times;540)</text>
+      <rect x="230" y="90" width="470" height="30" rx="3" fill="#d03b3b" opacity="0.26" stroke="#d03b3b"/>
+      <rect x="230" y="90" width="128" height="30" rx="3" fill="#199e70" opacity="0.55"/>
+      <text x="294" y="109" font-family="ui-monospace, monospace" font-size="9.5" fill="#111110" text-anchor="middle">1,528</text>
+      <text x="530" y="109" font-family="ui-monospace, monospace" font-size="10" fill="#c3c2b7" text-anchor="middle">4,072 above the fold &mdash; 73%</text>
+
+      <text x="230" y="150" font-family="ui-monospace, monospace" font-size="10" fill="#f5c95f">PROPOSED &mdash; a hold-to-expand ceiling at 0.75, mine to argue with</text>
+      <rect x="230" y="160" width="470" height="30" rx="3" fill="#c98500" opacity="0.18" stroke="#c98500"/>
+      <rect x="230" y="160" width="470" height="30" rx="3" fill="#199e70" opacity="0.50"/>
+      <text x="465" y="179" font-family="ui-monospace, monospace" font-size="10" fill="#111110" text-anchor="middle">all 5,600 visible &mdash; 62 rows</text>
+
+      <rect x="0" y="22" width="180" height="200" rx="4" fill="none" stroke="#3a3a36"/>
+      <text x="230" y="215" font-family="ui-monospace, monospace" font-size="9" fill="#8b8a80">the conversation stays underneath; the box is drawn over it, released on send</text>
+      <text x="230" y="232" font-family="ui-monospace, monospace" font-size="9" fill="#8b8a80">rows computed at the 9.5pt floor, shipped 1.35 line-height, 0.6 advance ratio</text>
+    </svg>
+  </div>
+  <figcaption><b>The ceiling is a constant, and it is the only thing standing between you and the whole prompt.</b> 0.33 was chosen so the composer could not eat the conversation it is a reply to &mdash; which is the right instinct for the resting state and the wrong one for the ten seconds you spend reading back a thousand words before you send them.</figcaption>
+  <div class="gutter">visible/hidden counts are <code>composer_hidden</code> run directly, extracted from workbench.rs and compiled standalone &middot; the 0.75 ceiling is my number and nothing implements it &middot; yellow = mine to argue with</div>
+</figure>
+
+<h2 class="sec">Collisions</h2>
+
+<p>The workbench face is not a layer over the terminal. It is the <i>same</i> pane and the <i>same</i> key handler, and <code>bench_key</code> runs early and ends every path in <code>stop_propagation</code>. Anything it does not explicitly decline is taken, whether or not it has a use for it. That has already stranded one set of chords — the window's alt keys, fixed by adding <code>window_chord</code> above the gallery — and the same shape is live for the clipboard.</p>
+
+<figure>
+  <span class="lbl">05 &middot; Where a keystroke goes on the workbench face</span>
+  <div class="scroller">
+    <svg viewBox="0 0 700 300" role="img" aria-label="The ordered ladder of key handlers, showing that bench_key consumes everything and the handlers below it are unreachable on the workbench face">
+      <defs><marker id="ar" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0,0 L7,3.5 L0,7 z" fill="#8b8a80"/></marker></defs>
+      <text x="0" y="12" font-family="ui-monospace, monospace" font-size="10" fill="#8b8a80">TerminalView::on_key &mdash; pane.rs, in source order</text>
+
+      <rect x="0" y="22" width="300" height="24" rx="4" fill="#232321" stroke="#3a3a36"/>
+      <text x="10" y="38" font-family="ui-monospace, monospace" font-size="10" fill="#c3c2b7">4498  f1 &rarr; help</text>
+      <rect x="0" y="50" width="300" height="24" rx="4" fill="#232321" stroke="#3a3a36"/>
+      <text x="10" y="66" font-family="ui-monospace, monospace" font-size="10" fill="#c3c2b7">4513  alt+k &rarr; flip the face</text>
+      <rect x="0" y="78" width="300" height="24" rx="4" fill="#232321" stroke="#3a3a36"/>
+      <text x="10" y="94" font-family="ui-monospace, monospace" font-size="10" fill="#c3c2b7">4538  escape &rarr; keylayer ladder</text>
+      <rect x="0" y="106" width="300" height="24" rx="4" fill="#232321" stroke="#3a3a36"/>
+      <text x="10" y="122" font-family="ui-monospace, monospace" font-size="10" fill="#c3c2b7">4640  paint mode</text>
+
+      <rect x="0" y="134" width="300" height="34" rx="4" fill="rgba(57,135,229,.16)" stroke="#3987e5" stroke-width="1.5"/>
+      <text x="10" y="149" font-family="ui-monospace, monospace" font-size="10" fill="#7fb3f2">4662  bench_key  &mdash;  THE WORKBENCH FACE</text>
+      <text x="10" y="162" font-family="ui-monospace, monospace" font-size="9" fill="#8b8a80">declines only window_chord; everything else ends in stop_propagation</text>
+
+      <rect x="0" y="180" width="300" height="100" rx="4" fill="#1a1a19" stroke="#d03b3b" stroke-dasharray="4 3"/>
+      <text x="10" y="196" font-family="ui-monospace, monospace" font-size="9.5" fill="#f08a8a">unreachable while the bench is up:</text>
+      <text x="10" y="211" font-family="ui-monospace, monospace" font-size="9.5" fill="#c3c2b7">4765  ctrl+w &rarr; close tab</text>
+      <text x="10" y="226" font-family="ui-monospace, monospace" font-size="9.5" fill="#c3c2b7">4772  ctrl+x &rarr; cut selection</text>
+      <text x="10" y="241" font-family="ui-monospace, monospace" font-size="9.5" fill="#c3c2b7">4779  ctrl+f &rarr; find in pane</text>
+      <text x="10" y="256" font-family="ui-monospace, monospace" font-size="9.5" fill="#c3c2b7">4787  ctrl+shift+c &rarr; copy selection</text>
+      <text x="10" y="271" font-family="ui-monospace, monospace" font-size="9.5" fill="#c3c2b7">4791  ctrl+shift+v &rarr; paste</text>
+
+      <path d="M150,46 L150,50" stroke="#8b8a80" marker-end="url(#ar)"/>
+      <path d="M150,74 L150,78" stroke="#8b8a80" marker-end="url(#ar)"/>
+      <path d="M150,102 L150,106" stroke="#8b8a80" marker-end="url(#ar)"/>
+      <path d="M150,130 L150,134" stroke="#8b8a80" marker-end="url(#ar)"/>
+
+      <text x="340" y="38" font-family="ui-monospace, monospace" font-size="10" fill="#8b8a80">what that costs, by chord</text>
+      <rect x="340" y="48" width="360" height="22" rx="3" fill="rgba(208,59,59,.10)" stroke="#d03b3b"/>
+      <text x="348" y="63" font-family="ui-monospace, monospace" font-size="9.5" fill="#c3c2b7">ctrl+c        &rarr; 0x03 to the pty &mdash; INTERRUPTS THE TURN</text>
+      <rect x="340" y="74" width="360" height="22" rx="3" fill="rgba(208,59,59,.10)" stroke="#d03b3b"/>
+      <text x="348" y="89" font-family="ui-monospace, monospace" font-size="9.5" fill="#c3c2b7">ctrl+shift+c  &rarr; also 0x03, and maybe a stray 'C'</text>
+      <rect x="340" y="100" width="360" height="22" rx="3" fill="rgba(208,59,59,.10)" stroke="#d03b3b"/>
+      <text x="348" y="115" font-family="ui-monospace, monospace" font-size="9.5" fill="#c3c2b7">ctrl+x        &rarr; 0x18, readline's prefix key</text>
+      <rect x="340" y="126" width="360" height="22" rx="3" fill="rgba(250,178,25,.10)" stroke="#fab219"/>
+      <text x="348" y="141" font-family="ui-monospace, monospace" font-size="9.5" fill="#c3c2b7">ctrl+f        &rarr; 0x06, and find never opens</text>
+      <rect x="340" y="152" width="360" height="22" rx="3" fill="rgba(25,158,112,.10)" stroke="#199e70"/>
+      <text x="348" y="167" font-family="ui-monospace, monospace" font-size="9.5" fill="#c3c2b7">ctrl+w        &rarr; kill-word-left. Correct here, by accident</text>
+      <rect x="340" y="178" width="360" height="22" rx="3" fill="rgba(25,158,112,.10)" stroke="#199e70"/>
+      <text x="348" y="193" font-family="ui-monospace, monospace" font-size="9.5" fill="#c3c2b7">ctrl+v        &rarr; caught above; text, files and images</text>
+      <rect x="340" y="204" width="360" height="22" rx="3" fill="rgba(139,138,128,.10)" stroke="#8b8a80"/>
+      <text x="348" y="219" font-family="ui-monospace, monospace" font-size="9.5" fill="#8b8a80">alt+&larr;&uarr;&rarr;&darr; r v h w k &rarr; declined; the window keeps them</text>
+      <rect x="340" y="230" width="360" height="22" rx="3" fill="rgba(139,138,128,.10)" stroke="#8b8a80"/>
+      <text x="348" y="245" font-family="ui-monospace, monospace" font-size="9.5" fill="#8b8a80">right-click &rarr; the TERMINAL's copy tray, over the bench</text>
+      <text x="340" y="272" font-family="ui-monospace, monospace" font-size="9" fill="#8b8a80">ctrl+w reads as a text-editing chord only because the tab-close</text>
+      <text x="340" y="284" font-family="ui-monospace, monospace" font-size="9" fill="#8b8a80">handler happens to sit below the bench. Nothing decided that.</text>
+    </svg>
+  </div>
+  <figcaption><b>Six chords a person uses in a text box are already spoken for by something else, and the arbiter is line order in one function.</b> That is the same failure mode that stranded the window's alt keys, and the repair is the same: a declared table, above the handler, that says what the bench is allowed to keep.</figcaption>
+  <div class="gutter">line numbers are from this branch &middot; the stray 'C' on ctrl+shift+c depends on whether gpui fills key_char under ctrl &mdash; unverified, and the check is in the limits modal</div>
+</figure>
+
+<figure>
+  <span class="lbl">06 &middot; The fence &mdash; what the bench may keep</span>
+  <div class="fence">
+    <div>
+      <h4>&#x25A3; the bench's, while composing</h4>
+      <ul>
+        <li>Every printable character, and the shift forms</li>
+        <li>&larr; &rarr; &uarr; &darr;, home, end, and their ctrl/alt word forms</li>
+        <li>shift + any of those, once a selection exists</li>
+        <li>backspace, delete, and the readline kills: ctrl+w, ctrl+u, ctrl+k, alt+d</li>
+        <li>ctrl+a, ctrl+c, ctrl+x, ctrl+v and their shift forms &mdash; <b>as text operations</b></li>
+        <li>ctrl+z, ctrl+shift+z</li>
+        <li>enter to send, shift+enter for a line break</li>
+        <li>escape, to put the pen down</li>
+      </ul>
+    </div>
+    <div>
+      <h4>&#x2717; never the bench's</h4>
+      <ul>
+        <li>alt + arrows, r, v, h, w, k &mdash; the window's pane chords</li>
+        <li>ctrl+alt + anything &mdash; the left bar's tree</li>
+        <li>f1, alt+k &mdash; resolved above the bench already</li>
+        <li>ctrl+pageup / pagedown &mdash; tab switching</li>
+        <li>ctrl+shift + t, k, a, u, d, g &mdash; workspace panels</li>
+        <li>ctrl+f &mdash; find. <b>Currently taken by mistake</b></li>
+        <li>ctrl+w &mdash; close tab, when the composer is closed</li>
+        <li>An interrupt. <b>It needs its own key on this face</b></li>
+      </ul>
+    </div>
+  </div>
+  <figcaption><b>The hard case is the last line on each side: ctrl+c means copy in a text box and interrupt in a terminal, and the composer is both.</b> My answer is that the text box wins the chord and the interrupt moves to the strip's stop verb plus <code>ctrl+shift+&#x2044;</code> &mdash; because a person who wanted to interrupt can look at a button, and a person who wanted to copy has no second gesture at all.</figcaption>
+  <div class="gutter">left column is the proposal; right column is read from window_chord, keystroke_bytes and on_key &middot; yellow decisions are named in the grill</div>
+</figure>
+
+<h2 class="sec">Three placements of the boundary</h2>
+
+<p>Every fix above is cheap or impossible depending on this one choice, so it is the only thing that has to be decided before work starts.</p>
+
+<div class="grid">
+  <div class="card rec">
+    <span class="badge">recommended</span>
+    <h3>A &middot; Widen the mirror, express every edit in arrows</h3>
+    <p>Keep the pipe. Give <code>Line</code> rows and a selection range, and route every keystroke through one function that returns both the local edit <i>and</i> the bytes that make the far end do the same thing — using only arrows, backspace and literal characters, which is the set every line editor on the far end agrees on.</p>
+    <p>The mechanism already exists and is already trusted: <code>bench_click</code> turns a pixel into a column with the text system's own layout and walks the far end there with <code>caret_move</code>. Up-arrow, shift+motion and a selection replacement are the same operation with different targets.</p>
+    <p class="why"><b>What it costs you:</b> it does not fix drift the agent causes on its own — a history recall, a completion accepted with tab. Those stay invisible, and the only honest repair for them is to read the agent's echo, which is a much bigger piece of work. It also depends on one unverified fact: that a left-arrow at column zero of the second row moves to the end of the first row in Claude Code's editor.</p>
+  </div>
+  <div class="card">
+    <span class="badge">alternative</span>
+    <h3>B &middot; Own the draft; send it once</h3>
+    <p>Nothing is typed through while you compose. The composer is an ordinary local document with rows, ranges, undo, the lot. On send, the whole draft goes down the pseudoterminal in one bracketed-paste write followed by a carriage return.</p>
+    <p>Zero drift, by construction — there is no second model to drift from. Every row in the standard table becomes an ordinary implementation job with no protocol question attached.</p>
+    <p class="why"><b>Genuinely better at:</b> correctness, and the things that only work when you own the buffer — undo, a real find-in-draft, rectangular selection. <b>What it costs:</b> slash-command completion menus and history recall stop happening as you type, because the agent is not hearing you. Those are the two things the mirror was built for, and getting them back means asking the agent for completions over a side channel that does not exist.</p>
+  </div>
+  <div class="card">
+    <span class="badge">alternative</span>
+    <h3>C &middot; Two modes, one expand gesture</h3>
+    <p>The pipe stays for short lines. A gesture — the expand you are already asking for — opens a full local editor over the pane, which composes offline and pastes on send. The short path keeps completion; the long path gets the standard.</p>
+    <p class="why"><b>Genuinely better at:</b> shipping. It needs no protocol work at all, and it directly answers the thousand-word case. <b>What it costs:</b> two editors with different rules for the same box, which is the exact thing this codebase's comments keep warning about — one table, one function, so the conventions can be asserted. A person will learn the short-mode rules and then be wrong in long mode.</p>
+  </div>
+</div>
+
+<h2 class="sec">Findings</h2>
+
+<div class="finding">
+  <h3>The type-size ladder has never fired</h3>
+  <p><span class="tag v">measured</span> <code>COMPOSER_STEPS</code> is <code>[8.5, 7.25, 6.25]</code> and <code>COMPOSER_MIN_PT</code> is <code>9.5</code>. The floor is applied after the pane's gauge, so at the default gauge all three steps render as 9.5pt. The three-step shrink that exists to buy rows before scrolling buys nothing until the pane's text size is above 112%.</p>
+  <p>The floor is right — it is a claim about what the eye receives, and it survived the halving of the ramp deliberately. The steps are what is now wrong: they were halved to answer &ldquo;smaller!&rdquo; and halved past the floor that was meant to catch them.</p>
+  <p class="inv"><b>Invalidation:</b> if <code>composer_pt(5600, 670, 356, 1.0)</code> returns anything below 9.5, the floor is not being applied last and this is wrong. It returned exactly 9.5.</p>
+</div>
+
+<div class="finding">
+  <h3>The caret follows the end of the draft, not the caret</h3>
+  <p><span class="tag v">measured</span> <code>follows(caret, len)</code> is <code>caret &gt;= len</code>. Edit at the end and the box scrolls to the bottom; edit anywhere else and it does not scroll at all. In a draft with 2,427 characters above the fold, editing paragraph one means typing at something you cannot see.</p>
+  <p>The comment defending this is about not yanking the view under a hand that scrolled deliberately, which is a real concern and a different one. Both are satisfied by scrolling to the <i>caret's row</i> rather than to the bottom.</p>
+  <p class="inv"><b>Invalidation:</b> if the composer's scroll container is already caret-driven somewhere outside <code>composer_follows</code>, this is fixed and the finding is stale. Grep for <code>wb_slots.scroll</code> — there is one writer.</p>
+</div>
+
+<div class="finding">
+  <h3>Right-clicking the composer opens the terminal's copy tray</h3>
+  <p><span class="tag w">inferred</span> The bench's mousedown branch is <code>MouseButton::Left</code> only, so a right-click falls through to <code>ctx_menu = Some(pos)</code>. The tray that opens offers Copy and Paste, and its Copy calls <code>copy_selection</code>, which reads the <i>terminal grid's</i> selection — the face you are not looking at.</p>
+  <p class="inv"><b>Invalidation:</b> right-click the composer with text selected on the terminal face behind it. If the tray does not appear, or its Copy copies the draft, this is wrong.</p>
+</div>
+
+<div class="finding">
+  <h3>Four of these are already filed, and one is stale</h3>
+  <p><span class="tag v">measured</span> The rollup carries the copy chord, the home/end drift, the missing selection, the hidden-character count and the caret-above-the-fold case. The missing-selection one says Ctrl+A is unbuilt; it was built on 2026-09-18. Retitle it rather than closing it — the shift-motions and the copy half are still true.</p>
+  <p class="inv"><b>Invalidation:</b> if <code>Line::mark_all</code> is absent from <code>workbench.rs</code>, Ctrl+A is still unbuilt and the issue stands as written. It is at L547.</p>
+</div>
+
+<h2 class="sec">What is yours to decide</h2>
+
+<div class="grill">
+  <div class="ask">
+    <h3>1 &middot; Where does the boundary sit?</h3>
+    <p>A, B or C above. Everything else follows from it: under A the standard table is about fifteen small changes, under B it is one large one, under C it is both and a mode switch.</p>
+    <p class="rec"><b>Recommendation: A.</b> It keeps completion and history, the mechanism is already proven by the click path, and it converts a bug class into a function signature. Revisit if the multi-line arrow question below comes back wrong.</p>
+  </div>
+  <div class="ask">
+    <h3>2 &middot; Who wins ctrl+c on the workbench face?</h3>
+    <p>Copy and interrupt both have a legitimate claim. Today interrupt wins silently, and copy has no gesture at all — not even ctrl+shift+c, because the bench consumes it before the window's handler runs.</p>
+    <p class="rec"><b>Recommendation: copy wins, both forms.</b> The interrupt keeps the strip's stop verb, which is visible and already built, and gains an explicit chord. An interrupt you have to aim at is better than a copy that cannot be performed.</p>
+  </div>
+  <div class="ask">
+    <h3>3 &middot; How far may the composer grow, and on whose say-so?</h3>
+    <p>The ceiling is 33% so the box cannot eat the conversation it is replying to. That protects the resting state and punishes the case you raised. The choices: raise the constant, grow on demand with a gesture, or grow automatically while the draft is long and shrink back on send.</p>
+    <p class="rec"><b>Recommendation: grow on demand, to 75%, released on send or escape.</b> A constant cannot be right for both a two-word reply and a thousand words. An automatic grow moves the conversation under your eye while you are reading it, which is the complaint that produced the 33% in the first place.</p>
+  </div>
+  <div class="ask">
+    <h3>4 &middot; Is a thousand words in the composer the shape you actually want?</h3>
+    <p>The alternative is that a long prompt is a <i>document</i>: opened in an editor, saved to a file, and sent as a path or a paste. The bench already accepts dropped files and pasted paths. This is the question upstream of every fix above, and it is the only one I cannot answer from the code.</p>
+    <p class="rec"><b>Recommendation: both, and the composer first.</b> The composer has to hold a long draft without losing it whatever else exists, because it is where the draft already is when it gets long. A hand-off to a real editor is the second thing, not the substitute.</p>
+  </div>
+</div>
+
+<div class="morerow">
+  <button class="more" data-dlg="d-drawn">What each picture is drawn from &rarr;</button>
+  <button class="more" data-dlg="d-limits">Method and limits &rarr;</button>
+  <button class="more" data-dlg="d-repro">Reproduce every measurement &rarr;</button>
+</div>
+
+<footer>
+  <p>terminal-delight &middot; branch fix/the-second-click-backs-out-to-your-branch &middot; 2026-09-21</p>
+  <p>Notes save into this file. Add them, press &#x1F4BE;, then ask: &ldquo;read my notes in 2026-09-21-workbench-text-entry.html and act on them.&rdquo;</p>
+</footer>
+
+</div>
+
+<dialog id="d-selection">
+  <div class="dlg-head"><div><h3>Why a selection is two numbers</h3><p class="repo">workbench.rs &middot; Line::marked</p></div><button class="x" data-close>&times;</button></div>
+  <div class="dlg-body">
+    <h4>What the boolean can say</h4>
+    <p>Exactly one thing: the whole draft is selected. The comment in the source is honest about why — &ldquo;there is no mouse drag over the draft and no shift+arrow here, so a range would be three states wide and only ever hold two of them.&rdquo; That was true when it was written.</p>
+    <p>The cost shows up the moment a second gesture exists. A range has an <b>anchor</b> and a <b>head</b>, and the anchor is what makes shift+arrow repeatable: press it five times and the selection grows from the same place each time. A boolean has nowhere to put the anchor, so the fifth press cannot know where the first one started.</p>
+    <h4>Why replacing a selection is the hard half</h4>
+    <p>The far end also has to forget the selected text, and it has no idea a selection exists. Today's trick is elegant and narrow: <code>ctrl+a</code> has already moved the far end's caret to column zero, so one <code>ctrl+k</code> kills the rest and the replacement lands in the right place. It works because the caret position is <i>known</i>, not guessed.</p>
+    <p>A range generalises it without guessing: walk the far end's caret to the range's start with <code>caret_move</code>, then send <code>(end - start)</code> deletes. Arrows and deletes are the two things every editor on the far end agrees on, which is the same argument <code>caret_move</code>'s own doc comment makes for not using home and end.</p>
+    <h4>The one-line bug underneath</h4>
+    <p><code>Line::apply</code> clears the mark for every edit but the three that use it. <code>Line::seek</code>, <code>left</code>, <code>right</code>, <code>home</code> and <code>end</code> are public and do not. <code>bench_click</code> calls <code>seek</code> directly, which is how a click into a selection leaves the highlight up. Routing the click through <code>apply</code> fixes it and removes the second way to move a caret.</p>
+  </div>
+</dialog>
+
+<dialog id="d-mirror">
+  <div class="dlg-head"><div><h3>Why the composer is a mirror</h3><p class="repo">the reasoning, and what it bought</p></div><button class="x" data-close>&times;</button></div>
+  <div class="dlg-body">
+    <h4>The decision</h4>
+    <p>From the source: &ldquo;Everything else straight through, byte for byte. The echo comes back from the agent itself, which is why this needs no local editing model at all.&rdquo; And beside it, the reason: &ldquo;Slash commands complete, history works, ctrl+c interrupts, because the agent's own line editor is doing all of it. This is the difference between a text box that imitates a terminal and a person typing at one.&rdquo;</p>
+    <p>That is a good decision and this brief does not argue with it. Typing <code>/mod</code> into the bench raises Claude Code's own completion menu, and nothing on our side had to know that menu exists.</p>
+    <h4>What it already admits it cannot mirror</h4>
+    <p>Two things, both handled deliberately and both worth noticing as precedent:</p>
+    <ul>
+      <li><b>A pasted image.</b> The agent writes <code>[Image #7]</code> — a number this side cannot know. So the mirror holds a <i>count</i> beside the text rather than inventing the string, and the composer draws a chip.</li>
+      <li><b>A dial change mid-draft.</b> Sending <code>/model opus</code> would land on the end of your sentence. So <code>aside_bytes</code> erases the far end's line, sends the command, types the draft back and restores the caret — and it explicitly gives up on restoring a pasted image, because no retyping brings one back.</li>
+    </ul>
+    <p>Both are the same move: where the mirror cannot be exact, say so in the model rather than guessing. The gestures in this brief are cases where it guesses instead, or does nothing and lets the far end move alone.</p>
+    <h4>What would make the mirror exact</h4>
+    <p>Reading the agent's echo and reconciling against it. The bench already scrapes the pane's screen for other purposes, and the mirror could be corrected from the line the agent actually drew. That is the honest fix for history recall and completion, it is well beyond the scope of these complaints, and it is the reason option A is recommended with its limit stated rather than sold as complete.</p>
+  </div>
+</dialog>
+
+<dialog id="d-drawn">
+  <div class="dlg-head"><div><h3>What each picture is drawn from</h3><p class="repo">provenance, three ways</p></div><button class="x" data-close>&times;</button></div>
+  <div class="dlg-body">
+    <h4>Drawn from the code</h4>
+    <ul>
+      <li><b>Figure 01</b> — <code>benchdraw::composer</code> L2264&ndash;2495 and <code>workbench::Line</code> L489&ndash;772. The strings on the mockup are the shipped ones: &ldquo;&#x1F5CE; 1 IMAGE&rdquo;, &ldquo;LIVE &rarr; AGENT&rdquo;, &ldquo;&uarr; N more characters above&rdquo;, &ldquo;TYPE ANYWHERE &middot; ENTER SENDS &middot; PASTE TEXT, FILES OR AN IMAGE&rdquo;.</li>
+      <li><b>Figure 03, panels A, C and D</b> — <code>Line::mark_all</code>, <code>Line::seek</code>, <code>bench_click</code>, and the left-button guard in the pane's mouse-down. Panel C's left half was run; its right half is inferred from the bytes <code>caret_move</code> and <code>replace_bytes</code> emit.</li>
+      <li><b>Figure 02, frames 1&ndash;3</b> — <code>bench_key</code> L370&ndash;437 and the doc comment on <code>Line</code> L480&ndash;518.</li>
+      <li><b>Figure 05</b> — <code>on_key</code> with the line numbers read off this branch, plus <code>window_chord</code>, <code>keystroke_bytes</code> and <code>cursor_key_bytes</code>.</li>
+      <li><b>Figure 06, right column</b> — the same three functions.</li>
+    </ul>
+    <h4>Drawn from a measurement</h4>
+    <ul>
+      <li><b>Figure 04</b> — the visible and hidden counts come from running <code>composer_pt</code> and <code>composer_hidden</code>, extracted verbatim from <code>workbench.rs</code> and compiled standalone. The pane geometry is the shipped formula: rail is <code>(pane_w * 0.30).clamp(132, 208)</code>, composer width is <code>pane_w - rail - 90</code>, ceiling is <code>(pane_h * 0.33).max(96)</code>.</li>
+      <li><b>The tiles</b> — same run. 27 rows is <code>(356 / (9.5 * 1.35)).floor()</code>, the shipped line-height factor.</li>
+    </ul>
+    <h4>Mine, and drawn in amber</h4>
+    <ul>
+      <li><b>Figure 02, frame 4</b> — the <code>resolve(key, layout, line) &rarr; (Edit, Vec&lt;u8&gt;)</code> shape. Nothing in the repo implements it.</li>
+      <li><b>Figure 03, panel B</b> — the anchor and head model. Not implemented anywhere in the repo.</li>
+      <li><b>Figure 04, the third bar</b> — a 0.75 ceiling and 62 rows. The row count is real arithmetic on an invented constant.</li>
+      <li><b>Figure 06, left column</b> — the proposed fence, including moving the interrupt off ctrl+c.</li>
+    </ul>
+    <h4>The one estimated number</h4>
+    <p>&ldquo;1,000 words&rdquo; is taken as 5,600 characters, at 5.6 characters per word including the space. English prose runs about 5.1 to 6.1 depending on register; a technical prompt with file paths in it runs long. At 5.1 the hidden fraction at 968&times;1080 falls to 38%; at 6.1 it rises to 47%. The argument does not turn on the choice.</p>
+  </div>
+</dialog>
+
+<dialog id="d-limits">
+  <div class="dlg-head"><div><h3>Method and limits</h3><p class="repo">what this did not establish</p></div><button class="x" data-close>&times;</button></div>
+  <div class="dlg-body">
+    <h4>What the method was</h4>
+    <p>Source reading, plus the pure decision functions extracted by line range from <code>workbench.rs</code> and compiled standalone with <code>rustc</code> so they could be driven with a real corpus. That is the technique that turns &ldquo;up-arrow probably does nothing&rdquo; into &ldquo;returns <code>None</code> in all twelve modifier forms&rdquo;.</p>
+    <h4>What it structurally misses</h4>
+    <p>Nothing here was run in the app. No window was opened, no agent was launched, no key was pressed. Every claim about what the <i>far end</i> does with a byte is an inference from the protocol and from the agent's documented behaviour, not an observation.</p>
+    <h4>Four things not established</h4>
+    <ul>
+      <li><b>Multi-line caret motion across the far end's newline.</b> Option A assumes a left-arrow at column zero of row two moves to the end of row one in Claude Code's editor. If it does not, arrow-based caret walking cannot cross a line break and option A needs a different byte for that one case. <i>The check:</i> type a two-line prompt with shift+enter, press left at the start of line two, and watch where the block lands.</li>
+      <li><b>Whether gpui fills <code>key_char</code> under ctrl.</b> If it does, ctrl+shift+c inserts a stray <code>C</code> into the mirror as well as interrupting. The talking branch checks only for control characters; <code>types_a_character</code>, which would have refused it, is not called on that path. <i>The check:</i> <code>TD_KEYDEBUG=1</code> and press it.</li>
+      <li><b>IME and dead keys.</b> No composition path was found and none was tried.</li>
+      <li><b>Whether the 33% ceiling is what you are hitting.</b> It is the ceiling in the code and the arithmetic says a thousand words overflows it, but your pane's actual height was not measured. <i>The check:</i> the &ldquo;N more characters above&rdquo; line appears exactly when it overflows.</li>
+    </ul>
+    <h4>A confound worth recording</h4>
+    <p>The first run of the geometry probe modelled the rail as 30% of the pane width, which is what <code>RAIL_SHARE</code> says. It is clamped to 208px, so at 968px the rail is 208 and not 290 — the composer is 670px wide, not 588. The first numbers were 7 points too pessimistic on the hidden fraction. Re-run with <code>rail_fit</code>'s real clamp.</p>
+  </div>
+</dialog>
+
+<dialog id="d-repro">
+  <div class="dlg-head"><div><h3>Reproduce every measurement</h3><p class="repo">the probe, start to finish</p></div><button class="x" data-close>&times;</button></div>
+  <div class="dlg-body">
+    <h4>Extract and run</h4>
+    <p>The decision functions are pure, so they can be lifted out and driven without building the app. From the repo root:</p>
+    <pre><code>S=app/src/workbench.rs
+sed -n '489,772p'   $S   # struct Line + impl Line
+sed -n '1331,1353p' $S   # enum Edit
+sed -n '1451,1474p' $S   # line_edit
+sed -n '1033,1035p' $S   # follows
+sed -n '2008,2059p' $S   # composer_pt, the consts, composer_hidden</code></pre>
+    <p>Concatenate those with a <code>main</code> that asserts the claims, then <code>rustc -O --edition 2021</code>. The whole probe compiles in about a second because it imports nothing.</p>
+    <h4>What each claim's assertion is</h4>
+    <ul>
+      <li><b>Arrows:</b> <code>line_edit(k, ctrl, alt).is_none()</code> for <code>up</code>, <code>down</code>, <code>pageup</code>, <code>pagedown</code> across the three modifier forms.</li>
+      <li><b>Shift+enter:</b> <code>line_edit("enter", false, false)</code> is <code>Edit::Submit</code>, and the function takes no shift parameter — so no call site can distinguish them. Apply it to <code>Line::holding(..)</code> and read <code>chars()</code>.</li>
+      <li><b>Click into a selection:</b> <code>mark_all()</code>, then <code>seek(9)</code>, then <code>insert("X")</code>. Read <code>text()</code>.</li>
+      <li><b>Geometry:</b> <code>composer_hidden(5600, 670.0, 356.0, 1.0)</code>.</li>
+      <li><b>The dead ladder:</b> map <code>COMPOSER_STEPS</code> through <code>(s * 1.0).max(COMPOSER_MIN_PT)</code>.</li>
+    </ul>
+    <h4>In the app instead</h4>
+    <p>The end-to-end harness runs the binary without a window and the bench smoke rig can only stage shells, so none of this can be photographed today on an agent pane. Both are open follow-ups. Until then the standalone probe is the only mechanical evidence available, and it covers the pure half.</p>
+  </div>
+</dialog>
+
+
+<script>
+(function () {
+  document.addEventListener('click', function (e) {
+    var open = e.target.closest('[data-dlg]');
+    if (open) { var d = document.getElementById(open.dataset.dlg); if (d) d.showModal(); return; }
+    if (e.target.closest('[data-close]')) {
+      var dd = e.target.closest('dialog'); if (dd) dd.close();
+    }
+  });
+  document.querySelectorAll('dialog').forEach(function (d) {
+    d.addEventListener('click', function (e) { if (e.target === d) d.close(); });
+  });
+})();
+</script>
+
+<!-- decision-brief — the markup the notes system needs.
+     Paste immediately before the closing </body>. notes.js finds these by id.
+     Nothing here needs editing except NOTES_FILE. -->
+
+<div class="notebar" id="notebar">
+  <span class="cnt"><b id="note-count">0</b> notes</span>
+  <button id="btn-export" class="primary" data-note-action="export"
+          title="Anchored note map for pasting into a prompt">&#x1F4CB; copy map</button>
+  <button id="btn-embed" data-note-action="embed"
+          title="Download this file with your notes baked in">&#x1F4BE; save into file</button>
+  <button id="btn-clear" data-note-action="clear" title="Delete every note">&#x2715;</button>
+</div>
+
+<dialog id="d-note">
+  <div class="dlg-head">
+    <div>
+      <h3 id="note-title">Note</h3>
+      <p class="repo" id="note-anchor">&nbsp;</p>
+    </div>
+    <button class="x" data-close>&times;</button>
+  </div>
+  <div class="dlg-body">
+    <ul id="note-list"></ul>
+    <p id="note-none">No notes on this yet.</p>
+    <textarea id="note-text"
+      placeholder="Your note. Saved against this element and readable by an agent once you save into the file."></textarea>
+    <div class="note-actions">
+      <button class="save" data-note-action="add">Add note</button>
+      <button data-close>Close</button>
+      <span class="hintk">Ctrl+Enter to add</span>
+    </div>
+  </div>
+</dialog>
+
+<dialog id="d-export">
+  <div class="dlg-head">
+    <div>
+      <h3>Note map</h3>
+      <p class="repo">Anchored to element ids in this file &middot; paste straight into a prompt</p>
+    </div>
+    <button class="x" data-close>&times;</button>
+  </div>
+  <div class="dlg-body">
+    <p style="margin-bottom:12px">
+      Each line is anchored to an element id, so an agent can locate the passage without you
+      pasting the file. Prompt shape: <em>"read my notes in <code>&lt;filename&gt;</code> and act
+      on them."</em>
+    </p>
+    <textarea id="export-out" readonly></textarea>
+    <p class="tokest" id="export-est"></p>
+    <div class="note-actions">
+      <button class="save" data-note-action="copy">Copy to clipboard</button>
+      <button data-close>Close</button>
+    </div>
+  </div>
+</dialog>
+
+<!-- Notes are baked in here by "save into file". Leave it empty and leave it in. -->
+<script type="application/json" id="report-notes">{}</script>
+
+<script>
+  /* Set before notes.js runs. Used for the storage key and the download filename. */
+  window.NOTES_FILE = '2026-09-21-workbench-text-entry.html';
+</script>
+<script>
+/* decision-brief — reader notes.
+ *
+ * Drop-in. No build step, no dependencies. Paste this file's contents inline inside a
+ * script element, after the document body — a decision brief must survive being emailed
+ * as one file, so never load it with a src attribute.
+ *
+ * NOTHING IN THIS FILE MAY CONTAIN THE LITERAL CLOSING SCRIPT TAG, not even inside a
+ * comment or a string: an HTML parser ends the script element at the first one it sees,
+ * and everything after it silently becomes page content. Write it broken up, e.g.
+ * "<\/script>", if you ever need to emit one.
+ *
+ * Three outputs, in the order they matter:
+ *   1. copy map    — anchored note map, ~1% of the tokens of the whole document
+ *   2. save into   — bakes notes into a downloadable copy so an agent can READ them
+ *   3. localStorage — live persistence between reloads
+ *
+ * Why the map exists: pasting a whole annotated report into a prompt costs thousands of
+ * tokens; pasting bare notes loses which passage each one is about. The map is the third
+ * option — [element-id] + note, so the agent greps the id and finds the passage itself.
+ *
+ * Configure before this script runs (all optional):
+ *   window.NOTES_FILE    — filename used for the storage key and the download. Default: location basename.
+ *   window.NOTES_TARGETS — [[selector, prefix], ...] overriding what gets an affordance.
+ */
+(function () {
+  'use strict';
+
+  var FILE = window.NOTES_FILE ||
+    (location.pathname.split('/').pop() || 'decision-brief.html');
+  var KEY = 'notes:' + FILE;
+
+  /* Default targets. A prefix keeps exported anchors readable and grouped.
+     Override wholesale with window.NOTES_TARGETS if a brief's shape differs.
+
+     THE GRILL COMES FIRST, AND IT IS NOT OPTIONAL. Until 2026-09-02 this list
+     covered five of the seven components layout.md tells you to build and
+     omitted the grill — so the one section whose entire purpose is a decision
+     the reader has to make was the one section the reader could not comment on.
+     Two briefs shipped that way, each having invented its own class name
+     (`grill-q`, then `q`) because nothing here named one. Both spellings are
+     matched below; `.ask` is the name to use going forward. If you add a
+     component, add it here in the same commit.
+
+     FIGURES ARE SECOND, for the same reason. The 2026-09-15 attention-spine
+     brief carried eleven pictures and had to override NOTES_TARGETS wholesale
+     to make any of them annotatable, because `figure` was not here — a fork of
+     this list living in one report, where nothing else would inherit it. The
+     pictures are the part a reader argues with, so they are in the default list
+     now. `titleOf()` already reads `.lbl`, so a figure labelled `03 · What
+     opening costs` anchors as `fig-03-what-opening-costs`. */
+  var TARGETS = window.NOTES_TARGETS || [
+    ['.grill .q, .grill-q, .ask', 'ask'],
+    ['figure', 'fig'],
+    ['.card', 'verdict'],
+    ['.esc-list li', 'readfirst'],
+    ['.finding', 'finding'],
+    ['.tile', 'stat'],
+    ['table.wide tr', 'row'],
+    ['.bar-row', 'chart'],
+    ['.callout', 'callout'],
+    ['dialog .dlg-body > h4', 'sub']
+  ];
+
+  /* Notes baked into the file win on first load — a fresh browser should see what the
+     author saved. After that localStorage is the live copy. */
+  var baked = {};
+  try {
+    var island = document.getElementById('report-notes');
+    if (island) baked = JSON.parse(island.textContent || '{}');
+  } catch (e) { /* a malformed island must not break the page */ }
+
+  var N;
+  try { N = JSON.parse(localStorage.getItem(KEY) || 'null') || baked; }
+  catch (e) { N = baked; }
+
+  var active = null, activeTitle = '';
+
+  function save() {
+    try { localStorage.setItem(KEY, JSON.stringify(N)); } catch (e) {}
+  }
+  function esc(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+  function slug(s) {
+    return String(s || 'x').toLowerCase().replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '').slice(0, 44) || 'x';
+  }
+  function titleOf(el) {
+    var h = el.querySelector('h2,h3,h4,.bar-lab,.k,.lbl,td:first-child,th:first-child');
+    var t = ((h ? h.textContent : el.textContent) || 'item').replace(/\s+/g, ' ').trim();
+    return t.length > 72 ? t.slice(0, 69) + '…' : t;
+  }
+
+  /* ---- give every target a stable anchor id and a note affordance ---- */
+  function tag() {
+    var used = {};
+    TARGETS.forEach(function (pair) {
+      var sel = pair[0], pre = pair[1];
+      Array.prototype.forEach.call(document.querySelectorAll(sel), function (el, i) {
+        if (el.classList.contains('notable')) return;
+        if (el.tagName === 'TR' && el.querySelector('th')) return;   // header rows
+        if (el.closest('#d-note, #d-export, .notebar')) return;
+
+        /* Numbered lists anchor by position; everything else by a SHORT title slug.
+           Long slugs make the exported map unreadable, which defeats the map. */
+        var id;
+        var num = el.querySelector('.esc-n');
+        if (num) id = pre + '-' + num.textContent.trim();
+        else id = pre + '-' + slug(titleOf(el)).split('-').slice(0, 4).join('-');
+
+        var base = id, n = 2;
+        while (used[id]) id = base + '-' + (n++);
+        used[id] = 1;
+
+        el.classList.add('notable');
+        el.dataset.nid = id;
+        el.dataset.ntitle = titleOf(el);
+        if (!el.id) el.id = id;                      // a real anchor in the file
+
+        var b = document.createElement('button');
+        b.className = 'note-btn';
+        b.type = 'button';
+        b.title = 'Add a note';
+        b.innerHTML = '&#x1F4AC;';
+        b.addEventListener('click', function (ev) {
+          ev.preventDefault(); ev.stopPropagation(); open(el);
+        });
+        el.appendChild(b);
+      });
+    });
+  }
+
+  function badges() {
+    var total = 0;
+    Array.prototype.forEach.call(document.querySelectorAll('.notable'), function (el) {
+      var n = (N[el.dataset.nid] || []).length;
+      total += n;
+      el.classList.toggle('has-note', n > 0);
+      var b = el.querySelector(':scope > .note-btn');
+      if (b) b.innerHTML = n ? String(n) : '&#x1F4AC;';
+    });
+    var c = document.getElementById('note-count');
+    if (c) c.textContent = total;
+    ['btn-export', 'btn-embed', 'btn-clear'].forEach(function (id) {
+      var b = document.getElementById(id);
+      if (b) b.disabled = total === 0;
+    });
+  }
+
+  function render() {
+    var list = N[active] || [];
+    var ul = document.getElementById('note-list');
+    document.getElementById('note-none').style.display = list.length ? 'none' : 'block';
+    ul.innerHTML = list.map(function (n, i) {
+      return '<li><div class="nts"><span>' + esc(n.ts) + '</span>' +
+        '<button class="ndel" data-i="' + i + '">delete</button></div>' + esc(n.text) + '</li>';
+    }).join('');
+    Array.prototype.forEach.call(ul.querySelectorAll('.ndel'), function (b) {
+      b.addEventListener('click', function () { del(+b.dataset.i); });
+    });
+  }
+
+  function open(el) {
+    active = el.dataset.nid;
+    activeTitle = el.dataset.ntitle;
+    document.getElementById('note-title').textContent = activeTitle;
+    document.getElementById('note-anchor').textContent = '#' + active;
+    render();
+    document.getElementById('d-note').showModal();
+    document.getElementById('note-text').focus();
+  }
+
+  function add() {
+    var ta = document.getElementById('note-text');
+    var t = ta.value.trim();
+    if (!t || !active) return;
+    (N[active] = N[active] || []).push({
+      text: t,
+      title: activeTitle,
+      ts: new Date().toISOString().slice(0, 16).replace('T', ' ')
+    });
+    ta.value = '';
+    save(); render(); badges();
+  }
+
+  function del(i) {
+    N[active].splice(i, 1);
+    if (!N[active].length) delete N[active];
+    save(); render(); badges();
+  }
+
+  /* ---- the map: anchored, compact, prompt-ready ---- */
+  function buildMap() {
+    var count = 0, els = 0;
+    for (var k in N) { if (N.hasOwnProperty(k)) { els++; count += N[k].length; } }
+    var out = [
+      'NOTES — ' + FILE,
+      count + ' notes on ' + els + ' elements.',
+      'Each [anchor] is an element id in that file — search it to find the passage.',
+      ''
+    ];
+    /* Document order, not object order: the map should read the way the brief reads. */
+    Array.prototype.forEach.call(document.querySelectorAll('.notable'), function (el) {
+      var list = N[el.dataset.nid];
+      if (!list || !list.length) return;
+      out.push('[' + el.dataset.nid + '] ' + el.dataset.ntitle);
+      list.forEach(function (n) { out.push('  · ' + n.text.replace(/\n+/g, ' ')); });
+      out.push('');
+    });
+    return out.join('\n');
+  }
+
+  function exportNotes() {
+    var txt = buildMap();
+    document.getElementById('export-out').value = txt;
+    var est = document.getElementById('export-est');
+    if (est) {
+      est.textContent = txt.length + ' characters ≈ ' + Math.ceil(txt.length / 4) +
+        ' tokens — versus ~' + Math.ceil(document.body.innerText.length / 4) +
+        ' for the whole document.';
+    }
+    document.getElementById('d-export').showModal();
+  }
+
+  function copyExport(btn) {
+    var ta = document.getElementById('export-out');
+    ta.select();
+    try { document.execCommand('copy'); } catch (e) {}
+    if (btn) {
+      var o = btn.textContent;
+      btn.textContent = 'Copied';
+      setTimeout(function () { btn.textContent = o; }, 1400);
+    }
+  }
+
+  /* ---- bake notes into a downloadable copy of this file ----
+     localStorage is invisible to an agent. This is what makes
+     "read my notes in <file>" work. */
+  function embedNotes() {
+    var doc = document.documentElement.cloneNode(true);
+    Array.prototype.forEach.call(doc.querySelectorAll('.note-btn'), function (n) { n.remove(); });
+    Array.prototype.forEach.call(doc.querySelectorAll('.notable'), function (n) {
+      n.classList.remove('notable', 'has-note');
+    });
+    var island = doc.querySelector('#report-notes');
+    if (island) island.textContent = JSON.stringify(N, null, 1);
+    /* A plain-text mirror as well, so grep and ctx_read find the notes
+       without anyone having to parse JSON out of a script tag. */
+    var body = doc.querySelector('body');
+    if (body) body.appendChild(document.createComment('\nREADER NOTES —\n' + buildMap() + '\n'));
+
+    var blob = new Blob(['<!DOCTYPE html>\n' + doc.outerHTML], { type: 'text/html' });
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = FILE;
+    a.click();
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 4000);
+
+    var b = document.getElementById('btn-embed');
+    if (b) { var o = b.innerHTML; b.innerHTML = 'saved &#x2713;'; setTimeout(function () { b.innerHTML = o; }, 2200); }
+  }
+
+  function clearNotes() {
+    if (!confirm('Delete every note in this brief?')) return;
+    N = {}; save(); badges();
+  }
+
+  /* ---- wiring ---- */
+  function init() {
+    var ta = document.getElementById('note-text');
+    if (ta) {
+      ta.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); add(); }
+      });
+    }
+    document.addEventListener('click', function (e) {
+      var t = e.target.closest('[data-note-action]');
+      if (!t) return;
+      var a = t.dataset.noteAction;
+      if (a === 'add') add();
+      else if (a === 'export') exportNotes();
+      else if (a === 'embed') embedNotes();
+      else if (a === 'clear') clearNotes();
+      else if (a === 'copy') copyExport(t);
+    });
+    ['d-note', 'd-export'].forEach(function (id) {
+      var d = document.getElementById(id);
+      if (!d) return;
+      Array.prototype.forEach.call(d.querySelectorAll('[data-close]'), function (x) {
+        x.addEventListener('click', function () { d.close(); });
+      });
+      d.addEventListener('click', function (e) { if (e.target === d) d.close(); });
+    });
+    tag();
+    badges();
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+  else init();
+})();
+
+</script>
+
+
+</body>
+</html>

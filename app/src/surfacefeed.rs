@@ -113,6 +113,42 @@ pub fn actions_path(session: &str, pane: u64) -> PathBuf {
     pane_dir(session, pane).join("actions.jsonl")
 }
 
+/// Where the window records what it did through the agent channel, before it
+/// does it. See `docs/spec/td-agent-channel.md` §4.
+pub fn outbound_path(session: &str, pane: u64) -> PathBuf {
+    pane_dir(session, pane).join("outbound.jsonl")
+}
+
+/// The window's liveness marker for a pane — what a hook reads before it
+/// holds a picker for the bench. Written beside and renamed, so a hook never
+/// reads half of it.
+pub fn write_marker(dir: &Path, bench_open: bool, now_ms: u64) -> std::io::Result<()> {
+    fs::create_dir_all(dir)?;
+    let value = crate::channel::marker(bench_open, now_ms, std::process::id());
+    let temp = dir.join(format!(".bench.{}.part", std::process::id()));
+    fs::write(&temp, serde_json::to_vec(&value)?)?;
+    fs::rename(&temp, dir.join("bench.json"))
+}
+
+/// The answer to a question a hook is holding open, as the file it is
+/// polling for. Under `answers/`, named by the same filter the hook applies
+/// to the tool-use id, written beside and renamed.
+pub fn write_answers(
+    dir: &Path,
+    tool_use_id: &str,
+    answers: &serde_json::Map<String, Value>,
+) -> std::io::Result<PathBuf> {
+    let key = crate::channel::file_key(tool_use_id);
+    let folder = dir.join("answers");
+    fs::create_dir_all(&folder)?;
+    let value = crate::channel::answers_json(tool_use_id, answers);
+    let temp = folder.join(format!(".{key}.{}.part", std::process::id()));
+    fs::write(&temp, serde_json::to_vec(&value)?)?;
+    let path = folder.join(format!("{key}.json"));
+    fs::rename(&temp, &path)?;
+    Ok(path)
+}
+
 /// Keep a session key from walking out of its own directory.
 ///
 /// Dots are dropped rather than kept-and-checked. A filter that allowed them
@@ -155,6 +191,9 @@ struct Stamp {
 #[derive(Default, Debug)]
 pub struct Feed {
     seen: HashMap<PathBuf, Stamp>,
+    /// How far into each pane's inbound journal the reader has got, in bytes.
+    /// An unchanged journal then costs one `metadata` call.
+    offsets: HashMap<PathBuf, u64>,
 }
 
 /// One pane's worth of arrivals.
@@ -162,6 +201,8 @@ pub struct Feed {
 pub struct Arrivals {
     pub pane: u64,
     pub posts: Vec<Post>,
+    /// What the pane's inbound journal gained — the agent channel's half.
+    pub events: Vec<crate::channel::Inbound>,
 }
 
 impl Feed {
@@ -191,10 +232,60 @@ impl Feed {
                 continue; // not a pane directory; leave whatever it is alone
             };
             let posts = self.sweep_pane(&path, now);
-            if !posts.is_empty() {
-                out.push(Arrivals { pane, posts });
+            let events = self.tail_inbound(&path);
+            if !posts.is_empty() || !events.is_empty() {
+                out.push(Arrivals {
+                    pane,
+                    posts,
+                    events,
+                });
             }
         }
+        out
+    }
+
+    /// New lines of the pane's inbound journal since the last sweep.
+    ///
+    /// A byte offset per file. A trailing line with no newline yet is a line
+    /// still being written and is left for the next sweep, offset unmoved —
+    /// the same rule [`Feed::sweep_pane`] applies to a file caught mid-write.
+    /// A journal that shrank was rotated or truncated, and is read from the
+    /// start again rather than from an offset past its end.
+    pub fn tail_inbound(&mut self, dir: &Path) -> Vec<crate::channel::Inbound> {
+        use std::io::{Read, Seek, SeekFrom};
+        let path = dir.join("inbound.jsonl");
+        let Ok(meta) = fs::metadata(&path) else {
+            return Vec::new();
+        };
+        let len = meta.len();
+        let at = self.offsets.get(&path).copied().unwrap_or(0);
+        let at = if len < at { 0 } else { at };
+        if len == at {
+            return Vec::new();
+        }
+        let Ok(mut file) = fs::File::open(&path) else {
+            return Vec::new();
+        };
+        if file.seek(SeekFrom::Start(at)).is_err() {
+            return Vec::new();
+        }
+        let mut buf = Vec::with_capacity((len - at) as usize);
+        if file.take(len - at).read_to_end(&mut buf).is_err() {
+            return Vec::new();
+        }
+        let Some(complete) = buf.iter().rposition(|b| *b == b'\n').map(|i| i + 1) else {
+            return Vec::new();
+        };
+        let text = String::from_utf8_lossy(&buf[..complete]);
+        let mut out = Vec::new();
+        for line in text.lines().filter(|l| !l.trim().is_empty()) {
+            out.push(crate::channel::Inbound::parse_line(line).unwrap_or(
+                crate::channel::Inbound::Unknown {
+                    type_name: "a line that is not a record".into(),
+                },
+            ));
+        }
+        self.offsets.insert(path, at + complete as u64);
         out
     }
 
@@ -210,6 +301,12 @@ impl Feed {
             let path = entry.path();
             if path.extension().and_then(|e| e.to_str()) != Some("json") {
                 continue; // actions.jsonl lives here too, and is ours not theirs
+            }
+            // The channel's liveness marker is a `.json` in the same directory
+            // and it is not a surface: swept as one it would land on every
+            // bench as an `unclassified` card, once a second, forever.
+            if path.file_name().and_then(|n| n.to_str()) == Some("bench.json") {
+                continue;
             }
             let Ok(meta) = entry.metadata() else { continue };
             if !meta.is_file() {
@@ -1643,6 +1740,98 @@ mod tests {
             serde_json::from_str::<Value>(&text).is_ok(),
             "a reader could see a half-written file: {text}"
         );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_inbound_journal_is_read_by_offset_and_a_half_written_line_waits() {
+        use std::io::Write;
+        let dir =
+            std::env::temp_dir().join(format!("td-inbound-{}-{}", std::process::id(), now_ms()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("inbound.jsonl");
+        let mut feed = Feed::new();
+        assert!(feed.tail_inbound(&dir).is_empty(), "no journal yet");
+        {
+            let mut f = fs::File::create(&path).unwrap();
+            writeln!(f, r#"{{"td":"0.1","type":"prompt","text":"one"}}"#).unwrap();
+            writeln!(f, r#"{{"td":"0.1","type":"reply","text":"two"}}"#).unwrap();
+            // The third line is still being written: no newline yet.
+            write!(f, r#"{{"td":"0.1","type":"pro"#).unwrap();
+        }
+        let got = feed.tail_inbound(&dir);
+        assert_eq!(got.len(), 2, "two whole lines, the half-written one waits");
+        assert!(
+            matches!(&got[0], crate::channel::Inbound::Prompt { text: Some(t), .. } if t == "one")
+        );
+        assert!(
+            matches!(&got[1], crate::channel::Inbound::Reply { text: Some(t), .. } if t == "two")
+        );
+        assert!(feed.tail_inbound(&dir).is_empty(), "nothing new");
+        {
+            let mut f = fs::OpenOptions::new().append(true).open(&path).unwrap();
+            writeln!(f, r#"mpt","text":"three"}}"#).unwrap();
+            writeln!(f, "not json at all").unwrap();
+        }
+        let got = feed.tail_inbound(&dir);
+        assert_eq!(got.len(), 2);
+        assert!(
+            matches!(&got[0], crate::channel::Inbound::Prompt { text: Some(t), .. } if t == "three")
+        );
+        assert!(
+            matches!(&got[1], crate::channel::Inbound::Unknown { .. }),
+            "a line that is not a record is kept as unknown, never dropped: {:?}",
+            got[1]
+        );
+        // A journal that shrank is read from the start again.
+        fs::write(
+            &path,
+            "{\"td\":\"0.1\",\"type\":\"reply\",\"text\":\"again\"}\n",
+        )
+        .unwrap();
+        let got = feed.tail_inbound(&dir);
+        assert_eq!(got.len(), 1);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_marker_and_the_answer_file_are_whole_when_read() {
+        let dir =
+            std::env::temp_dir().join(format!("td-marker-{}-{}", std::process::id(), now_ms()));
+        write_marker(&dir, true, 5_000).unwrap();
+        let text = fs::read_to_string(dir.join("bench.json")).unwrap();
+        let v: Value = serde_json::from_str(&text).unwrap();
+        assert!(crate::channel::marker_holds(&v, 5_000));
+        assert_eq!(v["window"], std::process::id());
+        write_marker(&dir, false, 6_000).unwrap();
+        let v: Value =
+            serde_json::from_str(&fs::read_to_string(dir.join("bench.json")).unwrap()).unwrap();
+        assert!(!crate::channel::marker_holds(&v, 6_000), "terminal face");
+        // The marker is a `.json` in the mailbox and it is NOT a surface.
+        let mut feed = Feed::new();
+        assert!(
+            feed.sweep_pane(&dir, 7_000).is_empty(),
+            "the marker was swept onto the bench as a surface"
+        );
+
+        let mut answers = serde_json::Map::new();
+        answers.insert("Which drink?".into(), Value::String("Coffee".into()));
+        let path = write_answers(&dir, "toolu_01/../x", &answers).unwrap();
+        assert!(path.ends_with("answers/toolu_01x.json"), "{path:?}");
+        let v: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(v["answers"]["Which drink?"], "Coffee");
+        assert_eq!(
+            v["tool_use_id"], "toolu_01/../x",
+            "the id itself travels whole"
+        );
+        // No `.part` left behind for anything to trip over.
+        let stray: Vec<_> = fs::read_dir(dir.join("answers"))
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.contains(".part"))
+            .collect();
+        assert!(stray.is_empty(), "{stray:?}");
         let _ = fs::remove_dir_all(&dir);
     }
 }
