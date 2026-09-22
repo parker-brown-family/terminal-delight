@@ -1415,8 +1415,33 @@ impl TerminalView {
         }
         let now = crate::surfacefeed::now_ms();
         for ev in events {
+            // A PROMPT RECORD IS A TURN BEGINNING, whatever it carried. The
+            // caption effects below are about whose VOICE opened it, and both
+            // of them — plus the third case, a prompt the harness handed over
+            // with no text at all — are the same event to the feed: this
+            // conversation has a new turn and the overview flips to it.
+            let began = matches!(ev, crate::channel::Inbound::Prompt { .. });
             self.bench_record_round(&ev);
-            match self.wb_channel.take(ev, now) {
+            let effect = self.wb_channel.take(ev, now);
+            if began {
+                let (headline, voice) = match &effect {
+                    // The first line of what they said — the rail has one line
+                    // to say what a turn is about, and that is it.
+                    Effect::Asked { text } => (
+                        text.lines().next().map(str::to_string),
+                        Some(crate::workbench::Voice::Person),
+                    ),
+                    Effect::Woken(w) => (
+                        Some(crate::benchdraw::woken_says(w).0),
+                        Some(crate::workbench::Voice::Harness),
+                    ),
+                    // A turn certainly began and nothing said whose it was.
+                    // Unknown, and unknown does not take an opened card.
+                    _ => (None, None),
+                };
+                self.bench.turn_began(headline, voice, now);
+            }
+            match effect {
                 Effect::Asked { text } => {
                     // Into the record first, in full. What the caption keeps
                     // below is the first few lines of it, which is a drawing
@@ -3457,6 +3482,10 @@ impl TerminalView {
         // gets the close: the stand-in was not opened and cannot be closed,
         // and a ✕ that did nothing would be a control that lies.
         let card_open = self.bench.selected().is_some();
+        // THE TURN IN FLIGHT TAKES THE ROOM, over the reply to the turn before
+        // it. Taken before `showing`, which yields `None` while this is `Some`
+        // so that the two can never both be drawn — see `Bench::showing`.
+        let live_turn = self.bench.live_standing().cloned();
         // Is there a card IN the body — not "did somebody open one". The
         // overview stands the newest reply in the room without anybody opening
         // it, and that stand-in is a card in every way this code cares about:
@@ -3471,10 +3500,17 @@ impl TerminalView {
         // card (open a row, close one, change shelf, a new reply arriving,
         // a surface retired under the reader): one comparison cannot miss a
         // site, and five resets can.
-        if self.wb_card_at != showing_id {
+        // The turn's own id counts as a document here: reading a long reply,
+        // then asking something, must not land the new turn's card halfway
+        // down the old one's scroll.
+        let room_id = live_turn
+            .as_ref()
+            .map(|t| t.id.clone())
+            .or_else(|| showing_id.clone());
+        if self.wb_card_at != room_id {
             self.wb_card_scroll
                 .set_offset(gpui::point(gpui::px(0.), gpui::px(0.)));
-            self.wb_card_at = showing_id.clone();
+            self.wb_card_at = room_id;
         }
         // The offer to start an agent, keyed on whether this pane HAS one —
         // never on whether its bench happens to be clean.
@@ -3493,117 +3529,136 @@ impl TerminalView {
         // strip carries the verb instead — one slot, two states, not two
         // buttons offering the same thing in different places.
         let offering = showing_id.is_none() && !agent_now && !self.wb_had_agent;
-        let body = match self.bench.showing() {
-            Some(surface) => {
-                let tint = crate::benchdraw::ink(crate::workbench::tint_of(&surface.kind), th);
-                let bench = &self.bench;
-                // The picks the renderer cannot hold: which tab, and which
-                // register inside whichever tab it resolves to. The closure is
-                // what lets the renderer ask AFTER it has worked out the open
-                // group, which is a thing only it can do — it is the half that
-                // knows which groups this reply actually carries.
-                let reg = |g: crate::surface::Group| {
-                    bench.picked_register(&surface.id, g).map(str::to_string)
-                };
-                let picks = crate::benchdraw::Picks {
-                    id: &surface.id,
-                    tab: bench.picked_tab(&surface.id),
-                    reg: &reg,
-                    zones: self.wb_zones.clone(),
-                };
-                let drawn = crate::benchdraw::body(surface, how, Some(&picks), sk, th);
-                // A question opened from the rail is still a question, so it
-                // gets the chips the inline block gets. Built before the verb
-                // row because both borrow `self`.
-                let asked = match &surface.kind {
-                    crate::surface::Kind::Question(q) => Some(q.clone()),
-                    _ => None,
-                };
-                let answers = asked.map(|q| self.answer_chips(&q, sk, th));
-                let verbs = self.bench_verbs(sk, th);
-                // One title, not two. The card drew `kind · title` here and
-                // then [`benchdraw::body`] drew its own heading directly
-                // underneath — the same two strings twice, six pixels apart,
-                // which is what an opened artifact looked like in Parker's
-                // screenshot. The renderer owns the heading, because the
-                // renderer is what knows how a KIND wants to introduce
-                // itself; the card keeps only the close, which is chrome.
-                crate::benchdraw::raised(
-                    sk.panel()
-                        .relative()
-                        .flex()
-                        .flex_col()
-                        .gap(px(12.))
-                        .p(px(16.))
-                        .bg(th.surface)
-                        .border_l(px(3.))
-                        // The card's edge goes to the accent for the moment
-                        // after the bench types into the terminal, so a write
-                        // is something a person sees happen where they
-                        // pressed — the agent bar turning to "Reading your
-                        // answer" is the longer signal, this is the flash.
-                        .border_color(if self.bench_flashing(crate::surfacefeed::now_ms()) {
-                            th.accent
-                        } else {
-                            tint
-                        }),
-                    tint,
+        let body = match live_turn.as_ref() {
+            // Only what is live. The status line is parsed here rather than
+            // read off the strip's copy because the strip is built inside a
+            // closure that may not have run — a pane that never had an agent
+            // draws no strip — and a card that silently took its numbers from
+            // a block that did not exist would show them as absent.
+            Some(_) => {
+                let status = self.agent_status();
+                let vitals = crate::workbench::turn_vitals(&status);
+                crate::benchdraw::live_card(
+                    self.bench_status(),
+                    vitals.as_ref(),
+                    status.gerund.as_deref(),
+                    self.tool_face.as_ref().map(|f| f.verb.as_str()),
+                    sk,
                     th,
                 )
-                .when(card_open, |card| {
-                    card.child(
-                        div()
-                            .absolute()
-                            .right(px(10.))
-                            .top(px(8.))
-                            .text_size(px(sk.pt(Step::Lead)))
-                            .text_color(sk.ink.ink_faint)
-                            .child("\u{2715}")
+            }
+            None => match self.bench.showing() {
+                Some(surface) => {
+                    let tint = crate::benchdraw::ink(crate::workbench::tint_of(&surface.kind), th);
+                    let bench = &self.bench;
+                    // The picks the renderer cannot hold: which tab, and which
+                    // register inside whichever tab it resolves to. The closure is
+                    // what lets the renderer ask AFTER it has worked out the open
+                    // group, which is a thing only it can do — it is the half that
+                    // knows which groups this reply actually carries.
+                    let reg = |g: crate::surface::Group| {
+                        bench.picked_register(&surface.id, g).map(str::to_string)
+                    };
+                    let picks = crate::benchdraw::Picks {
+                        id: &surface.id,
+                        tab: bench.picked_tab(&surface.id),
+                        reg: &reg,
+                        zones: self.wb_zones.clone(),
+                    };
+                    let drawn = crate::benchdraw::body(surface, how, Some(&picks), sk, th);
+                    // A question opened from the rail is still a question, so it
+                    // gets the chips the inline block gets. Built before the verb
+                    // row because both borrow `self`.
+                    let asked = match &surface.kind {
+                        crate::surface::Kind::Question(q) => Some(q.clone()),
+                        _ => None,
+                    };
+                    let answers = asked.map(|q| self.answer_chips(&q, sk, th));
+                    let verbs = self.bench_verbs(sk, th);
+                    // One title, not two. The card drew `kind · title` here and
+                    // then [`benchdraw::body`] drew its own heading directly
+                    // underneath — the same two strings twice, six pixels apart,
+                    // which is what an opened artifact looked like in Parker's
+                    // screenshot. The renderer owns the heading, because the
+                    // renderer is what knows how a KIND wants to introduce
+                    // itself; the card keeps only the close, which is chrome.
+                    crate::benchdraw::raised(
+                        sk.panel()
                             .relative()
-                            .child(crate::benchdraw::zone(
-                                self.wb_zones.clone(),
-                                crate::workbench::Hit::CloseCard,
-                            )),
+                            .flex()
+                            .flex_col()
+                            .gap(px(12.))
+                            .p(px(16.))
+                            .bg(th.surface)
+                            .border_l(px(3.))
+                            // The card's edge goes to the accent for the moment
+                            // after the bench types into the terminal, so a write
+                            // is something a person sees happen where they
+                            // pressed — the agent bar turning to "Reading your
+                            // answer" is the longer signal, this is the flash.
+                            .border_color(if self.bench_flashing(crate::surfacefeed::now_ms()) {
+                                th.accent
+                            } else {
+                                tint
+                            }),
+                        tint,
+                        th,
                     )
-                })
-                .child(drawn)
-                .children(answers)
-                .children(verbs)
-            }
-            // No card: the conversation.
-            None => {
-                let tail = self.recent_lines(if full { 18 } else { 12 });
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(10.))
-                    // The offer is ONE element: a dialogue card with the action
-                    // inside it.
-                    //
-                    // It was a panel with the button as a sibling above it, and
-                    // before that a panel with the button as a chip tacked on
-                    // its end. Both failed the same way — the only pressable
-                    // thing on the surface and the sentence naming it were not
-                    // in the same box, so they aligned independently and read as
-                    // two unrelated blocks. A dialogue holds its own action.
-                    .when(offering, |d| {
-                        d.child(crate::benchdraw::empty(
-                            false,
-                            "",
-                            Some(crate::benchdraw::launch_button(sk, th).child(
-                                crate::benchdraw::zone(
+                    .when(card_open, |card| {
+                        card.child(
+                            div()
+                                .absolute()
+                                .right(px(10.))
+                                .top(px(8.))
+                                .text_size(px(sk.pt(Step::Lead)))
+                                .text_color(sk.ink.ink_faint)
+                                .child("\u{2715}")
+                                .relative()
+                                .child(crate::benchdraw::zone(
                                     self.wb_zones.clone(),
-                                    crate::workbench::Hit::Launch,
-                                ),
-                            )),
-                            sk,
-                            th,
-                        ))
+                                    crate::workbench::Hit::CloseCard,
+                                )),
+                        )
                     })
-                    .when(shows.mirror, |d| {
-                        d.child(crate::benchdraw::conversation(&tail, sk, th))
-                    })
-            }
+                    .child(drawn)
+                    .children(answers)
+                    .children(verbs)
+                }
+                // No card: the conversation.
+                None => {
+                    let tail = self.recent_lines(if full { 18 } else { 12 });
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(10.))
+                        // The offer is ONE element: a dialogue card with the action
+                        // inside it.
+                        //
+                        // It was a panel with the button as a sibling above it, and
+                        // before that a panel with the button as a chip tacked on
+                        // its end. Both failed the same way — the only pressable
+                        // thing on the surface and the sentence naming it were not
+                        // in the same box, so they aligned independently and read as
+                        // two unrelated blocks. A dialogue holds its own action.
+                        .when(offering, |d| {
+                            d.child(crate::benchdraw::empty(
+                                false,
+                                "",
+                                Some(crate::benchdraw::launch_button(sk, th).child(
+                                    crate::benchdraw::zone(
+                                        self.wb_zones.clone(),
+                                        crate::workbench::Hit::Launch,
+                                    ),
+                                )),
+                                sk,
+                                th,
+                            ))
+                        })
+                        .when(shows.mirror, |d| {
+                            d.child(crate::benchdraw::conversation(&tail, sk, th))
+                        })
+                }
+            },
         };
 
         // ── what the agent is blocked on, whatever else is on the bench ─────

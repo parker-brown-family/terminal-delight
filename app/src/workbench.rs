@@ -2671,6 +2671,39 @@ pub fn ask_lines(shelf: Shelf, stand_in: bool, agent: bool, how: Embodiment) -> 
     }
 }
 
+/// WHAT THE LIVE CARD SAYS: its lane word, and the sentence under the action.
+///
+/// Split out of the renderer so the words can be read by a test, for the same
+/// reason [`crate::benchdraw::woken_says`] was — a `Div` cannot be asked what
+/// text is inside it, and the thing that can be wrong here is what a person
+/// ends up reading.
+///
+/// **The card outlives the turn, and this is where it stops pretending.**
+/// [`Bench::turn_settled`] is called by a reply ARRIVING, never by the agent
+/// going idle, so a turn that ended having presented nothing keeps its place
+/// at the head of the feed. Every row below `Working` is that case: the honest
+/// sentence, rather than a card still claiming to be in flight or — worse —
+/// the previous turn's answer sliding back into the room.
+pub fn live_says(state: AgentState) -> (&'static str, &'static str) {
+    match state {
+        AgentState::Working => ("IN FLIGHT", "the reply lands here when the turn ends"),
+        AgentState::Reading => ("IN FLIGHT", "it is reading what the bench just typed"),
+        AgentState::Paused => ("PAUSED", "you stopped this turn; it has not started again"),
+        AgentState::Asking => ("WAITING ON YOU", "it asked something before it could go on"),
+        AgentState::Blocked => ("BLOCKED", "the turn stopped on something that went wrong"),
+        // Not "finished": the turn finished and this card is still here, which
+        // means the one thing it was waiting for never came.
+        AgentState::Done | AgentState::Idle => (
+            "NOTHING PRESENTED",
+            "this turn ended without presenting a reply",
+        ),
+        AgentState::Exited => (
+            "AGENT GONE",
+            "the agent left before this turn presented a reply",
+        ),
+    }
+}
+
 /// Whether the strip's dials can be pressed in this state.
 ///
 /// A dial press types a slash command, and a slash command typed mid-turn does
@@ -3308,6 +3341,70 @@ pub struct Bench {
     /// evidence tab and back brings the technical brief back rather than the
     /// tl;dr.
     reg: std::collections::HashMap<(SurfaceId, crate::surface::Group), String>,
+    /// The turn that has begun and presented nothing yet.
+    ///
+    /// Not a surface, and deliberately not in `surfaces`: nothing was
+    /// presented, so there is nothing to store, nothing to retire and nothing
+    /// to survive the process. See [`LiveTurn`].
+    live: Option<LiveTurn>,
+    /// How many turns this bench has seen begin, so two of them in one
+    /// millisecond are still two rows and two scroll positions.
+    turns: u32,
+}
+
+/// What a live turn's row calls itself where a surface would name its kind.
+///
+/// It is not a [`Kind`] and never becomes one — a kind is a shape a payload
+/// arrived in, and nothing has arrived. The rail reads this word to give the
+/// row its own lane vocabulary: a turn that has said nothing does not
+/// `STAND NOW` for anything. See [`crate::benchdraw`]'s lane table.
+pub const LIVE_TURN_KIND: &str = "turn";
+
+/// Who opened a turn.
+///
+/// Absent is a third answer and not a synonym for either: the harness's prompt
+/// record can arrive carrying no text at all, and then a turn certainly began
+/// and this window cannot say whose it was. See [`Bench::turn_began`].
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Voice {
+    /// A person typed it.
+    Person,
+    /// The harness opened it — a background task reporting in, a peer session
+    /// talking. See [`crate::channel::Woken`].
+    Harness,
+}
+
+/// A TURN IN FLIGHT, standing in the feed for the reply that has not landed.
+///
+/// The overview is a feed of replies, and a reply is a thing an agent presents
+/// at the END of a turn — so for the whole length of a turn the newest reply
+/// in the store belonged to the PREVIOUS one, and the rail said `STANDS NOW`
+/// over it. Parker, with the bench four minutes into a turn beside the
+/// terminal running it: *"when the CURRENT turn is running in workbench... we
+/// see the LAST turn persisting -- the CURRENT turn should IMMEDIATELY make a
+/// new overview card, and we flip to that"*.
+///
+/// So the turn itself becomes the card. It carries what is known at the moment
+/// it begins — the opening words and whose voice they are — and the renderer
+/// adds what is only true this instant: the agent's own gerund, its clock, its
+/// tokens and the tool call it is inside. Nothing else. *"only the action that
+/// is LIVE -- ie. not the terminal scrollback style."* The terminal face is
+/// one keystroke away and is the surface that keeps the log.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct LiveTurn {
+    /// The row's identity, unique to this turn. Never names a surface, which
+    /// is what makes it unopenable — see [`Bench::select`].
+    pub id: SurfaceId,
+    /// The turn's opening line, for the rail row that has one line to say what
+    /// this turn is about.
+    ///
+    /// `None` means this window did not see how the turn opened — an unhooked
+    /// pane noticing the spinner start — which is drawn as that rather than as
+    /// an empty string.
+    pub headline: Option<String>,
+    pub voice: Option<Voice>,
+    /// When it began, on the window's clock.
+    pub at_ms: u64,
 }
 
 /// What a press turns into.
@@ -3543,6 +3640,10 @@ impl Default for Bench {
             unseen: HashSet::new(),
             tab: std::collections::HashMap::new(),
             reg: std::collections::HashMap::new(),
+            // A fresh bench is not mid-turn. `None` here is the honest one:
+            // no turn has begun that this bench saw.
+            live: None,
+            turns: 0,
         }
     }
 }
@@ -3597,6 +3698,8 @@ impl Bench {
             unseen,
             tab,
             reg,
+            live,
+            turns,
             // Kept — the reader's settings about this pane, not facts about the
             // agent that left.
             face: _,
@@ -3608,6 +3711,11 @@ impl Bench {
         unseen.clear();
         tab.clear();
         reg.clear();
+        // A turn belongs to the conversation that was having it. An agent that
+        // left is not four minutes into anything, and a card saying it was
+        // would be the one lie this whole surface exists to stop telling.
+        *live = None;
+        *turns = 0;
     }
 
     pub fn face(&self) -> Face {
@@ -3647,7 +3755,20 @@ impl Bench {
             .and_then(|id| self.get(id))
             .is_some_and(|s| shelf.holds(s.kind.shelf()))
         {
-            self.selected = self.rows().first().map(|r| r.id.clone());
+            // The head row, and ONLY if it names a surface. The head of the
+            // overview can be the turn in flight: selecting that id would set
+            // the card to something `get` cannot resolve — an empty room with
+            // nothing in the state saying why — and skipping past it to the
+            // reply underneath would open the previous turn's answer over a
+            // turn that is still running, which is the defect [`LiveTurn`]
+            // exists to end. Selecting nothing is right: the live turn then
+            // stands in the room, which is where a person switching back to
+            // this shelf meant to arrive.
+            self.selected = self
+                .rows()
+                .first()
+                .map(|r| r.id.clone())
+                .filter(|id| self.get(id).is_some());
         }
         if self.face == Face::Workbench {
             self.mark_shelf_seen();
@@ -3717,6 +3838,12 @@ impl Bench {
                 unseen += 1;
             }
         }
+        // The turn in flight is a row on the overview, so it is one of the
+        // overview's things — a tab reading `4` above five rows is a surface
+        // disagreeing with itself. Never UNSEEN: it is the thing in the room.
+        if shelf == Shelf::Overview && self.live.is_some() {
+            total += 1;
+        }
         (total, unseen)
     }
 
@@ -3729,24 +3856,50 @@ impl Bench {
     }
 
     pub fn rows_for(&self, shelf: Shelf) -> Vec<Row> {
-        let mut rows: Vec<Row> = self
-            .surfaces
-            .iter()
-            .rev()
-            .filter(|s| shelf.holds(s.kind.shelf()))
-            .map(|s| Row {
-                selected: self.selected.as_ref() == Some(&s.id),
-                unseen: self.unseen.contains(&s.id),
-                id: s.id.clone(),
-                title: s.title.clone(),
-                subtitle: s.subtitle(),
-                kind: s.kind.id(),
-                badge: shelf.badge(&s.kind, false),
-                tint: tint_of(&s.kind),
-                // Filled in below: standing is a property of a row's place in
-                // the shelf, which no row can know about itself.
+        // THE TURN IN FLIGHT IS THE FIRST ROW, and it is here rather than in
+        // the renderer so that one list is the rail, the keyboard's `step` and
+        // the shelf's count — three readers of one fact that would otherwise
+        // have three chances to disagree.
+        let live = (shelf == Shelf::Overview)
+            .then_some(self.live.as_ref())
+            .flatten()
+            .map(|t| Row {
+                id: t.id.clone(),
+                title: t.headline.clone().unwrap_or_else(|| {
+                    "a turn began \u{b7} nothing recorded what opened it".to_string()
+                }),
+                subtitle: "the reply has not landed yet".to_string(),
+                kind: LIVE_TURN_KIND,
+                badge: None,
+                tint: Tint::Pending,
                 standing: Standing::Past,
-            })
+                // It cannot be opened, so it can never be the selection; and it
+                // is the thing in the room, so it was never missed.
+                selected: false,
+                unseen: false,
+            });
+        let mut rows: Vec<Row> = live
+            .into_iter()
+            .chain(
+                self.surfaces
+                    .iter()
+                    .rev()
+                    .filter(|s| shelf.holds(s.kind.shelf()))
+                    .map(|s| Row {
+                        selected: self.selected.as_ref() == Some(&s.id),
+                        unseen: self.unseen.contains(&s.id),
+                        id: s.id.clone(),
+                        title: s.title.clone(),
+                        subtitle: s.subtitle(),
+                        kind: s.kind.id(),
+                        badge: shelf.badge(&s.kind, false),
+                        tint: tint_of(&s.kind),
+                        // Filled in below: standing is a property of a row's
+                        // place in the shelf, which no row can know about
+                        // itself.
+                        standing: Standing::Past,
+                    }),
+            )
             .collect();
         stand(&mut rows);
         rows
@@ -3778,7 +3931,16 @@ impl Bench {
     /// rail keeps it until they close it. This is a property of the SHELF,
     /// not of an arrival: an arrival still selects nothing, still moves no
     /// shelf, and a card the person opened stays open under it.
+    ///
+    /// A TURN IN FLIGHT OUTRANKS THE STAND-IN and yields `None` here, because
+    /// the two answer the same question — *what is this conversation's newest
+    /// thing* — and the live turn is the newer of them. Returning the previous
+    /// reply as well would draw both, which is the defect [`LiveTurn`] exists
+    /// to end.
     pub fn showing(&self) -> Option<&Surface> {
+        if self.live_standing().is_some() {
+            return None;
+        }
         self.selected().or_else(|| {
             (self.shelf == Shelf::Overview)
                 .then(|| {
@@ -3791,6 +3953,77 @@ impl Bench {
         })
     }
 
+    /// The turn in flight, if this bench has one.
+    pub fn live(&self) -> Option<&LiveTurn> {
+        self.live.as_ref()
+    }
+
+    /// The turn in flight WHEN IT IS THE THING IN THE ROOM — the overview, with
+    /// no card opened over it.
+    ///
+    /// The same three conditions the stand-in reply has, for the same reasons:
+    /// another shelf is not a conversation, and a card the person opened is a
+    /// document they navigated to and is theirs until they close it.
+    pub fn live_standing(&self) -> Option<&LiveTurn> {
+        (self.shelf == Shelf::Overview && self.selected.is_none())
+            .then_some(self.live.as_ref())
+            .flatten()
+    }
+
+    /// A turn began. Mints the card the overview flips to.
+    ///
+    /// Always replaces: a second prompt while the first turn's card is still up
+    /// is a second turn, and the row that names it is the new one.
+    ///
+    /// **Only a turn the PERSON opened takes an opened card.** They typed, so
+    /// they moved themselves, and the room follows them to what they just said.
+    /// A wake-up did not move them and neither did a prompt record that carried
+    /// no words — the card stays where they left it, and the new turn waits at
+    /// the head of the rail. `Voice` being an [`Option`] is what makes those
+    /// two different from a turn known to be the harness's.
+    pub fn turn_began(&mut self, headline: Option<String>, voice: Option<Voice>, at_ms: u64) {
+        self.turns = self.turns.wrapping_add(1);
+        self.live = Some(LiveTurn {
+            id: SurfaceId(format!("turn:{at_ms}:{}", self.turns)),
+            headline: headline.filter(|h| !h.trim().is_empty()),
+            voice,
+            at_ms,
+        });
+        if voice == Some(Voice::Person) {
+            self.selected = None;
+        }
+    }
+
+    /// The agent started working and no record said so first.
+    ///
+    /// The fallback for a pane whose harness has no hooks installed, and for a
+    /// turn typed at the terminal face of a pane that does: the spinner is the
+    /// only evidence either produces. It fills a gap and never overwrites — a
+    /// turn already begun knows more about itself (the words, the voice) than
+    /// an edge can ever say.
+    pub fn turn_seen_working(&mut self, headline: Option<String>, at_ms: u64) {
+        if self.live.is_none() {
+            // Voice stays UNKNOWN however good the headline is. A screen
+            // cannot tell a person typing from the harness pasting a task
+            // notification in — they arrive identically, which is the whole
+            // reason [`crate::channel::woken_by`] exists on the hook side —
+            // so the words are offered and the attribution is not claimed.
+            self.turn_began(headline, None, at_ms);
+        }
+    }
+
+    /// A reply landed. The turn is over and its card is the reply's.
+    ///
+    /// **Called by the reply arriving, never by the agent going idle.** A turn
+    /// ends before its reply is presented — the harness's own stop hook writes
+    /// the record afterwards — so retiring on idle would put the PREVIOUS
+    /// turn's card back in the room for that gap, which is this feature's own
+    /// defect in miniature. A turn that ends having presented nothing keeps its
+    /// card, and [`live_says`] is where the card says so.
+    pub fn turn_settled(&mut self) {
+        self.live = None;
+    }
+
     /// True when the card in the room is the overview's STAND-IN — the newest
     /// reply, standing there because nobody opened anything.
     ///
@@ -3798,8 +4031,12 @@ impl Bench {
     /// is a document they navigated to; the stand-in is the tail of a
     /// conversation, and only the tail can honestly be captioned with the
     /// latest thing the person said. See [`ask_lines`].
+    ///
+    /// A turn in flight is the tail by definition, and the message above it is
+    /// the one that opened it — which is the caption at its most accurate this
+    /// block ever gets.
     pub fn standing_in(&self) -> bool {
-        self.selected.is_none() && self.showing().is_some()
+        self.selected.is_none() && (self.live_standing().is_some() || self.showing().is_some())
     }
 
     /// Read one group of a response card.
@@ -3852,7 +4089,18 @@ impl Bench {
     }
 
     /// Open one as a card. Marks it seen, because opening is looking.
+    ///
+    /// THE TURN IN FLIGHT IS NOT A DOCUMENT, so its row does not open one —
+    /// pressing it closes whatever is open instead, which is what "go to the
+    /// turn in flight" means on a surface where the room already holds it. A
+    /// row that swallowed the press and did nothing would be a control that
+    /// lies, and one that set `selected` to an id naming no surface would
+    /// silently empty the room.
     pub fn select(&mut self, id: &SurfaceId) {
+        if self.live.as_ref().is_some_and(|t| &t.id == id) {
+            self.selected = None;
+            return;
+        }
         if self.get(id).is_some() {
             self.selected = Some(id.clone());
             self.unseen.remove(id);
@@ -4315,6 +4563,220 @@ mod tests {
             b.showing().is_none(),
             "the newest reply stands in on the overview only; another shelf shows its own card or nothing"
         );
+    }
+
+    #[test]
+    fn the_turn_in_flight_takes_the_room_from_the_previous_turns_reply() {
+        // The defect, stated as the test: a reply is presented at the END of a
+        // turn, so for the whole length of the next one the newest reply in
+        // the store belongs to the turn before it — and the room drew that
+        // under the new turn's question. Parker: *"we see the LAST turn
+        // persisting -- the CURRENT turn should IMMEDIATELY make a new
+        // overview card, and we flip to that"*.
+        let mut b = Bench::new();
+        b.apply(response("r1", "First."));
+        assert_eq!(b.showing().map(|s| s.id.as_str()), Some("r1"));
+        assert!(b.live().is_none(), "no turn has begun");
+
+        b.turn_began(Some("what now?".into()), Some(Voice::Person), 100);
+        assert!(
+            b.showing().is_none(),
+            "the previous turn's reply does not share the room with the turn in flight"
+        );
+        assert!(b.live_standing().is_some(), "the turn is what stands");
+        assert!(
+            b.standing_in(),
+            "and it is a stand-in, so the person's own message is captioned over it"
+        );
+        assert_eq!(
+            ask_lines(b.shelf(), b.standing_in(), true, Embodiment::Full),
+            Some(4),
+            "the YOU block draws over a live turn exactly as it does over a reply"
+        );
+
+        let rows = b.rows_for(Shelf::Overview);
+        assert_eq!(rows.len(), 2, "the turn and the reply before it");
+        assert_eq!(rows[0].kind, LIVE_TURN_KIND);
+        assert_eq!(rows[0].title, "what now?", "the row says what the turn is");
+        assert_eq!(rows[0].standing, Standing::Current, "it is the head");
+        assert!(!rows[0].unseen, "the thing in the room was never missed");
+        assert_eq!(
+            b.counts(Shelf::Overview).0,
+            rows.len(),
+            "the tab's number and the rail's rows are one fact"
+        );
+
+        // The reply landing is what ends it, and then the reply stands.
+        b.apply(response("r2", "Done."));
+        b.turn_settled();
+        assert_eq!(b.showing().map(|s| s.id.as_str()), Some("r2"));
+        assert_eq!(b.rows_for(Shelf::Overview).len(), 2, "two replies, no turn");
+        assert_eq!(b.counts(Shelf::Overview).0, 2);
+    }
+
+    #[test]
+    fn a_turn_that_ended_presenting_nothing_keeps_its_card_and_says_so() {
+        // `turn_settled` is called by a reply ARRIVING, never by the agent
+        // going idle — so an interrupted turn keeps the head of the feed, and
+        // what changes is the words. The alternative is retiring on idle,
+        // which puts the previous turn's answer back in the room for the gap
+        // between a turn ending and its reply landing: this defect, smaller.
+        let mut b = Bench::new();
+        b.apply(response("r1", "First."));
+        b.turn_began(Some("stop".into()), Some(Voice::Person), 1);
+        assert!(b.showing().is_none());
+        // Nothing arrived. The card is still the turn's.
+        assert!(b.live_standing().is_some());
+        assert_eq!(live_says(AgentState::Working).0, "IN FLIGHT");
+        let (label, sentence) = live_says(AgentState::Idle);
+        assert_eq!(label, "NOTHING PRESENTED");
+        assert!(
+            sentence.contains("without presenting"),
+            "it says what happened, not `finished`: {sentence}"
+        );
+        assert_ne!(
+            live_says(AgentState::Idle),
+            live_says(AgentState::Working),
+            "a turn that ended must not read as one still running"
+        );
+        for state in [
+            AgentState::Asking,
+            AgentState::Blocked,
+            AgentState::Done,
+            AgentState::Exited,
+            AgentState::Idle,
+            AgentState::Paused,
+            AgentState::Reading,
+            AgentState::Working,
+        ] {
+            let (l, s) = live_says(state);
+            assert!(!l.is_empty() && !s.is_empty(), "{state:?} says nothing");
+        }
+    }
+
+    #[test]
+    fn whose_voice_opened_the_turn_decides_whether_an_opened_card_is_taken() {
+        let mut b = Bench::new();
+        b.apply(response("r1", "First."));
+        b.apply(response("r2", "Second."));
+        b.select(&SurfaceId("r1".into()));
+
+        b.turn_began(Some("a task finished".into()), Some(Voice::Harness), 1);
+        assert_eq!(
+            b.showing().map(|s| s.id.as_str()),
+            Some("r1"),
+            "a wake-up did not move the person, so it does not move their card"
+        );
+        assert!(
+            b.live_standing().is_none(),
+            "it waits at the head of the rail"
+        );
+
+        b.turn_began(None, None, 2);
+        assert_eq!(
+            b.showing().map(|s| s.id.as_str()),
+            Some("r1"),
+            "and neither does a turn whose voice is unknown"
+        );
+
+        b.turn_began(Some("what now?".into()), Some(Voice::Person), 3);
+        assert!(
+            b.selected().is_none() && b.live_standing().is_some(),
+            "they typed, so they moved themselves: the room follows"
+        );
+    }
+
+    #[test]
+    fn the_turn_in_flight_is_not_a_document() {
+        let mut b = Bench::new();
+        b.apply(response("r1", "First."));
+        b.turn_began(Some("what now?".into()), Some(Voice::Person), 1);
+        let live_id = b.live().expect("a turn").id.clone();
+
+        b.select(&SurfaceId("r1".into()));
+        assert!(b.selected().is_some(), "a reply opens");
+        b.select(&live_id);
+        assert!(
+            b.selected().is_none() && b.live_standing().is_some(),
+            "pressing the turn's row goes back to the turn, it does not open a card"
+        );
+
+        // The keyboard reaches it and lands in the same place.
+        b.select(&SurfaceId("r1".into()));
+        b.step(-1);
+        assert!(
+            b.selected().is_none(),
+            "stepping up onto the turn closes the card"
+        );
+
+        // Coming back to this shelf lands on the turn, not on the answer to the
+        // turn before it. `set_shelf` opens the head row — and the head row is
+        // the live turn, which opens nothing.
+        b.select(&SurfaceId("r1".into()));
+        b.set_shelf(Shelf::Artifacts);
+        b.set_shelf(Shelf::Overview);
+        assert!(
+            b.selected.is_none(),
+            "the head of the overview is the turn, and a turn is not a card to open"
+        );
+        assert!(
+            b.live_standing().is_some(),
+            "so the turn is what a returning reader sees"
+        );
+
+        // With no turn in flight the old behaviour is untouched: the head is a
+        // reply and the shelf opens it.
+        b.turn_settled();
+        b.set_shelf(Shelf::Artifacts);
+        b.set_shelf(Shelf::Overview);
+        assert_eq!(b.selected().map(|s| s.id.as_str()), Some("r1"));
+    }
+
+    #[test]
+    fn the_spinner_fills_a_gap_and_never_overwrites_the_record() {
+        // The fallback for a pane whose harness has no hooks, and for a turn
+        // typed at the terminal face of a pane that does.
+        let mut b = Bench::new();
+        b.turn_seen_working(Some("scraped off the screen".into()), 1);
+        let t = b.live().expect("the spinner opened one");
+        assert_eq!(t.headline.as_deref(), Some("scraped off the screen"));
+        assert_eq!(
+            t.voice, None,
+            "a screen cannot tell a person typing from a notification pasted in"
+        );
+
+        let mut b = Bench::new();
+        b.turn_began(Some("their exact words".into()), Some(Voice::Person), 1);
+        b.turn_seen_working(Some("scraped off the screen".into()), 2);
+        let t = b.live().expect("still the first one");
+        assert_eq!(
+            t.headline.as_deref(),
+            Some("their exact words"),
+            "the record knows more than the edge and is not overwritten by it"
+        );
+        assert_eq!(t.voice, Some(Voice::Person));
+
+        // An empty headline is an absent one, not a blank row.
+        let mut b = Bench::new();
+        b.turn_began(Some("   ".into()), None, 1);
+        assert_eq!(b.live().expect("a turn").headline, None);
+        assert!(
+            b.rows_for(Shelf::Overview)[0]
+                .title
+                .contains("nothing recorded"),
+            "and the row says the opener is unknown rather than showing a blank"
+        );
+    }
+
+    #[test]
+    fn an_agent_that_left_is_not_four_minutes_into_anything() {
+        let mut b = Bench::new();
+        b.apply(response("r1", "First."));
+        b.turn_began(Some("what now?".into()), Some(Voice::Person), 1);
+        b.clear_surfaces();
+        assert!(b.live().is_none(), "the turn went with the conversation");
+        assert!(b.rows_for(Shelf::Overview).is_empty());
+        assert_eq!(b.counts(Shelf::Overview), (0, 0));
     }
 
     #[test]

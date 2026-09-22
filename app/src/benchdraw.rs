@@ -294,6 +294,14 @@ pub fn rail_row(row: &Row, sk: &Skin, th: &Theme) -> Div {
     // the emphasis on two rows at once.
     let on_cursor = row.selected || row.standing.lit();
     let lane = match (row.standing, row.kind) {
+        // A TURN HAS NOT SAID ANYTHING YET, so it stands for nothing — first
+        // in the table because no other row's rule may reach it. The word is
+        // deliberately weaker than the card's own: the card can read the
+        // agent's state this instant and say `IN FLIGHT` or `NOTHING
+        // PRESENTED`, the rail cannot, so the rail makes the claim it can
+        // support in every case rather than the livelier one that goes stale
+        // the moment a turn ends having presented nothing.
+        (_, crate::workbench::LIVE_TURN_KIND) => Some("THIS TURN"),
         // A note does not STAND. The standing vocabulary is about work a person
         // has to resolve — what is waiting, what the answer currently is, how it
         // got there — and none of those questions apply to something you wrote
@@ -3570,6 +3578,99 @@ pub fn woken(w: &crate::channel::Woken, sk: &Skin, th: &Theme) -> Div {
                 .text_color(th.text.alpha(0.78))
                 .child(sel(body)),
         )
+}
+
+/// THE TURN IN FLIGHT, standing in the room for the reply that has not landed.
+///
+/// The overview's room used to hold the newest `response` for the whole length
+/// of a turn — and a response is presented at the END of a turn, so what stood
+/// there was the PREVIOUS turn's answer under the current turn's question.
+/// Parker: *"we see the LAST turn persisting -- the CURRENT turn should
+/// IMMEDIATELY make a new overview card, and we flip to that"*.
+///
+/// **Only what is live.** The agent's own gerund, the one tool call it is
+/// inside this instant, its clock and its tokens. Not a tail of its output —
+/// *"only the action that is LIVE -- ie. not the terminal scrollback style"* —
+/// because the terminal face of this same pane is one keystroke away and is
+/// the surface whose job is the log. What the person SAID is not here either:
+/// [`asked`] draws that above this card, in their own ink, for every stand-in.
+///
+/// Each number is drawn only when the screen carried it. A working agent whose
+/// status line was truncated by a narrow pane gets a sentence saying the screen
+/// carried no account of it, never a zero nobody measured.
+pub fn live_card(
+    state: crate::workbench::AgentState,
+    vitals: Option<&crate::workbench::TurnVitals>,
+    gerund: Option<&str>,
+    tool: Option<&str>,
+    sk: &Skin,
+    th: &Theme,
+) -> Div {
+    let tint = ink(state.tint(), th);
+    let (label, sentence) = crate::workbench::live_says(state);
+    // The verbose line, in the order of how much it says: the agent's own
+    // account of the call it is in, then the tool face's verb, then nothing —
+    // and nothing is a sentence rather than an empty row.
+    let doing = vitals
+        .and_then(|v| v.doing.clone())
+        .or_else(|| tool.map(str::to_string));
+    sk.panel()
+        .flex()
+        .flex_col()
+        .gap(px(8.))
+        .px(px(16.))
+        .py(px(14.))
+        .border_l(px(3.))
+        .border_color(tint)
+        .bg(tint.alpha(0.06))
+        .child(micro(label, Step::Fine, tint, sk, th))
+        // THE AGENT'S OWN WORD for what it is doing — `Perambulating`,
+        // `Forming`, whatever its spinner is wearing. Its own vocabulary and
+        // not ours: the strip beside it already says `Working`, which is this
+        // window's word, and repeating that here would spend the largest type
+        // on the card saying a thing the reader just read.
+        .children(gerund.map(|g| {
+            div()
+                .text_size(px(sk.pt(Step::Title)))
+                .text_color(th.text.alpha(0.92))
+                .child(sel(g.to_string()))
+        }))
+        .child(match doing {
+            Some(d) => div()
+                .text_size(px(sk.pt(Step::Body)))
+                .font_family(th.font_family.clone())
+                .text_color(th.accent.alpha(0.9))
+                .child(sel(d)),
+            None => micro(
+                "the screen carried no account of what it is doing",
+                Step::Note,
+                sk.ink.ink_faint,
+                sk,
+                th,
+            ),
+        })
+        .children(vitals.filter(|v| !v.is_unread()).map(|v| {
+            div()
+                .flex()
+                .flex_row()
+                .gap(px(12.))
+                .items_baseline()
+                .children(
+                    v.elapsed.clone().map(|e| {
+                        micro(format!("turn {e}"), Step::Note, th.text.alpha(0.75), sk, th)
+                    }),
+                )
+                .children(v.tokens.map(|n| {
+                    micro(
+                        format!("\u{2193} {} tokens", crate::hud::fmt_tokens(n)),
+                        Step::Note,
+                        th.text.alpha(0.75),
+                        sk,
+                        th,
+                    )
+                }))
+        }))
+        .child(micro(sentence, Step::Note, sk.ink.ink_faint, sk, th))
 }
 
 /// The agent, talking. The main area's ordinary state.

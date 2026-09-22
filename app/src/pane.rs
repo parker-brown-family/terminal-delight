@@ -3832,6 +3832,20 @@ impl TerminalView {
         let st = self.agent_status();
         let working = st.working();
         if working {
+            // THE SPINNER STARTING IS A TURN BEGINNING, for every pane whose
+            // harness has no hooks installed and for every turn typed at the
+            // terminal face of a pane that does. It fills a gap and never
+            // overwrites: where the channel already named the turn, that
+            // record knows the words and the voice and this edge knows
+            // neither. The latched message is offered as a headline because it
+            // is the best this side has; the voice stays unknown, because a
+            // screen cannot tell a person typing from a task notification
+            // being pasted in.
+            if self.bench.live().is_none() {
+                let headline = self.wb_asked.first().cloned();
+                self.bench
+                    .turn_seen_working(headline, crate::surfacefeed::now_ms());
+            }
             if let Some(t) = st.turn_tokens {
                 self.turn_peak_tokens = self.turn_peak_tokens.max(t);
             }
@@ -7291,10 +7305,16 @@ impl TerminalView {
         // A reply the agent presented itself means the hook's copy of the same
         // turn is not wanted — see [`crate::channel::State::saw_response`].
         if let Some(s) = post.surface.as_ref() {
-            if matches!(s.kind, crate::surface::Kind::Response(_))
-                && s.origin != crate::surface::Origin::Hook
-            {
-                self.wb_channel.saw_response();
+            if matches!(s.kind, crate::surface::Kind::Response(_)) {
+                // THE REPLY LANDING IS WHAT RETIRES THE TURN'S OWN CARD, and
+                // this half counts the hook's copy too: a hook-synthesised
+                // reply is still this turn's reply, and leaving the live card
+                // standing over it would draw the same turn twice. The line
+                // below deliberately does not — see `saw_response`.
+                self.bench.turn_settled();
+                if s.origin != crate::surface::Origin::Hook {
+                    self.wb_channel.saw_response();
+                }
             }
         }
         if self.bench.apply(post).is_some() {
