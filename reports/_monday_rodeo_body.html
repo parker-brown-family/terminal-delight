@@ -1,0 +1,1051 @@
+<div class="runbar"><div class="inner">
+  <span class="k">MONDAY RODEO</span>
+  <span class="p">pass <b id="c-pass">0</b></span>
+  <span class="f">fail <b id="c-fail">0</b></span>
+  <span class="o">odd <b id="c-odd">0</b></span>
+  <span class="u">untried <b id="c-todo">0</b></span>
+  <span class="k" style="margin-left:auto">mark it &rarr; 💾 save into file &rarr; tell me to read it</span>
+</div></div>
+
+<header class="top">
+  <div class="wrap">
+    <p class="repo">terminal-delight &middot; 2026-09-21 &middot; __COMMITS__ commits, __PRS__ pull requests &middot; read from the repo and from /proc at __STAMP__</p>
+    <h1>The Monday rodeo</h1>
+    <p class="lede">Today the workbench stopped looking at the screen. It has its own line to the
+      agent process now — a directory of journal files and a hook — so a question reaches the bench
+      whole, before any menu paints, and gets answered without one. Around that landed a composer
+      you can select text in, a bench you can drag over and copy, a reply card that opens on plain
+      English, and a question card that grew tabs.</p>
+    <p class="lede"><b>Most of it you can press in the window you are already in.</b> Two things
+      gate the rest: which build is drawing your panes, and one stale file on your PATH. Both are
+      the first two items below.</p>
+  </div>
+</header>
+
+<div class="wrap">
+
+<div class="stamp">
+  <b>This page has a shelf life.</b> Every number on it was read from the repository and from
+  <code>/proc</code> at <code>__STAMP__</code>, on a day that merged __PRS__ pull requests.
+  Regenerate it with <code>python3 reports/_assemble_monday_rodeo.py</code> — your notes live in
+  the browser and survive the rebuild.
+</div>
+
+<div class="tiles">
+  <div class="tile b"><div class="n">__COMMITS__</div><div class="k">commits onto main today, from 07:02 to 13:19</div></div>
+  <div class="tile b"><div class="n">__PRS__</div><div class="k">pull requests merged</div></div>
+  <div class="tile g"><div class="n">__RUST__</div><div class="k">lines of Rust added under <code>app/</code></div></div>
+  <div class="tile g"><div class="n">__TESTS__</div><div class="k">tests passing on this head, per its own gate line</div></div>
+  <div class="tile a"><div class="n">1</div><div class="k">feature merged three times and never once rendered</div></div>
+</div>
+
+<h2 class="sec">Read first</h2>
+<ul class="esc-list">
+  <li><span class="esc-n">1</span><div class="esc-t"><b>The hook adapter on your PATH is the old one.</b>
+    <em>What it is:</em> <code>~/.local/bin/td-agent-hooks</code> is the TDAC __HOOKVER__ copy from 09:37;
+    the repository's is 0.2, hardened at 11:07 with journal rotation and a separate lock file.
+    <em>Why it matters:</em> every journal line in your mailboxes right now says <code>"td":"0.1"</code>,
+    so the channel you would be testing is this morning's.
+    <em>What it takes:</em> one command, no relaunch — the harness reads the script fresh on every hook.</div></li>
+  <li><span class="esc-n">2</span><div class="esc-t"><b>The round navigator has never been drawn on a screen.</b>
+    <em>What it is:</em> tabs across the top of a multi-question round, a tick on the ones you answered,
+    and answering one moves you to the next.
+    <em>Why it matters:</em> three pull requests merged it and the pane that built it filed
+    <a href="https://github.com/parker-brown-family/terminal-delight/issues/648">#648</a> against itself
+    saying no image exists. It is the one claim in today's work with no measurement behind it.
+    <em>What it takes:</em> ask any agent in a pane for a round of three or four questions and look at the bench.</div></li>
+  <li><span class="esc-n">3</span><div class="esc-t"><b>A hook waited for the bench this afternoon and gave up, saying why.</b>
+    <em>What it is:</em> a four-question round on the pane next to this one at 13:35 was released as
+    <code>stale</code> — the bench's liveness marker was more than four seconds old — so the picker painted
+    and the answer went by keystrokes.
+    <em>Why it matters:</em> that is the fallback working, and it is the first time it has been caught
+    naming its own reason. Whether the marker <i>should</i> have gone stale on a live window is open.
+    <em>What it takes:</em> one round, and a look at figure 09.</div></li>
+  <li><span class="esc-n">4</span><div class="esc-t"><b>Not every window on this box is today's build.</b>
+    <em>What it is:</em> the launcher points at <code>__INSTALLED__</code>; a window started before 13:20
+    keeps whatever it started with.
+    <em>Why it matters:</em> a pane in an older window draws this morning's bench, and every failure you
+    record there is about a build nobody is asking about.
+    <em>What it takes:</em> the table in figure 01 says which of your live windows is which.</div></li>
+  <li><span class="esc-n">5</span><div class="esc-t"><b>The conversation store landed without its wiring.</b>
+    <em>What it is:</em> a conversation's surfaces and turns now have a place on disk that no agent can
+    write to, and a reader that works with no window open.
+    <em>Why it matters:</em> nothing calls it yet from the live bench, so <i>close the window, reopen it,
+    is my bench still there</i> is not a test that can pass today. Marking it FAIL would be recording a
+    gap that is already known.
+    <em>What it takes:</em> nothing — skip it, and read the last section.</div></li>
+</ul>
+
+<h2 class="sec">The gate</h2>
+
+<figure>
+  <span class="lbl">01 &middot; Which build is drawing your panes</span>
+  <div class="scroller">
+  <svg viewBox="0 0 700 132" role="img" aria-label="The tip of main, the installed binary, the launcher symlink, and the window process, in a chain" font-family="ui-monospace, monospace">
+    <defs><marker id="ar1" markerWidth="7" markerHeight="7" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L6,3 L0,6 z" fill="#8b8a80"/></marker></defs>
+
+    <rect x="0" y="20" width="150" height="56" rx="7" fill="rgba(25,158,112,.11)" stroke="#199e70"/>
+    <text x="75" y="40" font-size="10" fill="#6cd46c" text-anchor="middle">TIP OF MAIN</text>
+    <text x="75" y="58" font-size="12" fill="#ffffff" text-anchor="middle">__MAIN__</text>
+    <text x="75" y="71" font-size="9" fill="#8b8a80" text-anchor="middle">git</text>
+
+    <line x1="150" y1="48" x2="176" y2="48" stroke="#3a3a36" marker-end="url(#ar1)"/>
+
+    <rect x="180" y="20" width="176" height="56" rx="7" fill="rgba(25,158,112,.11)" stroke="#199e70"/>
+    <text x="268" y="40" font-size="10" fill="#6cd46c" text-anchor="middle">INSTALLED &middot; ON DISK</text>
+    <text x="268" y="58" font-size="11.5" fill="#ffffff" text-anchor="middle">__INSTALLED__</text>
+    <text x="268" y="71" font-size="9" fill="#8b8a80" text-anchor="middle">~/.local/lib/terminal-delight/</text>
+
+    <line x1="356" y1="48" x2="382" y2="48" stroke="#3a3a36" marker-end="url(#ar1)"/>
+
+    <rect x="386" y="20" width="150" height="56" rx="7" fill="rgba(57,135,229,.11)" stroke="#3987e5"/>
+    <text x="461" y="40" font-size="10" fill="#7fb4f0" text-anchor="middle">THE LAUNCHER</text>
+    <text x="461" y="58" font-size="11.5" fill="#ffffff" text-anchor="middle">terminal-delight</text>
+    <text x="461" y="71" font-size="9" fill="#8b8a80" text-anchor="middle">~/.local/bin &middot; a symlink</text>
+
+    <line x1="536" y1="48" x2="562" y2="48" stroke="#3a3a36" marker-end="url(#ar1)"/>
+
+    <rect x="566" y="20" width="134" height="56" rx="7" fill="rgba(250,178,25,.10)" stroke="#c98500"/>
+    <text x="633" y="40" font-size="10" fill="#f5c95f" text-anchor="middle">A WINDOW</text>
+    <text x="633" y="58" font-size="11.5" fill="#ffffff" text-anchor="middle">whatever it</text>
+    <text x="633" y="71" font-size="11.5" fill="#ffffff" text-anchor="middle">started with</text>
+
+    <text x="690" y="102" font-size="9.5" fill="#8b8a80" text-anchor="end">a process does not follow a symlink</text>
+    <text x="690" y="115" font-size="9.5" fill="#8b8a80" text-anchor="end">that moved after it started</text>
+  </svg>
+  </div>
+  <table class="wide" style="margin-top:14px">
+    <thead><tr><th>Live window</th><th>The binary it actually is</th><th>Behind main</th></tr></thead>
+    <tbody>__WINROWS__</tbody>
+  </table>
+  <figcaption><b>The first three boxes are always in step; only the fourth can be wrong.</b> A window
+  reads the symlink once, at exec. Everything you press today is drawn by the window, so the row above
+  that says <i>up to date</i> is the only one worth recording a result in.</figcaption>
+</figure>
+
+<figure>
+  <span class="lbl">02 &middot; The window is swappable, the host is not</span>
+  <div class="scroller">
+  <svg viewBox="0 0 700 208" role="img" aria-label="A window process holding the chrome, bench and channel reader, beside a session host holding the pseudoterminals and agent processes" font-family="ui-monospace, monospace">
+    <rect x="0" y="16" width="330" height="140" rx="9" fill="#1a1a19" stroke="#3987e5"/>
+    <text x="12" y="34" font-size="9.5" fill="#7fb4f0" letter-spacing="1">▣ THE WINDOW &middot; RESTARTABLE</text>
+    <rect x="14" y="44" width="302" height="26" rx="5" fill="#232321" stroke="#3a3a36"/>
+    <text x="24" y="61" font-size="11" fill="#ffffff">chrome &middot; tabs &middot; the left bar &middot; the agent wall</text>
+    <rect x="14" y="76" width="302" height="26" rx="5" fill="#232321" stroke="#199e70"/>
+    <text x="24" y="93" font-size="11" fill="#ffffff">the workbench &middot; cards, composer, selection</text>
+    <rect x="14" y="108" width="302" height="26" rx="5" fill="#232321" stroke="#199e70"/>
+    <text x="24" y="125" font-size="11" fill="#ffffff">the channel reader &middot; tails the journals</text>
+    <text x="14" y="150" font-size="9.5" fill="#8b8a80">everything in today's rodeo lives in this box</text>
+
+    <rect x="370" y="16" width="330" height="140" rx="9" fill="#1a1a19" stroke="#d03b3b"/>
+    <text x="382" y="34" font-size="9.5" fill="#f08a8a" letter-spacing="1">▣ THE SESSION HOST &middot; DO NOT RESTART</text>
+    <rect x="384" y="44" width="302" height="26" rx="5" fill="#232321" stroke="#3a3a36"/>
+    <text x="394" y="61" font-size="11" fill="#ffffff">serve --session &lt;key&gt; &middot; owns the terminals</text>
+    <rect x="384" y="76" width="302" height="58" rx="5" fill="#232321" stroke="#3a3a36"/>
+    <text x="394" y="93" font-size="11" fill="#ffffff">your agent processes, mid-conversation</text>
+    <text x="394" y="110" font-size="10" fill="#8b8a80">claude · claude · claude · a shell · claude</text>
+    <text x="394" y="126" font-size="10" fill="#8b8a80">killing this kills all of them</text>
+    <text x="384" y="150" font-size="9.5" fill="#8b8a80">still on this morning's build, and that is fine</text>
+
+    <line x1="330" y1="86" x2="370" y2="86" stroke="#3a3a36"/>
+    <text x="350" y="80" font-size="9" fill="#8b8a80" text-anchor="middle">pty</text>
+
+    <text x="0" y="186" font-size="10.5" fill="#8b8a80">Quit the window, start it again from the launcher: your panes come back, your agents never noticed.</text>
+    <text x="0" y="200" font-size="10.5" fill="#8b8a80">The host only upgrades by dying, so it is deliberately left behind — nothing in this rodeo needs it.</text>
+  </svg>
+  </div>
+  <figcaption>The split shipped on 2026-09-10 and it is what makes today testable at all.
+  <b>Every feature below is drawn by the window, so a relaunch is the whole upgrade.</b> The hosts on
+  this box are still running this morning's binary and the channel works through them anyway — measured:
+  the journals under this very pane are being written by a 13:20 window against an 08:33 host.</figcaption>
+</figure>
+
+<div class="finding">
+  <div class="hd"><span class="num">1</span><div>
+    <h4>Confirm the window you are testing in is today's build</h4>
+    <p class="who">gates every item below &middot; costs a relaunch, not a build</p>
+  </div></div>
+  <div class="bd">
+    <div class="do"><b>Do:</b> ask the agent in the pane you are about to test for a Terminal Delight
+      MCP call — <code>list_panes</code> is enough — and read the <code>instance</code> block it answers with.
+      If it is not <code>__INSTALLED__</code>, quit that window and start it again by running
+      <code>terminal-delight</code> from your PATH. Never from a path inside a worktree.</div>
+    <p class="pass"><b>Pass:</b> <code>instance.build</code> reads <code>__INSTALLED__</code>. Your agent
+      panes survived the restart, because the host owns them.</p>
+  </div>
+  <div class="verdicts">
+    <button class="vp" data-v="PASS">&#10003; pass</button><button class="vf" data-v="FAIL &mdash; ">&#10007; fail</button><button class="vo" data-v="ODD &mdash; ">~ odd</button><button class="vs" data-v="SKIPPED &mdash; ">skip</button>
+    <span class="mark"></span>
+  </div>
+</div>
+
+<div class="finding">
+  <div class="hd"><span class="num">2</span><div>
+    <h4>Replace the hook adapter with the hardened one</h4>
+    <p class="who">__HOOKSTATE__ &middot; no relaunch needed &middot; ten seconds</p>
+  </div></div>
+  <div class="bd">
+    <p>The adapter is a shell script the harness runs on five events. It is what puts your words,
+      the agent's questions and the agent's reply into the pane's journal. The copy on your PATH is
+      TDAC __HOOKVER__; this morning's. The hardening at 11:07 added journal rotation at 2&nbsp;MiB and moved
+      the advisory lock onto its own file so a rotation cannot race an append.</p>
+    <pre class="cmd"><code>~/Work/terminal-delight/scripts/install-agent-hooks.sh</code></pre>
+    <div class="do"><b>Do:</b> run it. It is idempotent, it keeps a timestamped backup of
+      <code>~/.claude/settings.json</code>, and it only appends to hook arrays that already exist.
+      <code>--uninstall</code> takes all of it back out.</div>
+    <p class="pass"><b>Pass:</b> <code>grep -c '"0.2"' ~/.local/bin/td-agent-hooks</code> answers with a
+      number above zero, and the next thing you type into any agent pane appends a line to that pane's
+      <code>inbound.jsonl</code> beginning <code>{"td":"0.2","type":"prompt"</code>.</p>
+  </div>
+  <div class="verdicts">
+    <button class="vp" data-v="PASS">&#10003; pass</button><button class="vf" data-v="FAIL &mdash; ">&#10007; fail</button><button class="vo" data-v="ODD &mdash; ">~ odd</button><button class="vs" data-v="SKIPPED &mdash; ">skip</button>
+    <span class="mark"></span>
+  </div>
+</div>
+
+<h2 class="sec">The day, drawn</h2>
+
+<figure>
+  <span class="lbl">03 &middot; Where today's work landed, a piece at a time</span>
+  <div class="frames">
+    <div class="frame">
+      <div class="frame-t">A &middot; the chrome, which was already there</div>
+      <div class="arch">
+        <div class="bound"><span class="bl">▣ WINDOW</span>
+          <div class="node g">mother bar &middot; agent rollup &middot; the wall</div>
+          <div class="node g">tab strip &middot; left bar &middot; pane headers</div>
+        </div>
+      </div>
+      <p class="fc">Four of today's merges are here: the wall wearing its panes' colours, a header
+        that refuses a bare number, the strip backing out to the branch you are in, and a press that
+        acts on the click it was given.</p>
+    </div>
+    <div class="frame">
+      <div class="frame-t">B &middot; + the bench becomes a surface you touch</div>
+      <div class="arch">
+        <div class="bound"><span class="bl">▣ WINDOW</span>
+          <div class="node g">mother bar &middot; agent rollup &middot; the wall</div>
+          <div class="node g">tab strip &middot; left bar &middot; pane headers</div>
+          <div class="node b">the bench
+            <div class="node b inner">every text run knows where it is &rarr; drag, copy</div>
+            <div class="node b inner">the composer is a document &rarr; shift selects, ctrl+z undoes</div>
+            <div class="node b inner">the reply card opens on plain English</div>
+          </div>
+        </div>
+      </div>
+      <p class="fc">Seven merges. Nothing here needs a hook, a file or an agent — it is the window
+        drawing, and it is why most of this rodeo is pressable in the pane you are reading from.</p>
+    </div>
+    <div class="frame">
+      <div class="frame-t">C &middot; + the channel, which is files</div>
+      <div class="arch">
+        <div class="bound"><span class="bl">▣ WINDOW</span>
+          <div class="node g">mother bar &middot; agent rollup &middot; the wall</div>
+          <div class="node g">tab strip &middot; left bar &middot; pane headers</div>
+          <div class="node b">the bench
+            <div class="node b inner">selection &middot; composer &middot; registers</div>
+            <div class="node b inner">channel::State &middot; rounds, presses, the three roads</div>
+          </div>
+        </div>
+        <div class="bound files"><span class="bl">▤ THE PANE'S MAILBOX</span>
+          <div class="node b">inbound.jsonl &nbsp;&lArr;&nbsp; the hook</div>
+          <div class="node b">outbound.jsonl &nbsp;&lArr;&nbsp; the window, always first</div>
+          <div class="node b">answers/&lt;tool_use_id&gt;.json &nbsp;&rArr;&nbsp; the hook</div>
+          <div class="node b">bench.json &nbsp;&mdash;&nbsp; is a bench open on this pane?</div>
+        </div>
+        <div class="bound dashed"><span class="bl">⌁ THE AGENT'S OWN PROCESS</span>
+          <div class="node b">td-agent-hooks &middot; 5 events &middot; holds the picker</div>
+        </div>
+      </div>
+      <p class="fc">Seven merges, including the big one. The only new process is a shell script the
+        harness already runs. Nothing was asked of the host.</p>
+    </div>
+    <div class="frame">
+      <div class="frame-t">D &middot; + a place for it to persist <span class="amber">(landed, not wired)</span></div>
+      <div class="arch">
+        <div class="bound"><span class="bl">▣ WINDOW</span>
+          <div class="node g">mother bar &middot; agent rollup &middot; the wall</div>
+          <div class="node g">tab strip &middot; left bar &middot; pane headers</div>
+          <div class="node b">the bench
+            <div class="node b inner">selection &middot; composer &middot; registers</div>
+            <div class="node b inner">channel::State</div>
+          </div>
+        </div>
+        <div class="bound files"><span class="bl">▤ THE PANE'S MAILBOX</span>
+          <div class="node b">the four channel files</div>
+        </div>
+        <div class="bound dashed"><span class="bl">⌁ THE AGENT'S OWN PROCESS</span>
+          <div class="node b">td-agent-hooks</div>
+        </div>
+        <div class="bound files"><span class="bl">▤ THE CONVERSATION STORE</span>
+          <div class="node a">benchstore &middot; surfaces and turns, keyed by conversation</div>
+          <div class="node a">tenancy &middot; which conversation is this pane in</div>
+        </div>
+      </div>
+      <p class="fc"><span class="amber">yellow = on disk today, reachable by nothing.</span> The store
+        has a reader that runs with no window; the live bench does not call it yet. This is the
+        boundary between what you can test tonight and what is next week's.</p>
+    </div>
+  </div>
+  <figcaption>The frame never moves; each panel adds a piece. <b>A and B are pressable in the window
+  you have; C needs the adapter from item 2; D cannot be tested at all yet and should be skipped rather
+  than failed.</b> The channel's own architecture — the three roads an answer takes, and why files
+  rather than a wire — is drawn at length in the agent-channel brief linked at the foot of this page.</figcaption>
+</figure>
+
+<figure>
+  <span class="lbl">04 &middot; What was actually on the wire this afternoon</span>
+  <div class="run">
+    <div class="run-col">
+      <div class="st-t">read out of two live mailboxes at 13:35</div>
+<pre class="mock">{"td":"0.1","type":"prompt",
+ "pid":4145015,
+ "session_id":"b1834c58…",
+ "text":"testing some of the new
+  features, what can you tell me
+  about what work landed today…"}
+
+{"td":"0.1","type":"question",
+ "tool_use_id":"toolu_01HHnH…",
+ "questions":[ 4 of them ],
+ "deadline_ms":1790023462978}
+
+{"td":"0.1","type":"waiting",
+ "until_ms":1790023462978}
+
+{"td":"0.1","type":"released",
+ "why":"stale"}</pre>
+    </div>
+    <div class="run-col">
+      <div class="st-t">what the bench did with each</div>
+      <p style="font-size:12.5px;color:#c3c2b7;margin:0 0 9px">
+        <b style="color:#fff">prompt</b> — captioned the overview with your exact words, and stopped
+        trusting the screen for this turn. That line is how the bench knows what you asked without
+        reading the terminal.</p>
+      <p style="font-size:12.5px;color:#c3c2b7;margin:0 0 9px">
+        <b style="color:#fff">question</b> — one card per question, the whole round at once,
+        provenance <i>hook</i>. This is the round the navigator is for.</p>
+      <p style="font-size:12.5px;color:#c3c2b7;margin:0 0 9px">
+        <b style="color:#fff">waiting</b> — the hook has decided to hold the picker until
+        <code>until_ms</code>, so an answer can travel back as a file.</p>
+      <p style="font-size:12.5px;color:#f5c95f;margin:0">
+        <b>released &middot; stale</b> — it gave up. The bench's marker was more than four seconds
+        old, the picker painted, and the answer went as keystrokes down the pseudoterminal.
+        Journalled, so the fallback is not silent.</p>
+    </div>
+  </div>
+  <div class="gutter">every one of those lines says <code>"td":"0.1"</code> — that is item 2, visible on the wire</div>
+  <figcaption>Not a mockup. <b>These are four real lines, copied out of two panes in this window,
+  and they are the cheapest way to tell whether the channel is alive for you</b>: open your own pane's
+  <code>inbound.jsonl</code> and type something. The <code>released</code> line is the one that earns
+  the protocol — a fallback that looked like the real thing is the failure it exists to remove.</figcaption>
+</figure>
+
+<h3 class="mini">The twenty-four, and where you press each one</h3>
+<p class="sub">Named from the merge commits rather than from the branch names. The last column is what
+  this page asks you to do about it.</p>
+<table class="wide">
+  <thead><tr><th>PR</th><th>What landed</th><th>Where you press it</th></tr></thead>
+  <tbody>
+    <tr><td><b>624</b></td><td>The workbench talks to the agent process through a channel, and no longer reads the screen or types keystrokes</td><td class="ok">items 2, 10, 11</td></tr>
+    <tr><td><b>635</b></td><td>The channel says why it let a picker go, writes its marker only while it matters, and survives a replay</td><td class="ok">item 2</td></tr>
+    <tr><td><b>634</b></td><td>The round of questions is a navigator you can walk, and answering one step moves you to the next</td><td class="ok">item 10</td></tr>
+    <tr><td><b>638</b></td><td>A round's questions are tabs in the same vocabulary its registers are</td><td class="ok">item 10</td></tr>
+    <tr><td><b>647</b></td><td>The hindsight pass: a comment that claimed a guard, a guard that did not exist, and a spec that had gone false</td><td class="warn">source only</td></tr>
+    <tr><td><b>621</b></td><td>Text on the bench can be dragged over and copied; the right-click tray copies the selection</td><td class="ok">item 5</td></tr>
+    <tr><td><b>639</b></td><td>Shift and a motion select in the composer, and the draft remembers where the selection started</td><td class="ok">item 4</td></tr>
+    <tr><td><b>646</b></td><td>The selection rules have one door, and the caret cannot be moved past them</td><td class="ok">item 4</td></tr>
+    <tr><td><b>620</b></td><td>The plain brief is the reply the overview opens on; the tl;dr and the ELI5 stop being registers</td><td class="ok">item 6</td></tr>
+    <tr><td><b>613</b></td><td>The four weights read as a readout, the open tab has a border around what it opened, and the routing lines are a diagnostic</td><td class="ok">item 7</td></tr>
+    <tr><td><b>610</b></td><td>A press on a dial is carried through the harness's own confirmation, and four other places the bench was not acting on the click it was given</td><td class="ok">item 8</td></tr>
+    <tr><td><b>596</b></td><td>Clicking the group you are already in no longer puts the whole session across the top</td><td class="ok">item 9</td></tr>
+    <tr><td><b>652</b></td><td>The agent wall wears its panes' own colours, and the theme toggle is gone</td><td class="ok">item 3</td></tr>
+    <tr><td><b>591</b></td><td>A number on the pane header says what it counts, or it does not go on the pane header</td><td class="ok">item 3</td></tr>
+    <tr><td><b>608</b></td><td>A closed pipe ends a headless verb quietly instead of printing a panic</td><td class="ok">item 13</td></tr>
+    <tr><td><b>642</b></td><td>A session id can be asked which conversation it belongs to</td><td class="ok">item 12</td></tr>
+    <tr><td><b>627</b></td><td>A conversation's surfaces and turns have a place to live that no agent can write to; a pane whose agent has gone offers an empty bench</td><td class="warn">half of it — item 14</td></tr>
+    <tr><td><b>589</b></td><td>The resolver's guards say how to break them, and which of its branches nobody has ever seen</td><td class="warn">source only</td></tr>
+    <tr><td><b>626</b></td><td>The decouple is audited against the scorecard that asked for it, and the gap is named</td><td>a document</td></tr>
+    <tr><td><b>637</b></td><td>Persistence of the workbench's history is a requirement, and the build is measured against it</td><td>a document</td></tr>
+    <tr><td><b>640</b></td><td>Codex can ask a round of three, and the channel cannot carry it yet</td><td class="bad">blocked — last section</td></tr>
+    <tr><td><b>644</b></td><td>The landing brief for the consolidation, with every tree's fate in one table</td><td>a document</td></tr>
+    <tr><td><b>651</b></td><td>The three retro panes' handoffs are on main</td><td>a document</td></tr>
+    <tr><td><b>653</b></td><td>The parallel transcript brief: one .ws file per conversation, and the wiring the store still lacks</td><td>a document</td></tr>
+  </tbody>
+</table>
+
+<h2 class="sec">On the bench, with no build and no round</h2>
+<p class="sub">Seven gestures in the pane you are already standing in. Flip to the workbench face from
+  the pane's own header, or with the chord you already use.</p>
+
+<figure>
+  <span class="lbl">05 &middot; The composer, which is a document now</span>
+  <div class="scroller">
+  <svg viewBox="0 0 700 176" role="img" aria-label="A mockup of the workbench composer with a range of text selected, the anchor and the caret marked" font-family="ui-monospace, monospace">
+    <rect x="0" y="14" width="700" height="96" rx="8" fill="#1a1a19" stroke="#3a3a36"/>
+    <text x="14" y="34" font-size="9.5" fill="#8b8a80" letter-spacing="1">THE COMPOSER</text>
+
+    <text x="14" y="58" font-size="12.5" fill="#c3c2b7">give me a doc with lots of </text>
+    <rect x="228" y="46" width="130" height="17" rx="2" fill="rgba(57,135,229,.30)"/>
+    <text x="230" y="58" font-size="12.5" fill="#ffffff">graphics and</text>
+    <text x="362" y="58" font-size="12.5" fill="#c3c2b7">examples</text>
+
+    <text x="14" y="80" font-size="12.5" fill="#c3c2b7">and tell me how to test it</text>
+    <rect x="221.5" y="70" width="1.6" height="15" fill="#3987e5"/>
+
+    <text x="232" y="100" font-size="9" fill="#7fb4f0">▲ anchor — where shift first landed</text>
+    <text x="14" y="100" font-size="9" fill="#7fb4f0">▲ caret</text>
+
+    <text x="0" y="132" font-size="10.5" fill="#8b8a80">A MOTION FIRST, THEN SHIFT DECIDES WHAT IT DOES TO THE SELECTION</text>
+    <text x="0" y="150" font-size="11" fill="#ffffff">← → ↑ ↓ home end ctrl+← ctrl+→ ctrl+b ctrl+f ctrl+e</text>
+    <text x="0" y="166" font-size="10.5" fill="#8b8a80">alone: move the caret, drop the selection &nbsp;&middot;&nbsp; with shift: extend from the anchor</text>
+  </svg>
+  </div>
+  <figcaption>Eleven motions, one rule. <b>The table was written this way rather than as eight more
+  arms, because eight arms is what nobody wrote and the box went a month with no way to highlight
+  anything.</b> The anchor is the new state: it remembers where shift first landed, so a second
+  shift+motion extends the same range instead of starting a new one.</figcaption>
+</figure>
+
+<div class="finding">
+  <div class="hd"><span class="num">3</span><div>
+    <h4>The agent wall wears its panes' colours, and a number on a header says what it counts</h4>
+    <p class="who">chrome &middot; PR 652 and 591 &middot; look, do not measure</p>
+  </div></div>
+  <div class="bd">
+    <div class="do"><b>Do:</b> open the agent wall by pressing the agent-state counter in the top bar
+      — the row of ▶ ‖ ✗ ✓ ○ ? glyphs. Look at the button row, and at the colour each pane's card is
+      drawn in. Then look at your pane headers.</div>
+    <p class="pass"><b>Pass:</b> no 🎨 theme toggle in the row; each card carries its own pane's colour
+      rather than a wall-wide theme; no bare integer sits on a pane header without a word saying what
+      it counts.</p>
+  </div>
+  <div class="verdicts">
+    <button class="vp" data-v="PASS">&#10003; pass</button><button class="vf" data-v="FAIL &mdash; ">&#10007; fail</button><button class="vo" data-v="ODD &mdash; ">~ odd</button><button class="vs" data-v="SKIPPED &mdash; ">skip</button>
+    <span class="mark"></span>
+  </div>
+</div>
+
+<div class="finding">
+  <div class="hd"><span class="num">4</span><div>
+    <h4>Select text in the composer with shift and a motion</h4>
+    <p class="who">PR 639 and 646 &middot; the one that went a month with no way to highlight anything</p>
+  </div></div>
+  <div class="bd">
+    <div class="do"><b>Do:</b> type two lines into the composer with <kbd>shift+enter</kbd> between
+      them. Then: <kbd>shift+←</kbd> a few times, <kbd>shift+ctrl+←</kbd> for a word,
+      <kbd>shift+home</kbd>, <kbd>shift+↑</kbd>. Press <kbd>ctrl+c</kbd> and paste somewhere.
+      Press <kbd>ctrl+a</kbd>, then <kbd>ctrl+z</kbd>. Then press <kbd>←</kbd> with no shift.</div>
+    <p class="pass"><b>Pass:</b> the highlight grows from where shift first landed, not from wherever
+      the caret was last. <kbd>ctrl+c</kbd> copies the selection and does <i>not</i> interrupt your
+      agent. <kbd>ctrl+z</kbd> undoes. A bare motion clears the selection and leaves the caret where
+      it moved to — there is exactly one function that decides that now, and the caret cannot be
+      placed past it.</p>
+  </div>
+  <div class="verdicts">
+    <button class="vp" data-v="PASS">&#10003; pass</button><button class="vf" data-v="FAIL &mdash; ">&#10007; fail</button><button class="vo" data-v="ODD &mdash; ">~ odd</button><button class="vs" data-v="SKIPPED &mdash; ">skip</button>
+    <span class="mark"></span>
+  </div>
+</div>
+
+<figure>
+  <span class="lbl">06 &middot; Where a drag is allowed to go</span>
+  <div class="fence">
+    <div class="side in">
+      <div class="st-t" style="color:#6cd46c">inside the fence — drag here</div>
+      <ul>
+        <li><b>The card body</b> — a reply's prose, a table, a diagram's caption</li>
+        <li><b>The rail rows</b> — the comment summaries on the right spine</li>
+        <li><b>The composer</b>, by its own keyboard rules (item 4)</li>
+      </ul>
+    </div>
+    <div class="side out">
+      <div class="st-t">outside — a press still acts</div>
+      <ul>
+        <li>The tab strip and the shelf tabs</li>
+        <li>The gallery</li>
+        <li>The pane header</li>
+        <li>Menus, by his own line: <i>"I don't care about the menus"</i></li>
+      </ul>
+    </div>
+  </div>
+  <div class="gutter">a drag under 5&nbsp;px is still a click — that is how a row you meant to open still opens</div>
+  <figcaption><b>The hard part was not the copy, it was that both regions already act on mouse-down.</b>
+  A press now arms an anchor and defers; on release it either fires the click you meant or settles the
+  selection. A selection that silently dropped one run in twelve would read as working for weeks, which
+  is why the debug switch in item 5 exists.</figcaption>
+</figure>
+
+<div class="finding">
+  <div class="hd"><span class="num">5</span><div>
+    <h4>Drag over a card and copy it off the bench</h4>
+    <p class="who">PR 621 &middot; four ways out, and they are not the same chord as the terminal's</p>
+  </div></div>
+  <div class="bd">
+    <div class="do"><b>Do:</b> drag across the prose of a response card. Then try each exit:
+      middle-click into another window (the X11 PRIMARY selection is published on release),
+      <kbd>ctrl+shift+c</kbd>, and right-click &rarr; <b>Copy</b>. Then drag across the comment rows
+      on the right rail and do it again.</div>
+    <p class="pass"><b>Pass:</b> the highlight follows the pointer across runs and stops at the fence
+      above; all three exits give the same text; <kbd>ctrl+c</kbd> is untouched and still interrupts a
+      running agent. With no selection, <kbd>ctrl+shift+c</kbd> falls through to the terminal's own copy.</p>
+    <p><b>If a run is missing from the highlight</b>, that is the failure worth writing down — relaunch
+      with <code>TD_SELDEBUG=1</code> and the window prints which run the pointer resolved to, and how
+      many it knows about.</p>
+  </div>
+  <div class="verdicts">
+    <button class="vp" data-v="PASS">&#10003; pass</button><button class="vf" data-v="FAIL &mdash; ">&#10007; fail</button><button class="vo" data-v="ODD &mdash; ">~ odd</button><button class="vs" data-v="SKIPPED &mdash; ">skip</button>
+    <span class="mark"></span>
+  </div>
+</div>
+
+<figure>
+  <span class="lbl">07 &middot; The reply card, this morning and tonight</span>
+  <div class="run">
+    <div class="run-col">
+      <div class="st-t">before &middot; four registers and four fake buttons</div>
+<pre class="mock">  What this turn did
+
+  ( small ) ( involved )
+  ( subsystem ) ( measured )
+
+  tl;dr   ELI5   Plain   Technical
+  ─────
+  One or two sentences that stand
+  for the whole reply.</pre>
+      <p style="font-size:12px;color:#8b8a80;margin:8px 0 0">Eight identical chips in two rows,
+        four of which did nothing. Four lengths of one paragraph, and the card opened on the
+        shortest.</p>
+    </div>
+    <div class="run-col">
+      <div class="st-t">after &middot; one readout, two readings</div>
+<pre class="mock">  What this turn did
+
+  ┌────────────────────────────────┐
+  │ EFFORT small   COMPLEXITY      │
+  │ involved   DEPTH subsystem     │
+  │ CONFIDENCE measured            │
+  └────────────────────────────────┘
+
+  reading   evidence   steps
+  ───────
+ ┌─────────────────────────────────┐
+ │ The whole reply in plain        │
+ │ English, written for you.       │
+ └─────────────────────────────────┘</pre>
+      <p style="font-size:12px;color:#8fe08f;margin:8px 0 0">One bordered group, each value named so
+        it cannot be mistaken for a control. The open tab draws a border around the section it opened.</p>
+    </div>
+  </div>
+  <figcaption>Two complaints, answered in one stroke. <b>The weights were made of the same object as
+  the tab strip directly beneath them, so the card offered eight controls and four of them did nothing</b>
+  — and the tabs, which <i>are</i> the controls, had no boundary around what they switched. The
+  third tab was renamed from <code>next</code>, which in a row of three reads as the button that
+  advances you.</figcaption>
+</figure>
+
+<div class="finding">
+  <div class="hd"><span class="num">6</span><div>
+    <h4>A reply opens on plain English, and the tl;dr is gone</h4>
+    <p class="who">PR 620 &middot; TDSP 0.4 &middot; this very page's reply is the specimen</p>
+  </div></div>
+  <div class="bd">
+    <div class="do"><b>Do:</b> look at the newest card on the overview. Unfold the registers.</div>
+    <p class="pass"><b>Pass:</b> the card opens showing the plain brief, whole, with no press required.
+      There is no <b>TL;DR</b> register and no <b>ELI5</b> register. A pane still running the older
+      briefing keeps working — a <code>tldr</code> that arrives with no <code>layman</code> beside it
+      is read <i>as</i> the plain brief rather than refused, and an <code>eli5</code> files under
+      <b>Other</b>.</p>
+  </div>
+  <div class="verdicts">
+    <button class="vp" data-v="PASS">&#10003; pass</button><button class="vf" data-v="FAIL &mdash; ">&#10007; fail</button><button class="vo" data-v="ODD &mdash; ">~ odd</button><button class="vs" data-v="SKIPPED &mdash; ">skip</button>
+    <span class="mark"></span>
+  </div>
+</div>
+
+<div class="finding">
+  <div class="hd"><span class="num">7</span><div>
+    <h4>The four weights are a readout, and the open tab has a border</h4>
+    <p class="who">PR 613 &middot; your words: <i>"made obvious they are NOT CLICKABLE BUTTONS"</i></p>
+  </div></div>
+  <div class="bd">
+    <div class="do"><b>Do:</b> on any response card, try to press each of the four weights. Then press
+      each tab in turn and watch the boundary.</div>
+    <p class="pass"><b>Pass:</b> the weights are one bordered group reading <code>EFFORT&nbsp;…</code>
+      <code>COMPLEXITY&nbsp;…</code> <code>DEPTH&nbsp;…</code> <code>CONFIDENCE&nbsp;…</code>, and none
+      of them responds. The tabs read <b>reading · evidence · steps</b> and the open one draws a border
+      around the section it opened, in its own lit colour. No routing lines or per-verb prompt text
+      under the card — those now need <code>TD_VERB_PREVIEW</code> in the environment.</p>
+  </div>
+  <div class="verdicts">
+    <button class="vp" data-v="PASS">&#10003; pass</button><button class="vf" data-v="FAIL &mdash; ">&#10007; fail</button><button class="vo" data-v="ODD &mdash; ">~ odd</button><button class="vs" data-v="SKIPPED &mdash; ">skip</button>
+    <span class="mark"></span>
+  </div>
+</div>
+
+<div class="finding">
+  <div class="hd"><span class="num">8</span><div>
+    <h4>A press acts on the click it was given</h4>
+    <p class="who">PR 610 &middot; five places, one of them a dial behind a confirmation</p>
+  </div></div>
+  <div class="bd">
+    <div class="do"><b>Do:</b> press a dial on the bench that asks the harness to confirm before it
+      acts. Answer the confirmation. Then press a card's verb chips and rail rows, quickly, and watch
+      whether the thing that happens is the thing under the pointer.</div>
+    <p class="pass"><b>Pass:</b> the confirmed press carries through to the dial it was made on, not to
+      whatever the bench had selected by the time the answer came back.</p>
+  </div>
+  <div class="verdicts">
+    <button class="vp" data-v="PASS">&#10003; pass</button><button class="vf" data-v="FAIL &mdash; ">&#10007; fail</button><button class="vo" data-v="ODD &mdash; ">~ odd</button><button class="vs" data-v="SKIPPED &mdash; ">skip</button>
+    <span class="mark"></span>
+  </div>
+</div>
+
+<figure>
+  <span class="lbl">08 &middot; Pressing the group you are already in</span>
+  <div class="scroller">
+  <svg viewBox="0 0 700 150" role="img" aria-label="Before and after: a second press on a branch row used to widen the strip to every tab in the session, and now stays on the branch" font-family="ui-monospace, monospace">
+    <text x="0" y="14" font-size="9.5" fill="#8b8a80" letter-spacing="1">BEFORE</text>
+    <rect x="0" y="22" width="150" height="30" rx="5" fill="#1a1a19" stroke="#3a3a36"/>
+    <text x="75" y="41" font-size="10.5" fill="#c3c2b7" text-anchor="middle">press a branch row</text>
+    <path d="M150,37 L176,37" stroke="#3a3a36"/>
+    <rect x="180" y="22" width="180" height="30" rx="5" fill="#1a1a19" stroke="#199e70"/>
+    <text x="270" y="41" font-size="10.5" fill="#c3c2b7" text-anchor="middle">the strip pins that branch</text>
+    <path d="M360,37 L386,37" stroke="#3a3a36"/>
+    <rect x="390" y="22" width="150" height="30" rx="5" fill="#1a1a19" stroke="#3a3a36"/>
+    <text x="465" y="41" font-size="10.5" fill="#c3c2b7" text-anchor="middle">press it again</text>
+    <path d="M540,37 L566,37" stroke="#3a3a36"/>
+    <rect x="570" y="22" width="130" height="30" rx="5" fill="rgba(208,59,59,.12)" stroke="#d03b3b"/>
+    <text x="635" y="41" font-size="10.5" fill="#f08a8a" text-anchor="middle">31 tabs, 3 rows</text>
+
+    <text x="0" y="84" font-size="9.5" fill="#8b8a80" letter-spacing="1">AFTER</text>
+    <rect x="0" y="92" width="150" height="30" rx="5" fill="#1a1a19" stroke="#3a3a36"/>
+    <text x="75" y="111" font-size="10.5" fill="#c3c2b7" text-anchor="middle">press a branch row</text>
+    <path d="M150,107 L176,107" stroke="#3a3a36"/>
+    <rect x="180" y="92" width="180" height="30" rx="5" fill="#1a1a19" stroke="#199e70"/>
+    <text x="270" y="111" font-size="10.5" fill="#c3c2b7" text-anchor="middle">the strip pins that branch</text>
+    <path d="M360,107 L386,107" stroke="#3a3a36"/>
+    <rect x="390" y="92" width="150" height="30" rx="5" fill="#1a1a19" stroke="#3a3a36"/>
+    <text x="465" y="111" font-size="10.5" fill="#c3c2b7" text-anchor="middle">press it again</text>
+    <path d="M540,107 L566,107" stroke="#3a3a36"/>
+    <rect x="570" y="92" width="130" height="30" rx="5" fill="rgba(25,158,112,.13)" stroke="#199e70"/>
+    <text x="635" y="111" font-size="10.5" fill="#6cd46c" text-anchor="middle">still your branch</text>
+
+    <text x="0" y="144" font-size="10" fill="#8b8a80">the UNFILED heading, which asks for ALL by name, is the door that still widens it — and it toggles both ways now</text>
+  </svg>
+  </div>
+  <figcaption><b>The gesture was a trap because its first half is invisible.</b> Pinning the branch the
+  strip is already resting on draws the same tabs under the same chip label, so the second press is
+  made by somebody who reasonably believes the first did nothing. Backing out now lands on the branch
+  you are in, and every control that widens the strip asks one function which way the next press goes.</figcaption>
+</figure>
+
+<div class="finding">
+  <div class="hd"><span class="num">9</span><div>
+    <h4>Press a branch row in the tree twice</h4>
+    <p class="who">PR 596 &middot; your words: <i>"the outer is tab bombed with ALL our tabs again"</i></p>
+  </div></div>
+  <div class="bd">
+    <div class="do"><b>Do:</b> in the left bar, press the branch row for the group you are already in.
+      Press it again. Then press the <b>UNFILED</b> heading, and press it again.</div>
+    <p class="pass"><b>Pass:</b> the second press on a branch row leaves the strip showing your branch.
+      The UNFILED heading widens the strip to everything and narrows it back — a toggle, not a one-way
+      door.</p>
+  </div>
+  <div class="verdicts">
+    <button class="vp" data-v="PASS">&#10003; pass</button><button class="vf" data-v="FAIL &mdash; ">&#10007; fail</button><button class="vo" data-v="ODD &mdash; ">~ odd</button><button class="vs" data-v="SKIPPED &mdash; ">skip</button>
+    <span class="mark"></span>
+  </div>
+</div>
+
+<h2 class="sec">A live round</h2>
+<p class="sub">This is the half that needs the hook from item 2, and it is the half nobody has seen.</p>
+
+<figure>
+  <span class="lbl">09 &middot; The navigator, drawn from the code</span>
+  <div class="run">
+    <div class="run-col">
+      <div class="st-t">a round of four, on the second step</div>
+<pre class="mock">  ✓ Morning   Weather   Free night   Sweet/sav
+              ────────
+  1 of 4 answered
+
+  What is the weather doing where
+  you are?
+
+   1  Clear
+      Nothing in the sky at all.
+   2  Grey
+      Flat light, no rain yet.
+   3  Raining
+      Properly, not a drizzle.</pre>
+    </div>
+    <div class="run-col">
+      <div class="st-t">what each part is made of</div>
+      <p style="font-size:12.5px;color:#c3c2b7;margin:0 0 8px"><b style="color:#fff">The tabs are the
+        same object a register tab is</b> — underlined text with a muted rest, never a bordered chip.
+        Your ask: <i>"tabs along the top of the questions for multiple questions — similar to the
+        response: reading - evidence - next"</i>.</p>
+      <p style="font-size:12.5px;color:#c3c2b7;margin:0 0 8px"><b style="color:#fff">The tick is the
+        one divergence.</b> A register is never <i>finished</i>; an answered question is. It stays
+        ticked even on the tab you are standing on.</p>
+      <p style="font-size:12.5px;color:#c3c2b7;margin:0 0 8px"><b style="color:#fff">A tab is pressable
+        only where it has a card behind it.</b> A step read off the screen rather than off the wire has
+        no surface, and must not look like a button that does nothing.</p>
+      <p style="font-size:12.5px;color:#c3c2b7;margin:0"><b style="color:#fff">Answering advances you</b>
+        to the next step still open, reading the freshly built cards rather than the bench's copy. A
+        completed round moves nobody.</p>
+    </div>
+  </div>
+  <div class="gutter"><span style="color:#f5c95f">yellow rule: this picture is drawn from
+    <code>round_progress</code> in <code>benchdraw.rs</code> and from a real four-question round on the
+    next pane — it is a reconstruction, not a screenshot. Nothing has ever rendered this.</span></div>
+  <figcaption><b>Three pull requests merged this and the pane that built it filed an issue against
+  itself saying no image exists.</b> The labels are the question headers, so a round asking about
+  Morning, Weather, Free night and Sweet/savoury draws exactly those four words. If what you see
+  differs from this drawing in any way, the drawing is what is wrong — write down which part.</figcaption>
+</figure>
+
+<figure>
+  <span class="lbl">10 &middot; Five ways a held picker is let go</span>
+  <div class="scroller">
+  <svg viewBox="0 0 700 250" role="img" aria-label="Decision tree: the hook checks the bench marker and either waits for an answer file or releases with one of five named reasons" font-family="ui-monospace, monospace">
+    <defs><marker id="ar2" markerWidth="7" markerHeight="7" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L6,3 L0,6 z" fill="#8b8a80"/></marker></defs>
+
+    <rect x="0" y="10" width="210" height="34" rx="6" fill="#1a1a19" stroke="#3987e5"/>
+    <text x="105" y="31" font-size="11" fill="#ffffff" text-anchor="middle">the agent asks a question</text>
+
+    <line x1="105" y1="44" x2="105" y2="62" stroke="#8b8a80" marker-end="url(#ar2)"/>
+    <rect x="0" y="64" width="210" height="34" rx="6" fill="#1a1a19" stroke="#3a3a36"/>
+    <text x="105" y="85" font-size="11" fill="#c3c2b7" text-anchor="middle">read bench.json</text>
+
+    <line x1="210" y1="81" x2="276" y2="81" stroke="#8b8a80" marker-end="url(#ar2)"/>
+
+    <rect x="280" y="10" width="190" height="26" rx="5" fill="rgba(139,138,128,.12)" stroke="#8b8a80"/>
+    <text x="290" y="28" font-size="10.5" fill="#c3c2b7">no file at all &rarr; <tspan fill="#ffffff">missing</tspan></text>
+    <rect x="280" y="42" width="190" height="26" rx="5" fill="rgba(139,138,128,.12)" stroke="#8b8a80"/>
+    <text x="290" y="60" font-size="10.5" fill="#c3c2b7">not the face on screen &rarr; <tspan fill="#ffffff">closed</tspan></text>
+    <rect x="280" y="74" width="190" height="26" rx="5" fill="rgba(236,131,90,.14)" stroke="#ec835a"/>
+    <text x="290" y="92" font-size="10.5" fill="#c3c2b7">clock &gt; 4s off &rarr; <tspan fill="#ec835a">stale</tspan></text>
+
+    <line x1="105" y1="98" x2="105" y2="126" stroke="#8b8a80" marker-end="url(#ar2)"/>
+    <rect x="0" y="128" width="210" height="34" rx="6" fill="rgba(25,158,112,.11)" stroke="#199e70"/>
+    <text x="105" y="149" font-size="11" fill="#6cd46c" text-anchor="middle">hold the picker, and wait</text>
+
+    <line x1="210" y1="145" x2="276" y2="145" stroke="#8b8a80" marker-end="url(#ar2)"/>
+    <rect x="280" y="112" width="190" height="26" rx="5" fill="rgba(25,158,112,.13)" stroke="#199e70"/>
+    <text x="290" y="130" font-size="10.5" fill="#c3c2b7">answers/ file &rarr; <tspan fill="#6cd46c">answered</tspan></text>
+    <rect x="280" y="144" width="190" height="26" rx="5" fill="rgba(139,138,128,.12)" stroke="#8b8a80"/>
+    <text x="290" y="162" font-size="10.5" fill="#c3c2b7">540 s gone &rarr; <tspan fill="#ffffff">timeout</tspan></text>
+
+    <line x1="470" y1="55" x2="520" y2="55" stroke="#8b8a80" marker-end="url(#ar2)"/>
+    <rect x="524" y="30" width="176" height="52" rx="6" fill="#1a1a19" stroke="#8b8a80"/>
+    <text x="612" y="50" font-size="10.5" fill="#ffffff" text-anchor="middle">the picker paints</text>
+    <text x="612" y="66" font-size="10" fill="#8b8a80" text-anchor="middle">the answer goes as keystrokes</text>
+
+    <line x1="470" y1="125" x2="520" y2="125" stroke="#8b8a80" marker-end="url(#ar2)"/>
+    <rect x="524" y="100" width="176" height="52" rx="6" fill="rgba(25,158,112,.11)" stroke="#199e70"/>
+    <text x="612" y="120" font-size="10.5" fill="#6cd46c" text-anchor="middle">no picker, ever</text>
+    <text x="612" y="136" font-size="10" fill="#8b8a80" text-anchor="middle">the answer goes as a file</text>
+
+    <text x="0" y="196" font-size="10.5" fill="#8b8a80">Every one of the five is written into the journal as a `released` line carrying its reason.</text>
+    <text x="0" y="212" font-size="10.5" fill="#ec835a">Observed at 13:35 today, on the pane next to this one: stale. The keys road, journalled, on a live window.</text>
+    <text x="0" y="230" font-size="10.5" fill="#8b8a80">The marker is refreshed once a second while the bench is on screen, and written once when it stops.</text>
+  </svg>
+  </div>
+  <figcaption><b>A fallback that looked like the real thing is the failure this protocol exists to
+  remove</b>, which is why the reason is on the wire rather than in someone's head. The orange branch
+  is the one that actually fired today — worth deciding whether a bench you are not looking at should
+  still be allowed to hold a picker open.</figcaption>
+</figure>
+
+<div class="finding">
+  <div class="hd"><span class="num">10</span><div>
+    <h4>Ask an agent for a round of four questions and walk it</h4>
+    <p class="who">PR 634, 638 &middot; the highest-value ten minutes on this page</p>
+  </div></div>
+  <div class="bd">
+    <div class="do"><b>Do:</b> stand on the workbench face of an agent pane and leave it there. Type
+      into any agent: <i>"ask me four unrelated questions at once with AskUserQuestion."</i>
+      Watch the bench before the terminal paints anything.</div>
+    <p class="pass"><b>Pass:</b> four cards arrive together, with a tab row above the question carrying
+      each question's header. Answering one ticks its tab and moves you to the next one still open.
+      The round opens on the <i>first</i> unanswered step, not the last to arrive. If the file road
+      held, no picker ever painted in the terminal.</p>
+    <p><b>Photograph this one.</b> It is three merged pull requests with no image behind them, and the
+      open issue asking for one is <a href="https://github.com/parker-brown-family/terminal-delight/issues/648">#648</a>.</p>
+  </div>
+  <div class="verdicts">
+    <button class="vp" data-v="PASS">&#10003; pass</button><button class="vf" data-v="FAIL &mdash; ">&#10007; fail</button><button class="vo" data-v="ODD &mdash; ">~ odd</button><button class="vs" data-v="SKIPPED &mdash; ">skip</button>
+    <span class="mark"></span>
+  </div>
+</div>
+
+<div class="finding">
+  <div class="hd"><span class="num">11</span><div>
+    <h4>Read the journal for the round you just answered</h4>
+    <p class="who">PR 624, 635 &middot; the fallback must be visible, or it is not a fallback</p>
+  </div></div>
+  <div class="bd">
+    <pre class="cmd"><code>tail -5 ~/.local/state/terminal-delight/surfaces/$TD_SESSION/$TD_PANE_ID/inbound.jsonl</code></pre>
+    <div class="do"><b>Do:</b> run that in the pane that just answered a round — or read any pane's by
+      substituting its session and number.</div>
+    <p class="pass"><b>Pass:</b> a <code>question</code> line carrying all four questions verbatim, a
+      <code>waiting</code> line, then either a <code>released</code> line naming one of the five reasons
+      or an <code>answered</code> line carrying the map the tool returned. If it says
+      <code>"why":"stale"</code> or <code>"closed"</code>, the keys road was taken — that is the
+      designed behaviour, and the interesting question is whether it should have been.</p>
+  </div>
+  <div class="verdicts">
+    <button class="vp" data-v="PASS">&#10003; pass</button><button class="vf" data-v="FAIL &mdash; ">&#10007; fail</button><button class="vo" data-v="ODD &mdash; ">~ odd</button><button class="vs" data-v="SKIPPED &mdash; ">skip</button>
+    <span class="mark"></span>
+  </div>
+</div>
+
+<h2 class="sec">From a shell, with no window at all</h2>
+
+<div class="finding">
+  <div class="hd"><span class="num">12</span><div>
+    <h4>Ask which conversation each live agent is in</h4>
+    <p class="who">PR 642 &middot; the tenancy half &middot; a new verb</p>
+  </div></div>
+  <div class="bd">
+    <pre class="cmd"><code>terminal-delight bindings</code></pre>
+    <pre class="cmd"><code>terminal-delight bindings 3d475389-6fff-4f14-94d6-7ace2cb494fa</code></pre>
+    <div class="do"><b>Do:</b> run the bare form for every live agent, then hand it a session id from
+      one of the rows.</div>
+    <p class="pass"><b>Pass:</b> each row carries <code>tenancy</code>, a <code>root</code> and a
+      <code>seq</code> — so a resumed session says which conversation it is a <i>segment</i> of rather
+      than presenting as a new one. <code>certain:false</code> is an answer, not a failure: it means
+      the binding was inferred rather than read.</p>
+  </div>
+  <div class="verdicts">
+    <button class="vp" data-v="PASS">&#10003; pass</button><button class="vf" data-v="FAIL &mdash; ">&#10007; fail</button><button class="vo" data-v="ODD &mdash; ">~ odd</button><button class="vs" data-v="SKIPPED &mdash; ">skip</button>
+    <span class="mark"></span>
+  </div>
+</div>
+
+<div class="finding">
+  <div class="hd"><span class="num">13</span><div>
+    <h4>Close a pipe under a headless verb</h4>
+    <p class="who">PR 608 &middot; already measured here — confirm it on your box</p>
+  </div></div>
+  <div class="bd">
+    <pre class="cmd"><code>terminal-delight bindings | head -1</code></pre>
+    <div class="do"><b>Do:</b> run it, and watch stderr.</div>
+    <p class="pass"><b>Pass:</b> one line of JSON and nothing else. No <code>Broken pipe</code>, no
+      panic, no backtrace. <span class="tag v">measured</span> zero bytes on stderr when this page was
+      generated.</p>
+  </div>
+  <div class="verdicts">
+    <button class="vp" data-v="PASS">&#10003; pass</button><button class="vf" data-v="FAIL &mdash; ">&#10007; fail</button><button class="vo" data-v="ODD &mdash; ">~ odd</button><button class="vs" data-v="SKIPPED &mdash; ">skip</button>
+    <span class="mark"></span>
+  </div>
+</div>
+
+<div class="finding">
+  <div class="hd"><span class="num">14</span><div>
+    <h4>End an agent and look at the bench it left behind</h4>
+    <p class="who">PR 627, the half that is reachable &middot; needs a pane you are willing to clear</p>
+  </div></div>
+  <div class="bd">
+    <p>Until today nothing anywhere emptied a bench. The surfaces an agent presented outlived it, so
+      the one pane an agent had worked in was the one pane that could never offer a clean start.</p>
+    <div class="do"><b>Do:</b> end the agent in a scratch pane. Look at the bench. Launch a new agent
+      in the same pane.</div>
+    <p class="pass"><b>Pass:</b> the cards, the selection, the unseen marks and the chosen tab are all
+      gone; the face, the shelf and the rail preference you chose are still yours. The new agent starts
+      on a clean rail rather than inheriting a stranger's diagrams and answered questions.</p>
+  </div>
+  <div class="verdicts">
+    <button class="vp" data-v="PASS">&#10003; pass</button><button class="vf" data-v="FAIL &mdash; ">&#10007; fail</button><button class="vo" data-v="ODD &mdash; ">~ odd</button><button class="vs" data-v="SKIPPED &mdash; ">skip</button>
+    <span class="mark"></span>
+  </div>
+</div>
+
+<h2 class="sec">What is on disk and cannot be pressed</h2>
+
+<figure>
+  <span class="lbl">11 &middot; Four states, and three of them are not failures</span>
+  <div class="quad">
+    <div class="state now">
+      <div class="st-t" style="color:#6cd46c">pressable tonight</div>
+      <p style="font-size:12.5px;color:#c3c2b7;margin:0">Eleven of the fourteen items above. The window
+        draws it, you touch it, it either does the thing or it does not.</p>
+    </div>
+    <div class="state">
+      <div class="st-t" style="color:#7fb4f0">needs the adapter</div>
+      <p style="font-size:12.5px;color:#c3c2b7;margin:0">Items 10 and 11. One command, then a round.
+        Until then the bench falls back to the screen and says so on the card.</p>
+    </div>
+    <div class="state" style="border-color:#c98500">
+      <div class="st-t" style="color:#f5c95f">built, reachable by nothing</div>
+      <p style="font-size:12.5px;color:#c3c2b7;margin:0">The conversation store and its reader. The
+        code runs, has tests, and no live caller. <b>Skip, do not fail.</b></p>
+    </div>
+    <div class="state" style="border-color:#3a3a36;border-style:dashed">
+      <div class="st-t">blocked on a permission grant</div>
+      <p style="font-size:12.5px;color:#c3c2b7;margin:0">Codex rounds. Widening its hook matcher
+        re-prompts Codex to trust its hooks, which is yours to grant and nobody else's.</p>
+    </div>
+  </div>
+  <figcaption><b>The middle two columns are the ones a checklist usually loses.</b> A feature that
+  merged today and cannot be reached is a real state of the world, and recording it as a failed test
+  would put a red mark against work that is exactly where it was planned to be.</figcaption>
+</figure>
+
+<div class="callout">
+  <span class="lbl">the three that are genuinely open</span>
+  <p><b>The store has no caller on the live bench.</b> A conversation's surfaces and turns now have a
+    place no agent can write to, and a reader that works with no window. Persistence across a window
+    restart is a requirement with a brief behind it, and it is not a gesture that can pass today.</p>
+  <p><b>Codex cannot ask a round.</b> Its <code>PreToolUse</code> matcher has to be widened in
+    <code>~/.codex/hooks.json</code>, and editing that file re-prompts Codex to trust its hooks — a
+    permission grant, refused on your behalf. Two follow-on items (matching
+    <code>request_user_input</code>, keying the answer map by question id) are deliberately not built,
+    because without the grant nothing can reach them.</p>
+  <p><b>The bench is still a field on the pane.</b> 124 references, moved deliberately after the
+    tenancy key lands — two agents reshaping one struct in one afternoon is how a merge eats a day.</p>
+</div>
+
+<h2 class="sec">Three things only you can settle</h2>
+<div class="grill">
+  <div class="q">
+    <h4>Should a bench you are not looking at still hold a picker open?</h4>
+    <p>Today the hook holds the agent's question only while the marker says the workbench is the face
+      on screen <i>and</i> was written within four seconds. A round fired at 13:35 on the pane next to
+      this one and was released as <code>stale</code> on a window that was very much alive.</p>
+    <p class="rec"><b>My read:</b> the four-second rule is right for a window that has died, and wrong
+      for a pane sitting on the terminal face in a window you are using. Those are two different
+      facts wearing one marker. <span class="tag w">inferred</span> — I have one observation, not a
+      measurement of the refresh cadence.</p>
+  </div>
+  <div class="q">
+    <h4>Text selection is merged, and its plan page still says <i>awaiting approval</i>.</h4>
+    <p>The combined plan for dragging over the bench asked four questions — whether presses on the card
+      body and rail rows may act on release, whether the composer was still wanted, whether verb chips
+      are highlightable in passing, and what else belongs inside the fence. It shipped as pull request
+      621 with those questions open.</p>
+    <p class="rec"><b>My read:</b> answer them against what you see in item 5 rather than on paper,
+      and let the gate close retroactively. The one that could still change code is the verb chips.</p>
+  </div>
+  <div class="q">
+    <h4>Do you want Codex asking rounds at all?</h4>
+    <p>It is established that Codex can ask one — three questions, keyed by id rather than by question
+      text. Reaching it costs you a trust prompt in Codex, and costs the adapter two small changes
+      that are currently unreachable code.</p>
+    <p class="rec"><b>My read:</b> worth it only if you actually run Codex panes on the bench. If the
+      bench is a Claude surface in practice, saying so closes an issue and stops two agents circling it.</p>
+  </div>
+</div>
+
+<h2 class="sec">Where the rest of it is written down</h2>
+<div class="modals-row">
+  <button class="dlg-open" data-dlg="d-repro">How every number here was got</button>
+  <button class="dlg-open" data-dlg="d-gates">The gates, and the count that lies</button>
+  <button class="dlg-open" data-dlg="d-docs">Today's own briefs and handoffs</button>
+</div>
+
+<footer>
+  <p>terminal-delight &middot; reports/2026-09-21-the-monday-rodeo.html</p>
+  <p>Mark each item, then 💾 <b>save into file</b> and say <i>read my notes in
+    2026-09-21-the-monday-rodeo.html</i>. The download lands in ~/Downloads, not beside this file.</p>
+</footer>
+
+</div>
+
+<dialog id="d-repro">
+  <div class="dlg-head"><div><h3>How every number here was got</h3>
+    <p class="repo">run these and the page rebuilds itself from them</p></div>
+    <button class="x" data-close>&times;</button></div>
+  <div class="dlg-body">
+    <h4>Drawn from the code</h4>
+    <ul>
+      <li>Figure 05, the motion table — <code>motion_for</code> and <code>line_edit</code> in
+        <code>app/src/workbench.rs</code>. Eleven motions, and shift turns every one of them from a
+        <code>Move</code> into an <code>Extend</code>.</li>
+      <li>Figure 06, the drag threshold — <code>DRAG_SLOP = 5.0</code> in <code>app/src/pane/bench.rs</code>.</li>
+      <li>Figure 09, the navigator — <code>round_progress</code> in <code>app/src/benchdraw.rs</code>.
+        The tick, the underline and the <i>N of M answered</i> line are read straight off it. Nothing
+        rendered it; this is a reconstruction.</li>
+      <li>Figure 10, the five reasons — <code>unfresh()</code> in <code>scripts/td-agent-hooks</code>
+        and <code>MARKER_FRESH_MS</code> / <code>BEACON_MS</code> in <code>app/src/channel.rs</code>
+        (4000 ms and 1000 ms).</li>
+    </ul>
+    <h4>Measured on this machine</h4>
+    <ul>
+      <li>The window table in figure 01 — <code>/proc/&lt;pid&gt;/exe</code> for every terminal-delight
+        process carrying no subcommand, against <code>git rev-list</code> for the distance to main.</li>
+      <li>The journal lines in figure 04 — copied out of
+        <code>surfaces/attention/6/inbound.jsonl</code> and <code>surfaces/attention/7/inbound.jsonl</code>.</li>
+      <li>The adapter version — <code>diff</code> between <code>scripts/td-agent-hooks</code> and the
+        copy on PATH, plus the <code>td</code> field the installed one writes.</li>
+      <li>Item 13 — <code>terminal-delight bindings | head -1</code> with stderr captured: zero bytes.</li>
+    </ul>
+    <h4>Not established</h4>
+    <ul>
+      <li>Why the marker went stale at 13:35. It could be a pane going off-screen, a window not
+        rendering, or a face flipped mid-wait. One observation, no cadence measurement.</li>
+      <li>Whether every one of the fourteen items actually passes. Nobody has pressed them; that is
+        what this page is for.</li>
+    </ul>
+  </div>
+</dialog>
+
+<dialog id="d-gates">
+  <div class="dlg-head"><div><h3>The gates, and the count that lies</h3>
+    <p class="repo">what CI runs, and the trap in running it locally</p></div>
+    <button class="x" data-close>&times;</button></div>
+  <div class="dlg-body">
+    <h4>The three commands</h4>
+    <pre><code>cd ~/Work/terminal-delight/app &amp;&amp; cargo test --locked --bin terminal-delight
+cargo clippy --locked -- -D warnings
+cargo fmt --check</code></pre>
+    <p>Clippy runs without <code>--all-targets</code>, so it does not lint test code. Say which
+      invocation you ran before reporting a clippy result.</p>
+    <h4>Cross-check the count, not the exit code</h4>
+    <p>A shared <code>CARGO_TARGET_DIR</code> between two worktrees will happily serve another tree's
+      test binary. That has already dropped sixteen tests out of a run that reported green. This head's
+      own gate line says <b>__TESTS__ passing</b> — if your run says materially fewer, you are testing
+      somebody else's binary, not a regression.</p>
+  </div>
+</dialog>
+
+<dialog id="d-docs">
+  <div class="dlg-head"><div><h3>Today's own briefs and handoffs</h3>
+    <p class="repo">all under ~/Work/terminal-delight</p></div>
+    <button class="x" data-close>&times;</button></div>
+  <div class="dlg-body">
+    <h4>Briefs written today, drawn</h4>
+    <ul>
+      <li><code>reports/2026-09-21-decouple-async-the-agent-channel.html</code> — the channel's own
+        architecture, the three roads an answer takes, and the six decisions made while you were away.
+        The one to read if any of this needs overruling.</li>
+      <li><code>reports/2026-09-21-multiple-questions-jam-the-bench.html</code> — why a round arriving
+        whole broke a rule written for questions arriving one at a time.</li>
+      <li><code>reports/2026-09-21-text-on-the-bench-is-selectable.html</code> — the fence, the anatomy
+        of a drag, and the four questions still open.</li>
+      <li><code>reports/2026-09-21-bench-tenancy.html</code> — which conversation a workbench is showing.</li>
+      <li><code>reports/2026-09-21-can-codex-ask-a-round.html</code> — the measurement behind the
+        blocked column.</li>
+      <li><code>reports/2026-09-21-the-parallel-transcript.html</code> — one file per conversation, and
+        the wiring the store still lacks.</li>
+      <li><code>reports/2026-09-21-through-the-eye-of-the-needle.html</code> — every worktree's fate in
+        the consolidation that put all of this on main.</li>
+    </ul>
+    <h4>The week, in one page</h4>
+    <ul>
+      <li><code>CEREMONIES/burndowns/2026-09-21.md</code> — 334 commits in seven days, the honesty pass,
+        and the six action items. Two of its findings are structural rather than today's: Fieldcraft has
+        produced zero closures for this project against 154 done tickets, and the APES registration
+        points at a tree that is not main.</li>
+      <li><code>docs/spec/td-agent-channel.md</code> — TDAC 0.2, the whole contract.</li>
+      <li><code>docs/spec/td-surface-protocol.md</code> — TDSP 0.4, where the tl;dr and the ELI5 stop
+        being registers.</li>
+      <li><code>handoffs/HANDOFF-2026-09-21-*.md</code> — seven panes' handoffs, each naming what it
+        did not finish.</li>
+    </ul>
+  </div>
+</dialog>

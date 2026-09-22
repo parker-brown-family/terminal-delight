@@ -1,0 +1,507 @@
+<header class="hero">
+  <p class="kicker">terminal-delight &middot; 2026-09-21 &middot; diagnosis from pane 16 (pid 1272160)</p>
+  <h1>One ask, four cards</h1>
+  <p class="lede">You photographed a bench where one <code>AskUserQuestion</code> drew four rows on the
+  decisions rail &mdash; three waiting, one of them answered <em>as well</em>. Two separate things made
+  that picture. The bench has <b>three</b> ways to mint a question card and <b>one</b> reconciliation
+  between them, and that one switches itself off the moment you answer. Separately, the road that
+  holds all three answers and submits them together was gone before you pressed anything: it lives
+  only while the hook is still waiting, and the hook let go when you looked at the terminal.</p>
+  <p class="lede">The double-printed card in the left column &mdash; the same picker twice, stacked
+  &mdash; is <b>already fixed on this branch and not installed</b>.</p>
+</header>
+
+<section>
+  <h2>Read first</h2>
+  <ol class="esc-list">
+    <li><b>The batch road is tied to whether you are looking at the bench.</b>
+      <span class="tag v">measured</span><br>
+      <code>route_for</code> returns the road that queues a whole round only while the hook is still
+      holding. Flip to TERM mid-question and every later press falls to the arrow-key road, one
+      question at a time, permanently for that round.<br>
+      <em>Cost to fix: the hold rule, plus a completeness gate above the road &mdash; a day.</em></li>
+
+    <li><b>Three producers, three id schemes, one edge between them.</b>
+      <span class="tag v">measured</span><br>
+      <code>ask-hook-&lt;tool_use_id&gt;-&lt;i&gt;</code>, <code>ask-live-&lt;hash(text)&gt;</code>,
+      <code>ask-&lt;tail(tool_use_id)&gt;</code>. Only the middle one is reconciled against the first.
+      The third has no check at all.<br>
+      <em>Cost to fix: one shared id function &mdash; an afternoon for the cheap version.</em></li>
+
+    <li><b>The one reconciliation has a guard that disables it on answer.</b>
+      <span class="tag v">measured</span><br>
+      <code>matching()</code> skips any question with something already picked, so the hook card
+      stops matching its own question the instant you press an option &mdash; and the next screen
+      sweep mints a twin.<br>
+      <em>Cost to fix: drop one clause, and add the reverse fold. Small, and it needs a test that
+      fails first.</em></li>
+
+    <li><b>The stacked identical pickers are fixed, unshipped.</b>
+      <span class="tag v">measured</span><br>
+      Commit <code>9499efe</code> on <code>bench/pause-and-resume-the-turn</code>; the window is
+      running <code>td-b7fd57b-main</code>. Nothing to decide, only to install.<br>
+      <em>Cost: a rebuild and a symlink.</em></li>
+
+    <li><b>The installed hook adapter is a version behind.</b>
+      <span class="tag v">measured</span><br>
+      <code>~/.local/bin/td-agent-hooks</code> is TDAC 0.1; the repo ships 0.2, which splits
+      <code>released.why</code> into five reasons and stamps a clock on it. Your journal says
+      <code>stale</code> where 0.2 would have said <code>closed</code>, which is a different story.<br>
+      <em>Cost: re-run the installer.</em></li>
+  </ol>
+</section>
+
+<section>
+  <h2>What you photographed</h2>
+
+  <figure id="fig-rail">
+    <span class="lbl">01 &middot; The decisions rail, as it drew</span>
+    <div class="scroller">
+      <div class="railmock">
+        <div class="rr">
+          <div class="rlane crit">WAITING ON YOU</div>
+          <div class="rtitle">What&rsquo;s still sitting there for tomorrow?</div>
+          <div class="rsub">4 options &middot; waiting on you</div>
+          <div class="rid">ask-hook-toolu_014wNH&hellip;-2</div>
+        </div>
+        <div class="rr">
+          <div class="rlane warn">ALSO WAITING</div>
+          <div class="rtitle">What ate more of it than it deserved?</div>
+          <div class="rsub">4 options &middot; waiting on you</div>
+          <div class="rid">ask-hook-toolu_014wNH&hellip;-1</div>
+        </div>
+        <div class="rr dupe">
+          <div class="rlane warn">ALSO WAITING</div>
+          <div class="rtitle">How was today on the whole?</div>
+          <div class="rsub">4 options &middot; waiting on you</div>
+          <div class="rid">ask-hook-toolu_014wNH&hellip;-0</div>
+        </div>
+        <div class="rr dupe">
+          <div class="rlane ok">ANSWERED</div>
+          <div class="rtitle">How was today on the whole?</div>
+          <div class="rsub">answered &middot; Good &mdash; real progress</div>
+          <div class="rid">a second id &mdash; not the hook&rsquo;s</div>
+        </div>
+      </div>
+      <p class="mockkey"><span class="sw dupe-sw"></span> the two rows that are one question</p>
+    </div>
+    <figcaption>Four rows, drawn from your screenshot with the ids read out of the code that mints
+    them. <b>The rail iterates a flat list keyed by surface id, so four rows means four distinct
+    ids</b> &mdash; this is not a drawing bug, it is two records of one question. The subtitles are
+    generated by one <code>match</code> on the answer state
+    (<code>surface.rs:1694</code>): <code>N options &middot; waiting on you</code> is
+    <code>Answered::Waiting</code>, <code>answered &middot; &lt;label&gt;</code> is
+    <code>Answered::Chose(0)</code>. Same question, same four options, two different answer states,
+    two ids.</figcaption>
+  </figure>
+</section>
+
+<section>
+  <h2>Where the second card comes from</h2>
+  <p>Three subsystems can each turn an <code>AskUserQuestion</code> into a card. They were built at
+  different times for different reasons and all three are still wired. Here they are one at a time;
+  the boxes never move.</p>
+
+  <figure id="fig-arch-1">
+    <span class="lbl">02 &middot; The hook channel, alone</span>
+    <div class="scroller">
+      <div class="arch">
+        <div class="zone"><span class="zlbl">&#9635; THE AGENT&rsquo;S PROCESS</span>
+          <div class="node s1">AskUserQuestion<span class="pill">tool call</span></div>
+          <div class="conn v"></div>
+          <div class="node s1">td-agent-hooks<span class="pill">PreToolUse</span></div>
+        </div>
+        <div class="conn v"></div>
+        <div class="zone"><span class="zlbl">&#9635; THE WINDOW</span>
+          <div class="node s1">channel.rs &middot; Round<span class="pill mono">ask-hook-&lt;tuid&gt;-&lt;i&gt;</span></div>
+          <div class="conn v"></div>
+          <div class="node bench">the bench &middot; 3 cards</div>
+        </div>
+      </div>
+    </div>
+    <figcaption>The intended path, and the only one that knows the round is a <em>round</em>.
+    <b>It is the only producer that has the tool-use id</b>, which is what makes its ids stable and
+    its three cards provably one ask.</figcaption>
+  </figure>
+
+  <figure id="fig-arch-2">
+    <span class="lbl">03 &middot; The screen reader joins, with one edge back</span>
+    <div class="scroller">
+      <div class="arch">
+        <div class="zone"><span class="zlbl">&#9635; THE AGENT&rsquo;S PROCESS</span>
+          <div class="node dim">AskUserQuestion<span class="pill">tool call</span></div>
+          <div class="conn v"></div>
+          <div class="node dim">td-agent-hooks<span class="pill">PreToolUse</span></div>
+          <div class="side node s3">the picker, painted<span class="pill">pixels</span></div>
+        </div>
+        <div class="conn v"></div>
+        <div class="zone"><span class="zlbl">&#9635; THE WINDOW</span>
+          <div class="node dim">channel.rs &middot; Round<span class="pill mono">ask-hook-&lt;tuid&gt;-&lt;i&gt;</span></div>
+          <div class="node s3 side2">screenread.rs<span class="pill mono">ask-live-&lt;hash(text)&gt;</span></div>
+          <div class="edge-note">&#8592; <code>matching(text)</code> folds the reading in as a
+            <em>cursor</em>, and presents nothing</div>
+          <div class="conn v"></div>
+          <div class="node bench">the bench &middot; still 3 cards</div>
+        </div>
+      </div>
+    </div>
+    <figcaption>The screen reader exists because the picker&rsquo;s highlight position is the one
+    thing the hook cannot report, and the arrow-key road needs it. <b>It is the only reconciled
+    producer</b> &mdash; <code>bench.rs:1940</code> matches on question text and merges rather than
+    presenting a twin. Slice 3 of <em>workbench-drives-the-agent</em> names this edge by
+    name.</figcaption>
+  </figure>
+
+  <figure id="fig-arch-3">
+    <span class="lbl">04 &middot; The transcript reader joins, with no edge at all</span>
+    <div class="scroller">
+      <div class="arch">
+        <div class="zone"><span class="zlbl">&#9635; THE AGENT&rsquo;S PROCESS</span>
+          <div class="node dim">AskUserQuestion<span class="pill">tool call</span></div>
+          <div class="conn v"></div>
+          <div class="node dim">td-agent-hooks<span class="pill">PreToolUse</span></div>
+          <div class="side node dim">the picker, painted<span class="pill">pixels</span></div>
+          <div class="side3 node s4">~/.claude/&hellip;/&lt;session&gt;.jsonl<span class="pill">transcript</span></div>
+        </div>
+        <div class="conn v"></div>
+        <div class="zone"><span class="zlbl">&#9635; THE WINDOW</span>
+          <div class="node dim">channel.rs &middot; Round<span class="pill mono">ask-hook-&lt;tuid&gt;-&lt;i&gt;</span></div>
+          <div class="node dim side2">screenread.rs<span class="pill mono">ask-live-&lt;hash&gt;</span></div>
+          <div class="edge-note dim">&#8592; folded as a cursor</div>
+          <div class="node s4 side4">derive.rs<span class="pill mono">ask-&lt;tail(tuid)&gt;</span></div>
+          <div class="edge-note none">&#10005; no check against either &mdash; it presents</div>
+          <div class="conn v"></div>
+          <div class="node bench bad">the bench &middot; up to 4 cards</div>
+        </div>
+      </div>
+      <p class="mockkey"><span class="sw sw4"></span> amber is the unreconciled producer</p>
+    </div>
+    <figcaption><b>Three mints, one edge.</b> <code>derive.rs:166</code> knows the tool-use id &mdash;
+    it reads it out of the transcript &mdash; and throws it away, keying on the tail instead. It never
+    asks the channel whether that question is already on the bench.
+    <span class="gutter">The gutter: the transcript only carries an <code>AskUserQuestion</code>
+    once the whole round returns, so this producer is invisible during the ask and arrives, answered,
+    afterwards &mdash; which is the hardest possible moment to notice a duplicate.</span></figcaption>
+  </figure>
+
+  <figure id="fig-guard">
+    <span class="lbl">05 &middot; The one edge, and the clause that switches it off</span>
+    <div class="scroller">
+      <svg viewBox="0 0 760 300" role="img" aria-label="Decision tree for matching(): a screen reading either folds onto the hook card or mints a twin, and the picked-is-none guard is what decides">
+        <defs><marker id="ah" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+          <path d="M0,0 L8,4 L0,8 z" fill="#8b8a80"/></marker></defs>
+        <g font-family="ui-monospace, monospace" font-size="11">
+          <rect x="8" y="16" width="200" height="40" rx="6" fill="#232321" stroke="#3987e5"/>
+          <text x="20" y="34" fill="#c3c2b7">screen sweep reads</text>
+          <text x="20" y="48" fill="#ffffff">&ldquo;How was today&hellip;?&rdquo;</text>
+
+          <line x1="208" y1="36" x2="258" y2="36" stroke="#8b8a80" marker-end="url(#ah)"/>
+          <rect x="262" y="12" width="210" height="48" rx="6" fill="#232321" stroke="#3a3a36"/>
+          <text x="274" y="30" fill="#c3c2b7">matching(text) &mdash; is there</text>
+          <text x="274" y="44" fill="#c3c2b7">an open hook question?</text>
+
+          <line x1="472" y1="36" x2="522" y2="36" stroke="#8b8a80" marker-end="url(#ah)"/>
+          <rect x="526" y="12" width="226" height="48" rx="6" fill="#1a2a20" stroke="#199e70"/>
+          <text x="538" y="30" fill="#6cd46c">yes &rarr; fold as a cursor</text>
+          <text x="538" y="44" fill="#8b8a80">nothing new is presented</text>
+
+          <line x1="367" y1="60" x2="367" y2="104" stroke="#8b8a80" marker-end="url(#ah)"/>
+          <rect x="204" y="106" width="326" height="62" rx="6" fill="#2a2418" stroke="#c98500"/>
+          <text x="216" y="126" fill="#f5c95f">the guard: r.picked[i].is_none()</text>
+          <text x="216" y="142" fill="#c3c2b7">once you press ONE option on the card,</text>
+          <text x="216" y="157" fill="#c3c2b7">that question stops matching itself</text>
+
+          <line x1="367" y1="168" x2="367" y2="208" stroke="#8b8a80" marker-end="url(#ah)"/>
+          <rect x="188" y="210" width="358" height="62" rx="6" fill="#2a1a1a" stroke="#d03b3b"/>
+          <text x="200" y="230" fill="#f08a8a">no match &rarr; present ask-live-&lt;hash&gt;</text>
+          <text x="200" y="246" fill="#c3c2b7">a second card for the same question, carrying</text>
+          <text x="200" y="261" fill="#c3c2b7">the answer the screen can see &mdash; ANSWERED</text>
+
+          <rect x="566" y="210" width="186" height="62" rx="6" fill="#1a1a19" stroke="#3a3a36"/>
+          <text x="578" y="230" fill="#8b8a80">meanwhile the hook card</text>
+          <text x="578" y="246" fill="#8b8a80">is still Answered::Waiting,</text>
+          <text x="578" y="261" fill="#8b8a80">because nothing closed it</text>
+          <line x1="546" y1="241" x2="562" y2="241" stroke="#8b8a80" marker-end="url(#ah)"/>
+        </g>
+      </svg>
+    </div>
+    <figcaption>The guard is defensible in isolation &mdash; it stops a stale reading re-arming a
+    question you already answered. <b>Its side effect is that the de-duplication holds only until the
+    first press</b>, which is exactly when a second card is most confusing. The two-row pair in your
+    screenshot is this branch: <span class="tag v">measured</span> on the guard and on both id
+    schemes, <span class="tag w">inferred</span> that this specific sweep is what drew your fourth
+    row, because the window does not journal which producer minted a surface.</figcaption>
+  </figure>
+</section>
+
+<section>
+  <h2>Why it asked you one at a time</h2>
+  <p>This is the second, separate defect, and it is the one you asked about directly. The batch
+  behaviour you want <em>already exists</em>. It is on one of three roads, and that road was closed
+  before you pressed anything.</p>
+
+  <figure id="fig-roads">
+    <span class="lbl">06 &middot; Three roads to the agent, one of which batches</span>
+    <div class="scroller">
+      <table class="wide">
+        <thead><tr><th>Road</th><th>Chosen when</th><th>What a press does</th><th>Batches?</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><code>Route::File</code></td>
+            <td>the hook is still waiting &mdash; <code>waiting_until_ms</code> live <em>and</em> not released</td>
+            <td>records into <code>round.picked[i]</code>. <code>round.answers()</code> returns
+              <code>None</code> until every question has something, so nothing leaves the window
+              until the round is complete &mdash; then one file, one submission.</td>
+            <td class="yes">yes &mdash; all three at once</td>
+          </tr>
+          <tr>
+            <td><code>Route::Keys</code></td>
+            <td>otherwise, if the screen reader knows where the picker&rsquo;s highlight is</td>
+            <td>drives the terminal picker with arrow keys <b>on every press</b>, then the picker
+              advances to the next question.</td>
+            <td class="no">no &mdash; one at a time</td>
+          </tr>
+          <tr>
+            <td><code>Route::Sentence</code></td>
+            <td>otherwise</td>
+            <td>types the chosen label into the composer as prose.</td>
+            <td class="no">no &mdash; one at a time</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <figcaption><code>channel.rs:414</code> and <code>channel.rs:941&ndash;979</code>.
+    <b>The completeness gate sits inside one arm of the road match rather than above it</b> &mdash;
+    so &ldquo;hold the answers and submit the round together&rdquo; is a property of the transport,
+    not of the bench. Change transport and you silently change the interaction.</figcaption>
+  </figure>
+
+  <figure id="fig-clock">
+    <span class="lbl">07 &middot; Your pane, on a clock</span>
+    <div class="scroller">
+      <div class="tl">
+        <div class="ti"><span class="tt">14:22:04</span><span class="td-b">the agent calls <code>AskUserQuestion</code> with three questions</span></div>
+        <div class="ti"><span class="tt">&Prime;</span><span class="td-b">the hook reads <code>bench.json</code>: face is <code>workbench</code>, clock fresh &rarr; it writes <code>waiting</code> and holds. <span class="ok">The batch road is open.</span></span></div>
+        <div class="ti"><span class="tt">&Prime;</span><span class="td-b">the picker paints in the terminal; the screen reader folds its cursor onto the hook&rsquo;s first card</span></div>
+        <div class="ti bad"><span class="tt">&mdash;</span><span class="td-b">the marker stops saying &ldquo;bench, just now&rdquo;. Within 250&nbsp;ms the hook writes <code>released &middot; stale</code> and exits. <span class="crit">The batch road is now closed, for the rest of this round.</span></span></div>
+        <div class="ti"><span class="tt">14:23:21</span><span class="td-b">a permission prompt fires (<code>notify</code>)</span></div>
+        <div class="ti"><span class="tt">14:26:22</span><span class="td-b"><code>bench.json</code> reads <code>face: terminal</code></span></div>
+        <div class="ti"><span class="tt">&mdash;</span><span class="td-b">you press <b>Good &mdash; real progress</b>. <code>route_for</code> sees <code>released</code> and takes <code>Route::Keys</code>; the action journal records <code>chose &quot;Good &mdash; real progress&quot;</code> &mdash; <b>with an empty surface id</b></span></div>
+        <div class="ti"><span class="tt">&mdash;</span><span class="td-b">no <code>answered</code> record ever arrives. The conversation store holds one <code>asked</code> and nothing closing it.</span></div>
+      </div>
+    </div>
+    <figcaption>Read out of
+    <code>surfaces/tdclip/16/inbound.jsonl</code>, <code>actions.jsonl</code> and
+    <code>conversations/5112c1ad&hellip;.ws</code>. <b>The exact instant the hold broke is not
+    recorded</b>, because the installed adapter is TDAC 0.1 and its <code>released</code> line
+    carries no <code>at_ms</code> &mdash; 0.2 adds one, and splits <code>stale</code> from
+    <code>closed</code> so this row would say which. Times shown are from the records that do carry a
+    clock. <span class="tag w">inferred</span> on the ordering of the last three rows.</figcaption>
+  </figure>
+
+  <div class="callout">
+    <p><b>The design fault, stated once.</b> Whether the bench can answer a multi-part question as
+    one submission currently depends on whether you happen to be looking at the bench at that
+    moment. Glance at the terminal to check something and the interaction silently degrades to
+    one-question-at-a-time, with no message, for the rest of the round.</p>
+  </div>
+</section>
+
+<section>
+  <h2>What it should do instead</h2>
+
+  <figure id="fig-target">
+    <span class="lbl">08 &middot; The round card, queuing</span>
+    <div class="scroller">
+      <div class="cardmock">
+        <div class="cm-head"><span class="cm-chip">question</span> How was today on the whole?</div>
+        <div class="cm-steps">
+          <span class="st done">The day &check;</span><span class="st done">Time sink &check;</span><span class="st open">Tomorrow</span>
+        </div>
+        <div class="cm-prog">2 of 3 answered &middot; nothing has gone to the agent yet</div>
+        <div class="cm-opts">
+          <span class="op picked">Good &mdash; real progress</span><span class="op">Mixed</span><span class="op">A slog</span><span class="op">Rough</span>
+        </div>
+        <div class="cm-foot"><span class="cm-submit dim">SUBMIT ROUND &mdash; answer the last one first</span></div>
+      </div>
+      <div class="cardmock">
+        <div class="cm-head"><span class="cm-chip">question</span> What&rsquo;s still sitting there for tomorrow?</div>
+        <div class="cm-steps">
+          <span class="st done">The day &check;</span><span class="st done">Time sink &check;</span><span class="st done">Tomorrow &check;</span>
+        </div>
+        <div class="cm-prog">3 of 3 answered &middot; ready to send as one answer</div>
+        <div class="cm-opts">
+          <span class="op">One thing, and I know what it is</span><span class="op picked">A pile I haven&rsquo;t sorted yet</span>
+        </div>
+        <div class="cm-foot"><span class="cm-submit live">SUBMIT ROUND &rarr;</span></div>
+      </div>
+      <p class="mockkey"><span class="sw sw4"></span> the SUBMIT ROUND control does not exist today &mdash; this is the proposal</p>
+    </div>
+    <figcaption>The bench already tracks everything this needs: <code>round.picked</code> holds the
+    per-question choices, <code>Round::complete()</code> and <code>Round::answers()</code> already
+    refuse to produce a partial answer, and the step strip is already drawn on every card.
+    <b>What is missing is that the gate lives inside one transport arm instead of above all
+    three</b>, and that there is no explicit control for &ldquo;send it now&rdquo;. On the arrow-key
+    road this means a short scripted walk of the picker at submit time rather than one keystroke per
+    press &mdash; and the picker has to be re-read between steps, which is the part that carries
+    risk.</figcaption>
+  </figure>
+</section>
+
+<section>
+  <h2>Decisions</h2>
+  <p>Three, and the third is only a sequencing call.</p>
+
+  <div class="grill">
+    <div class="q" id="q-identity">
+      <p class="ask"><b>1 &middot; How does one question get one identity?</b></p>
+      <table class="wide">
+        <thead><tr><th>Shape</th><th>What it changes</th><th>What it leaves</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><b>A &mdash; one id function</b></td>
+            <td><code>derive.rs</code> mints <code>ask-hook-&lt;tuid&gt;-&lt;i&gt;</code> like the
+              channel does, from the tool-use id it already reads.</td>
+            <td>The screen race and the <code>picked.is_none()</code> guard.</td>
+          </tr>
+          <tr class="rec">
+            <td><b>B &mdash; A, plus close both directions</b> <span class="pillrec">recommended</span></td>
+            <td>Also: drop the <code>picked.is_none()</code> clause so an answered question still
+              matches its own card, and retire any <code>ask-live-</code> twin when a hook round
+              arrives naming the same text.</td>
+            <td>Three producers still exist; nothing structurally prevents a fourth.</td>
+          </tr>
+          <tr>
+            <td><b>C &mdash; one owner</b></td>
+            <td>The channel becomes the only thing that presents a question surface. The screen
+              reader and the transcript reader feed it facts &mdash; a cursor, an answer &mdash; and
+              mint nothing.</td>
+            <td>Nothing. This is the shape where the bug class cannot recur.</td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="rationale">B now, C as the direction. B is small, testable and fixes what you saw. C
+      is the honest answer and is a plan of its own &mdash; it re-keys what a question surface
+      <em>is</em>, which is the same weight as the conversation re-keying that got four gates.</p>
+    </div>
+
+    <div class="q" id="q-batch">
+      <p class="ask"><b>2 &middot; How do the three answers get submitted together?</b></p>
+      <table class="wide">
+        <thead><tr><th>Shape</th><th>What it does</th><th>Risk</th></tr></thead>
+        <tbody>
+          <tr class="rec">
+            <td><b>Keep the hold open</b> <span class="pillrec">recommended, first</span></td>
+            <td>The window keeps the marker fresh on a cadence regardless of which face is showing,
+              and the <em>face</em> alone decides whether the hook may hold &mdash; instead of the
+              clock going stale the moment you look away.</td>
+            <td>Low, but it needs care: the staleness rule is what stops a dead window holding an
+              agent hostage for nine minutes. A live window on the TERM face is not a dead
+              window; the rule currently cannot tell them apart.</td>
+          </tr>
+          <tr class="rec">
+            <td><b>Move the gate above the road</b> <span class="pillrec">recommended, second</span></td>
+            <td>A press always records. A round only leaves the bench when it is complete, on
+              whatever road is available, behind an explicit SUBMIT ROUND.</td>
+            <td>Real. The arrow-key road has to walk the picker through three answers, re-reading
+              the screen between each. Worth a tracer slice before committing to it.</td>
+          </tr>
+          <tr>
+            <td><b>Say so instead</b></td>
+            <td>Leave the roads alone; draw on the card that this round is being answered one at a
+              time and why.</td>
+            <td>None, and it does not give you what you asked for. Listed because it is the
+              cheap honest fallback if the second shape turns out fragile.</td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="rationale">The first removes the reason the bad road was ever taken; the second makes
+      the bad road behave when it must be taken. They are independent and the first is much
+      cheaper.</p>
+    </div>
+
+    <div class="q" id="q-order">
+      <p class="ask"><b>3 &middot; What ships first?</b></p>
+      <p>Two things on this list need no decision and are not code:
+      install the branch build (the stacked-picker fix is sitting in <code>9499efe</code> unshipped),
+      and re-run the hook installer so the pane is on TDAC 0.2 &mdash; without which the next
+      diagnosis of this has the same blind spot: a <code>released</code> line with no clock and one
+      word covering two different causes.</p>
+      <p class="rationale">Suggested order: install both, then B, then keep-the-hold-open, then the
+      gate move behind a tracer slice.</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>Invalidate it before you fix it</h2>
+  <p>Each of these would prove a finding wrong. Run them first.</p>
+  <table class="wide">
+    <thead><tr><th>Claim</th><th>Confirm</th><th>If this, it is not real</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>Three producers mint question surfaces under three schemes</td>
+        <td><code>grep -n 'ask-hook-\|ask-live-\|format!("ask-' app/src/{channel,screenread,derive}.rs</code>
+          returns three distinct formats</td>
+        <td>Any two resolve to the same string for one tool-use id &rarr; the duplicate has another
+          cause; look at surface retirement instead</td>
+      </tr>
+      <tr>
+        <td>The de-dup stops after the first press</td>
+        <td>Write a test: present a hook round, press option 0, then feed the same question text to
+          <code>matching()</code> &mdash; it must return <code>None</code> today</td>
+        <td><code>matching()</code> still returns the card &rarr; the guard is not the path; suspect
+          the ordering race between <code>sweep_live_questions</code> and
+          <code>channel_events</code></td>
+      </tr>
+      <tr>
+        <td>The batch road is lost on release</td>
+        <td><code>route_for(Some(t), true, now, true)</code> returns <code>Route::Keys</code></td>
+        <td>It returns <code>Route::File</code> &rarr; the one-at-a-time behaviour came from
+          somewhere else</td>
+      </tr>
+      <tr>
+        <td>The stacked pickers are already fixed</td>
+        <td><code>git log --oneline origin/main..HEAD</code> contains <code>9499efe</code>, and
+          <code>readlink -f /proc/&lt;window pid&gt;/exe</code> does not name a build containing
+          it</td>
+        <td>The running build already has it &rarr; the double-print is a second, different
+          defect</td>
+      </tr>
+      <tr>
+        <td>The installed adapter is a version behind</td>
+        <td><code>grep -c 'td:"0.1"' ~/.local/bin/td-agent-hooks</code> is non-zero</td>
+        <td>It reports 0.2 &rarr; the missing <code>at_ms</code> in your journal has another
+          cause</td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+
+<section>
+  <h2>Method, and what is not established</h2>
+  <p>Read from the live pane and from the source on
+  <code>bench/pause-and-resume-the-turn</code>. Nothing here was changed, built or rendered &mdash;
+  the test run below is the branch as it stands.</p>
+  <ul>
+    <li><b>The pane.</b> pid 1272160, pane 16, session <code>5112c1ad</code>, found with
+      <code>list_panes</code> and confirmed by its own surface journal. Its session id is unique in
+      the census, so <code>pane_events</code> is attributable here.</li>
+    <li><b>The records.</b> <code>inbound.jsonl</code> (7 lines), <code>actions.jsonl</code> (1),
+      <code>outbound.jsonl</code> (2), <code>bench.json</code>, and the conversation store
+      <code>5112c1ad&hellip;.ws</code> (5 records: one <code>asked</code>, no
+      <code>answered</code>).</li>
+    <li><b>The build.</b> <code>/proc/1160679/exe</code> &rarr;
+      <code>td-b7fd57b-main</code>. The branch is four commits ahead of that.</li>
+    <li><b>The tests.</b> <code>cargo test</code> in <code>app/</code>: 1521 run, 1513 passed, 2
+      failed, 6 ignored. Both failures are in <code>paneident</code> &mdash; they inspect the real
+      process table &mdash; and neither is touched by anything here. No edit was made, so every
+      failure is pre-existing by construction. <code>channel::tests</code> is 22 of 22
+      green.</li>
+    <li><b>Not established.</b> Which producer minted the fourth row &mdash; the window journals no
+      provenance per surface, so that attribution is reasoning from the two id schemes and the
+      guard, not a reading. Whether the arrow-key road can reliably walk a three-step picker is
+      untested and is the reason the gate move wants a tracer slice. The exact millisecond the
+      hook released is unrecoverable on TDAC 0.1.</li>
+  </ul>
+</section>
