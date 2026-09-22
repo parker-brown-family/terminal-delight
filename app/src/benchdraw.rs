@@ -43,7 +43,7 @@ use crate::surface::{
     Body, Confidence, Depth, Kind, Register, Response, Shelf, Surface, SurfaceId, Verdict, Weight,
 };
 use crate::theme::Theme;
-use crate::workbench::{Embodiment, Row, Step, Tint};
+use crate::workbench::{Embodiment, Row, Standing, Step, Tint};
 
 /// What a response renderer needs to draw a card it cannot decide for itself:
 /// whose reply this is, what the reader picked, and where to register the tabs
@@ -261,8 +261,48 @@ fn micro(text: impl Into<String>, step: Step, colour: Hsla, sk: &Skin, th: &Them
 /// column of short rows with almost nothing else on it — and the skin files
 /// record why that matters: at 2px against no other lines a marker reads as a
 /// scratch. The number is not carried over from a denser surface.
+/// THE WORD A RAIL ROW WEARS, or none where its state chip says everything.
+///
+/// Out of [`rail_row`] so a test can read the words, which is the thing that
+/// can be wrong here — the same reason [`woken_says`] and
+/// [`crate::workbench::live_says`] are their own functions. Inside the
+/// renderer this table was reachable only by a person looking at a screen, and
+/// its arms are ORDERED: a wrong order is silent, compiles, and shows the
+/// wrong word on every row of a kind.
+pub fn lane_word(standing: Standing, kind: &str, tint: Tint) -> Option<&'static str> {
+    match (standing, kind) {
+        // A TURN HAS NOT SAID ANYTHING YET, so it stands for nothing — first
+        // in the table because no other row's rule may reach it. The word is
+        // deliberately weaker than the card's own: the card can read the
+        // agent's state this instant and say `IN FLIGHT` or `NOTHING
+        // PRESENTED`, the rail cannot, so the rail makes the claim it can
+        // support in every case rather than the livelier one that goes stale
+        // the moment a turn ends having presented nothing.
+        (_, crate::workbench::LIVE_TURN_KIND) => Some("THIS TURN"),
+        // A note does not STAND. The standing vocabulary is about work a person
+        // has to resolve — what is waiting, what the answer currently is, how it
+        // got there — and none of those questions apply to something you wrote
+        // to yourself. `STANDS NOW` on a comment would be the rail claiming an
+        // opinion the comment never held.
+        //
+        // The head of the board still earns a word, because the head of a shelf
+        // is where a reader who has not moved the cursor is meant to start, and
+        // `Standing::lit` already gives it the weight. LATEST is what that word
+        // is on a chronological board. Parker: *"LATEST is nice."*
+        (Standing::Current, "comment") => Some("LATEST"),
+        (_, "comment") => None,
+        (Standing::Waiting, _) => Some("WAITING ON YOU"),
+        (Standing::Queued, _) => Some("ALSO WAITING"),
+        (Standing::Current, _) => Some("STANDS NOW"),
+        (Standing::Past, _) => match (tint, kind) {
+            (Tint::Settled, "question") | (Tint::Settled, "decision") => Some("ANSWERED"),
+            (Tint::Settled, _) => Some("DONE"),
+            _ => None,
+        },
+    }
+}
+
 pub fn rail_row(row: &Row, sk: &Skin, th: &Theme) -> Div {
-    use crate::workbench::Standing;
     let tint = ink(row.tint, th);
     // The spine's own row, read out of `Workspace::rail_panel` rather than
     // approximated from a screenshot. Parker, twice: *"SERIOUSLY LOOK AND
@@ -293,28 +333,7 @@ pub fn rail_row(row: &Row, sk: &Skin, th: &Theme) -> Div {
     // shelf shapes demanding at most one row claims it — so this can never be
     // the emphasis on two rows at once.
     let on_cursor = row.selected || row.standing.lit();
-    let lane = match (row.standing, row.kind) {
-        // A note does not STAND. The standing vocabulary is about work a person
-        // has to resolve — what is waiting, what the answer currently is, how it
-        // got there — and none of those questions apply to something you wrote
-        // to yourself. `STANDS NOW` on a comment would be the rail claiming an
-        // opinion the comment never held.
-        //
-        // The head of the board still earns a word, because the head of a shelf
-        // is where a reader who has not moved the cursor is meant to start, and
-        // `Standing::lit` already gives it the weight. LATEST is what that word
-        // is on a chronological board. Parker: *"LATEST is nice."*
-        (Standing::Current, "comment") => Some("LATEST"),
-        (_, "comment") => None,
-        (Standing::Waiting, _) => Some("WAITING ON YOU"),
-        (Standing::Queued, _) => Some("ALSO WAITING"),
-        (Standing::Current, _) => Some("STANDS NOW"),
-        (Standing::Past, _) => match (row.tint, row.kind) {
-            (Tint::Settled, "question") | (Tint::Settled, "decision") => Some("ANSWERED"),
-            (Tint::Settled, _) => Some("DONE"),
-            _ => None,
-        },
-    };
+    let lane = lane_word(row.standing, row.kind, row.tint);
     let head = div()
         .flex()
         .flex_row()
@@ -1286,8 +1305,21 @@ fn response(r: &Response, picks: Option<&Picks>, sk: &Skin, th: &Theme) -> Div {
     // `emphasis::shelf()`'s only caller away: there is no row of things to tier
     // when only one of them is on screen.
     let panel = panel.when_some(shown, |d, leaf| match leaf {
-        Leaf::Brief => d.child(section_body(
-            &crate::surface::Body::Prose(r.brief.clone()),
+        // Matched rather than unwrapped: `Leaf::Brief` is only built where
+        // there is one, so `None` cannot happen — and a card that panics is a
+        // worse answer to a broken invariant than a card drawing one register
+        // less.
+        Leaf::Brief => match &r.brief {
+            Some(brief) => d.child(section_body(
+                &crate::surface::Body::Prose(brief.clone()),
+                Register::Brief,
+                sk,
+                th,
+            )),
+            None => d,
+        },
+        Leaf::Layman => d.child(section_body(
+            &crate::surface::Body::Prose(r.layman.clone()),
             Register::Layman,
             sk,
             th,
@@ -3583,6 +3615,99 @@ pub fn woken(w: &crate::channel::Woken, sk: &Skin, th: &Theme) -> Div {
         )
 }
 
+/// THE TURN IN FLIGHT, standing in the room for the reply that has not landed.
+///
+/// The overview's room used to hold the newest `response` for the whole length
+/// of a turn — and a response is presented at the END of a turn, so what stood
+/// there was the PREVIOUS turn's answer under the current turn's question.
+/// Parker: *"we see the LAST turn persisting -- the CURRENT turn should
+/// IMMEDIATELY make a new overview card, and we flip to that"*.
+///
+/// **Only what is live.** The agent's own gerund, the one tool call it is
+/// inside this instant, its clock and its tokens. Not a tail of its output —
+/// *"only the action that is LIVE -- ie. not the terminal scrollback style"* —
+/// because the terminal face of this same pane is one keystroke away and is
+/// the surface whose job is the log. What the person SAID is not here either:
+/// [`asked`] draws that above this card, in their own ink, for every stand-in.
+///
+/// Each number is drawn only when the screen carried it. A working agent whose
+/// status line was truncated by a narrow pane gets a sentence saying the screen
+/// carried no account of it, never a zero nobody measured.
+pub fn live_card(
+    state: crate::workbench::AgentState,
+    vitals: Option<&crate::workbench::TurnVitals>,
+    gerund: Option<&str>,
+    tool: Option<&str>,
+    sk: &Skin,
+    th: &Theme,
+) -> Div {
+    let tint = ink(state.tint(), th);
+    let (label, sentence) = crate::workbench::live_says(state);
+    // The verbose line, in the order of how much it says: the agent's own
+    // account of the call it is in, then the tool face's verb, then nothing —
+    // and nothing is a sentence rather than an empty row.
+    let doing = vitals
+        .and_then(|v| v.doing.clone())
+        .or_else(|| tool.map(str::to_string));
+    sk.panel()
+        .flex()
+        .flex_col()
+        .gap(px(8.))
+        .px(px(16.))
+        .py(px(14.))
+        .border_l(px(3.))
+        .border_color(tint)
+        .bg(tint.alpha(0.06))
+        .child(micro(label, Step::Fine, tint, sk, th))
+        // THE AGENT'S OWN WORD for what it is doing — `Perambulating`,
+        // `Forming`, whatever its spinner is wearing. Its own vocabulary and
+        // not ours: the strip beside it already says `Working`, which is this
+        // window's word, and repeating that here would spend the largest type
+        // on the card saying a thing the reader just read.
+        .children(gerund.map(|g| {
+            div()
+                .text_size(px(sk.pt(Step::Title)))
+                .text_color(th.text.alpha(0.92))
+                .child(sel(g.to_string()))
+        }))
+        .child(match doing {
+            Some(d) => div()
+                .text_size(px(sk.pt(Step::Body)))
+                .font_family(th.font_family.clone())
+                .text_color(th.accent.alpha(0.9))
+                .child(sel(d)),
+            None => micro(
+                "the screen carried no account of what it is doing",
+                Step::Note,
+                sk.ink.ink_faint,
+                sk,
+                th,
+            ),
+        })
+        .children(vitals.filter(|v| !v.is_unread()).map(|v| {
+            div()
+                .flex()
+                .flex_row()
+                .gap(px(12.))
+                .items_baseline()
+                .children(
+                    v.elapsed.clone().map(|e| {
+                        micro(format!("turn {e}"), Step::Note, th.text.alpha(0.75), sk, th)
+                    }),
+                )
+                .children(v.tokens.map(|n| {
+                    micro(
+                        format!("\u{2193} {} tokens", crate::hud::fmt_tokens(n)),
+                        Step::Note,
+                        th.text.alpha(0.75),
+                        sk,
+                        th,
+                    )
+                }))
+        }))
+        .child(micro(sentence, Step::Note, sk.ink.ink_faint, sk, th))
+}
+
 /// The agent, talking. The main area's ordinary state.
 ///
 /// Its own recent output, in its own font, with nothing drawn around it. This
@@ -4681,6 +4806,115 @@ mod tests {
         assert!(
             verbs.contains("when(auditing"),
             "the preview block is built but no longer gated on the flag:\n{verbs}"
+        );
+    }
+
+    #[test]
+    fn a_turn_that_has_said_nothing_does_not_stand_for_anything() {
+        use crate::workbench::LIVE_TURN_KIND;
+        // The head of the overview while a turn runs. `STANDS NOW` over a turn
+        // that has not spoken is the rail claiming an answer that does not
+        // exist — and the arm that prevents it is FIRST in an ordered table,
+        // so deleting it is silent and puts exactly that word back.
+        assert_eq!(
+            lane_word(Standing::Current, LIVE_TURN_KIND, Tint::Pending),
+            Some("THIS TURN")
+        );
+        // Whatever else `stand` decides about it. The row's word is a fact
+        // about what it IS, and nothing about its place can make it an answer.
+        for standing in [
+            Standing::Waiting,
+            Standing::Queued,
+            Standing::Current,
+            Standing::Past,
+        ] {
+            assert_eq!(
+                lane_word(standing, LIVE_TURN_KIND, Tint::Pending),
+                Some("THIS TURN"),
+                "{standing:?} found another word for a turn"
+            );
+        }
+        // And the words it must never be mistaken for, kept as they were.
+        assert_eq!(
+            lane_word(Standing::Current, "response", Tint::Settled),
+            Some("STANDS NOW")
+        );
+        assert_eq!(
+            lane_word(Standing::Current, "comment", Tint::Mine),
+            Some("LATEST")
+        );
+        assert_eq!(lane_word(Standing::Past, "comment", Tint::Mine), None);
+        assert_eq!(
+            lane_word(Standing::Waiting, "question", Tint::Waiting),
+            Some("WAITING ON YOU")
+        );
+        assert_eq!(
+            lane_word(Standing::Past, "question", Tint::Settled),
+            Some("ANSWERED")
+        );
+        assert_eq!(lane_word(Standing::Past, "markdown", Tint::Ident), None);
+    }
+
+    /// THE TWO WIRES A HEADLESS SUITE CANNOT PULL: what tells the bench a turn
+    /// has begun.
+    ///
+    /// Both live in methods that take a gpui `Context`, so nothing in this
+    /// suite can call them. Everything downstream of them is pure and tested —
+    /// `workbench::turn_opening` decides the headline and the voice,
+    /// `Bench::turn_began` decides the room, `Bench::apply` retires the card —
+    /// and all of it is dead if these two lines go. That is exactly the shape
+    /// a source guard is for: not a rule about behaviour, which a test should
+    /// own, but a rule that a CALL still exists.
+    ///
+    /// `body_of` strips comments before it looks, so neither of these can be
+    /// satisfied by the sentence above it explaining why it is there.
+    #[test]
+    fn the_bench_is_still_told_when_a_turn_begins() {
+        let events = body_of(include_str!("pane/bench.rs"), "pub fn channel_events(");
+        assert!(
+            events.contains("turn_opening(&effect)") && events.contains("turn_began("),
+            "a prompt record no longer opens a card on the feed:\n{events}"
+        );
+        // The fallback for a pane whose harness has no hooks at all, and for a
+        // turn typed at the terminal face of a pane that does.
+        let accrue = body_of(include_str!("pane.rs"), "fn accrue_tokens(");
+        assert!(
+            accrue.contains("turn_seen_working("),
+            "an unhooked pane's turn is invisible to the feed again:\n{accrue}"
+        );
+    }
+
+    /// THE TURN'S CARD READS FROM THE TOP, like every other card.
+    ///
+    /// `body_anchor` and the body's scroll are both asked *is a card in the
+    /// room*, and for a year the value that answered was `showing_id` — which
+    /// `Bench::showing` now returns `None` for while a turn stands. A
+    /// photograph caught the result on the first build: the live card pinned to
+    /// the floor of an 800-pixel pane under an acre of empty, which is the
+    /// failure the comment at that line was ALREADY written about, reached by a
+    /// third kind of card the old test could not see.
+    ///
+    /// `room_id` is the value that knows, and nothing headless can tell that it
+    /// is the one being passed — a layout is not a position a test can assert
+    /// about, which is what makes this the guard's job rather than a test's.
+    #[test]
+    fn the_room_decides_the_anchor_not_the_surface_in_it() {
+        let el = body_of(include_str!("pane/bench.rs"), "pub(super) fn bench_el(");
+        assert!(
+            el.contains("let card_in_room = reviewing || room_id.is_some();"),
+            "the one value naming the question is gone; the sites below are back on a proxy"
+        );
+        assert!(
+            el.contains("body_anchor(card_in_room, offering, has_waiting)"),
+            "the anchor is being decided by something that cannot see every kind of card"
+        );
+        assert!(
+            el.contains(".when(card_in_room, |d| {"),
+            "a card taller than the pane can no longer be scrolled"
+        );
+        assert!(
+            !el.contains("body_anchor(showing_id") && !el.contains("body_anchor(room_id"),
+            "a proxy is back on the anchor"
         );
     }
 

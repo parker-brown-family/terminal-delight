@@ -3844,6 +3844,20 @@ impl TerminalView {
         let st = self.agent_status();
         let working = st.working();
         if working {
+            // THE SPINNER STARTING IS A TURN BEGINNING, for every pane whose
+            // harness has no hooks installed and for every turn typed at the
+            // terminal face of a pane that does. It fills a gap and never
+            // overwrites: where the channel already named the turn, that
+            // record knows the words and the voice and this edge knows
+            // neither. The latched message is offered as a headline because it
+            // is the best this side has; the voice stays unknown, because a
+            // screen cannot tell a person typing from a task notification
+            // being pasted in.
+            if self.bench.live().is_none() {
+                let headline = self.wb_asked.first().cloned();
+                self.bench
+                    .turn_seen_working(headline, crate::surfacefeed::now_ms());
+            }
             if let Some(t) = st.turn_tokens {
                 self.turn_peak_tokens = self.turn_peak_tokens.max(t);
             }
@@ -8812,10 +8826,21 @@ mod tests {
     #[test]
     fn only_the_body_that_is_drawn_is_built() {
         let code = bench_code();
+        // THE SCRUTINEE, not a fixed spelling of it. This read
+        // `contains("let body = match self.review_body(")`, which held the
+        // invariant for exactly as long as the body had two arms: adding the
+        // turn-in-flight card made the match a tuple, and the guard failed on
+        // a change that never broke the rule it guards. What the rule needs is
+        // that the review is decided IN the match — so that is what is asked,
+        // and it survives the next body arriving.
+        let at = code
+            .find("let body = match ")
+            .expect("the body's own match is gone");
+        let scrutinee = &code[at..at + code[at..].find(" {").unwrap_or(0)];
         assert!(
-            code.contains("let body = match self.review_body("),
+            scrutinee.contains("self.review_body("),
             "the review must be chosen inside the body's own match, so the body \
-             it replaces is never constructed"
+             it replaces is never constructed: {scrutinee}"
         );
         assert!(
             !code.contains("None => body,"),

@@ -941,6 +941,9 @@ fn tool_defs() -> Value {
                  of these and shows nothing else. A response is a `layman` \
                  (required) — the whole reply in plain English, written for the \
                  person and not for yourself, and the register the card opens on \
+                 — and a `brief`, the bare minimum in at most two sentences and \
+                 under fifty words, serious and direct and never a metaphor, \
+                 drawn last as the reading a person drops to \
                  — plus registers a person unfolds by name: `technical`, \
                  `evidence`, `asks`, `next`, and `doubts`, where you are not \
                  sure, each a `claim` with a `why` and a `confidence`. Any other \
@@ -957,7 +960,8 @@ fn tool_defs() -> Value {
                  widths, no colours, no components; the window owns all of that. \
                  `surface` is one TDSP document: \
                  {\"td\":\"0.4\", \"kind\":\"response\", \"title\":\"…\", \
-                 \"model\":{\"layman\":\"…\",\"technical\":\"…\",\"doubts\":[…]}}. \
+                 \"model\":{\"layman\":\"…\",\"brief\":\"…\",\"technical\":\"…\",\
+                 \"doubts\":[…]}}. \
                  Send the same `id` again to update it in place, or op \"retire\" \
                  to take it off the bench. An unknown kind is shown as \
                  unclassified rather than dropped, so it is always safe to send. \
@@ -2428,7 +2432,7 @@ mod tests {
             blurb.contains(&format!("\"td\":\"{}\"", crate::surface::TDSP_VERSION)),
             "the example names a version this build does not speak: {blurb}"
         );
-        for word in ["response", "layman", "doubts"] {
+        for word in ["response", "brief", "fifty words", "layman", "doubts"] {
             assert!(
                 blurb.contains(word),
                 "the blurb never says {word:?}: {blurb}"

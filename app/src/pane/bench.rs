@@ -1389,8 +1389,19 @@ impl TerminalView {
         }
         let now = crate::surfacefeed::now_ms();
         for ev in events {
+            // A PROMPT RECORD IS A TURN BEGINNING, whatever it carried. The
+            // caption effects below are about whose VOICE opened it, and both
+            // of them — plus the third case, a prompt the harness handed over
+            // with no text at all — are the same event to the feed: this
+            // conversation has a new turn and the overview flips to it.
+            let began = matches!(ev, crate::channel::Inbound::Prompt { .. });
             self.bench_record_event(&ev);
-            match self.wb_channel.take(ev, now) {
+            let effect = self.wb_channel.take(ev, now);
+            if began {
+                let (headline, voice) = crate::workbench::turn_opening(&effect);
+                self.bench.turn_began(headline, voice, now);
+            }
+            match effect {
                 Effect::Asked { text } => {
                     // The record already has the whole of it, written from the
                     // raw event above. What the caption keeps is the first few
@@ -3507,6 +3518,10 @@ impl TerminalView {
         // gets the close: the stand-in was not opened and cannot be closed,
         // and a ✕ that did nothing would be a control that lies.
         let card_open = self.bench.selected().is_some();
+        // THE TURN IN FLIGHT TAKES THE ROOM, over the reply to the turn before
+        // it. Taken before `showing`, which yields `None` while this is `Some`
+        // so that the two can never both be drawn — see `Bench::showing`.
+        let live_turn = self.bench.live_standing().cloned();
         // Is there a card IN the body — not "did somebody open one". The
         // overview stands the newest reply in the room without anybody opening
         // it, and that stand-in is a card in every way this code cares about:
@@ -3521,10 +3536,17 @@ impl TerminalView {
         // card (open a row, close one, change shelf, a new reply arriving,
         // a surface retired under the reader): one comparison cannot miss a
         // site, and five resets can.
-        if self.wb_card_at != showing_id {
+        // The turn's own id counts as a document here: reading a long reply,
+        // then asking something, must not land the new turn's card halfway
+        // down the old one's scroll.
+        let room_id = live_turn
+            .as_ref()
+            .map(|t| t.id.clone())
+            .or_else(|| showing_id.clone());
+        if self.wb_card_at != room_id {
             self.wb_card_scroll
                 .set_offset(gpui::point(gpui::px(0.), gpui::px(0.)));
-            self.wb_card_at = showing_id.clone();
+            self.wb_card_at = room_id.clone();
         }
         // The offer to start an agent, keyed on whether this pane HAS one —
         // never on whether its bench happens to be clean.
@@ -3542,7 +3564,11 @@ impl TerminalView {
         // the PROCESS. A pane that has had an agent is excluded because its
         // strip carries the verb instead — one slot, two states, not two
         // buttons offering the same thing in different places.
-        let offering = showing_id.is_none() && !agent_now && !self.wb_had_agent;
+        // `room_id`, not `showing_id`: the offer to start an agent must never be
+        // drawn under something. A turn in flight already implies an agent, so
+        // the two agree today — but the offer is a claim that the room is empty
+        // and that is the value which says whether it is.
+        let offering = room_id.is_none() && !agent_now && !self.wb_had_agent;
         // THE REVIEW TAKES THE WORKBENCH, and is chosen BEFORE the body it
         // replaces is built — not after.
         //
@@ -3560,11 +3586,34 @@ impl TerminalView {
         // resolve only from a paint-phase closure at the bottom of the tree, so
         // everything above is measured. This is the same invariant from the
         // WRITING side: do not register what will not be drawn. A `match` whose
-        // arms are the two bodies keeps that true by construction, where an
+        // arms are the bodies keeps that true by construction, where an
         // override after the fact could not.
-        let body = match self.review_body(sk, th) {
-            Some(page) => page,
-            None => match self.bench.showing() {
+        //
+        // THE TURN IN FLIGHT IS THE SECOND ARM, under the review and over
+        // everything else, and the tuple is what keeps the panic-invariant
+        // true with three bodies instead of two: `review_body` is evaluated
+        // once in the scrutinee and the live card is only BUILT inside its own
+        // arm, so at most one body ever registers a run.
+        let body = match (self.review_body(sk, th), live_turn.as_ref()) {
+            (Some(page), _) => page,
+            // Only what is live. The status line is parsed here rather than
+            // read off the strip's copy because the strip is built inside a
+            // closure that may not have run — a pane that never had an agent
+            // draws no strip — and a card that silently took its numbers from
+            // a block that did not exist would show them as absent.
+            (None, Some(_)) => {
+                let status = self.agent_status();
+                let vitals = crate::workbench::turn_vitals(&status);
+                crate::benchdraw::live_card(
+                    self.bench_status(),
+                    vitals.as_ref(),
+                    status.gerund.as_deref(),
+                    self.tool_face.as_ref().map(|f| f.verb.as_str()),
+                    sk,
+                    th,
+                )
+            }
+            (None, None) => match self.bench.showing() {
                 Some(surface) => {
                     let tint = crate::benchdraw::ink(crate::workbench::tint_of(&surface.kind), th);
                     let bench = &self.bench;
@@ -3728,6 +3777,21 @@ impl TerminalView {
         // anchor that needs it is built far below and the block itself is
         // moved into the tree before then.
         let has_waiting = waiting.is_some();
+
+        // IS A CARD IN THE ROOM — the question itself, asked once and named.
+        //
+        // Four things answer yes now: a review page, a turn in flight, a card
+        // the person opened, and the newest reply standing in for one. Each
+        // arrived separately and each time the sites below were carrying a
+        // PROXY for this question rather than the question — first
+        // `showing_id.is_some()`, then that `|| reviewing` — and a proxy is
+        // only correct for the cases that existed when it was written. The
+        // live-turn card was bottom-anchored and pinned to the floor of the
+        // pane because of exactly that, and the review had already had to
+        // patch the same line a day earlier. A fifth kind of card should have
+        // to change one line, here, and the compiler should not let it be this
+        // one that goes stale.
+        let card_in_room = reviewing || room_id.is_some();
 
         // ── the note box ────────────────────────────────────────────────────
         //
@@ -4037,22 +4101,32 @@ impl TerminalView {
                     // caret it lights is the thing to look at.
                     .child({
                         use crate::workbench::Anchor;
-                        // `showing_id.is_some()` rather than `card_open`: the
+                        // `room_id.is_some()` rather than `card_open`: the
                         // overview stands the newest reply in the room without
                         // anybody having opened it, and that stand-in IS a card
                         // — it reads from the top and was being bottom-anchored
                         // because nothing had selected it. Bottom belongs to the
                         // conversation and to nothing else, and it matters twice
                         // over now the body scrolls.
+                        //
                         // A review fills the body like a card, so it is
                         // anchored and scrolled like one: bottom-anchored it
                         // would sit at the foot of the pane, and unscrolled a
                         // long answer would simply be cut.
-                        let anchor = crate::workbench::body_anchor(
-                            showing_id.is_some() || reviewing,
-                            offering,
-                            has_waiting,
-                        );
+                        //
+                        // The TURN IN FLIGHT is the FOURTH thing that reads from
+                        // the top, and `showing_id` was still the value here
+                        // until a photograph caught it: the live card pinned to
+                        // the floor of an 800-pixel pane under an acre of empty,
+                        // exactly the failure this comment was already written
+                        // about. `showing` yields `None` while a turn stands, so
+                        // a test meaning "a card is in the room" stopped meaning
+                        // it the moment another kind of card existed — which has
+                        // now happened twice in two days, to the same line.
+                        // `card_in_room` is the question itself rather than a
+                        // proxy for it, named once above and read here.
+                        let anchor =
+                            crate::workbench::body_anchor(card_in_room, offering, has_waiting);
                         div()
                             // Stateful, because a scroll container IS state:
                             // gpui keeps the offset against this id between
@@ -4093,10 +4167,10 @@ impl TerminalView {
                             // simply cut — with the folds already built and
                             // already unable to save it, because one unfolded
                             // section can exceed the pane on its own.
-                            .when(showing_id.is_some() || reviewing, |d| {
+                            .when(card_in_room, |d| {
                                 d.overflow_y_scroll().track_scroll(&self.wb_card_scroll)
                             })
-                            .when(showing_id.is_none() && !reviewing, |d| d.overflow_hidden())
+                            .when(!card_in_room, |d| d.overflow_hidden())
                             .when(anchor == Anchor::Bottom, |d| d.justify_end())
                             .when(self.mode.is_agent(), |d| {
                                 d.relative().child(crate::benchdraw::zone(
