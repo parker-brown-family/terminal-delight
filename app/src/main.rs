@@ -10324,14 +10324,28 @@ impl Workspace {
         cx.notify();
     }
 
-    /// A project born holding a terminal of its own, and landed in.
+    /// A project born holding a terminal of its own, landed in, and open at its
+    /// name.
     ///
-    /// Generate, then go there. It does NOT open the rename box: a gesture that
+    /// Generate, go there, put the cursor in the name box. Creation was stopped
+    /// from opening that box on 2026-09-15, on the argument that a gesture which
     /// grabs the keyboard decides for you that naming the thing is the next
-    /// move, when most of the time the next move is using the terminal it just
-    /// gave you. It opens as `project N` and stays that way until somebody
-    /// double-clicks or right-clicks the row, which is where renaming already
-    /// lives and costs nothing to reach.
+    /// move. That holds for a branch made by accident and fails for every one
+    /// made on purpose: on a tree of twenty panes `project 7` is a row nobody
+    /// can aim at, and a name put off until later is a name that never gets
+    /// typed. Parker asked for it back — the box on creation is the only moment
+    /// he knows what the branch is for.
+    ///
+    /// Esc is the way out, and is why this is not the keyboard-seizing trap the
+    /// removal described: it reverts the box and drops straight into the
+    /// terminal the same gesture just made.
+    ///
+    /// What keeps the two from fighting is [`Self::overlay_owns_keyboard`].
+    /// `open_tab` defers a focus onto the new pane and stands down when an
+    /// overlay legitimately owns the keyboard, and `bar_rename` is one of the
+    /// buffers it counts. Drop this box out of that list and the defer takes the
+    /// keyboard back mid-gesture, which on screen looks like a name box
+    /// ignoring everything typed into it.
     fn new_project_with_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) -> u32 {
         let id = self.new_project(None, cx);
         self.new_tab_in(
@@ -10342,11 +10356,12 @@ impl Workspace {
             window,
             cx,
         );
+        self.start_bar_rename(BarBranch::Project(id), window, cx);
         id
     }
 
     /// The same thing one layer down: a group holding a fresh terminal,
-    /// optionally inside a project.
+    /// optionally inside a project, open at its name.
     fn new_group_with_terminal(
         &mut self,
         project: Option<u32>,
@@ -10375,6 +10390,7 @@ impl Workspace {
             window,
             cx,
         );
+        self.start_bar_rename(BarBranch::Initiative(id), window, cx);
         id
     }
 
@@ -28494,12 +28510,38 @@ mod tests {
             body.contains("new_tab_in("),
             "a new project must open a terminal of its own"
         );
+        // Restored 2026-09-21, and asserted against comment-stripped source so
+        // this paragraph cannot satisfy its own grep. Creation stopped opening
+        // the name box on 2026-09-15, as a gesture that seizes the keyboard.
+        // That reading holds for a branch made by accident; these are made on
+        // purpose, and `project 7` is a row nobody can aim at once the moment
+        // you knew what it was for has gone. Esc is the way out of the box.
+        let code = shipped_code();
+        for (f, branch) in [
+            ("fn new_project_with_terminal(", "BarBranch::Project(id)"),
+            ("fn new_group_with_terminal(", "BarBranch::Initiative(id)"),
+        ] {
+            let at = code.find(f).unwrap_or_else(|| panic!("{f} is gone"));
+            let end = code[at..].find("\n    }\n").expect("end of fn") + at;
+            assert!(
+                code[at..end].contains(&format!("start_bar_rename({branch}")),
+                "{f} no longer opens its name box on creation — a branch made on purpose \
+                 is named at the moment it is made, or never"
+            );
+        }
+
+        // And the box has to survive the frame it opens in. `open_tab` defers a
+        // focus onto the new pane and stands down only for an overlay that owns
+        // the keyboard, so a `bar_rename` missing from that list is a name box
+        // that silently loses every keystroke typed into it.
+        let at = code
+            .find("fn overlay_owns_keyboard(")
+            .expect("overlay_owns_keyboard");
+        let end = code[at..].find("\n    }\n").expect("end of fn") + at;
         assert!(
-            !body.contains("start_bar_rename("),
-            "making a project opens its rename box again — the gesture grabs the keyboard \
-             and decides for you that naming it is the next move, when the next move is \
-             usually using the terminal it just gave you. It opens as `project N`; renaming \
-             is double-click or the row's own menu"
+            code[at..end].contains("self.bar_rename.is_some()"),
+            "overlay_owns_keyboard no longer counts the left bar's name box, so the \
+             deferred pane focus takes the keyboard back the moment a branch is made"
         );
 
         // And the tab it builds goes through the identity carrier. `Tab::new`
