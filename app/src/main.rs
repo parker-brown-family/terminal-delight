@@ -1008,6 +1008,11 @@ const LEFT_BAR_DEFAULT_ON: bool = true;
 /// scan on it. Twenty seconds: git state moves at the pace of a person
 /// typing a commit, and a scan is a handful of subprocesses per checkout.
 const ENG_STALE: Duration = Duration::from_secs(20);
+
+/// How long the rail keeps an event on show after noticing it. Fifteen
+/// minutes is about how long a person is away in another project before
+/// coming back, which is the moment the afterglow is for.
+const ENG_AFTERGLOW: Duration = Duration::from_secs(15 * 60);
 /// Default bar width in logical pixels at scale 1.0 — wide enough for two
 /// levels of indent plus a name plus its roll-up glyphs.
 const LEFT_BAR_W: f32 = 208.;
@@ -3733,6 +3738,13 @@ struct Workspace {
     eng_scanning: bool,
     /// Which ticker frame is up, advanced on its own clock.
     eng_frame: usize,
+    /// The afterglow: what changed between consecutive readings of each
+    /// project, with when it was noticed. Kept for [`ENG_AFTERGLOW`] and then
+    /// dropped — evidence that something happened, never a notification.
+    eng_events: std::collections::HashMap<Option<u32>, Vec<(Instant, String)>>,
+    /// The checkouts table is open — the badge, unfolded: one row per
+    /// checkout with who is writing there, then the drift and the afterglow.
+    eng_table: bool,
     /// Which surface files this window has already delivered to a bench.
     ///
     /// Taken out and handed to the pool for the duration of a sweep, then put
@@ -5167,6 +5179,10 @@ impl Workspace {
             eng: std::collections::HashMap::new(),
             eng_scanning: false,
             eng_frame: 0,
+            eng_events: std::collections::HashMap::new(),
+            // a rig lever, like TD_RAIL_DEBUG: there is no click injection on
+            // this machine, so the table is photographed by opening at launch
+            eng_table: std::env::var_os("TD_RAIL_TABLE").is_some(),
             surface_feed: Some(surfacefeed::Feed::new()),
             derived_stamps: std::collections::HashMap::new(),
             // Headless-capture hook: TD_WALL_THEME=1 arms the "theme · on" wall
@@ -11519,13 +11535,63 @@ impl Workspace {
                 state.took
             );
         }
+        // The afterglow: what this reading says happened since the last one.
+        // Diffed before the insert, against the reading it replaces, and only
+        // for the same project — the pure function refuses anything else.
+        if let Some(prev) = self.eng.get(&state.project) {
+            let now = Instant::now();
+            let fresh = engstate::events(prev, &state);
+            let log = self.eng_events.entry(state.project).or_default();
+            log.extend(fresh.into_iter().map(|e| (now, e)));
+            log.retain(|(at, _)| now.duration_since(*at) < ENG_AFTERGLOW);
+            // the newest twelve; older ones have had their fifteen minutes
+            let excess = log.len().saturating_sub(12);
+            log.drain(..excess);
+        }
         self.eng.insert(state.project, state);
         cx.notify();
     }
 
+    /// The afterglow still on show for the active project, oldest first.
+    fn eng_afterglow(&self) -> Vec<&str> {
+        let key = self.place_of(self.active).project;
+        let now = Instant::now();
+        self.eng_events
+            .get(&key)
+            .map(|log| {
+                log.iter()
+                    .filter(|(at, _)| now.duration_since(*at) < ENG_AFTERGLOW)
+                    .map(|(_, e)| e.as_str())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Every frame the ticker rotates through: the reading's own, then one
+    /// for the afterglow when there is any. One function, so the clock and
+    /// the renderer count the same frames.
+    fn eng_frames(&self) -> Vec<engstate::Frame> {
+        let Some(st) = self.eng_state() else {
+            return Vec::new();
+        };
+        let mut frames = st.frames();
+        let glow = self.eng_afterglow();
+        if !glow.is_empty() {
+            // the three newest, newest first — the rest are on the badge's
+            // dot and in the table
+            let recent: Vec<&str> = glow.iter().rev().take(3).copied().collect();
+            frames.push(engstate::Frame {
+                kind: engstate::FrameKind::Events,
+                text: format!("\u{25c6} {}", recent.join(" \u{00b7} ")),
+                tone: engstate::Tone::Plain,
+            });
+        }
+        frames
+    }
+
     /// Advance the ticker. Silent when there is nothing to rotate.
     fn tick_eng_frame(&mut self, cx: &mut Context<Self>) {
-        let n = self.eng_state().map(|s| s.frames().len()).unwrap_or(0);
+        let n = self.eng_frames().len();
         if n == 0 {
             return;
         }
@@ -14764,6 +14830,7 @@ impl Workspace {
             || self.confirm_close.is_some()
             || self.confirm_delete.is_some()
             || self.bar_menu.is_some()
+            || self.eng_table
             || self.theme_menu.is_some()
             || self.osd_menu.is_some()
             || self.tab_menu.is_some()
@@ -15291,6 +15358,12 @@ impl Workspace {
         // A left-bar menu is dismissed by Esc like every other overlay, and by
         // nothing else — a menu that ate arrow keys would be claiming a
         // navigation model it does not have.
+        if self.eng_table && ks.key.as_str() == "escape" {
+            self.eng_table = false;
+            self.focus_active(window, cx);
+            cx.notify();
+            return;
+        }
         if self.bar_menu.is_some() && ks.key.as_str() == "escape" {
             self.close_bar_menu(cx);
             return;
@@ -20922,13 +20995,21 @@ impl Workspace {
         let th = theme::theme(cx);
         let s = theme::outer_choice(cx).grade.scale;
         let sk = skin::skin(cx, s);
-        let segments = match self.eng_state() {
+        let mut segments = match self.eng_state() {
             Some(st) => st.badge(),
             None => vec![engstate::Segment {
                 text: "SCANNING".into(),
                 tone: engstate::Tone::Muted,
             }],
         };
+        // the afterglow's dot: something happened here in the last quarter
+        // hour, and the ticker has the sentence
+        if !self.eng_afterglow().is_empty() {
+            segments.push(engstate::Segment {
+                text: "\u{25c6}".into(),
+                tone: engstate::Tone::Good,
+            });
+        }
         let mut chip = sk
             .bezel(false, s)
             .flex_none()
@@ -20947,13 +21028,295 @@ impl Workspace {
                         .child("\u{00b7}".to_string()),
                 );
             }
+            let ink = self.eng_ink(seg.tone, &th);
+            // A warning wears a wash as well as its ink. On an amber palette
+            // the ansi yellow is a hair from the text colour, and `1 SHARED`
+            // read exactly like `3 WT` beside it; a tint behind the words is
+            // a difference every palette can show.
+            let warn = seg.tone == engstate::Tone::Warn;
             chip = chip.child(
                 div()
-                    .text_color(self.eng_ink(seg.tone, &th))
+                    .text_color(ink)
+                    .when(warn, |d| {
+                        d.px(px(4. * s)).rounded(sk.radius()).bg(ink.alpha(0.16))
+                    })
                     .child(seg.text.clone()),
             );
         }
-        chip
+        // click: unfold it into the table. Propagation stops here so the
+        // mother bar's move handle does not also arm on the press.
+        chip.on_mouse_down(
+            MouseButton::Left,
+            cx.listener(|ws, _: &MouseDownEvent, window, cx| {
+                cx.stop_propagation();
+                ws.toggle_eng_table(window, cx);
+            }),
+        )
+    }
+
+    /// Open or close the checkouts table. Opening takes the keyboard the way
+    /// a menu does, so esc reaches it; closing hands the keyboard back to the
+    /// terminal that had it.
+    fn toggle_eng_table(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.eng_table = !self.eng_table;
+        if self.eng_table {
+            self.commit_all_renames(cx);
+            self.bar_menu = None;
+            window.focus(&self.focus_handle, cx);
+        } else {
+            self.focus_active(window, cx);
+        }
+        cx.notify();
+    }
+
+    /// The badge, unfolded: the project's checkouts one to a row, then every
+    /// pane the drift lint has something to say about, then the afterglow.
+    ///
+    /// This is where the specific identity lives now — WHICH branch, in
+    /// WHICH directory, with WHO writing to it. The rail aggregates; the
+    /// table itemises; the pane header says its own. Same information at
+    /// three scales, none of it repeated at the same one.
+    fn render_eng_table(
+        &self,
+        th: &theme::Theme,
+        s: f32,
+        cx: &mut Context<Self>,
+    ) -> Option<gpui::Div> {
+        if !self.eng_table {
+            return None;
+        }
+        let sk = skin::skin(cx, s);
+        let st = self.eng_state();
+        let mono = |d: gpui::Div| d.font_family("monospace").text_size(px(10.5 * s));
+        let cell = |w: f32, ink: Hsla, text: String| {
+            mono(div())
+                .flex_none()
+                .w(px(w * s))
+                .overflow_hidden()
+                .truncate()
+                .text_color(ink)
+                .child(text)
+        };
+        let mut rows = div()
+            .flex()
+            .flex_col()
+            .gap(px(3. * s))
+            .p(px(8. * s))
+            .min_w(px(520. * s));
+        // the heading: what this is a table OF, and how fresh it is
+        let name = self
+            .place_of(self.active)
+            .project
+            .and_then(|p| self.project_at(p))
+            .map(|p| p.label().to_uppercase())
+            .unwrap_or_else(|| "UNFILED".into());
+        let freshness = match st {
+            Some(st) => format!(
+                "read {}s ago in {}ms",
+                st.scanned_at.elapsed().as_secs(),
+                st.took.as_millis()
+            ),
+            None => "not read yet".into(),
+        };
+        rows = rows.child(
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .justify_between()
+                .pb(px(4. * s))
+                .child(
+                    div()
+                        .text_size(px(11. * s))
+                        .font_weight(gpui::FontWeight::BOLD)
+                        .text_color(th.text)
+                        .child(name),
+                )
+                .child(
+                    div()
+                        .text_size(px(9.5 * s))
+                        .text_color(th.text.alpha(0.5))
+                        .child(freshness),
+                ),
+        );
+        let Some(st) = st else {
+            return Some(self.eng_table_frame(&sk, s, rows, cx));
+        };
+        let muted = th.text.alpha(0.55);
+        let warn = self.eng_ink(engstate::Tone::Warn, th);
+        // column heads
+        rows = rows.child(
+            div()
+                .flex()
+                .flex_row()
+                .gap(px(8. * s))
+                .child(cell(150., muted, "line".into()))
+                .child(cell(60., muted, "".into()))
+                .child(cell(110., muted, "uncommitted".into()))
+                .child(cell(60., muted, "vs main".into()))
+                .child(cell(160., muted, "writing here".into())),
+        );
+        let main_name = st
+            .primary()
+            .and_then(|r| r.main_ref.as_deref())
+            .map(|m| m.rsplit('/').next().unwrap_or(m).to_string());
+        for c in &st.checkouts {
+            let is_primary = st.primary().is_some_and(|p| p.id == c.repo);
+            let line = if is_primary {
+                c.line()
+            } else {
+                let repo = st
+                    .repos
+                    .iter()
+                    .find(|r| r.id == c.repo)
+                    .map(|r| r.name.as_str())
+                    .unwrap_or("?");
+                format!("{} ({repo})", c.line())
+            };
+            let kind = if c.shared() { "SHARED" } else { "WT" };
+            let kind_ink = if c.shared() { warn } else { th.accent };
+            let dirt = match (c.dirty, c.delta) {
+                (Some(0), _) => "clean".to_string(),
+                (Some(n), Some((a, d))) => format!("{n} dirty +{a} \u{2212}{d}"),
+                (Some(n), None) => format!("{n} dirty"),
+                (None, _) => "unmeasured".to_string(),
+            };
+            let dirt_ink = match c.dirty {
+                Some(0) => muted,
+                Some(_) => th.text,
+                None => muted,
+            };
+            let vs = match c.ahead_behind {
+                _ if Some(c.line()) == main_name => "\u{2014}".to_string(),
+                Some((a, b)) => format!("\u{2191}{a} \u{2193}{b}"),
+                None => "?".to_string(),
+            };
+            let who: Vec<String> = c
+                .writers
+                .iter()
+                .map(|w| format!("{} ({})", w.label.to_lowercase(), w.tab_name))
+                .collect();
+            rows = rows.child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .gap(px(8. * s))
+                    .child(cell(150., th.text, line))
+                    .child(cell(60., kind_ink, kind.into()))
+                    .child(cell(110., dirt_ink, dirt))
+                    .child(cell(60., th.text, vs))
+                    .child(cell(160., th.text, who.join(", "))),
+            );
+        }
+        // the drift and the panes in no repository
+        let mut notes: Vec<(Hsla, String)> = Vec::new();
+        for f in &st.foreign {
+            notes.push((
+                warn,
+                format!(
+                    "\u{26a0} {} is filed here but working in {}",
+                    f.writer.tab_name, f.repo_name
+                ),
+            ));
+        }
+        for v in &st.visitors {
+            notes.push((
+                muted,
+                match &v.filed_under {
+                    Some(u) => format!(
+                        "\u{25cc} {} is working here but filed under {u}",
+                        v.writer.tab_name
+                    ),
+                    None => format!("\u{25cc} {} is working here, unfiled", v.writer.tab_name),
+                },
+            ));
+        }
+        for w in &st.no_git {
+            notes.push((muted, format!("{} is in no repository", w.tab_name)));
+        }
+        if let Some(r) = st.primary() {
+            if let Some(n) = r.worktrees_on_disk {
+                let in_use = st.primary_checkouts().len() as u32;
+                if n > in_use {
+                    notes.push((
+                        muted,
+                        format!("{n} worktrees of {} on disk, {in_use} in use", r.name),
+                    ));
+                }
+            }
+        }
+        if !notes.is_empty() {
+            rows = rows.child(div().h(px(1.)).mt(px(4. * s)).bg(th.text.alpha(0.12)));
+            for (ink, text) in notes {
+                rows = rows.child(mono(div()).text_color(ink).child(text));
+            }
+        }
+        // the afterglow, oldest first, with how long ago
+        let glow = self.eng_afterglow();
+        if !glow.is_empty() {
+            rows = rows.child(div().h(px(1.)).mt(px(4. * s)).bg(th.text.alpha(0.12)));
+            let key = self.place_of(self.active).project;
+            let now = Instant::now();
+            if let Some(log) = self.eng_events.get(&key) {
+                for (at, e) in log {
+                    let age = now.duration_since(*at).as_secs();
+                    let when = if age < 60 {
+                        format!("{age}s ago")
+                    } else {
+                        format!("{}m ago", age / 60)
+                    };
+                    rows = rows.child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .gap(px(8. * s))
+                            .child(cell(60., muted, when))
+                            .child(
+                                mono(div())
+                                    .text_color(th.text)
+                                    .child(format!("\u{25c6} {e}")),
+                            ),
+                    );
+                }
+            }
+        }
+        Some(self.eng_table_frame(&sk, s, rows, cx))
+    }
+
+    /// The scrim and the panel around the table — the same shape as every
+    /// menu, so closing it never also presses what was underneath.
+    fn eng_table_frame(
+        &self,
+        sk: &skin::Skin,
+        s: f32,
+        rows: gpui::Div,
+        cx: &mut Context<Self>,
+    ) -> gpui::Div {
+        div()
+            .absolute()
+            .inset_0()
+            .occlude()
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|ws, _: &MouseDownEvent, window, cx| {
+                    cx.stop_propagation();
+                    ws.eng_table = false;
+                    ws.focus_active(window, cx);
+                    cx.notify();
+                }),
+            )
+            .child(
+                sk.panel()
+                    .id("eng-table-panel")
+                    .absolute()
+                    .left(px(12. * s))
+                    .top(px(44. * s))
+                    .max_h(px(self.tray_max_h(44. * s)))
+                    .overflow_x_hidden()
+                    .overflow_y_scroll()
+                    .shadow_lg()
+                    .child(rows),
+            )
     }
 
     /// The ink a tone is drawn in. Bound here and nowhere else, so the model
@@ -20993,7 +21356,7 @@ impl Workspace {
                 .h(px(14. * scale))
                 .bg(th.text.alpha(0.18)),
         );
-        let frames = st.frames();
+        let frames = self.eng_frames();
         if frames.is_empty() {
             // silence means healthy: the badge already said what there is to
             // say, and an empty middle is the breathing room that makes the
@@ -28208,6 +28571,7 @@ impl Render for Workspace {
                     .children(confirm_overlay)
                     .children(delete_overlay)
                     .children(self.render_bar_menu(&th, scale, cx))
+                    .children(self.render_eng_table(&th, scale, cx))
                     .children(self.render_rail(cx))
                     .children(scale_overlay)
                     .children(more_overlay)

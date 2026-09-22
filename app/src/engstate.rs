@@ -200,6 +200,9 @@ pub enum FrameKind {
     Worktrees,
     Pulse,
     Sentence,
+    /// What happened between two readings — assembled by the window from
+    /// [`events`], since a single reading cannot know what changed.
+    Events,
 }
 
 /// One frame of the rotating ticker.
@@ -850,11 +853,10 @@ impl ProjectState {
             let total: u32 = p.iter().sum();
             if total > 0 {
                 let recent: u32 = p[9..].iter().sum();
-                let glyphs = pulse_glyphs(&p);
                 out.push(Frame {
                     kind: FrameKind::Pulse,
                     text: format!(
-                        "{} in the last hour \u{00b7} {recent} in the last fifteen minutes \u{00b7} {glyphs}",
+                        "{} in the last hour \u{00b7} {recent} in the last fifteen minutes",
                         plural(total, "commit", "commits")
                     ),
                     tone: Tone::Plain,
@@ -917,6 +919,78 @@ impl ProjectState {
     }
 }
 
+/// What changed between two readings of the same project — the afterglow.
+///
+/// A reading is a photograph; the interesting thing is often the difference
+/// between two of them: a commit landed on a line while you were in another
+/// project, a checkout went dirty, main moved on under a branch, a pane
+/// wandered in. Each is one sentence, in the order the checkouts are listed,
+/// and nothing here is a judgement — the rail keeps them for a while as
+/// evidence that something happened, not as a notification to act on.
+///
+/// Pure, so it is tested on hand-built readings with no git at all.
+pub fn events(prev: &ProjectState, next: &ProjectState) -> Vec<String> {
+    let mut out = Vec::new();
+    if prev.project != next.project {
+        return out;
+    }
+    for c in &next.checkouts {
+        let Some(p) = prev.checkouts.iter().find(|p| p.root == c.root) else {
+            out.push(format!("a pane arrived in {}", c.line()));
+            continue;
+        };
+        if p.branch != c.branch && c.branch.is_some() {
+            out.push(format!("{} switched to {}", short_root(&c.root), c.line()));
+        }
+        if let (Some(a), Some(b)) = (p.last_commit, c.last_commit) {
+            if b > a {
+                out.push(format!("a commit landed on {}", c.line()));
+            }
+        }
+        match (p.is_dirty(), c.is_dirty()) {
+            (Some(false), Some(true)) => out.push(format!("{} went dirty", c.line())),
+            (Some(true), Some(false)) => out.push(format!("{} went clean", c.line())),
+            _ => {}
+        }
+        if let (Some((_, pb)), Some((_, nb))) = (p.ahead_behind, c.ahead_behind) {
+            if nb > pb {
+                out.push(format!("main moved on: {} is now {nb} behind", c.line()));
+            }
+        }
+    }
+    for p in &prev.checkouts {
+        if !next.checkouts.iter().any(|c| c.root == p.root) {
+            out.push(format!("{} was left", p.line()));
+        }
+    }
+    if next.foreign.len() > prev.foreign.len() {
+        let names: Vec<&str> = next
+            .foreign
+            .iter()
+            .filter(|f| !prev.foreign.iter().any(|g| g.writer.cwd == f.writer.cwd))
+            .map(|f| f.repo_name.as_str())
+            .collect();
+        if names.is_empty() {
+            out.push("a pane wandered off".into());
+        } else {
+            out.push(format!("a pane wandered into {}", names.join(" \u{00b7} ")));
+        }
+    } else if next.foreign.len() < prev.foreign.len() {
+        out.push("a wandering pane came home".into());
+    }
+    if next.visitors.len() > prev.visitors.len() {
+        out.push("an external pane arrived".into());
+    }
+    out
+}
+
+/// A checkout's directory, as a person would say it.
+fn short_root(root: &Path) -> String {
+    root.file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| root.display().to_string())
+}
+
 fn plural(n: u32, one: &str, many: &str) -> String {
     if n == 1 {
         format!("1 {one}")
@@ -938,26 +1012,6 @@ fn number(n: usize) -> String {
         5 => "five".into(),
         n => n.to_string(),
     }
-}
-
-/// The heartbeat as eight-level block glyphs, oldest first — the fallback
-/// drawing where only text is available.
-pub fn pulse_glyphs(p: &[u32; 12]) -> String {
-    const LEVELS: [char; 8] = [
-        '\u{2581}', '\u{2582}', '\u{2583}', '\u{2584}', '\u{2585}', '\u{2586}', '\u{2587}',
-        '\u{2588}',
-    ];
-    let max = p.iter().copied().max().unwrap_or(0).max(1);
-    p.iter()
-        .map(|&v| {
-            if v == 0 {
-                LEVELS[0]
-            } else {
-                let i = ((v as f32 / max as f32) * 7.0).round() as usize;
-                LEVELS[i.clamp(1, 7)]
-            }
-        })
-        .collect()
 }
 
 #[cfg(test)]
@@ -1118,8 +1172,6 @@ mod tests {
             4,
             "an hour ago and the future are out"
         );
-        assert_eq!(pulse_glyphs(&p).chars().count(), 12);
-        assert_eq!(pulse_glyphs(&[0; 12]), "\u{2581}".repeat(12));
     }
 
     #[test]
@@ -1294,6 +1346,109 @@ mod tests {
         });
         assert_eq!(st.no_git.len(), 1);
         assert_eq!(st.badge()[0].text, "NO GIT");
+    }
+
+    /// A hand-built reading, so the afterglow is tested without git.
+    fn reading(checkouts: Vec<Checkout>, foreign: usize, visitors: usize) -> ProjectState {
+        let wr = |n: usize| w(n, "SHELL", Path::new("/x"));
+        ProjectState {
+            project: Some(1),
+            name: Some("P".into()),
+            scanned_at: Instant::now(),
+            took: Duration::ZERO,
+            repos: vec![RepoFacts {
+                id: "o/r".into(),
+                name: "r".into(),
+                main_ref: Some("origin/main".into()),
+                worktrees_on_disk: None,
+                pulse: None,
+            }],
+            checkouts,
+            no_git: vec![],
+            foreign: (0..foreign)
+                .map(|i| Foreign {
+                    writer: w(10 + i, "SHELL", Path::new(&format!("/f/{i}"))),
+                    repo_name: "elsewhere".into(),
+                })
+                .collect(),
+            visitors: (0..visitors)
+                .map(|i| Visitor {
+                    writer: wr(20 + i),
+                    filed_under: None,
+                })
+                .collect(),
+        }
+    }
+
+    fn co(root: &str, branch: &str, dirty: u32, commit: u64, behind: u32) -> Checkout {
+        Checkout {
+            root: PathBuf::from(root),
+            repo: "o/r".into(),
+            branch: Some(branch.into()),
+            head: Some("abc1234".into()),
+            dirty: Some(dirty),
+            untracked: Some(0),
+            delta: Some((0, 0)),
+            ahead_behind: Some((0, behind)),
+            last_commit: Some(commit),
+            writers: vec![w(0, "CLAUDE", Path::new(root))],
+        }
+    }
+
+    #[test]
+    fn the_afterglow_is_the_difference_between_two_readings() {
+        let before = reading(
+            vec![
+                co("/w/main", "main", 0, 100, 0),
+                co("/w/rail", "rail", 2, 100, 0),
+                co("/w/gone", "old", 0, 100, 0),
+            ],
+            0,
+            0,
+        );
+        let after = reading(
+            vec![
+                co("/w/main", "main", 3, 100, 0),   // went dirty
+                co("/w/rail", "rail", 0, 200, 2),   // commit landed, went clean, main moved
+                co("/w/new", "feature", 0, 100, 0), // arrived
+            ],
+            1,
+            1,
+        );
+        let ev = events(&before, &after);
+        assert_eq!(
+            ev,
+            vec![
+                "main went dirty",
+                "a commit landed on rail",
+                "rail went clean",
+                "main moved on: rail is now 2 behind",
+                "a pane arrived in feature",
+                "old was left",
+                "a pane wandered into elsewhere",
+                "an external pane arrived",
+            ]
+        );
+    }
+
+    #[test]
+    fn two_identical_readings_have_no_afterglow_and_two_projects_never_compare() {
+        let a = reading(vec![co("/w/main", "main", 0, 100, 0)], 0, 0);
+        assert!(events(&a, &a).is_empty());
+        let mut b = a.clone();
+        b.project = Some(2);
+        b.checkouts.clear();
+        assert!(
+            events(&a, &b).is_empty(),
+            "a different project is not a change"
+        );
+    }
+
+    #[test]
+    fn a_branch_switch_names_the_directory_not_the_old_branch() {
+        let a = reading(vec![co("/w/rail", "rail", 0, 100, 0)], 0, 0);
+        let b = reading(vec![co("/w/rail", "rail-2", 0, 100, 0)], 0, 0);
+        assert_eq!(events(&a, &b), vec!["rail switched to rail-2"]);
     }
 
     #[test]
