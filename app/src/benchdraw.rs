@@ -1776,6 +1776,13 @@ fn question(q: &crate::surface::Question, picks: Option<&Picks>, sk: &Skin, th: 
             // the chips are still drawn, and without this line the only
             // difference between a round you can still answer and one that
             // ended without you is a tint.
+            Answered::Ended => Some(micro(
+                "ended \u{b7} the agent moved on and nobody recorded how".to_string(),
+                Step::Note,
+                sk.ink.ink_faint,
+                sk,
+                th,
+            )),
             Answered::Cancelled => Some(micro(
                 "cancelled \u{b7} the round ended with no answer".to_string(),
                 Step::Note,

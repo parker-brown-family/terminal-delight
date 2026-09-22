@@ -1457,7 +1457,22 @@ impl TerminalView {
                         );
                     }
                 }
-                Effect::Reply { text, n } => {
+                Effect::Reply { text, n, ended } => {
+                    // The rounds this reply proved over, first: the reply is
+                    // the agent having moved on, and a card still offering
+                    // chips underneath that is the thing being fixed.
+                    for s in ended {
+                        let id = s.id.clone();
+                        self.present(
+                            Post {
+                                op: Op::Present,
+                                id,
+                                pane: None,
+                                surface: Some(s),
+                            },
+                            cx,
+                        );
+                    }
                     if let Some(s) = crate::channel::reply_surface(&text, now, n) {
                         let id = s.id.clone();
                         self.present(
