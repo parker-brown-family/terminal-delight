@@ -2198,7 +2198,18 @@ impl TerminalView {
             )
             // Review, beside Submit, and only once there is something to
             // review. A gallery of nothing is a button that punishes a press.
-            .when(!self.bench.reviewable().is_empty() && !answered, |d| {
+            //
+            // NOT gated on this card being unanswered, which is what it used
+            // to be, and which took the button away at the exact moment there
+            // was most to look at: answering makes MORE to review, not less,
+            // and the last answer of a round is when a person most wants to
+            // see what they just said. Parker, on a round of three with all
+            // three answered and no button anywhere: *"Oh no not seeing the
+            // review submit panel AT ALL!"*.
+            //
+            // `reviewable()` is the honest guard and always was — it counts
+            // what there is to show, so it cannot offer an empty gallery.
+            .when(!self.bench.reviewable().is_empty(), |d| {
                 d.child(sk.rule_h()).child(
                     div().flex().flex_row().gap(px(8.)).justify_end().child(
                         sk.chip(false)
@@ -3672,6 +3683,9 @@ impl TerminalView {
             None => body,
         };
 
+        // Taken as a bool before the block is moved into the tree, so the
+        // anchor far below can ask without borrowing it.
+        //
         // ── what the agent is blocked on, whatever else is on the bench ─────
         //
         // OUT of the match, and that is the fix rather than a tidy-up. It was
@@ -3710,6 +3724,11 @@ impl TerminalView {
                 let zones = self.wb_zones.clone();
                 crate::benchdraw::waiting_block(&q, Some(&zones), sk, th).child(chips)
             });
+
+        // Taken as a bool here, where the block still exists, because the
+        // anchor that needs it is built far below and the block itself is
+        // moved into the tree before then.
+        let has_waiting = waiting.is_some();
 
         // ── the note box ────────────────────────────────────────────────────
         //
@@ -4033,6 +4052,7 @@ impl TerminalView {
                         let anchor = crate::workbench::body_anchor(
                             showing_id.is_some() || reviewing,
                             offering,
+                            has_waiting,
                         );
                         div()
                             // Stateful, because a scroll container IS state:
