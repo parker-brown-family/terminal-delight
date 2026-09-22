@@ -21827,10 +21827,6 @@ impl Workspace {
     }
 }
 
-/// Hover popup for a theme button. Shows the full theme name (the in-button
-/// caption is truncated — e.g. `tactical` for `tactical-overdrive`). For the
-/// hot-reloaded `custom` slot it also shows the resolved file path on THIS
-/// machine and a clickable "Open in editor" line.
 /// A hover card drawn OVER the glass — the tooltip half of
 /// [`Workspace::over_the_glass`], and flat for exactly the same reason.
 ///
@@ -21886,6 +21882,10 @@ impl Render for SlotTooltip {
     }
 }
 
+/// Hover popup for a theme button. Shows the full theme name (the in-button
+/// caption is truncated — e.g. `tactical` for `tactical-overdrive`). For the
+/// hot-reloaded `custom` slot it also shows the resolved file path on THIS
+/// machine and a clickable "Open in editor" line.
 struct ThemeTooltip {
     name: SharedString,
     /// `Some` only for the custom slot — the file to reveal/open.
