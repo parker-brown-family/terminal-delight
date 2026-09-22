@@ -3543,145 +3543,144 @@ impl TerminalView {
         // strip carries the verb instead — one slot, two states, not two
         // buttons offering the same thing in different places.
         let offering = showing_id.is_none() && !agent_now && !self.wb_had_agent;
-        let body = match self.bench.showing() {
-            Some(surface) => {
-                let tint = crate::benchdraw::ink(crate::workbench::tint_of(&surface.kind), th);
-                let bench = &self.bench;
-                // The picks the renderer cannot hold: which tab, and which
-                // register inside whichever tab it resolves to. The closure is
-                // what lets the renderer ask AFTER it has worked out the open
-                // group, which is a thing only it can do — it is the half that
-                // knows which groups this reply actually carries.
-                let reg = |g: crate::surface::Group| {
-                    bench.picked_register(&surface.id, g).map(str::to_string)
-                };
-                let picks = crate::benchdraw::Picks {
-                    id: &surface.id,
-                    tab: bench.picked_tab(&surface.id),
-                    reg: &reg,
-                    zones: self.wb_zones.clone(),
-                };
-                let drawn = crate::benchdraw::body(surface, how, Some(&picks), sk, th);
-                // A question opened from the rail is still a question, so it
-                // gets the chips the inline block gets. Built before the verb
-                // row because both borrow `self`.
-                let asked = match &surface.kind {
-                    crate::surface::Kind::Question(q) => Some(q.clone()),
-                    _ => None,
-                };
-                let answers = asked.map(|q| self.answer_chips(&q, sk, th));
-                let verbs = self.bench_verbs(sk, th);
-                // One title, not two. The card drew `kind · title` here and
-                // then [`benchdraw::body`] drew its own heading directly
-                // underneath — the same two strings twice, six pixels apart,
-                // which is what an opened artifact looked like in Parker's
-                // screenshot. The renderer owns the heading, because the
-                // renderer is what knows how a KIND wants to introduce
-                // itself; the card keeps only the close, which is chrome.
-                crate::benchdraw::raised(
-                    sk.panel()
-                        .relative()
+        // THE REVIEW TAKES THE WORKBENCH, and is chosen BEFORE the body it
+        // replaces is built — not after.
+        //
+        // `benchdraw::sel` registers a run into the selection sink the moment
+        // the element is CONSTRUCTED, and `benchdraw::resolve` later asks every
+        // registered run for its bounds. `gpui::TextLayout` panics when asked
+        // for bounds it has not measured, and a run belonging to an element
+        // nothing painted has none. So building the card and then throwing it
+        // away in favour of the review registered a whole body of runs that
+        // would never be laid out, and the next frame aborted the window.
+        // Parker, on the first build where the review was reachable at all:
+        // *"click review answers... TD just crashes lol"*.
+        //
+        // The module's own header states the invariant from the READING side —
+        // resolve only from a paint-phase closure at the bottom of the tree, so
+        // everything above is measured. This is the same invariant from the
+        // WRITING side: do not register what will not be drawn. A `match` whose
+        // arms are the two bodies keeps that true by construction, where an
+        // override after the fact could not.
+        let body = match self.review_body(sk, th) {
+            Some(page) => page,
+            None => match self.bench.showing() {
+                Some(surface) => {
+                    let tint = crate::benchdraw::ink(crate::workbench::tint_of(&surface.kind), th);
+                    let bench = &self.bench;
+                    // The picks the renderer cannot hold: which tab, and which
+                    // register inside whichever tab it resolves to. The closure is
+                    // what lets the renderer ask AFTER it has worked out the open
+                    // group, which is a thing only it can do — it is the half that
+                    // knows which groups this reply actually carries.
+                    let reg = |g: crate::surface::Group| {
+                        bench.picked_register(&surface.id, g).map(str::to_string)
+                    };
+                    let picks = crate::benchdraw::Picks {
+                        id: &surface.id,
+                        tab: bench.picked_tab(&surface.id),
+                        reg: &reg,
+                        zones: self.wb_zones.clone(),
+                    };
+                    let drawn = crate::benchdraw::body(surface, how, Some(&picks), sk, th);
+                    // A question opened from the rail is still a question, so it
+                    // gets the chips the inline block gets. Built before the verb
+                    // row because both borrow `self`.
+                    let asked = match &surface.kind {
+                        crate::surface::Kind::Question(q) => Some(q.clone()),
+                        _ => None,
+                    };
+                    let answers = asked.map(|q| self.answer_chips(&q, sk, th));
+                    let verbs = self.bench_verbs(sk, th);
+                    // One title, not two. The card drew `kind · title` here and
+                    // then [`benchdraw::body`] drew its own heading directly
+                    // underneath — the same two strings twice, six pixels apart,
+                    // which is what an opened artifact looked like in Parker's
+                    // screenshot. The renderer owns the heading, because the
+                    // renderer is what knows how a KIND wants to introduce
+                    // itself; the card keeps only the close, which is chrome.
+                    crate::benchdraw::raised(
+                        sk.panel()
+                            .relative()
+                            .flex()
+                            .flex_col()
+                            .gap(px(12.))
+                            .p(px(16.))
+                            .bg(th.surface)
+                            .border_l(px(3.))
+                            // The card's edge goes to the accent for the moment
+                            // after the bench types into the terminal, so a write
+                            // is something a person sees happen where they
+                            // pressed — the agent bar turning to "Reading your
+                            // answer" is the longer signal, this is the flash.
+                            .border_color(if self.bench_flashing(crate::surfacefeed::now_ms()) {
+                                th.accent
+                            } else {
+                                tint
+                            }),
+                        tint,
+                        th,
+                    )
+                    .when(card_open, |card| {
+                        card.child(
+                            div()
+                                .absolute()
+                                .right(px(10.))
+                                .top(px(8.))
+                                .text_size(px(sk.pt(Step::Lead)))
+                                .text_color(sk.ink.ink_faint)
+                                .child("\u{2715}")
+                                .relative()
+                                .child(crate::benchdraw::zone(
+                                    self.wb_zones.clone(),
+                                    crate::workbench::Hit::CloseCard,
+                                )),
+                        )
+                    })
+                    .child(drawn)
+                    .children(answers)
+                    .children(verbs)
+                }
+                // No card: the conversation.
+                None => {
+                    let tail = self.recent_lines(if full { 18 } else { 12 });
+                    div()
                         .flex()
                         .flex_col()
-                        .gap(px(12.))
-                        .p(px(16.))
-                        .bg(th.surface)
-                        .border_l(px(3.))
-                        // The card's edge goes to the accent for the moment
-                        // after the bench types into the terminal, so a write
-                        // is something a person sees happen where they
-                        // pressed — the agent bar turning to "Reading your
-                        // answer" is the longer signal, this is the flash.
-                        .border_color(if self.bench_flashing(crate::surfacefeed::now_ms()) {
-                            th.accent
-                        } else {
-                            tint
-                        }),
-                    tint,
-                    th,
-                )
-                .when(card_open, |card| {
-                    card.child(
-                        div()
-                            .absolute()
-                            .right(px(10.))
-                            .top(px(8.))
-                            .text_size(px(sk.pt(Step::Lead)))
-                            .text_color(sk.ink.ink_faint)
-                            .child("\u{2715}")
-                            .relative()
-                            .child(crate::benchdraw::zone(
-                                self.wb_zones.clone(),
-                                crate::workbench::Hit::CloseCard,
-                            )),
-                    )
-                })
-                .child(drawn)
-                .children(answers)
-                .children(verbs)
-            }
-            // No card: the conversation.
-            None => {
-                let tail = self.recent_lines(if full { 18 } else { 12 });
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(10.))
-                    // The offer is ONE element: a dialogue card with the action
-                    // inside it.
-                    //
-                    // It was a panel with the button as a sibling above it, and
-                    // before that a panel with the button as a chip tacked on
-                    // its end. Both failed the same way — the only pressable
-                    // thing on the surface and the sentence naming it were not
-                    // in the same box, so they aligned independently and read as
-                    // two unrelated blocks. A dialogue holds its own action.
-                    .when(offering, |d| {
-                        d.child(crate::benchdraw::empty(
-                            false,
-                            "",
-                            Some(crate::benchdraw::launch_button(sk, th).child(
-                                crate::benchdraw::zone(
-                                    self.wb_zones.clone(),
-                                    crate::workbench::Hit::Launch,
-                                ),
-                            )),
-                            sk,
-                            th,
-                        ))
-                    })
-                    .when(shows.mirror, |d| {
-                        d.child(crate::benchdraw::conversation(&tail, sk, th))
-                    })
-            }
+                        .gap(px(10.))
+                        // The offer is ONE element: a dialogue card with the action
+                        // inside it.
+                        //
+                        // It was a panel with the button as a sibling above it, and
+                        // before that a panel with the button as a chip tacked on
+                        // its end. Both failed the same way — the only pressable
+                        // thing on the surface and the sentence naming it were not
+                        // in the same box, so they aligned independently and read as
+                        // two unrelated blocks. A dialogue holds its own action.
+                        .when(offering, |d| {
+                            d.child(crate::benchdraw::empty(
+                                false,
+                                "",
+                                Some(crate::benchdraw::launch_button(sk, th).child(
+                                    crate::benchdraw::zone(
+                                        self.wb_zones.clone(),
+                                        crate::workbench::Hit::Launch,
+                                    ),
+                                )),
+                                sk,
+                                th,
+                            ))
+                        })
+                        .when(shows.mirror, |d| {
+                            d.child(crate::benchdraw::conversation(&tail, sk, th))
+                        })
+                }
+            },
         };
 
         // Asked once, because the anchor and the scroll below both need it
         // and `reviewable()` walks the bench to answer.
         let reviewing = self.wb_review.is_some() && !self.bench.reviewable().is_empty();
-
-        // THE REVIEW TAKES THE WORKBENCH, rather than floating over it.
-        //
-        // It was an absolutely-positioned panel centred on the bench — which
-        // is what a flyout IS — and at a narrow pane it drew outside the
-        // bench's own box. Parker: *"the review question BROKE OUT OF THE MAIN
-        // WORKBENCH SPACE!!! it should have just taken OVER the main workbench
-        // space ... in a very obvious way like the other tabs, comments
-        // overview etc. do"*.
-        //
-        // A shelf is the thing it is most like: you go to it, it fills the
-        // space, and you come back. So it is drawn as one, in the body, inside
-        // the same box every other shelf is clipped and scrolled by — which is
-        // the part that makes breaking out of the bench impossible rather than
-        // merely unlikely. The old reasoning for the overlay was that the card
-        // underneath is a question somebody is part-way through answering; that
-        // is still true, and it survives because the review REPLACES the body
-        // without touching the selection, so CLOSE puts them back exactly
-        // where they were.
-        let body = match self.review_body(sk, th) {
-            Some(page) => page,
-            None => body,
-        };
 
         // Taken as a bool before the block is moved into the tree, so the
         // anchor far below can ask without borrowing it.

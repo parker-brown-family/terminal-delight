@@ -8789,6 +8789,41 @@ mod tests {
             .join("\n")
     }
 
+    /// The body that is DRAWN is the only body that is BUILT.
+    ///
+    /// [`crate::benchdraw::sel`] registers a run into the selection sink when
+    /// the element is CONSTRUCTED, and [`crate::benchdraw::resolve`] later asks
+    /// every registered run for its bounds — which `gpui::TextLayout` panics on
+    /// when the run was never laid out, and a run belonging to an element
+    /// nothing painted never is.
+    ///
+    /// So building the card and then discarding it in favour of the review
+    /// registered a whole body of runs that nothing would draw, and the next
+    /// frame aborted the window. It did, on the first build where the review
+    /// was reachable at all: *"click review answers... TD just crashes lol"*.
+    ///
+    /// `benchdraw`'s header states this invariant from the READING side —
+    /// resolve only from a paint-phase closure at the bottom of the tree, so
+    /// everything above is measured. This is the WRITING side of the same
+    /// invariant, and it is kept by SHAPE rather than by care: the two bodies
+    /// are arms of one match, so neither is built unless it is the one chosen.
+    /// An override applied afterwards cannot have that property, which is why
+    /// the assertion is about the shape and not about the outcome.
+    #[test]
+    fn only_the_body_that_is_drawn_is_built() {
+        let code = bench_code();
+        assert!(
+            code.contains("let body = match self.review_body("),
+            "the review must be chosen inside the body's own match, so the body \
+             it replaces is never constructed"
+        );
+        assert!(
+            !code.contains("None => body,"),
+            "a body built and then discarded registers selection runs that nothing \
+             will paint, and resolve panics asking them for bounds"
+        );
+    }
+
     /// REVIEW ANSWERS is offered on an ANSWERED card.
     ///
     /// Its guard is whether there is anything to review, and nothing else. It
