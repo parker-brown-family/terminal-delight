@@ -679,6 +679,16 @@ impl Round {
                         None => Answered::Waiting,
                     },
                     (false, [one]) => Answered::Chose(*one),
+                    // TICKS ARE NOT AN ANSWER. On a multi-select the picker
+                    // stays on the question while boxes go on and off; the
+                    // answer is the Submit below them. Reported as answered
+                    // the moment the first box was ticked, the card treated
+                    // itself as finished and took its own Submit away — so a
+                    // one-question multi-select became unanswerable from the
+                    // card that asked it, and the only live Submit left on the
+                    // bench was the screen-read twin's. Nothing is lost by
+                    // calling it open: the ticks are drawn on the options.
+                    (true, _) if !self.sent && self.ending.is_none() => Answered::Waiting,
                     (_, many) => Answered::Typed(
                         many.iter()
                             .filter_map(|n| q.options.get(*n))
@@ -1078,15 +1088,54 @@ impl State {
 
     /// An open hook question with these words, for the screen reader to merge
     /// its cursor into rather than presenting a second card.
+    ///
+    /// # A SUFFIX, not an equality
+    ///
+    /// The hook has a paragraph; the screen reader has one ROW.
+    /// [`crate::screenread::question_on_screen`] takes the nearest line above
+    /// the first option, so on any question the pane is too narrow to draw
+    /// whole it holds the LAST visual row and nothing else. The last row of a
+    /// wrapped string is a suffix of that string whether the wrap fell on a
+    /// space or inside a word, once [`fold`] has collapsed the whitespace —
+    /// so a suffix is the strongest test that can actually be made here, and
+    /// equality was a test that could only pass on short questions.
+    ///
+    /// Under equality the fold simply never happened on a long one: a second
+    /// card stood beside the first for the life of the round and both drew a
+    /// live Submit. Measured on a 254-character question in a pane about sixty
+    /// columns wide. Parker: *"I hit submit --- and then it asked AGAIN if I
+    /// would like to submit... JUST ONE SUBMIT please!"*
+    ///
+    /// The caller guarantees the reading is more than eight characters, so
+    /// there is no length floor here; a floor no caller can trip is a case
+    /// that cannot fail.
+    ///
+    /// # Why a ticked multi-select is still a candidate
+    ///
+    /// The other clause skips a question that has already been picked, so a
+    /// stale reading cannot re-arm one the person has dealt with — and *dealt
+    /// with* is what `picked` means on a SINGLE-select, where pressing an
+    /// option advances the picker to the next question. It is not what it
+    /// means on a multi-select, where ticking a box leaves you on the same
+    /// question with the Submit still ahead of you. Skipping there mints a
+    /// twin of the question the picker is painting right now.
     pub fn matching(&self, question_text: &str) -> Option<SurfaceId> {
         let want = fold(question_text);
-        self.rounds.iter().filter(|r| !r.closed()).find_map(|r| {
-            r.questions
-                .iter()
-                .enumerate()
-                .find(|(i, q)| r.picked[*i].is_none() && fold(&q.question) == want)
-                .map(|(i, _)| r.surface_id(i))
-        })
+        if want.is_empty() {
+            return None;
+        }
+        self.rounds
+            .iter()
+            .filter(|r| !r.closed() && !r.sent)
+            .find_map(|r| {
+                r.questions
+                    .iter()
+                    .enumerate()
+                    .find(|(i, q)| {
+                        (q.multi || r.picked[*i].is_none()) && fold(&q.question).ends_with(&want)
+                    })
+                    .map(|(i, _)| r.surface_id(i))
+            })
     }
 
     /// The screen reader saw the picker for this card, and where its highlight is.
@@ -2277,6 +2326,126 @@ mod tests {
                 label: String::new()
             },
             "no hook is waiting and no picker painted: a sentence"
+        );
+    }
+
+    /// Verbatim off pane 13 on 2026-09-21 — the question that produced two
+    /// Submit buttons. 254 characters, in a pane about sixty columns wide.
+    const A_QUESTION_TOO_LONG_FOR_THE_PANE: &str = "On 2026-09-15 (`dbb39cf`, the incinerator-bay commit) the name box was deliberately stopped from opening on creation, with the reason \"the next move is usually using the terminal it just made\". Which creation should open straight into its name box again?";
+
+    fn a_long_multi_select() -> Inbound {
+        Inbound::Question {
+            at_ms: None,
+            tool_use_id: "toolu_01LONG".into(),
+            questions: vec![Asked {
+                question: A_QUESTION_TOO_LONG_FOR_THE_PANE.into(),
+                header: Some("Which one".into()),
+                multi: true,
+                options: [
+                    "A new project and a new group",
+                    "Also a plain new tab",
+                    "Only a plain new tab",
+                ]
+                .into_iter()
+                .map(|label| AskedOption {
+                    label: label.into(),
+                    description: None,
+                    preview: None,
+                })
+                .collect(),
+            }],
+            deadline_ms: None,
+        }
+    }
+
+    /// The screen reader gets one ROW of a paragraph, so the fold has to be a
+    /// suffix test. Under equality it missed on every question the pane was
+    /// too narrow to draw whole, and the twin it minted carried a second
+    /// Submit.
+    #[test]
+    fn a_question_too_long_for_the_pane_still_matches_the_card_that_asked_it() {
+        let mut st = State::new();
+        st.take(a_long_multi_select(), 10);
+        let card = SurfaceId("ask-hook-toolu_01LONG-0".into());
+
+        // A terminal breaks on a space when it can...
+        assert_eq!(
+            st.matching("Which creation should open straight into its name box again?"),
+            Some(card.clone()),
+            "the last wrapped row is the only thing the screen reader has"
+        );
+        // ...and inside a word when it cannot. Both are suffixes.
+        assert_eq!(
+            st.matching("ht into its name box again?"),
+            Some(card.clone()),
+            "a wrap mid-word is still a suffix once the whitespace is folded"
+        );
+        // The whole thing, for a pane wide enough to show it.
+        assert_eq!(
+            st.matching(A_QUESTION_TOO_LONG_FOR_THE_PANE),
+            Some(card),
+            "equality is a special case of suffix, not a different rule"
+        );
+        // And it is still a TEST: a reading of something else finds nothing.
+        assert_eq!(st.matching("Which drink?"), None);
+        assert_eq!(st.matching("   "), None, "an empty reading matches nothing");
+    }
+
+    /// Ticking a box leaves the picker on the same question, so the card must
+    /// stay open and keep its Submit — and the fold must keep finding it.
+    ///
+    /// Both halves of one bug. Reported as answered, the card took its own
+    /// Submit away; skipped by the fold, a twin appeared carrying one. Between
+    /// them, the only live Submit on the bench belonged to a card the channel
+    /// did not own.
+    #[test]
+    fn a_multi_select_is_not_answered_until_it_is_submitted() {
+        let mut st = State::new();
+        st.take(a_long_multi_select(), 10);
+        let card = SurfaceId("ask-hook-toolu_01LONG-0".into());
+
+        let answer_now = |st: &State| {
+            let Kind::Question(q) = &st.round_surfaces(&card, 0)[0].kind else {
+                panic!()
+            };
+            q.answer.clone()
+        };
+
+        assert_eq!(answer_now(&st), Answered::Waiting, "nothing ticked");
+        assert_eq!(st.press(&card, 0, 11), Press::Recorded, "a tick records");
+        assert_eq!(
+            answer_now(&st),
+            Answered::Waiting,
+            "a tick is not an answer — the card keeps its Submit"
+        );
+        assert_eq!(
+            st.matching(A_QUESTION_TOO_LONG_FOR_THE_PANE),
+            Some(card.clone()),
+            "the picker has not moved on, so neither has the fold"
+        );
+        // The tick IS visible — on the option, where it belongs.
+        let Kind::Question(q) = &st.round_surfaces(&card, 0)[0].kind else {
+            panic!()
+        };
+        assert_eq!(q.options[0].checked, Some(true));
+        assert_eq!(q.options[1].checked, Some(false));
+
+        // Ending the round is what settles it.
+        st.take(
+            Inbound::Answered {
+                tool_use_id: "toolu_01LONG".into(),
+                answers: None,
+            },
+            12,
+        );
+        assert!(
+            !matches!(answer_now(&st), Answered::Waiting),
+            "once the round has ended the card is finished"
+        );
+        assert_eq!(
+            st.matching(A_QUESTION_TOO_LONG_FOR_THE_PANE),
+            None,
+            "and a stale reading cannot re-arm it"
         );
     }
 
