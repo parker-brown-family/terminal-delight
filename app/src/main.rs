@@ -7528,6 +7528,28 @@ impl Workspace {
         )
     }
 
+    /// Send the open round, however much of it was answered — the SUBMIT tab,
+    /// pressed from a socket.
+    ///
+    /// It exists for the reason `bench_choose` does, and more urgently: since
+    /// a round with a navigator stopped posting itself on its last answer,
+    /// this tab is the ONLY way such a round can ever go out. A capability
+    /// with one channel and no headless reach cannot be gated, and the keys
+    /// road's defect lived in exactly that gap — every test of `submit`
+    /// walked the file road, because the file road was the only one a test
+    /// could get to.
+    ///
+    /// Qualifies on the same predicate the tab is drawn under, so this lands
+    /// where the pointer would land rather than beside it.
+    pub(crate) fn bench_submit(&mut self, cx: &mut Context<Self>) -> String {
+        self.bench_apply(
+            cx,
+            |v| v.bench.face() == workbench::Face::Workbench && v.bench_can_submit(),
+            "no pane is showing a bench with a round it can send",
+            |view, cx| view.bench_submit_round(cx),
+        )
+    }
+
     /// Every leaf, the active tab's first, plus which ones are on screen.
     /// Every leaf, the active tab's first, plus which ones are on screen and
     /// where the FOCUSED pane sits in that order. The pick itself is

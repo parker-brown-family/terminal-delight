@@ -611,6 +611,20 @@ impl Round {
             .all(|p| p.as_ref().is_some_and(|v| !v.is_empty()))
     }
 
+    /// Not one question of this round got an answer.
+    ///
+    /// The opposite end of [`Self::complete`], and a DIFFERENT fact from "not
+    /// complete": a round with two of three answered is incomplete and carries
+    /// real decisions, while this one carries none at all. Submitting the
+    /// first is a person sending what they had an opinion about; submitting
+    /// the second is a person declining the whole round, and the bench draws
+    /// them differently because they are different acts.
+    pub fn nothing_picked(&self) -> bool {
+        self.picked
+            .iter()
+            .all(|p| p.as_ref().is_none_or(|v| v.is_empty()))
+    }
+
     /// The map the harness's own answer channel takes: question text to the
     /// chosen label, several labels joined by `", "` on a multi-select.
     /// `None` until every question is answered — a partial map would answer
@@ -750,7 +764,31 @@ impl Round {
                     // otherwise overwrite a deliberate blank with "how is
                     // unavailable" — the bench forgetting something it watched
                     // a person do, and replacing it with a shrug.
-                    (_, []) if self.sent => Answered::Skipped,
+                    (_, []) if self.sent => {
+                        // NOTHING AT ALL IS A REFUSAL, not three separate
+                        // decisions to leave a question blank.
+                        //
+                        // `Skipped` says a person looked at this question and
+                        // chose to send without it, which is true of a blank
+                        // beside an answer and false of a round where nothing
+                        // was picked — there the one decision was *go on
+                        // without me*, and drawing it as three considered
+                        // omissions invents deliberation that did not happen.
+                        // [`Answered::Cancelled`] already means exactly this
+                        // and already reads "cancelled · nothing was
+                        // answered".
+                        //
+                        // Read here rather than off `ending`, for the same
+                        // reason the whole arm is: the harness's own record
+                        // lands a moment later and sets `ending` to
+                        // `Answered`, which would overwrite what the bench
+                        // watched a person do with a shrug.
+                        if self.nothing_picked() {
+                            Answered::Cancelled
+                        } else {
+                            Answered::Skipped
+                        }
+                    }
                     // Nothing picked. WHY nothing was picked is the whole
                     // reading: a round still open is waiting on a person, a
                     // round that returned answered this question in a shape we
@@ -1456,12 +1494,33 @@ impl State {
     /// - **File** — the hook is holding the picker, so the map goes to disk
     ///   and the tool returns it. The road this button was built for.
     /// - **Keys** — no hold, but the picker is painted and the screen reader
-    ///   knows where its own Submit sits. Aim at it. Every answer already went
-    ///   down the pseudoterminal as it was made, so this is the last keystroke
-    ///   rather than the whole round.
+    ///   knows where its own button sits. Every answer already went down the
+    ///   pseudoterminal as it was made, so on a COMPLETE round that button is
+    ///   the round's own Submit and this is the last keystroke. On a partial
+    ///   round it is not — see below.
     /// - **Sentence** — nobody is holding anything and there is no picker to
     ///   drive. Say what was chosen in a line the agent reads next turn, with
     ///   the blanks named aloud (see [`Round::spoken_answers`]).
+    ///
+    /// # A PARTIAL ROUND NEVER GOES BY KEYS
+    ///
+    /// The picker calls its own button `Submit` on the last question of a
+    /// round and `Next` on every other one — [`crate::screenread`] matches all
+    /// three spellings and records only the POSITION. So a keystroke aimed at
+    /// it from question two of three presses `Next`: the picker advances, the
+    /// round does not go out, and the bench has just set the flag that turns
+    /// every remaining blank into [`Answered::Skipped`] and takes the chips
+    /// away. The agent stays blocked on question three with nothing left on
+    /// the bench that can answer it.
+    ///
+    /// Measured on `cdb64925` before this clause existed: `submit` on a round
+    /// with both questions blank returned
+    /// `Keys { bytes: [1b 5b 42 × 3, 0d], note: "submitted the round" }` and
+    /// both questions came back `Skipped`.
+    ///
+    /// So the keystroke is used only where it really is the round's ending,
+    /// and a partial round falls to words — which the sentence road already
+    /// names blanks in, and which cannot half-press anybody's menu.
     pub fn submit(&mut self, id: &SurfaceId, now_ms: u64) -> Press {
         let Some((ri, _)) = self.owns(id) else {
             return Press::Refused("not a question this channel carried".into());
@@ -1490,7 +1549,11 @@ impl State {
             },
             Route::Keys => {
                 let (at, submit) = cursor.unwrap_or((0, None));
-                match submit {
+                // BOTH, or words. `submit` is a row the screen reader saw, and
+                // completeness is what makes that row the round's Submit
+                // rather than its Next. Either one alone presses something
+                // nobody chose.
+                match submit.filter(|_| round.complete()) {
                     Some(target) => {
                         let bytes = crate::workbench::menu_keys(target, at);
                         self.cursors.remove(id);
@@ -1499,9 +1562,10 @@ impl State {
                             note: "submitted the round".into(),
                         }
                     }
-                    // The picker is up and has no Submit row we can see.
-                    // Guessing a position would drive somebody's menu to a row
-                    // nobody chose, so this falls to words instead.
+                    // The picker is up and either has no button we can see or
+                    // is not on the last question. Guessing a position would
+                    // drive somebody's menu to a row nobody chose, so this
+                    // falls to words instead.
                     None => Press::Sentence {
                         label: round.spoken_answers(),
                     },
@@ -3159,5 +3223,142 @@ mod tests {
         }
         assert_eq!(released.as_deref(), Some("answered"));
         let _ = std::fs::remove_dir_all(&state);
+    }
+
+    /// A PARTIAL ROUND NEVER GOES OUT AS ONE KEYSTROKE.
+    ///
+    /// The picker calls its own button `Submit` on the last question of a
+    /// round and `Next` on every other one, and the screen reader records only
+    /// where it sits. So a keystroke aimed at it from an unanswered question
+    /// presses `Next`: the picker advances, the round does not go, and the
+    /// bench has just set the flag that blanks every remaining question and
+    /// takes the chips away. The agent stays blocked with nothing on the bench
+    /// that can answer it.
+    ///
+    /// Measured on `cdb64925`, before the completeness clause:
+    /// `Keys { bytes: [1b 5b 42 × 3, 0d], note: "submitted the round" }`, and
+    /// both questions came back `Skipped`.
+    ///
+    /// Two halves, because either alone would pass on the broken code: that a
+    /// partial round says it in words, and that a COMPLETE one still sends the
+    /// keystroke — a fix that refused the keys road outright would take away
+    /// the only exit a finished round has on that road.
+    #[test]
+    fn a_partial_round_is_spoken_rather_than_half_pressed_into_the_picker() {
+        let mut st = State::new();
+        let ev = Inbound::parse(&question_event()).unwrap();
+        let Effect::Present(cards) = st.take(ev, 1_000) else {
+            panic!()
+        };
+        let first = cards[0].id.clone();
+        // No hook hold, so this is the keys road; the screen reader has seen
+        // the picker's button at row 3.
+        st.saw_cursor(&first, 0, Some(3));
+        match st.submit(&first, 5_000) {
+            Press::Sentence { label } => {
+                assert!(
+                    label.contains("left blank"),
+                    "the blanks have to be named aloud: {label}"
+                );
+            }
+            other => panic!("a partial round must not drive the picker: {other:?}"),
+        }
+        // And nothing of it reads as a considered omission, because nothing
+        // was considered — see `nothing_picked`.
+        let after = st.round_surfaces(&first, 5_100);
+        for s in &after {
+            let Kind::Question(q) = &s.kind else { panic!() };
+            assert_eq!(q.answer, Answered::Cancelled);
+        }
+
+        // THE COMPLETE ROUND STILL GOES BY KEYS. Every answer already went
+        // down the pseudoterminal as it was made, so the picker is on the last
+        // question and its button really is the round's Submit.
+        let mut st = State::new();
+        let Effect::Present(cards) = st.take(Inbound::parse(&question_event()).unwrap(), 1_000)
+        else {
+            panic!()
+        };
+        let single = cards[0].id.clone();
+        let multi = cards[1].id.clone();
+        st.saw_cursor(&single, 0, Some(3));
+        st.saw_cursor(&multi, 0, Some(3));
+        assert!(matches!(st.press(&single, 1, 1_100), Press::Keys { .. }));
+        assert_eq!(st.press(&multi, 0, 1_101), Press::Recorded, "a tick");
+        assert!(matches!(st.press(&multi, 2, 1_102), Press::Keys { .. }));
+        // A press spends its cursor; the next sweep supplies another, which is
+        // what makes the round sendable by keys at all.
+        st.saw_cursor(&multi, 0, Some(3));
+        assert!(
+            matches!(st.submit(&multi, 1_200), Press::Keys { .. }),
+            "a finished round still ends with the picker's own Submit"
+        );
+    }
+
+    /// A ROUND SENT WITH NOTHING IN IT IS A REFUSAL, not three omissions.
+    ///
+    /// `Skipped` says a person looked at this question and chose to send
+    /// without it. That is true of a blank beside an answer and false of a
+    /// round where nothing was picked, where the one decision was *go on
+    /// without me*. Drawing it as three considered omissions invents
+    /// deliberation nobody performed, and `Cancelled` already says exactly the
+    /// right thing.
+    #[test]
+    fn a_round_submitted_with_nothing_picked_reads_as_refused() {
+        let mut st = State::new();
+        let ev = Inbound::parse(&question_event()).unwrap();
+        let Effect::Present(cards) = st.take(ev, 1_000) else {
+            panic!()
+        };
+        let first = cards[0].id.clone();
+        st.take(
+            Inbound::Waiting {
+                tool_use_id: "toolu_01ABC".into(),
+                until_ms: 600_000,
+            },
+            1_001,
+        );
+        // The tab is still offered — a person saying "none of these" in one
+        // press is a real gesture and counting answers would hide it.
+        assert!(st.submittable(&first));
+        assert!(matches!(
+            st.submit(&first, 1_500),
+            Press::WriteAnswers { .. }
+        ));
+        for s in st.round_surfaces(&first, 1_600) {
+            let Kind::Question(q) = &s.kind else { panic!() };
+            assert_eq!(q.answer, Answered::Cancelled, "{:?}", s.id);
+        }
+
+        // AND THE PARTIAL ROUND IS UNCHANGED, which is the half that keeps
+        // this from being a rename: one answer given and one left means the
+        // blank really was skipped, and it must not read as a refusal.
+        let mut st = State::new();
+        let Effect::Present(cards) = st.take(Inbound::parse(&question_event()).unwrap(), 1_000)
+        else {
+            panic!()
+        };
+        let first = cards[0].id.clone();
+        st.take(
+            Inbound::Waiting {
+                tool_use_id: "toolu_01ABC".into(),
+                until_ms: 600_000,
+            },
+            1_001,
+        );
+        assert_eq!(st.press(&first, 1, 1_500), Press::Recorded);
+        assert!(matches!(
+            st.submit(&first, 1_600),
+            Press::WriteAnswers { .. }
+        ));
+        let after = st.round_surfaces(&first, 1_700);
+        let Kind::Question(given) = &after[0].kind else {
+            panic!()
+        };
+        let Kind::Question(blank) = &after[1].kind else {
+            panic!()
+        };
+        assert_eq!(given.answer, Answered::Chose(1));
+        assert_eq!(blank.answer, Answered::Skipped);
     }
 }

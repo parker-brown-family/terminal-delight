@@ -2080,24 +2080,22 @@ impl TerminalView {
     /// button is absent rather than present and refusing. A control that can
     /// only say no is worse than no control.
     ///
-    /// **`selected()` then `waiting_question()`, and the fallback is the half
-    /// that matters.** A question reaches a person two ways: as a card they
-    /// opened from the rail, and as the block pinned below the body that
-    /// arrived in front of them — and the second is the commoner, because it
-    /// is what a pane does the moment an agent stops to ask. Both draw the
-    /// same chips through the same builder, so a gate reading the SELECTION
-    /// alone would put the round's only submit on the copy a person had to go
-    /// looking for, and leave the copy in front of them with no way to end the
-    /// round. That is the exact shape of the defect this resolution already
-    /// exists for: `Bench::act` has answered both ways for a year, and it was
-    /// the DRAWING that kept falling behind it.
+    /// **`submittable` is asked of EACH candidate, not of the first one** —
+    /// the rule is [`crate::workbench::first_sendable`], held there rather
+    /// than here so it has a test. This read
+    /// `selected().or_else(waiting_question())` and then asked about whatever
+    /// that returned, which drew the tab on the pinned block and refused the
+    /// press.
+    ///
+    /// The ANSWERING half of the same case is still the house resolution in
+    /// `Bench::act` and `bench_choose`, and is older than this function —
+    /// `parker-brown-family/terminal-delight#694`.
     fn bench_round_open(&self) -> Option<crate::surface::SurfaceId> {
-        let id = &self
-            .bench
-            .selected()
-            .or_else(|| self.bench.waiting_question())?
-            .id;
-        self.wb_channel.submittable(id).then(|| id.clone())
+        crate::workbench::first_sendable(
+            self.bench.selected(),
+            self.bench.waiting_question(),
+            |id| self.wb_channel.submittable(id),
+        )
     }
 
     /// SUBMIT ANSWERS, pressed.
@@ -2107,7 +2105,17 @@ impl TerminalView {
     /// arguing with a decision the person has already made. Parker: *"NO
     /// CONFIRMATION if the person FAILED to answer questions... a blank
     /// question is common practice, this will not add friction"*.
-    fn bench_submit_round(&mut self, cx: &mut Context<Self>) {
+    /// Is there a round this pane could send right now?
+    ///
+    /// The control socket's qualifier, and deliberately the SAME question the
+    /// tab is drawn under rather than a second reading of it — `ctl bench
+    /// submit` has to land where the pointer would land or it is not a test of
+    /// the button, it is a second implementation of it.
+    pub(crate) fn bench_can_submit(&self) -> bool {
+        self.bench_round_open().is_some()
+    }
+
+    pub(crate) fn bench_submit_round(&mut self, cx: &mut Context<Self>) {
         use crate::surface::{Op, Post};
         let Some(id) = self.bench_round_open() else {
             return;

@@ -3030,6 +3030,42 @@ pub fn draws_waiting_block(
     showing != Some(waiting) && !same_round
 }
 
+/// Which of the two places a question reaches a person can answer a press?
+///
+/// The card they opened from the rail, or the block pinned below the body —
+/// and `can` is whatever the caller needs to be true of it, which for the
+/// SUBMIT tab is [`crate::channel::State::submittable`].
+///
+/// # ASK EACH ONE, NOT JUST THE FIRST
+///
+/// The house resolution is `selected().or_else(waiting_question())`, which
+/// picks a surface and then asks about whatever it picked. That is right where
+/// the question is only *which surface*, and wrong for a control whose DRAWING
+/// asks per-surface — because the two then disagree for one ordinary case: a
+/// person reading a reply while a round waits.
+///
+/// There, the selection is the reply, the fallback never runs, the answer is
+/// about the reply, and the press does nothing — while the card's gate and the
+/// pinned block's gate, which each ask about their own surface, have both
+/// already said yes. So the tab was drawn on the block and silently refused. A
+/// control that is absent tells the truth; one that is drawn and declines does
+/// not, which is the argument this file already makes against the gallery
+/// button.
+///
+/// Held here rather than in the pane so it has a test, the same way
+/// [`draws_waiting_block`] is.
+pub fn first_sendable(
+    selected: Option<&Surface>,
+    waiting: Option<&Surface>,
+    can: impl Fn(&SurfaceId) -> bool,
+) -> Option<SurfaceId> {
+    [selected, waiting]
+        .into_iter()
+        .flatten()
+        .find(|s| can(&s.id))
+        .map(|s| s.id.clone())
+}
+
 /// Are these two surfaces questions of the same round?
 ///
 /// Compared on the round's step LIST rather than on a round id, because a
@@ -9332,5 +9368,66 @@ mod tests {
         };
         let _ = spans(&p, &s);
         let _ = copy_text(&p, &s);
+    }
+
+    /// THE PINNED QUESTION IS STILL FOUND WHEN AN UNRELATED CARD IS OPEN.
+    ///
+    /// The state: a person reading a reply while a round waits. The pinned
+    /// block draws the question — the rule for that compares decision nodes,
+    /// and a reply is not one — and the block's own submit gate asks about the
+    /// question's id, so the SUBMIT tab appears on it.
+    ///
+    /// The press gate used to read `selected().or_else(waiting_question())`
+    /// and then ask about whatever that returned, so with a reply selected the
+    /// fallback never ran, the answer was about the reply, and the tab was
+    /// drawn and silently refused. Asserted here rather than in `pane` because
+    /// this is the resolution, and `pane::bench_round_open` now asks
+    /// `submittable` of each candidate in turn against exactly this pair.
+    ///
+    /// The ANSWERING half is still the old resolution in [`Bench::act`] and
+    /// `bench_choose` — `parker-brown-family/terminal-delight#694`.
+    #[test]
+    fn an_open_reply_does_not_swallow_the_question_pinned_under_it() {
+        let mut b = Bench::new();
+        b.apply(asked("q", None));
+        b.apply(response("r", "a reply"));
+        b.select(&SurfaceId("r".into()));
+
+        let waiting = b.waiting_question().map(|s| s.id.clone());
+        assert_eq!(waiting, Some(SurfaceId("q".into())));
+        assert!(
+            draws_waiting_block(
+                b.showing().map(|s| &s.id),
+                &SurfaceId("q".into()),
+                in_same_round(b.showing(), b.waiting_question()),
+            ),
+            "the block is drawn, so something on it has to be pressable"
+        );
+
+        // `can` stands in for `submittable`, which is not reachable from this
+        // module — only a question of a hook-carried round can be sent, and a
+        // reply never can.
+        let can = |id: &SurfaceId| id.0.starts_with('q');
+        assert_eq!(
+            first_sendable(b.selected(), b.waiting_question(), can),
+            waiting,
+            "the press has to land on the question the block drew"
+        );
+
+        // And the selection still WINS when it can answer, which is the half
+        // that keeps a person on the card they opened instead of jumping them
+        // to whichever question is open.
+        b.apply(asked("q2", None));
+        b.select(&SurfaceId("q2".into()));
+        assert_eq!(
+            first_sendable(b.selected(), b.waiting_question(), can),
+            Some(SurfaceId("q2".into()))
+        );
+
+        // Neither can: nothing to press, and no guess at a third surface.
+        assert_eq!(
+            first_sendable(b.selected(), b.waiting_question(), |_| false),
+            None
+        );
     }
 }
