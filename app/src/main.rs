@@ -21396,40 +21396,80 @@ impl Workspace {
             .text_size(px(8.5 * s))
             .text_color(th.accent.alpha(0.8))
             .child("esc or click outside to close");
+        self.over_the_glass(
+            div()
+                .id("eng-table-panel")
+                .absolute()
+                .left(px(12. * s))
+                .top(px(50. * s))
+                .max_h(px(self.tray_max_h(50. * s)))
+                .overflow_x_hidden()
+                .overflow_y_scroll()
+                .rounded(sk.rad_raw(8.))
+                .border_2()
+                .border_color(th.accent.alpha(0.85))
+                .bg(darken(th.surface, 0.45))
+                .shadow(float_shadows(th.accent))
+                // a click inside the panel is the panel's, not the scrim's
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|_, _: &MouseDownEvent, _w, cx| cx.stop_propagation()),
+                )
+                .child(rows.child(footer)),
+            |ws, window, cx| {
+                ws.eng_table = false;
+                ws.focus_active(window, cx);
+                cx.notify();
+            },
+            cx,
+        )
+    }
+
+    /// A surface drawn OVER the glass: the scrim that closes it and, by
+    /// construction, a flat screen underneath it.
+    ///
+    /// Every overlay in this window — a menu, a picker, a table — is a scrim
+    /// and a panel, and every one of them has to flatten the CRT warp for the
+    /// frame it is up, because the warp is a screen-space post-pass that bends
+    /// whatever pixels land inside a pane's tube no matter which element drew
+    /// them. That rule lived in a list in `render` that each new overlay had
+    /// to be added to, beside two sibling lists (the keyboard-owner predicate
+    /// and `close_popups`) it also had to join, and a hand-kept table a guard
+    /// read. The project rail's table joined two of the four and shipped bent.
+    /// Parker: *"how many times have we fixed this exact problem … the solution
+    /// has to be code."*
+    ///
+    /// So the property is attached to the one thing an overlay cannot avoid
+    /// having — its scrim. Build the scrim here and the glass is flat for this
+    /// frame; there is no list to join and nothing to remember. The guard
+    /// `a_scrim_over_the_glass_flattens_it_by_construction` refuses any
+    /// occluding scrim in this file that did not come from here, and freezes
+    /// the ones that predate it.
+    ///
+    /// Runs during element construction, before any pane paints, which is why
+    /// [`warp::flatten`] is sticky for the frame rather than an argument.
+    fn over_the_glass<F, P: gpui::IntoElement>(
+        &self,
+        panel: P,
+        on_close: F,
+        cx: &mut Context<Self>,
+    ) -> gpui::Div
+    where
+        F: Fn(&mut Workspace, &mut Window, &mut Context<Workspace>) + 'static,
+    {
+        warp::flatten();
         div()
             .absolute()
             .inset_0()
             .occlude()
             .on_mouse_down(
                 MouseButton::Left,
-                cx.listener(|ws, _: &MouseDownEvent, window, cx| {
+                cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
                     cx.stop_propagation();
-                    ws.eng_table = false;
-                    ws.focus_active(window, cx);
-                    cx.notify();
+                    on_close(ws, window, cx);
                 }),
             )
-            .child(
-                div()
-                    .id("eng-table-panel")
-                    .absolute()
-                    .left(px(12. * s))
-                    .top(px(50. * s))
-                    .max_h(px(self.tray_max_h(50. * s)))
-                    .overflow_x_hidden()
-                    .overflow_y_scroll()
-                    .rounded(sk.rad_raw(8.))
-                    .border_2()
-                    .border_color(th.accent.alpha(0.85))
-                    .bg(darken(th.surface, 0.45))
-                    .shadow(float_shadows(th.accent))
-                    // a click inside the panel is the panel's, not the scrim's
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|_, _: &MouseDownEvent, _w, cx| cx.stop_propagation()),
-                    )
-                    .child(rows.child(footer)),
-            )
+            .child(panel)
     }
 
     /// The ink a tone is drawn in. Bound here and nowhere else, so the model
@@ -30478,6 +30518,99 @@ mod tests {
             seed[opened..].contains("Naming::Quiet"),
             "a fresh window opens its first tab's name box over the first-run hint, \
              which the next lines are about to write into that same field"
+        );
+    }
+
+    /// A scrim over the glass flattens it by construction, or the build fails.
+    ///
+    /// The warp is a screen-space post-pass: a panel drawn over a pane's tube
+    /// is bent by it no matter how flat its own border makes it look, and the
+    /// only remedy is to flatten the glass for the frame. That remedy was a
+    /// list in `render` that every new overlay had to join — beside the
+    /// keyboard-owner predicate, `close_popups`, and a hand-kept table — and
+    /// every agent that ever added a menu missed at least one of the four.
+    /// The project rail's table missed the one that shows.
+    ///
+    /// The code answer: flatness rides the scrim. `over_the_glass` is the one
+    /// builder of an occluding scrim, and it calls `warp::flatten()`. This
+    /// test walks every `.occlude()` in the shipped source and refuses any
+    /// that is not inside that builder or inside one of the sites that predate
+    /// it — whose counts are FROZEN, so a scrim added inline anywhere fails
+    /// here, by name, before it can ship bent.
+    ///
+    /// Comment-stripped, so this paragraph cannot satisfy its own grep.
+    #[test]
+    fn a_scrim_over_the_glass_flattens_it_by_construction() {
+        let code = shipped_code();
+        // every occluding scrim, attributed to the fn that draws it
+        let mut sites: Vec<(String, usize)> = Vec::new();
+        let mut from = 0;
+        while let Some(i) = code[from..].find(".occlude()") {
+            let pos = from + i;
+            // the nearest header above the scrim, whatever its visibility —
+            // taking the first spelling that matched attributed a scrim under
+            // a `pub fn` to the plain `fn` before it
+            let head = ["\n    fn ", "\n    pub fn ", "\n    pub(crate) fn "]
+                .iter()
+                .filter_map(|h| code[..pos].rfind(h))
+                .max()
+                .expect("an occlude outside any method");
+            let name = code[head..]
+                .trim_start()
+                .trim_start_matches("pub(crate) ")
+                .trim_start_matches("pub ")
+                .trim_start_matches("fn ")
+                .split(['(', '<'])
+                .next()
+                .unwrap()
+                .to_string();
+            match sites.iter_mut().find(|(n, _)| *n == name) {
+                Some((_, c)) => *c += 1,
+                None => sites.push((name, 1)),
+            }
+            from = pos + 1;
+        }
+        // The sites that predate the builder. Each is flattened by the
+        // suppression list in `render`, which its own guards check. FROZEN:
+        // a count that grew means a scrim was added inline instead of through
+        // `over_the_glass`, and a name not in this table means a new one.
+        let legacy: &[(&str, usize)] = &[
+            ("savings_shell", 1),
+            ("render_bar_menu", 1),
+            ("render_find", 1),
+            ("render_lang_picker", 1),
+            ("render_agent_launcher", 2),
+            ("render_logo_picker", 1),
+            ("render_paint_outer", 1),
+            ("render_rail", 1),
+            ("render", 5),
+        ];
+        assert!(
+            sites.iter().any(|(n, _)| n == "over_the_glass"),
+            "over_the_glass no longer draws the scrim — the builder is the rule"
+        );
+        for (name, count) in &sites {
+            if name == "over_the_glass" {
+                continue;
+            }
+            let frozen = legacy.iter().find(|(n, _)| n == name).map(|(_, c)| *c);
+            assert_eq!(
+                frozen,
+                Some(*count),
+                "`{name}` draws {count} occluding scrim(s) that were not built through \
+                 `over_the_glass`. A scrim built anywhere else sits over a pane's tube \
+                 and is bent by the warp pass unless somebody also remembers the \
+                 suppression list — which is the mistake this test exists to end. \
+                 Build it with `self.over_the_glass(panel, on_close, cx)` and the glass \
+                 is flat by construction."
+            );
+        }
+        // and the builder really does flatten
+        let at = code.find("fn over_the_glass").expect("the builder");
+        let end = code[at..].find("\n    }\n").expect("end of fn") + at;
+        assert!(
+            code[at..end].contains("warp::flatten();"),
+            "over_the_glass draws a scrim without flattening the glass under it"
         );
     }
 
