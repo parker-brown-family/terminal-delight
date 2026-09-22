@@ -11567,6 +11567,29 @@ impl Workspace {
             .unwrap_or_default()
     }
 
+    /// Every project's reading, for the MCP snapshot — the active one flagged,
+    /// each with its own afterglow. What `engineering_state` answers with.
+    fn eng_reports(&self) -> Vec<engstate::Report> {
+        let active = self.place_of(self.active).project;
+        let now = Instant::now();
+        self.eng
+            .iter()
+            .map(|(key, st)| {
+                let glow: Vec<String> = self
+                    .eng_events
+                    .get(key)
+                    .map(|log| {
+                        log.iter()
+                            .filter(|(at, _)| now.duration_since(*at) < ENG_AFTERGLOW)
+                            .map(|(_, e)| e.clone())
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                st.report(*key == active, &glow)
+            })
+            .collect()
+    }
+
     /// Every frame the ticker rotates through: the reading's own, then one
     /// for the afterglow when there is any. One function, so the clock and
     /// the renderer count the same frames.
@@ -21102,7 +21125,7 @@ impl Workspace {
             .flex_col()
             .gap(px(3. * s))
             .p(px(8. * s))
-            .min_w(px(520. * s));
+            .min_w(px(700. * s));
         // the heading: what this is a table OF, and how fresh it is
         let name = self
             .place_of(self.active)
@@ -21150,11 +21173,11 @@ impl Workspace {
                 .flex()
                 .flex_row()
                 .gap(px(8. * s))
-                .child(cell(150., muted, "line".into()))
+                .child(cell(210., muted, "line".into()))
                 .child(cell(60., muted, "".into()))
                 .child(cell(110., muted, "uncommitted".into()))
                 .child(cell(60., muted, "vs main".into()))
-                .child(cell(160., muted, "writing here".into())),
+                .child(cell(200., muted, "writing here".into())),
         );
         let main_name = st
             .primary()
@@ -21201,11 +21224,11 @@ impl Workspace {
                     .flex()
                     .flex_row()
                     .gap(px(8. * s))
-                    .child(cell(150., th.text, line))
+                    .child(cell(210., th.text, line))
                     .child(cell(60., kind_ink, kind.into()))
                     .child(cell(110., dirt_ink, dirt))
                     .child(cell(60., th.text, vs))
-                    .child(cell(160., th.text, who.join(", "))),
+                    .child(cell(200., th.text, who.join(", "))),
             );
         }
         // the drift and the panes in no repository

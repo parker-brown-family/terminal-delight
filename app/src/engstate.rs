@@ -41,6 +41,7 @@
 //! meant to be called from the background executor; `main.rs` gathers the
 //! writers on the main thread, hands them here, and applies the result back.
 
+use serde::Serialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -93,13 +94,40 @@ pub struct Checkout {
     pub ahead_behind: Option<(u32, u32)>,
     /// Unix seconds of the last commit on this checkout's HEAD.
     pub last_commit: Option<u64>,
-    /// The panes operating here. Two or more is a SHARED checkout.
+    /// The panes operating here. Two or more is a SHARED checkout. Empty for
+    /// an idle worktree — one on disk that nothing is in.
     pub writers: Vec<Writer>,
+    /// The branch this one tracks, if it tracks one.
+    pub upstream: Option<String>,
+    /// Commits here that its upstream does not have. `None` when there is no
+    /// upstream — which is its own landing item, not zero unpushed.
+    pub unpushed: Option<u32>,
+    /// Every file this line changes against main — committed since the merge
+    /// base, and uncommitted — sorted, unique. `None` = not measured. For the
+    /// main line itself, only the uncommitted files.
+    pub touched: Option<Vec<String>>,
+    /// Whether this line would merge into main today. A dry run, so it can be
+    /// asked every scan without touching a working tree.
+    pub merge: Option<Merge>,
+}
+
+/// What `git merge-tree` said about landing a line on main.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Merge {
+    /// Nothing to do: this IS the main line, or it is not ahead of it.
+    Nothing,
+    Clean,
+    /// The files that would conflict.
+    Conflicts(Vec<String>),
 }
 
 impl Checkout {
     pub fn shared(&self) -> bool {
         self.writers.len() > 1
+    }
+    /// A worktree on disk that no pane is in.
+    pub fn idle(&self) -> bool {
+        self.writers.is_empty()
     }
     /// Does this checkout carry uncommitted work? `None` when unmeasured.
     pub fn is_dirty(&self) -> Option<bool> {
@@ -130,6 +158,9 @@ pub struct RepoFacts {
     /// Commits landed anywhere in the repository in the last hour, in twelve
     /// five-minute buckets, oldest first. The heartbeat.
     pub pulse: Option<[u32; 12]>,
+    /// Entries in `git stash list`. A repository fact: stashes live in the
+    /// common dir and every worktree sees the same list.
+    pub stashes: Option<u32>,
 }
 
 /// A pane filed under this project but operating in another repository.
@@ -159,10 +190,55 @@ pub struct ProjectState {
     /// the PRIMARY — the one with the most writers.
     pub repos: Vec<RepoFacts>,
     pub checkouts: Vec<Checkout>,
+    /// Worktrees of the primary repository that no pane is in, measured the
+    /// same way — because an idle worktree is where lost work hides.
+    pub idle: Vec<Checkout>,
     /// Panes whose cwd is inside no repository at all.
     pub no_git: Vec<Writer>,
     pub foreign: Vec<Foreign>,
     pub visitors: Vec<Visitor>,
+}
+
+/// Two lines that change the same files — converging before they conflict.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Collision {
+    pub a: String,
+    pub b: String,
+    pub files: Vec<String>,
+}
+
+/// One thing that must become true for everything in flight to be on main.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LandingItem {
+    /// The line it is about, or the repository's name for a repository fact.
+    pub line: String,
+    /// True when the line lives in a worktree no pane is in.
+    pub idle: bool,
+    pub kind: LandingKind,
+    /// The sentence a coordinating agent reads.
+    pub text: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum LandingKind {
+    /// Uncommitted changes on a line.
+    Commit,
+    /// Commits the upstream has not seen.
+    Push,
+    /// A line with no upstream at all.
+    NoUpstream,
+    /// A merge into main that would go cleanly.
+    Merge,
+    /// A merge into main that would conflict.
+    Conflict,
+    /// A merge into main that could not be checked.
+    Unchecked,
+    /// Main itself is behind its origin.
+    Pull,
+    /// Stashes in the repository.
+    Stash,
+    /// Two lines converging on the same files.
+    Collision,
 }
 
 /// How loud a piece of the rail is. Bound once, here, and read by the
@@ -200,6 +276,12 @@ pub enum FrameKind {
     Worktrees,
     Pulse,
     Sentence,
+    /// What must become true to land everything — the count of it.
+    Landing,
+    /// Two lines converging on the same files.
+    Collision,
+    /// Idle worktrees carrying work.
+    Idle,
     /// What happened between two readings — assembled by the window from
     /// [`events`], since a single reading cannot know what changed.
     Events,
@@ -253,6 +335,164 @@ fn git(dir: &Path, args: &[&str], budget: Duration) -> Option<String> {
     }
 }
 
+/// Like [`git`], but the exit code is part of the answer: `git merge-tree`
+/// says "conflicts" with status 1 and its output, which the plain runner
+/// would throw away as a failure.
+fn git_status(dir: &Path, args: &[&str], budget: Duration) -> Option<(i32, String)> {
+    let mut child = Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .env("GIT_OPTIONAL_LOCKS", "0")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    let started = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let mut out = String::new();
+                use std::io::Read;
+                child.stdout.take()?.read_to_string(&mut out).ok()?;
+                return Some((status.code().unwrap_or(-1), out));
+            }
+            Ok(None) if started.elapsed() < budget => {
+                std::thread::sleep(Duration::from_millis(15));
+            }
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+        }
+    }
+}
+
+/// What `git merge-tree --write-tree --name-only <main> HEAD` said. Exit 0
+/// is a clean merge and the output is a tree id; exit 1 is conflicts and the
+/// lines after the tree id name the files; anything else is not an answer.
+pub fn parse_merge_tree(code: i32, out: &str) -> Option<Merge> {
+    match code {
+        0 => Some(Merge::Clean),
+        1 => {
+            let files: Vec<String> = out
+                .lines()
+                .skip(1)
+                .take_while(|l| !l.trim().is_empty())
+                .map(|l| l.trim().to_string())
+                .collect();
+            Some(Merge::Conflicts(files))
+        }
+        _ => None,
+    }
+}
+
+/// Measure what a checkout is on its own: branch, head, dirt, delta, last
+/// commit, upstream and what the upstream has not seen. Shared by the
+/// checkouts panes are in and the idle worktrees nobody is.
+fn measure_checkout(c: &mut Checkout) {
+    let root = c.root.clone();
+    if let Some(out) = git(&root, &["rev-parse", "--abbrev-ref", "HEAD"], BUDGET) {
+        let b = out.trim();
+        c.branch = (b != "HEAD" && !b.is_empty()).then(|| b.to_string());
+    }
+    c.head = git(&root, &["rev-parse", "--short", "HEAD"], BUDGET).map(|s| s.trim().to_string());
+    if let Some(st) = git(
+        &root,
+        &["status", "--porcelain", "--untracked-files=normal"],
+        BUDGET,
+    ) {
+        let (d, u) = count_status(&st);
+        c.dirty = Some(d);
+        c.untracked = Some(u);
+    }
+    if let Some(ns) = git(&root, &["diff", "--numstat", "HEAD"], BUDGET) {
+        c.delta = Some(sum_numstat(&ns));
+    }
+    c.last_commit = git(&root, &["log", "-1", "--format=%ct"], BUDGET)
+        .and_then(|s| s.trim().parse::<u64>().ok());
+    // the upstream, and what it has not seen. No upstream is None on both,
+    // and the landing list says so rather than counting nothing as pushed.
+    c.upstream = git(&root, &["rev-parse", "--abbrev-ref", "@{u}"], BUDGET)
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    c.unpushed = match &c.upstream {
+        Some(_) => git(&root, &["rev-list", "--count", "@{u}..HEAD"], BUDGET)
+            .and_then(|s| s.trim().parse::<u32>().ok()),
+        None => None,
+    };
+}
+
+/// Measure a checkout against its repository's main line: how far ahead and
+/// behind, which files it changes, and whether it would merge today.
+fn measure_against_main(c: &mut Checkout, main_ref: &str) {
+    let root = c.root.clone();
+    let spec = format!("{main_ref}...HEAD");
+    c.ahead_behind = git(
+        &root,
+        &["rev-list", "--left-right", "--count", &spec],
+        BUDGET,
+    )
+    .and_then(|s| {
+        let mut it = s.split_whitespace();
+        let behind = it.next()?.parse::<u32>().ok()?;
+        let ahead = it.next()?.parse::<u32>().ok()?;
+        Some((ahead, behind))
+    });
+    let main_name = main_ref.rsplit('/').next().unwrap_or(main_ref);
+    let is_main = c.branch.as_deref() == Some(main_name);
+    // files touched: committed since the merge base (not for main itself),
+    // plus whatever is uncommitted right now
+    let committed = if is_main {
+        Some(String::new())
+    } else {
+        git(&root, &["diff", "--name-only", &spec], BUDGET)
+    };
+    let uncommitted = git(
+        &root,
+        &["status", "--porcelain", "--untracked-files=no"],
+        BUDGET,
+    );
+    c.touched = match (committed, uncommitted) {
+        (Some(cm), Some(un)) => {
+            let mut files: Vec<String> = cm
+                .lines()
+                .map(|l| l.trim().to_string())
+                .filter(|l| !l.is_empty())
+                .collect();
+            for l in un.lines() {
+                if l.len() > 3 {
+                    // "XY path" — and "XY old -> new" for a rename
+                    let p = l[3..].rsplit(" -> ").next().unwrap_or(&l[3..]);
+                    files.push(p.trim().to_string());
+                }
+            }
+            files.sort();
+            files.dedup();
+            Some(files)
+        }
+        _ => None,
+    };
+    // the dry run. Skipped for main and for a line with nothing to merge —
+    // `Nothing` is an answer, not an absence.
+    c.merge = if is_main || c.ahead_behind.map(|(a, _)| a) == Some(0) {
+        Some(Merge::Nothing)
+    } else {
+        git_status(
+            &root,
+            &[
+                "merge-tree",
+                "--write-tree",
+                "--name-only",
+                main_ref,
+                "HEAD",
+            ],
+            BUDGET,
+        )
+        .and_then(|(code, out)| parse_merge_tree(code, &out))
+    };
+}
 const BUDGET: Duration = Duration::from_secs(8);
 
 /// The identity of a repository across its checkouts.
@@ -436,6 +676,10 @@ pub fn scan(input: &ScanInput) -> ProjectState {
                         ahead_behind: None,
                         last_commit: None,
                         writers: vec![w.clone()],
+                        upstream: None,
+                        unpushed: None,
+                        touched: None,
+                        merge: None,
                     });
                 }
             }
@@ -466,31 +710,10 @@ pub fn scan(input: &ScanInput) -> ProjectState {
         }
     }
 
-    // Measure each checkout.
+    // Measure each checkout on its own.
     for c in checkouts.iter_mut() {
-        let root = c.root.clone();
-        if let Some(out) = git(&root, &["rev-parse", "--abbrev-ref", "HEAD"], BUDGET) {
-            let b = out.trim();
-            c.branch = (b != "HEAD" && !b.is_empty()).then(|| b.to_string());
-        }
-        c.head =
-            git(&root, &["rev-parse", "--short", "HEAD"], BUDGET).map(|s| s.trim().to_string());
-        if let Some(st) = git(
-            &root,
-            &["status", "--porcelain", "--untracked-files=normal"],
-            BUDGET,
-        ) {
-            let (d, u) = count_status(&st);
-            c.dirty = Some(d);
-            c.untracked = Some(u);
-        }
-        if let Some(ns) = git(&root, &["diff", "--numstat", "HEAD"], BUDGET) {
-            c.delta = Some(sum_numstat(&ns));
-        }
-        c.last_commit = git(&root, &["log", "-1", "--format=%ct"], BUDGET)
-            .and_then(|s| s.trim().parse::<u64>().ok());
+        measure_checkout(c);
     }
-
     // Repository-level facts, measured on the first checkout of each.
     let mut repos = Vec::new();
     for id in &repo_ids {
@@ -519,10 +742,11 @@ pub fn scan(input: &ScanInput) -> ProjectState {
             main_ref,
             worktrees_on_disk,
             pulse,
+            stashes: None,
         });
     }
 
-    // Ahead/behind needs the repository's main line, so it comes after.
+    // Against main — needs the repository's main line, so it comes after.
     for c in checkouts.iter_mut() {
         let Some(main_ref) = repos
             .iter()
@@ -531,20 +755,66 @@ pub fn scan(input: &ScanInput) -> ProjectState {
         else {
             continue;
         };
-        let spec = format!("{main_ref}...HEAD");
-        c.ahead_behind = git(
-            &c.root,
-            &["rev-list", "--left-right", "--count", &spec],
-            BUDGET,
-        )
-        .and_then(|s| {
-            let mut it = s.split_whitespace();
-            let behind = it.next()?.parse::<u32>().ok()?;
-            let ahead = it.next()?.parse::<u32>().ok()?;
-            Some((ahead, behind))
-        });
+        measure_against_main(c, &main_ref);
     }
 
+    // Idle worktrees of the primary repository: on disk, nobody in them —
+    // mine or anyone else's. Measured like the rest, because a worktree
+    // nothing is looking at is exactly where uncommitted work gets lost.
+    // Capped, since a repository can have forty and the rail is not a census
+    // of them.
+    let mut idle: Vec<Checkout> = Vec::new();
+    if let Some(p) = &primary {
+        let occupied: Vec<&PathBuf> = root_of.values().flatten().collect();
+        if let Some(c0) = checkouts.iter().find(|c| c.repo == *p) {
+            let listing = git(&c0.root, &["worktree", "list", "--porcelain"], BUDGET);
+            let main_ref = repos
+                .iter()
+                .find(|r| r.id == *p)
+                .and_then(|r| r.main_ref.clone());
+            for line in listing.as_deref().unwrap_or("").lines() {
+                let Some(path) = line.strip_prefix("worktree ") else {
+                    continue;
+                };
+                let root = PathBuf::from(path.trim());
+                if occupied.contains(&&root) || !root.is_dir() {
+                    continue;
+                }
+                if idle.len() >= 12 {
+                    break;
+                }
+                let mut c = Checkout {
+                    root,
+                    repo: p.clone(),
+                    branch: None,
+                    head: None,
+                    dirty: None,
+                    untracked: None,
+                    delta: None,
+                    ahead_behind: None,
+                    last_commit: None,
+                    writers: Vec::new(),
+                    upstream: None,
+                    unpushed: None,
+                    touched: None,
+                    merge: None,
+                };
+                measure_checkout(&mut c);
+                if let Some(m) = &main_ref {
+                    measure_against_main(&mut c, m);
+                }
+                idle.push(c);
+            }
+        }
+    }
+
+    // Stashes, once per repository.
+    for r in repos.iter_mut() {
+        if let Some(c) = checkouts.iter().find(|c| c.repo == r.id) {
+            r.stashes = git(&c.root, &["stash", "list"], BUDGET)
+                .map(|s| s.lines().filter(|l| !l.trim().is_empty()).count() as u32);
+        }
+    }
     // Drift, both directions, against the primary repository.
     let mut foreign = Vec::new();
     let mut visitors = Vec::new();
@@ -582,6 +852,7 @@ pub fn scan(input: &ScanInput) -> ProjectState {
         took: started.elapsed(),
         repos,
         checkouts,
+        idle,
         no_git,
         foreign,
         visitors,
@@ -688,6 +959,13 @@ impl ProjectState {
         if foreign > 0 {
             out.push(Segment {
                 text: format!("\u{26a0} {foreign} FOREIGN"),
+                tone: Tone::Warn,
+            });
+        }
+        let conflicts = self.conflicts().len();
+        if conflicts > 0 {
+            out.push(Segment {
+                text: format!("\u{2717} {conflicts} CONFLICT"),
                 tone: Tone::Warn,
             });
         }
@@ -848,6 +1126,69 @@ impl ProjectState {
             }
         }
 
+        // 5b · what it would take to land everything, and what is converging
+        let landing = self.landing();
+        let count = |k: LandingKind| landing.iter().filter(|i| i.kind == k).count();
+        let merges = count(LandingKind::Merge)
+            + count(LandingKind::Conflict)
+            + count(LandingKind::Unchecked);
+        let conflicts = count(LandingKind::Conflict);
+        let commits = count(LandingKind::Commit);
+        let pushes = count(LandingKind::Push) + count(LandingKind::NoUpstream);
+        if merges + commits + pushes > 0 {
+            let mut parts = Vec::new();
+            if merges > 0 {
+                parts.push(plural(merges as u32, "merge", "merges"));
+            }
+            if commits > 0 {
+                parts.push(format!("{commits} uncommitted"));
+            }
+            if pushes > 0 {
+                parts.push(format!("{pushes} unpushed"));
+            }
+            if conflicts > 0 {
+                parts.push(format!(
+                    "{} would conflict",
+                    plural(conflicts as u32, "line", "lines")
+                ));
+            }
+            out.push(Frame {
+                kind: FrameKind::Landing,
+                text: format!("to land everything: {}", parts.join(" \u{00b7} ")),
+                tone: if conflicts > 0 {
+                    Tone::Warn
+                } else {
+                    Tone::Plain
+                },
+            });
+        }
+        for col in self.collisions() {
+            out.push(Frame {
+                kind: FrameKind::Collision,
+                text: format!(
+                    "\u{25c7} {} \u{00b7} {} converge on {}",
+                    col.a,
+                    col.b,
+                    plural(col.files.len() as u32, "file", "files")
+                ),
+                tone: Tone::Warn,
+            });
+        }
+        let idle_dirty = self
+            .idle
+            .iter()
+            .filter(|c| c.is_dirty() == Some(true) || c.ahead_behind.is_some_and(|(a, _)| a > 0))
+            .count();
+        if idle_dirty > 0 {
+            out.push(Frame {
+                kind: FrameKind::Idle,
+                text: format!(
+                    "{} carry work nobody is looking at",
+                    plural(idle_dirty as u32, "idle worktree", "idle worktrees")
+                ),
+                tone: Tone::Warn,
+            });
+        }
         // 6 · the heartbeat, as a sentence, only when it is beating
         if let Some(p) = primary.pulse {
             let total: u32 = p.iter().sum();
@@ -909,6 +1250,17 @@ impl ProjectState {
         if !self.foreign.is_empty() {
             parts.push(format!("{} wandering", panes(self.foreign.len())));
         }
+        let conflicts = self.conflicts().len();
+        if conflicts > 0 {
+            parts.push(format!("{} would conflict with main", number(conflicts)));
+        }
+        let converging = self.collisions().len();
+        if converging > 0 {
+            parts.push(format!(
+                "{} converging",
+                plural(converging as u32, "pair", "pairs")
+            ));
+        }
         if let Some(p) = primary.pulse {
             let total: u32 = p.iter().sum();
             if total == 0 {
@@ -919,6 +1271,424 @@ impl ProjectState {
     }
 }
 
+impl ProjectState {
+    /// The lines a landing is about: the primary repository's checkouts that
+    /// panes are in, then its idle worktrees — main itself excluded, since
+    /// main is what everything lands ON.
+    fn landing_lines(&self) -> Vec<&Checkout> {
+        let main_name = self.main_name();
+        self.primary_checkouts()
+            .into_iter()
+            .chain(self.idle.iter())
+            .filter(|c| Some(c.line()) != main_name)
+            .collect()
+    }
+
+    /// The main line's short name — `main` for `origin/main`.
+    pub fn main_name(&self) -> Option<String> {
+        self.primary()
+            .and_then(|r| r.main_ref.as_deref())
+            .map(|m| m.rsplit('/').next().unwrap_or(m).to_string())
+    }
+
+    /// Lines that change the same files. Two checkouts on one branch are one
+    /// line and do not collide with themselves; a line whose files were not
+    /// measured collides with nothing, which is not the same as being safe —
+    /// the landing list carries that.
+    pub fn collisions(&self) -> Vec<Collision> {
+        let lines = self.landing_lines();
+        let mut out = Vec::new();
+        for (i, a) in lines.iter().enumerate() {
+            for b in lines.iter().skip(i + 1) {
+                if a.line() == b.line() {
+                    continue;
+                }
+                let (Some(fa), Some(fb)) = (&a.touched, &b.touched) else {
+                    continue;
+                };
+                let files: Vec<String> = fa.iter().filter(|f| fb.contains(f)).cloned().collect();
+                if !files.is_empty() {
+                    out.push(Collision {
+                        a: a.line(),
+                        b: b.line(),
+                        files,
+                    });
+                }
+            }
+        }
+        out
+    }
+
+    /// Lines whose merge into main would conflict today.
+    pub fn conflicts(&self) -> Vec<&Checkout> {
+        self.landing_lines()
+            .into_iter()
+            .filter(|c| matches!(c.merge, Some(Merge::Conflicts(_))))
+            .collect()
+    }
+
+    /// What must become true for everything in flight to be on main, in the
+    /// order a person would do it: each line's own housekeeping first
+    /// (commit, push), then its merge, then the repository's loose ends, then
+    /// the collisions as advisories. Every item names its line, so a
+    /// coordinating agent can go straight to the checkout.
+    pub fn landing(&self) -> Vec<LandingItem> {
+        let mut out = Vec::new();
+        let Some(primary) = self.primary() else {
+            return out;
+        };
+        let main_name = self.main_name();
+        let item = |c: &Checkout, kind: LandingKind, text: String| LandingItem {
+            line: c.line(),
+            idle: c.idle(),
+            kind,
+            text,
+        };
+        for c in self.landing_lines() {
+            let where_ = if c.idle() {
+                format!("{} (idle worktree)", c.line())
+            } else {
+                c.line()
+            };
+            if let Some(d) = c.dirty.filter(|d| *d > 0) {
+                out.push(item(
+                    c,
+                    LandingKind::Commit,
+                    format!(
+                        "commit or stash {} on {where_}",
+                        plural(d, "uncommitted file", "uncommitted files")
+                    ),
+                ));
+            }
+            match (&c.upstream, c.unpushed, c.ahead_behind) {
+                (Some(_), Some(n), _) if n > 0 => out.push(item(
+                    c,
+                    LandingKind::Push,
+                    format!("push {} on {where_}", plural(n, "commit", "commits")),
+                )),
+                (None, _, Some((a, _))) if a > 0 => out.push(item(
+                    c,
+                    LandingKind::NoUpstream,
+                    format!(
+                        "{where_} is not pushed anywhere ({} only here)",
+                        plural(a, "commit", "commits")
+                    ),
+                )),
+                _ => {}
+            }
+            if let Some((a, _)) = c.ahead_behind.filter(|(a, _)| *a > 0) {
+                let m = main_name.as_deref().unwrap_or("main");
+                let commits = plural(a, "commit", "commits");
+                match &c.merge {
+                    Some(Merge::Clean) => out.push(item(
+                        c,
+                        LandingKind::Merge,
+                        format!("merge {where_} into {m} ({commits}) — merges clean"),
+                    )),
+                    Some(Merge::Conflicts(files)) => out.push(item(
+                        c,
+                        LandingKind::Conflict,
+                        format!(
+                            "merge {where_} into {m} ({commits}) — would conflict on {}",
+                            files.join(", ")
+                        ),
+                    )),
+                    Some(Merge::Nothing) | None => out.push(item(
+                        c,
+                        LandingKind::Unchecked,
+                        format!("merge {where_} into {m} ({commits}) — merge not checked"),
+                    )),
+                }
+            }
+        }
+        // main itself: uncommitted work on it, and its distance from origin
+        if let Some(c) = self
+            .primary_checkouts()
+            .into_iter()
+            .find(|c| Some(c.line()) == main_name)
+        {
+            if let Some(d) = c.dirty.filter(|d| *d > 0) {
+                out.push(item(
+                    c,
+                    LandingKind::Commit,
+                    format!(
+                        "commit or stash {} on {}",
+                        plural(d, "uncommitted file", "uncommitted files"),
+                        c.line()
+                    ),
+                ));
+            }
+            if let Some((a, b)) = c.ahead_behind {
+                if b > 0 {
+                    out.push(item(
+                        c,
+                        LandingKind::Pull,
+                        format!(
+                            "{} is {} behind its origin — pull first",
+                            c.line(),
+                            plural(b, "commit", "commits")
+                        ),
+                    ));
+                }
+                if a > 0 {
+                    out.push(item(
+                        c,
+                        LandingKind::Push,
+                        format!("push {} on {}", plural(a, "commit", "commits"), c.line()),
+                    ));
+                }
+            }
+        }
+        if let Some(n) = primary.stashes.filter(|n| *n > 0) {
+            out.push(LandingItem {
+                line: primary.name.clone(),
+                idle: false,
+                kind: LandingKind::Stash,
+                text: format!("{} in {}", plural(n, "stash", "stashes"), primary.name),
+            });
+        }
+        for col in self.collisions() {
+            out.push(LandingItem {
+                line: format!("{} · {}", col.a, col.b),
+                idle: false,
+                kind: LandingKind::Collision,
+                text: format!(
+                    "{} and {} both change {}: {}",
+                    col.a,
+                    col.b,
+                    plural(col.files.len() as u32, "file", "files"),
+                    col.files.join(", ")
+                ),
+            });
+        }
+        out
+    }
+}
+// ---- the report ------------------------------------------------------------
+
+/// A reading, as a program reads it — over MCP as `engineering_state` and on
+/// the command line as `ctl rail`. Every `Option` is an `Option` on the wire
+/// too: a field that was not measured is `null`, never `0`, because the
+/// agent reading this is about to act on it.
+#[derive(Clone, Debug, Serialize)]
+pub struct Report {
+    pub project: Option<u32>,
+    pub name: Option<String>,
+    /// Whether this is the project the window is standing in.
+    pub active: bool,
+    pub read_secs_ago: u64,
+    pub took_ms: u128,
+    /// The main line's short name, `null` when the repository has none.
+    pub main: Option<String>,
+    pub badge: Vec<String>,
+    pub sentence: Option<String>,
+    pub repos: Vec<RepoReport>,
+    /// Checkouts panes are in, in tab order.
+    pub checkouts: Vec<CheckoutReport>,
+    /// Worktrees on disk that no pane is in.
+    pub idle: Vec<CheckoutReport>,
+    pub no_git: Vec<WriterReport>,
+    pub foreign: Vec<ForeignReport>,
+    pub visitors: Vec<VisitorReport>,
+    pub collisions: Vec<Collision>,
+    /// What must become true for everything in flight to be on main.
+    pub landing: Vec<LandingReport>,
+    /// What changed between recent readings, oldest first.
+    pub afterglow: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct RepoReport {
+    pub id: String,
+    pub name: String,
+    pub main_ref: Option<String>,
+    pub worktrees_on_disk: Option<u32>,
+    pub stashes: Option<u32>,
+    /// Commits in the last hour, five-minute buckets, oldest first.
+    pub pulse: Option<[u32; 12]>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct WriterReport {
+    pub tab: usize,
+    pub tab_name: String,
+    pub label: String,
+    pub cwd: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct CheckoutReport {
+    pub root: String,
+    pub repo: String,
+    /// The branch, or `detached @<sha>`.
+    pub line: String,
+    pub branch: Option<String>,
+    pub head: Option<String>,
+    pub idle: bool,
+    pub shared: bool,
+    pub writers: Vec<WriterReport>,
+    pub dirty: Option<u32>,
+    pub untracked: Option<u32>,
+    pub added: Option<u32>,
+    pub removed: Option<u32>,
+    pub ahead: Option<u32>,
+    pub behind: Option<u32>,
+    pub last_commit: Option<u64>,
+    pub upstream: Option<String>,
+    pub unpushed: Option<u32>,
+    pub touched: Option<Vec<String>>,
+    /// `clean`, `conflicts`, `nothing`, or `null` when not checked.
+    pub merge: Option<String>,
+    pub conflict_files: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct ForeignReport {
+    pub writer: WriterReport,
+    pub repo: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct VisitorReport {
+    pub writer: WriterReport,
+    pub filed_under: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct LandingReport {
+    pub line: String,
+    pub idle: bool,
+    pub kind: String,
+    pub text: String,
+}
+
+impl Serialize for Collision {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let mut st = s.serialize_struct("Collision", 3)?;
+        st.serialize_field("a", &self.a)?;
+        st.serialize_field("b", &self.b)?;
+        st.serialize_field("files", &self.files)?;
+        st.end()
+    }
+}
+
+fn writer_report(w: &Writer) -> WriterReport {
+    WriterReport {
+        tab: w.tab,
+        tab_name: w.tab_name.clone(),
+        label: w.label.clone(),
+        cwd: w.cwd.display().to_string(),
+    }
+}
+
+fn checkout_report(c: &Checkout) -> CheckoutReport {
+    let (merge, conflict_files) = match &c.merge {
+        Some(Merge::Clean) => (Some("clean".to_string()), Vec::new()),
+        Some(Merge::Nothing) => (Some("nothing".to_string()), Vec::new()),
+        Some(Merge::Conflicts(files)) => (Some("conflicts".to_string()), files.clone()),
+        None => (None, Vec::new()),
+    };
+    CheckoutReport {
+        root: c.root.display().to_string(),
+        repo: c.repo.clone(),
+        line: c.line(),
+        branch: c.branch.clone(),
+        head: c.head.clone(),
+        idle: c.idle(),
+        shared: c.shared(),
+        writers: c.writers.iter().map(writer_report).collect(),
+        dirty: c.dirty,
+        untracked: c.untracked,
+        added: c.delta.map(|d| d.0),
+        removed: c.delta.map(|d| d.1),
+        ahead: c.ahead_behind.map(|ab| ab.0),
+        behind: c.ahead_behind.map(|ab| ab.1),
+        last_commit: c.last_commit,
+        upstream: c.upstream.clone(),
+        unpushed: c.unpushed,
+        touched: c.touched.clone(),
+        merge,
+        conflict_files,
+    }
+}
+
+impl LandingKind {
+    /// The wire spelling, stable for programs that switch on it.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            LandingKind::Commit => "commit",
+            LandingKind::Push => "push",
+            LandingKind::NoUpstream => "no_upstream",
+            LandingKind::Merge => "merge",
+            LandingKind::Conflict => "conflict",
+            LandingKind::Unchecked => "unchecked",
+            LandingKind::Pull => "pull",
+            LandingKind::Stash => "stash",
+            LandingKind::Collision => "collision",
+        }
+    }
+}
+
+impl ProjectState {
+    /// The reading as a program reads it. `afterglow` is the window's, since
+    /// a single reading cannot know what changed.
+    pub fn report(&self, active: bool, afterglow: &[String]) -> Report {
+        Report {
+            project: self.project,
+            name: self.name.clone(),
+            active,
+            read_secs_ago: self.scanned_at.elapsed().as_secs(),
+            took_ms: self.took.as_millis(),
+            main: self.main_name(),
+            badge: self.badge().into_iter().map(|s| s.text).collect(),
+            sentence: self.sentence(),
+            repos: self
+                .repos
+                .iter()
+                .map(|r| RepoReport {
+                    id: r.id.clone(),
+                    name: r.name.clone(),
+                    main_ref: r.main_ref.clone(),
+                    worktrees_on_disk: r.worktrees_on_disk,
+                    stashes: r.stashes,
+                    pulse: r.pulse,
+                })
+                .collect(),
+            checkouts: self.checkouts.iter().map(checkout_report).collect(),
+            idle: self.idle.iter().map(checkout_report).collect(),
+            no_git: self.no_git.iter().map(writer_report).collect(),
+            foreign: self
+                .foreign
+                .iter()
+                .map(|f| ForeignReport {
+                    writer: writer_report(&f.writer),
+                    repo: f.repo_name.clone(),
+                })
+                .collect(),
+            visitors: self
+                .visitors
+                .iter()
+                .map(|v| VisitorReport {
+                    writer: writer_report(&v.writer),
+                    filed_under: v.filed_under.clone(),
+                })
+                .collect(),
+            collisions: self.collisions(),
+            landing: self
+                .landing()
+                .into_iter()
+                .map(|i| LandingReport {
+                    line: i.line,
+                    idle: i.idle,
+                    kind: i.kind.as_str().into(),
+                    text: i.text,
+                })
+                .collect(),
+            afterglow: afterglow.to_vec(),
+        }
+    }
+}
 /// What changed between two readings of the same project — the afterglow.
 ///
 /// A reading is a photograph; the interesting thing is often the difference
@@ -1362,8 +2132,10 @@ mod tests {
                 main_ref: Some("origin/main".into()),
                 worktrees_on_disk: None,
                 pulse: None,
+                stashes: None,
             }],
             checkouts,
+            idle: vec![],
             no_git: vec![],
             foreign: (0..foreign)
                 .map(|i| Foreign {
@@ -1392,6 +2164,10 @@ mod tests {
             ahead_behind: Some((0, behind)),
             last_commit: Some(commit),
             writers: vec![w(0, "CLAUDE", Path::new(root))],
+            upstream: None,
+            unpushed: None,
+            touched: None,
+            merge: None,
         }
     }
 
@@ -1449,6 +2225,178 @@ mod tests {
         let a = reading(vec![co("/w/rail", "rail", 0, 100, 0)], 0, 0);
         let b = reading(vec![co("/w/rail", "rail-2", 0, 100, 0)], 0, 0);
         assert_eq!(events(&a, &b), vec!["rail switched to rail-2"]);
+    }
+
+    fn commit_file(dir: &Path, name: &str, content: &str, msg: &str) {
+        std::fs::write(dir.join(name), content).unwrap();
+        sh(dir, &["git", "add", name]);
+        sh(dir, &["git", "commit", "-q", "-m", msg]);
+    }
+
+    #[test]
+    fn the_landing_list_is_what_must_become_true() {
+        let rig = Rig::new("landing");
+        // feature changes a.txt and commits; main changes the same line
+        // differently → a conflict, and the same file → a collision with a
+        // third line in an idle worktree that nobody is in
+        commit_file(&rig.wt, "a.txt", "feature\n", "feature edit");
+        commit_file(&rig.main, "a.txt", "main\n", "main edit");
+        // main's edit has to be on ORIGIN's main: that is the line everything
+        // is measured against and merged into
+        sh(&rig.main, &["git", "push", "-q", "origin", "main"]);
+        let idle = rig.base.join("repo-idle");
+        sh(
+            &rig.main,
+            &[
+                "git",
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                "idle-line",
+                idle.to_str().unwrap(),
+            ],
+        );
+        std::fs::write(idle.join("a.txt"), "idle\n").unwrap(); // uncommitted, in an idle worktree
+                                                               // a stash in the repository
+        std::fs::write(rig.main.join("a.txt"), "stashed\n").unwrap();
+        sh(&rig.main, &["git", "stash", "-q"]);
+        // feature has an upstream one commit behind it
+        sh(
+            &rig.main,
+            &["git", "push", "-q", "origin", "feature:feature"],
+        );
+        sh(
+            &rig.wt,
+            &["git", "branch", "-q", "--set-upstream-to=origin/feature"],
+        );
+        commit_file(&rig.wt, "b.txt", "more\n", "unpushed");
+
+        let st = scan(&ScanInput {
+            project: Some(1),
+            name: Some("REPO".into()),
+            mine: vec![w(0, "CLAUDE", &rig.main), w(1, "CODEX", &rig.wt)],
+            others: vec![],
+        });
+        let feature = st.checkouts.iter().find(|c| c.root == rig.wt).unwrap();
+        assert_eq!(feature.upstream.as_deref(), Some("origin/feature"));
+        assert_eq!(feature.unpushed, Some(1));
+        assert_eq!(
+            feature.ahead_behind,
+            Some((2, 1)),
+            "two ahead of main, one behind"
+        );
+        assert_eq!(
+            feature.touched.as_deref(),
+            Some(&["a.txt".to_string(), "b.txt".to_string()][..])
+        );
+        assert_eq!(feature.merge, Some(Merge::Conflicts(vec!["a.txt".into()])));
+        let main = st.checkouts.iter().find(|c| c.root == rig.main).unwrap();
+        assert_eq!(
+            main.merge,
+            Some(Merge::Nothing),
+            "main is what things land on"
+        );
+        assert_eq!(
+            main.touched.as_deref(),
+            Some(&[][..]),
+            "main has nothing uncommitted after the stash"
+        );
+        assert_eq!(st.primary().unwrap().stashes, Some(1));
+        // the idle worktree was found, measured, and is dirty
+        assert_eq!(st.idle.len(), 1);
+        let idle_c = &st.idle[0];
+        assert!(idle_c.idle());
+        assert_eq!(idle_c.branch.as_deref(), Some("idle-line"));
+        assert_eq!(idle_c.dirty, Some(1));
+        assert_eq!(idle_c.touched.as_deref(), Some(&["a.txt".to_string()][..]));
+        // the collision: feature and idle-line both change a.txt
+        let cols = st.collisions();
+        assert_eq!(cols.len(), 1);
+        assert_eq!(
+            (cols[0].a.as_str(), cols[0].b.as_str()),
+            ("feature", "idle-line")
+        );
+        assert_eq!(cols[0].files, vec!["a.txt"]);
+        assert_eq!(st.conflicts().len(), 1);
+        // the list, in the order a person would do it
+        let texts: Vec<String> = st.landing().into_iter().map(|i| i.text).collect();
+        assert_eq!(
+            texts,
+            vec![
+                "push 1 commit on feature",
+                "merge feature into main (2 commits) — would conflict on a.txt",
+                "commit or stash 1 uncommitted file on idle-line (idle worktree)",
+                "1 stash in repo",
+                "feature and idle-line both change 1 file: a.txt",
+            ]
+        );
+        let badge: Vec<String> = st.badge().into_iter().map(|s| s.text).collect();
+        assert_eq!(badge, vec!["2 WT \u{2713}", "\u{2717} 1 CONFLICT"]);
+        let kinds: Vec<FrameKind> = st.frames().iter().map(|f| f.kind).collect();
+        assert!(kinds.contains(&FrameKind::Landing));
+        assert!(kinds.contains(&FrameKind::Collision));
+        assert!(kinds.contains(&FrameKind::Idle));
+        let landing = st
+            .frames()
+            .into_iter()
+            .find(|f| f.kind == FrameKind::Landing)
+            .unwrap();
+        assert_eq!(landing.text, "to land everything: 1 merge \u{00b7} 1 uncommitted \u{00b7} 1 unpushed \u{00b7} 1 line would conflict");
+        assert_eq!(landing.tone, Tone::Warn);
+        let s = st.sentence().unwrap();
+        assert!(s.contains("one would conflict with main"), "{s}");
+        assert!(s.contains("1 pair converging"), "{s}");
+    }
+
+    #[test]
+    fn merge_tree_answers_are_read_by_exit_code() {
+        assert_eq!(parse_merge_tree(0, "abc123\n"), Some(Merge::Clean));
+        assert_eq!(
+            parse_merge_tree(1, "abc123\na.txt\nsrc/b.rs\n\nCONFLICT (content): …\n"),
+            Some(Merge::Conflicts(vec!["a.txt".into(), "src/b.rs".into()]))
+        );
+        assert_eq!(
+            parse_merge_tree(128, "fatal: …"),
+            None,
+            "a failure is not an answer"
+        );
+    }
+
+    #[test]
+    fn the_report_is_json_with_null_where_nothing_was_measured() {
+        // two commits ahead of main with no upstream and no merge check: the
+        // three landing kinds a hand-built checkout can carry
+        let mut c = co("/w/rail", "rail", 2, 100, 1);
+        c.ahead_behind = Some((2, 1));
+        let st = reading(vec![c], 1, 0);
+        let json =
+            serde_json::to_value(st.report(true, &["a commit landed on rail".into()])).unwrap();
+        assert_eq!(json["active"], true);
+        assert_eq!(json["main"], "main");
+        assert_eq!(json["checkouts"][0]["line"], "rail");
+        assert_eq!(json["checkouts"][0]["dirty"], 2);
+        assert_eq!(json["checkouts"][0]["behind"], 1);
+        assert_eq!(
+            json["checkouts"][0]["upstream"],
+            serde_json::Value::Null,
+            "no upstream is null, not a string"
+        );
+        assert_eq!(
+            json["checkouts"][0]["merge"],
+            serde_json::Value::Null,
+            "unchecked is null, not clean"
+        );
+        assert_eq!(json["repos"][0]["stashes"], serde_json::Value::Null);
+        assert_eq!(json["foreign"][0]["repo"], "elsewhere");
+        assert_eq!(json["afterglow"][0], "a commit landed on rail");
+        let kinds: Vec<&str> = json["landing"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|i| i["kind"].as_str().unwrap())
+            .collect();
+        assert_eq!(kinds, vec!["commit", "no_upstream", "unchecked"]);
     }
 
     #[test]
