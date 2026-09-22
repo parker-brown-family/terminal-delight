@@ -41,6 +41,7 @@ mod derive;
 mod dirlogo;
 mod doc;
 mod emphasis;
+mod engstate;
 mod fav;
 mod gamba;
 mod gridwire;
@@ -1002,6 +1003,16 @@ const FIRST_RUN_HINT: &str = "RIGHT CLICK TO RENAME";
 /// discovered through a chord is furniture. One ctrl+shift+B hides it forever
 /// after, per session.
 const LEFT_BAR_DEFAULT_ON: bool = true;
+
+/// How old the rail's reading of a project may be before the sweep spends a
+/// scan on it. Twenty seconds: git state moves at the pace of a person
+/// typing a commit, and a scan is a handful of subprocesses per checkout.
+const ENG_STALE: Duration = Duration::from_secs(20);
+
+/// How long the rail keeps an event on show after noticing it. Fifteen
+/// minutes is about how long a person is away in another project before
+/// coming back, which is the moment the afterglow is for.
+const ENG_AFTERGLOW: Duration = Duration::from_secs(15 * 60);
 /// Default bar width in logical pixels at scale 1.0 — wide enough for two
 /// levels of indent plus a name plus its roll-up glyphs.
 const LEFT_BAR_W: f32 = 208.;
@@ -3719,6 +3730,21 @@ struct Workspace {
     agent_vitals: std::collections::HashMap<u32, vitals::Vitals>,
     /// A vitals pass is parsing transcripts on a pool thread.
     vitals_refreshing: bool,
+    /// The engineering state of each declared project the rail has read,
+    /// keyed by project id — `None` is the loose tabs. See `engstate`.
+    eng: std::collections::HashMap<Option<u32>, engstate::ProjectState>,
+    /// A scan is out. One at a time: a second pass queued behind a slow git
+    /// would land after the first and say the same thing.
+    eng_scanning: bool,
+    /// Which ticker frame is up, advanced on its own clock.
+    eng_frame: usize,
+    /// The afterglow: what changed between consecutive readings of each
+    /// project, with when it was noticed. Kept for [`ENG_AFTERGLOW`] and then
+    /// dropped — evidence that something happened, never a notification.
+    eng_events: std::collections::HashMap<Option<u32>, Vec<(Instant, String)>>,
+    /// The checkouts table is open — the badge, unfolded: one row per
+    /// checkout with who is writing there, then the drift and the afterglow.
+    eng_table: bool,
     /// Which surface files this window has already delivered to a bench.
     ///
     /// Taken out and handed to the pool for the duration of a sweep, then put
@@ -3911,8 +3937,6 @@ struct Workspace {
     tab_light_drag: bool,
     /// Live tab-pane lightness-slider rect, for ratio math during a drag.
     tab_light_bounds: Arc<Mutex<Option<Bounds<Pixels>>>>,
-    /// Inline group-name editor: (group id, buffer) while renaming a group.
-    group_rename: Option<(u32, EditBuffer)>,
     /// The pane currently mirrored in the FOCUS reading modal, if any. Weak so a
     /// closed pane (its × / shell exit) drops normally — the modal just vanishes.
     focus_read: Option<gpui::WeakEntity<TerminalView>>,
@@ -5152,6 +5176,13 @@ impl Workspace {
             launch_defaults_open: false,
             agent_vitals: std::collections::HashMap::new(),
             vitals_refreshing: false,
+            eng: std::collections::HashMap::new(),
+            eng_scanning: false,
+            eng_frame: 0,
+            eng_events: std::collections::HashMap::new(),
+            // a rig lever, like TD_RAIL_DEBUG: there is no click injection on
+            // this machine, so the table is photographed by opening at launch
+            eng_table: std::env::var_os("TD_RAIL_TABLE").is_some(),
             surface_feed: Some(surfacefeed::Feed::new()),
             derived_stamps: std::collections::HashMap::new(),
             // Headless-capture hook: TD_WALL_THEME=1 arms the "theme · on" wall
@@ -5233,7 +5264,6 @@ impl Workspace {
             tab_wheel_bounds: Arc::new(Mutex::new(None)),
             tab_light_drag: false,
             tab_light_bounds: Arc::new(Mutex::new(None)),
-            group_rename: None,
             focus_read: None,
             focus_zoom: 1.0,
             focus_zoom_drag: false,
@@ -5485,6 +5515,50 @@ impl Workspace {
                 .await;
             if this
                 .update(cx, |ws: &mut Workspace, cx| ws.apply_vitals(found, cx))
+                .is_err()
+            {
+                break;
+            }
+        })
+        .detach();
+        // THE PROJECT RAIL: the engineering state of the project you are in.
+        //
+        // Same shape as the sweeps above — gather on the main thread, run git
+        // on the pool, apply back. Two seconds between checks, but a scan is
+        // only spent when the active project's reading is missing or older
+        // than `ENG_STALE`, so switching projects gets a fresh read within a
+        // beat and sitting still costs one pass every twenty seconds. One scan
+        // at a time: a second pass queued behind a slow git would land after
+        // the first and repeat it.
+        cx.spawn(async move |this, cx| loop {
+            cx.background_executor().timer(Duration::from_secs(2)).await;
+            let Ok(input) = this.update(cx, |ws: &mut Workspace, cx| ws.eng_scan_request(cx))
+            else {
+                break; // window gone
+            };
+            let Some(input) = input else {
+                continue; // nothing due
+            };
+            let state = cx
+                .background_executor()
+                .spawn(async move { engstate::scan(&input) })
+                .await;
+            if this
+                .update(cx, |ws: &mut Workspace, cx| ws.apply_eng(state, cx))
+                .is_err()
+            {
+                break;
+            }
+        })
+        .detach();
+        // The ticker's clock. Six seconds a frame — long enough to read a
+        // sentence, short enough that a person who glanced up and missed one
+        // sees the next before looking away. A silent rail has no frames and
+        // the tick costs it nothing.
+        cx.spawn(async move |this, cx| loop {
+            cx.background_executor().timer(Duration::from_secs(6)).await;
+            if this
+                .update(cx, |ws: &mut Workspace, cx| ws.tick_eng_frame(cx))
                 .is_err()
             {
                 break;
@@ -11358,6 +11432,196 @@ impl Workspace {
         leaves.first().and_then(|p| p.read(cx).current_cwd())
     }
 
+    // ---- the project rail --------------------------------------------------
+
+    /// The active project's engineering state, if the rail has read it yet.
+    fn eng_state(&self) -> Option<&engstate::ProjectState> {
+        self.eng.get(&self.place_of(self.active).project)
+    }
+
+    /// What the sweep should read next, or `None` when nothing is due.
+    ///
+    /// Due means: no reading for the active project, or one older than
+    /// [`ENG_STALE`]. Switching to a project the rail has never read is the
+    /// case that matters — the sweep's two-second beat is the most a person
+    /// waits to see the rail say something about where they just arrived.
+    fn eng_scan_request(&mut self, cx: &App) -> Option<engstate::ScanInput> {
+        if self.eng_scanning {
+            return None;
+        }
+        let key = self.place_of(self.active).project;
+        let fresh = self
+            .eng
+            .get(&key)
+            .is_some_and(|s| s.scanned_at.elapsed() < ENG_STALE);
+        if fresh {
+            return None;
+        }
+        self.eng_scanning = true;
+        Some(self.eng_input(key, cx))
+    }
+
+    /// Every writer in the session, sorted into the project being read and
+    /// everyone else — the second list is how a visitor is recognised.
+    ///
+    /// A pane with no cwd yet (a host pane still attaching) is left out
+    /// rather than filed as "nowhere": it will be there on the next pass, and
+    /// counting it as outside any repository would be inventing a fact.
+    fn eng_input(&self, key: Option<u32>, cx: &App) -> engstate::ScanInput {
+        let name = key.and_then(|p| self.project_at(p)).map(|p| p.label());
+        let mut mine = Vec::new();
+        let mut others = Vec::new();
+        for (i, tab) in self.tabs.iter().enumerate() {
+            let place = self.place_of(i);
+            let mut leaves = vec![];
+            tab.root.leaves(&mut leaves);
+            for pane in leaves {
+                let v = pane.read(cx);
+                let Some(cwd) = v.current_cwd() else {
+                    continue;
+                };
+                let tab_name = tab.name.clone().unwrap_or_else(|| {
+                    if v.title.trim().is_empty() {
+                        v.mode.label().to_lowercase()
+                    } else {
+                        v.title.clone()
+                    }
+                });
+                let w = engstate::Writer {
+                    tab: i,
+                    tab_name,
+                    label: v.mode.label().to_string(),
+                    cwd: std::path::PathBuf::from(cwd),
+                };
+                if place.project == key {
+                    mine.push(w);
+                } else {
+                    // filed under its project when it has one, else its group,
+                    // else nothing — which the rail reports as "unfiled"
+                    let filed = place
+                        .project
+                        .and_then(|p| self.project_at(p))
+                        .map(|p| p.label())
+                        .or_else(|| {
+                            place
+                                .initiative
+                                .and_then(|g| self.groups.iter().find(|x| x.id == g))
+                                .map(|g| g.label())
+                        });
+                    others.push((filed, w));
+                }
+            }
+        }
+        engstate::ScanInput {
+            project: key,
+            name,
+            mine,
+            others,
+        }
+    }
+
+    /// A scan landed. The frame index is left where it was: a project whose
+    /// frame count shrank wraps on the next tick, and resetting it would make
+    /// every twenty-second refresh snap the ticker back to its first frame.
+    fn apply_eng(&mut self, state: engstate::ProjectState, cx: &mut Context<Self>) {
+        self.eng_scanning = false;
+        if std::env::var_os("TD_RAIL_DEBUG").is_some() {
+            eprintln!(
+                "rail: {} checkouts, {} repos, {} foreign, {} visitors in {:?}",
+                state.checkouts.len(),
+                state.repos.len(),
+                state.foreign.len(),
+                state.visitors.len(),
+                state.took
+            );
+        }
+        // The afterglow: what this reading says happened since the last one.
+        // Diffed before the insert, against the reading it replaces, and only
+        // for the same project — the pure function refuses anything else.
+        if let Some(prev) = self.eng.get(&state.project) {
+            let now = Instant::now();
+            let fresh = engstate::events(prev, &state);
+            let log = self.eng_events.entry(state.project).or_default();
+            log.extend(fresh.into_iter().map(|e| (now, e)));
+            log.retain(|(at, _)| now.duration_since(*at) < ENG_AFTERGLOW);
+            // the newest twelve; older ones have had their fifteen minutes
+            let excess = log.len().saturating_sub(12);
+            log.drain(..excess);
+        }
+        self.eng.insert(state.project, state);
+        cx.notify();
+    }
+
+    /// The afterglow still on show for the active project, oldest first.
+    fn eng_afterglow(&self) -> Vec<&str> {
+        let key = self.place_of(self.active).project;
+        let now = Instant::now();
+        self.eng_events
+            .get(&key)
+            .map(|log| {
+                log.iter()
+                    .filter(|(at, _)| now.duration_since(*at) < ENG_AFTERGLOW)
+                    .map(|(_, e)| e.as_str())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Every project's reading, for the MCP snapshot — the active one flagged,
+    /// each with its own afterglow. What `engineering_state` answers with.
+    fn eng_reports(&self) -> Vec<engstate::Report> {
+        let active = self.place_of(self.active).project;
+        let now = Instant::now();
+        self.eng
+            .iter()
+            .map(|(key, st)| {
+                let glow: Vec<String> = self
+                    .eng_events
+                    .get(key)
+                    .map(|log| {
+                        log.iter()
+                            .filter(|(at, _)| now.duration_since(*at) < ENG_AFTERGLOW)
+                            .map(|(_, e)| e.clone())
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                st.report(*key == active, &glow)
+            })
+            .collect()
+    }
+
+    /// Every frame the ticker rotates through: the reading's own, then one
+    /// for the afterglow when there is any. One function, so the clock and
+    /// the renderer count the same frames.
+    fn eng_frames(&self) -> Vec<engstate::Frame> {
+        let Some(st) = self.eng_state() else {
+            return Vec::new();
+        };
+        let mut frames = st.frames();
+        let glow = self.eng_afterglow();
+        if !glow.is_empty() {
+            // the three newest, newest first — the rest are on the badge's
+            // dot and in the table
+            let recent: Vec<&str> = glow.iter().rev().take(3).copied().collect();
+            frames.push(engstate::Frame {
+                kind: engstate::FrameKind::Events,
+                text: format!("\u{25c6} {}", recent.join(" \u{00b7} ")),
+                tone: engstate::Tone::Plain,
+            });
+        }
+        frames
+    }
+
+    /// Advance the ticker. Silent when there is nothing to rotate.
+    fn tick_eng_frame(&mut self, cx: &mut Context<Self>) {
+        let n = self.eng_frames().len();
+        if n == 0 {
+            return;
+        }
+        self.eng_frame = (self.eng_frame + 1) % n;
+        cx.notify();
+    }
+
     // ---- ctl `tabs`: the tab strip, scripted ---------------------------------
 
     /// A stable identity for tab `i` that survives a reorder: the entity id of
@@ -14586,10 +14850,10 @@ impl Workspace {
             || self.agent_launcher.is_some()
             || self.renaming.is_some()
             || self.bar_rename.is_some()
-            || self.group_rename.is_some()
             || self.confirm_close.is_some()
             || self.confirm_delete.is_some()
             || self.bar_menu.is_some()
+            || self.eng_table
             || self.theme_menu.is_some()
             || self.osd_menu.is_some()
             || self.tab_menu.is_some()
@@ -14636,21 +14900,6 @@ impl Workspace {
         true
     }
 
-    /// Commit an in-progress group rename (if any). Same terms as the tab and
-    /// branch editors: an empty name clears back to the unnamed group.
-    fn commit_group_rename(&mut self, cx: &mut Context<Self>) -> bool {
-        let Some((gid, eb)) = self.group_rename.take() else {
-            return false;
-        };
-        let name = eb.text();
-        if let Some(g) = self.groups.iter_mut().find(|g| g.id == gid) {
-            g.name = (!name.trim().is_empty()).then(|| name.trim().to_string());
-        }
-        self.save(cx);
-        cx.notify();
-        true
-    }
-
     /// Open the inline rename box on a tab — from the strip, from the tree, or
     /// from a double-click. One door, so the seeding can never drift apart.
     fn start_tab_rename(&mut self, i: usize, window: &mut Window, cx: &mut Context<Self>) {
@@ -14659,22 +14908,6 @@ impl Workspace {
         self.commit_all_renames(cx);
         self.tab_menu = None;
         self.renaming = Some((i, EditBuffer::seeded(&seed)));
-        window.focus(&self.focus_handle, cx);
-        cx.notify();
-    }
-
-    /// Open the inline rename box on a group heading.
-    fn start_group_rename(&mut self, gid: u32, window: &mut Window, cx: &mut Context<Self>) {
-        let seed = self
-            .groups
-            .iter()
-            .find(|g| g.id == gid)
-            .and_then(|g| g.name.clone())
-            .unwrap_or_default();
-        self.commit_all_renames(cx);
-        self.group_menu = None;
-        self.tab_menu = None;
-        self.group_rename = Some((gid, EditBuffer::seeded(&seed)));
         window.focus(&self.focus_handle, cx);
         cx.notify();
     }
@@ -14690,7 +14923,6 @@ impl Workspace {
     fn commit_all_renames(&mut self, cx: &mut Context<Self>) {
         self.commit_rename(cx);
         self.commit_bar_rename(cx);
-        self.commit_group_rename(cx);
         let panes: Vec<Entity<TerminalView>> = {
             let mut leaves = vec![];
             for tab in &self.tabs {
@@ -15141,27 +15373,6 @@ impl Workspace {
                 }
             }
         }
-        // the inline group-name editor owns the keyboard while open
-        if let Some((gid, mut eb)) = self.group_rename.take() {
-            match ks.key.as_str() {
-                "enter" | "escape" => {
-                    if ks.key.as_str() == "enter" {
-                        let name = eb.text();
-                        if let Some(g) = self.groups.iter_mut().find(|g| g.id == gid) {
-                            g.name = (!name.trim().is_empty()).then(|| name.trim().to_string());
-                        }
-                        self.save(cx);
-                    }
-                    self.focus_active(window, cx);
-                }
-                _ => {
-                    eb.apply(ks.key.as_str(), m, ks.key_char.as_deref(), 18);
-                    self.group_rename = Some((gid, eb));
-                }
-            }
-            cx.notify();
-            return;
-        }
         if self.tab_menu.is_some() && ks.key.as_str() == "escape" {
             self.tab_menu = None;
             cx.notify();
@@ -15170,6 +15381,12 @@ impl Workspace {
         // A left-bar menu is dismissed by Esc like every other overlay, and by
         // nothing else — a menu that ate arrow keys would be claiming a
         // navigation model it does not have.
+        if self.eng_table && ks.key.as_str() == "escape" {
+            self.eng_table = false;
+            self.focus_active(window, cx);
+            cx.notify();
+            return;
+        }
         if self.bar_menu.is_some() && ks.key.as_str() == "escape" {
             self.close_bar_menu(cx);
             return;
@@ -20749,137 +20966,494 @@ impl Workspace {
             .flex_none()
             .flex_row()
             .items_center()
-            .justify_center()
             .overflow_hidden()
+            .gap(px(8. * s))
             .px(px(6. * s));
         if let Some(w) = width.filter(|w| *w > 0.) {
             col = col.w(px(w));
         }
-        // the same key the strip filters by, so the name always describes the
-        // branch whose tabs are on the strip
+        // THE PROJECT, not the branch. The rail answers for the project as a
+        // whole — switching tabs changes nothing here, switching projects
+        // does — so the name is the project's, drawn the way the tree draws
+        // it. A loose tab hangs from no project and gets the mark and the
+        // badge alone: an unorganised session is not labelled "unfiled".
         let place = self.place_of(self.active);
-        match place.initiative {
-            Some(gid) => col.child(self.group_title(gid, pt, cx)),
-            // A loose tab hangs from its project, if it hangs from anything —
-            // and when that is nothing at all this says nothing. An unorganised
-            // session gets a bare mark, not a label reading "unfiled".
-            None => {
-                let project = place
-                    .project
-                    .and_then(|p| self.projects.iter().find(|q| q.id == p))
-                    .map(|p| (p.id, p.label()));
-                match project {
-                    Some((pid, name)) => col.child(
-                        div()
-                            .min_w_0()
-                            .truncate()
-                            .text_size(px(pt))
-                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .text_color(th.faint)
-                            .child(name)
-                            // a name in the chrome, so it renames the way every
-                            // other one does — the tree row beside it is the
-                            // same project and answers to the same gesture
-                            .on_mouse_down(
-                                MouseButton::Right,
-                                cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
-                                    cx.stop_propagation();
-                                    ws.start_bar_rename(BarBranch::Project(pid), window, cx);
-                                }),
-                            ),
+        let project = place
+            .project
+            .and_then(|p| self.projects.iter().find(|q| q.id == p))
+            .map(|p| (p.id, p.label()));
+        if let Some((pid, name)) = project {
+            col = col.child(
+                div()
+                    .min_w_0()
+                    .truncate()
+                    .text_size(px(pt))
+                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                    .text_color(th.text)
+                    .child(name.to_uppercase())
+                    // a name in the chrome, so it renames the way every
+                    // other one does — the tree row beside it is the
+                    // same project and answers to the same gesture
+                    .on_mouse_down(
+                        MouseButton::Right,
+                        cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
+                            cx.stop_propagation();
+                            ws.start_bar_rename(BarBranch::Project(pid), window, cx);
+                        }),
                     ),
-                    None => col,
-                }
-            }
+            );
         }
+        col.child(self.eng_badge(pt, cx))
     }
 
-    /// A branch's name, as the mother bar draws it.
+    /// The persistent badge beside the project's name: its isolation health.
     ///
-    /// Not a chip and not coloured. The tree carries this branch's colour key
-    /// and its name already; a second coloured token on top of that was the
-    /// same fact twice, in the place with the least room for it. Still the
-    /// branch's handle, though — right-click writes over its name, ctrl+click
-    /// opens its menu (colour, fold, disband), and a plain click folds it in
-    /// the tree. Those gestures came with it from the tab strip's heading to
-    /// the header row, because a name in TD's chrome answers to the same three
-    /// gestures wherever it is drawn.
-    fn group_title(&self, gid: u32, pt: f32, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
+    /// `[4 WT ✓]`, `[2 WT · 1 SHARED]`, `[⚠ 1 FOREIGN]`, `[NO GIT]` — the
+    /// one thing about a project a person wants at a glance without reading a
+    /// ticker: are the things writing into it writing into separate
+    /// directories? Until the first scan has landed it says `SCANNING`,
+    /// because an empty badge would read as "nothing to report", which is a
+    /// different claim.
+    fn eng_badge(&self, pt: f32, cx: &mut Context<Self>) -> gpui::Div {
         let th = theme::theme(cx);
         let s = theme::outer_choice(cx).grade.scale;
-        // never `name`: a group starts nameless, and a heading that renders
-        // nothing is an invisible control sitting on the widest surface in the
-        // window — with its click and right-click still live
-        let name = self
-            .groups
-            .iter()
-            .find(|g| g.id == gid)
-            .map(|g| g.label())
-            .unwrap_or_else(|| unnamed_group(gid));
-        let mut chip = div()
-            .id(SharedString::from(format!("grp-title-{gid}")))
+        let sk = skin::skin(cx, s);
+        let mut segments = match self.eng_state() {
+            Some(st) => st.badge(),
+            None => vec![engstate::Segment {
+                text: "SCANNING".into(),
+                tone: engstate::Tone::Muted,
+            }],
+        };
+        // the afterglow's dot: something happened here in the last quarter
+        // hour, and the ticker has the sentence
+        if !self.eng_afterglow().is_empty() {
+            segments.push(engstate::Segment {
+                text: "\u{25c6}".into(),
+                tone: engstate::Tone::Good,
+            });
+        }
+        let mut chip = sk
+            .bezel(false, s)
+            .flex_none()
             .flex()
             .flex_row()
             .items_center()
-            .justify_center()
-            .min_w_0()
-            .overflow_hidden()
-            .gap(px(4. * s))
-            .px(px(4. * s))
-            .cursor_pointer()
-            .text_size(px(pt))
+            .gap(px(5. * s))
+            .text_size(px(pt * 0.8))
             .font_weight(gpui::FontWeight::SEMIBOLD)
-            .text_color(th.faint);
-        if let Some((_, eb)) = self.group_rename.as_ref().filter(|(rg, _)| *rg == gid) {
-            chip = chip.child(render_edit_buffer(
-                eb,
-                s,
-                th.text,
-                th.cursor,
-                th.accent.alpha(0.4),
-            ));
-        } else {
-            // truncate, not overflow_hidden: gpui wraps by default, and the
-            // whole point of the fixed rail is that a name too long for it
-            // costs an ellipsis rather than a second row on the mother bar
-            chip = chip.child(div().min_w_0().truncate().child(name));
+            .border_color(th.text.alpha(0.22));
+        for (i, seg) in segments.iter().enumerate() {
+            if i > 0 {
+                chip = chip.child(
+                    div()
+                        .text_color(th.text.alpha(0.35))
+                        .child("\u{00b7}".to_string()),
+                );
+            }
+            let ink = self.eng_ink(seg.tone, &th);
+            // A warning wears a wash as well as its ink. On an amber palette
+            // the ansi yellow is a hair from the text colour, and `1 SHARED`
+            // read exactly like `3 WT` beside it; a tint behind the words is
+            // a difference every palette can show.
+            let warn = seg.tone == engstate::Tone::Warn;
+            chip = chip.child(
+                div()
+                    .text_color(ink)
+                    .when(warn, |d| {
+                        d.px(px(4. * s)).rounded(sk.radius()).bg(ink.alpha(0.16))
+                    })
+                    .child(seg.text.clone()),
+            );
         }
+        // click: unfold it into the table. Propagation stops here so the
+        // mother bar's move handle does not also arm on the press.
         chip.on_mouse_down(
             MouseButton::Left,
-            cx.listener(move |ws, ev: &MouseDownEvent, _window, cx| {
+            cx.listener(|ws, _: &MouseDownEvent, window, cx| {
                 cx.stop_propagation();
-                if ws.group_rename.as_ref().is_some_and(|(rg, _)| *rg == gid) {
-                    // clicking the edit box itself keeps editing — it must not
-                    // arm the fold/reorder drag sitting under the same pixels
-                    return;
-                }
-                if ev.modifiers.control {
-                    // ctrl+click → the group's config tray (colour, fold, disband)
-                    ws.open_group_menu(gid, ev.position, cx);
-                    return;
-                }
-                // arm a group drag: a release without travel folds the group, a
-                // release after travel reorders the whole group (see on_mouse_up).
-                ws.group_drag = Some(GroupDrag {
-                    gid,
-                    start: ev.position,
-                    at: ev.position,
-                    engaged: false,
-                });
-                ws.tab_drop = None;
-                cx.notify();
+                ws.toggle_eng_table(window, cx);
             }),
         )
-        // right-click the handle → write over the group's name in place, the
-        // same gesture as every other name in the chrome. The group's other
-        // properties (colour, fold, disband) are ctrl+click.
-        .on_mouse_down(
-            MouseButton::Right,
-            cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
-                cx.stop_propagation();
-                ws.start_group_rename(gid, window, cx);
-            }),
-        )
+    }
+
+    /// Open or close the checkouts table. Opening takes the keyboard the way
+    /// a menu does, so esc reaches it; closing hands the keyboard back to the
+    /// terminal that had it.
+    fn toggle_eng_table(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.eng_table = !self.eng_table;
+        if self.eng_table {
+            self.commit_all_renames(cx);
+            self.bar_menu = None;
+            window.focus(&self.focus_handle, cx);
+        } else {
+            self.focus_active(window, cx);
+        }
+        cx.notify();
+    }
+
+    /// The badge, unfolded: the project's checkouts one to a row, then every
+    /// pane the drift lint has something to say about, then the afterglow.
+    ///
+    /// This is where the specific identity lives now — WHICH branch, in
+    /// WHICH directory, with WHO writing to it. The rail aggregates; the
+    /// table itemises; the pane header says its own. Same information at
+    /// three scales, none of it repeated at the same one.
+    fn render_eng_table(
+        &self,
+        th: &theme::Theme,
+        s: f32,
+        cx: &mut Context<Self>,
+    ) -> Option<gpui::Div> {
+        if !self.eng_table {
+            return None;
+        }
+        let sk = skin::skin(cx, s);
+        let st = self.eng_state();
+        let mono = |d: gpui::Div| d.font_family("monospace").text_size(px(10.5 * s));
+        let cell = |w: f32, ink: Hsla, text: String| {
+            mono(div())
+                .flex_none()
+                .w(px(w * s))
+                .overflow_hidden()
+                .truncate()
+                .text_color(ink)
+                .child(text)
+        };
+        let mut rows = div()
+            .flex()
+            .flex_col()
+            .gap(px(3. * s))
+            .p(px(8. * s))
+            .min_w(px(700. * s));
+        // the heading: what this is a table OF, and how fresh it is
+        let name = self
+            .place_of(self.active)
+            .project
+            .and_then(|p| self.project_at(p))
+            .map(|p| p.label().to_uppercase())
+            .unwrap_or_else(|| "UNFILED".into());
+        let freshness = match st {
+            Some(st) => format!(
+                "read {}s ago in {}ms",
+                st.scanned_at.elapsed().as_secs(),
+                st.took.as_millis()
+            ),
+            None => "not read yet".into(),
+        };
+        rows = rows.child(
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .justify_between()
+                .pb(px(4. * s))
+                .child(
+                    div()
+                        .text_size(px(11. * s))
+                        .font_weight(gpui::FontWeight::BOLD)
+                        .text_color(th.text)
+                        .child(name),
+                )
+                .child(
+                    div()
+                        .text_size(px(9.5 * s))
+                        .text_color(th.text.alpha(0.5))
+                        .child(freshness),
+                ),
+        );
+        let Some(st) = st else {
+            return Some(self.eng_table_frame(&sk, s, rows, cx));
+        };
+        let muted = th.text.alpha(0.55);
+        let warn = self.eng_ink(engstate::Tone::Warn, th);
+        // column heads
+        rows = rows.child(
+            div()
+                .flex()
+                .flex_row()
+                .gap(px(8. * s))
+                .child(cell(210., muted, "line".into()))
+                .child(cell(60., muted, "".into()))
+                .child(cell(110., muted, "uncommitted".into()))
+                .child(cell(60., muted, "vs main".into()))
+                .child(cell(200., muted, "writing here".into())),
+        );
+        let main_name = st
+            .primary()
+            .and_then(|r| r.main_ref.as_deref())
+            .map(|m| m.rsplit('/').next().unwrap_or(m).to_string());
+        for c in &st.checkouts {
+            let is_primary = st.primary().is_some_and(|p| p.id == c.repo);
+            let line = if is_primary {
+                c.line()
+            } else {
+                let repo = st
+                    .repos
+                    .iter()
+                    .find(|r| r.id == c.repo)
+                    .map(|r| r.name.as_str())
+                    .unwrap_or("?");
+                format!("{} ({repo})", c.line())
+            };
+            let kind = if c.shared() { "SHARED" } else { "WT" };
+            let kind_ink = if c.shared() { warn } else { th.accent };
+            let dirt = match (c.dirty, c.delta) {
+                (Some(0), _) => "clean".to_string(),
+                (Some(n), Some((a, d))) => format!("{n} dirty +{a} \u{2212}{d}"),
+                (Some(n), None) => format!("{n} dirty"),
+                (None, _) => "unmeasured".to_string(),
+            };
+            let dirt_ink = match c.dirty {
+                Some(0) => muted,
+                Some(_) => th.text,
+                None => muted,
+            };
+            let vs = match c.ahead_behind {
+                _ if Some(c.line()) == main_name => "\u{2014}".to_string(),
+                Some((a, b)) => format!("\u{2191}{a} \u{2193}{b}"),
+                None => "?".to_string(),
+            };
+            let who: Vec<String> = c
+                .writers
+                .iter()
+                .map(|w| format!("{} ({})", w.label.to_lowercase(), w.tab_name))
+                .collect();
+            rows = rows.child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .gap(px(8. * s))
+                    .child(cell(210., th.text, line))
+                    .child(cell(60., kind_ink, kind.into()))
+                    .child(cell(110., dirt_ink, dirt))
+                    .child(cell(60., th.text, vs))
+                    .child(cell(200., th.text, who.join(", "))),
+            );
+        }
+        // the drift and the panes in no repository
+        let mut notes: Vec<(Hsla, String)> = Vec::new();
+        for f in &st.foreign {
+            notes.push((
+                warn,
+                format!(
+                    "\u{26a0} {} is filed here but working in {}",
+                    f.writer.tab_name, f.repo_name
+                ),
+            ));
+        }
+        for v in &st.visitors {
+            notes.push((
+                muted,
+                match &v.filed_under {
+                    Some(u) => format!(
+                        "\u{25cc} {} is working here but filed under {u}",
+                        v.writer.tab_name
+                    ),
+                    None => format!("\u{25cc} {} is working here, unfiled", v.writer.tab_name),
+                },
+            ));
+        }
+        for w in &st.no_git {
+            notes.push((muted, format!("{} is in no repository", w.tab_name)));
+        }
+        if let Some(r) = st.primary() {
+            if let Some(n) = r.worktrees_on_disk {
+                let in_use = st.primary_checkouts().len() as u32;
+                if n > in_use {
+                    notes.push((
+                        muted,
+                        format!("{n} worktrees of {} on disk, {in_use} in use", r.name),
+                    ));
+                }
+            }
+        }
+        if !notes.is_empty() {
+            rows = rows.child(div().h(px(1.)).mt(px(4. * s)).bg(th.text.alpha(0.12)));
+            for (ink, text) in notes {
+                rows = rows.child(mono(div()).text_color(ink).child(text));
+            }
+        }
+        // the afterglow, oldest first, with how long ago
+        let glow = self.eng_afterglow();
+        if !glow.is_empty() {
+            rows = rows.child(div().h(px(1.)).mt(px(4. * s)).bg(th.text.alpha(0.12)));
+            let key = self.place_of(self.active).project;
+            let now = Instant::now();
+            if let Some(log) = self.eng_events.get(&key) {
+                for (at, e) in log {
+                    let age = now.duration_since(*at).as_secs();
+                    let when = if age < 60 {
+                        format!("{age}s ago")
+                    } else {
+                        format!("{}m ago", age / 60)
+                    };
+                    rows = rows.child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .gap(px(8. * s))
+                            .child(cell(60., muted, when))
+                            .child(
+                                mono(div())
+                                    .text_color(th.text)
+                                    .child(format!("\u{25c6} {e}")),
+                            ),
+                    );
+                }
+            }
+        }
+        Some(self.eng_table_frame(&sk, s, rows, cx))
+    }
+
+    /// The scrim and the panel around the table — the same shape as every
+    /// menu, so closing it never also presses what was underneath.
+    fn eng_table_frame(
+        &self,
+        sk: &skin::Skin,
+        s: f32,
+        rows: gpui::Div,
+        cx: &mut Context<Self>,
+    ) -> gpui::Div {
+        div()
+            .absolute()
+            .inset_0()
+            .occlude()
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|ws, _: &MouseDownEvent, window, cx| {
+                    cx.stop_propagation();
+                    ws.eng_table = false;
+                    ws.focus_active(window, cx);
+                    cx.notify();
+                }),
+            )
+            .child(
+                sk.panel()
+                    .id("eng-table-panel")
+                    .absolute()
+                    .left(px(12. * s))
+                    .top(px(44. * s))
+                    .max_h(px(self.tray_max_h(44. * s)))
+                    .overflow_x_hidden()
+                    .overflow_y_scroll()
+                    .shadow_lg()
+                    .child(rows),
+            )
+    }
+
+    /// The ink a tone is drawn in. Bound here and nowhere else, so the model
+    /// never names a colour and the palette decides what "warn" looks like.
+    fn eng_ink(&self, tone: engstate::Tone, th: &theme::Theme) -> Hsla {
+        match tone {
+            engstate::Tone::Plain => th.text,
+            engstate::Tone::Muted => th.text.alpha(0.55),
+            engstate::Tone::Good => th.accent,
+            // the palette's own yellow: every theme has one, and it is the
+            // colour a shell already uses for "look at this"
+            engstate::Tone::Warn => th.ansi[3],
+        }
+    }
+
+    /// The ticker: one frame of the active project's engineering state, and
+    /// its heartbeat. Takes the middle of the top row when the tree is open —
+    /// the tabs it replaces there are the spine's task rows, already on
+    /// screen an inch below.
+    fn render_ticker(&self, scale: f32, cx: &mut Context<Self>) -> gpui::Div {
+        let th = theme::theme(cx);
+        let mut row = div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .min_w_0()
+            .flex_1()
+            .gap(px(12. * scale));
+        let Some(st) = self.eng_state() else {
+            return row;
+        };
+        // a thin rule between the badge and the ticker, as the mockup drew it
+        row = row.child(
+            div()
+                .flex_none()
+                .w(px(1.))
+                .h(px(14. * scale))
+                .bg(th.text.alpha(0.18)),
+        );
+        let frames = self.eng_frames();
+        if frames.is_empty() {
+            // silence means healthy: the badge already said what there is to
+            // say, and an empty middle is the breathing room that makes the
+            // next non-empty frame land
+            return row.child(div().min_w_0().flex_1());
+        }
+        let frame = &frames[self.eng_frame % frames.len()];
+        row = row.child(
+            div()
+                .min_w_0()
+                .flex_1()
+                .truncate()
+                .text_size(px(11.5 * scale))
+                .text_color(self.eng_ink(frame.tone, &th))
+                .child(frame.text.clone()),
+        );
+        // the frame counter, so a reader knows there are more and how far
+        // round they are — "3/7" in the quietest ink
+        if frames.len() > 1 {
+            row = row.child(
+                div()
+                    .flex_none()
+                    .text_size(px(9.5 * scale))
+                    .text_color(th.text.alpha(0.35))
+                    .child(format!(
+                        "{}/{}",
+                        (self.eng_frame % frames.len()) + 1,
+                        frames.len()
+                    )),
+            );
+        }
+        if let Some(p) = st.primary().and_then(|r| r.pulse) {
+            row = row.child(self.render_pulse(&p, scale, cx));
+        }
+        row
+    }
+
+    /// The heartbeat: twelve bars, one per five minutes of the last hour,
+    /// oldest on the left. Not a graph to study — peripheral vision tells you
+    /// the project is hot. A calm hour is twelve baseline dots, drawn rather
+    /// than omitted, so an absent instrument and a quiet one look different.
+    fn render_pulse(&self, p: &[u32; 12], scale: f32, cx: &mut Context<Self>) -> gpui::Div {
+        let th = theme::theme(cx);
+        let max = p.iter().copied().max().unwrap_or(0).max(1) as f32;
+        let mut bars = div()
+            .flex_none()
+            .flex()
+            .flex_row()
+            .items_end()
+            .gap(px(1.5 * scale))
+            .h(px(12. * scale));
+        for (i, &v) in p.iter().enumerate() {
+            // newest bars brightest, so the eye reads direction as well as size
+            let age = (11 - i) as f32 / 11.;
+            let ink = if v == 0 {
+                th.text.alpha(0.18)
+            } else {
+                th.accent.alpha(0.45 + 0.55 * (1. - age))
+            };
+            let h = if v == 0 {
+                2. * scale
+            } else {
+                (3. + 9. * (v as f32 / max)) * scale
+            };
+            bars = bars.child(
+                div()
+                    .flex_none()
+                    .w(px(3. * scale))
+                    .h(px(h))
+                    .rounded(px(1.))
+                    .bg(ink),
+            );
+        }
+        bars
     }
 
     /// The tab-config wheel: the same HSV disk as the theme breakout, carrying
@@ -22241,17 +22815,12 @@ impl Render for Workspace {
         // the header icons for. Four ordinary tab titles wrapped into a scrunched
         // column at that cap; at full width they simply lay out, and only a
         // genuinely full bar wraps — onto a second TAB row, which pushes nothing.
-        // The strip belongs to the SCREEN, not to the whole window: with the
-        // tree open the tabs start where the terminals start, so a tab sits
-        // over the thing it opens instead of over the tree that lists it. The
-        // indent is computed from the same numbers the layout uses — the bar's
-        // width plus its margin and the screen's, less the bezel's own padding
-        // — so the two edges line up at any bar width and any scale.
-        let strip_indent = if self.left_bar {
-            (self.left_bar_w * scale + 16. - 12. * scale).max(0.)
-        } else {
-            0.
-        };
+        // The middle of the row is the project rail while the tree is open and
+        // the tab strip while it is shut (see `middle` below). The strip used to
+        // start on the line the terminals start at, by pinning the corner to the
+        // tree's width; with the tree open the tabs are no longer up here, and
+        // with it shut that indent was always zero. So the corner takes the
+        // width it needs and nothing is pinned.
         // The heading stands in a column the width of the tree, centred over it,
         // so the name sits above the rows it belongs to. Then a gutter that is
         // VOID on purpose: the tabs start a little way INSIDE the terminals
@@ -22260,15 +22829,6 @@ impl Render for Workspace {
         // that gap — the moment a control moves into it, the inset stops
         // reading as deliberate and starts reading as that control's margin.
         let strip_void = 14. * scale;
-        // `strip_indent` is the tree's width, and it is what keeps the tabs'
-        // left edge on the line the terminals start at — a tab sits over the
-        // thing it opens rather than over the tree that lists it.
-        //
-        // It used to be a spacer of its own on a second row. Now that the
-        // header is one line, the CORNER is pinned to this width instead: the
-        // mark and the branch name occupy exactly the tree's column, so the
-        // tabs begin where they always did and the space the corner was
-        // leaving empty is doing a job.
         let mut tab_strip = div()
             .flex()
             .flex_row()
@@ -22754,6 +23314,15 @@ impl Render for Workspace {
                 }
             });
 
+        // THE MIDDLE of the top row: the project rail while the tree is open
+        // — the tabs it would list there are the spine's task rows, an inch
+        // below — and the tab strip while the tree is shut, when the strip is
+        // the only listing of the tabs there is.
+        let middle: gpui::AnyElement = if self.left_bar {
+            self.render_ticker(scale, cx).into_any_element()
+        } else {
+            tab_strip.into_any_element()
+        };
         let bezel_top = div()
             // min-height (not fixed): extra tab rows grow the bar downward.
             .min_h(px(43. * scale))
@@ -22783,7 +23352,7 @@ impl Render for Workspace {
             .py(px(7. * scale))
             // NO row gap, deliberately. The corner is pinned to the tree's
             // width and the void after it is an exact number, so the tabs'
-            // left edge is `px + strip_indent + strip_void` — the same
+            // left edge is `px + corner + strip_void` — the same
             // arithmetic the layout below uses to place the terminals. A flex
             // gap would be added between EVERY pair, putting two of them ahead
             // of the strip and pushing the tabs 16px right of the panes they
@@ -22810,27 +23379,21 @@ impl Render for Workspace {
                 }),
             )
             .child(
-                // THE CORNER: the app's MARK, then the name of the branch this
-                // window is standing in.
+                // THE CORNER: the app's MARK, then the PROJECT this window is
+                // standing in, then that project's isolation badge.
                 //
                 // It used to read `▸ TERMINAL DELIGHT` — the widest thing on
                 // the busiest row, spent saying something that never changes
-                // and that the window's own title already says. Worse, the
-                // strip heading below it said the active branch's name, so a
-                // session whose project is called Terminal Delight printed the
-                // same three words twice, stacked, in the two most prominent
-                // places in the window. The mark says which program this is in
-                // 18px; the words beside it now say something that changes.
-                //
-                // Pinned to the width of the TREE, which is what keeps the
-                // tabs' left edge on the line the terminals start at — the
-                // alignment the old second row got from its heading column. A
-                // branch named longer than the tree is wide truncates here
-                // rather than pushing the first tab right. With the tree closed
-                // there is no column to match, so it takes what it needs.
+                // and that the window's own title already says. Then it named
+                // the active BRANCH, in a box pinned to the tree's width and
+                // sitting directly above the spine row already lit for that
+                // same branch: one fact, said twice, in the two most prominent
+                // places in the window. Now the words say which project, and
+                // the badge says what kind of engineering situation is inside
+                // it — a thing the tree cannot say, because the tree is the
+                // DECLARED organisation and the badge is read off the disk.
                 div()
                     .flex_none()
-                    .when(strip_indent > 0., |d| d.w(px(strip_indent)))
                     .h(px(22. * scale))
                     // clip instead of paint-over: when the window narrows past
                     // the corner, the fixed-size children must truncate, not
@@ -22851,10 +23414,10 @@ impl Render for Workspace {
             // the void: no control, no rule, no handle. What makes the strip
             // read as belonging to the screen rather than to the tree.
             .child(div().flex_none().w(px(strip_void)))
-            // THE TABS, inline. `flex_1` + `min_w_0` + `flex_wrap`, so they
-            // take the middle, absorb the slack that used to be dead space on
-            // two rows, and still wrap downward on a genuinely full bar.
-            .child(tab_strip)
+            // THE MIDDLE: the rail or the tabs, chosen above. Either is
+            // `flex_1` + `min_w_0`, so it takes the middle and absorbs the
+            // slack that used to be dead space on two rows.
+            .child(middle)
             .child(
                 // Never compressed or pushed off. The menu glyphs used to lead
                 // this group and the splits followed them; both are at the
@@ -28031,6 +28594,7 @@ impl Render for Workspace {
                     .children(confirm_overlay)
                     .children(delete_overlay)
                     .children(self.render_bar_menu(&th, scale, cx))
+                    .children(self.render_eng_table(&th, scale, cx))
                     .children(self.render_rail(cx))
                     .children(scale_overlay)
                     .children(more_overlay)
@@ -29073,20 +29637,10 @@ mod tests {
             &src[at..at + end]
         };
 
-        let title = body("fn group_title");
-        assert!(
-            title.contains(".label()"),
-            "group_title must go through TabGroup::label — reading `name` \
-             directly renders nothing at all for a group nobody has named yet"
-        );
-        assert!(
-            title.contains(".truncate()"),
-            "group_title must truncate: gpui wraps by default, so a long branch \
-             name grows the mother bar instead of clipping inside its rail"
-        );
         assert!(
             body("fn place_name").contains(".truncate()"),
-            "the project name must truncate for the same reason"
+            "the project name must truncate: gpui wraps by default, so a long \
+             name grows the mother bar instead of clipping inside its rail"
         );
 
         // and the fallback has to actually say something
@@ -29179,7 +29733,6 @@ mod tests {
         for call in [
             "self.commit_rename(cx)",
             "self.commit_bar_rename(cx)",
-            "self.commit_group_rename(cx)",
             "v.commit_rename(cx)",
         ] {
             assert!(
@@ -29200,14 +29753,13 @@ mod tests {
             .filter_map(|l| l.split(':').next())
             .collect();
         assert!(
-            fields.len() >= 3,
-            "expected the three workspace rename buffers, found {fields:?}"
+            fields.len() >= 2,
+            "expected the two workspace rename buffers, found {fields:?}"
         );
         let commits = format!(
-            "{}{}{}",
+            "{}{}",
             body("fn commit_rename"),
-            body("fn commit_bar_rename"),
-            body("fn commit_group_rename")
+            body("fn commit_bar_rename")
         );
         for f in fields {
             assert!(
@@ -29979,7 +30531,7 @@ mod tests {
     /// same three words twice, stacked, in the two most prominent places in the
     /// window. The mark does the identifying; the words do the informing.
     #[test]
-    fn the_header_corner_carries_the_mark_and_the_branchs_name() {
+    fn the_header_corner_carries_the_mark_and_the_projects_state() {
         let src = shipped_src();
         let region = |sig: &str| -> &str {
             let at = src.find(sig).unwrap_or_else(|| panic!("{sig} not found"));
@@ -29993,8 +30545,8 @@ mod tests {
         );
         assert!(
             top.contains("self.place_name(None,"),
-            "…and beside it, the branch this window is standing in, at its \
-             natural width rather than pinned to the tree's column"
+            "…and beside it, the project this window is standing in, at its \
+             natural width"
         );
         // The words are gone. Spelled in pieces so this test's own source does
         // not answer the search — see `shipped_src`.
@@ -30003,47 +30555,48 @@ mod tests {
             !src.contains(&brand_text),
             "the header no longer prints the program's name as words"
         );
-        // ONE ROW. The corner, the void, the tabs and the right-hand controls
-        // are siblings of `bezel_top` itself, not children of two stacked
-        // rows — two rows each holding a short thing with a wide gap beside it
-        // was the awkward space this removed.
+        // ONE ROW. The corner, the void, the middle and the right-hand
+        // controls are siblings of `bezel_top` itself, not children of two
+        // stacked rows.
         assert!(
             top.contains(".flex_row()") && !top.contains(".flex_col()"),
-            "the mother bar is one row: the tabs share it with the corner and \
-             the scale"
+            "the mother bar is one row"
         );
+        // THE MIDDLE is chosen by whether the tree is open. With it open the
+        // tabs are the spine's task rows, an inch below, and the row carries
+        // the project rail instead; with it shut the strip is the only listing
+        // of the tabs there is, and it stays. A middle that showed the rail
+        // regardless would leave a tree-shut window with no tabs at all, and
+        // one that showed the strip regardless is the duplication this
+        // replaced (Parker: "the top outer repeats something we already see
+        // on the left spine").
         assert!(
-            top.contains(".child(tab_strip)"),
-            "the tabs are inline in that row"
+            top.contains(".child(middle)"),
+            "the row's middle is the chosen element, not the strip by name"
         );
-        // And the corner carries the INDENT the second row's spacer used to
-        // provide — the thing that keeps a tab sitting over the terminals it
-        // opens rather than over the tree that lists them. Pinning the corner
-        // to the tree's width is what makes one row possible without moving
-        // the tabs' left edge.
+        let choice = region("let middle: gpui::AnyElement");
         assert!(
-            top.contains(".when(strip_indent > 0., |d| d.w(px(strip_indent)))"),
-            "the corner occupies the tree's column, so the tabs begin where \
-             they always did"
+            choice.contains("if self.left_bar")
+                && choice.contains("self.render_ticker(")
+                && choice.contains("tab_strip.into_any_element()"),
+            "the middle is the rail with the tree open and the strip with it \
+             shut — both, chosen by self.left_bar"
         );
         assert!(
             top.contains("w(px(strip_void))"),
-            "…and the void after it survives: it is what makes the strip read \
-             as belonging to the screen rather than to the tree"
+            "the void after the corner survives: it is what makes the middle \
+             read as belonging to the screen rather than to the tree"
         );
-        // No flex gap on the row. A gap is inserted between EVERY pair, so two
-        // of them would land ahead of the strip and push the tabs 16px right of
-        // the panes they sit over — the one thing the indent exists to prevent.
-        // The tabs' left edge has to stay `px + strip_indent + strip_void`,
-        // which is the arithmetic the layout below uses for the terminals.
+        // No flex gap on the row: the tabs' left edge (tree shut) has to stay
+        // `px + corner + strip_void`, and a gap would land ahead of the strip.
         let row_head = &top[..top.find(".child(").unwrap_or(top.len())];
         assert!(
             !row_head.contains(".gap(px("),
-            "the mother bar's row must carry no gap, or the tabs stop lining up \
-             with the terminals"
+            "the mother bar's row must carry no gap"
         );
-        // One name-rendering path, called at two sizes, so the corner and the
-        // strip can never disagree about what the branch is called.
+        // The corner names the PROJECT, uppercase as the tree draws it, and
+        // carries the badge — never the branch. Switching tabs must not
+        // change the corner; switching projects must.
         let name = {
             let at = src.find("    fn place_name").expect("place_name");
             let end = src[at..].find("\n    }\n").expect("end of fn");
@@ -30054,8 +30607,16 @@ mod tests {
             "place_name takes its column width and its size from the caller"
         );
         assert!(
-            name.contains("self.group_title(gid, pt, cx)"),
-            "and hands the size on, so a group and a project render alike"
+            name.contains(".child(name.to_uppercase())"),
+            "the corner spells the project the way the tree does"
+        );
+        assert!(
+            name.contains("self.eng_badge(pt, cx)"),
+            "the corner carries the isolation badge"
+        );
+        assert!(
+            !name.contains("group_title") && !name.contains("place.initiative"),
+            "the corner names the project, never the group the active tab is in"
         );
     }
 
