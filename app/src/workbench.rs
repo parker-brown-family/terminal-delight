@@ -323,20 +323,27 @@ pub fn tabbed(
     r: &crate::surface::Response,
     promoted_asks: bool,
 ) -> Vec<(crate::surface::Group, Vec<Leaf<'_>>)> {
-    // The brief leads where there is one, so the card opens on the shortest
-    // honest answer; the plain reply leads where there is not, which is every
-    // card this build drew before the brief existed.
-    let mut leaves: Vec<Leaf<'_>> = Vec::new();
-    if r.brief.is_some() {
-        leaves.push(Leaf::Brief);
-    }
-    leaves.push(Leaf::Layman);
+    // The plain reply LEADS, and the brief comes last in its group.
+    //
+    // The order is the default: `resolve_leaf` takes the first leaf when the
+    // reader has picked nothing, so where a leaf sits and what the card opens
+    // on are one decision rather than two that can disagree. Parker, on a
+    // first cut that put the brief in front: *"it should be ordered last!
+    // Plain Brief is still the default."* A reader who has opened a card has
+    // already decided to read; the fifty-word version is the rung they drop
+    // to. Pushed after the sections so it lands behind the technical brief —
+    // its group filters it back out of this vector, so its position relative
+    // to the doubts below does not matter.
+    let mut leaves: Vec<Leaf<'_>> = vec![Leaf::Layman];
     leaves.extend(
         r.sections
             .iter()
             .filter(|s| !(promoted_asks && s.register == crate::surface::Register::Asks))
             .map(Leaf::Section),
     );
+    if r.brief.is_some() {
+        leaves.push(Leaf::Brief);
+    }
     if !r.doubts.is_empty() {
         leaves.push(Leaf::Doubts);
     }
@@ -4415,8 +4422,8 @@ mod tests {
         );
         assert_eq!(
             resolve_leaf(None, &tabs[0].1).map(|l| l.key()),
-            Some("brief"),
-            "…on the shortest reading in it"
+            Some("layman"),
+            "…on the plain brief, which a brief in the same group does not displace"
         );
     }
 
@@ -4581,15 +4588,16 @@ mod tests {
         );
     }
 
-    /// The brief leads the readings — and ONLY on the cards that sent one.
+    /// The brief comes LAST in the readings and moves no default.
     ///
-    /// Both halves in one test on purpose. The change is a new first leaf, and
-    /// the way a new first leaf ships broken is by moving the default on every
-    /// card rather than on the cards that asked for it: every pane on this
-    /// machine is still sending replies with no brief in them, and each of
-    /// those has to open exactly where it opened yesterday.
+    /// The whole risk in adding a reading is that it takes the slot the card
+    /// opens on, and a first cut of this one did: *"it should be ordered last!
+    /// Plain Brief is still the default."* Since `resolve_leaf` takes the first
+    /// leaf when nobody has picked, position and default are one fact — so this
+    /// asserts both the order and what an unpicked card resolves to, on a reply
+    /// that has a brief AND on one that does not.
     #[test]
-    fn a_brief_leads_the_readings_and_a_reply_without_one_opens_where_it_always_did() {
+    fn the_brief_comes_last_in_the_readings_and_the_plain_one_stays_the_default() {
         use crate::surface::Group;
         let mut b = Bench::new();
         let plain = "The effort row offered invented words; it now passes the harness's own flag.";
@@ -4622,25 +4630,22 @@ mod tests {
         let with = readings("with");
         assert_eq!(
             with.iter().map(|l| l.key()).collect::<Vec<_>>(),
-            ["brief", "layman", "technical"],
-            "the ladder runs shortest first"
+            ["layman", "technical", "brief"],
+            "the brief is the rung you drop to, so it sits at the end"
         );
         assert_eq!(
             resolve_leaf(None, &with).map(|l| l.key()),
-            Some("brief"),
-            "and the card opens on the shortest rung"
+            Some("layman"),
+            "and an unpicked card opens where it always has"
         );
         assert_eq!(
             with.iter().map(|l| l.label()).collect::<Vec<_>>(),
-            ["Brief", "Plain brief", "Technical brief"],
-            "the chip row reads as one ladder of depth, which is what lets the \
-             bare word sit beside two that qualify it"
+            ["Plain brief", "Technical brief", "Brief"],
         );
-        // The reader is still in charge: a brief ahead of the plain reply is an
-        // order, not a demotion.
+        // Reachable, which is the whole point of it being a chip.
         assert_eq!(
-            resolve_leaf(Some("layman"), &with).map(|l| l.key()),
-            Some("layman")
+            resolve_leaf(Some("brief"), &with).map(|l| l.key()),
+            Some("brief")
         );
 
         let without = readings("without");
@@ -4652,7 +4657,7 @@ mod tests {
         assert_eq!(
             resolve_leaf(None, &without).map(|l| l.key()),
             Some("layman"),
-            "and every card sent before today opens exactly where it did"
+            "and a reply that sent no brief is untouched in every respect"
         );
     }
 

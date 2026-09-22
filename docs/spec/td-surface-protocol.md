@@ -164,8 +164,8 @@ is the same reply cut for several readers, and the person picks the cut.
 { "kind": "response",
   "title": "What this turn did",
   "model": {
-    "brief": "The bare minimum, in two sentences under fifty words.",
     "layman": "The whole reply in plain English, written for the person.",
+    "brief": "The bare minimum, in two sentences under fifty words.",
     "technical": "…",
     "evidence": ["cargo test --locked, all green", "…"],
     "next": ["install the build", "watch the overview"],
@@ -188,8 +188,8 @@ is the same reply cut for several readers, and the person picks the cut.
 
 | Key | Required | Drawn as | Notes |
 |---|---|---|---|
-| `brief` | no | the **first** register, and what the card opens on where it exists | **At most two sentences, under fifty words.** Aliases: `in_brief`, `bare_minimum`, `bottom_line`. It is the row's subtitle and titles the row when `title` is absent. A brief identical to the `layman` is dropped rather than drawn twice. |
-| `layman` | **yes** | a register, and what the card opens on when no `brief` came | Aliases: `plain`, `plain_brief`, `plain_english`, `layman_brief`. Falls back to the row when there is no brief. |
+| `layman` | **yes** | the first register, and what the card opens on | Aliases: `plain`, `plain_brief`, `plain_english`, `layman_brief`. The first sentence titles the row if `title` is absent, and the whole thing is the row's subtitle. |
+| `brief` | no | the **last** reading — the rung a reader drops to | **At most two sentences, under fifty words.** Aliases: `in_brief`, `bare_minimum`, `bottom_line`. Never the default and never the row: a brief identical to the `layman` is dropped rather than drawn twice. |
 | `technical` | no | a folded register, **Technical brief** | Aliases: `technical_brief`, `tech`, `detail`. |
 | `evidence` | no | a folded register, **What was verified** | Aliases: `verified`, `proof`, `checks`. |
 | `asks` | no | an **open** register, **Needs from you** — or the escalation, if none was declared | Aliases: `needs`, `questions`, `blocked_on`. |
@@ -213,21 +213,25 @@ the tl;dr's brevity and the ELI5's plainness in a single fifty-word answer:
 go to the ELI5 AND TL;DR AND boil it down to a 2 sentence under 50 words: what
 is the BARE MINIMUM i need to know about what this decision or attention
 requirement is. - SERIOUS - DIRECT - SIMPLE … not the kind of ELI5 that means
-use metaphors, more the ELI5 that allows converyance of the idea simply."* So
-the ladder is **brief → plain → technical**, each longer than the last, and no
-rung a rewrite of the one below it at the same depth.
+use metaphors, more the ELI5 that allows converyance of the idea simply."*
 
-**Every register is a peer.** The brief does not outrank the plain reply and
-the plain reply does not outrank the technical one: a reader who deliberately
-opened the technical brief is reading the technical brief. They share one
-panel, one type size and one ink, and exactly one of them is lit at a time —
-the one the reader is in. The brief is FIRST, which is an order, not a
-promotion; nothing else on a card glows.
+**The brief is drawn LAST, and it is not the default.** A first cut put it in
+front, on the argument that a reader should meet the shortest honest answer
+first: *"it should be ordered last! Plain Brief is still the default."* Someone
+who has opened a card has already decided to read — the fifty-word version is
+the rung they drop TO, and the chip row reads `Plain brief · Technical brief ·
+Brief`.
 
-**Write each reading as the answer, not as a trailer for one.** The brief is
-what the card is showing before anybody presses anything, and the `layman` is
-what it shows when no brief came — so either one written as a teaser for a
-fuller reply somewhere else leaves the reader with the teaser.
+**Every register is a peer.** The plain reply does not outrank the technical
+one and the brief does not undercut either: a reader who deliberately opened
+the technical brief is reading the technical brief. They share one panel, one
+type size and one ink, and exactly one of them is lit at a time — the one the
+reader is in. Nothing else on a card glows.
+
+**Write the `layman` as the answer, not as a trailer for one.** It is what the
+card is showing before anybody presses anything, so a plain brief written as a
+teaser for a fuller reply somewhere else leaves the reader with the teaser. The
+same goes for the brief, which has fifty words to be complete in.
 
 **`escalation` — the only thing allowed to interrupt.**
 
@@ -634,9 +638,9 @@ the sender can read.
 ### What changed
 
 **0.4, 2026-09-22** — `brief`, the bare minimum: at most two sentences and
-under fifty words, first in the reading group and what the card opens on. It is
-optional, so **no payload that parsed before fails now**, and a reply without
-one opens on its `layman` exactly as it did yesterday. Two things did change
+under fifty words, drawn **last** in the reading group. It is optional and it
+moves no default, so **no payload that parsed before fails now** and every
+reply opens on its `layman` exactly as it did yesterday. Two things did change
 shape without changing what is accepted. A legacy `tldr` alongside a real
 `layman` used to be discarded and now fills the brief — it was always that
 length. And `brief` was an undocumented alias for the `layman`; a reply sending

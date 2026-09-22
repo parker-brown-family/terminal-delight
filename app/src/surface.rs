@@ -763,17 +763,20 @@ pub struct Choice_ {
 /// committee, and the reader picks between a plain explanation and a technical
 /// one or between nothing at all.
 ///
-/// **A BRIEF sits above it, from 2026-09-22 — and it is the shortest thing
-/// there is, not a fourth length.** The tl;dr and the ELI5 came back as ONE
-/// register, which is the whole of what was wrong with them: *"bring BACK
-/// tl;dr and ELI5 as a SINGLE READING element ... call it BRIEF -- but go to
-/// the ELI5 AND TL;DR AND boil it down to a 2 sentence under 50 words: what is
-/// the BARE MINIMUM i need to know about what this decision or attention
-/// requirement is. - SERIOUS - DIRECT - SIMPLE ... not the kind of ELI5 that
-/// means use metaphors, more the ELI5 that allows converyance of the idea
-/// simply."* So the reading ladder is brief, plain, technical: each longer
-/// than the last, none of them a rewrite of another at the same depth. It is
-/// optional, and a reply without one draws exactly as it did before.
+/// **A BRIEF joins it from 2026-09-22, LAST and not the default.** The tl;dr
+/// and the ELI5 came back as ONE register, which is the whole of what was
+/// wrong with them: *"bring BACK tl;dr and ELI5 as a SINGLE READING element
+/// ... call it BRIEF -- but go to the ELI5 AND TL;DR AND boil it down to a 2
+/// sentence under 50 words: what is the BARE MINIMUM i need to know about what
+/// this decision or attention requirement is. - SERIOUS - DIRECT - SIMPLE ...
+/// not the kind of ELI5 that means use metaphors, more the ELI5 that allows
+/// converyance of the idea simply."*
+///
+/// It was drawn first for one draft, and that was wrong: *"it should be
+/// ordered last! Plain Brief is still the default."* A reader who has opened a
+/// card has already decided to read, so the fifty-word version is the rung
+/// they drop TO rather than the one they are met with. It is optional, it is
+/// the last chip in the reading group, and a reply without one is unchanged.
 ///
 /// **Well defined and very flexible, both.** The registers this build knows
 /// get a fixed label and a fixed order; any other key the agent sends becomes
@@ -800,8 +803,9 @@ pub struct Response {
     ///
     /// `None` is a real answer and the reason this is not a `String` with an
     /// empty default. An agent that wrote no brief has not written a blank one,
-    /// and the card draws the difference: with a brief it opens on the brief,
-    /// without one it opens on [`Response::layman`] exactly as it did before.
+    /// and the card draws the difference: with a brief there is a last chip in
+    /// the reading group, without one there is not. Either way the card opens
+    /// on [`Response::layman`], which is where it has opened since 2026-09-21.
     ///
     /// Never a second copy of the plain reply. A brief identical to it is
     /// dropped in the parser, because two chips holding the same paragraph is
@@ -914,44 +918,49 @@ pub struct Section {
 
 /// The registers this build knows by name, and the honest default.
 ///
-/// Ordered as they are drawn: easiest reading first, then what the agent
-/// checked, then what it wants from you, then what comes next. `Other` sorts
-/// last and keeps the agent's own key as its label.
+/// Ordered as they are drawn: the plain reply, the technical one, the
+/// fifty-word brief, then what the agent checked, then what it wants from you,
+/// then what comes next. `Other` sorts last and keeps the agent's own key as
+/// its label.
 ///
 /// **Three readings, and they differ in LENGTH rather than in voice.** `Tldr`
 /// and `Eli5` were separate variants here until 2026-09-21, when both died: a
 /// reply cut four ways is a reply written four times, and three of the four
 /// said the same thing at the same depth. What they were each half of came
 /// back on 2026-09-22 as one register, [`Register::Brief`] — the tl;dr's
-/// brevity and the ELI5's plainness in a single fifty-word answer. So the
-/// ladder is brief, plain, technical, and no rung repeats the one below it.
+/// brevity and the ELI5's plainness in a single fifty-word answer.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, PartialOrd, Ord)]
 pub enum Register {
-    /// The bare minimum, in two sentences — what the card opens on when the
-    /// agent wrote one.
-    ///
-    /// First in this enum because the enum's order IS the drawing order, and a
-    /// reader arriving at a card should meet the shortest honest answer before
-    /// choosing to spend more. It never appears in [`Response::sections`]: it
-    /// is [`Response::brief`], an `Option` on the wire, because unlike the
-    /// plain reply it is one an agent may simply not have written.
-    Brief,
-    /// The whole reply in plain English — a register like any other, and what
-    /// the card opens on when no brief came with it.
+    /// The whole reply in plain English — the register the card opens on.
     ///
     /// The gist used to sit in this slot and used to be drawn as a banner:
     /// bigger type, its own raised floor, the accent down its edge. That made
     /// it outrank a technical brief the reader had deliberately opened, which
     /// is backwards. Parker: *"ALL THE READING will ONLY be phosphor
     /// highlighted when ACTIVE — all the reading will be attentionally equal,
-    /// eli5 or tl;dr does not get escalated."* The brief that now sits ahead of
-    /// it is a PEER for the same reason: first in the row, and no louder.
+    /// eli5 or tl;dr does not get escalated."* The brief added on 2026-09-22
+    /// did not take this slot back: Parker, on a first draft that gave it away,
+    /// *"it should be ordered last! Plain Brief is still the default."*
     ///
     /// It never appears in [`Response::sections`] — the wire keeps it as
     /// [`Response::layman`], its own required member — but it is a first-class
     /// register everywhere the bench reasons about folds and order.
     Layman,
     Technical,
+    /// The bare minimum, in two sentences. Present only when the agent wrote
+    /// one, and LAST among the readings.
+    ///
+    /// Last rather than first because a reader who has opened a card has
+    /// already decided to read: the fifty-word version is what they drop to,
+    /// not what they are met with. This enum's order is the drawing order, so
+    /// the variant sits where it is drawn even though that wedges it between
+    /// the readings and the evidence — a position that matched the name and not
+    /// the screen would be the comment that lies.
+    ///
+    /// Like the plain reply it never appears in [`Response::sections`]: it is
+    /// [`Response::brief`], an `Option` on the wire, because unlike the plain
+    /// reply it is one an agent may simply not have written.
+    Brief,
     Evidence,
     Asks,
     Next,
@@ -1100,7 +1109,7 @@ impl Group {
     /// Where a register is read. Total, and a pure function.
     pub fn of(register: Register) -> Group {
         match register {
-            Register::Brief | Register::Layman | Register::Technical => Group::Reading,
+            Register::Layman | Register::Technical | Register::Brief => Group::Reading,
             Register::Evidence => Group::Evidence,
             Register::Asks | Register::Next => Group::Next,
             Register::Other => Group::Other,
@@ -1757,11 +1766,16 @@ impl Surface {
                 Answered::ChoseUnknown => "answered · how is unavailable".into(),
                 Answered::Waiting => format!("{} options · waiting on you", q.options.len()),
             },
-            // A reply's row is READ, not counted — so it carries the shortest
-            // complete answer the agent wrote. The brief was designed for
-            // exactly this line; the plain reply stands in when there is none,
-            // which is what the row has always shown.
-            Kind::Response(r) => r.brief.clone().unwrap_or_else(|| r.layman.clone()),
+            // The plain reply IS the subtitle: a reply's row is read, not
+            // counted.
+            //
+            // The brief is the obvious candidate for a one-line row and is
+            // deliberately NOT used. The row and the register the card opens on
+            // are the same text, so a person who scans a row and clicks it
+            // lands on what they just read; a row advertising a register the
+            // card does not open on is a bait the reader pays for every time.
+            // Parker, on the brief: *"Plain Brief is still the default."*
+            Kind::Response(r) => r.layman.clone(),
             Kind::Unclassified(u) => u.reason.clone(),
             // WHEN, and WHO only where who is knowable.
             //
@@ -2005,9 +2019,10 @@ fn default_title(kind: &Kind) -> String {
         Kind::Changeset(c) => format!("{} hunks", c.hunks.len()),
         Kind::Decision(d) => d.question.chars().take(TITLE_MAX_CHARS).collect(),
         Kind::Question(q) => q.question.chars().take(TITLE_MAX_CHARS).collect(),
-        // The first sentence of the shortest reading, which is what a person
-        // would have typed as the title had they been asked.
-        Kind::Response(r) => first_sentence(r.brief.as_deref().unwrap_or(&r.layman))
+        // The first sentence of the plain reply, which is what a person would
+        // have typed as the title had they been asked — and the same register
+        // the row and the opened card both show.
+        Kind::Response(r) => first_sentence(&r.layman)
             .chars()
             .take(TITLE_MAX_CHARS)
             .collect(),
@@ -2922,12 +2937,13 @@ pub fn launch_briefing(dir: &str) -> String {
          surface beside this terminal — a WORKBENCH face on this pane, toggled from its header.\n\
          \n\
          END EVERY TURN by presenting your reply as a `response` surface — the bench's OVERVIEW \
-         is a feed of these and shows nothing else. Two readings carry it. `brief` is the bare \
-         minimum: AT MOST TWO SENTENCES, UNDER FIFTY WORDS, saying what this reply or this \
-         summons IS for somebody who will read nothing else — serious, direct, simple, and not \
-         a metaphor. `layman` (required) is the whole reply in plain English, written for the \
-         person and not for yourself. The card opens on the brief where there is one, so write \
-         both as answers rather than as trailers for one. Then registers a person unfolds by \
+         is a feed of these and shows nothing else. A response is a `layman` (required): the \
+         whole reply in plain English, written for the person and not for yourself. It is what \
+         the card opens on, so write it as the answer rather than as a trailer for one. Also \
+         send a `brief`: the bare minimum, AT MOST TWO SENTENCES AND UNDER FIFTY WORDS, saying \
+         what this reply or this summons IS for somebody who will read nothing else — serious, \
+         direct, simple, and not a metaphor. It is the last reading, the one a person drops to. \
+         Then registers a person unfolds by \
          name: `technical` (the same reply for someone who reads the code), `evidence` (what \
          you verified), `asks` (what you need from them), `next` (what comes next), and \
          `doubts` — where you are not sure, each with a `claim`, a `why` and a `confidence`. \
@@ -2935,8 +2951,8 @@ pub fn launch_briefing(dir: &str) -> String {
          array is a list, an object is facts.\n\
          \n\
          {{\"td\":\"{TDSP_VERSION}\",\"kind\":\"response\",\"title\":\"<what this turn did>\",\
-         \"model\":{{\"brief\":\"<two sentences, under fifty words>\",\
-         \"layman\":\"<the whole reply, in plain English>\",\
+         \"model\":{{\"layman\":\"<the whole reply, in plain English>\",\
+         \"brief\":\"<two sentences, under fifty words>\",\
          \"technical\":\"<…>\",\"evidence\":[\"<…>\"],\"next\":[\"<…>\"],\
          \"doubts\":[{{\"claim\":\"<…>\",\"why\":\"<…>\",\"confidence\":\"hunch\"}}]}}}}\n\
          \n\
@@ -2989,9 +3005,9 @@ mod tests {
     fn every_register_has_exactly_one_group_and_the_table_says_which() {
         use super::{Group, Register};
         let table = [
-            (Register::Brief, Group::Reading),
             (Register::Layman, Group::Reading),
             (Register::Technical, Group::Reading),
+            (Register::Brief, Group::Reading),
             (Register::Evidence, Group::Evidence),
             (Register::Asks, Group::Next),
             (Register::Next, Group::Next),
@@ -3718,9 +3734,10 @@ mod tests {
             "an empty section is a section the agent wrote nothing in"
         );
         assert_eq!(
-            Some(s.subtitle()),
-            r.brief.clone(),
-            "the shortest reading is the row"
+            s.subtitle(),
+            r.layman,
+            "the row is the register the card opens on, never the brief — a row \
+             advertising a reading the card does not open on is a bait"
         );
         assert_eq!(s.kind.shelf(), Shelf::Overview);
         assert_eq!(

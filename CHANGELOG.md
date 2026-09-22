@@ -14,10 +14,11 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
   exactly what was wrong with them as two: the brevity of the first and the
   plainness of the second in a single answer to *what is the bare minimum I
   need to know about this*. Serious, direct, simple; an explanation made small,
-  never a metaphor. It is first in the reading group, the register the card
-  opens on, and the line the overview row shows — so the reading ladder is now
-  brief, plain, technical, each longer than the last and none a rewrite of
-  another at the same depth. Optional, and every reply sent without one draws
+  never a metaphor. It is drawn **last** in the reading group and moves no
+  default — the chip row reads `Plain brief · Technical brief · Brief`, and a
+  card still opens on its plain reply, because somebody who has opened a card
+  has already decided to read and the fifty-word version is the rung they drop
+  to. Optional, and every reply sent without one draws
   precisely as it did before. Two migrations came with it: a legacy `tldr`
   beside a real `layman` used to be thrown away and now fills the brief, which
   is the length it always was, and `brief` — until now an undocumented alias

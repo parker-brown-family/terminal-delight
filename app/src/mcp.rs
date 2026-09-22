@@ -933,11 +933,12 @@ fn tool_defs() -> Value {
                  face, toggled from its header beside the terminal. Describe what \
                  the thing MEANS and Terminal Delight renders it natively. END \
                  EVERY TURN with a `response`: the workbench's OVERVIEW is a feed \
-                 of these and shows nothing else. A response is a `brief` — the \
-                 bare minimum in at most two sentences and under fifty words, \
-                 serious and direct and never a metaphor, and the register the \
-                 card opens on — and a `layman` (required), the whole reply in \
-                 plain English, written for the person and not for yourself \
+                 of these and shows nothing else. A response is a `layman` \
+                 (required) — the whole reply in plain English, written for the \
+                 person and not for yourself, and the register the card opens on \
+                 — and a `brief`, the bare minimum in at most two sentences and \
+                 under fifty words, serious and direct and never a metaphor, \
+                 drawn last as the reading a person drops to \
                  — plus registers a person unfolds by name: `technical`, \
                  `evidence`, `asks`, `next`, and `doubts`, where you are not \
                  sure, each a `claim` with a `why` and a `confidence`. Any other \
@@ -954,7 +955,7 @@ fn tool_defs() -> Value {
                  widths, no colours, no components; the window owns all of that. \
                  `surface` is one TDSP document: \
                  {\"td\":\"0.4\", \"kind\":\"response\", \"title\":\"…\", \
-                 \"model\":{\"brief\":\"…\",\"layman\":\"…\",\"technical\":\"…\",\
+                 \"model\":{\"layman\":\"…\",\"brief\":\"…\",\"technical\":\"…\",\
                  \"doubts\":[…]}}. \
                  Send the same `id` again to update it in place, or op \"retire\" \
                  to take it off the bench. An unknown kind is shown as \

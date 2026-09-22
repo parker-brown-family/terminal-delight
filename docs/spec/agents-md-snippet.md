@@ -52,20 +52,21 @@ theme and at whatever size the pane is. A kind it does not know is shown as
 `unclassified` rather than dropped, so it is always safe to send.
 
 **End every turn with a `response`.** The bench's OVERVIEW is a feed of these
-and shows nothing else. Two readings carry it. `brief` is **the bare minimum:
-at most two sentences, under fifty words** — what this reply or this summons IS
-for somebody who will read nothing else. `layman` (required) is the whole reply
-in plain English, written for the person and not for yourself. The card opens
-on the brief where there is one, so write both as answers rather than as
-trailers for one. Then registers a person unfolds by name — `technical`,
-`evidence`, `asks`, `next` — and `doubts`, where you are not sure, each with a
-`claim`, a `why` and a `confidence`. Any other key becomes a section labelled by
-its key; a string is prose, an array is a list, an object is facts.
+and shows nothing else. A response is a `layman` (required): the whole reply in
+plain English, written for the person and not for yourself. It is what the card
+opens on, so write it as the answer rather than as a trailer for one. Send a
+`brief` too — **the bare minimum, at most two sentences and under fifty words**
+— what this reply or this summons IS for somebody who will read nothing else;
+it is the **last** reading, the rung a person drops to. Then registers a person
+unfolds by name — `technical`, `evidence`, `asks`, `next` — and `doubts`, where
+you are not sure, each with a `claim`, a `why` and a `confidence`. Any other key
+becomes a section labelled by its key; a string is prose, an array is a list, an
+object is facts.
 
 ```json
 { "td": "0.4", "kind": "response", "title": "What this turn did",
-  "model": { "brief": "Two sentences, under fifty words.",
-             "layman": "The whole reply, in plain English.", "technical": "…",
+  "model": { "layman": "The whole reply, in plain English.",
+             "brief": "Two sentences, under fifty words.", "technical": "…",
              "evidence": ["…"], "next": ["…"],
              "doubts": [ { "claim": "…", "why": "…", "confidence": "hunch" } ] } }
 ```
