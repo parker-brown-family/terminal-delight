@@ -4560,6 +4560,52 @@ mod tests {
         rest[..end].to_string()
     }
 
+    /// NOTHING the bench draws may block the mouse.
+    ///
+    /// The bench's controls are not gpui elements that listen. They are
+    /// rectangles recorded during paint ([`zone`]) and resolved by ONE listener
+    /// on the pane root, behind everything. So `.occlude()` — which is
+    /// `HitboxBehavior::BlockMouse`, "block mouse interactions with elements
+    /// behind this element's hitbox" — does not protect what is under it. It
+    /// severs every control INSIDE it from the only handler that can read them.
+    ///
+    /// The review flyout occluded, with the honest intention of stopping a
+    /// press falling through to the question underneath. The cost was that its
+    /// own back, forward and CLOSE were dead from the day it was written, and
+    /// so was the way out: Parker, three reports in a row — *"the review arrows
+    /// don't work, clicking them does not do anything"*, *"doesn't seem to
+    /// respond when I hover CLOSE"*, *"clicking on review kills the submit
+    /// card!"* — all of it one line. Nothing failed loudly; the buttons simply
+    /// never received anything.
+    ///
+    /// It is gone with the flyout, and this keeps it gone. A modal that needs
+    /// to swallow the clicks behind it does that the way the gallery already
+    /// did — a full-bench [`zone`] carrying [`crate::workbench::Hit::Nothing`],
+    /// which is resolved by the same listener and therefore cannot silence it.
+    #[test]
+    fn nothing_the_bench_draws_blocks_the_mouse() {
+        for (name, src) in [
+            ("benchdraw.rs", include_str!("benchdraw.rs")),
+            ("pane/bench.rs", include_str!("pane/bench.rs")),
+        ] {
+            let code = src
+                .split_once("\n#[cfg(test)]")
+                .map_or(src, |(before, _)| before);
+            for (n, raw) in code.lines().enumerate() {
+                let line = raw.split("//").next().unwrap_or("");
+                for blocker in [".occlude(", ".block_mouse"] {
+                    assert!(
+                        !line.contains(blocker),
+                        "{name}:{} uses {blocker}, which cuts every zone beneath it off \
+                         from the pane root's listener \u{2014} the only thing that reads them: {}",
+                        n + 1,
+                        raw.trim()
+                    );
+                }
+            }
+        }
+    }
+
     /// The review FILLS the workbench; it does not float over it.
     ///
     /// It used to be a centred, occluding panel with a maximum width — a
