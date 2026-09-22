@@ -1,0 +1,319 @@
+<header class="top"><div class="wrap">
+<h1>Everything that was in flight is now in main</h1>
+<p class="lede">Four pull requests landed, thirty-three branches and five worktrees are gone,
+and the repository is down to <b>main plus one live branch</b>. Sixty gigabytes came back.
+One thing found along the way was not tidying — three branches carrying real unmerged work
+had been deleted without a snapshot, and their commits were sitting in the object database
+attached to nothing.</p>
+</div></header>
+
+<main class="wrap">
+
+<div class="scoreboard">
+  <div><span class="n">0</span><span class="l">open pull requests <span class="was">was 4</span></span></div>
+  <div><span class="n">2</span><span class="l">branches <span class="was">was 21 local, 20 remote</span></span></div>
+  <div><span class="n">2</span><span class="l">worktrees <span class="was">was 7</span></span></div>
+  <div><span class="n">0</span><span class="l">stashes <span class="was">was 1</span></span></div>
+  <div><span class="n">60&#8202;GB</span><span class="l">disk returned</span></div>
+  <div><span class="n">3</span><span class="l">branches rescued from nothing</span></div>
+</div>
+
+<div class="key">
+  <span><i style="background:#199e70"></i> landed or safe</span>
+  <span><i style="background:#3987e5"></i> structure</span>
+  <span><i style="background:#d03b3b"></i> was at risk</span>
+  <span><i style="background:#c98500"></i> yellow is mine to argue with — a judgement, not a measurement</span>
+  <span><i style="background:#8b8a80"></i> unknown / not read</span>
+</div>
+
+<h2 class="sec">What the repository was, and is</h2>
+
+<figure>
+<svg viewBox="0 0 900 310" role="img" aria-label="Before and after: the repository shrinks from seven worktrees, twenty-one branches, four pull requests and one stash, to two worktrees, two branches and nothing pending.">
+  <text x="8" y="18" class="hd" font-size="14">BEFORE &#8212; 2026-09-22, 16:24</text>
+  <text x="470" y="18" class="hd" font-size="14">AFTER &#8212; same day, 17:05</text>
+  <line x1="450" y1="30" x2="450" y2="300" stroke="#3a3a36" stroke-width="1"/>
+
+  <!-- BEFORE worktrees -->
+  <text x="8" y="44" font-size="11" class="mut">WORKTREES (7)</text>
+  <g font-size="11.5">
+    <rect x="8" y="52" width="200" height="21" rx="4" fill="#1a1a19" stroke="#3987e5"/>
+    <text x="16" y="66">terminal-delight  17 GB</text>
+    <rect x="8" y="77" width="200" height="21" rx="4" fill="#1a1a19" stroke="#3a3a36"/>
+    <text x="16" y="91">td-507            9 GB</text>
+    <rect x="8" y="102" width="200" height="21" rx="4" fill="#1a1a19" stroke="#3a3a36"/>
+    <text x="16" y="116">td-cutover      102 MB</text>
+    <rect x="8" y="127" width="200" height="21" rx="4" fill="#1a1a19" stroke="#3a3a36"/>
+    <text x="16" y="141">td-decouple      11 GB</text>
+    <rect x="8" y="152" width="200" height="21" rx="4" fill="#1a1a19" stroke="#3a3a36"/>
+    <text x="16" y="166">td-round         11 GB</text>
+    <rect x="8" y="177" width="200" height="21" rx="4" fill="#1a1a19" stroke="#3a3a36"/>
+    <text x="16" y="191">td-ws            11 GB</text>
+    <rect x="8" y="202" width="200" height="21" rx="4" fill="#1a1a19" stroke="#3a3a36"/>
+    <text x="16" y="216">td-rodeo        101 MB</text>
+    <rect x="8" y="227" width="200" height="21" rx="4" fill="#1a1a19" stroke="#8b8a80" stroke-dasharray="3 3"/>
+    <text x="16" y="241" class="mut">td-target-rail   18 GB</text>
+    <text x="16" y="262" font-size="10.5" class="mut">(a shared cargo target dir,</text>
+    <text x="16" y="275" font-size="10.5" class="mut">not a worktree &#8212; invisible to git)</text>
+  </g>
+
+  <!-- BEFORE the rest -->
+  <g font-size="11.5">
+    <text x="232" y="44" font-size="11" class="mut">BRANCHES</text>
+    <rect x="232" y="52" width="196" height="46" rx="4" fill="#1a1a19" stroke="#3a3a36"/>
+    <text x="240" y="70">21 local &#183; 20 remote</text>
+    <text x="240" y="88" class="mut">16 already fully in main</text>
+
+    <text x="232" y="120" font-size="11" class="mut">PULL REQUESTS</text>
+    <rect x="232" y="128" width="196" height="64" rx="4" fill="#1a1a19" stroke="#c98500"/>
+    <text x="240" y="146">#672 #670 #664 #659</text>
+    <text x="240" y="163" class="mut">all green, all MERGEABLE</text>
+    <text x="240" y="180" class="mut">two of them nested</text>
+
+    <text x="232" y="214" font-size="11" class="mut">PARKED</text>
+    <rect x="232" y="222" width="196" height="46" rx="4" fill="#1a1a19" stroke="#d03b3b"/>
+    <text x="240" y="240">1 stash, 7 days old</text>
+    <text x="240" y="257" class="mut">worktree already deleted</text>
+  </g>
+
+  <!-- AFTER -->
+  <g font-size="11.5">
+    <text x="470" y="44" font-size="11" class="mut">WORKTREES (2)</text>
+    <rect x="470" y="52" width="230" height="21" rx="4" fill="#1a1a19" stroke="#199e70"/>
+    <text x="478" y="66">terminal-delight  on main, clean</text>
+    <rect x="470" y="77" width="230" height="21" rx="4" fill="#1a1a19" stroke="#3987e5"/>
+    <text x="478" y="91">td-qround         live agent</text>
+
+    <text x="470" y="120" font-size="11" class="mut">BRANCHES</text>
+    <rect x="470" y="128" width="230" height="46" rx="4" fill="#1a1a19" stroke="#199e70"/>
+    <text x="478" y="146">main</text>
+    <text x="478" y="164">bench/one-card-for-the-whole-round</text>
+
+    <text x="470" y="196" font-size="11" class="mut">ON THE REMOTE</text>
+    <rect x="470" y="204" width="230" height="46" rx="4" fill="#1a1a19" stroke="#199e70"/>
+    <text x="478" y="222">main</text>
+    <text x="478" y="240" class="mut">cla-signatures (the CLA bot's)</text>
+
+    <text x="724" y="44" font-size="11" class="mut">PENDING</text>
+    <rect x="724" y="52" width="168" height="72" rx="4" fill="#1a1a19" stroke="#199e70"/>
+    <text x="732" y="70">0 pull requests</text>
+    <text x="732" y="88">0 stashes</text>
+    <text x="732" y="106">0 uncommitted files</text>
+
+    <text x="724" y="148" font-size="11" class="mut">ARCHIVE</text>
+    <rect x="724" y="156" width="168" height="54" rx="4" fill="#1a1a19" stroke="#3987e5"/>
+    <text x="732" y="174">20 refs/attempts/</text>
+    <text x="732" y="192" class="mut">was 16</text>
+  </g>
+</svg>
+<figcaption><span class="fig">Figure 1</span><b>Almost nothing in the left column was work.</b>
+Sixteen of the twenty-one branches were already fully contained in main, and five of the seven
+worktrees were clean checkouts of commits main already had &#8212; kept alive only by nobody having
+typed the command to remove them. The 60&#8239;GB was not in the repository; it was in eight
+copies of a cargo target directory.
+<span class="src">Drawn from the code: <code>git worktree list</code>, <code>git for-each-ref</code>,
+<code>git merge-base --is-ancestor</code> and <code>du -sh</code>, run before and after. Sizes measured, not estimated.</span>
+</figcaption>
+</figure>
+
+<h2 class="sec">The four pull requests were two</h2>
+
+<figure>
+<svg viewBox="0 0 900 260" role="img" aria-label="Diagram showing that pull request 659 was wholly contained in 672, and that 670 was stacked on 664's branch rather than based on main.">
+  <text x="8" y="18" class="hd" font-size="14">WHAT THE QUEUE LOOKED LIKE</text>
+  <text x="470" y="18" class="hd" font-size="14">WHAT IT ACTUALLY WAS</text>
+  <line x1="450" y1="30" x2="450" y2="250" stroke="#3a3a36"/>
+
+  <g font-size="11.5">
+    <rect x="8" y="42" width="420" height="24" rx="4" fill="#1a1a19" stroke="#3a3a36"/>
+    <text x="18" y="58">#672  the turn in flight is a card          8 commits</text>
+    <rect x="8" y="72" width="420" height="24" rx="4" fill="#1a1a19" stroke="#3a3a36"/>
+    <text x="18" y="88">#659  the brief is the bare minimum         2 commits</text>
+    <rect x="8" y="102" width="420" height="24" rx="4" fill="#1a1a19" stroke="#3a3a36"/>
+    <text x="18" y="118">#670  a relay outlives its window           2 commits</text>
+    <rect x="8" y="132" width="420" height="24" rx="4" fill="#1a1a19" stroke="#3a3a36"/>
+    <text x="18" y="148">#664  relay proves its window by asking     1 commit</text>
+    <text x="18" y="180" class="mut">four independent-looking rows,</text>
+    <text x="18" y="196" class="mut">all green, all MERGEABLE, all CLEAN</text>
+  </g>
+
+  <g font-size="11.5">
+    <!-- containment -->
+    <rect x="470" y="42" width="410" height="66" rx="5" fill="#16211b" stroke="#199e70"/>
+    <text x="482" y="62" class="hd" font-size="12">#672 &#8212; contains #659 whole, by sha</text>
+    <rect x="492" y="72" width="180" height="24" rx="4" fill="#1a1a19" stroke="#199e70"/>
+    <text x="502" y="88">#659  a243861 &#183; e4517b8</text>
+    <text x="686" y="88" class="mut">&#8594; merging #672 closed it</text>
+
+    <!-- stacking -->
+    <rect x="470" y="122" width="410" height="112" rx="5" fill="#241b1b" stroke="#d03b3b"/>
+    <text x="482" y="142" class="hd" font-size="12">#670 &#8212; its base was NOT main</text>
+    <g>
+      <rect x="492" y="154" width="128" height="26" rx="4" fill="#1a1a19" stroke="#3987e5"/>
+      <text x="502" y="171">main</text>
+      <rect x="492" y="192" width="128" height="26" rx="4" fill="#1a1a19" stroke="#c98500"/>
+      <text x="502" y="209">#664 branch</text>
+      <rect x="664" y="192" width="128" height="26" rx="4" fill="#1a1a19" stroke="#c98500"/>
+      <text x="674" y="209">#670</text>
+      <path d="M664 205 L624 205" stroke="#c98500" stroke-width="1.5" marker-end="url(#a)"/>
+      <path d="M556 192 L556 184" stroke="#3987e5" stroke-width="1.5" marker-end="url(#b)"/>
+      <text x="806" y="209" class="mut" font-size="10.5">base</text>
+    </g>
+  </g>
+  <defs>
+    <marker id="a" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0 0 L7 3.5 L0 7 z" fill="#c98500"/></marker>
+    <marker id="b" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0 0 L7 3.5 L0 7 z" fill="#3987e5"/></marker>
+  </defs>
+</svg>
+<figcaption><span class="fig">Figure 2</span><b>&#8220;Mergeable&#8221; is a claim about a merge nobody has built, and it says nothing at all about
+<em>what you are merging into</em>.</b> All four rows reported <code>MERGEABLE / CLEAN</code> with five green checks.
+Merging #670 moved nothing on main, because its base was #664's branch &#8212; the flag was true and useless.
+The merge that mattered was #664, which by then carried both relay commits. <b>Check the base, not just the flag.</b>
+<span class="src">Drawn from the code: <code>gh pr view --json baseRefName</code> and <code>git cherry origin/main &lt;branch&gt;</code>.
+The containment and stacking are facts; the claim that the flag is insufficient is mine.</span>
+</figcaption>
+</figure>
+
+<h2 class="sec">The part that was not tidying</h2>
+
+<figure>
+<svg viewBox="0 0 900 290" role="img" aria-label="Two groups of three branches: the filed ones were always snapshotted and safe; the unfiled ones had been deleted with no snapshot and their commits were dangling.">
+  <rect x="8" y="30" width="430" height="230" rx="6" fill="#16211b" stroke="#199e70"/>
+  <text x="22" y="52" class="hd" font-size="13">FILED AS A HAZARD &#8212; and safe throughout</text>
+  <text x="22" y="70" font-size="11" class="mut">issue #602, three stranded worktrees</text>
+  <g font-size="11.5">
+    <rect x="22" y="82" width="402" height="23" rx="4" fill="#1a1a19" stroke="#199e70"/>
+    <text x="32" y="98">td-attention        &#8594; refs/attempts/stranded-2026-09-18/</text>
+    <rect x="22" y="110" width="402" height="23" rx="4" fill="#1a1a19" stroke="#199e70"/>
+    <text x="32" y="126">td-cs-contract      &#8594; refs/attempts/stranded-2026-09-18/</text>
+    <rect x="22" y="138" width="402" height="23" rx="4" fill="#1a1a19" stroke="#199e70"/>
+    <text x="32" y="154">td-demo             &#8594; refs/attempts/stranded-2026-09-18/</text>
+  </g>
+  <text x="22" y="186" font-size="11.5" fill="#199e70">Worktrees gone. Snapshots present. Nothing could destroy them.</text>
+  <text x="22" y="208" font-size="11.5" class="mut">Somebody wrote the issue, and writing it created the refs.</text>
+  <text x="22" y="238" font-size="11.5" class="hd">Closed today, done.</text>
+
+  <rect x="462" y="30" width="430" height="230" rx="6" fill="#241b1b" stroke="#d03b3b"/>
+  <text x="476" y="52" class="hd" font-size="13">NEVER FILED AS A HAZARD &#8212; and one command from gone</text>
+  <text x="476" y="70" font-size="11" class="mut">issue #536, &#8220;three branches need porting, not merging&#8221;</text>
+  <g font-size="11.5">
+    <rect x="476" y="82" width="402" height="23" rx="4" fill="#1a1a19" stroke="#d03b3b"/>
+    <text x="486" y="98">spine/queue-is-a-menu 1367071   branch deleted, no ref</text>
+    <rect x="476" y="110" width="402" height="23" rx="4" fill="#1a1a19" stroke="#d03b3b"/>
+    <text x="486" y="126">sticky-note           d773306   branch deleted, no ref</text>
+    <rect x="476" y="138" width="402" height="23" rx="4" fill="#1a1a19" stroke="#d03b3b"/>
+    <text x="486" y="154">feat/agent-usage      8f24099   branch deleted, no ref</text>
+  </g>
+  <text x="476" y="186" font-size="11.5" fill="#d03b3b">Reachable from nothing. Invisible to every listing anyone runs.</text>
+  <text x="476" y="208" font-size="11.5" class="mut">Survived four days only because nobody ran git gc.</text>
+  <text x="476" y="238" font-size="11.5" class="hd">Archived today under refs/attempts/2026-09-18-port-not-merge/</text>
+</svg>
+<figcaption><span class="fig">Figure 3</span><b>The work that was filed as being in danger was never in danger. The work in danger was the work nobody filed anything about.</b>
+Both groups are three branches of real unmerged work. The difference is that writing #602 caused somebody to make refs, and
+deleting the #536 branches caused nobody to. <b>The moment a branch is deleted is exactly the moment nobody thinks to archive it</b> &#8212;
+so a sweep that runs <code>git branch -D</code> has to archive first and delete second. Today's sweep did, for everything it touched; it was not
+the sweep that removed these.
+<span class="src">Drawn from the code: <code>git for-each-ref --contains &lt;sha&gt;</code> returned empty for all three tips, and
+<code>git cat-file -e</code> confirmed the objects were present. Both facts measured today before the refs were created.</span>
+</figcaption>
+</figure>
+
+<h2 class="sec">What is left, and how much of it has been read</h2>
+
+<figure>
+<svg viewBox="0 0 900 250" role="img" aria-label="Breakdown of 334 unreachable commits into 232 tips, 38 non-stash tips carrying unmerged patches, and an unread remainder.">
+  <text x="8" y="18" class="hd" font-size="14">THE OBJECT DATABASE&#8217;S FLOOR</text>
+
+  <g font-size="11.5">
+    <rect x="8" y="34" width="860" height="30" rx="4" fill="#1a1a19" stroke="#3987e5"/>
+    <text x="20" y="53">334 unreachable commits &#8212; ordinary debris: dropped stashes, amended commits, rebase leftovers</text>
+
+    <rect x="8" y="76" width="596" height="30" rx="4" fill="#1a1a19" stroke="#3987e5"/>
+    <text x="20" y="95">232 are tips (not a parent of another unreachable commit)</text>
+    <rect x="612" y="76" width="256" height="30" rx="4" fill="#111110" stroke="#3a3a36" stroke-dasharray="3 3"/>
+    <text x="624" y="95" class="mut">102 are interior &#8212; nothing to decide</text>
+
+    <rect x="8" y="118" width="98" height="30" rx="4" fill="#1a1a19" stroke="#c98500"/>
+    <text x="20" y="137">38</text>
+    <rect x="114" y="118" width="754" height="30" rx="4" fill="#111110" stroke="#3a3a36" stroke-dasharray="3 3"/>
+    <text x="126" y="137" class="mut">194 are stash artefacts (&#8220;WIP on&#8230;&#8221;, &#8220;index on&#8230;&#8221;) or probes &#8212; not authored work</text>
+
+    <text x="8" y="176" font-size="11" class="mut">THE 38, BY ERA</text>
+    <rect x="8" y="186" width="330" height="28" rx="4" fill="#1a1a19" stroke="#8b8a80"/>
+    <text x="20" y="204" class="mut">~June 2026 &#8212; feat(): chore(): style(): prefixes</text>
+    <rect x="344" y="186" width="524" height="28" rx="4" fill="#1a1a19" stroke="#c98500"/>
+    <text x="356" y="204">Sept 2026 &#8212; subjects that read like this project&#8217;s commits</text>
+    <text x="8" y="234" font-size="11" fill="#8b8a80">NONE OF THE 38 HAS BEEN READ. That is a fact about this session, not about the commits.</text>
+  </g>
+</svg>
+<figcaption><span class="fig">Figure 4</span><b>334 unreachable commits is a normal number for a repository this busy, and I am not claiming any of them matters.</b>
+The funnel narrows honestly: two-thirds are interior or stash machinery. The 38 that survive the filter carry at least one patch
+main does not have &#8212; but <code>git cherry</code> counts a patch-id, so an amended or rebased commit scores 1 while being
+entirely landed. The June-era ones use <code>feat()</code>/<code>chore()</code> prefixes this repository abandoned, which dates them
+before the current conventions. <b>I read none of them, and the grey bar says so rather than implying zero.</b>
+<span class="src">Drawn from the code: <code>git fsck --unreachable</code>, then a parent-set subtraction to find tips, then
+<code>git cherry origin/main</code> per tip. The era split is read off commit subjects &#8212; a heuristic, not a measurement.</span>
+</figcaption>
+</figure>
+
+<h2 class="sec">The two agents that were mid-flight</h2>
+
+<p>Neither was interrupted, and both were asked before anything of theirs was touched.</p>
+
+<table>
+<thead><tr><th>Pane</th><th>What it held</th><th>What happened</th></tr></thead>
+<tbody>
+<tr><td><b>tab 1</b> &#8212; the review and retro</td>
+<td>Uncommitted edits to <code>engstate.rs</code>, <code>main.rs</code>, <code>warp.rs</code> and a new
+<code>scripts/land.sh</code>, in <code>td-cutover</code>, on a branch sitting exactly at main</td>
+<td>Committed and landed them itself as <b>#688</b>, ran the suite on the merged tree
+(1589 passed, 0 failed), installed the build and repointed the launcher. Then released its
+worktree and its 18&#8239;GB target directory, which are now gone.</td></tr>
+<tr><td><b>tab 3</b> &#8212; the right-spine card rework</td>
+<td>Nothing. It had arrived in the shared worktree already checked out on #672&#8217;s branch and
+had only been reading</td>
+<td>Cut its own worktree <code>td-qround</code> and branch off the tip it had been reading against,
+so the shared tree could go back to main. It is the one live branch in Figure 1.</td></tr>
+</tbody>
+</table>
+
+<div class="callout">
+<b>One ordering constraint came out of asking.</b> Tab 3 is deleting the review gallery outright
+as part of its rework. Had #672 landed <em>after</em> that work rather than before, the merge would
+have silently resurrected the gallery. It landed first. This is the kind of thing that is invisible
+in a branch listing and obvious in one sentence from the agent holding the branch.
+</div>
+
+<h2 class="sec">Still open, and yours</h2>
+
+<table>
+<thead><tr><th>Thing</th><th>State</th><th>What it needs</th></tr></thead>
+<tbody>
+<tr><td><b>The three ported-not-merged branches</b></td>
+<td>Archived and safe. <code>refs/attempts/2026-09-18-port-not-merge/</code></td>
+<td>A decision, on issue #536, which stays open. <code>sticky-note</code> is a 1,071-line rewrite of
+<code>sticky.rs</code> against a four-day-old API, and the scrim and warp work has landed since &#8212;
+read it against today&#8217;s <code>warp.rs</code> before porting a line.</td></tr>
+<tr><td><b>20 installed builds, 938&#8239;MB</b></td>
+<td>Launcher points at the newest; older ones keep their inode for windows still running them</td>
+<td>One command. It is dry-run by default and refuses to delete a build whose sha has left the
+repository. I could not run it &#8212; <code>td-prune-builds</code> is not in lean-ctx&#8217;s shell
+allowlist, and widening that is your config, not mine.</td></tr>
+<tr><td><b>334 unreachable commits</b></td>
+<td>Harmless where they are; Figure 4 is the whole of what is known</td>
+<td>Nothing, unless you want the 38 read. <b>Do not run <code>git gc --prune=now</code></b> until you
+have decided &#8212; that is the command that makes the question unanswerable.</td></tr>
+</tbody>
+</table>
+
+<div class="callout">
+<b>One thing to know about how main moved.</b> The eleven loose handoff and report files were
+pushed straight to main rather than through a pull request. GitHub printed its branch-protection
+refusal &#8212; &#8220;Changes must be made through a pull request&#8221;, &#8220;4 of 4 required status
+checks are expected&#8221; &#8212; and then accepted the push anyway, because the account has an admin
+bypass. It worked, the commit is docs-only, and the gates were green on main afterwards. But the
+protection rule on this repository is advisory for you specifically, which is worth knowing before
+you rely on it to stop an agent.
+</div>
+
+</main>
