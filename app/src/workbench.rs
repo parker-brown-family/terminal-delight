@@ -1848,6 +1848,11 @@ pub fn reviewed(surfaces: &[crate::surface::Surface]) -> Vec<Reviewed> {
                     .unwrap_or_else(|| "answered \u{b7} the option is unavailable".into()),
                 Answered::Typed(said) => said.clone(),
                 Answered::ChoseUnknown => "answered \u{b7} how is unavailable".into(),
+                // A refused round produced no answers, so it has nothing to
+                // review. Listing it with a placeholder would put a row in a
+                // summary of decisions for a decision nobody made. Same for a
+                // round nobody recorded the end of: there is no answer to show.
+                Answered::Cancelled | Answered::Ended => return None,
             };
             Some(Reviewed {
                 title: s.title.clone(),
@@ -1935,25 +1940,55 @@ pub enum LiveMove {
 ///   in memory, and that is why this bug erased a card rather than a record.
 pub const SETTLE_SWEEPS: u8 = 3;
 
+/// What one screen sweep resolved to — which is three-valued, and was two.
+///
+/// `Option<SurfaceId>` collapsed the two negative readings into a single
+/// `None`, and they are opposites. *The screen could not be read* is an
+/// ABSENCE of evidence, produced identically by a repaint, a resize, a clear
+/// and a scroll — so [`live_move`] must never act on it while somebody is
+/// still being asked something. *The question was read, and the channel
+/// already carries a card for it* is EVIDENCE, and acting on it at once is
+/// the whole point: a card the channel now owns is a duplicate for every
+/// frame it is kept.
+///
+/// Told apart by nothing, they behaved as the cautious one, which is the safe
+/// direction for a blank frame and the wrong one for a fold. A live card
+/// minted in the instant before the hook's record landed could therefore never
+/// be retired for the rest of the round: every later sweep folded it, reported
+/// `None`, and was read as blindness. Three questions, four rows, photographed
+/// on pane 11 on 2026-09-21.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum LiveRead {
+    /// Nothing on screen could be read as a question this instant.
+    Unreadable,
+    /// A question WAS read, and the hook channel already carries a card for
+    /// it. Its cursor has been folded onto that card; there is nothing left
+    /// for a live card of our own to carry.
+    Folded,
+    /// A question was read that nothing else is carrying.
+    Fresh(crate::surface::SurfaceId),
+}
+
 /// Decide it. `waiting` is whether the agent is still stopped on a person,
-/// `parsed` what the screen could be read as this instant, `tracked` the live
+/// `parsed` what the screen resolved to this instant, `tracked` the live
 /// question already on the bench, and `quiet_for` how many sweeps in a row
 /// the agent has looked like it is no longer waiting.
 pub fn live_move(
     waiting: bool,
-    parsed: Option<&crate::surface::SurfaceId>,
+    parsed: &LiveRead,
     tracked: Option<&crate::surface::SurfaceId>,
     quiet_for: u8,
 ) -> LiveMove {
     match (waiting, parsed, tracked) {
-        // Nothing up, nothing tracked.
-        (_, None, None) => LiveMove::Keep,
+        // Nothing of our own to show, and nothing showing it.
+        (_, LiveRead::Unreadable | LiveRead::Folded, None) => LiveMove::Keep,
         // Something to show and nothing showing it.
-        (true, Some(_), None) => LiveMove::Replace,
-        (false, Some(_), None) => LiveMove::Keep,
+        (true, LiveRead::Fresh(_), None) => LiveMove::Replace,
+        (false, LiveRead::Fresh(_), None) => LiveMove::Keep,
         // The agent looks like it has moved on — but only once it has looked
-        // that way for long enough to be believed. This is the ONLY
-        // retirement, and it is now the only DEBOUNCED one.
+        // that way for long enough to be believed. This is the DEBOUNCED
+        // retirement, and the debounce is there because the evidence is a
+        // screen that has gone quiet, which is absence.
         (false, _, Some(_)) => {
             if quiet_for >= SETTLE_SWEEPS {
                 LiveMove::Retire
@@ -1962,8 +1997,13 @@ pub fn live_move(
             }
         }
         // Still waiting, and the screen cannot be read: keep what we have.
-        (true, None, Some(_)) => LiveMove::Keep,
-        (true, Some(now), Some(was)) => {
+        (true, LiveRead::Unreadable, Some(_)) => LiveMove::Keep,
+        // Still waiting, and the question we were carrying is now the
+        // channel's. NOT debounced, and that asymmetry is the point: this is
+        // a successful reading that names an owner, not a blank frame. Waiting
+        // three sweeps would draw the duplicate the fold exists to prevent.
+        (true, LiveRead::Folded, Some(_)) => LiveMove::Retire,
+        (true, LiveRead::Fresh(now), Some(was)) => {
             if now == was {
                 LiveMove::Keep
             } else {
@@ -2602,8 +2642,25 @@ pub enum Anchor {
 /// — would have left the `else if offering` arm below unreachable, which is the
 /// same defect in the other direction: an arm nobody can reach says the offer
 /// was never given a home.
-pub fn body_anchor(card: bool, offering: bool) -> Anchor {
-    if card {
+///
+/// A **waiting question** is the third instance of the sentence already above:
+/// *bottom-anchoring is for the conversation and for nothing else*. It is not
+/// in the body — it is drawn below it, outside the body's scroll, on purpose —
+/// so a bottom-anchored body took the whole box and left the one thing holding
+/// the session up pressed against the composer. Then answering it opened it as
+/// a card and the card anchored `Top`, so the question a person was part-way
+/// through JUMPED the height of the pane under their cursor. Parker: *"when a
+/// question first comes up it is snapped to the BOTTOM in the composer area --
+/// then If I click the options (q1, q2, q3) -- it JUMPS up to the top... it
+/// should be at the top to start with!"*
+///
+/// It folds into `card` rather than getting an arm of its own because it wants
+/// exactly what a card wants, for the reason an OFFER wants `Eye`: a call to
+/// action is not history. `offering` stays reachable — an offer is drawn when
+/// no agent is running and a waiting question means one is, so the two cannot
+/// both be true.
+pub fn body_anchor(card: bool, offering: bool, waiting: bool) -> Anchor {
+    if card || waiting {
         Anchor::Top
     } else if offering {
         Anchor::Eye
@@ -4480,6 +4537,20 @@ mod tests {
         post(json!({
             "td": "0.1", "kind": "decision", "id": id, "title": "Which way?",
             "model": { "question": "Which way?", "options": [{"name":"A"}] }
+        }))
+    }
+
+    fn asked(id: &str, answer: Option<usize>) -> Post {
+        let mut model = json!({
+            "question": "Tea or coffee?",
+            "options": [{"label": "Tea"}, {"label": "Coffee"}]
+        });
+        if let Some(a) = answer {
+            model["answer"] = json!(a);
+        }
+        post(json!({
+            "td": "0.1", "kind": "question", "id": id,
+            "title": "Tea or coffee?", "model": model
         }))
     }
 
@@ -7250,6 +7321,83 @@ mod tests {
         assert!(reviewed(&b.all_newest_first().cloned().collect::<Vec<_>>()).is_empty());
     }
 
+    /// Answering makes MORE to review, not less.
+    ///
+    /// The REVIEW ANSWERS button was hidden the moment the card it sits on was
+    /// answered, so it vanished at the exact point there was most to look at —
+    /// and on the last question of a round there was no button anywhere.
+    /// Parker, with three of three answered: *"Oh no not seeing the review
+    /// submit panel AT ALL!"*.
+    ///
+    /// The button's real guard is this count, and this is the direction it
+    /// moves in. Asserted here because it is the PREMISE of removing that
+    /// clause: if answering ever shrank the gallery, hiding the button on an
+    /// answered card would have been right.
+    #[test]
+    fn answering_a_question_adds_to_the_review_rather_than_emptying_it() {
+        let mut b = Bench::new();
+        b.apply(asked("q1", None));
+        b.apply(asked("q2", None));
+        assert!(
+            reviewed(&b.all_newest_first().cloned().collect::<Vec<_>>()).is_empty(),
+            "nothing answered yet, so there is nothing to review"
+        );
+
+        b.apply(asked("q1", Some(1)));
+        assert_eq!(
+            reviewed(&b.all_newest_first().cloned().collect::<Vec<_>>()).len(),
+            1,
+            "one answer, one row"
+        );
+        b.apply(asked("q2", Some(0)));
+        assert_eq!(
+            reviewed(&b.all_newest_first().cloned().collect::<Vec<_>>()).len(),
+            2,
+            "the count only ever grows as a round is answered"
+        );
+    }
+
+    /// A reading that FOLDED is not a reading that FAILED.
+    ///
+    /// Both used to arrive as `None`, and the rule treats `None`-while-waiting
+    /// as a screen it could not parse — correctly, because a blank frame is
+    /// produced by a repaint, a resize, a clear and a scroll, and taking a
+    /// question off the bench underneath somebody was the worse bug this
+    /// debounce was built to fix. The cost was that a live card minted in the
+    /// instant before the hook's record landed could never be retired at all:
+    /// every later sweep folded it, said `None`, and was read as blindness.
+    /// Three questions drew four rows on Parker's bench for the whole round.
+    #[test]
+    fn a_question_the_channel_has_taken_over_is_retired_at_once() {
+        let a = SurfaceId("ask-live-9f2c".into());
+
+        // Still waiting, and the screen read perfectly well — the question is
+        // simply the channel's now. Our card is a duplicate from here on.
+        assert_eq!(
+            live_move(true, &LiveRead::Folded, Some(&a), 0),
+            LiveMove::Retire
+        );
+        // And it does NOT wait out the debounce. The debounce exists for
+        // absence of evidence; a fold is evidence, and it names the owner.
+        for quiet in 0..=SETTLE_SWEEPS {
+            assert_eq!(
+                live_move(true, &LiveRead::Folded, Some(&a), quiet),
+                LiveMove::Retire,
+                "a fold is not debounced (quiet_for = {quiet})"
+            );
+        }
+        // The distinction the type exists for, side by side: the same absence
+        // of a live question, read as blindness, still keeps the card.
+        assert_eq!(
+            live_move(true, &LiveRead::Unreadable, Some(&a), 0),
+            LiveMove::Keep,
+            "a screen that could not be read is not a question that went away"
+        );
+        // A fold with nothing tracked retires nothing and mints nothing.
+        assert_eq!(live_move(true, &LiveRead::Folded, None, 0), LiveMove::Keep);
+        assert_eq!(live_move(false, &LiveRead::Folded, None, 0), LiveMove::Keep);
+    }
+
     #[test]
     fn a_question_only_goes_away_when_the_agent_stops_waiting() {
         let a = SurfaceId("a".into());
@@ -7259,27 +7407,48 @@ mod tests {
 
         // The first bug: still waiting, screen unreadable because the picker
         // scrolled its own question line off the top. Keep the card.
-        assert_eq!(live_move(true, None, Some(&a), 0), LiveMove::Keep);
+        assert_eq!(
+            live_move(true, &LiveRead::Unreadable, Some(&a), 0),
+            LiveMove::Keep
+        );
 
         // The only thing that takes a card down, and only once it has been
         // true for long enough to believe.
-        assert_eq!(live_move(false, None, Some(&a), settled), LiveMove::Retire);
         assert_eq!(
-            live_move(false, Some(&a), Some(&a), settled),
+            live_move(false, &LiveRead::Unreadable, Some(&a), settled),
+            LiveMove::Retire
+        );
+        assert_eq!(
+            live_move(false, &LiveRead::Fresh(a.clone()), Some(&a), settled),
             LiveMove::Retire,
             "not waiting wins over a stale parse"
         );
 
         // Ordinary progress through a round.
-        assert_eq!(live_move(true, Some(&b), Some(&a), 0), LiveMove::Replace);
-        assert_eq!(live_move(true, Some(&a), Some(&a), 0), LiveMove::Keep);
+        assert_eq!(
+            live_move(true, &LiveRead::Fresh(b.clone()), Some(&a), 0),
+            LiveMove::Replace
+        );
+        assert_eq!(
+            live_move(true, &LiveRead::Fresh(a.clone()), Some(&a), 0),
+            LiveMove::Keep
+        );
 
         // First arrival, and the quiet cases.
-        assert_eq!(live_move(true, Some(&a), None, 0), LiveMove::Replace);
-        assert_eq!(live_move(true, None, None, 0), LiveMove::Keep);
-        assert_eq!(live_move(false, None, None, settled), LiveMove::Keep);
         assert_eq!(
-            live_move(false, Some(&a), None, settled),
+            live_move(true, &LiveRead::Fresh(a.clone()), None, 0),
+            LiveMove::Replace
+        );
+        assert_eq!(
+            live_move(true, &LiveRead::Unreadable, None, 0),
+            LiveMove::Keep
+        );
+        assert_eq!(
+            live_move(false, &LiveRead::Unreadable, None, settled),
+            LiveMove::Keep
+        );
+        assert_eq!(
+            live_move(false, &LiveRead::Fresh(a.clone()), None, settled),
             LiveMove::Keep,
             "a question read off a screen nobody is waiting on is not live"
         );
@@ -7300,15 +7469,27 @@ mod tests {
         // caught exactly that — the debounce was disabled and the test stayed
         // green, which is worse than having no test at all.
         assert_eq!(
-            live_move(false, None, Some(&a), 0),
+            live_move(false, &LiveRead::Unreadable, Some(&a), 0),
             LiveMove::Keep,
             "the blink itself must not retire anything"
         );
-        assert_eq!(live_move(false, None, Some(&a), 1), LiveMove::Keep);
-        assert_eq!(live_move(false, None, Some(&a), 2), LiveMove::Keep);
+        assert_eq!(
+            live_move(false, &LiveRead::Unreadable, Some(&a), 1),
+            LiveMove::Keep
+        );
+        assert_eq!(
+            live_move(false, &LiveRead::Unreadable, Some(&a), 2),
+            LiveMove::Keep
+        );
         // And a genuine answer still lands, a sweep later.
-        assert_eq!(live_move(false, None, Some(&a), 3), LiveMove::Retire);
-        assert_eq!(live_move(false, None, Some(&a), 9), LiveMove::Retire);
+        assert_eq!(
+            live_move(false, &LiveRead::Unreadable, Some(&a), 3),
+            LiveMove::Retire
+        );
+        assert_eq!(
+            live_move(false, &LiveRead::Unreadable, Some(&a), 9),
+            LiveMove::Retire
+        );
         // The constant and the numbers above have to agree, or this test is
         // asserting something other than what ships.
         assert_eq!(SETTLE_SWEEPS, 3, "the numbers in this test are literal");
@@ -7771,23 +7952,69 @@ mod tests {
 
     #[test]
     fn an_offer_sits_at_eye_level_and_a_transcript_on_the_floor() {
-        // The whole table. Two booleans, and three different answers — an offer
-        // is neither of the other two, which is the point of the third variant.
+        // The whole table. Three booleans, three answers, and exactly ONE way
+        // to reach the floor — which is the rule this function keeps being
+        // asked to learn again: bottom-anchoring is for the conversation and
+        // for nothing else.
         assert_eq!(
-            body_anchor(false, true),
+            body_anchor(false, true, false),
             Anchor::Eye,
             "an offer is not against the ceiling"
         );
-        assert_eq!(body_anchor(true, false), Anchor::Top, "an opened card");
         assert_eq!(
-            body_anchor(true, true),
+            body_anchor(true, false, false),
+            Anchor::Top,
+            "an opened card"
+        );
+        assert_eq!(
+            body_anchor(true, true, false),
             Anchor::Top,
             "a card over an offer is a card: it may be taller than the box"
         );
         assert_eq!(
-            body_anchor(false, false),
+            body_anchor(false, false, false),
             Anchor::Bottom,
             "a conversation still sits on its composer"
+        );
+
+        // A question waiting on a person is drawn BELOW the body, so a
+        // bottom-anchored body pressed it against the composer — and then
+        // answering it opened it as a card, which anchors Top, so it jumped
+        // the height of the pane under the cursor that had just pressed it.
+        assert_eq!(
+            body_anchor(false, false, true),
+            Anchor::Top,
+            "a question is not history and does not go to the floor"
+        );
+        // The same place it lands once it has been opened. That EQUALITY is
+        // the bug: unequal, the card moves when a person presses it.
+        assert_eq!(
+            body_anchor(false, false, true),
+            body_anchor(true, false, true),
+            "asking and having asked must anchor alike, or the card jumps"
+        );
+        assert_eq!(
+            body_anchor(false, true, true),
+            Anchor::Top,
+            "a waiting question outranks an offer, as a card does"
+        );
+
+        // Exhaustive, because the only claim worth making here is about the
+        // whole table: one combination reaches the floor and it is the
+        // conversation's.
+        let floors: Vec<(bool, bool, bool)> = [false, true]
+            .into_iter()
+            .flat_map(|c| {
+                [false, true]
+                    .into_iter()
+                    .flat_map(move |o| [false, true].into_iter().map(move |w| (c, o, w)))
+            })
+            .filter(|&(c, o, w)| body_anchor(c, o, w) == Anchor::Bottom)
+            .collect();
+        assert_eq!(
+            floors,
+            vec![(false, false, false)],
+            "exactly one row anchors to the floor, and it is the conversation"
         );
     }
 

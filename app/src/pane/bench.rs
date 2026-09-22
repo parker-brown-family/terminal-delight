@@ -562,11 +562,31 @@ impl TerminalView {
                 hit,
                 Some(crate::workbench::Hit::Composer | crate::workbench::Hit::Arm)
             );
-        if pointer != self.wb_pointer || drop != self.wb_drop {
+        // The HIT is compared too, not only the pointer's shape. Moving from
+        // one chip to the next leaves the cursor a hand the whole way, so a
+        // repaint gated on the shape alone would light the first chip and then
+        // never move the light.
+        if pointer != self.wb_pointer || drop != self.wb_drop || hit != self.wb_hover {
             self.wb_pointer = pointer;
             self.wb_drop = drop;
+            self.wb_hover = hit;
             cx.notify();
         }
+    }
+
+    /// The hit zone for a pressable chip, and the lift that says it is one.
+    ///
+    /// Everything on the bench that a person can press ends in one of these,
+    /// so this is the single place that decides what "the pointer is on it"
+    /// looks like. See [`crate::benchdraw::zone_lit`] for why the wash belongs
+    /// on the zone and not on the chip.
+    pub(super) fn live_zone(
+        &self,
+        hit: crate::workbench::Hit,
+        sk: &crate::skin::Skin,
+    ) -> impl gpui::IntoElement {
+        let lit = self.wb_hover.as_ref() == Some(&hit);
+        crate::benchdraw::zone_lit(self.wb_zones.clone(), hit, sk, lit.then_some(sk.ink.hover))
     }
 
     /// The bench's pointer hook: one element, painted last and covering the
@@ -1205,42 +1225,30 @@ impl TerminalView {
             return;
         }
         let dir = crate::benchstore::store_root();
-        let recs = crate::benchstore::records(&dir, &key.root);
-        self.wb_turn = recs
-            .iter()
-            .filter_map(crate::benchstore::Rec::n)
-            .max()
-            .map_or(0, |n| n + 1);
-        // A boundary is written once per segment. The sweep hands the same key
-        // down every pass and a window restart hands down one it has seen
-        // before, so writing unconditionally would put a `segment` line in the
-        // file on every restart and make the record's own history of
-        // compactions a history of window launches instead.
-        let already = recs
-            .iter()
-            .any(|r| matches!(r, crate::benchstore::Rec::Segment { seq, .. } if *seq == key.seq));
-        if !already {
-            let _ = crate::benchstore::segment(
-                &dir,
-                &key,
-                crate::surfacefeed::now_ms(),
-                if key.seq == 0 { "startup" } else { "continued" },
-                self.mode.label(),
-                self.shell_pid().unwrap_or(0),
-            );
-        }
-        // Everything said before the window could name this conversation,
-        // in the order it was said, shifted onto the end of what the record
+        let mut writer = crate::benchstore::Writer::open(&dir, &key.root);
+        // A boundary is a line like any other, and its name is its sequence
+        // number, so a window restart that hands down a key it has seen before
+        // does not add a second one. The record's history of compactions stays
+        // a history of compactions rather than becoming one of window launches.
+        writer.write(
+            &dir,
+            crate::benchstore::Rec::Segment {
+                seq: key.seq,
+                at_ms: crate::surfacefeed::now_ms(),
+                source: if key.seq == 0 { "startup" } else { "continued" }.into(),
+                agent: self.mode.label().to_string(),
+                pid: self.shell_pid().unwrap_or(0),
+            },
+        );
+        // Everything said before the window could name this conversation, in
+        // the order it was said, shifted onto the end of what the record
         // already had. Written before the load below, so the load sees them.
-        let base = self.wb_turn;
-        let held = std::mem::take(&mut self.wb_unfiled);
-        for rec in held {
-            if let Some(n) = rec.n() {
-                self.wb_turn = self.wb_turn.max(base + n + 1);
-            }
-            let _ = crate::benchstore::append(&dir, &key.root, &rec.shifted(base));
+        let base = writer.next_turn();
+        for rec in std::mem::take(&mut self.wb_unfiled) {
+            writer.write(&dir, rec.shifted(base));
         }
         let loaded = crate::benchstore::load(&dir, &key.root);
+        self.wb_writer = Some(writer);
         self.wb_conv = Some(key);
         let now = crate::surfacefeed::now_ms();
         for (id, doc) in loaded.surfaces {
@@ -1274,15 +1282,31 @@ impl TerminalView {
         // The turn these answer is the one that is open: `wb_turn` is the ask
         // that has not been made yet. Before any ask has been recorded there is
         // no open turn and everything belongs to the first one.
-        let turn = self.wb_turn.saturating_sub(1);
         let now = crate::surfacefeed::now_ms();
-        let _ = dir;
         for (id, doc) in docs {
-            // `None` is an id that must never become a record key. Skipped
-            // rather than repaired: a filing under a name nobody chose is
-            // worse than a surface that is only on the bench.
-            if let Some(rec) = crate::benchstore::said(turn, id, doc, self.wb_conv_bond, now) {
-                self.bench_write(rec);
+            match self.wb_writer.as_mut() {
+                // `None` from the writer is an id that must never become a
+                // record key. Skipped rather than repaired: a filing under a
+                // name nobody chose is worse than a surface that is only on
+                // the bench.
+                Some(w) => {
+                    w.write_surface(&dir, id, doc, self.wb_conv_bond, now);
+                }
+                None => {
+                    if let Some(rec) = crate::benchstore::said(
+                        self.wb_unfiled
+                            .iter()
+                            .filter_map(crate::benchstore::Rec::n)
+                            .max()
+                            .unwrap_or(0),
+                        id,
+                        doc,
+                        self.wb_conv_bond,
+                        now,
+                    ) {
+                        self.bench_write(rec);
+                    }
+                }
             }
         }
     }
@@ -1304,10 +1328,10 @@ impl TerminalView {
     /// Held lines count their turns from zero and are shifted onto the end of
     /// whatever the conversation already had, when the key lands.
     fn bench_write(&mut self, rec: crate::benchstore::Rec) {
-        match self.wb_conv.clone() {
-            Some(key) => {
-                let _ =
-                    crate::benchstore::append(&crate::benchstore::store_root(), &key.root, &rec);
+        let dir = crate::benchstore::store_root();
+        match self.wb_writer.as_mut() {
+            Some(w) => {
+                w.write(&dir, rec);
             }
             // Bounded, because a pane that never binds must not grow a list
             // forever: a shell pane with a drop box, or an agent whose siblings
@@ -1324,86 +1348,36 @@ impl TerminalView {
         }
     }
 
-    /// Record what the person said, in their own words.
-    ///
-    /// Only from the channel, so only when the harness itself reported the
-    /// prompt — that is what makes [`crate::benchstore::Origin::Hook`] true.
-    /// The screen latch has no writer here on purpose: a caption read off a
-    /// rendered terminal is a good enough thing to draw and not a good enough
-    /// thing to keep.
-    fn bench_record_ask(&mut self, text: &str) {
-        let n = self.wb_turn;
-        self.bench_write(crate::benchstore::Rec::Ask {
-            n,
-            at_ms: crate::surfacefeed::now_ms(),
-            origin: crate::benchstore::Origin::Hook,
-            kind: crate::benchstore::prompt_kind(text),
-            text: text.to_string(),
-            // The hook hands over no image bytes on any agent this build has
-            // measured, so there is nothing to reference. Empty here is "this
-            // ask carried none", which is what was observed.
-            images: Vec::new(),
-        });
-        self.wb_turn = n + 1;
-    }
-
-    /// Record a question round and how it was answered.
+    /// Put one journal event in the conversation's record.
     ///
     /// From the raw event, before the channel folds it into bench state: the
-    /// record is of what the conversation was asked, and the channel's own
-    /// view of a round — which step is open, which press is pending — is
-    /// working state that belongs to the live pane and to nothing else.
-    fn bench_record_round(&mut self, ev: &crate::channel::Inbound) {
-        use crate::channel::Inbound;
-        let n = self.wb_turn.saturating_sub(1);
+    /// record is of what the conversation was asked and told, and the
+    /// channel's own view of a round — which step is open, which press is
+    /// pending — is working state that belongs to the live pane.
+    ///
+    /// The writer decides what is worth keeping and refuses a line it has
+    /// already written, which is what makes a restart's replay of the whole
+    /// journal cost nothing. A pane with no conversation yet holds the line
+    /// instead; see `bench_write`.
+    fn bench_record_event(&mut self, ev: &crate::channel::Inbound) {
+        let dir = crate::benchstore::store_root();
         let now = crate::surfacefeed::now_ms();
-        match ev {
-            Inbound::Question {
-                tool_use_id,
-                questions,
-                ..
-            } => {
-                let qs = serde_json::Value::Array(
-                    questions
+        match self.wb_writer.as_mut() {
+            Some(w) => {
+                w.write_event(&dir, ev, now);
+            }
+            None => {
+                let mut held = crate::benchstore::Writer::held(
+                    self.wb_unfiled
                         .iter()
-                        .map(|q| {
-                            serde_json::json!({
-                                "question": q.question,
-                                "header": q.header,
-                                "multi": q.multi,
-                                "options": q.options.iter().map(|o| serde_json::json!({
-                                    "label": o.label,
-                                    "description": o.description,
-                                })).collect::<Vec<_>>(),
-                            })
-                        })
-                        .collect(),
+                        .filter_map(crate::benchstore::Rec::n)
+                        .max()
+                        .map_or(0, |n| n + 1),
                 );
-                self.bench_write(crate::benchstore::Rec::Asked {
-                    n,
-                    at_ms: now,
-                    tool_use_id: tool_use_id.clone(),
-                    questions: qs,
-                });
+                if let Some(rec) = held.record_for(ev, now) {
+                    self.bench_write(rec);
+                }
             }
-            Inbound::Answered {
-                tool_use_id,
-                answers,
-            } => {
-                // `None` is recorded as JSON null rather than as an empty
-                // object: the tool returned and this build could not read what
-                // it carried, which is a different thing from a round answered
-                // with nothing.
-                let a = answers.clone().unwrap_or(serde_json::Value::Null);
-                self.bench_write(crate::benchstore::Rec::Answered {
-                    n,
-                    at_ms: now,
-                    tool_use_id: tool_use_id.clone(),
-                    answers: a,
-                    road: "result".into(),
-                });
-            }
-            _ => {}
         }
     }
 
@@ -1421,7 +1395,7 @@ impl TerminalView {
             // with no text at all — are the same event to the feed: this
             // conversation has a new turn and the overview flips to it.
             let began = matches!(ev, crate::channel::Inbound::Prompt { .. });
-            self.bench_record_round(&ev);
+            self.bench_record_event(&ev);
             let effect = self.wb_channel.take(ev, now);
             if began {
                 let (headline, voice) = crate::workbench::turn_opening(&effect);
@@ -1429,10 +1403,11 @@ impl TerminalView {
             }
             match effect {
                 Effect::Asked { text } => {
-                    // Into the record first, in full. What the caption keeps
-                    // below is the first few lines of it, which is a drawing
-                    // decision and not what the conversation should remember.
-                    self.bench_record_ask(&text);
+                    // The record already has the whole of it, written from the
+                    // raw event above. What the caption keeps is the first few
+                    // lines, which is a drawing decision and not what the
+                    // conversation should remember.
+                    //
                     // The harness's own words outrank anything read off the
                     // screen, and once a pane has heard them the screen latch
                     // stops overwriting the caption — see `latch_asked`.
@@ -1468,7 +1443,22 @@ impl TerminalView {
                         );
                     }
                 }
-                Effect::Reply { text, n } => {
+                Effect::Reply { text, n, ended } => {
+                    // The rounds this reply proved over, first: the reply is
+                    // the agent having moved on, and a card still offering
+                    // chips underneath that is the thing being fixed.
+                    for s in ended {
+                        let id = s.id.clone();
+                        self.present(
+                            Post {
+                                op: Op::Present,
+                                id,
+                                pane: None,
+                                surface: Some(s),
+                            },
+                            cx,
+                        );
+                    }
                     if let Some(s) = crate::channel::reply_surface(&text, now, n) {
                         let id = s.id.clone();
                         self.present(
@@ -1959,6 +1949,7 @@ impl TerminalView {
         // time as a screen reading. The reading still has the one thing the
         // hook does not — where the picker's highlight is — so it is merged
         // into the hook's card as a cursor, and that card answers by keys.
+        let mut reading = crate::workbench::LiveRead::Unreadable;
         let asking = asking.and_then(|q| match self.wb_channel.matching(&q.question) {
             Some(id) => {
                 if let Some(cursor) = q.cursor {
@@ -1970,11 +1961,20 @@ impl TerminalView {
                         hq.cursor = Some(cursor);
                     });
                 }
+                // Read, and it belongs to somebody else — which is a FINDING,
+                // not a failure to read. Saying so is what lets the rule below
+                // retire a live card the channel has taken over; reported as
+                // `None` it was indistinguishable from a screen that could not
+                // be parsed at all, and a stranded card outlived every round.
+                reading = crate::workbench::LiveRead::Folded;
                 None
             }
             None => Some(q),
         });
         let now_id = asking.as_ref().map(crate::screenread::screen_question_id);
+        if let Some(id) = now_id.as_ref() {
+            reading = crate::workbench::LiveRead::Fresh(id.clone());
+        }
         let was = self.wb_live_q.clone();
         // Counted here rather than in the rule, because the rule is a pure
         // decision and this is the pane remembering what it has seen.
@@ -1984,12 +1984,7 @@ impl TerminalView {
             self.wb_quiet.saturating_add(1)
         };
 
-        match crate::workbench::live_move(
-            self.needs_input,
-            now_id.as_ref(),
-            was.as_ref(),
-            self.wb_quiet,
-        ) {
+        match crate::workbench::live_move(self.needs_input, &reading, was.as_ref(), self.wb_quiet) {
             LiveMove::Keep => return out,
             LiveMove::Retire => {
                 if let Some(id) = was {
@@ -2075,6 +2070,58 @@ impl TerminalView {
     /// so answering worked in the place you were not looking. Parker, with the
     /// two side by side: *"The decision tab work surface should look a LOT
     /// more like [the waiting block]"*.
+    /// The review, as the whole of the workbench body.
+    ///
+    /// `None` when nothing is being reviewed, or when there is nothing to
+    /// review — a gallery of nothing is a takeover that strands the person on
+    /// an empty page, where the old flyout merely declined to open.
+    ///
+    /// The navigator is built here rather than in [`crate::benchdraw`] because
+    /// its three chips need this pane's hit zones, which is also what makes
+    /// them light under the pointer.
+    pub(super) fn review_body(&self, sk: &crate::skin::Skin, th: &Theme) -> Option<gpui::Div> {
+        let at = self.wb_review?;
+        let all = self.bench.reviewable();
+        if all.is_empty() {
+            return None;
+        }
+        // Clamped rather than trusted: answering a question while the gallery
+        // is open can shorten the list under the index.
+        let at = at.min(all.len() - 1);
+        let item = all[at].clone();
+        let total = all.len();
+        let back = at > 0;
+        let fwd = at + 1 < total;
+        Some(
+            crate::benchdraw::review_page(at, total, &item.title, &item.answer, sk, th).child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .gap(px(8.))
+                    .items_center()
+                    .child(
+                        sk.chip(back)
+                            .child("\u{2190}".to_string())
+                            .relative()
+                            .child(self.live_zone(crate::workbench::Hit::GalleryBack, sk)),
+                    )
+                    .child(
+                        sk.chip(fwd)
+                            .child("\u{2192}".to_string())
+                            .relative()
+                            .child(self.live_zone(crate::workbench::Hit::GalleryForward, sk)),
+                    )
+                    .child(div().flex_1())
+                    .child(
+                        sk.chip(false)
+                            .child("CLOSE".to_string())
+                            .relative()
+                            .child(self.live_zone(crate::workbench::Hit::GalleryClose, sk)),
+                    ),
+            ),
+        )
+    }
+
     pub(super) fn answer_chips(
         &mut self,
         q: &crate::surface::Question,
@@ -2144,10 +2191,8 @@ impl TerminalView {
                     // menu that has already closed.
                     return chip;
                 }
-                chip.relative().child(crate::benchdraw::zone(
-                    self.wb_zones.clone(),
-                    crate::workbench::Hit::Choose(i),
-                ))
+                chip.relative()
+                    .child(self.live_zone(crate::workbench::Hit::Choose(i), sk))
             })
             .collect();
         div()
@@ -2164,17 +2209,25 @@ impl TerminalView {
             )
             // Review, beside Submit, and only once there is something to
             // review. A gallery of nothing is a button that punishes a press.
-            .when(!self.bench.reviewable().is_empty() && !answered, |d| {
+            //
+            // NOT gated on this card being unanswered, which is what it used
+            // to be, and which took the button away at the exact moment there
+            // was most to look at: answering makes MORE to review, not less,
+            // and the last answer of a round is when a person most wants to
+            // see what they just said. Parker, on a round of three with all
+            // three answered and no button anywhere: *"Oh no not seeing the
+            // review submit panel AT ALL!"*.
+            //
+            // `reviewable()` is the honest guard and always was — it counts
+            // what there is to show, so it cannot offer an empty gallery.
+            .when(!self.bench.reviewable().is_empty(), |d| {
                 d.child(sk.rule_h()).child(
                     div().flex().flex_row().gap(px(8.)).justify_end().child(
                         sk.chip(false)
                             .text_size(px(sk.pt(Step::Small)))
                             .child("\u{21ba} REVIEW ANSWERS".to_string())
                             .relative()
-                            .child(crate::benchdraw::zone(
-                                self.wb_zones.clone(),
-                                crate::workbench::Hit::Review,
-                            )),
+                            .child(self.live_zone(crate::workbench::Hit::Review, sk)),
                     ),
                 )
             })
@@ -2197,10 +2250,7 @@ impl TerminalView {
                             sk,
                         )
                         .relative()
-                        .child(crate::benchdraw::zone(
-                            self.wb_zones.clone(),
-                            crate::workbench::Hit::PressNav(at),
-                        )),
+                        .child(self.live_zone(crate::workbench::Hit::PressNav(at), sk)),
                     ),
                 )
             })
@@ -2358,12 +2408,12 @@ impl TerminalView {
                             sk,
                         )
                         .relative()
-                        .child(crate::benchdraw::zone(
-                            self.wb_zones.clone(),
+                        .child(self.live_zone(
                             crate::workbench::Hit::Verb {
                                 action: action.clone(),
                                 target: target.clone(),
                             },
+                            sk,
                         ))
                     })
                     .collect::<Vec<_>>()
@@ -3519,13 +3569,39 @@ impl TerminalView {
         // the two agree today — but the offer is a claim that the room is empty
         // and that is the value which says whether it is.
         let offering = room_id.is_none() && !agent_now && !self.wb_had_agent;
-        let body = match live_turn.as_ref() {
+        // THE REVIEW TAKES THE WORKBENCH, and is chosen BEFORE the body it
+        // replaces is built — not after.
+        //
+        // `benchdraw::sel` registers a run into the selection sink the moment
+        // the element is CONSTRUCTED, and `benchdraw::resolve` later asks every
+        // registered run for its bounds. `gpui::TextLayout` panics when asked
+        // for bounds it has not measured, and a run belonging to an element
+        // nothing painted has none. So building the card and then throwing it
+        // away in favour of the review registered a whole body of runs that
+        // would never be laid out, and the next frame aborted the window.
+        // Parker, on the first build where the review was reachable at all:
+        // *"click review answers... TD just crashes lol"*.
+        //
+        // The module's own header states the invariant from the READING side —
+        // resolve only from a paint-phase closure at the bottom of the tree, so
+        // everything above is measured. This is the same invariant from the
+        // WRITING side: do not register what will not be drawn. A `match` whose
+        // arms are the bodies keeps that true by construction, where an
+        // override after the fact could not.
+        //
+        // THE TURN IN FLIGHT IS THE SECOND ARM, under the review and over
+        // everything else, and the tuple is what keeps the panic-invariant
+        // true with three bodies instead of two: `review_body` is evaluated
+        // once in the scrutinee and the live card is only BUILT inside its own
+        // arm, so at most one body ever registers a run.
+        let body = match (self.review_body(sk, th), live_turn.as_ref()) {
+            (Some(page), _) => page,
             // Only what is live. The status line is parsed here rather than
             // read off the strip's copy because the strip is built inside a
             // closure that may not have run — a pane that never had an agent
             // draws no strip — and a card that silently took its numbers from
             // a block that did not exist would show them as absent.
-            Some(_) => {
+            (None, Some(_)) => {
                 let status = self.agent_status();
                 let vitals = crate::workbench::turn_vitals(&status);
                 crate::benchdraw::live_card(
@@ -3537,7 +3613,7 @@ impl TerminalView {
                     th,
                 )
             }
-            None => match self.bench.showing() {
+            (None, None) => match self.bench.showing() {
                 Some(surface) => {
                     let tint = crate::benchdraw::ink(crate::workbench::tint_of(&surface.kind), th);
                     let bench = &self.bench;
@@ -3651,6 +3727,13 @@ impl TerminalView {
             },
         };
 
+        // Asked once, because the anchor and the scroll below both need it
+        // and `reviewable()` walks the bench to answer.
+        let reviewing = self.wb_review.is_some() && !self.bench.reviewable().is_empty();
+
+        // Taken as a bool before the block is moved into the tree, so the
+        // anchor far below can ask without borrowing it.
+        //
         // ── what the agent is blocked on, whatever else is on the bench ─────
         //
         // OUT of the match, and that is the fix rather than a tidy-up. It was
@@ -3689,6 +3772,26 @@ impl TerminalView {
                 let zones = self.wb_zones.clone();
                 crate::benchdraw::waiting_block(&q, Some(&zones), sk, th).child(chips)
             });
+
+        // Taken as a bool here, where the block still exists, because the
+        // anchor that needs it is built far below and the block itself is
+        // moved into the tree before then.
+        let has_waiting = waiting.is_some();
+
+        // IS A CARD IN THE ROOM — the question itself, asked once and named.
+        //
+        // Four things answer yes now: a review page, a turn in flight, a card
+        // the person opened, and the newest reply standing in for one. Each
+        // arrived separately and each time the sites below were carrying a
+        // PROXY for this question rather than the question — first
+        // `showing_id.is_some()`, then that `|| reviewing` — and a proxy is
+        // only correct for the cases that existed when it was written. The
+        // live-turn card was bottom-anchored and pinned to the floor of the
+        // pane because of exactly that, and the review had already had to
+        // patch the same line a day earlier. A fifth kind of card should have
+        // to change one line, here, and the compiler should not let it be this
+        // one that goes stale.
+        let card_in_room = reviewing || room_id.is_some();
 
         // ── the note box ────────────────────────────────────────────────────
         //
@@ -3915,76 +4018,6 @@ impl TerminalView {
             }
         };
 
-        // The review gallery, drawn OVER everything rather than in place of
-        // it. The thing underneath is a question somebody is part-way
-        // through answering, and replacing it with a history is exactly the
-        // navigation the flyout exists to avoid.
-        let gallery = self.wb_review.and_then(|at| {
-            let all = self.bench.reviewable();
-            if all.is_empty() {
-                return None;
-            }
-            let at = at.min(all.len() - 1);
-            let item = all[at].clone();
-            let total = all.len();
-            let back = at > 0;
-            let fwd = at + 1 < total;
-            Some(
-                // The centring wrapper: it fills the bench and puts the panel
-                // in the middle of it, over whatever is underneath.
-                div()
-                    .absolute()
-                    .inset_0()
-                    .relative()
-                    .child(crate::benchdraw::zone(
-                        self.wb_zones.clone(),
-                        crate::workbench::Hit::Nothing,
-                    ))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .child(
-                        crate::benchdraw::review_flyout(
-                            at,
-                            total,
-                            &item.title,
-                            &item.answer,
-                            sk,
-                            th,
-                        )
-                        .child(
-                            div()
-                                .flex()
-                                .flex_row()
-                                .gap(px(8.))
-                                .items_center()
-                                .child(
-                                    sk.chip(back)
-                                        .child("\u{2190}".to_string())
-                                        .relative()
-                                        .child(crate::benchdraw::zone(
-                                            self.wb_zones.clone(),
-                                            crate::workbench::Hit::GalleryBack,
-                                        )),
-                                )
-                                .child(sk.chip(fwd).child("\u{2192}".to_string()).relative().child(
-                                    crate::benchdraw::zone(
-                                        self.wb_zones.clone(),
-                                        crate::workbench::Hit::GalleryForward,
-                                    ),
-                                ))
-                                .child(div().flex_1())
-                                .child(sk.chip(false).child("CLOSE".to_string()).relative().child(
-                                    crate::benchdraw::zone(
-                                        self.wb_zones.clone(),
-                                        crate::workbench::Hit::GalleryClose,
-                                    ),
-                                )),
-                        ),
-                    ),
-            )
-        });
-
         // ── the open dial's list ────────────────────────────────────────────
         //
         // Drawn last and placed absolutely, UNDER THE DIAL THAT OPENED IT, so
@@ -4076,16 +4109,24 @@ impl TerminalView {
                         // conversation and to nothing else, and it matters twice
                         // over now the body scrolls.
                         //
-                        // The TURN IN FLIGHT is the third thing that reads from
-                        // the top, and it was `showing_id` here until a
-                        // photograph caught it: the live card pinned to the
-                        // floor of an 800-pixel pane under an acre of empty,
+                        // A review fills the body like a card, so it is
+                        // anchored and scrolled like one: bottom-anchored it
+                        // would sit at the foot of the pane, and unscrolled a
+                        // long answer would simply be cut.
+                        //
+                        // The TURN IN FLIGHT is the FOURTH thing that reads from
+                        // the top, and `showing_id` was still the value here
+                        // until a photograph caught it: the live card pinned to
+                        // the floor of an 800-pixel pane under an acre of empty,
                         // exactly the failure this comment was already written
                         // about. `showing` yields `None` while a turn stands, so
-                        // the test that used to mean "a card is in the room"
-                        // stopped meaning it the moment a third kind of card
-                        // existed.
-                        let anchor = crate::workbench::body_anchor(room_id.is_some(), offering);
+                        // a test meaning "a card is in the room" stopped meaning
+                        // it the moment another kind of card existed — which has
+                        // now happened twice in two days, to the same line.
+                        // `card_in_room` is the question itself rather than a
+                        // proxy for it, named once above and read here.
+                        let anchor =
+                            crate::workbench::body_anchor(card_in_room, offering, has_waiting);
                         div()
                             // Stateful, because a scroll container IS state:
                             // gpui keeps the offset against this id between
@@ -4126,10 +4167,10 @@ impl TerminalView {
                             // simply cut — with the folds already built and
                             // already unable to save it, because one unfolded
                             // section can exceed the pane on its own.
-                            .when(room_id.is_some(), |d| {
+                            .when(card_in_room, |d| {
                                 d.overflow_y_scroll().track_scroll(&self.wb_card_scroll)
                             })
-                            .when(room_id.is_none(), |d| d.overflow_hidden())
+                            .when(!card_in_room, |d| d.overflow_hidden())
                             .when(anchor == Anchor::Bottom, |d| d.justify_end())
                             .when(self.mode.is_agent(), |d| {
                                 d.relative().child(crate::benchdraw::zone(
@@ -4202,7 +4243,6 @@ impl TerminalView {
             // card's and win the lookup — last painted wins. Before the
             // gallery, which is a modal and must win over both.
             .children(dial_list)
-            .children(gallery)
             // Last, so its hitbox and its cursor request are painted after
             // every control's — see the hook for why that order is the rule.
             .child(self.pointer_hook(weak))

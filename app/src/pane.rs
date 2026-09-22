@@ -2201,6 +2201,13 @@ pub struct TerminalView {
     /// What the pointer looks like over the bench, decided from the un-bent
     /// position on every mouse move and painted by the bench's pointer hook.
     wb_pointer: crate::workbench::Pointer,
+    /// What the pointer is over, so a pressable thing can say so.
+    ///
+    /// The shape of the cursor was already derived from this and then the hit
+    /// itself thrown away — which is why the bench could turn the pointer into
+    /// a hand over a chip and still leave the chip looking exactly as dead as
+    /// the label beside it.
+    wb_hover: Option<crate::workbench::Hit>,
     /// Whether a dragged file is over the composer right now, so the box can
     /// say it will take it. Set from the same un-bent hover that decides the
     /// pointer, and cleared when the drag leaves the window — which arrives
@@ -2314,10 +2321,13 @@ pub struct TerminalView {
     /// in, oldest first. Drained into the record the moment it can. See
     /// `bench_write`.
     wb_unfiled: Vec<crate::benchstore::Rec>,
-    /// The ordinal the NEXT ask will carry. Read from the record when the
-    /// conversation is adopted, so a window restart mid-conversation does not
-    /// start counting again and file this turn's reply under the first one.
-    wb_turn: u32,
+    /// The open record for [`Self::wb_conv`]: where the next turn starts, and
+    /// the name of every line already in the file, so a journal replayed after
+    /// a restart is recognised instead of written again.
+    ///
+    /// `None` means no conversation has been established, and nothing is
+    /// written — see `bench_write`, which holds instead.
+    wb_writer: Option<crate::benchstore::Writer>,
 }
 
 /// Click on the header's theme icon — the workspace opens the breakout menu.
@@ -2447,7 +2457,8 @@ enum PaintKey {
 /// keep travelling to the Workspace.
 ///
 /// **INVARIANT: a key this pane DECLINES must bubble.** Every workspace chord —
-/// alt+arrows (pane nav), alt+v/h and ctrl+alt+r/d (split), ctrl+pgup/pgdn
+/// alt+arrows (pane nav), alt+v/h and ctrl+alt+d (split), ctrl+alt+r (rename the
+/// highlighted tree row), ctrl+pgup/pgdn
 /// (tabs) — reaches the Workspace only by bubbling out of a focused pane, so
 /// swallowing the fall-through kills all of them at once with no compile error
 /// and nothing else failing.
@@ -3065,7 +3076,7 @@ impl TerminalView {
             // Nothing on disk is touched — the record outlives the process.
             self.wb_conv = None;
             self.wb_conv_bond = crate::vitals::Bond::Guess;
-            self.wb_turn = 0;
+            self.wb_writer = None;
             // Anything held for a conversation that never got named belongs to
             // the agent that left, and the next one in this pane is not it.
             self.wb_unfiled.clear();
@@ -3623,6 +3634,7 @@ impl TerminalView {
             wb_press: None,
             wb_bench_rect: std::rc::Rc::new(std::cell::RefCell::new(None)),
             wb_pointer: crate::workbench::Pointer::Arrow,
+            wb_hover: None,
             wb_drop: false,
             wb_mirror: false,
             wb_live_q: None,
@@ -3643,7 +3655,7 @@ impl TerminalView {
             wb_conv: None,
             wb_conv_bond: crate::vitals::Bond::Guess,
             wb_unfiled: Vec::new(),
-            wb_turn: 0,
+            wb_writer: None,
         }
     }
 
@@ -6069,6 +6081,23 @@ impl TerminalView {
         }
         let answered = rows_fingerprint(&self.recent_lines(PROMPT_TAIL_ROWS));
         self.answered_on = Some(answered);
+        // Recorded above, and then NOT cleared below, when the channel is
+        // still holding a round.
+        //
+        // Typing answers the SCREEN's prompt. It does not answer a round the
+        // hook carried: that ends when the round ends, and until then this
+        // flag is not this edge's to drop. The 120ms scan sets it from
+        // `screen || channel` (see the scan in `Workspace`), and this edge
+        // used to clear it from the screen half alone — so every keystroke put
+        // the tab badge and the rail lane out and the next scan put them back,
+        // once per key, for as long as a question stayed open. Parker, watching
+        // his own pane on 2026-09-21: *"it should PERSIST WITHOUT BLINKING ON
+        // KEYSTROKE.. until the question SET is actually submitted"*, which is
+        // this predicate exactly — `has_open_question` is false once every
+        // question has an answer, or the round is sent, or it has ended.
+        if self.wb_channel.has_open_question() {
+            return;
+        }
         self.needs_input = false;
         cx.emit(AgentWorkingChanged);
         cx.notify();
@@ -7300,6 +7329,24 @@ impl TerminalView {
                     pid,
                     own: Some(crate::ctl::descends_from(pid, shell)),
                 };
+            }
+        }
+        // The transcript is a REPORTER of a round the channel OWNS. Both now
+        // spell a question's id the same way (`channel::question_surface_id`),
+        // so a derived question for a round this channel is carrying would
+        // land on the channel's own card and overwrite it — losing the round
+        // strip, which only the channel can build, because only the channel is
+        // told that an ask is a round of several questions rather than one.
+        //
+        // Dropped rather than merged: the channel re-presents the whole round
+        // whenever anything about it changes, so there is nothing in this copy
+        // that the surviving card does not already have.
+        if let Some(s) = post.surface.as_ref() {
+            if matches!(s.kind, crate::surface::Kind::Question(_))
+                && s.origin == crate::surface::Origin::Derived
+                && self.wb_channel.owns(&post.id).is_some()
+            {
+                return;
             }
         }
         // A reply the agent presented itself means the hook's copy of the same
@@ -8756,6 +8803,202 @@ mod tests {
             .join("\n")
     }
 
+    /// The body that is DRAWN is the only body that is BUILT.
+    ///
+    /// [`crate::benchdraw::sel`] registers a run into the selection sink when
+    /// the element is CONSTRUCTED, and [`crate::benchdraw::resolve`] later asks
+    /// every registered run for its bounds — which `gpui::TextLayout` panics on
+    /// when the run was never laid out, and a run belonging to an element
+    /// nothing painted never is.
+    ///
+    /// So building the card and then discarding it in favour of the review
+    /// registered a whole body of runs that nothing would draw, and the next
+    /// frame aborted the window. It did, on the first build where the review
+    /// was reachable at all: *"click review answers... TD just crashes lol"*.
+    ///
+    /// `benchdraw`'s header states this invariant from the READING side —
+    /// resolve only from a paint-phase closure at the bottom of the tree, so
+    /// everything above is measured. This is the WRITING side of the same
+    /// invariant, and it is kept by SHAPE rather than by care: the two bodies
+    /// are arms of one match, so neither is built unless it is the one chosen.
+    /// An override applied afterwards cannot have that property, which is why
+    /// the assertion is about the shape and not about the outcome.
+    #[test]
+    fn only_the_body_that_is_drawn_is_built() {
+        let code = bench_code();
+        // THE SCRUTINEE, not a fixed spelling of it. This read
+        // `contains("let body = match self.review_body(")`, which held the
+        // invariant for exactly as long as the body had two arms: adding the
+        // turn-in-flight card made the match a tuple, and the guard failed on
+        // a change that never broke the rule it guards. What the rule needs is
+        // that the review is decided IN the match — so that is what is asked,
+        // and it survives the next body arriving.
+        let at = code
+            .find("let body = match ")
+            .expect("the body's own match is gone");
+        let scrutinee = &code[at..at + code[at..].find(" {").unwrap_or(0)];
+        assert!(
+            scrutinee.contains("self.review_body("),
+            "the review must be chosen inside the body's own match, so the body \
+             it replaces is never constructed: {scrutinee}"
+        );
+        assert!(
+            !code.contains("None => body,"),
+            "a body built and then discarded registers selection runs that nothing \
+             will paint, and resolve panics asking them for bounds"
+        );
+    }
+
+    /// REVIEW ANSWERS is offered on an ANSWERED card.
+    ///
+    /// Its guard is whether there is anything to review, and nothing else. It
+    /// was also gated on the card being unanswered, which took the button away
+    /// at the moment a round finished — the moment a person most wants to see
+    /// what they just said. The premise is asserted where it can be executed,
+    /// in `workbench::tests::answering_a_question_adds_to_the_review_rather_\
+    /// than_emptying_it`; this is the clause.
+    #[test]
+    fn the_review_button_is_not_gated_on_the_card_being_unanswered() {
+        let code = bench_code();
+        let at = code
+            .find("reviewable().is_empty()")
+            .expect("the review button is gone");
+        // The line it is on, and nothing else: a wider slice would pick up the
+        // Submit gate below, which IS allowed to consult `answered`.
+        let start = code[..at].rfind('\n').map_or(0, |i| i + 1);
+        let end = at + code[at..].find('\n').unwrap_or(0);
+        let line = &code[start..end];
+        assert!(
+            !line.contains("answered"),
+            "the review button consults `answered` again, so it hides itself \
+             exactly when there is most to review: {line}"
+        );
+    }
+
+    /// The body of [`TerminalView::ack_needs_input`], code only.
+    ///
+    /// Brace-matched from the signature's opening brace, so the slice is that
+    /// function and nothing after it — a scan that ran to the first `}` would
+    /// end above most of what it is meant to read.
+    fn ack_needs_input_body() -> String {
+        let code = shipped_code();
+        let at = code
+            .find("pub fn ack_needs_input(")
+            .expect("the needs-input clearing edge is gone");
+        let open = at + code[at..].find('{').expect("a body");
+        let mut depth = 0usize;
+        for (i, c) in code[open..].char_indices() {
+            match c {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return code[open..open + i + 1].to_string();
+                    }
+                }
+                _ => {}
+            }
+        }
+        panic!("unbalanced braces in ack_needs_input");
+    }
+
+    /// Typing answers the SCREEN's prompt. It never answers a round the hook
+    /// carried.
+    ///
+    /// The 120ms scan sets the needs-you flag from `screen || channel`, and
+    /// this edge cleared it from the screen half alone — so every keystroke
+    /// put the tab badge out and the next scan put it back, once per key, for
+    /// as long as a question stayed open. Parker, watching his own pane on
+    /// 2026-09-21: *"it should PERSIST WITHOUT BLINKING ON KEYSTROKE.. until
+    /// the question SET is actually submitted"*.
+    ///
+    /// The BEHAVIOUR is specified where it can be executed — see
+    /// `channel::tests::the_badge_predicate_holds_from_the_question_to_its_ending`,
+    /// which pins `has_open_question` across a round's whole life. What cannot
+    /// be executed here is the WIRING: this function takes a `Context<Self>`
+    /// and the crate has no gpui test app, so the line that consults the
+    /// channel is guarded by reading it.
+    ///
+    /// TWO assertions, because one is not enough: a gate that asks only
+    /// whether the call appears passes on a guard moved BELOW the clear, which
+    /// is the same bug with the same words in it.
+    #[test]
+    fn a_keystroke_does_not_clear_a_question_the_channel_still_holds() {
+        let body = ack_needs_input_body();
+        let guard = body
+            .find("has_open_question()")
+            .expect("ack_needs_input must ask the channel before it clears the flag");
+        let clear = body
+            .find("self.needs_input = false")
+            .expect("ack_needs_input must still be the edge that clears the flag");
+        assert!(
+            guard < clear,
+            "the channel is consulted AFTER the flag is dropped, so it is dropped anyway:\n{body}"
+        );
+    }
+
+    /// Every chip the bench can press lights under the pointer.
+    ///
+    /// The rule is not "call `live_zone`" for its own sake. A chip wired with a
+    /// bare [`crate::benchdraw::zone`] is perfectly clickable and gives no sign
+    /// of it, and a bench full of those is the state this whole thing was in:
+    /// every control worked, none of them acknowledged the pointer, and the
+    /// only feedback was the cursor turning into a hand. Parker, on the review
+    /// gallery's CLOSE: *"doesn't seem to respond when I hover"*.
+    ///
+    /// Scanned rather than executed: the decision reads `wb_hover` off a live
+    /// `TerminalView` and this crate has no gpui test app.
+    ///
+    /// The slice for each chip runs to the NEXT chip, so one chip's zone cannot
+    /// satisfy the chip above it. `live_zone(` ends in `zone(`, so a bare zone
+    /// is counted by subtraction rather than by a `contains` that its own
+    /// replacement would satisfy.
+    #[test]
+    fn every_chip_the_bench_can_press_lights_under_the_pointer() {
+        let code = bench_code();
+        let starts: Vec<usize> = code.match_indices(".chip(").map(|(i, _)| i).collect();
+        assert!(
+            starts.len() >= 6,
+            "expected the bench to still draw chips; found {}",
+            starts.len()
+        );
+        let mut pressable = 0;
+        for (n, &at) in starts.iter().enumerate() {
+            // A chip's zone is its own CHILD, so it is the first one after it
+            // and it is close by — the widest real gap on this bench is
+            // fifteen lines. Running the slice to the next `.chip(` instead
+            // spanned fifteen hundred lines on the first draft and happily
+            // blamed one chip for a row's zone a thousand lines below it.
+            let stop = starts
+                .get(n + 1)
+                .copied()
+                .unwrap_or(code.len())
+                .min(nth_newline(&code, at, 25));
+            let slice = &code[at..stop];
+            let Some(z) = slice.find("zone(") else {
+                continue; // a label, not a button — it must NOT light
+            };
+            pressable += 1;
+            assert!(
+                slice[..z].ends_with("live_"),
+                "a pressable chip is wired with a bare zone, so it cannot light:\n{}",
+                slice.lines().take(10).collect::<Vec<_>>().join("\n")
+            );
+        }
+        assert!(
+            pressable >= 6,
+            "expected several pressable chips on the bench; found {pressable}"
+        );
+    }
+
+    /// The byte offset `n` newlines after `from`, or the end of `s`.
+    fn nth_newline(s: &str, from: usize, n: usize) -> usize {
+        s[from..]
+            .match_indices('\n')
+            .nth(n)
+            .map_or(s.len(), |(i, _)| from + i)
+    }
+
     /// The `departed` branch of [`TerminalView::set_mode`], code only.
     ///
     /// Brace-matched from `if departed {` rather than cut at the first closing
@@ -8834,7 +9077,7 @@ mod tests {
             // an embarrassment.
             "wb_conv",
             "wb_conv_bond",
-            "wb_turn",
+            "wb_writer",
             "wb_unfiled",
         ] {
             assert!(

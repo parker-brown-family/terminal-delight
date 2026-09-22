@@ -1367,6 +1367,24 @@ pub enum Answered {
     /// Answered, and how is unavailable — a result shape this build cannot
     /// read. Distinct from [`Answered::Typed`], which knows what was said.
     ChoseUnknown,
+    /// The round ended with no answer, and none is coming: the person refused
+    /// the tool, so it never ran.
+    ///
+    /// Not a fifth flavour of answered. [`Answered::ChoseUnknown`] HAS an
+    /// answer that this build could not read; this has none and never will,
+    /// and the two tell a reader opposite things about whether anything was
+    /// decided. Drawn as one state they are indistinguishable, which is how a
+    /// refused round sat on a bench for six minutes still offering its chips.
+    Cancelled,
+    /// The round is over and nothing on this machine records how.
+    ///
+    /// The third honest shape of "we do not fully know", and the weakest:
+    /// [`Answered::ChoseUnknown`] knows the tool RETURNED with something,
+    /// [`Answered::Cancelled`] knows it was refused, and this knows only that
+    /// the agent moved on. Collapsing it into either would put a claim on the
+    /// card that nobody made — and the claim would look exactly as confident
+    /// as the ones that were measured.
+    Ended,
 }
 
 /// Something arrived and this build cannot type it.
@@ -1764,6 +1782,8 @@ impl Surface {
                 ),
                 Answered::Typed(said) => format!("answered · {said}"),
                 Answered::ChoseUnknown => "answered · how is unavailable".into(),
+                Answered::Cancelled => "cancelled · nothing was answered".into(),
+                Answered::Ended => "ended · nobody recorded how".into(),
                 Answered::Waiting => format!("{} options · waiting on you", q.options.len()),
             },
             // The plain reply IS the subtitle: a reply's row is read, not

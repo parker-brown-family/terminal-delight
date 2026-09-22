@@ -567,6 +567,10 @@ pub struct Snapshot {
     /// which is why it lives on the snapshot: the snapshot is the live data ONE
     /// request is answered from.
     pub caller: Option<Caller>,
+    /// The engineering state of every project the rail has read — checkouts,
+    /// drift, what it would take to land everything. The `engineering_state`
+    /// tool's whole answer; empty until the rail's first scan lands.
+    pub engineering: Vec<crate::engstate::Report>,
 }
 
 /// Who is asking, as derived from their own process tree by the relay.
@@ -642,6 +646,7 @@ impl Snapshot {
             outer_grade: GradeReport::default(),
             instance: None,
             caller: None,
+            engineering: vec![],
         }
     }
 }
@@ -974,6 +979,22 @@ fn tool_defs() -> Value {
             }
         },
         {
+            "name": "engineering_state",
+            "description":
+                "The engineering state of every project this window has read — what a \
+                 coordinating agent needs before landing work in flight. Per project: the \
+                 checkouts its panes are in (branch, dirty files and ±lines, ahead/behind \
+                 main, upstream and unpushed commits, the files the line touches, and \
+                 whether it would merge into main today — a merge-tree dry run naming the \
+                 conflicting files), the idle worktrees on disk that nobody is in, panes \
+                 filed here but working in another repository and vice versa, pairs of \
+                 lines converging on the same files, stashes, and the LANDING list: the \
+                 ordered things that must become true for everything to be on main, each \
+                 naming its line. Read-only; the rail moves nothing. A null field was not \
+                 measured — it is never zero. Empty until the rail's first scan lands.",
+            "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false }
+        },
+        {
             "name": "surface_catalogue",
             "description": "What kinds of work object this build of Terminal Delight can render, the actions a person can take on them, and the weights a surface may carry. Read-only. Ask before presenting if you are unsure a kind exists — an unknown kind still lands, but as unclassified.",
             "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false }
@@ -1019,6 +1040,7 @@ where
     let args = params.get("arguments").cloned().unwrap_or(Value::Null);
     let out = match name {
         "list_panes" => list_panes(snap),
+        "engineering_state" => engineering_state(snap),
         "pane_events" => pane_events(&args, snap, tail),
         "get_pane_config" => get_pane_config(&args, snap),
         "set_pane_config" => set_pane_config(&args, snap, apply),
@@ -1123,6 +1145,100 @@ where
         )
     };
     tool_ok(text, json!({ "query": query, "panes": panes }))
+}
+
+/// The rail's reading of every project, for a program.
+///
+/// The text half is the thing an agent can act on without parsing: one block
+/// per project with its badge, its sentence and its landing list, the active
+/// project first. The structured half is the whole reading, every `Option`
+/// still an `Option`.
+fn engineering_state(snap: &Snapshot) -> Value {
+    if !snap.config.enabled {
+        return tool_err(
+            "MCP exposure is disabled. Enable it in terminal-delight's MCP \
+             CONTROL panel (the robot button on the mother bar).",
+        );
+    }
+    let mut projects: Vec<&crate::engstate::Report> = snap.engineering.iter().collect();
+    projects.sort_by_key(|r| !r.active);
+    let text = if projects.is_empty() {
+        "the rail has not read any project yet — no scan has landed".to_string()
+    } else {
+        projects
+            .iter()
+            .map(|r| {
+                let mut s = format!(
+                    "{}{}  [{}]  read {}s ago",
+                    r.name.as_deref().unwrap_or("(unfiled)"),
+                    if r.active { " (active)" } else { "" },
+                    r.badge.join(" \u{00b7} "),
+                    r.read_secs_ago
+                );
+                if let Some(sentence) = &r.sentence {
+                    s.push_str(&format!("\n  {sentence}"));
+                }
+                for c in r.checkouts.iter().chain(r.idle.iter()) {
+                    let who: Vec<String> = c
+                        .writers
+                        .iter()
+                        .map(|w| {
+                            format!("{} \u{2018}{}\u{2019}", w.label.to_lowercase(), w.tab_name)
+                        })
+                        .collect();
+                    s.push_str(&format!(
+                        "\n  {} {}  dirty={} ahead={} behind={} unpushed={} merge={}  {}",
+                        if c.idle {
+                            "idle"
+                        } else if c.shared {
+                            "SHARED"
+                        } else {
+                            "wt"
+                        },
+                        c.line,
+                        c.dirty.map_or("?".into(), |v| v.to_string()),
+                        c.ahead.map_or("?".into(), |v| v.to_string()),
+                        c.behind.map_or("?".into(), |v| v.to_string()),
+                        c.unpushed.map_or("?".into(), |v| v.to_string()),
+                        c.merge.as_deref().unwrap_or("?"),
+                        if who.is_empty() {
+                            c.root.clone()
+                        } else {
+                            who.join(", ")
+                        }
+                    ));
+                }
+                for f in &r.foreign {
+                    s.push_str(&format!(
+                        "\n  \u{26a0} \u{2018}{}\u{2019} is filed here but working in {}",
+                        f.writer.tab_name, f.repo
+                    ));
+                }
+                for v in &r.visitors {
+                    s.push_str(&format!(
+                        "\n  \u{25cc} \u{2018}{}\u{2019} is working here but filed under {}",
+                        v.writer.tab_name,
+                        v.filed_under.as_deref().unwrap_or("nothing")
+                    ));
+                }
+                if !r.landing.is_empty() {
+                    s.push_str("\n  to land everything:");
+                    for (i, item) in r.landing.iter().enumerate() {
+                        s.push_str(&format!("\n    {}. {}", i + 1, item.text));
+                    }
+                }
+                for e in &r.afterglow {
+                    s.push_str(&format!("\n  \u{25c6} {e}"));
+                }
+                s
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n")
+    };
+    tool_ok(
+        text,
+        json!({ "projects": serde_json::to_value(&snap.engineering).unwrap_or(Value::Null) }),
+    )
 }
 
 fn list_panes(snap: &Snapshot) -> Value {
@@ -1939,6 +2055,103 @@ mod tests {
         }
     }
 
+    /// A landing list an agent can act on rides the TEXT, numbered, with the
+    /// active project first; the structured half carries the kind a program
+    /// switches on. And nothing is answered while exposure is off.
+    #[test]
+    fn engineering_state_hands_an_agent_the_landing_list() {
+        use crate::engstate::{CheckoutReport, LandingReport, Report};
+        let report = |name: &str, active: bool| Report {
+            project: Some(1),
+            name: Some(name.into()),
+            active,
+            read_secs_ago: 3,
+            took_ms: 900,
+            main: Some("main".into()),
+            badge: vec!["2 WT".into(), "1 SHARED".into()],
+            sentence: Some("2 lines of work, one shared".into()),
+            repos: vec![],
+            checkouts: vec![CheckoutReport {
+                root: "/w/feature".into(),
+                repo: "o/r".into(),
+                line: "feature".into(),
+                branch: Some("feature".into()),
+                head: Some("abc1234".into()),
+                idle: false,
+                shared: false,
+                writers: vec![],
+                dirty: Some(0),
+                untracked: None,
+                added: None,
+                removed: None,
+                ahead: Some(2),
+                behind: Some(1),
+                last_commit: None,
+                upstream: Some("origin/feature".into()),
+                unpushed: Some(1),
+                touched: None,
+                merge: Some("conflicts".into()),
+                conflict_files: vec!["a.txt".into()],
+            }],
+            idle: vec![],
+            no_git: vec![],
+            foreign: vec![],
+            visitors: vec![],
+            collisions: vec![],
+            landing: vec![
+                LandingReport {
+                    line: "feature".into(),
+                    idle: false,
+                    kind: "push".into(),
+                    text: "push 1 commit on feature".into(),
+                },
+                LandingReport {
+                    line: "feature".into(),
+                    idle: false,
+                    kind: "conflict".into(),
+                    text: "merge feature into main (2 commits) — would conflict on a.txt".into(),
+                },
+            ],
+            afterglow: vec!["a commit landed on feature".into()],
+        };
+        let mut s = snap(true, false, vec![]);
+        s.engineering = vec![report("BFS", false), report("TERMINAL DELIGHT", true)];
+        let out = engineering_state(&s);
+        let text = out["content"][0]["text"].as_str().unwrap();
+        assert!(
+            text.starts_with("TERMINAL DELIGHT (active)  [2 WT \u{00b7} 1 SHARED]"),
+            "the active project leads: {text}"
+        );
+        assert!(text.contains(
+            "to land everything:\n    1. push 1 commit on feature\n    2. merge feature"
+        ));
+        assert!(text.contains("wt feature  dirty=0 ahead=2 behind=1 unpushed=1 merge=conflicts"));
+        assert!(text.contains("\u{25c6} a commit landed on feature"));
+        let kinds: Vec<&str> = out["structuredContent"]["projects"][1]["landing"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|i| i["kind"].as_str().unwrap())
+            .collect();
+        assert_eq!(kinds, vec!["push", "conflict"]);
+        assert_eq!(
+            out["structuredContent"]["projects"][1]["checkouts"][0]["untracked"],
+            Value::Null,
+            "unmeasured stays null on the wire"
+        );
+
+        let empty = engineering_state(&snap(true, false, vec![]));
+        assert!(empty["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("no scan has landed"));
+        let off = engineering_state(&snap(false, false, vec![]));
+        assert_eq!(
+            off["isError"], true,
+            "exposure off is a refusal, not an empty list"
+        );
+    }
+
     fn snap(enabled: bool, events: bool, panes: Vec<PaneInfo>) -> Snapshot {
         Snapshot {
             config: McpConfig {
@@ -1955,6 +2168,7 @@ mod tests {
                 build: Some("td-abc1234-under-test".into()),
             }),
             caller: None,
+            engineering: vec![],
         }
     }
 

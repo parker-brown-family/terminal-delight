@@ -64,15 +64,34 @@ use crate::surface::{
 /// `now_ms` stamps arrival, as it does for a declared surface: the agent's own
 /// clock is one more thing that can be wrong, and ordering a bench by it would
 /// let a bad clock jump the queue.
-pub fn from_transcript(path: &Path, now_ms: u64) -> Vec<Post> {
+pub fn from_transcript(path: &Path, now_ms: u64) -> Derived {
     let Some(body) = crate::mcp_tail::read_tail_public(path) else {
-        return Vec::new();
+        return Derived::default();
     };
-    from_jsonl(&body, now_ms)
+    walk(&body, now_ms)
 }
 
-/// The same, over text — the seam every test uses.
-pub fn from_jsonl(body: &str, now_ms: u64) -> Vec<Post> {
+/// Everything one transcript yields.
+///
+/// Two outputs rather than one, because they are answered by different
+/// authorities. A surface is this module's to draw. A round's LIFECYCLE is
+/// [`crate::channel`]'s — it is the only reader told that an ask is a ROUND of
+/// several questions, and the only one that can therefore settle all of them
+/// together. So what the transcript contributes is the NEWS that a round
+/// ended, and the channel decides what that does to the cards.
+#[derive(Default)]
+pub struct Derived {
+    pub posts: Vec<Post>,
+    /// Endings for `AskUserQuestion` rounds whose result has arrived.
+    ///
+    /// The one the hook structurally cannot report is the refusal: a rejected
+    /// tool never runs, so `PostToolUse` never fires and the journal simply
+    /// stops. See [`crate::channel::Ending::Cancelled`].
+    pub endings: Vec<crate::channel::Inbound>,
+}
+
+/// Read one transcript body whole: surfaces, and the endings beside them.
+pub fn walk(body: &str, now_ms: u64) -> Derived {
     let mut asked: Vec<Asked> = Vec::new();
     let mut deliverables: Vec<(String, String)> = Vec::new();
     let mut fenced: Vec<Post> = Vec::new();
@@ -131,7 +150,27 @@ pub fn from_jsonl(body: &str, now_ms: u64) -> Vec<Post> {
     }
 
     let mut out: Vec<Post> = Vec::new();
+    let mut endings: Vec<crate::channel::Inbound> = Vec::new();
     for a in asked {
+        // A round that has an answer in the transcript is a round that ENDED,
+        // and the channel wants telling however it ended — its own record may
+        // never arrive (a refusal) or may have been missed (a window opened
+        // mid-session). Emitted before the post, because the post is only this
+        // reader's view of question one and the ending settles all of them.
+        match a.answer {
+            Answered::Waiting => {}
+            Answered::Cancelled => endings.push(crate::channel::Inbound::Cancelled {
+                tool_use_id: a.id.clone(),
+            }),
+            _ => endings.push(crate::channel::Inbound::Answered {
+                tool_use_id: a.id.clone(),
+                // Deliberately not this reader's parse of the answer. It sees
+                // only the FIRST question of a round, so a map built here
+                // would answer question one and silently leave the rest
+                // unanswered on a round it had just declared over.
+                answers: None,
+            }),
+        }
         out.push(a.into_post(now_ms));
     }
     // Every fence, not just the newest. This shelf is a FEED — the whole point
@@ -146,7 +185,10 @@ pub fn from_jsonl(body: &str, now_ms: u64) -> Vec<Post> {
     if let Some((label, href)) = deliverables.pop() {
         out.push(deliverable_post(&label, &href, now_ms));
     }
-    out
+    Derived {
+        posts: out,
+        endings,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -163,7 +205,11 @@ struct Asked {
 
 impl Asked {
     fn into_post(self, now_ms: u64) -> Post {
-        let id = SurfaceId(format!("ask-{}", tail_of(&self.id)));
+        // The id the CHANNEL would give question one of this round. These
+        // are the same question seen by two readers, so they are one card —
+        // and when the channel is carrying the round, the pane drops this copy
+        // in favour of the fuller one (see `TerminalView::present`).
+        let id = crate::channel::question_surface_id(&self.id, 0);
         let title = self.question.chars().take(72).collect::<String>();
         let waiting = matches!(self.answer, Answered::Waiting);
         let kind = Kind::Question(Question {
@@ -253,6 +299,19 @@ fn parse_ask(block: &Value) -> Option<Asked> {
 /// of the surface worth reading. Three outcomes, in order of how much is
 /// known — an option, the words, or the honest nothing.
 fn answered_with(block: &Value, options: &[Choice_]) -> Answered {
+    // An `AskUserQuestion` that ERRORED did not run: the person refused it at
+    // the permission prompt, or interrupted the turn holding it. There is no
+    // answer and there never will be one, which is a different fact from an
+    // answer this build cannot read — and drawn as the latter, the card went
+    // on offering chips that could no longer reach anyone.
+    //
+    // The FLAG is the signal, never the prose beside it. The prose is English
+    // the harness is free to reword ("The user doesn't want to proceed with
+    // this tool use…", read off a live transcript on 2026-09-21); `is_error`
+    // is structure.
+    if block.get("is_error").and_then(Value::as_bool) == Some(true) {
+        return Answered::Cancelled;
+    }
     let Some(text) = result_text(block) else {
         return Answered::ChoseUnknown;
     };
@@ -499,16 +558,6 @@ fn content_blocks(v: &Value) -> Vec<&Value> {
         .unwrap_or_default()
 }
 
-fn tail_of(id: &str) -> String {
-    id.chars()
-        .rev()
-        .take(12)
-        .collect::<String>()
-        .chars()
-        .rev()
-        .collect()
-}
-
 pub(crate) fn short_hash(s: &str) -> String {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
     for b in s.bytes() {
@@ -525,6 +574,111 @@ pub(crate) fn short_hash(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The posts alone — the seam most of these tests use.
+    ///
+    /// In here rather than beside [`walk`] behind a `#[cfg(test)]`: a
+    /// file-scope one of those moves the cut point of every source scan that
+    /// slices at the first `#[cfg(test)]`, and a gate that silently starts
+    /// reading half a file is worse than no gate.
+    fn from_jsonl(body: &str, now_ms: u64) -> Vec<Post> {
+        walk(body, now_ms).posts
+    }
+
+    /// A refused tool, in the shape Claude Code actually writes it.
+    ///
+    /// Transcribed from this box's own transcript on 2026-09-21, the round
+    /// Parker killed: the result block carries `is_error` and a sentence of
+    /// English. The FLAG is what is read here — the sentence is prose the
+    /// harness is free to reword, and a reader that keyed on it would go quiet
+    /// the day it did.
+    #[test]
+    fn a_refused_tool_reads_as_cancelled_and_ends_the_round() {
+        let id = "toolu_01HgeFHK4WgnGAiXRiKY6vkm";
+        let body = format!(
+            "{}\n{}",
+            assistant(json!([ask_block(id)])),
+            user(json!([{
+                "type": "tool_result",
+                "tool_use_id": id,
+                "is_error": true,
+                "content": "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed."
+            }]))
+        );
+        let read = walk(&body, NOW);
+
+        let Kind::Question(q) = &read.posts[0].surface.as_ref().unwrap().kind else {
+            panic!("a question")
+        };
+        assert_eq!(
+            q.answer,
+            Answered::Cancelled,
+            "refused is not answered-and-we-cannot-read-how: one has an answer, this has none"
+        );
+        assert_eq!(
+            read.endings,
+            vec![crate::channel::Inbound::Cancelled {
+                tool_use_id: id.into()
+            }],
+            "the channel owns a round's lifecycle, so the transcript's job is to tell it"
+        );
+    }
+
+    /// An ordinary answer still ends the round, as a backstop for a pane whose
+    /// hook never wrote one — a window opened mid-session, an adapter not
+    /// installed.
+    #[test]
+    fn an_answered_tool_ends_the_round_without_guessing_at_the_answers() {
+        let id = "toolu_01ANSWERED";
+        let body = format!(
+            "{}\n{}",
+            assistant(json!([ask_block(id)])),
+            user(json!([{
+                "type": "tool_result", "tool_use_id": id,
+                "content": "The user answered: \"What should the placeholder page actually hold?\"=\"Session status page\"."
+            }]))
+        );
+        let read = walk(&body, NOW);
+        assert_eq!(
+            read.endings,
+            vec![crate::channel::Inbound::Answered {
+                tool_use_id: id.into(),
+                // Never this reader's parse: it sees only question ONE of a
+                // round, so a map built here would answer the first and leave
+                // the rest silently unanswered on a round it just ended.
+                answers: None,
+            }]
+        );
+    }
+
+    /// One question, two readers, one id.
+    ///
+    /// The channel mints `ask-hook-<key>-<i>` from the hook's record and this
+    /// module used to mint `ask-<last twelve characters>` from the very same
+    /// tool-use id. Both were stable and sensible alone, and together they put
+    /// one question on the bench as two cards. The pane drops this module's
+    /// copy by asking the channel whether it owns that id — which under two
+    /// spellings it never did.
+    #[test]
+    fn a_channel_carrying_the_round_owns_the_card_the_transcript_derives() {
+        let id = "toolu_01HgeFHK4WgnGAiXRiKY6vkm";
+        let posts = from_jsonl(&assistant(json!([ask_block(id)])), NOW);
+        let mut st = crate::channel::State::new();
+        st.take(
+            crate::channel::Inbound::parse(&json!({
+                "type": "question", "tool_use_id": id,
+                "questions": [{"question": "What should the placeholder page actually hold?",
+                               "options": ["Session status page", "Drawn decision brief"]}]
+            }))
+            .unwrap(),
+            NOW,
+        );
+        assert!(
+            st.owns(&posts[0].id).is_some(),
+            "the channel must recognise the transcript's card as its own: {}",
+            posts[0].id.as_str()
+        );
+    }
 
     #[test]
     fn a_title_a_person_would_give_it() {
