@@ -1590,7 +1590,7 @@ pub fn round_progress(
 ///
 /// The pane attaches the arrows and the close, because pressing one is a
 /// change of state rather than a change of picture.
-pub fn review_flyout(
+pub fn review_page(
     at: usize,
     total: usize,
     title: &str,
@@ -1599,65 +1599,42 @@ pub fn review_flyout(
     th: &Theme,
 ) -> Div {
     let tint = ink(crate::workbench::Tint::Settled, th);
-    aglow(
-        sk.panel()
-            // CENTRED on what it covers, not parked at the bottom.
-            //
-            // A flyout opens because somebody pressed a button in the middle
-            // of the card, and their eye is already there; putting the answer
-            // at the foot of the pane asks them to go and find it. Parker:
-            // *"the POSITION should be CENTERED on the question element and
-            // overlapping it ... if the person CLICKED review, the popup will
-            // be where they JUST clicked"*. The centring is done by the
-            // wrapper the pane puts this in, so this only has to say how wide
-            // it is willing to be.
-            .max_w(px(620.))
-            .w_full()
-            .flex()
-            .flex_col()
-            .gap(px(10.))
-            .p(px(16.))
-            .bg(th.surface)
-            .border_l(px(3.))
-            .border_color(tint)
-            // Over everything, and taking its own clicks: an overlay that
-            // let a press through to the card underneath would answer a
-            // question while somebody was reading an old one.
-            .occlude(),
-        tint,
-        th,
-    )
-    .child(
-        div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(8.))
-            .child(micro("REVIEW", Step::Fine, tint, sk, th))
-            .child(div().flex_1())
-            // Where you are in the gallery, said plainly. This is a count a
-            // person cannot see — unlike the option count, which was printed
-            // over the top of the options themselves.
-            .child(micro(
-                format!("{} of {}", at + 1, total.max(1)),
-                Step::Fine,
-                sk.ink.ink_faint,
-                sk,
-                th,
-            )),
-    )
-    .child(
-        div()
-            .text_size(px(sk.pt(Step::Head)))
-            .text_color(th.text)
-            .child(sel(title.to_string())),
-    )
-    .child(
-        div()
-            .text_size(px(sk.pt(Step::Lead)))
-            .text_color(tint)
-            .child(sel(answer.to_string())),
-    )
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(10.))
+        .w_full()
+        .child(
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(8.))
+                .child(micro("REVIEW", Step::Fine, tint, sk, th))
+                .child(div().flex_1())
+                // Where you are in the gallery, said plainly. This is a count
+                // a person cannot see — unlike the option count, which was
+                // printed over the top of the options themselves.
+                .child(micro(
+                    format!("{} of {}", at + 1, total.max(1)),
+                    Step::Fine,
+                    sk.ink.ink_faint,
+                    sk,
+                    th,
+                )),
+        )
+        .child(
+            div()
+                .text_size(px(sk.pt(Step::Head)))
+                .text_color(th.text)
+                .child(sel(title.to_string())),
+        )
+        .child(
+            div()
+                .text_size(px(sk.pt(Step::Lead)))
+                .text_color(tint)
+                .child(sel(answer.to_string())),
+        )
 }
 
 /// A question, opened from the rail.
@@ -1766,6 +1743,25 @@ fn question(q: &crate::surface::Question, picks: Option<&Picks>, sk: &Skin, th: 
             )),
             Answered::ChoseUnknown => Some(micro(
                 "answered in the terminal \u{b7} how is unavailable".to_string(),
+                Step::Note,
+                sk.ink.ink_faint,
+                sk,
+                th,
+            )),
+            // Said on the card as well as in the subtitle, because this is the
+            // state a reader is most likely to mistake for a live question:
+            // the chips are still drawn, and without this line the only
+            // difference between a round you can still answer and one that
+            // ended without you is a tint.
+            Answered::Ended => Some(micro(
+                "ended \u{b7} the agent moved on and nobody recorded how".to_string(),
+                Step::Note,
+                sk.ink.ink_faint,
+                sk,
+                th,
+            )),
+            Answered::Cancelled => Some(micro(
+                "cancelled \u{b7} the round ended with no answer".to_string(),
                 Step::Note,
                 sk.ink.ink_faint,
                 sk,
@@ -2952,6 +2948,34 @@ pub fn region_probe(
 ///
 /// The parent must be `relative()` so `inset_0` measures it and not some
 /// ancestor; the call sites add that alongside this.
+/// [`zone`], plus the lift under the pointer.
+///
+/// The wash rides the ZONE rather than the chip, because they are the same
+/// rectangle by construction — the zone is the thing the click hit-test finds.
+/// So a control cannot light without being clickable, or be clickable without
+/// lighting, and the two cannot drift apart later. Keeping them separate is
+/// how this bench ended up with every chip perfectly clickable and not one of
+/// them acknowledging the pointer: gpui's own `hover` needs a stateful, id'd
+/// element, and these are plain divs found by geometry. Parker, on the review
+/// gallery's CLOSE button: *"doesn't seem to respond when I hover"*.
+///
+/// The corner is the SKIN's, like every other corner on this bench — the wash
+/// sits over a rounded chip and a square one shows its corners, and
+/// `every_corner_on_the_bench_goes_through_the_skin` caught the first draft
+/// deciding its own radius.
+pub fn zone_lit(
+    into: std::rc::Rc<std::cell::RefCell<Vec<crate::workbench::Zone>>>,
+    hit: crate::workbench::Hit,
+    sk: &crate::skin::Skin,
+    wash: Option<gpui::Hsla>,
+) -> impl gpui::IntoElement {
+    gpui::div()
+        .absolute()
+        .inset_0()
+        .when_some(wash, |d, colour| d.bg(colour).rounded(sk.radius()))
+        .child(zone(into, hit))
+}
+
 pub fn zone(
     into: std::rc::Rc<std::cell::RefCell<Vec<crate::workbench::Zone>>>,
     hit: crate::workbench::Hit,
@@ -4534,6 +4558,93 @@ mod tests {
             .or_else(|| rest.find("\n    }"))
             .map_or(rest.len(), |i| i + 2);
         rest[..end].to_string()
+    }
+
+    /// NOTHING the bench draws may block the mouse.
+    ///
+    /// The bench's controls are not gpui elements that listen. They are
+    /// rectangles recorded during paint ([`zone`]) and resolved by ONE listener
+    /// on the pane root, behind everything. So `.occlude()` — which is
+    /// `HitboxBehavior::BlockMouse`, "block mouse interactions with elements
+    /// behind this element's hitbox" — does not protect what is under it. It
+    /// severs every control INSIDE it from the only handler that can read them.
+    ///
+    /// The review flyout occluded, with the honest intention of stopping a
+    /// press falling through to the question underneath. The cost was that its
+    /// own back, forward and CLOSE were dead from the day it was written, and
+    /// so was the way out: Parker, three reports in a row — *"the review arrows
+    /// don't work, clicking them does not do anything"*, *"doesn't seem to
+    /// respond when I hover CLOSE"*, *"clicking on review kills the submit
+    /// card!"* — all of it one line. Nothing failed loudly; the buttons simply
+    /// never received anything.
+    ///
+    /// It is gone with the flyout, and this keeps it gone. A modal that needs
+    /// to swallow the clicks behind it does that the way the gallery already
+    /// did — a full-bench [`zone`] carrying [`crate::workbench::Hit::Nothing`],
+    /// which is resolved by the same listener and therefore cannot silence it.
+    #[test]
+    fn nothing_the_bench_draws_blocks_the_mouse() {
+        for (name, src) in [
+            ("benchdraw.rs", include_str!("benchdraw.rs")),
+            ("pane/bench.rs", include_str!("pane/bench.rs")),
+        ] {
+            let code = src
+                .split_once("\n#[cfg(test)]")
+                .map_or(src, |(before, _)| before);
+            for (n, raw) in code.lines().enumerate() {
+                let line = raw.split("//").next().unwrap_or("");
+                for blocker in [".occlude(", ".block_mouse"] {
+                    assert!(
+                        !line.contains(blocker),
+                        "{name}:{} uses {blocker}, which cuts every zone beneath it off \
+                         from the pane root's listener \u{2014} the only thing that reads them: {}",
+                        n + 1,
+                        raw.trim()
+                    );
+                }
+            }
+        }
+    }
+
+    /// The review FILLS the workbench; it does not float over it.
+    ///
+    /// It used to be a centred, occluding panel with a maximum width — a
+    /// flyout — laid absolutely over the whole bench. At a narrow pane it drew
+    /// outside the bench's own box. Parker: *"the review question BROKE OUT OF
+    /// THE MAIN WORKBENCH SPACE!!! it should have just taken OVER the main
+    /// workbench space ... in a very obvious way like the other tabs, comments
+    /// overview etc. do"*.
+    ///
+    /// Drawn in the body, it is clipped and scrolled by the same box as every
+    /// other shelf, and breaking out stops being possible rather than
+    /// unlikely. This is the guard on that: a page that positions ITSELF can
+    /// leave the box however it is parented, so it may not.
+    ///
+    /// Comments are stripped by [`body_of`], so the words in this explanation
+    /// cannot satisfy or trip the scan they describe.
+    #[test]
+    fn the_review_page_cannot_position_itself_out_of_the_bench() {
+        let body = body_of(include_str!("benchdraw.rs"), "pub fn review_page(");
+        for escape in [
+            ".absolute(",
+            ".occlude(",
+            ".max_w(",
+            ".inset_0(",
+            ".left(",
+            ".right(",
+            ".top(",
+            ".bottom(",
+        ] {
+            assert!(
+                !body.contains(escape),
+                "review_page uses {escape}, so it can place itself outside the body box \
+                 it is drawn in:\n{body}"
+            );
+        }
+        assert!(
+            body.contains(".w_full()"),
+            "a takeover that does not fill the width is not a takeover:\n{body}"
+        );
     }
 
     /// Two pieces of chrome a person asked to be rid of, kept gone.

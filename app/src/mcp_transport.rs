@@ -248,6 +248,7 @@ fn snapshot_of(ws: &mut Workspace, cx: &mut Context<Workspace>) -> mcp::Snapshot
         // Filled in by the transport that has a caller to name; the ticker
         // serves every transport and knows nothing about who asked.
         caller: None,
+        engineering: ws.eng_reports(),
     }
 }
 
@@ -492,6 +493,7 @@ mod tests {
                 build: Some("td-test".into()),
             }),
             caller: None,
+            engineering: vec![],
         }
     }
 
