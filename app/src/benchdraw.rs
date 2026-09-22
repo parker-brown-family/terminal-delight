@@ -2971,6 +2971,34 @@ pub fn region_probe(
 ///
 /// The parent must be `relative()` so `inset_0` measures it and not some
 /// ancestor; the call sites add that alongside this.
+/// [`zone`], plus the lift under the pointer.
+///
+/// The wash rides the ZONE rather than the chip, because they are the same
+/// rectangle by construction — the zone is the thing the click hit-test finds.
+/// So a control cannot light without being clickable, or be clickable without
+/// lighting, and the two cannot drift apart later. Keeping them separate is
+/// how this bench ended up with every chip perfectly clickable and not one of
+/// them acknowledging the pointer: gpui's own `hover` needs a stateful, id'd
+/// element, and these are plain divs found by geometry. Parker, on the review
+/// gallery's CLOSE button: *"doesn't seem to respond when I hover"*.
+///
+/// The corner is the SKIN's, like every other corner on this bench — the wash
+/// sits over a rounded chip and a square one shows its corners, and
+/// `every_corner_on_the_bench_goes_through_the_skin` caught the first draft
+/// deciding its own radius.
+pub fn zone_lit(
+    into: std::rc::Rc<std::cell::RefCell<Vec<crate::workbench::Zone>>>,
+    hit: crate::workbench::Hit,
+    sk: &crate::skin::Skin,
+    wash: Option<gpui::Hsla>,
+) -> impl gpui::IntoElement {
+    gpui::div()
+        .absolute()
+        .inset_0()
+        .when_some(wash, |d, colour| d.bg(colour).rounded(sk.radius()))
+        .child(zone(into, hit))
+}
+
 pub fn zone(
     into: std::rc::Rc<std::cell::RefCell<Vec<crate::workbench::Zone>>>,
     hit: crate::workbench::Hit,
