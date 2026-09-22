@@ -8853,26 +8853,37 @@ mod tests {
     #[test]
     fn submit_answers_is_not_gated_on_how_much_of_the_round_is_answered() {
         let code = bench_code();
-        // The ZONE, not the name — `Hit::SubmitAnswers` appears first in the
-        // click dispatcher hundreds of lines above the button, and a slice
-        // taken from there would be looking for a gate in the wrong function.
-        let at = code
-            .find("live_zone(crate::workbench::Hit::SubmitAnswers")
-            .expect("the submit button is gone");
-        // The `.when(...)` that guards it — the nearest one above the zone.
-        let head = &code[..at];
-        let gate_at = head.rfind(".when(").expect("the button has no gate at all");
-        let gate = &head[gate_at
-            ..head[gate_at..]
-                .find('\n')
-                .map_or(head.len(), |i| gate_at + i)];
-        for counting in ["answered", "complete", "done"] {
-            assert!(
-                !gate.contains(counting),
-                "the submit gate consults `{counting}`, so it hides itself on the \
-                 partial round it was built for: {gate}"
-            );
+        // THE SUBMIT IS THE NAVIGATOR'S LAST TAB NOW, so the gate is wherever
+        // `Hit::SubmitAnswers` is handed to the strip. BOTH places a question
+        // is drawn pass it — the card opened from the rail and the block
+        // pinned below the body — and both have to decide the same way, which
+        // is why this counts them rather than finding one.
+        let mut gates = 0;
+        for (at, _) in code.match_indices("crate::workbench::Hit::SubmitAnswers)") {
+            let head = &code[..at];
+            let line_at = head.rfind('\n').map_or(0, |i| i + 1);
+            // `then_some(...)` over a bool from the channel is the gate; the
+            // dispatcher arm hundreds of lines above is not, and is skipped by
+            // this rather than by a line number.
+            if !code[line_at..at].contains("then_some") {
+                continue;
+            }
+            gates += 1;
+            let before = &code[line_at.saturating_sub(240)..at];
+            for counting in ["complete", "answered()", "reviewable"] {
+                assert!(
+                    !before.contains(counting),
+                    "a submit gate consults `{counting}`, so it hides itself on the \
+                     partial round it was built for:\n{before}"
+                );
+            }
         }
+        assert_eq!(
+            gates, 2,
+            "the opened card and the pinned block must BOTH offer the round's \
+             submit — a question drawn in one place and sendable only from the \
+             other is the defect this pair keeps reproducing; found {gates}"
+        );
         // And the predicate behind the gate, which is where a count would
         // actually hide.
         // CUT AT THE TEST MODULE, not at the first `#[cfg(test)]`. There are
@@ -8983,11 +8994,12 @@ mod tests {
         let starts: Vec<usize> = code.match_indices(".chip(").map(|(i, _)| i).collect();
         // A FLOOR, so the scan cannot pass by finding nothing. It was six
         // while the review gallery contributed three chips of its own — two
-        // arrows and a close — plus the button that opened it; those went with
-        // the gallery, and this is what the card itself draws: the options,
-        // the round's submit, the picker's own submit, and a card verb.
+        // arrows and a close — plus the button that opened it. Those went with
+        // the gallery, and the round's own submit went to the navigator, which
+        // draws a tab rather than a chip. What is left here is the options,
+        // the picker's own submit, and a card verb.
         assert!(
-            starts.len() >= 4,
+            starts.len() >= 3,
             "expected the bench to still draw chips; found {}",
             starts.len()
         );
@@ -9015,7 +9027,7 @@ mod tests {
             );
         }
         assert!(
-            pressable >= 4,
+            pressable >= 3,
             "expected several pressable chips on the bench; found {pressable}"
         );
     }

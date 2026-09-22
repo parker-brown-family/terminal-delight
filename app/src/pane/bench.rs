@@ -1384,6 +1384,29 @@ impl TerminalView {
                     self.wb_woken = Some(w);
                 }
                 Effect::Present(surfaces) => {
+                    // A ROUND ARRIVING TAKES THE ROOM, as a card at the top,
+                    // rather than arriving pinned to the floor of the pane.
+                    //
+                    // The pin is drawn below the body and outside its scroll,
+                    // which puts it at the bottom by construction — so a
+                    // question appeared down by the composer and then jumped
+                    // the height of the pane the moment answering it opened a
+                    // card. Parker has now reported that jump twice, the
+                    // second time as *"it must not snap to the bottom for any
+                    // tab (overview OR decisions)"*. `body_anchor` was the
+                    // first attempt and it can only move the BODY; the pin is
+                    // not in the body, so the fix has to be that the question
+                    // is a card in the first place.
+                    //
+                    // Gated on the selection not already being in this round,
+                    // which is what keeps it from fighting the person: every
+                    // press re-presents the whole round, and a rule that
+                    // selected on each of those would drag them back to
+                    // question one every time they answered anything.
+                    let open = crate::workbench::round_lands_on(
+                        &surfaces,
+                        self.bench.selected().map(|s| &s.id),
+                    );
                     for s in surfaces {
                         let id = s.id.clone();
                         self.present(
@@ -1395,6 +1418,9 @@ impl TerminalView {
                             },
                             cx,
                         );
+                    }
+                    if let Some(id) = open {
+                        self.bench.select(&id);
                     }
                 }
                 Effect::Reply { text, n, ended } => {
@@ -2125,9 +2151,18 @@ impl TerminalView {
         };
         let answered = q.answer != crate::surface::Answered::Waiting;
         // Asked once, before the borrow of `self` the chips take, and read
-        // twice below — by the round's own submit and by the per-question one,
-        // which demotes itself when the first is present.
+        // three times below — by the round's own submit, by the per-question
+        // one, and by the chips deciding whether they still press.
         let round_open = self.bench_round_open().is_some();
+        // SETTLED IS NOT ANSWERED. A question with a pick on it is `answered`
+        // and can still be changed while its round is live; a question whose
+        // round has gone is settled and cannot. Collapsing the two is what
+        // froze a card the moment somebody chose on it.
+        //
+        // A question with no round at all — the lone ask, the screen-read
+        // twin — has no `round_open` to consult, so it keeps the old rule and
+        // locks on its answer. That one really did commit on the press.
+        let settled = answered && !round_open;
         let chips: Vec<gpui::Div> = q
             .options
             .iter()
@@ -2175,11 +2210,24 @@ impl TerminalView {
                     sk,
                     th,
                 );
-                if answered {
-                    // A question already answered keeps its chips so the
-                    // record reads the same as the decision did, but they do
-                    // not press: answering twice sends a second keystroke to a
-                    // menu that has already closed.
+                // A QUESTION YOU HAVE ANSWERED IS STILL CHANGEABLE, right up
+                // until the round goes.
+                //
+                // These were dead the moment a question was answered, on the
+                // reasoning that answering twice sends a second keystroke to a
+                // menu that has already closed. True on the keys road; false
+                // on the file road, where nothing has been sent yet and the
+                // pick is a value in a map this window owns. And the round's
+                // tabs now exist precisely so a person can go back and look at
+                // an earlier answer — arriving there to find it frozen is the
+                // tabs offering a trip to a dead end. Parker: *"Once answered
+                // a question, it is locked and I cannot change it - this is
+                // wrong. must be able to change"*.
+                //
+                // `settled` is the round being over — sent, cancelled, ended —
+                // and THAT is when the chips stop pressing, because then there
+                // really is nothing left to change.
+                if settled {
                     return chip;
                 }
                 chip.relative()
@@ -2198,37 +2246,19 @@ impl TerminalView {
                     .gap(px(6.))
                     .children(chips),
             )
-            // SUBMIT ANSWERS — the way a round ENDS, in the slot REVIEW
-            // ANSWERS used to hold.
+            // THE ROUND'S SUBMIT IS NOT HERE — it is the last tab of the
+            // navigator, drawn by `benchdraw::round_progress`.
             //
-            // A round used to go out only when its last question was
-            // answered, so a person who meant to leave one blank had no move
-            // at all, and three answered questions sat on the bench with
-            // nothing to press. Parker: *"there is STILL NO WAY TO SUBMIT THE
-            // QUESTIONS!!!!"* — and, on what replaced the gallery, *"THE
-            // SUBMIT ANSWERS BUTTON goes INSTEAD OF THE REVIEW ANSWERS
-            // BUTTON"*.
+            // It was a chip on this row for one build, in the slot REVIEW
+            // ANSWERS had held, and that put it at the far end of the card
+            // from the strip that says how much of the round is left. Parker
+            // moved it: *"the FINAL submit Tab at the top with the question
+            // nav... 3 questions + submit tab which is just a SUBMIT button
+            // which is the single click no confirmation submit!"*
             //
-            // GATED ON THE ROUND BEING SENDABLE, not on how much of it is
-            // answered. Nothing here counts what is filled in, because a
-            // partial round is exactly the case the button exists for; the
-            // channel decides, and it decides about the round rather than
-            // about this card (`channel::State::submittable`).
-            .when(round_open, |d| {
-                d.child(sk.rule_h()).child(
-                    div().flex().flex_row().gap(px(8.)).justify_end().child(
-                        crate::benchdraw::verb_button(
-                            sk.chip(true)
-                                .text_size(px(sk.pt(Step::Small)))
-                                .child("\u{2714} SUBMIT ANSWERS".to_string()),
-                            true,
-                            sk,
-                        )
-                        .relative()
-                        .child(self.live_zone(crate::workbench::Hit::SubmitAnswers, sk)),
-                    ),
-                )
-            })
+            // Nothing takes its place here, deliberately. A second submit
+            // beside the first is the double-display complaint in miniature,
+            // and this card has just been cleared of one of those.
             // The picker's own Submit, where it has one — on a row of its
             // own, behind a rule.
             //
@@ -3627,11 +3657,21 @@ impl TerminalView {
                     let reg = |g: crate::surface::Group| {
                         bench.picked_register(&surface.id, g).map(str::to_string)
                     };
+                    // The SUBMIT tab, offered only where the round can still
+                    // be sent. `submittable` asks about the ROUND, so it is
+                    // true on an answered question of an unfinished round —
+                    // which is exactly where a person goes to change an answer
+                    // and then send.
+                    let can_submit = self
+                        .wb_channel
+                        .submittable(&surface.id)
+                        .then_some(crate::workbench::Hit::SubmitAnswers);
                     let picks = crate::benchdraw::Picks {
                         id: &surface.id,
                         tab: bench.picked_tab(&surface.id),
                         reg: &reg,
                         zones: self.wb_zones.clone(),
+                        submit: can_submit,
                     };
                     let drawn = crate::benchdraw::body(surface, how, Some(&picks), sk, th);
                     // A question opened from the rail is still a question, so it
@@ -3757,18 +3797,35 @@ impl TerminalView {
         // it twice, once as the card with its verbs and once pinned
         // underneath. The rule is `workbench::draws_waiting_block`, held there
         // rather than here so it has a test.
+        // ONE DECISION NODE, ONE PLACE. The filter asks about the ROUND rather
+        // than about the surface, because a round of three is three surfaces
+        // drawing one thing — see `workbench::draws_waiting_block`.
+        let showing_surface = showing_id
+            .as_ref()
+            .and_then(|id| self.bench.get(id))
+            .cloned();
         let waiting = self
             .bench
             .waiting_question()
-            .filter(|s| crate::workbench::draws_waiting_block(showing_id.as_ref(), &s.id))
+            .filter(|s| {
+                crate::workbench::draws_waiting_block(
+                    showing_id.as_ref(),
+                    &s.id,
+                    crate::workbench::in_same_round(showing_surface.as_ref(), Some(s)),
+                )
+            })
             .and_then(|s| match &s.kind {
-                crate::surface::Kind::Question(q) => Some(q.clone()),
+                crate::surface::Kind::Question(q) => Some((s.id.clone(), q.clone())),
                 _ => None,
             })
-            .map(|q| {
+            .map(|(id, q)| {
+                let submit = self
+                    .wb_channel
+                    .submittable(&id)
+                    .then_some(crate::workbench::Hit::SubmitAnswers);
                 let chips = self.answer_chips(&q, sk, th);
                 let zones = self.wb_zones.clone();
-                crate::benchdraw::waiting_block(&q, Some(&zones), sk, th).child(chips)
+                crate::benchdraw::waiting_block(&q, Some(&zones), submit, sk, th).child(chips)
             });
 
         // Taken as a bool here, where the block still exists, because the

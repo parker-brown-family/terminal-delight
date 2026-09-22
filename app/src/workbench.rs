@@ -1894,6 +1894,37 @@ pub fn fold_rounds(
     out
 }
 
+/// Which question a newly arrived round should OPEN on, if any.
+///
+/// A round that lands while the person is somewhere else takes the room, as a
+/// card at the top — because the alternative is the pin, which is drawn
+/// outside the body's scroll and therefore at the bottom of the pane, and then
+/// jumps the height of the pane the moment it becomes a card.
+///
+/// **`None` when the selection is already inside this round**, and that guard
+/// is the whole of the rule's safety: every press re-presents the entire round
+/// so this runs on each one, and without it a person answering question two
+/// would be dragged back to question one by their own click.
+///
+/// `None` too when nothing here is a round worth landing on — a lone question,
+/// a batch of anything else, or a round whose questions are all answered,
+/// which has nothing to ask and should not take a room away from whatever the
+/// person was reading.
+pub fn round_lands_on(arriving: &[Surface], selected: Option<&SurfaceId>) -> Option<SurfaceId> {
+    let steps = arriving.iter().find_map(|s| match &s.kind {
+        Kind::Question(q) => q.round.as_ref().filter(|r| r.steps.len() > 1),
+        _ => None,
+    })?;
+    if selected.is_some_and(|sel| steps.steps.iter().any(|st| st.id.as_ref() == Some(sel))) {
+        return None;
+    }
+    steps
+        .steps
+        .iter()
+        .find(|st| !st.done)
+        .and_then(|st| st.id.clone())
+}
+
 /// Which question of a round its single row opens.
 ///
 /// Three rungs, and the order is the whole of it:
@@ -2968,8 +2999,57 @@ pub fn turn_control(state: AgentState, agent_present: bool) -> Option<TurnContro
 /// `kind · title` above a heading that said `kind · title`, and a question
 /// asked three times inside one card. The shape of the bug is always two
 /// renderers each correctly drawing the thing they were told to draw.
-pub fn draws_waiting_block(showing: Option<&SurfaceId>, waiting: &SurfaceId) -> bool {
-    showing != Some(waiting)
+///
+/// # THE UNIT IS THE ROUND, not the surface
+///
+/// This compared surface ids, and that was right for exactly as long as a
+/// question was a lone card. A round of three is three surfaces drawing ONE
+/// decision node, and the pin reappeared the moment those two ids differed —
+/// which they do constantly, because `waiting_question` hands back the first
+/// OPEN question and the card in the room is whichever one the person is
+/// reading.
+///
+/// The reliable way to see it: answer question one, then click its tab to go
+/// back and look at it. The card is now an ANSWERED question, so
+/// `waiting_question` falls past the selection to question two, the ids differ,
+/// and the round is drawn twice — once as the card at the top and once pinned
+/// at the bottom, each showing a different question of the same round, each
+/// with its own navigator. Parker, meeting exactly that: *"it must not snap to
+/// the bottom for any tab (overview OR decisions) and must not double
+/// display!"*
+///
+/// `same_round` is the caller's answer to *are these two the same decision
+/// node* — see [`in_same_round`]. Passing `false` gives the old
+/// surface-identity behaviour, which is still correct for a question that has
+/// no round.
+pub fn draws_waiting_block(
+    showing: Option<&SurfaceId>,
+    waiting: &SurfaceId,
+    same_round: bool,
+) -> bool {
+    showing != Some(waiting) && !same_round
+}
+
+/// Are these two surfaces questions of the same round?
+///
+/// Compared on the round's step LIST rather than on a round id, because a
+/// round has no id of its own on the wire — the navigator is built once and
+/// stamped on every card of the round, so two cards of one round carry
+/// identical step lists and two cards of different rounds cannot.
+///
+/// `false` whenever either side is not a question, or carries no round: a lone
+/// question is its own decision node and shares one with nothing.
+pub fn in_same_round(a: Option<&Surface>, b: Option<&Surface>) -> bool {
+    fn steps(s: Option<&Surface>) -> Option<&Vec<crate::surface::Step>> {
+        match &s?.kind {
+            Kind::Question(q) => Some(&q.round.as_ref()?.steps),
+            _ => None,
+        }
+    }
+    match (steps(a), steps(b)) {
+        (Some(x), Some(y)) => !x.is_empty() && x == y,
+        _ => false,
+    }
 }
 
 /// What the strip's trailing verb offers.
@@ -5855,17 +5935,74 @@ mod tests {
         let open = SurfaceId("q-1".into());
         let other = SurfaceId("q-2".into());
         assert!(
-            !draws_waiting_block(Some(&open), &open),
+            !draws_waiting_block(Some(&open), &open, false),
             "the open card is the question; pinning a second copy is the bug"
         );
         assert!(
-            draws_waiting_block(Some(&other), &open),
+            draws_waiting_block(Some(&other), &open, false),
             "reading one card must never hide a different question"
         );
         assert!(
-            draws_waiting_block(None, &open),
+            draws_waiting_block(None, &open, false),
             "with nothing open the pin is the only copy there is"
         );
+        // AND THE SAME ROUND IS THE SAME QUESTION, for this purpose. Two
+        // different ids of one round drew the round twice — the card showing
+        // the question you went back to look at, the pin showing the one still
+        // open, each with its own navigator under it.
+        assert!(
+            !draws_waiting_block(Some(&other), &open, true),
+            "one decision node, one place: a sibling of the open card must not \
+             pin a second copy of the same round"
+        );
+    }
+
+    /// Two cards of one round are the same decision node; two rounds are not.
+    ///
+    /// The comparison is on the step LIST because a round carries no id of its
+    /// own — the navigator is built once and stamped on every card of the
+    /// round, which is exactly what makes the list an identity.
+    #[test]
+    fn questions_of_one_round_are_recognised_as_one_decision_node() {
+        let round = round_of(&[Some(1), None, None]);
+        assert!(
+            in_same_round(Some(&round[0]), Some(&round[2])),
+            "an answered question and an open one, of the same round"
+        );
+        // A DIFFERENT round of the same SHAPE is not the same round: its step
+        // ids differ, which is the part the identity rests on.
+        let mut other = round_of(&[None, None, None]);
+        for s in other.iter_mut() {
+            if let Kind::Question(q) = &mut s.kind {
+                for st in q.round.as_mut().expect("a round").steps.iter_mut() {
+                    st.id = Some(SurfaceId(format!("{}-b", st.id.take().unwrap().0)));
+                }
+            }
+        }
+        assert!(!in_same_round(Some(&round[0]), Some(&other[0])));
+        assert!(!in_same_round(Some(&round[0]), None), "nothing open");
+    }
+
+    /// A round arriving opens as a card; answering inside it does not move you.
+    #[test]
+    fn a_round_takes_the_room_once_and_then_leaves_the_person_alone() {
+        let fresh = round_of(&[None, None, None]);
+        assert_eq!(
+            round_lands_on(&fresh, None),
+            Some(SurfaceId("ask-r-0".into())),
+            "it arrives as a card at the top rather than pinned at the bottom"
+        );
+        // THE GUARD. Every press re-presents the whole round, so without this
+        // the person would be dragged back to the first open question by their
+        // own click.
+        let here = SurfaceId("ask-r-2".into());
+        assert_eq!(
+            round_lands_on(&fresh, Some(&here)),
+            None,
+            "already inside this round: nothing moves"
+        );
+        // Answered rounds ask nothing and take no room.
+        assert_eq!(round_lands_on(&round_of(&[Some(0), Some(1)]), None), None);
     }
 
     #[test]

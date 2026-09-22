@@ -65,6 +65,14 @@ pub struct Picks<'a> {
     /// which is the half that holds the map.
     pub reg: &'a dyn Fn(crate::surface::Group) -> Option<String>,
     pub zones: std::rc::Rc<std::cell::RefCell<Vec<crate::workbench::Zone>>>,
+    /// The round's SUBMIT tab gets this hit, or [`None`] where the round
+    /// cannot be sent — it is settled, or this is not a hook-carried round.
+    ///
+    /// Carried on `Picks` rather than passed beside it because it belongs to
+    /// the same question `zones` does — *this pane, collecting presses, for
+    /// this card* — and a second parameter threaded through the same three
+    /// functions would be one more thing a new call site can forget.
+    pub submit: Option<crate::workbench::Hit>,
 }
 
 /// Which palette role each meaning borrows.
@@ -1526,9 +1534,13 @@ fn section_body(body: &Body, register: Register, sk: &Skin, th: &Theme) -> Div {
 /// `zones` makes the steps pressable. Pass [`None`] where there is nothing to
 /// press into — the strip still names every step, because knowing a question
 /// exists is worth more than being able to jump to it.
+/// `submit` is the hit the SUBMIT tab carries, or [`None`] where this round
+/// cannot be sent from here — a settled round, or a strip drawn somewhere that
+/// collects no presses at all.
 pub fn round_progress(
     round: &crate::surface::Round,
     zones: Option<&std::rc::Rc<std::cell::RefCell<Vec<crate::workbench::Zone>>>>,
+    submit: Option<crate::workbench::Hit>,
     sk: &Skin,
     th: &Theme,
 ) -> Div {
@@ -1552,69 +1564,105 @@ pub fn round_progress(
             sk,
             th,
         ))
-        .child(div().flex().flex_row().flex_wrap().gap(px(10.)).children(
-            round.steps.iter().enumerate().map(|(i, step)| {
-                let here = round.current == Some(i);
-                // THE SAME TAB A REGISTER IS, and deliberately not a chip of
-                // this function's own invention. The registers a reader unfolds
-                // on a response card — reading, evidence, next — are underlined
-                // text with a muted rest, and a round's questions are the same
-                // gesture over the same kind of thing: several readings of one
-                // card, one of which you are in. Parker, seeing the first cut:
-                // *"we should have tabs along the top of the questions for
-                // multiple questions — similar to the response: reading -
-                // evidence - next"*. Two vocabularies for one gesture is how a
-                // surface stops feeling like one surface.
-                let facet = crate::emphasis::facet(
-                    if here {
-                        crate::emphasis::Emphasis::Active
+        .child(
+            div()
+                .flex()
+                .flex_row()
+                .flex_wrap()
+                .gap(px(10.))
+                .children(round.steps.iter().enumerate().map(|(i, step)| {
+                    let here = round.current == Some(i);
+                    // THE SAME TAB A REGISTER IS, and deliberately not a chip of
+                    // this function's own invention. The registers a reader unfolds
+                    // on a response card — reading, evidence, next — are underlined
+                    // text with a muted rest, and a round's questions are the same
+                    // gesture over the same kind of thing: several readings of one
+                    // card, one of which you are in. Parker, seeing the first cut:
+                    // *"we should have tabs along the top of the questions for
+                    // multiple questions — similar to the response: reading -
+                    // evidence - next"*. Two vocabularies for one gesture is how a
+                    // surface stops feeling like one surface.
+                    let facet = crate::emphasis::facet(
+                        if here {
+                            crate::emphasis::Emphasis::Active
+                        } else {
+                            crate::emphasis::Emphasis::Reading
+                        },
+                        th,
+                    );
+                    // A tick is the one thing a register tab has no use for and a
+                    // question tab needs: a register is never *finished*, and a
+                    // step that has been answered is. Drawn in the settled hue so
+                    // done reads as done even on the tab you are standing on —
+                    // being here does not un-answer it.
+                    let label = if step.done {
+                        format!("\u{2713} {}", step.label)
                     } else {
-                        crate::emphasis::Emphasis::Reading
-                    },
-                    th,
-                );
-                // A tick is the one thing a register tab has no use for and a
-                // question tab needs: a register is never *finished*, and a
-                // step that has been answered is. Drawn in the settled hue so
-                // done reads as done even on the tab you are standing on —
-                // being here does not un-answer it.
-                let label = if step.done {
-                    format!("\u{2713} {}", step.label)
-                } else {
-                    step.label.clone()
-                };
-                // SIZED FOR A HAND, not for a footnote. These were `Note` —
-                // the ramp's rung for a subtitle — back when the pin above the
-                // composer carried the pressable copy and this one was a
-                // read-out. Now they are the only way back to a question
-                // already answered, so they are body type with room around
-                // them. Parker, on being asked to navigate a round with them:
-                // *"THE NICE TABS NEED MORE EMPHAPSIS now --- BIGGER?"*
-                let tab = div()
-                    .px(px(sk.tpx(3.)))
-                    .py(px(sk.tpx(2.)))
-                    .text_size(px(sk.pt(Step::Body)))
-                    .font_family(th.font_family.clone())
-                    .text_color(match (here, step.done) {
-                        (true, _) => facet.ink,
-                        (false, true) => settled.alpha(0.85),
-                        (false, false) => crate::emphasis::meta(th),
-                    })
-                    .when(here, |x| x.border_b_1().border_color(facet.tint.alpha(0.8)))
-                    .child(sel(label));
-                // Pressable only where BOTH are true: we have somewhere to
-                // send the press, and this step has a card of its own. A
-                // screen-read step has no surface and must not look like a
-                // button that does nothing.
-                match (zones, step.id.as_ref()) {
-                    (Some(z), Some(id)) if !here => tab
-                        .cursor_pointer()
-                        .relative()
-                        .child(zone(z.clone(), crate::workbench::Hit::OpenRow(id.clone()))),
-                    _ => tab,
-                }
-            }),
-        ))
+                        step.label.clone()
+                    };
+                    // SIZED FOR A HAND, not for a footnote. These were `Note` —
+                    // the ramp's rung for a subtitle — back when the pin above the
+                    // composer carried the pressable copy and this one was a
+                    // read-out. Now they are the only way back to a question
+                    // already answered, so they are body type with room around
+                    // them. Parker, on being asked to navigate a round with them:
+                    // *"THE NICE TABS NEED MORE EMPHAPSIS now --- BIGGER?"*
+                    let tab = div()
+                        .px(px(sk.tpx(3.)))
+                        .py(px(sk.tpx(2.)))
+                        .text_size(px(sk.pt(Step::Body)))
+                        .font_family(th.font_family.clone())
+                        .text_color(match (here, step.done) {
+                            (true, _) => facet.ink,
+                            (false, true) => settled.alpha(0.85),
+                            (false, false) => crate::emphasis::meta(th),
+                        })
+                        .when(here, |x| x.border_b_1().border_color(facet.tint.alpha(0.8)))
+                        .child(sel(label));
+                    // Pressable only where BOTH are true: we have somewhere to
+                    // send the press, and this step has a card of its own. A
+                    // screen-read step has no surface and must not look like a
+                    // button that does nothing.
+                    match (zones, step.id.as_ref()) {
+                        (Some(z), Some(id)) if !here => tab
+                            .cursor_pointer()
+                            .relative()
+                            .child(zone(z.clone(), crate::workbench::Hit::OpenRow(id.clone()))),
+                        _ => tab,
+                    }
+                }))
+                // THE LAST TAB IS THE SUBMIT, and it is the button rather than a route
+                // to one. Parker: *"3 questions + submit tab which is just a SUBMIT
+                // button which is the single click no confirmation submit!"*
+                //
+                // It lives in the navigator because that is where the round's shape is
+                // already drawn — three questions and the end of them read as one
+                // strip, and the person's eye is there anyway to see what is left. The
+                // chip that used to sit at the foot of the card is gone with it; two
+                // submits on one card is the double-display complaint in miniature.
+                //
+                // Drawn in the WAITING hue rather than the tab ink, because it is the
+                // one element here that acts instead of navigating, and a row of four
+                // identical words where the fourth ends the interaction is a trap.
+                .when_some(submit.filter(|_| zones.is_some()), |d, hit| {
+                    let tint = ink(crate::workbench::Tint::Waiting, th);
+                    d.child(
+                        div()
+                            .px(px(sk.tpx(3.)))
+                            .py(px(sk.tpx(2.)))
+                            .text_size(px(sk.pt(Step::Body)))
+                            .font_family(th.font_family.clone())
+                            .text_color(tint)
+                            .cursor_pointer()
+                            .child(sel("\u{2714} SUBMIT".to_string()))
+                            .relative()
+                            .child(zone(
+                                zones.expect("filtered on zones being present").clone(),
+                                hit,
+                            )),
+                    )
+                }),
+        )
         .child(micro(
             if round.submitting {
                 format!("{done} of {total} answered \u{b7} ready to submit")
@@ -1692,7 +1740,13 @@ fn question(q: &crate::surface::Question, picks: Option<&Picks>, sk: &Skin, th: 
             // the reasoning that the pin below carried the pressable copy —
             // and that reasoning expired the day the pin stopped being drawn
             // under its own card.
-            d.child(round_progress(round, picks.map(|p| &p.zones), sk, th))
+            d.child(round_progress(
+                round,
+                picks.map(|p| &p.zones),
+                picks.and_then(|p| p.submit.clone()),
+                sk,
+                th,
+            ))
         })
         // What an option costs, for the options that say. Never the label —
         // the chip underneath is the label, and printing it here is the
@@ -3723,6 +3777,7 @@ pub fn conversation(tail: &[String], sk: &Skin, th: &Theme) -> Div {
 pub fn waiting_block(
     q: &crate::surface::Question,
     zones: Option<&std::rc::Rc<std::cell::RefCell<Vec<crate::workbench::Zone>>>>,
+    submit: Option<crate::workbench::Hit>,
     sk: &Skin,
     th: &Theme,
 ) -> Div {
@@ -3752,7 +3807,7 @@ pub fn waiting_block(
     // afterwards; a round of two had already reached the bench with the wrong
     // question on it by then.
     .when_some(q.round.as_ref(), |d, round| {
-        d.child(round_progress(round, zones, sk, th))
+        d.child(round_progress(round, zones, submit.clone(), sk, th))
     })
     .child(
         div()

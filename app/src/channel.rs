@@ -1379,7 +1379,25 @@ impl State {
             now_ms,
             cursor.is_some(),
         ) {
-            Route::File => match round.answers() {
+            // A ROUND WITH A NAVIGATOR IS SENT BY ITS SUBMIT TAB, never by
+            // running out of questions.
+            //
+            // Filling in the last answer used to send the round on the spot,
+            // which was the only way it could ever go and is why there was no
+            // submit at all. Now that there is one, auto-sending is worse than
+            // redundant: it takes the round away at the exact moment a person
+            // has finished and might want to look back over it, and it makes
+            // the tabs a lie — they invite you to revisit question one, and
+            // answering question three had already posted the lot. Parker, on
+            // the state that produces: *"Once answered a question, it is
+            // locked and I cannot change it - this is wrong."*
+            //
+            // A round of ONE still commits on the press, because a round of
+            // one draws no navigator (`Round::steps` returns `None` below two)
+            // and therefore has no submit tab. Leaving it to a button that is
+            // not there would make a single question unanswerable, which is
+            // the same class of bug pointing the other way.
+            Route::File => match round.answers().filter(|_| round.questions.len() < 2) {
                 Some(answers) => {
                     round.sent = true;
                     Press::WriteAnswers {
@@ -2308,7 +2326,15 @@ mod tests {
         // round and the answer goes as a FILE.
         assert_eq!(st.press(&multi, 0, 2_001), Press::Recorded);
         assert_eq!(st.press(&multi, 1, 2_002), Press::Recorded);
-        match st.press(&multi, 2, 2_003) {
+        // FILLING IN THE LAST ANSWER NO LONGER SENDS. This used to be a
+        // `WriteAnswers`, and that was the only way a round could go — which
+        // is why there was no submit at all. A round with a navigator now has
+        // a SUBMIT tab, and posting the round the instant its last box was
+        // ticked made the other tabs a lie: they invite a person back to an
+        // earlier question and the round had already gone.
+        assert_eq!(st.press(&multi, 2, 2_003), Press::Recorded);
+        assert!(st.submittable(&single), "and it is waiting to be sent");
+        match st.submit(&single, 2_004) {
             Press::WriteAnswers {
                 tool_use_id,
                 answers,
@@ -2759,8 +2785,11 @@ mod tests {
         let multi = SurfaceId("ask-hook-toolu_01ABC-1".into());
         assert_eq!(st.press(&single, 1, 2_000), Press::Recorded);
         assert_eq!(st.press(&multi, 0, 2_000), Press::Recorded);
+        assert_eq!(st.press(&multi, 2, 2_000), Press::Recorded);
+        // The round of two is sent by its SUBMIT tab, not by running out of
+        // questions.
         assert!(matches!(
-            st.press(&multi, 2, 2_000),
+            st.submit(&multi, 2_000),
             Press::WriteAnswers { .. }
         ));
         let before = st.round_surfaces(&single, 0);
