@@ -2447,7 +2447,8 @@ enum PaintKey {
 /// keep travelling to the Workspace.
 ///
 /// **INVARIANT: a key this pane DECLINES must bubble.** Every workspace chord —
-/// alt+arrows (pane nav), alt+v/h and ctrl+alt+r/d (split), ctrl+pgup/pgdn
+/// alt+arrows (pane nav), alt+v/h and ctrl+alt+d (split), ctrl+alt+r (rename the
+/// highlighted tree row), ctrl+pgup/pgdn
 /// (tabs) — reaches the Workspace only by bubbling out of a focused pane, so
 /// swallowing the fall-through kills all of them at once with no compile error
 /// and nothing else failing.

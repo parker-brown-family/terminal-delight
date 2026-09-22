@@ -10335,14 +10335,28 @@ impl Workspace {
         cx.notify();
     }
 
-    /// A project born holding a terminal of its own, and landed in.
+    /// A project born holding a terminal of its own, landed in, and open at its
+    /// name.
     ///
-    /// Generate, then go there. It does NOT open the rename box: a gesture that
+    /// Generate, go there, put the cursor in the name box. Creation was stopped
+    /// from opening that box on 2026-09-15, on the argument that a gesture which
     /// grabs the keyboard decides for you that naming the thing is the next
-    /// move, when most of the time the next move is using the terminal it just
-    /// gave you. It opens as `project N` and stays that way until somebody
-    /// double-clicks or right-clicks the row, which is where renaming already
-    /// lives and costs nothing to reach.
+    /// move. That holds for a branch made by accident and fails for every one
+    /// made on purpose: on a tree of twenty panes `project 7` is a row nobody
+    /// can aim at, and a name put off until later is a name that never gets
+    /// typed. Parker asked for it back — the box on creation is the only moment
+    /// he knows what the branch is for.
+    ///
+    /// Esc is the way out, and is why this is not the keyboard-seizing trap the
+    /// removal described: it reverts the box and drops straight into the
+    /// terminal the same gesture just made.
+    ///
+    /// What keeps the two from fighting is [`Self::overlay_owns_keyboard`].
+    /// `open_tab` defers a focus onto the new pane and stands down when an
+    /// overlay legitimately owns the keyboard, and `bar_rename` is one of the
+    /// buffers it counts. Drop this box out of that list and the defer takes the
+    /// keyboard back mid-gesture, which on screen looks like a name box
+    /// ignoring everything typed into it.
     fn new_project_with_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) -> u32 {
         let id = self.new_project(None, cx);
         self.new_tab_in(
@@ -10353,11 +10367,12 @@ impl Workspace {
             window,
             cx,
         );
+        self.start_bar_rename(BarBranch::Project(id), window, cx);
         id
     }
 
     /// The same thing one layer down: a group holding a fresh terminal,
-    /// optionally inside a project.
+    /// optionally inside a project, open at its name.
     fn new_group_with_terminal(
         &mut self,
         project: Option<u32>,
@@ -10386,6 +10401,7 @@ impl Workspace {
             window,
             cx,
         );
+        self.start_bar_rename(BarBranch::Initiative(id), window, cx);
         id
     }
 
@@ -10882,6 +10898,51 @@ impl Workspace {
             self.bar_cursor = Some(to);
             self.bar_reveal(&rows);
             cx.notify();
+        }
+    }
+
+    /// Ctrl+Alt+R: name whatever the highlight is sitting on.
+    ///
+    /// The walk had no verb for this. Ctrl+Alt+↑↓ finds a row and Ctrl+Alt+→
+    /// steps into it, but naming the thing you had just found meant leaving the
+    /// keyboard for a right-click — so a branch made in a hurry kept the name
+    /// the machine gave it. This closes the loop the arrows opened: find it,
+    /// name it, never touch the mouse.
+    ///
+    /// **It renames the HIGHLIGHT, not the active tab.** That distinction is the
+    /// whole feature. Ctrl+Alt+→ is a separate gesture with its own meaning
+    /// (commit to this row), and requiring it first would make naming a branch
+    /// you are merely pointing at cost you the branch you are working in.
+    ///
+    /// Each layer goes to the editor that layer already has, so this adds a door
+    /// and not a fourth buffer: a project or a group to `bar_rename`, a task to
+    /// the strip's `renaming` — which the tree's own task rows draw too, so the
+    /// box appears under the cursor whichever surface the row is on.
+    ///
+    /// With no live cursor it names the active task, and with the tree shut it
+    /// does the same without consulting the tree at all. A row the tree is not
+    /// drawing cannot show a box, and a chord that silently does nothing is how
+    /// a person concludes a binding is broken — the active tab is the one row
+    /// that is on screen either way, since the strip always draws it.
+    fn rename_here(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let at = self.left_bar.then(|| {
+            let rows = self.bar_rows(cx);
+            self.bar_live_cursor(&rows).or_else(|| self.bar_seed(&rows))
+        });
+        match at.flatten() {
+            Some(tree::RowId::Project(id)) => {
+                self.start_bar_rename(BarBranch::Project(id), window, cx)
+            }
+            Some(tree::RowId::Initiative(id)) => {
+                self.start_bar_rename(BarBranch::Initiative(id), window, cx)
+            }
+            Some(tree::RowId::Task(i)) => self.start_tab_rename(i, window, cx),
+            // `tree::row_id` yields no `Unfiled`, so the cursor can never rest
+            // on the divider — it is a drop target and nothing else. Spelled out
+            // rather than folded into the fallback so that a fifth row kind
+            // added to the tree is a compile error here rather than a chord that
+            // quietly renames the wrong thing.
+            Some(tree::RowId::Unfiled) | None => self.start_tab_rename(self.active, window, cx),
         }
     }
 
@@ -15149,7 +15210,13 @@ impl Workspace {
         }
         if m.control && m.alt {
             match ks.key.as_str() {
-                "r" => self.split(SplitDir::Row, window, cx),
+                // R is the verb the walk was missing. Ctrl+Alt+↑↓ moves the
+                // highlight and Ctrl+Alt+→ steps into it, so until now the only
+                // way to name what you had just found was to leave the keyboard
+                // for the mouse. It cost nothing to take: this was a second
+                // spelling of the vertical split, which Alt+V has done all
+                // along — and Alt+H still twins Ctrl+Alt+D below it.
+                "r" => self.rename_here(window, cx),
                 "d" => self.split(SplitDir::Col, window, cx),
                 // Ctrl+Alt+arrows drive the LEFT BAR, one layer out from
                 // Alt+arrows, which move pane focus inside the tab. Same
@@ -15183,8 +15250,10 @@ impl Workspace {
         }
         if m.alt && !m.control {
             // Alt+V / Alt+H split the focused pane, Tilix-style: V puts the new
-            // pane beside it (a vertical divider, SplitDir::Row — same as
-            // ctrl+alt+r), H puts it below (SplitDir::Col — same as ctrl+alt+d).
+            // pane beside it (a vertical divider, SplitDir::Row), H puts it
+            // below (SplitDir::Col — same as ctrl+alt+d). V is now the ONLY
+            // spelling of the vertical split; ctrl+alt+r was its twin and has
+            // gone to the tree's rename, which had no key at all.
             match ks.key.as_str() {
                 "v" => {
                     self.split(SplitDir::Row, window, cx);
@@ -26375,12 +26444,13 @@ impl Render for Workspace {
                         row("Ctrl+Shift+T", s.new_tab),
                         row("Ctrl+PgUp / PgDn", s.switch_tabs),
                         row("Ctrl+Shift+PgUp / PgDn", s.move_tab),
-                        row("Alt+V / H · Ctrl+Alt+R / D", s.split),
+                        row("Alt+V / H · Ctrl+Alt+D", s.split),
                         row("Alt+W", s.close_pane),
                         row("Alt+K", s.toggle_bench),
                         row("Ctrl+W", s.close_tab),
                         row("Ctrl+Alt+↑↓←→", s.walk_tree),
                         row("Ctrl+Alt+1…9", s.jump_branch),
+                        row("Ctrl+Alt+R", s.rename_row),
                         row(s.k_alt_arrows, s.move_focus_dir),
                         row(s.k_drag_subtab, s.drag_subtab),
                         row(s.k_rclick_tab, s.rclick_tab),
@@ -28505,12 +28575,38 @@ mod tests {
             body.contains("new_tab_in("),
             "a new project must open a terminal of its own"
         );
+        // Restored 2026-09-21, and asserted against comment-stripped source so
+        // this paragraph cannot satisfy its own grep. Creation stopped opening
+        // the name box on 2026-09-15, as a gesture that seizes the keyboard.
+        // That reading holds for a branch made by accident; these are made on
+        // purpose, and `project 7` is a row nobody can aim at once the moment
+        // you knew what it was for has gone. Esc is the way out of the box.
+        let code = shipped_code();
+        for (f, branch) in [
+            ("fn new_project_with_terminal(", "BarBranch::Project(id)"),
+            ("fn new_group_with_terminal(", "BarBranch::Initiative(id)"),
+        ] {
+            let at = code.find(f).unwrap_or_else(|| panic!("{f} is gone"));
+            let end = code[at..].find("\n    }\n").expect("end of fn") + at;
+            assert!(
+                code[at..end].contains(&format!("start_bar_rename({branch}")),
+                "{f} no longer opens its name box on creation — a branch made on purpose \
+                 is named at the moment it is made, or never"
+            );
+        }
+
+        // And the box has to survive the frame it opens in. `open_tab` defers a
+        // focus onto the new pane and stands down only for an overlay that owns
+        // the keyboard, so a `bar_rename` missing from that list is a name box
+        // that silently loses every keystroke typed into it.
+        let at = code
+            .find("fn overlay_owns_keyboard(")
+            .expect("overlay_owns_keyboard");
+        let end = code[at..].find("\n    }\n").expect("end of fn") + at;
         assert!(
-            !body.contains("start_bar_rename("),
-            "making a project opens its rename box again — the gesture grabs the keyboard \
-             and decides for you that naming it is the next move, when the next move is \
-             usually using the terminal it just gave you. It opens as `project N`; renaming \
-             is double-click or the row's own menu"
+            code[at..end].contains("self.bar_rename.is_some()"),
+            "overlay_owns_keyboard no longer counts the left bar's name box, so the \
+             deferred pane focus takes the keyboard back the moment a branch is made"
         );
 
         // And the tab it builds goes through the identity carrier. `Tab::new`
@@ -29580,6 +29676,83 @@ mod tests {
     ///
     /// Mutation-tested: dropping the halt, putting the pan first, and swapping
     /// the named dial for the bench's each fail this test.
+    /// Ctrl+Alt+R names the row the walk is HIGHLIGHTING, and the vertical split
+    /// keeps its one remaining spelling.
+    ///
+    /// The chord used to be a second name for `split(SplitDir::Row)`, which Alt+V
+    /// has always done — so the tree's arrows could find a row and then had no
+    /// way to name it without reaching for the mouse. Three things can undo that
+    /// silently, and none of them fails to compile:
+    ///
+    /// - the arm falling back to `split(`, which is the state this replaced;
+    /// - `rename_here` reading `self.active` instead of the cursor, which still
+    ///   renames *something* and so looks like it works until the highlight is
+    ///   somewhere other than the tab you are in — the exact case the feature is
+    ///   for;
+    /// - the help modal going on advertising Ctrl+Alt+R as a split, which is a
+    ///   lie in nine languages.
+    ///
+    /// Scanned rather than exercised because the handler takes a live gpui
+    /// `Window`. Comment-stripped, so this paragraph cannot satisfy its own grep.
+    #[test]
+    fn ctrl_alt_r_names_the_highlighted_row_rather_than_splitting() {
+        let code = shipped_code();
+        let at = code
+            .find("if m.control && m.alt {")
+            .expect("the ctrl+alt block");
+        let end = code[at..]
+            .find("if m.alt && !m.control {")
+            .expect("the alt-only block below it");
+        let block = &code[at..at + end];
+
+        assert!(
+            block.contains("\"r\" => self.rename_here("),
+            "ctrl+alt+r no longer names the highlighted row"
+        );
+        assert!(
+            !block.contains("\"r\" => self.split("),
+            "ctrl+alt+r is a second spelling of the vertical split again — alt+v \
+             already is one, and the tree's rename is left with no key"
+        );
+        assert!(
+            block.contains("\"d\" => self.split(SplitDir::Col"),
+            "ctrl+alt+d must keep the horizontal split"
+        );
+
+        // The distinction the whole gesture exists for: the HIGHLIGHT, not the
+        // active tab. `bar_live_cursor` is the only thing that can answer where
+        // the walk is pointing.
+        let at = code.find("fn rename_here(").expect("rename_here");
+        let end = code[at..].find("\n    }\n").expect("end of fn") + at;
+        let body = &code[at..end];
+        assert!(
+            body.contains("self.bar_live_cursor("),
+            "rename_here no longer consults the tree's cursor, so it renames \
+             whatever tab happens to be active rather than the row you walked to"
+        );
+        for door in [
+            "self.start_bar_rename(BarBranch::Project(id)",
+            "self.start_bar_rename(BarBranch::Initiative(id)",
+            "self.start_tab_rename(",
+        ] {
+            assert!(
+                body.contains(door),
+                "rename_here no longer reaches {door} — a layer of the tree has \
+                 lost its editor"
+            );
+        }
+
+        // And the modal must not keep selling the old meaning.
+        assert!(
+            !code.contains("Ctrl+Alt+R / D"),
+            "the help modal still lists ctrl+alt+r as a split"
+        );
+        assert!(
+            code.contains("row(\"Ctrl+Alt+R\", s.rename_row)"),
+            "the help modal does not teach the rename chord"
+        );
+    }
+
     #[test]
     fn the_focus_reader_does_not_pan_on_the_size_chord() {
         let code = shipped_code();
