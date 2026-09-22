@@ -348,6 +348,12 @@ pub enum Rec {
     Ask {
         n: u32,
         at_ms: u64,
+        /// The harness's own id for this prompt, when it gave one. Carried so
+        /// a prompt replayed out of the journal is recognised as the one
+        /// already in the record rather than written again. `None` is an
+        /// absence, not a new prompt — [`Rec::identity`] falls back to the
+        /// stamp and the words, which are equally stable across a replay.
+        prompt_id: Option<String>,
         origin: Origin,
         kind: Kind,
         text: String,
@@ -401,6 +407,7 @@ impl Rec {
             Rec::Ask {
                 n,
                 at_ms,
+                prompt_id,
                 origin,
                 kind,
                 text,
@@ -408,6 +415,7 @@ impl Rec {
             } => Rec::Ask {
                 n: n + base,
                 at_ms,
+                prompt_id,
                 origin,
                 kind,
                 text,
@@ -477,11 +485,13 @@ impl Rec {
             Rec::Ask {
                 n,
                 at_ms,
+                prompt_id,
                 origin,
                 kind,
                 text,
                 images,
             } => json!({ "ws": WS, "t": "ask", "n": n, "at_ms": at_ms,
+                         "prompt_id": prompt_id,
                          "origin": origin.as_str(), "kind": kind.as_str(),
                          "text": text,
                          "images": images.iter().map(Image::to_json).collect::<Vec<_>>() }),
@@ -526,6 +536,7 @@ impl Rec {
             "ask" => Some(Rec::Ask {
                 n: n()?,
                 at_ms,
+                prompt_id: s("prompt_id"),
                 origin: Origin::parse(v.get("origin").and_then(Value::as_str)),
                 kind: Kind::parse(v.get("kind").and_then(Value::as_str)),
                 text: s("text")?,
@@ -569,6 +580,252 @@ impl Rec {
     }
 }
 
+/// A stable name for a line, so a replay is recognised instead of recorded.
+///
+/// **Why every line needs one.** Both feeds the window reads are re-read from
+/// the beginning when a window restarts: the channel journal's byte offsets and
+/// the mailbox's seen-stamps are held in memory and nowhere else. That is by
+/// design — it is how a fresh window rebuilds a pane's channel state — and
+/// `channel::State` was built to survive it, with
+/// `replaying_the_journal_leaves_the_state_where_it_was` naming the property.
+/// The transcript was the first consumer of those feeds that writes to disk,
+/// and it inherited the assumption without the property: measured on this
+/// machine after three restarts, one conversation held 79 ask lines for 36
+/// distinct messages and one task notification 53 times.
+///
+/// So identity is computed from the record's own fields, never from a clock or
+/// a counter, because the same journal line must produce the same name on every
+/// pass. A [`Writer`] refuses a name it has already written.
+///
+/// [`Rec::Said`] is the one that carries content in its name. A surface
+/// re-presented with NEW content is a card being updated and must be written; a
+/// surface re-swept unchanged after a restart is the same card and must not be.
+/// Only the document tells those apart — the id is equal in both.
+impl Rec {
+    pub fn identity(&self) -> String {
+        match self {
+            Rec::Segment { seq, .. } => format!("segment:{seq}"),
+            Rec::Ask {
+                prompt_id,
+                at_ms,
+                text,
+                ..
+            } => match prompt_id {
+                Some(id) => format!("ask:{id}"),
+                // The hook did not name it. The stamp and the words are as
+                // stable across a replay as an id would have been, because
+                // both are read back out of the same journal line.
+                None => format!("ask:{at_ms}:{:016x}", digest(text)),
+            },
+            Rec::Asked { tool_use_id, .. } => format!("asked:{tool_use_id}"),
+            Rec::Answered { tool_use_id, .. } => format!("answered:{tool_use_id}"),
+            Rec::Said { id, surface, .. } => {
+                format!("said:{id}:{:016x}", digest(&surface.to_string()))
+            }
+        }
+    }
+}
+
+/// FNV-1a. Not a security hash and not trying to be: it names a line within one
+/// file so a replay can be spotted, and the same function already does the same
+/// job for anonymous surface ids in `surface.rs`.
+fn digest(s: &str) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in s.bytes() {
+        h ^= b as u64;
+        h = h.wrapping_mul(0x100_0000_01b3);
+    }
+    h
+}
+
+/// An open conversation record: what is already in it, and where the next turn
+/// starts.
+///
+/// The pane holds one of these instead of a root and a counter. Two reasons.
+/// The turn policy — an ask opens a turn, everything else answers the one that
+/// is open — lives in one place that a test can drive without a window. And the
+/// set of names already written is read from the file at open, so it survives a
+/// restart, which is the only way the refusal above can work at all.
+#[derive(Debug)]
+pub struct Writer {
+    root: String,
+    next_turn: u32,
+    written: std::collections::HashSet<String>,
+}
+
+impl Writer {
+    /// A writer with no record behind it, for a pane that does not yet know
+    /// which conversation it is in.
+    ///
+    /// It applies the same turn policy and builds the same lines, and writes
+    /// nothing: an empty root is not a [`safe_segment`], so [`transcript_path`]
+    /// gives no file and [`Writer::write`] reports the line as not written. The
+    /// refusal is the same one that stops a root from naming a path, rather
+    /// than a second guard here saying the same thing in another place. The
+    /// caller holds what it builds.
+    pub fn held(next_turn: u32) -> Writer {
+        Writer {
+            root: String::new(),
+            next_turn,
+            written: std::collections::HashSet::new(),
+        }
+    }
+
+    /// Open the record for a conversation, learning what is already in it.
+    pub fn open(root_dir: &Path, root: &str) -> Writer {
+        let recs = records(root_dir, root);
+        Writer {
+            root: root.to_string(),
+            next_turn: recs.iter().filter_map(Rec::n).max().map_or(0, |n| n + 1),
+            written: recs.iter().map(Rec::identity).collect(),
+        }
+    }
+
+    /// The ordinal the next ask will carry.
+    pub fn next_turn(&self) -> u32 {
+        self.next_turn
+    }
+
+    /// The turn everything that is not an ask belongs to: the open one.
+    ///
+    /// Before any ask has been recorded there is no open turn, and what arrives
+    /// belongs to the first one rather than to turn minus one.
+    pub fn open_turn(&self) -> u32 {
+        self.next_turn.saturating_sub(1)
+    }
+
+    /// Write a line unless its name is already in the record.
+    ///
+    /// `false` means it was already there — a replay, not a loss. The turn
+    /// counter moves for a line that is actually written AND for one that is
+    /// refused, because a refused line is one the record already has and the
+    /// count has to agree with the file either way.
+    pub fn write(&mut self, root_dir: &Path, rec: Rec) -> bool {
+        let name = rec.identity();
+        if let Some(n) = rec.n() {
+            self.next_turn = self.next_turn.max(n + 1);
+        }
+        if !self.written.insert(name) {
+            return false;
+        }
+        if append(root_dir, &self.root, &rec).is_err() {
+            // The name stays in the set. A write that failed for want of a
+            // disk is not a line to retry every sweep for the rest of the
+            // session; the next window opens the file and sees the truth.
+            return false;
+        }
+        true
+    }
+
+    /// Record one journal event, with the turn policy applied.
+    ///
+    /// `None` for an event the record has nothing to say about — a reply, a
+    /// notification, a waiting notice, a record this build does not know. Those
+    /// are the channel's business and the bench's; the transcript holds what
+    /// was asked, what was shown, and how a question was answered.
+    pub fn write_event(
+        &mut self,
+        root_dir: &Path,
+        ev: &crate::channel::Inbound,
+        now_ms: u64,
+    ) -> Option<bool> {
+        let rec = self.record_for(ev, now_ms)?;
+        Some(self.write(root_dir, rec))
+    }
+
+    /// The line one journal event makes, with the turn policy applied, without
+    /// writing it. What a pane that has no conversation yet holds.
+    pub fn record_for(&mut self, ev: &crate::channel::Inbound, now_ms: u64) -> Option<Rec> {
+        use crate::channel::Inbound;
+        let rec = match ev {
+            Inbound::Prompt {
+                at_ms,
+                prompt_id,
+                text,
+            } => {
+                let text = text.as_ref()?;
+                if text.trim().is_empty() {
+                    return None;
+                }
+                Rec::Ask {
+                    n: self.next_turn,
+                    // The hook's own stamp when it gave one. Falling back to
+                    // the reader's clock would make the same journal line
+                    // name itself differently on every pass, which is the one
+                    // thing identity may not do.
+                    at_ms: at_ms.unwrap_or(now_ms),
+                    prompt_id: prompt_id.clone(),
+                    origin: Origin::Hook,
+                    kind: prompt_kind(text),
+                    text: text.clone(),
+                    images: Vec::new(),
+                }
+            }
+            Inbound::Question {
+                at_ms,
+                tool_use_id,
+                questions,
+                ..
+            } => Rec::Asked {
+                n: self.open_turn(),
+                at_ms: at_ms.unwrap_or(now_ms),
+                tool_use_id: tool_use_id.clone(),
+                questions: Value::Array(questions.iter().map(asked_json).collect()),
+            },
+            Inbound::Answered {
+                tool_use_id,
+                answers,
+            } => Rec::Answered {
+                n: self.open_turn(),
+                // The tool result carries no stamp of its own, so this one is
+                // the reader's. It is not part of the identity.
+                at_ms: now_ms,
+                tool_use_id: tool_use_id.clone(),
+                // `None` is JSON null rather than an empty object: the tool
+                // returned and this build could not read what it carried,
+                // which is not a round answered with nothing.
+                answers: answers.clone().unwrap_or(Value::Null),
+                road: "result".into(),
+            },
+            _ => return None,
+        };
+        // The policy moves here rather than in `write`, so a rootless writer
+        // advances the same way a real one does. Writing it again is harmless:
+        // `write` takes the max, and both arrive at the same number.
+        if let Some(n) = rec.n() {
+            self.next_turn = self.next_turn.max(n + 1);
+        }
+        Some(rec)
+    }
+
+    /// Record a surface, with the id rules applied. `None` for an id that must
+    /// never become a key.
+    pub fn write_surface(
+        &mut self,
+        root_dir: &Path,
+        id: &str,
+        doc: &Value,
+        bond: Bond,
+        now_ms: u64,
+    ) -> Option<bool> {
+        let rec = said(self.open_turn(), id, doc, bond, now_ms)?;
+        Some(self.write(root_dir, rec))
+    }
+}
+
+/// One question of a round, as the record keeps it.
+fn asked_json(q: &crate::channel::Asked) -> Value {
+    json!({
+        "question": q.question,
+        "header": q.header,
+        "multi": q.multi,
+        "options": q.options.iter().map(|o| json!({
+            "label": o.label,
+            "description": o.description,
+        })).collect::<Vec<_>>(),
+    })
+}
+
 /// Where conversations live: `$XDG_STATE_HOME/terminal-delight/conversations`.
 ///
 /// Beside `surfaces/`, not inside it, and named by nothing that belongs to a
@@ -605,28 +862,6 @@ pub fn append(root_dir: &Path, root: &str, rec: &Rec) -> io::Result<()> {
         .append(true)
         .open(path)?;
     f.write_all(line.as_bytes())
-}
-
-/// Mark where a segment of this conversation began.
-pub fn segment(
-    root_dir: &Path,
-    key: &ConvKey,
-    at_ms: u64,
-    source: &str,
-    agent: &str,
-    pid: u32,
-) -> io::Result<()> {
-    append(
-        root_dir,
-        &key.root,
-        &Rec::Segment {
-            seq: key.seq,
-            at_ms,
-            source: source.to_string(),
-            agent: agent.to_string(),
-            pid,
-        },
-    )
 }
 
 /// The line a surface makes, with the id rules applied — or [`None`] when the
@@ -985,6 +1220,28 @@ mod tests {
             .collect()
     }
 
+    /// What the removed `segment` helper was: the boundary line, written.
+    fn segment(
+        root_dir: &Path,
+        key: &ConvKey,
+        at_ms: u64,
+        source: &str,
+        agent: &str,
+        pid: u32,
+    ) -> io::Result<()> {
+        append(
+            root_dir,
+            &key.root,
+            &Rec::Segment {
+                seq: key.seq,
+                at_ms,
+                source: source.to_string(),
+                agent: agent.to_string(),
+                pid,
+            },
+        )
+    }
+
     fn filed(s: &Scratch, root: &str, n: u32, id: &str, title: &str, at: u64) {
         let rec = super::said(n, id, &doc(title), Bond::Declared, at).expect("a legal id");
         append(s.path(), root, &rec).unwrap();
@@ -1013,6 +1270,7 @@ mod tests {
             &Rec::Ask {
                 n,
                 at_ms: at,
+                prompt_id: None,
                 origin: Origin::Hook,
                 kind: Kind::Person,
                 text: text.into(),
@@ -1171,6 +1429,7 @@ mod tests {
             Rec::Ask {
                 n: 0,
                 at_ms: 10,
+                prompt_id: None,
                 origin: Origin::Hook,
                 kind: Kind::Person,
                 text: "what is the key".into(),
@@ -1541,6 +1800,7 @@ mod tests {
             &Rec::Ask {
                 n: 0,
                 at_ms: 10,
+                prompt_id: None,
                 origin: Origin::Hook,
                 kind: Kind::Person,
                 text: "look at this".into(),
@@ -1700,6 +1960,7 @@ mod tests {
             Rec::Ask {
                 n: 0,
                 at_ms: 20,
+                prompt_id: None,
                 origin: Origin::Hook,
                 kind: Kind::Person,
                 text: "held one".into(),
@@ -1709,6 +1970,7 @@ mod tests {
             Rec::Ask {
                 n: 1,
                 at_ms: 22,
+                prompt_id: None,
                 origin: Origin::Hook,
                 kind: Kind::System,
                 text: "<task-notification>\nheld two\n</task-notification>".into(),
@@ -1760,6 +2022,228 @@ mod tests {
         assert_eq!(seg.clone().shifted(7), seg);
     }
 
+    // -----------------------------------------------------------------------
+    // the replay harness
+    // -----------------------------------------------------------------------
+
+    /// Drive a journal through a FRESH writer twice and return both records.
+    ///
+    /// The second pass is a window restart: the offsets that say how far the
+    /// reader got live in memory and nowhere else, so a new window re-reads
+    /// every journal from byte 0 and re-delivers everything. A consumer that
+    /// writes to disk has to come out of that unchanged.
+    ///
+    /// This is the harness rather than a test: give it any journal and it
+    /// answers what one restart costs. Every case below is one journal.
+    fn replayed(tag: &str, events: &[crate::channel::Inbound]) -> (Vec<Rec>, Vec<Rec>) {
+        let s = Scratch::new(tag);
+        let root = "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa";
+        let mut clock = 1_000u64;
+        let mut pass = || {
+            let mut w = Writer::open(s.path(), root);
+            for ev in events {
+                clock += 1;
+                w.write_event(s.path(), ev, clock);
+            }
+            records(s.path(), root)
+        };
+        let first = pass();
+        let second = pass();
+        (first, second)
+    }
+
+    fn prompt(id: Option<&str>, at: u64, text: &str) -> crate::channel::Inbound {
+        crate::channel::Inbound::Prompt {
+            at_ms: Some(at),
+            prompt_id: id.map(str::to_string),
+            text: Some(text.into()),
+        }
+    }
+
+    fn question(tool: &str, at: u64) -> crate::channel::Inbound {
+        crate::channel::Inbound::Question {
+            at_ms: Some(at),
+            tool_use_id: tool.into(),
+            questions: vec![crate::channel::Asked {
+                question: "Drink?".into(),
+                header: Some("Drink".into()),
+                multi: false,
+                options: vec![crate::channel::AskedOption {
+                    label: "Coffee".into(),
+                    description: None,
+                    preview: None,
+                }],
+            }],
+            deadline_ms: None,
+        }
+    }
+
+    fn answered(tool: &str) -> crate::channel::Inbound {
+        crate::channel::Inbound::Answered {
+            tool_use_id: tool.into(),
+            answers: Some(json!({ "Drink?": "Coffee" })),
+        }
+    }
+
+    /// The defect, in the shape it was found in.
+    ///
+    /// Measured on this machine 2026-09-21 after three window restarts: one
+    /// conversation held 79 ask lines for 36 distinct messages, and one task
+    /// notification 53 times. #658.
+    #[test]
+    fn a_restart_replaying_the_journal_adds_nothing() {
+        let journal = vec![
+            prompt(Some("p1"), 10, "the first thing"),
+            question("toolu_1", 11),
+            answered("toolu_1"),
+            prompt(
+                Some("p2"),
+                20,
+                "<task-notification>\nbuild done\n</task-notification>",
+            ),
+            prompt(Some("p3"), 30, "the third thing"),
+        ];
+        let (first, second) = replayed("bs-replay", &journal);
+
+        assert_eq!(
+            first.len(),
+            5,
+            "every event the record has something to say about"
+        );
+        assert_eq!(
+            second, first,
+            "a restart re-reads the whole journal and must leave the record exactly as it was"
+        );
+        let turns: Vec<Option<u32>> = second.iter().map(Rec::n).collect();
+        assert_eq!(
+            turns,
+            vec![Some(0), Some(0), Some(0), Some(1), Some(2)],
+            "and the turn numbers do not inflate"
+        );
+    }
+
+    /// The hook does not always name a prompt, and an unnamed one must still
+    /// be recognised on the way back round.
+    #[test]
+    fn an_unnamed_prompt_is_still_recognised_on_replay() {
+        let journal = vec![
+            prompt(None, 10, "no id on this one"),
+            prompt(None, 20, "nor this"),
+            // Same words, different moment: two things a person said, not one.
+            prompt(None, 30, "no id on this one"),
+        ];
+        let (first, second) = replayed("bs-replay-unnamed", &journal);
+        assert_eq!(
+            first.len(),
+            3,
+            "the same words at a new moment is a new ask"
+        );
+        assert_eq!(second, first);
+    }
+
+    /// A card re-presented with new content is an update and must be written.
+    /// The same card re-swept unchanged after a restart is not.
+    #[test]
+    fn an_updated_card_is_written_and_a_re_swept_one_is_not() {
+        let s = Scratch::new("bs-replay-surface");
+        let root = "bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb";
+
+        let mut w = Writer::open(s.path(), root);
+        w.write_surface(s.path(), "card", &doc("First"), Bond::Declared, 10);
+        w.write_surface(s.path(), "card", &doc("Second"), Bond::Declared, 20);
+        assert_eq!(records(s.path(), root).len(), 2, "an update is a new line");
+
+        // The restart: a fresh window, the same mailbox swept from scratch.
+        let mut w = Writer::open(s.path(), root);
+        let wrote = w.write_surface(s.path(), "card", &doc("Second"), Bond::Declared, 99);
+        assert_eq!(wrote, Some(false), "the unchanged card is already recorded");
+        assert_eq!(records(s.path(), root).len(), 2);
+        assert_eq!(
+            load(s.path(), root).surfaces.len(),
+            1,
+            "and it is still one row on the bench"
+        );
+    }
+
+    /// A boundary is named by its sequence, so restarts do not turn the
+    /// record's history of compactions into a history of window launches.
+    #[test]
+    fn a_segment_is_written_once_however_often_a_window_opens() {
+        let s = Scratch::new("bs-replay-segment");
+        let root = "cccccccc-3333-4333-8333-cccccccccccc";
+        let seg = |seq: u32, at: u64| Rec::Segment {
+            seq,
+            at_ms: at,
+            source: "startup".into(),
+            agent: "CLAUDE".into(),
+            pid: 7,
+        };
+        for at in [1u64, 2, 3] {
+            let mut w = Writer::open(s.path(), root);
+            w.write(s.path(), seg(0, at));
+        }
+        assert_eq!(records(s.path(), root).len(), 1);
+        // A compaction is a different boundary and does get written.
+        let mut w = Writer::open(s.path(), root);
+        assert!(w.write(s.path(), seg(1, 4)));
+        assert_eq!(records(s.path(), root).len(), 2);
+    }
+
+    /// A rootless writer applies the turn policy and touches no disk, which is
+    /// what a pane with no conversation yet needs.
+    #[test]
+    fn a_held_writer_builds_lines_and_writes_none() {
+        let s = Scratch::new("bs-replay-held");
+        let mut w = Writer::held(0);
+        let rec = w.record_for(&prompt(Some("p1"), 10, "held"), 11).unwrap();
+        assert_eq!(rec.n(), Some(0));
+        assert_eq!(w.next_turn(), 1, "the policy still moves");
+        assert!(
+            !w.write(s.path(), rec),
+            "and there is no file it could be right about"
+        );
+        assert!(
+            fs::read_dir(s.path()).unwrap().next().is_none(),
+            "nothing reached the disk"
+        );
+    }
+
+    /// Events the transcript has nothing to say about are not lines.
+    #[test]
+    fn a_reply_and_a_notification_are_not_records() {
+        let mut w = Writer::held(0);
+        for ev in [
+            crate::channel::Inbound::Reply {
+                at_ms: Some(1),
+                text: Some("done".into()),
+            },
+            crate::channel::Inbound::Notify {
+                at_ms: Some(2),
+                kind: Some("idle".into()),
+                message: None,
+            },
+            crate::channel::Inbound::Waiting {
+                tool_use_id: "t".into(),
+                until_ms: 3,
+            },
+            crate::channel::Inbound::Released {
+                tool_use_id: "t".into(),
+                why: "timeout".into(),
+            },
+            crate::channel::Inbound::Unknown {
+                type_name: "from-a-later-build".into(),
+            },
+            // A prompt the harness handed over empty is not a thing said.
+            crate::channel::Inbound::Prompt {
+                at_ms: Some(4),
+                prompt_id: Some("p".into()),
+                text: Some("   ".into()),
+            },
+        ] {
+            assert!(w.record_for(&ev, 9).is_none(), "{ev:?}");
+        }
+    }
+
     /// Every record shape survives a write and a read, including the ones with
     /// no writer on the bench yet.
     #[test]
@@ -1775,6 +2259,7 @@ mod tests {
             Rec::Ask {
                 n: 0,
                 at_ms: 2,
+                prompt_id: None,
                 origin: Origin::Screen,
                 kind: Kind::System,
                 text: "two\nlines".into(),

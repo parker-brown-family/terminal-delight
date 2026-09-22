@@ -2321,10 +2321,13 @@ pub struct TerminalView {
     /// in, oldest first. Drained into the record the moment it can. See
     /// `bench_write`.
     wb_unfiled: Vec<crate::benchstore::Rec>,
-    /// The ordinal the NEXT ask will carry. Read from the record when the
-    /// conversation is adopted, so a window restart mid-conversation does not
-    /// start counting again and file this turn's reply under the first one.
-    wb_turn: u32,
+    /// The open record for [`Self::wb_conv`]: where the next turn starts, and
+    /// the name of every line already in the file, so a journal replayed after
+    /// a restart is recognised instead of written again.
+    ///
+    /// `None` means no conversation has been established, and nothing is
+    /// written — see `bench_write`, which holds instead.
+    wb_writer: Option<crate::benchstore::Writer>,
 }
 
 /// Click on the header's theme icon — the workspace opens the breakout menu.
@@ -3073,7 +3076,7 @@ impl TerminalView {
             // Nothing on disk is touched — the record outlives the process.
             self.wb_conv = None;
             self.wb_conv_bond = crate::vitals::Bond::Guess;
-            self.wb_turn = 0;
+            self.wb_writer = None;
             // Anything held for a conversation that never got named belongs to
             // the agent that left, and the next one in this pane is not it.
             self.wb_unfiled.clear();
@@ -3652,7 +3655,7 @@ impl TerminalView {
             wb_conv: None,
             wb_conv_bond: crate::vitals::Bond::Guess,
             wb_unfiled: Vec::new(),
-            wb_turn: 0,
+            wb_writer: None,
         }
     }
 
@@ -8988,7 +8991,7 @@ mod tests {
             // an embarrassment.
             "wb_conv",
             "wb_conv_bond",
-            "wb_turn",
+            "wb_writer",
             "wb_unfiled",
         ] {
             assert!(
