@@ -1047,27 +1047,22 @@ impl Line {
     }
 }
 
-/// One answered question, as the review gallery shows it.
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub struct Reviewed {
-    pub title: String,
-    /// What was chosen, in the words it was chosen by. Never a number — the
-    /// point of reviewing is to read the answer, not to decode it.
-    pub answer: String,
-}
-
 /// What escape takes off, innermost first.
 ///
 /// **It never takes off a question somebody is being waited on.** Escape on
 /// this surface has always meant "close the outermost thing", and the ladder
-/// ran gallery, then typing, then the open card, then the face — which is
-/// correct right up until the open card is the question an agent has stopped
-/// on. Then a key that means *give me less* removes the one thing that cannot
-/// be got back without going to the terminal, and it did: Parker, tracing his
-/// vanishing question, *"i may have pressed ESC while the review pane was up
-/// ... and that is what killed the question interaction ... that interaction
-/// surface for answering questions must be MORE persistent and the target for
-/// hitting esc should always land on the overlay"*.
+/// ran the review gallery, then typing, then the open card, then the face —
+/// which is correct right up until the open card is the question an agent has
+/// stopped on. Then a key that means *give me less* removes the one thing that
+/// cannot be got back without going to the terminal, and it did: Parker,
+/// tracing his vanishing question, *"i may have pressed ESC while the review
+/// pane was up ... and that is what killed the question interaction ... that
+/// interaction surface for answering questions must be MORE persistent and the
+/// target for hitting esc should always land on the overlay"*.
+///
+/// The gallery that incident happened inside is gone — the round's own tabs
+/// replaced it — so the ladder is one rung shorter. The floor it taught is
+/// not, and is the reason this is still a ladder rather than a boolean.
 ///
 /// So a waiting question is a FLOOR. Escape peels everything above it and
 /// stops there, and the way out of a pane that is waiting on you is the TERM
@@ -1092,8 +1087,6 @@ pub enum Peel {
     /// An open dial menu, which is drawn over everything and is the newest
     /// thing on the screen.
     Dial,
-    /// The review gallery, drawn over everything.
-    Gallery,
     /// A half-typed line in the composer.
     Typing,
     /// The opened card — but only when it is not holding a live question.
@@ -1103,16 +1096,13 @@ pub enum Peel {
     Nothing,
 }
 
-pub fn peel(dial: bool, gallery: bool, typing: bool, card_open: bool, card_waits: bool) -> Peel {
-    // ABOVE THE GALLERY, because it is above everything: a dial menu is the
-    // last thing opened and the smallest thing to lose. Escape reaching past
-    // it to empty the composer would take the person's sentence to close a
-    // list of five words — which is what it did before this rung existed.
+pub fn peel(dial: bool, typing: bool, card_open: bool, card_waits: bool) -> Peel {
+    // ABOVE EVERYTHING, because it is the last thing opened and the smallest
+    // thing to lose. Escape reaching past it to empty the composer would take
+    // the person's sentence to close a list of five words — which is what it
+    // did before this rung existed.
     if dial {
         return Peel::Dial;
-    }
-    if gallery {
-        return Peel::Gallery;
     }
     if typing {
         return Peel::Typing;
@@ -1147,8 +1137,15 @@ pub enum Hit {
         action: crate::surface::Action,
         target: Option<String>,
     },
-    /// Open the review gallery.
-    Review,
+    /// Send the open question's whole ROUND, however much of it was answered.
+    ///
+    /// It took the slot the review gallery used to sit in, and that is the
+    /// same decision twice rather than a coincidence: the round's own tabs
+    /// walk back to any question already answered, so a second modal gallery
+    /// for reading them was a takeover that did what one click already did.
+    /// Parker: *"NO REVIEW QUESTIONS ANYMORE — the user can simply click back
+    /// to a previous question with the nice tabs"*.
+    SubmitAnswers,
     /// The card's close.
     CloseCard,
     /// The launcher, on a shell pane's empty bench.
@@ -1191,11 +1188,8 @@ pub enum Hit {
     /// `alt+m` by wearing it, and is the thing a hand reaches for meanwhile.
     AddNote,
     OpenRow(crate::surface::SurfaceId),
-    GalleryBack,
-    GalleryForward,
-    GalleryClose,
-    /// The dim field around the gallery: a click there does nothing, and
-    /// must not fall through to the card underneath.
+    /// A dim field over the bench: a click there does nothing, and must not
+    /// fall through to whatever it is covering.
     Nothing,
 }
 
@@ -1203,7 +1197,7 @@ impl Hit {
     /// The pointer a control asks for.
     ///
     /// The composer is text. The field around it — which arms the line — and
-    /// the dim field around the gallery are nothing to point at. Everything
+    /// any dim field over the bench are nothing to point at. Everything
     /// else is pressed, and says so with a hand.
     pub fn pointer(&self) -> Pointer {
         match self {
@@ -1794,72 +1788,170 @@ pub fn unwarp(rect: (f32, f32, f32, f32), k1: f32, k2: f32, px: f32, py: f32) ->
     (rx + lx * rw, ry + ly * rh)
 }
 
-/// Where a key takes the review gallery.
-///
-/// Its own function because the gallery is MODAL and modal key handling is
-/// where surfaces quietly go wrong: a key the overlay does not use must not
-/// fall through to the thing underneath, or a left arrow aimed at the gallery
-/// walks the caret in a composer nobody can see. Every key is answered here,
-/// including the ones whose answer is "nothing".
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Gallery {
-    Back,
-    Forward,
-    Close,
-    /// Used by the gallery and meaning nothing — swallowed, not passed on.
-    Ignore,
+/// What the rail does with one question surface that belongs to a round.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum Fold {
+    /// Draw no row at all — another question of the same round carries it.
+    Hidden,
+    /// Draw ONE row, standing for the whole round.
+    Round {
+        /// Every question of the round that has a card, in ask order. The rail
+        /// reads it to decide whether the open card and any unseen arrival
+        /// belong to this row.
+        members: Vec<SurfaceId>,
+        /// Which question a click on the row opens.
+        opens: SurfaceId,
+        /// The round's name: the question it opens with, which does not move
+        /// as the round is answered.
+        title: String,
+        /// Answered, out of asked.
+        done: usize,
+        total: usize,
+        /// Any question of it is still waiting on a person. The row's colour,
+        /// and it cannot be read off the carrying card — a round whose first
+        /// question is answered and whose third is not has one card saying
+        /// settled and another saying waiting, and the ROW is the second.
+        waiting: bool,
+    },
 }
 
-pub fn gallery_key(key: &str) -> Gallery {
-    match key {
-        "left" | "up" | "h" => Gallery::Back,
-        "right" | "down" | "l" | "space" => Gallery::Forward,
-        "escape" | "q" | "enter" => Gallery::Close,
-        _ => Gallery::Ignore,
-    }
-}
-
-/// Every answered question on this bench, oldest first.
+/// ONE RAIL ROW FOR A WHOLE ROUND.
 ///
-/// Oldest first because a review is a story of how you got here, and the rail
-/// — which is newest first, because a rail is about what just happened — reads
-/// the other way. The two orders are not a disagreement; they answer different
-/// questions.
+/// An `AskUserQuestion` of three questions is three surfaces, and it was three
+/// rows — which is true of the data and wrong about the work. It is one
+/// decision node with three steps, it already draws as one card with a tab per
+/// question, and the rail was the last place still counting it as a pile.
+/// Parker: *"SINGLE right spine card for ALL questions in the turn ... THIS
+/// will be where questions are cycled through, and the full interaction is
+/// done here"*.
 ///
-/// An empty list is a real answer: nothing has been answered yet, and the
-/// button that opens this is simply not offered.
-pub fn reviewed(surfaces: &[crate::surface::Surface]) -> Vec<Reviewed> {
+/// It also ends the duplicate by construction, which is the part worth saying
+/// out loud: a round can no longer put two rows on the rail, because the
+/// collapse is keyed on the round rather than counted per card, so there is no
+/// arithmetic left to get wrong.
+///
+/// **A round is identified by its first step's id**, which every card of the
+/// round carries a copy of — the navigator strip is built once and stamped on
+/// all of them. That is what makes this a lookup rather than a guess about
+/// arrival times: two rounds asked in the same millisecond still have
+/// different first steps.
+///
+/// **A round read off the screen folds nothing.** Its steps are named by the
+/// picker's tab bar and none of them has a card
+/// ([`crate::surface::Step::id`]), so there is exactly one surface and it
+/// keeps its own row. Returning `Hidden` for it would hide the only copy.
+pub fn fold_rounds(
+    surfaces: &[crate::surface::Surface],
+    selected: Option<&SurfaceId>,
+) -> std::collections::HashMap<SurfaceId, Fold> {
     use crate::surface::{Answered, Kind};
-    surfaces
+    let mut out = std::collections::HashMap::new();
+    let mut carried: HashSet<SurfaceId> = HashSet::new();
+    for s in surfaces {
+        let Kind::Question(q) = &s.kind else {
+            continue;
+        };
+        let Some(round) = q.round.as_ref() else {
+            continue;
+        };
+        let members: Vec<SurfaceId> = round.steps.iter().filter_map(|st| st.id.clone()).collect();
+        // Nothing to collapse: a lone card, or a round nobody can open.
+        if members.len() < 2 {
+            continue;
+        }
+        let key = members[0].clone();
+        if !carried.insert(key.clone()) {
+            out.insert(s.id.clone(), Fold::Hidden);
+            continue;
+        }
+        // The round's name is the question it OPENS with, not the question
+        // this row happens to point at. A row that renamed itself every time
+        // somebody answered would be a row nobody could find again.
+        let title = surfaces
+            .iter()
+            .find(|x| x.id == key)
+            .unwrap_or(s)
+            .title
+            .clone();
+        let waiting = members.iter().any(|m| {
+            surfaces.iter().find(|x| &x.id == m).is_some_and(
+                |x| matches!(&x.kind, Kind::Question(q) if q.answer == Answered::Waiting),
+            )
+        });
+        let opens = round_opens(&members, round, selected);
+        out.insert(
+            s.id.clone(),
+            Fold::Round {
+                members,
+                opens,
+                title,
+                done: round.answered(),
+                total: round.total(),
+                waiting,
+            },
+        );
+    }
+    out
+}
+
+/// Which question a newly arrived round should OPEN on, if any.
+///
+/// A round that lands while the person is somewhere else takes the room, as a
+/// card at the top — because the alternative is the pin, which is drawn
+/// outside the body's scroll and therefore at the bottom of the pane, and then
+/// jumps the height of the pane the moment it becomes a card.
+///
+/// **`None` when the selection is already inside this round**, and that guard
+/// is the whole of the rule's safety: every press re-presents the entire round
+/// so this runs on each one, and without it a person answering question two
+/// would be dragged back to question one by their own click.
+///
+/// `None` too when nothing here is a round worth landing on — a lone question,
+/// a batch of anything else, or a round whose questions are all answered,
+/// which has nothing to ask and should not take a room away from whatever the
+/// person was reading.
+pub fn round_lands_on(arriving: &[Surface], selected: Option<&SurfaceId>) -> Option<SurfaceId> {
+    let steps = arriving.iter().find_map(|s| match &s.kind {
+        Kind::Question(q) => q.round.as_ref().filter(|r| r.steps.len() > 1),
+        _ => None,
+    })?;
+    if selected.is_some_and(|sel| steps.steps.iter().any(|st| st.id.as_ref() == Some(sel))) {
+        return None;
+    }
+    steps
+        .steps
         .iter()
-        .filter_map(|s| {
-            let Kind::Question(q) = &s.kind else {
-                return None;
-            };
-            let answer = match &q.answer {
-                Answered::Waiting => return None,
-                Answered::Chose(i) => q
-                    .options
-                    .get(*i)
-                    .map(|o| o.label.clone())
-                    // A chosen index with no option at it is a bench and a
-                    // transcript that disagree, and saying so beats printing
-                    // the number nobody can read.
-                    .unwrap_or_else(|| "answered \u{b7} the option is unavailable".into()),
-                Answered::Typed(said) => said.clone(),
-                Answered::ChoseUnknown => "answered \u{b7} how is unavailable".into(),
-                // A refused round produced no answers, so it has nothing to
-                // review. Listing it with a placeholder would put a row in a
-                // summary of decisions for a decision nobody made. Same for a
-                // round nobody recorded the end of: there is no answer to show.
-                Answered::Cancelled | Answered::Ended => return None,
-            };
-            Some(Reviewed {
-                title: s.title.clone(),
-                answer,
-            })
-        })
-        .collect()
+        .find(|st| !st.done)
+        .and_then(|st| st.id.clone())
+}
+
+/// Which question of a round its single row opens.
+///
+/// Three rungs, and the order is the whole of it:
+///
+/// 1. **Where the person already is.** If a card of this round is open, the
+///    row IS that card — so it draws as selected, and clicking it is a no-op
+///    rather than a jump out of the question being read.
+/// 2. **The first question still wanting an answer.** What the row is for
+///    while the round is live: *take me to the part that needs me*.
+/// 3. **The first question.** A finished round opens where it began, which is
+///    where its title points, so the row and the card it opens agree.
+fn round_opens(
+    members: &[SurfaceId],
+    round: &crate::surface::Round,
+    selected: Option<&SurfaceId>,
+) -> SurfaceId {
+    if let Some(sel) = selected {
+        if members.iter().any(|m| m == sel) {
+            return sel.clone();
+        }
+    }
+    round
+        .steps
+        .iter()
+        .find(|st| !st.done)
+        .and_then(|st| st.id.clone())
+        .unwrap_or_else(|| members[0].clone())
 }
 
 /// What to do with the live question we are tracking, given what the screen
@@ -2907,8 +2999,93 @@ pub fn turn_control(state: AgentState, agent_present: bool) -> Option<TurnContro
 /// `kind · title` above a heading that said `kind · title`, and a question
 /// asked three times inside one card. The shape of the bug is always two
 /// renderers each correctly drawing the thing they were told to draw.
-pub fn draws_waiting_block(showing: Option<&SurfaceId>, waiting: &SurfaceId) -> bool {
-    showing != Some(waiting)
+///
+/// # THE UNIT IS THE ROUND, not the surface
+///
+/// This compared surface ids, and that was right for exactly as long as a
+/// question was a lone card. A round of three is three surfaces drawing ONE
+/// decision node, and the pin reappeared the moment those two ids differed —
+/// which they do constantly, because `waiting_question` hands back the first
+/// OPEN question and the card in the room is whichever one the person is
+/// reading.
+///
+/// The reliable way to see it: answer question one, then click its tab to go
+/// back and look at it. The card is now an ANSWERED question, so
+/// `waiting_question` falls past the selection to question two, the ids differ,
+/// and the round is drawn twice — once as the card at the top and once pinned
+/// at the bottom, each showing a different question of the same round, each
+/// with its own navigator. Parker, meeting exactly that: *"it must not snap to
+/// the bottom for any tab (overview OR decisions) and must not double
+/// display!"*
+///
+/// `same_round` is the caller's answer to *are these two the same decision
+/// node* — see [`in_same_round`]. Passing `false` gives the old
+/// surface-identity behaviour, which is still correct for a question that has
+/// no round.
+pub fn draws_waiting_block(
+    showing: Option<&SurfaceId>,
+    waiting: &SurfaceId,
+    same_round: bool,
+) -> bool {
+    showing != Some(waiting) && !same_round
+}
+
+/// Which of the two places a question reaches a person can answer a press?
+///
+/// The card they opened from the rail, or the block pinned below the body —
+/// and `can` is whatever the caller needs to be true of it, which for the
+/// SUBMIT tab is [`crate::channel::State::submittable`].
+///
+/// # ASK EACH ONE, NOT JUST THE FIRST
+///
+/// The house resolution is `selected().or_else(waiting_question())`, which
+/// picks a surface and then asks about whatever it picked. That is right where
+/// the question is only *which surface*, and wrong for a control whose DRAWING
+/// asks per-surface — because the two then disagree for one ordinary case: a
+/// person reading a reply while a round waits.
+///
+/// There, the selection is the reply, the fallback never runs, the answer is
+/// about the reply, and the press does nothing — while the card's gate and the
+/// pinned block's gate, which each ask about their own surface, have both
+/// already said yes. So the tab was drawn on the block and silently refused. A
+/// control that is absent tells the truth; one that is drawn and declines does
+/// not, which is the argument this file already makes against the gallery
+/// button.
+///
+/// Held here rather than in the pane so it has a test, the same way
+/// [`draws_waiting_block`] is.
+pub fn first_sendable(
+    selected: Option<&Surface>,
+    waiting: Option<&Surface>,
+    can: impl Fn(&SurfaceId) -> bool,
+) -> Option<SurfaceId> {
+    [selected, waiting]
+        .into_iter()
+        .flatten()
+        .find(|s| can(&s.id))
+        .map(|s| s.id.clone())
+}
+
+/// Are these two surfaces questions of the same round?
+///
+/// Compared on the round's step LIST rather than on a round id, because a
+/// round has no id of its own on the wire — the navigator is built once and
+/// stamped on every card of the round, so two cards of one round carry
+/// identical step lists and two cards of different rounds cannot.
+///
+/// `false` whenever either side is not a question, or carries no round: a lone
+/// question is its own decision node and shares one with nothing.
+pub fn in_same_round(a: Option<&Surface>, b: Option<&Surface>) -> bool {
+    fn steps(s: Option<&Surface>) -> Option<&Vec<crate::surface::Step>> {
+        match &s?.kind {
+            Kind::Question(q) => Some(&q.round.as_ref()?.steps),
+            _ => None,
+        }
+    }
+    match (steps(a), steps(b)) {
+        (Some(x), Some(y)) => !x.is_empty() && x == y,
+        _ => false,
+    }
 }
 
 /// What the strip's trailing verb offers.
@@ -3925,10 +4102,28 @@ impl Bench {
 
     /// How many surfaces sit on each shelf, and how many of those are unseen.
     pub fn counts(&self, shelf: Shelf) -> (usize, usize) {
+        // THE SAME COLLAPSE THE RAIL DOES, because this number sits directly
+        // above those rows: a tab reading `3` over one row is a surface
+        // disagreeing with itself, which is the defect the live turn's count
+        // below was fixed for.
+        let fold = fold_rounds(&self.surfaces, self.selected.as_ref());
         let on = self.surfaces.iter().filter(|s| shelf.holds(s.kind.shelf()));
         let mut total = 0;
         let mut unseen = 0;
         for s in on {
+            match fold.get(&s.id) {
+                Some(Fold::Hidden) => continue,
+                // A round is one thing, and it is missed if any of its
+                // questions was.
+                Some(Fold::Round { members, .. }) => {
+                    total += 1;
+                    if members.iter().any(|m| self.unseen.contains(m)) {
+                        unseen += 1;
+                    }
+                    continue;
+                }
+                None => {}
+            }
             total += 1;
             if self.unseen.contains(&s.id) {
                 unseen += 1;
@@ -3974,6 +4169,11 @@ impl Bench {
                 selected: false,
                 unseen: false,
             });
+        // A ROUND IS ONE ROW, decided here for the same reason the live turn
+        // is: the rail, the keyboard's `step` and the shelf's count all read
+        // this list, and a collapse applied in the renderer would leave the
+        // other two counting questions while the person counts decisions.
+        let fold = fold_rounds(&self.surfaces, self.selected.as_ref());
         let mut rows: Vec<Row> = live
             .into_iter()
             .chain(
@@ -3981,30 +4181,52 @@ impl Bench {
                     .iter()
                     .rev()
                     .filter(|s| shelf.holds(s.kind.shelf()))
-                    .map(|s| Row {
-                        selected: self.selected.as_ref() == Some(&s.id),
-                        unseen: self.unseen.contains(&s.id),
-                        id: s.id.clone(),
-                        title: s.title.clone(),
-                        subtitle: s.subtitle(),
-                        kind: s.kind.id(),
-                        badge: shelf.badge(&s.kind, false),
-                        tint: tint_of(&s.kind),
-                        // Filled in below: standing is a property of a row's
-                        // place in the shelf, which no row can know about
-                        // itself.
-                        standing: Standing::Past,
+                    .filter_map(|s| match fold.get(&s.id) {
+                        Some(Fold::Hidden) => None,
+                        Some(Fold::Round {
+                            members,
+                            opens,
+                            title,
+                            done,
+                            total,
+                            waiting,
+                        }) => Some(Row {
+                            selected: self
+                                .selected
+                                .as_ref()
+                                .is_some_and(|sel| members.contains(sel)),
+                            unseen: members.iter().any(|m| self.unseen.contains(m)),
+                            id: opens.clone(),
+                            title: title.clone(),
+                            subtitle: format!("{done} of {total} answered"),
+                            kind: s.kind.id(),
+                            badge: shelf.badge(&s.kind, false),
+                            tint: if *waiting {
+                                Tint::Waiting
+                            } else {
+                                Tint::Settled
+                            },
+                            standing: Standing::Past,
+                        }),
+                        None => Some(Row {
+                            selected: self.selected.as_ref() == Some(&s.id),
+                            unseen: self.unseen.contains(&s.id),
+                            id: s.id.clone(),
+                            title: s.title.clone(),
+                            subtitle: s.subtitle(),
+                            kind: s.kind.id(),
+                            badge: shelf.badge(&s.kind, false),
+                            tint: tint_of(&s.kind),
+                            // Filled in below: standing is a property of a
+                            // row's place in the shelf, which no row can know
+                            // about itself.
+                            standing: Standing::Past,
+                        }),
                     }),
             )
             .collect();
         stand(&mut rows);
         rows
-    }
-
-    /// Every answered question on this bench, oldest first — what the review
-    /// gallery walks. See [`reviewed`].
-    pub fn reviewable(&self) -> Vec<Reviewed> {
-        reviewed(&self.surfaces)
     }
 
     /// The surface OPENED as a card over the conversation, if any.
@@ -5749,17 +5971,74 @@ mod tests {
         let open = SurfaceId("q-1".into());
         let other = SurfaceId("q-2".into());
         assert!(
-            !draws_waiting_block(Some(&open), &open),
+            !draws_waiting_block(Some(&open), &open, false),
             "the open card is the question; pinning a second copy is the bug"
         );
         assert!(
-            draws_waiting_block(Some(&other), &open),
+            draws_waiting_block(Some(&other), &open, false),
             "reading one card must never hide a different question"
         );
         assert!(
-            draws_waiting_block(None, &open),
+            draws_waiting_block(None, &open, false),
             "with nothing open the pin is the only copy there is"
         );
+        // AND THE SAME ROUND IS THE SAME QUESTION, for this purpose. Two
+        // different ids of one round drew the round twice — the card showing
+        // the question you went back to look at, the pin showing the one still
+        // open, each with its own navigator under it.
+        assert!(
+            !draws_waiting_block(Some(&other), &open, true),
+            "one decision node, one place: a sibling of the open card must not \
+             pin a second copy of the same round"
+        );
+    }
+
+    /// Two cards of one round are the same decision node; two rounds are not.
+    ///
+    /// The comparison is on the step LIST because a round carries no id of its
+    /// own — the navigator is built once and stamped on every card of the
+    /// round, which is exactly what makes the list an identity.
+    #[test]
+    fn questions_of_one_round_are_recognised_as_one_decision_node() {
+        let round = round_of(&[Some(1), None, None]);
+        assert!(
+            in_same_round(Some(&round[0]), Some(&round[2])),
+            "an answered question and an open one, of the same round"
+        );
+        // A DIFFERENT round of the same SHAPE is not the same round: its step
+        // ids differ, which is the part the identity rests on.
+        let mut other = round_of(&[None, None, None]);
+        for s in other.iter_mut() {
+            if let Kind::Question(q) = &mut s.kind {
+                for st in q.round.as_mut().expect("a round").steps.iter_mut() {
+                    st.id = Some(SurfaceId(format!("{}-b", st.id.take().unwrap().0)));
+                }
+            }
+        }
+        assert!(!in_same_round(Some(&round[0]), Some(&other[0])));
+        assert!(!in_same_round(Some(&round[0]), None), "nothing open");
+    }
+
+    /// A round arriving opens as a card; answering inside it does not move you.
+    #[test]
+    fn a_round_takes_the_room_once_and_then_leaves_the_person_alone() {
+        let fresh = round_of(&[None, None, None]);
+        assert_eq!(
+            round_lands_on(&fresh, None),
+            Some(SurfaceId("ask-r-0".into())),
+            "it arrives as a card at the top rather than pinned at the bottom"
+        );
+        // THE GUARD. Every press re-presents the whole round, so without this
+        // the person would be dragged back to the first open question by their
+        // own click.
+        let here = SurfaceId("ask-r-2".into());
+        assert_eq!(
+            round_lands_on(&fresh, Some(&here)),
+            None,
+            "already inside this round: nothing moves"
+        );
+        // Answered rounds ask nothing and take no room.
+        assert_eq!(round_lands_on(&round_of(&[Some(0), Some(1)]), None), None);
     }
 
     #[test]
@@ -6992,23 +7271,22 @@ mod tests {
 
     #[test]
     fn escape_peels_overlays_and_stops_at_a_question() {
-        // Outermost first. The dial menu is above the gallery because it is
+        // Outermost first. The dial menu is above the composer because it is
         // the newest thing on the glass and the cheapest thing to lose — and
         // because without this rung escape reached past an open menu and
         // emptied the composer, trading somebody's sentence for a list of
         // five words that stayed on screen anyway.
-        assert_eq!(peel(true, true, true, true, true), Peel::Dial);
-        assert_eq!(peel(false, true, true, true, true), Peel::Gallery);
-        assert_eq!(peel(false, false, true, true, true), Peel::Typing);
+        assert_eq!(peel(true, true, true, true), Peel::Dial);
+        assert_eq!(peel(false, true, true, true), Peel::Typing);
 
         // THE FLOOR. A card holding a question somebody is being waited on is
         // not something escape may take away — every other meaning of the key
         // here removes the thing the agent is waiting with.
-        assert_eq!(peel(false, false, false, true, true), Peel::Nothing);
+        assert_eq!(peel(false, false, true, true), Peel::Nothing);
 
         // An ANSWERED card is a record, and a record closes like anything
         // else.
-        assert_eq!(peel(false, false, false, true, false), Peel::Card);
+        assert_eq!(peel(false, false, true, false), Peel::Card);
     }
 
     /// The bench is a base surface, and escape does not leave one.
@@ -7021,12 +7299,12 @@ mod tests {
     #[test]
     fn escape_with_nothing_left_stays_on_the_bench() {
         assert_eq!(
-            peel(false, false, false, false, false),
+            peel(false, false, false, false),
             Peel::Nothing,
             "a quiet bench is still the surface you are on"
         );
         assert_eq!(
-            peel(false, false, false, false, true),
+            peel(false, false, false, true),
             Peel::Nothing,
             "a waiting question with no card open is on the rail, not under escape"
         );
@@ -7038,18 +7316,18 @@ mod tests {
         let zones = vec![
             z(0.0, 0.0, 100.0, 100.0, Hit::CloseCard),
             // Painted later, on top of the first.
-            z(50.0, 50.0, 100.0, 100.0, Hit::Review),
+            z(50.0, 50.0, 100.0, 100.0, Hit::SubmitAnswers),
         ];
         assert_eq!(hit_at(&zones, 10.0, 10.0), Some(&Hit::CloseCard));
         assert_eq!(
             hit_at(&zones, 75.0, 75.0),
-            Some(&Hit::Review),
+            Some(&Hit::SubmitAnswers),
             "the one on top"
         );
         assert_eq!(hit_at(&zones, 200.0, 200.0), None);
         // Left/top inclusive, right/bottom exclusive: the shared edge at 100
         // belongs to the later zone only.
-        assert_eq!(hit_at(&zones, 100.0, 60.0), Some(&Hit::Review));
+        assert_eq!(hit_at(&zones, 100.0, 60.0), Some(&Hit::SubmitAnswers));
         assert_eq!(hit_at(&zones, 99.9, 10.0), Some(&Hit::CloseCard));
         assert_eq!(hit_at(&[], 1.0, 1.0), None);
     }
@@ -7117,15 +7395,14 @@ mod tests {
         for pressed in [
             Hit::Choose(0),
             Hit::PressNav(3),
-            Hit::Review,
+            Hit::SubmitAnswers,
             Hit::CloseCard,
             Hit::Launch,
             Hit::ToggleRail,
             Hit::Shelf(crate::surface::Shelf::Decisions),
             Hit::OpenRow(crate::surface::SurfaceId("s".to_string())),
-            Hit::GalleryBack,
-            Hit::GalleryForward,
-            Hit::GalleryClose,
+            Hit::AddNote,
+            Hit::EndAgent,
         ] {
             assert_eq!(pressed.pointer(), Pointer::Hand, "{pressed:?}");
         }
@@ -7225,8 +7502,8 @@ mod tests {
         let corners = [
             (rx, ry, Hit::CloseCard),
             (rx + rw - side, ry, Hit::ToggleRail),
-            (rx, ry + rh - side, Hit::GalleryBack),
-            (rx + rw - side, ry + rh - side, Hit::GalleryForward),
+            (rx, ry + rh - side, Hit::AddNote),
+            (rx + rw - side, ry + rh - side, Hit::SubmitAnswers),
         ];
         let zones: Vec<Zone> = corners
             .iter()
@@ -7291,70 +7568,232 @@ mod tests {
         assert!(moved > 20.0, "composer corner moves {moved:.1}px");
     }
 
-    #[test]
-    fn the_gallery_answers_every_key_including_the_ones_it_ignores() {
-        // The pair a person reaches for, and the pair beside them on a
-        // keyboard somebody is already resting a hand on.
-        assert_eq!(gallery_key("left"), Gallery::Back);
-        assert_eq!(gallery_key("right"), Gallery::Forward);
-        assert_eq!(gallery_key("up"), Gallery::Back);
-        assert_eq!(gallery_key("down"), Gallery::Forward);
-        // Three ways out, because a modal nobody can close is a trap.
-        for out in ["escape", "q", "enter"] {
-            assert_eq!(gallery_key(out), Gallery::Close, "{out}");
-        }
-        // And everything else is SWALLOWED rather than passed down. A key
-        // that fell through would reach the composer underneath, which the
-        // person cannot see and did not mean to type into.
-        for other in ["a", "f5", "tab", "backspace", "1"] {
-            assert_eq!(gallery_key(other), Gallery::Ignore, "{other}");
-        }
+    /// A round of `answers.len()` questions, as the channel builds them: the
+    /// same navigator stamped on every card, each knowing which step it is.
+    ///
+    /// `answers[i]` is which option question `i` was answered with, or `None`
+    /// for one still open.
+    fn round_of(answers: &[Option<usize>]) -> Vec<Surface> {
+        use crate::surface::{Answered, Choice_, Question, Round as QRound, Step as QStep};
+        let steps: Vec<QStep> = answers
+            .iter()
+            .enumerate()
+            .map(|(i, a)| QStep {
+                label: format!("step{i}"),
+                done: a.is_some(),
+                id: Some(SurfaceId(format!("ask-r-{i}"))),
+            })
+            .collect();
+        answers
+            .iter()
+            .enumerate()
+            .map(|(i, a)| {
+                let kind = Kind::Question(Question {
+                    question: format!("question {i}?"),
+                    options: vec![
+                        Choice_ {
+                            label: "Tea".into(),
+                            what_happens: None,
+                            checked: None,
+                        },
+                        Choice_ {
+                            label: "Coffee".into(),
+                            what_happens: None,
+                            checked: None,
+                        },
+                    ],
+                    recommend: None,
+                    answer: match a {
+                        Some(n) => Answered::Chose(*n),
+                        None => Answered::Waiting,
+                    },
+                    cursor: None,
+                    submit: None,
+                    round: Some(QRound {
+                        steps: steps.clone(),
+                        submitting: false,
+                        current: Some(i),
+                    }),
+                });
+                Surface {
+                    id: SurfaceId(format!("ask-r-{i}")),
+                    title: format!("question {i}?"),
+                    kind,
+                    weight: crate::surface::Weight::default(),
+                    actions: Vec::new(),
+                    source: None,
+                    arrived_ms: 10,
+                    origin: crate::surface::Origin::Hook,
+                }
+            })
+            .collect()
     }
 
+    /// THREE QUESTIONS ARE ONE ROW, and the round names itself after the
+    /// question it opens with.
+    ///
+    /// The rail counted cards, and an `AskUserQuestion` of three is three
+    /// cards — so one decision node drew a stack of three rows that all said
+    /// roughly the same thing, and answering one changed only its own. Parker:
+    /// *"SINGLE right spine card for ALL questions in the turn"*.
     #[test]
-    fn the_review_gallery_reads_oldest_first_and_names_the_answer() {
-        let mut b = Bench::new();
-        b.apply(decision("one"));
-        b.apply(decision("two"));
-        // Nothing answered yet: an empty gallery, and the button that opens
-        // it is simply not offered.
-        assert!(reviewed(&b.all_newest_first().cloned().collect::<Vec<_>>()).is_empty());
+    fn a_round_of_three_is_one_rail_row_carrying_the_whole_round() {
+        let round = round_of(&[None, None, None]);
+        let fold = fold_rounds(&round, None);
+        let rows: Vec<&Fold> = round.iter().filter_map(|s| fold.get(&s.id)).collect();
+        assert_eq!(rows.len(), 3, "every card of the round is accounted for");
+        assert_eq!(
+            rows.iter()
+                .filter(|f| matches!(f, Fold::Round { .. }))
+                .count(),
+            1,
+            "and exactly one of them draws a row"
+        );
+        let Fold::Round {
+            title,
+            done,
+            total,
+            waiting,
+            opens,
+            ..
+        } = rows[0]
+        else {
+            panic!("the first question carries the round's row");
+        };
+        assert_eq!((*done, *total), (0, 3));
+        assert!(*waiting);
+        assert_eq!(title, "question 0?", "the round is named by where it opens");
+        assert_eq!(opens, &SurfaceId("ask-r-0".into()));
+        assert!(matches!(rows[1], Fold::Hidden));
+        assert!(matches!(rows[2], Fold::Hidden));
     }
 
-    /// Answering makes MORE to review, not less.
+    /// The row's NAME holds still while the round is answered; only where it
+    /// OPENS moves.
     ///
-    /// The REVIEW ANSWERS button was hidden the moment the card it sits on was
-    /// answered, so it vanished at the exact point there was most to look at —
-    /// and on the last question of a round there was no button anywhere.
-    /// Parker, with three of three answered: *"Oh no not seeing the review
-    /// submit panel AT ALL!"*.
-    ///
-    /// The button's real guard is this count, and this is the direction it
-    /// moves in. Asserted here because it is the PREMISE of removing that
-    /// clause: if answering ever shrank the gallery, hiding the button on an
-    /// answered card would have been right.
+    /// Two facts a single row has to carry at once, and they pull opposite
+    /// ways: a person scanning the rail needs the round to keep the name they
+    /// last saw it under, and a person clicking it wants the question that
+    /// still needs them. Collapsing them onto one string would have made the
+    /// row rename itself on every answer.
     #[test]
-    fn answering_a_question_adds_to_the_review_rather_than_emptying_it() {
+    fn answering_moves_where_the_row_opens_and_never_what_it_is_called() {
+        let round = round_of(&[Some(1), None, None]);
+        let fold = fold_rounds(&round, None);
+        let Some(Fold::Round {
+            title, opens, done, ..
+        }) = fold.get(&SurfaceId("ask-r-0".into()))
+        else {
+            panic!("the first question still carries the row");
+        };
+        assert_eq!(title, "question 0?", "the name did not move");
+        assert_eq!(
+            opens,
+            &SurfaceId("ask-r-1".into()),
+            "but the click now lands on the first question still open"
+        );
+        assert_eq!(*done, 1);
+
+        // FINISHED: nothing is open, so it opens where it began — the row and
+        // its title agree again, which is what an archived round should read
+        // like.
+        let all = round_of(&[Some(1), Some(0), Some(1)]);
+        let fold = fold_rounds(&all, None);
+        let Some(Fold::Round {
+            opens,
+            done,
+            waiting,
+            ..
+        }) = fold.get(&SurfaceId("ask-r-0".into()))
+        else {
+            panic!("still one row");
+        };
+        assert_eq!(opens, &SurfaceId("ask-r-0".into()));
+        assert_eq!(*done, 3);
+        assert!(!*waiting, "nothing of it is waiting on anybody now");
+    }
+
+    /// The open card wins over the question that wants answering.
+    ///
+    /// Without this the row would point somewhere else while the person is
+    /// standing inside the round, so it would draw as unselected and a click
+    /// on it would throw them off the question they were reading.
+    #[test]
+    fn a_rounds_row_points_at_the_card_the_person_already_has_open() {
+        let round = round_of(&[Some(1), None, None]);
+        let here = SurfaceId("ask-r-2".into());
+        let fold = fold_rounds(&round, Some(&here));
+        let Some(Fold::Round { opens, members, .. }) = fold.get(&SurfaceId("ask-r-0".into()))
+        else {
+            panic!("one row");
+        };
+        assert_eq!(opens, &here);
+        assert!(members.contains(&here), "and the row knows it holds it");
+    }
+
+    /// A round nobody can open folds nothing.
+    ///
+    /// The screen reader knows a round exists because the picker's tab bar
+    /// names its steps, and it can open none of them — only the question being
+    /// painted was ever read, so every step's id is `None`. Folding on that
+    /// would hide the one card there is.
+    #[test]
+    fn a_round_read_off_the_screen_keeps_its_only_card() {
+        let mut only = round_of(&[None, None]);
+        only.truncate(1);
+        if let Kind::Question(q) = &mut only[0].kind {
+            for st in q.round.as_mut().expect("a round").steps.iter_mut() {
+                st.id = None;
+            }
+        }
+        assert!(
+            fold_rounds(&only, None).is_empty(),
+            "no id to key on, so the card keeps the row it already had"
+        );
+    }
+
+    /// A LONE question is untouched by the collapse.
+    ///
+    /// The guard on the whole feature, and the cheapest way for it to be
+    /// wrong: most questions an agent asks are one question, they carry no
+    /// round at all, and a fold that reached them would take the only row they
+    /// have. `Fold` says nothing about them, which is how the rail knows to
+    /// draw them exactly as before.
+    #[test]
+    fn a_question_that_is_not_in_a_round_keeps_its_own_row() {
         let mut b = Bench::new();
         b.apply(asked("q1", None));
-        b.apply(asked("q2", None));
+        b.apply(asked("q2", Some(1)));
         assert!(
-            reviewed(&b.all_newest_first().cloned().collect::<Vec<_>>()).is_empty(),
-            "nothing answered yet, so there is nothing to review"
+            fold_rounds(&b.all_newest_first().cloned().collect::<Vec<_>>(), None).is_empty(),
+            "no rounds here, so nothing to collapse"
         );
-
-        b.apply(asked("q1", Some(1)));
         assert_eq!(
-            reviewed(&b.all_newest_first().cloned().collect::<Vec<_>>()).len(),
-            1,
-            "one answer, one row"
-        );
-        b.apply(asked("q2", Some(0)));
-        assert_eq!(
-            reviewed(&b.all_newest_first().cloned().collect::<Vec<_>>()).len(),
+            b.rows_for(Shelf::Decisions).len(),
             2,
-            "the count only ever grows as a round is answered"
+            "two questions, two rows"
         );
+        assert_eq!(b.counts(Shelf::Decisions).0, 2);
+    }
+
+    /// The tab's count says what the rail shows.
+    ///
+    /// Two readers of one fact, and the tab sits directly above the rows — so
+    /// a `3` over one row is the surface disagreeing with itself in the two
+    /// places a person sees at once.
+    #[test]
+    fn the_decisions_tab_counts_rounds_the_way_the_rail_draws_them() {
+        let mut b = Bench::new();
+        for s in round_of(&[None, None, None]) {
+            b.apply(Post {
+                op: Op::Present,
+                id: s.id.clone(),
+                pane: None,
+                surface: Some(s),
+            });
+        }
+        assert_eq!(b.rows_for(Shelf::Decisions).len(), 1, "one row");
+        assert_eq!(b.counts(Shelf::Decisions).0, 1, "and the tab agrees");
     }
 
     /// A reading that FOLDED is not a reading that FAILED.
@@ -8929,5 +9368,66 @@ mod tests {
         };
         let _ = spans(&p, &s);
         let _ = copy_text(&p, &s);
+    }
+
+    /// THE PINNED QUESTION IS STILL FOUND WHEN AN UNRELATED CARD IS OPEN.
+    ///
+    /// The state: a person reading a reply while a round waits. The pinned
+    /// block draws the question — the rule for that compares decision nodes,
+    /// and a reply is not one — and the block's own submit gate asks about the
+    /// question's id, so the SUBMIT tab appears on it.
+    ///
+    /// The press gate used to read `selected().or_else(waiting_question())`
+    /// and then ask about whatever that returned, so with a reply selected the
+    /// fallback never ran, the answer was about the reply, and the tab was
+    /// drawn and silently refused. Asserted here rather than in `pane` because
+    /// this is the resolution, and `pane::bench_round_open` now asks
+    /// `submittable` of each candidate in turn against exactly this pair.
+    ///
+    /// The ANSWERING half is still the old resolution in [`Bench::act`] and
+    /// `bench_choose` — `parker-brown-family/terminal-delight#694`.
+    #[test]
+    fn an_open_reply_does_not_swallow_the_question_pinned_under_it() {
+        let mut b = Bench::new();
+        b.apply(asked("q", None));
+        b.apply(response("r", "a reply"));
+        b.select(&SurfaceId("r".into()));
+
+        let waiting = b.waiting_question().map(|s| s.id.clone());
+        assert_eq!(waiting, Some(SurfaceId("q".into())));
+        assert!(
+            draws_waiting_block(
+                b.showing().map(|s| &s.id),
+                &SurfaceId("q".into()),
+                in_same_round(b.showing(), b.waiting_question()),
+            ),
+            "the block is drawn, so something on it has to be pressable"
+        );
+
+        // `can` stands in for `submittable`, which is not reachable from this
+        // module — only a question of a hook-carried round can be sent, and a
+        // reply never can.
+        let can = |id: &SurfaceId| id.0.starts_with('q');
+        assert_eq!(
+            first_sendable(b.selected(), b.waiting_question(), can),
+            waiting,
+            "the press has to land on the question the block drew"
+        );
+
+        // And the selection still WINS when it can answer, which is the half
+        // that keeps a person on the card they opened instead of jumping them
+        // to whichever question is open.
+        b.apply(asked("q2", None));
+        b.select(&SurfaceId("q2".into()));
+        assert_eq!(
+            first_sendable(b.selected(), b.waiting_question(), can),
+            Some(SurfaceId("q2".into()))
+        );
+
+        // Neither can: nothing to press, and no guess at a third surface.
+        assert_eq!(
+            first_sendable(b.selected(), b.waiting_question(), |_| false),
+            None
+        );
     }
 }

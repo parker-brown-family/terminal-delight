@@ -1385,6 +1385,24 @@ pub enum Answered {
     /// card that nobody made — and the claim would look exactly as confident
     /// as the ones that were measured.
     Ended,
+    /// The person submitted the round with this question still blank.
+    ///
+    /// A DECISION, and the only one of the unanswered states that somebody
+    /// actually made. Parker, asking for the submit that creates it: *"NO
+    /// CONFIRMATION if the person FAILED to answer questions... a blank
+    /// question is common practice, this will not add friction"*. Leaving a
+    /// question alone and pressing submit is an ordinary thing to do, so the
+    /// bench has to be able to say it happened.
+    ///
+    /// Distinct from [`Answered::Waiting`], which is the state this replaces
+    /// and the reason the variant exists at all: after a partial submit
+    /// nobody is coming back to this question, and a card still drawing
+    /// WAITING ON YOU over it would be asking for an answer that can no
+    /// longer be delivered. Distinct from [`Answered::Cancelled`], where the
+    /// round was refused and no question got an answer, and from
+    /// [`Answered::Ended`], where the ending is simply unrecorded — here the
+    /// ending is known, chosen, and this question's share of it is *nothing*.
+    Skipped,
 }
 
 /// Something arrived and this build cannot type it.
@@ -1784,6 +1802,7 @@ impl Surface {
                 Answered::ChoseUnknown => "answered · how is unavailable".into(),
                 Answered::Cancelled => "cancelled · nothing was answered".into(),
                 Answered::Ended => "ended · nobody recorded how".into(),
+                Answered::Skipped => "left blank · the round went without it".into(),
                 Answered::Waiting => format!("{} options · waiting on you", q.options.len()),
             },
             // The plain reply IS the subtitle: a reply's row is read, not

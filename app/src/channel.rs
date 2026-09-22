@@ -611,14 +611,44 @@ impl Round {
             .all(|p| p.as_ref().is_some_and(|v| !v.is_empty()))
     }
 
+    /// Not one question of this round got an answer.
+    ///
+    /// The opposite end of [`Self::complete`], and a DIFFERENT fact from "not
+    /// complete": a round with two of three answered is incomplete and carries
+    /// real decisions, while this one carries none at all. Submitting the
+    /// first is a person sending what they had an opinion about; submitting
+    /// the second is a person declining the whole round, and the bench draws
+    /// them differently because they are different acts.
+    pub fn nothing_picked(&self) -> bool {
+        self.picked
+            .iter()
+            .all(|p| p.as_ref().is_none_or(|v| v.is_empty()))
+    }
+
     /// The map the harness's own answer channel takes: question text to the
     /// chosen label, several labels joined by `", "` on a multi-select.
     /// `None` until every question is answered — a partial map would answer
     /// questions nobody has looked at with nothing.
     pub fn answers(&self) -> Option<Map<String, Value>> {
-        if !self.complete() {
-            return None;
-        }
+        self.complete().then(|| self.answers_so_far())
+    }
+
+    /// The same map, however far through the round the person got.
+    ///
+    /// What SUBMIT ANSWERS sends. [`Self::answers`] refuses to build one until
+    /// every question is committed, and that refusal is right for the
+    /// automatic road — a round that sends itself the instant it fills up must
+    /// not send itself early. It is wrong for a button somebody pressed on
+    /// purpose. Parker: *"NO CONFIRMATION if the person FAILED to answer
+    /// questions... a blank question is common practice, this will not add
+    /// friction"*.
+    ///
+    /// **An unanswered question is OMITTED, never sent as `""`.** The two are
+    /// not the same fact on the other side of the wire: an empty string is an
+    /// answer whose content happens to be nothing, and an absent key is a
+    /// question nobody answered. The agent reading this map can act on the
+    /// second and can only be misled by the first.
+    pub fn answers_so_far(&self) -> Map<String, Value> {
         let mut out = Map::new();
         for (q, picks) in self.questions.iter().zip(&self.picked) {
             let labels: Vec<&str> = picks
@@ -630,9 +660,47 @@ impl Round {
                         .collect()
                 })
                 .unwrap_or_default();
+            if labels.is_empty() {
+                continue;
+            }
             out.insert(q.question.clone(), json!(labels.join(", ")));
         }
-        Some(out)
+        out
+    }
+
+    /// Every question's answer as one line, for the road where the bench can
+    /// only talk to the agent in words.
+    ///
+    /// A blank is SAID rather than dropped here, and that is not a
+    /// contradiction of [`Self::answers_so_far`] — a map has a shape that can
+    /// carry absence and a sentence does not, so a question omitted from a
+    /// sentence is a question the agent never learns was asked.
+    fn spoken_answers(&self) -> String {
+        self.questions
+            .iter()
+            .zip(&self.picked)
+            .map(|(q, picks)| {
+                let name = q
+                    .header
+                    .clone()
+                    .unwrap_or_else(|| fold(&q.question).chars().take(40).collect::<String>());
+                let labels: Vec<&str> = picks
+                    .as_ref()
+                    .map(|v| {
+                        v.iter()
+                            .filter_map(|i| q.options.get(*i))
+                            .map(|o| o.label.as_str())
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                if labels.is_empty() {
+                    format!("{name}: left blank")
+                } else {
+                    format!("{name}: {}", labels.join(", "))
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("; ")
     }
 
     /// The round's steps, for the progress strip on every card in it.
@@ -686,6 +754,41 @@ impl Round {
                     })
                     .collect();
                 let answer = match (q.multi, picks) {
+                    // NOTHING PICKED, AND THE BENCH SENT ANYWAY — somebody
+                    // pressed SUBMIT ANSWERS with this one still blank.
+                    //
+                    // Read ABOVE every ending, because it is the strongest
+                    // thing known about this question and the only one of the
+                    // blank states that records a decision. The `answered`
+                    // record for the round lands a moment later and would
+                    // otherwise overwrite a deliberate blank with "how is
+                    // unavailable" — the bench forgetting something it watched
+                    // a person do, and replacing it with a shrug.
+                    (_, []) if self.sent => {
+                        // NOTHING AT ALL IS A REFUSAL, not three separate
+                        // decisions to leave a question blank.
+                        //
+                        // `Skipped` says a person looked at this question and
+                        // chose to send without it, which is true of a blank
+                        // beside an answer and false of a round where nothing
+                        // was picked — there the one decision was *go on
+                        // without me*, and drawing it as three considered
+                        // omissions invents deliberation that did not happen.
+                        // [`Answered::Cancelled`] already means exactly this
+                        // and already reads "cancelled · nothing was
+                        // answered".
+                        //
+                        // Read here rather than off `ending`, for the same
+                        // reason the whole arm is: the harness's own record
+                        // lands a moment later and sets `ending` to
+                        // `Answered`, which would overwrite what the bench
+                        // watched a person do with a shrug.
+                        if self.nothing_picked() {
+                            Answered::Cancelled
+                        } else {
+                            Answered::Skipped
+                        }
+                    }
                     // Nothing picked. WHY nothing was picked is the whole
                     // reading: a round still open is waiting on a person, a
                     // round that returned answered this question in a shape we
@@ -1113,6 +1216,22 @@ impl State {
             .any(|r| !r.closed() && !r.sent && !r.complete())
     }
 
+    /// Can this card's round still be sent from the bench?
+    ///
+    /// What the SUBMIT ANSWERS button is drawn under. It asks about the ROUND
+    /// and not about the card, which is the whole point: a round whose first
+    /// question is answered is still sendable, and the card somebody happens
+    /// to be reading has no idea whether its neighbours are done.
+    ///
+    /// A card the channel does not carry answers `false` — there is no
+    /// `tool_use_id` to write against and nothing accumulating to send, so the
+    /// button is absent there rather than present and refusing.
+    pub fn submittable(&self, id: &SurfaceId) -> bool {
+        self.owns(id)
+            .map(|(ri, _)| &self.rounds[ri])
+            .is_some_and(|r| !r.closed() && !r.sent)
+    }
+
     /// Which round and question a card belongs to, if it is ours.
     pub fn owns(&self, id: &SurfaceId) -> Option<(usize, usize)> {
         self.rounds.iter().enumerate().find_map(|(ri, r)| {
@@ -1146,32 +1265,50 @@ impl State {
     /// there is no length floor here; a floor no caller can trip is a case
     /// that cannot fail.
     ///
-    /// # Why a ticked multi-select is still a candidate
+    /// # An ANSWERED question of an open round still matches
     ///
-    /// The other clause skips a question that has already been picked, so a
-    /// stale reading cannot re-arm one the person has dealt with — and *dealt
-    /// with* is what `picked` means on a SINGLE-select, where pressing an
-    /// option advances the picker to the next question. It is not what it
-    /// means on a multi-select, where ticking a box leaves you on the same
-    /// question with the Submit still ahead of you. Skipping there mints a
-    /// twin of the question the picker is painting right now.
+    /// A preference, not a filter, and the difference is the duplicate card
+    /// Parker kept meeting: *"STILL REPEATING A QUESTION ON THE RIGHT SPINE
+    /// CARDS ... or maybe sometimes not!!!"*
+    ///
+    /// This used to SKIP any question already picked, on the reasoning that
+    /// pressing an option advances the picker, so a reading of a picked
+    /// question must be stale. **That reasoning holds on the keys road and
+    /// fails on the file road**, which is the road a held picker actually
+    /// takes: there the bench types nothing at all — it records the pick and
+    /// waits for the round to fill up — so the picker goes on painting the
+    /// question it was painting, unchanged, for as long as the round is open.
+    /// The next screen sweep read that question, found it picked, called it a
+    /// stranger, and minted a second card for it. Timing is the whole reason
+    /// it came and went: on the keys road the picker really does move on, and
+    /// the twin never appeared.
+    ///
+    /// So a picked question is now the SECOND choice rather than no choice.
+    /// An unpicked one still wins where both match, which keeps the old
+    /// behaviour everywhere it was right — the reading most likely belongs to
+    /// the question the picker has moved to. Falling back costs nothing a
+    /// twin did not cost more of: folding into an answered card sets a cursor
+    /// on it and nothing else, and the card's armed-ness is read from
+    /// `picked`, never from the screen, so a stale reading cannot re-arm
+    /// anything.
     pub fn matching(&self, question_text: &str) -> Option<SurfaceId> {
         let want = fold(question_text);
         if want.is_empty() {
             return None;
         }
-        self.rounds
-            .iter()
-            .filter(|r| !r.closed() && !r.sent)
-            .find_map(|r| {
-                r.questions
-                    .iter()
-                    .enumerate()
-                    .find(|(i, q)| {
-                        (q.multi || r.picked[*i].is_none()) && fold(&q.question).ends_with(&want)
-                    })
-                    .map(|(i, _)| r.surface_id(i))
-            })
+        let mut fallback = None;
+        for r in self.rounds.iter().filter(|r| !r.closed() && !r.sent) {
+            for (i, q) in r.questions.iter().enumerate() {
+                if !fold(&q.question).ends_with(&want) {
+                    continue;
+                }
+                if q.multi || r.picked[i].is_none() {
+                    return Some(r.surface_id(i));
+                }
+                fallback.get_or_insert_with(|| r.surface_id(i));
+            }
+        }
+        fallback
     }
 
     /// Every round still open is over, because the agent has finished a turn.
@@ -1280,7 +1417,25 @@ impl State {
             now_ms,
             cursor.is_some(),
         ) {
-            Route::File => match round.answers() {
+            // A ROUND WITH A NAVIGATOR IS SENT BY ITS SUBMIT TAB, never by
+            // running out of questions.
+            //
+            // Filling in the last answer used to send the round on the spot,
+            // which was the only way it could ever go and is why there was no
+            // submit at all. Now that there is one, auto-sending is worse than
+            // redundant: it takes the round away at the exact moment a person
+            // has finished and might want to look back over it, and it makes
+            // the tabs a lie — they invite you to revisit question one, and
+            // answering question three had already posted the lot. Parker, on
+            // the state that produces: *"Once answered a question, it is
+            // locked and I cannot change it - this is wrong."*
+            //
+            // A round of ONE still commits on the press, because a round of
+            // one draws no navigator (`Round::steps` returns `None` below two)
+            // and therefore has no submit tab. Leaving it to a button that is
+            // not there would make a single question unanswerable, which is
+            // the same class of bug pointing the other way.
+            Route::File => match round.answers().filter(|_| round.questions.len() < 2) {
                 Some(answers) => {
                     round.sent = true;
                     Press::WriteAnswers {
@@ -1312,6 +1467,113 @@ impl State {
                 }
             }
             Route::Sentence => Press::Sentence { label },
+        }
+    }
+
+    /// SUBMIT ANSWERS: send this card's whole round, however much of it was
+    /// answered.
+    ///
+    /// The round was already the unit — one decision node, one card, one
+    /// navigator across its questions — in every way except the one that
+    /// mattered, which is that there was no way to END it. A round only ever
+    /// went out when its last question was answered, so a person who meant to
+    /// leave one blank had no move at all. Parker, on a bench with three
+    /// questions on it: *"there is STILL NO WAY TO SUBMIT THE QUESTIONS!!!!"*
+    ///
+    /// **Nothing is refused for being incomplete, and nothing asks twice.**
+    /// A confirmation here would be the friction the button exists to remove —
+    /// *"a blank question is common practice, this will not add friction"* —
+    /// and the state it would protect is recorded honestly instead: every
+    /// question left blank comes back as [`Answered::Skipped`], which says a
+    /// person decided rather than that a person has not arrived yet.
+    ///
+    /// The road is picked exactly as a single press picks it ([`route_for`]),
+    /// because the question of who can hear the bench right now does not
+    /// change with which button was pressed:
+    ///
+    /// - **File** — the hook is holding the picker, so the map goes to disk
+    ///   and the tool returns it. The road this button was built for.
+    /// - **Keys** — no hold, but the picker is painted and the screen reader
+    ///   knows where its own button sits. Every answer already went down the
+    ///   pseudoterminal as it was made, so on a COMPLETE round that button is
+    ///   the round's own Submit and this is the last keystroke. On a partial
+    ///   round it is not — see below.
+    /// - **Sentence** — nobody is holding anything and there is no picker to
+    ///   drive. Say what was chosen in a line the agent reads next turn, with
+    ///   the blanks named aloud (see [`Round::spoken_answers`]).
+    ///
+    /// # A PARTIAL ROUND NEVER GOES BY KEYS
+    ///
+    /// The picker calls its own button `Submit` on the last question of a
+    /// round and `Next` on every other one — [`crate::screenread`] matches all
+    /// three spellings and records only the POSITION. So a keystroke aimed at
+    /// it from question two of three presses `Next`: the picker advances, the
+    /// round does not go out, and the bench has just set the flag that turns
+    /// every remaining blank into [`Answered::Skipped`] and takes the chips
+    /// away. The agent stays blocked on question three with nothing left on
+    /// the bench that can answer it.
+    ///
+    /// Measured on `cdb64925` before this clause existed: `submit` on a round
+    /// with both questions blank returned
+    /// `Keys { bytes: [1b 5b 42 × 3, 0d], note: "submitted the round" }` and
+    /// both questions came back `Skipped`.
+    ///
+    /// So the keystroke is used only where it really is the round's ending,
+    /// and a partial round falls to words — which the sentence road already
+    /// names blanks in, and which cannot half-press anybody's menu.
+    pub fn submit(&mut self, id: &SurfaceId, now_ms: u64) -> Press {
+        let Some((ri, _)) = self.owns(id) else {
+            return Press::Refused("not a question this channel carried".into());
+        };
+        let cursor = self.cursors.get(id).copied();
+        let round = &mut self.rounds[ri];
+        if round.closed() || round.sent {
+            return Press::Refused("this round has already been answered".into());
+        }
+        let route = route_for(
+            round.waiting_until_ms,
+            round.released,
+            now_ms,
+            cursor.is_some(),
+        );
+        // SENT IS SET ON EVERY ROAD, unlike a single press — which leaves it
+        // alone on the keys road because one answer of several is not the
+        // round going out. This IS the round going out, whichever way it
+        // travelled, and the flag is what turns the blanks into
+        // [`Answered::Skipped`] and stops the card offering its chips again.
+        round.sent = true;
+        match route {
+            Route::File => Press::WriteAnswers {
+                tool_use_id: round.tool_use_id.clone(),
+                answers: round.answers_so_far(),
+            },
+            Route::Keys => {
+                let (at, submit) = cursor.unwrap_or((0, None));
+                // BOTH, or words. `submit` is a row the screen reader saw, and
+                // completeness is what makes that row the round's Submit
+                // rather than its Next. Either one alone presses something
+                // nobody chose.
+                match submit.filter(|_| round.complete()) {
+                    Some(target) => {
+                        let bytes = crate::workbench::menu_keys(target, at);
+                        self.cursors.remove(id);
+                        Press::Keys {
+                            bytes,
+                            note: "submitted the round".into(),
+                        }
+                    }
+                    // The picker is up and either has no button we can see or
+                    // is not on the last question. Guessing a position would
+                    // drive somebody's menu to a row nobody chose, so this
+                    // falls to words instead.
+                    None => Press::Sentence {
+                        label: round.spoken_answers(),
+                    },
+                }
+            }
+            Route::Sentence => Press::Sentence {
+                label: round.spoken_answers(),
+            },
         }
     }
 }
@@ -2128,7 +2390,15 @@ mod tests {
         // round and the answer goes as a FILE.
         assert_eq!(st.press(&multi, 0, 2_001), Press::Recorded);
         assert_eq!(st.press(&multi, 1, 2_002), Press::Recorded);
-        match st.press(&multi, 2, 2_003) {
+        // FILLING IN THE LAST ANSWER NO LONGER SENDS. This used to be a
+        // `WriteAnswers`, and that was the only way a round could go — which
+        // is why there was no submit at all. A round with a navigator now has
+        // a SUBMIT tab, and posting the round the instant its last box was
+        // ticked made the other tabs a lie: they invite a person back to an
+        // earlier question and the round had already gone.
+        assert_eq!(st.press(&multi, 2, 2_003), Press::Recorded);
+        assert!(st.submittable(&single), "and it is waiting to be sent");
+        match st.submit(&single, 2_004) {
             Press::WriteAnswers {
                 tool_use_id,
                 answers,
@@ -2183,8 +2453,19 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
-        // Answered: no longer matched by the screen reader.
-        assert_eq!(st.matching("Which drink?"), None);
+        // ANSWERED, AND STILL MATCHED — which is the change that killed the
+        // duplicate card, and it reads as a reversal until you ask what
+        // matching DOES. It hands the screen reader a card to fold its cursor
+        // into; the alternative is not "no card", it is a second card for a
+        // question that already has one. This assertion used to read `None`,
+        // and that `None` is what the twin came out of.
+        //
+        // Folding into an answered card changes nothing about it: the chips
+        // are armed from `picked`, never from the screen.
+        assert_eq!(st.matching("Which drink?"), Some(single.clone()));
+        // The PREFERENCE is intact, which is the half worth protecting: the
+        // round's other question is untouched and still matches on its own.
+        assert_eq!(st.matching("Which sizes?"), Some(cards[1].id.clone()));
         // With neither a hook nor a picker, the answer is a sentence.
         let multi = cards[1].id.clone();
         assert_eq!(st.press(&multi, 0, 2_001), Press::Recorded);
@@ -2193,6 +2474,117 @@ mod tests {
             Press::Sentence {
                 label: String::new()
             }
+        );
+    }
+
+    /// SUBMIT ANSWERS sends a round nobody finished, and says so afterwards.
+    ///
+    /// The button exists for this shape and only this shape — a person who
+    /// answered what they had an opinion about and wants the agent to get on
+    /// with it. Parker: *"a blank question is common practice, this will not
+    /// add friction"*.
+    ///
+    /// Three things are asserted because each could be wrong on its own: what
+    /// goes out, what is left behind, and what a second press does.
+    #[test]
+    fn submitting_a_half_answered_round_sends_what_there_is_and_marks_the_rest() {
+        let mut st = State::new();
+        let ev = Inbound::parse(&question_event()).unwrap();
+        let Effect::Present(cards) = st.take(ev, 1_000) else {
+            panic!()
+        };
+        let first = cards[0].id.clone();
+        st.take(
+            Inbound::Waiting {
+                tool_use_id: "toolu_01ABC".into(),
+                until_ms: 600_000,
+            },
+            1_001,
+        );
+        // One of two answered, so the round would never have gone out on its
+        // own — which is the whole state the button was missing for.
+        assert_eq!(st.press(&first, 1, 1_500), Press::Recorded);
+
+        match st.submit(&first, 1_600) {
+            Press::WriteAnswers { answers, .. } => {
+                assert_eq!(
+                    answers.get("Which drink?").and_then(Value::as_str),
+                    Some("Coffee")
+                );
+                // OMITTED, not empty. An absent key is a question nobody
+                // answered; `""` is an answer whose content is nothing. The
+                // agent reading this map can act on the first and can only be
+                // misled by the second.
+                assert!(
+                    !answers.contains_key("Which sizes?"),
+                    "the blank question was sent as a value: {answers:?}"
+                );
+            }
+            other => panic!("the hook is holding, so this is the file road: {other:?}"),
+        }
+
+        // WHAT IS LEFT BEHIND. Nobody is coming back to the blank one, and
+        // saying so is the difference between a card that records what
+        // happened and one that goes on offering chips that reach nothing.
+        let after = st.round_surfaces(&first, 1_700);
+        let Kind::Question(blank) = &after[1].kind else {
+            panic!()
+        };
+        assert_eq!(blank.answer, Answered::Skipped);
+        let Kind::Question(given) = &after[0].kind else {
+            panic!()
+        };
+        assert_eq!(
+            given.answer,
+            Answered::Chose(1),
+            "and the answer that was given still stands"
+        );
+
+        // AND IT DOES NOT GO TWICE.
+        assert!(!st.submittable(&first));
+        assert!(matches!(st.submit(&first, 1_800), Press::Refused(_)));
+    }
+
+    /// THE DUPLICATE CARD, in the state that produced it.
+    ///
+    /// A hook holding the picker takes the FILE road, and the file road types
+    /// nothing: a press is recorded and the round waits to fill up. So the
+    /// picker goes on painting the question it was painting — the one the
+    /// bench has just answered — and the screen reader keeps reading it.
+    ///
+    /// Under the old rule that reading matched nothing, because the question
+    /// was picked, so the pane minted a second card for it and the rail grew
+    /// a twin. Parker: *"STILL REPEATING A QUESTION ON THE RIGHT SPINE CARDS
+    /// ... or maybe sometimes not!!!"* — the *sometimes* is the two roads. On
+    /// the keys road the picker really does advance, the next reading is of a
+    /// different question, and no twin ever appeared.
+    ///
+    /// Asserted about `matching` rather than about the pane because this is
+    /// the decision: a reading that finds a card folds into it, and only a
+    /// reading that finds NOTHING becomes a new surface.
+    #[test]
+    fn a_question_answered_on_the_file_road_is_still_found_by_the_screen() {
+        let mut st = State::new();
+        let ev = Inbound::parse(&question_event()).unwrap();
+        let Effect::Present(cards) = st.take(ev, 1_000) else {
+            panic!()
+        };
+        let first = cards[0].id.clone();
+        // The hook is holding the picker, which is what makes this the file
+        // road — and the file road is the one that types nothing.
+        st.take(
+            Inbound::Waiting {
+                tool_use_id: "toolu_01ABC".into(),
+                until_ms: 600_000,
+            },
+            1_001,
+        );
+        assert_eq!(st.press(&first, 1, 1_500), Press::Recorded, "nothing typed");
+        assert_eq!(
+            st.matching("Which drink?"),
+            Some(first),
+            "the picker is still painting it, and the reading must land on the \
+             card that already answered it rather than making another"
         );
     }
 
@@ -2457,8 +2849,11 @@ mod tests {
         let multi = SurfaceId("ask-hook-toolu_01ABC-1".into());
         assert_eq!(st.press(&single, 1, 2_000), Press::Recorded);
         assert_eq!(st.press(&multi, 0, 2_000), Press::Recorded);
+        assert_eq!(st.press(&multi, 2, 2_000), Press::Recorded);
+        // The round of two is sent by its SUBMIT tab, not by running out of
+        // questions.
         assert!(matches!(
-            st.press(&multi, 2, 2_000),
+            st.submit(&multi, 2_000),
             Press::WriteAnswers { .. }
         ));
         let before = st.round_surfaces(&single, 0);
@@ -2828,5 +3223,142 @@ mod tests {
         }
         assert_eq!(released.as_deref(), Some("answered"));
         let _ = std::fs::remove_dir_all(&state);
+    }
+
+    /// A PARTIAL ROUND NEVER GOES OUT AS ONE KEYSTROKE.
+    ///
+    /// The picker calls its own button `Submit` on the last question of a
+    /// round and `Next` on every other one, and the screen reader records only
+    /// where it sits. So a keystroke aimed at it from an unanswered question
+    /// presses `Next`: the picker advances, the round does not go, and the
+    /// bench has just set the flag that blanks every remaining question and
+    /// takes the chips away. The agent stays blocked with nothing on the bench
+    /// that can answer it.
+    ///
+    /// Measured on `cdb64925`, before the completeness clause:
+    /// `Keys { bytes: [1b 5b 42 × 3, 0d], note: "submitted the round" }`, and
+    /// both questions came back `Skipped`.
+    ///
+    /// Two halves, because either alone would pass on the broken code: that a
+    /// partial round says it in words, and that a COMPLETE one still sends the
+    /// keystroke — a fix that refused the keys road outright would take away
+    /// the only exit a finished round has on that road.
+    #[test]
+    fn a_partial_round_is_spoken_rather_than_half_pressed_into_the_picker() {
+        let mut st = State::new();
+        let ev = Inbound::parse(&question_event()).unwrap();
+        let Effect::Present(cards) = st.take(ev, 1_000) else {
+            panic!()
+        };
+        let first = cards[0].id.clone();
+        // No hook hold, so this is the keys road; the screen reader has seen
+        // the picker's button at row 3.
+        st.saw_cursor(&first, 0, Some(3));
+        match st.submit(&first, 5_000) {
+            Press::Sentence { label } => {
+                assert!(
+                    label.contains("left blank"),
+                    "the blanks have to be named aloud: {label}"
+                );
+            }
+            other => panic!("a partial round must not drive the picker: {other:?}"),
+        }
+        // And nothing of it reads as a considered omission, because nothing
+        // was considered — see `nothing_picked`.
+        let after = st.round_surfaces(&first, 5_100);
+        for s in &after {
+            let Kind::Question(q) = &s.kind else { panic!() };
+            assert_eq!(q.answer, Answered::Cancelled);
+        }
+
+        // THE COMPLETE ROUND STILL GOES BY KEYS. Every answer already went
+        // down the pseudoterminal as it was made, so the picker is on the last
+        // question and its button really is the round's Submit.
+        let mut st = State::new();
+        let Effect::Present(cards) = st.take(Inbound::parse(&question_event()).unwrap(), 1_000)
+        else {
+            panic!()
+        };
+        let single = cards[0].id.clone();
+        let multi = cards[1].id.clone();
+        st.saw_cursor(&single, 0, Some(3));
+        st.saw_cursor(&multi, 0, Some(3));
+        assert!(matches!(st.press(&single, 1, 1_100), Press::Keys { .. }));
+        assert_eq!(st.press(&multi, 0, 1_101), Press::Recorded, "a tick");
+        assert!(matches!(st.press(&multi, 2, 1_102), Press::Keys { .. }));
+        // A press spends its cursor; the next sweep supplies another, which is
+        // what makes the round sendable by keys at all.
+        st.saw_cursor(&multi, 0, Some(3));
+        assert!(
+            matches!(st.submit(&multi, 1_200), Press::Keys { .. }),
+            "a finished round still ends with the picker's own Submit"
+        );
+    }
+
+    /// A ROUND SENT WITH NOTHING IN IT IS A REFUSAL, not three omissions.
+    ///
+    /// `Skipped` says a person looked at this question and chose to send
+    /// without it. That is true of a blank beside an answer and false of a
+    /// round where nothing was picked, where the one decision was *go on
+    /// without me*. Drawing it as three considered omissions invents
+    /// deliberation nobody performed, and `Cancelled` already says exactly the
+    /// right thing.
+    #[test]
+    fn a_round_submitted_with_nothing_picked_reads_as_refused() {
+        let mut st = State::new();
+        let ev = Inbound::parse(&question_event()).unwrap();
+        let Effect::Present(cards) = st.take(ev, 1_000) else {
+            panic!()
+        };
+        let first = cards[0].id.clone();
+        st.take(
+            Inbound::Waiting {
+                tool_use_id: "toolu_01ABC".into(),
+                until_ms: 600_000,
+            },
+            1_001,
+        );
+        // The tab is still offered — a person saying "none of these" in one
+        // press is a real gesture and counting answers would hide it.
+        assert!(st.submittable(&first));
+        assert!(matches!(
+            st.submit(&first, 1_500),
+            Press::WriteAnswers { .. }
+        ));
+        for s in st.round_surfaces(&first, 1_600) {
+            let Kind::Question(q) = &s.kind else { panic!() };
+            assert_eq!(q.answer, Answered::Cancelled, "{:?}", s.id);
+        }
+
+        // AND THE PARTIAL ROUND IS UNCHANGED, which is the half that keeps
+        // this from being a rename: one answer given and one left means the
+        // blank really was skipped, and it must not read as a refusal.
+        let mut st = State::new();
+        let Effect::Present(cards) = st.take(Inbound::parse(&question_event()).unwrap(), 1_000)
+        else {
+            panic!()
+        };
+        let first = cards[0].id.clone();
+        st.take(
+            Inbound::Waiting {
+                tool_use_id: "toolu_01ABC".into(),
+                until_ms: 600_000,
+            },
+            1_001,
+        );
+        assert_eq!(st.press(&first, 1, 1_500), Press::Recorded);
+        assert!(matches!(
+            st.submit(&first, 1_600),
+            Press::WriteAnswers { .. }
+        ));
+        let after = st.round_surfaces(&first, 1_700);
+        let Kind::Question(given) = &after[0].kind else {
+            panic!()
+        };
+        let Kind::Question(blank) = &after[1].kind else {
+            panic!()
+        };
+        assert_eq!(given.answer, Answered::Chose(1));
+        assert_eq!(blank.answer, Answered::Skipped);
     }
 }

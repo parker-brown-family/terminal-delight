@@ -139,7 +139,7 @@ impl TerminalView {
         }
         // A modal is up: no selection behind it, and the press keeps whatever
         // meaning the modal gave it.
-        if self.wb_review.is_some() || self.wb_dial.is_some() {
+        if self.wb_dial.is_some() {
             return false;
         }
         self.bench_select_from(flat);
@@ -410,9 +410,7 @@ impl TerminalView {
             Hit::Choose(i) => self.bench_choose(i, cx),
             Hit::PressNav(at) => self.bench_press_nav(at, cx),
             Hit::Verb { action, target } => self.bench_act(action, target, cx),
-            Hit::Review => {
-                self.wb_review = Some(0);
-            }
+            Hit::SubmitAnswers => self.bench_submit_round(cx),
             Hit::CloseCard => {
                 self.bench.close_card();
             }
@@ -443,18 +441,6 @@ impl TerminalView {
             Hit::PickRegister { id, key } => self.bench.pick_register(&id, &key),
             Hit::Shelf(shelf) => self.bench.set_shelf(shelf),
             Hit::OpenRow(id) => self.bench_open(&id, cx),
-            Hit::GalleryBack => {
-                if let Some(n) = self.wb_review.as_mut() {
-                    *n = n.saturating_sub(1);
-                }
-            }
-            Hit::GalleryForward => {
-                let total = self.bench.reviewable().len();
-                if let Some(n) = self.wb_review.as_mut() {
-                    *n = (*n + 1).min(total.saturating_sub(1));
-                }
-            }
-            Hit::GalleryClose => self.wb_review = None,
             Hit::Nothing => {}
         }
         cx.notify();
@@ -682,33 +668,6 @@ impl TerminalView {
     /// Nor does it stop propagation — `on_key` does that in one place, from what
     /// this returns.
     pub(super) fn bench_key(&mut self, ks: &Keystroke, cx: &mut Context<Self>) -> bool {
-        // The GALLERY next, and it takes every key.
-        //
-        // It is drawn over everything and it was opened by a deliberate
-        // press, so attention is there — the arrows belong to it until it
-        // closes. Swallowing the keys it does not use is the other half:
-        // a left arrow falling through would walk the caret in a composer
-        // hidden behind the overlay.
-        if self.wb_review.is_some() {
-            use crate::workbench::Gallery;
-            let total = self.bench.reviewable().len();
-            match crate::workbench::gallery_key(&ks.key) {
-                Gallery::Back => {
-                    if let Some(n) = self.wb_review.as_mut() {
-                        *n = n.saturating_sub(1);
-                    }
-                }
-                Gallery::Forward => {
-                    if let Some(n) = self.wb_review.as_mut() {
-                        *n = (*n + 1).min(total.saturating_sub(1));
-                    }
-                }
-                Gallery::Close => self.wb_review = None,
-                Gallery::Ignore => {}
-            }
-            cx.notify();
-            return true;
-        }
         // ALT+<n> LANDS ON A SHELF, above everything that could swallow a digit.
         //
         // Above `reading_key` in particular, which reads a bare digit as
@@ -759,17 +718,12 @@ impl TerminalView {
             );
             match crate::workbench::peel(
                 self.wb_dial.is_some(),
-                self.wb_review.is_some(),
                 talking,
                 self.bench.selected().is_some(),
                 card_waits,
             ) {
                 Peel::Dial => {
                     self.wb_dial = None;
-                    cx.notify();
-                }
-                Peel::Gallery => {
-                    self.wb_review = None;
                     cx.notify();
                 }
                 Peel::Typing => {
@@ -1430,6 +1384,29 @@ impl TerminalView {
                     self.wb_woken = Some(w);
                 }
                 Effect::Present(surfaces) => {
+                    // A ROUND ARRIVING TAKES THE ROOM, as a card at the top,
+                    // rather than arriving pinned to the floor of the pane.
+                    //
+                    // The pin is drawn below the body and outside its scroll,
+                    // which puts it at the bottom by construction — so a
+                    // question appeared down by the composer and then jumped
+                    // the height of the pane the moment answering it opened a
+                    // card. Parker has now reported that jump twice, the
+                    // second time as *"it must not snap to the bottom for any
+                    // tab (overview OR decisions)"*. `body_anchor` was the
+                    // first attempt and it can only move the BODY; the pin is
+                    // not in the body, so the fix has to be that the question
+                    // is a card in the first place.
+                    //
+                    // Gated on the selection not already being in this round,
+                    // which is what keeps it from fighting the person: every
+                    // press re-presents the whole round, and a rule that
+                    // selected on each of those would drag them back to
+                    // question one every time they answered anything.
+                    let open = crate::workbench::round_lands_on(
+                        &surfaces,
+                        self.bench.selected().map(|s| &s.id),
+                    );
                     for s in surfaces {
                         let id = s.id.clone();
                         self.present(
@@ -1441,6 +1418,9 @@ impl TerminalView {
                             },
                             cx,
                         );
+                    }
+                    if let Some(id) = open {
+                        self.bench.select(&id);
                     }
                 }
                 Effect::Reply { text, n, ended } => {
@@ -1509,19 +1489,23 @@ impl TerminalView {
         self.wb_beacon = Some((open, now));
     }
 
-    /// A press on a card the channel carried: record it, then take whichever
-    /// road the hook left open — the answer file, the picker's keys, or a
-    /// sentence. See [`crate::channel::State::press`].
-    fn bench_hook_press(
+    /// Take whichever road the channel picked — the answer file, the picker's
+    /// keys, or a sentence — and leave a journal entry saying which.
+    ///
+    /// ONE function for both of the things that can send, because they send
+    /// the same four ways and a second copy would be a second place for the
+    /// journal to go quiet. A single press takes this
+    /// ([`crate::channel::State::press`]) and so does SUBMIT ANSWERS
+    /// ([`crate::channel::State::submit`]); what differs between them is what
+    /// they decide to send, never how it travels.
+    fn bench_route_press(
         &mut self,
         id: &crate::surface::SurfaceId,
-        nav: usize,
+        press: crate::channel::Press,
         cx: &mut Context<Self>,
     ) {
         use crate::channel::{Outbound, Press, Route};
-        use crate::surface::{Op, Post};
-        let now = crate::surfacefeed::now_ms();
-        match self.wb_channel.press(id, nav, now) {
+        match press {
             Press::WriteAnswers {
                 tool_use_id,
                 answers,
@@ -1571,6 +1555,20 @@ impl TerminalView {
             }
             Press::Recorded | Press::Refused(_) => {}
         }
+    }
+
+    /// A press on a card the channel carried: record it, then take whichever
+    /// road the hook left open. See [`crate::channel::State::press`].
+    fn bench_hook_press(
+        &mut self,
+        id: &crate::surface::SurfaceId,
+        nav: usize,
+        cx: &mut Context<Self>,
+    ) {
+        use crate::surface::{Op, Post};
+        let now = crate::surfacefeed::now_ms();
+        let press = self.wb_channel.press(id, nav, now);
+        self.bench_route_press(id, press, cx);
         // Whatever the road, the cards say what was pressed.
         let surfaces = self.wb_channel.round_surfaces(id, now);
         // WHERE TO STAND NEXT, decided from the cards we are about to present
@@ -2070,56 +2068,79 @@ impl TerminalView {
     /// so answering worked in the place you were not looking. Parker, with the
     /// two side by side: *"The decision tab work surface should look a LOT
     /// more like [the waiting block]"*.
-    /// The review, as the whole of the workbench body.
+    /// Is the open card a question of a round this pane can still send?
     ///
-    /// `None` when nothing is being reviewed, or when there is nothing to
-    /// review — a gallery of nothing is a takeover that strands the person on
-    /// an empty page, where the old flyout merely declined to open.
+    /// The condition SUBMIT ANSWERS is drawn under, and it is about the round
+    /// rather than about the card: a round with its first question answered
+    /// and its third blank is still a round somebody can submit, and the card
+    /// they happen to be standing on says nothing about that.
     ///
-    /// The navigator is built here rather than in [`crate::benchdraw`] because
-    /// its three chips need this pane's hit zones, which is also what makes
-    /// them light under the pointer.
-    pub(super) fn review_body(&self, sk: &crate::skin::Skin, th: &Theme) -> Option<gpui::Div> {
-        let at = self.wb_review?;
-        let all = self.bench.reviewable();
-        if all.is_empty() {
-            return None;
-        }
-        // Clamped rather than trusted: answering a question while the gallery
-        // is open can shorten the list under the index.
-        let at = at.min(all.len() - 1);
-        let item = all[at].clone();
-        let total = all.len();
-        let back = at > 0;
-        let fwd = at + 1 < total;
-        Some(
-            crate::benchdraw::review_page(at, total, &item.title, &item.answer, sk, th).child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .gap(px(8.))
-                    .items_center()
-                    .child(
-                        sk.chip(back)
-                            .child("\u{2190}".to_string())
-                            .relative()
-                            .child(self.live_zone(crate::workbench::Hit::GalleryBack, sk)),
-                    )
-                    .child(
-                        sk.chip(fwd)
-                            .child("\u{2192}".to_string())
-                            .relative()
-                            .child(self.live_zone(crate::workbench::Hit::GalleryForward, sk)),
-                    )
-                    .child(div().flex_1())
-                    .child(
-                        sk.chip(false)
-                            .child("CLOSE".to_string())
-                            .relative()
-                            .child(self.live_zone(crate::workbench::Hit::GalleryClose, sk)),
-                    ),
-            ),
+    /// A question that is not a hook-carried round has no round-level send —
+    /// there is no `tool_use_id` to answer and nothing accumulating — so the
+    /// button is absent rather than present and refusing. A control that can
+    /// only say no is worse than no control.
+    ///
+    /// **`submittable` is asked of EACH candidate, not of the first one** —
+    /// the rule is [`crate::workbench::first_sendable`], held there rather
+    /// than here so it has a test. This read
+    /// `selected().or_else(waiting_question())` and then asked about whatever
+    /// that returned, which drew the tab on the pinned block and refused the
+    /// press.
+    ///
+    /// The ANSWERING half of the same case is still the house resolution in
+    /// `Bench::act` and `bench_choose`, and is older than this function —
+    /// `parker-brown-family/terminal-delight#694`.
+    fn bench_round_open(&self) -> Option<crate::surface::SurfaceId> {
+        crate::workbench::first_sendable(
+            self.bench.selected(),
+            self.bench.waiting_question(),
+            |id| self.wb_channel.submittable(id),
         )
+    }
+
+    /// SUBMIT ANSWERS, pressed.
+    ///
+    /// No confirmation, on purpose and against the instinct — half a round is
+    /// a legitimate thing to send, so a dialog here would be the surface
+    /// arguing with a decision the person has already made. Parker: *"NO
+    /// CONFIRMATION if the person FAILED to answer questions... a blank
+    /// question is common practice, this will not add friction"*.
+    /// Is there a round this pane could send right now?
+    ///
+    /// The control socket's qualifier, and deliberately the SAME question the
+    /// tab is drawn under rather than a second reading of it — `ctl bench
+    /// submit` has to land where the pointer would land or it is not a test of
+    /// the button, it is a second implementation of it.
+    pub(crate) fn bench_can_submit(&self) -> bool {
+        self.bench_round_open().is_some()
+    }
+
+    pub(crate) fn bench_submit_round(&mut self, cx: &mut Context<Self>) {
+        use crate::surface::{Op, Post};
+        let Some(id) = self.bench_round_open() else {
+            return;
+        };
+        let now = crate::surfacefeed::now_ms();
+        let press = self.wb_channel.submit(&id, now);
+        self.bench_route_press(&id, press, cx);
+        // EVERY CARD OF THE ROUND IS RE-PRESENTED, not just the open one: the
+        // send changed what the blank ones mean — they are
+        // `Answered::Skipped` now rather than waiting — and a card left
+        // holding the old reading would go on offering chips for a round that
+        // has already gone.
+        for s in self.wb_channel.round_surfaces(&id, now) {
+            let sid = s.id.clone();
+            self.present(
+                Post {
+                    op: Op::Present,
+                    id: sid,
+                    pane: None,
+                    surface: Some(s),
+                },
+                cx,
+            );
+        }
+        cx.notify();
     }
 
     pub(super) fn answer_chips(
@@ -2137,6 +2158,19 @@ impl TerminalView {
             _ => "SUBMIT",
         };
         let answered = q.answer != crate::surface::Answered::Waiting;
+        // Asked once, before the borrow of `self` the chips take, and read
+        // three times below — by the round's own submit, by the per-question
+        // one, and by the chips deciding whether they still press.
+        let round_open = self.bench_round_open().is_some();
+        // SETTLED IS NOT ANSWERED. A question with a pick on it is `answered`
+        // and can still be changed while its round is live; a question whose
+        // round has gone is settled and cannot. Collapsing the two is what
+        // froze a card the moment somebody chose on it.
+        //
+        // A question with no round at all — the lone ask, the screen-read
+        // twin — has no `round_open` to consult, so it keeps the old rule and
+        // locks on its answer. That one really did commit on the press.
+        let settled = answered && !round_open;
         let chips: Vec<gpui::Div> = q
             .options
             .iter()
@@ -2184,11 +2218,24 @@ impl TerminalView {
                     sk,
                     th,
                 );
-                if answered {
-                    // A question already answered keeps its chips so the
-                    // record reads the same as the decision did, but they do
-                    // not press: answering twice sends a second keystroke to a
-                    // menu that has already closed.
+                // A QUESTION YOU HAVE ANSWERED IS STILL CHANGEABLE, right up
+                // until the round goes.
+                //
+                // These were dead the moment a question was answered, on the
+                // reasoning that answering twice sends a second keystroke to a
+                // menu that has already closed. True on the keys road; false
+                // on the file road, where nothing has been sent yet and the
+                // pick is a value in a map this window owns. And the round's
+                // tabs now exist precisely so a person can go back and look at
+                // an earlier answer — arriving there to find it frozen is the
+                // tabs offering a trip to a dead end. Parker: *"Once answered
+                // a question, it is locked and I cannot change it - this is
+                // wrong. must be able to change"*.
+                //
+                // `settled` is the round being over — sent, cancelled, ended —
+                // and THAT is when the chips stop pressing, because then there
+                // really is nothing left to change.
+                if settled {
                     return chip;
                 }
                 chip.relative()
@@ -2207,30 +2254,19 @@ impl TerminalView {
                     .gap(px(6.))
                     .children(chips),
             )
-            // Review, beside Submit, and only once there is something to
-            // review. A gallery of nothing is a button that punishes a press.
+            // THE ROUND'S SUBMIT IS NOT HERE — it is the last tab of the
+            // navigator, drawn by `benchdraw::round_progress`.
             //
-            // NOT gated on this card being unanswered, which is what it used
-            // to be, and which took the button away at the exact moment there
-            // was most to look at: answering makes MORE to review, not less,
-            // and the last answer of a round is when a person most wants to
-            // see what they just said. Parker, on a round of three with all
-            // three answered and no button anywhere: *"Oh no not seeing the
-            // review submit panel AT ALL!"*.
+            // It was a chip on this row for one build, in the slot REVIEW
+            // ANSWERS had held, and that put it at the far end of the card
+            // from the strip that says how much of the round is left. Parker
+            // moved it: *"the FINAL submit Tab at the top with the question
+            // nav... 3 questions + submit tab which is just a SUBMIT button
+            // which is the single click no confirmation submit!"*
             //
-            // `reviewable()` is the honest guard and always was — it counts
-            // what there is to show, so it cannot offer an empty gallery.
-            .when(!self.bench.reviewable().is_empty(), |d| {
-                d.child(sk.rule_h()).child(
-                    div().flex().flex_row().gap(px(8.)).justify_end().child(
-                        sk.chip(false)
-                            .text_size(px(sk.pt(Step::Small)))
-                            .child("\u{21ba} REVIEW ANSWERS".to_string())
-                            .relative()
-                            .child(self.live_zone(crate::workbench::Hit::Review, sk)),
-                    ),
-                )
-            })
+            // Nothing takes its place here, deliberately. A second submit
+            // beside the first is the double-display complaint in miniature,
+            // and this card has just been cleared of one of those.
             // The picker's own Submit, where it has one — on a row of its
             // own, behind a rule.
             //
@@ -2238,15 +2274,21 @@ impl TerminalView {
             // without this chip is a question the bench can ask and cannot
             // answer. And it is not one of the options: wrapped in beside
             // `6 · Chat about this` it read as a seventh thing to pick.
-            // Parker: *"SUBMIT lives in its own space"*. It is also the only
-            // element in this card that glows, which is what makes the glow
-            // legible again — one primary action, one bloom.
+            // Parker: *"SUBMIT lives in its own space"*.
+            //
+            // ONE BLOOM PER CARD, and since SUBMIT ANSWERS arrived this is no
+            // longer the one wearing it. A multi-select inside a round draws
+            // both — this chip commits the ticks and steps on, the other ends
+            // the round — and two glowing buttons side by side is the state
+            // that made the glow stop meaning anything the first time. The
+            // round's end is the primary action; this is a step within it.
             .when_some(q.submit.filter(|_| !answered), |d, at| {
+                let primary = !round_open;
                 d.child(sk.rule_h()).child(
                     div().flex().flex_row().justify_end().child(
                         crate::benchdraw::verb_button(
-                            sk.chip(true).child(format!("\u{2714} {submit_word}")),
-                            true,
+                            sk.chip(primary).child(format!("\u{2714} {submit_word}")),
+                            primary,
                             sk,
                         )
                         .relative()
@@ -3589,19 +3631,17 @@ impl TerminalView {
         // arms are the bodies keeps that true by construction, where an
         // override after the fact could not.
         //
-        // THE TURN IN FLIGHT IS THE SECOND ARM, under the review and over
-        // everything else, and the tuple is what keeps the panic-invariant
-        // true with three bodies instead of two: `review_body` is evaluated
-        // once in the scrutinee and the live card is only BUILT inside its own
-        // arm, so at most one body ever registers a run.
-        let body = match (self.review_body(sk, th), live_turn.as_ref()) {
-            (Some(page), _) => page,
+        // THE TURN IN FLIGHT IS THE FIRST ARM, over everything else. The
+        // review gallery used to sit above it as a third; the match survives
+        // its removal unchanged in shape, because the invariant is about the
+        // bodies being ARMS rather than about how many there are.
+        let body = match live_turn.as_ref() {
             // Only what is live. The status line is parsed here rather than
             // read off the strip's copy because the strip is built inside a
             // closure that may not have run — a pane that never had an agent
             // draws no strip — and a card that silently took its numbers from
             // a block that did not exist would show them as absent.
-            (None, Some(_)) => {
+            Some(_) => {
                 let status = self.agent_status();
                 let vitals = crate::workbench::turn_vitals(&status);
                 crate::benchdraw::live_card(
@@ -3613,7 +3653,7 @@ impl TerminalView {
                     th,
                 )
             }
-            (None, None) => match self.bench.showing() {
+            None => match self.bench.showing() {
                 Some(surface) => {
                     let tint = crate::benchdraw::ink(crate::workbench::tint_of(&surface.kind), th);
                     let bench = &self.bench;
@@ -3625,11 +3665,21 @@ impl TerminalView {
                     let reg = |g: crate::surface::Group| {
                         bench.picked_register(&surface.id, g).map(str::to_string)
                     };
+                    // The SUBMIT tab, offered only where the round can still
+                    // be sent. `submittable` asks about the ROUND, so it is
+                    // true on an answered question of an unfinished round —
+                    // which is exactly where a person goes to change an answer
+                    // and then send.
+                    let can_submit = self
+                        .wb_channel
+                        .submittable(&surface.id)
+                        .then_some(crate::workbench::Hit::SubmitAnswers);
                     let picks = crate::benchdraw::Picks {
                         id: &surface.id,
                         tab: bench.picked_tab(&surface.id),
                         reg: &reg,
                         zones: self.wb_zones.clone(),
+                        submit: can_submit,
                     };
                     let drawn = crate::benchdraw::body(surface, how, Some(&picks), sk, th);
                     // A question opened from the rail is still a question, so it
@@ -3727,10 +3777,6 @@ impl TerminalView {
             },
         };
 
-        // Asked once, because the anchor and the scroll below both need it
-        // and `reviewable()` walks the bench to answer.
-        let reviewing = self.wb_review.is_some() && !self.bench.reviewable().is_empty();
-
         // Taken as a bool before the block is moved into the tree, so the
         // anchor far below can ask without borrowing it.
         //
@@ -3759,18 +3805,35 @@ impl TerminalView {
         // it twice, once as the card with its verbs and once pinned
         // underneath. The rule is `workbench::draws_waiting_block`, held there
         // rather than here so it has a test.
+        // ONE DECISION NODE, ONE PLACE. The filter asks about the ROUND rather
+        // than about the surface, because a round of three is three surfaces
+        // drawing one thing — see `workbench::draws_waiting_block`.
+        let showing_surface = showing_id
+            .as_ref()
+            .and_then(|id| self.bench.get(id))
+            .cloned();
         let waiting = self
             .bench
             .waiting_question()
-            .filter(|s| crate::workbench::draws_waiting_block(showing_id.as_ref(), &s.id))
+            .filter(|s| {
+                crate::workbench::draws_waiting_block(
+                    showing_id.as_ref(),
+                    &s.id,
+                    crate::workbench::in_same_round(showing_surface.as_ref(), Some(s)),
+                )
+            })
             .and_then(|s| match &s.kind {
-                crate::surface::Kind::Question(q) => Some(q.clone()),
+                crate::surface::Kind::Question(q) => Some((s.id.clone(), q.clone())),
                 _ => None,
             })
-            .map(|q| {
+            .map(|(id, q)| {
+                let submit = self
+                    .wb_channel
+                    .submittable(&id)
+                    .then_some(crate::workbench::Hit::SubmitAnswers);
                 let chips = self.answer_chips(&q, sk, th);
                 let zones = self.wb_zones.clone();
-                crate::benchdraw::waiting_block(&q, Some(&zones), sk, th).child(chips)
+                crate::benchdraw::waiting_block(&q, Some(&zones), submit, sk, th).child(chips)
             });
 
         // Taken as a bool here, where the block still exists, because the
@@ -3780,18 +3843,22 @@ impl TerminalView {
 
         // IS A CARD IN THE ROOM — the question itself, asked once and named.
         //
-        // Four things answer yes now: a review page, a turn in flight, a card
-        // the person opened, and the newest reply standing in for one. Each
-        // arrived separately and each time the sites below were carrying a
-        // PROXY for this question rather than the question — first
-        // `showing_id.is_some()`, then that `|| reviewing` — and a proxy is
-        // only correct for the cases that existed when it was written. The
-        // live-turn card was bottom-anchored and pinned to the floor of the
-        // pane because of exactly that, and the review had already had to
-        // patch the same line a day earlier. A fifth kind of card should have
-        // to change one line, here, and the compiler should not let it be this
-        // one that goes stale.
-        let card_in_room = reviewing || room_id.is_some();
+        // Three things answer yes: a turn in flight, a card the person opened,
+        // and the newest reply standing in for one. Each arrived separately
+        // and each time the sites below were carrying a PROXY for this
+        // question rather than the question — first `showing_id.is_some()`,
+        // then that `|| reviewing` — and a proxy is only correct for the cases
+        // that existed when it was written. The live-turn card was
+        // bottom-anchored and pinned to the floor of the pane because of
+        // exactly that, and the review gallery had already had to patch the
+        // same line a day earlier. A fourth kind of card should have to change
+        // one line, here, and the compiler should not let it be this one that
+        // goes stale.
+        //
+        // The gallery was the fourth and is gone; `room_id` now answers for
+        // everything left. The name stays, because what it is asking is the
+        // durable question and the proxies were the bug.
+        let card_in_room = room_id.is_some();
 
         // ── the note box ────────────────────────────────────────────────────
         //

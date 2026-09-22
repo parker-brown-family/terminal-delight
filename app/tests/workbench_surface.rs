@@ -264,8 +264,22 @@ fn every_bench_verb_this_build_carries_is_spelled_the_way_it_is_documented() {
     // in a half-typed line could be photographed without borrowing somebody's
     // keyboard, and a verb that is not wired is worse than no verb, because
     // the harness then quietly types into whatever window has focus.
+    //
+    // `submit` joined them for a sharper version of the same reason: since a
+    // round with a navigator stopped posting itself on its last answer, that
+    // tab is the ONLY way such a round can ever go out, and until this verb
+    // existed the only thing that could press it was a pointer. A capability
+    // with one channel cannot be gated, and that gap is where a real defect
+    // lived — every test of the round's submit walked the answer-file road,
+    // because the answer-file road was the only one a test could reach.
     let (usage, _) = ctl(&["nonsense-verb"]);
-    for verb in ["bench on", "choose <n>", "say <text>", "type <text>"] {
+    for verb in [
+        "bench on",
+        "choose <n>",
+        "submit",
+        "say <text>",
+        "type <text>",
+    ] {
         assert!(usage.contains(verb), "the usage line never offers `{verb}`");
     }
 }
@@ -291,12 +305,30 @@ fn a_bench_verb_that_parses_gets_as_far_as_looking_for_a_window() {
     // With no window listening this cannot succeed, and it must fail for the
     // RIGHT reason — no window — rather than by being rejected as a typo.
     // That distinction is what proves the verb is wired end to end.
-    let (text, _) = ctl(&["bench", "type", "half a sentence"]);
-    let lower = text.to_lowercase();
-    assert!(
-        !lower.contains("usage"),
-        "a documented verb was refused as unknown: {text}"
-    );
+    //
+    // EVERY argument-free bench verb, not one of them. A verb that parses and
+    // is never dispatched fails exactly like a verb that is wired, from the
+    // outside, so the only thing separating them is that the refusal names a
+    // window rather than the grammar — and `submit` is the one that most needs
+    // saying, because it is the whole of how a round ends.
+    for args in [
+        vec!["bench", "type", "half a sentence"],
+        vec!["bench", "submit"],
+    ] {
+        let (text, _) = ctl(&args);
+        let lower = text.to_lowercase();
+        assert!(
+            !lower.contains("usage"),
+            "`{}` was refused as unknown: {text}",
+            args.join(" ")
+        );
+        assert!(
+            text.contains(NO_SUCH_WINDOW),
+            "`{}` failed for some reason other than the pinned window being \
+             absent, so it is not wired through to one: {text}",
+            args.join(" ")
+        );
+    }
 }
 
 #[test]

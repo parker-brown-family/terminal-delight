@@ -65,6 +65,14 @@ pub struct Picks<'a> {
     /// which is the half that holds the map.
     pub reg: &'a dyn Fn(crate::surface::Group) -> Option<String>,
     pub zones: std::rc::Rc<std::cell::RefCell<Vec<crate::workbench::Zone>>>,
+    /// The round's SUBMIT tab gets this hit, or [`None`] where the round
+    /// cannot be sent — it is settled, or this is not a hook-carried round.
+    ///
+    /// Carried on `Picks` rather than passed beside it because it belongs to
+    /// the same question `zones` does — *this pane, collecting presses, for
+    /// this card* — and a second parameter threaded through the same three
+    /// functions would be one more thing a new call site can forget.
+    pub submit: Option<crate::workbench::Hit>,
 }
 
 /// Which palette role each meaning borrows.
@@ -1526,9 +1534,13 @@ fn section_body(body: &Body, register: Register, sk: &Skin, th: &Theme) -> Div {
 /// `zones` makes the steps pressable. Pass [`None`] where there is nothing to
 /// press into — the strip still names every step, because knowing a question
 /// exists is worth more than being able to jump to it.
+/// `submit` is the hit the SUBMIT tab carries, or [`None`] where this round
+/// cannot be sent from here — a settled round, or a strip drawn somewhere that
+/// collects no presses at all.
 pub fn round_progress(
     round: &crate::surface::Round,
     zones: Option<&std::rc::Rc<std::cell::RefCell<Vec<crate::workbench::Zone>>>>,
+    submit: Option<crate::workbench::Hit>,
     sk: &Skin,
     th: &Theme,
 ) -> Div {
@@ -1539,61 +1551,118 @@ pub fn round_progress(
         .flex()
         .flex_col()
         .gap(px(6.))
-        .child(div().flex().flex_row().flex_wrap().gap(px(4.)).children(
-            round.steps.iter().enumerate().map(|(i, step)| {
-                let here = round.current == Some(i);
-                // THE SAME TAB A REGISTER IS, and deliberately not a chip of
-                // this function's own invention. The registers a reader unfolds
-                // on a response card — reading, evidence, next — are underlined
-                // text with a muted rest, and a round's questions are the same
-                // gesture over the same kind of thing: several readings of one
-                // card, one of which you are in. Parker, seeing the first cut:
-                // *"we should have tabs along the top of the questions for
-                // multiple questions — similar to the response: reading -
-                // evidence - next"*. Two vocabularies for one gesture is how a
-                // surface stops feeling like one surface.
-                let facet = crate::emphasis::facet(
-                    if here {
-                        crate::emphasis::Emphasis::Active
-                    } else {
-                        crate::emphasis::Emphasis::Reading
-                    },
-                    th,
-                );
-                // A tick is the one thing a register tab has no use for and a
-                // question tab needs: a register is never *finished*, and a
-                // step that has been answered is. Drawn in the settled hue so
-                // done reads as done even on the tab you are standing on —
-                // being here does not un-answer it.
-                let label = if step.done {
-                    format!("\u{2713} {}", step.label)
-                } else {
-                    step.label.clone()
-                };
-                let tab = div()
-                    .px(px(sk.tpx(5.)))
-                    .text_size(px(sk.pt(Step::Note)))
-                    .font_family(th.font_family.clone())
-                    .text_color(match (here, step.done) {
-                        (true, _) => facet.ink,
-                        (false, true) => settled.alpha(0.85),
-                        (false, false) => crate::emphasis::meta(th),
-                    })
-                    .when(here, |x| x.border_b_1().border_color(facet.tint.alpha(0.8)))
-                    .child(sel(label));
-                // Pressable only where BOTH are true: we have somewhere to
-                // send the press, and this step has a card of its own. A
-                // screen-read step has no surface and must not look like a
-                // button that does nothing.
-                match (zones, step.id.as_ref()) {
-                    (Some(z), Some(id)) if !here => tab
-                        .cursor_pointer()
-                        .relative()
-                        .child(zone(z.clone(), crate::workbench::Hit::OpenRow(id.clone()))),
-                    _ => tab,
-                }
-            }),
+        // NAMED, because the strip is now the card's navigation rather than a
+        // progress read-out beside it — and an unlabelled row of words under a
+        // question reads as part of the question. It inherited whatever line
+        // happened to sit above it, which for an answered card was the word
+        // `answered`, so the tabs looked titled with a state. Parker: *"the
+        // nice tabs are not title answered.. they are title QUESTIONS"*.
+        .child(micro(
+            "QUESTIONS",
+            Step::Fine,
+            crate::emphasis::meta(th),
+            sk,
+            th,
         ))
+        .child(
+            div()
+                .flex()
+                .flex_row()
+                .flex_wrap()
+                .gap(px(10.))
+                .children(round.steps.iter().enumerate().map(|(i, step)| {
+                    let here = round.current == Some(i);
+                    // THE SAME TAB A REGISTER IS, and deliberately not a chip of
+                    // this function's own invention. The registers a reader unfolds
+                    // on a response card — reading, evidence, next — are underlined
+                    // text with a muted rest, and a round's questions are the same
+                    // gesture over the same kind of thing: several readings of one
+                    // card, one of which you are in. Parker, seeing the first cut:
+                    // *"we should have tabs along the top of the questions for
+                    // multiple questions — similar to the response: reading -
+                    // evidence - next"*. Two vocabularies for one gesture is how a
+                    // surface stops feeling like one surface.
+                    let facet = crate::emphasis::facet(
+                        if here {
+                            crate::emphasis::Emphasis::Active
+                        } else {
+                            crate::emphasis::Emphasis::Reading
+                        },
+                        th,
+                    );
+                    // A tick is the one thing a register tab has no use for and a
+                    // question tab needs: a register is never *finished*, and a
+                    // step that has been answered is. Drawn in the settled hue so
+                    // done reads as done even on the tab you are standing on —
+                    // being here does not un-answer it.
+                    let label = if step.done {
+                        format!("\u{2713} {}", step.label)
+                    } else {
+                        step.label.clone()
+                    };
+                    // SIZED FOR A HAND, not for a footnote. These were `Note` —
+                    // the ramp's rung for a subtitle — back when the pin above the
+                    // composer carried the pressable copy and this one was a
+                    // read-out. Now they are the only way back to a question
+                    // already answered, so they are body type with room around
+                    // them. Parker, on being asked to navigate a round with them:
+                    // *"THE NICE TABS NEED MORE EMPHAPSIS now --- BIGGER?"*
+                    let tab = div()
+                        .px(px(sk.tpx(3.)))
+                        .py(px(sk.tpx(2.)))
+                        .text_size(px(sk.pt(Step::Body)))
+                        .font_family(th.font_family.clone())
+                        .text_color(match (here, step.done) {
+                            (true, _) => facet.ink,
+                            (false, true) => settled.alpha(0.85),
+                            (false, false) => crate::emphasis::meta(th),
+                        })
+                        .when(here, |x| x.border_b_1().border_color(facet.tint.alpha(0.8)))
+                        .child(sel(label));
+                    // Pressable only where BOTH are true: we have somewhere to
+                    // send the press, and this step has a card of its own. A
+                    // screen-read step has no surface and must not look like a
+                    // button that does nothing.
+                    match (zones, step.id.as_ref()) {
+                        (Some(z), Some(id)) if !here => tab
+                            .cursor_pointer()
+                            .relative()
+                            .child(zone(z.clone(), crate::workbench::Hit::OpenRow(id.clone()))),
+                        _ => tab,
+                    }
+                }))
+                // THE LAST TAB IS THE SUBMIT, and it is the button rather than a route
+                // to one. Parker: *"3 questions + submit tab which is just a SUBMIT
+                // button which is the single click no confirmation submit!"*
+                //
+                // It lives in the navigator because that is where the round's shape is
+                // already drawn — three questions and the end of them read as one
+                // strip, and the person's eye is there anyway to see what is left. The
+                // chip that used to sit at the foot of the card is gone with it; two
+                // submits on one card is the double-display complaint in miniature.
+                //
+                // Drawn in the WAITING hue rather than the tab ink, because it is the
+                // one element here that acts instead of navigating, and a row of four
+                // identical words where the fourth ends the interaction is a trap.
+                .when_some(submit.filter(|_| zones.is_some()), |d, hit| {
+                    let tint = ink(crate::workbench::Tint::Waiting, th);
+                    d.child(
+                        div()
+                            .px(px(sk.tpx(3.)))
+                            .py(px(sk.tpx(2.)))
+                            .text_size(px(sk.pt(Step::Body)))
+                            .font_family(th.font_family.clone())
+                            .text_color(tint)
+                            .cursor_pointer()
+                            .child(sel("\u{2714} SUBMIT".to_string()))
+                            .relative()
+                            .child(zone(
+                                zones.expect("filtered on zones being present").clone(),
+                                hit,
+                            )),
+                    )
+                }),
+        )
         .child(micro(
             if round.submitting {
                 format!("{done} of {total} answered \u{b7} ready to submit")
@@ -1605,68 +1674,6 @@ pub fn round_progress(
             sk,
             th,
         ))
-}
-
-/// The review flyout: one answered question at a time, with arrows.
-///
-/// A round of five leaves five answers scattered down a rail, and checking
-/// what you said means opening each one and losing the question you are in the
-/// middle of. Parker: *"a button to REVIEW answers -> clicking this would open
-/// a flyout overlay (so that we don't navigate around) which has a left arrow
-/// right arrow gallery type of a feel for questions asked and answered"*.
-///
-/// An OVERLAY rather than a card, deliberately: the thing underneath is a
-/// question somebody is part-way through answering, and replacing it with a
-/// history is exactly the navigation this exists to avoid. It draws over, and
-/// closing it puts the person back where they were with nothing to restore.
-///
-/// The pane attaches the arrows and the close, because pressing one is a
-/// change of state rather than a change of picture.
-pub fn review_page(
-    at: usize,
-    total: usize,
-    title: &str,
-    answer: &str,
-    sk: &Skin,
-    th: &Theme,
-) -> Div {
-    let tint = ink(crate::workbench::Tint::Settled, th);
-    div()
-        .flex()
-        .flex_col()
-        .gap(px(10.))
-        .w_full()
-        .child(
-            div()
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap(px(8.))
-                .child(micro("REVIEW", Step::Fine, tint, sk, th))
-                .child(div().flex_1())
-                // Where you are in the gallery, said plainly. This is a count
-                // a person cannot see — unlike the option count, which was
-                // printed over the top of the options themselves.
-                .child(micro(
-                    format!("{} of {}", at + 1, total.max(1)),
-                    Step::Fine,
-                    sk.ink.ink_faint,
-                    sk,
-                    th,
-                )),
-        )
-        .child(
-            div()
-                .text_size(px(sk.pt(Step::Head)))
-                .text_color(th.text)
-                .child(sel(title.to_string())),
-        )
-        .child(
-            div()
-                .text_size(px(sk.pt(Step::Lead)))
-                .text_color(tint)
-                .child(sel(answer.to_string())),
-        )
 }
 
 /// A question, opened from the rail.
@@ -1717,6 +1724,30 @@ fn question(q: &crate::surface::Question, picks: Option<&Picks>, sk: &Skin, th: 
         .flex()
         .flex_col()
         .gap(px(6.))
+        // THE NAVIGATOR SITS DIRECTLY UNDER THE TITLE, which is as near the
+        // top as a card body can reach — the heading above it is drawn by the
+        // card's own frame. Same order as [`waiting_block`], for the same
+        // reason it was put there: it answers "which of these am I on", and
+        // that is the first thing a person needs rather than the thing they
+        // check afterwards.
+        //
+        // It used to be the LAST element, below the options, which was right
+        // while it was a progress bar and wrong the moment it became the way
+        // back to a question already answered.
+        .when_some(q.round.as_ref(), |d, round| {
+            // Pressable wherever a pane is collecting presses, and merely
+            // readable everywhere else. It used to be readable in both, on
+            // the reasoning that the pin below carried the pressable copy —
+            // and that reasoning expired the day the pin stopped being drawn
+            // under its own card.
+            d.child(round_progress(
+                round,
+                picks.map(|p| &p.zones),
+                picks.and_then(|p| p.submit.clone()),
+                sk,
+                th,
+            ))
+        })
         // What an option costs, for the options that say. Never the label —
         // the chip underneath is the label, and printing it here is the
         // duplication that made this card unreadable.
@@ -1792,6 +1823,17 @@ fn question(q: &crate::surface::Question, picks: Option<&Picks>, sk: &Skin, th: 
                 sk,
                 th,
             )),
+            // A DECISION, said as one. The round went out with this question
+            // blank because somebody chose to send it that way, and the line
+            // has to read as that rather than as a failure — it is the
+            // ordinary case the submit button was built to allow.
+            Answered::Skipped => Some(micro(
+                "left blank \u{b7} the round was submitted without it".to_string(),
+                Step::Note,
+                sk.ink.ink_faint,
+                sk,
+                th,
+            )),
             Answered::Cancelled => Some(micro(
                 "cancelled \u{b7} the round ended with no answer".to_string(),
                 Step::Note,
@@ -1799,14 +1841,6 @@ fn question(q: &crate::surface::Question, picks: Option<&Picks>, sk: &Skin, th: 
                 sk,
                 th,
             )),
-        })
-        .when_some(q.round.as_ref(), |d, round| {
-            // Pressable wherever a pane is collecting presses, and merely
-            // readable everywhere else. It used to be readable in both, on
-            // the reasoning that the pin below carried the pressable copy —
-            // and that reasoning expired the day the pin stopped being drawn
-            // under its own card.
-            d.child(round_progress(round, picks.map(|p| &p.zones), sk, th))
         })
 }
 
@@ -3743,6 +3777,7 @@ pub fn conversation(tail: &[String], sk: &Skin, th: &Theme) -> Div {
 pub fn waiting_block(
     q: &crate::surface::Question,
     zones: Option<&std::rc::Rc<std::cell::RefCell<Vec<crate::workbench::Zone>>>>,
+    submit: Option<crate::workbench::Hit>,
     sk: &Skin,
     th: &Theme,
 ) -> Div {
@@ -3772,7 +3807,7 @@ pub fn waiting_block(
     // afterwards; a round of two had already reached the bench with the wrong
     // question on it by then.
     .when_some(q.round.as_ref(), |d, round| {
-        d.child(round_progress(round, zones, sk, th))
+        d.child(round_progress(round, zones, submit.clone(), sk, th))
     })
     .child(
         div()
@@ -4731,45 +4766,40 @@ mod tests {
         }
     }
 
-    /// The review FILLS the workbench; it does not float over it.
+    /// THE REVIEW GALLERY STAYS GONE.
     ///
-    /// It used to be a centred, occluding panel with a maximum width — a
-    /// flyout — laid absolutely over the whole bench. At a narrow pane it drew
-    /// outside the bench's own box. Parker: *"the review question BROKE OUT OF
-    /// THE MAIN WORKBENCH SPACE!!! it should have just taken OVER the main
-    /// workbench space ... in a very obvious way like the other tabs, comments
-    /// overview etc. do"*.
+    /// It was a modal over the bench holding one answered question at a time,
+    /// reached by a REVIEW ANSWERS button, and everything it did a person now
+    /// does by clicking a tab on the question card itself. Parker: *"NO REVIEW
+    /// QUESTIONS ANYMORE — the user can simply click back to a previous
+    /// question with the nice tabs"*.
     ///
-    /// Drawn in the body, it is clipped and scrolled by the same box as every
-    /// other shelf, and breaking out stops being possible rather than
-    /// unlikely. This is the guard on that: a page that positions ITSELF can
-    /// leave the box however it is parented, so it may not.
+    /// Worth a guard rather than a deletion alone, because the gallery is the
+    /// obvious thing to reach for the next time somebody wants to show a round
+    /// of answers — and reaching for it would put a second, modal way to read
+    /// a question beside the tabs that replaced it, which is the two-designs-
+    /// for-one-thing failure this file has shipped twice.
     ///
-    /// Comments are stripped by [`body_of`], so the words in this explanation
-    /// cannot satisfy or trip the scan they describe.
+    /// It scans the WHOLE renderer rather than one function, since the thing
+    /// being asserted is an absence and an absence has no body to cut.
+    /// Comments are stripped, so this explanation cannot satisfy it.
     #[test]
-    fn the_review_page_cannot_position_itself_out_of_the_bench() {
-        let body = body_of(include_str!("benchdraw.rs"), "pub fn review_page(");
-        for escape in [
-            ".absolute(",
-            ".occlude(",
-            ".max_w(",
-            ".inset_0(",
-            ".left(",
-            ".right(",
-            ".top(",
-            ".bottom(",
-        ] {
+    fn the_review_gallery_is_not_quietly_rebuilt() {
+        let src = include_str!("benchdraw.rs");
+        let (code, _tests) = src.split_once("\n#[cfg(test)]").expect("a test module");
+        let code: String = code
+            .lines()
+            .map(|l| l.split("//").next().unwrap_or(""))
+            .collect::<Vec<_>>()
+            .join("\n");
+        for gone in ["fn review_page(", "REVIEW ANSWERS"] {
             assert!(
-                !body.contains(escape),
-                "review_page uses {escape}, so it can place itself outside the body box \
-                 it is drawn in:\n{body}"
+                !code.contains(gone),
+                "`{gone}` is back. The round's own tabs are the way to a question \
+                 already answered; a modal beside them is a second vocabulary for \
+                 one gesture."
             );
         }
-        assert!(
-            body.contains(".w_full()"),
-            "a takeover that does not fill the width is not a takeover:\n{body}"
-        );
     }
 
     /// Two pieces of chrome a person asked to be rid of, kept gone.
@@ -4901,7 +4931,7 @@ mod tests {
     fn the_room_decides_the_anchor_not_the_surface_in_it() {
         let el = body_of(include_str!("pane/bench.rs"), "pub(super) fn bench_el(");
         assert!(
-            el.contains("let card_in_room = reviewing || room_id.is_some();"),
+            el.contains("let card_in_room = room_id.is_some();"),
             "the one value naming the question is gone; the sites below are back on a proxy"
         );
         assert!(

@@ -88,6 +88,9 @@ pub(crate) enum Req {
     /// what `ok` used to mean, and a smoke run reported green on that while
     /// the window logged that nothing happened.
     BenchChoose(usize, mpsc::Sender<String>),
+    /// Send the open round from the focused pane's bench. See
+    /// [`Cmd::BenchSubmit`].
+    BenchSubmit(mpsc::Sender<String>),
     /// Say a line to the agent through the bench. See [`Cmd::BenchSay`].
     BenchSay(String, mpsc::Sender<String>),
     /// Put a line in the composer WITHOUT submitting it — what a person
@@ -325,6 +328,13 @@ enum Cmd {
     /// a bench with a question, the first pane that is — the same rule the
     /// two verbs below follow, as a table in `workbench::bench_target`.
     BenchChoose(usize),
+    /// Send the open round, however much of it was answered — what pressing
+    /// the navigator's SUBMIT tab does.
+    ///
+    /// Takes no argument on purpose: the round is not named, because the tab
+    /// is not either. It sends whatever round the pane would send if somebody
+    /// clicked, which is the only thing a test of that click can mean.
+    BenchSubmit,
     /// Type a line into the agent through the bench, exactly as the composer
     /// does. The scripted half of talking to a pane.
     BenchSay(String),
@@ -405,7 +415,8 @@ pub fn socket_path(pid: u32) -> PathBuf {
 /// Everything the grammar accepts, in one place — the usage string and the
 /// unknown-command error both quote it, so they can't drift from the match.
 const USAGE: &str = "ping | whoami | paint on|off|toggle|status | \
-     skin <name>|theme|status | bench on|off|toggle|choose <n>|say <text>|type <text> | \
+     skin <name>|theme|status | \
+     bench on|off|toggle|choose <n>|submit|say <text>|type <text> | \
      mcp status|on|off | mcp writes on|off | mcp expose agents|all | \
      mcp rpc <json> | mcp from <session> <pane|-> rpc <json> | \
      adopt {\"cwd\":\"/…\",\"run\":\"…\"} | \
@@ -474,6 +485,11 @@ fn parse_line(s: &str) -> Result<Cmd, String> {
             .filter(|n| *n >= 1 && *n <= 20)
             .map(Cmd::BenchChoose)
             .ok_or_else(|| format!("bench choose: {n:?} is not an option number")),
+        // `bench submit` — the round's only exit, for a caller with no
+        // pointer. Since a round with a navigator stopped posting itself on
+        // its last answer, the SUBMIT tab is the whole of how one ends, and a
+        // capability reachable only by a mouse cannot be gated by anything.
+        ["bench", "submit"] => Ok(Cmd::BenchSubmit),
         ["skin", "status"] => Ok(Cmd::SkinStatus),
         // Any other single word is a skin id — `theme` and `custom` included,
         // which is why they are not special-cased here. The window is what knows
@@ -754,6 +770,14 @@ fn handle_conn(
                 "err ui gone".into()
             }
         }
+        Ok(Cmd::BenchSubmit) => {
+            let (rtx, rrx) = mpsc::channel();
+            if tx.send(Req::BenchSubmit(rtx)).is_ok() {
+                bench_outcome(rrx)
+            } else {
+                "err ui gone".into()
+            }
+        }
         Ok(Cmd::Bench(face)) => {
             if tx.send(Req::Bench(face)).is_ok() {
                 "ok".into()
@@ -853,6 +877,9 @@ pub fn start(cx: &mut Context<Workspace>) {
                     Req::Bench(face) => ws.set_all_faces(face, cx),
                     Req::BenchChoose(n, reply) => {
                         let _ = reply.send(ws.bench_choose(n, cx));
+                    }
+                    Req::BenchSubmit(reply) => {
+                        let _ = reply.send(ws.bench_submit(cx));
                     }
                     Req::BenchSay(line, reply) => {
                         let _ = reply.send(ws.bench_say(&line, cx));
@@ -1851,6 +1878,32 @@ mod tests {
 
     fn tmp(tag: &str) -> crate::testsync::Scratch {
         crate::testsync::Scratch::new(&format!("ctl-{tag}"))
+    }
+
+    /// `bench submit` parses, and the usage string says so.
+    ///
+    /// The round's ONLY exit is a zone on a tab — since a round with a
+    /// navigator stopped posting itself on its last answer, nothing else ends
+    /// one. A capability with no headless reach cannot be gated by a test, and
+    /// that gap is where the keys road's defect lived: every test of `submit`
+    /// walked the file road, because the file road was the only one a test
+    /// could get to.
+    ///
+    /// The usage half is asserted because an undiscoverable verb is most of
+    /// the way to an absent one, and `USAGE` is the only place the grammar is
+    /// written down for a person.
+    #[test]
+    fn the_rounds_only_exit_can_be_pressed_without_a_pointer() {
+        assert!(matches!(parse_line("bench submit"), Ok(Cmd::BenchSubmit)));
+        assert!(
+            USAGE.contains("submit"),
+            "the verb exists and the usage string does not mention it: {USAGE}"
+        );
+        // It takes NO argument. A round is not named because the tab is not
+        // either — anything trailing is a caller with the wrong idea, and
+        // answering it would send a round they did not mean.
+        assert!(parse_line("bench submit 1").is_err());
+        assert!(parse_line("bench submit all").is_err());
     }
 
     #[test]

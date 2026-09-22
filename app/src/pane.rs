@@ -2107,12 +2107,6 @@ pub struct TerminalView {
     /// question was about this string in this box on this line, and a wrapped
     /// line has no single answer to it at all.
     wb_slots: crate::benchdraw::Slots,
-    /// Which answered question the review flyout is showing, if it is open.
-    ///
-    /// [`None`] is closed, and it is the ordinary state. An index rather than
-    /// a surface id because the gallery is a walk through a list and the list
-    /// is rebuilt each frame from the bench.
-    wb_review: Option<usize>,
     /// How many sweeps in a row this pane has looked like it is no longer
     /// waiting on a person.
     ///
@@ -3618,7 +3612,6 @@ impl TerminalView {
             wb_compose: None,
             wb_note: None,
             wb_slots: crate::benchdraw::Slots::default(),
-            wb_review: None,
             wb_quiet: 0,
             wb_state_since: None,
             wb_on_screen: true,
@@ -8826,21 +8819,18 @@ mod tests {
     #[test]
     fn only_the_body_that_is_drawn_is_built() {
         let code = bench_code();
-        // THE SCRUTINEE, not a fixed spelling of it. This read
+        // THE SHAPE, not a fixed spelling of it. This read
         // `contains("let body = match self.review_body(")`, which held the
         // invariant for exactly as long as the body had two arms: adding the
-        // turn-in-flight card made the match a tuple, and the guard failed on
-        // a change that never broke the rule it guards. What the rule needs is
-        // that the review is decided IN the match — so that is what is asked,
-        // and it survives the next body arriving.
-        let at = code
-            .find("let body = match ")
-            .expect("the body's own match is gone");
-        let scrutinee = &code[at..at + code[at..].find(" {").unwrap_or(0)];
+        // turn-in-flight card made the match a tuple, the guard failed on a
+        // change that never broke the rule it guards, and removing the review
+        // made the tuple a plain match again. Three spellings, one rule — so
+        // what is asked is that a `match` is what chooses, and that no arm
+        // hands back a body built outside it.
         assert!(
-            scrutinee.contains("self.review_body("),
-            "the review must be chosen inside the body's own match, so the body \
-             it replaces is never constructed: {scrutinee}"
+            code.contains("let body = match "),
+            "the body's own match is gone; something else is choosing between the \
+             cards, and whatever it discards has already registered its runs"
         );
         assert!(
             !code.contains("None => body,"),
@@ -8849,29 +8839,74 @@ mod tests {
         );
     }
 
-    /// REVIEW ANSWERS is offered on an ANSWERED card.
+    /// SUBMIT ANSWERS is offered on a round NOBODY HAS FINISHED.
     ///
-    /// Its guard is whether there is anything to review, and nothing else. It
-    /// was also gated on the card being unanswered, which took the button away
-    /// at the moment a round finished — the moment a person most wants to see
-    /// what they just said. The premise is asserted where it can be executed,
-    /// in `workbench::tests::answering_a_question_adds_to_the_review_rather_\
-    /// than_emptying_it`; this is the clause.
+    /// The whole point of the button is the partial round — two of three
+    /// answered and a person who wants to send it that way. A gate that
+    /// consulted how much was filled in would hide it in exactly the case it
+    /// exists for, which is the same mistake the REVIEW ANSWERS button it
+    /// replaced made in the other direction: that one hid itself once the card
+    /// was answered, so it vanished at the moment there was most to look at.
+    ///
+    /// Two halves, checked separately. A single scan would pass on a button
+    /// whose visible gate is clean and whose predicate counts answers.
     #[test]
-    fn the_review_button_is_not_gated_on_the_card_being_unanswered() {
+    fn submit_answers_is_not_gated_on_how_much_of_the_round_is_answered() {
         let code = bench_code();
-        let at = code
-            .find("reviewable().is_empty()")
-            .expect("the review button is gone");
-        // The line it is on, and nothing else: a wider slice would pick up the
-        // Submit gate below, which IS allowed to consult `answered`.
-        let start = code[..at].rfind('\n').map_or(0, |i| i + 1);
-        let end = at + code[at..].find('\n').unwrap_or(0);
-        let line = &code[start..end];
+        // THE SUBMIT IS THE NAVIGATOR'S LAST TAB NOW, so the gate is wherever
+        // `Hit::SubmitAnswers` is handed to the strip. BOTH places a question
+        // is drawn pass it — the card opened from the rail and the block
+        // pinned below the body — and both have to decide the same way, which
+        // is why this counts them rather than finding one.
+        let mut gates = 0;
+        for (at, _) in code.match_indices("crate::workbench::Hit::SubmitAnswers)") {
+            let head = &code[..at];
+            let line_at = head.rfind('\n').map_or(0, |i| i + 1);
+            // `then_some(...)` over a bool from the channel is the gate; the
+            // dispatcher arm hundreds of lines above is not, and is skipped by
+            // this rather than by a line number.
+            if !code[line_at..at].contains("then_some") {
+                continue;
+            }
+            gates += 1;
+            let before = &code[line_at.saturating_sub(240)..at];
+            for counting in ["complete", "answered()", "reviewable"] {
+                assert!(
+                    !before.contains(counting),
+                    "a submit gate consults `{counting}`, so it hides itself on the \
+                     partial round it was built for:\n{before}"
+                );
+            }
+        }
+        assert_eq!(
+            gates, 2,
+            "the opened card and the pinned block must BOTH offer the round's \
+             submit — a question drawn in one place and sendable only from the \
+             other is the defect this pair keeps reproducing; found {gates}"
+        );
+        // And the predicate behind the gate, which is where a count would
+        // actually hide.
+        // CUT AT THE TEST MODULE, not at the first `#[cfg(test)]`. There are
+        // three in this file and the module is the last of them; splitting on
+        // the bare attribute truncates the source at line 67 and every scan
+        // after it then "passes" by finding nothing.
+        let ch = include_str!("channel.rs");
+        let (ch, _) = ch
+            .split_once("\n#[cfg(test)]\nmod tests")
+            .unwrap_or((ch, ""));
+        let sub = ch
+            .find("pub fn submittable(")
+            .expect("`submittable` is gone");
+        let body: String = ch[sub..]
+            .lines()
+            .take_while(|l| !l.starts_with("    }"))
+            .map(|l| l.split("//").next().unwrap_or(""))
+            .collect::<Vec<_>>()
+            .join("\n");
         assert!(
-            !line.contains("answered"),
-            "the review button consults `answered` again, so it hides itself \
-             exactly when there is most to review: {line}"
+            !body.contains("complete()"),
+            "`submittable` asks whether the round is finished; a round nobody has \
+             finished is the one the button is for:\n{body}"
         );
     }
 
@@ -8957,8 +8992,14 @@ mod tests {
     fn every_chip_the_bench_can_press_lights_under_the_pointer() {
         let code = bench_code();
         let starts: Vec<usize> = code.match_indices(".chip(").map(|(i, _)| i).collect();
+        // A FLOOR, so the scan cannot pass by finding nothing. It was six
+        // while the review gallery contributed three chips of its own — two
+        // arrows and a close — plus the button that opened it. Those went with
+        // the gallery, and the round's own submit went to the navigator, which
+        // draws a tab rather than a chip. What is left here is the options,
+        // the picker's own submit, and a card verb.
         assert!(
-            starts.len() >= 6,
+            starts.len() >= 3,
             "expected the bench to still draw chips; found {}",
             starts.len()
         );
@@ -8986,7 +9027,7 @@ mod tests {
             );
         }
         assert!(
-            pressable >= 6,
+            pressable >= 3,
             "expected several pressable chips on the bench; found {pressable}"
         );
     }
