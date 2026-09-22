@@ -8862,22 +8862,15 @@ impl Workspace {
                 } else {
                     "bar · what's spent"
                 })
-                .tooltip({
-                    let (tip_bg, tip_text, tip_faint) =
-                        (darken(th.surface, 0.85), th.text, th.faint);
-                    move |_w, cx| {
-                        cx.new(|_| SlotTooltip {
-                            lines: vec![
-                                "the left bar's allowance rails".into(),
-                                "bar LENGTH is whatever this chip says".into(),
-                                "bar COLOUR is always how much is spent".into(),
-                            ],
-                            bg: tip_bg,
-                            text: tip_text,
-                            faint: tip_faint,
-                        })
-                        .into()
-                    }
+                .tooltip(move |_w, cx| {
+                    cx.new(|_| SlotTooltip {
+                        lines: vec![
+                            "the left bar's allowance rails".into(),
+                            "bar LENGTH is whatever this chip says".into(),
+                            "bar COLOUR is always how much is spent".into(),
+                        ],
+                    })
+                    .into()
                 })
                 .on_mouse_down(
                     MouseButton::Left,
@@ -18843,7 +18836,6 @@ impl Workspace {
                         .child(val),
                 );
             }
-            let (tip_bg, tip_text, tip_faint) = (darken(th.surface, 0.85), th.text, th.faint);
             let acc = th.accent;
             let row_id = row.id.clone();
             stack = stack.child(
@@ -18874,9 +18866,6 @@ impl Workspace {
                     .tooltip(move |_w, cx| {
                         cx.new(|_| SlotTooltip {
                             lines: hover_title.clone(),
-                            bg: tip_bg,
-                            text: tip_text,
-                            faint: tip_faint,
                         })
                         .into()
                     }),
@@ -21842,39 +21831,51 @@ impl Workspace {
 /// gpui builds a tooltip's view once on hover and then prepaints it AFTER the
 /// whole root tree, so by the time this runs every pane has already registered.
 ///
-/// Callers add their own gap, shadow and children; what is bound here is the
-/// card's shell and its flatness.
-fn over_the_glass_tip(bg: Hsla, border: Hsla, text: Hsla) -> gpui::Div {
+/// The chrome is the menu recipe, copied from the NEEDS ME panel rather than
+/// invented: the skin's radius, a real 2px accent border, an opaque darkened
+/// fill and the float shadow, which is where the phosphor glow comes from.
+/// Parker, on the first cut: *"needs the same phosphor styling of all our other
+/// overlay menu items"* — a hover card that wears a 1px grey border and a flat
+/// fill reads as a decal stuck on the screen, which is the same observation
+/// that sent the rail's panel through this recipe.
+///
+/// Callers add their own gap and children; what is bound here is the card's
+/// shell, its chrome and its flatness.
+fn over_the_glass_tip(th: &theme::Theme, sk: &skin::Skin, s: f32) -> gpui::Div {
     warp::flatten();
     div()
         .flex()
         .flex_col()
-        .px(px(9.))
-        .py(px(6.))
-        .rounded_md()
-        .border_1()
-        .border_color(border)
-        .bg(bg)
-        .text_color(text)
+        .px(px(9. * s))
+        .py(px(6. * s))
+        .rounded(sk.rad_raw(8.))
+        .border_2()
+        .border_color(th.accent.alpha(0.85))
+        .bg(darken(th.surface, 0.45))
+        .shadow(float_shadows(th.accent))
 }
 
 /// The hover over one of the bottom slot's allowance rows: the provider, then
 /// a line per window naming it in the vendor's own words.
 struct SlotTooltip {
     lines: Vec<String>,
-    bg: Hsla,
-    text: Hsla,
-    faint: Hsla,
 }
 
 impl Render for SlotTooltip {
-    fn render(&mut self, _w: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        let mut card = over_the_glass_tip(self.bg, self.faint.alpha(0.5), self.text).gap(px(2.));
+    fn render(&mut self, _w: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let th = theme::theme(cx);
+        let s = theme::outer_choice(cx).grade.scale;
+        let sk = skin::skin(cx, s);
+        let mut card = over_the_glass_tip(&th, &sk, s).gap(px(2. * s));
         for (i, line) in self.lines.iter().enumerate() {
             card = card.child(
                 div()
-                    .text_size(px(if i == 0 { 12. } else { 10.5 }))
-                    .text_color(if i == 0 { self.text } else { self.faint })
+                    .text_size(px(if i == 0 { 12. } else { 10.5 } * s))
+                    // The window's own text inks, not a palette role. `th.faint`
+                    // is a DIVIDER colour — 1.22:1 to 1.62:1 against these
+                    // grounds — and the readings were drawn in it, which is why
+                    // the second and third lines of this card were barely there.
+                    .text_color(if i == 0 { sk.ink.ink } else { sk.ink.ink_dim })
                     .child(line.clone()),
             );
         }
@@ -21890,38 +21891,34 @@ struct ThemeTooltip {
     name: SharedString,
     /// `Some` only for the custom slot — the file to reveal/open.
     path: Option<PathBuf>,
-    bg: Hsla,
-    text: Hsla,
-    accent: Hsla,
-    faint: Hsla,
 }
 
 impl Render for ThemeTooltip {
-    fn render(&mut self, _w: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        let mut card = over_the_glass_tip(self.bg, self.accent.alpha(0.5), self.text)
-            .gap(px(3.))
-            .shadow(vec![BoxShadow {
-                color: hsla(0., 0., 0., 0.45),
-                offset: point(px(0.), px(2.)),
-                blur_radius: px(8.),
-                spread_radius: px(0.),
-                inset: false,
-            }])
-            .child(div().text_size(px(12.)).child(self.name.clone()));
+    fn render(&mut self, _w: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let th = theme::theme(cx);
+        let s = theme::outer_choice(cx).grade.scale;
+        let sk = skin::skin(cx, s);
+        let mut card = over_the_glass_tip(&th, &sk, s).gap(px(3. * s)).child(
+            div()
+                .text_size(px(12. * s))
+                .text_color(sk.ink.ink)
+                .child(self.name.clone()),
+        );
         if let Some(path) = self.path.clone() {
             card = card
                 .child(
+                    // a path is exactly what `ink_faint` is the token for
                     div()
-                        .text_size(px(10.))
-                        .text_color(self.faint)
+                        .text_size(px(10. * s))
+                        .text_color(sk.ink.ink_faint)
                         .child(path.display().to_string()),
                 )
                 .child(
                     div()
                         .id("open-theme-file")
-                        .mt(px(2.))
-                        .text_size(px(11.))
-                        .text_color(self.accent)
+                        .mt(px(2. * s))
+                        .text_size(px(11. * s))
+                        .text_color(th.accent)
                         .cursor_pointer()
                         .child("▸ Open in editor  ⧉")
                         .on_mouse_down(MouseButton::Left, move |_, _, cx| {
@@ -23734,16 +23731,10 @@ impl Render for Workspace {
                 let cur_c = cur.clone();
                 let tip_name: SharedString = id.clone().into();
                 let tip_path = (id == "custom").then(theme::theme_path);
-                let (tip_bg, tip_text, tip_accent, tip_faint) =
-                    (darken(th.surface, 0.85), th.text, th.accent, th.faint);
                 let mk_tip = move |_w: &mut Window, cx: &mut App| -> gpui::AnyView {
                     cx.new(|_| ThemeTooltip {
                         name: tip_name.clone(),
                         path: tip_path.clone(),
-                        bg: tip_bg,
-                        text: tip_text,
-                        accent: tip_accent,
-                        faint: tip_faint,
                     })
                     .into()
                 };
@@ -29018,6 +29009,21 @@ mod tests {
         sites
     }
 
+    /// One function's body, from its header to its closing brace.
+    ///
+    /// Takes whichever closes first — a top-level `fn` ends at `\n}` and a
+    /// method at `\n    }`, and nothing inside either body closes at its own
+    /// indent, so the earlier of the two is always the right end.
+    fn body_of<'a>(code: &'a str, header: &str) -> &'a str {
+        let at = code.find(header).unwrap_or_else(|| panic!("no `{header}`"));
+        let end = ["\n}\n", "\n    }\n"]
+            .iter()
+            .filter_map(|c| code[at..].find(c))
+            .min()
+            .unwrap_or_else(|| panic!("`{header}` never closes"));
+        &code[at..at + end]
+    }
+
     fn shipped_code() -> String {
         shipped_src()
             .lines()
@@ -30799,12 +30805,41 @@ mod tests {
         );
 
         // And the builder really does flatten.
-        let at = code.find("fn over_the_glass_tip").expect("the builder");
-        let end = code[at..].find("\n}\n").expect("end of fn") + at;
+        let tip = body_of(&code, "fn over_the_glass_tip");
         assert!(
-            code[at..end].contains("warp::flatten();"),
+            tip.contains("warp::flatten();"),
             "over_the_glass_tip draws a hover card without flattening the glass under it"
         );
+
+        // And it wears the house menu recipe, which is the NEEDS ME panel's,
+        // token for token. Flatness alone is not enough to belong over the
+        // glass: the first cut of this card kept its 1px grey border and flat
+        // fill, and Parker sent it straight back — "needs the same phosphor
+        // styling of all our other overlay menu items". Read out of BOTH
+        // surfaces so the panel changing its chrome tells us the card drifted,
+        // rather than the two quietly diverging.
+        let panel = body_of(&code, "fn rail_panel");
+        for token in [
+            "rad_raw(8.)",
+            "border_2()",
+            "th.accent.alpha(0.85)",
+            "darken(th.surface, 0.45)",
+            "float_shadows(th.accent)",
+        ] {
+            assert!(
+                panel.contains(token),
+                "the NEEDS ME panel no longer writes `{token}`, so this guard is \
+                 reading the wrong surface for the house menu recipe. Point it at \
+                 whatever carries the recipe now."
+            );
+            assert!(
+                tip.contains(token),
+                "a hover card is missing `{token}` from the menu recipe the NEEDS ME \
+                 panel wears. A card with a thinner border and no phosphor glow reads \
+                 as a decal stuck on the screen rather than as one of this window's \
+                 menus, which is the state this guard exists to refuse."
+            );
+        }
 
         // Where a hover card is hung. FROZEN: a new one here means a new card,
         // and a card whose view is not named `…Tooltip` would otherwise be
