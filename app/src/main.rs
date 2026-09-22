@@ -5584,21 +5584,32 @@ impl Workspace {
                         let now = surfacefeed::now_ms();
                         moved
                             .into_iter()
-                            .map(|(pane, path)| surfacefeed::Arrivals {
-                                pane,
-                                posts: derive::from_transcript(&path, now),
-                                events: Vec::new(),
-                                // Derived surfaces have no document of their
-                                // own: they are read out of the agent's
-                                // transcript, which is durable, keyed by the
-                                // same session and re-read wherever the
-                                // conversation is resumed. Filing a
-                                // reconstruction of one would put a second
-                                // copy in the record that the first sweep of
-                                // the next window would disagree with.
-                                docs: Vec::new(),
+                            .map(|(pane, path)| {
+                                let read = derive::from_transcript(&path, now);
+                                surfacefeed::Arrivals {
+                                    pane,
+                                    posts: read.posts,
+                                    // The transcript's half of the agent channel.
+                                    // It carries what the hook cannot: that a
+                                    // round was REFUSED, which skips PostToolUse
+                                    // and so never reaches the journal at all.
+                                    events: read.endings,
+                                    // Derived surfaces have no document of their
+                                    // own: they are read out of the agent's
+                                    // transcript, which is durable, keyed by the
+                                    // same session and re-read wherever the
+                                    // conversation is resumed. Filing a
+                                    // reconstruction of one would put a second
+                                    // copy in the record that the first sweep of
+                                    // the next window would disagree with.
+                                    docs: Vec::new(),
+                                }
                             })
-                            .filter(|a| !a.posts.is_empty())
+                            // An arrival carrying only an ENDING is still an
+                            // arrival. Filtering on posts alone would have
+                            // dropped every refusal on the floor, since a
+                            // refused round adds no surface of its own.
+                            .filter(|a| !a.posts.is_empty() || !a.events.is_empty())
                             .collect::<Vec<_>>()
                     })
                     .await;

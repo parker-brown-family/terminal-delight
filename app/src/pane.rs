@@ -6055,6 +6055,23 @@ impl TerminalView {
         }
         let answered = rows_fingerprint(&self.recent_lines(PROMPT_TAIL_ROWS));
         self.answered_on = Some(answered);
+        // Recorded above, and then NOT cleared below, when the channel is
+        // still holding a round.
+        //
+        // Typing answers the SCREEN's prompt. It does not answer a round the
+        // hook carried: that ends when the round ends, and until then this
+        // flag is not this edge's to drop. The 120ms scan sets it from
+        // `screen || channel` (see the scan in `Workspace`), and this edge
+        // used to clear it from the screen half alone — so every keystroke put
+        // the tab badge and the rail lane out and the next scan put them back,
+        // once per key, for as long as a question stayed open. Parker, watching
+        // his own pane on 2026-09-21: *"it should PERSIST WITHOUT BLINKING ON
+        // KEYSTROKE.. until the question SET is actually submitted"*, which is
+        // this predicate exactly — `has_open_question` is false once every
+        // question has an answer, or the round is sent, or it has ended.
+        if self.wb_channel.has_open_question() {
+            return;
+        }
         self.needs_input = false;
         cx.emit(AgentWorkingChanged);
         cx.notify();
@@ -7286,6 +7303,24 @@ impl TerminalView {
                     pid,
                     own: Some(crate::ctl::descends_from(pid, shell)),
                 };
+            }
+        }
+        // The transcript is a REPORTER of a round the channel OWNS. Both now
+        // spell a question's id the same way (`channel::question_surface_id`),
+        // so a derived question for a round this channel is carrying would
+        // land on the channel's own card and overwrite it — losing the round
+        // strip, which only the channel can build, because only the channel is
+        // told that an ask is a round of several questions rather than one.
+        //
+        // Dropped rather than merged: the channel re-presents the whole round
+        // whenever anything about it changes, so there is nothing in this copy
+        // that the surviving card does not already have.
+        if let Some(s) = post.surface.as_ref() {
+            if matches!(s.kind, crate::surface::Kind::Question(_))
+                && s.origin == crate::surface::Origin::Derived
+                && self.wb_channel.owns(&post.id).is_some()
+            {
+                return;
             }
         }
         // A reply the agent presented itself means the hook's copy of the same
@@ -8740,6 +8775,68 @@ mod tests {
             .filter(|l| !l.trim_start().starts_with("//"))
             .collect::<Vec<_>>()
             .join("\n")
+    }
+
+    /// The body of [`TerminalView::ack_needs_input`], code only.
+    ///
+    /// Brace-matched from the signature's opening brace, so the slice is that
+    /// function and nothing after it — a scan that ran to the first `}` would
+    /// end above most of what it is meant to read.
+    fn ack_needs_input_body() -> String {
+        let code = shipped_code();
+        let at = code
+            .find("pub fn ack_needs_input(")
+            .expect("the needs-input clearing edge is gone");
+        let open = at + code[at..].find('{').expect("a body");
+        let mut depth = 0usize;
+        for (i, c) in code[open..].char_indices() {
+            match c {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return code[open..open + i + 1].to_string();
+                    }
+                }
+                _ => {}
+            }
+        }
+        panic!("unbalanced braces in ack_needs_input");
+    }
+
+    /// Typing answers the SCREEN's prompt. It never answers a round the hook
+    /// carried.
+    ///
+    /// The 120ms scan sets the needs-you flag from `screen || channel`, and
+    /// this edge cleared it from the screen half alone — so every keystroke
+    /// put the tab badge out and the next scan put it back, once per key, for
+    /// as long as a question stayed open. Parker, watching his own pane on
+    /// 2026-09-21: *"it should PERSIST WITHOUT BLINKING ON KEYSTROKE.. until
+    /// the question SET is actually submitted"*.
+    ///
+    /// The BEHAVIOUR is specified where it can be executed — see
+    /// `channel::tests::the_badge_predicate_holds_from_the_question_to_its_ending`,
+    /// which pins `has_open_question` across a round's whole life. What cannot
+    /// be executed here is the WIRING: this function takes a `Context<Self>`
+    /// and the crate has no gpui test app, so the line that consults the
+    /// channel is guarded by reading it.
+    ///
+    /// TWO assertions, because one is not enough: a gate that asks only
+    /// whether the call appears passes on a guard moved BELOW the clear, which
+    /// is the same bug with the same words in it.
+    #[test]
+    fn a_keystroke_does_not_clear_a_question_the_channel_still_holds() {
+        let body = ack_needs_input_body();
+        let guard = body
+            .find("has_open_question()")
+            .expect("ack_needs_input must ask the channel before it clears the flag");
+        let clear = body
+            .find("self.needs_input = false")
+            .expect("ack_needs_input must still be the edge that clears the flag");
+        assert!(
+            guard < clear,
+            "the channel is consulted AFTER the flag is dropped, so it is dropped anyway:\n{body}"
+        );
     }
 
     /// The `departed` branch of [`TerminalView::set_mode`], code only.

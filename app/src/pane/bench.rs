@@ -1948,6 +1948,7 @@ impl TerminalView {
         // time as a screen reading. The reading still has the one thing the
         // hook does not — where the picker's highlight is — so it is merged
         // into the hook's card as a cursor, and that card answers by keys.
+        let mut reading = crate::workbench::LiveRead::Unreadable;
         let asking = asking.and_then(|q| match self.wb_channel.matching(&q.question) {
             Some(id) => {
                 if let Some(cursor) = q.cursor {
@@ -1959,11 +1960,20 @@ impl TerminalView {
                         hq.cursor = Some(cursor);
                     });
                 }
+                // Read, and it belongs to somebody else — which is a FINDING,
+                // not a failure to read. Saying so is what lets the rule below
+                // retire a live card the channel has taken over; reported as
+                // `None` it was indistinguishable from a screen that could not
+                // be parsed at all, and a stranded card outlived every round.
+                reading = crate::workbench::LiveRead::Folded;
                 None
             }
             None => Some(q),
         });
         let now_id = asking.as_ref().map(crate::screenread::screen_question_id);
+        if let Some(id) = now_id.as_ref() {
+            reading = crate::workbench::LiveRead::Fresh(id.clone());
+        }
         let was = self.wb_live_q.clone();
         // Counted here rather than in the rule, because the rule is a pure
         // decision and this is the pane remembering what it has seen.
@@ -1973,12 +1983,7 @@ impl TerminalView {
             self.wb_quiet.saturating_add(1)
         };
 
-        match crate::workbench::live_move(
-            self.needs_input,
-            now_id.as_ref(),
-            was.as_ref(),
-            self.wb_quiet,
-        ) {
+        match crate::workbench::live_move(self.needs_input, &reading, was.as_ref(), self.wb_quiet) {
             LiveMove::Keep => return out,
             LiveMove::Retire => {
                 if let Some(id) = was {
