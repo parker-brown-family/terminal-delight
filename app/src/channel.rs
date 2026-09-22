@@ -34,7 +34,7 @@
 //! no hooks, an older window — the bench falls back to the screen and to keys
 //! and **says so on the card**.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use serde_json::{json, Map, Value};
 
@@ -176,6 +176,13 @@ pub enum Inbound {
         tool_use_id: String,
         answers: Option<Value>,
     },
+    /// The person refused the tool, so it never ran and no answer is coming.
+    ///
+    /// Read out of the transcript rather than written by the hook — see
+    /// [`Ending::Cancelled`] for why the hook is structurally unable to say
+    /// this. Parsed here as well so a future adapter that CAN say it needs no
+    /// change on this side.
+    Cancelled { tool_use_id: String },
     /// The agent's turn ended, with its last message when the harness gave it.
     Reply {
         at_ms: Option<u64>,
@@ -247,6 +254,10 @@ impl Inbound {
                     tool_use_id,
                     answers: m.get("answers").filter(|v| !v.is_null()).cloned(),
                 },
+                None => malformed("no tool_use_id"),
+            },
+            "cancelled" => match s("tool_use_id") {
+                Some(tool_use_id) => Inbound::Cancelled { tool_use_id },
                 None => malformed("no tool_use_id"),
             },
             "reply" => Inbound::Reply {
@@ -479,6 +490,19 @@ pub fn answers_json(tool_use_id: &str, answers: &Map<String, Value>) -> Value {
 /// A tool-use id as a file name. The hook applies the same filter, so the two
 /// sides name the same file; anything else in the id is dropped rather than
 /// escaped, because a name made only of these cannot walk anywhere.
+/// The surface id of question `i` of the round `tool_use_id` names.
+///
+/// **One function, called by every reader of a round.** It used to be two: the
+/// channel formatting `ask-hook-<key>-<i>` from the hook's record, and the
+/// transcript reader formatting `ask-<last twelve characters>` from the very
+/// same tool-use id. Two spellings of one id is how a single question arrived
+/// on one bench as two cards that then disagreed about whether it had been
+/// answered — and nothing about the ids made it visible, because each was
+/// stable and sensible on its own.
+pub fn question_surface_id(tool_use_id: &str, i: usize) -> SurfaceId {
+    SurfaceId(format!("ask-hook-{}-{i}", file_key(tool_use_id)))
+}
+
 pub fn file_key(tool_use_id: &str) -> String {
     tool_use_id
         .chars()
@@ -490,6 +514,31 @@ pub fn file_key(tool_use_id: &str) -> String {
 // ---------------------------------------------------------------------------
 // rounds
 // ---------------------------------------------------------------------------
+
+/// How a round ended.
+///
+/// `None` on [`Round::ending`] is *it has not ended*, which is a different
+/// fact from ending in nothing — and the one a `bool` could not hold.
+///
+/// The two endings are not shades of each other. An answered round produced
+/// something, even when this build cannot read what; a cancelled round
+/// produced nothing and never will. Everything downstream — whether the chips
+/// are live, whether the tab badge stays up, whether the row belongs in a
+/// review — turns on which of those happened.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Ending {
+    /// The tool returned. Whatever was chosen is in `picked`.
+    Answered,
+    /// The person refused the tool, so it never ran.
+    ///
+    /// **The hook cannot report this.** A rejected tool skips `PostToolUse`
+    /// entirely, so the adapter is never called and the journal simply stops
+    /// after `released` — measured on pane 11 on 2026-09-21, where a refused
+    /// round was still drawing three live cards and holding the tab badge up
+    /// six minutes later. It is read out of the transcript instead, where the
+    /// refusal arrives as a `tool_result` carrying `is_error`.
+    Cancelled,
+}
 
 /// One `AskUserQuestion` call as the bench tracks it: every question, what has
 /// been picked so far, and what the hook has said about itself.
@@ -504,8 +553,8 @@ pub struct Round {
     pub picked: Vec<Option<Vec<usize>>>,
     pub waiting_until_ms: Option<u64>,
     pub released: bool,
-    /// The harness said the tool returned.
-    pub closed: bool,
+    /// How this round ended, once it has. `None` while it is still open.
+    pub ending: Option<Ending>,
     /// The bench has already sent its answer, whichever road it took.
     pub sent: bool,
 }
@@ -520,15 +569,20 @@ impl Round {
             picked,
             waiting_until_ms: None,
             released: false,
-            closed: false,
+            ending: None,
             sent: false,
         }
+    }
+
+    /// Has this round ended, however it ended.
+    pub fn closed(&self) -> bool {
+        self.ending.is_some()
     }
 
     /// The surface id of question `i`. Stable across sweeps, so the harness's
     /// own `answered` lands on the card that asked.
     pub fn surface_id(&self, i: usize) -> SurfaceId {
-        SurfaceId(format!("ask-hook-{}-{i}", file_key(&self.tool_use_id)))
+        question_surface_id(&self.tool_use_id, i)
     }
 
     /// Every question has an answer committed.
@@ -613,7 +667,17 @@ impl Round {
                     })
                     .collect();
                 let answer = match (q.multi, picks) {
-                    (_, []) => Answered::Waiting,
+                    // Nothing picked. WHY nothing was picked is the whole
+                    // reading: a round still open is waiting on a person, a
+                    // round that returned answered this question in a shape we
+                    // could not read, and a refused round will never answer it
+                    // at all. Drawn as one state, the last two invite a press
+                    // that cannot reach the agent.
+                    (_, []) => match self.ending {
+                        Some(Ending::Cancelled) => Answered::Cancelled,
+                        Some(Ending::Answered) => Answered::ChoseUnknown,
+                        None => Answered::Waiting,
+                    },
                     (false, [one]) => Answered::Chose(*one),
                     (_, many) => Answered::Typed(
                         many.iter()
@@ -816,10 +880,15 @@ pub struct State {
     /// Screen cursors the reader has supplied for open hook questions, so the
     /// keys road knows where the picker's highlight is.
     cursors: BTreeMap<SurfaceId, (usize, Option<usize>)>,
-    /// Rounds the harness reported answered BEFORE their question reached us —
-    /// a journal replayed from an offset, two hooks racing. The question, when
-    /// it arrives, is presented already closed rather than as a live ask.
-    closed_early: BTreeSet<String>,
+    /// Rounds whose ENDING reached us before their question did — a journal
+    /// replayed from an offset, two hooks racing, a transcript read before the
+    /// hook's own record landed. The question, when it arrives, is presented
+    /// already settled rather than as a live ask.
+    ///
+    /// A map rather than a set, because *which* ending arrived is the part
+    /// that decides how the card draws: a set could say only that the round
+    /// was over, which is the distinction this whole slice exists to keep.
+    closed_early: BTreeMap<String, Ending>,
     /// How many hook replies this pane has presented, for their ids.
     replies: u32,
 }
@@ -859,8 +928,8 @@ impl State {
                 }
                 let mut round = Round::new(tool_use_id, at_ms, questions);
                 // Its answer got here first: a settled question, not a live one.
-                if self.closed_early.remove(&round.tool_use_id) {
-                    round.closed = true;
+                if let Some(ending) = self.closed_early.remove(&round.tool_use_id) {
+                    round.ending = Some(ending);
                 }
                 let surfaces = round.surfaces(now_ms);
                 self.rounds.push(round);
@@ -872,7 +941,7 @@ impl State {
                     let at = self
                         .rounds
                         .iter()
-                        .position(|r| r.closed || r.sent)
+                        .position(|r| r.closed() || r.sent)
                         .unwrap_or(0);
                     let gone = self.rounds.remove(at);
                     for i in 0..gone.questions.len() {
@@ -905,10 +974,18 @@ impl State {
                     // Answered before asked, as far as this reader has seen.
                     // Remembered, so the question is not presented live when
                     // its record catches up.
-                    self.closed_early.insert(tool_use_id);
+                    self.closed_early.insert(tool_use_id, Ending::Answered);
                     return Effect::Nothing;
                 };
-                r.closed = true;
+                // The same transcript tail is re-read every sweep, so this
+                // record arrives again and again for as long as the refusal
+                // stays in it. The first is the event; the rest are the same
+                // fact, and re-presenting on each would repaint every card in
+                // the round once a second.
+                if r.ending == Some(Ending::Answered) && answers.is_none() {
+                    return Effect::Nothing;
+                }
+                r.ending = Some(Ending::Answered);
                 // The harness's own record of what was chosen outranks ours:
                 // a person may have answered in the terminal instead.
                 if let Some(map) = answers.as_ref().and_then(answers_of) {
@@ -926,6 +1003,33 @@ impl State {
                     }
                 }
                 let out = r.surfaces(now_ms);
+                let ids: Vec<SurfaceId> = (0..r.questions.len()).map(|i| r.surface_id(i)).collect();
+                for id in ids {
+                    self.cursors.remove(&id);
+                }
+                Effect::Present(out)
+            }
+            Inbound::Cancelled { tool_use_id } => {
+                let Some(r) = self.round_mut(&tool_use_id) else {
+                    // Refused before its question reached us. Remembered, so
+                    // the question is not presented live when its record
+                    // catches up — the transcript is swept on its own clock
+                    // and can easily overtake the journal.
+                    self.closed_early.insert(tool_use_id, Ending::Cancelled);
+                    return Effect::Nothing;
+                };
+                // Re-read of the same transcript tail, sweep after sweep. The
+                // first arrival is the event; every later one is the same fact
+                // again, and presenting on each would repaint every card in
+                // the round about once a second for as long as the refusal
+                // stays in the tail.
+                if r.ending == Some(Ending::Cancelled) {
+                    return Effect::Nothing;
+                }
+                r.ending = Some(Ending::Cancelled);
+                let out = r.surfaces(now_ms);
+                // The picker is gone with the tool that drew it, so a cursor
+                // kept for the keys road now points at nothing.
                 let ids: Vec<SurfaceId> = (0..r.questions.len()).map(|i| r.surface_id(i)).collect();
                 for id in ids {
                     self.cursors.remove(&id);
@@ -960,7 +1064,7 @@ impl State {
     pub fn has_open_question(&self) -> bool {
         self.rounds
             .iter()
-            .any(|r| !r.closed && !r.sent && !r.complete())
+            .any(|r| !r.closed() && !r.sent && !r.complete())
     }
 
     /// Which round and question a card belongs to, if it is ours.
@@ -976,7 +1080,7 @@ impl State {
     /// its cursor into rather than presenting a second card.
     pub fn matching(&self, question_text: &str) -> Option<SurfaceId> {
         let want = fold(question_text);
-        self.rounds.iter().filter(|r| !r.closed).find_map(|r| {
+        self.rounds.iter().filter(|r| !r.closed()).find_map(|r| {
             r.questions
                 .iter()
                 .enumerate()
@@ -1020,7 +1124,7 @@ impl State {
         };
         let cursor = self.cursors.get(id).copied();
         let round = &mut self.rounds[ri];
-        if round.closed || round.sent {
+        if round.closed() || round.sent {
             return Press::Refused("this question has already been answered".into());
         }
         let q = &round.questions[qi];
@@ -1604,6 +1708,148 @@ mod tests {
             None,
             "a finished round moves nobody anywhere"
         );
+    }
+
+    /// The round Parker refused on 2026-09-21, and what has to become of it.
+    ///
+    /// A rejected tool never runs, so `PostToolUse` never fires and the hook
+    /// writes nothing at all — the journal for that pane simply stops after
+    /// `released`. The round therefore stayed open forever: three cards still
+    /// offering chips that could no longer reach the agent, and a tab badge
+    /// that could not go down. The transcript is the only reader that sees the
+    /// refusal, and this is what it has to be able to say.
+    #[test]
+    fn a_refused_round_ends_and_its_cards_stop_asking() {
+        let mut st = State::new();
+        let Effect::Present(open) = st.take(Inbound::parse(&question_event()).unwrap(), 10) else {
+            panic!("a round presents one card per question")
+        };
+        assert_eq!(open.len(), 2);
+        assert!(st.has_open_question(), "asked, and nobody has answered");
+
+        let Effect::Present(settled) = st.take(
+            Inbound::Cancelled {
+                tool_use_id: "toolu_01ABC".into(),
+            },
+            20,
+        ) else {
+            panic!("a refusal settles the round it names")
+        };
+
+        assert!(
+            !st.has_open_question(),
+            "the badge predicate: nothing waits on a person once the round is refused"
+        );
+        assert_eq!(
+            settled.iter().map(|c| c.id.clone()).collect::<Vec<_>>(),
+            open.iter().map(|c| c.id.clone()).collect::<Vec<_>>(),
+            "the SAME cards settle in place; a second set would be the duplicate again"
+        );
+        for c in &settled {
+            let Kind::Question(q) = &c.kind else { panic!() };
+            assert_eq!(
+                q.answer,
+                Answered::Cancelled,
+                "a refused question is cancelled — not still waiting, and not answered"
+            );
+        }
+    }
+
+    /// The transcript tail is re-read on every sweep, so the refusal in it
+    /// arrives again and again. It is one event.
+    #[test]
+    fn an_ending_read_again_next_sweep_presents_nothing() {
+        let cancel = || Inbound::Cancelled {
+            tool_use_id: "toolu_01ABC".into(),
+        };
+        let mut st = State::new();
+        st.take(Inbound::parse(&question_event()).unwrap(), 10);
+        assert!(matches!(st.take(cancel(), 20), Effect::Present(_)));
+        assert!(
+            matches!(st.take(cancel(), 21), Effect::Nothing),
+            "the same refusal is the same fact, not a second one"
+        );
+        assert!(matches!(st.take(cancel(), 22), Effect::Nothing));
+
+        let answered = || Inbound::Answered {
+            tool_use_id: "toolu_01ABC".into(),
+            answers: None,
+        };
+        let mut st = State::new();
+        st.take(Inbound::parse(&question_event()).unwrap(), 10);
+        assert!(matches!(st.take(answered(), 20), Effect::Present(_)));
+        assert!(
+            matches!(st.take(answered(), 21), Effect::Nothing),
+            "re-reporting an ending is not a second ending — without this every card \
+             in the round repaints about once a second for as long as it is in the tail"
+        );
+    }
+
+    /// The transcript is swept on its own clock and can overtake the journal.
+    #[test]
+    fn a_refusal_that_arrives_before_its_question_settles_it_on_arrival() {
+        let mut st = State::new();
+        assert!(matches!(
+            st.take(
+                Inbound::Cancelled {
+                    tool_use_id: "toolu_01ABC".into()
+                },
+                5
+            ),
+            Effect::Nothing
+        ));
+        let Effect::Present(cards) = st.take(Inbound::parse(&question_event()).unwrap(), 10) else {
+            panic!()
+        };
+        assert!(!st.has_open_question(), "it was over before we heard of it");
+        for c in &cards {
+            let Kind::Question(q) = &c.kind else { panic!() };
+            assert_eq!(
+                q.answer,
+                Answered::Cancelled,
+                "WHICH ending arrived early is the part that decides how the card draws"
+            );
+        }
+    }
+
+    /// The predicate the tab badge and the keystroke edge both consult.
+    ///
+    /// [`TerminalView::ack_needs_input`] asks this before a keystroke is
+    /// allowed to drop the needs-you flag, so this test is the specification
+    /// of Parker's *"it should PERSIST WITHOUT BLINKING ON KEYSTROKE.. until
+    /// the question SET is actually submitted"* — the whole of it, in the one
+    /// place it can be executed.
+    #[test]
+    fn the_badge_predicate_holds_from_the_question_to_its_ending() {
+        let first = SurfaceId("ask-hook-toolu_01ABC-0".into());
+
+        let mut st = State::new();
+        assert!(!st.has_open_question(), "nothing has been asked");
+        st.take(Inbound::parse(&question_event()).unwrap(), 10);
+        assert!(st.has_open_question(), "asked");
+        st.press(&first, 0, 11);
+        assert!(
+            st.has_open_question(),
+            "one of two answered is not a SET the person is done with"
+        );
+        st.take(
+            Inbound::Cancelled {
+                tool_use_id: "toolu_01ABC".into(),
+            },
+            12,
+        );
+        assert!(!st.has_open_question(), "refused counts as ended");
+
+        let mut st = State::new();
+        st.take(Inbound::parse(&question_event()).unwrap(), 10);
+        st.take(
+            Inbound::Answered {
+                tool_use_id: "toolu_01ABC".into(),
+                answers: None,
+            },
+            11,
+        );
+        assert!(!st.has_open_question(), "answered counts as ended");
     }
 
     #[test]
