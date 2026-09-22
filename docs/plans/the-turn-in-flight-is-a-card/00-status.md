@@ -52,6 +52,17 @@ Every input the card needs already exists and is already parsed:
   in the room for the gap between the turn ending and its reply landing — which
   is the reported defect, in miniature. A turn that ends having presented
   nothing keeps its card and the card SAYS so.
+  **Amended the same sitting** — and by the same rule the decision rests on.
+  The card first said `NOTHING PRESENTED · this turn ended without presenting a
+  reply`, which is a claim about the future made at the one moment it cannot be
+  checked: `Done` is raised off the finish bell on the pane's own 120ms clock,
+  the reply comes from the harness's stop hook on its own, and the two race on
+  EVERY turn. It now says `THE TURN ENDED · no reply has landed on the bench` —
+  both halves observable right now, both still true if nothing ever comes. Only
+  `AGENT GONE` may be final, because a dead process is a fact rather than a
+  forecast. Parker, asked whether this decision was right: *"gets tricky and
+  grey - but let's leave it in assumption land right now"* — so the RULE is
+  parked as an assumption, and the sentence it made the card say is not.
 - **Whose voice opened it decides whether an opened card is taken.** A person
   who typed has moved themselves, so their turn clears the selection and the
   room flips to it. A wake-up has not moved them and does not — *a place Parker
@@ -105,8 +116,22 @@ the amber list — five decisions taken without asking, each of which could
 reasonably have gone the other way, written down where Parker can argue with
 any of them rather than discovered later in the code.
 
-Sixteen mutations, sixteen caught, on a harness proven to have all three legs
+Eighteen mutations, eighteen caught, on a harness proven to have all three legs
 (a mutation that survives, one that is caught, one that fails to build). One of
 them earned its place the honest way: `M16 the rail row calls itself STANDS NOW
 again` **survived** with the suite green, which is how the lane words came out
 of the renderer into `benchdraw::lane_word` and got a table test.
+
+## What review is for, demonstrated twice
+
+Neither of the two real defects in this feature was found by a test, and both
+were found by asking a question no test knows how to ask.
+
+| found by | defect |
+|---|---|
+| looking at a photograph | the card pinned to the floor under an acre of empty — a proxy predicate that went stale when a third kind of card arrived |
+| reading my own words back after approval | `NOTHING PRESENTED` — a claim about the future, drawn in a race that runs on every turn |
+
+Both are the same shape as the bug the feature exists to fix: a surface stating
+something confidently in a gap where it does not have it. Having written the
+rule down did not stop me writing the violation eleven lines below it.
