@@ -23484,7 +23484,15 @@ impl Render for Workspace {
                 // DECLARED organisation and the badge is read off the disk.
                 div()
                     .flex_none()
-                    .h(px(22. * scale))
+                    // A minimum, not a height. It was `h(22)` from the days the
+                    // corner held one line of text; the badge is a bordered
+                    // chip that stands a hair taller once a warning glyph is in
+                    // it, and a fixed height plus the clip below sliced its top
+                    // border off. Parker: "see how the border at the top of the
+                    // fixed element is cutoff... should have some breathing
+                    // room". The row's own padding is the breathing room; the
+                    // corner just has to stop being shorter than its contents.
+                    .min_h(px(22. * scale))
                     // clip instead of paint-over: when the window narrows past
                     // the corner, the fixed-size children must truncate, not
                     // bleed onto the always-kept right-side controls (#86).
