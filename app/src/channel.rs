@@ -538,6 +538,25 @@ pub enum Ending {
     /// six minutes later. It is read out of the transcript instead, where the
     /// refusal arrives as a `tool_result` carrying `is_error`.
     Cancelled,
+    /// Over, and nothing still readable says how.
+    ///
+    /// Inferred rather than reported: the agent finished a turn, which it
+    /// cannot do while an `AskUserQuestion` is holding one open. The reason it
+    /// exists is that both REPORTED endings can go out of reach. The hook
+    /// never writes one for a refusal at all, and the transcript reader sees
+    /// only the last 256 KiB of a session — so on a window restart an hour
+    /// later the journal replays `question` / `waiting` / `released` with
+    /// nothing closing it, and the refusal it would have been closed by has
+    /// scrolled out of view.
+    ///
+    /// Measured 2026-09-21: a round refused at 21:48 came back live on a
+    /// window relaunched at 22:43, and Parker answered two of its cards —
+    /// *"the old stale questions were still hanging around - I smash clicked
+    /// them a bunch"*. The refusal was 5.2 MB behind the reader's window.
+    ///
+    /// **Not a guess at WHICH ending happened.** The card says it does not
+    /// know, because it does not.
+    Unknown,
 }
 
 /// One `AskUserQuestion` call as the bench tracks it: every question, what has
@@ -676,6 +695,7 @@ impl Round {
                     (_, []) => match self.ending {
                         Some(Ending::Cancelled) => Answered::Cancelled,
                         Some(Ending::Answered) => Answered::ChoseUnknown,
+                        Some(Ending::Unknown) => Answered::Ended,
                         None => Answered::Waiting,
                     },
                     (false, [one]) => Answered::Chose(*one),
@@ -851,7 +871,17 @@ pub enum Effect {
     Present(Vec<Surface>),
     /// Present the agent's reply as a response, because none arrived itself.
     /// `n` counts this pane's hook replies, so two in one millisecond are two.
-    Reply { text: String, n: u32 },
+    ///
+    /// `ended` is every round this same reply proved over — see
+    /// [`State::abandon_open_rounds`]. Carried on the reply rather than sent
+    /// as its own effect because it IS the same event: one record arrived and
+    /// it says two things, and an effect that could only report one of them
+    /// would have to drop the other.
+    Reply {
+        text: String,
+        n: u32,
+        ended: Vec<Surface>,
+    },
     /// Recorded; nothing to draw.
     Nothing,
 }
@@ -1046,16 +1076,22 @@ impl State {
                 }
                 Effect::Present(out)
             }
-            Inbound::Reply { text, .. } => match text {
-                Some(t) if !t.trim().is_empty() && self.responses_since_prompt == 0 => {
-                    self.replies += 1;
-                    Effect::Reply {
-                        text: t,
-                        n: self.replies,
+            Inbound::Reply { text, .. } => {
+                let ended = self.abandon_open_rounds(now_ms);
+                match text {
+                    Some(t) if !t.trim().is_empty() && self.responses_since_prompt == 0 => {
+                        self.replies += 1;
+                        Effect::Reply {
+                            text: t,
+                            n: self.replies,
+                            ended,
+                        }
                     }
+                    // No reply surface to draw, but the rounds still ended.
+                    _ if !ended.is_empty() => Effect::Present(ended),
+                    _ => Effect::Nothing,
                 }
-                _ => Effect::Nothing,
-            },
+            }
             Inbound::Notify { .. } => Effect::Nothing,
             Inbound::Unknown { .. } => {
                 self.unknown += 1;
@@ -1136,6 +1172,38 @@ impl State {
                     })
                     .map(|(i, _)| r.surface_id(i))
             })
+    }
+
+    /// Every round still open is over, because the agent has finished a turn.
+    ///
+    /// `AskUserQuestion` holds the turn open until it returns, so an agent that
+    /// replied cannot still be blocked on one. That makes a `reply` record a
+    /// proof of ending — and, unlike the two REPORTED endings, a proof that
+    /// lives in the pane's own journal, which is replayed whole when a window
+    /// restarts. The hook writes nothing at all for a refusal, and the
+    /// transcript reader sees only the last 256 KiB of the session; both are
+    /// out of reach by the time a window comes back an hour later.
+    ///
+    /// Falsified before it was shipped, not after: 11 rounds across 9 panes on
+    /// this machine, checked for a `reply` landing between a `question` and its
+    /// `answered`. **Zero.** The eight answered rounds had none in between, and
+    /// the only round this would have ended was the dead one.
+    ///
+    /// A round with picks already recorded keeps them — the ending only
+    /// decides how a question with NOTHING picked draws, so this cannot
+    /// overwrite an answer the person gave.
+    fn abandon_open_rounds(&mut self, now_ms: u64) -> Vec<Surface> {
+        let mut out = Vec::new();
+        for r in self.rounds.iter_mut().filter(|r| r.ending.is_none()) {
+            r.ending = Some(Ending::Unknown);
+            out.extend(r.surfaces(now_ms));
+        }
+        // The picker went with the turn, so a cursor kept for the keys road
+        // now points at nothing.
+        for s in &out {
+            self.cursors.remove(&s.id);
+        }
+        out
     }
 
     /// The screen reader saw the picker for this card, and where its highlight is.
@@ -1861,6 +1929,110 @@ mod tests {
         }
     }
 
+    /// Exactly what a window restart replays for the round Parker refused.
+    ///
+    /// `question` / `waiting` / `released`, and nothing closing it — a rejected
+    /// tool never fires `PostToolUse`, so the hook writes no ending, and the
+    /// refusal that would have closed it lives only in the transcript, 5.2 MB
+    /// behind the 256 KiB the reader looks at. Before this, the round came back
+    /// live with pressable cards an hour after it died, and he pressed them.
+    #[test]
+    fn a_round_the_agent_walked_away_from_is_over_even_when_nothing_says_how() {
+        let mut st = State::new();
+        st.take(Inbound::parse(&question_event()).unwrap(), 10);
+        st.take(
+            Inbound::Released {
+                tool_use_id: "toolu_01ABC".into(),
+                why: "stale".into(),
+            },
+            11,
+        );
+        assert!(
+            st.has_open_question(),
+            "so far this is indistinguishable from a question still being asked"
+        );
+
+        // The agent finished a turn. It cannot do that while an
+        // AskUserQuestion is holding one open, so the round is over.
+        let Effect::Reply { ended, .. } = st.take(
+            Inbound::Reply {
+                at_ms: None,
+                text: Some("here is what I found".into()),
+            },
+            12,
+        ) else {
+            panic!("a reply with words presents a reply")
+        };
+
+        assert!(!st.has_open_question(), "the badge lets go");
+        assert_eq!(
+            ended.len(),
+            2,
+            "every card of the round, not just the first"
+        );
+        for c in &ended {
+            let Kind::Question(q) = &c.kind else { panic!() };
+            assert_eq!(
+                q.answer,
+                Answered::Ended,
+                "it says it does not know how it ended, rather than guessing \
+                 answered or cancelled"
+            );
+        }
+        assert!(
+            matches!(
+                st.press(&SurfaceId("ask-hook-toolu_01ABC-0".into()), 0, 13),
+                Press::Refused(_)
+            ),
+            "and the cards stop taking presses"
+        );
+    }
+
+    /// The ending decides only how an UNANSWERED question draws.
+    #[test]
+    fn walking_away_does_not_overwrite_an_answer_already_given() {
+        let first = SurfaceId("ask-hook-toolu_01ABC-0".into());
+        let mut st = State::new();
+        st.take(Inbound::parse(&question_event()).unwrap(), 10);
+        st.press(&first, 1, 11);
+        st.take(
+            Inbound::Reply {
+                at_ms: None,
+                text: Some("done".into()),
+            },
+            12,
+        );
+        let Kind::Question(q) = &st.round_surfaces(&first, 13)[0].kind else {
+            panic!()
+        };
+        assert_eq!(
+            q.answer,
+            Answered::Chose(1),
+            "a press the person made outranks an ending nobody recorded"
+        );
+    }
+
+    /// A reply with nothing to draw still ends what it proves over.
+    #[test]
+    fn a_reply_the_agent_already_presented_still_ends_the_round() {
+        let mut st = State::new();
+        st.take(Inbound::parse(&question_event()).unwrap(), 10);
+        // The agent sent its own `response` surface, so the hook's copy of the
+        // same turn is not wanted — but the turn still ENDED.
+        st.saw_response();
+        let Effect::Present(ended) = st.take(
+            Inbound::Reply {
+                at_ms: None,
+                text: Some("done".into()),
+            },
+            11,
+        ) else {
+            panic!("no reply surface, but the rounds it ended still have to be drawn")
+        };
+        assert_eq!(ended.len(), 2);
+        assert!(!st.has_open_question());
+    }
+
     /// The predicate the tab badge and the keystroke edge both consult.
     ///
     /// [`TerminalView::ack_needs_input`] asks this before a keystroke is
@@ -2107,7 +2279,9 @@ mod tests {
             ),
             Effect::Reply {
                 text: "done again".into(),
-                n: 1
+                n: 1,
+                // No rounds were open, so this reply ended nothing.
+                ended: Vec::new()
             }
         );
         let s = reply_surface("done again\nwith detail", 4, 1).expect("a response");
@@ -2531,7 +2705,7 @@ mod tests {
                 },
                 7,
             ) {
-                Effect::Reply { text, n } => reply_surface(&text, 7, n).unwrap().id,
+                Effect::Reply { text, n, .. } => reply_surface(&text, 7, n).unwrap().id,
                 other => panic!("{other:?}"),
             }
         };

@@ -1828,8 +1828,9 @@ pub fn reviewed(surfaces: &[crate::surface::Surface]) -> Vec<Reviewed> {
                 Answered::ChoseUnknown => "answered \u{b7} how is unavailable".into(),
                 // A refused round produced no answers, so it has nothing to
                 // review. Listing it with a placeholder would put a row in a
-                // summary of decisions for a decision nobody made.
-                Answered::Cancelled => return None,
+                // summary of decisions for a decision nobody made. Same for a
+                // round nobody recorded the end of: there is no answer to show.
+                Answered::Cancelled | Answered::Ended => return None,
             };
             Some(Reviewed {
                 title: s.title.clone(),
