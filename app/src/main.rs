@@ -1013,6 +1013,21 @@ const ENG_STALE: Duration = Duration::from_secs(20);
 /// minutes is about how long a person is away in another project before
 /// coming back, which is the moment the afterglow is for.
 const ENG_AFTERGLOW: Duration = Duration::from_secs(15 * 60);
+
+/// Which branch of the tree the rail is reading for.
+///
+/// The project the active tab is filed under when it has one; else the
+/// top-level group it sits in; else the loose tabs. The first cut keyed on
+/// the project alone, and Parker's own session showed why that is wrong: his
+/// JOB branch is a group at the top of the tree with no project over it, so
+/// the corner drew a bare mark and the ticker said "filed under this
+/// project" about a branch that had a perfectly good name an inch below.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+enum EngKey {
+    Project(u32),
+    Group(u32),
+    Unfiled,
+}
 /// Default bar width in logical pixels at scale 1.0 — wide enough for two
 /// levels of indent plus a name plus its roll-up glyphs.
 const LEFT_BAR_W: f32 = 208.;
@@ -3732,7 +3747,7 @@ struct Workspace {
     vitals_refreshing: bool,
     /// The engineering state of each declared project the rail has read,
     /// keyed by project id — `None` is the loose tabs. See `engstate`.
-    eng: std::collections::HashMap<Option<u32>, engstate::ProjectState>,
+    eng: std::collections::HashMap<EngKey, engstate::ProjectState>,
     /// A scan is out. One at a time: a second pass queued behind a slow git
     /// would land after the first and say the same thing.
     eng_scanning: bool,
@@ -3741,7 +3756,7 @@ struct Workspace {
     /// The afterglow: what changed between consecutive readings of each
     /// project, with when it was noticed. Kept for [`ENG_AFTERGLOW`] and then
     /// dropped — evidence that something happened, never a notification.
-    eng_events: std::collections::HashMap<Option<u32>, Vec<(Instant, String)>>,
+    eng_events: std::collections::HashMap<EngKey, Vec<(Instant, String)>>,
     /// The checkouts table is open — the badge, unfolded: one row per
     /// checkout with who is writing there, then the drift and the afterglow.
     eng_table: bool,
@@ -5536,7 +5551,7 @@ impl Workspace {
             else {
                 break; // window gone
             };
-            let Some(input) = input else {
+            let Some((key, input)) = input else {
                 continue; // nothing due
             };
             let state = cx
@@ -5544,7 +5559,7 @@ impl Workspace {
                 .spawn(async move { engstate::scan(&input) })
                 .await;
             if this
-                .update(cx, |ws: &mut Workspace, cx| ws.apply_eng(state, cx))
+                .update(cx, |ws: &mut Workspace, cx| ws.apply_eng(key, state, cx))
                 .is_err()
             {
                 break;
@@ -11436,7 +11451,30 @@ impl Workspace {
 
     /// The active project's engineering state, if the rail has read it yet.
     fn eng_state(&self) -> Option<&engstate::ProjectState> {
-        self.eng.get(&self.place_of(self.active).project)
+        self.eng.get(&self.eng_key())
+    }
+
+    /// The branch the rail reads for right now — see [`EngKey`].
+    fn eng_key(&self) -> EngKey {
+        Self::eng_key_of(self.place_of(self.active))
+    }
+
+    fn eng_key_of(place: tree::Place) -> EngKey {
+        match (place.project, place.initiative) {
+            (Some(p), _) => EngKey::Project(p),
+            (None, Some(g)) => EngKey::Group(g),
+            (None, None) => EngKey::Unfiled,
+        }
+    }
+
+    /// What the tree calls that branch. `None` for the loose tabs — an
+    /// unorganised session is not labelled "unfiled" in the corner.
+    fn eng_key_name(&self, key: EngKey) -> Option<String> {
+        match key {
+            EngKey::Project(p) => self.project_at(p).map(|p| p.label()),
+            EngKey::Group(g) => self.groups.iter().find(|x| x.id == g).map(|g| g.label()),
+            EngKey::Unfiled => None,
+        }
     }
 
     /// What the sweep should read next, or `None` when nothing is due.
@@ -11445,11 +11483,11 @@ impl Workspace {
     /// [`ENG_STALE`]. Switching to a project the rail has never read is the
     /// case that matters — the sweep's two-second beat is the most a person
     /// waits to see the rail say something about where they just arrived.
-    fn eng_scan_request(&mut self, cx: &App) -> Option<engstate::ScanInput> {
+    fn eng_scan_request(&mut self, cx: &App) -> Option<(EngKey, engstate::ScanInput)> {
         if self.eng_scanning {
             return None;
         }
-        let key = self.place_of(self.active).project;
+        let key = self.eng_key();
         let fresh = self
             .eng
             .get(&key)
@@ -11458,7 +11496,7 @@ impl Workspace {
             return None;
         }
         self.eng_scanning = true;
-        Some(self.eng_input(key, cx))
+        Some((key, self.eng_input(key, cx)))
     }
 
     /// Every writer in the session, sorted into the project being read and
@@ -11467,8 +11505,8 @@ impl Workspace {
     /// A pane with no cwd yet (a host pane still attaching) is left out
     /// rather than filed as "nowhere": it will be there on the next pass, and
     /// counting it as outside any repository would be inventing a fact.
-    fn eng_input(&self, key: Option<u32>, cx: &App) -> engstate::ScanInput {
-        let name = key.and_then(|p| self.project_at(p)).map(|p| p.label());
+    fn eng_input(&self, key: EngKey, cx: &App) -> engstate::ScanInput {
+        let name = self.eng_key_name(key);
         let mut mine = Vec::new();
         let mut others = Vec::new();
         for (i, tab) in self.tabs.iter().enumerate() {
@@ -11493,7 +11531,7 @@ impl Workspace {
                     label: v.mode.label().to_string(),
                     cwd: std::path::PathBuf::from(cwd),
                 };
-                if place.project == key {
+                if Self::eng_key_of(place) == key {
                     mine.push(w);
                 } else {
                     // filed under its project when it has one, else its group,
@@ -11513,7 +11551,10 @@ impl Workspace {
             }
         }
         engstate::ScanInput {
-            project: key,
+            project: match key {
+                EngKey::Project(p) => Some(p),
+                EngKey::Group(_) | EngKey::Unfiled => None,
+            },
             name,
             mine,
             others,
@@ -11523,7 +11564,7 @@ impl Workspace {
     /// A scan landed. The frame index is left where it was: a project whose
     /// frame count shrank wraps on the next tick, and resetting it would make
     /// every twenty-second refresh snap the ticker back to its first frame.
-    fn apply_eng(&mut self, state: engstate::ProjectState, cx: &mut Context<Self>) {
+    fn apply_eng(&mut self, key: EngKey, state: engstate::ProjectState, cx: &mut Context<Self>) {
         self.eng_scanning = false;
         if std::env::var_os("TD_RAIL_DEBUG").is_some() {
             eprintln!(
@@ -11538,23 +11579,23 @@ impl Workspace {
         // The afterglow: what this reading says happened since the last one.
         // Diffed before the insert, against the reading it replaces, and only
         // for the same project — the pure function refuses anything else.
-        if let Some(prev) = self.eng.get(&state.project) {
+        if let Some(prev) = self.eng.get(&key) {
             let now = Instant::now();
             let fresh = engstate::events(prev, &state);
-            let log = self.eng_events.entry(state.project).or_default();
+            let log = self.eng_events.entry(key).or_default();
             log.extend(fresh.into_iter().map(|e| (now, e)));
             log.retain(|(at, _)| now.duration_since(*at) < ENG_AFTERGLOW);
             // the newest twelve; older ones have had their fifteen minutes
             let excess = log.len().saturating_sub(12);
             log.drain(..excess);
         }
-        self.eng.insert(state.project, state);
+        self.eng.insert(key, state);
         cx.notify();
     }
 
     /// The afterglow still on show for the active project, oldest first.
     fn eng_afterglow(&self) -> Vec<&str> {
-        let key = self.place_of(self.active).project;
+        let key = self.eng_key();
         let now = Instant::now();
         self.eng_events
             .get(&key)
@@ -11570,7 +11611,7 @@ impl Workspace {
     /// Every project's reading, for the MCP snapshot — the active one flagged,
     /// each with its own afterglow. What `engineering_state` answers with.
     fn eng_reports(&self) -> Vec<engstate::Report> {
-        let active = self.place_of(self.active).project;
+        let active = self.eng_key();
         let now = Instant::now();
         self.eng
             .iter()
@@ -20972,17 +21013,20 @@ impl Workspace {
         if let Some(w) = width.filter(|w| *w > 0.) {
             col = col.w(px(w));
         }
-        // THE PROJECT, not the branch. The rail answers for the project as a
-        // whole — switching tabs changes nothing here, switching projects
-        // does — so the name is the project's, drawn the way the tree draws
-        // it. A loose tab hangs from no project and gets the mark and the
-        // badge alone: an unorganised session is not labelled "unfiled".
-        let place = self.place_of(self.active);
-        let project = place
-            .project
-            .and_then(|p| self.projects.iter().find(|q| q.id == p))
-            .map(|p| (p.id, p.label()));
-        if let Some((pid, name)) = project {
+        // THE BRANCH THE RAIL READS FOR, never the tab. The project the active
+        // tab is filed under when it has one, else the top-level group it
+        // sits in — the same key the scan uses, so the name and the numbers
+        // beside it can never be about different things. Switching tabs
+        // inside that branch changes nothing here; switching branches does.
+        // A loose tab hangs from nothing and gets the mark and the badge
+        // alone: an unorganised session is not labelled "unfiled".
+        let key = self.eng_key();
+        let branch = match key {
+            EngKey::Project(p) => Some(BarBranch::Project(p)),
+            EngKey::Group(g) => Some(BarBranch::Initiative(g)),
+            EngKey::Unfiled => None,
+        };
+        if let (Some(name), Some(branch)) = (self.eng_key_name(key), branch) {
             col = col.child(
                 div()
                     .min_w_0()
@@ -20993,12 +21037,12 @@ impl Workspace {
                     .child(name.to_uppercase())
                     // a name in the chrome, so it renames the way every
                     // other one does — the tree row beside it is the
-                    // same project and answers to the same gesture
+                    // same branch and answers to the same gesture
                     .on_mouse_down(
                         MouseButton::Right,
                         cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
                             cx.stop_propagation();
-                            ws.start_bar_rename(BarBranch::Project(pid), window, cx);
+                            ws.start_bar_rename(branch, window, cx);
                         }),
                     ),
             );
@@ -21120,18 +21164,43 @@ impl Workspace {
                 .text_color(ink)
                 .child(text)
         };
+        // Air at the top. The heading row sat on the border and the title on
+        // the heading; Parker: "just need a bit better spacing along the
+        // top". More above than below, since the eye enters from the rail.
         let mut rows = div()
             .flex()
             .flex_col()
-            .gap(px(3. * s))
-            .p(px(8. * s))
+            .gap(px(4. * s))
+            .px(px(12. * s))
+            .pt(px(11. * s))
+            .pb(px(9. * s))
             .min_w(px(700. * s));
-        // the heading: what this is a table OF, and how fresh it is
+        // The house menu's heading row first: what surface this is, and the
+        // keys it answers to — the NEEDS ME panel's recipe, so a person who
+        // has learned one panel has learned this one.
+        rows = rows.child(
+            div()
+                .flex()
+                .flex_row()
+                .justify_between()
+                .px(px(3. * s))
+                .pb(px(9. * s))
+                .text_size(px(9.5 * s))
+                .text_color(sk.ink.ink_dim)
+                .child("PROJECT RAIL \u{b7} the badge, unfolded")
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .gap(px(6. * s))
+                        .child("click the badge")
+                        .child("esc"),
+                ),
+        );
+        // then what this is a table OF, and how fresh it is
         let name = self
-            .place_of(self.active)
-            .project
-            .and_then(|p| self.project_at(p))
-            .map(|p| p.label().to_uppercase())
+            .eng_key_name(self.eng_key())
+            .map(|n| n.to_uppercase())
             .unwrap_or_else(|| "UNFILED".into());
         let freshness = match st {
             Some(st) => format!(
@@ -21147,7 +21216,7 @@ impl Workspace {
                 .flex_row()
                 .items_center()
                 .justify_between()
-                .pb(px(4. * s))
+                .pb(px(7. * s))
                 .child(
                     div()
                         .text_size(px(11. * s))
@@ -21163,7 +21232,7 @@ impl Workspace {
                 ),
         );
         let Some(st) = st else {
-            return Some(self.eng_table_frame(&sk, s, rows, cx));
+            return Some(self.eng_table_frame(&sk, th, s, rows, cx));
         };
         let muted = th.text.alpha(0.55);
         let warn = self.eng_ink(engstate::Tone::Warn, th);
@@ -21278,7 +21347,7 @@ impl Workspace {
         let glow = self.eng_afterglow();
         if !glow.is_empty() {
             rows = rows.child(div().h(px(1.)).mt(px(4. * s)).bg(th.text.alpha(0.12)));
-            let key = self.place_of(self.active).project;
+            let key = self.eng_key();
             let now = Instant::now();
             if let Some(log) = self.eng_events.get(&key) {
                 for (at, e) in log {
@@ -21303,7 +21372,7 @@ impl Workspace {
                 }
             }
         }
-        Some(self.eng_table_frame(&sk, s, rows, cx))
+        Some(self.eng_table_frame(&sk, th, s, rows, cx))
     }
 
     /// The scrim and the panel around the table — the same shape as every
@@ -21311,10 +21380,22 @@ impl Workspace {
     fn eng_table_frame(
         &self,
         sk: &skin::Skin,
+        th: &theme::Theme,
         s: f32,
         rows: gpui::Div,
         cx: &mut Context<Self>,
     ) -> gpui::Div {
+        // The menu recipe, the same one the NEEDS ME panel and the usage card
+        // wear: a real 2px accent border, an opaque darkened fill, a float
+        // shadow, a radius, and a footer saying how to leave. The first cut
+        // used the skin's bare panel and drew a borderless sheet over the
+        // terminals — Parker: "click opens a pane, but has no border...
+        // should follow the design pattern of the other menu items".
+        let footer = div()
+            .pt(px(6. * s))
+            .text_size(px(8.5 * s))
+            .text_color(th.accent.alpha(0.8))
+            .child("esc or click outside to close");
         div()
             .absolute()
             .inset_0()
@@ -21329,16 +21410,25 @@ impl Workspace {
                 }),
             )
             .child(
-                sk.panel()
+                div()
                     .id("eng-table-panel")
                     .absolute()
                     .left(px(12. * s))
-                    .top(px(44. * s))
-                    .max_h(px(self.tray_max_h(44. * s)))
+                    .top(px(50. * s))
+                    .max_h(px(self.tray_max_h(50. * s)))
                     .overflow_x_hidden()
                     .overflow_y_scroll()
-                    .shadow_lg()
-                    .child(rows),
+                    .rounded(sk.rad_raw(8.))
+                    .border_2()
+                    .border_color(th.accent.alpha(0.85))
+                    .bg(darken(th.surface, 0.45))
+                    .shadow(float_shadows(th.accent))
+                    // a click inside the panel is the panel's, not the scrim's
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|_, _: &MouseDownEvent, _w, cx| cx.stop_propagation()),
+                    )
+                    .child(rows.child(footer)),
             )
     }
 
@@ -23394,7 +23484,15 @@ impl Render for Workspace {
                 // DECLARED organisation and the badge is read off the disk.
                 div()
                     .flex_none()
-                    .h(px(22. * scale))
+                    // A minimum, not a height. It was `h(22)` from the days the
+                    // corner held one line of text; the badge is a bordered
+                    // chip that stands a hair taller once a warning glyph is in
+                    // it, and a fixed height plus the clip below sliced its top
+                    // border off. Parker: "see how the border at the top of the
+                    // fixed element is cutoff... should have some breathing
+                    // room". The row's own padding is the breathing room; the
+                    // corner just has to stop being shorter than its contents.
+                    .min_h(px(22. * scale))
                     // clip instead of paint-over: when the window narrows past
                     // the corner, the fixed-size children must truncate, not
                     // bleed onto the always-kept right-side controls (#86).
@@ -30615,8 +30713,14 @@ mod tests {
             "the corner carries the isolation badge"
         );
         assert!(
-            !name.contains("group_title") && !name.contains("place.initiative"),
-            "the corner names the project, never the group the active tab is in"
+            name.contains("self.eng_key()") && name.contains("self.eng_key_name("),
+            "the corner must name the branch the rail READS for, by the same key \
+             the scan uses — a project, else a top-level group, else nothing. \
+             Naming the project alone drew a bare mark over Parker's JOB group"
+        );
+        assert!(
+            !name.contains("group_title"),
+            "the corner never draws the strip's old group heading"
         );
     }
 
