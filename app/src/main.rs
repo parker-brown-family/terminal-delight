@@ -1028,6 +1028,47 @@ enum EngKey {
     Group(u32),
     Unfiled,
 }
+
+/// One branch's reading, with the two things the rail draws from it every
+/// frame already derived. The frames and the badge are a function of the
+/// reading alone, and the window renders many times between two readings —
+/// rebuilding them on every render was allocation for the same answer.
+struct Reading {
+    state: engstate::ProjectState,
+    frames: Vec<engstate::Frame>,
+    badge: Vec<engstate::Segment>,
+}
+
+impl Reading {
+    fn of(state: engstate::ProjectState) -> Reading {
+        Reading {
+            frames: state.frames(),
+            badge: state.badge(),
+            state,
+        }
+    }
+}
+
+/// Which branch the sweep should read next: the active one when its reading
+/// is missing or stale, else the stalest of the others that is stale, else
+/// nothing. `keys` is every branch the tree has, active first.
+///
+/// The active branch always wins because it is the one on screen; the others
+/// are read round-robin behind it so that `engineering_state` describes the
+/// whole session for a coordinating agent, not only the places a person has
+/// visited since the window opened. A branch never read has age `MAX` and so
+/// goes first among the others.
+fn next_stale(keys: &[EngKey], age: impl Fn(&EngKey) -> Duration) -> Option<EngKey> {
+    let active = *keys.first()?;
+    if age(&active) >= ENG_STALE {
+        return Some(active);
+    }
+    keys[1..]
+        .iter()
+        .copied()
+        .filter(|k| age(k) >= ENG_STALE)
+        .max_by_key(|k| age(k))
+}
 /// Default bar width in logical pixels at scale 1.0 — wide enough for two
 /// levels of indent plus a name plus its roll-up glyphs.
 const LEFT_BAR_W: f32 = 208.;
@@ -3747,7 +3788,7 @@ struct Workspace {
     vitals_refreshing: bool,
     /// The engineering state of each declared project the rail has read,
     /// keyed by project id — `None` is the loose tabs. See `engstate`.
-    eng: std::collections::HashMap<EngKey, engstate::ProjectState>,
+    eng: std::collections::HashMap<EngKey, Reading>,
     /// A scan is out. One at a time: a second pass queued behind a slow git
     /// would land after the first and say the same thing.
     eng_scanning: bool,
@@ -11451,7 +11492,7 @@ impl Workspace {
 
     /// The active project's engineering state, if the rail has read it yet.
     fn eng_state(&self) -> Option<&engstate::ProjectState> {
-        self.eng.get(&self.eng_key())
+        self.eng.get(&self.eng_key()).map(|r| &r.state)
     }
 
     /// The branch the rail reads for right now — see [`EngKey`].
@@ -11487,14 +11528,24 @@ impl Workspace {
         if self.eng_scanning {
             return None;
         }
-        let key = self.eng_key();
-        let fresh = self
-            .eng
-            .get(&key)
-            .is_some_and(|s| s.scanned_at.elapsed() < ENG_STALE);
-        if fresh {
-            return None;
+        // Every branch the tree has, active first. The active one is read
+        // whenever it is stale; the rest take turns behind it, so a
+        // coordinating agent asking for the whole session gets the whole
+        // session. At one scan per two-second beat and twenty seconds of
+        // staleness, ten branches stay fresh — and a scan is ~150ms now.
+        let mut keys: Vec<EngKey> = vec![self.eng_key()];
+        for i in 0..self.tabs.len() {
+            let k = Self::eng_key_of(self.place_of(i));
+            if !keys.contains(&k) {
+                keys.push(k);
+            }
         }
+        let key = next_stale(&keys, |k| {
+            self.eng
+                .get(k)
+                .map(|r| r.state.scanned_at.elapsed())
+                .unwrap_or(Duration::MAX)
+        })?;
         self.eng_scanning = true;
         Some((key, self.eng_input(key, cx)))
     }
@@ -11579,7 +11630,7 @@ impl Workspace {
         // The afterglow: what this reading says happened since the last one.
         // Diffed before the insert, against the reading it replaces, and only
         // for the same project — the pure function refuses anything else.
-        if let Some(prev) = self.eng.get(&key) {
+        if let Some(prev) = self.eng.get(&key).map(|r| &r.state) {
             let now = Instant::now();
             let fresh = engstate::events(prev, &state);
             let log = self.eng_events.entry(key).or_default();
@@ -11589,7 +11640,7 @@ impl Workspace {
             let excess = log.len().saturating_sub(12);
             log.drain(..excess);
         }
-        self.eng.insert(key, state);
+        self.eng.insert(key, Reading::of(state));
         cx.notify();
     }
 
@@ -11626,7 +11677,7 @@ impl Workspace {
                             .collect()
                     })
                     .unwrap_or_default();
-                st.report(*key == active, &glow)
+                st.state.report(*key == active, &glow)
             })
             .collect()
     }
@@ -11635,10 +11686,10 @@ impl Workspace {
     /// for the afterglow when there is any. One function, so the clock and
     /// the renderer count the same frames.
     fn eng_frames(&self) -> Vec<engstate::Frame> {
-        let Some(st) = self.eng_state() else {
+        let Some(reading) = self.eng.get(&self.eng_key()) else {
             return Vec::new();
         };
-        let mut frames = st.frames();
+        let mut frames = reading.frames.clone();
         let glow = self.eng_afterglow();
         if !glow.is_empty() {
             // the three newest, newest first — the rest are on the badge's
@@ -21062,8 +21113,8 @@ impl Workspace {
         let th = theme::theme(cx);
         let s = theme::outer_choice(cx).grade.scale;
         let sk = skin::skin(cx, s);
-        let mut segments = match self.eng_state() {
-            Some(st) => st.badge(),
+        let mut segments = match self.eng.get(&self.eng_key()) {
+            Some(r) => r.badge.clone(),
             None => vec![engstate::Segment {
                 text: "SCANNING".into(),
                 tone: engstate::Tone::Muted,
@@ -30519,6 +30570,40 @@ mod tests {
             "a fresh window opens its first tab's name box over the first-run hint, \
              which the next lines are about to write into that same field"
         );
+    }
+
+    /// The sweep reads the active branch first and the rest round-robin.
+    ///
+    /// The first cut read only the branch you were standing in, so the MCP
+    /// reading — built for a coordinating agent — described only the places
+    /// you had visited since the window opened. Pure, so it is tested on
+    /// ages rather than on a window.
+    #[test]
+    fn the_sweep_reads_the_active_branch_first_and_the_rest_in_turn() {
+        let a = EngKey::Project(1);
+        let b = EngKey::Group(2);
+        let c = EngKey::Unfiled;
+        let keys = [a, b, c];
+        let secs = |n: u64| Duration::from_secs(n);
+        // active stale → active, however stale the others are
+        assert_eq!(next_stale(&keys, |_| secs(999)), Some(a));
+        // active fresh → the stalest of the others
+        let age = |k: &EngKey| match k {
+            EngKey::Project(_) => secs(1),
+            EngKey::Group(_) => secs(25),
+            EngKey::Unfiled => secs(40),
+        };
+        assert_eq!(next_stale(&keys, age), Some(c));
+        // a branch never read has age MAX and goes first among the others
+        let age = |k: &EngKey| match k {
+            EngKey::Project(_) => secs(1),
+            EngKey::Group(_) => Duration::MAX,
+            EngKey::Unfiled => secs(40),
+        };
+        assert_eq!(next_stale(&keys, age), Some(b));
+        // everything fresh → nothing is due, and the beat costs nothing
+        assert_eq!(next_stale(&keys, |_| secs(3)), None);
+        assert_eq!(next_stale(&[], |_| secs(999)), None);
     }
 
     /// A scrim over the glass flattens it by construction, or the build fails.

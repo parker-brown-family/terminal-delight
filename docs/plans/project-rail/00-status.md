@@ -4,7 +4,16 @@
 putting aggregate numbers in the most prominent row of the window, where the
 failure mode is a confident wrong number that looks exactly like a real one.
 → four gates.
-**Turned out to be:** _filled in at the end_
+**Turned out to be:** an 8, for the reason given and one the score did not
+foresee. The prominent wrong number never happened — unknown-is-not-zero held
+— but the *invisible* wrong number did: the git runner deadlocked on any
+checkout whose status out-talked a 64 KiB pipe and reported it as unmeasured,
+which is honest and useless, and a reviewer found it the next morning (#684).
+The gates were written as artifacts, not approvals, and every one of them
+changed something the morning read caught — the missing group name, the bent
+table, the clipped badge — so they were not rubber stamps; they were simply
+read late. Photographing at `warp = 0.0` all night was the one methodological
+miss, and it is now in memory.
 
 Opened 2026-09-22, overnight, on Parker's instruction: *"You are going to build
 this out end to end as I sleep! Automated tests and everything … use a tracer
