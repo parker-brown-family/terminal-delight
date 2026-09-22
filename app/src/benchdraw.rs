@@ -1590,7 +1590,7 @@ pub fn round_progress(
 ///
 /// The pane attaches the arrows and the close, because pressing one is a
 /// change of state rather than a change of picture.
-pub fn review_flyout(
+pub fn review_page(
     at: usize,
     total: usize,
     title: &str,
@@ -1599,65 +1599,42 @@ pub fn review_flyout(
     th: &Theme,
 ) -> Div {
     let tint = ink(crate::workbench::Tint::Settled, th);
-    aglow(
-        sk.panel()
-            // CENTRED on what it covers, not parked at the bottom.
-            //
-            // A flyout opens because somebody pressed a button in the middle
-            // of the card, and their eye is already there; putting the answer
-            // at the foot of the pane asks them to go and find it. Parker:
-            // *"the POSITION should be CENTERED on the question element and
-            // overlapping it ... if the person CLICKED review, the popup will
-            // be where they JUST clicked"*. The centring is done by the
-            // wrapper the pane puts this in, so this only has to say how wide
-            // it is willing to be.
-            .max_w(px(620.))
-            .w_full()
-            .flex()
-            .flex_col()
-            .gap(px(10.))
-            .p(px(16.))
-            .bg(th.surface)
-            .border_l(px(3.))
-            .border_color(tint)
-            // Over everything, and taking its own clicks: an overlay that
-            // let a press through to the card underneath would answer a
-            // question while somebody was reading an old one.
-            .occlude(),
-        tint,
-        th,
-    )
-    .child(
-        div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(8.))
-            .child(micro("REVIEW", Step::Fine, tint, sk, th))
-            .child(div().flex_1())
-            // Where you are in the gallery, said plainly. This is a count a
-            // person cannot see — unlike the option count, which was printed
-            // over the top of the options themselves.
-            .child(micro(
-                format!("{} of {}", at + 1, total.max(1)),
-                Step::Fine,
-                sk.ink.ink_faint,
-                sk,
-                th,
-            )),
-    )
-    .child(
-        div()
-            .text_size(px(sk.pt(Step::Head)))
-            .text_color(th.text)
-            .child(sel(title.to_string())),
-    )
-    .child(
-        div()
-            .text_size(px(sk.pt(Step::Lead)))
-            .text_color(tint)
-            .child(sel(answer.to_string())),
-    )
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(10.))
+        .w_full()
+        .child(
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(8.))
+                .child(micro("REVIEW", Step::Fine, tint, sk, th))
+                .child(div().flex_1())
+                // Where you are in the gallery, said plainly. This is a count
+                // a person cannot see — unlike the option count, which was
+                // printed over the top of the options themselves.
+                .child(micro(
+                    format!("{} of {}", at + 1, total.max(1)),
+                    Step::Fine,
+                    sk.ink.ink_faint,
+                    sk,
+                    th,
+                )),
+        )
+        .child(
+            div()
+                .text_size(px(sk.pt(Step::Head)))
+                .text_color(th.text)
+                .child(sel(title.to_string())),
+        )
+        .child(
+            div()
+                .text_size(px(sk.pt(Step::Lead)))
+                .text_color(tint)
+                .child(sel(answer.to_string())),
+        )
 }
 
 /// A question, opened from the rail.
@@ -4581,6 +4558,47 @@ mod tests {
             .or_else(|| rest.find("\n    }"))
             .map_or(rest.len(), |i| i + 2);
         rest[..end].to_string()
+    }
+
+    /// The review FILLS the workbench; it does not float over it.
+    ///
+    /// It used to be a centred, occluding panel with a maximum width — a
+    /// flyout — laid absolutely over the whole bench. At a narrow pane it drew
+    /// outside the bench's own box. Parker: *"the review question BROKE OUT OF
+    /// THE MAIN WORKBENCH SPACE!!! it should have just taken OVER the main
+    /// workbench space ... in a very obvious way like the other tabs, comments
+    /// overview etc. do"*.
+    ///
+    /// Drawn in the body, it is clipped and scrolled by the same box as every
+    /// other shelf, and breaking out stops being possible rather than
+    /// unlikely. This is the guard on that: a page that positions ITSELF can
+    /// leave the box however it is parented, so it may not.
+    ///
+    /// Comments are stripped by [`body_of`], so the words in this explanation
+    /// cannot satisfy or trip the scan they describe.
+    #[test]
+    fn the_review_page_cannot_position_itself_out_of_the_bench() {
+        let body = body_of(include_str!("benchdraw.rs"), "pub fn review_page(");
+        for escape in [
+            ".absolute(",
+            ".occlude(",
+            ".max_w(",
+            ".inset_0(",
+            ".left(",
+            ".right(",
+            ".top(",
+            ".bottom(",
+        ] {
+            assert!(
+                !body.contains(escape),
+                "review_page uses {escape}, so it can place itself outside the body box \
+                 it is drawn in:\n{body}"
+            );
+        }
+        assert!(
+            body.contains(".w_full()"),
+            "a takeover that does not fill the width is not a takeover:\n{body}"
+        );
     }
 
     /// Two pieces of chrome a person asked to be rid of, kept gone.
