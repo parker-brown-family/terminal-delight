@@ -631,6 +631,21 @@ fn handle_conn(
             // answer about somebody else's terminals, correct in shape and
             // impossible to spot. Refusing costs one comparison and turns that
             // into a sentence naming both sessions.
+            //
+            // THIS GUARDS MISROUTING, NOT IMPERSONATION, and the difference
+            // matters to whoever arrives here cold. `c.session` is whatever the
+            // caller wrote on the wire; nothing checks it against the process on
+            // the other end of the connection, and `c.pane` is not checked
+            // against anything at all. A caller that names the right session on
+            // purpose is served, and that is deliberate: every caller able to
+            // reach this socket is already the same person, and an agent acting
+            // for them is them. `docs/decisions/0002` carries the argument and,
+            // more usefully, says what ends it — the first caller able to arrive
+            // from outside this user's runtime directory.
+            //
+            // `host.rs` does check, with `SO_PEERCRED`, because it is answering
+            // a different question. If this socket ever needs to, the technique
+            // is already in the tree rather than to be invented.
             if let Some(c) = &caller {
                 let mine = crate::instance::key();
                 if c.session != mine {
