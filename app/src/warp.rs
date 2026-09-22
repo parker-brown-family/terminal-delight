@@ -27,6 +27,11 @@ pub const MAX_TUBES: usize = 32;
 
 static RECTS: Mutex<Vec<Tube>> = Mutex::new(Vec::new());
 static SUPPRESSED: AtomicBool = AtomicBool::new(false);
+/// Set by [`flatten`] from inside an overlay's own builder; cleared by
+/// [`begin_frame`]. The second flag exists so that flatness can be a property
+/// of the element that needs it rather than of a list in `render` that every
+/// new overlay had to be added to — and was not.
+static FLATTENED: AtomicBool = AtomicBool::new(false);
 
 /// Suppress the warp pass for the current frame (set in the workspace render
 /// before panes paint). While suppressed no tube registers, so the renderer's
@@ -35,7 +40,19 @@ pub fn set_suppressed(suppressed: bool) {
     SUPPRESSED.store(suppressed, Ordering::Relaxed);
 }
 
+/// Flatten the glass for the frame being built — called by whatever draws a
+/// surface OVER it, during element construction, before any pane paints.
+///
+/// Sticky for the frame: it does not matter whether the caller runs before
+/// or after the workspace's own `set_suppressed`, and it needs no entry in any
+/// list. `Workspace::over_the_glass` is the one caller; a scrim built there
+/// is flat by construction.
+pub fn flatten() {
+    FLATTENED.store(true, Ordering::Relaxed);
+}
+
 pub fn begin_frame() {
+    FLATTENED.store(false, Ordering::Relaxed);
     let mut rects = RECTS.lock().unwrap();
     rects.clear();
     push(&rects);
@@ -81,7 +98,7 @@ pub fn register_focus_tube(rect: [f32; 4], glare: f32, k1: f32, k2: f32, crawl: 
 /// (`crawl = [enabled, a, depth]`, all `0`/identity when crawl is off), each
 /// from its resolved theme.
 pub fn register_tube(rect: [f32; 4], glare: f32, k1: f32, k2: f32, crawl: [f32; 3]) {
-    if SUPPRESSED.load(Ordering::Relaxed) {
+    if is_suppressed() {
         return;
     }
     let mut rects = RECTS.lock().unwrap();
@@ -99,7 +116,7 @@ pub fn register_tube(rect: [f32; 4], glare: f32, k1: f32, k2: f32, crawl: [f32; 
 /// whole screen goes flat it has to stop compensating or it becomes the one
 /// thing on screen that is bent.
 pub fn is_suppressed() -> bool {
-    SUPPRESSED.load(Ordering::Relaxed)
+    SUPPRESSED.load(Ordering::Relaxed) || FLATTENED.load(Ordering::Relaxed)
 }
 
 /// Register one OVERLAY tube (an agent-wall card's logo square) — like
