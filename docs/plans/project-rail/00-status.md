@@ -20,19 +20,23 @@ carries every least-confident call for him to argue with.
 - Gate 3 — Program Design: written as artifact 2026-09-22 (`03-program-design.md`)
 - Gate 4 — Slice plan: written as artifact 2026-09-22 (`04-slices.md`)
 
-## Slices
+## Slices (see `04-slices.md` for what each one is)
 
-- [x] Slice 1 — tracer bullet: `engstate` model + scan + badge, the corner
-      names the PROJECT and carries the badge, the ticker shows one frame
-- [ ] Slice 2 — the frames rotate; drift both ways; NO GIT; several repos;
-      the derived sentence; the heartbeat drawn as bars
-- [ ] Slice 3 — MVP: photographed on the rig, guards for the wiring, the
-      help modal mentions the rail, PR opened
-- [ ] Slice 4 — full: pull requests via `gh` on a slow cadence (unknown on
-      failure, never zero); click the badge for the checkouts table;
-      afterglow markers for what happened while you were elsewhere
-- [ ] Slice 5 — stretch: hold the project name to reveal the inferred
-      topology for three seconds
+- [x] 1 · Tracer — `0fbab3d`. Photographed: badge, one frame, heartbeat, the
+      strip back with the tree shut.
+- [x] 2 · Morph — `1a3d390`. Afterglow (pure diff, tested), warn wash, the
+      checkouts table on a click, esc closes it.
+- [x] 3 · MVP — the table photographed at full width; guards; committed.
+- [x] 4 · Landing — the teeth: unpushed, touched files, `merge-tree` dry
+      runs, idle worktrees, stashes, collisions, the landing list. Tested
+      on a rig with a real conflict.
+- [x] 5 · Exposure — `engineering_state` over MCP, answered on the real rig
+      (see the brief). `ctl rail` NOT done.
+- [ ] 6 · Pull requests via `gh` — not started.
+- [ ] 7 · Hold-to-reveal topology — not started.
+
+Not done and not attempted: localising the frames; the help modal does not
+yet mention the rail.
 
 ## Notes for a fresh session
 
