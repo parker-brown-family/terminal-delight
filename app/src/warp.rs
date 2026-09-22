@@ -41,14 +41,25 @@ pub fn set_suppressed(suppressed: bool) {
 }
 
 /// Flatten the glass for the frame being built — called by whatever draws a
-/// surface OVER it, during element construction, before any pane paints.
+/// surface OVER it.
 ///
-/// Sticky for the frame: it does not matter whether the caller runs before
-/// or after the workspace's own `set_suppressed`, and it needs no entry in any
-/// list. `Workspace::over_the_glass` is the one caller; a scrim built there
-/// is flat by construction.
+/// Sticky for the frame, and order-independent in BOTH directions, which is
+/// what lets it be a property of the element rather than an entry in a list.
+/// A scrim is built in `Workspace::render`, before any pane prepaints, so the
+/// flag alone is enough: no tube ever registers. A hover card is not — gpui
+/// prepaints a tooltip after the entire root tree (`Window::draw_roots`), by
+/// which time every visible pane has already banked its tube — so this also
+/// CLEARS what was banked and re-pushes the empty set, which the renderer reads
+/// once when it finally draws the frame. Without the clear, `flatten()` would
+/// silently do nothing for every caller on the late side of prepaint.
+///
+/// `Workspace::over_the_glass` and `over_the_glass_tip` are the two callers;
+/// a scrim or a hover card built there is flat by construction.
 pub fn flatten() {
     FLATTENED.store(true, Ordering::Relaxed);
+    let mut rects = RECTS.lock().unwrap();
+    rects.clear();
+    push(&rects);
 }
 
 pub fn begin_frame() {
@@ -197,6 +208,38 @@ mod tests {
         register_tube(r, 0.5, 0.14, 0.06, CRAWL_OFF);
         assert_eq!(rect_count(), 1, "the next frame is bent again");
         assert!(!is_suppressed());
+    }
+
+    /// The late caller: a hover card, which gpui prepaints only after the whole
+    /// root tree has run and every pane has already banked its tube.
+    ///
+    /// Setting the flag at that point is worth nothing — the tubes are already
+    /// with the renderer, which reads them once when it draws. So `flatten()`
+    /// clears the set as well, and the order it is called in stops mattering.
+    /// This is the half that was missing when the quota rails' hover card
+    /// shipped cut off at the tube's edge.
+    #[test]
+    fn flatten_clears_tubes_that_registered_before_it() {
+        let _serial = WARP_SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        let r = [0.0, 0.0, 100.0, 100.0];
+        begin_frame();
+        set_suppressed(false);
+        register_tube(r, 0.5, 0.14, 0.06, CRAWL_OFF);
+        register_tube(r, 0.5, 0.14, 0.06, CRAWL_OFF);
+        assert_eq!(rect_count(), 2, "the panes bank their tubes first");
+
+        flatten();
+        assert_eq!(
+            rect_count(),
+            0,
+            "a surface drawn over the glass flattens it even from the far side of prepaint"
+        );
+        assert!(is_suppressed(), "and nothing re-registers behind it");
+        register_tube(r, 0.5, 0.14, 0.06, CRAWL_OFF);
+        assert_eq!(rect_count(), 0);
+
+        begin_frame();
+        set_suppressed(false);
     }
 
     #[test]
