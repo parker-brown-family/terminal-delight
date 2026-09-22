@@ -2620,8 +2620,25 @@ pub enum Anchor {
 /// — would have left the `else if offering` arm below unreachable, which is the
 /// same defect in the other direction: an arm nobody can reach says the offer
 /// was never given a home.
-pub fn body_anchor(card: bool, offering: bool) -> Anchor {
-    if card {
+///
+/// A **waiting question** is the third instance of the sentence already above:
+/// *bottom-anchoring is for the conversation and for nothing else*. It is not
+/// in the body — it is drawn below it, outside the body's scroll, on purpose —
+/// so a bottom-anchored body took the whole box and left the one thing holding
+/// the session up pressed against the composer. Then answering it opened it as
+/// a card and the card anchored `Top`, so the question a person was part-way
+/// through JUMPED the height of the pane under their cursor. Parker: *"when a
+/// question first comes up it is snapped to the BOTTOM in the composer area --
+/// then If I click the options (q1, q2, q3) -- it JUMPS up to the top... it
+/// should be at the top to start with!"*
+///
+/// It folds into `card` rather than getting an arm of its own because it wants
+/// exactly what a card wants, for the reason an OFFER wants `Eye`: a call to
+/// action is not history. `offering` stays reachable — an offer is drawn when
+/// no agent is running and a waiting question means one is, so the two cannot
+/// both be true.
+pub fn body_anchor(card: bool, offering: bool, waiting: bool) -> Anchor {
+    if card || waiting {
         Anchor::Top
     } else if offering {
         Anchor::Eye
@@ -7208,23 +7225,69 @@ mod tests {
 
     #[test]
     fn an_offer_sits_at_eye_level_and_a_transcript_on_the_floor() {
-        // The whole table. Two booleans, and three different answers — an offer
-        // is neither of the other two, which is the point of the third variant.
+        // The whole table. Three booleans, three answers, and exactly ONE way
+        // to reach the floor — which is the rule this function keeps being
+        // asked to learn again: bottom-anchoring is for the conversation and
+        // for nothing else.
         assert_eq!(
-            body_anchor(false, true),
+            body_anchor(false, true, false),
             Anchor::Eye,
             "an offer is not against the ceiling"
         );
-        assert_eq!(body_anchor(true, false), Anchor::Top, "an opened card");
         assert_eq!(
-            body_anchor(true, true),
+            body_anchor(true, false, false),
+            Anchor::Top,
+            "an opened card"
+        );
+        assert_eq!(
+            body_anchor(true, true, false),
             Anchor::Top,
             "a card over an offer is a card: it may be taller than the box"
         );
         assert_eq!(
-            body_anchor(false, false),
+            body_anchor(false, false, false),
             Anchor::Bottom,
             "a conversation still sits on its composer"
+        );
+
+        // A question waiting on a person is drawn BELOW the body, so a
+        // bottom-anchored body pressed it against the composer — and then
+        // answering it opened it as a card, which anchors Top, so it jumped
+        // the height of the pane under the cursor that had just pressed it.
+        assert_eq!(
+            body_anchor(false, false, true),
+            Anchor::Top,
+            "a question is not history and does not go to the floor"
+        );
+        // The same place it lands once it has been opened. That EQUALITY is
+        // the bug: unequal, the card moves when a person presses it.
+        assert_eq!(
+            body_anchor(false, false, true),
+            body_anchor(true, false, true),
+            "asking and having asked must anchor alike, or the card jumps"
+        );
+        assert_eq!(
+            body_anchor(false, true, true),
+            Anchor::Top,
+            "a waiting question outranks an offer, as a card does"
+        );
+
+        // Exhaustive, because the only claim worth making here is about the
+        // whole table: one combination reaches the floor and it is the
+        // conversation's.
+        let floors: Vec<(bool, bool, bool)> = [false, true]
+            .into_iter()
+            .flat_map(|c| {
+                [false, true]
+                    .into_iter()
+                    .flat_map(move |o| [false, true].into_iter().map(move |w| (c, o, w)))
+            })
+            .filter(|&(c, o, w)| body_anchor(c, o, w) == Anchor::Bottom)
+            .collect();
+        assert_eq!(
+            floors,
+            vec![(false, false, false)],
+            "exactly one row anchors to the floor, and it is the conversation"
         );
     }
 

@@ -3672,6 +3672,9 @@ impl TerminalView {
             None => body,
         };
 
+        // Taken as a bool before the block is moved into the tree, so the
+        // anchor far below can ask without borrowing it.
+        //
         // ── what the agent is blocked on, whatever else is on the bench ─────
         //
         // OUT of the match, and that is the fix rather than a tidy-up. It was
@@ -3710,6 +3713,11 @@ impl TerminalView {
                 let zones = self.wb_zones.clone();
                 crate::benchdraw::waiting_block(&q, Some(&zones), sk, th).child(chips)
             });
+
+        // Taken as a bool here, where the block still exists, because the
+        // anchor that needs it is built far below and the block itself is
+        // moved into the tree before then.
+        let has_waiting = waiting.is_some();
 
         // ── the note box ────────────────────────────────────────────────────
         //
@@ -4033,6 +4041,7 @@ impl TerminalView {
                         let anchor = crate::workbench::body_anchor(
                             showing_id.is_some() || reviewing,
                             offering,
+                            has_waiting,
                         );
                         div()
                             // Stateful, because a scroll container IS state:
