@@ -1603,6 +1603,33 @@ enum Seat {
     Loose,
 }
 
+/// Whether a gesture that makes a tab ends in that tab's name box.
+///
+/// A parameter rather than a rule inside [`Workspace::new_tab_in`], because the
+/// six call sites do not agree and the disagreement is not about the tab — it is
+/// about what the PERSON just asked for. A gesture whose entire content is
+/// "give me a tab" can assume the next thing you want is to say what it is for;
+/// a tab that appears as the by-product of something else can assume nothing of
+/// the kind.
+///
+/// An enum and not a `bool`, so a call site reads as the sentence it is making.
+/// `new_tab_in(place, true, …)` says nothing at the point it is read, and this
+/// is a decision somebody will get wrong from three screens away.
+#[derive(Clone, Copy, PartialEq)]
+enum Naming {
+    /// Open the new tab's name box with the keyboard in it. Ctrl+Shift+T, the
+    /// strip's `+`, and the "New tab here" rows — every gesture that means
+    /// nothing except *make me a tab*.
+    Prompt,
+    /// Leave it nameless. Three cases, and none of them is a person asking for a
+    /// tab: the tab is the by-product of making a BRANCH, whose own name box is
+    /// the one that should have the keyboard; it is the first tab of a fresh
+    /// window, which gets the first-run hint written into that very field; or it
+    /// arrived from outside — an adoption, a resurrection, the launcher — where
+    /// seizing the keyboard is a stranger typing over you.
+    Quiet,
+}
+
 /// `true` if `c` counts as part of a "word" for ctrl-arrow navigation.
 fn is_word_char(c: char) -> bool {
     c.is_alphanumeric() || c == '_'
@@ -5291,7 +5318,13 @@ impl Workspace {
                     ws.active = 0;
                     ws.focus_active(window, cx);
                 }
-                None => ws.new_tab(window, cx),
+                // `new_tab_in` rather than `new_tab`, for the `Quiet`: the
+                // gesture here is opening the application, not asking for a
+                // tab, and the very next lines write the first-run hint into
+                // the field a name box would be editing. A box open over that
+                // would commit its empty buffer the first time it was clicked
+                // away from and take the hint with it.
+                None => ws.new_tab_in(tree::Place::default(), Naming::Quiet, window, cx),
             }
             // Fresh window: seed the rename hint onto the first tab + its sole
             // sub-terminal (and only those — later tabs/splits stay default).
@@ -6992,7 +7025,13 @@ impl Workspace {
         // tab is still possible, by dragging one out of its branch, which is
         // where a deliberate choice belongs; it is no longer what a `+` does by
         // accident.
-        self.new_tab_in(self.place_of(self.active), window, cx);
+        //
+        // And it lands in its own name box. This IS the gesture whose whole
+        // content is "give me a tab", so the next thing wanted is what the tab
+        // is for — on a session of twenty panes a strip of shells named after
+        // their shell is a strip you cannot aim at, and the name never gets
+        // typed later because later is when you have stopped caring.
+        self.new_tab_in(self.place_of(self.active), Naming::Prompt, window, cx);
     }
 
     /// Open a fresh terminal as a new tab in `place`, seated at that branch's
@@ -7008,13 +7047,36 @@ impl Workspace {
     /// This delegates to [`Self::open_tab`], which is the only place a new tab
     /// is built, so the hosted-mode invariant has one site to hold rather than
     /// three. See `a_hosted_window_makes_no_pane_of_its_own`.
-    fn new_tab_in(&mut self, place: tree::Place, window: &mut Window, cx: &mut Context<Self>) {
+    ///
+    /// `naming` is the one thing this cannot decide for its callers — see
+    /// [`Naming`]. It is asked for rather than defaulted because the wrong
+    /// answer is silent in both directions: a missing box is a tab that keeps
+    /// the shell's name for ever, and an unwanted one is a keyboard taken away
+    /// from somebody who was about to type into a terminal.
+    ///
+    /// The box is opened AFTER `open_tab`, which is what makes it stick.
+    /// `open_tab` defers a focus onto the new pane and stands down only when
+    /// [`Self::overlay_owns_keyboard`] is true — and `renaming` is one of the
+    /// buffers that answers it.
+    fn new_tab_in(
+        &mut self,
+        place: tree::Place,
+        naming: Naming,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.open_tab(
             session::PaneRestore::default(),
             Seat::Branch(place),
             window,
             cx,
         );
+        if naming == Naming::Prompt {
+            // `open_tab` has just made this the active tab, which is the tab it
+            // built — the index it inserted at, not the one that was active
+            // when the gesture started.
+            self.start_tab_rename(self.active, window, cx);
+        }
     }
 
     /// Build one new tab, holding one terminal, and seat it.
@@ -10019,6 +10081,7 @@ impl Workspace {
                                         project: Some(id),
                                         initiative: None,
                                     },
+                                    Naming::Prompt,
                                     window,
                                     cx,
                                 );
@@ -10101,6 +10164,7 @@ impl Workspace {
                                         project: None,
                                         initiative: Some(id),
                                     },
+                                    Naming::Prompt,
                                     window,
                                     cx,
                                 );
@@ -10165,7 +10229,7 @@ impl Workspace {
                                 cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
                                     cx.stop_propagation();
                                     ws.bar_menu = None;
-                                    ws.new_tab_in(ws.place_of(i), window, cx);
+                                    ws.new_tab_in(ws.place_of(i), Naming::Prompt, window, cx);
                                 }),
                             ),
                     )
@@ -10359,11 +10423,16 @@ impl Workspace {
     /// ignoring everything typed into it.
     fn new_project_with_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) -> u32 {
         let id = self.new_project(None, cx);
+        // `Quiet`: the tab is a by-product here, and the box that should have
+        // the keyboard is the PROJECT's. Two boxes open at once would be one
+        // gesture asking two questions, and the answer would land in whichever
+        // one the last call happened to leave focused.
         self.new_tab_in(
             tree::Place {
                 project: Some(id),
                 initiative: None,
             },
+            Naming::Quiet,
             window,
             cx,
         );
@@ -10392,12 +10461,14 @@ impl Workspace {
         });
         // The terminal comes before the rename for the same reason it does one
         // layer up — and before anything prunes, because a group with no tabs
-        // is exactly what `prune_groups` exists to remove.
+        // is exactly what `prune_groups` exists to remove. `Quiet` for the same
+        // reason too: the GROUP's box is the one being opened.
         self.new_tab_in(
             tree::Place {
                 project: None,
                 initiative: Some(id),
             },
+            Naming::Quiet,
             window,
             cx,
         );
@@ -28794,7 +28865,14 @@ mod tests {
     /// here; escalate if it fails to hold.
     #[test]
     fn a_hosted_window_makes_no_pane_of_its_own() {
-        let src = include_str!("main.rs");
+        // `shipped_src()` and not `include_str!`, which reads this file whole —
+        // test module included. The table below spells its own anchors as string
+        // literals, so a signature that changes shape does not go missing: the
+        // scan finds the literal in the table instead and reports on the wrong
+        // region. That happened, the moment `new_tab_in` grew a fourth argument
+        // and its `&mut self` moved onto its own line. It failed rather than
+        // passed, which was luck.
+        let src = shipped_src();
         let body = |sig: &str| -> &str {
             let at = src.find(sig).unwrap_or_else(|| panic!("{sig} not found"));
             let end = src[at..].find("\n    }\n").expect("end of fn");
@@ -28803,7 +28881,9 @@ mod tests {
 
         // Full signatures, not name prefixes: `fn split` alone matches
         // `split_leaf` three thousand lines earlier, and a source scan that
-        // silently reads the wrong function is worse than no scan.
+        // silently reads the wrong function is worse than no scan. Where a
+        // signature is multi-line the `fn name(` form IS the full one — there is
+        // no second function it can reach.
         for gesture in ["fn open_tab(", "fn split(&mut self, dir: SplitDir"] {
             let b = body(gesture);
             assert!(
@@ -28823,7 +28903,7 @@ mod tests {
         // quietly stopped covering the gesture people actually press.
         for (sig, reaches) in [
             ("fn new_tab(&mut self", "self.new_tab_in("),
-            ("fn new_tab_in(&mut self", "self.open_tab("),
+            ("fn new_tab_in(", "self.open_tab("),
             ("fn adopt_pane(", "self.open_tab("),
         ] {
             let delegating = body(sig);
@@ -29660,22 +29740,97 @@ mod tests {
         );
     }
 
-    /// The FOCUS reader names the dial it turns instead of guessing at one.
+    /// Asking for a tab lands you in its name box; getting one as a by-product
+    /// does not.
     ///
-    /// Its scrim `.occlude()`s the whole window, so the reader's own wheel
-    /// handler is the only one a flick reaches — and where the pointer happens
-    /// to be says nothing about which region of the mirrored pane is being
-    /// read. The reader mirrors the GRID on both faces (see
-    /// `the_focus_reader_mirrors_the_grid_on_both_faces` in pane.rs), so the
-    /// grid's dial is the answer and it is written down here rather than
-    /// resolved from a cursor that is standing on a modal.
+    /// Parker pressed Ctrl+Shift+T on the build that had just shipped the
+    /// branch-level name box and reported it: *"it did NOT fall into renaming!
+    /// it should have"*. The first cut put the box on branch creation only,
+    /// which is where it had been REMOVED from — restoring what was taken
+    /// rather than asking what the gesture was for.
     ///
-    /// It also has to HALT, and take ctrl before the pan. Before that the chord
-    /// scrolled the reader and — propagation never stopped — resized the outer
-    /// bar behind it, off one flick.
+    /// Both directions are silent, which is why this is scanned rather than
+    /// trusted:
     ///
-    /// Mutation-tested: dropping the halt, putting the pan first, and swapping
-    /// the named dial for the bench's each fail this test.
+    /// - a gesture dropping to `Quiet` is a tab that keeps its shell's name for
+    ///   ever, and nothing anywhere fails;
+    /// - a branch builder rising to `Prompt` opens two name boxes in one
+    ///   gesture, and what you type lands in whichever one was focused last.
+    ///
+    /// The first-run seed is the third case and the easiest to miss: the lines
+    /// right after it write `FIRST_RUN_HINT` into the very field a box would be
+    /// editing, so a box open over it commits its empty buffer on the first
+    /// click away and takes the hint with it.
+    ///
+    /// Scanned because every one of these needs a live gpui `Window`.
+    /// Comment-stripped, so this paragraph cannot satisfy its own grep.
+    #[test]
+    fn asking_for_a_tab_opens_its_name_box_and_a_by_product_does_not() {
+        let code = shipped_code();
+        let body = |sig: &str| {
+            let at = code.find(sig).unwrap_or_else(|| panic!("{sig} is gone"));
+            let end = code[at..].find("\n    }\n").expect("end of fn") + at;
+            code[at..end].to_string()
+        };
+
+        // The gesture whose whole content is "give me a tab".
+        let gesture = body("fn new_tab(&mut self");
+        assert!(
+            gesture.contains("Naming::Prompt"),
+            "ctrl+shift+t and the strip's + stopped opening the new tab's name box — \
+             a tab nobody names at the moment it is made is a tab called `bash`"
+        );
+
+        // And the site that acts on it, in the order that makes it stick.
+        let opener = body("fn new_tab_in(");
+        let opened = opener
+            .find("self.open_tab(")
+            .expect("new_tab_in must open a tab");
+        let named = opener
+            .find("self.start_tab_rename(")
+            .expect("new_tab_in no longer opens the name box for a Prompt gesture");
+        assert!(
+            opened < named,
+            "new_tab_in renames before it opens the tab — open_tab sets self.active to \
+             the tab it built, and its deferred focus only stands down for a box that \
+             is already open"
+        );
+        assert!(
+            opener.contains("naming == Naming::Prompt"),
+            "new_tab_in renames unconditionally, so making a project or a group now \
+             opens two name boxes in one gesture"
+        );
+
+        // The by-products. Each of these opens a box of its OWN, one layer up.
+        for (sig, whose) in [
+            ("fn new_project_with_terminal(", "the project's"),
+            ("fn new_group_with_terminal(", "the group's"),
+        ] {
+            let b = body(sig);
+            assert!(
+                b.contains("Naming::Quiet"),
+                "{sig} asks for the TAB's name box as well as {whose} — one gesture, \
+                 two questions, and the answer lands in whichever was focused last"
+            );
+            assert!(
+                b.contains("self.start_bar_rename("),
+                "{sig} no longer opens {whose} name box at all"
+            );
+        }
+
+        // The first tab of a fresh window, whose name field is spoken for.
+        let at = code
+            .find("if let Some(tab) = ws.tabs.first_mut()")
+            .expect("the first-run hint");
+        let seed = &code[..at];
+        let opened = seed.rfind("=> ws.new_tab").expect("the first-run tab");
+        assert!(
+            seed[opened..].contains("Naming::Quiet"),
+            "a fresh window opens its first tab's name box over the first-run hint, \
+             which the next lines are about to write into that same field"
+        );
+    }
+
     /// Ctrl+Alt+R names the row the walk is HIGHLIGHTING, and the vertical split
     /// keeps its one remaining spelling.
     ///
@@ -29753,6 +29908,22 @@ mod tests {
         );
     }
 
+    /// The FOCUS reader names the dial it turns instead of guessing at one.
+    ///
+    /// Its scrim `.occlude()`s the whole window, so the reader's own wheel
+    /// handler is the only one a flick reaches — and where the pointer happens
+    /// to be says nothing about which region of the mirrored pane is being
+    /// read. The reader mirrors the GRID on both faces (see
+    /// `the_focus_reader_mirrors_the_grid_on_both_faces` in pane.rs), so the
+    /// grid's dial is the answer and it is written down here rather than
+    /// resolved from a cursor that is standing on a modal.
+    ///
+    /// It also has to HALT, and take ctrl before the pan. Before that the chord
+    /// scrolled the reader and — propagation never stopped — resized the outer
+    /// bar behind it, off one flick.
+    ///
+    /// Mutation-tested: dropping the halt, putting the pan first, and swapping
+    /// the named dial for the bench's each fail this test.
     #[test]
     fn the_focus_reader_does_not_pan_on_the_size_chord() {
         let code = shipped_code();
