@@ -2387,6 +2387,74 @@ mod tests {
         );
     }
 
+    /// SUBMIT ANSWERS sends a round nobody finished, and says so afterwards.
+    ///
+    /// The button exists for this shape and only this shape — a person who
+    /// answered what they had an opinion about and wants the agent to get on
+    /// with it. Parker: *"a blank question is common practice, this will not
+    /// add friction"*.
+    ///
+    /// Three things are asserted because each could be wrong on its own: what
+    /// goes out, what is left behind, and what a second press does.
+    #[test]
+    fn submitting_a_half_answered_round_sends_what_there_is_and_marks_the_rest() {
+        let mut st = State::new();
+        let ev = Inbound::parse(&question_event()).unwrap();
+        let Effect::Present(cards) = st.take(ev, 1_000) else {
+            panic!()
+        };
+        let first = cards[0].id.clone();
+        st.take(
+            Inbound::Waiting {
+                tool_use_id: "toolu_01ABC".into(),
+                until_ms: 600_000,
+            },
+            1_001,
+        );
+        // One of two answered, so the round would never have gone out on its
+        // own — which is the whole state the button was missing for.
+        assert_eq!(st.press(&first, 1, 1_500), Press::Recorded);
+
+        match st.submit(&first, 1_600) {
+            Press::WriteAnswers { answers, .. } => {
+                assert_eq!(
+                    answers.get("Which drink?").and_then(Value::as_str),
+                    Some("Coffee")
+                );
+                // OMITTED, not empty. An absent key is a question nobody
+                // answered; `""` is an answer whose content is nothing. The
+                // agent reading this map can act on the first and can only be
+                // misled by the second.
+                assert!(
+                    !answers.contains_key("Which sizes?"),
+                    "the blank question was sent as a value: {answers:?}"
+                );
+            }
+            other => panic!("the hook is holding, so this is the file road: {other:?}"),
+        }
+
+        // WHAT IS LEFT BEHIND. Nobody is coming back to the blank one, and
+        // saying so is the difference between a card that records what
+        // happened and one that goes on offering chips that reach nothing.
+        let after = st.round_surfaces(&first, 1_700);
+        let Kind::Question(blank) = &after[1].kind else {
+            panic!()
+        };
+        assert_eq!(blank.answer, Answered::Skipped);
+        let Kind::Question(given) = &after[0].kind else {
+            panic!()
+        };
+        assert_eq!(
+            given.answer,
+            Answered::Chose(1),
+            "and the answer that was given still stands"
+        );
+
+        // AND IT DOES NOT GO TWICE.
+        assert!(!st.submittable(&first));
+        assert!(matches!(st.submit(&first, 1_800), Press::Refused(_)));
+    }
+
     /// THE DUPLICATE CARD, in the state that produced it.
     ///
     /// A hook holding the picker takes the FILE road, and the file road types

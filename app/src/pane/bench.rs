@@ -2053,8 +2053,24 @@ impl TerminalView {
     /// there is no `tool_use_id` to answer and nothing accumulating — so the
     /// button is absent rather than present and refusing. A control that can
     /// only say no is worse than no control.
+    ///
+    /// **`selected()` then `waiting_question()`, and the fallback is the half
+    /// that matters.** A question reaches a person two ways: as a card they
+    /// opened from the rail, and as the block pinned below the body that
+    /// arrived in front of them — and the second is the commoner, because it
+    /// is what a pane does the moment an agent stops to ask. Both draw the
+    /// same chips through the same builder, so a gate reading the SELECTION
+    /// alone would put the round's only submit on the copy a person had to go
+    /// looking for, and leave the copy in front of them with no way to end the
+    /// round. That is the exact shape of the defect this resolution already
+    /// exists for: `Bench::act` has answered both ways for a year, and it was
+    /// the DRAWING that kept falling behind it.
     fn bench_round_open(&self) -> Option<crate::surface::SurfaceId> {
-        let id = &self.bench.selected()?.id;
+        let id = &self
+            .bench
+            .selected()
+            .or_else(|| self.bench.waiting_question())?
+            .id;
         self.wb_channel.submittable(id).then(|| id.clone())
     }
 
