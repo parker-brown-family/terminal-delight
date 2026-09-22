@@ -75,8 +75,38 @@ Every input the card needs already exists and is already parsed:
 - [x] `benchdraw::live_card` and the `IN FLIGHT` lane word
 - [x] wiring: the prompt record, the working edge, the reply arriving
 - [x] tests, including a mutation pass on the retirement rule
-- [ ] looked at on a screen
+- [x] **looked at on a screen** — a throwaway window on the unfocused monitor,
+      driven by a stand-in named `claude` that paints the exact shapes the three
+      readers look for (`is_human_input_line`, `doing_line`, `row_is_working`)
+      rather than a picture of them. The rig and both photographs are under
+      `~/Work/reports/live-turn-2026-09-21/`.
+
+## What the photograph caught
+
+**The card was pinned to the floor of the pane, under an acre of empty** — and
+the comment at the line that decided it had already been written about exactly
+that failure, for the stand-in reply, a month earlier. `body_anchor` and the
+body's scroll are both asked *is a card in the room*, and the value answering
+was `showing_id`, which this feature deliberately makes `None` while a turn
+stands. A test could not have seen it: a layout is not a position a headless
+suite can assert about. What holds it now is `room_id` plus a source guard,
+`benchdraw::tests::the_room_decides_the_anchor_not_the_surface_in_it`.
+
+The lesson generalises and is the one worth keeping: **a comment explaining why
+a condition is what it is, is the test for whatever you add beside it.** The old
+sentence said *the stand-in IS a card*. A third kind of card walked straight
+past it.
 
 ## Difficulty, after the fact
 
-_(filled in at the end)_
+**5 was right, and the ceremony it bought was right too.** One plan page, no
+gates, built in one sitting. What the five bought that a three would not have is
+the amber list — five decisions taken without asking, each of which could
+reasonably have gone the other way, written down where Parker can argue with
+any of them rather than discovered later in the code.
+
+Sixteen mutations, sixteen caught, on a harness proven to have all three legs
+(a mutation that survives, one that is caught, one that fails to build). One of
+them earned its place the honest way: `M16 the rail row calls itself STANDS NOW
+again` **survived** with the suite green, which is how the lane words came out
+of the renderer into `benchdraw::lane_word` and got a table test.

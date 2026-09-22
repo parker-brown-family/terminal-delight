@@ -4773,6 +4773,36 @@ mod tests {
         );
     }
 
+    /// THE TURN'S CARD READS FROM THE TOP, like every other card.
+    ///
+    /// `body_anchor` and the body's scroll are both asked *is a card in the
+    /// room*, and for a year the value that answered was `showing_id` — which
+    /// `Bench::showing` now returns `None` for while a turn stands. A
+    /// photograph caught the result on the first build: the live card pinned to
+    /// the floor of an 800-pixel pane under an acre of empty, which is the
+    /// failure the comment at that line was ALREADY written about, reached by a
+    /// third kind of card the old test could not see.
+    ///
+    /// `room_id` is the value that knows, and nothing headless can tell that it
+    /// is the one being passed — a layout is not a position a test can assert
+    /// about, which is what makes this the guard's job rather than a test's.
+    #[test]
+    fn the_room_decides_the_anchor_not_the_surface_in_it() {
+        let el = body_of(include_str!("pane/bench.rs"), "pub(super) fn bench_el(");
+        assert!(
+            el.contains("body_anchor(room_id.is_some()"),
+            "the anchor is being decided by something that cannot see a live turn"
+        );
+        assert!(
+            el.contains(".when(room_id.is_some(), |d| {"),
+            "a live card taller than the pane can no longer be scrolled"
+        );
+        assert!(
+            !el.contains("body_anchor(showing_id"),
+            "the old value is back on the anchor"
+        );
+    }
+
     #[test]
     fn a_tables_columns_are_as_wide_as_what_is_in_them() {
         // The real one, from a follow-up rollup on Parker's bench: a short

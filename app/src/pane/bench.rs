@@ -3496,7 +3496,7 @@ impl TerminalView {
         if self.wb_card_at != room_id {
             self.wb_card_scroll
                 .set_offset(gpui::point(gpui::px(0.), gpui::px(0.)));
-            self.wb_card_at = room_id;
+            self.wb_card_at = room_id.clone();
         }
         // The offer to start an agent, keyed on whether this pane HAS one —
         // never on whether its bench happens to be clean.
@@ -3514,7 +3514,11 @@ impl TerminalView {
         // the PROCESS. A pane that has had an agent is excluded because its
         // strip carries the verb instead — one slot, two states, not two
         // buttons offering the same thing in different places.
-        let offering = showing_id.is_none() && !agent_now && !self.wb_had_agent;
+        // `room_id`, not `showing_id`: the offer to start an agent must never be
+        // drawn under something. A turn in flight already implies an agent, so
+        // the two agree today — but the offer is a claim that the room is empty
+        // and that is the value which says whether it is.
+        let offering = room_id.is_none() && !agent_now && !self.wb_had_agent;
         let body = match live_turn.as_ref() {
             // Only what is live. The status line is parsed here rather than
             // read off the strip's copy because the strip is built inside a
@@ -4064,14 +4068,24 @@ impl TerminalView {
                     // caret it lights is the thing to look at.
                     .child({
                         use crate::workbench::Anchor;
-                        // `showing_id.is_some()` rather than `card_open`: the
+                        // `room_id.is_some()` rather than `card_open`: the
                         // overview stands the newest reply in the room without
                         // anybody having opened it, and that stand-in IS a card
                         // — it reads from the top and was being bottom-anchored
                         // because nothing had selected it. Bottom belongs to the
                         // conversation and to nothing else, and it matters twice
                         // over now the body scrolls.
-                        let anchor = crate::workbench::body_anchor(showing_id.is_some(), offering);
+                        //
+                        // The TURN IN FLIGHT is the third thing that reads from
+                        // the top, and it was `showing_id` here until a
+                        // photograph caught it: the live card pinned to the
+                        // floor of an 800-pixel pane under an acre of empty,
+                        // exactly the failure this comment was already written
+                        // about. `showing` yields `None` while a turn stands, so
+                        // the test that used to mean "a card is in the room"
+                        // stopped meaning it the moment a third kind of card
+                        // existed.
+                        let anchor = crate::workbench::body_anchor(room_id.is_some(), offering);
                         div()
                             // Stateful, because a scroll container IS state:
                             // gpui keeps the offset against this id between
@@ -4112,10 +4126,10 @@ impl TerminalView {
                             // simply cut — with the folds already built and
                             // already unable to save it, because one unfolded
                             // section can exceed the pane on its own.
-                            .when(showing_id.is_some(), |d| {
+                            .when(room_id.is_some(), |d| {
                                 d.overflow_y_scroll().track_scroll(&self.wb_card_scroll)
                             })
-                            .when(showing_id.is_none(), |d| d.overflow_hidden())
+                            .when(room_id.is_none(), |d| d.overflow_hidden())
                             .when(anchor == Anchor::Bottom, |d| d.justify_end())
                             .when(self.mode.is_agent(), |d| {
                                 d.relative().child(crate::benchdraw::zone(
