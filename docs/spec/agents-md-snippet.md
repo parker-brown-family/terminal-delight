@@ -52,20 +52,30 @@ theme and at whatever size the pane is. A kind it does not know is shown as
 `unclassified` rather than dropped, so it is always safe to send.
 
 **End every turn with a `response`.** The bench's OVERVIEW is a feed of these
-and shows nothing else. A response is a `layman` (required): the whole reply in
-plain English, written for the person and not for yourself. It is what the card
-opens on, so write it as the answer rather than as a trailer for one. Then
-registers a person unfolds by name — `technical`, `evidence`, `asks`, `next` —
-and `doubts`, where you are not sure, each with a `claim`, a `why` and a
-`confidence`. Any other key becomes a section labelled by its key; a string is
-prose, an array is a list, an object is facts.
+and shows nothing else. Two readings carry it. `brief` is **the bare minimum:
+at most two sentences, under fifty words** — what this reply or this summons IS
+for somebody who will read nothing else. `layman` (required) is the whole reply
+in plain English, written for the person and not for yourself. The card opens
+on the brief where there is one, so write both as answers rather than as
+trailers for one. Then registers a person unfolds by name — `technical`,
+`evidence`, `asks`, `next` — and `doubts`, where you are not sure, each with a
+`claim`, a `why` and a `confidence`. Any other key becomes a section labelled by
+its key; a string is prose, an array is a list, an object is facts.
 
 ```json
 { "td": "0.4", "kind": "response", "title": "What this turn did",
-  "model": { "layman": "The reply, in plain English.", "technical": "…",
+  "model": { "brief": "Two sentences, under fifty words.",
+             "layman": "The whole reply, in plain English.", "technical": "…",
              "evidence": ["…"], "next": ["…"],
              "doubts": [ { "claim": "…", "why": "…", "confidence": "hunch" } ] } }
 ```
+
+**The brief is serious, direct and simple — not a metaphor.** It is an ELI5 in
+the sense of *say the idea plainly*, never in the sense of *explain it with a
+story about a lemonade stand*. Fifty words is the budget for the whole of it;
+if the reply will not go into fifty, say what the reader has to know and let
+the plain reading carry the rest. A brief that is the plain reading pasted
+short of its ending is a trailer, and a brief identical to it is dropped.
 
 **Weigh it.** `effort`, `complexity`, `foundation` (which system, and how deep
 — leaf, component, subsystem, bedrock) and `confidence` (measured, inferred,

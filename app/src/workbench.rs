@@ -254,9 +254,12 @@ pub fn tint_of(kind: &Kind) -> Tint {
 /// other and the renderer switches on which kind it drew.
 #[derive(Clone, Copy, Debug)]
 pub enum Leaf<'a> {
-    /// The reply in plain English. Always present: a response without one does
-    /// not parse, and it is what the card opens on.
+    /// The bare minimum, in two sentences. Present only when the agent wrote
+    /// one — and where it is, it is what the card opens on.
     Brief,
+    /// The whole reply in plain English. Always present: a response without one
+    /// does not parse.
+    Layman,
     Section(&'a crate::surface::Section),
     /// Present only when the reply carries doubts.
     Doubts,
@@ -271,7 +274,8 @@ impl<'a> Leaf<'a> {
     /// was sitting in, which is what lets a caller map over a list of them.
     pub fn key(self) -> &'a str {
         match self {
-            Leaf::Brief => "layman",
+            Leaf::Brief => "brief",
+            Leaf::Layman => "layman",
             Leaf::Section(s) => &s.key,
             Leaf::Doubts => "doubts",
         }
@@ -280,7 +284,11 @@ impl<'a> Leaf<'a> {
     /// The word on its chip.
     pub fn label(self) -> &'a str {
         match self {
-            Leaf::Brief => "Plain brief",
+            // `Brief`, `Plain brief`, `Technical brief` — the row reads as one
+            // ladder of depth, shortest on the left, which is the only reason
+            // the bare word is allowed to sit beside two that qualify it.
+            Leaf::Brief => "Brief",
+            Leaf::Layman => "Plain brief",
             Leaf::Section(s) => &s.label,
             Leaf::Doubts => "doubts",
         }
@@ -288,7 +296,7 @@ impl<'a> Leaf<'a> {
 
     pub fn group(self) -> crate::surface::Group {
         match self {
-            Leaf::Brief => crate::surface::Group::Reading,
+            Leaf::Brief | Leaf::Layman => crate::surface::Group::Reading,
             Leaf::Section(s) => crate::surface::Group::of(s.register),
             // The doubts are evidence: they are what the agent could not
             // establish, filed beside what it did.
@@ -315,7 +323,14 @@ pub fn tabbed(
     r: &crate::surface::Response,
     promoted_asks: bool,
 ) -> Vec<(crate::surface::Group, Vec<Leaf<'_>>)> {
-    let mut leaves: Vec<Leaf<'_>> = vec![Leaf::Brief];
+    // The brief leads where there is one, so the card opens on the shortest
+    // honest answer; the plain reply leads where there is not, which is every
+    // card this build drew before the brief existed.
+    let mut leaves: Vec<Leaf<'_>> = Vec::new();
+    if r.brief.is_some() {
+        leaves.push(Leaf::Brief);
+    }
+    leaves.push(Leaf::Layman);
     leaves.extend(
         r.sections
             .iter()
@@ -3805,10 +3820,10 @@ impl Bench {
     }
 
     /// The group a key belongs to, looked up through the surface rather than
-    /// guessed from the key's spelling — except for the two keys that have no
-    /// section to look up.
+    /// guessed from the key's spelling — except for the three keys that have
+    /// no section to look up: the brief, the plain reply and the doubts.
     fn group_of_key(&self, id: &SurfaceId, key: &str) -> crate::surface::Group {
-        if crate::surface::Register::is_brief(key) {
+        if crate::surface::Register::is_brief(key) || crate::surface::Register::is_layman(key) {
             return crate::surface::Group::Reading;
         }
         if crate::surface::Register::is_doubts(key) {
@@ -4174,11 +4189,11 @@ mod tests {
         }))
     }
 
-    fn response(id: &str, brief: &str) -> Post {
+    fn response(id: &str, plain: &str) -> Post {
         post(json!({
-            "td": "0.3", "kind": "response", "id": id, "title": brief,
+            "td": "0.3", "kind": "response", "id": id, "title": plain,
             "model": {
-                "layman": brief,
+                "layman": plain,
                 "technical": "big words",
                 "asks": ["pick one"],
                 "doubts": ["maybe"]
@@ -4389,7 +4404,8 @@ mod tests {
         let tabs = tabbed(r, false);
         assert_eq!(
             tabs.iter().map(|(g, l)| (*g, l.len())).collect::<Vec<_>>(),
-            vec![(Group::Reading, 2), (Group::Evidence, 2), (Group::Next, 1)],
+            vec![(Group::Reading, 3), (Group::Evidence, 2), (Group::Next, 1)],
+            "three readings: the brief, the plain reply, the technical one"
         );
         assert_eq!(b.picked_tab(&showing.id), None, "nobody has pressed");
         assert_eq!(
@@ -4399,8 +4415,8 @@ mod tests {
         );
         assert_eq!(
             resolve_leaf(None, &tabs[0].1).map(|l| l.key()),
-            Some("layman"),
-            "…on the plain brief"
+            Some("brief"),
+            "…on the shortest reading in it"
         );
     }
 
@@ -4562,6 +4578,81 @@ mod tests {
             resolve_leaf(Some("gone"), reading).map(|l| l.key()),
             Some("layman"),
             "a key that is not there any more falls back to the first"
+        );
+    }
+
+    /// The brief leads the readings — and ONLY on the cards that sent one.
+    ///
+    /// Both halves in one test on purpose. The change is a new first leaf, and
+    /// the way a new first leaf ships broken is by moving the default on every
+    /// card rather than on the cards that asked for it: every pane on this
+    /// machine is still sending replies with no brief in them, and each of
+    /// those has to open exactly where it opened yesterday.
+    #[test]
+    fn a_brief_leads_the_readings_and_a_reply_without_one_opens_where_it_always_did() {
+        use crate::surface::Group;
+        let mut b = Bench::new();
+        let plain = "The effort row offered invented words; it now passes the harness's own flag.";
+        b.apply(post(json!({
+            "td": "0.4", "kind": "response", "id": "with", "title": "t",
+            "model": {
+                "brief": "The launcher's effort setting is a real flag now. Install the build to use it.",
+                "layman": plain,
+                "technical": "launcher::Effort is the union of the harnesses' own levels."
+            }
+        })));
+        b.apply(post(json!({
+            "td": "0.4", "kind": "response", "id": "without", "title": "t",
+            "model": {
+                "layman": plain,
+                "technical": "launcher::Effort is the union of the harnesses' own levels."
+            }
+        })));
+        let readings = |id: &str| match &b.get(&SurfaceId(id.into())).unwrap().kind {
+            Kind::Response(r) => {
+                tabbed(r, false)
+                    .into_iter()
+                    .find(|(g, _)| *g == Group::Reading)
+                    .expect("every reply has a reading")
+                    .1
+            }
+            _ => unreachable!(),
+        };
+
+        let with = readings("with");
+        assert_eq!(
+            with.iter().map(|l| l.key()).collect::<Vec<_>>(),
+            ["brief", "layman", "technical"],
+            "the ladder runs shortest first"
+        );
+        assert_eq!(
+            resolve_leaf(None, &with).map(|l| l.key()),
+            Some("brief"),
+            "and the card opens on the shortest rung"
+        );
+        assert_eq!(
+            with.iter().map(|l| l.label()).collect::<Vec<_>>(),
+            ["Brief", "Plain brief", "Technical brief"],
+            "the chip row reads as one ladder of depth, which is what lets the \
+             bare word sit beside two that qualify it"
+        );
+        // The reader is still in charge: a brief ahead of the plain reply is an
+        // order, not a demotion.
+        assert_eq!(
+            resolve_leaf(Some("layman"), &with).map(|l| l.key()),
+            Some("layman")
+        );
+
+        let without = readings("without");
+        assert_eq!(
+            without.iter().map(|l| l.key()).collect::<Vec<_>>(),
+            ["layman", "technical"],
+            "no brief, no chip for one"
+        );
+        assert_eq!(
+            resolve_leaf(None, &without).map(|l| l.key()),
+            Some("layman"),
+            "and every card sent before today opens exactly where it did"
         );
     }
 

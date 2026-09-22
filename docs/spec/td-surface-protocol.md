@@ -164,6 +164,7 @@ is the same reply cut for several readers, and the person picks the cut.
 { "kind": "response",
   "title": "What this turn did",
   "model": {
+    "brief": "The bare minimum, in two sentences under fifty words.",
     "layman": "The whole reply in plain English, written for the person.",
     "technical": "…",
     "evidence": ["cargo test --locked, all green", "…"],
@@ -187,7 +188,8 @@ is the same reply cut for several readers, and the person picks the cut.
 
 | Key | Required | Drawn as | Notes |
 |---|---|---|---|
-| `layman` | **yes** | the first register, and what the card opens on | Aliases: `plain`, `plain_brief`, `plain_english`, `layman_brief`, `brief`. The first sentence titles the row if `title` is absent, and the whole thing is the row's subtitle. |
+| `brief` | no | the **first** register, and what the card opens on where it exists | **At most two sentences, under fifty words.** Aliases: `in_brief`, `bare_minimum`, `bottom_line`. It is the row's subtitle and titles the row when `title` is absent. A brief identical to the `layman` is dropped rather than drawn twice. |
+| `layman` | **yes** | a register, and what the card opens on when no `brief` came | Aliases: `plain`, `plain_brief`, `plain_english`, `layman_brief`. Falls back to the row when there is no brief. |
 | `technical` | no | a folded register, **Technical brief** | Aliases: `technical_brief`, `tech`, `detail`. |
 | `evidence` | no | a folded register, **What was verified** | Aliases: `verified`, `proof`, `checks`. |
 | `asks` | no | an **open** register, **Needs from you** — or the escalation, if none was declared | Aliases: `needs`, `questions`, `blocked_on`. |
@@ -195,25 +197,37 @@ is the same reply cut for several readers, and the person picks the cut.
 | `escalation` | no | the card's one interrupt, above the title | See below. `none` and *absent* are different answers. |
 | `doubts` | no | its own strip, never folded, quiet | Aliases: `unsure`, `caveats`, `risks`. |
 | anything else | no | a folded register labelled by the key | `next_steps` → `Next steps`. Never dropped. |
-| `tldr` | no | **nothing — dead as of 2026-09-21** | Aliases: `tl;dr`, `summary`, `gist`, `headline`. Consumed as the plain brief when no `layman` arrived, so a pane still running the old briefing keeps rendering; discarded when a real `layman` is there. Never a section. |
+| `tldr` | no | **no register of its own — dead as of 2026-09-21** | Aliases: `tl;dr`, `summary`, `gist`, `headline`. Consumed, never a section: it fills `brief`, which is the length it always was, and falls back to the plain reply only when there is no other text at all. A pane still running an older briefing keeps rendering. |
 | `eli5` | no | **dead as a reading as of 2026-09-21** | Files under **Other**, after every register the build lays out, labelled `ELI5`. Kept, because nothing here is dropped; just not one of the lengths the card offers. |
 
-**Two readings, not four.** The card offers a plain explanation and a technical
-one, and that is the whole of it. `tldr` and `eli5` were registers until
-2026-09-21; three lengths of the same paragraph is one register argued over by a
-committee, and every one of them cost the agent a rewrite of a reply it had
-already written. Parker, on the overview: *"The plain text explanation gets
-promoted to the default. TLDR and LE5 both die, and the technical brief stays."*
+**Three readings, and they differ in LENGTH rather than in voice.** `tldr` and
+`eli5` were separate registers until 2026-09-21, when both died: three lengths
+of the same paragraph is one register argued over by a committee, and each cost
+the agent a rewrite of a reply it had already written. Parker, on the overview:
+*"The plain text explanation gets promoted to the default. TLDR and LE5 both
+die, and the technical brief stays."*
 
-**Every register is a peer.** The plain brief does not outrank the technical
-one: a reader who deliberately opened the technical brief is reading the
-technical brief. They share one panel, one type size and one ink, and exactly
-one of them is lit at a time — the one the reader is in. Nothing else on a card
-glows.
+What each of those two was half of came back on 2026-09-22 as one register —
+the tl;dr's brevity and the ELI5's plainness in a single fifty-word answer:
+*"bring BACK tl;dr and ELI5 as a SINGLE READING element … call it BRIEF -- but
+go to the ELI5 AND TL;DR AND boil it down to a 2 sentence under 50 words: what
+is the BARE MINIMUM i need to know about what this decision or attention
+requirement is. - SERIOUS - DIRECT - SIMPLE … not the kind of ELI5 that means
+use metaphors, more the ELI5 that allows converyance of the idea simply."* So
+the ladder is **brief → plain → technical**, each longer than the last, and no
+rung a rewrite of the one below it at the same depth.
 
-**Write the `layman` as the answer, not as a trailer for one.** It is what the
-card is showing before anybody presses anything, so a plain brief written as a
-teaser for a fuller reply somewhere else leaves the reader with the teaser.
+**Every register is a peer.** The brief does not outrank the plain reply and
+the plain reply does not outrank the technical one: a reader who deliberately
+opened the technical brief is reading the technical brief. They share one
+panel, one type size and one ink, and exactly one of them is lit at a time —
+the one the reader is in. The brief is FIRST, which is an order, not a
+promotion; nothing else on a card glows.
+
+**Write each reading as the answer, not as a trailer for one.** The brief is
+what the card is showing before anybody presses anything, and the `layman` is
+what it shows when no brief came — so either one written as a teaser for a
+fuller reply somewhere else leaves the reader with the teaser.
 
 **`escalation` — the only thing allowed to interrupt.**
 
@@ -618,6 +632,18 @@ New kinds are additive by design: an older build renders a newer kind as
 the sender can read.
 
 ### What changed
+
+**0.4, 2026-09-22** — `brief`, the bare minimum: at most two sentences and
+under fifty words, first in the reading group and what the card opens on. It is
+optional, so **no payload that parsed before fails now**, and a reply without
+one opens on its `layman` exactly as it did yesterday. Two things did change
+shape without changing what is accepted. A legacy `tldr` alongside a real
+`layman` used to be discarded and now fills the brief — it was always that
+length. And `brief` was an undocumented alias for the `layman`; a reply sending
+only a `brief` still parses, because the resolution ladder falls back to it for
+the plain reply rather than refusing a payload that plainly has text in it. No
+reading is ever a second copy of another: a brief equal to the plain reply is
+dropped.
 
 **0.4, 2026-09-21** — the plain brief replaces the tl;dr as the required
 register, and `eli5` stops being a reading. **No payload that parsed before

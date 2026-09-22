@@ -7,6 +7,25 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Added
+
+- **A response carries a `brief` — the bare minimum, in two sentences under
+  fifty words.** The tl;dr and the ELI5 came back as ONE register, which is
+  exactly what was wrong with them as two: the brevity of the first and the
+  plainness of the second in a single answer to *what is the bare minimum I
+  need to know about this*. Serious, direct, simple; an explanation made small,
+  never a metaphor. It is first in the reading group, the register the card
+  opens on, and the line the overview row shows — so the reading ladder is now
+  brief, plain, technical, each longer than the last and none a rewrite of
+  another at the same depth. Optional, and every reply sent without one draws
+  precisely as it did before. Two migrations came with it: a legacy `tldr`
+  beside a real `layman` used to be thrown away and now fills the brief, which
+  is the length it always was, and `brief` — until now an undocumented alias
+  for the plain reply — still parses on its own, because the resolution ladder
+  falls back to it rather than refusing a payload that plainly has text in it.
+  No reading is ever a second copy of another; a brief equal to the plain reply
+  is dropped at the parser. (#XXX)
+
 ### Fixed
 
 - **Standing on the comments board no longer swallows a keystroke meant for the

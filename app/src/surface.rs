@@ -763,6 +763,18 @@ pub struct Choice_ {
 /// committee, and the reader picks between a plain explanation and a technical
 /// one or between nothing at all.
 ///
+/// **A BRIEF sits above it, from 2026-09-22 — and it is the shortest thing
+/// there is, not a fourth length.** The tl;dr and the ELI5 came back as ONE
+/// register, which is the whole of what was wrong with them: *"bring BACK
+/// tl;dr and ELI5 as a SINGLE READING element ... call it BRIEF -- but go to
+/// the ELI5 AND TL;DR AND boil it down to a 2 sentence under 50 words: what is
+/// the BARE MINIMUM i need to know about what this decision or attention
+/// requirement is. - SERIOUS - DIRECT - SIMPLE ... not the kind of ELI5 that
+/// means use metaphors, more the ELI5 that allows converyance of the idea
+/// simply."* So the reading ladder is brief, plain, technical: each longer
+/// than the last, none of them a rewrite of another at the same depth. It is
+/// optional, and a reply without one draws exactly as it did before.
+///
 /// **Well defined and very flexible, both.** The registers this build knows
 /// get a fixed label and a fixed order; any other key the agent sends becomes
 /// a section too, labelled by its key, because a reply shape that dropped
@@ -772,14 +784,29 @@ pub struct Choice_ {
 /// the JSON will allow it to be flexible."*
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Response {
-    /// The reply in plain English — the register that is always on screen.
-    /// Required, and never folded: a response whose explanation is folded is a
-    /// response nobody reads.
+    /// The whole reply in plain English. Required: a response a person cannot
+    /// read is not a response.
     ///
-    /// Named `brief` rather than `tldr` because it is no longer a tl;dr. A
-    /// field holding a paragraph under a name that promises one sentence is a
-    /// comment that lies, and the next reader would write to the promise.
-    pub brief: String,
+    /// Named for its wire key, which it took back on 2026-09-22. It was called
+    /// `brief` while it was the shortest thing on the card; the bare-minimum
+    /// register is now shorter, and a field whose name promises brevity has to
+    /// be the brief one or the next reader writes to the promise rather than to
+    /// the type.
+    pub layman: String,
+    /// The bare minimum: at most two sentences and under fifty words, saying
+    /// what this reply or this summons IS for somebody who will read nothing
+    /// else. Serious, direct, simple — an explanation made small, not a
+    /// metaphor.
+    ///
+    /// `None` is a real answer and the reason this is not a `String` with an
+    /// empty default. An agent that wrote no brief has not written a blank one,
+    /// and the card draws the difference: with a brief it opens on the brief,
+    /// without one it opens on [`Response::layman`] exactly as it did before.
+    ///
+    /// Never a second copy of the plain reply. A brief identical to it is
+    /// dropped in the parser, because two chips holding the same paragraph is
+    /// the four-registers problem coming back one register at a time.
+    pub brief: Option<String>,
     /// The registers, known ones first in their canonical order and then
     /// whatever else the agent sent, by key.
     pub sections: Vec<Section>,
@@ -891,26 +918,38 @@ pub struct Section {
 /// checked, then what it wants from you, then what comes next. `Other` sorts
 /// last and keeps the agent's own key as its label.
 ///
-/// **Two readings, not four.** `Tldr` and `Eli5` were variants here until
-/// 2026-09-21. A reply cut four ways is a reply written four times, and the
-/// reader was being asked to choose between three that say the same thing.
-/// What survives is the pair that genuinely differ in what they contain: the
-/// plain brief and the technical one.
+/// **Three readings, and they differ in LENGTH rather than in voice.** `Tldr`
+/// and `Eli5` were separate variants here until 2026-09-21, when both died: a
+/// reply cut four ways is a reply written four times, and three of the four
+/// said the same thing at the same depth. What they were each half of came
+/// back on 2026-09-22 as one register, [`Register::Brief`] — the tl;dr's
+/// brevity and the ELI5's plainness in a single fifty-word answer. So the
+/// ladder is brief, plain, technical, and no rung repeats the one below it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, PartialOrd, Ord)]
 pub enum Register {
-    /// The reply in plain English — a register like any other, and first.
+    /// The bare minimum, in two sentences — what the card opens on when the
+    /// agent wrote one.
+    ///
+    /// First in this enum because the enum's order IS the drawing order, and a
+    /// reader arriving at a card should meet the shortest honest answer before
+    /// choosing to spend more. It never appears in [`Response::sections`]: it
+    /// is [`Response::brief`], an `Option` on the wire, because unlike the
+    /// plain reply it is one an agent may simply not have written.
+    Brief,
+    /// The whole reply in plain English — a register like any other, and what
+    /// the card opens on when no brief came with it.
     ///
     /// The gist used to sit in this slot and used to be drawn as a banner:
     /// bigger type, its own raised floor, the accent down its edge. That made
     /// it outrank a technical brief the reader had deliberately opened, which
     /// is backwards. Parker: *"ALL THE READING will ONLY be phosphor
     /// highlighted when ACTIVE — all the reading will be attentionally equal,
-    /// eli5 or tl;dr does not get escalated."* Both of those are now gone
-    /// entirely and this is what the card opens on.
+    /// eli5 or tl;dr does not get escalated."* The brief that now sits ahead of
+    /// it is a PEER for the same reason: first in the row, and no louder.
     ///
-    /// It never appears in [`Response::sections`] — the wire keeps the plain
-    /// brief as [`Response::brief`], its own required member — but it is a
-    /// first-class register everywhere the bench reasons about folds and order.
+    /// It never appears in [`Response::sections`] — the wire keeps it as
+    /// [`Response::layman`], its own required member — but it is a first-class
+    /// register everywhere the bench reasons about folds and order.
     Layman,
     Technical,
     Evidence,
@@ -922,10 +961,10 @@ pub enum Register {
 impl Register {
     /// The key a register is folded to, and the label it wears.
     ///
-    /// The plain brief is absent from this table on purpose: it is
-    /// [`Response::brief`], pulled out before the section loop ever runs, so a
-    /// row for it here would build a second copy of the one register that must
-    /// not have one.
+    /// The brief and the plain reply are absent from this table on purpose:
+    /// they are [`Response::brief`] and [`Response::layman`], pulled out before
+    /// the section loop ever runs, so a row for either here would build a
+    /// second copy of a register that must not have one.
     pub fn known(key: &str) -> Option<(Register, &'static str, &'static str)> {
         let k = key.trim().to_ascii_lowercase().replace(['-', ' '], "_");
         Some(match k.as_str() {
@@ -949,34 +988,52 @@ impl Register {
         })
     }
 
-    /// The keys that are the plain brief, however the agent spelled it.
+    /// The keys that are the plain reply, however the agent spelled it.
+    ///
+    /// `brief` is NOT among them any more. It was an alias here until
+    /// 2026-09-22, when the word was given to the register it actually
+    /// describes; an agent that sends only a `brief` is not refused, because
+    /// the ladder in [`parse_response`] falls back to it for the plain reply
+    /// rather than rejecting a payload that plainly has text in it.
+    pub fn is_layman(key: &str) -> bool {
+        matches!(
+            key.trim()
+                .to_ascii_lowercase()
+                .replace(['-', ' '], "_")
+                .as_str(),
+            "layman" | "layman_brief" | "laymans" | "plain" | "plain_brief" | "plain_english"
+        )
+    }
+
+    /// The keys that are the bare minimum, however the agent spelled it.
+    ///
+    /// Deliberately few. A register defined by a word count earns aliases only
+    /// for the phrases that mean the same count — `bottom_line` and
+    /// `bare_minimum` do; `summary` does not, and lands in
+    /// [`Register::is_legacy_gist`] where it can be read without claiming the
+    /// agent was writing to a limit.
     pub fn is_brief(key: &str) -> bool {
         matches!(
             key.trim()
                 .to_ascii_lowercase()
                 .replace(['-', ' '], "_")
                 .as_str(),
-            "layman"
-                | "layman_brief"
-                | "laymans"
-                | "plain"
-                | "plain_brief"
-                | "plain_english"
-                | "brief"
+            "brief" | "in_brief" | "bare_minimum" | "bottom_line"
         )
     }
 
-    /// The keys that USED to be the gist, and now fill the plain brief when
-    /// nothing better arrived.
+    /// The keys that USED to be the gist, and now fill whichever reading is
+    /// still empty.
     ///
-    /// The tl;dr is dead as a register: it is never a section, never a chip,
-    /// never named in the briefing. It is still read, because ~20 agent panes
-    /// on this machine are running with the old briefing in their context and
-    /// refusing their replies would have emptied every overview on the box
-    /// until each one was relaunched. A legacy gist is CONSUMED, not dropped —
-    /// it fills [`Response::brief`] only when no real plain brief came with it,
-    /// and loses to one that did. Drawing it as a section of its own would be
-    /// the tl;dr back on the card under a different name.
+    /// The tl;dr is dead as a register of its own: it is never a section, never
+    /// a chip, never named in the briefing. It is still read, because ~20 agent
+    /// panes on this machine are running with an older briefing in their
+    /// context and refusing their replies would have emptied every overview on
+    /// the box until each one was relaunched. A legacy gist is CONSUMED, not
+    /// dropped — and since 2026-09-22 what it usually fills is
+    /// [`Response::brief`], which is the slot a tl;dr was always the right
+    /// length for. It falls back to the plain reply only when there is no other
+    /// text at all.
     pub fn is_legacy_gist(key: &str) -> bool {
         matches!(
             key.trim()
@@ -1043,7 +1100,7 @@ impl Group {
     /// Where a register is read. Total, and a pure function.
     pub fn of(register: Register) -> Group {
         match register {
-            Register::Layman | Register::Technical => Group::Reading,
+            Register::Brief | Register::Layman | Register::Technical => Group::Reading,
             Register::Evidence => Group::Evidence,
             Register::Asks | Register::Next => Group::Next,
             Register::Other => Group::Other,
@@ -1700,9 +1757,11 @@ impl Surface {
                 Answered::ChoseUnknown => "answered · how is unavailable".into(),
                 Answered::Waiting => format!("{} options · waiting on you", q.options.len()),
             },
-            // The plain brief IS the subtitle: a reply's row is read, not
-            // counted.
-            Kind::Response(r) => r.brief.clone(),
+            // A reply's row is READ, not counted — so it carries the shortest
+            // complete answer the agent wrote. The brief was designed for
+            // exactly this line; the plain reply stands in when there is none,
+            // which is what the row has always shown.
+            Kind::Response(r) => r.brief.clone().unwrap_or_else(|| r.layman.clone()),
             Kind::Unclassified(u) => u.reason.clone(),
             // WHEN, and WHO only where who is knowable.
             //
@@ -1946,9 +2005,9 @@ fn default_title(kind: &Kind) -> String {
         Kind::Changeset(c) => format!("{} hunks", c.hunks.len()),
         Kind::Decision(d) => d.question.chars().take(TITLE_MAX_CHARS).collect(),
         Kind::Question(q) => q.question.chars().take(TITLE_MAX_CHARS).collect(),
-        // The first sentence of the plain brief, which is what a person would
-        // have typed as the title had they been asked.
-        Kind::Response(r) => first_sentence(&r.brief)
+        // The first sentence of the shortest reading, which is what a person
+        // would have typed as the title had they been asked.
+        Kind::Response(r) => first_sentence(r.brief.as_deref().unwrap_or(&r.layman))
             .chars()
             .take(TITLE_MAX_CHARS)
             .collect(),
@@ -2259,7 +2318,8 @@ fn parse_kind(name: &str, model: Option<&Value>) -> Result<Kind, KindError> {
     })
 }
 
-/// A response's model: a `layman` brief plus registers, known and otherwise.
+/// A response's model: a `layman` reply, an optional `brief`, plus registers
+/// known and otherwise.
 ///
 /// The registers may sit directly in the model or one level down under a
 /// `response` key — Parker drew it nested (*"`{xyz: <value>, abc: <value>,
@@ -2267,11 +2327,18 @@ fn parse_kind(name: &str, model: Option<&Value>) -> Result<Kind, KindError> {
 /// flat example will send it flat, and neither of them is wrong.
 fn parse_response(m: &Map<String, Value>) -> Result<Response, String> {
     let inner = m.get("response").and_then(Value::as_object).unwrap_or(m);
+    // Three slots, each filled only from its own keys, and resolved into two
+    // fields once the whole map has been walked. Writing straight into the
+    // fields would make the answer depend on which key the map iterated first,
+    // and the ladder below has to read the same whichever order they arrive in.
+    let mut layman: Option<String> = None;
     let mut brief: Option<String> = None;
-    // Kept in its own slot rather than written straight into `brief`, because
-    // the two arrive in whatever order the map iterates and the plain brief has
-    // to win regardless of which was seen first.
     let mut legacy_gist: Option<String> = None;
+    let prose = |v: &Value| {
+        v.as_str()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+    };
     let mut doubts: Vec<Doubt> = Vec::new();
     let mut sections: Vec<Section> = Vec::new();
     let mut escalation: Option<Escalation> = None;
@@ -2285,21 +2352,21 @@ fn parse_response(m: &Map<String, Value>) -> Result<Response, String> {
             }
             continue;
         }
+        if Register::is_layman(key) {
+            if layman.is_none() {
+                layman = prose(value);
+            }
+            continue;
+        }
         if Register::is_brief(key) {
             if brief.is_none() {
-                brief = value
-                    .as_str()
-                    .map(|s| s.trim().to_string())
-                    .filter(|s| !s.is_empty());
+                brief = prose(value);
             }
             continue;
         }
         if Register::is_legacy_gist(key) {
             if legacy_gist.is_none() {
-                legacy_gist = value
-                    .as_str()
-                    .map(|s| s.trim().to_string())
-                    .filter(|s| !s.is_empty());
+                legacy_gist = prose(value);
             }
             continue;
         }
@@ -2330,9 +2397,27 @@ fn parse_response(m: &Map<String, Value>) -> Result<Response, String> {
             body,
         });
     }
-    let brief = brief.or(legacy_gist).ok_or_else(|| {
-        "a response needs a `layman` — the plain-English explanation of the whole reply".to_string()
-    })?;
+    // THE LADDER, and it runs downhill in one direction only.
+    //
+    // The plain reply takes whatever plain English there is — its own key, then
+    // a legacy gist, then the brief — because a payload that plainly has text
+    // in it must never be refused over a spelling. The brief is then whatever
+    // is LEFT: the shortest thing that is not already the text on screen.
+    //
+    // The `!= layman` filter is the whole guard against a second copy. An agent
+    // that sends one string under both names, or a `brief` and nothing else,
+    // gets one reading rather than two chips holding the same paragraph.
+    let layman = layman
+        .or_else(|| legacy_gist.clone())
+        .or_else(|| brief.clone())
+        .ok_or_else(|| {
+            "a response needs a `layman` — the plain-English explanation of the whole reply"
+                .to_string()
+        })?;
+    let brief = [brief, legacy_gist]
+        .into_iter()
+        .flatten()
+        .find(|candidate| *candidate != layman);
     // Known registers in their canonical order, then the rest by key. Stable,
     // so two `Other`s keep the order they arrived in.
     sections.sort_by(|a, b| {
@@ -2350,6 +2435,7 @@ fn parse_response(m: &Map<String, Value>) -> Result<Response, String> {
     // which is undeclared and NOT the same as a declared `none`.
     let escalation = escalation.or_else(|| infer_escalation(&sections));
     Ok(Response {
+        layman,
         brief,
         sections,
         doubts,
@@ -2836,17 +2922,21 @@ pub fn launch_briefing(dir: &str) -> String {
          surface beside this terminal — a WORKBENCH face on this pane, toggled from its header.\n\
          \n\
          END EVERY TURN by presenting your reply as a `response` surface — the bench's OVERVIEW \
-         is a feed of these and shows nothing else. A response is a `layman` (required): the \
-         whole reply in plain English, written for the person and not for yourself. It is what \
-         the card opens on, so write it as the answer rather than as a trailer for one. Then \
-         registers a person unfolds by name: `technical` (the same reply for someone who reads \
-         the code), `evidence` (what you verified), `asks` (what you need from them), `next` \
-         (what comes next), and `doubts` — where you are not sure, each with a `claim`, a \
-         `why` and a `confidence`. Any other key you send becomes a section labelled by its \
-         key. A string is prose, an array is a list, an object is facts.\n\
+         is a feed of these and shows nothing else. Two readings carry it. `brief` is the bare \
+         minimum: AT MOST TWO SENTENCES, UNDER FIFTY WORDS, saying what this reply or this \
+         summons IS for somebody who will read nothing else — serious, direct, simple, and not \
+         a metaphor. `layman` (required) is the whole reply in plain English, written for the \
+         person and not for yourself. The card opens on the brief where there is one, so write \
+         both as answers rather than as trailers for one. Then registers a person unfolds by \
+         name: `technical` (the same reply for someone who reads the code), `evidence` (what \
+         you verified), `asks` (what you need from them), `next` (what comes next), and \
+         `doubts` — where you are not sure, each with a `claim`, a `why` and a `confidence`. \
+         Any other key you send becomes a section labelled by its key. A string is prose, an \
+         array is a list, an object is facts.\n\
          \n\
          {{\"td\":\"{TDSP_VERSION}\",\"kind\":\"response\",\"title\":\"<what this turn did>\",\
-         \"model\":{{\"layman\":\"<the reply, in plain English>\",\
+         \"model\":{{\"brief\":\"<two sentences, under fifty words>\",\
+         \"layman\":\"<the whole reply, in plain English>\",\
          \"technical\":\"<…>\",\"evidence\":[\"<…>\"],\"next\":[\"<…>\"],\
          \"doubts\":[{{\"claim\":\"<…>\",\"why\":\"<…>\",\"confidence\":\"hunch\"}}]}}}}\n\
          \n\
@@ -2889,16 +2979,17 @@ mod tests {
 
     /// Every register has a home, and the table says which.
     ///
-    /// A table test over all six rather than a spot check: the mapping is the
-    /// navigation every reply is read through, and a register quietly landing
-    /// in the wrong tab is a thing a person would work around for weeks before
-    /// reporting it. The table is exhaustive on purpose — a variant added here
-    /// without a row is a register with no tab, and the count in this sentence
-    /// is the thing that notices.
+    /// A table test over all seven rather than a spot check: the mapping is
+    /// the navigation every reply is read through, and a register quietly
+    /// landing in the wrong tab is a thing a person would work around for weeks
+    /// before reporting it. The table is exhaustive on purpose — a variant
+    /// added here without a row is a register with no tab, and the count in
+    /// this sentence is the thing that notices.
     #[test]
     fn every_register_has_exactly_one_group_and_the_table_says_which() {
         use super::{Group, Register};
         let table = [
+            (Register::Brief, Group::Reading),
             (Register::Layman, Group::Reading),
             (Register::Technical, Group::Reading),
             (Register::Evidence, Group::Evidence),
@@ -3518,7 +3609,8 @@ mod tests {
                 consequences: vec![],
             }),
             Kind::Response(Response {
-                brief: "x".into(),
+                layman: "x".into(),
+                brief: None,
                 sections: vec![],
                 doubts: vec![],
                 escalation: None,
@@ -3560,8 +3652,10 @@ mod tests {
             "td": "0.3", "kind": "response", "id": "r1", "title": "The launcher",
             "model": {
                 "plain": "Two bugs fixed and a new kind. The chips now say what the flag says.",
-                // A legacy gist alongside a real plain brief: it loses, and it
-                // does not come back as a section.
+                // A legacy gist alongside a real plain reply. It does not come
+                // back as a section — and since the brief exists it is no
+                // longer discarded either: a tl;dr is exactly the length the
+                // brief slot wants, so that is where it lands.
                 "tl;dr": "The old one-liner, from an agent on the old briefing.",
                 "technical_brief": "The panel height counted one chip row.\nIt now counts four.",
                 "eli5": "The list was squashed flat.",
@@ -3584,9 +3678,14 @@ mod tests {
             panic!("not a response: {:?}", s.kind)
         };
         assert!(
-            r.brief.starts_with("Two bugs fixed"),
-            "the plain brief is the reply, and a legacy tl;dr beside it loses: {:?}",
-            r.brief
+            r.layman.starts_with("Two bugs fixed"),
+            "the plain reply is the agent's own plain English, never the gist: {:?}",
+            r.layman
+        );
+        assert_eq!(
+            r.brief.as_deref(),
+            Some("The old one-liner, from an agent on the old briefing."),
+            "and the legacy gist fills the brief, which is the length it always was"
         );
         let keys: Vec<&str> = r.sections.iter().map(|s| s.key.as_str()).collect();
         assert_eq!(
@@ -3618,7 +3717,11 @@ mod tests {
             !keys.contains(&"empty"),
             "an empty section is a section the agent wrote nothing in"
         );
-        assert_eq!(s.subtitle(), r.brief, "the plain brief is the row");
+        assert_eq!(
+            Some(s.subtitle()),
+            r.brief.clone(),
+            "the shortest reading is the row"
+        );
         assert_eq!(s.kind.shelf(), Shelf::Overview);
         assert_eq!(
             Shelf::Overview.badge(&s.kind, false).as_deref(),
@@ -3739,43 +3842,81 @@ mod tests {
         let Kind::Response(r) = &nested.kind else {
             panic!()
         };
-        assert_eq!(r.brief, "Nested.");
+        assert_eq!(r.layman, "Nested.");
         assert_eq!(r.sections[0].key, "technical");
         assert_eq!(
             nested.title, "Nested.",
-            "the first sentence of the plain brief titles it"
+            "the first sentence of the plain reply titles it"
         );
     }
 
-    /// A tl;dr is no longer a register, and it is still READ.
+    /// THE LADDER, every rung of it, including the ones that only old panes
+    /// climb.
     ///
-    /// The two halves are the whole migration. Every agent pane on this machine
-    /// was launched with a briefing that asked for a `tldr`, and they keep that
-    /// briefing until they are relaunched — so refusing it would have emptied
-    /// every overview on the box at once. It fills the plain brief when nothing
-    /// better came, loses to a real one when both arrive, and is never a
-    /// section either way.
+    /// Two shapes have to hold at once and they pull against each other. Every
+    /// agent pane on this machine keeps whatever briefing it launched with
+    /// until it is relaunched — some ask for a `tldr`, some for a `layman`,
+    /// none of them yet for a `brief` — so refusing any of those would empty
+    /// an overview on the box. And no reading may ever be a second copy of
+    /// another, or the card grows back the duplicate registers that killing
+    /// the tl;dr and the ELI5 removed.
+    ///
+    /// A table over the whole cross-product rather than a case each: the bug
+    /// this shape invites is one combination resolving differently from the
+    /// rest, and a spot check is exactly what misses it.
     #[test]
-    fn a_legacy_gist_fills_the_plain_brief_and_never_becomes_a_register() {
-        let old = response_of(json!({
-            "td": "0.4", "kind": "response",
-            "model": { "tldr": "From an agent still on the old briefing." }
-        }));
-        assert_eq!(old.brief, "From an agent still on the old briefing.");
-        assert!(
-            old.sections.is_empty(),
-            "consumed, not drawn: {:?}",
-            old.sections
-        );
-
-        // Order-independent: the plain brief wins whichever was seen first.
-        for model in [
-            json!({ "tldr": "the old one", "layman": "the plain one" }),
-            json!({ "layman": "the plain one", "tldr": "the old one" }),
-        ] {
-            let both = response_of(json!({ "td": "0.4", "kind": "response", "model": model }));
-            assert_eq!(both.brief, "the plain one");
-            assert!(both.sections.is_empty(), "the loser is not a section");
+    fn the_reading_ladder_fills_downhill_and_never_shows_one_text_twice() {
+        // (what the agent sent, the plain reply, the brief)
+        let table: [(Value, &str, Option<&str>); 8] = [
+            // Today's canonical shape, and the one most panes send.
+            (json!({ "layman": "plain" }), "plain", None),
+            // The shape this change exists for.
+            (
+                json!({ "brief": "short", "layman": "plain" }),
+                "plain",
+                Some("short"),
+            ),
+            // A pane on the 0.4 briefing: its gist is the right LENGTH for the
+            // brief, so that is where it goes rather than nowhere.
+            (
+                json!({ "tldr": "gist", "layman": "plain" }),
+                "plain",
+                Some("gist"),
+            ),
+            // Order-independent, which is the whole reason the slots are
+            // resolved after the walk rather than during it.
+            (
+                json!({ "layman": "plain", "tldr": "gist" }),
+                "plain",
+                Some("gist"),
+            ),
+            // A real brief beats a legacy gist for the one slot.
+            (
+                json!({ "brief": "short", "tldr": "gist", "layman": "plain" }),
+                "plain",
+                Some("short"),
+            ),
+            // A pane on the oldest briefing of all: the gist is all there is,
+            // so it is the reply and the card opens on it exactly as before.
+            (json!({ "tldr": "gist" }), "gist", None),
+            // `brief` was an alias for the plain reply until 2026-09-22. An
+            // agent still spelling it that way is not refused — it is the only
+            // text there is, so it becomes the reply, and it is NOT also shown
+            // as a brief.
+            (json!({ "brief": "short" }), "short", None),
+            // The laziest failure there is: the same paragraph pasted into
+            // both. One chip, not two.
+            (json!({ "brief": "same", "layman": "same" }), "same", None),
+        ];
+        for (model, layman, brief) in table {
+            let r = response_of(json!({ "td": "0.4", "kind": "response", "model": model.clone() }));
+            assert_eq!(r.layman, layman, "the plain reply of {model}");
+            assert_eq!(r.brief.as_deref(), brief, "the brief of {model}");
+            assert!(
+                r.sections.is_empty(),
+                "a reading is consumed, never drawn as a section too: {:?} from {model}",
+                r.sections
+            );
         }
     }
 
@@ -3972,6 +4113,14 @@ mod tests {
         let text = launch_briefing("/run/td/7").to_lowercase();
         assert!(text.contains("layman"), "the required register is named");
         assert!(text.contains("technical"), "and the one that survived");
+        // The brief is a register defined BY a limit, so a briefing that names
+        // it without the limit has asked for a second plain reply. Both halves
+        // or neither.
+        assert!(text.contains("brief"), "and the one that came back");
+        assert!(
+            text.contains("two sentences") && text.contains("fifty words"),
+            "a brief asked for without its limit is just another plain reply"
+        );
         for dead in ["tldr", "tl;dr", "eli5"] {
             assert!(
                 !text.contains(dead),

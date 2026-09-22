@@ -695,6 +695,11 @@ pub fn demo_surfaces() -> Vec<(&'static str, Value)> {
                 "weight": { "effort": "medium", "complexity": "moderate", "confidence": "measured",
                             "foundation": { "system": "workbench", "depth": "component" } },
                 "model": {
+                    // AT THE LIMIT, not comfortably inside it. A demo brief of
+                    // six words would photograph a card nobody will ever be
+                    // sent: the shape worth checking is two real sentences
+                    // wrapping the way a real one wraps.
+                    "brief": "Two bugs in the launcher are fixed: the effort setting is now a real flag, and the panel is tall enough for its four rows. Install the build and open the launcher to see it.",
                     "layman": "Two bugs in the launch panel. One: the effort row offered invented words that were turned into a polite sentence instead of a real setting — now it offers the harness's own levels and passes them as a flag. Two: the panel's height was computed for one row of buttons and it has four, so a short list of matches got no room at all.",
                     "technical": "launcher::Effort is now the union of the harnesses' own levels, ordered; Harness::efforts lists what each takes and clamp_effort finds the nearest when the harness changes. Recipe::command_line emits --effort <id> for Claude and -c model_reasoning_effort=<id> for Codex, and the briefing carries no effort prose. launcher::panel_height sums the chrome the render actually draws (PANEL_CHROME_H) and adds a row per match; a test holds every count up to the cap gets its rows on top of the chrome.",
                     "evidence": {

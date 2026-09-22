@@ -77,9 +77,10 @@ pub enum Emphasis {
     /// articles of doubt. Grey, and never a hue — an unknown that arrives in a
     /// colour looks like a claim.
     Quiet,
-    /// Reading. Every register is this, and they are PEERS: the tl;dr does not
+    /// Reading. Every register is this, and they are PEERS: the brief does not
     /// outrank the technical brief, because a reader who deliberately opened the
-    /// technical brief is reading the technical brief.
+    /// technical brief is reading the technical brief. The brief is drawn FIRST,
+    /// which is an order and not a rung.
     Reading,
     /// The one register the reader is actually in. The only thing on a card that
     /// gets phosphor.

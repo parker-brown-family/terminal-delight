@@ -1286,8 +1286,21 @@ fn response(r: &Response, picks: Option<&Picks>, sk: &Skin, th: &Theme) -> Div {
     // `emphasis::shelf()`'s only caller away: there is no row of things to tier
     // when only one of them is on screen.
     let panel = panel.when_some(shown, |d, leaf| match leaf {
-        Leaf::Brief => d.child(section_body(
-            &crate::surface::Body::Prose(r.brief.clone()),
+        // Matched rather than unwrapped: `Leaf::Brief` is only built where
+        // there is one, so `None` cannot happen — and a card that panics is a
+        // worse answer to a broken invariant than a card drawing one register
+        // less.
+        Leaf::Brief => match &r.brief {
+            Some(brief) => d.child(section_body(
+                &crate::surface::Body::Prose(brief.clone()),
+                Register::Brief,
+                sk,
+                th,
+            )),
+            None => d,
+        },
+        Leaf::Layman => d.child(section_body(
+            &crate::surface::Body::Prose(r.layman.clone()),
             Register::Layman,
             sk,
             th,
