@@ -21164,11 +21164,16 @@ impl Workspace {
                 .text_color(ink)
                 .child(text)
         };
+        // Air at the top. The heading row sat on the border and the title on
+        // the heading; Parker: "just need a bit better spacing along the
+        // top". More above than below, since the eye enters from the rail.
         let mut rows = div()
             .flex()
             .flex_col()
-            .gap(px(3. * s))
-            .p(px(8. * s))
+            .gap(px(4. * s))
+            .px(px(12. * s))
+            .pt(px(11. * s))
+            .pb(px(9. * s))
             .min_w(px(700. * s));
         // The house menu's heading row first: what surface this is, and the
         // keys it answers to — the NEEDS ME panel's recipe, so a person who
@@ -21179,7 +21184,7 @@ impl Workspace {
                 .flex_row()
                 .justify_between()
                 .px(px(3. * s))
-                .pb(px(5. * s))
+                .pb(px(9. * s))
                 .text_size(px(9.5 * s))
                 .text_color(sk.ink.ink_dim)
                 .child("PROJECT RAIL \u{b7} the badge, unfolded")
@@ -21211,7 +21216,7 @@ impl Workspace {
                 .flex_row()
                 .items_center()
                 .justify_between()
-                .pb(px(4. * s))
+                .pb(px(7. * s))
                 .child(
                     div()
                         .text_size(px(11. * s))
@@ -21409,8 +21414,8 @@ impl Workspace {
                     .id("eng-table-panel")
                     .absolute()
                     .left(px(12. * s))
-                    .top(px(44. * s))
-                    .max_h(px(self.tray_max_h(44. * s)))
+                    .top(px(50. * s))
+                    .max_h(px(self.tray_max_h(50. * s)))
                     .overflow_x_hidden()
                     .overflow_y_scroll()
                     .rounded(sk.rad_raw(8.))
