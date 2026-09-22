@@ -1096,8 +1096,15 @@ fn parse_cli(args: &[String]) -> Result<(String, Scope), String> {
 
 /// Sockets currently present, as (pid, path).
 fn discover() -> Vec<(u32, PathBuf)> {
+    discover_in(&ctl_dir())
+}
+
+/// [`discover`] told where to look — the `_at`/`_in` twin `hostctl` names as
+/// this house's discipline, so a test never sets `XDG_RUNTIME_DIR` for every
+/// other test in the process.
+fn discover_in(dir: &Path) -> Vec<(u32, PathBuf)> {
     let mut out = Vec::new();
-    let Ok(rd) = std::fs::read_dir(ctl_dir()) else {
+    let Ok(rd) = std::fs::read_dir(dir) else {
         return out;
     };
     for e in rd.flatten() {
@@ -1495,7 +1502,12 @@ fn window_identity(path: &Path) -> Option<(String, u32)> {
 
 /// Every window that is actually running, with the session each one holds.
 fn live_windows() -> Vec<(String, u32)> {
-    discover()
+    live_windows_in(&ctl_dir())
+}
+
+/// [`live_windows`] told where to look.
+fn live_windows_in(dir: &Path) -> Vec<(String, u32)> {
+    discover_in(dir)
         .into_iter()
         .filter_map(|(_, path)| window_identity(&path))
         .collect()
@@ -1558,14 +1570,89 @@ pub(crate) fn locate() -> Option<Located> {
     })
 }
 
-/// The window a session's `session-<key>.window` record names, if a control
-/// socket for it is still there. Written by both the host and the window; a
-/// stale value is caught by the socket check, and anything it misses now ends
-/// in a refusal naming both sessions rather than in a wrong answer.
+/// The window a session's `session-<key>.window` record names — proven by
+/// ASKING it, never by the presence of its socket file.
+///
+/// This used to end in `socket_path(pid).exists()`, and the comment above it
+/// claimed that caught a stale value. It did not, and this module's own doc
+/// says why: the socket file is not unlinked on exit, because there is no hook
+/// that runs on every exit path. So the check passed for a window that had
+/// died, the relay targeted a corpse, and the agent lost every
+/// `mcp__terminal-delight__*` tool for the rest of its session — with the live
+/// scan it should have fallen through to sitting one line below the call. That
+/// is not a rare shape: 24 stale socket files against 3 live windows, counted
+/// on this desk on 2026-09-21. See `terminal-delight#507`.
+///
+/// Cross-checking the session is free and buys the case a liveness check alone
+/// would still get wrong: a socket whose pid has been RECYCLED by a different
+/// window answers perfectly well, and taking it would be a wrong answer rather
+/// than a missing one.
 fn recorded_window(session: &str) -> Option<u32> {
-    let text = std::fs::read_to_string(crate::hostproto::window_pid_path(session)).ok()?;
+    recorded_window_at(
+        &crate::hostproto::window_pid_path(session),
+        &ctl_dir(),
+        session,
+    )
+}
+
+/// [`recorded_window`] told where to look.
+///
+/// The injectable twin `hostctl` names as this house's discipline: the ambient
+/// function reads the runtime directory, the `_at` one is handed a path, so a
+/// test never sets `XDG_RUNTIME_DIR` for every other test in the process.
+fn recorded_window_at(record: &Path, ctl_dir: &Path, session: &str) -> Option<u32> {
+    let text = std::fs::read_to_string(record).ok()?;
     let pid: u32 = text.trim().parse().ok()?;
-    socket_path(pid).exists().then_some(pid)
+    proven_window(&ctl_dir.join(format!("ctl-{pid}.sock")), pid, session)
+}
+
+/// A window pid that came from a RECORD rather than from a live walk, proven
+/// against the window itself.
+///
+/// ONE door, because there were two copies of the file check and fixing the
+/// filed one would have left the other standing. A future third reader of a
+/// recorded pid should reach for this rather than re-deriving `.exists()` from
+/// first principles, which is exactly how the second copy came to exist.
+///
+/// Deliberately NOT used by [`owning_td`], whose pid comes from walking our own
+/// `/proc` ancestry and is therefore alive by construction. Asking there would
+/// buy nothing and would have the window connect to its own control socket when
+/// it pokes itself, which is a self-deadlock waiting to be discovered.
+fn proven_window(sock: &Path, pid: u32, want_session: &str) -> Option<u32> {
+    let (session, live) = window_identity(sock)?;
+    (live == pid && session == want_session).then_some(pid)
+}
+
+/// Where THIS session's window went, for a relay whose own has gone away.
+///
+/// Same order as [`locate`]: ask the windows that are actually running, then
+/// fall back to the record — which is itself now proven rather than stat-ed.
+///
+/// **Deliberately narrower than [`relay_target`], and that is a trust boundary
+/// rather than a tidiness preference.** `relay_target` ends in "only one
+/// terminal is running, so it must be the one", which is a fair degraded mode
+/// for a relay that never managed to locate itself at all. It would be a
+/// downgrade here. A relay that reaches this point HAS a session: it proved one
+/// at startup and is only asking where that session moved to. Re-resolving to
+/// whatever happens to be listening would let a window that is not ours inherit
+/// an agent mid-run, and a cutover is precisely the moment when something else
+/// could be the only thing bound. **A rebind may narrow what a relay talks to.
+/// It may never widen it.**
+fn rebound_window(session: &str) -> Option<u32> {
+    rebound_window_at(
+        &ctl_dir(),
+        &crate::hostproto::window_pid_path(session),
+        session,
+    )
+}
+
+/// [`rebound_window`] told where to look.
+fn rebound_window_at(ctl_dir: &Path, record: &Path, session: &str) -> Option<u32> {
+    live_windows_in(ctl_dir)
+        .into_iter()
+        .find(|(s, _)| s == session)
+        .map(|(_, pid)| pid)
+        .or_else(|| recorded_window_at(record, ctl_dir, session))
 }
 
 /// Resolve which terminal the relay talks to: an explicit `--pid`, else the
@@ -1592,13 +1679,22 @@ fn relay_target(args: &[String]) -> Result<u32, String> {
     // records the attached window's pid per session; if this pane carries
     // TD_SESSION, use that window's ctl socket when it is live. A stale or
     // missing record falls through to discovery below.
+    //
+    // "When it is live" was a file-existence test until 2026-09-21, and this
+    // copy was the worse of the two: `recorded_window` is at least consulted
+    // AFTER a live scan, while this arm returns before `discover()` below has
+    // ever run — so a corpse here shadowed a perfectly good window sitting one
+    // match arm away.
+    //
+    // It is now the same CALL rather than the same logic written out twice.
+    // Side by side, this arm and `recorded_window` read one file, parsed one
+    // pid and checked one session, and differed only in which of those they
+    // believed; that duplication is precisely what would have let the filed
+    // bug be fixed while its twin went on shipping. One door also means the
+    // door's own test covers both callers, which two copies could never be.
     if let Ok(key) = std::env::var("TD_SESSION") {
-        if let Ok(text) = std::fs::read_to_string(crate::hostproto::window_pid_path(&key)) {
-            if let Ok(pid) = text.trim().parse::<u32>() {
-                if socket_path(pid).exists() {
-                    return Ok(pid);
-                }
-            }
+        if let Some(pid) = recorded_window(&key) {
+            return Ok(pid);
         }
     }
     match discover().as_slice() {
@@ -1657,7 +1753,11 @@ pub fn run_mcp_cli(args: &[String]) -> i32 {
         ),
         None => BARE_RPC.to_string(),
     };
-    let path = socket_path(pid);
+    // Both move when the window under us is replaced — see the rebind in the
+    // loop. Resolved once and then frozen was the whole of issue 391: the
+    // relay held a path to a window that had gone and died on the next call.
+    let mut pid = pid;
+    let mut path = socket_path(pid);
 
     // The server's own budget is 5 s; allow slack for the queue and the write so
     // a busy UI reads as slow, never as a dropped connection.
@@ -1696,6 +1796,34 @@ pub fn run_mcp_cli(args: &[String]) -> i32 {
             );
             prefix = BARE_RPC.to_string();
             sent = send_within(&path, &format!("{prefix}{req}"), budget);
+        }
+        // THE WINDOW WENT AWAY UNDER US. Until now this was fatal: the target
+        // was resolved once before the loop, so a window replaced mid-session —
+        // a build cutover, a bounce, a crash — left the relay holding a path to
+        // a corpse, and the next tool call exited 2. The agent then lost every
+        // `mcp__terminal-delight__*` tool for the REST of its session, because
+        // a client that watches a server's stdio close does not un-fail it when
+        // a replacement relay comes up healthy. Observed 2026-09-21: a relay
+        // died on a cutover, a replacement was spawned three seconds later on
+        // the new build and served a call, and the session never saw the tools
+        // again. Issue 391.
+        //
+        // So: ask once more where our session is, and only ever for OUR session
+        // (see `rebound_window`). One retry, not a loop — a window that is
+        // there answers the second call, and anything else is a real failure
+        // that the caller is owed promptly rather than after a spin.
+        if sent.is_err() {
+            if let Some(next) = located.as_ref().and_then(|l| rebound_window(&l.session)) {
+                if next != pid {
+                    eprintln!(
+                        "terminal-delight mcp: window {pid} went away; session is \
+                         now window {next} — reconnected"
+                    );
+                    pid = next;
+                    path = socket_path(pid);
+                    sent = send_within(&path, &format!("{prefix}{req}"), budget);
+                }
+            }
         }
         match sent {
             // A notification: JSON-RPC says answer nothing, so write nothing.
@@ -2379,5 +2507,149 @@ mod tests {
         drop(UnixListener::bind(&sock).unwrap()); // file survives the listener
         assert!(sock.exists());
         assert!(send(&sock, "ping").is_err());
+    }
+
+    /// A stand-in window that answers `whoami` with whatever we hand it.
+    ///
+    /// Deliberately not [`handle_conn`]: that answers with this process's own
+    /// instance key and pid, and two of the four cases below are precisely
+    /// about a window whose answer does NOT match what the record claimed.
+    fn fake_window(sock: &Path, reply: &str, serves: usize) -> thread::JoinHandle<()> {
+        let listener = UnixListener::bind(sock).expect("bind the stand-in window");
+        let reply = reply.to_string();
+        thread::spawn(move || {
+            for _ in 0..serves {
+                let Ok((mut stream, _)) = listener.accept() else {
+                    return;
+                };
+                let mut line = String::new();
+                if let Ok(peer) = stream.try_clone() {
+                    let _ = BufReader::new(peer).read_line(&mut line);
+                }
+                let _ = writeln!(stream, "{reply}");
+            }
+        })
+    }
+
+    /// A recorded window is proven by ASKING it, never by its socket file.
+    ///
+    /// The bug this replaces, `terminal-delight#507`: the record was taken on
+    /// the strength of `socket_path(pid).exists()`, and nothing unlinks that
+    /// file when a window exits. The relay then targeted a corpse and the agent
+    /// lost every terminal-delight tool for the rest of its session.
+    ///
+    /// Four legs, and the last three are why the first is not enough on its
+    /// own: a function that simply returned `None` forever would satisfy the
+    /// corpse case and break every real window on the desk.
+    #[test]
+    fn a_recorded_window_is_proven_by_asking_it_not_by_its_socket_file() {
+        let dir = tmp("recorded-window");
+        let here = dir.path();
+        let record = here.join("session-S.window");
+
+        // 1. THE CORPSE — bound for real, then dropped, which is exactly the
+        //    state a window exit leaves behind. The file is the bug.
+        std::fs::write(&record, "3\n").unwrap();
+        let corpse = here.join("ctl-3.sock");
+        drop(UnixListener::bind(&corpse).unwrap());
+        assert!(
+            corpse.exists(),
+            "the file must survive — that IS the defect"
+        );
+        assert_eq!(
+            recorded_window_at(&record, here, "S"),
+            None,
+            "a socket file with nothing behind it is not a window"
+        );
+
+        // 2. A WINDOW THAT ANSWERS, holding the session we asked about.
+        std::fs::write(&record, "4242\n").unwrap();
+        let live = here.join("ctl-4242.sock");
+        let server = fake_window(&live, "ok S 4242", 1);
+        assert_eq!(
+            recorded_window_at(&record, here, "S"),
+            Some(4242),
+            "a window that answers for this session is the answer"
+        );
+        server.join().unwrap();
+        std::fs::remove_file(&live).unwrap();
+
+        // 3. THE RECYCLED PID — reachable, and a different window. Taking it
+        //    would be a WRONG answer, which is worse than a missing one.
+        let other = fake_window(&live, "ok not-S 4242", 1);
+        assert_eq!(
+            recorded_window_at(&record, here, "S"),
+            None,
+            "another session's window must not be served to this one"
+        );
+        other.join().unwrap();
+        std::fs::remove_file(&live).unwrap();
+
+        // 4. RIGHT SESSION, WRONG PID — the socket's number and the window's
+        //    own account of itself disagree, so the record is not trustworthy.
+        let mismatched = fake_window(&live, "ok S 9999", 1);
+        assert_eq!(
+            recorded_window_at(&record, here, "S"),
+            None,
+            "a window whose pid disagrees with its socket name is not proven"
+        );
+        mismatched.join().unwrap();
+    }
+
+    /// A relay whose window went away finds its session again — and a rebind
+    /// may NARROW what it talks to, never widen it.
+    ///
+    /// The second half is the one to read. [`relay_target`] ends in "only one
+    /// terminal is running, so it must be the one", a fair degraded mode for a
+    /// relay that never located itself at all. Reaching for it HERE would be
+    /// different in kind: this relay proved a session at startup, and a cutover
+    /// is exactly the moment when the only thing bound might not be ours.
+    ///
+    /// Everything on this box runs as one user, so these sockets are not a
+    /// boundary between people. The only boundary they carry is between what a
+    /// relay asked for and what it will accept — which makes the first two
+    /// assertions below that boundary, written down.
+    #[test]
+    fn a_rebind_finds_our_own_session_and_never_adopts_another() {
+        let dir = tmp("rebind");
+        let here = dir.path();
+        let record = here.join("session-mine.window");
+
+        // A window that is NOT ours and — the point — the only one running.
+        let theirs = here.join("ctl-222.sock");
+        let them = fake_window(&theirs, "ok theirs 222", 4);
+
+        // No record and no window of ours. The lone live terminal is a
+        // stranger's, and "it is the only one" must not promote it.
+        assert_eq!(
+            rebound_window_at(here, &record, "mine"),
+            None,
+            "a lone window belonging to another session must not be adopted"
+        );
+
+        // A record naming that stranger does not launder it either.
+        std::fs::write(&record, "222\n").unwrap();
+        assert_eq!(
+            rebound_window_at(here, &record, "mine"),
+            None,
+            "a record naming another session's window is still not ours"
+        );
+
+        // Ours comes up beside it: there is now something to rebind to, and it
+        // is picked out of a field that still contains one we must not take.
+        let ours = here.join("ctl-111.sock");
+        // One connection each is not a guess: the scan below reaches ours once,
+        // while theirs has already taken three scans plus the record probe. A
+        // stand-in promised more connections than it gets blocks on `join`
+        // forever, which is how this test first hung.
+        let us = fake_window(&ours, "ok mine 111", 1);
+        assert_eq!(
+            rebound_window_at(here, &record, "mine"),
+            Some(111),
+            "our session's window is found even beside another's"
+        );
+
+        us.join().unwrap();
+        them.join().unwrap();
     }
 }
