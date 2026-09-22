@@ -41,6 +41,7 @@ mod derive;
 mod dirlogo;
 mod doc;
 mod emphasis;
+mod engstate;
 mod fav;
 mod gamba;
 mod gridwire;
@@ -1002,6 +1003,31 @@ const FIRST_RUN_HINT: &str = "RIGHT CLICK TO RENAME";
 /// discovered through a chord is furniture. One ctrl+shift+B hides it forever
 /// after, per session.
 const LEFT_BAR_DEFAULT_ON: bool = true;
+
+/// How old the rail's reading of a project may be before the sweep spends a
+/// scan on it. Twenty seconds: git state moves at the pace of a person
+/// typing a commit, and a scan is a handful of subprocesses per checkout.
+const ENG_STALE: Duration = Duration::from_secs(20);
+
+/// How long the rail keeps an event on show after noticing it. Fifteen
+/// minutes is about how long a person is away in another project before
+/// coming back, which is the moment the afterglow is for.
+const ENG_AFTERGLOW: Duration = Duration::from_secs(15 * 60);
+
+/// Which branch of the tree the rail is reading for.
+///
+/// The project the active tab is filed under when it has one; else the
+/// top-level group it sits in; else the loose tabs. The first cut keyed on
+/// the project alone, and Parker's own session showed why that is wrong: his
+/// JOB branch is a group at the top of the tree with no project over it, so
+/// the corner drew a bare mark and the ticker said "filed under this
+/// project" about a branch that had a perfectly good name an inch below.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+enum EngKey {
+    Project(u32),
+    Group(u32),
+    Unfiled,
+}
 /// Default bar width in logical pixels at scale 1.0 — wide enough for two
 /// levels of indent plus a name plus its roll-up glyphs.
 const LEFT_BAR_W: f32 = 208.;
@@ -1601,6 +1627,33 @@ enum Seat {
     Branch(tree::Place),
     /// Loose at the end of the window, in no branch at all.
     Loose,
+}
+
+/// Whether a gesture that makes a tab ends in that tab's name box.
+///
+/// A parameter rather than a rule inside [`Workspace::new_tab_in`], because the
+/// six call sites do not agree and the disagreement is not about the tab — it is
+/// about what the PERSON just asked for. A gesture whose entire content is
+/// "give me a tab" can assume the next thing you want is to say what it is for;
+/// a tab that appears as the by-product of something else can assume nothing of
+/// the kind.
+///
+/// An enum and not a `bool`, so a call site reads as the sentence it is making.
+/// `new_tab_in(place, true, …)` says nothing at the point it is read, and this
+/// is a decision somebody will get wrong from three screens away.
+#[derive(Clone, Copy, PartialEq)]
+enum Naming {
+    /// Open the new tab's name box with the keyboard in it. Ctrl+Shift+T, the
+    /// strip's `+`, and the "New tab here" rows — every gesture that means
+    /// nothing except *make me a tab*.
+    Prompt,
+    /// Leave it nameless. Three cases, and none of them is a person asking for a
+    /// tab: the tab is the by-product of making a BRANCH, whose own name box is
+    /// the one that should have the keyboard; it is the first tab of a fresh
+    /// window, which gets the first-run hint written into that very field; or it
+    /// arrived from outside — an adoption, a resurrection, the launcher — where
+    /// seizing the keyboard is a stranger typing over you.
+    Quiet,
 }
 
 /// `true` if `c` counts as part of a "word" for ctrl-arrow navigation.
@@ -3692,6 +3745,21 @@ struct Workspace {
     agent_vitals: std::collections::HashMap<u32, vitals::Vitals>,
     /// A vitals pass is parsing transcripts on a pool thread.
     vitals_refreshing: bool,
+    /// The engineering state of each declared project the rail has read,
+    /// keyed by project id — `None` is the loose tabs. See `engstate`.
+    eng: std::collections::HashMap<EngKey, engstate::ProjectState>,
+    /// A scan is out. One at a time: a second pass queued behind a slow git
+    /// would land after the first and say the same thing.
+    eng_scanning: bool,
+    /// Which ticker frame is up, advanced on its own clock.
+    eng_frame: usize,
+    /// The afterglow: what changed between consecutive readings of each
+    /// project, with when it was noticed. Kept for [`ENG_AFTERGLOW`] and then
+    /// dropped — evidence that something happened, never a notification.
+    eng_events: std::collections::HashMap<EngKey, Vec<(Instant, String)>>,
+    /// The checkouts table is open — the badge, unfolded: one row per
+    /// checkout with who is writing there, then the drift and the afterglow.
+    eng_table: bool,
     /// Which surface files this window has already delivered to a bench.
     ///
     /// Taken out and handed to the pool for the duration of a sweep, then put
@@ -3884,8 +3952,6 @@ struct Workspace {
     tab_light_drag: bool,
     /// Live tab-pane lightness-slider rect, for ratio math during a drag.
     tab_light_bounds: Arc<Mutex<Option<Bounds<Pixels>>>>,
-    /// Inline group-name editor: (group id, buffer) while renaming a group.
-    group_rename: Option<(u32, EditBuffer)>,
     /// The pane currently mirrored in the FOCUS reading modal, if any. Weak so a
     /// closed pane (its × / shell exit) drops normally — the modal just vanishes.
     focus_read: Option<gpui::WeakEntity<TerminalView>>,
@@ -5125,6 +5191,13 @@ impl Workspace {
             launch_defaults_open: false,
             agent_vitals: std::collections::HashMap::new(),
             vitals_refreshing: false,
+            eng: std::collections::HashMap::new(),
+            eng_scanning: false,
+            eng_frame: 0,
+            eng_events: std::collections::HashMap::new(),
+            // a rig lever, like TD_RAIL_DEBUG: there is no click injection on
+            // this machine, so the table is photographed by opening at launch
+            eng_table: std::env::var_os("TD_RAIL_TABLE").is_some(),
             surface_feed: Some(surfacefeed::Feed::new()),
             derived_stamps: std::collections::HashMap::new(),
             // Headless-capture hook: TD_WALL_THEME=1 arms the "theme · on" wall
@@ -5206,7 +5279,6 @@ impl Workspace {
             tab_wheel_bounds: Arc::new(Mutex::new(None)),
             tab_light_drag: false,
             tab_light_bounds: Arc::new(Mutex::new(None)),
-            group_rename: None,
             focus_read: None,
             focus_zoom: 1.0,
             focus_zoom_drag: false,
@@ -5291,7 +5363,13 @@ impl Workspace {
                     ws.active = 0;
                     ws.focus_active(window, cx);
                 }
-                None => ws.new_tab(window, cx),
+                // `new_tab_in` rather than `new_tab`, for the `Quiet`: the
+                // gesture here is opening the application, not asking for a
+                // tab, and the very next lines write the first-run hint into
+                // the field a name box would be editing. A box open over that
+                // would commit its empty buffer the first time it was clicked
+                // away from and take the hint with it.
+                None => ws.new_tab_in(tree::Place::default(), Naming::Quiet, window, cx),
             }
             // Fresh window: seed the rename hint onto the first tab + its sole
             // sub-terminal (and only those — later tabs/splits stay default).
@@ -5458,6 +5536,50 @@ impl Workspace {
             }
         })
         .detach();
+        // THE PROJECT RAIL: the engineering state of the project you are in.
+        //
+        // Same shape as the sweeps above — gather on the main thread, run git
+        // on the pool, apply back. Two seconds between checks, but a scan is
+        // only spent when the active project's reading is missing or older
+        // than `ENG_STALE`, so switching projects gets a fresh read within a
+        // beat and sitting still costs one pass every twenty seconds. One scan
+        // at a time: a second pass queued behind a slow git would land after
+        // the first and repeat it.
+        cx.spawn(async move |this, cx| loop {
+            cx.background_executor().timer(Duration::from_secs(2)).await;
+            let Ok(input) = this.update(cx, |ws: &mut Workspace, cx| ws.eng_scan_request(cx))
+            else {
+                break; // window gone
+            };
+            let Some((key, input)) = input else {
+                continue; // nothing due
+            };
+            let state = cx
+                .background_executor()
+                .spawn(async move { engstate::scan(&input) })
+                .await;
+            if this
+                .update(cx, |ws: &mut Workspace, cx| ws.apply_eng(key, state, cx))
+                .is_err()
+            {
+                break;
+            }
+        })
+        .detach();
+        // The ticker's clock. Six seconds a frame — long enough to read a
+        // sentence, short enough that a person who glanced up and missed one
+        // sees the next before looking away. A silent rail has no frames and
+        // the tick costs it nothing.
+        cx.spawn(async move |this, cx| loop {
+            cx.background_executor().timer(Duration::from_secs(6)).await;
+            if this
+                .update(cx, |ws: &mut Workspace, cx| ws.tick_eng_frame(cx))
+                .is_err()
+            {
+                break;
+            }
+        })
+        .detach();
         // WORKBENCH: the surface feed.
         //
         // One second, because this is a person waiting to see the thing they
@@ -5584,21 +5706,32 @@ impl Workspace {
                         let now = surfacefeed::now_ms();
                         moved
                             .into_iter()
-                            .map(|(pane, path)| surfacefeed::Arrivals {
-                                pane,
-                                posts: derive::from_transcript(&path, now),
-                                events: Vec::new(),
-                                // Derived surfaces have no document of their
-                                // own: they are read out of the agent's
-                                // transcript, which is durable, keyed by the
-                                // same session and re-read wherever the
-                                // conversation is resumed. Filing a
-                                // reconstruction of one would put a second
-                                // copy in the record that the first sweep of
-                                // the next window would disagree with.
-                                docs: Vec::new(),
+                            .map(|(pane, path)| {
+                                let read = derive::from_transcript(&path, now);
+                                surfacefeed::Arrivals {
+                                    pane,
+                                    posts: read.posts,
+                                    // The transcript's half of the agent channel.
+                                    // It carries what the hook cannot: that a
+                                    // round was REFUSED, which skips PostToolUse
+                                    // and so never reaches the journal at all.
+                                    events: read.endings,
+                                    // Derived surfaces have no document of their
+                                    // own: they are read out of the agent's
+                                    // transcript, which is durable, keyed by the
+                                    // same session and re-read wherever the
+                                    // conversation is resumed. Filing a
+                                    // reconstruction of one would put a second
+                                    // copy in the record that the first sweep of
+                                    // the next window would disagree with.
+                                    docs: Vec::new(),
+                                }
                             })
-                            .filter(|a| !a.posts.is_empty())
+                            // An arrival carrying only an ENDING is still an
+                            // arrival. Filtering on posts alone would have
+                            // dropped every refusal on the floor, since a
+                            // refused round adds no surface of its own.
+                            .filter(|a| !a.posts.is_empty() || !a.events.is_empty())
                             .collect::<Vec<_>>()
                     })
                     .await;
@@ -6981,7 +7114,13 @@ impl Workspace {
         // tab is still possible, by dragging one out of its branch, which is
         // where a deliberate choice belongs; it is no longer what a `+` does by
         // accident.
-        self.new_tab_in(self.place_of(self.active), window, cx);
+        //
+        // And it lands in its own name box. This IS the gesture whose whole
+        // content is "give me a tab", so the next thing wanted is what the tab
+        // is for — on a session of twenty panes a strip of shells named after
+        // their shell is a strip you cannot aim at, and the name never gets
+        // typed later because later is when you have stopped caring.
+        self.new_tab_in(self.place_of(self.active), Naming::Prompt, window, cx);
     }
 
     /// Open a fresh terminal as a new tab in `place`, seated at that branch's
@@ -6997,13 +7136,36 @@ impl Workspace {
     /// This delegates to [`Self::open_tab`], which is the only place a new tab
     /// is built, so the hosted-mode invariant has one site to hold rather than
     /// three. See `a_hosted_window_makes_no_pane_of_its_own`.
-    fn new_tab_in(&mut self, place: tree::Place, window: &mut Window, cx: &mut Context<Self>) {
+    ///
+    /// `naming` is the one thing this cannot decide for its callers — see
+    /// [`Naming`]. It is asked for rather than defaulted because the wrong
+    /// answer is silent in both directions: a missing box is a tab that keeps
+    /// the shell's name for ever, and an unwanted one is a keyboard taken away
+    /// from somebody who was about to type into a terminal.
+    ///
+    /// The box is opened AFTER `open_tab`, which is what makes it stick.
+    /// `open_tab` defers a focus onto the new pane and stands down only when
+    /// [`Self::overlay_owns_keyboard`] is true — and `renaming` is one of the
+    /// buffers that answers it.
+    fn new_tab_in(
+        &mut self,
+        place: tree::Place,
+        naming: Naming,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.open_tab(
             session::PaneRestore::default(),
             Seat::Branch(place),
             window,
             cx,
         );
+        if naming == Naming::Prompt {
+            // `open_tab` has just made this the active tab, which is the tab it
+            // built — the index it inserted at, not the one that was active
+            // when the gesture started.
+            self.start_tab_rename(self.active, window, cx);
+        }
     }
 
     /// Build one new tab, holding one terminal, and seat it.
@@ -10008,6 +10170,7 @@ impl Workspace {
                                         project: Some(id),
                                         initiative: None,
                                     },
+                                    Naming::Prompt,
                                     window,
                                     cx,
                                 );
@@ -10090,6 +10253,7 @@ impl Workspace {
                                         project: None,
                                         initiative: Some(id),
                                     },
+                                    Naming::Prompt,
                                     window,
                                     cx,
                                 );
@@ -10154,7 +10318,7 @@ impl Workspace {
                                 cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
                                     cx.stop_propagation();
                                     ws.bar_menu = None;
-                                    ws.new_tab_in(ws.place_of(i), window, cx);
+                                    ws.new_tab_in(ws.place_of(i), Naming::Prompt, window, cx);
                                 }),
                             ),
                     )
@@ -10324,29 +10488,49 @@ impl Workspace {
         cx.notify();
     }
 
-    /// A project born holding a terminal of its own, and landed in.
+    /// A project born holding a terminal of its own, landed in, and open at its
+    /// name.
     ///
-    /// Generate, then go there. It does NOT open the rename box: a gesture that
+    /// Generate, go there, put the cursor in the name box. Creation was stopped
+    /// from opening that box on 2026-09-15, on the argument that a gesture which
     /// grabs the keyboard decides for you that naming the thing is the next
-    /// move, when most of the time the next move is using the terminal it just
-    /// gave you. It opens as `project N` and stays that way until somebody
-    /// double-clicks or right-clicks the row, which is where renaming already
-    /// lives and costs nothing to reach.
+    /// move. That holds for a branch made by accident and fails for every one
+    /// made on purpose: on a tree of twenty panes `project 7` is a row nobody
+    /// can aim at, and a name put off until later is a name that never gets
+    /// typed. Parker asked for it back — the box on creation is the only moment
+    /// he knows what the branch is for.
+    ///
+    /// Esc is the way out, and is why this is not the keyboard-seizing trap the
+    /// removal described: it reverts the box and drops straight into the
+    /// terminal the same gesture just made.
+    ///
+    /// What keeps the two from fighting is [`Self::overlay_owns_keyboard`].
+    /// `open_tab` defers a focus onto the new pane and stands down when an
+    /// overlay legitimately owns the keyboard, and `bar_rename` is one of the
+    /// buffers it counts. Drop this box out of that list and the defer takes the
+    /// keyboard back mid-gesture, which on screen looks like a name box
+    /// ignoring everything typed into it.
     fn new_project_with_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) -> u32 {
         let id = self.new_project(None, cx);
+        // `Quiet`: the tab is a by-product here, and the box that should have
+        // the keyboard is the PROJECT's. Two boxes open at once would be one
+        // gesture asking two questions, and the answer would land in whichever
+        // one the last call happened to leave focused.
         self.new_tab_in(
             tree::Place {
                 project: Some(id),
                 initiative: None,
             },
+            Naming::Quiet,
             window,
             cx,
         );
+        self.start_bar_rename(BarBranch::Project(id), window, cx);
         id
     }
 
     /// The same thing one layer down: a group holding a fresh terminal,
-    /// optionally inside a project.
+    /// optionally inside a project, open at its name.
     fn new_group_with_terminal(
         &mut self,
         project: Option<u32>,
@@ -10366,15 +10550,18 @@ impl Workspace {
         });
         // The terminal comes before the rename for the same reason it does one
         // layer up — and before anything prunes, because a group with no tabs
-        // is exactly what `prune_groups` exists to remove.
+        // is exactly what `prune_groups` exists to remove. `Quiet` for the same
+        // reason too: the GROUP's box is the one being opened.
         self.new_tab_in(
             tree::Place {
                 project: None,
                 initiative: Some(id),
             },
+            Naming::Quiet,
             window,
             cx,
         );
+        self.start_bar_rename(BarBranch::Initiative(id), window, cx);
         id
     }
 
@@ -10874,6 +11061,51 @@ impl Workspace {
         }
     }
 
+    /// Ctrl+Alt+R: name whatever the highlight is sitting on.
+    ///
+    /// The walk had no verb for this. Ctrl+Alt+↑↓ finds a row and Ctrl+Alt+→
+    /// steps into it, but naming the thing you had just found meant leaving the
+    /// keyboard for a right-click — so a branch made in a hurry kept the name
+    /// the machine gave it. This closes the loop the arrows opened: find it,
+    /// name it, never touch the mouse.
+    ///
+    /// **It renames the HIGHLIGHT, not the active tab.** That distinction is the
+    /// whole feature. Ctrl+Alt+→ is a separate gesture with its own meaning
+    /// (commit to this row), and requiring it first would make naming a branch
+    /// you are merely pointing at cost you the branch you are working in.
+    ///
+    /// Each layer goes to the editor that layer already has, so this adds a door
+    /// and not a fourth buffer: a project or a group to `bar_rename`, a task to
+    /// the strip's `renaming` — which the tree's own task rows draw too, so the
+    /// box appears under the cursor whichever surface the row is on.
+    ///
+    /// With no live cursor it names the active task, and with the tree shut it
+    /// does the same without consulting the tree at all. A row the tree is not
+    /// drawing cannot show a box, and a chord that silently does nothing is how
+    /// a person concludes a binding is broken — the active tab is the one row
+    /// that is on screen either way, since the strip always draws it.
+    fn rename_here(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let at = self.left_bar.then(|| {
+            let rows = self.bar_rows(cx);
+            self.bar_live_cursor(&rows).or_else(|| self.bar_seed(&rows))
+        });
+        match at.flatten() {
+            Some(tree::RowId::Project(id)) => {
+                self.start_bar_rename(BarBranch::Project(id), window, cx)
+            }
+            Some(tree::RowId::Initiative(id)) => {
+                self.start_bar_rename(BarBranch::Initiative(id), window, cx)
+            }
+            Some(tree::RowId::Task(i)) => self.start_tab_rename(i, window, cx),
+            // `tree::row_id` yields no `Unfiled`, so the cursor can never rest
+            // on the divider — it is a drop target and nothing else. Spelled out
+            // rather than folded into the fallback so that a fifth row kind
+            // added to the tree is a compile error here rather than a chord that
+            // quietly renames the wrong thing.
+            Some(tree::RowId::Unfiled) | None => self.start_tab_rename(self.active, window, cx),
+        }
+    }
+
     /// Ctrl+Alt+→: open what the cursor is over, then step into it.
     ///
     /// Two presses, deliberately: the first unfolds a folded branch and leaves
@@ -11213,6 +11445,222 @@ impl Workspace {
         let mut leaves = vec![];
         tab.root.leaves(&mut leaves);
         leaves.first().and_then(|p| p.read(cx).current_cwd())
+    }
+
+    // ---- the project rail --------------------------------------------------
+
+    /// The active project's engineering state, if the rail has read it yet.
+    fn eng_state(&self) -> Option<&engstate::ProjectState> {
+        self.eng.get(&self.eng_key())
+    }
+
+    /// The branch the rail reads for right now — see [`EngKey`].
+    fn eng_key(&self) -> EngKey {
+        Self::eng_key_of(self.place_of(self.active))
+    }
+
+    fn eng_key_of(place: tree::Place) -> EngKey {
+        match (place.project, place.initiative) {
+            (Some(p), _) => EngKey::Project(p),
+            (None, Some(g)) => EngKey::Group(g),
+            (None, None) => EngKey::Unfiled,
+        }
+    }
+
+    /// What the tree calls that branch. `None` for the loose tabs — an
+    /// unorganised session is not labelled "unfiled" in the corner.
+    fn eng_key_name(&self, key: EngKey) -> Option<String> {
+        match key {
+            EngKey::Project(p) => self.project_at(p).map(|p| p.label()),
+            EngKey::Group(g) => self.groups.iter().find(|x| x.id == g).map(|g| g.label()),
+            EngKey::Unfiled => None,
+        }
+    }
+
+    /// What the sweep should read next, or `None` when nothing is due.
+    ///
+    /// Due means: no reading for the active project, or one older than
+    /// [`ENG_STALE`]. Switching to a project the rail has never read is the
+    /// case that matters — the sweep's two-second beat is the most a person
+    /// waits to see the rail say something about where they just arrived.
+    fn eng_scan_request(&mut self, cx: &App) -> Option<(EngKey, engstate::ScanInput)> {
+        if self.eng_scanning {
+            return None;
+        }
+        let key = self.eng_key();
+        let fresh = self
+            .eng
+            .get(&key)
+            .is_some_and(|s| s.scanned_at.elapsed() < ENG_STALE);
+        if fresh {
+            return None;
+        }
+        self.eng_scanning = true;
+        Some((key, self.eng_input(key, cx)))
+    }
+
+    /// Every writer in the session, sorted into the project being read and
+    /// everyone else — the second list is how a visitor is recognised.
+    ///
+    /// A pane with no cwd yet (a host pane still attaching) is left out
+    /// rather than filed as "nowhere": it will be there on the next pass, and
+    /// counting it as outside any repository would be inventing a fact.
+    fn eng_input(&self, key: EngKey, cx: &App) -> engstate::ScanInput {
+        let name = self.eng_key_name(key);
+        let mut mine = Vec::new();
+        let mut others = Vec::new();
+        for (i, tab) in self.tabs.iter().enumerate() {
+            let place = self.place_of(i);
+            let mut leaves = vec![];
+            tab.root.leaves(&mut leaves);
+            for pane in leaves {
+                let v = pane.read(cx);
+                let Some(cwd) = v.current_cwd() else {
+                    continue;
+                };
+                let tab_name = tab.name.clone().unwrap_or_else(|| {
+                    if v.title.trim().is_empty() {
+                        v.mode.label().to_lowercase()
+                    } else {
+                        v.title.clone()
+                    }
+                });
+                let w = engstate::Writer {
+                    tab: i,
+                    tab_name,
+                    label: v.mode.label().to_string(),
+                    cwd: std::path::PathBuf::from(cwd),
+                };
+                if Self::eng_key_of(place) == key {
+                    mine.push(w);
+                } else {
+                    // filed under its project when it has one, else its group,
+                    // else nothing — which the rail reports as "unfiled"
+                    let filed = place
+                        .project
+                        .and_then(|p| self.project_at(p))
+                        .map(|p| p.label())
+                        .or_else(|| {
+                            place
+                                .initiative
+                                .and_then(|g| self.groups.iter().find(|x| x.id == g))
+                                .map(|g| g.label())
+                        });
+                    others.push((filed, w));
+                }
+            }
+        }
+        engstate::ScanInput {
+            project: match key {
+                EngKey::Project(p) => Some(p),
+                EngKey::Group(_) | EngKey::Unfiled => None,
+            },
+            name,
+            mine,
+            others,
+        }
+    }
+
+    /// A scan landed. The frame index is left where it was: a project whose
+    /// frame count shrank wraps on the next tick, and resetting it would make
+    /// every twenty-second refresh snap the ticker back to its first frame.
+    fn apply_eng(&mut self, key: EngKey, state: engstate::ProjectState, cx: &mut Context<Self>) {
+        self.eng_scanning = false;
+        if std::env::var_os("TD_RAIL_DEBUG").is_some() {
+            eprintln!(
+                "rail: {} checkouts, {} repos, {} foreign, {} visitors in {:?}",
+                state.checkouts.len(),
+                state.repos.len(),
+                state.foreign.len(),
+                state.visitors.len(),
+                state.took
+            );
+        }
+        // The afterglow: what this reading says happened since the last one.
+        // Diffed before the insert, against the reading it replaces, and only
+        // for the same project — the pure function refuses anything else.
+        if let Some(prev) = self.eng.get(&key) {
+            let now = Instant::now();
+            let fresh = engstate::events(prev, &state);
+            let log = self.eng_events.entry(key).or_default();
+            log.extend(fresh.into_iter().map(|e| (now, e)));
+            log.retain(|(at, _)| now.duration_since(*at) < ENG_AFTERGLOW);
+            // the newest twelve; older ones have had their fifteen minutes
+            let excess = log.len().saturating_sub(12);
+            log.drain(..excess);
+        }
+        self.eng.insert(key, state);
+        cx.notify();
+    }
+
+    /// The afterglow still on show for the active project, oldest first.
+    fn eng_afterglow(&self) -> Vec<&str> {
+        let key = self.eng_key();
+        let now = Instant::now();
+        self.eng_events
+            .get(&key)
+            .map(|log| {
+                log.iter()
+                    .filter(|(at, _)| now.duration_since(*at) < ENG_AFTERGLOW)
+                    .map(|(_, e)| e.as_str())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Every project's reading, for the MCP snapshot — the active one flagged,
+    /// each with its own afterglow. What `engineering_state` answers with.
+    fn eng_reports(&self) -> Vec<engstate::Report> {
+        let active = self.eng_key();
+        let now = Instant::now();
+        self.eng
+            .iter()
+            .map(|(key, st)| {
+                let glow: Vec<String> = self
+                    .eng_events
+                    .get(key)
+                    .map(|log| {
+                        log.iter()
+                            .filter(|(at, _)| now.duration_since(*at) < ENG_AFTERGLOW)
+                            .map(|(_, e)| e.clone())
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                st.report(*key == active, &glow)
+            })
+            .collect()
+    }
+
+    /// Every frame the ticker rotates through: the reading's own, then one
+    /// for the afterglow when there is any. One function, so the clock and
+    /// the renderer count the same frames.
+    fn eng_frames(&self) -> Vec<engstate::Frame> {
+        let Some(st) = self.eng_state() else {
+            return Vec::new();
+        };
+        let mut frames = st.frames();
+        let glow = self.eng_afterglow();
+        if !glow.is_empty() {
+            // the three newest, newest first — the rest are on the badge's
+            // dot and in the table
+            let recent: Vec<&str> = glow.iter().rev().take(3).copied().collect();
+            frames.push(engstate::Frame {
+                kind: engstate::FrameKind::Events,
+                text: format!("\u{25c6} {}", recent.join(" \u{00b7} ")),
+                tone: engstate::Tone::Plain,
+            });
+        }
+        frames
+    }
+
+    /// Advance the ticker. Silent when there is nothing to rotate.
+    fn tick_eng_frame(&mut self, cx: &mut Context<Self>) {
+        let n = self.eng_frames().len();
+        if n == 0 {
+            return;
+        }
+        self.eng_frame = (self.eng_frame + 1) % n;
+        cx.notify();
     }
 
     // ---- ctl `tabs`: the tab strip, scripted ---------------------------------
@@ -14443,10 +14891,10 @@ impl Workspace {
             || self.agent_launcher.is_some()
             || self.renaming.is_some()
             || self.bar_rename.is_some()
-            || self.group_rename.is_some()
             || self.confirm_close.is_some()
             || self.confirm_delete.is_some()
             || self.bar_menu.is_some()
+            || self.eng_table
             || self.theme_menu.is_some()
             || self.osd_menu.is_some()
             || self.tab_menu.is_some()
@@ -14493,21 +14941,6 @@ impl Workspace {
         true
     }
 
-    /// Commit an in-progress group rename (if any). Same terms as the tab and
-    /// branch editors: an empty name clears back to the unnamed group.
-    fn commit_group_rename(&mut self, cx: &mut Context<Self>) -> bool {
-        let Some((gid, eb)) = self.group_rename.take() else {
-            return false;
-        };
-        let name = eb.text();
-        if let Some(g) = self.groups.iter_mut().find(|g| g.id == gid) {
-            g.name = (!name.trim().is_empty()).then(|| name.trim().to_string());
-        }
-        self.save(cx);
-        cx.notify();
-        true
-    }
-
     /// Open the inline rename box on a tab — from the strip, from the tree, or
     /// from a double-click. One door, so the seeding can never drift apart.
     fn start_tab_rename(&mut self, i: usize, window: &mut Window, cx: &mut Context<Self>) {
@@ -14516,22 +14949,6 @@ impl Workspace {
         self.commit_all_renames(cx);
         self.tab_menu = None;
         self.renaming = Some((i, EditBuffer::seeded(&seed)));
-        window.focus(&self.focus_handle, cx);
-        cx.notify();
-    }
-
-    /// Open the inline rename box on a group heading.
-    fn start_group_rename(&mut self, gid: u32, window: &mut Window, cx: &mut Context<Self>) {
-        let seed = self
-            .groups
-            .iter()
-            .find(|g| g.id == gid)
-            .and_then(|g| g.name.clone())
-            .unwrap_or_default();
-        self.commit_all_renames(cx);
-        self.group_menu = None;
-        self.tab_menu = None;
-        self.group_rename = Some((gid, EditBuffer::seeded(&seed)));
         window.focus(&self.focus_handle, cx);
         cx.notify();
     }
@@ -14547,7 +14964,6 @@ impl Workspace {
     fn commit_all_renames(&mut self, cx: &mut Context<Self>) {
         self.commit_rename(cx);
         self.commit_bar_rename(cx);
-        self.commit_group_rename(cx);
         let panes: Vec<Entity<TerminalView>> = {
             let mut leaves = vec![];
             for tab in &self.tabs {
@@ -14998,27 +15414,6 @@ impl Workspace {
                 }
             }
         }
-        // the inline group-name editor owns the keyboard while open
-        if let Some((gid, mut eb)) = self.group_rename.take() {
-            match ks.key.as_str() {
-                "enter" | "escape" => {
-                    if ks.key.as_str() == "enter" {
-                        let name = eb.text();
-                        if let Some(g) = self.groups.iter_mut().find(|g| g.id == gid) {
-                            g.name = (!name.trim().is_empty()).then(|| name.trim().to_string());
-                        }
-                        self.save(cx);
-                    }
-                    self.focus_active(window, cx);
-                }
-                _ => {
-                    eb.apply(ks.key.as_str(), m, ks.key_char.as_deref(), 18);
-                    self.group_rename = Some((gid, eb));
-                }
-            }
-            cx.notify();
-            return;
-        }
         if self.tab_menu.is_some() && ks.key.as_str() == "escape" {
             self.tab_menu = None;
             cx.notify();
@@ -15027,6 +15422,12 @@ impl Workspace {
         // A left-bar menu is dismissed by Esc like every other overlay, and by
         // nothing else — a menu that ate arrow keys would be claiming a
         // navigation model it does not have.
+        if self.eng_table && ks.key.as_str() == "escape" {
+            self.eng_table = false;
+            self.focus_active(window, cx);
+            cx.notify();
+            return;
+        }
         if self.bar_menu.is_some() && ks.key.as_str() == "escape" {
             self.close_bar_menu(cx);
             return;
@@ -15138,7 +15539,13 @@ impl Workspace {
         }
         if m.control && m.alt {
             match ks.key.as_str() {
-                "r" => self.split(SplitDir::Row, window, cx),
+                // R is the verb the walk was missing. Ctrl+Alt+↑↓ moves the
+                // highlight and Ctrl+Alt+→ steps into it, so until now the only
+                // way to name what you had just found was to leave the keyboard
+                // for the mouse. It cost nothing to take: this was a second
+                // spelling of the vertical split, which Alt+V has done all
+                // along — and Alt+H still twins Ctrl+Alt+D below it.
+                "r" => self.rename_here(window, cx),
                 "d" => self.split(SplitDir::Col, window, cx),
                 // Ctrl+Alt+arrows drive the LEFT BAR, one layer out from
                 // Alt+arrows, which move pane focus inside the tab. Same
@@ -15172,8 +15579,10 @@ impl Workspace {
         }
         if m.alt && !m.control {
             // Alt+V / Alt+H split the focused pane, Tilix-style: V puts the new
-            // pane beside it (a vertical divider, SplitDir::Row — same as
-            // ctrl+alt+r), H puts it below (SplitDir::Col — same as ctrl+alt+d).
+            // pane beside it (a vertical divider, SplitDir::Row), H puts it
+            // below (SplitDir::Col — same as ctrl+alt+d). V is now the ONLY
+            // spelling of the vertical split; ctrl+alt+r was its twin and has
+            // gone to the tree's rename, which had no key at all.
             match ks.key.as_str() {
                 "v" => {
                     self.split(SplitDir::Row, window, cx);
@@ -20598,137 +21007,583 @@ impl Workspace {
             .flex_none()
             .flex_row()
             .items_center()
-            .justify_center()
             .overflow_hidden()
+            .gap(px(8. * s))
             .px(px(6. * s));
         if let Some(w) = width.filter(|w| *w > 0.) {
             col = col.w(px(w));
         }
-        // the same key the strip filters by, so the name always describes the
-        // branch whose tabs are on the strip
-        let place = self.place_of(self.active);
-        match place.initiative {
-            Some(gid) => col.child(self.group_title(gid, pt, cx)),
-            // A loose tab hangs from its project, if it hangs from anything —
-            // and when that is nothing at all this says nothing. An unorganised
-            // session gets a bare mark, not a label reading "unfiled".
-            None => {
-                let project = place
-                    .project
-                    .and_then(|p| self.projects.iter().find(|q| q.id == p))
-                    .map(|p| (p.id, p.label()));
-                match project {
-                    Some((pid, name)) => col.child(
-                        div()
-                            .min_w_0()
-                            .truncate()
-                            .text_size(px(pt))
-                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .text_color(th.faint)
-                            .child(name)
-                            // a name in the chrome, so it renames the way every
-                            // other one does — the tree row beside it is the
-                            // same project and answers to the same gesture
-                            .on_mouse_down(
-                                MouseButton::Right,
-                                cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
-                                    cx.stop_propagation();
-                                    ws.start_bar_rename(BarBranch::Project(pid), window, cx);
-                                }),
-                            ),
+        // THE BRANCH THE RAIL READS FOR, never the tab. The project the active
+        // tab is filed under when it has one, else the top-level group it
+        // sits in — the same key the scan uses, so the name and the numbers
+        // beside it can never be about different things. Switching tabs
+        // inside that branch changes nothing here; switching branches does.
+        // A loose tab hangs from nothing and gets the mark and the badge
+        // alone: an unorganised session is not labelled "unfiled".
+        let key = self.eng_key();
+        let branch = match key {
+            EngKey::Project(p) => Some(BarBranch::Project(p)),
+            EngKey::Group(g) => Some(BarBranch::Initiative(g)),
+            EngKey::Unfiled => None,
+        };
+        if let (Some(name), Some(branch)) = (self.eng_key_name(key), branch) {
+            col = col.child(
+                div()
+                    .min_w_0()
+                    .truncate()
+                    .text_size(px(pt))
+                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                    .text_color(th.text)
+                    .child(name.to_uppercase())
+                    // a name in the chrome, so it renames the way every
+                    // other one does — the tree row beside it is the
+                    // same branch and answers to the same gesture
+                    .on_mouse_down(
+                        MouseButton::Right,
+                        cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
+                            cx.stop_propagation();
+                            ws.start_bar_rename(branch, window, cx);
+                        }),
                     ),
-                    None => col,
-                }
-            }
+            );
         }
+        col.child(self.eng_badge(pt, cx))
     }
 
-    /// A branch's name, as the mother bar draws it.
+    /// The persistent badge beside the project's name: its isolation health.
     ///
-    /// Not a chip and not coloured. The tree carries this branch's colour key
-    /// and its name already; a second coloured token on top of that was the
-    /// same fact twice, in the place with the least room for it. Still the
-    /// branch's handle, though — right-click writes over its name, ctrl+click
-    /// opens its menu (colour, fold, disband), and a plain click folds it in
-    /// the tree. Those gestures came with it from the tab strip's heading to
-    /// the header row, because a name in TD's chrome answers to the same three
-    /// gestures wherever it is drawn.
-    fn group_title(&self, gid: u32, pt: f32, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
+    /// `[4 WT ✓]`, `[2 WT · 1 SHARED]`, `[⚠ 1 FOREIGN]`, `[NO GIT]` — the
+    /// one thing about a project a person wants at a glance without reading a
+    /// ticker: are the things writing into it writing into separate
+    /// directories? Until the first scan has landed it says `SCANNING`,
+    /// because an empty badge would read as "nothing to report", which is a
+    /// different claim.
+    fn eng_badge(&self, pt: f32, cx: &mut Context<Self>) -> gpui::Div {
         let th = theme::theme(cx);
         let s = theme::outer_choice(cx).grade.scale;
-        // never `name`: a group starts nameless, and a heading that renders
-        // nothing is an invisible control sitting on the widest surface in the
-        // window — with its click and right-click still live
-        let name = self
-            .groups
-            .iter()
-            .find(|g| g.id == gid)
-            .map(|g| g.label())
-            .unwrap_or_else(|| unnamed_group(gid));
-        let mut chip = div()
-            .id(SharedString::from(format!("grp-title-{gid}")))
+        let sk = skin::skin(cx, s);
+        let mut segments = match self.eng_state() {
+            Some(st) => st.badge(),
+            None => vec![engstate::Segment {
+                text: "SCANNING".into(),
+                tone: engstate::Tone::Muted,
+            }],
+        };
+        // the afterglow's dot: something happened here in the last quarter
+        // hour, and the ticker has the sentence
+        if !self.eng_afterglow().is_empty() {
+            segments.push(engstate::Segment {
+                text: "\u{25c6}".into(),
+                tone: engstate::Tone::Good,
+            });
+        }
+        let mut chip = sk
+            .bezel(false, s)
+            .flex_none()
             .flex()
             .flex_row()
             .items_center()
-            .justify_center()
-            .min_w_0()
-            .overflow_hidden()
-            .gap(px(4. * s))
-            .px(px(4. * s))
-            .cursor_pointer()
-            .text_size(px(pt))
+            .gap(px(5. * s))
+            .text_size(px(pt * 0.8))
             .font_weight(gpui::FontWeight::SEMIBOLD)
-            .text_color(th.faint);
-        if let Some((_, eb)) = self.group_rename.as_ref().filter(|(rg, _)| *rg == gid) {
-            chip = chip.child(render_edit_buffer(
-                eb,
-                s,
-                th.text,
-                th.cursor,
-                th.accent.alpha(0.4),
-            ));
-        } else {
-            // truncate, not overflow_hidden: gpui wraps by default, and the
-            // whole point of the fixed rail is that a name too long for it
-            // costs an ellipsis rather than a second row on the mother bar
-            chip = chip.child(div().min_w_0().truncate().child(name));
+            .border_color(th.text.alpha(0.22));
+        for (i, seg) in segments.iter().enumerate() {
+            if i > 0 {
+                chip = chip.child(
+                    div()
+                        .text_color(th.text.alpha(0.35))
+                        .child("\u{00b7}".to_string()),
+                );
+            }
+            let ink = self.eng_ink(seg.tone, &th);
+            // A warning wears a wash as well as its ink. On an amber palette
+            // the ansi yellow is a hair from the text colour, and `1 SHARED`
+            // read exactly like `3 WT` beside it; a tint behind the words is
+            // a difference every palette can show.
+            let warn = seg.tone == engstate::Tone::Warn;
+            chip = chip.child(
+                div()
+                    .text_color(ink)
+                    .when(warn, |d| {
+                        d.px(px(4. * s)).rounded(sk.radius()).bg(ink.alpha(0.16))
+                    })
+                    .child(seg.text.clone()),
+            );
         }
+        // click: unfold it into the table. Propagation stops here so the
+        // mother bar's move handle does not also arm on the press.
         chip.on_mouse_down(
             MouseButton::Left,
-            cx.listener(move |ws, ev: &MouseDownEvent, _window, cx| {
+            cx.listener(|ws, _: &MouseDownEvent, window, cx| {
                 cx.stop_propagation();
-                if ws.group_rename.as_ref().is_some_and(|(rg, _)| *rg == gid) {
-                    // clicking the edit box itself keeps editing — it must not
-                    // arm the fold/reorder drag sitting under the same pixels
-                    return;
+                ws.toggle_eng_table(window, cx);
+            }),
+        )
+    }
+
+    /// Open or close the checkouts table. Opening takes the keyboard the way
+    /// a menu does, so esc reaches it; closing hands the keyboard back to the
+    /// terminal that had it.
+    fn toggle_eng_table(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.eng_table = !self.eng_table;
+        if self.eng_table {
+            self.commit_all_renames(cx);
+            self.bar_menu = None;
+            window.focus(&self.focus_handle, cx);
+        } else {
+            self.focus_active(window, cx);
+        }
+        cx.notify();
+    }
+
+    /// The badge, unfolded: the project's checkouts one to a row, then every
+    /// pane the drift lint has something to say about, then the afterglow.
+    ///
+    /// This is where the specific identity lives now — WHICH branch, in
+    /// WHICH directory, with WHO writing to it. The rail aggregates; the
+    /// table itemises; the pane header says its own. Same information at
+    /// three scales, none of it repeated at the same one.
+    fn render_eng_table(
+        &self,
+        th: &theme::Theme,
+        s: f32,
+        cx: &mut Context<Self>,
+    ) -> Option<gpui::Div> {
+        if !self.eng_table {
+            return None;
+        }
+        let sk = skin::skin(cx, s);
+        let st = self.eng_state();
+        let mono = |d: gpui::Div| d.font_family("monospace").text_size(px(10.5 * s));
+        let cell = |w: f32, ink: Hsla, text: String| {
+            mono(div())
+                .flex_none()
+                .w(px(w * s))
+                .overflow_hidden()
+                .truncate()
+                .text_color(ink)
+                .child(text)
+        };
+        // Air at the top. The heading row sat on the border and the title on
+        // the heading; Parker: "just need a bit better spacing along the
+        // top". More above than below, since the eye enters from the rail.
+        let mut rows = div()
+            .flex()
+            .flex_col()
+            .gap(px(4. * s))
+            .px(px(12. * s))
+            .pt(px(11. * s))
+            .pb(px(9. * s))
+            .min_w(px(700. * s));
+        // The house menu's heading row first: what surface this is, and the
+        // keys it answers to — the NEEDS ME panel's recipe, so a person who
+        // has learned one panel has learned this one.
+        rows = rows.child(
+            div()
+                .flex()
+                .flex_row()
+                .justify_between()
+                .px(px(3. * s))
+                .pb(px(9. * s))
+                .text_size(px(9.5 * s))
+                .text_color(sk.ink.ink_dim)
+                .child("PROJECT RAIL \u{b7} the badge, unfolded")
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .gap(px(6. * s))
+                        .child("click the badge")
+                        .child("esc"),
+                ),
+        );
+        // then what this is a table OF, and how fresh it is
+        let name = self
+            .eng_key_name(self.eng_key())
+            .map(|n| n.to_uppercase())
+            .unwrap_or_else(|| "UNFILED".into());
+        let freshness = match st {
+            Some(st) => format!(
+                "read {}s ago in {}ms",
+                st.scanned_at.elapsed().as_secs(),
+                st.took.as_millis()
+            ),
+            None => "not read yet".into(),
+        };
+        rows = rows.child(
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .justify_between()
+                .pb(px(7. * s))
+                .child(
+                    div()
+                        .text_size(px(11. * s))
+                        .font_weight(gpui::FontWeight::BOLD)
+                        .text_color(th.text)
+                        .child(name),
+                )
+                .child(
+                    div()
+                        .text_size(px(9.5 * s))
+                        .text_color(th.text.alpha(0.5))
+                        .child(freshness),
+                ),
+        );
+        let Some(st) = st else {
+            return Some(self.eng_table_frame(&sk, th, s, rows, cx));
+        };
+        let muted = th.text.alpha(0.55);
+        let warn = self.eng_ink(engstate::Tone::Warn, th);
+        // column heads
+        rows = rows.child(
+            div()
+                .flex()
+                .flex_row()
+                .gap(px(8. * s))
+                .child(cell(210., muted, "line".into()))
+                .child(cell(60., muted, "".into()))
+                .child(cell(110., muted, "uncommitted".into()))
+                .child(cell(60., muted, "vs main".into()))
+                .child(cell(200., muted, "writing here".into())),
+        );
+        let main_name = st
+            .primary()
+            .and_then(|r| r.main_ref.as_deref())
+            .map(|m| m.rsplit('/').next().unwrap_or(m).to_string());
+        for c in &st.checkouts {
+            let is_primary = st.primary().is_some_and(|p| p.id == c.repo);
+            let line = if is_primary {
+                c.line()
+            } else {
+                let repo = st
+                    .repos
+                    .iter()
+                    .find(|r| r.id == c.repo)
+                    .map(|r| r.name.as_str())
+                    .unwrap_or("?");
+                format!("{} ({repo})", c.line())
+            };
+            let kind = if c.shared() { "SHARED" } else { "WT" };
+            let kind_ink = if c.shared() { warn } else { th.accent };
+            let dirt = match (c.dirty, c.delta) {
+                (Some(0), _) => "clean".to_string(),
+                (Some(n), Some((a, d))) => format!("{n} dirty +{a} \u{2212}{d}"),
+                (Some(n), None) => format!("{n} dirty"),
+                (None, _) => "unmeasured".to_string(),
+            };
+            let dirt_ink = match c.dirty {
+                Some(0) => muted,
+                Some(_) => th.text,
+                None => muted,
+            };
+            let vs = match c.ahead_behind {
+                _ if Some(c.line()) == main_name => "\u{2014}".to_string(),
+                Some((a, b)) => format!("\u{2191}{a} \u{2193}{b}"),
+                None => "?".to_string(),
+            };
+            let who: Vec<String> = c
+                .writers
+                .iter()
+                .map(|w| format!("{} ({})", w.label.to_lowercase(), w.tab_name))
+                .collect();
+            rows = rows.child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .gap(px(8. * s))
+                    .child(cell(210., th.text, line))
+                    .child(cell(60., kind_ink, kind.into()))
+                    .child(cell(110., dirt_ink, dirt))
+                    .child(cell(60., th.text, vs))
+                    .child(cell(200., th.text, who.join(", "))),
+            );
+        }
+        // the drift and the panes in no repository
+        let mut notes: Vec<(Hsla, String)> = Vec::new();
+        for f in &st.foreign {
+            notes.push((
+                warn,
+                format!(
+                    "\u{26a0} {} is filed here but working in {}",
+                    f.writer.tab_name, f.repo_name
+                ),
+            ));
+        }
+        for v in &st.visitors {
+            notes.push((
+                muted,
+                match &v.filed_under {
+                    Some(u) => format!(
+                        "\u{25cc} {} is working here but filed under {u}",
+                        v.writer.tab_name
+                    ),
+                    None => format!("\u{25cc} {} is working here, unfiled", v.writer.tab_name),
+                },
+            ));
+        }
+        for w in &st.no_git {
+            notes.push((muted, format!("{} is in no repository", w.tab_name)));
+        }
+        if let Some(r) = st.primary() {
+            if let Some(n) = r.worktrees_on_disk {
+                let in_use = st.primary_checkouts().len() as u32;
+                if n > in_use {
+                    notes.push((
+                        muted,
+                        format!("{n} worktrees of {} on disk, {in_use} in use", r.name),
+                    ));
                 }
-                if ev.modifiers.control {
-                    // ctrl+click → the group's config tray (colour, fold, disband)
-                    ws.open_group_menu(gid, ev.position, cx);
-                    return;
+            }
+        }
+        if !notes.is_empty() {
+            rows = rows.child(div().h(px(1.)).mt(px(4. * s)).bg(th.text.alpha(0.12)));
+            for (ink, text) in notes {
+                rows = rows.child(mono(div()).text_color(ink).child(text));
+            }
+        }
+        // the afterglow, oldest first, with how long ago
+        let glow = self.eng_afterglow();
+        if !glow.is_empty() {
+            rows = rows.child(div().h(px(1.)).mt(px(4. * s)).bg(th.text.alpha(0.12)));
+            let key = self.eng_key();
+            let now = Instant::now();
+            if let Some(log) = self.eng_events.get(&key) {
+                for (at, e) in log {
+                    let age = now.duration_since(*at).as_secs();
+                    let when = if age < 60 {
+                        format!("{age}s ago")
+                    } else {
+                        format!("{}m ago", age / 60)
+                    };
+                    rows = rows.child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .gap(px(8. * s))
+                            .child(cell(60., muted, when))
+                            .child(
+                                mono(div())
+                                    .text_color(th.text)
+                                    .child(format!("\u{25c6} {e}")),
+                            ),
+                    );
                 }
-                // arm a group drag: a release without travel folds the group, a
-                // release after travel reorders the whole group (see on_mouse_up).
-                ws.group_drag = Some(GroupDrag {
-                    gid,
-                    start: ev.position,
-                    at: ev.position,
-                    engaged: false,
-                });
-                ws.tab_drop = None;
+            }
+        }
+        Some(self.eng_table_frame(&sk, th, s, rows, cx))
+    }
+
+    /// The scrim and the panel around the table — the same shape as every
+    /// menu, so closing it never also presses what was underneath.
+    fn eng_table_frame(
+        &self,
+        sk: &skin::Skin,
+        th: &theme::Theme,
+        s: f32,
+        rows: gpui::Div,
+        cx: &mut Context<Self>,
+    ) -> gpui::Div {
+        // The menu recipe, the same one the NEEDS ME panel and the usage card
+        // wear: a real 2px accent border, an opaque darkened fill, a float
+        // shadow, a radius, and a footer saying how to leave. The first cut
+        // used the skin's bare panel and drew a borderless sheet over the
+        // terminals — Parker: "click opens a pane, but has no border...
+        // should follow the design pattern of the other menu items".
+        let footer = div()
+            .pt(px(6. * s))
+            .text_size(px(8.5 * s))
+            .text_color(th.accent.alpha(0.8))
+            .child("esc or click outside to close");
+        self.over_the_glass(
+            div()
+                .id("eng-table-panel")
+                .absolute()
+                .left(px(12. * s))
+                .top(px(50. * s))
+                .max_h(px(self.tray_max_h(50. * s)))
+                .overflow_x_hidden()
+                .overflow_y_scroll()
+                .rounded(sk.rad_raw(8.))
+                .border_2()
+                .border_color(th.accent.alpha(0.85))
+                .bg(darken(th.surface, 0.45))
+                .shadow(float_shadows(th.accent))
+                // a click inside the panel is the panel's, not the scrim's
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|_, _: &MouseDownEvent, _w, cx| cx.stop_propagation()),
+                )
+                .child(rows.child(footer)),
+            |ws, window, cx| {
+                ws.eng_table = false;
+                ws.focus_active(window, cx);
                 cx.notify();
-            }),
+            },
+            cx,
         )
-        // right-click the handle → write over the group's name in place, the
-        // same gesture as every other name in the chrome. The group's other
-        // properties (colour, fold, disband) are ctrl+click.
-        .on_mouse_down(
-            MouseButton::Right,
-            cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
-                cx.stop_propagation();
-                ws.start_group_rename(gid, window, cx);
-            }),
-        )
+    }
+
+    /// A surface drawn OVER the glass: the scrim that closes it and, by
+    /// construction, a flat screen underneath it.
+    ///
+    /// Every overlay in this window — a menu, a picker, a table — is a scrim
+    /// and a panel, and every one of them has to flatten the CRT warp for the
+    /// frame it is up, because the warp is a screen-space post-pass that bends
+    /// whatever pixels land inside a pane's tube no matter which element drew
+    /// them. That rule lived in a list in `render` that each new overlay had
+    /// to be added to, beside two sibling lists (the keyboard-owner predicate
+    /// and `close_popups`) it also had to join, and a hand-kept table a guard
+    /// read. The project rail's table joined two of the four and shipped bent.
+    /// Parker: *"how many times have we fixed this exact problem … the solution
+    /// has to be code."*
+    ///
+    /// So the property is attached to the one thing an overlay cannot avoid
+    /// having — its scrim. Build the scrim here and the glass is flat for this
+    /// frame; there is no list to join and nothing to remember. The guard
+    /// `a_scrim_over_the_glass_flattens_it_by_construction` refuses any
+    /// occluding scrim in this file that did not come from here, and freezes
+    /// the ones that predate it.
+    ///
+    /// Runs during element construction, before any pane paints, which is why
+    /// [`warp::flatten`] is sticky for the frame rather than an argument.
+    fn over_the_glass<F, P: gpui::IntoElement>(
+        &self,
+        panel: P,
+        on_close: F,
+        cx: &mut Context<Self>,
+    ) -> gpui::Div
+    where
+        F: Fn(&mut Workspace, &mut Window, &mut Context<Workspace>) + 'static,
+    {
+        warp::flatten();
+        div()
+            .absolute()
+            .inset_0()
+            .occlude()
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
+                    cx.stop_propagation();
+                    on_close(ws, window, cx);
+                }),
+            )
+            .child(panel)
+    }
+
+    /// The ink a tone is drawn in. Bound here and nowhere else, so the model
+    /// never names a colour and the palette decides what "warn" looks like.
+    fn eng_ink(&self, tone: engstate::Tone, th: &theme::Theme) -> Hsla {
+        match tone {
+            engstate::Tone::Plain => th.text,
+            engstate::Tone::Muted => th.text.alpha(0.55),
+            engstate::Tone::Good => th.accent,
+            // the palette's own yellow: every theme has one, and it is the
+            // colour a shell already uses for "look at this"
+            engstate::Tone::Warn => th.ansi[3],
+        }
+    }
+
+    /// The ticker: one frame of the active project's engineering state, and
+    /// its heartbeat. Takes the middle of the top row when the tree is open —
+    /// the tabs it replaces there are the spine's task rows, already on
+    /// screen an inch below.
+    fn render_ticker(&self, scale: f32, cx: &mut Context<Self>) -> gpui::Div {
+        let th = theme::theme(cx);
+        let mut row = div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .min_w_0()
+            .flex_1()
+            .gap(px(12. * scale));
+        let Some(st) = self.eng_state() else {
+            return row;
+        };
+        // a thin rule between the badge and the ticker, as the mockup drew it
+        row = row.child(
+            div()
+                .flex_none()
+                .w(px(1.))
+                .h(px(14. * scale))
+                .bg(th.text.alpha(0.18)),
+        );
+        let frames = self.eng_frames();
+        if frames.is_empty() {
+            // silence means healthy: the badge already said what there is to
+            // say, and an empty middle is the breathing room that makes the
+            // next non-empty frame land
+            return row.child(div().min_w_0().flex_1());
+        }
+        let frame = &frames[self.eng_frame % frames.len()];
+        row = row.child(
+            div()
+                .min_w_0()
+                .flex_1()
+                .truncate()
+                .text_size(px(11.5 * scale))
+                .text_color(self.eng_ink(frame.tone, &th))
+                .child(frame.text.clone()),
+        );
+        // the frame counter, so a reader knows there are more and how far
+        // round they are — "3/7" in the quietest ink
+        if frames.len() > 1 {
+            row = row.child(
+                div()
+                    .flex_none()
+                    .text_size(px(9.5 * scale))
+                    .text_color(th.text.alpha(0.35))
+                    .child(format!(
+                        "{}/{}",
+                        (self.eng_frame % frames.len()) + 1,
+                        frames.len()
+                    )),
+            );
+        }
+        if let Some(p) = st.primary().and_then(|r| r.pulse) {
+            row = row.child(self.render_pulse(&p, scale, cx));
+        }
+        row
+    }
+
+    /// The heartbeat: twelve bars, one per five minutes of the last hour,
+    /// oldest on the left. Not a graph to study — peripheral vision tells you
+    /// the project is hot. A calm hour is twelve baseline dots, drawn rather
+    /// than omitted, so an absent instrument and a quiet one look different.
+    fn render_pulse(&self, p: &[u32; 12], scale: f32, cx: &mut Context<Self>) -> gpui::Div {
+        let th = theme::theme(cx);
+        let max = p.iter().copied().max().unwrap_or(0).max(1) as f32;
+        let mut bars = div()
+            .flex_none()
+            .flex()
+            .flex_row()
+            .items_end()
+            .gap(px(1.5 * scale))
+            .h(px(12. * scale));
+        for (i, &v) in p.iter().enumerate() {
+            // newest bars brightest, so the eye reads direction as well as size
+            let age = (11 - i) as f32 / 11.;
+            let ink = if v == 0 {
+                th.text.alpha(0.18)
+            } else {
+                th.accent.alpha(0.45 + 0.55 * (1. - age))
+            };
+            let h = if v == 0 {
+                2. * scale
+            } else {
+                (3. + 9. * (v as f32 / max)) * scale
+            };
+            bars = bars.child(
+                div()
+                    .flex_none()
+                    .w(px(3. * scale))
+                    .h(px(h))
+                    .rounded(px(1.))
+                    .bg(ink),
+            );
+        }
+        bars
     }
 
     /// The tab-config wheel: the same HSV disk as the theme breakout, carrying
@@ -22090,17 +22945,12 @@ impl Render for Workspace {
         // the header icons for. Four ordinary tab titles wrapped into a scrunched
         // column at that cap; at full width they simply lay out, and only a
         // genuinely full bar wraps — onto a second TAB row, which pushes nothing.
-        // The strip belongs to the SCREEN, not to the whole window: with the
-        // tree open the tabs start where the terminals start, so a tab sits
-        // over the thing it opens instead of over the tree that lists it. The
-        // indent is computed from the same numbers the layout uses — the bar's
-        // width plus its margin and the screen's, less the bezel's own padding
-        // — so the two edges line up at any bar width and any scale.
-        let strip_indent = if self.left_bar {
-            (self.left_bar_w * scale + 16. - 12. * scale).max(0.)
-        } else {
-            0.
-        };
+        // The middle of the row is the project rail while the tree is open and
+        // the tab strip while it is shut (see `middle` below). The strip used to
+        // start on the line the terminals start at, by pinning the corner to the
+        // tree's width; with the tree open the tabs are no longer up here, and
+        // with it shut that indent was always zero. So the corner takes the
+        // width it needs and nothing is pinned.
         // The heading stands in a column the width of the tree, centred over it,
         // so the name sits above the rows it belongs to. Then a gutter that is
         // VOID on purpose: the tabs start a little way INSIDE the terminals
@@ -22109,15 +22959,6 @@ impl Render for Workspace {
         // that gap — the moment a control moves into it, the inset stops
         // reading as deliberate and starts reading as that control's margin.
         let strip_void = 14. * scale;
-        // `strip_indent` is the tree's width, and it is what keeps the tabs'
-        // left edge on the line the terminals start at — a tab sits over the
-        // thing it opens rather than over the tree that lists it.
-        //
-        // It used to be a spacer of its own on a second row. Now that the
-        // header is one line, the CORNER is pinned to this width instead: the
-        // mark and the branch name occupy exactly the tree's column, so the
-        // tabs begin where they always did and the space the corner was
-        // leaving empty is doing a job.
         let mut tab_strip = div()
             .flex()
             .flex_row()
@@ -22603,6 +23444,15 @@ impl Render for Workspace {
                 }
             });
 
+        // THE MIDDLE of the top row: the project rail while the tree is open
+        // — the tabs it would list there are the spine's task rows, an inch
+        // below — and the tab strip while the tree is shut, when the strip is
+        // the only listing of the tabs there is.
+        let middle: gpui::AnyElement = if self.left_bar {
+            self.render_ticker(scale, cx).into_any_element()
+        } else {
+            tab_strip.into_any_element()
+        };
         let bezel_top = div()
             // min-height (not fixed): extra tab rows grow the bar downward.
             .min_h(px(43. * scale))
@@ -22632,7 +23482,7 @@ impl Render for Workspace {
             .py(px(7. * scale))
             // NO row gap, deliberately. The corner is pinned to the tree's
             // width and the void after it is an exact number, so the tabs'
-            // left edge is `px + strip_indent + strip_void` — the same
+            // left edge is `px + corner + strip_void` — the same
             // arithmetic the layout below uses to place the terminals. A flex
             // gap would be added between EVERY pair, putting two of them ahead
             // of the strip and pushing the tabs 16px right of the panes they
@@ -22659,28 +23509,30 @@ impl Render for Workspace {
                 }),
             )
             .child(
-                // THE CORNER: the app's MARK, then the name of the branch this
-                // window is standing in.
+                // THE CORNER: the app's MARK, then the PROJECT this window is
+                // standing in, then that project's isolation badge.
                 //
                 // It used to read `▸ TERMINAL DELIGHT` — the widest thing on
                 // the busiest row, spent saying something that never changes
-                // and that the window's own title already says. Worse, the
-                // strip heading below it said the active branch's name, so a
-                // session whose project is called Terminal Delight printed the
-                // same three words twice, stacked, in the two most prominent
-                // places in the window. The mark says which program this is in
-                // 18px; the words beside it now say something that changes.
-                //
-                // Pinned to the width of the TREE, which is what keeps the
-                // tabs' left edge on the line the terminals start at — the
-                // alignment the old second row got from its heading column. A
-                // branch named longer than the tree is wide truncates here
-                // rather than pushing the first tab right. With the tree closed
-                // there is no column to match, so it takes what it needs.
+                // and that the window's own title already says. Then it named
+                // the active BRANCH, in a box pinned to the tree's width and
+                // sitting directly above the spine row already lit for that
+                // same branch: one fact, said twice, in the two most prominent
+                // places in the window. Now the words say which project, and
+                // the badge says what kind of engineering situation is inside
+                // it — a thing the tree cannot say, because the tree is the
+                // DECLARED organisation and the badge is read off the disk.
                 div()
                     .flex_none()
-                    .when(strip_indent > 0., |d| d.w(px(strip_indent)))
-                    .h(px(22. * scale))
+                    // A minimum, not a height. It was `h(22)` from the days the
+                    // corner held one line of text; the badge is a bordered
+                    // chip that stands a hair taller once a warning glyph is in
+                    // it, and a fixed height plus the clip below sliced its top
+                    // border off. Parker: "see how the border at the top of the
+                    // fixed element is cutoff... should have some breathing
+                    // room". The row's own padding is the breathing room; the
+                    // corner just has to stop being shorter than its contents.
+                    .min_h(px(22. * scale))
                     // clip instead of paint-over: when the window narrows past
                     // the corner, the fixed-size children must truncate, not
                     // bleed onto the always-kept right-side controls (#86).
@@ -22700,10 +23552,10 @@ impl Render for Workspace {
             // the void: no control, no rule, no handle. What makes the strip
             // read as belonging to the screen rather than to the tree.
             .child(div().flex_none().w(px(strip_void)))
-            // THE TABS, inline. `flex_1` + `min_w_0` + `flex_wrap`, so they
-            // take the middle, absorb the slack that used to be dead space on
-            // two rows, and still wrap downward on a genuinely full bar.
-            .child(tab_strip)
+            // THE MIDDLE: the rail or the tabs, chosen above. Either is
+            // `flex_1` + `min_w_0`, so it takes the middle and absorbs the
+            // slack that used to be dead space on two rows.
+            .child(middle)
             .child(
                 // Never compressed or pushed off. The menu glyphs used to lead
                 // this group and the splits followed them; both are at the
@@ -26364,12 +27216,13 @@ impl Render for Workspace {
                         row("Ctrl+Shift+T", s.new_tab),
                         row("Ctrl+PgUp / PgDn", s.switch_tabs),
                         row("Ctrl+Shift+PgUp / PgDn", s.move_tab),
-                        row("Alt+V / H · Ctrl+Alt+R / D", s.split),
+                        row("Alt+V / H · Ctrl+Alt+D", s.split),
                         row("Alt+W", s.close_pane),
                         row("Alt+K", s.toggle_bench),
                         row("Ctrl+W", s.close_tab),
                         row("Ctrl+Alt+↑↓←→", s.walk_tree),
                         row("Ctrl+Alt+1…9", s.jump_branch),
+                        row("Ctrl+Alt+R", s.rename_row),
                         row(s.k_alt_arrows, s.move_focus_dir),
                         row(s.k_drag_subtab, s.drag_subtab),
                         row(s.k_rclick_tab, s.rclick_tab),
@@ -27879,6 +28732,7 @@ impl Render for Workspace {
                     .children(confirm_overlay)
                     .children(delete_overlay)
                     .children(self.render_bar_menu(&th, scale, cx))
+                    .children(self.render_eng_table(&th, scale, cx))
                     .children(self.render_rail(cx))
                     .children(scale_overlay)
                     .children(more_overlay)
@@ -28494,12 +29348,38 @@ mod tests {
             body.contains("new_tab_in("),
             "a new project must open a terminal of its own"
         );
+        // Restored 2026-09-21, and asserted against comment-stripped source so
+        // this paragraph cannot satisfy its own grep. Creation stopped opening
+        // the name box on 2026-09-15, as a gesture that seizes the keyboard.
+        // That reading holds for a branch made by accident; these are made on
+        // purpose, and `project 7` is a row nobody can aim at once the moment
+        // you knew what it was for has gone. Esc is the way out of the box.
+        let code = shipped_code();
+        for (f, branch) in [
+            ("fn new_project_with_terminal(", "BarBranch::Project(id)"),
+            ("fn new_group_with_terminal(", "BarBranch::Initiative(id)"),
+        ] {
+            let at = code.find(f).unwrap_or_else(|| panic!("{f} is gone"));
+            let end = code[at..].find("\n    }\n").expect("end of fn") + at;
+            assert!(
+                code[at..end].contains(&format!("start_bar_rename({branch}")),
+                "{f} no longer opens its name box on creation — a branch made on purpose \
+                 is named at the moment it is made, or never"
+            );
+        }
+
+        // And the box has to survive the frame it opens in. `open_tab` defers a
+        // focus onto the new pane and stands down only for an overlay that owns
+        // the keyboard, so a `bar_rename` missing from that list is a name box
+        // that silently loses every keystroke typed into it.
+        let at = code
+            .find("fn overlay_owns_keyboard(")
+            .expect("overlay_owns_keyboard");
+        let end = code[at..].find("\n    }\n").expect("end of fn") + at;
         assert!(
-            !body.contains("start_bar_rename("),
-            "making a project opens its rename box again — the gesture grabs the keyboard \
-             and decides for you that naming it is the next move, when the next move is \
-             usually using the terminal it just gave you. It opens as `project N`; renaming \
-             is double-click or the row's own menu"
+            code[at..end].contains("self.bar_rename.is_some()"),
+            "overlay_owns_keyboard no longer counts the left bar's name box, so the \
+             deferred pane focus takes the keyboard back the moment a branch is made"
         );
 
         // And the tab it builds goes through the identity carrier. `Tab::new`
@@ -28687,7 +29567,14 @@ mod tests {
     /// here; escalate if it fails to hold.
     #[test]
     fn a_hosted_window_makes_no_pane_of_its_own() {
-        let src = include_str!("main.rs");
+        // `shipped_src()` and not `include_str!`, which reads this file whole —
+        // test module included. The table below spells its own anchors as string
+        // literals, so a signature that changes shape does not go missing: the
+        // scan finds the literal in the table instead and reports on the wrong
+        // region. That happened, the moment `new_tab_in` grew a fourth argument
+        // and its `&mut self` moved onto its own line. It failed rather than
+        // passed, which was luck.
+        let src = shipped_src();
         let body = |sig: &str| -> &str {
             let at = src.find(sig).unwrap_or_else(|| panic!("{sig} not found"));
             let end = src[at..].find("\n    }\n").expect("end of fn");
@@ -28696,7 +29583,9 @@ mod tests {
 
         // Full signatures, not name prefixes: `fn split` alone matches
         // `split_leaf` three thousand lines earlier, and a source scan that
-        // silently reads the wrong function is worse than no scan.
+        // silently reads the wrong function is worse than no scan. Where a
+        // signature is multi-line the `fn name(` form IS the full one — there is
+        // no second function it can reach.
         for gesture in ["fn open_tab(", "fn split(&mut self, dir: SplitDir"] {
             let b = body(gesture);
             assert!(
@@ -28716,7 +29605,7 @@ mod tests {
         // quietly stopped covering the gesture people actually press.
         for (sig, reaches) in [
             ("fn new_tab(&mut self", "self.new_tab_in("),
-            ("fn new_tab_in(&mut self", "self.open_tab("),
+            ("fn new_tab_in(", "self.open_tab("),
             ("fn adopt_pane(", "self.open_tab("),
         ] {
             let delegating = body(sig);
@@ -28886,20 +29775,10 @@ mod tests {
             &src[at..at + end]
         };
 
-        let title = body("fn group_title");
-        assert!(
-            title.contains(".label()"),
-            "group_title must go through TabGroup::label — reading `name` \
-             directly renders nothing at all for a group nobody has named yet"
-        );
-        assert!(
-            title.contains(".truncate()"),
-            "group_title must truncate: gpui wraps by default, so a long branch \
-             name grows the mother bar instead of clipping inside its rail"
-        );
         assert!(
             body("fn place_name").contains(".truncate()"),
-            "the project name must truncate for the same reason"
+            "the project name must truncate: gpui wraps by default, so a long \
+             name grows the mother bar instead of clipping inside its rail"
         );
 
         // and the fallback has to actually say something
@@ -28992,7 +29871,6 @@ mod tests {
         for call in [
             "self.commit_rename(cx)",
             "self.commit_bar_rename(cx)",
-            "self.commit_group_rename(cx)",
             "v.commit_rename(cx)",
         ] {
             assert!(
@@ -29013,14 +29891,13 @@ mod tests {
             .filter_map(|l| l.split(':').next())
             .collect();
         assert!(
-            fields.len() >= 3,
-            "expected the three workspace rename buffers, found {fields:?}"
+            fields.len() >= 2,
+            "expected the two workspace rename buffers, found {fields:?}"
         );
         let commits = format!(
-            "{}{}{}",
+            "{}{}",
             body("fn commit_rename"),
-            body("fn commit_bar_rename"),
-            body("fn commit_group_rename")
+            body("fn commit_bar_rename")
         );
         for f in fields {
             assert!(
@@ -29553,6 +30430,267 @@ mod tests {
         );
     }
 
+    /// Asking for a tab lands you in its name box; getting one as a by-product
+    /// does not.
+    ///
+    /// Parker pressed Ctrl+Shift+T on the build that had just shipped the
+    /// branch-level name box and reported it: *"it did NOT fall into renaming!
+    /// it should have"*. The first cut put the box on branch creation only,
+    /// which is where it had been REMOVED from — restoring what was taken
+    /// rather than asking what the gesture was for.
+    ///
+    /// Both directions are silent, which is why this is scanned rather than
+    /// trusted:
+    ///
+    /// - a gesture dropping to `Quiet` is a tab that keeps its shell's name for
+    ///   ever, and nothing anywhere fails;
+    /// - a branch builder rising to `Prompt` opens two name boxes in one
+    ///   gesture, and what you type lands in whichever one was focused last.
+    ///
+    /// The first-run seed is the third case and the easiest to miss: the lines
+    /// right after it write `FIRST_RUN_HINT` into the very field a box would be
+    /// editing, so a box open over it commits its empty buffer on the first
+    /// click away and takes the hint with it.
+    ///
+    /// Scanned because every one of these needs a live gpui `Window`.
+    /// Comment-stripped, so this paragraph cannot satisfy its own grep.
+    #[test]
+    fn asking_for_a_tab_opens_its_name_box_and_a_by_product_does_not() {
+        let code = shipped_code();
+        let body = |sig: &str| {
+            let at = code.find(sig).unwrap_or_else(|| panic!("{sig} is gone"));
+            let end = code[at..].find("\n    }\n").expect("end of fn") + at;
+            code[at..end].to_string()
+        };
+
+        // The gesture whose whole content is "give me a tab".
+        let gesture = body("fn new_tab(&mut self");
+        assert!(
+            gesture.contains("Naming::Prompt"),
+            "ctrl+shift+t and the strip's + stopped opening the new tab's name box — \
+             a tab nobody names at the moment it is made is a tab called `bash`"
+        );
+
+        // And the site that acts on it, in the order that makes it stick.
+        let opener = body("fn new_tab_in(");
+        let opened = opener
+            .find("self.open_tab(")
+            .expect("new_tab_in must open a tab");
+        let named = opener
+            .find("self.start_tab_rename(")
+            .expect("new_tab_in no longer opens the name box for a Prompt gesture");
+        assert!(
+            opened < named,
+            "new_tab_in renames before it opens the tab — open_tab sets self.active to \
+             the tab it built, and its deferred focus only stands down for a box that \
+             is already open"
+        );
+        assert!(
+            opener.contains("naming == Naming::Prompt"),
+            "new_tab_in renames unconditionally, so making a project or a group now \
+             opens two name boxes in one gesture"
+        );
+
+        // The by-products. Each of these opens a box of its OWN, one layer up.
+        for (sig, whose) in [
+            ("fn new_project_with_terminal(", "the project's"),
+            ("fn new_group_with_terminal(", "the group's"),
+        ] {
+            let b = body(sig);
+            assert!(
+                b.contains("Naming::Quiet"),
+                "{sig} asks for the TAB's name box as well as {whose} — one gesture, \
+                 two questions, and the answer lands in whichever was focused last"
+            );
+            assert!(
+                b.contains("self.start_bar_rename("),
+                "{sig} no longer opens {whose} name box at all"
+            );
+        }
+
+        // The first tab of a fresh window, whose name field is spoken for.
+        let at = code
+            .find("if let Some(tab) = ws.tabs.first_mut()")
+            .expect("the first-run hint");
+        let seed = &code[..at];
+        let opened = seed.rfind("=> ws.new_tab").expect("the first-run tab");
+        assert!(
+            seed[opened..].contains("Naming::Quiet"),
+            "a fresh window opens its first tab's name box over the first-run hint, \
+             which the next lines are about to write into that same field"
+        );
+    }
+
+    /// A scrim over the glass flattens it by construction, or the build fails.
+    ///
+    /// The warp is a screen-space post-pass: a panel drawn over a pane's tube
+    /// is bent by it no matter how flat its own border makes it look, and the
+    /// only remedy is to flatten the glass for the frame. That remedy was a
+    /// list in `render` that every new overlay had to join — beside the
+    /// keyboard-owner predicate, `close_popups`, and a hand-kept table — and
+    /// every agent that ever added a menu missed at least one of the four.
+    /// The project rail's table missed the one that shows.
+    ///
+    /// The code answer: flatness rides the scrim. `over_the_glass` is the one
+    /// builder of an occluding scrim, and it calls `warp::flatten()`. This
+    /// test walks every `.occlude()` in the shipped source and refuses any
+    /// that is not inside that builder or inside one of the sites that predate
+    /// it — whose counts are FROZEN, so a scrim added inline anywhere fails
+    /// here, by name, before it can ship bent.
+    ///
+    /// Comment-stripped, so this paragraph cannot satisfy its own grep.
+    #[test]
+    fn a_scrim_over_the_glass_flattens_it_by_construction() {
+        let code = shipped_code();
+        // every occluding scrim, attributed to the fn that draws it
+        let mut sites: Vec<(String, usize)> = Vec::new();
+        let mut from = 0;
+        while let Some(i) = code[from..].find(".occlude()") {
+            let pos = from + i;
+            // the nearest header above the scrim, whatever its visibility —
+            // taking the first spelling that matched attributed a scrim under
+            // a `pub fn` to the plain `fn` before it
+            let head = ["\n    fn ", "\n    pub fn ", "\n    pub(crate) fn "]
+                .iter()
+                .filter_map(|h| code[..pos].rfind(h))
+                .max()
+                .expect("an occlude outside any method");
+            let name = code[head..]
+                .trim_start()
+                .trim_start_matches("pub(crate) ")
+                .trim_start_matches("pub ")
+                .trim_start_matches("fn ")
+                .split(['(', '<'])
+                .next()
+                .unwrap()
+                .to_string();
+            match sites.iter_mut().find(|(n, _)| *n == name) {
+                Some((_, c)) => *c += 1,
+                None => sites.push((name, 1)),
+            }
+            from = pos + 1;
+        }
+        // The sites that predate the builder. Each is flattened by the
+        // suppression list in `render`, which its own guards check. FROZEN:
+        // a count that grew means a scrim was added inline instead of through
+        // `over_the_glass`, and a name not in this table means a new one.
+        let legacy: &[(&str, usize)] = &[
+            ("savings_shell", 1),
+            ("render_bar_menu", 1),
+            ("render_find", 1),
+            ("render_lang_picker", 1),
+            ("render_agent_launcher", 2),
+            ("render_logo_picker", 1),
+            ("render_paint_outer", 1),
+            ("render_rail", 1),
+            ("render", 5),
+        ];
+        assert!(
+            sites.iter().any(|(n, _)| n == "over_the_glass"),
+            "over_the_glass no longer draws the scrim — the builder is the rule"
+        );
+        for (name, count) in &sites {
+            if name == "over_the_glass" {
+                continue;
+            }
+            let frozen = legacy.iter().find(|(n, _)| n == name).map(|(_, c)| *c);
+            assert_eq!(
+                frozen,
+                Some(*count),
+                "`{name}` draws {count} occluding scrim(s) that were not built through \
+                 `over_the_glass`. A scrim built anywhere else sits over a pane's tube \
+                 and is bent by the warp pass unless somebody also remembers the \
+                 suppression list — which is the mistake this test exists to end. \
+                 Build it with `self.over_the_glass(panel, on_close, cx)` and the glass \
+                 is flat by construction."
+            );
+        }
+        // and the builder really does flatten
+        let at = code.find("fn over_the_glass").expect("the builder");
+        let end = code[at..].find("\n    }\n").expect("end of fn") + at;
+        assert!(
+            code[at..end].contains("warp::flatten();"),
+            "over_the_glass draws a scrim without flattening the glass under it"
+        );
+    }
+
+    /// Ctrl+Alt+R names the row the walk is HIGHLIGHTING, and the vertical split
+    /// keeps its one remaining spelling.
+    ///
+    /// The chord used to be a second name for `split(SplitDir::Row)`, which Alt+V
+    /// has always done — so the tree's arrows could find a row and then had no
+    /// way to name it without reaching for the mouse. Three things can undo that
+    /// silently, and none of them fails to compile:
+    ///
+    /// - the arm falling back to `split(`, which is the state this replaced;
+    /// - `rename_here` reading `self.active` instead of the cursor, which still
+    ///   renames *something* and so looks like it works until the highlight is
+    ///   somewhere other than the tab you are in — the exact case the feature is
+    ///   for;
+    /// - the help modal going on advertising Ctrl+Alt+R as a split, which is a
+    ///   lie in nine languages.
+    ///
+    /// Scanned rather than exercised because the handler takes a live gpui
+    /// `Window`. Comment-stripped, so this paragraph cannot satisfy its own grep.
+    #[test]
+    fn ctrl_alt_r_names_the_highlighted_row_rather_than_splitting() {
+        let code = shipped_code();
+        let at = code
+            .find("if m.control && m.alt {")
+            .expect("the ctrl+alt block");
+        let end = code[at..]
+            .find("if m.alt && !m.control {")
+            .expect("the alt-only block below it");
+        let block = &code[at..at + end];
+
+        assert!(
+            block.contains("\"r\" => self.rename_here("),
+            "ctrl+alt+r no longer names the highlighted row"
+        );
+        assert!(
+            !block.contains("\"r\" => self.split("),
+            "ctrl+alt+r is a second spelling of the vertical split again — alt+v \
+             already is one, and the tree's rename is left with no key"
+        );
+        assert!(
+            block.contains("\"d\" => self.split(SplitDir::Col"),
+            "ctrl+alt+d must keep the horizontal split"
+        );
+
+        // The distinction the whole gesture exists for: the HIGHLIGHT, not the
+        // active tab. `bar_live_cursor` is the only thing that can answer where
+        // the walk is pointing.
+        let at = code.find("fn rename_here(").expect("rename_here");
+        let end = code[at..].find("\n    }\n").expect("end of fn") + at;
+        let body = &code[at..end];
+        assert!(
+            body.contains("self.bar_live_cursor("),
+            "rename_here no longer consults the tree's cursor, so it renames \
+             whatever tab happens to be active rather than the row you walked to"
+        );
+        for door in [
+            "self.start_bar_rename(BarBranch::Project(id)",
+            "self.start_bar_rename(BarBranch::Initiative(id)",
+            "self.start_tab_rename(",
+        ] {
+            assert!(
+                body.contains(door),
+                "rename_here no longer reaches {door} — a layer of the tree has \
+                 lost its editor"
+            );
+        }
+
+        // And the modal must not keep selling the old meaning.
+        assert!(
+            !code.contains("Ctrl+Alt+R / D"),
+            "the help modal still lists ctrl+alt+r as a split"
+        );
+        assert!(
+            code.contains("row(\"Ctrl+Alt+R\", s.rename_row)"),
+            "the help modal does not teach the rename chord"
+        );
+    }
+
     /// The FOCUS reader names the dial it turns instead of guessing at one.
     ///
     /// Its scrim `.occlude()`s the whole window, so the reader's own wheel
@@ -29624,7 +30762,7 @@ mod tests {
     /// same three words twice, stacked, in the two most prominent places in the
     /// window. The mark does the identifying; the words do the informing.
     #[test]
-    fn the_header_corner_carries_the_mark_and_the_branchs_name() {
+    fn the_header_corner_carries_the_mark_and_the_projects_state() {
         let src = shipped_src();
         let region = |sig: &str| -> &str {
             let at = src.find(sig).unwrap_or_else(|| panic!("{sig} not found"));
@@ -29638,8 +30776,8 @@ mod tests {
         );
         assert!(
             top.contains("self.place_name(None,"),
-            "…and beside it, the branch this window is standing in, at its \
-             natural width rather than pinned to the tree's column"
+            "…and beside it, the project this window is standing in, at its \
+             natural width"
         );
         // The words are gone. Spelled in pieces so this test's own source does
         // not answer the search — see `shipped_src`.
@@ -29648,47 +30786,48 @@ mod tests {
             !src.contains(&brand_text),
             "the header no longer prints the program's name as words"
         );
-        // ONE ROW. The corner, the void, the tabs and the right-hand controls
-        // are siblings of `bezel_top` itself, not children of two stacked
-        // rows — two rows each holding a short thing with a wide gap beside it
-        // was the awkward space this removed.
+        // ONE ROW. The corner, the void, the middle and the right-hand
+        // controls are siblings of `bezel_top` itself, not children of two
+        // stacked rows.
         assert!(
             top.contains(".flex_row()") && !top.contains(".flex_col()"),
-            "the mother bar is one row: the tabs share it with the corner and \
-             the scale"
+            "the mother bar is one row"
         );
+        // THE MIDDLE is chosen by whether the tree is open. With it open the
+        // tabs are the spine's task rows, an inch below, and the row carries
+        // the project rail instead; with it shut the strip is the only listing
+        // of the tabs there is, and it stays. A middle that showed the rail
+        // regardless would leave a tree-shut window with no tabs at all, and
+        // one that showed the strip regardless is the duplication this
+        // replaced (Parker: "the top outer repeats something we already see
+        // on the left spine").
         assert!(
-            top.contains(".child(tab_strip)"),
-            "the tabs are inline in that row"
+            top.contains(".child(middle)"),
+            "the row's middle is the chosen element, not the strip by name"
         );
-        // And the corner carries the INDENT the second row's spacer used to
-        // provide — the thing that keeps a tab sitting over the terminals it
-        // opens rather than over the tree that lists them. Pinning the corner
-        // to the tree's width is what makes one row possible without moving
-        // the tabs' left edge.
+        let choice = region("let middle: gpui::AnyElement");
         assert!(
-            top.contains(".when(strip_indent > 0., |d| d.w(px(strip_indent)))"),
-            "the corner occupies the tree's column, so the tabs begin where \
-             they always did"
+            choice.contains("if self.left_bar")
+                && choice.contains("self.render_ticker(")
+                && choice.contains("tab_strip.into_any_element()"),
+            "the middle is the rail with the tree open and the strip with it \
+             shut — both, chosen by self.left_bar"
         );
         assert!(
             top.contains("w(px(strip_void))"),
-            "…and the void after it survives: it is what makes the strip read \
-             as belonging to the screen rather than to the tree"
+            "the void after the corner survives: it is what makes the middle \
+             read as belonging to the screen rather than to the tree"
         );
-        // No flex gap on the row. A gap is inserted between EVERY pair, so two
-        // of them would land ahead of the strip and push the tabs 16px right of
-        // the panes they sit over — the one thing the indent exists to prevent.
-        // The tabs' left edge has to stay `px + strip_indent + strip_void`,
-        // which is the arithmetic the layout below uses for the terminals.
+        // No flex gap on the row: the tabs' left edge (tree shut) has to stay
+        // `px + corner + strip_void`, and a gap would land ahead of the strip.
         let row_head = &top[..top.find(".child(").unwrap_or(top.len())];
         assert!(
             !row_head.contains(".gap(px("),
-            "the mother bar's row must carry no gap, or the tabs stop lining up \
-             with the terminals"
+            "the mother bar's row must carry no gap"
         );
-        // One name-rendering path, called at two sizes, so the corner and the
-        // strip can never disagree about what the branch is called.
+        // The corner names the PROJECT, uppercase as the tree draws it, and
+        // carries the badge — never the branch. Switching tabs must not
+        // change the corner; switching projects must.
         let name = {
             let at = src.find("    fn place_name").expect("place_name");
             let end = src[at..].find("\n    }\n").expect("end of fn");
@@ -29699,8 +30838,22 @@ mod tests {
             "place_name takes its column width and its size from the caller"
         );
         assert!(
-            name.contains("self.group_title(gid, pt, cx)"),
-            "and hands the size on, so a group and a project render alike"
+            name.contains(".child(name.to_uppercase())"),
+            "the corner spells the project the way the tree does"
+        );
+        assert!(
+            name.contains("self.eng_badge(pt, cx)"),
+            "the corner carries the isolation badge"
+        );
+        assert!(
+            name.contains("self.eng_key()") && name.contains("self.eng_key_name("),
+            "the corner must name the branch the rail READS for, by the same key \
+             the scan uses — a project, else a top-level group, else nothing. \
+             Naming the project alone drew a bare mark over Parker's JOB group"
+        );
+        assert!(
+            !name.contains("group_title"),
+            "the corner never draws the strip's old group heading"
         );
     }
 
