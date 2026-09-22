@@ -1002,6 +1002,27 @@ impl ProjectState {
         Some((files, add, del))
     }
 
+    /// Nothing here is worth interrupting for: one repository, every
+    /// checkout isolated, nothing uncommitted anywhere, no drift, nothing
+    /// that would conflict or converge, no idle worktree carrying work. The
+    /// badge says `N WT ✓` and the ticker says nothing — silence means
+    /// healthy, and the rail earns trust by not screaming continuously.
+    pub fn is_calm(&self) -> bool {
+        self.primary().is_some()
+            && self.repos.len() == 1
+            && self.shared_count() == 0
+            && self.foreign.is_empty()
+            && self.visitors.is_empty()
+            && self.no_git.is_empty()
+            && self.dirty_checkouts() == Some(0)
+            && self.conflicts().is_empty()
+            && self.collisions().is_empty()
+            && !self
+                .idle
+                .iter()
+                .any(|c| c.is_dirty() == Some(true) || c.ahead_behind.is_some_and(|(a, _)| a > 0))
+    }
+
     /// The persistent badge. Never empty once a scan has landed.
     pub fn badge(&self) -> Vec<Segment> {
         let mut out = Vec::new();
@@ -1077,6 +1098,28 @@ impl ProjectState {
             }
             return out;
         };
+
+        // 0 · a calm project says nothing but its heartbeat, and that only
+        // while it is beating. Parker's mockup of the healthy case was the
+        // badge alone — "huge breathing room" — and the first cut still
+        // cycled a branches frame and a sentence through it.
+        if self.is_calm() {
+            if let Some(p) = primary.pulse {
+                let total: u32 = p.iter().sum();
+                if total > 0 {
+                    let recent: u32 = p[9..].iter().sum();
+                    out.push(Frame {
+                        kind: FrameKind::Pulse,
+                        text: format!(
+                            "{} in the last hour \u{00b7} {recent} in the last fifteen minutes",
+                            plural(total, "commit", "commits")
+                        ),
+                        tone: Tone::Plain,
+                    });
+                }
+            }
+            return out;
+        }
 
         // 1 · what is uncommitted
         match (self.dirty_checkouts(), self.churn()) {
@@ -2143,9 +2186,16 @@ mod tests {
             "clean says nothing about dirt"
         );
         assert!(!kinds.contains(&FrameKind::Shared));
-        // the branch line and the sentence are all that is left
-        assert!(kinds.contains(&FrameKind::Branches));
-        assert!(kinds.contains(&FrameKind::Sentence));
+        // silence means healthy: a calm project shows its badge and, while
+        // it is beating, its heartbeat — nothing else
+        assert!(
+            st.is_calm(),
+            "two isolated clean checkouts of one repository are calm"
+        );
+        assert!(
+            kinds.iter().all(|k| *k == FrameKind::Pulse),
+            "a calm project says nothing but its heartbeat: {kinds:?}"
+        );
         let s = st.sentence().unwrap();
         assert!(
             s.starts_with(

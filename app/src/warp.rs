@@ -171,6 +171,34 @@ mod tests {
     // Poison-tolerant so one failing test can't cascade into the others.
     static WARP_SERIAL: Mutex<()> = Mutex::new(());
 
+    /// `flatten()` is what a scrim built over the glass calls for itself: it
+    /// holds for the frame whatever the workspace's own list said, and the
+    /// next frame is bent again unless something flattens it again.
+    #[test]
+    fn flatten_is_sticky_for_the_frame_and_cleared_by_the_next() {
+        let _serial = WARP_SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        let r = [0.0, 0.0, 100.0, 100.0];
+        begin_frame();
+        set_suppressed(false);
+        flatten();
+        register_tube(r, 0.5, 0.14, 0.06, CRAWL_OFF);
+        assert_eq!(
+            rect_count(),
+            0,
+            "a scrim over the glass flattens it, list or no list"
+        );
+        assert!(
+            is_suppressed(),
+            "pre-warped surfaces must stop compensating too"
+        );
+
+        begin_frame();
+        set_suppressed(false);
+        register_tube(r, 0.5, 0.14, 0.06, CRAWL_OFF);
+        assert_eq!(rect_count(), 1, "the next frame is bent again");
+        assert!(!is_suppressed());
+    }
+
     #[test]
     fn suppression_stops_tubes_from_registering() {
         let _serial = WARP_SERIAL.lock().unwrap_or_else(|e| e.into_inner());
