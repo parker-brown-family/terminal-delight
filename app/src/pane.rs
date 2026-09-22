@@ -7305,16 +7305,10 @@ impl TerminalView {
         // A reply the agent presented itself means the hook's copy of the same
         // turn is not wanted — see [`crate::channel::State::saw_response`].
         if let Some(s) = post.surface.as_ref() {
-            if matches!(s.kind, crate::surface::Kind::Response(_)) {
-                // THE REPLY LANDING IS WHAT RETIRES THE TURN'S OWN CARD, and
-                // this half counts the hook's copy too: a hook-synthesised
-                // reply is still this turn's reply, and leaving the live card
-                // standing over it would draw the same turn twice. The line
-                // below deliberately does not — see `saw_response`.
-                self.bench.turn_settled();
-                if s.origin != crate::surface::Origin::Hook {
-                    self.wb_channel.saw_response();
-                }
+            if matches!(s.kind, crate::surface::Kind::Response(_))
+                && s.origin != crate::surface::Origin::Hook
+            {
+                self.wb_channel.saw_response();
             }
         }
         if self.bench.apply(post).is_some() {

@@ -2671,6 +2671,31 @@ pub fn ask_lines(shelf: Shelf, stand_in: bool, agent: bool, how: Embodiment) -> 
     }
 }
 
+/// WHAT A PROMPT RECORD SAYS ABOUT THE TURN IT OPENED — the headline for the
+/// rail's row, and whose voice it was.
+///
+/// Pure, so the part with judgement in it is tested rather than asserted about
+/// by a grep over the call site. Three cases, and the third is the one that
+/// matters: the harness can hand the hook a prompt with no text at all, and a
+/// turn certainly began. `(None, None)` is that — an unknown headline and an
+/// unclaimed voice — which the row draws as *nothing recorded what opened it*
+/// and which [`Bench::turn_began`] refuses to move an opened card for.
+pub fn turn_opening(effect: &crate::channel::Effect) -> (Option<String>, Option<Voice>) {
+    match effect {
+        // The FIRST LINE of what they said. The rail has one line to say what
+        // a turn is about, and the opening of a message is what a person
+        // recognises their own turn by.
+        crate::channel::Effect::Asked { text } => {
+            (text.lines().next().map(str::to_string), Some(Voice::Person))
+        }
+        crate::channel::Effect::Woken(w) => (
+            Some(crate::benchdraw::woken_says(w).0),
+            Some(Voice::Harness),
+        ),
+        _ => (None, None),
+    }
+}
+
 /// WHAT THE LIVE CARD SAYS: its lane word, and the sentence under the action.
 ///
 /// Split out of the renderer so the words can be read by a test, for the same
@@ -4186,6 +4211,16 @@ impl Bench {
             Op::Present | Op::Update => {
                 let incoming = post.surface?;
                 let id = incoming.id.clone();
+                // THE REPLY LANDING IS WHAT RETIRES THE TURN, and it is done
+                // here rather than at the pane's `present` so that one door
+                // does both halves. A reply reaches this bench by four roads —
+                // the MCP verb, the hook's own copy, a file dropped in the
+                // pane's directory, and a replay off disk at startup — and a
+                // retirement written beside any one of them would leave the
+                // other three standing a finished turn over its own answer.
+                if matches!(incoming.kind, Kind::Response(_)) {
+                    self.turn_settled();
+                }
                 match self.surfaces.iter_mut().find(|s| s.id == id) {
                     Some(existing) if post.op == Op::Update => existing.merge(incoming),
                     Some(existing) => {
@@ -4598,6 +4633,10 @@ mod tests {
         assert_eq!(rows.len(), 2, "the turn and the reply before it");
         assert_eq!(rows[0].kind, LIVE_TURN_KIND);
         assert_eq!(rows[0].title, "what now?", "the row says what the turn is");
+        assert_eq!(
+            rows[0].subtitle, "the reply has not landed yet",
+            "and the row says what is missing, which is the whole of its news"
+        );
         assert_eq!(rows[0].standing, Standing::Current, "it is the head");
         assert!(!rows[0].unseen, "the thing in the room was never missed");
         assert_eq!(
@@ -4766,6 +4805,53 @@ mod tests {
                 .contains("nothing recorded"),
             "and the row says the opener is unknown rather than showing a blank"
         );
+    }
+
+    #[test]
+    fn a_prompt_record_says_who_opened_the_turn_or_says_it_cannot_tell() {
+        use crate::channel::{Effect, Woken};
+        let (headline, voice) = turn_opening(&Effect::Asked {
+            text: "fix the card\nand then the rail".into(),
+        });
+        assert_eq!(
+            headline.as_deref(),
+            Some("fix the card"),
+            "the opening line, not the whole message"
+        );
+        assert_eq!(voice, Some(Voice::Person));
+
+        let (headline, voice) = turn_opening(&Effect::Woken(Woken::Task {
+            summary: Some("the gate went green".into()),
+        }));
+        assert!(
+            headline.as_deref().is_some_and(|h| h.contains("WOKEN")),
+            "a wake-up is drawn as itself: {headline:?}"
+        );
+        assert_eq!(voice, Some(Voice::Harness));
+
+        // The case that is neither, and the reason `Voice` is an `Option`: the
+        // harness handed the hook a prompt with no words in it. A turn began
+        // and this window cannot say whose.
+        let (headline, voice) = turn_opening(&Effect::Nothing);
+        assert_eq!((headline, voice), (None, None));
+    }
+
+    #[test]
+    fn a_reply_arriving_retires_the_turn_however_it_arrived() {
+        // On `apply`, not beside one caller of it. A reply reaches a bench by
+        // the MCP verb, the hook's own copy, a file dropped in the pane's
+        // directory and a replay off disk — and a retirement written next to
+        // any one road leaves the other three standing a finished turn over
+        // its own answer.
+        let mut b = Bench::new();
+        b.turn_began(Some("go".into()), Some(Voice::Person), 1);
+        b.apply(doc("d1", "A drawing"));
+        assert!(b.live().is_some(), "an artifact is not a reply");
+        b.apply(decision("k1"));
+        assert!(b.live().is_some(), "and neither is a decision");
+        b.apply(response("r1", "Done."));
+        assert!(b.live().is_none(), "the reply landed; the turn is over");
+        assert_eq!(b.showing().map(|s| s.id.as_str()), Some("r1"));
     }
 
     #[test]

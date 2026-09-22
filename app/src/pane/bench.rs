@@ -1424,21 +1424,7 @@ impl TerminalView {
             self.bench_record_round(&ev);
             let effect = self.wb_channel.take(ev, now);
             if began {
-                let (headline, voice) = match &effect {
-                    // The first line of what they said — the rail has one line
-                    // to say what a turn is about, and that is it.
-                    Effect::Asked { text } => (
-                        text.lines().next().map(str::to_string),
-                        Some(crate::workbench::Voice::Person),
-                    ),
-                    Effect::Woken(w) => (
-                        Some(crate::benchdraw::woken_says(w).0),
-                        Some(crate::workbench::Voice::Harness),
-                    ),
-                    // A turn certainly began and nothing said whose it was.
-                    // Unknown, and unknown does not take an opened card.
-                    _ => (None, None),
-                };
+                let (headline, voice) = crate::workbench::turn_opening(&effect);
                 self.bench.turn_began(headline, voice, now);
             }
             match effect {

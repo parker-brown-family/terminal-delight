@@ -4687,6 +4687,35 @@ mod tests {
         );
     }
 
+    /// THE TWO WIRES A HEADLESS SUITE CANNOT PULL: what tells the bench a turn
+    /// has begun.
+    ///
+    /// Both live in methods that take a gpui `Context`, so nothing in this
+    /// suite can call them. Everything downstream of them is pure and tested —
+    /// `workbench::turn_opening` decides the headline and the voice,
+    /// `Bench::turn_began` decides the room, `Bench::apply` retires the card —
+    /// and all of it is dead if these two lines go. That is exactly the shape
+    /// a source guard is for: not a rule about behaviour, which a test should
+    /// own, but a rule that a CALL still exists.
+    ///
+    /// `body_of` strips comments before it looks, so neither of these can be
+    /// satisfied by the sentence above it explaining why it is there.
+    #[test]
+    fn the_bench_is_still_told_when_a_turn_begins() {
+        let events = body_of(include_str!("pane/bench.rs"), "pub fn channel_events(");
+        assert!(
+            events.contains("turn_opening(&effect)") && events.contains("turn_began("),
+            "a prompt record no longer opens a card on the feed:\n{events}"
+        );
+        // The fallback for a pane whose harness has no hooks at all, and for a
+        // turn typed at the terminal face of a pane that does.
+        let accrue = body_of(include_str!("pane.rs"), "fn accrue_tokens(");
+        assert!(
+            accrue.contains("turn_seen_working("),
+            "an unhooked pane's turn is invisible to the feed again:\n{accrue}"
+        );
+    }
+
     #[test]
     fn a_tables_columns_are_as_wide_as_what_is_in_them() {
         // The real one, from a follow-up rollup on Parker's bench: a short
