@@ -224,6 +224,7 @@ impl Asked {
             cursor: waiting.then_some(0),
             round: None,
             submit: None,
+            submit_kind: None,
         });
         let mut actions = kind.default_actions();
         actions.push(crate::surface::Action::AskAgent);

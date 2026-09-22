@@ -7609,6 +7609,7 @@ mod tests {
                     },
                     cursor: None,
                     submit: None,
+                    submit_kind: None,
                     round: Some(QRound {
                         steps: steps.clone(),
                         submitting: false,

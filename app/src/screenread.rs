@@ -23,7 +23,7 @@
 //! *What a surface is not told*, and the rules there are the reasons the
 //! functions here are shaped the way they are.
 
-use crate::surface::{Answered, Choice_, Question, Round, Step, SurfaceId};
+use crate::surface::{Answered, Choice_, MenuButton, Question, Round, Step, SurfaceId};
 
 // ---------------------------------------------------------------------------
 // from pane.rs
@@ -665,18 +665,26 @@ pub fn question_on_screen(rows: &[String]) -> Option<Question> {
         recommend: None,
         answer: Answered::Waiting,
         cursor: Some(cursor),
-        submit,
+        // The two halves of one row, set together or not at all.
+        submit: submit.map(|(at, _)| at),
+        submit_kind: submit.map(|(_, kind)| kind),
         round: round_on_screen(rows),
     })
 }
 
 /// The consecutive `N. label` block, its first row, and which one the cursor
 /// is on.
-fn collect_options(rows: &[String]) -> Option<(usize, Vec<Choice_>, usize, Option<usize>)> {
+/// What [`collect_options`] found on the screen: the row the option block
+/// starts at, the options themselves, which one the cursor is on, and the
+/// picker's own button row — its PLACE and the WORD drawn there, which are two
+/// facts and are kept as two.
+type OptionBlock = (usize, Vec<Choice_>, usize, Option<(usize, MenuButton)>);
+
+fn collect_options(rows: &[String]) -> Option<OptionBlock> {
     let mut first_line = None;
     let mut options: Vec<Choice_> = Vec::new();
     let mut cursor = 0usize;
-    let mut submit_at: Option<usize> = None;
+    let mut submit_at: Option<(usize, MenuButton)> = None;
     for (i, row) in rows.iter().enumerate() {
         let Some((n, label, marked)) = numbered_option(row) else {
             // A description line belongs to the option above it: indented,
@@ -693,8 +701,23 @@ fn collect_options(rows: &[String]) -> Option<(usize, Vec<Choice_>, usize, Optio
                 // POSITION in the up/down order, and recording where it sits
                 // is the only way an answer sent from here lands on the row
                 // the person pointed at.
-                if matches!(t, "Submit" | "Submit answers" | "Next") {
-                    submit_at.get_or_insert(options.len());
+                // RECORD THE WORD, NOT JUST THE PLACE. The position is what an
+                // answer needs to land on the right row; the word is what says
+                // whether landing there ends the round or steps to the next
+                // question, and the picker draws both at the same place. This
+                // used to keep only the position, and the one consumer that
+                // needed the difference reconstructed it from the bench's own
+                // record instead — which is a different fact and is wrong
+                // exactly when it matters (#698).
+                let kind = match t {
+                    "Submit" | "Submit answers" => Some(MenuButton::EndsRound),
+                    "Next" => Some(MenuButton::StepsOn),
+                    _ => None,
+                };
+                if let Some(kind) = kind {
+                    if submit_at.is_none() {
+                        submit_at = Some((options.len(), kind));
+                    }
                     continue;
                 }
                 // A row that is nothing BUT the side panel is not a
@@ -1433,13 +1456,62 @@ mod tests {
         );
 
         // And it sits at five in the up/down order, between option five and
-        // the trailing `Chat about this`.
-        assert_eq!(submit, Some(5));
+        // the trailing `Chat about this`, carrying the WORD that was drawn
+        // there as well as the place.
+        assert_eq!(submit, Some((5, MenuButton::EndsRound)));
         assert_eq!(
-            crate::workbench::nav_index(5, submit),
+            crate::workbench::nav_index(5, submit.map(|(at, _)| at)),
             6,
             "option six shifts"
         );
+    }
+
+    /// `Next` IS KEPT AS `Next`, and that is the whole of the fix for #698.
+    ///
+    /// The picker draws its button at the same place under either word, so a
+    /// reader that records only the place hands every consumer a row it cannot
+    /// act on safely. The one consumer that needed the difference — ending a
+    /// round with a single keystroke — reconstructed it from the bench's own
+    /// record instead, and was wrong exactly when the picker had been reset
+    /// under it.
+    ///
+    /// Collapsing happens at the reader or it does not happen: a renderer may
+    /// decide `Submit` and `Next` look alike, a parser may not decide they ARE
+    /// alike.
+    #[test]
+    fn the_readers_button_keeps_the_word_it_was_drawn_with() {
+        let rows = |word: &str| {
+            vec![
+                "Which drink?".to_string(),
+                "  1. Tea".to_string(),
+                "  2. Coffee".to_string(),
+                format!("    {word}"),
+                "  3. Chat about this".to_string(),
+            ]
+        };
+        for (word, want) in [
+            ("Submit", MenuButton::EndsRound),
+            ("Submit answers", MenuButton::EndsRound),
+            ("Next", MenuButton::StepsOn),
+        ] {
+            let q = question_on_screen(&rows(word)).expect("a picker with a button");
+            assert_eq!(
+                q.submit_kind,
+                Some(want),
+                "{word:?} must survive the read as itself"
+            );
+            assert_eq!(q.submit, Some(2), "{word:?} sits after the two options");
+        }
+        // A picker with no button row at all reports neither half, rather than
+        // a position with an invented word or a word with no position.
+        let bare = vec![
+            "Which drink?".to_string(),
+            "  1. Tea".to_string(),
+            "  2. Coffee".to_string(),
+        ];
+        let q = question_on_screen(&bare).expect("a picker");
+        assert_eq!(q.submit, None);
+        assert_eq!(q.submit_kind, None);
     }
 
     #[test]
