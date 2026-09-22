@@ -8789,6 +8789,32 @@ mod tests {
             .join("\n")
     }
 
+    /// REVIEW ANSWERS is offered on an ANSWERED card.
+    ///
+    /// Its guard is whether there is anything to review, and nothing else. It
+    /// was also gated on the card being unanswered, which took the button away
+    /// at the moment a round finished — the moment a person most wants to see
+    /// what they just said. The premise is asserted where it can be executed,
+    /// in `workbench::tests::answering_a_question_adds_to_the_review_rather_\
+    /// than_emptying_it`; this is the clause.
+    #[test]
+    fn the_review_button_is_not_gated_on_the_card_being_unanswered() {
+        let code = bench_code();
+        let at = code
+            .find("reviewable().is_empty()")
+            .expect("the review button is gone");
+        // The line it is on, and nothing else: a wider slice would pick up the
+        // Submit gate below, which IS allowed to consult `answered`.
+        let start = code[..at].rfind('\n').map_or(0, |i| i + 1);
+        let end = at + code[at..].find('\n').unwrap_or(0);
+        let line = &code[start..end];
+        assert!(
+            !line.contains("answered"),
+            "the review button consults `answered` again, so it hides itself \
+             exactly when there is most to review: {line}"
+        );
+    }
+
     /// The body of [`TerminalView::ack_needs_input`], code only.
     ///
     /// Brace-matched from the signature's opening brace, so the slice is that

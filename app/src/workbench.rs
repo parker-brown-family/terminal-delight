@@ -4221,6 +4221,20 @@ mod tests {
         }))
     }
 
+    fn asked(id: &str, answer: Option<usize>) -> Post {
+        let mut model = json!({
+            "question": "Tea or coffee?",
+            "options": [{"label": "Tea"}, {"label": "Coffee"}]
+        });
+        if let Some(a) = answer {
+            model["answer"] = json!(a);
+        }
+        post(json!({
+            "td": "0.1", "kind": "question", "id": id,
+            "title": "Tea or coffee?", "model": model
+        }))
+    }
+
     fn changeset(id: &str) -> Post {
         post(json!({
             "td": "0.1", "kind": "changeset", "id": id, "title": "A change",
@@ -6628,6 +6642,42 @@ mod tests {
         // Nothing answered yet: an empty gallery, and the button that opens
         // it is simply not offered.
         assert!(reviewed(&b.all_newest_first().cloned().collect::<Vec<_>>()).is_empty());
+    }
+
+    /// Answering makes MORE to review, not less.
+    ///
+    /// The REVIEW ANSWERS button was hidden the moment the card it sits on was
+    /// answered, so it vanished at the exact point there was most to look at —
+    /// and on the last question of a round there was no button anywhere.
+    /// Parker, with three of three answered: *"Oh no not seeing the review
+    /// submit panel AT ALL!"*.
+    ///
+    /// The button's real guard is this count, and this is the direction it
+    /// moves in. Asserted here because it is the PREMISE of removing that
+    /// clause: if answering ever shrank the gallery, hiding the button on an
+    /// answered card would have been right.
+    #[test]
+    fn answering_a_question_adds_to_the_review_rather_than_emptying_it() {
+        let mut b = Bench::new();
+        b.apply(asked("q1", None));
+        b.apply(asked("q2", None));
+        assert!(
+            reviewed(&b.all_newest_first().cloned().collect::<Vec<_>>()).is_empty(),
+            "nothing answered yet, so there is nothing to review"
+        );
+
+        b.apply(asked("q1", Some(1)));
+        assert_eq!(
+            reviewed(&b.all_newest_first().cloned().collect::<Vec<_>>()).len(),
+            1,
+            "one answer, one row"
+        );
+        b.apply(asked("q2", Some(0)));
+        assert_eq!(
+            reviewed(&b.all_newest_first().cloned().collect::<Vec<_>>()).len(),
+            2,
+            "the count only ever grows as a round is answered"
+        );
     }
 
     /// A reading that FOLDED is not a reading that FAILED.
