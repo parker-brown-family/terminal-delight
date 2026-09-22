@@ -1954,7 +1954,8 @@ impl TerminalView {
                     // The cursor onto the card; the picker's own Submit
                     // position stays beside it in the channel, because the
                     // card's Submit slot is the round's and not the screen's.
-                    self.wb_channel.saw_cursor(&id, cursor, q.submit);
+                    self.wb_channel
+                        .saw_cursor(&id, cursor, q.submit, q.submit_kind);
                     self.bench.with_question_mut(&id, |hq| {
                         hq.cursor = Some(cursor);
                     });

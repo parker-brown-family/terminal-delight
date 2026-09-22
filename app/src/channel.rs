@@ -39,7 +39,8 @@ use std::collections::BTreeMap;
 use serde_json::{json, Map, Value};
 
 use crate::surface::{
-    Answered, Choice_, Kind, Origin, Question, Round as QRound, Step, Surface, SurfaceId, Weight,
+    Answered, Choice_, Kind, MenuButton, Origin, Question, Round as QRound, Step, Surface,
+    SurfaceId, Weight,
 };
 
 /// The channel's own version, carried on every record the window writes.
@@ -414,6 +415,40 @@ pub fn say_bytes(text: &str, bracketed: bool) -> (Vec<u8>, Delivery) {
         let mut out = text.replace('\n', " ").into_bytes();
         out.push(b'\r');
         (out, Delivery::Flat)
+    }
+}
+
+/// What the screen reader has told us about one card's picker, kept together
+/// because the two facts are read off the same rows in the same pass.
+///
+/// The button is one `Option` rather than a position and a word that could
+/// disagree: either a row was read, in which case both halves are known, or
+/// none was, in which case neither is. Keeping them apart is how a consumer
+/// ends up with a position and no idea what pressing it does.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub struct SeenPicker {
+    /// Where the highlight sits, in the picker's own up/down order.
+    pub at: usize,
+    /// The picker's own button row — where it sits, and what it does.
+    /// [`None`] when the picker has no such row.
+    pub button: Option<(usize, MenuButton)>,
+}
+
+impl SeenPicker {
+    /// The button's POSITION, for navigation arithmetic, which needs it
+    /// whichever word the picker drew there.
+    pub fn slot(&self) -> Option<usize> {
+        self.button.map(|(at, _)| at)
+    }
+
+    /// The button's position, but ONLY if pressing it ends the round.
+    ///
+    /// The guard for the keys road. A `None` here is either "no button" or
+    /// "a button that steps on", and neither is a row a round may be sent by.
+    pub fn ending_slot(&self) -> Option<usize> {
+        self.button
+            .filter(|(_, kind)| *kind == MenuButton::EndsRound)
+            .map(|(at, _)| at)
     }
 }
 
@@ -831,6 +866,7 @@ impl Round {
                     // picker's own would take. A single choice commits on the
                     // press.
                     submit: q.multi.then_some(q.options.len()),
+                    submit_kind: None,
                     // The same steps on every card of the round, each one
                     // knowing which step it is. That is what lets the navigator
                     // mark where you are standing without the renderer having
@@ -1022,7 +1058,7 @@ pub struct State {
     responses_since_prompt: usize,
     /// Screen cursors the reader has supplied for open hook questions, so the
     /// keys road knows where the picker's highlight is.
-    cursors: BTreeMap<SurfaceId, (usize, Option<usize>)>,
+    cursors: BTreeMap<SurfaceId, SeenPicker>,
     /// Rounds whose ENDING reached us before their question did — a journal
     /// replayed from an offset, two hooks racing, a transcript read before the
     /// hook's own record landed. The question, when it arrives, is presented
@@ -1344,8 +1380,19 @@ impl State {
     }
 
     /// The screen reader saw the picker for this card, and where its highlight is.
-    pub fn saw_cursor(&mut self, id: &SurfaceId, cursor: usize, submit: Option<usize>) {
-        self.cursors.insert(id.clone(), (cursor, submit));
+    pub fn saw_cursor(
+        &mut self,
+        id: &SurfaceId,
+        cursor: usize,
+        submit: Option<usize>,
+        submit_kind: Option<MenuButton>,
+    ) {
+        // Both halves of the button row or neither. A position whose word was
+        // not read is not a button this channel will press — see
+        // [`SeenPicker::ending_slot`].
+        let button = submit.zip(submit_kind);
+        self.cursors
+            .insert(id.clone(), SeenPicker { at: cursor, button });
     }
 
     /// The round a card is in, whole, for re-presenting after a change — with
@@ -1357,9 +1404,9 @@ impl State {
         };
         let mut out = self.rounds[ri].surfaces(now_ms);
         for s in out.iter_mut() {
-            if let (Some((cursor, _)), Kind::Question(q)) =
-                (self.cursors.get(&s.id).copied(), &mut s.kind)
+            if let (Some(seen), Kind::Question(q)) = (self.cursors.get(&s.id).copied(), &mut s.kind)
             {
+                let cursor = seen.at;
                 // The cursor only. The card's own Submit slot stays where the
                 // round put it — after the options — and the picker's Submit
                 // position is kept beside the cursor for the keys road.
@@ -1449,7 +1496,15 @@ impl State {
                 // `nav` is the CARD's order — options, then a Submit after
                 // them. The picker's order may put its Submit earlier, so the
                 // screen's position is what the keys aim at.
-                let (at, submit) = cursor.unwrap_or((0, None));
+                //
+                // THE POSITION, not the word. A single press is a step inside
+                // the round, and stepping is what the picker's row does under
+                // either spelling: `Next` on a middle question, `Submit` on the
+                // last one, and a multi-select's ticks commit against both. It
+                // is [`Channel::submit`] — ending the whole round — that may
+                // only aim at a row which really ends it.
+                let seen = cursor.unwrap_or_default();
+                let (at, submit) = (seen.at, seen.slot());
                 let target = if is_submit {
                     submit.unwrap_or(nav)
                 } else {
@@ -1548,12 +1603,24 @@ impl State {
                 answers: round.answers_so_far(),
             },
             Route::Keys => {
-                let (at, submit) = cursor.unwrap_or((0, None));
-                // BOTH, or words. `submit` is a row the screen reader saw, and
-                // completeness is what makes that row the round's Submit
-                // rather than its Next. Either one alone presses something
-                // nobody chose.
-                match submit.filter(|_| round.complete()) {
+                let seen = cursor.unwrap_or_default();
+                let at = seen.at;
+                // BOTH, or words — and the second half now ASKS THE PICKER.
+                //
+                // `ending_slot` is a row the screen reader read the word off:
+                // it is `Some` only where the picker drew `Submit`, never where
+                // it drew `Next`. Completeness of the bench's own record stays
+                // as the other half, because a partial round must not go by
+                // keys whatever the picker says.
+                //
+                // Completeness used to be the WHOLE test, standing in for "the
+                // picker is on its last question". The two agree until the hook
+                // releases a round: the tool proceeds, the picker paints from
+                // question one, the bench still holds every answer, and the
+                // proxy said Submit at a row that said Next — pressing it
+                // advanced the menu, marked the rest Skipped, and left the
+                // agent blocked (#698).
+                match seen.ending_slot().filter(|_| round.complete()) {
                     Some(target) => {
                         let bytes = crate::workbench::menu_keys(target, at);
                         self.cursors.remove(id);
@@ -2445,7 +2512,7 @@ mod tests {
         assert_eq!(st.matching("Which drink?  "), Some(single.clone()));
         assert_eq!(st.matching("which drink"), Some(single.clone()), "folded");
         assert_eq!(st.matching("Which size?"), None);
-        st.saw_cursor(&single, 0, None);
+        st.saw_cursor(&single, 0, None, None);
         match st.press(&single, 1, 2_000) {
             Press::Keys { bytes, note } => {
                 assert_eq!(bytes, crate::workbench::menu_keys(1, 0));
@@ -3053,7 +3120,7 @@ mod tests {
         let first = SurfaceId("ask-hook-twice-0".into());
         let second = SurfaceId("ask-hook-twice-1".into());
         assert_eq!(st.matching("Are you sure"), Some(first.clone()));
-        st.saw_cursor(&first, 0, None);
+        st.saw_cursor(&first, 0, None, None);
         assert!(matches!(st.press(&first, 0, 2), Press::Keys { .. }));
         assert_eq!(st.matching("Are you sure?"), Some(second));
     }
@@ -3253,7 +3320,7 @@ mod tests {
         let first = cards[0].id.clone();
         // No hook hold, so this is the keys road; the screen reader has seen
         // the picker's button at row 3.
-        st.saw_cursor(&first, 0, Some(3));
+        st.saw_cursor(&first, 0, Some(3), Some(MenuButton::EndsRound));
         match st.submit(&first, 5_000) {
             Press::Sentence { label } => {
                 assert!(
@@ -3281,17 +3348,158 @@ mod tests {
         };
         let single = cards[0].id.clone();
         let multi = cards[1].id.clone();
-        st.saw_cursor(&single, 0, Some(3));
-        st.saw_cursor(&multi, 0, Some(3));
+        st.saw_cursor(&single, 0, Some(3), Some(MenuButton::EndsRound));
+        st.saw_cursor(&multi, 0, Some(3), Some(MenuButton::EndsRound));
         assert!(matches!(st.press(&single, 1, 1_100), Press::Keys { .. }));
         assert_eq!(st.press(&multi, 0, 1_101), Press::Recorded, "a tick");
         assert!(matches!(st.press(&multi, 2, 1_102), Press::Keys { .. }));
         // A press spends its cursor; the next sweep supplies another, which is
         // what makes the round sendable by keys at all.
-        st.saw_cursor(&multi, 0, Some(3));
+        st.saw_cursor(&multi, 0, Some(3), Some(MenuButton::EndsRound));
         assert!(
             matches!(st.submit(&multi, 1_200), Press::Keys { .. }),
             "a finished round still ends with the picker's own Submit"
+        );
+    }
+
+    /// A COMPLETE ROUND WILL NOT BE SENT BY A ROW THAT SAYS `Next`.
+    ///
+    /// The failure this closes, measured and filed as `terminal-delight#698`:
+    /// the hook's deadline fires, the tool proceeds — a `PreToolUse` hook that
+    /// exits without `updatedInput` lets the call run — and the picker paints
+    /// from question ONE, while the bench still holds every answer.
+    ///
+    /// [`Round::complete`] is true of the BENCH's record and says nothing
+    /// about where the picker is. It used to be the whole test for "that row
+    /// is the round's Submit", so the round went out as a single keystroke
+    /// aimed at a row spelling `Next`: the menu advanced one question, `sent`
+    /// turned every remaining blank into [`Answered::Skipped`] and took the
+    /// chips away, and the agent stayed blocked on the rest with nothing left
+    /// that could answer it.
+    ///
+    /// The reader now keeps the WORD beside the place, so the guard asks the
+    /// picker what its button does instead of inferring it from the bench. The
+    /// round falls to words, which is the road that cannot half-press anybody's
+    /// menu — and the answers survive as a sentence the agent reads.
+    #[test]
+    fn a_complete_round_will_not_press_a_button_that_says_next() {
+        let mut st = State::new();
+        let Effect::Present(cards) = st.take(Inbound::parse(&question_event()).unwrap(), 1_000)
+        else {
+            panic!()
+        };
+        let single = cards[0].id.clone();
+        let multi = cards[1].id.clone();
+
+        // The whole round answered on the bench, exactly as the passing case
+        // above does it.
+        st.saw_cursor(&single, 0, Some(3), Some(MenuButton::EndsRound));
+        assert!(matches!(st.press(&single, 1, 1_100), Press::Keys { .. }));
+        st.saw_cursor(&multi, 0, Some(3), Some(MenuButton::EndsRound));
+        assert_eq!(st.press(&multi, 0, 1_101), Press::Recorded, "a tick");
+        assert!(matches!(st.press(&multi, 2, 1_102), Press::Keys { .. }));
+
+        // The hook gives up. Nothing about the bench's own record changes —
+        // which is the whole trap.
+        st.take(
+            Inbound::Released {
+                tool_use_id: "toolu_01ABC".into(),
+                why: "timeout".into(),
+            },
+            1_150,
+        );
+
+        // The picker repaints from question one, where the button reads `Next`.
+        st.saw_cursor(&multi, 0, Some(3), Some(MenuButton::StepsOn));
+        match st.submit(&multi, 1_200) {
+            Press::Sentence { label } => assert!(
+                !label.is_empty(),
+                "the answers still travel, as words the agent reads"
+            ),
+            other => panic!("a round must not go out on a row that says Next: {other:?}"),
+        }
+    }
+
+    /// The same round, the same release, a row that really does end it.
+    ///
+    /// The other half of the guard: this must NOT have been closed by refusing
+    /// the keys road whenever a round has been released. A release is why the
+    /// file road is shut, not a reason the picker cannot be driven — and if
+    /// this test ever starts failing, the fix above has been widened into a
+    /// feature nobody asked to lose.
+    #[test]
+    fn a_released_round_still_goes_by_keys_when_the_row_really_submits() {
+        let mut st = State::new();
+        let Effect::Present(cards) = st.take(Inbound::parse(&question_event()).unwrap(), 1_000)
+        else {
+            panic!()
+        };
+        let single = cards[0].id.clone();
+        let multi = cards[1].id.clone();
+        st.saw_cursor(&single, 0, Some(3), Some(MenuButton::EndsRound));
+        assert!(matches!(st.press(&single, 1, 1_100), Press::Keys { .. }));
+        st.saw_cursor(&multi, 0, Some(3), Some(MenuButton::EndsRound));
+        assert_eq!(st.press(&multi, 0, 1_101), Press::Recorded, "a tick");
+        assert!(matches!(st.press(&multi, 2, 1_102), Press::Keys { .. }));
+        st.take(
+            Inbound::Released {
+                tool_use_id: "toolu_01ABC".into(),
+                why: "timeout".into(),
+            },
+            1_150,
+        );
+        st.saw_cursor(&multi, 0, Some(3), Some(MenuButton::EndsRound));
+        assert!(
+            matches!(st.submit(&multi, 1_200), Press::Keys { .. }),
+            "the picker is on its last question and says so"
+        );
+    }
+
+    /// A position with no word read off it is not a button this channel presses.
+    ///
+    /// `None` here is *nobody looked*, and it is a different fact from *the row
+    /// says Next* — but both are unsafe to send a round on, and the type is
+    /// what makes them behave the same at the one place it matters. A card the
+    /// hook declared and no screen reading ever touched has no button at all.
+    #[test]
+    fn a_button_whose_word_was_never_read_is_not_pressed() {
+        assert_eq!(
+            SeenPicker {
+                at: 0,
+                button: None
+            }
+            .ending_slot(),
+            None,
+            "no row was read"
+        );
+        assert_eq!(
+            SeenPicker {
+                at: 0,
+                button: Some((3, MenuButton::StepsOn))
+            }
+            .ending_slot(),
+            None,
+            "the row steps on"
+        );
+        assert_eq!(
+            SeenPicker {
+                at: 0,
+                button: Some((3, MenuButton::EndsRound))
+            }
+            .ending_slot(),
+            Some(3),
+            "the row ends the round"
+        );
+        // And the POSITION is still available to navigation arithmetic under
+        // either word, which is the reason the two halves are separate
+        // accessors rather than one.
+        assert_eq!(
+            SeenPicker {
+                at: 0,
+                button: Some((3, MenuButton::StepsOn))
+            }
+            .slot(),
+            Some(3),
         );
     }
 

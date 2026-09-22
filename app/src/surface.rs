@@ -1234,6 +1234,31 @@ impl Artifact {
 /// unanswered question and a question answered with the first option are
 /// different states, and a renderer that showed them the same way would be
 /// claiming a decision nobody made.
+/// The picker's own button, as the screen reader SAW it — not as anything
+/// downstream inferred.
+///
+/// The picker calls this row `Submit` on the last question of a round and
+/// `Next` on every other one, and draws both at the same position. Recording
+/// only the position discards the single fact that decides whether a keystroke
+/// aimed there ends the round or advances somebody's menu — so the reader
+/// records the word, and nothing downstream has to guess.
+///
+/// This exists because guessing was tried. `Channel::submit` used to ask
+/// `Round::complete()` — the BENCH's record of what was answered — as a proxy
+/// for "the picker is on its last question". The two agree right up until the
+/// hook releases a round: the tool proceeds, the picker paints from question
+/// one, the bench still holds every answer, and the proxy says `Submit` at a
+/// row that says `Next`. See `terminal-delight#698`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum MenuButton {
+    /// `Submit` / `Submit answers` — pressing it ENDS the round.
+    EndsRound,
+    /// `Next` — pressing it advances to the following question and ends
+    /// nothing. A round sent by pressing this leaves the agent blocked on the
+    /// questions after it with the bench's chips already taken away.
+    StepsOn,
+}
+
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Question {
     pub question: String,
@@ -1263,6 +1288,20 @@ pub struct Question {
     /// after it is one arrow further down than its own position suggests. See
     /// [`crate::workbench::nav_index`].
     pub submit: Option<usize>,
+    /// What the button at [`Self::submit`] DOES, as the screen reader read it.
+    ///
+    /// [`Self::submit`] is a POSITION and deliberately stays one, because the
+    /// navigation arithmetic needs it whichever word the picker drew. This is
+    /// the other half of the same row: whether pressing it ends the round or
+    /// steps to the next question. The picker draws `Submit` and `Next` at the
+    /// same place, so a position alone cannot tell them apart.
+    ///
+    /// **[`None`] is not "Next".** It means nobody read a button — the card was
+    /// declared by the hook rather than observed on screen, or the picker had
+    /// no button row at all. A keystroke must not be sent on that, because
+    /// "I did not look" and "I looked and it steps on" are different facts and
+    /// only one of them is safe to guess about.
+    pub submit_kind: Option<MenuButton>,
     /// The ROUND this question belongs to, when the agent asked several at
     /// once.
     ///
@@ -2351,6 +2390,7 @@ fn parse_kind(name: &str, model: Option<&Value>) -> Result<Kind, KindError> {
                 cursor: within("cursor"),
                 round: None,
                 submit: None,
+                submit_kind: None,
                 options,
             })
         }
