@@ -21831,6 +21831,37 @@ impl Workspace {
 /// caption is truncated — e.g. `tactical` for `tactical-overdrive`). For the
 /// hot-reloaded `custom` slot it also shows the resolved file path on THIS
 /// machine and a clickable "Open in editor" line.
+/// A hover card drawn OVER the glass — the tooltip half of
+/// [`Workspace::over_the_glass`], and flat for exactly the same reason.
+///
+/// A tooltip is a surface over a pane's tube like any menu, so the warp bends
+/// it: the quota rails' card shipped looking chopped off down its right side,
+/// because barrel distortion at a tube's near edge samples from *inside* the
+/// tube and paints terminal over whatever was sitting there. Flatness therefore
+/// rides the card, the way it rides the scrim — build the card here and there
+/// is no list to join.
+///
+/// The ordering is the one thing that differs from the scrim, and it is why
+/// [`warp::flatten`] clears the banked tubes rather than only setting a flag:
+/// gpui builds a tooltip's view once on hover and then prepaints it AFTER the
+/// whole root tree, so by the time this runs every pane has already registered.
+///
+/// Callers add their own gap, shadow and children; what is bound here is the
+/// card's shell and its flatness.
+fn over_the_glass_tip(bg: Hsla, border: Hsla, text: Hsla) -> gpui::Div {
+    warp::flatten();
+    div()
+        .flex()
+        .flex_col()
+        .px(px(9.))
+        .py(px(6.))
+        .rounded_md()
+        .border_1()
+        .border_color(border)
+        .bg(bg)
+        .text_color(text)
+}
+
 /// The hover over one of the bottom slot's allowance rows: the provider, then
 /// a line per window naming it in the vendor's own words.
 struct SlotTooltip {
@@ -21842,17 +21873,7 @@ struct SlotTooltip {
 
 impl Render for SlotTooltip {
     fn render(&mut self, _w: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        let mut card = div()
-            .flex()
-            .flex_col()
-            .gap(px(2.))
-            .px(px(9.))
-            .py(px(6.))
-            .rounded_md()
-            .border_1()
-            .border_color(self.faint.alpha(0.5))
-            .bg(self.bg)
-            .text_color(self.text);
+        let mut card = over_the_glass_tip(self.bg, self.faint.alpha(0.5), self.text).gap(px(2.));
         for (i, line) in self.lines.iter().enumerate() {
             card = card.child(
                 div()
@@ -21877,16 +21898,8 @@ struct ThemeTooltip {
 
 impl Render for ThemeTooltip {
     fn render(&mut self, _w: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        let mut card = div()
-            .flex()
-            .flex_col()
+        let mut card = over_the_glass_tip(self.bg, self.accent.alpha(0.5), self.text)
             .gap(px(3.))
-            .px(px(9.))
-            .py(px(6.))
-            .rounded_md()
-            .border_1()
-            .border_color(self.accent.alpha(0.5))
-            .bg(self.bg)
             .shadow(vec![BoxShadow {
                 color: hsla(0., 0., 0., 0.45),
                 offset: point(px(0.), px(2.)),
@@ -21894,7 +21907,6 @@ impl Render for ThemeTooltip {
                 spread_radius: px(0.),
                 inset: false,
             }])
-            .text_color(self.text)
             .child(div().text_size(px(12.)).child(self.name.clone()));
         if let Some(path) = self.path.clone() {
             card = card
@@ -28964,6 +28976,48 @@ mod tests {
     /// one in this file passed on the comment describing the line it was meant
     /// to find, while the line itself was gone. Every assertion below runs
     /// against code only.
+    /// Every occurrence of `needle` in `code`, attributed to the function that
+    /// writes it and counted per function.
+    ///
+    /// The nearest header above the site wins whatever its indent or
+    /// visibility — taking the first spelling that matched once attributed a
+    /// scrim under a `pub fn` to the plain `fn` before it. Two guards below
+    /// freeze a table of these, so both count the same way.
+    fn call_sites(code: &str, needle: &str) -> Vec<(String, usize)> {
+        let mut sites: Vec<(String, usize)> = Vec::new();
+        let mut from = 0;
+        while let Some(i) = code[from..].find(needle) {
+            let pos = from + i;
+            let head = [
+                "\n    fn ",
+                "\n    pub fn ",
+                "\n    pub(crate) fn ",
+                "\nfn ",
+                "\npub fn ",
+                "\npub(crate) fn ",
+            ]
+            .iter()
+            .filter_map(|h| code[..pos].rfind(h))
+            .max()
+            .unwrap_or_else(|| panic!("a `{needle}` outside any function"));
+            let name = code[head..]
+                .trim_start()
+                .trim_start_matches("pub(crate) ")
+                .trim_start_matches("pub ")
+                .trim_start_matches("fn ")
+                .split(['(', '<'])
+                .next()
+                .unwrap()
+                .to_string();
+            match sites.iter_mut().find(|(n, _)| *n == name) {
+                Some((_, c)) => *c += 1,
+                None => sites.push((name, 1)),
+            }
+            from = pos + 1;
+        }
+        sites
+    }
+
     fn shipped_code() -> String {
         shipped_src()
             .lines()
@@ -30650,33 +30704,7 @@ mod tests {
     fn a_scrim_over_the_glass_flattens_it_by_construction() {
         let code = shipped_code();
         // every occluding scrim, attributed to the fn that draws it
-        let mut sites: Vec<(String, usize)> = Vec::new();
-        let mut from = 0;
-        while let Some(i) = code[from..].find(".occlude()") {
-            let pos = from + i;
-            // the nearest header above the scrim, whatever its visibility —
-            // taking the first spelling that matched attributed a scrim under
-            // a `pub fn` to the plain `fn` before it
-            let head = ["\n    fn ", "\n    pub fn ", "\n    pub(crate) fn "]
-                .iter()
-                .filter_map(|h| code[..pos].rfind(h))
-                .max()
-                .expect("an occlude outside any method");
-            let name = code[head..]
-                .trim_start()
-                .trim_start_matches("pub(crate) ")
-                .trim_start_matches("pub ")
-                .trim_start_matches("fn ")
-                .split(['(', '<'])
-                .next()
-                .unwrap()
-                .to_string();
-            match sites.iter_mut().find(|(n, _)| *n == name) {
-                Some((_, c)) => *c += 1,
-                None => sites.push((name, 1)),
-            }
-            from = pos + 1;
-        }
+        let sites = call_sites(&code, ".occlude()");
         // The sites that predate the builder. Each is flattened by the
         // suppression list in `render`, which its own guards check. FROZEN:
         // a count that grew means a scrim was added inline instead of through
@@ -30718,6 +30746,96 @@ mod tests {
         assert!(
             code[at..end].contains("warp::flatten();"),
             "over_the_glass draws a scrim without flattening the glass under it"
+        );
+    }
+
+    /// A hover card over the glass flattens it too, or the build fails.
+    ///
+    /// The scrim guard above covers menus, pickers and tables — everything that
+    /// darkens the window behind it. A tooltip has no scrim and was therefore
+    /// outside it entirely, so the allowance rails' hover card shipped cut off
+    /// down its right-hand side: the warp samples a tube's near edge from
+    /// *inside* the tube, and painted terminal over the half of the card that
+    /// crossed the boundary.
+    ///
+    /// So the card gets the same treatment as the scrim. `over_the_glass_tip`
+    /// is the one builder of a hover card's shell and it calls
+    /// `warp::flatten()`; this walks every tooltip view and refuses one that
+    /// built its own, and freezes the places a tooltip is ATTACHED so a hover
+    /// card whose view is named something else cannot slip past the first half.
+    ///
+    /// Comment-stripped, so this paragraph cannot satisfy its own grep.
+    #[test]
+    fn a_hover_card_over_the_glass_flattens_it_too() {
+        let code = shipped_code();
+
+        // Every view rendered as a tooltip builds its card through the builder.
+        let mut views = 0;
+        let mut from = 0;
+        while let Some(i) = code[from..].find("impl Render for ") {
+            let at = from + i;
+            let name: String = code[at + "impl Render for ".len()..]
+                .split([' ', '\n', '{'])
+                .next()
+                .unwrap()
+                .to_string();
+            let end = code[at..].find("\n}\n").expect("end of impl") + at;
+            if name.ends_with("Tooltip") {
+                views += 1;
+                assert!(
+                    code[at..end].contains("over_the_glass_tip("),
+                    "`{name}` builds its own hover card instead of calling \
+                     `over_the_glass_tip`, so the glass under it stays bent and the \
+                     card is chopped off where it crosses a pane's tube. Build the \
+                     shell with `over_the_glass_tip(bg, border, text)` and add the \
+                     gap, shadow and children to what it returns."
+                );
+            }
+            from = at + 1;
+        }
+        assert!(
+            views >= 2,
+            "the tooltip views have been renamed out of this guard's sight"
+        );
+
+        // And the builder really does flatten.
+        let at = code.find("fn over_the_glass_tip").expect("the builder");
+        let end = code[at..].find("\n}\n").expect("end of fn") + at;
+        assert!(
+            code[at..end].contains("warp::flatten();"),
+            "over_the_glass_tip draws a hover card without flattening the glass under it"
+        );
+
+        // Where a hover card is hung. FROZEN: a new one here means a new card,
+        // and a card whose view is not named `…Tooltip` would otherwise be
+        // invisible to the walk above.
+        let mut hung = call_sites(&code, ".tooltip(");
+        for (name, count) in call_sites(&code, ".hoverable_tooltip(") {
+            match hung.iter_mut().find(|(n, _)| *n == name) {
+                Some((_, c)) => *c += count,
+                None => hung.push((name, count)),
+            }
+        }
+        let known: &[(&str, usize)] = &[
+            ("render_savings_overlay", 1),
+            ("render_bar_slot", 1),
+            ("render", 2),
+        ];
+        for (name, count) in &hung {
+            assert_eq!(
+                known.iter().find(|(n, _)| n == name).map(|(_, c)| *c),
+                Some(*count),
+                "`{name}` hangs {count} hover card(s) this guard has not seen. A \
+                 tooltip is a surface over a pane's tube like any menu: build its \
+                 card with `over_the_glass_tip` so the glass under it is flat, then \
+                 add the site to this table."
+            );
+        }
+        assert_eq!(
+            hung.iter().map(|(_, c)| c).sum::<usize>(),
+            known.iter().map(|(_, c)| c).sum::<usize>(),
+            "a hover card in this table is gone — drop its row rather than leaving \
+             the count standing for something nobody draws"
         );
     }
 
