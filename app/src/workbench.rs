@@ -2709,6 +2709,26 @@ pub fn turn_opening(effect: &crate::channel::Effect) -> (Option<String>, Option<
 /// at the head of the feed. Every row below `Working` is that case: the honest
 /// sentence, rather than a card still claiming to be in flight or — worse —
 /// the previous turn's answer sliding back into the room.
+///
+/// # The at-rest rows say what HAPPENED, never what will not
+///
+/// This shipped as `NOTHING PRESENTED · this turn ended without presenting a
+/// reply`, and that sentence is a claim about the FUTURE made at the one moment
+/// it cannot be checked. `Done` is raised off the bell, which the pane's own
+/// 120ms clock sets on the working→idle edge; the reply comes from the
+/// harness's stop hook, on its own schedule. The two race on EVERY turn, so
+/// every turn had a window — short, and there on all of them — where the card
+/// confidently announced that nothing was coming while the reply was in flight.
+///
+/// That is this feature's own disease: a surface stating something it has not
+/// got, in the gap before it has it. The repair is not a grace period, which
+/// would be a guess wearing a number. It is to say the two things that ARE
+/// observable — the turn ended, and nothing has landed — and to leave the
+/// question of whether anything ever will to the only thing that can answer it,
+/// which is a reply arriving or not.
+///
+/// `Exited` keeps its finality, and earns it: the process is gone, so *nothing
+/// further is coming* is a fact about the present rather than a prediction.
 pub fn live_says(state: AgentState) -> (&'static str, &'static str) {
     match state {
         AgentState::Working => ("IN FLIGHT", "the reply lands here when the turn ends"),
@@ -2716,16 +2736,10 @@ pub fn live_says(state: AgentState) -> (&'static str, &'static str) {
         AgentState::Paused => ("PAUSED", "you stopped this turn; it has not started again"),
         AgentState::Asking => ("WAITING ON YOU", "it asked something before it could go on"),
         AgentState::Blocked => ("BLOCKED", "the turn stopped on something that went wrong"),
-        // Not "finished": the turn finished and this card is still here, which
-        // means the one thing it was waiting for never came.
-        AgentState::Done | AgentState::Idle => (
-            "NOTHING PRESENTED",
-            "this turn ended without presenting a reply",
-        ),
-        AgentState::Exited => (
-            "AGENT GONE",
-            "the agent left before this turn presented a reply",
-        ),
+        AgentState::Done | AgentState::Idle => {
+            ("THE TURN ENDED", "no reply has landed on the bench")
+        }
+        AgentState::Exited => ("AGENT GONE", "the agent left before a reply landed"),
     }
 }
 
@@ -4667,16 +4681,35 @@ mod tests {
         // Nothing arrived. The card is still the turn's.
         assert!(b.live_standing().is_some());
         assert_eq!(live_says(AgentState::Working).0, "IN FLIGHT");
-        let (label, sentence) = live_says(AgentState::Idle);
-        assert_eq!(label, "NOTHING PRESENTED");
-        assert!(
-            sentence.contains("without presenting"),
-            "it says what happened, not `finished`: {sentence}"
-        );
         assert_ne!(
             live_says(AgentState::Idle),
             live_says(AgentState::Working),
             "a turn that ended must not read as one still running"
+        );
+
+        // THE AT-REST ROWS MAY NOT PREDICT. `Done` is raised off the bell, on
+        // the pane's own 120ms clock; the reply comes from the harness's stop
+        // hook on its own schedule. They race on every turn, so a sentence
+        // claiming nothing is coming is drawn — briefly, but on ALL of them —
+        // while the reply is still in flight. Say what happened; leave what
+        // will happen to the reply arriving or not arriving.
+        for state in [AgentState::Idle, AgentState::Done, AgentState::Exited] {
+            let (label, sentence) = live_says(state);
+            assert!(
+                !sentence.contains("without presenting") && !label.contains("NOTHING"),
+                "{state:?} is predicting the future during the gap before a reply lands: \
+                 {label} / {sentence}"
+            );
+        }
+        assert_eq!(
+            live_says(AgentState::Idle),
+            ("THE TURN ENDED", "no reply has landed on the bench"),
+            "both halves are observable right now, and stay true if nothing ever comes"
+        );
+        assert_eq!(
+            live_says(AgentState::Exited).0,
+            "AGENT GONE",
+            "the one at-rest row allowed to be final: the process is gone"
         );
         for state in [
             AgentState::Asking,
