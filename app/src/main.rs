@@ -10638,7 +10638,22 @@ impl Workspace {
     /// place to drop this" and "you are about to drop it here" are different
     /// things to tell somebody, and a door that only opens on hover is a door
     /// nobody discovers.
+    ///
+    /// Demo/capture hook, in the family of `TD_CONFIRM_DEMO` and friends:
+    /// `TD_BAY_DEMO=<0..1>` pins the target, so the reveal can be photographed.
+    /// This box has no pointer injection and the doors only part with something
+    /// in your hand, which left the entire open half of this surface — the
+    /// fire, the bin, the two lit inner edges — unphotographable, and a change
+    /// to the doors' geometry checkable only on the shut state.
     fn bay_target(&self) -> f32 {
+        static DEMO: std::sync::OnceLock<Option<f32>> = std::sync::OnceLock::new();
+        if let Some(v) = *DEMO.get_or_init(|| {
+            std::env::var("TD_BAY_DEMO")
+                .ok()
+                .map(|v| v.trim().parse::<f32>().unwrap_or(1.0).clamp(0., 1.))
+        }) {
+            return v;
+        }
         // Two kinds of drag can end in the bay — a branch off the left bar and a
         // pane off its own header — and the doors answer to both. A door that
         // opens for one of the two gestures teaches that the other one cannot be
@@ -18336,11 +18351,13 @@ impl Workspace {
                 .as_ref()
                 .is_some_and(|d| d.engaged && d.over_bay);
 
-        // Half the bay's inner width, which is how far each door travels to be
-        // fully open. Derived from the bar rather than measured, because a door
-        // has to know where it is going before the frame it is drawn in.
-        let half = (self.left_bar_w * s - 12. * s).max(20.) / 2.;
-        let travel = px(open * half);
+        // How far each door slides to be fully open — its own width. Derived
+        // from the bar rather than measured, because a door has to know where
+        // it is going before the frame it is drawn in, and DELIBERATELY
+        // generous: the bar's outer width still carries the panel's border and
+        // padding, which the bay does not get. Overshooting is free, since the
+        // bay clips; coming up short leaves a lit sliver at the edge.
+        let travel = px(open * (self.left_bar_w * s - 12. * s).max(20.) / 2.);
 
         let ember = hsla(0.06, 0.95, 0.55, 1.);
         let door = move |right: bool| {
@@ -18348,10 +18365,15 @@ impl Workspace {
                 .absolute()
                 .top_0()
                 .bottom_0()
-                // A hair over half, so rounding can never leave a lit seam
-                // between two shut doors. They are opaque; overlapping costs
-                // nothing.
-                .w(px(half + 1.))
+                // HALF THE BAY, as a fraction of whatever the bay turns out to
+                // be, so two shut doors meet exactly at its centre without this
+                // function knowing how wide it is. Spelled in pixels it was
+                // half the BAR — which still carries the enclosing panel's
+                // border and its padding — so each door overshot the centre by
+                // eleven pixels and their two lit inner edges stood twenty-two
+                // apart, with the seam drawn between them: three lines down the
+                // middle of a door that is supposed to show one.
+                .w(gpui::relative(0.5))
                 .when(!right, |d| d.left(-travel))
                 .when(right, |d| d.right(-travel))
                 // OPAQUE, and the whole point of them. These were painted at
@@ -18362,8 +18384,11 @@ impl Workspace {
                 .bg(sk.ink.panel)
                 // The inner edge is the one that moves and the one the fire
                 // falls on, so it takes the ember as the gap widens — the doors
-                // are lit BY what is behind them.
-                .border_color(ember.alpha(0.20 + 0.60 * open))
+                // are lit BY what is behind them. Dark at rest, because shut
+                // the two edges ARE the seam and the bay draws that once: an
+                // edge that stays lit while closed is a second line nobody
+                // asked for.
+                .border_color(ember.alpha(0.80 * open))
                 .when(!right, |d| d.border_r_1())
                 .when(right, |d| d.border_l_1())
         };
@@ -18395,6 +18420,14 @@ impl Workspace {
             .flex_none()
             .overflow_hidden()
             .rounded(sk.radius())
+            // The doorway's own frame, in the ink the house uses for the edge
+            // of a region — the same line the bar panel around it is drawn
+            // with. Without it the shut bay was an unbordered dark rectangle
+            // with a line down it, which reads as a gap in the bar rather than
+            // as something closed. It stays while the doors are open: a frame
+            // is the thing they are set into, not a state they are in.
+            .border_1()
+            .border_color(sk.ink.rule_strong)
             // The fire throws light on the bar around it. Same phosphor shape
             // the delete dialog wears — a crisp rim plus a soft bloom — in ember
             // rather than danger red, and scaled by how far open the doors are,
@@ -18514,19 +18547,32 @@ impl Workspace {
             )
             .child(door(false))
             .child(door(true))
-            // The seam, and the only thing the shut bay ever says. A count sits
-            // on it when something is recoverable: a trash nobody can see the
-            // contents of is a trash nobody opens, and the whole point of the
-            // holding window is that somebody comes back for it.
+            // The seam: ONE line, where the two doors meet, in the frame's own
+            // ink so the shut bay reads as a single closed thing. Centred by
+            // the layout rather than placed at a computed offset, for the same
+            // reason the doors are a fraction of the bay — the offset was
+            // computed from the bar and landed eleven pixels off centre.
             .child(
-                div()
-                    .absolute()
-                    .top_0()
-                    .bottom_0()
-                    .left(px(half - 0.5))
-                    .w(px(1.))
-                    .bg(th.faint.alpha(0.42 * (1. - open))),
+                div().absolute().inset_0().flex().justify_center().child(
+                    div()
+                        .w(px(1.))
+                        .h_full()
+                        // Gone by a tenth open rather than faded across the
+                        // whole travel: a seam is where two doors MEET, and a
+                        // centred line that outlives the meeting is a line
+                        // ruled down the middle of the fire, through the bin
+                        // and through the words under it. Once they part, the
+                        // doors' own lit edges carry it.
+                        .bg(sk
+                            .ink
+                            .rule_strong
+                            .alpha(sk.ink.rule_strong.a * (1. - open * 8.).clamp(0., 1.))),
+                ),
             )
+            // A count sits on the shut doors when something is recoverable: a
+            // trash nobody can see the contents of is a trash nobody opens, and
+            // the whole point of the holding window is that somebody comes back
+            // for it.
             .when(held > 0 && open < 0.5 && says.is_none(), |d| {
                 d.child(
                     div()
@@ -29244,6 +29290,69 @@ mod tests {
             "a bay door is painted with an alpha ({}) — it tints the fire instead of hiding \
              it, and a door that does not occlude is not a door",
             bg.trim()
+        );
+    }
+
+    /// A shut door shows ONE line down its middle, which holds only while the
+    /// doors are half of the BAY.
+    ///
+    /// They were half the BAR. `left_bar_w` minus the bay's own margins still
+    /// carries the enclosing panel's border and its padding — twenty-two
+    /// pixels the bay never gets — so each door overshot the centre by eleven,
+    /// and the shut bay drew each door's lit inner edge as a separate line with
+    /// the seam, placed off-centre by the same arithmetic, between them.
+    /// Measured off Parker's screenshot: lit columns at x=144 and x=166, either
+    /// side of a count centred by the layout at x=155.
+    ///
+    /// Nothing computable caught it. Both doors drew, they slid, the fire lit
+    /// them, and every test passed — the bay's real width is a layout result
+    /// this function never sees, so a pixel number for it can only ever be a
+    /// guess that happens to be close. The property is therefore that neither
+    /// door nor seam states one: the width is a fraction of the container and
+    /// the seam is centred by the layout. Travel may stay in pixels, because a
+    /// door that slides too far is still fully open.
+    #[test]
+    fn the_bay_doors_are_half_the_bay_and_not_half_the_bar() {
+        let code = shipped_code();
+        let at = code
+            .find("let door = move |right: bool|")
+            .expect("the bay doors");
+        let end = code[at..]
+            .find("\n        };")
+            .expect("end of the door closure")
+            + at;
+        let door = &code[at..end];
+
+        let widths: Vec<&str> = door.lines().filter(|l| l.contains(".w(")).collect();
+        assert!(!widths.is_empty(), "a door with no width is not a door");
+        for w in widths {
+            assert!(
+                w.contains("relative("),
+                "a bay door states its width as an absolute length ({}) — it cannot know how \
+                 wide the bay is, so two shut doors meet wherever that arithmetic lands and \
+                 the seam is drawn somewhere else",
+                w.trim()
+            );
+        }
+
+        let bay_at = code.find("fn render_bay(").expect("render_bay");
+        let bay_end = code[bay_at..]
+            .find("\n    fn ")
+            .map(|e| e + bay_at)
+            .unwrap_or(code.len());
+        let bay = &code[bay_at..bay_end];
+        for placed in [".left(px(", ".right(px("] {
+            assert!(
+                !bay.contains(placed),
+                "something in the bay is placed at a computed horizontal offset ({placed}) — \
+                 the centre of the bay is a layout result, and every attempt to name it in \
+                 pixels has put the seam beside the place the doors actually meet"
+            );
+        }
+        assert!(
+            bay.contains(".justify_center()"),
+            "the seam is no longer centred by the layout, so it is centred by arithmetic or \
+             not at all"
         );
     }
 
