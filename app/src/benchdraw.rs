@@ -43,7 +43,7 @@ use crate::surface::{
     Body, Confidence, Depth, Kind, Register, Response, Shelf, Surface, SurfaceId, Verdict, Weight,
 };
 use crate::theme::Theme;
-use crate::workbench::{Embodiment, Row, Step, Tint};
+use crate::workbench::{Embodiment, Row, Standing, Step, Tint};
 
 /// What a response renderer needs to draw a card it cannot decide for itself:
 /// whose reply this is, what the reader picked, and where to register the tabs
@@ -261,8 +261,48 @@ fn micro(text: impl Into<String>, step: Step, colour: Hsla, sk: &Skin, th: &Them
 /// column of short rows with almost nothing else on it — and the skin files
 /// record why that matters: at 2px against no other lines a marker reads as a
 /// scratch. The number is not carried over from a denser surface.
+/// THE WORD A RAIL ROW WEARS, or none where its state chip says everything.
+///
+/// Out of [`rail_row`] so a test can read the words, which is the thing that
+/// can be wrong here — the same reason [`woken_says`] and
+/// [`crate::workbench::live_says`] are their own functions. Inside the
+/// renderer this table was reachable only by a person looking at a screen, and
+/// its arms are ORDERED: a wrong order is silent, compiles, and shows the
+/// wrong word on every row of a kind.
+pub fn lane_word(standing: Standing, kind: &str, tint: Tint) -> Option<&'static str> {
+    match (standing, kind) {
+        // A TURN HAS NOT SAID ANYTHING YET, so it stands for nothing — first
+        // in the table because no other row's rule may reach it. The word is
+        // deliberately weaker than the card's own: the card can read the
+        // agent's state this instant and say `IN FLIGHT` or `NOTHING
+        // PRESENTED`, the rail cannot, so the rail makes the claim it can
+        // support in every case rather than the livelier one that goes stale
+        // the moment a turn ends having presented nothing.
+        (_, crate::workbench::LIVE_TURN_KIND) => Some("THIS TURN"),
+        // A note does not STAND. The standing vocabulary is about work a person
+        // has to resolve — what is waiting, what the answer currently is, how it
+        // got there — and none of those questions apply to something you wrote
+        // to yourself. `STANDS NOW` on a comment would be the rail claiming an
+        // opinion the comment never held.
+        //
+        // The head of the board still earns a word, because the head of a shelf
+        // is where a reader who has not moved the cursor is meant to start, and
+        // `Standing::lit` already gives it the weight. LATEST is what that word
+        // is on a chronological board. Parker: *"LATEST is nice."*
+        (Standing::Current, "comment") => Some("LATEST"),
+        (_, "comment") => None,
+        (Standing::Waiting, _) => Some("WAITING ON YOU"),
+        (Standing::Queued, _) => Some("ALSO WAITING"),
+        (Standing::Current, _) => Some("STANDS NOW"),
+        (Standing::Past, _) => match (tint, kind) {
+            (Tint::Settled, "question") | (Tint::Settled, "decision") => Some("ANSWERED"),
+            (Tint::Settled, _) => Some("DONE"),
+            _ => None,
+        },
+    }
+}
+
 pub fn rail_row(row: &Row, sk: &Skin, th: &Theme) -> Div {
-    use crate::workbench::Standing;
     let tint = ink(row.tint, th);
     // The spine's own row, read out of `Workspace::rail_panel` rather than
     // approximated from a screenshot. Parker, twice: *"SERIOUSLY LOOK AND
@@ -293,36 +333,7 @@ pub fn rail_row(row: &Row, sk: &Skin, th: &Theme) -> Div {
     // shelf shapes demanding at most one row claims it — so this can never be
     // the emphasis on two rows at once.
     let on_cursor = row.selected || row.standing.lit();
-    let lane = match (row.standing, row.kind) {
-        // A TURN HAS NOT SAID ANYTHING YET, so it stands for nothing — first
-        // in the table because no other row's rule may reach it. The word is
-        // deliberately weaker than the card's own: the card can read the
-        // agent's state this instant and say `IN FLIGHT` or `NOTHING
-        // PRESENTED`, the rail cannot, so the rail makes the claim it can
-        // support in every case rather than the livelier one that goes stale
-        // the moment a turn ends having presented nothing.
-        (_, crate::workbench::LIVE_TURN_KIND) => Some("THIS TURN"),
-        // A note does not STAND. The standing vocabulary is about work a person
-        // has to resolve — what is waiting, what the answer currently is, how it
-        // got there — and none of those questions apply to something you wrote
-        // to yourself. `STANDS NOW` on a comment would be the rail claiming an
-        // opinion the comment never held.
-        //
-        // The head of the board still earns a word, because the head of a shelf
-        // is where a reader who has not moved the cursor is meant to start, and
-        // `Standing::lit` already gives it the weight. LATEST is what that word
-        // is on a chronological board. Parker: *"LATEST is nice."*
-        (Standing::Current, "comment") => Some("LATEST"),
-        (_, "comment") => None,
-        (Standing::Waiting, _) => Some("WAITING ON YOU"),
-        (Standing::Queued, _) => Some("ALSO WAITING"),
-        (Standing::Current, _) => Some("STANDS NOW"),
-        (Standing::Past, _) => match (row.tint, row.kind) {
-            (Tint::Settled, "question") | (Tint::Settled, "decision") => Some("ANSWERED"),
-            (Tint::Settled, _) => Some("DONE"),
-            _ => None,
-        },
-    };
+    let lane = lane_word(row.standing, row.kind, row.tint);
     let head = div()
         .flex()
         .flex_row()
@@ -4685,6 +4696,52 @@ mod tests {
             verbs.contains("when(auditing"),
             "the preview block is built but no longer gated on the flag:\n{verbs}"
         );
+    }
+
+    #[test]
+    fn a_turn_that_has_said_nothing_does_not_stand_for_anything() {
+        use crate::workbench::LIVE_TURN_KIND;
+        // The head of the overview while a turn runs. `STANDS NOW` over a turn
+        // that has not spoken is the rail claiming an answer that does not
+        // exist — and the arm that prevents it is FIRST in an ordered table,
+        // so deleting it is silent and puts exactly that word back.
+        assert_eq!(
+            lane_word(Standing::Current, LIVE_TURN_KIND, Tint::Pending),
+            Some("THIS TURN")
+        );
+        // Whatever else `stand` decides about it. The row's word is a fact
+        // about what it IS, and nothing about its place can make it an answer.
+        for standing in [
+            Standing::Waiting,
+            Standing::Queued,
+            Standing::Current,
+            Standing::Past,
+        ] {
+            assert_eq!(
+                lane_word(standing, LIVE_TURN_KIND, Tint::Pending),
+                Some("THIS TURN"),
+                "{standing:?} found another word for a turn"
+            );
+        }
+        // And the words it must never be mistaken for, kept as they were.
+        assert_eq!(
+            lane_word(Standing::Current, "response", Tint::Settled),
+            Some("STANDS NOW")
+        );
+        assert_eq!(
+            lane_word(Standing::Current, "comment", Tint::Mine),
+            Some("LATEST")
+        );
+        assert_eq!(lane_word(Standing::Past, "comment", Tint::Mine), None);
+        assert_eq!(
+            lane_word(Standing::Waiting, "question", Tint::Waiting),
+            Some("WAITING ON YOU")
+        );
+        assert_eq!(
+            lane_word(Standing::Past, "question", Tint::Settled),
+            Some("ANSWERED")
+        );
+        assert_eq!(lane_word(Standing::Past, "markdown", Tint::Ident), None);
     }
 
     /// THE TWO WIRES A HEADLESS SUITE CANNOT PULL: what tells the bench a turn
