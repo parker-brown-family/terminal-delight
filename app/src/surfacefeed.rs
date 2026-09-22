@@ -793,7 +793,7 @@ pub fn run_cli(args: &[String]) -> i32 {
             eprintln!("terminal-delight surface --derive: no such transcript: {path}");
             return 2;
         }
-        let posts = crate::derive::from_transcript(file, now_ms());
+        let posts = crate::derive::from_transcript(file, now_ms()).posts;
         if posts.is_empty() {
             println!("nothing derivable in {path}");
             return 0;

@@ -1771,6 +1771,18 @@ fn question(q: &crate::surface::Question, picks: Option<&Picks>, sk: &Skin, th: 
                 sk,
                 th,
             )),
+            // Said on the card as well as in the subtitle, because this is the
+            // state a reader is most likely to mistake for a live question:
+            // the chips are still drawn, and without this line the only
+            // difference between a round you can still answer and one that
+            // ended without you is a tint.
+            Answered::Cancelled => Some(micro(
+                "cancelled \u{b7} the round ended with no answer".to_string(),
+                Step::Note,
+                sk.ink.ink_faint,
+                sk,
+                th,
+            )),
         })
         .when_some(q.round.as_ref(), |d, round| {
             // Pressable wherever a pane is collecting presses, and merely
