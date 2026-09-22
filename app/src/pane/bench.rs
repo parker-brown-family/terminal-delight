@@ -562,11 +562,31 @@ impl TerminalView {
                 hit,
                 Some(crate::workbench::Hit::Composer | crate::workbench::Hit::Arm)
             );
-        if pointer != self.wb_pointer || drop != self.wb_drop {
+        // The HIT is compared too, not only the pointer's shape. Moving from
+        // one chip to the next leaves the cursor a hand the whole way, so a
+        // repaint gated on the shape alone would light the first chip and then
+        // never move the light.
+        if pointer != self.wb_pointer || drop != self.wb_drop || hit != self.wb_hover {
             self.wb_pointer = pointer;
             self.wb_drop = drop;
+            self.wb_hover = hit;
             cx.notify();
         }
+    }
+
+    /// The hit zone for a pressable chip, and the lift that says it is one.
+    ///
+    /// Everything on the bench that a person can press ends in one of these,
+    /// so this is the single place that decides what "the pointer is on it"
+    /// looks like. See [`crate::benchdraw::zone_lit`] for why the wash belongs
+    /// on the zone and not on the chip.
+    pub(super) fn live_zone(
+        &self,
+        hit: crate::workbench::Hit,
+        sk: &crate::skin::Skin,
+    ) -> impl gpui::IntoElement {
+        let lit = self.wb_hover.as_ref() == Some(&hit);
+        crate::benchdraw::zone_lit(self.wb_zones.clone(), hit, sk, lit.then_some(sk.ink.hover))
     }
 
     /// The bench's pointer hook: one element, painted last and covering the
@@ -2153,10 +2173,8 @@ impl TerminalView {
                     // menu that has already closed.
                     return chip;
                 }
-                chip.relative().child(crate::benchdraw::zone(
-                    self.wb_zones.clone(),
-                    crate::workbench::Hit::Choose(i),
-                ))
+                chip.relative()
+                    .child(self.live_zone(crate::workbench::Hit::Choose(i), sk))
             })
             .collect();
         div()
@@ -2180,10 +2198,7 @@ impl TerminalView {
                             .text_size(px(sk.pt(Step::Small)))
                             .child("\u{21ba} REVIEW ANSWERS".to_string())
                             .relative()
-                            .child(crate::benchdraw::zone(
-                                self.wb_zones.clone(),
-                                crate::workbench::Hit::Review,
-                            )),
+                            .child(self.live_zone(crate::workbench::Hit::Review, sk)),
                     ),
                 )
             })
@@ -2206,10 +2221,7 @@ impl TerminalView {
                             sk,
                         )
                         .relative()
-                        .child(crate::benchdraw::zone(
-                            self.wb_zones.clone(),
-                            crate::workbench::Hit::PressNav(at),
-                        )),
+                        .child(self.live_zone(crate::workbench::Hit::PressNav(at), sk)),
                     ),
                 )
             })
@@ -2367,12 +2379,12 @@ impl TerminalView {
                             sk,
                         )
                         .relative()
-                        .child(crate::benchdraw::zone(
-                            self.wb_zones.clone(),
+                        .child(self.live_zone(
                             crate::workbench::Hit::Verb {
                                 action: action.clone(),
                                 target: target.clone(),
                             },
+                            sk,
                         ))
                     })
                     .collect::<Vec<_>>()
@@ -3937,23 +3949,16 @@ impl TerminalView {
                                     sk.chip(back)
                                         .child("\u{2190}".to_string())
                                         .relative()
-                                        .child(crate::benchdraw::zone(
-                                            self.wb_zones.clone(),
-                                            crate::workbench::Hit::GalleryBack,
-                                        )),
+                                        .child(
+                                            self.live_zone(crate::workbench::Hit::GalleryBack, sk),
+                                        ),
                                 )
                                 .child(sk.chip(fwd).child("\u{2192}".to_string()).relative().child(
-                                    crate::benchdraw::zone(
-                                        self.wb_zones.clone(),
-                                        crate::workbench::Hit::GalleryForward,
-                                    ),
+                                    self.live_zone(crate::workbench::Hit::GalleryForward, sk),
                                 ))
                                 .child(div().flex_1())
                                 .child(sk.chip(false).child("CLOSE".to_string()).relative().child(
-                                    crate::benchdraw::zone(
-                                        self.wb_zones.clone(),
-                                        crate::workbench::Hit::GalleryClose,
-                                    ),
+                                    self.live_zone(crate::workbench::Hit::GalleryClose, sk),
                                 )),
                         ),
                     ),

@@ -2201,6 +2201,13 @@ pub struct TerminalView {
     /// What the pointer looks like over the bench, decided from the un-bent
     /// position on every mouse move and painted by the bench's pointer hook.
     wb_pointer: crate::workbench::Pointer,
+    /// What the pointer is over, so a pressable thing can say so.
+    ///
+    /// The shape of the cursor was already derived from this and then the hit
+    /// itself thrown away — which is why the bench could turn the pointer into
+    /// a hand over a chip and still leave the chip looking exactly as dead as
+    /// the label beside it.
+    wb_hover: Option<crate::workbench::Hit>,
     /// Whether a dragged file is over the composer right now, so the box can
     /// say it will take it. Set from the same un-bent hover that decides the
     /// pointer, and cleared when the drag leaves the window — which arrives
@@ -3624,6 +3631,7 @@ impl TerminalView {
             wb_press: None,
             wb_bench_rect: std::rc::Rc::new(std::cell::RefCell::new(None)),
             wb_pointer: crate::workbench::Pointer::Arrow,
+            wb_hover: None,
             wb_drop: false,
             wb_mirror: false,
             wb_live_q: None,
@@ -8838,6 +8846,68 @@ mod tests {
             guard < clear,
             "the channel is consulted AFTER the flag is dropped, so it is dropped anyway:\n{body}"
         );
+    }
+
+    /// Every chip the bench can press lights under the pointer.
+    ///
+    /// The rule is not "call `live_zone`" for its own sake. A chip wired with a
+    /// bare [`crate::benchdraw::zone`] is perfectly clickable and gives no sign
+    /// of it, and a bench full of those is the state this whole thing was in:
+    /// every control worked, none of them acknowledged the pointer, and the
+    /// only feedback was the cursor turning into a hand. Parker, on the review
+    /// gallery's CLOSE: *"doesn't seem to respond when I hover"*.
+    ///
+    /// Scanned rather than executed: the decision reads `wb_hover` off a live
+    /// `TerminalView` and this crate has no gpui test app.
+    ///
+    /// The slice for each chip runs to the NEXT chip, so one chip's zone cannot
+    /// satisfy the chip above it. `live_zone(` ends in `zone(`, so a bare zone
+    /// is counted by subtraction rather than by a `contains` that its own
+    /// replacement would satisfy.
+    #[test]
+    fn every_chip_the_bench_can_press_lights_under_the_pointer() {
+        let code = bench_code();
+        let starts: Vec<usize> = code.match_indices(".chip(").map(|(i, _)| i).collect();
+        assert!(
+            starts.len() >= 6,
+            "expected the bench to still draw chips; found {}",
+            starts.len()
+        );
+        let mut pressable = 0;
+        for (n, &at) in starts.iter().enumerate() {
+            // A chip's zone is its own CHILD, so it is the first one after it
+            // and it is close by — the widest real gap on this bench is
+            // fifteen lines. Running the slice to the next `.chip(` instead
+            // spanned fifteen hundred lines on the first draft and happily
+            // blamed one chip for a row's zone a thousand lines below it.
+            let stop = starts
+                .get(n + 1)
+                .copied()
+                .unwrap_or(code.len())
+                .min(nth_newline(&code, at, 25));
+            let slice = &code[at..stop];
+            let Some(z) = slice.find("zone(") else {
+                continue; // a label, not a button — it must NOT light
+            };
+            pressable += 1;
+            assert!(
+                slice[..z].ends_with("live_"),
+                "a pressable chip is wired with a bare zone, so it cannot light:\n{}",
+                slice.lines().take(10).collect::<Vec<_>>().join("\n")
+            );
+        }
+        assert!(
+            pressable >= 6,
+            "expected several pressable chips on the bench; found {pressable}"
+        );
+    }
+
+    /// The byte offset `n` newlines after `from`, or the end of `s`.
+    fn nth_newline(s: &str, from: usize, n: usize) -> usize {
+        s[from..]
+            .match_indices('\n')
+            .nth(n)
+            .map_or(s.len(), |(i, _)| from + i)
     }
 
     /// The `departed` branch of [`TerminalView::set_mode`], code only.
