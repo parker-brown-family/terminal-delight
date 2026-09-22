@@ -297,11 +297,20 @@ pub struct Frame {
 
 // ---- the scan ------------------------------------------------------------
 
-/// Run one git command in `dir`, with a ceiling on how long it may take. A
-/// scan runs on the background executor, so a hung git would not freeze the
-/// window — but it would stop every later scan behind it, which is the same
-/// outcome one project at a time.
-fn git(dir: &Path, args: &[&str], budget: Duration) -> Option<String> {
+/// Run one git command in `dir`, with a ceiling on how long it may take, and
+/// hand back its exit code with whatever it printed. A scan runs on the
+/// background executor, so a hung git would not freeze the window — but it
+/// would stop every later scan behind it, which is the same outcome one
+/// project at a time.
+///
+/// **Stdout is drained on its own thread, concurrently with the wait.** A pipe
+/// holds 64 KiB; `git status --porcelain` in a tree with a couple of thousand
+/// untracked files prints more than that, and a runner that reads only after
+/// the child has exited waits forever on a child that is itself blocked
+/// writing into a full pipe. That deadlock costs the whole budget and then
+/// reports the field as *unmeasured* — a reading git was perfectly able to
+/// give. See `a_wordy_git_is_still_measured`.
+fn run_git(dir: &Path, args: &[&str], budget: Duration) -> Option<(i32, String)> {
     let mut child = Command::new("git")
         .args(args)
         .current_dir(dir)
@@ -311,62 +320,104 @@ fn git(dir: &Path, args: &[&str], budget: Duration) -> Option<String> {
         .stderr(Stdio::null())
         .spawn()
         .ok()?;
+    let pipe = child.stdout.take()?;
+    let reader = std::thread::spawn(move || {
+        let mut out = String::new();
+        use std::io::Read;
+        let _ = std::io::BufReader::new(pipe).read_to_string(&mut out);
+        out
+    });
     let started = Instant::now();
-    loop {
+    // Poll with a short backoff rather than a fixed tick. These calls really
+    // cost two to seven milliseconds each; a flat 15 ms sleep rounded every
+    // one of them up to 15, which across a whole scan was more time asleep
+    // than in git. `try_wait` is a `waitpid(WNOHANG)` — polling it often is
+    // free next to what it saves.
+    let mut nap = Duration::from_micros(150);
+    let status = loop {
         match child.try_wait() {
-            Ok(Some(status)) => {
-                if !status.success() {
-                    return None;
-                }
-                let mut out = String::new();
-                use std::io::Read;
-                child.stdout.take()?.read_to_string(&mut out).ok()?;
-                return Some(out);
-            }
+            Ok(Some(status)) => break Some(status),
             Ok(None) if started.elapsed() < budget => {
-                std::thread::sleep(Duration::from_millis(15));
+                std::thread::sleep(nap);
+                nap = (nap * 2).min(POLL_CEILING);
             }
             _ => {
                 let _ = child.kill();
                 let _ = child.wait();
-                return None;
+                break None;
             }
         }
-    }
+    };
+    // Always join: the reader ends when the pipe closes, which a kill also does.
+    let out = reader.join().unwrap_or_default();
+    Some((status?.code().unwrap_or(-1), out))
+}
+
+/// The longest one poll may sleep. Small enough that a fast git is not rounded
+/// up, large enough that a slow one is not polled thousands of times.
+const POLL_CEILING: Duration = Duration::from_millis(2);
+
+/// Run one git command, keeping its output only when it succeeded.
+fn git(dir: &Path, args: &[&str], budget: Duration) -> Option<String> {
+    let (code, out) = run_git(dir, args, budget)?;
+    (code == 0).then_some(out)
 }
 
 /// Like [`git`], but the exit code is part of the answer: `git merge-tree`
 /// says "conflicts" with status 1 and its output, which the plain runner
 /// would throw away as a failure.
 fn git_status(dir: &Path, args: &[&str], budget: Duration) -> Option<(i32, String)> {
-    let mut child = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_OPTIONAL_LOCKS", "0")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .ok()?;
-    let started = Instant::now();
-    loop {
-        match child.try_wait() {
-            Ok(Some(status)) => {
-                let mut out = String::new();
-                use std::io::Read;
-                child.stdout.take()?.read_to_string(&mut out).ok()?;
-                return Some((status.code().unwrap_or(-1), out));
-            }
-            Ok(None) if started.elapsed() < budget => {
-                std::thread::sleep(Duration::from_millis(15));
-            }
-            _ => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return None;
-            }
-        }
+    run_git(dir, args, budget)
+}
+
+/// Run `f` over `items` on a small pool of threads, giving the results back in
+/// the order the items came in.
+///
+/// Every measurement in a scan is a git subprocess against one directory, and
+/// those directories know nothing about each other — so the scan was paying
+/// for a hundred round trips end to end that it could have overlapped. The
+/// pool is deliberately small: this runs beside twenty agent panes, and the
+/// win is already had by the time it is this wide.
+fn parallel_map<T, R, F>(items: Vec<T>, f: F) -> Vec<R>
+where
+    T: Send,
+    R: Send,
+    F: Fn(T) -> R + Sync,
+{
+    let n = items.len();
+    if n <= 1 {
+        return items.into_iter().map(f).collect();
     }
+    let queue: std::sync::Mutex<Vec<(usize, T)>> =
+        std::sync::Mutex::new(items.into_iter().enumerate().rev().collect());
+    let done: std::sync::Mutex<Vec<(usize, R)>> = std::sync::Mutex::new(Vec::with_capacity(n));
+    std::thread::scope(|s| {
+        for _ in 0..workers().min(n) {
+            s.spawn(|| loop {
+                // Taken one at a time rather than in chunks: one checkout can
+                // be an order of magnitude slower than its neighbours (a cold
+                // untracked cache), and a chunked split would leave the rest
+                // of the scan waiting behind it.
+                let Some((i, item)) = queue.lock().expect("scan queue").pop() else {
+                    break;
+                };
+                let r = f(item);
+                done.lock().expect("scan results").push((i, r));
+            });
+        }
+    });
+    let mut out = done.into_inner().expect("scan results");
+    out.sort_by_key(|(i, _)| *i);
+    out.into_iter().map(|(_, r)| r).collect()
+}
+
+/// How wide the scan runs. Capped, because this shares a machine with the
+/// panes it is measuring.
+fn workers() -> usize {
+    std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4)
+        .clamp(1, 8)
 }
 
 /// What `git merge-tree --write-tree --name-only <main> HEAD` said. Exit 0
@@ -391,19 +442,23 @@ pub fn parse_merge_tree(code: i32, out: &str) -> Option<Merge> {
 /// Measure what a checkout is on its own: branch, head, dirt, delta, last
 /// commit, upstream and what the upstream has not seen. Shared by the
 /// checkouts panes are in and the idle worktrees nobody is.
-fn measure_checkout(c: &mut Checkout) {
+///
+/// Hands back the porcelain it read, because [`measure_against_main`] wants
+/// the same listing and used to ask git for it a second time.
+fn measure_checkout(c: &mut Checkout) -> Option<String> {
     let root = c.root.clone();
     if let Some(out) = git(&root, &["rev-parse", "--abbrev-ref", "HEAD"], BUDGET) {
         let b = out.trim();
         c.branch = (b != "HEAD" && !b.is_empty()).then(|| b.to_string());
     }
     c.head = git(&root, &["rev-parse", "--short", "HEAD"], BUDGET).map(|s| s.trim().to_string());
-    if let Some(st) = git(
+    let porcelain = git(
         &root,
         &["status", "--porcelain", "--untracked-files=normal"],
         BUDGET,
-    ) {
-        let (d, u) = count_status(&st);
+    );
+    if let Some(st) = &porcelain {
+        let (d, u) = count_status(st);
         c.dirty = Some(d);
         c.untracked = Some(u);
     }
@@ -422,11 +477,12 @@ fn measure_checkout(c: &mut Checkout) {
             .and_then(|s| s.trim().parse::<u32>().ok()),
         None => None,
     };
+    porcelain
 }
 
 /// Measure a checkout against its repository's main line: how far ahead and
 /// behind, which files it changes, and whether it would merge today.
-fn measure_against_main(c: &mut Checkout, main_ref: &str) {
+fn measure_against_main(c: &mut Checkout, main_ref: &str, porcelain: Option<&str>) {
     let root = c.root.clone();
     let spec = format!("{main_ref}...HEAD");
     c.ahead_behind = git(
@@ -449,11 +505,16 @@ fn measure_against_main(c: &mut Checkout, main_ref: &str) {
     } else {
         git(&root, &["diff", "--name-only", &spec], BUDGET)
     };
-    let uncommitted = git(
-        &root,
-        &["status", "--porcelain", "--untracked-files=no"],
-        BUDGET,
-    );
+    // The listing [`measure_checkout`] already read, minus the untracked
+    // entries — which is exactly what `--untracked-files=no` prints, and one
+    // fewer subprocess. Reading one snapshot rather than two also removes a
+    // window in which a file could be counted by one call and not the other.
+    let uncommitted = porcelain.map(|p| {
+        p.lines()
+            .filter(|l| !l.starts_with("??"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    });
     c.touched = match (committed, uncommitted) {
         (Some(cm), Some(un)) => {
             let mut files: Vec<String> = cm
@@ -615,34 +676,42 @@ pub fn scan(input: &ScanInput) -> ProjectState {
         .unwrap_or(0);
 
     // Resolve every distinct cwd — mine and others' — to its checkout root,
-    // once. Panes share directories far more often than not.
-    let mut root_of: HashMap<PathBuf, Option<PathBuf>> = HashMap::new();
-    let all_dirs = input
+    // once, and all of them at the same time. Panes share directories far more
+    // often than not, and the ones they do not share know nothing about each
+    // other.
+    let mut distinct_dirs: Vec<PathBuf> = Vec::new();
+    for dir in input
         .mine
         .iter()
         .map(|w| &w.cwd)
-        .chain(input.others.iter().map(|(_, w)| &w.cwd));
-    for dir in all_dirs {
-        if root_of.contains_key(dir) {
-            continue;
+        .chain(input.others.iter().map(|(_, w)| &w.cwd))
+    {
+        if !distinct_dirs.contains(dir) {
+            distinct_dirs.push(dir.clone());
         }
+    }
+    let root_of: HashMap<PathBuf, Option<PathBuf>> = parallel_map(distinct_dirs, |dir| {
         let root = if dir.is_dir() {
-            git(dir, &["rev-parse", "--show-toplevel"], BUDGET)
+            git(&dir, &["rev-parse", "--show-toplevel"], BUDGET)
                 .map(|s| PathBuf::from(s.trim()))
                 .filter(|p| !p.as_os_str().is_empty())
         } else {
             None
         };
-        root_of.insert(dir.clone(), root);
-    }
+        (dir, root)
+    })
+    .into_iter()
+    .collect();
 
     // Identity per root, once.
-    let mut repo_of_root: HashMap<PathBuf, String> = HashMap::new();
+    let mut distinct_roots: Vec<PathBuf> = Vec::new();
     for root in root_of.values().flatten() {
-        if repo_of_root.contains_key(root) {
-            continue;
+        if !distinct_roots.contains(root) {
+            distinct_roots.push(root.clone());
         }
-        let common = git(root, &["rev-parse", "--git-common-dir"], BUDGET)
+    }
+    let repo_of_root: HashMap<PathBuf, String> = parallel_map(distinct_roots, |root| {
+        let common = git(&root, &["rev-parse", "--git-common-dir"], BUDGET)
             .map(|s| {
                 let p = PathBuf::from(s.trim());
                 if p.is_absolute() {
@@ -652,9 +721,12 @@ pub fn scan(input: &ScanInput) -> ProjectState {
                 }
             })
             .unwrap_or_else(|| root.join(".git"));
-        let origin = git(root, &["remote", "get-url", "origin"], BUDGET);
-        repo_of_root.insert(root.clone(), repo_identity(origin.as_deref(), &common));
-    }
+        let origin = git(&root, &["remote", "get-url", "origin"], BUDGET);
+        let id = repo_identity(origin.as_deref(), &common);
+        (root, id)
+    })
+    .into_iter()
+    .collect();
 
     // My checkouts, keyed by root, with their writers.
     let mut checkouts: Vec<Checkout> = Vec::new();
@@ -710,23 +782,40 @@ pub fn scan(input: &ScanInput) -> ProjectState {
         }
     }
 
-    // Measure each checkout on its own.
-    for c in checkouts.iter_mut() {
-        measure_checkout(c);
-    }
-    // Repository-level facts, measured on the first checkout of each.
-    let mut repos = Vec::new();
-    for id in &repo_ids {
-        let Some(c) = checkouts.iter().find(|c| c.repo == *id) else {
-            continue;
-        };
-        let root = c.root.clone();
+    // Measure each checkout on its own, all at once. Each keeps the porcelain
+    // it read so the pass against main does not ask for it again.
+    let measured = parallel_map(std::mem::take(&mut checkouts), |mut c| {
+        let porcelain = measure_checkout(&mut c);
+        (c, porcelain)
+    });
+    let (mut checkouts, mut porcelains): (Vec<Checkout>, Vec<Option<String>>) =
+        measured.into_iter().unzip();
+
+    // Repository-level facts, measured on the first checkout of each. The
+    // worktree listing is kept: the idle sweep below wants the primary's, and
+    // it is the same listing from the same root.
+    let repo_roots: Vec<(String, PathBuf)> = repo_ids
+        .iter()
+        .filter_map(|id| {
+            checkouts
+                .iter()
+                .find(|c| c.repo == *id)
+                .map(|c| (id.clone(), c.root.clone()))
+        })
+        .collect();
+    let scanned = parallel_map(repo_roots, |(id, root)| {
         let main_ref = ["origin/main", "main", "origin/master", "master"]
             .into_iter()
             .find(|r| git(&root, &["rev-parse", "--verify", "--quiet", r], BUDGET).is_some())
             .map(str::to_string);
-        let worktrees_on_disk = git(&root, &["worktree", "list", "--porcelain"], BUDGET)
+        let listing = git(&root, &["worktree", "list", "--porcelain"], BUDGET);
+        let worktrees_on_disk = listing
+            .as_deref()
             .map(|s| s.lines().filter(|l| l.starts_with("worktree ")).count() as u32);
+        // Stashes live in the common dir, so any checkout of the repository
+        // sees the same list — measured here rather than in a pass of its own.
+        let stashes = git(&root, &["stash", "list"], BUDGET)
+            .map(|s| s.lines().filter(|l| !l.trim().is_empty()).count() as u32);
         let pulse = git(
             &root,
             &["log", "--all", "--since=1.hour", "--format=%ct"],
@@ -736,27 +825,40 @@ pub fn scan(input: &ScanInput) -> ProjectState {
             let stamps: Vec<u64> = s.lines().filter_map(|l| l.trim().parse().ok()).collect();
             bucket_pulse(&stamps, now_unix)
         });
-        repos.push(RepoFacts {
-            id: id.clone(),
-            name: repo_name(id, &root),
-            main_ref,
-            worktrees_on_disk,
-            pulse,
-            stashes: None,
-        });
+        (
+            RepoFacts {
+                name: repo_name(&id, &root),
+                id,
+                main_ref,
+                worktrees_on_disk,
+                pulse,
+                stashes,
+            },
+            listing,
+        )
+    });
+    let mut worktree_listings: HashMap<String, Option<String>> = HashMap::new();
+    let mut repos: Vec<RepoFacts> = Vec::with_capacity(scanned.len());
+    for (facts, listing) in scanned {
+        worktree_listings.insert(facts.id.clone(), listing);
+        repos.push(facts);
     }
 
     // Against main — needs the repository's main line, so it comes after.
-    for c in checkouts.iter_mut() {
-        let Some(main_ref) = repos
-            .iter()
-            .find(|r| r.id == c.repo)
-            .and_then(|r| r.main_ref.clone())
-        else {
-            continue;
-        };
-        measure_against_main(c, &main_ref);
-    }
+    let main_of: HashMap<&str, String> = repos
+        .iter()
+        .filter_map(|r| r.main_ref.clone().map(|m| (r.id.as_str(), m)))
+        .collect();
+    let paired: Vec<(Checkout, Option<String>)> = std::mem::take(&mut checkouts)
+        .into_iter()
+        .zip(std::mem::take(&mut porcelains))
+        .collect();
+    let mut checkouts: Vec<Checkout> = parallel_map(paired, |(mut c, porcelain)| {
+        if let Some(main_ref) = main_of.get(c.repo.as_str()) {
+            measure_against_main(&mut c, main_ref, porcelain.as_deref());
+        }
+        c
+    });
 
     // Idle worktrees of the primary repository: on disk, nobody in them —
     // mine or anyone else's. Measured like the rest, because a worktree
@@ -766,55 +868,44 @@ pub fn scan(input: &ScanInput) -> ProjectState {
     let mut idle: Vec<Checkout> = Vec::new();
     if let Some(p) = &primary {
         let occupied: Vec<&PathBuf> = root_of.values().flatten().collect();
-        if let Some(c0) = checkouts.iter().find(|c| c.repo == *p) {
-            let listing = git(&c0.root, &["worktree", "list", "--porcelain"], BUDGET);
-            let main_ref = repos
-                .iter()
-                .find(|r| r.id == *p)
-                .and_then(|r| r.main_ref.clone());
-            for line in listing.as_deref().unwrap_or("").lines() {
-                let Some(path) = line.strip_prefix("worktree ") else {
-                    continue;
-                };
-                let root = PathBuf::from(path.trim());
-                if occupied.contains(&&root) || !root.is_dir() {
-                    continue;
-                }
-                if idle.len() >= 12 {
-                    break;
-                }
-                let mut c = Checkout {
-                    root,
-                    repo: p.clone(),
-                    branch: None,
-                    head: None,
-                    dirty: None,
-                    untracked: None,
-                    delta: None,
-                    ahead_behind: None,
-                    last_commit: None,
-                    writers: Vec::new(),
-                    upstream: None,
-                    unpushed: None,
-                    touched: None,
-                    merge: None,
-                };
-                measure_checkout(&mut c);
-                if let Some(m) = &main_ref {
-                    measure_against_main(&mut c, m);
-                }
-                idle.push(c);
+        // The listing the repository pass already read, rather than the same
+        // `git worktree list` a second time on the same root.
+        let listing = worktree_listings.get(p).cloned().flatten();
+        let main_ref = main_of.get(p.as_str()).cloned();
+        let roots: Vec<PathBuf> = listing
+            .as_deref()
+            .unwrap_or("")
+            .lines()
+            .filter_map(|l| l.strip_prefix("worktree "))
+            .map(|p| PathBuf::from(p.trim()))
+            .filter(|root| !occupied.contains(&root) && root.is_dir())
+            .take(12)
+            .collect();
+        idle = parallel_map(roots, |root| {
+            let mut c = Checkout {
+                root,
+                repo: p.clone(),
+                branch: None,
+                head: None,
+                dirty: None,
+                untracked: None,
+                delta: None,
+                ahead_behind: None,
+                last_commit: None,
+                writers: Vec::new(),
+                upstream: None,
+                unpushed: None,
+                touched: None,
+                merge: None,
+            };
+            let porcelain = measure_checkout(&mut c);
+            if let Some(m) = &main_ref {
+                measure_against_main(&mut c, m, porcelain.as_deref());
             }
-        }
+            c
+        });
     }
 
-    // Stashes, once per repository.
-    for r in repos.iter_mut() {
-        if let Some(c) = checkouts.iter().find(|c| c.repo == r.id) {
-            r.stashes = git(&c.root, &["stash", "list"], BUDGET)
-                .map(|s| s.lines().filter(|l| !l.trim().is_empty()).count() as u32);
-        }
-    }
     // Drift, both directions, against the primary repository.
     let mut foreign = Vec::new();
     let mut visitors = Vec::new();
@@ -2152,6 +2243,27 @@ mod tests {
         }
     }
 
+    /// An unmeasured checkout rooted at a real directory, for the tests that
+    /// go and ask git rather than hand-building an answer.
+    fn co_at(root: &Path) -> Checkout {
+        Checkout {
+            root: root.to_path_buf(),
+            repo: "o/r".into(),
+            branch: None,
+            head: None,
+            dirty: None,
+            untracked: None,
+            delta: None,
+            ahead_behind: None,
+            last_commit: None,
+            writers: Vec::new(),
+            upstream: None,
+            unpushed: None,
+            touched: None,
+            merge: None,
+        }
+    }
+
     fn co(root: &str, branch: &str, dirty: u32, commit: u64, behind: u32) -> Checkout {
         Checkout {
             root: PathBuf::from(root),
@@ -2361,6 +2473,108 @@ mod tests {
             None,
             "a failure is not an answer"
         );
+    }
+
+    /// The runner used to read stdout only after `try_wait` said the child had
+    /// exited — and a child filling the 64 KiB a pipe holds is blocked in
+    /// `write` and will never exit. A checkout with a couple of thousand
+    /// untracked files (an un-ignored build directory is enough) therefore
+    /// burned the whole eight-second budget per call and came back
+    /// **unmeasured** on a number git had been perfectly willing to give.
+    ///
+    /// Measured on the merged code: 176 000 bytes of porcelain, 8082 ms,
+    /// `dirty: None, untracked: None`.
+    #[test]
+    fn a_wordy_git_is_still_measured() {
+        let r = Rig::new("wordy");
+        // Untracked files at the ROOT, so each gets a porcelain line of its
+        // own: `--untracked-files=normal` collapses an untracked *directory*
+        // to one line and would print ten bytes, proving nothing. 40 bytes a
+        // line, so about 80 KiB — comfortably past what the pipe holds.
+        for i in 0..2000 {
+            std::fs::write(
+                r.main
+                    .join(format!("a-file-with-a-longish-name-{i:05}.txt")),
+                "x",
+            )
+            .unwrap();
+        }
+        let printed = git(
+            &r.main,
+            &["status", "--porcelain", "--untracked-files=normal"],
+            BUDGET,
+        )
+        .map(|s| s.len())
+        .unwrap_or(0);
+        assert!(
+            printed > 65_536,
+            "the fixture has to out-talk the pipe to prove anything; printed {printed} bytes"
+        );
+
+        let mut c = co_at(&r.main);
+        let began = Instant::now();
+        measure_checkout(&mut c);
+        assert_eq!(
+            c.untracked,
+            Some(2000),
+            "every untracked file counted, not thrown away at the budget"
+        );
+        assert!(
+            began.elapsed() < BUDGET,
+            "the runner deadlocked and was killed at the budget: {:?}",
+            began.elapsed()
+        );
+    }
+
+    /// The pass against main used to run `git status` a second time with
+    /// `--untracked-files=no`. That output is the listing the first pass
+    /// already read with the `??` lines dropped — verified here on the shape
+    /// that is easiest to get wrong, a staged rename beside an untracked file.
+    #[test]
+    fn the_second_status_was_the_first_one_without_its_untracked_lines() {
+        let r = Rig::new("onestatus");
+        std::fs::write(r.main.join("old name.txt"), "hello\n").unwrap();
+        sh(&r.main, &["git", "add", "-A"]);
+        sh(&r.main, &["git", "commit", "-q", "-m", "named"]);
+        std::fs::rename(r.main.join("old name.txt"), r.main.join("new name.txt")).unwrap();
+        std::fs::write(r.main.join("untracked.txt"), "u").unwrap();
+        sh(&r.main, &["git", "add", "-A"]);
+
+        let normal = git(
+            &r.main,
+            &["status", "--porcelain", "--untracked-files=normal"],
+            BUDGET,
+        )
+        .expect("porcelain");
+        let derived: Vec<&str> = normal.lines().filter(|l| !l.starts_with("??")).collect();
+        let asked = git(
+            &r.main,
+            &["status", "--porcelain", "--untracked-files=no"],
+            BUDGET,
+        )
+        .expect("porcelain");
+        let asked: Vec<&str> = asked.lines().collect();
+        assert_eq!(derived, asked, "the second call bought nothing");
+        assert!(
+            derived.iter().any(|l| l.starts_with('R')),
+            "a rename has to be in the fixture or it proves too little: {derived:?}"
+        );
+    }
+
+    /// The pool has to give every item back, in the order it took them —
+    /// a dropped checkout is a pane that vanishes from the table, and a
+    /// reordered one breaks the tab ordering the table reads by.
+    #[test]
+    fn the_pool_returns_every_item_in_order() {
+        let items: Vec<usize> = (0..200).collect();
+        let out = parallel_map(items.clone(), |i| {
+            // uneven work, so a chunked split would finish out of order
+            std::thread::sleep(Duration::from_micros((i % 7) as u64 * 50));
+            i * 2
+        });
+        assert_eq!(out, items.iter().map(|i| i * 2).collect::<Vec<_>>());
+        assert!(parallel_map(Vec::<usize>::new(), |i| i).is_empty());
+        assert_eq!(parallel_map(vec![9usize], |i| i + 1), vec![10]);
     }
 
     #[test]
