@@ -2059,6 +2059,58 @@ impl TerminalView {
     /// so answering worked in the place you were not looking. Parker, with the
     /// two side by side: *"The decision tab work surface should look a LOT
     /// more like [the waiting block]"*.
+    /// The review, as the whole of the workbench body.
+    ///
+    /// `None` when nothing is being reviewed, or when there is nothing to
+    /// review — a gallery of nothing is a takeover that strands the person on
+    /// an empty page, where the old flyout merely declined to open.
+    ///
+    /// The navigator is built here rather than in [`crate::benchdraw`] because
+    /// its three chips need this pane's hit zones, which is also what makes
+    /// them light under the pointer.
+    pub(super) fn review_body(&self, sk: &crate::skin::Skin, th: &Theme) -> Option<gpui::Div> {
+        let at = self.wb_review?;
+        let all = self.bench.reviewable();
+        if all.is_empty() {
+            return None;
+        }
+        // Clamped rather than trusted: answering a question while the gallery
+        // is open can shorten the list under the index.
+        let at = at.min(all.len() - 1);
+        let item = all[at].clone();
+        let total = all.len();
+        let back = at > 0;
+        let fwd = at + 1 < total;
+        Some(
+            crate::benchdraw::review_page(at, total, &item.title, &item.answer, sk, th).child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .gap(px(8.))
+                    .items_center()
+                    .child(
+                        sk.chip(back)
+                            .child("\u{2190}".to_string())
+                            .relative()
+                            .child(self.live_zone(crate::workbench::Hit::GalleryBack, sk)),
+                    )
+                    .child(
+                        sk.chip(fwd)
+                            .child("\u{2192}".to_string())
+                            .relative()
+                            .child(self.live_zone(crate::workbench::Hit::GalleryForward, sk)),
+                    )
+                    .child(div().flex_1())
+                    .child(
+                        sk.chip(false)
+                            .child("CLOSE".to_string())
+                            .relative()
+                            .child(self.live_zone(crate::workbench::Hit::GalleryClose, sk)),
+                    ),
+            ),
+        )
+    }
+
     pub(super) fn answer_chips(
         &mut self,
         q: &crate::surface::Question,
@@ -3593,6 +3645,33 @@ impl TerminalView {
             }
         };
 
+        // Asked once, because the anchor and the scroll below both need it
+        // and `reviewable()` walks the bench to answer.
+        let reviewing = self.wb_review.is_some() && !self.bench.reviewable().is_empty();
+
+        // THE REVIEW TAKES THE WORKBENCH, rather than floating over it.
+        //
+        // It was an absolutely-positioned panel centred on the bench — which
+        // is what a flyout IS — and at a narrow pane it drew outside the
+        // bench's own box. Parker: *"the review question BROKE OUT OF THE MAIN
+        // WORKBENCH SPACE!!! it should have just taken OVER the main workbench
+        // space ... in a very obvious way like the other tabs, comments
+        // overview etc. do"*.
+        //
+        // A shelf is the thing it is most like: you go to it, it fills the
+        // space, and you come back. So it is drawn as one, in the body, inside
+        // the same box every other shelf is clipped and scrolled by — which is
+        // the part that makes breaking out of the bench impossible rather than
+        // merely unlikely. The old reasoning for the overlay was that the card
+        // underneath is a question somebody is part-way through answering; that
+        // is still true, and it survives because the review REPLACES the body
+        // without touching the selection, so CLOSE puts them back exactly
+        // where they were.
+        let body = match self.review_body(sk, th) {
+            Some(page) => page,
+            None => body,
+        };
+
         // ── what the agent is blocked on, whatever else is on the bench ─────
         //
         // OUT of the match, and that is the fix rather than a tidy-up. It was
@@ -3857,69 +3936,6 @@ impl TerminalView {
             }
         };
 
-        // The review gallery, drawn OVER everything rather than in place of
-        // it. The thing underneath is a question somebody is part-way
-        // through answering, and replacing it with a history is exactly the
-        // navigation the flyout exists to avoid.
-        let gallery = self.wb_review.and_then(|at| {
-            let all = self.bench.reviewable();
-            if all.is_empty() {
-                return None;
-            }
-            let at = at.min(all.len() - 1);
-            let item = all[at].clone();
-            let total = all.len();
-            let back = at > 0;
-            let fwd = at + 1 < total;
-            Some(
-                // The centring wrapper: it fills the bench and puts the panel
-                // in the middle of it, over whatever is underneath.
-                div()
-                    .absolute()
-                    .inset_0()
-                    .relative()
-                    .child(crate::benchdraw::zone(
-                        self.wb_zones.clone(),
-                        crate::workbench::Hit::Nothing,
-                    ))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .child(
-                        crate::benchdraw::review_flyout(
-                            at,
-                            total,
-                            &item.title,
-                            &item.answer,
-                            sk,
-                            th,
-                        )
-                        .child(
-                            div()
-                                .flex()
-                                .flex_row()
-                                .gap(px(8.))
-                                .items_center()
-                                .child(
-                                    sk.chip(back)
-                                        .child("\u{2190}".to_string())
-                                        .relative()
-                                        .child(
-                                            self.live_zone(crate::workbench::Hit::GalleryBack, sk),
-                                        ),
-                                )
-                                .child(sk.chip(fwd).child("\u{2192}".to_string()).relative().child(
-                                    self.live_zone(crate::workbench::Hit::GalleryForward, sk),
-                                ))
-                                .child(div().flex_1())
-                                .child(sk.chip(false).child("CLOSE".to_string()).relative().child(
-                                    self.live_zone(crate::workbench::Hit::GalleryClose, sk),
-                                )),
-                        ),
-                    ),
-            )
-        });
-
         // ── the open dial's list ────────────────────────────────────────────
         //
         // Drawn last and placed absolutely, UNDER THE DIAL THAT OPENED IT, so
@@ -4010,7 +4026,14 @@ impl TerminalView {
                         // because nothing had selected it. Bottom belongs to the
                         // conversation and to nothing else, and it matters twice
                         // over now the body scrolls.
-                        let anchor = crate::workbench::body_anchor(showing_id.is_some(), offering);
+                        // A review fills the body like a card, so it is
+                        // anchored and scrolled like one: bottom-anchored it
+                        // would sit at the foot of the pane, and unscrolled a
+                        // long answer would simply be cut.
+                        let anchor = crate::workbench::body_anchor(
+                            showing_id.is_some() || reviewing,
+                            offering,
+                        );
                         div()
                             // Stateful, because a scroll container IS state:
                             // gpui keeps the offset against this id between
@@ -4051,10 +4074,10 @@ impl TerminalView {
                             // simply cut — with the folds already built and
                             // already unable to save it, because one unfolded
                             // section can exceed the pane on its own.
-                            .when(showing_id.is_some(), |d| {
+                            .when(showing_id.is_some() || reviewing, |d| {
                                 d.overflow_y_scroll().track_scroll(&self.wb_card_scroll)
                             })
-                            .when(showing_id.is_none(), |d| d.overflow_hidden())
+                            .when(showing_id.is_none() && !reviewing, |d| d.overflow_hidden())
                             .when(anchor == Anchor::Bottom, |d| d.justify_end())
                             .when(self.mode.is_agent(), |d| {
                                 d.relative().child(crate::benchdraw::zone(
@@ -4127,7 +4150,6 @@ impl TerminalView {
             // card's and win the lookup — last painted wins. Before the
             // gallery, which is a modal and must win over both.
             .children(dial_list)
-            .children(gallery)
             // Last, so its hitbox and its cursor request are painted after
             // every control's — see the hook for why that order is the rule.
             .child(self.pointer_hook(weak))
