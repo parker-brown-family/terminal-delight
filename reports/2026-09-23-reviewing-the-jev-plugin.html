@@ -370,7 +370,8 @@ td.defer { color: var(--warning); font-family: var(--mono); font-size: 12.5px; }
   re-verified at <code>2902d86</code>, fixes landed as <code>7a6ee60</code>, a bug I shipped
   in that very commit repaired in <code>2d002bf</code>, and the author's state-partitioning work
   rebased on top as <code>313cc27</code>. Gates on the pushed tree:
-  <b>clippy clean, rustfmt clean, 14/14 plugin tests</b>.</p>
+  <b>clippy clean, rustfmt clean, 15/15 plugin tests</b>, run by me on the author's tree rather
+  than reported to me.</p>
 </header>
 
 <section>
@@ -988,12 +989,30 @@ td.defer { color: var(--warning); font-family: var(--mono); font-size: 12.5px; }
   </div>
 
   <p class="aside">This is the third variant of the same fault in one evening, and the first two
-  are findings in this document. The timeout made an abstention unreachable; one malformed
+  are findings in this document. A fourth arrived within the hour, below. The timeout made an abstention unreachable; one malformed
   question made twenty-seven answers unreachable; and now a guard made its own subject
   unreachable. <b>Between us we produced three different ways for a thing to be green and not
   run</b> &mdash; the author's probe rig supplied a variable that hid a mismatch, my rig skipped
   the branch entirely. A reviewer who has just written that up twice is evidently not immune to
   it.</p>
+
+  <div class="callout">
+    <p><b>The picture then found a fourth instance, in the author's code, before it was written
+    up.</b> Shown the two-by-two, they went looking in their own work and found
+    <code>_ask_rail</code> in the same cell: measured live across four real readings and three
+    arms, and guarded nowhere. Their reason is the part worth keeping &mdash; the branch needs a
+    client that can answer, and they had silently equated <em>a client that can answer</em> with
+    <em>a real client</em>, filed the whole thing under expensive, and stopped asking. It was one
+    method away from free. They have since added that method to the fixture and the branch now has
+    a guard that reads the partition out of the request instead of inferring it from a band that
+    moved. <span class="tag measured">measured</span> I emptied <code>GLOBAL_KINDS</code> myself
+    to check their new guard fails, and restored the file byte-identical.</p>
+    <p style="margin-top:10px">Which is the argument for the picture over another run. Four
+    instances in one evening, in two people's code, and <b>not one of them would have been found
+    by running anything</b> &mdash; every suite involved was green at the moment each defect was
+    live. The matrix costs a minute and asks a question no test can ask of itself: not <em>does
+    this pass</em>, but <em>which cell is it in</em>.</p>
+  </div>
 
   <div class="callout">
     <p><b>One correction to my own earlier finding.</b> When I reported the test that can spend
