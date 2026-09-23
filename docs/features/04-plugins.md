@@ -167,6 +167,24 @@ the rail's own order stand inside a band. That number is a **resolution**, not a
 confidence floor: it is the worst measured positional effect rounded up, from two
 fixtures on one day, and `TD_JEV_RAIL_BAND` overrides it.
 
+**The rail's own severity is withheld from the model on purpose.** Each frame
+arrives carrying a `tone`, and passing it along looks free. Measured on four
+deliberately ambiguous frames, holding the text fixed and flipping only the tone:
+with the tone in the state and the question silent about it, scores moved 0.40 on
+average; with the question naming it, 0.41. Naming it costs nothing — **putting
+it in the state at all is what moves the answer**, four times the noise floor,
+before a word of the question mentions it.
+
+So it is dropped before the request. The value of this question is a *second*
+opinion, and the caller already enforces severity with an ordering floor that a
+warning cannot fall through — a constraint, which needs no agreement from here.
+Two readings that agree because one of them read the other are one reading. What
+is *not* measured is whether that shift would have been correct, so this is a
+switch rather than a deletion: `TD_JEV_RAIL_TONE=1` sends it and names it. With
+it off the experiment becomes its own control — flipping a withheld field has no
+causal path, and that arm reads 0.16, the noise floor measured under the same
+conditions instead of quoted from elsewhere.
+
 No threshold ships. A confidence floor is a measurement, nobody has swept labelled
 cases for these questions yet, and a default would be a number nothing measured —
 so `TD_JEV_MIN_CONFIDENCE` defaults to no floor and every answer carries its own

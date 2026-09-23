@@ -567,6 +567,51 @@ RAIL_CRITERIA = [
 ]
 
 
+def _send_tone():
+    """Is the rail's own severity put in front of the model at all? Off by default.
+
+    The rail assigns every frame a tone before this plugin sees it, and sends it.
+    The obvious move is to pass it along — the model is better informed, and the
+    caller keeps its ordering floor regardless. Measured on four deliberately
+    ambiguous frames, holding the text fixed and flipping only the tone:
+
+        tone in the state, question silent about it   0.40 mean, 0.70 worst
+        tone in the state, question naming it         0.41 mean, 0.74 worst
+        run-to-run noise on this instrument           0.10 stdev, 0.22 worst
+
+    Naming it costs nothing — 0.40 against 0.41. **Sending it at all is what moves
+    the answer**, four times the noise floor, before a single word of the question
+    mentions it. So the choice was never how to word this; it was whether the
+    rail's own severity belongs in front of the model, and a field in the state
+    is read whether or not anything points at it.
+
+    Re-measured after this switch went in, which gives the experiment its own
+    control: with tone withheld, flipping it has no causal path at all, and the
+    arm reads 0.16 — the noise floor, measured under the same conditions rather
+    than quoted from elsewhere. With the switch on it reads 0.49 mean, 0.94 worst.
+
+    It stays out, because the value here is a SECOND opinion. The caller already
+    enforces severity with an ordering floor a warning cannot fall through, which
+    is a constraint rather than a suggestion and does not need this question's
+    agreement. Two readings that agree because one of them read the other are one
+    reading. What is NOT measured is whether that 0.40 shift is correct — a warn
+    line may well deserve to rank higher — so this is a switch and not a deletion:
+    `TD_JEV_RAIL_TONE=1` sends it and names it, for re-deciding against real
+    readings rather than the four fixtures behind the numbers above.
+    """
+    return os.environ.get("TD_JEV_RAIL_TONE", "").strip().lower() in ("1", "true", "yes")
+
+
+def _tone_clause(idx):
+    """The sentence naming tone, when it is being sent. Empty when it is not."""
+    if not _send_tone():
+        return ""
+    return (" `frames[%d].tone` is the severity the status bar itself assigned this "
+            "line. Treat it as one more fact about the line, not as the answer: the "
+            "reader can already see the colour, and what is being asked is what they "
+            "should DO about it." % idx)
+
+
 def _rail_question(idx):
     f = "`frames[%d]" % idx
     return {
@@ -583,7 +628,8 @@ def _rail_question(idx):
                 "one of them may sum up the others; a line that summarises its "
                 "neighbours tells the reader nothing they cannot get from the lines it "
                 "summarises. In `facts`, a null is a measurement git could not take — "
-                "not a zero, and not permission to assume the thing is absent.",
+                "not a zero, and not permission to assume the thing is absent."
+                + _tone_clause(idx),
         },
         "criteria": RAIL_CRITERIA,
     }
@@ -637,7 +683,12 @@ def do_rail_weather(args):
     state = {
         "project": args.get("project"),
         "facts": facts,
-        "frames": [{"id": f.get("id"), "kind": f.get("kind"), "text": f.get("text")}
+        # `tone` is accepted on every frame and deliberately NOT forwarded unless
+        # asked for — see `_send_tone`. Dropping it here rather than at the
+        # question is the point: a field in the state moves the answer whether or
+        # not any question mentions it.
+        "frames": [dict({"id": f.get("id"), "kind": f.get("kind"), "text": f.get("text")},
+                        **({"tone": f.get("tone")} if _send_tone() else {}))
                    for f in frames],
     }
     questions = {"frame_%d" % i: _rail_question(i) for i in range(len(frames))}
