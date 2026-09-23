@@ -11759,13 +11759,29 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         self.eng_judging = false;
+        let debug = std::env::var_os("TD_RAIL_DEBUG").is_some();
         let Some(j) = judgement else {
+            if debug {
+                eprintln!("rail: no judgement — the bar is git's own order");
+            }
             return;
         };
         if let Some(reading) = self.eng.get_mut(&key) {
-            if judge::key_of(&reading.frames) == j.reading {
+            let current = judge::key_of(&reading.frames);
+            if current == j.reading {
+                if debug {
+                    eprintln!(
+                        "rail: judged {} frames, attention {:?}, diamond {:?}, first {:?}",
+                        j.order.len(),
+                        j.attention,
+                        judge::diamond(reading.state.is_calm(), Some(&j), &reading.frames),
+                        j.order.first()
+                    );
+                }
                 reading.judgement = Some(j);
                 cx.notify();
+            } else if debug {
+                eprintln!("rail: judgement arrived about a reading that has moved — dropped");
             }
         }
     }
