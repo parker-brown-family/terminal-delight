@@ -913,9 +913,38 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("td-fake-jev-{tag}"));
         let ports = dir.join("jev").join("ports");
         std::fs::create_dir_all(&ports).expect("temp dir is writable");
+        // `ask_many` answers every question and, in the score's own value,
+        // reports HOW MANY FRAMES that request carried. That turns the fake into
+        // an instrument: a test can read back what the plugin actually sent,
+        // which is the only way to prove a partition happened rather than
+        // inferring it from a band that moved. Nothing leaves the machine.
         std::fs::write(
             dir.join("jev").join("__init__.py"),
-            "class JevClient:\n    def __init__(self, *a, **k):\n        pass\n",
+            "class _D:\n\
+             \x20   def __init__(self, kind, value):\n\
+             \x20       self.kind = kind\n\
+             \x20       self.value = value\n\
+             \x20       self.probabilities = None\n\
+             \x20       self.confidence = None\n\
+             \x20       self.abstained = False\n\
+             \x20       self.reason = None\n\
+             \x20       self.latency_ms = 1.0\n\
+             \x20       self.backend = 'fake'\n\
+             \n\
+             \n\
+             class JevClient:\n\
+             \x20   def __init__(self, *a, **k):\n\
+             \x20       pass\n\
+             \n\
+             \x20   def ask_many(self, state, questions):\n\
+             \x20       n = len((state or {}).get('frames') or [])\n\
+             \x20       out = {}\n\
+             \x20       for key, q in questions.items():\n\
+             \x20           if q.get('type') == 'noul':\n\
+             \x20               out[key] = _D('noul', 0.5)\n\
+             \x20           else:\n\
+             \x20               out[key] = _D('score', min(4.0, n / 10.0))\n\
+             \x20       return out\n",
         )
         .unwrap();
         std::fs::write(ports.join("__init__.py"), "").unwrap();
@@ -1127,6 +1156,117 @@ mod tests {
             status["reason"].as_str().is_some_and(|r| !r.is_empty()),
             "refused without saying why: {status}"
         );
+    }
+
+    /// A `group` partitions the state, and the whole-reading questions do not.
+    ///
+    /// Both halves are one assertion, because the fake client answers each score
+    /// with `frames / 10` — the size of the request it was handed. So the value
+    /// coming back IS the state size, and a test can read the partition instead
+    /// of inferring it from a band that moved.
+    ///
+    /// This guard exists because the rest of my own work had the failure the
+    /// reviewer's grid exposed: `_ask_rail` was measured live and guarded
+    /// nowhere, and the branch it needed — a client that can answer — looked
+    /// expensive until `fake_jev_home` made it free.
+    #[test]
+    fn live_jev_mcp_group_splits_the_state_but_not_the_whole_reading() {
+        let bin = std::path::Path::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../plugins/jev-mcp/jev-mcp"
+        ))
+        .to_path_buf();
+        if !bin.is_file() {
+            eprintln!("skip: bundled jev-mcp not in this checkout");
+            return;
+        }
+        let home = fake_jev_home("group-split", None);
+        let env = vec![
+            (
+                "TD_JEV_HOME".to_string(),
+                home.to_string_lossy().into_owned(),
+            ),
+            (
+                concat!("SYSTEMONE", "_BASE_URL").to_string(),
+                "http://127.0.0.1:9".to_string(),
+            ),
+        ];
+
+        // Ten frames: four warn, six plain, and the Sentence — the one kind whose
+        // judgement is about the whole reading — sits in the plain group.
+        let frame = |i: usize, kind: &str, group: &str| json!({ "id": format!("f{i}"), "kind": kind, "text": "t", "group": group });
+        let mut frames: Vec<Value> = Vec::new();
+        for i in 0..4 {
+            frames.push(frame(i, "Collision", "warn"));
+        }
+        for i in 4..9 {
+            frames.push(frame(i, "Repos", "plain"));
+        }
+        frames.push(frame(9, "Sentence", "plain"));
+
+        let mut proc = McpProcess::spawn(&bin.to_string_lossy(), &[], &env).unwrap();
+        proc.initialize().unwrap();
+        let text = proc
+            .call_tool(
+                "rail_weather",
+                json!({ "reading": "r", "frames": frames, "facts": { "calm": false } }),
+            )
+            .unwrap();
+        let w: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(
+            w["available"],
+            json!(true),
+            "fake client should answer: {w}"
+        );
+
+        let pos = |kind: &str| -> f64 {
+            w["frames"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|f| f["kind"] == kind)
+                .and_then(|f| f["position"].as_f64())
+                .unwrap_or_else(|| panic!("no judged {kind} frame in {w}"))
+        };
+
+        // 4 warn frames in their own request, 5 plain ones in theirs (the
+        // Sentence is lifted out), and the Sentence against all 10.
+        assert!(
+            (pos("Collision") - 0.4).abs() < 1e-6,
+            "warn group should have been asked alone: got {}",
+            pos("Collision")
+        );
+        assert!(
+            (pos("Repos") - 0.5).abs() < 1e-6,
+            "plain group should exclude the whole-reading frame: got {}",
+            pos("Repos")
+        );
+        assert!(
+            (pos("Sentence") - 1.0).abs() < 1e-6,
+            "a frame judged against its neighbours must keep every one of them: got {}",
+            pos("Sentence")
+        );
+
+        // And with no group sent, nothing partitions — the contract a caller
+        // that has never heard of groups still relies on.
+        let plain_frames: Vec<Value> = (0..10)
+            .map(|i| json!({ "id": format!("g{i}"), "kind": "Repos", "text": "t" }))
+            .collect();
+        let mut proc2 = McpProcess::spawn(&bin.to_string_lossy(), &[], &env).unwrap();
+        proc2.initialize().unwrap();
+        let t2 = proc2
+            .call_tool(
+                "rail_weather",
+                json!({ "reading": "r", "frames": plain_frames, "facts": { "calm": false } }),
+            )
+            .unwrap();
+        let w2: Value = serde_json::from_str(&t2).unwrap();
+        for f in w2["frames"].as_array().unwrap() {
+            assert!(
+                (f["position"].as_f64().unwrap() - 1.0).abs() < 1e-6,
+                "an ungrouped reading must still go as one request: {f}"
+            );
+        }
     }
 
     /// terminal-delight's own source knows nothing about Jev but its name.
