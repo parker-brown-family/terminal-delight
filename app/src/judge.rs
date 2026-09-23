@@ -89,10 +89,23 @@ pub fn order(frames: Vec<Frame>, judgement: Option<&Judgement>) -> Vec<Frame> {
     // Stable, so frames the model did not rank keep git's order among
     // themselves and sit behind the ones it did.
     out.sort_by_key(|f| {
-        j.order
+        let rank = j
+            .order
             .iter()
             .position(|t| *t == f.text)
-            .unwrap_or(usize::MAX)
+            .unwrap_or(usize::MAX);
+        // A warning git MEASURED outranks an opinion about it — the same rule
+        // [`diamond`] applies to the badge, applied to the ticker. The model
+        // may order warnings among themselves and may promote anything it
+        // likes; it may not sink a warning beneath a line that is not one.
+        //
+        // This is not hypothetical. On the first live ranking, a Foreign frame
+        // — a pane filed under this project but writing into another
+        // repository, which the badge shows as `⚠ 3 FOREIGN` — came back
+        // "background" at 1.23 and sorted below a repository count. Tone is a
+        // fact about what git found; the level is an opinion about what it is
+        // worth, and the fact wins.
+        (f.tone != Tone::Warn, rank)
     });
     out
 }
@@ -499,6 +512,91 @@ mod tests {
         }
         assert!(p.contains("two dirty"));
         assert!(p.contains("\"f0\""));
+    }
+
+    /// A body the real plugin really returned, kept verbatim.
+    ///
+    /// Recorded 2026-09-23 from `jev-mcp` on the JEV project's live reading,
+    /// 346 ms through OpenRouter. Every other body in this file is one I wrote,
+    /// which only ever proves my own spelling — this one proves theirs, and it
+    /// is the only fixture here that would notice the plugin changing shape.
+    ///
+    /// **One field is edited, and only one.** The real body ends with a
+    /// `backend` naming the model, and pasting it here tripped
+    /// `plugins::source_says_nothing_about_jev_but_its_name` — the gate that
+    /// keeps a model id out of this crate — within minutes of the guard being
+    /// written. It was right to. `parse` never reads that field, so the value
+    /// is elided and every field the parser actually touches is verbatim.
+    const LIVE_BODY: &str = r#"{"available": true, "reason": null, "reading": "17250913310000000001", "attention": 0.66, "ranked": ["f1", "f2", "f3", "f0", "f4", "f5", "f6"], "band": 1.5, "unjudged": [], "frames": [{"id": "f0", "kind": "Repos", "level": "background", "position": 0.97, "reason": null}, {"id": "f1", "kind": "Branches", "level": "worth_noticing", "position": 1.62, "reason": null}, {"id": "f2", "kind": "Shared", "level": "worth_noticing", "position": 2.24, "reason": null}, {"id": "f3", "kind": "Shared", "level": "act_soon", "position": 2.73, "reason": null}, {"id": "f4", "kind": "Foreign", "level": "background", "position": 1.23, "reason": null}, {"id": "f5", "kind": "Pulse", "level": "background", "position": 1.33, "reason": null}, {"id": "f6", "kind": "Sentence", "level": "background", "position": 1.24, "reason": null}], "backend": "<elided: a model id, which this crate may not carry>"}"#;
+
+    /// The same reading's frames, in git's order, with git's tones.
+    fn live_frames() -> Vec<Frame> {
+        let mut f = vec![
+            frame(FrameKind::Repos, "2 repositories"),
+            frame(FrameKind::Branches, "main \u{2190} master"),
+            frame(FrameKind::Shared, "master is shared by 3 writers"),
+            frame(FrameKind::Shared, "main is shared by 3 writers"),
+            frame(
+                FrameKind::Foreign,
+                "\u{26a0} ideas spitball is operating elsewhere",
+            ),
+            frame(FrameKind::Pulse, "5 commits in the last hour"),
+            frame(FrameKind::Sentence, "1 lines of work, one shared"),
+        ];
+        // as engstate writes them: shared and foreign are warnings
+        f[2].tone = Tone::Warn;
+        f[3].tone = Tone::Warn;
+        f[4].tone = Tone::Warn;
+        f
+    }
+
+    #[test]
+    fn the_real_plugins_real_answer_parses() {
+        let f = live_frames();
+        // the recorded body names a reading of its own; re-key it to these
+        // frames so the echo check passes and the ranking is what is tested.
+        let body = LIVE_BODY.replace("17250913310000000001", &key_of(&f).to_string());
+        let j = parse(&f, &body).expect("the live body parses");
+        assert_eq!(j.attention, Some(0.66));
+        assert_eq!(j.order.len(), 7, "every frame was ranked");
+        assert_eq!(j.order[0], "main \u{2190} master");
+    }
+
+    #[test]
+    fn a_warning_is_never_sunk_beneath_a_line_that_is_not_one() {
+        // THE LIVE CASE: the Foreign frame came back "background" at 1.23 and
+        // the plugin ranked it below a repository count. Tone is a fact git
+        // measured; the level is an opinion about it, and the fact wins.
+        let f = live_frames();
+        let body = LIVE_BODY.replace("17250913310000000001", &key_of(&f).to_string());
+        let j = parse(&f, &body).expect("parsed");
+        let out = order(f, Some(&j));
+        let warn_last = out
+            .iter()
+            .rposition(|x| x.tone == Tone::Warn)
+            .expect("warns");
+        let plain_first = out
+            .iter()
+            .position(|x| x.tone != Tone::Warn)
+            .expect("plains");
+        assert!(
+            warn_last < plain_first,
+            "a warning sorted below a non-warning: {:?}",
+            out.iter().map(|x| (&x.text, x.tone)).collect::<Vec<_>>()
+        );
+        // and the model still orders the warnings among themselves
+        assert_eq!(out[0].text, "master is shared by 3 writers");
+    }
+
+    #[test]
+    fn the_model_may_still_promote_within_a_tone() {
+        // the floor must not freeze git's order outright — that would make the
+        // whole ranking a no-op for every ordinary reading.
+        let f = three(); // all Tone::Plain
+        let j = judging(&f, &["quiet for an hour", "two converging"], None);
+        let out = order(f, Some(&j));
+        assert_eq!(out[0].text, "quiet for an hour");
+        assert_eq!(out[1].text, "two converging");
     }
 
     // ---- the key ---------------------------------------------------------
