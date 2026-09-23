@@ -18,7 +18,8 @@
 //! git's own order. There is nothing to keep in step, because there is only
 //! one thing.
 
-use crate::engstate::{Frame, Segment, Tone};
+use crate::engstate::{Frame, ProjectState, Segment, Tone};
+use serde_json::{json, Value};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
@@ -148,6 +149,105 @@ impl Diamond {
             tone,
         })
     }
+}
+
+/// What the rail hands the plugin, and what it expects back.
+///
+/// **No question wording lives here, deliberately.** `plugins.rs` promises that
+/// a public checkout of this repository carries nothing that knows what Jev is,
+/// and while the mechanical gate beside that promise only forbids endpoints,
+/// keys and model ids, the promise is worth keeping whole. There is a second,
+/// larger reason: wording is where these questions actually fail — a rubric
+/// level whose boundary cannot be stated in one sentence goes soft — and the
+/// plugin can be edited and re-run in seconds where this crate takes a gpui
+/// rebuild. So the rail sends **facts**, and the plugin composes the questions.
+pub fn payload(state: &ProjectState, frames: &[Frame]) -> Value {
+    let ids: Vec<Value> = frames
+        .iter()
+        .enumerate()
+        .map(|(i, f)| {
+            json!({
+                "id": format!("f{i}"),
+                "kind": format!("{:?}", f.kind),
+                "text": f.text,
+            })
+        })
+        .collect();
+    json!({
+        "reading": key_of(frames).to_string(),
+        "project": state.name,
+        "frames": ids,
+        "facts": {
+            "calm": state.is_calm(),
+            "checkouts": state.primary_checkouts().len(),
+            "shared": state.shared_count(),
+            // `dirty` is Option all the way out: unmeasured is not zero, and a
+            // null here must never arrive at the model as "nothing uncommitted".
+            "dirty": state.dirty_checkouts(),
+            "foreign": state.foreign.len(),
+            "visitors": state.visitors.len(),
+            "no_git": state.no_git.len(),
+            "conflicts": state.conflicts().len(),
+            "collisions": state.collisions().len(),
+            "landing": state.landing().len(),
+            "idle_worktrees": state.idle.len(),
+            "commits_last_hour": state
+                .primary()
+                .and_then(|p| p.pulse)
+                .map(|p| p.iter().sum::<u32>()),
+        }
+    })
+}
+
+/// Read what the plugin said, or decide it said nothing usable.
+///
+/// Every route out of here that is not a complete answer is `None`, which is
+/// the git-only bar. Three absences the plugin keeps distinct — not installed,
+/// no client or key, and abstained — all collapse to `None` *here*, at the
+/// edge, having stayed separate for the whole journey. That is the right place
+/// for a collapse: a renderer may decide unknown draws as nothing, a store may
+/// not decide unknown is zero.
+pub fn parse(frames: &[Frame], body: &str) -> Option<Judgement> {
+    let v: Value = serde_json::from_str(body).ok()?;
+    if v.get("available") == Some(&Value::Bool(false)) {
+        return None;
+    }
+    // A reading the plugin echoes back that is not the one we asked about is a
+    // wrong answer, not a stale one — refuse it rather than key it.
+    let asked = key_of(frames);
+    if let Some(echo) = v.get("reading").and_then(|r| r.as_str()) {
+        if echo != asked.to_string() {
+            return None;
+        }
+    }
+    // `attention` absent or null stays None. It must not become 0.0, which
+    // would read as "nobody is needed" — a claim nothing made.
+    let attention = v
+        .get("attention")
+        .and_then(|a| a.as_f64())
+        .map(|a| a as f32)
+        .filter(|a| (0.0..=1.0).contains(a));
+    let order = v
+        .get("ranked")
+        .and_then(|r| r.as_array())
+        .map(|ids| {
+            ids.iter()
+                .filter_map(|id| id.as_str())
+                .filter_map(|id| id.strip_prefix('f'))
+                .filter_map(|n| n.parse::<usize>().ok())
+                .filter_map(|i| frames.get(i))
+                .map(|f| f.text.clone())
+                .collect::<Vec<String>>()
+        })
+        .unwrap_or_default();
+    if order.is_empty() && attention.is_none() {
+        return None; // nothing usable came back
+    }
+    Some(Judgement {
+        reading: asked,
+        order,
+        attention,
+    })
 }
 
 /// The key for a set of frames — what a judgement must match to be believed.
@@ -298,6 +398,107 @@ mod tests {
             let j = judging(&f, &[], Some(p));
             assert_eq!(diamond(true, Some(&j), &f), Diamond::Split, "at {p}");
         }
+    }
+
+    // ---- reading what the plugin said ------------------------------------
+
+    /// A reading with no repository in it — enough to exercise `payload`
+    /// without a git tree, and it keeps every count honestly at its own zero.
+    fn bare_state() -> ProjectState {
+        ProjectState {
+            project: None,
+            name: Some("TD".into()),
+            scanned_at: std::time::Instant::now(),
+            took: std::time::Duration::ZERO,
+            repos: vec![],
+            checkouts: vec![],
+            idle: vec![],
+            no_git: vec![],
+            foreign: vec![],
+            visitors: vec![],
+        }
+    }
+
+    fn body(frames: &[Frame], extra: &str) -> String {
+        format!(
+            r#"{{"available":true,"reading":"{}",{extra}}}"#,
+            key_of(frames)
+        )
+    }
+
+    #[test]
+    fn a_ranking_comes_back_as_the_rails_own_texts() {
+        let f = three();
+        let j = parse(&f, &body(&f, r#""ranked":["f2","f0"],"attention":0.7"#)).expect("parsed");
+        assert_eq!(j.order, vec!["quiet for an hour", "two dirty"]);
+        assert_eq!(j.attention, Some(0.7));
+        assert_eq!(j.reading, key_of(&f));
+    }
+
+    #[test]
+    fn an_unavailable_plugin_is_no_judgement() {
+        let f = three();
+        let r = parse(&f, r#"{"available":false,"reason":"no key"}"#);
+        assert_eq!(r, None);
+    }
+
+    #[test]
+    fn an_answer_about_another_reading_is_refused_not_kept() {
+        // a wrong answer, not a stale one — keying it to what we asked would
+        // launder somebody else's judgement into this bar.
+        let f = three();
+        let r = parse(&f, r#"{"available":true,"reading":"99","ranked":["f0"]}"#);
+        assert_eq!(r, None);
+    }
+
+    #[test]
+    fn a_missing_attention_never_becomes_zero() {
+        // 0.0 would read as "nobody is needed" — a claim nothing made.
+        let f = three();
+        let j = parse(&f, &body(&f, r#""ranked":["f0"],"attention":null"#)).expect("parsed");
+        assert_eq!(j.attention, None);
+        assert_eq!(diamond(true, Some(&j), &f), Diamond::Undeclared);
+    }
+
+    #[test]
+    fn an_attention_outside_zero_to_one_is_dropped() {
+        let f = three();
+        for bad in ["1.4", "-0.2"] {
+            let j = parse(
+                &f,
+                &body(&f, &format!(r#""ranked":["f0"],"attention":{bad}"#)),
+            )
+            .expect("parsed");
+            assert_eq!(j.attention, None, "accepted {bad}");
+        }
+    }
+
+    #[test]
+    fn an_id_for_a_frame_that_does_not_exist_is_dropped() {
+        let f = three();
+        let j = parse(&f, &body(&f, r#""ranked":["f9","f0","nonsense"]"#)).expect("parsed");
+        assert_eq!(j.order, vec!["two dirty"]);
+    }
+
+    #[test]
+    fn nothing_usable_is_no_judgement() {
+        let f = three();
+        assert_eq!(parse(&f, &body(&f, r#""ranked":[]"#)), None);
+        assert_eq!(parse(&f, "not json at all"), None);
+        assert_eq!(parse(&f, "{}"), None);
+    }
+
+    #[test]
+    fn the_payload_carries_no_question_wording() {
+        // the promise plugins.rs makes: nothing in this crate knows what the
+        // model is being asked. The rail sends facts and its own frame texts.
+        let f = three();
+        let p = payload(&bare_state(), &f).to_string();
+        for leak in ["How ", "Rate ", "probability", "criteria", "instructions"] {
+            assert!(!p.contains(leak), "payload carries {leak:?}");
+        }
+        assert!(p.contains("two dirty"));
+        assert!(p.contains("\"f0\""));
     }
 
     // ---- the key ---------------------------------------------------------

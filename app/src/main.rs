@@ -3799,6 +3799,10 @@ struct Workspace {
     /// A scan is out. One at a time: a second pass queued behind a slow git
     /// would land after the first and say the same thing.
     eng_scanning: bool,
+    /// One judgement call in flight at a time. The measured budget on the
+    /// backend holds to about nine concurrent callers and this machine runs
+    /// twenty panes, so a window asks once per reading and never per pane.
+    eng_judging: bool,
     /// Which ticker frame is up, advanced on its own clock.
     eng_frame: usize,
     /// The afterglow: what changed between consecutive readings of each
@@ -5241,6 +5245,7 @@ impl Workspace {
             vitals_refreshing: false,
             eng: std::collections::HashMap::new(),
             eng_scanning: false,
+            eng_judging: false,
             eng_frame: 0,
             eng_events: std::collections::HashMap::new(),
             // a rig lever, like TD_RAIL_DEBUG: there is no click injection on
@@ -5608,6 +5613,43 @@ impl Workspace {
                 .await;
             if this
                 .update(cx, |ws: &mut Workspace, cx| ws.apply_eng(key, state, cx))
+                .is_err()
+            {
+                break;
+            }
+        })
+        .detach();
+        // THE SECOND OPINION: a typed judgement over the frames git just drew.
+        //
+        // Entirely optional, and optional by absence rather than by a switch:
+        // with no `jev` plugin installed, `discover` returns nothing, this loop
+        // asks nothing, every reading keeps `judgement: None`, and the rail is
+        // the git-only bar it has always been. There is no second rendering
+        // path to keep in step — see `judge.rs`.
+        //
+        // Off the main thread for the same reason the scan is: this spawns a
+        // process and talks to it over a pipe. Nothing here is awaited by a
+        // render, and a call that never returns costs a judgement, not a frame.
+        cx.spawn(async move |this, cx| loop {
+            cx.background_executor().timer(Duration::from_secs(3)).await;
+            let Ok(req) = this.update(cx, |ws: &mut Workspace, _| ws.eng_judge_request()) else {
+                break; // window gone
+            };
+            let Some((key, frames, payload)) = req else {
+                continue; // nothing due, or one already in flight
+            };
+            let answer = cx
+                .background_executor()
+                .spawn(async move {
+                    let home = session::home_dir();
+                    let found = plugins::discover(&home);
+                    let jev = found.iter().find(|m| m.name == "jev")?;
+                    let body = plugins::run_action(jev, "rail_weather", payload).ok()?;
+                    judge::parse(&frames, &body)
+                })
+                .await;
+            if this
+                .update(cx, |ws: &mut Workspace, cx| ws.apply_judge(key, answer, cx))
                 .is_err()
             {
                 break;
@@ -11679,6 +11721,53 @@ impl Workspace {
         }
         self.eng.insert(key, Reading::of(state));
         cx.notify();
+    }
+
+    /// What to ask a judgement about, or `None` when there is nothing to ask.
+    ///
+    /// Due means: the active project has a reading, that reading has no
+    /// judgement yet, and nothing else is in flight. A reading whose frames
+    /// have not changed keeps the judgement it already has, so a still window
+    /// asks once and then stops — the ranking of a list that did not move
+    /// cannot have moved either.
+    fn eng_judge_request(&mut self) -> Option<(EngKey, Vec<engstate::Frame>, serde_json::Value)> {
+        if self.eng_judging {
+            return None;
+        }
+        let key = self.eng_key();
+        let reading = self.eng.get(&key)?;
+        if reading.judgement.is_some() || reading.frames.is_empty() {
+            return None;
+        }
+        let payload = judge::payload(&reading.state, &reading.frames);
+        self.eng_judging = true;
+        Some((key, reading.frames.clone(), payload))
+    }
+
+    /// Take a judgement, if it is still about the reading on screen.
+    ///
+    /// The guard is not belt-and-braces: a scan lands every two seconds and a
+    /// call takes a couple of hundred milliseconds, so an answer arriving
+    /// about frames that have since changed is an ordinary event, not an edge
+    /// case. `judge::order` refuses it on the key anyway; dropping it here as
+    /// well keeps a superseded answer from sitting in the struct looking
+    /// current.
+    fn apply_judge(
+        &mut self,
+        key: EngKey,
+        judgement: Option<judge::Judgement>,
+        cx: &mut Context<Self>,
+    ) {
+        self.eng_judging = false;
+        let Some(j) = judgement else {
+            return;
+        };
+        if let Some(reading) = self.eng.get_mut(&key) {
+            if judge::key_of(&reading.frames) == j.reading {
+                reading.judgement = Some(j);
+                cx.notify();
+            }
+        }
     }
 
     /// The afterglow still on show for the active project, oldest first.
