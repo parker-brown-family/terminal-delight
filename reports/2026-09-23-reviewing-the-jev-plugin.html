@@ -346,6 +346,7 @@ td.defer { color: var(--warning); font-family: var(--mono); font-size: 12.5px; }
 .tag.measured { color: var(--good); border-color: #235023; }
 .tag.inferred { color: var(--s1); border-color: #1d3f68; }
 .tag.hunch { color: var(--warning); border-color: #6b5313; }
+.tag.contradicted { color: var(--critical); border-color: #5c1f1f; }
 @media (max-width: 720px) { h1 { font-size: 26px; } .wrap { padding: 24px 16px 70px; } }
 
 </style>
@@ -362,10 +363,13 @@ td.defer { color: var(--warning); font-family: var(--mono); font-size: 12.5px; }
   not work was the rule the plugin exists to enforce &mdash; that an absence is never answered as
   a fact &mdash; which was broken in three places, each one inside a function whose own comment
   forbids it. Eight findings are fixed and pushed; one is deferred with an issue. The plugin's own
-  model was then asked to judge all nine, and it separated them the same way I did.</p>
+  model was then asked to judge all nine, and it separated them the same way I did. Then I shipped
+  a crash in the fix commit and the author caught it, which is the last section and the most
+  useful one.</p>
   <p class="pinned"><span class="tag measured">measured</span> Reviewed at <code>720a8d7</code>,
-  re-verified at <code>2902d86</code>, fixes landed as <code>7a6ee60</code>. Gates on the pushed
-  tree: <b>clippy clean, rustfmt clean, 13/13 plugin tests</b>.</p>
+  re-verified at <code>2902d86</code>, fixes landed as <code>7a6ee60</code>, and a bug I shipped
+  in that very commit repaired in <code>2d002bf</code>. Gates on the pushed tree:
+  <b>clippy clean, rustfmt clean, 14/14 plugin tests</b>.</p>
 </header>
 
 <section>
@@ -837,6 +841,11 @@ td.defer { color: var(--warning); font-family: var(--mono); font-size: 12.5px; }
         <td>A pinned model id inside terminal-delight</td>
         <td><code>plugins.rs carries "typesafe/jev" &mdash; an endpoint, key or model id belongs in plugins/jev-mcp/</code></td>
       </tr>
+      <tr>
+        <td>Put back the deleted <code>before</code> comparison</td>
+        <td>The <code>NameError</code> I shipped, described below</td>
+        <td><code>plugin error -32000: jev_status failed: name 'before' is not defined</code> &mdash; and the six sibling live tests all stayed green</td>
+      </tr>
     </tbody>
   </table>
 
@@ -868,10 +877,92 @@ td.defer { color: var(--warning); font-family: var(--mono); font-size: 12.5px; }
       <tr><td><b>Duration lost on the run that explains most</b><br><span class="sub">and two branches with different shapes</span></td><td><span class="p">0.29</span></td><td class="fixed">fixed &mdash; captured from abstentions too</td></tr>
       <tr><td><b>The plugin's deadline equalled the host's</b></td><td><span class="p">0.26</span></td><td class="fixed">fixed &mdash; eight seconds against ten</td></tr>
       <tr><td><b>A guard that cannot fail</b><br><span class="sub">asserts a property of a path that does not exist</span></td><td><span class="p">0.15</span></td><td class="defer">deferred &mdash; issue 710</td></tr>
-      <tr><td><b>A test that can spend money</b><br><span class="sub">inherits the shell that has the key</span></td><td><span class="p">0.13</span></td><td class="fixed">fixed &mdash; environment blanked</td></tr>
+      <tr><td><b>A test that can spend money</b><br><span class="sub">inherits whatever shell runs it</span></td><td><span class="p">0.13</span></td><td class="fixed">fixed &mdash; environment blanked</td></tr>
       <tr><td><b>One malformed question destroys the batch</b></td><td><span class="p">0.12</span></td><td class="fixed">fixed &mdash; validated per question</td></tr>
     </tbody>
   </table>
+</section>
+
+<section>
+  <h2>Then I shipped the same bug I had just written up twice</h2>
+
+  <p><code>7a6ee60</code> &mdash; the commit carrying all eight fixes &mdash; raised
+  <code>NameError: name 'before' is not defined</code> out of every verb in the plugin, on any
+  machine where the client imports and a key is set. The pull request's author hit it within
+  minutes of rebasing onto my work, reproduced it, traced it to my commit with
+  <code>git log -S</code>, and did not touch it because it was mine to fix.
+  <span class="tag measured">measured</span></p>
+
+  <p>The cause is dull: a restructure deleted the set the line compared against and left the line.
+  What is worth your time is why nothing caught it.</p>
+
+  <figure>
+    <span class="lbl">09 &middot; Two conditions, and no test that met both</span>
+    <div class="scroller">
+      <svg viewBox="0 0 880 300" role="img" aria-label="A two-by-two grid showing that the crashing line needed both an importable client and a key present, and that each existing test satisfied only one of the two conditions">
+        <text x="150" y="42" text-anchor="middle" font-family="ui-monospace, monospace" font-size="11" fill="#8b8a80">no key set</text>
+        <text x="150" y="58" text-anchor="middle" font-family="ui-monospace, monospace" font-size="11" fill="#8b8a80">&nbsp;</text>
+        <text x="520" y="42" text-anchor="middle" font-family="ui-monospace, monospace" font-size="11" fill="#8b8a80">a key is set</text>
+
+        <text x="20" y="112" font-family="ui-monospace, monospace" font-size="11" fill="#8b8a80">client cannot import</text>
+        <text x="20" y="212" font-family="ui-monospace, monospace" font-size="11" fill="#8b8a80">client imports</text>
+
+        <rect x="200" y="76" width="240" height="72" rx="8" fill="#1a1a19" stroke="#3a3a36"/>
+        <text x="320" y="106" text-anchor="middle" font-family="ui-monospace, monospace" font-size="10.5" fill="#8b8a80">returns early</text>
+        <text x="320" y="124" text-anchor="middle" font-family="ui-monospace, monospace" font-size="10" fill="#8b8a80">4 tests live here</text>
+
+        <rect x="460" y="76" width="240" height="72" rx="8" fill="#1a1a19" stroke="#3987e5"/>
+        <text x="580" y="106" text-anchor="middle" font-family="ui-monospace, monospace" font-size="10.5" fill="#3987e5">returns early, one line sooner</text>
+        <text x="580" y="124" text-anchor="middle" font-family="ui-monospace, monospace" font-size="10" fill="#8b8a80">the fingerprint test lives here</text>
+
+        <rect x="200" y="176" width="240" height="72" rx="8" fill="#1a1a19" stroke="#3a3a36"/>
+        <text x="320" y="206" text-anchor="middle" font-family="ui-monospace, monospace" font-size="10.5" fill="#8b8a80">reached, loop body never runs</text>
+        <text x="320" y="224" text-anchor="middle" font-family="ui-monospace, monospace" font-size="10" fill="#8b8a80">nothing lives here</text>
+
+        <rect x="460" y="176" width="240" height="72" rx="8" fill="#1a1a19" stroke="#d03b3b" stroke-width="2"/>
+        <text x="580" y="202" text-anchor="middle" font-family="ui-monospace, monospace" font-size="11" fill="#d03b3b">NameError, every verb</text>
+        <text x="580" y="222" text-anchor="middle" font-family="ui-monospace, monospace" font-size="10" fill="#fab219">nothing lived here either</text>
+        <text x="580" y="238" text-anchor="middle" font-family="ui-monospace, monospace" font-size="10" fill="#8b8a80">&mdash; until now</text>
+
+        <text x="20" y="284" font-family="ui-monospace, monospace" font-size="10.5" fill="#fab219">yellow = the cell the feature actually runs in</text>
+      </svg>
+    </div>
+    <figcaption>The two tests that set <code>TD_JEV_HOME</code> print <code>skip</code> and report
+    <code>ok</code> when it is unset, which it is on this machine. The one test that sets a key
+    blanks <code>TD_JEV_HOME</code>, so its import fails one line before the fault.
+    <b>A key-origin feature that only runs when a key is present was guarded entirely by tests
+    that only run when one is not.</b> Every guard was green and the code was unreachable.</figcaption>
+  </figure>
+
+  <div class="callout warn">
+    <p><b>The repair is the guard, not the line.</b> Reaching that branch never needed a real
+    client &mdash; only something importable. <code>fake_jev_home</code> writes a <code>jev</code>
+    package of two empty classes into a temp directory, and
+    <code>live_jev_mcp_tracks_where_the_key_came_from</code> spawns against it twice: once with the
+    key in the environment, once with a stand-in <code>dotenv.load</code> that sets the key only
+    after the import, so both origins are asserted and told apart. No checkout, no network, runs
+    everywhere. Put the deleted line back and it fails with the exact <code>NameError</code>
+    &mdash; while all six sibling live tests stay green, which is the measurement that matters:
+    they were not weak guards, they were guards pointed somewhere else.</p>
+  </div>
+
+  <p class="aside">This is the third variant of the same fault in one evening, and the first two
+  are findings in this document. The timeout made an abstention unreachable; one malformed
+  question made twenty-seven answers unreachable; and now a guard made its own subject
+  unreachable. <b>Between us we produced three different ways for a thing to be green and not
+  run</b> &mdash; the author's probe rig supplied a variable that hid a mismatch, my rig skipped
+  the branch entirely. A reviewer who has just written that up twice is evidently not immune to
+  it.</p>
+
+  <div class="callout">
+    <p><b>One correction to my own earlier finding.</b> When I reported the test that can spend
+    money, I said your shell has <code>TD_JEV_HOME</code> and a key exported, so
+    <code>cargo test</code> there would bill. <span class="tag contradicted">contradicted</span>
+    <code>TD_JEV_HOME</code> is <em>unset</em> in this shell &mdash; that is precisely why the
+    gated tests skipped. The finding stands, because <code>spawn</code> does inherit the
+    environment and a shell with those set would bill; the specific claim about this shell was
+    something I asserted without checking. Blanking the environment is still the right fix.</p>
+  </div>
 </section>
 
 <section class="grill">
