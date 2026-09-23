@@ -1360,6 +1360,11 @@ impl ProjectState {
         parts.push(match (n, shared) {
             (0, _) => "no checkout in use".into(),
             (1, 0) => "one line of work".into(),
+            // One line of work that IS the shared one. Without this arm the
+            // last case catches it and the bar says "1 lines of work, one
+            // shared", which it did on screen — and counting the sharers is
+            // noise when there is only one line for them to share.
+            (1, _) => "one line of work, shared".into(),
             (n, 0) => format!("{n} isolated lines of work"),
             (n, s) => format!("{n} lines of work, {} shared", number(s)),
         });
@@ -2167,6 +2172,23 @@ mod tests {
         let s = st.sentence().unwrap();
         assert!(s.starts_with("2 lines of work, one shared"), "{s}");
         assert!(s.contains("main is clean"), "{s}");
+    }
+
+    #[test]
+    fn one_line_that_is_the_shared_one_is_not_one_lines() {
+        // Seen on the bar: "1 lines of work, one shared". Every other count in
+        // this sentence spells its singular, and counting the sharers adds
+        // nothing when there is only one line for them to share.
+        let rig = Rig::new("oneshared");
+        let st = scan(&ScanInput {
+            project: Some(1),
+            name: Some("REPO".into()),
+            mine: vec![w(0, "CLAUDE", &rig.main), w(1, "CODEX", &rig.main)],
+            others: vec![],
+        });
+        let s = st.sentence().unwrap();
+        assert!(s.starts_with("one line of work, shared"), "{s}");
+        assert!(!s.contains("1 lines"), "{s}");
     }
 
     #[test]
