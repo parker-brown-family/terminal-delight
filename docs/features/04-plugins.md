@@ -94,6 +94,66 @@ and the card is up on the frame of the click with whatever it already has.
 - Demo: `TD_USAGE_DEMO` (fictional). Dev: `TD_USAGE_LIVE` (this machine's real
   records — never for capture).
 
+## Optional: jev — typed judgement, and only if you have it
+
+Every other plugin here reads something already on the disk. This one calls a
+hosted model behind an API key — TypeSafe's System One — and that makes it the one
+place where a public repository could acquire a paid third-party
+dependency. It does not, and the design is the proof.
+
+**Terminal Delight's source knows nothing about Jev but the plugin's name.** No
+HTTP client, no key, no endpoint, no model id, and not one line of question text.
+Everything that knows what Jev *is* lives in `plugins/jev-mcp/jev-mcp`. That is
+not a convention to be remembered — `plugins.rs::source_says_nothing_about_jev_but_its_name`
+walks every `.rs` file under `app/src` and fails the build if an endpoint, a key
+name or a model id appears in any of them.
+
+**Installing is the opt-in, and it is the only one.** `resolve_jev_mcp` looks on
+`PATH`, in `~/.local/bin` and in `~/.cargo/bin` — and deliberately *not* at the
+copy bundled in this checkout, which is what `resolve_leanctx_mcp` and
+`resolve_cdx_mcp` both do. That walk is right for a ledger reader and wrong for
+something that spends money over the network: cloning a repository is not consent.
+The bundled copy is the thing you install *from*.
+
+**Three absences, three answers, never collapsed.** This is the whole contract:
+
+| What is missing | What happens |
+|---|---|
+| The server isn't installed | `discover()` never returns it. No Jev surface exists anywhere — not a greyed one waiting for a key, and above all not a zero. |
+| Installed, but no client or no key | Every tool answers `available: false` **with a reason**. Callers draw *unknown*. |
+| Configured, but a question abstained | That answer is `null` with its own reason; the other answers still stand. |
+
+Every measured field is nullable and nothing defaults: `probabilities` is `null`
+rather than `{}` when none came back, `counts.unknown` is reported on its own line
+and added to no other count, and `needs_you` is `{total, measured, judged,
+unknown}` so a total of 0 sitting beside 6 unknowns cannot read as calm.
+
+**It writes no client.** The wire format, the ports and the abstention semantics
+already exist in the `jev` package; the server imports it and adapts MCP onto it,
+and says `available: false` when it cannot. Point `TD_JEV_HOME` at a checkout or
+`pip install jev`.
+
+**Measurement and judgement never share a field.** Two things are answered without
+asking the model, because they are facts read off the pane: a pane running a plain
+shell is not an agent, and a pane already known to be awaiting input already wants
+you. Those rows come back `source: "measured"` with no probability. A pane whose
+`awaiting_input` is `null` — TD could not tell — *is* asked, because unknown is
+not false.
+
+Three tools: `jev_status` (makes no call — the cheap check before drawing),
+`judge` (any typed question set over any state, batched into one request), and
+`workspace_weather` (per-pane state, composed in the plugin so TD's own source
+stays free of Jev vocabulary).
+
+No threshold ships. A confidence floor is a measurement, nobody has swept labelled
+cases for these questions yet, and a default would be a number nothing measured —
+so `TD_JEV_MIN_CONFIDENCE` defaults to no floor and every answer carries its own
+probability.
+
+- Evidence: `plugins/jev-mcp/jev-mcp`, `plugins.rs::builtin_jev` / `resolve_jev_mcp`,
+  and three tests: the checkout-never-resolves rule, the rows-are-never-blank
+  invariant driven against the real server, and the source gate.
+
 ## Built-in: context-delight harvest
 
 If the `cdx-mcp` binary is on `PATH`, TD auto-registers

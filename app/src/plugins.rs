@@ -151,6 +151,11 @@ pub fn discover(home: &Path) -> Vec<PluginManifest> {
             out.push(builtin_leanctx_savings(cmd));
         }
     }
+    if !out.iter().any(|m| m.name == "jev") {
+        if let Some(cmd) = resolve_jev_mcp(home) {
+            out.push(builtin_jev(cmd));
+        }
+    }
     out
 }
 
@@ -189,6 +194,55 @@ fn builtin_leanctx_savings(command: String) -> PluginManifest {
             surfaces: vec!["global".into(), "agent".into()],
         }],
     }
+}
+
+/// The jev plugin definition: typed judgement, from TypeSafe's System One.
+///
+/// terminal-delight is a public repository and this is the one seam where a
+/// hosted, keyed, third-party model could leak into it. It does not: TD holds no
+/// client, no key, no endpoint, no model id and not one line of question text.
+/// Everything that knows what Jev *is* lives in `plugins/jev-mcp/jev-mcp`, and a
+/// checkout without that server installed has no Jev surface at all — not a
+/// greyed one, not an empty one, and above all not a zero.
+///
+/// `source_says_nothing_about_jev` below is the mechanical half of that promise.
+fn builtin_jev(command: String) -> PluginManifest {
+    PluginManifest {
+        name: "jev".into(),
+        version: "0.1.0".into(),
+        description: "Typed judgement over the workspace. Optional \u{2014} without it terminal-delight judges nothing."
+            .into(),
+        command,
+        args: vec![],
+        env: vec![],
+        scope: "global".into(),
+        actions: vec![PluginAction {
+            tool: "workspace_weather".into(),
+            label: "\u{25c8} weather".into(),
+            surfaces: vec!["global".into()],
+        }],
+    }
+}
+
+/// Find the `jev-mcp` server — and *only* where a person put it deliberately.
+///
+/// Note what is missing, next to [`resolve_leanctx_mcp`]: there is no walk up
+/// from the running exe to a copy bundled in this checkout. That fallback is
+/// right for lean-ctx, which reads a ledger already sitting on the disk, and
+/// wrong here, because this plugin makes a paid call to a third party over the
+/// network. Cloning a repository is not consent to that. The bundled copy under
+/// `plugins/jev-mcp/` is the thing you install *from*; installing is the opt-in.
+fn resolve_jev_mcp(home: &Path) -> Option<String> {
+    if let Ok(p) = which("jev-mcp") {
+        return Some(p);
+    }
+    [
+        home.join(".local/bin/jev-mcp"),
+        home.join(".cargo/bin/jev-mcp"),
+    ]
+    .into_iter()
+    .find(|p| p.is_file())
+    .map(|p| p.to_string_lossy().into_owned())
 }
 
 /// Find the `leanctx-mcp` server: PATH, a couple of well-known spots, then the
@@ -545,5 +599,150 @@ mod tests {
             )
             .unwrap();
         assert!(text.contains("tool calls"), "got: {text}");
+    }
+
+    /// The bundled `jev-mcp` in this checkout must never resolve on its own.
+    ///
+    /// lean-ctx and context-delight both walk up from the running exe to a copy
+    /// sitting in the tree, and for them that is right. This plugin calls a paid
+    /// third-party service over the network, so the same convenience would turn
+    /// `git clone` into consent. Whatever else resolves, it is not this repo.
+    #[test]
+    fn jev_never_resolves_from_the_checkout() {
+        let nowhere = std::env::temp_dir().join("td-jev-resolve-probe-no-such-home");
+        if let Some(found) = resolve_jev_mcp(&nowhere) {
+            let repo = concat!(env!("CARGO_MANIFEST_DIR"), "/../plugins/");
+            assert!(
+                !found.contains("/plugins/jev-mcp/"),
+                "resolved the bundled copy at {found} — installing must stay the opt-in \
+                 (checkout plugins live under {repo})"
+            );
+        }
+    }
+
+    /// Drive the bundled server for real and check the one invariant that has to
+    /// hold on every branch, network or no network: **a row says what it is, or
+    /// it says why it cannot.** Never both blank, and never a fabricated state.
+    ///
+    /// This makes no paid call. With no `jev` client importable it exercises the
+    /// unavailable path end to end; on a machine that has one configured it
+    /// exercises the answered path instead, and the invariant is the same.
+    #[test]
+    fn live_jev_mcp_rows_are_never_silently_blank() {
+        let bin = std::path::Path::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../plugins/jev-mcp/jev-mcp"
+        ))
+        .to_path_buf();
+        if !bin.is_file() {
+            eprintln!("skip: bundled jev-mcp not in this checkout");
+            return;
+        }
+        let mut proc = McpProcess::spawn(&bin.to_string_lossy(), &[], &[]).unwrap();
+        let init = proc.initialize().unwrap();
+        assert_eq!(init["serverInfo"]["name"], "jev");
+
+        // `available: false` must always name a reason. A plugin that refuses
+        // without saying why is a different, worse fault than one that cannot run.
+        let status: Value =
+            serde_json::from_str(&proc.call_tool("jev_status", json!({})).unwrap()).unwrap();
+        assert!(status.get("available").and_then(Value::as_bool).is_some());
+        if status["available"] == json!(false) {
+            assert!(
+                status["reason"].as_str().is_some_and(|r| !r.is_empty()),
+                "unavailable with no reason: {status}"
+            );
+        }
+
+        let text = proc
+            .call_tool(
+                "workspace_weather",
+                json!({ "panes": [
+                    { "id": "a", "mode": "claude", "title": "t", "last_line": "working",
+                      "idle_s": 2, "awaiting_input": false },
+                    { "id": "b", "mode": "shell", "title": "shell", "awaiting_input": null },
+                ]}),
+            )
+            .unwrap();
+        let w: Value = serde_json::from_str(&text).unwrap();
+        let rows = w["panes"].as_array().expect("panes array");
+        assert_eq!(rows.len(), 2);
+        for r in rows {
+            assert!(
+                !r["state"].is_null() || !r["reason"].is_null(),
+                "a row with neither a state nor a reason is an invented blank: {r}"
+            );
+        }
+        // Unknowns are counted on their own line and added to nothing, so a
+        // caller can always see how much of the picture is missing.
+        let counts = &w["counts"];
+        let named: u64 = [
+            "working",
+            "needs_person",
+            "stalled",
+            "done",
+            "unclear",
+            "not_an_agent",
+        ]
+        .iter()
+        .map(|k| counts[*k].as_u64().unwrap_or(0))
+        .sum();
+        let unknown = counts["unknown"]
+            .as_u64()
+            .expect("unknown is always reported");
+        assert_eq!(
+            named + unknown,
+            2,
+            "every pane lands in exactly one count: {counts}"
+        );
+    }
+
+    /// terminal-delight's own source knows nothing about Jev but its name.
+    ///
+    /// The promise this whole plugin exists to keep is that a public checkout
+    /// carries no hosted-model dependency, so the things that would constitute
+    /// one — an endpoint, a key, a model id — may not appear in `app/src` at all.
+    /// Naming the plugin `"jev"` is fine and deliberate; that is a plugin id, not
+    /// a dependency. Each needle is assembled from fragments so this test's own
+    /// source does not trip the scan it performs over itself.
+    #[test]
+    fn source_says_nothing_about_jev_but_its_name() {
+        let needles = [
+            concat!("type", "safe.ai"),
+            concat!("openrouter", ".ai"),
+            concat!("TYPESAFE", "_API_KEY"),
+            concat!("OPENROUTER", "_API_KEY"),
+            concat!("SYSTEMONE", "_API_KEY"),
+            concat!("jev-", "latest"),
+            concat!("/v1/", "systemone"),
+        ];
+        let mut stack = vec![PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/src"))];
+        let mut scanned = 0usize;
+        while let Some(dir) = stack.pop() {
+            for e in std::fs::read_dir(&dir)
+                .expect("app/src is readable")
+                .flatten()
+            {
+                let p = e.path();
+                if p.is_dir() {
+                    stack.push(p);
+                } else if p.extension().is_some_and(|x| x == "rs") {
+                    let src = std::fs::read_to_string(&p).unwrap_or_default();
+                    scanned += 1;
+                    for n in needles {
+                        assert!(
+                            !src.contains(n),
+                            "{} carries {n:?} — an endpoint, key or model id belongs in \
+                             plugins/jev-mcp/, never in terminal-delight itself",
+                            p.display()
+                        );
+                    }
+                }
+            }
+        }
+        assert!(
+            scanned > 1,
+            "scanned {scanned} files — the walk found nothing to check"
+        );
     }
 }

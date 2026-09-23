@@ -1,0 +1,544 @@
+#!/usr/bin/env python3
+"""jev-mcp — terminal-delight plugin #4: typed judgement, and only if you have it.
+
+A tiny MCP server (newline-delimited JSON-RPC 2.0 over stdio, the same transport
+as TD's host in `app/src/plugins.rs`) putting TypeSafe's System One — Jev — behind
+the plugin boundary.
+
+WHY THIS IS A PLUGIN AND NOT A FEATURE
+--------------------------------------
+terminal-delight is a public repository. Jev is a hosted model behind an API key
+that most people cloning this do not have, will not get today, and should never
+need. So TD carries no HTTP client, no key, no model id and no question text: its
+*only* route to Jev is this file, and this file is only ever reached if somebody
+installed it on purpose. A checkout with no `jev-mcp` on it has no Jev surface at
+all — not a greyed one waiting for a key, and above all not a zero.
+
+THREE ABSENCES, THREE ANSWERS
+-----------------------------
+They are not the same fact and are never collapsed:
+
+  1. This server is not installed        → TD's `discover()` never returns it and
+                                           no Jev surface is drawn anywhere.
+  2. Installed, but no client or no key  → every tool answers `available: false`
+                                           with a `reason`. TD draws *unknown*.
+  3. Configured, but the call abstained  → that answer is `null` with a `reason`
+     (timeout, transport, below the         (per question — the others still
+     confidence floor, no answer given)     stand). TD draws *unknown*, and the
+                                           abstentions are counted separately
+                                           from every real answer.
+
+A number that means "I did not get an answer" is the bug this file is written to
+avoid, so no field here defaults to zero, to false, or to an empty map.
+
+IT WRITES NO CLIENT
+-------------------
+The Jev wire format, its ports and its abstention semantics already exist in the
+`jev` package (`JevClient.ask_many`). This server imports it and adapts MCP onto
+it, and reports `available: false` when it cannot be imported. Duplicating that
+client here would give us a second one to keep correct, and the second copy is
+always the stale one.
+
+  pip install jev            — or —
+  TD_JEV_HOME=/path/to/jev-integrations   (a checkout; prepended to sys.path)
+
+BACKEND AND KEY
+---------------
+Resolved from the environment, never from an argument and never from this file:
+
+  SYSTEMONE_BASE_URL   default https://api.typesafe.ai
+                       (https://openrouter.ai/api serves the identical format)
+  TYPESAFE_API_KEY | OPENROUTER_API_KEY | SYSTEMONE_API_KEY
+                       the first one set names the header this run uses. The
+                       value is read by the client, never by this file, and is
+                       never echoed into a tool result.
+  TD_JEV_MODEL         default jev-latest
+  TD_JEV_TIMEOUT_S     default 10
+  TD_JEV_MIN_CONFIDENCE
+                       default 0.0 — NO floor. A threshold is a measurement, and
+                       nobody has run labelled cases for these questions yet, so
+                       shipping one would be a number nothing measured. Every
+                       answer comes back with its own probability; set this only
+                       once you have swept it on cases of your own.
+
+TOOLS
+-----
+  jev_status         is there a client, a backend and a key? Makes no paid call.
+  judge              any typed question set over any state — the general verb.
+  workspace_weather  what each agent pane is doing, composed here so that TD's
+                     own source contains no Jev vocabulary.
+"""
+import json
+import os
+import sys
+
+PROTOCOL = "2024-11-05"
+NAME = "jev"
+VERSION = "0.1.0"
+
+DEFAULT_BASE_URL = "https://api.typesafe.ai"
+KEY_ENVS = ("TYPESAFE_API_KEY", "OPENROUTER_API_KEY", "SYSTEMONE_API_KEY")
+
+
+# ---------------------------------------------------------------------------
+# resolving the client — the one place absence is decided
+# ---------------------------------------------------------------------------
+
+def _import_jev():
+    """Return (JevClient, HostedPort) or (None, reason).
+
+    `TD_JEV_HOME` points at a `jev-integrations` checkout for people running from
+    source; an installed package needs nothing. Both paths fail the same way — by
+    saying so — rather than by raising into the host.
+    """
+    home = os.environ.get("TD_JEV_HOME", "").strip()
+    if home and os.path.isdir(home) and home not in sys.path:
+        sys.path.insert(0, home)
+    try:
+        from jev import JevClient  # noqa: F401
+        from jev.ports.hosted import HostedPort  # noqa: F401
+    except Exception as e:
+        hint = "set TD_JEV_HOME to a jev-integrations checkout, or pip install jev"
+        return None, "no jev client: %s (%s)" % (e, hint)
+    if home:
+        # A checkout keeps its key in its own gitignored `.env`, which is the one
+        # place it already lives. Loading it here means terminal-delight's config
+        # never holds a key and this repository never has a reason to. `load`
+        # leaves anything already exported alone and returns names, not values.
+        try:
+            from jev.dotenv import load
+            load()
+        except Exception:
+            pass  # no .env, or an older checkout without the loader
+    return (JevClient, HostedPort), None
+
+
+def _key_env():
+    """Which env var holds the key this run — or None if none is set.
+
+    None is not "" and is not "no key needed": a local System One server on
+    127.0.0.1 legitimately wants no key, which is why an absent key is reported
+    rather than treated as a failure.
+    """
+    for name in KEY_ENVS:
+        if os.environ.get(name, "").strip():
+            return name
+    return None
+
+
+def _base_url():
+    return os.environ.get("SYSTEMONE_BASE_URL", "").strip() or DEFAULT_BASE_URL
+
+
+def _is_local(url):
+    return "127.0.0.1" in url or "localhost" in url or "://0.0.0.0" in url
+
+
+def _status():
+    """The whole availability picture, with no call made."""
+    mods, reason = _import_jev()
+    base = _base_url()
+    key = _key_env()
+    model = os.environ.get("TD_JEV_MODEL", "").strip() or "jev-latest"
+    if mods is None:
+        return {
+            "available": False,
+            "reason": reason,
+            "client": False,
+            "base_url": base,
+            "key_env": key,
+            "model": model,
+        }
+    if key is None and not _is_local(base):
+        return {
+            "available": False,
+            "reason": "no API key: set one of %s (a local System One server on "
+                      "127.0.0.1 needs none)" % ", ".join(KEY_ENVS),
+            "client": True,
+            "base_url": base,
+            "key_env": None,
+            "model": model,
+        }
+    return {
+        "available": True,
+        "reason": None,
+        "client": True,
+        "base_url": base,
+        "key_env": key,
+        "model": model,
+    }
+
+
+def _client():
+    """A configured JevClient, or (None, status) when one cannot be built."""
+    st = _status()
+    if not st["available"]:
+        return None, st
+    (JevClient, HostedPort), _ = _import_jev()
+    try:
+        floor = float(os.environ.get("TD_JEV_MIN_CONFIDENCE", "0") or 0)
+    except ValueError:
+        floor = 0.0
+    try:
+        timeout = float(os.environ.get("TD_JEV_TIMEOUT_S", "10") or 10)
+    except ValueError:
+        timeout = 10.0
+    c = JevClient(
+        st["base_url"],
+        port=HostedPort(st["model"]),
+        api_key_env=st["key_env"] or "SYSTEMONE_API_KEY",
+        min_confidence=floor,
+        timeout_s=timeout,
+    )
+    return c, st
+
+
+def _answer(d):
+    """One `Decision` → JSON, keeping every absence as null.
+
+    `value` is null when the backend abstained or gave nothing. `probabilities`
+    is null — never `{}` — when none came back, because an empty distribution and
+    an unreported one are different facts and only one of them is evidence.
+    """
+    return {
+        "kind": getattr(d, "kind", None),
+        "value": None if getattr(d, "abstained", False) else getattr(d, "value", None),
+        "probabilities": getattr(d, "probabilities", None) or None,
+        "confidence": getattr(d, "confidence", None),
+        "abstained": bool(getattr(d, "abstained", False)),
+        "reason": getattr(d, "reason", None),
+        "latency_ms": getattr(d, "latency_ms", None),
+        "backend": getattr(d, "backend", None),
+    }
+
+
+# ---------------------------------------------------------------------------
+# judge — the general verb
+# ---------------------------------------------------------------------------
+
+def do_judge(args):
+    state = args.get("state")
+    questions = args.get("questions") or {}
+    if not isinstance(questions, dict) or not questions:
+        return {"available": False,
+                "reason": "judge needs a non-empty `questions` map "
+                          "(id → question); independent questions over one state "
+                          "are evaluated in parallel in a single request",
+                "answers": None}
+    c, st = _client()
+    if c is None:
+        return {"available": False, "reason": st["reason"], "answers": None}
+    answers = c.ask_many(state, questions)
+    return {
+        "available": True,
+        "reason": None,
+        "backend": st["model"],
+        "answers": {k: _answer(v) for k, v in answers.items()},
+    }
+
+
+# ---------------------------------------------------------------------------
+# workspace_weather — the questions live here, not in terminal-delight
+# ---------------------------------------------------------------------------
+
+# One Choice per pane. Five outcomes, the fifth of which is the escape hatch: a
+# Choice cannot answer with an option it was not given, so without `unclear` a
+# pane whose fields say nothing gets forced onto the nearest option and comes
+# back looking like a real answer with a real probability.
+PANE_STATES = ("working", "needs_person", "stalled", "done", "unclear")
+
+# What a row may say, which is more than the model may answer. `not_an_agent` is
+# read off the pane's mode and never asked — a shell prompt is not an agent that
+# has stalled, and the first run of these questions scored one at 0.49 between
+# `stalled` and everything else, which is a coin toss dressed as a verdict.
+ROW_STATES = PANE_STATES + ("not_an_agent",)
+
+AGENT_MODES = ("claude", "codex", "agent")
+
+PANE_CRITERIA = {
+    "working": {
+        "description": "The agent is carrying the task forward right now — running a "
+                       "command, editing a file, reading code, or searching. A tool "
+                       "call in flight or a small `idle_s` is this even when the line "
+                       "reports a step that finished: one finished step is not a "
+                       "finished task.",
+        "not": "Not this when the agent has stopped and is waiting for anyone.",
+    },
+    "needs_person": {
+        "description": "The agent has stopped and cannot continue until the person "
+                       "answers it: it asked a question, offered a choice, or wants "
+                       "permission for something.",
+        "example": "The last line is a question addressed to the reader.",
+    },
+    "stalled": {
+        "description": "The agent is neither working nor asking. It repeated the same "
+                       "step without getting anywhere, hit an error it did not recover "
+                       "from, or went quiet with the task unfinished.",
+        "not": "Not this when the agent is simply waiting for a long command.",
+    },
+    "done": {
+        "description": "The agent reported the whole task complete and is waiting for a "
+                       "new one — a closing summary, a handover, or a plain statement "
+                       "that it has finished.",
+        "not": "Not this when it finished one step and the task carries on.",
+    },
+    "unclear": {
+        "description": "The fields given do not say enough to tell the others apart. "
+                       "Choose this rather than guessing between them.",
+    },
+}
+
+# Fields a pane may carry. Anything outside this set is dropped before the state
+# is sent: accuracy falls as a state grows with material no question names, and a
+# pane's cwd and pid are not evidence about what it is doing.
+PANE_FIELDS = ("id", "title", "mode", "last_tool", "last_line", "idle_s")
+
+
+def _pane_question(idx):
+    p = "`panes[%d]" % idx
+    return {
+        "type": "choice",
+        "instructions":
+            "%s` is one AI coding agent working in a terminal pane. From %s.title`, "
+            "%s.last_tool`, %s.last_line` and %s.idle_s` — the agent's own most recent "
+            "activity — decide what that agent is doing at this moment. Judge only this "
+            "pane; the other panes in `panes` are other people's work and are not "
+            "evidence about this one." % (p, p, p, p, p),
+        "options": list(PANE_STATES),
+        "criteria": {k: PANE_CRITERIA[k] for k in PANE_STATES},
+    }
+
+
+def _trim(pane):
+    return {k: pane.get(k) for k in PANE_FIELDS if k in pane}
+
+
+def do_workspace_weather(args):
+    """What every agent pane is doing — measured where it can be, judged where it can't.
+
+    Three things are deliberately NOT asked of the model:
+
+      * A pane running a plain shell is not an agent, which its `mode` says
+        outright. Asking anyway buys a flat answer between options none of which
+        fit. A pane with no `mode` at all is a different fact and IS asked.
+      * A pane whose `awaiting_input` is true is already known to want the person.
+        That is a fact TD read off the pane, not a judgement, so the pane is never
+        sent — and `awaiting_input: null` (TD could not tell) IS sent, because
+        unknown is not false.
+      * The headline counts. Jev does not count, and a total assembled from its
+        answers in code is one we can check. Abstentions are totalled on their own
+        line and never folded into any of the others.
+    """
+    panes = args.get("panes")
+    if not isinstance(panes, list):
+        return {"available": False, "reason": "workspace_weather needs a `panes` array",
+                "panes": None}
+
+    out = []
+    ask_idx = []          # index in `judged` → index in `out`
+    judged = []           # the panes actually sent
+    for pane in panes:
+        pid = pane.get("id")
+        mode = pane.get("mode")
+        if isinstance(mode, str) and mode.strip() and mode.strip().lower() not in AGENT_MODES:
+            out.append({"id": pid, "state": "not_an_agent", "p": None,
+                        "source": "measured", "reason": None})
+            continue
+        if pane.get("awaiting_input") is True:
+            out.append({"id": pid, "state": "needs_person", "p": None,
+                        "source": "measured", "reason": None})
+            continue
+        ask_idx.append(len(out))
+        out.append({"id": pid, "state": None, "p": None,
+                    "source": "judged", "reason": None})
+        judged.append(_trim(pane))
+
+    backend = None
+    latency_ms = None
+    if judged:
+        c, st = _client()
+        if c is None:
+            for i in ask_idx:
+                out[i]["reason"] = st["reason"]
+            return {"available": False, "reason": st["reason"],
+                    "panes": out, "counts": _counts(out),
+                    "needs_you": _needs_you(out)}
+        backend = st["model"]
+        questions = {"pane_%d" % n: _pane_question(n) for n in range(len(judged))}
+        answers = c.ask_many({"panes": judged}, questions)
+        for n, i in enumerate(ask_idx):
+            d = answers.get("pane_%d" % n)
+            if d is None or getattr(d, "abstained", False):
+                out[i]["reason"] = getattr(d, "reason", None) or "error:missing_answer"
+                continue
+            value = getattr(d, "value", None)
+            if value not in PANE_STATES:
+                # An option we did not offer is not an answer. Say so rather than
+                # coercing it onto the nearest one.
+                out[i]["reason"] = "error:unknown_option"
+                continue
+            out[i]["state"] = value
+            probs = getattr(d, "probabilities", None) or None
+            out[i]["p"] = probs.get(value) if probs else None
+            if latency_ms is None:
+                latency_ms = getattr(d, "latency_ms", None)
+
+    return {
+        "available": True,
+        "reason": None,
+        "backend": backend,
+        "latency_ms": latency_ms,
+        "panes": out,
+        "counts": _counts(out),
+        "needs_you": _needs_you(out),
+    }
+
+
+def _counts(rows):
+    """One count per state, plus `unknown` on its own line.
+
+    `unknown` is every pane with no answer — abstained, timed out, or never asked
+    because the backend was unreachable. It is reported beside the real counts and
+    added to none of them, so a caller can always see how much of the picture is
+    missing before it believes the rest.
+    """
+    c = {k: 0 for k in ROW_STATES}
+    c["unknown"] = 0
+    for r in rows:
+        if r["state"] is None:
+            c["unknown"] += 1
+        else:
+            c[r["state"]] += 1
+    return c
+
+
+def _needs_you(rows):
+    """How many agents want the person, split by how we know.
+
+    `unknown` rides along: three agents needing you out of twenty reads very
+    differently when six of the twenty were never answered for.
+    """
+    measured = sum(1 for r in rows
+                   if r["state"] == "needs_person" and r["source"] == "measured")
+    judged = sum(1 for r in rows
+                 if r["state"] == "needs_person" and r["source"] == "judged")
+    unknown = sum(1 for r in rows if r["state"] is None)
+    return {"total": measured + judged, "measured": measured,
+            "judged": judged, "unknown": unknown}
+
+
+# ---------------------------------------------------------------------------
+# MCP plumbing
+# ---------------------------------------------------------------------------
+
+def _send(obj):
+    sys.stdout.write(json.dumps(obj) + "\n")
+    sys.stdout.flush()
+
+
+def _result(rid, result):
+    _send({"jsonrpc": "2.0", "id": rid, "result": result})
+
+
+def _error(rid, code, msg):
+    _send({"jsonrpc": "2.0", "id": rid, "error": {"code": code, "message": msg}})
+
+
+TOOLS = [
+    {
+        "name": "jev_status",
+        "description": "Is typed judgement available here — a client, a backend and a "
+                       "key? Answers without making a call, so it is the cheap check a "
+                       "surface runs before drawing anything.",
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "judge",
+        "description": "Ask Jev a set of typed questions (choice / score / noul) about "
+                       "one state. Independent questions run in parallel in a single "
+                       "request — pass them all together rather than one per call. "
+                       "Every answer may be null with a reason; that is an abstention, "
+                       "not a no.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "state": {"description": "Any JSON the questions refer to."},
+                "questions": {"type": "object",
+                              "description": "id → question. Each question carries its "
+                                             "own full instructions; the id is never "
+                                             "sent to the model."},
+            },
+            "required": ["questions"],
+        },
+    },
+    {
+        "name": "workspace_weather",
+        "description": "What each agent pane is doing — working, needs_person, stalled, "
+                       "done, or unclear — and how many agents want the person. Panes "
+                       "already known to be waiting are counted without asking. Panes "
+                       "with no answer are reported as unknown and added to no count.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "panes": {
+                    "type": "array",
+                    "description": "One object per pane: id, title, mode, last_tool, "
+                                   "last_line, idle_s, and awaiting_input (true / false "
+                                   "/ null when it could not be read).",
+                    "items": {"type": "object"},
+                },
+            },
+            "required": ["panes"],
+        },
+    },
+]
+
+HANDLERS = {
+    "jev_status": lambda _a: _status(),
+    "judge": do_judge,
+    "workspace_weather": do_workspace_weather,
+}
+
+
+def main():
+    for line in sys.stdin:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            req = json.loads(line)
+        except Exception:
+            continue
+        method = req.get("method")
+        rid = req.get("id")
+        if method == "initialize":
+            _result(rid, {
+                "protocolVersion": PROTOCOL,
+                "capabilities": {"tools": {}},
+                "serverInfo": {"name": NAME, "version": VERSION},
+            })
+        elif method == "notifications/initialized":
+            pass  # no response to a notification
+        elif method == "tools/list":
+            _result(rid, {"tools": TOOLS})
+        elif method == "tools/call":
+            params = req.get("params") or {}
+            handler = HANDLERS.get(params.get("name"))
+            if handler is None:
+                _error(rid, -32601, "unknown tool: %s" % params.get("name"))
+                continue
+            try:
+                payload = handler(params.get("arguments") or {})
+                _result(rid, {"content": [{"type": "text",
+                                           "text": json.dumps(payload)}]})
+            except Exception as e:  # never crash the host
+                _error(rid, -32000, "%s failed: %s" % (params.get("name"), e))
+        elif rid is not None:
+            _error(rid, -32601, "unknown method: %s" % method)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (BrokenPipeError, KeyboardInterrupt):
+        pass

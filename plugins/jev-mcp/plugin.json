@@ -1,0 +1,14 @@
+{
+  "name": "jev",
+  "version": "0.1.0",
+  "description": "Typed judgement over the workspace, via TypeSafe's System One. Optional — without it terminal-delight draws no judgement at all.",
+  "command": "jev-mcp",
+  "scope": "global",
+  "actions": [
+    {
+      "tool": "workspace_weather",
+      "label": "◈ weather",
+      "surfaces": ["global"]
+    }
+  ]
+}
