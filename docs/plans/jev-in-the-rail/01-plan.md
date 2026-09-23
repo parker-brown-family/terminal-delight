@@ -145,11 +145,44 @@ no confidence on a noul at all, so the amber band comes from distance from 0.5,
 which is still an open decision in the jev-integrations repo. If it is unresolved
 at slice 2, hosted Jev is the backend for this question.
 
-**Choice — the chooser.** Options are the frame texts themselves, verbatim.
-*A person just glanced up at this bar and will read one line. Which one earns
-it?* The pick sets the order; the winning probability sets the dwell. A flat
-distribution is the model saying nothing stands out, and the bar honours that by
-showing the calm sentence, or nothing.
+**~~Choice~~ Score — the chooser. Amended 2026-09-23, before slice 3 existed.**
+
+The original design was a Choice over the frame texts, verbatim: *which one line
+earns a person's glance?* **That is the wrong primitive, and the source says so
+without a single model call having to be made.**
+
+`ProjectState::frames()` is an accumulator. After the calm early return there is
+no further `return` and no `clear`, so sections 1 through 7 all push into one
+vector: a non-calm reading emits an uncommitted-work frame *and* a branches
+frame *and* one Shared frame per shared checkout *and* one Foreign frame per
+wanderer, all true at the same time. Section 7 is worse than merely coexisting —
+it is commented *"the derived sentence, last, so it lands after the facts it
+sums"*, so it is a frame that **contains** several of the others.
+
+A Choice picks one of a defined set and its distribution compares *competing*
+options. These do not compete, and one is a superset of its neighbours. Asked as
+a Choice, the mass spreads across several simultaneously-true answers and comes
+back flat — which would read as *nothing stands out* when what actually happened
+is *everything here is true*. Those are different states and the rail draws them
+differently, so collapsing them is the unknown-is-not-zero failure wearing a
+probability.
+
+**So: one Score per frame, comparable across frames.** *How much does this one
+fact deserve the single line a person will read?* Levels are concrete
+situations, not adjectives. Code sorts by the score, which it already does with
+a ladder — the model only supplies the rank. Falls out of it:
+
+- **Dwell** comes from the top frame's own level, not from a distribution's
+  concentration. A bar whose best frame scored low is a quiet bar.
+- **"Nothing stands out" and "everything matters" stop being the same reading.**
+  Every frame scoring low is the first; several scoring high is the second.
+- Independent Scores over one state batch into a single request, which is the
+  design anyway.
+
+Credit where it is due: the question came from the agent building the transport
+— *if two frame texts can both be true of the same reading, that is not a Choice
+at all* — after their own flat 0.49 on an option set that was written as
+independent sentences rather than as a partition.
 
 **Score — collision severity.** Given two branch names, the panes working them,
 and the files both touch: *how likely are these two lines to actually fight?*
@@ -176,6 +209,20 @@ false-positive rate before and after.
 
 Slice 1 is a tracer in the strict sense: it is the whole path with the
 interesting part removed, and it ships the fallback as a finished thing.
+
+### A standing rule, not a one-time pass
+
+**Anything code can know, code answers — and the set of things code can know
+keeps growing.** Two questions died that way already before either was written:
+a pane's mode is a fact, and a pane already known to be awaiting input is a
+fact, so neither reaches a model and both come back measured with no
+probability.
+
+The ones after those will not be obvious, and the failure is quiet: a question
+that keeps working while its answer quietly becomes derivable, still costing a
+call and still putting a probability on something now known. So **every shipped
+question gets re-read when its surface changes**, asking only *can code answer
+this yet?* — not once at the end of this plan, when the answer is trivially no.
 
 ## 5 · What would make this wrong
 

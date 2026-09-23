@@ -32,8 +32,11 @@ git — 2. Let's start in on making it this SUPER COOL FANCY Jev'd out bar."*
 - [ ] 2 · **The call.** Through the `jev` plugin's `judge()` verb, not a
       transport of our own — see the amendment in `01-plan.md`. One Noul. The
       diamond gets its four states.
-- [ ] 3 · **The chooser.** Choice over the frame texts; order AND dwell time
-      from the distribution. A flat distribution means the bar says nothing.
+- [ ] 3 · **The chooser.** **Amended before it was built:** one comparable
+      Score per frame, not a Choice over frame texts. `frames()` accumulates —
+      a non-calm reading emits several simultaneously-true frames and section 7
+      is a sentence that *contains* its neighbours, so a Choice would spread
+      its mass and read flat. Order and dwell come from the top frame's level.
 - [ ] 4 · **Collision severity.** The first suppression. Measured false-positive
       count before and after, or it does not land.
 - [ ] 5 · **Fidelity and waiting.** Branch name vs its own diff; a pane blocked
