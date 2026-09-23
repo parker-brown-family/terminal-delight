@@ -140,10 +140,32 @@ you. Those rows come back `source: "measured"` with no probability. A pane whose
 `awaiting_input` is `null` — TD could not tell — *is* asked, because unknown is
 not false.
 
-Three tools: `jev_status` (makes no call — the cheap check before drawing),
-`judge` (any typed question set over any state, batched into one request), and
-`workspace_weather` (per-pane state, composed in the plugin so TD's own source
-stays free of Jev vocabulary).
+Four tools: `jev_status` (makes no call — the cheap check before drawing),
+`judge` (any typed question set over any state, batched into one request),
+`workspace_weather` (per-pane state) and `rail_weather` (ranks the project rail's
+ticker frames). Every question's wording lives in the plugin, so TD's own source
+stays free of Jev vocabulary.
+
+**`rail_weather` is a Score per frame, not a Choice, and the rail's own code is
+why.** `ProjectState::frames()` is an accumulator: past the calm early return
+nothing returns and nothing clears, so sections 1 through 7 all push into one
+vector — and section 7 is commented *"the derived sentence, last, so it lands
+after the facts it sums"*. Several frames are true of one reading at once and one
+of them contains its neighbours, so a Choice would spread its mass over options
+that do not compete and come back flat. The Score's levels are about what a
+person would **do**, never about how much a line covers, because a rubric that
+rewards coverage hands first place to the summary frame forever.
+
+**The raw score carries a measured positional bias, so the ranking is banded.**
+Repeating one batch four times moved a frame by at most 0.22 levels (stdev 0.10).
+Reversing the frame array moved scores by 0.43 on average and 1.26 at worst, and
+two byte-identical frames sat ~0.98 apart in every run with the *earlier* one
+always winning — a gap that flips sign when the array is reversed. So the model
+partly anchors on the order it is handed, which is the order the ranking exists
+to improve on. `_band_width` therefore coarsens scores before ordering and lets
+the rail's own order stand inside a band. That number is a **resolution**, not a
+confidence floor: it is the worst measured positional effect rounded up, from two
+fixtures on one day, and `TD_JEV_RAIL_BAND` overrides it.
 
 No threshold ships. A confidence floor is a measurement, nobody has swept labelled
 cases for these questions yet, and a default would be a number nothing measured —

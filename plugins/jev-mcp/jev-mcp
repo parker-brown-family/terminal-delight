@@ -428,6 +428,240 @@ def _needs_you(rows):
 
 
 # ---------------------------------------------------------------------------
+# rail_weather — ranking the project rail's ticker frames
+# ---------------------------------------------------------------------------
+
+# One Score, asked once per frame, over the whole reading. It is a Score and not
+# a Choice for a reason found in the rail's own code rather than guessed:
+# `ProjectState::frames()` is an accumulator. Past the calm early return nothing
+# returns and nothing clears, so sections 1 through 7 all push into one vector —
+# and section 7 is commented "the derived sentence, last, so it lands after the
+# facts it sums". Several frames are therefore true of one reading at once, and
+# one of them CONTAINS its neighbours. Options that do not compete split a
+# Choice's mass and it comes back flat.
+#
+# The spectrum is deliberately about what a person would DO, not about how much
+# a frame says. A rubric rewarding coverage hands first place to the summary
+# frame every time, forever, and the ticker becomes one line.
+# The names are ours, for reporting. The wire carries the ORDERED LIST below and
+# answers with a position on it, so these two must stay index-aligned.
+RAIL_LEVELS = [
+    "already_known",
+    "background",
+    "worth_noticing",
+    "act_soon",
+    "act_now",
+]
+
+RAIL_CRITERIA = [
+    {
+        "summary": "Reading it first changes nothing",
+        "signals": [
+            "Restates or adds up what other lines in this same reading already say",
+            "A standing census the reader has seen every day",
+            "Nothing in it is new since the last time they looked",
+        ],
+    },
+    {
+        "summary": "A true, stable fact about the shape of the workspace",
+        "signals": ["Worth knowing", "Nothing to do about it", "Will read the same tomorrow"],
+    },
+    {
+        "summary": "Something has drifted, and it will keep",
+        "signals": [
+            "The reader would want to know",
+            "Nothing is harmed if they read it in a few minutes",
+        ],
+    },
+    {
+        "summary": "Names work that gets more expensive the longer it waits",
+        "signals": [
+            "Uncommitted changes, a branch fallen behind, a worktree holding work nobody is in",
+            "Nothing is being lost yet",
+        ],
+    },
+    {
+        "summary": "Names something going wrong as the reader looks at it",
+        "signals": [
+            "Waiting costs work",
+            "Two lines converging on the same files, a conflict, another writer inside "
+            "a checkout the reader is about to change",
+        ],
+    },
+]
+
+
+def _rail_question(idx):
+    f = "`frames[%d]" % idx
+    return {
+        "type": "score",
+        "instructions": {
+            "question":
+                "A person has just come back to a window showing this project's status "
+                "bar. %s.text` is one line that bar can show, of kind %s.kind`. How "
+                "much would reading THAT line first change what they do next, given "
+                "`facts` as the whole situation it came out of?" % (f, f),
+            "focus":
+                "Judge the line on what it would make the reader DO, never on how much "
+                "of the picture it covers. Several of these lines are true at once and "
+                "one of them may sum up the others; a line that summarises its "
+                "neighbours tells the reader nothing they cannot get from the lines it "
+                "summarises. In `facts`, a null is a measurement git could not take — "
+                "not a zero, and not permission to assume the thing is absent.",
+        },
+        "criteria": RAIL_CRITERIA,
+    }
+
+
+# The one question about the whole reading rather than any line of it. Phrased so
+# that a high value means yes, and about the COMBINATION — which is the only part
+# no single frame's score already expresses.
+ATTENTION_QUESTION = {
+    "type": "noul",
+    "instructions": {
+        "question":
+            "A person has come back to this window and means to start something new. "
+            "Taking `facts` as a whole rather than any single line of `frames`, should "
+            "they deal with what this project's state shows BEFORE starting anything "
+            "new?",
+        "focus":
+            "Judge the combination, not the worst single line. A null in `facts` is a "
+            "measurement git could not take, not a zero.",
+    },
+    "criteria": {
+        "true": "Starting new work now would make the existing situation worse or lose "
+                "some of it — for example uncommitted work sitting in a checkout "
+                "another writer is in.",
+        "false": "The situation will keep. Starting something else costs nothing that "
+                 "cannot be picked up later.",
+    },
+}
+
+
+def do_rail_weather(args):
+    """Rank the project rail's ticker frames, and say whether the window wants you.
+
+    Returns `ranked` as frame ids best first. A frame with no score is LEFT OUT of
+    the ranking rather than sorted to the bottom: unranked means "not judged", the
+    rail keeps git's own order for those, and that is a different statement from
+    "judged and found least important". `attention` is null when the noul abstained
+    and is never turned into a number here.
+    """
+    frames = args.get("frames")
+    if not isinstance(frames, list) or not frames:
+        return {"available": False, "reason": "rail_weather needs a non-empty `frames` array",
+                "reading": args.get("reading"), "attention": None, "ranked": None}
+    facts = args.get("facts") or {}
+
+    c, st = _client()
+    if c is None:
+        return {"available": False, "reason": st["reason"], "reading": args.get("reading"),
+                "attention": None, "ranked": None}
+
+    state = {
+        "project": args.get("project"),
+        "facts": facts,
+        "frames": [{"id": f.get("id"), "kind": f.get("kind"), "text": f.get("text")}
+                   for f in frames],
+    }
+    questions = {"frame_%d" % i: _rail_question(i) for i in range(len(frames))}
+    questions["attention"] = ATTENTION_QUESTION
+    answers = c.ask_many(state, questions)
+
+    scored = []       # (level_index, original_position, id)
+    unjudged = []
+    detail = []
+    for i, f in enumerate(frames):
+        d = answers.get("frame_%d" % i)
+        value = None if d is None or getattr(d, "abstained", False) else getattr(d, "value", None)
+        rank = _level_index(value)
+        detail.append({
+            "id": f.get("id"),
+            "kind": f.get("kind"),
+            "level": _level_name(rank),
+            "position": rank,
+            "reason": None if rank is not None else (
+                getattr(d, "reason", None) if d is not None else "error:missing_answer"),
+        })
+        if rank is None:
+            unjudged.append(f.get("id"))
+        else:
+            scored.append((rank, i, f.get("id")))
+
+    # Coarsen to bands before ordering, because the raw score has a MEASURED
+    # positional bias and sorting on it would dress that bias as a judgement.
+    # Within a band the rail's own order stands: git already decided it, and a
+    # difference smaller than the instrument's resolution is not a disagreement.
+    band = _band_width()
+    scored.sort(key=lambda t: (-int(t[0] / band) if band > 0 else -t[0], t[1]))
+
+    a = answers.get("attention")
+    attention = None
+    if a is not None and not getattr(a, "abstained", False):
+        v = getattr(a, "value", None)
+        if isinstance(v, (int, float)) and 0.0 <= float(v) <= 1.0:
+            attention = float(v)
+
+    return {
+        "available": True,
+        "reason": None,
+        "reading": args.get("reading"),
+        "attention": attention,
+        "ranked": [t[2] for t in scored],
+        "band": band,
+        "unjudged": unjudged,
+        "frames": detail,
+        "backend": st["model"],
+    }
+
+
+def _band_width():
+    """How far two frames must separate before we claim one outranks the other.
+
+    This is a RESOLUTION, not a confidence floor, and the difference matters.
+    A confidence floor would be a guess about when to believe an answer, and this
+    plugin ships none. This is a measured property of the instrument: asking one
+    batch four times moved a frame by at most 0.22 levels (stdev 0.10), but
+    reversing the frame array moved scores by 0.43 on average and 1.26 at worst,
+    and two BYTE-IDENTICAL frames sat ~0.98 apart in every run with the earlier
+    one always winning. So the model partly anchors on the order it is given —
+    which is the order we were asked to improve on.
+
+    1.5 is the worst measured positional effect rounded up. It was derived from
+    two fixtures on one day, so it is an estimate with its method attached rather
+    than a swept threshold; `TD_JEV_RAIL_BAND` overrides it, and 0 turns banding
+    off and sorts on the raw score, bias and all.
+    """
+    try:
+        return float(os.environ.get("TD_JEV_RAIL_BAND", "1.5"))
+    except ValueError:
+        return 1.5
+
+
+def _level_index(value):
+    """Where a Score landed, or None. A position we did not offer is not an answer.
+
+    A Score is a probability-weighted position and lands BETWEEN levels routinely,
+    so the float is kept rather than rounded — it is the ordering we want, and
+    rounding two frames to the same level throws away a real difference.
+    """
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)) and 0 <= float(value) <= len(RAIL_LEVELS) - 1:
+        return float(value)
+    if isinstance(value, str) and value in RAIL_LEVELS:
+        return float(RAIL_LEVELS.index(value))
+    return None
+
+
+def _level_name(rank):
+    """The nearest named level, for a human reading the payload. None stays None."""
+    if rank is None:
+        return None
+    return RAIL_LEVELS[min(int(round(rank)), len(RAIL_LEVELS) - 1)]
+
+
+# ---------------------------------------------------------------------------
 # MCP plumbing
 # ---------------------------------------------------------------------------
 
@@ -472,6 +706,36 @@ TOOLS = [
         },
     },
     {
+        "name": "rail_weather",
+        "description": "Rank the project rail's ticker frames by how much reading each "
+                       "one first would change what the reader does, and say whether the "
+                       "window should be dealt with before new work. `ranked` is frame "
+                       "ids best first and OMITS any frame that was not judged, which "
+                       "the caller keeps in git's own order. `attention` is null when it "
+                       "abstained and is never a number we invented.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "reading": {"type": "string",
+                            "description": "Echoed back unchanged, so the caller can "
+                                           "discard an answer about a reading that moved."},
+                "project": {"description": "Project name, or null."},
+                "frames": {
+                    "type": "array",
+                    "description": "One object per ticker frame: id, kind, text.",
+                    "items": {"type": "object"},
+                },
+                "facts": {
+                    "type": "object",
+                    "description": "The measured situation the frames came out of. A "
+                                   "null field means git could not measure it and must "
+                                   "not be sent as 0.",
+                },
+            },
+            "required": ["frames"],
+        },
+    },
+    {
         "name": "workspace_weather",
         "description": "What each agent pane is doing — working, needs_person, stalled, "
                        "done, or unclear — and how many agents want the person. Panes "
@@ -497,6 +761,7 @@ HANDLERS = {
     "jev_status": lambda _a: _status(),
     "judge": do_judge,
     "workspace_weather": do_workspace_weather,
+    "rail_weather": do_rail_weather,
 }
 
 
