@@ -601,6 +601,25 @@ mod tests {
         assert!(text.contains("tool calls"), "got: {text}");
     }
 
+    /// An environment with no route to a paid backend, whatever the shell has.
+    ///
+    /// Empty strings rather than absent names, because the plugin tests every
+    /// one of these with `.strip()` truthiness — so `""` reads to it exactly as
+    /// unset reads, and `Command::env` has no way to unset an inherited name.
+    /// Assembled from fragments for the same reason the source gate's needles
+    /// are: this file is inside the scan it performs over itself.
+    fn no_jev_env() -> Vec<(String, String)> {
+        [
+            "TD_JEV_HOME",
+            concat!("TYPESAFE", "_API_KEY"),
+            concat!("OPENROUTER", "_API_KEY"),
+            concat!("SYSTEMONE", "_API_KEY"),
+        ]
+        .into_iter()
+        .map(|k| (k.to_string(), String::new()))
+        .collect()
+    }
+
     /// The bundled `jev-mcp` in this checkout must never resolve on its own.
     ///
     /// lean-ctx and context-delight both walk up from the running exe to a copy
@@ -624,9 +643,13 @@ mod tests {
     /// hold on every branch, network or no network: **a row says what it is, or
     /// it says why it cannot.** Never both blank, and never a fabricated state.
     ///
-    /// This makes no paid call. With no `jev` client importable it exercises the
-    /// unavailable path end to end; on a machine that has one configured it
-    /// exercises the answered path instead, and the invariant is the same.
+    /// This makes no paid call, and that is now enforced rather than asserted.
+    /// `McpProcess::spawn` *adds* to the inherited environment, so passing no
+    /// env inherits the whole shell — and the one shell most likely to run this
+    /// suite is the one with a checkout path and a live key already exported.
+    /// That shell drove the answered path over the network and spent money, with
+    /// this comment's first sentence claiming otherwise two lines above. Blanking
+    /// the four names pins the test to the unavailable branch on every machine.
     #[test]
     fn live_jev_mcp_rows_are_never_silently_blank() {
         let bin = std::path::Path::new(concat!(
@@ -638,7 +661,7 @@ mod tests {
             eprintln!("skip: bundled jev-mcp not in this checkout");
             return;
         }
-        let mut proc = McpProcess::spawn(&bin.to_string_lossy(), &[], &[]).unwrap();
+        let mut proc = McpProcess::spawn(&bin.to_string_lossy(), &[], &no_jev_env()).unwrap();
         let init = proc.initialize().unwrap();
         assert_eq!(init["serverInfo"]["name"], "jev");
 
@@ -697,6 +720,254 @@ mod tests {
         );
     }
 
+    /// A pane nobody could describe is never answered as a measured fact.
+    ///
+    /// `PaneMode::label()` emits `UNKNOWN` for a pane this window's own census
+    /// could not describe, `REMOTE` for one it can only see through ssh, and
+    /// `Other(name)` for an agent it has no variant for. None of those is
+    /// evidence that no agent is there — and the mode branch used to answer all
+    /// three `not_an_agent` with `source: "measured"`, which is the strongest
+    /// claim this payload can make, invented from nobody having looked.
+    ///
+    /// `app/src/pane.rs` already carries the scar: its `Unknown` variant exists
+    /// so that "I have not been told" cannot be stored as "I was told, and it is
+    /// a shell". This asserts the plugin honours the same distinction.
+    #[test]
+    fn live_jev_mcp_never_measures_a_pane_it_cannot_describe() {
+        let bin = std::path::Path::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../plugins/jev-mcp/jev-mcp"
+        ))
+        .to_path_buf();
+        if !bin.is_file() {
+            eprintln!("skip: bundled jev-mcp not in this checkout");
+            return;
+        }
+        let mut proc = McpProcess::spawn(&bin.to_string_lossy(), &[], &no_jev_env()).unwrap();
+        proc.initialize().unwrap();
+        let text = proc
+            .call_tool(
+                "workspace_weather",
+                json!({ "panes": [
+                    { "id": "unknown", "mode": "UNKNOWN" },
+                    { "id": "remote",  "mode": "REMOTE" },
+                    { "id": "other",   "mode": "GEMINI" },
+                    { "id": "shell",   "mode": "SHELL" },
+                ]}),
+            )
+            .unwrap();
+        let w: Value = serde_json::from_str(&text).unwrap();
+        let rows = w["panes"].as_array().expect("panes array");
+        for r in rows {
+            let id = r["id"].as_str().unwrap_or_default();
+            if id == "shell" {
+                // The one mode that positively says no agent is here.
+                assert_eq!(r["state"], json!("not_an_agent"), "{r}");
+                assert_eq!(r["source"], json!("measured"), "{r}");
+            } else {
+                assert_ne!(
+                    r["source"],
+                    json!("measured"),
+                    "a pane whose mode says nobody looked was answered as measured: {r}"
+                );
+                assert!(
+                    !r["state"].is_null() || !r["reason"].is_null(),
+                    "neither a state nor a reason is an invented blank: {r}"
+                );
+            }
+        }
+    }
+
+    /// Availability describes the plugin, never whether this batch happened to
+    /// need it.
+    ///
+    /// Every pane here is answerable from measurement, so the old code never
+    /// built a client and reported `available: true` on a machine with none —
+    /// a draw gate that says judgement is configured when nothing is.
+    #[test]
+    fn live_jev_mcp_all_measured_panes_still_report_the_real_availability() {
+        let bin = std::path::Path::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../plugins/jev-mcp/jev-mcp"
+        ))
+        .to_path_buf();
+        if !bin.is_file() {
+            eprintln!("skip: bundled jev-mcp not in this checkout");
+            return;
+        }
+        let mut proc = McpProcess::spawn(&bin.to_string_lossy(), &[], &no_jev_env()).unwrap();
+        proc.initialize().unwrap();
+        // Nothing here needs the model: a shell is measured by its mode, and a
+        // pane already awaiting input is measured by that.
+        let text = proc
+            .call_tool(
+                "workspace_weather",
+                json!({ "panes": [
+                    { "id": "a", "mode": "SHELL" },
+                    { "id": "b", "mode": "claude", "awaiting_input": true },
+                ]}),
+            )
+            .unwrap();
+        let w: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(
+            w["available"],
+            json!(false),
+            "no client is installed, so nothing may claim judgement is available: {w}"
+        );
+        assert!(
+            w["reason"].as_str().is_some_and(|r| !r.is_empty()),
+            "unavailable with no reason: {w}"
+        );
+        // Both branches carry the same field set, so a consumer can tell "this
+        // run could not measure it" from "this branch never reports it".
+        for k in ["backend", "latency_ms", "counts", "needs_you"] {
+            assert!(
+                w.get(k).is_some(),
+                "{k} missing from the unavailable shape: {w}"
+            );
+        }
+    }
+
+    /// You can learn WHICH key this window is spending with, and never the key.
+    ///
+    /// The status verb answers three things about the credential — the variable
+    /// holding it, where that value came from, and a short one-way tag over it —
+    /// so a person can confirm their window is on the account they meant without
+    /// the secret being rendered anywhere. A terminal gets shoulder-surfed,
+    /// screenshotted into an issue, and recorded while streaming, so "safe to
+    /// display" has to be a property of the value, not a habit of the reader.
+    ///
+    /// This asserts the negative directly: the sentinel below is the key, and it
+    /// may not appear anywhere in the response text. Asserting that the
+    /// fingerprint *is* present would pass just as happily on a payload that
+    /// carried both.
+    #[test]
+    fn live_jev_mcp_reports_which_key_and_never_the_key() {
+        let bin = std::path::Path::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../plugins/jev-mcp/jev-mcp"
+        ))
+        .to_path_buf();
+        if !bin.is_file() {
+            eprintln!("skip: bundled jev-mcp not in this checkout");
+            return;
+        }
+        // Distinctive enough that a substring search cannot match it by luck,
+        // and not a real credential shape. `TD_JEV_HOME` is blanked so nothing
+        // loads a checkout `.env` over the top of it.
+        const SENTINEL: &str = "zzsentinel-key-do-not-print-4f7a91c2";
+        let mut env = no_jev_env();
+        for slot in env.iter_mut() {
+            if slot.0 == concat!("OPENROUTER", "_API_KEY") {
+                slot.1 = SENTINEL.to_string();
+            }
+        }
+        let mut proc = McpProcess::spawn(&bin.to_string_lossy(), &[], &env).unwrap();
+        proc.initialize().unwrap();
+        let text = proc.call_tool("jev_status", json!({})).unwrap();
+        assert!(
+            !text.contains(SENTINEL),
+            "the key itself reached a tool result: {text}"
+        );
+
+        let status: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(
+            status["key_env"],
+            json!(concat!("OPENROUTER", "_API_KEY")),
+            "the variable holding the key is not named: {status}"
+        );
+        assert_eq!(
+            status["key_origin"],
+            json!("environment"),
+            "a key supplied by the launcher must say so: {status}"
+        );
+        let fp = status["key_fingerprint"]
+            .as_str()
+            .expect("a key is set, so it has a fingerprint");
+        let hex = fp
+            .strip_prefix("sha256:")
+            .expect("fingerprint names its function");
+        assert_eq!(hex.len(), 8, "fingerprint is truncated to a label: {fp}");
+        assert!(
+            hex.chars().all(|c| c.is_ascii_hexdigit()),
+            "fingerprint is hex: {fp}"
+        );
+        // A tag over the key must not be derivable from the key's own name, or
+        // every window holding a different key would show the same one.
+        assert!(
+            !SENTINEL.contains(hex),
+            "the fingerprint is a slice of the key, not a digest of it: {fp}"
+        );
+    }
+
+    /// One malformed question abstains on its own and leaves its siblings alone.
+    ///
+    /// The encoder raises on an unknown type, a missing instruction, or a Score
+    /// whose levels arrive as a map instead of an ordered list — and that raise
+    /// used to escape the verb, so the whole call came back a JSON-RPC error and
+    /// every well-formed answer in the batch went with it. The file's documented
+    /// contract is that an answer may be null with a reason while its siblings
+    /// stand; a malformed question is just one more reason.
+    ///
+    /// Costs nothing to run: EVERY question here is malformed, so the partition
+    /// leaves nothing to send and no request is made. Opt-in on `TD_JEV_HOME`
+    /// because reaching the encoder at all needs the client importable.
+    #[test]
+    fn live_jev_mcp_one_bad_question_does_not_take_the_batch() {
+        let Ok(jev_home) = std::env::var("TD_JEV_HOME") else {
+            eprintln!("skip: TD_JEV_HOME not set, no jev client to import");
+            return;
+        };
+        let bin = std::path::Path::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../plugins/jev-mcp/jev-mcp"
+        ))
+        .to_path_buf();
+        if !bin.is_file() {
+            eprintln!("skip: bundled jev-mcp not in this checkout");
+            return;
+        }
+        let env = vec![("TD_JEV_HOME".to_string(), jev_home)];
+        let mut proc = McpProcess::spawn(&bin.to_string_lossy(), &[], &env).unwrap();
+        proc.initialize().unwrap();
+        let text = proc
+            .call_tool(
+                "judge",
+                json!({
+                    "state": { "thing": "anything" },
+                    "questions": {
+                        // An type the encoder has never heard of.
+                        "bogus_type": { "type": "noull", "instructions": "Is it?" },
+                        // The real mistake, made while composing the question set
+                        // that reviewed this very change: a Score's levels as a
+                        // map, where the encoder wants an ordered list.
+                        "score_as_map": { "type": "score", "instructions": "Where?",
+                                          "criteria": { "low": "a", "high": "b" } },
+                    }
+                }),
+            )
+            .unwrap();
+        let w: Value = serde_json::from_str(&text).unwrap();
+        // The plugin is fine. The questions were not. Those are different facts.
+        assert_eq!(
+            w["available"],
+            json!(true),
+            "a malformed question is not the plugin being unavailable: {w}"
+        );
+        let answers = w["answers"].as_object().expect("an answers map");
+        assert_eq!(answers.len(), 2, "every key sent comes back: {w}");
+        for (k, a) in answers {
+            assert_eq!(a["abstained"], json!(true), "{k} should abstain: {a}");
+            assert!(a["value"].is_null(), "{k} invented a value: {a}");
+            assert!(
+                a["reason"]
+                    .as_str()
+                    .is_some_and(|r| r.contains("invalid_question")),
+                "{k} abstained without saying why: {a}"
+            );
+        }
+    }
+
     /// A key and a host that cannot belong to each other must never report ready.
     ///
     /// Found by the agent building the rail, not by me: the plugin answered
@@ -730,7 +1001,7 @@ mod tests {
                 "not-a-real-key".to_string(),
             ),
             (
-                "SYSTEMONE_BASE_URL".to_string(),
+                concat!("SYSTEMONE", "_BASE_URL").to_string(),
                 // Split mid-word, not at the readable seam, so neither fragment
                 // spells a whole needle. The gate caught this line twice: first
                 // the string, then the comment that had quoted it to explain the
@@ -772,6 +1043,17 @@ mod tests {
             concat!("SYSTEMONE", "_API_KEY"),
             concat!("jev-", "latest"),
             concat!("/v1/", "systemone"),
+            // The alias above is not the id the service answers as. The live one
+            // is vendor-prefixed with a slash where the hostname needle has its
+            // dot, so it contained no needle at all and a pinned model id could
+            // be written straight into `app/src` past the gate built to catch
+            // exactly that. This needle is the prefix, so it catches the pin
+            // whatever version trails it.
+            concat!("typesafe", "/jev"),
+            // The base URL variable is the most likely thing a follow-up wiring
+            // TD's config to this plugin would reach for, and naming a host is
+            // naming the dependency this file exists to keep out.
+            concat!("SYSTEMONE", "_BASE_URL"),
         ];
         let mut stack = vec![PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/src"))];
         let mut scanned = 0usize;

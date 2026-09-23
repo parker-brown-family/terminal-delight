@@ -95,7 +95,10 @@ rather than a constant that may contradict it:
                        vendor and therefore a host; the third names neither and
                        pairs with whatever base URL is given.
   TD_JEV_MODEL         default jev-latest
-  TD_JEV_TIMEOUT_S     default 10
+  TD_JEV_TIMEOUT_S     default 8 — deliberately under the host's own 10s RPC
+                       deadline, so a slow backend comes back as a typed
+                       abstention rather than as a dead transport. Raising this
+                       above the host's budget makes every timeout unreadable.
   TD_JEV_MIN_CONFIDENCE
                        default 0.0 — NO floor. A threshold is a measurement, and
                        nobody has run labelled cases for these questions yet, so
@@ -109,6 +112,11 @@ TOOLS
                      backend? Makes no paid call — so `available: true` means
                      nothing checkable says this will fail, never that
                      authentication succeeded. Only a call can prove that.
+                     It also answers WHICH key, without the key: `key_env` names
+                     the variable, `key_origin` says whether the launcher or the
+                     checkout's `.env` supplied it, and `key_fingerprint` is a
+                     short one-way tag over the value — safe to render, safe in a
+                     screenshot, safe on a stream. See `_key_fingerprint`.
   judge              any typed question set over any state — the general verb.
   workspace_weather  what each agent pane is doing.
   rail_weather       the project rail's ticker frames, ranked by what reading
@@ -117,6 +125,7 @@ TOOLS
 Every question's wording lives here, so terminal-delight's own source contains no
 Jev vocabulary at all.
 """
+import hashlib
 import json
 import os
 import sys
@@ -126,6 +135,18 @@ NAME = "jev"
 VERSION = "0.1.0"
 
 DEFAULT_BASE_URL = "https://api.typesafe.ai"
+
+# Strictly under the host's own RPC deadline (`RPC_TIMEOUT`, 10s in
+# `app/src/plugins.rs`), and that gap is the whole point of the number.
+#
+# This used to be 10 — exactly the host's — which made the third of the three
+# absences unreachable through terminal-delight. The client abstains at the
+# deadline and only THEN serialises and writes its answer, so the host had
+# already given up and returned the string `plugin timed out after 10s`. A slow
+# backend could therefore never surface as what it is: a typed abstention,
+# per question, carrying `reason: timeout`, with its siblings still standing.
+# Two clocks that race do not make a contract; one that finishes first does.
+DEFAULT_TIMEOUT_S = "8"
 
 # A key names its vendor, so it also names the only host it can authenticate
 # against. Keeping these paired is what stops the plugin reporting itself ready
@@ -155,6 +176,15 @@ def _import_jev():
     saying so — rather than by raising into the host.
     """
     home = os.environ.get("TD_JEV_HOME", "").strip()
+    # Recorded BEFORE anything is loaded, and before the import can fail: after
+    # `load()` there is no way to tell a key the launcher supplied from one the
+    # checkout supplied, and "where did this key come from" is the question a
+    # person asks when a window turns out to be spending against the wrong
+    # account. `setdefault` makes the first writer win, so a name already holding
+    # a value is `environment` and only a name that appears later is `.env`.
+    for n in KEY_ENVS:
+        if os.environ.get(n, "").strip():
+            _KEY_ORIGIN.setdefault(n, "environment")
     if home and os.path.isdir(home) and home not in sys.path:
         sys.path.insert(0, home)
     try:
@@ -173,7 +203,57 @@ def _import_jev():
             load()
         except Exception:
             pass  # no .env, or an older checkout without the loader
+    for n in KEY_ENVS:
+        if os.environ.get(n, "").strip():
+            _KEY_ORIGIN.setdefault(
+                n, "environment" if n in before else "checkout .env")
     return (JevClient, HostedPort), None
+
+
+# Which env var's value came from where, this process. Filled in by `_import_jev`
+# because that is the only place a key can arrive from somewhere other than the
+# environment terminal-delight spawned us with.
+_KEY_ORIGIN = {}
+
+# A tag, not an authenticator. Eight hex characters is 32 bits: enough to tell
+# two keys apart by eye, far too few to be a credential, and deliberately so.
+KEY_FINGERPRINT_HEX = 8
+
+# Domain separation. Without it this digest would be the plain SHA-256 of the
+# key itself, which is the same value any other system might publish for the same
+# secret — a number safe on its own that stops being safe the moment it can be
+# lined up against somebody else's. Prefixed, the tag means something only here.
+_FINGERPRINT_DOMAIN = b"terminal-delight/jev-mcp/key-fingerprint/v1\x00"
+
+
+def _key_fingerprint(name):
+    """A short one-way tag for the key held in `name` — never the key.
+
+    THE POINT: a person needs to know *which* key their window is spending money
+    with, and the one way they must not find out is by reading it off a screen.
+    A terminal is shoulder-surfed, screenshotted into an issue, and recorded
+    while streaming; a value that is rendered anywhere is a value that leaks
+    somewhere. So nothing here ever returns it, and there is no verb that can.
+
+    What comes back instead is a fingerprint: `sha256:1f4c9ab2`. Two windows
+    showing the same eight characters hold the same key. A fingerprint that
+    changed after a rotation says the rotation took. One that does not match the
+    key you meant to install says you are spending somebody else's budget — all
+    three answerable at a glance, none of them requiring the secret on screen.
+
+    It is one-way, truncated, and domain-separated, which makes it useless as a
+    credential and useless to anyone correlating it against a hash from another
+    system. It is not a proof of possession and must never be accepted as one:
+    32 bits collide, and that is a fine property for a label and a disqualifying
+    one for a key. Guessing the value back out requires guessing the key itself,
+    which is exactly as hard as guessing the key — the only security claim made
+    here, and the only one needed.
+    """
+    value = os.environ.get(name or "", "").strip()
+    if not value:
+        return None
+    digest = hashlib.sha256(_FINGERPRINT_DOMAIN + value.encode("utf-8")).hexdigest()
+    return "sha256:" + digest[:KEY_FINGERPRINT_HEX]
 
 
 def _key_env():
@@ -235,14 +315,25 @@ def _status():
     key = _key_env()
     base = _base_url(key)
     model = os.environ.get("TD_JEV_MODEL", "").strip() or "jev-latest"
+    # WHICH key is spending the money, answerable without the key being anywhere
+    # a camera can reach it. `key_env` names the variable, `key_fingerprint` is a
+    # one-way tag over the value, `key_origin` says whether the launcher supplied
+    # it or the checkout's own `.env` did. All three are safe on a screen, in a
+    # screenshot, and on a stream; the value itself appears in none of them and
+    # no verb in this file returns it.
+    ident = {
+        "key_env": key,
+        "key_fingerprint": _key_fingerprint(key),
+        "key_origin": _KEY_ORIGIN.get(key),
+    }
     if mods is None:
         return {
             "available": False,
             "reason": reason,
             "client": False,
             "base_url": base,
-            "key_env": key,
             "model": model,
+            **ident,
         }
     if key is None and not _is_local(base):
         return {
@@ -251,8 +342,8 @@ def _status():
                       "127.0.0.1 needs none)" % ", ".join(KEY_ENVS),
             "client": True,
             "base_url": base,
-            "key_env": None,
             "model": model,
+            **ident,
         }
     # Only a KNOWN host paired with a KNOWN-and-different key is a certain
     # failure. A self-hosted endpoint, a proxy, or anything on 127.0.0.1 cannot
@@ -267,16 +358,16 @@ def _status():
                       "host." % (key, base, want),
             "client": True,
             "base_url": base,
-            "key_env": key,
             "model": model,
+            **ident,
         }
     return {
         "available": True,
         "reason": None,
         "client": True,
         "base_url": base,
-        "key_env": key,
         "model": model,
+        **ident,
     }
 
 
@@ -291,9 +382,10 @@ def _client():
     except ValueError:
         floor = 0.0
     try:
-        timeout = float(os.environ.get("TD_JEV_TIMEOUT_S", "10") or 10)
+        timeout = float(os.environ.get("TD_JEV_TIMEOUT_S", DEFAULT_TIMEOUT_S)
+                        or DEFAULT_TIMEOUT_S)
     except ValueError:
-        timeout = 10.0
+        timeout = float(DEFAULT_TIMEOUT_S)
     c = JevClient(
         st["base_url"],
         port=HostedPort(st["model"]),
@@ -323,6 +415,33 @@ def _answer(d):
     }
 
 
+def _abstention(reason):
+    """An answer that is not one — same shape as `_answer`, every field absent.
+
+    A caller must not have to tell an abstention apart by which keys are present.
+    Two shapes for one field set is how a consumer ends up with everything
+    optional, and then it can no longer tell "this branch never reports it" from
+    "this run could not measure it".
+    """
+    return {"kind": None, "value": None, "probabilities": None,
+            "confidence": None, "abstained": True, "reason": reason,
+            "latency_ms": None, "backend": None}
+
+
+def _invalid(c, key, question):
+    """Why this one question cannot be sent — or None when it can.
+
+    Asked through the port's own encoder rather than re-implemented here, so it
+    cannot drift from what the backend will actually accept. `to_backend_many`
+    builds a body and makes no call, so this costs nothing and needs no state.
+    """
+    try:
+        c.port.to_backend_many(None, {key: question})
+    except Exception as e:
+        return "error:invalid_question: %s" % e
+    return None
+
+
 # ---------------------------------------------------------------------------
 # judge — the general verb
 # ---------------------------------------------------------------------------
@@ -338,13 +457,37 @@ def do_judge(args):
                 "answers": None}
     c, st = _client()
     if c is None:
-        return {"available": False, "reason": st["reason"], "answers": None}
-    answers = c.ask_many(state, questions)
+        return {"available": False, "reason": st["reason"], "answers": None,
+                "backend": None}
+
+    # Partition before asking. One malformed question used to take the whole
+    # request down: the encoder raises on an unknown type, a missing instruction
+    # or an empty criteria map, that raise happened outside any handler, and the
+    # call came back as a JSON-RPC error with every well-formed sibling answer
+    # thrown away. It is the documented contract of this file that an answer may
+    # be null with a reason while its siblings still stand, and a malformed
+    # question is just one more reason.
+    #
+    # Caught in the wild rather than imagined: composing the question set that
+    # reviewed this very change, one Score carried its levels as a map instead of
+    # an ordered list, and all twenty-seven answers were lost to it.
+    good, answers = {}, {}
+    for k, q in questions.items():
+        bad = _invalid(c, k, q)
+        if bad is None:
+            good[k] = q
+        else:
+            answers[k] = _abstention(bad)
+    if good:
+        answers.update({k: _answer(v) for k, v in c.ask_many(state, good).items()})
     return {
         "available": True,
         "reason": None,
         "backend": st["model"],
-        "answers": {k: _answer(v) for k, v in answers.items()},
+        # Every key the caller sent comes back, in the order they sent it. A
+        # caller iterating its own keys must never silently lose one.
+        "answers": {k: answers.get(k, _abstention("error:missing_answer"))
+                    for k in questions},
     }
 
 
@@ -364,7 +507,23 @@ PANE_STATES = ("working", "needs_person", "stalled", "done", "unclear")
 # `stalled` and everything else, which is a coin toss dressed as a verdict.
 ROW_STATES = PANE_STATES + ("not_an_agent",)
 
-AGENT_MODES = ("claude", "codex", "agent")
+# The ONLY modes that may be answered from measurement: the ones that positively
+# say "there is no agent here". Everything else is asked.
+#
+# This list used to be the other way round — an allow-list of agent modes, with
+# every other string falling through to a measured `not_an_agent`. That is the
+# collapse this whole plugin exists to refuse, and it was sitting in the middle
+# of it. TD's `PaneMode::label()` emits `UNKNOWN` for a pane its own census
+# could not describe (`app/src/pane.rs`: "a reader that sees this knows the
+# census could not describe the pane"), and that absence was being answered
+# `not_an_agent`, `source: measured`, `reason: null` — a verdict invented from
+# nobody having looked. `REMOTE` was answered the same way, and an ssh pane can
+# perfectly well be running an agent; so can a `PaneMode::Other("GEMINI")` this
+# file has never heard of.
+#
+# A mode we do not recognise is not evidence of absence. It goes to the model
+# with the same fields every other pane gets, and `unclear` is there to catch it.
+NON_AGENT_MODES = ("shell",)
 
 PANE_CRITERIA = {
     "working": {
@@ -402,7 +561,15 @@ PANE_CRITERIA = {
 # Fields a pane may carry. Anything outside this set is dropped before the state
 # is sent: accuracy falls as a state grows with material no question names, and a
 # pane's cwd and pid are not evidence about what it is doing.
-PANE_FIELDS = ("id", "title", "mode", "last_tool", "last_line", "idle_s")
+#
+# `awaiting_input` is in this list on purpose. It used to be stripped, and a pane
+# TD had positively measured as NOT waiting for the person was judged blind to
+# that measurement — free to come back `needs_person` against a fact already in
+# hand, which `_needs_you` would then count. Only `true` short-circuits above, so
+# what reaches the model here is `false` (measured: not waiting) or `null` (TD
+# could not tell), and those two are not the same fact.
+PANE_FIELDS = ("id", "title", "mode", "last_tool", "last_line", "idle_s",
+               "awaiting_input")
 
 
 def _pane_question(idx):
@@ -412,9 +579,16 @@ def _pane_question(idx):
         "instructions":
             "%s` is one AI coding agent working in a terminal pane. From %s.title`, "
             "%s.last_tool`, %s.last_line` and %s.idle_s` — the agent's own most recent "
-            "activity — decide what that agent is doing at this moment. Judge only this "
-            "pane; the other panes in `panes` are other people's work and are not "
-            "evidence about this one." % (p, p, p, p, p),
+            "activity — decide what that agent is doing at this moment. "
+            "%s.awaiting_input` is a measurement taken from the terminal itself, not "
+            "a guess: `false` means the pane is definitely not blocked waiting for the "
+            "person, so do not answer `needs_person` against it; `null` means that "
+            "could not be measured and tells you nothing either way. "
+            "%s.mode` may be `UNKNOWN` or a name you do not recognise, which means "
+            "nobody established what is running there — that is not evidence the pane "
+            "is idle, and `unclear` is the honest answer when the rest says too little. "
+            "Judge only this pane; the other panes in `panes` are other people's work "
+            "and are not evidence about this one." % (p, p, p, p, p, p, p),
         "options": list(PANE_STATES),
         "criteria": {k: PANE_CRITERIA[k] for k in PANE_STATES},
     }
@@ -451,7 +625,7 @@ def do_workspace_weather(args):
     for pane in panes:
         pid = pane.get("id")
         mode = pane.get("mode")
-        if isinstance(mode, str) and mode.strip() and mode.strip().lower() not in AGENT_MODES:
+        if isinstance(mode, str) and mode.strip().lower() in NON_AGENT_MODES:
             out.append({"id": pid, "state": "not_an_agent", "p": None,
                         "source": "measured", "reason": None})
             continue
@@ -464,21 +638,30 @@ def do_workspace_weather(args):
                     "source": "judged", "reason": None})
         judged.append(_trim(pane))
 
-    backend = None
+    # Availability describes the PLUGIN, not this batch, so it is resolved here
+    # rather than inside `if judged:`. It used to sit inside, which meant a pane
+    # list that happened to be all-measured — every pane a shell, or every pane
+    # already awaiting input — returned `available: true` on a machine with no
+    # client and no key, because nothing had gone looking. A surface using this
+    # field as its draw gate would believe judgement was configured when none
+    # was. `_client()` makes no call; asking it costs nothing.
+    c, st = _client()
+    backend = st["model"] if c is not None else None
     latency_ms = None
-    if judged:
-        c, st = _client()
-        if c is None:
-            for i in ask_idx:
-                out[i]["reason"] = st["reason"]
-            return {"available": False, "reason": st["reason"],
-                    "panes": out, "counts": _counts(out),
-                    "needs_you": _needs_you(out)}
-        backend = st["model"]
+
+    if c is None:
+        for i in ask_idx:
+            out[i]["reason"] = st["reason"]
+    elif judged:
         questions = {"pane_%d" % n: _pane_question(n) for n in range(len(judged))}
         answers = c.ask_many({"panes": judged}, questions)
         for n, i in enumerate(ask_idx):
             d = answers.get("pane_%d" % n)
+            # Take the duration off whatever came back, including an abstention.
+            # A batch where every question timed out is the run whose duration
+            # explains the most, and it was the one run reporting none.
+            if latency_ms is None:
+                latency_ms = getattr(d, "latency_ms", None)
             if d is None or getattr(d, "abstained", False):
                 out[i]["reason"] = getattr(d, "reason", None) or "error:missing_answer"
                 continue
@@ -491,12 +674,13 @@ def do_workspace_weather(args):
             out[i]["state"] = value
             probs = getattr(d, "probabilities", None) or None
             out[i]["p"] = probs.get(value) if probs else None
-            if latency_ms is None:
-                latency_ms = getattr(d, "latency_ms", None)
 
+    # One shape on both branches. A consumer that had to make `backend` and
+    # `latency_ms` optional only because the unavailable return omitted them
+    # cannot tell "absent from this branch" from "unknown on this run".
     return {
-        "available": True,
-        "reason": None,
+        "available": c is not None,
+        "reason": st["reason"],
         "backend": backend,
         "latency_ms": latency_ms,
         "panes": out,
