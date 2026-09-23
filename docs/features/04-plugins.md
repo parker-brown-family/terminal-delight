@@ -179,9 +179,20 @@ two byte-identical frames sat ~0.98 apart in every run with the *earlier* one
 always winning — a gap that flips sign when the array is reversed. So the model
 partly anchors on the order it is handed, which is the order the ranking exists
 to improve on. `_band_width` therefore coarsens scores before ordering and lets
-the rail's own order stand inside a band. That number is a **resolution**, not a
-confidence floor: it is the worst measured positional effect rounded up, from two
-fixtures on one day, and `TD_JEV_RAIL_BAND` overrides it.
+the rail's own order stand inside a band. That width is a **resolution**, not a
+confidence floor, and it is **not a constant** — shipping it as one was wrong.
+Re-measured against four real readings pulled off a live window, the bias scales
+with how many frames are in the batch: 0.24 worst at 4 frames, 0.69 at 7, 1.21 at
+10, 1.92 at 14. A fixed 1.5 was six times too wide on a calm reading, freezing the
+rail's order while the model discriminated cleanly, and too *narrow* at fourteen.
+The width is now `0.14 × frame count`, floored at the 0.22 noise floor, with
+`TD_JEV_RAIL_BAND` overriding absolutely.
+
+The uncomfortable half of that table is worth keeping in view: at fourteen-plus
+frames, position alone moves a score by most of two whole levels, so the ranking
+there is a handful of bands rather than an order. If a wider corpus holds that,
+the repair is upstream — in how many frames get asked about at once — not in this
+number.
 
 **The rail's own severity is withheld from the model on purpose.** Each frame
 arrives carrying a `tone`, and passing it along looks free. Measured on four

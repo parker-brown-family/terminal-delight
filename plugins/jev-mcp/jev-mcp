@@ -754,7 +754,7 @@ def do_rail_weather(args):
     # positional bias and sorting on it would dress that bias as a judgement.
     # Within a band the rail's own order stands: git already decided it, and a
     # difference smaller than the instrument's resolution is not a disagreement.
-    band = _band_width()
+    band = _band_width(len(frames))
     scored.sort(key=lambda t: (-int(t[0] / band) if band > 0 else -t[0], t[1]))
 
     a = answers.get("attention")
@@ -777,7 +777,7 @@ def do_rail_weather(args):
     }
 
 
-def _band_width():
+def _band_width(n_frames):
     """How far two frames must separate before we claim one outranks the other.
 
     This is a RESOLUTION, not a confidence floor, and the difference matters.
@@ -789,15 +789,46 @@ def _band_width():
     one always winning. So the model partly anchors on the order it is given —
     which is the order we were asked to improve on.
 
-    1.5 is the worst measured positional effect rounded up. It was derived from
-    two fixtures on one day, so it is an estimate with its method attached rather
-    than a swept threshold; `TD_JEV_RAIL_BAND` overrides it, and 0 turns banding
-    off and sorts on the raw score, bias and all.
+    **It is not a constant, and shipping it as one was wrong.** Re-measured
+    against four real readings pulled off a live window — a calm project, one
+    with 14 uncommitted files and 23 unpushed commits, one with three panes
+    writing into another repository, and one with three pairs of lines converging
+    — by reversing each frame array and comparing:
+
+        frames   bias mean   bias max
+           4        0.10       0.24     a calm project
+           7        0.19       0.69
+          10        0.33       1.21
+          14        0.68       1.92     three collisions, two idle worktrees
+
+    The bias scales with how many frames are in the batch, near enough linearly.
+    A fixed 1.5 was therefore wrong at both ends: six times too wide on a calm
+    reading, where it froze the rail's order although the model was discriminating
+    cleanly, and too NARROW at fourteen, where position alone moves a score
+    further than the band it was supposed to absorb.
+
+    `0.14 * n` tracks the worst case at the top of that range and stays
+    deliberately conservative at the bottom, floored at the 0.22 run-to-run noise
+    so a two-frame reading never claims a resolution finer than the instrument
+    has. One constant rather than a slope and an intercept, because four points
+    do not earn two parameters.
+
+    The honest reading of the top row is uncomfortable and worth keeping in view:
+    at fourteen-plus frames, position alone can move a score by most of two whole
+    levels, so the ranking there is coarse — a handful of bands, not an order. If
+    that holds on a wider corpus the repair is upstream, in how many frames get
+    asked about at once, not in this number.
+
+    `TD_JEV_RAIL_BAND` overrides with an absolute width, and 0 turns banding off
+    and sorts on the raw score, bias and all.
     """
-    try:
-        return float(os.environ.get("TD_JEV_RAIL_BAND", "1.5"))
-    except ValueError:
-        return 1.5
+    override = os.environ.get("TD_JEV_RAIL_BAND", "").strip()
+    if override:
+        try:
+            return float(override)
+        except ValueError:
+            pass
+    return max(0.22, 0.14 * max(0, n_frames))
 
 
 def _level_index(value):
