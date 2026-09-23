@@ -25459,7 +25459,17 @@ impl Render for Workspace {
                         // half-full context stays white, because a half-full
                         // context is genuinely fine.
                         let tip = mix(white(), end, b.charge.clamp(0., 1.));
-                        let filled = track_w * b.drawn();
+                        // An unmeasured stat draws the whole track in flat grey
+                        // with no gradient and captions itself `—`.
+                        //
+                        // Full width, because the alternative readings are both
+                        // lies a glance would believe: a short bar says the
+                        // number is small, and an empty track says it is zero.
+                        // A grey slab matches no real reading — every measured
+                        // bar sweeps white → its tone — so it reads as "this is
+                        // not a length" without needing a legend.
+                        let unknown = b.unknown();
+                        let filled = track_w * b.drawn().unwrap_or(1.0);
                         div()
                             .flex()
                             .flex_row()
@@ -25500,13 +25510,21 @@ impl Render for Workspace {
                                     // exactly what is drawn — no inner clipping
                                     // layer, and a short bar still reaches its
                                     // full colour at its own right edge.
-                                    .child(div().h_full().w(px(filled)).rounded(sk.radius()).bg(
-                                        linear_gradient(
-                                            90.,
-                                            linear_color_stop(white().alpha(0.92), 0.),
-                                            linear_color_stop(tip, 1.),
-                                        ),
-                                    )),
+                                    .child(if unknown {
+                                        div()
+                                            .h_full()
+                                            .w(px(filled))
+                                            .rounded(sk.radius())
+                                            .bg(row_text.alpha(0.16))
+                                    } else {
+                                        div().h_full().w(px(filled)).rounded(sk.radius()).bg(
+                                            linear_gradient(
+                                                90.,
+                                                linear_color_stop(white().alpha(0.92), 0.),
+                                                linear_color_stop(tip, 1.),
+                                            ),
+                                        )
+                                    }),
                             )
                             .child(
                                 div()
@@ -25514,7 +25532,13 @@ impl Render for Workspace {
                                     .w(px(20. * cs))
                                     .text_size(px(6.5 * cs))
                                     .font_weight(gpui::FontWeight::BOLD)
-                                    .text_color(mix(row_text.alpha(0.75), tip, b.charge * 0.8))
+                                    .text_color(if unknown {
+                                        // Dimmer than any reading, so the eye
+                                        // skips it rather than reading a value.
+                                        row_text.alpha(0.40)
+                                    } else {
+                                        mix(row_text.alpha(0.75), tip, b.charge * 0.8)
+                                    })
                                     .child(b.caption.clone()),
                             )
                     };
