@@ -183,6 +183,22 @@ pub fn payload(state: &ProjectState, frames: &[Frame]) -> Value {
                 "id": format!("f{i}"),
                 "kind": format!("{:?}", f.kind),
                 "text": f.text,
+                // The severity the rail already assigned. Sent because the
+                // first live ranking judged a frame the rail had drawn as a
+                // warning without ever being told it was one, and scored it
+                // background. The model should judge the same object the bar
+                // draws, not a copy with the severity stripped out.
+                //
+                // This does NOT replace the floor in `order`. Telling the
+                // model a line is a warning makes it better informed; it does
+                // not make it unable to rank one last, and only the floor
+                // makes that impossible.
+                "tone": match f.tone {
+                    Tone::Warn => "warn",
+                    Tone::Good => "good",
+                    Tone::Muted => "muted",
+                    Tone::Plain => "plain",
+                },
             })
         })
         .collect();
@@ -512,6 +528,19 @@ mod tests {
         }
         assert!(p.contains("two dirty"));
         assert!(p.contains("\"f0\""));
+    }
+
+    #[test]
+    fn a_frame_is_sent_with_the_severity_the_rail_gave_it() {
+        let mut f = three();
+        f[1].tone = Tone::Warn;
+        let p = payload(&bare_state(), &f);
+        let sent = p["frames"].as_array().expect("frames");
+        assert_eq!(sent[0]["tone"], "plain");
+        assert_eq!(sent[1]["tone"], "warn");
+        // and every frame carries one — a missing tone would read as no
+        // opinion when the rail always has one.
+        assert!(sent.iter().all(|x| x["tone"].is_string()));
     }
 
     /// A body the real plugin really returned, kept verbatim.
