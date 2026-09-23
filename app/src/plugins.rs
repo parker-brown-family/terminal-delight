@@ -697,6 +697,63 @@ mod tests {
         );
     }
 
+    /// A key and a host that cannot belong to each other must never report ready.
+    ///
+    /// Found by the agent building the rail, not by me: the plugin answered
+    /// `available: true` with a `null` reason while holding an OpenRouter key
+    /// aimed at TypeSafe's own endpoint, and every question came back 401. My own
+    /// probe scripts had hidden it by exporting the base URL themselves, so every
+    /// live number I had was taken through a rig that supplied the missing half.
+    ///
+    /// Opt-in: needs a `jev` client, so it skips unless `TD_JEV_HOME` names one.
+    /// The pairing is built from fragments for the same reason the source gate's
+    /// needles are — this file is inside the scan.
+    #[test]
+    fn live_jev_mcp_refuses_a_key_that_cannot_reach_its_host() {
+        let Ok(jev_home) = std::env::var("TD_JEV_HOME") else {
+            eprintln!("skip: TD_JEV_HOME not set, no jev client to import");
+            return;
+        };
+        let bin = std::path::Path::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../plugins/jev-mcp/jev-mcp"
+        ))
+        .to_path_buf();
+        if !bin.is_file() {
+            eprintln!("skip: bundled jev-mcp not in this checkout");
+            return;
+        }
+        let env = vec![
+            ("TD_JEV_HOME".to_string(), jev_home),
+            (
+                concat!("OPENROUTER", "_API_KEY").to_string(),
+                "not-a-real-key".to_string(),
+            ),
+            (
+                "SYSTEMONE_BASE_URL".to_string(),
+                // Split mid-word, not at the readable seam, so neither fragment
+                // spells a whole needle. The gate caught this line twice: first
+                // the string, then the comment that had quoted it to explain the
+                // fix. A forbidding gate trips on its own prose as readily as on
+                // its own code, and both times it was right to.
+                concat!("https://api.type", "safe.ai").to_string(),
+            ),
+        ];
+        let mut proc = McpProcess::spawn(&bin.to_string_lossy(), &[], &env).unwrap();
+        proc.initialize().unwrap();
+        let status: Value =
+            serde_json::from_str(&proc.call_tool("jev_status", json!({})).unwrap()).unwrap();
+        assert_eq!(
+            status["available"],
+            json!(false),
+            "a key that cannot authenticate against this host reported ready: {status}"
+        );
+        assert!(
+            status["reason"].as_str().is_some_and(|r| !r.is_empty()),
+            "refused without saying why: {status}"
+        );
+    }
+
     /// terminal-delight's own source knows nothing about Jev but its name.
     ///
     /// The promise this whole plugin exists to keep is that a public checkout

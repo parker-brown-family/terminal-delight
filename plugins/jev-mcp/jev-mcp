@@ -44,14 +44,21 @@ always the stale one.
 
 BACKEND AND KEY
 ---------------
-Resolved from the environment, never from an argument and never from this file:
+Resolved from the environment, never from an argument and never from this file.
+A key names its vendor, so with no base URL named the plugin follows the key
+rather than a constant that may contradict it:
 
-  SYSTEMONE_BASE_URL   default https://api.typesafe.ai
-                       (https://openrouter.ai/api serves the identical format)
+  SYSTEMONE_BASE_URL   where to send it. Unset, the key below decides, because a
+                       key that names a vendor can only authenticate against that
+                       vendor. Set, it wins outright — a local System One server
+                       is a real target no key implies. The two hosts serve an
+                       identical wire format.
   TYPESAFE_API_KEY | OPENROUTER_API_KEY | SYSTEMONE_API_KEY
                        the first one set names the header this run uses. The
                        value is read by the client, never by this file, and is
-                       never echoed into a tool result.
+                       never echoed into a tool result. The first two name a
+                       vendor and therefore a host; the third names neither and
+                       pairs with whatever base URL is given.
   TD_JEV_MODEL         default jev-latest
   TD_JEV_TIMEOUT_S     default 10
   TD_JEV_MIN_CONFIDENCE
@@ -63,10 +70,17 @@ Resolved from the environment, never from an argument and never from this file:
 
 TOOLS
 -----
-  jev_status         is there a client, a backend and a key? Makes no paid call.
+  jev_status         is there a client, a backend, and a key that belongs to that
+                     backend? Makes no paid call — so `available: true` means
+                     nothing checkable says this will fail, never that
+                     authentication succeeded. Only a call can prove that.
   judge              any typed question set over any state — the general verb.
-  workspace_weather  what each agent pane is doing, composed here so that TD's
-                     own source contains no Jev vocabulary.
+  workspace_weather  what each agent pane is doing.
+  rail_weather       the project rail's ticker frames, ranked by what reading
+                     each one first would make the reader do.
+
+Every question's wording lives here, so terminal-delight's own source contains no
+Jev vocabulary at all.
 """
 import json
 import os
@@ -77,7 +91,21 @@ NAME = "jev"
 VERSION = "0.1.0"
 
 DEFAULT_BASE_URL = "https://api.typesafe.ai"
-KEY_ENVS = ("TYPESAFE_API_KEY", "OPENROUTER_API_KEY", "SYSTEMONE_API_KEY")
+
+# A key names its vendor, so it also names the only host it can authenticate
+# against. Keeping these paired is what stops the plugin reporting itself ready
+# while holding an OpenRouter key pointed at TypeSafe's own endpoint — a pairing
+# that 401s on every question, which is exactly the confident-wrong-value this
+# plugin exists to refuse. Order is preference when several are set.
+KEY_HOSTS = (
+    ("TYPESAFE_API_KEY", "https://api.typesafe.ai"),
+    ("OPENROUTER_API_KEY", "https://openrouter.ai/api"),
+    # Generic by design: it names no vendor, so it implies no host and pairs
+    # with whatever SYSTEMONE_BASE_URL says, including a local server.
+    ("SYSTEMONE_API_KEY", None),
+)
+KEY_ENVS = tuple(name for name, _ in KEY_HOSTS)
+KNOWN_HOSTS = {host for _, host in KEY_HOSTS if host}
 
 
 # ---------------------------------------------------------------------------
@@ -126,8 +154,27 @@ def _key_env():
     return None
 
 
-def _base_url():
-    return os.environ.get("SYSTEMONE_BASE_URL", "").strip() or DEFAULT_BASE_URL
+def _key_host(key_env):
+    """The one host a given key can authenticate against, or None if it names no vendor."""
+    for name, host in KEY_HOSTS:
+        if name == key_env:
+            return host
+    return None
+
+
+def _base_url(key_env=None):
+    """Where to send the request.
+
+    An explicit `SYSTEMONE_BASE_URL` always wins — a person who named a host meant
+    it, and a local System One server is a legitimate target no key implies. With
+    nothing named, follow the key: defaulting to a constant that contradicts the
+    only credential on the machine produces a plugin that reports itself ready and
+    401s on every question.
+    """
+    explicit = os.environ.get("SYSTEMONE_BASE_URL", "").strip()
+    if explicit:
+        return explicit
+    return _key_host(key_env) or DEFAULT_BASE_URL
 
 
 def _is_local(url):
@@ -135,10 +182,23 @@ def _is_local(url):
 
 
 def _status():
-    """The whole availability picture, with no call made."""
+    """The whole availability picture, with no call made.
+
+    `available: true` means **nothing checkable says this will fail** — the client
+    imports, a key is present where one is needed, and the key and the host can
+    belong to each other. It is not a claim that authentication succeeded, because
+    proving that costs a request and this verb deliberately makes none. The only
+    proof is a call, and every call reports its own failure per question.
+
+    What it must never do is say `true` with a `null` reason while holding a
+    pairing that cannot work. That happened: an OpenRouter key against TypeSafe's
+    own endpoint, reported ready, 401 on all seven frames. A confident wrong value
+    in the field that reports whether the boundary is up is the worst place in
+    this plugin for one, so the checkable half is now actually checked.
+    """
     mods, reason = _import_jev()
-    base = _base_url()
     key = _key_env()
+    base = _base_url(key)
     model = os.environ.get("TD_JEV_MODEL", "").strip() or "jev-latest"
     if mods is None:
         return {
@@ -157,6 +217,22 @@ def _status():
             "client": True,
             "base_url": base,
             "key_env": None,
+            "model": model,
+        }
+    # Only a KNOWN host paired with a KNOWN-and-different key is a certain
+    # failure. A self-hosted endpoint, a proxy, or anything on 127.0.0.1 cannot
+    # be judged from here and is left alone — a check that cries wolf gets
+    # switched off, and then nothing is checked at all.
+    want = _key_host(key)
+    if want and base in KNOWN_HOSTS and base != want:
+        return {
+            "available": False,
+            "reason": "%s cannot authenticate against %s — it belongs to %s. Unset "
+                      "SYSTEMONE_BASE_URL to follow the key, or set the key for this "
+                      "host." % (key, base, want),
+            "client": True,
+            "base_url": base,
+            "key_env": key,
             "model": model,
         }
     return {
@@ -681,9 +757,13 @@ def _error(rid, code, msg):
 TOOLS = [
     {
         "name": "jev_status",
-        "description": "Is typed judgement available here — a client, a backend and a "
-                       "key? Answers without making a call, so it is the cheap check a "
-                       "surface runs before drawing anything.",
+        "description": "Is typed judgement available here — a client, a backend, and a "
+                       "key that belongs to that backend? Answers without making a "
+                       "call, so it is the cheap check a surface runs before drawing "
+                       "anything. `available: true` means nothing checkable says this "
+                       "will fail; it is not proof that authentication succeeds, which "
+                       "only a real call can give. `available: false` always names a "
+                       "reason.",
         "inputSchema": {"type": "object", "properties": {}},
     },
     {
