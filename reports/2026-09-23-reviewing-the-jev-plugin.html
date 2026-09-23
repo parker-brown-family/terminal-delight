@@ -367,8 +367,9 @@ td.defer { color: var(--warning); font-family: var(--mono); font-size: 12.5px; }
   a crash in the fix commit and the author caught it, which is the last section and the most
   useful one.</p>
   <p class="pinned"><span class="tag measured">measured</span> Reviewed at <code>720a8d7</code>,
-  re-verified at <code>2902d86</code>, fixes landed as <code>7a6ee60</code>, and a bug I shipped
-  in that very commit repaired in <code>2d002bf</code>. Gates on the pushed tree:
+  re-verified at <code>2902d86</code>, fixes landed as <code>7a6ee60</code>, a bug I shipped
+  in that very commit repaired in <code>2d002bf</code>, and the author's state-partitioning work
+  rebased on top as <code>313cc27</code>. Gates on the pushed tree:
   <b>clippy clean, rustfmt clean, 14/14 plugin tests</b>.</p>
 </header>
 
@@ -702,6 +703,46 @@ td.defer { color: var(--warning); font-family: var(--mono); font-size: 12.5px; }
     before I had fixed it. <span class="tag measured">measured</span> It is now repaired and
     guarded, and the guard's comment says where it came from.</p>
   </div>
+</section>
+
+<section>
+  <h2>The sharpest measurement of the night is not mine</h2>
+
+  <p>While I was reviewing, the plugin's author was measuring something I would not have thought
+  to test: whether the order frames appear in moves the answer. It does, and the fix is not the
+  one the shape of the problem suggests. This landed as <code>313cc27</code> and it is the best
+  evidence in the pull request for what the plugin is actually for.</p>
+
+  <figure>
+    <span class="lbl">10 &middot; Splitting the questions changes nothing; splitting the state changes everything</span>
+    <div class="scroller">
+      <svg viewBox="0 0 880 280" role="img" aria-label="Three arms compared on positional bias, showing that splitting only the question set leaves bias unchanged while splitting the state halves it">
+        <text x="300" y="22" font-family="ui-monospace, monospace" font-size="10.5" fill="#8b8a80">mean bias</text>
+        <text x="600" y="22" font-family="ui-monospace, monospace" font-size="10.5" fill="#8b8a80">worst bias</text>
+<text x="290" y="68" text-anchor="end" font-family="ui-monospace, monospace" font-size="11" fill="#c3c2b7">one request, all 14 frames</text><rect x="300" y="56" width="74" height="17" rx="3" fill="#8b8a80"/><text x="382" y="69" font-family="ui-monospace, monospace" font-size="10.5" fill="#ffffff">0.74</text><rect x="600" y="56" width="216" height="17" rx="3" fill="#8b8a80" fill-opacity="0.55"/><text x="824" y="69" font-family="ui-monospace, monospace" font-size="10.5" fill="#c3c2b7">2.16</text>
+<text x="290" y="114" text-anchor="end" font-family="ui-monospace, monospace" font-size="11" fill="#c3c2b7">split the questions only</text><rect x="300" y="102" width="74" height="17" rx="3" fill="#d03b3b"/><text x="382" y="115" font-family="ui-monospace, monospace" font-size="10.5" fill="#ffffff">0.74</text><rect x="600" y="102" width="220" height="17" rx="3" fill="#d03b3b" fill-opacity="0.55"/><text x="828" y="115" font-family="ui-monospace, monospace" font-size="10.5" fill="#c3c2b7">2.20</text>
+<text x="290" y="160" text-anchor="end" font-family="ui-monospace, monospace" font-size="11" fill="#c3c2b7">split questions AND state</text><rect x="300" y="148" width="29" height="17" rx="3" fill="#0ca30c"/><text x="337" y="161" font-family="ui-monospace, monospace" font-size="10.5" fill="#ffffff">0.29</text><rect x="600" y="148" width="145" height="17" rx="3" fill="#0ca30c" fill-opacity="0.55"/><text x="753" y="161" font-family="ui-monospace, monospace" font-size="10.5" fill="#c3c2b7">1.45</text>
+        <line x1="300" y1="198" x2="860" y2="198" stroke="#3a3a36"/>
+        <text x="300" y="224" font-family="ui-monospace, monospace" font-size="10.5" fill="#fab219">the carve-out: splitting the state costs the summary frame 0.7 levels,</text>
+        <text x="300" y="242" font-family="ui-monospace, monospace" font-size="10.5" fill="#fab219">because it cannot restate neighbours it was never shown</text>
+        <text x="300" y="266" font-family="ui-monospace, monospace" font-size="10.5" fill="#8b8a80">so the summary and the attention question keep the whole reading; everything else partitions</text>
+      </svg>
+    </div>
+    <figcaption>Measured on a real fourteen-frame reading, not a fixture. <b>The middle arm is the
+    one that matters: splitting the question set while every request still carries all fourteen
+    frames moves the bias from 0.74 to 0.74</b> &mdash; nothing. It is what the model is shown
+    that biases it, not what it is asked. An implementation that split only the questions would
+    have looked exactly like it was working, and the band tightened 1.96 to 1.12 only once the
+    state was partitioned too. <span class="tag measured">measured</span> by the plugin's author.</figcaption>
+  </figure>
+
+  <p class="aside">The carve-out is the honest part. One question asks whether a frame merely
+  restates what the other lines already say &mdash; and a frame cannot be found to restate
+  neighbours it was not shown, so partitioning the state would quietly hand the summary frame a
+  better score for a reason that has nothing to do with the summary frame. <b>The two questions
+  that are about the whole reading keep the whole reading; the rest partition.</b> That exception
+  is a correctness fix disguised as a performance carve-out, and it is the kind of thing the raw
+  numbers would never have shown.</p>
 </section>
 
 <section>
