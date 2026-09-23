@@ -376,6 +376,24 @@ table.runs .sub { font-family: var(--sans); }
 <div class="wrap">
 
 <section>
+  <div class="callout">
+    <span class="lbl">written early, and overtaken</span>
+    <p>This page describes the plugin as it stood at commit <code>720a8d7</code> &mdash; three
+    tools and three guards. The pull request now carries <b>fifteen commits from three
+    agents</b>: a fourth tool that ranks the project rail's ticker, a review that found nine
+    defects in this code, and a crash the reviewer shipped into their own fix and I caught
+    minutes later. Fifteen tests, green.</p>
+    <p><b>The four questions at the end of this page are still open and still yours.</b>
+    Nothing has been merged. Everything below remains true of the boundary; it is simply
+    no longer the whole story.</p>
+    <p>The companion is <code>2026-09-23-reviewing-the-jev-plugin.html</code>, and I would
+    read it before this one. It carries the nine findings, one deferred as a falsifiable
+    issue, and one of the reviewer's own claims marked <i>contradicted</i> rather than
+    quietly removed.</p>
+  </div>
+</section>
+
+<section>
   <h2 class="sec">Read first</h2>
   <ol class="esc-list">
     <li><b>The boundary is built and enforced, not intended.</b> A source gate walks every <code>.rs</code> file under <code>app/src</code> and fails the build if an endpoint, a key name or a model id appears in any of them. <span class="tag v">measured</span> &middot; Nothing to do &mdash; but read figure 04 if you want to see it fail.</li>
