@@ -347,6 +347,12 @@ td.defer { color: var(--warning); font-family: var(--mono); font-size: 12.5px; }
 .tag.inferred { color: var(--s1); border-color: #1d3f68; }
 .tag.hunch { color: var(--warning); border-color: #6b5313; }
 .tag.contradicted { color: var(--critical); border-color: #5c1f1f; }
+.asof { margin-top: 20px; border: 1px solid var(--line); border-left: 3px solid var(--s4);
+  border-radius: 9px; background: var(--surface-1); padding: 14px 16px; }
+.asof p { margin: 0; font-size: 13px; color: var(--text-secondary); line-height: 1.6; }
+.asof .cmd { margin: 10px 0 0; overflow-x: auto; }
+.asof .cmd code { font-size: 11.5px; white-space: pre; }
+.asof .note { margin-top: 9px; color: var(--text-muted); font-size: 12.5px; }
 @media (max-width: 720px) { h1 { font-size: 26px; } .wrap { padding: 24px 16px 70px; } }
 
 </style>
@@ -372,6 +378,18 @@ td.defer { color: var(--warning); font-family: var(--mono); font-size: 12.5px; }
   rebased on top as <code>313cc27</code>. Gates on the pushed tree:
   <b>clippy clean, rustfmt clean, 15/15 plugin tests</b>, run by me on the author's tree rather
   than reported to me.</p>
+
+  <div class="asof">
+    <p><b>What this is true of, and how to tell if it still is.</b> Every claim here is pinned to
+    a commit, and this branch moves faster than a document does &mdash; three agents were working
+    in it and the head moved four times while the review was being written. The last state I
+    verified myself is <code>d540e9f</code>, at which point the branch carried 16 commits.
+    If it has moved on, this page is still exactly true of the commits it names and says nothing
+    about what came after. What landed since:</p>
+    <p class="cmd"><code>git log --oneline d540e9f..origin/feat/jev-is-a-plugin-terminal-delight-never-assumes</code></p>
+    <p class="note">Nothing here was merged. The author and I each held that line independently
+    and neither of us ever asked the other to.</p>
+  </div>
 </header>
 
 <section>
