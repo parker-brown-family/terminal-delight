@@ -42,6 +42,31 @@ always the stale one.
   pip install jev            — or —
   TD_JEV_HOME=/path/to/jev-integrations   (a checkout; prepended to sys.path)
 
+A SHELL IS NOT WHERE THIS GETS CONFIGURED
+-----------------------------------------
+terminal-delight is a GUI process started from a launcher, and it spawns this
+server as a child. Neither of them has ever seen your shell, so an `export` in
+the pane you happen to be reading this in reaches nothing. Every variable below
+belongs in the manifest, which the host applies per key when it spawns:
+
+  ~/.config/terminal-delight/plugins/jev/plugin.json
+
+  { "name": "jev", "version": "0.1.0", "command": "jev-mcp", "scope": "global",
+    "env": { "TD_JEV_HOME": "/path/to/jev-integrations" },
+    "actions": [ { "tool": "rail_weather", "label": "◈ weather",
+                   "surfaces": ["global"] } ] }
+
+A manifest named `jev` in that directory replaces the built-in definition
+outright, so this file is also where the install becomes visible: one document
+saying what is switched on and where its client lives, rather than an invisible
+dependency on whichever shell happened to launch the window. The key is still
+never in it — the checkout's own gitignored `.env` holds that, and this
+repository and terminal-delight's config never see the value.
+
+Testing from a terminal misses all of this, because a shell hands a child
+everything it has. The honest check is to run the server with nothing supplied:
+`env -i PATH=/usr/bin:/bin jev-mcp` and read what `jev_status` says.
+
 BACKEND AND KEY
 ---------------
 Resolved from the environment, never from an argument and never from this file.

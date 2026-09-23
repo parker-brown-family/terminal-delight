@@ -133,6 +133,22 @@ already exist in the `jev` package; the server imports it and adapts MCP onto it
 and says `available: false` when it cannot. Point `TD_JEV_HOME` at a checkout or
 `pip install jev`.
 
+**Configure it in the manifest, never in a shell.** TD is a GUI process started
+from a launcher and spawns this server as a child, so neither has seen your
+shell and an `export` reaches nothing. The env block in
+`~/.config/terminal-delight/plugins/jev/plugin.json` is applied per key at spawn,
+and a manifest named `jev` there replaces the built-in definition outright — so
+it doubles as the one visible document saying what is switched on and where its
+client lives. The key never appears in it: `TD_JEV_HOME` names a checkout, and
+the checkout's own gitignored `.env` holds the value.
+
+This is the trap that testing from a terminal cannot show you, because a shell
+hands a child everything it has. Two agents hit it the same day from opposite
+directions — one measuring the plugin through probe scripts that set the base URL
+themselves, one checking the install from a pane whose environment already
+carried what the launcher would not. The honest check supplies nothing:
+`env -i PATH=/usr/bin:/bin jev-mcp`, then read `jev_status`.
+
 **Measurement and judgement never share a field.** Two things are answered without
 asking the model, because they are facts read off the pane: a pane running a plain
 shell is not an agent, and a pane already known to be awaiting input already wants
