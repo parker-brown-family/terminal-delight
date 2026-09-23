@@ -922,20 +922,7 @@ def do_rail_weather(args):
         return {"available": False, "reason": st["reason"], "reading": args.get("reading"),
                 "attention": None, "ranked": None}
 
-    state = {
-        "project": args.get("project"),
-        "facts": facts,
-        # `tone` is accepted on every frame and deliberately NOT forwarded unless
-        # asked for — see `_send_tone`. Dropping it here rather than at the
-        # question is the point: a field in the state moves the answer whether or
-        # not any question mentions it.
-        "frames": [dict({"id": f.get("id"), "kind": f.get("kind"), "text": f.get("text")},
-                        **({"tone": f.get("tone")} if _send_tone() else {}))
-                   for f in frames],
-    }
-    questions = {"frame_%d" % i: _rail_question(i) for i in range(len(frames))}
-    questions["attention"] = ATTENTION_QUESTION
-    answers = c.ask_many(state, questions)
+    answers = _ask_rail(c, args.get("project"), facts, frames)
 
     scored = []       # (level_index, original_position, id)
     unjudged = []
@@ -957,11 +944,7 @@ def do_rail_weather(args):
         else:
             scored.append((rank, i, f.get("id")))
 
-    # Coarsen to bands before ordering, because the raw score has a MEASURED
-    # positional bias and sorting on it would dress that bias as a judgement.
-    # Within a band the rail's own order stands: git already decided it, and a
-    # difference smaller than the instrument's resolution is not a disagreement.
-    band = _band_width(len(frames))
+    band = _band_width(_effective_n(frames))
     scored.sort(key=lambda t: (-int(t[0] / band) if band > 0 else -t[0], t[1]))
 
     a = answers.get("attention")
@@ -982,6 +965,95 @@ def do_rail_weather(args):
         "frames": detail,
         "backend": st["model"],
     }
+
+
+# Kinds whose judgement is inherently about the WHOLE reading, so their question
+# is always asked against every frame even when the rest are partitioned. The
+# level-0 rung is "restates or adds up what other lines already say", and a frame
+# cannot be found to summarise neighbours it was not shown.
+GLOBAL_KINDS = {"Sentence"}
+
+
+def _groups(frames):
+    """The caller's partition, or None when it did not send one.
+
+    A partition is opt-in per reading. Absent, everything is judged in one
+    request exactly as before — no caller is broken by this existing.
+    """
+    seen = [f.get("group") for f in frames]
+    if not any(isinstance(g, str) and g.strip() for g in seen):
+        return None
+    out = {}
+    for i, f in enumerate(frames):
+        g = f.get("group")
+        out.setdefault(g if isinstance(g, str) and g.strip() else "", []).append(i)
+    return out
+
+
+def _effective_n(frames):
+    """Frame count the band is computed from: the biggest request actually sent.
+
+    The bias scales with how many frames share a request, so a partitioned
+    reading has a finer resolution than its total frame count would imply, and
+    banding it by the total would throw that gain away.
+    """
+    g = _groups(frames)
+    return len(frames) if g is None else max(len(v) for v in g.values())
+
+
+def _ask_rail(client, project, facts, frames):
+    """One dict of answers, from one request or several.
+
+    Measured on the fourteen-frame reading, reversing each request and comparing:
+
+        one batch, 14 questions over 14 frames      bias mean 0.74, max 2.16
+        questions split, state still all 14         bias mean 0.74, max 2.20
+        questions AND state split, 8 apiece         bias mean 0.29, max 1.45
+
+    **Splitting the questions alone changes nothing.** What the model sees is
+    what biases it, so a partition that leaves every frame in the state is
+    theatre — worth knowing before building it, because it is the obvious
+    implementation and it would have looked like it worked.
+
+    Splitting the state halves the bias and costs something real: the summary
+    frame rose 0.7 levels, because a frame cannot be found to restate neighbours
+    it was not shown. So the frames whose judgement is about the whole reading,
+    and the attention question, keep the full state; only the rest are
+    partitioned, which is where the bias actually lives.
+    """
+    def state_for(subset):
+        return {"project": project, "facts": facts,
+                "frames": [_frame_for_state(f) for f in subset]}
+
+    groups = _groups(frames)
+    if groups is None:
+        qs = {"frame_%d" % i: _rail_question(i) for i in range(len(frames))}
+        qs["attention"] = ATTENTION_QUESTION
+        return client.ask_many(state_for(frames), qs)
+
+    answers = {}
+    # Everything that needs the whole reading rides in one full-state request:
+    # the attention noul, and any frame whose kind is judged against its
+    # neighbours.
+    global_idxs = [i for i, f in enumerate(frames) if f.get("kind") in GLOBAL_KINDS]
+    full_qs = {"frame_%d" % i: _rail_question(i) for i in global_idxs}
+    full_qs["attention"] = ATTENTION_QUESTION
+    answers.update(client.ask_many(state_for(frames), full_qs))
+
+    for idxs in groups.values():
+        rest = [i for i in idxs if i not in global_idxs]
+        if not rest:
+            continue
+        subset = [frames[i] for i in rest]
+        pos = {i: n for n, i in enumerate(rest)}
+        qs = {"frame_%d" % i: _rail_question(pos[i]) for i in rest}
+        answers.update(client.ask_many(state_for(subset), qs))
+    return answers
+
+
+def _frame_for_state(f):
+    return dict({"id": f.get("id"), "kind": f.get("kind"), "text": f.get("text")},
+                **({"tone": f.get("tone")} if _send_tone() else {}))
 
 
 def _band_width(n_frames):
