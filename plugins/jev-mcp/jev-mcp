@@ -182,9 +182,7 @@ def _import_jev():
     # person asks when a window turns out to be spending against the wrong
     # account. `setdefault` makes the first writer win, so a name already holding
     # a value is `environment` and only a name that appears later is `.env`.
-    for n in KEY_ENVS:
-        if os.environ.get(n, "").strip():
-            _KEY_ORIGIN.setdefault(n, "environment")
+    _note_key_origins("environment")
     if home and os.path.isdir(home) and home not in sys.path:
         sys.path.insert(0, home)
     try:
@@ -203,10 +201,11 @@ def _import_jev():
             load()
         except Exception:
             pass  # no .env, or an older checkout without the loader
-    for n in KEY_ENVS:
-        if os.environ.get(n, "").strip():
-            _KEY_ORIGIN.setdefault(
-                n, "environment" if n in before else "checkout .env")
+        # Anything holding a value NOW that was not holding one a moment ago came
+        # out of that `.env`. No comparison is needed to know it: the call above
+        # already claimed every name the launcher supplied, and `setdefault`
+        # makes the first writer win.
+        _note_key_origins("checkout .env")
     return (JevClient, HostedPort), None
 
 
@@ -224,6 +223,30 @@ KEY_FINGERPRINT_HEX = 8
 # secret — a number safe on its own that stops being safe the moment it can be
 # lined up against somebody else's. Prefixed, the tag means something only here.
 _FINGERPRINT_DOMAIN = b"terminal-delight/jev-mcp/key-fingerprint/v1\x00"
+
+
+def _note_key_origins(origin):
+    """Claim `origin` for every key name holding a value that has no origin yet.
+
+    Called twice, and the order is the whole mechanism: once before anything is
+    loaded, so the launcher's keys are claimed, and once after a checkout `.env`
+    has been read, so whatever appeared in between is attributed to it.
+    `setdefault` makes the first writer win, so the second call cannot overwrite
+    the first and no comparison between the two moments is needed.
+
+    It used to need one, and the set it compared against was deleted in a
+    restructure while the line reading it survived — `NameError: name 'before' is
+    not defined`, raised out of every verb, but only on a machine where the
+    client imports AND a key is set. Both of this file's tests that reach the
+    import are skipped when `TD_JEV_HOME` is unset, and the one that sets a key
+    blanks `TD_JEV_HOME` so the import fails first. Every guard was green and the
+    feature could not run. Hence `a_fake_client_is_enough_to_reach_the_key_path`
+    in the host's tests, which stands up a two-file `jev` package in a temp dir so
+    this function is actually entered on every machine.
+    """
+    for n in KEY_ENVS:
+        if os.environ.get(n, "").strip():
+            _KEY_ORIGIN.setdefault(n, origin)
 
 
 def _key_fingerprint(name):

@@ -900,6 +900,110 @@ mod tests {
         );
     }
 
+    /// A two-file `jev` package in a temp dir, enough to make the import succeed.
+    ///
+    /// Nothing in this repository could previously enter the plugin's
+    /// import-succeeded branch: the tests that set `TD_JEV_HOME` skip when it is
+    /// unset, and the one that sets a key blanks `TD_JEV_HOME` so the import
+    /// fails first. So the branch shipped with a `NameError` in it and every
+    /// guard stayed green. A real client is not needed to reach that code — only
+    /// something importable — and a fake one runs everywhere, costs nothing, and
+    /// cannot call anything.
+    fn fake_jev_home(tag: &str, dotenv_sets: Option<&str>) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("td-fake-jev-{tag}"));
+        let ports = dir.join("jev").join("ports");
+        std::fs::create_dir_all(&ports).expect("temp dir is writable");
+        std::fs::write(
+            dir.join("jev").join("__init__.py"),
+            "class JevClient:\n    def __init__(self, *a, **k):\n        pass\n",
+        )
+        .unwrap();
+        std::fs::write(ports.join("__init__.py"), "").unwrap();
+        std::fs::write(
+            ports.join("hosted.py"),
+            "class HostedPort:\n    def __init__(self, *a, **k):\n        pass\n",
+        )
+        .unwrap();
+        let dotenv = dir.join("jev").join("dotenv.py");
+        match dotenv_sets {
+            // Stands in for a checkout's gitignored `.env`: a name that was not
+            // set a moment ago is holding a value now.
+            Some(name) => std::fs::write(
+                &dotenv,
+                format!("import os\n\n\ndef load():\n    os.environ[{name:?}] = 'zz-dotenv-9c1'\n"),
+            )
+            .unwrap(),
+            None => {
+                let _ = std::fs::remove_file(&dotenv);
+            }
+        }
+        dir
+    }
+
+    /// Where a key came from is tracked, on the branch that only a real client
+    /// reaches.
+    ///
+    /// Two spawns, because there are two origins and they are different facts: a
+    /// key the launcher handed us, and a key a checkout's own `.env` supplied.
+    /// Neither spawn can make a call — `jev_status` makes none by design, and the
+    /// client here is two empty classes.
+    #[test]
+    fn live_jev_mcp_tracks_where_the_key_came_from() {
+        let bin = std::path::Path::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../plugins/jev-mcp/jev-mcp"
+        ))
+        .to_path_buf();
+        if !bin.is_file() {
+            eprintln!("skip: bundled jev-mcp not in this checkout");
+            return;
+        }
+        let key = concat!("OPENROUTER", "_API_KEY");
+
+        // 1 — the launcher supplied it.
+        let home = fake_jev_home("env", None);
+        let mut env = no_jev_env();
+        for slot in env.iter_mut() {
+            if slot.0 == "TD_JEV_HOME" {
+                slot.1 = home.to_string_lossy().into_owned();
+            } else if slot.0 == key {
+                slot.1 = "zz-from-the-launcher-4f7".to_string();
+            }
+        }
+        let mut proc = McpProcess::spawn(&bin.to_string_lossy(), &[], &env).unwrap();
+        proc.initialize().unwrap();
+        let text = proc.call_tool("jev_status", json!({})).unwrap();
+        let st: Value = serde_json::from_str(&text).unwrap();
+        assert!(
+            st.get("key_origin").is_some(),
+            "the import-succeeded branch did not run, so nothing here is tested: {st}"
+        );
+        assert_eq!(st["key_origin"], json!("environment"), "{st}");
+        assert_eq!(st["key_env"], json!(key), "{st}");
+        assert!(!text.contains("zz-from-the-launcher"), "key leaked: {text}");
+        // The client imports and a key is present, so nothing checkable fails.
+        assert_eq!(st["client"], json!(true), "{st}");
+
+        // 2 — the checkout's own `.env` supplied it, and nothing else did.
+        let home2 = fake_jev_home("dotenv", Some(key));
+        let mut env2 = no_jev_env();
+        for slot in env2.iter_mut() {
+            if slot.0 == "TD_JEV_HOME" {
+                slot.1 = home2.to_string_lossy().into_owned();
+            }
+        }
+        let mut proc2 = McpProcess::spawn(&bin.to_string_lossy(), &[], &env2).unwrap();
+        proc2.initialize().unwrap();
+        let text2 = proc2.call_tool("jev_status", json!({})).unwrap();
+        let st2: Value = serde_json::from_str(&text2).unwrap();
+        assert_eq!(
+            st2["key_origin"],
+            json!("checkout .env"),
+            "a key that appeared only after the checkout was read must say so: {st2}"
+        );
+        assert!(!text2.contains("zz-dotenv"), "key leaked: {text2}");
+    }
+
     /// One malformed question abstains on its own and leaves its siblings alone.
     ///
     /// The encoder raises on an unknown type, a missing instruction, or a Score
