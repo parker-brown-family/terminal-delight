@@ -54,6 +54,8 @@ belongs in the manifest, which the host applies per key when it spawns:
   { "name": "jev", "version": "0.1.0", "command": "jev-mcp", "scope": "global",
     "env": { "TD_JEV_HOME": "/path/to/jev-integrations" },
     "actions": [ { "tool": "rail_weather", "label": "◈ weather",
+                   "surfaces": ["global"] },
+                 { "tool": "workspace_weather", "label": "◈ agents",
                    "surfaces": ["global"] } ] }
 
 A manifest named `jev` in that directory replaces the built-in definition
@@ -62,6 +64,14 @@ saying what is switched on and where its client lives, rather than an invisible
 dependency on whichever shell happened to launch the window. The key is still
 never in it — the checkout's own gitignored `.env` holds that, and this
 repository and terminal-delight's config never see the value.
+
+**List every action you want, because replacing is not merging.** An earlier
+version of this example advertised one action, and the first person to install
+from it nearly dropped the other without noticing. Nothing breaks when an action
+is missing from the array — `run_action` calls a tool by name and the tool is
+still there — but the surface stops offering it, which looks like the feature
+going away. Losing an action you meant to keep is the quiet failure here; the
+array is the menu, not the capability.
 
 Testing from a terminal misses all of this, because a shell hands a child
 everything it has. The honest check is to run the server with nothing supplied:
