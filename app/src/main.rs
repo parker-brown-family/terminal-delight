@@ -51,6 +51,7 @@ mod hostctl;
 mod hostproto;
 mod hud;
 mod instance;
+mod judge;
 mod keylayer;
 mod lang;
 mod launcher;
@@ -1037,6 +1038,11 @@ struct Reading {
     state: engstate::ProjectState,
     frames: Vec<engstate::Frame>,
     badge: Vec<engstate::Segment>,
+    /// What a System One model made of these frames, when one was asked and
+    /// answered in time. `None` is the ordinary case and the honest one: the
+    /// rail then draws git's own order and wears no verdict. See
+    /// [`judge`](crate::judge).
+    judgement: Option<judge::Judgement>,
 }
 
 impl Reading {
@@ -1045,6 +1051,7 @@ impl Reading {
             frames: state.frames(),
             badge: state.badge(),
             state,
+            judgement: None,
         }
     }
 }
@@ -11719,7 +11726,11 @@ impl Workspace {
         let Some(reading) = self.eng.get(&self.eng_key()) else {
             return Vec::new();
         };
-        let mut frames = reading.frames.clone();
+        // The model's ordering, when there is one for THESE frames. It ranks
+        // the reading's own frames only — the afterglow below is assembled by
+        // the window from the clock, so it was never in the list that was
+        // asked about, and it keeps its place at the end.
+        let mut frames = judge::order(reading.frames.clone(), reading.judgement.as_ref());
         let glow = self.eng_afterglow();
         if !glow.is_empty() {
             // the three newest, newest first — the rest are on the badge's
@@ -21184,6 +21195,12 @@ impl Workspace {
                 text: "\u{25c6}".into(),
                 tone: engstate::Tone::Good,
             });
+        }
+        // The second opinion, when one was asked and is about this reading.
+        // Silent otherwise, which is every reading until the call exists.
+        if let Some(r) = self.eng.get(&self.eng_key()) {
+            let d = judge::diamond(r.state.is_calm(), r.judgement.as_ref(), &r.frames);
+            segments.extend(d.segment());
         }
         let mut chip = sk
             .bezel(false, s)
