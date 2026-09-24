@@ -392,11 +392,18 @@ impl DocumentView {
 
     /// Where the document is scrolled, for the saved layout to keep. `None`
     /// for an image and for a page not yet laid out.
-    // Read by the saved layout when document panes are remembered; pinned by
-    // `an_image_has_no_scroll_to_save` before anything stores it.
-    #[allow(dead_code)]
     pub fn scroll(&self) -> Option<DocScroll> {
         scroll_of(&self.backend)
+    }
+
+    /// Go back to a place the saved layout kept, as soon as the page has been
+    /// laid out: the file is still being read when a restore asks. A picture
+    /// has no scroll to go back to.
+    pub fn restore_scroll(&mut self, at: DocScroll, cx: &mut Context<Self>) {
+        if let Backend::Markdown(md) = &mut self.backend {
+            md.restore_fraction(at.top);
+            cx.notify();
+        }
     }
 
     /// Paint in this palette from now on: the pane's own, which can differ
@@ -606,7 +613,12 @@ impl DocumentView {
                     eprintln!("[doc] kept the last render: {why}");
                 }
             }
-            Err(why) => md.doc = Some(Err(why)),
+            Err(why) => {
+                if std::env::var_os("TD_DOCDEBUG").is_some() {
+                    eprintln!("[doc] cannot read {}", self.target.path.display());
+                }
+                md.doc = Some(Err(why));
+            }
         }
         self.decode_images(cx);
         cx.notify();

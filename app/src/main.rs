@@ -698,6 +698,7 @@ impl<L: Clone> Tree<L> {
                     logo: s.logo,
                     note: s.note,
                     pane_id: s.pane_id,
+                    document: s.document,
                 }
             }
             Tree::Split {
@@ -736,6 +737,9 @@ impl Node {
                     pinned: n.pinned,
                 }),
                 pane_id: view.pane_id(),
+                document: view
+                    .saved_document(cx)
+                    .map(|(path, scroll)| SavedDocument { path, scroll }),
             }
         })
     }
@@ -752,6 +756,26 @@ struct LeafState {
     logo: Option<String>,
     note: Option<SavedNote>,
     pane_id: Option<u64>,
+    document: Option<SavedDocument>,
+}
+
+/// The document a pane was showing on its Document face, on its way into the
+/// state file, so a split opened to read something beside the prompt comes
+/// back after a restart with the page where it was left.
+///
+/// The path is kept even when the file has gone: a restore keeps the pane and
+/// its face, and the view says it cannot read the file. "Not there right now"
+/// (an unmounted drive, a branch switched away) is a different fact from "never
+/// was a document", and turning the pane back into a shell would lose it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+struct SavedDocument {
+    path: String,
+    /// The top of the view as a fraction of the page. `None` is "never
+    /// measured" — an image has no scroll, and a page that was never laid out
+    /// has none yet — which is not the top of the page, so it is never written
+    /// as 0.0 and never read back as it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    scroll: Option<f32>,
 }
 
 /// A sticky note on its way into the state file. The seed travels with the text
@@ -802,6 +826,11 @@ enum SavedNode {
         /// and starting a second one beside it.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pane_id: Option<u64>,
+        /// The document this pane was showing, if it was opened to show one.
+        /// Absent in every file written before documents existed, which reads
+        /// back as a terminal, as it was.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        document: Option<SavedDocument>,
     },
     Split {
         dir: SplitDir,
@@ -835,6 +864,8 @@ impl<'de> Deserialize<'de> for SavedNode {
             note: Option<SavedNote>,
             #[serde(default)]
             pane_id: Option<u64>,
+            #[serde(default)]
+            document: Option<SavedDocument>,
         }
         // A leaf's appearance: the new per-group form if present, else migrate a
         // legacy `theme` override, else pristine (follows outer for everything).
@@ -868,6 +899,7 @@ impl<'de> Deserialize<'de> for SavedNode {
                         logo: None,
                         note: None,
                         pane_id: None,
+                        document: None,
                     }),
                     other => Err(E::custom(format!("unknown node: {other}"))),
                 }
@@ -891,6 +923,7 @@ impl<'de> Deserialize<'de> for SavedNode {
                             logo: f.logo.take(),
                             note: f.note.take(),
                             pane_id: f.pane_id.take(),
+                            document: f.document.take(),
                         })
                     }
                     "Split" => {
@@ -5050,6 +5083,7 @@ fn build_node_attached(
             name,
             logo,
             note,
+            document,
             ..
         } => {
             let restore = session::PaneRestore {
@@ -5100,6 +5134,9 @@ fn build_node_attached(
                     view.name = name;
                 }
             });
+            // The document it was showing, back on its face over whichever
+            // shell the plan gave it, the terminal bound or respawned as ever.
+            restore_document_on(&pane, document.as_ref(), cx);
             Node::Leaf(pane)
         }
         SavedNode::Split { dir, ratio, a, b } => Node::Split {
@@ -5124,6 +5161,7 @@ fn build_node(saved: &SavedNode, window: &mut Window, cx: &mut Context<Workspace
             // A serverless window builds its own terminals, so whichever host
             // pane this leaf used to show is not this window's business.
             pane_id: _,
+            document,
         } => {
             let pane = make_pane_window_owned(
                 session::PaneRestore {
@@ -5152,6 +5190,7 @@ fn build_node(saved: &SavedNode, window: &mut Window, cx: &mut Context<Workspace
                     view.name = name;
                 }
             });
+            restore_document_on(&pane, document.as_ref(), cx);
             Node::Leaf(pane)
         }
         SavedNode::Split { dir, ratio, a, b } => Node::Split {
@@ -5161,6 +5200,19 @@ fn build_node(saved: &SavedNode, window: &mut Window, cx: &mut Context<Workspace
             a: Box::new(build_node(a, window, cx)),
             b: Box::new(build_node(b, window, cx)),
         },
+    }
+}
+
+/// Put a saved leaf's document back on its pane, if it had one. Shared by
+/// both restores — the hosted one and the one where the window owns its
+/// terminals — so a document pane comes back the same way in either.
+fn restore_document_on(
+    pane: &Entity<TerminalView>,
+    document: Option<&SavedDocument>,
+    cx: &mut Context<Workspace>,
+) {
+    if let Some(d) = document {
+        pane.update(cx, |view, cx| view.restore_document(&d.path, d.scroll, cx));
     }
 }
 
@@ -6335,7 +6387,7 @@ impl Workspace {
                 return;
             }
         };
-        fresh.update(cx, |view, _| view.adopt_presentation(carried));
+        fresh.update(cx, |view, cx| view.adopt_presentation(carried, cx));
         let old_id = old.entity_id();
         for tab in &mut self.tabs {
             if tab.root.replace_leaf(
@@ -31765,6 +31817,7 @@ mod tests {
             logo: None,
             note: None,
             pane_id,
+            document: None,
         }
     }
 
@@ -34884,6 +34937,7 @@ mod tests {
             logo: None,
             note: None,
             pane_id: None,
+            document: None,
         };
         let resumes = |tabs: &mut [SavedTab]| {
             let mut out = vec![];
@@ -34958,6 +35012,7 @@ mod tests {
             logo: None,
             note: Some(note(text)),
             pane_id: pane,
+            document: None,
         };
         let tab = |node: SavedNode| SavedTab {
             level: None,
@@ -35021,6 +35076,7 @@ mod tests {
             logo: None,
             note: None,
             pane_id: pane,
+            document: None,
         };
         let spoken = |pane: Option<u64>| SavedNode::Leaf {
             appearance: PaneTheme::default(),
@@ -35035,6 +35091,7 @@ mod tests {
                 pinned: true,
             }),
             pane_id: pane,
+            document: None,
         };
         let tab = |node: SavedNode| SavedTab {
             level: None,
@@ -35094,6 +35151,7 @@ mod tests {
             logo: None,
             note: None,
             pane_id: pane,
+            document: None,
         };
         let tab = |node: SavedNode| SavedTab {
             level: None,
@@ -35164,6 +35222,7 @@ mod tests {
             logo: None,
             note: None,
             pane_id: None,
+            document: None,
         };
         assert_eq!(count_saved_leaves(&leaf()), 1);
         let split = SavedNode::Split {
@@ -35309,6 +35368,136 @@ mod tests {
             matches!(back.node, SavedNode::Leaf { name: Some(n), .. } if n == "build"),
             "custom name lost on reload"
         );
+    }
+
+    /// A split showing a document writes the document into its leaf — the
+    /// path and where the page was scrolled — and reads back the same. An
+    /// unmeasured scroll (a picture, or a page never laid out) is `None`, and
+    /// stays `None` through the file: it is not written as 0.0, the top of the
+    /// page, and is not read back as it.
+    #[test]
+    fn a_document_leaf_round_trips_its_path_and_scroll_through_the_state_file() {
+        let round_trip = |document: Option<SavedDocument>| -> (String, SavedNode) {
+            let mut t: Tree<u32> = Tree::Leaf(1);
+            t.split_leaf(&|l| *l == 1, SplitDir::Row, 2);
+            let saved = t.to_saved_with(&|l| LeafState {
+                document: (*l == 2).then(|| document.clone()).flatten(),
+                ..Default::default()
+            });
+            let text = toml::to_string(&SavedTab {
+                level: None,
+                name: None,
+                color: None,
+                text_color: None,
+                group: None,
+                node: saved,
+                project: None,
+            })
+            .expect("serialize");
+            let back: SavedTab = toml::from_str(&text).expect("deserialize");
+            (text, back.node)
+        };
+        let right_leaf = |node: &SavedNode| -> Option<SavedDocument> {
+            let SavedNode::Split { a, b, .. } = node else {
+                panic!("a split");
+            };
+            assert!(
+                matches!(&**a, SavedNode::Leaf { document: None, .. }),
+                "the shell the document was opened beside stays a terminal"
+            );
+            match &**b {
+                SavedNode::Leaf { document, .. } => document.clone(),
+                _ => panic!("a leaf on the right"),
+            }
+        };
+
+        let page = SavedDocument {
+            path: "/home/me/notes/two words.md".into(),
+            scroll: Some(0.37),
+        };
+        let (_, back) = round_trip(Some(page.clone()));
+        assert_eq!(right_leaf(&back), Some(page), "path and place both kept");
+
+        let picture = SavedDocument {
+            path: "/home/me/shot.png".into(),
+            scroll: None,
+        };
+        let (text, back) = round_trip(Some(picture.clone()));
+        assert!(
+            !text.contains("scroll"),
+            "an unmeasured scroll is not written at all: {text}"
+        );
+        let kept = right_leaf(&back).expect("the document");
+        assert_eq!(kept.scroll, None, "None stays None, never 0.0");
+        assert_eq!(kept, picture);
+
+        // A place at the very top is a measurement, and it is kept as one.
+        let top = SavedDocument {
+            path: "/home/me/notes/a.md".into(),
+            scroll: Some(0.0),
+        };
+        let (_, back) = round_trip(Some(top.clone()));
+        assert_eq!(right_leaf(&back), Some(top));
+    }
+
+    /// A layout written before documents existed has no `document` key on any
+    /// leaf, and every leaf reads back as the terminal it was — the table form
+    /// and the older bare `"Leaf"` string alike.
+    #[test]
+    fn a_layout_written_before_documents_reads_every_leaf_as_a_terminal() {
+        let old = r#"
+active = 0
+[[tabs]]
+[tabs.node.Split]
+dir = "Row"
+ratio = 0.5
+[tabs.node.Split.a.Leaf]
+cwd = "/home/me"
+pane_id = 1
+[tabs.node.Split.b.Leaf]
+cwd = "/home/me/notes"
+resume = "claude --resume 4a1c"
+pane_id = 2
+[[tabs]]
+node = "Leaf"
+"#;
+        let state: StateFile = toml::from_str(old).expect("an old layout still loads");
+        let mut leaves = 0;
+        fn walk(n: &SavedNode, leaves: &mut usize) {
+            match n {
+                SavedNode::Leaf { document, .. } => {
+                    assert_eq!(*document, None, "an old leaf is a terminal");
+                    *leaves += 1;
+                }
+                SavedNode::Split { a, b, .. } => {
+                    walk(a, leaves);
+                    walk(b, leaves);
+                }
+            }
+        }
+        for tab in &state.tabs {
+            walk(&tab.node, &mut leaves);
+        }
+        assert_eq!(leaves, 3, "every leaf was read");
+    }
+
+    /// Both restores — a window attached to a session host and one that owns
+    /// its terminals — put a saved document back on its pane, through the one
+    /// function that does it. Source-scanned: a restore needs a live Window.
+    #[test]
+    fn both_restores_put_a_saved_document_back() {
+        for sig in ["fn build_node_attached(", "fn build_node(saved"] {
+            let body = live_fn(sig);
+            assert!(
+                body.contains("restore_document_on(&pane, document.as_ref(), cx)"),
+                "{sig} drops the leaf's document"
+            );
+        }
+        let put = live_fn("fn restore_document_on(");
+        assert!(put.contains("view.restore_document(&d.path, d.scroll, cx)"));
+        // What gets written is what the pane says it shows.
+        let saved = live_fn("fn to_saved(&self, cx: &App)");
+        assert!(saved.contains(".saved_document(cx)"));
     }
 
     #[test]
@@ -35477,6 +35666,7 @@ id = "hacker"
                     logo: None,
                     note: None,
                     pane_id: None,
+                    document: None,
                 },
                 project: None,
             }],
@@ -35524,6 +35714,7 @@ id = "hacker"
                     logo: None,
                     note: None,
                     pane_id: None,
+                    document: None,
                 },
                 project: None,
             }],
@@ -35558,6 +35749,7 @@ id = "hacker"
             logo: None,
             note: None,
             pane_id: None,
+            document: None,
         };
         let state = StateFile {
             panes: 0,
@@ -35945,6 +36137,7 @@ node = "Leaf"
             logo: Some("/home/u/Pictures/acme.png".to_string()),
             note: None,
             pane_id: None,
+            document: None,
         };
         let toml = toml::to_string(&node).expect("serialize leaf");
         assert!(
@@ -36167,6 +36360,7 @@ node = "Leaf"
             logo: None,
             note: None,
             pane_id: None,
+            document: None,
         };
         let node = SavedNode::Split {
             dir: SplitDir::Row,
