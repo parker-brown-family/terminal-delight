@@ -1,0 +1,19 @@
+{
+  "updates": [],
+  "bubbles": [
+    {
+      "kind": "gap-note",
+      "subjectId": "hyperion-tui",
+      "note": "Round 3 tried the people instead of the words: Fred Nix's public GitHub activity 2026-09-22..24 (blip, LANarchy, omacontra, Glide, infomarchy, omarchy-elgato-control — no TUI or Hyperion work), nixfred.com (a one-line landing page), and Andrew Boyd's public activity since 2026-09-15 (omarchy and omarchy-pkgs pushes, a jevpilot star — nothing GUI-in-TUI). Two consecutive rounds without progress: the harness should now stop this subject as unfindable.",
+      "why": "The artwork most likely depicts an idea rather than shipped software; only the X thread can say.",
+      "source": "https://github.com/nixfred"
+    },
+    {
+      "kind": "serendipity",
+      "note": "Correction to a round-1 bubble that said TD already answers pixel-geometry queries correctly. Read in this worktree (not run): app/src/host.rs answers CSI 14 t through TermEvent::TextAreaSizeRequest, but the reply is built from the `geom` value captured when the pane's event thread was spawned (spawn_pane's parameter, a Copy PaneGeom), while resize() updates only the pane's Mutex<PaneGeom> — so after a resize the pixel answer would still describe the pane's spawn size. And CSI 16 t (cell size in pixels) is not answered at all: vte 0.15 dispatches only 14, 18, 22 and 23 for CSI t. The pty's ws_xpixel/ws_ypixel do follow resizes (Msg::Resize carries cell sizes), so mpv-style clients are fine; query-style clients (rtv, ratatui-image's font-size probe, notcurses) are the ones exposed.",
+      "why": "Pixel size per pane is the first thing every image client asks; a split pane that answers with stale or whole-window numbers draws images at the wrong scale. Worth a falsifiable issue: resize a pane, send CSI 14 t, compare against the pane's geometry.",
+      "source": "file:///home/parker/Work/td-gui-in-the-tui/app/src/host.rs"
+    }
+  ],
+  "tokens": 5000
+}

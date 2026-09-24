@@ -1,0 +1,671 @@
+{
+  "updates": [
+    {
+      "id": "ueberzugpp",
+      "fields": {
+        "what_it_is": {
+          "value": "Überzug++: a C++ daemon, drop-in replacement for the defunct ueberzug. Host programs (lf, yazi, vifm, ranger, fzf scripts, image.nvim) send it JSON add/remove commands over stdin or a unix socket, and it paints a raster image (including GIF and animated WebP) into a column/row box. It renders no documents, only images.",
+          "provenance": {"source": "https://github.com/jstkdng/ueberzugpp/blob/HEAD/README.md", "confidence": "high"},
+          "note": "[measured] README read via gh api on 2026-09-24."
+        },
+        "license": {
+          "value": "GPL-3.0",
+          "provenance": {"source": "measured 2026-09-24: gh api repos/jstkdng/ueberzugpp", "confidence": "high"},
+          "note": "[measured]"
+        },
+        "language": {
+          "value": "C++ (about 93% of bytes), plus CMake and Shell",
+          "provenance": {"source": "measured 2026-09-24: gh api repos/jstkdng/ueberzugpp/languages", "confidence": "high"},
+          "note": "[measured] C++ 240,486 B; CMake 11,077; Shell 6,677; Python 756."
+        },
+        "graphics_mechanism": {
+          "value": "Six backends, selected by -o or config.json: x11 and wayland (a separate borderless, unfocusable compositor window per image, placed over the terminal), and kitty, sixel, iterm2, chafa (escape sequences written to the terminal). Escape-code probing is OFF by default (--use-escape-codes [0]). By default it reads TIOCGWINSZ for pixel size, marks iterm2 from TERM_PROGRAM (WezTerm, iTerm.app), and marks x11/wayland available from the session. Detection is last-wins in the order sixel < kitty < iterm2 < x11 < wayland, with chafa if nothing is found. So on Hyprland it picks the overlay window even inside a kitty-capable terminal. With probing on, it sends `ESC_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA ESC\\ CSI c` (kitty), `CSI ?1;1;0S` (XTSMGRAPHICS sixel), and `CSI 14t` then `CSI ?2;1;0S` for pixel size.",
+          "provenance": {"source": "https://github.com/jstkdng/ueberzugpp/blob/HEAD/src/terminal.cpp", "confidence": "high"},
+          "note": "[measured] Read in src/terminal.cpp (set_detected_output, check_kitty_support, check_sixel_support) and src/canvas.cpp."
+        },
+        "where_it_draws": {
+          "value": "With the wayland and x11 backends, it draws an overlay OS window positioned over cells. On Hyprland it sets window rules by title over the Hyprland IPC socket (float, no_focus, border_size 0, rounding 0), probing for the new Lua IPC first. It then moves the window to activewindow.at + col×font_width + guessed padding. It knows pane offsets only for tmux (tmux::get_offset). The window does not scroll with text; the host must send `remove`. With the kitty, sixel and iterm2 backends, it writes a cell-anchored placement to the terminal's stdout instead.",
+          "provenance": {"source": "https://github.com/jstkdng/ueberzugpp/blob/HEAD/src/canvas/wayland/config/hyprland.cpp", "confidence": "high"},
+          "note": "[measured] Also read src/canvas/wayland/window/waylandshm.cpp (move_window) and src/dimensions.cpp (read_offsets)."
+        },
+        "input_model": {
+          "value": "It has no input of its own and takes no keys or mouse. The host TUI owns input and sends JSON `{action:add|remove, identifier, path, x, y, max_width, max_height}` in columns and lines, over stdin or ${UEBERZUGPP_TMPDIR}/ueberzugpp-${PID}.socket. The overlay window gets no_focus, so it never takes keyboard focus.",
+          "provenance": {"source": "https://github.com/jstkdng/ueberzugpp/blob/HEAD/README.md", "confidence": "high"},
+          "note": "[measured] no_focus rule seen in hyprland.cpp disable_focus()."
+        },
+        "activity": {
+          "value": "1,326 stars · pushed 2026-09-20 · latest release v2.9.10 (2026-05-18)",
+          "provenance": {"source": "measured 2026-09-24: gh api repos/jstkdng/ueberzugpp", "confidence": "high"},
+          "note": "[measured] Plus gh api repos/jstkdng/ueberzugpp/releases/latest."
+        },
+        "td_overlap": {
+          "value": "floating",
+          "provenance": {"source": "https://github.com/jstkdng/ueberzugpp", "confidence": "medium"},
+          "note": "[inferred] Its Wayland/X11 backend puts a floating image square over a pane. TD wants the same result, but drawn in-process. It is a client program, not a host, and it is C++, so not same-stack."
+        },
+        "steal_for_td": {
+          "value": "Report exact per-pane pixel sizes in TIOCGWINSZ: ws_xpixel/ws_ypixel should equal cols×cell width and rows×cell height of the pane, not of the window. Also answer CSI 14t for the pane. Ueberzugpp derives font size and padding from these numbers, and its guess_padding() computes zero padding only when the pixels divide exactly by cols. mcat, tdf and w3m read the same fields.",
+          "provenance": {"source": "https://github.com/jstkdng/ueberzugpp/blob/HEAD/src/terminal.cpp", "confidence": "medium"},
+          "note": "[inferred] From get_terminal_size() and guess_padding() in terminal.cpp."
+        },
+        "trap": {
+          "value": "Nothing should fall back to overlay windows inside TD. The Wayland backend positions against the whole Hyprland client window plus guessed padding, and it knows nothing about TD's own splits. Whenever monitor scale is above 1 it halves coordinates and adds 10 px (`res_x/2 + 10`), which is only right at 2×. Issues for wrong position and scale on Hyprland/Sway (#122) and wrong workspace (#223) are still open. And because it prefers wayland over kitty, a user with ueberzugpp installed gets overlay windows unless the host program detects TD's graphics first.",
+          "provenance": {"source": "https://github.com/jstkdng/ueberzugpp/issues/122", "confidence": "medium"},
+          "note": "[inferred] Scale hack read in hyprland.cpp move_window(). Issue states from gh search on 2026-09-24: #122 open (2023-08-26), #223 open (2024-09-13)."
+        },
+        "primary_sources": {
+          "value": "https://github.com/jstkdng/ueberzugpp/blob/HEAD/README.md https://github.com/jstkdng/ueberzugpp/blob/HEAD/src/terminal.cpp https://github.com/jstkdng/ueberzugpp/blob/HEAD/src/canvas.cpp https://github.com/jstkdng/ueberzugpp/blob/HEAD/src/canvas/wayland/config/hyprland.cpp https://github.com/jstkdng/ueberzugpp/blob/HEAD/src/canvas/wayland/window/waylandshm.cpp https://github.com/jstkdng/ueberzugpp/blob/HEAD/src/dimensions.cpp https://github.com/jstkdng/ueberzugpp/issues/122 https://github.com/jstkdng/ueberzugpp/issues/223",
+          "provenance": {"source": "https://github.com/jstkdng/ueberzugpp", "confidence": "high"},
+          "note": "[measured] All read through gh api on 2026-09-24."
+        }
+      }
+    },
+    {
+      "id": "awrit",
+      "fields": {
+        "what_it_is": {
+          "value": "awrit (Actual Web Rendering In Terminal): a full Chromium browser, run as Electron offscreen rendering, whose painted frames stream into a terminal that speaks the Kitty graphics protocol. It has a web-tech toolbar and Chrome extensions, and mouse and keyboard drive the page. The repo is archived; the author cites limited time and rising security issues, and points macOS users to cmux.",
+          "provenance": {"source": "https://github.com/chase/awrit/blob/HEAD/README.md", "confidence": "high"},
+          "note": "[measured] Archived flag confirmed with gh api repos/chase/awrit (archived: true). Electron ^37.3.1 is in package.json."
+        },
+        "license": {
+          "value": "BSD-3-Clause",
+          "provenance": {"source": "measured 2026-09-24: gh api repos/chase/awrit", "confidence": "high"},
+          "note": "[measured]"
+        },
+        "language": {
+          "value": "Rust 374 KB (mostly a vendored crossterm fork plus the napi native module awrit-native-rs), TypeScript 97 KB, JavaScript 31 KB. Runs on Electron 37 and Node ≥22.",
+          "provenance": {"source": "measured 2026-09-24: gh api repos/chase/awrit/languages", "confidence": "high"},
+          "note": "[measured] Tree listing shows awrit-native-rs/crates/crossterm vendored. App logic lives in src/*.ts."
+        },
+        "graphics_mechanism": {
+          "value": "Kitty graphics protocol only. Electron `offscreen: true` emits `paint` events carrying a BGRA bitmap. awrit converts it to RGBA, writes it to POSIX shared memory and transmits `f=32,t=s,a=T,C=1,q=2`. The fast path uses kitty animation: frame 1 is a paused container image, each webview paint loads as an animation frame (`a=f,r=N,X=1`), and that frame is composited into the visible one at the layout rect (`a=c,C=1,x,y,w,h`). At startup it probes three capabilities, 100 ms timeout each: load a 1×1 image (`f=24,t=d,i=4294111295`), load a frame (`a=f,r=2`), and composite (`a=c,C=1,r=2,c=1`). If frames or compose fail, a fallback re-sends the whole bitmap at a cell-plus-pixel offset (`X=,Y=`) on every paint. The code notes that Ghostty 'and probably most other terminals only support a very small subset'.",
+          "provenance": {"source": "https://github.com/chase/awrit/blob/HEAD/src/tty/kittyGraphics.ts", "confidence": "high"},
+          "note": "[measured] Also read src/paint.ts and awrit-native-rs/crates/crossterm/src/terminal/sys/unix.rs (query_kitty_graphics_support)."
+        },
+        "where_it_draws": {
+          "value": "It fills the terminal window (or kitty split) it runs in. It clears the screen and places one image that covers the toolbar and content layout, and paints update that image in place. Nothing scrolls with text; Chromium does the page scrolling. Size comes from TIOCGWINSZ pixel dimensions (crossterm window_size). On Wayland under kitty, it reads the scale from ~/.config/monitors.xml.",
+          "provenance": {"source": "https://github.com/chase/awrit/blob/HEAD/src/paint.ts", "confidence": "high"},
+          "note": "[measured] Clear-screen seen in src/index.ts setup(). Scale seen in src/dpi.ts."
+        },
+        "input_model": {
+          "value": "The kitty keyboard protocol is a hard requirement. awrit pushes DISAMBIGUATE | REPORT_ALL_KEYS_AS_ESCAPE_CODES | REPORT_ALTERNATE_KEYS | REPORT_EVENT_TYPES and exits with 'Extended keyboard support is required' if the terminal refuses. For the mouse it enables 1000/1002/1003/1015/1006 plus SGR-Pixels 1016, so pointer events arrive in pixels. It divides them by devicePixelRatio, decides toolbar or content by y, and forwards them through Electron `webContents.sendInputEvent` (mouseDown/Up/Move, and mouseWheel with a ±100 delta). Keys go through the config.js keybindings first, then to the focused webContents as rawKeyDown/char/keyUp. Bracketed paste and focus events are on.",
+          "provenance": {"source": "https://github.com/chase/awrit/blob/HEAD/src/inputHandler.ts", "confidence": "high"},
+          "note": "[measured] Also read awrit-native-rs/src/term.rs, awrit-native-rs/crates/crossterm/src/event.rs (EnableMouseCapture includes ?1016h) and src/index.ts."
+        },
+        "activity": {
+          "value": "1,382 stars · archived · pushed 2026-04-25 · latest release awrit-native-rs-2.0.3 (2025-08-25)",
+          "provenance": {"source": "measured 2026-09-24: gh api repos/chase/awrit", "confidence": "high"},
+          "note": "[measured] Plus releases/latest."
+        },
+        "td_overlap": {
+          "value": "pane-content",
+          "provenance": {"source": "https://github.com/chase/awrit", "confidence": "medium"},
+          "note": "[inferred] A live web page as the content of a terminal pane matches TD's 'open an HTML brief in a split' goal. I left out same-stack on purpose: the Rust bytes are a vendored crossterm plus a napi shim, and the app itself is TypeScript on Electron."
+        },
+        "steal_for_td": {
+          "value": "Implement kitty-graphics shared-memory transmission (t=s) plus animation-frame load and compose (a=f with r=; a=c with x,y,w,h,C=1), and answer awrit's three-step probe OK. Then every Chromium repaint becomes a dirty-rect composite into one resident image instead of a full-frame re-upload. Put awrit's three probe strings in TD's conformance test verbatim.",
+          "provenance": {"source": "https://github.com/chase/awrit/blob/HEAD/awrit-native-rs/crates/crossterm/src/terminal/sys/unix.rs", "confidence": "medium"},
+          "note": "[inferred]"
+        },
+        "trap": {
+          "value": "Don't copy awrit's architecture for TD's own HTML pane. It ships a whole Electron/Chromium, the author archived it over security issues, and every frame crosses shared memory as a full BGRA bitmap. TD already owns the GPU and can embed a web view directly. awrit matters only as a client TD should be able to host. Also, a terminal that answers a=q OK but lacks a=f/a=c pushes awrit onto the slow full-frame fallback, so answer each frame probe truthfully.",
+          "provenance": {"source": "https://github.com/chase/awrit/blob/HEAD/README.md", "confidence": "medium"},
+          "note": "[inferred]"
+        },
+        "primary_sources": {
+          "value": "https://github.com/chase/awrit/blob/HEAD/README.md https://github.com/chase/awrit/blob/HEAD/package.json https://github.com/chase/awrit/blob/HEAD/src/tty/kittyGraphics.ts https://github.com/chase/awrit/blob/HEAD/src/paint.ts https://github.com/chase/awrit/blob/HEAD/src/dpi.ts https://github.com/chase/awrit/blob/HEAD/src/index.ts https://github.com/chase/awrit/blob/HEAD/src/inputHandler.ts https://github.com/chase/awrit/blob/HEAD/awrit-native-rs/src/term.rs https://github.com/chase/awrit/blob/HEAD/awrit-native-rs/crates/crossterm/src/terminal/sys/unix.rs https://github.com/chase/awrit/blob/HEAD/awrit-native-rs/crates/crossterm/src/event.rs",
+          "provenance": {"source": "https://github.com/chase/awrit", "confidence": "high"},
+          "note": "[measured] Default branch is 'electron'. All read via gh api on 2026-09-24."
+        }
+      }
+    },
+    {
+      "id": "browsh",
+      "fields": {
+        "what_it_is": {
+          "value": "Browsh: a text-based browser backed by real headless Firefox. A web extension serialises each page's text and pixel colours, and a Go 'interfacer' renders them in a TTY or serves them over HTTP to other browsers. It targets low-bandwidth SSH/Mosh browsing while keeping modern JavaScript support.",
+          "provenance": {"source": "https://github.com/browsh-org/browsh/blob/HEAD/README.md", "confidence": "high"},
+          "note": "[measured]"
+        },
+        "license": {
+          "value": "LGPL-2.1",
+          "provenance": {"source": "measured 2026-09-24: gh api repos/browsh-org/browsh", "confidence": "high"},
+          "note": "[measured]"
+        },
+        "language": {
+          "value": "JavaScript 111 KB (Firefox web extension) and Go 108 KB (tcell TUI 'interfacer'). Needs Firefox installed.",
+          "provenance": {"source": "measured 2026-09-24: gh api repos/browsh-org/browsh/languages", "confidence": "high"},
+          "note": "[measured]"
+        },
+        "graphics_mechanism": {
+          "value": "Unicode half-blocks, no graphics protocol. The web extension takes two screenshots of the visible DOM, one with text hidden and one with text drawn in a full-block glyph font, and samples background and text colours from them. On the Go side, a cell holding text shows the real DOM character in its colour. Any other cell becomes '▄', with the background colour as the top 'pixel' and the foreground as the bottom one: 2 vertical pixels per cell, in 24-bit colour via tcell.",
+          "provenance": {"source": "https://github.com/browsh-org/browsh/blob/HEAD/interfacer/src/browsh/frame_builder.go", "confidence": "high"},
+          "note": "[measured] See buildCell(), commented 'This is where we implement the UTF8 half-block trick', and webext/src/dom/graphics_builder.js."
+        },
+        "where_it_draws": {
+          "value": "A fullscreen tcell screen with a tab/URL bar on top. The page is a scrolled viewport that is re-rendered on every scroll; yScroll is doubled when sent back to Firefox because each cell holds two pixel rows. Nothing lands in scrollback.",
+          "provenance": {"source": "https://github.com/browsh-org/browsh/blob/HEAD/interfacer/src/browsh/tty.go", "confidence": "medium"},
+          "note": "[inferred] Viewport and scroll behaviour read in tty.go handleMouseScroll. Alternate-screen use is assumed from tcell's default."
+        },
+        "input_model": {
+          "value": "tcell with EnableMouse. A click is translated to page coordinates (x + xScroll, y − uiHeight + yScroll) and sent as JSON to the web extension, which dispatches it into the DOM. The wheel scrolls the frame. Keys go to the page, except browsh's own chords: Ctrl+Q quit, Ctrl+L URL bar, Ctrl+T new tab, Ctrl+W close tab, Backspace back, arrows and PgUp/PgDn scroll.",
+          "provenance": {"source": "https://github.com/browsh-org/browsh/blob/HEAD/interfacer/src/browsh/tty.go", "confidence": "high"},
+          "note": "[measured] From handleMouseEvent and handleUserKeyPress."
+        },
+        "activity": {
+          "value": "19,064 stars · pushed 2025-07-11 · latest release v1.8.3 (2024-01-29)",
+          "provenance": {"source": "measured 2026-09-24: gh api repos/browsh-org/browsh", "confidence": "high"},
+          "note": "[measured]"
+        },
+        "td_overlap": {
+          "value": "pane-content",
+          "provenance": {"source": "https://github.com/browsh-org/browsh", "confidence": "medium"},
+          "note": "[inferred] It renders HTML pages as the content of a terminal pane. It is written in Go and JavaScript, so not same-stack."
+        },
+        "steal_for_td": {
+          "value": "Keep a text layer under every rendered document. Browsh keeps page text as real characters in the grid and page graphics as pixels, by screenshotting with the text hidden. When TD renders a Markdown or HTML brief as pixels in a pane or float, it should also keep that brief's plain text addressable, so that TD's grep and pane_events tooling and its agents can read and search it. Pixels alone are invisible to them.",
+          "provenance": {"source": "https://github.com/browsh-org/browsh/blob/HEAD/webext/src/dom/graphics_builder.js", "confidence": "medium"},
+          "note": "[inferred]"
+        },
+        "trap": {
+          "value": "Half-block rendering caps a page at 2 vertical pixels per cell and loses glyph-level detail, and browsh hasn't shipped a release since January 2024. For a GPU terminal it is only a fallback for panes where TD's protocols go undetected (for example over nested SSH), not a model for TD's own HTML view.",
+          "provenance": {"source": "https://github.com/browsh-org/browsh/blob/HEAD/interfacer/src/browsh/frame_builder.go", "confidence": "medium"},
+          "note": "[inferred]"
+        },
+        "primary_sources": {
+          "value": "https://github.com/browsh-org/browsh/blob/HEAD/README.md https://github.com/browsh-org/browsh/blob/HEAD/interfacer/src/browsh/frame_builder.go https://github.com/browsh-org/browsh/blob/HEAD/interfacer/src/browsh/tty.go https://github.com/browsh-org/browsh/blob/HEAD/webext/src/dom/graphics_builder.js",
+          "provenance": {"source": "https://github.com/browsh-org/browsh", "confidence": "high"},
+          "note": "[measured]"
+        }
+      }
+    },
+    {
+      "id": "presenterm",
+      "fields": {
+        "what_it_is": {
+          "value": "presenterm: a Rust tool that turns Markdown into terminal slideshows, with themes, layouts, speaker notes, executable code blocks and images. It also renders mermaid, d2, LaTeX and typst code blocks to images; mermaid goes through mermaid-cli, which starts a headless browser at about 2 s per image.",
+          "provenance": {"source": "https://github.com/mfontanini/presenterm", "confidence": "high"},
+          "note": "[measured] Mermaid detail from docs/src/features/code/mermaid.md."
+        },
+        "license": {
+          "value": "BSD-2-Clause",
+          "provenance": {"source": "measured 2026-09-24: gh api repos/mfontanini/presenterm", "confidence": "high"},
+          "note": "[measured]"
+        },
+        "language": {
+          "value": "Rust (about 99% of bytes)",
+          "provenance": {"source": "measured 2026-09-24: gh api repos/mfontanini/presenterm/languages", "confidence": "high"},
+          "note": "[measured] Rust 854,301 B; Shell 3,438; JS 2,679; Nix 1,530."
+        },
+        "graphics_mechanism": {
+          "value": "Supports iTerm2 inline images (OSC 1337, including multipart), Kitty graphics in two modes, Sixel, and ASCII half-blocks as the universal fallback. The kitty modes are 'local' (t=f, a temp-file path, preferred) and 'remote' (t=d, base64). Under tmux, kitty images use U=1 virtual placements and U+10EEEE placeholder cells, and GIFs play as kitty animation frames. Detection lives in src/terminal/capabilities.rs. It writes a 1×1 RGBA kitty `a=q` twice, once with t=f and once with t=d, followed by DA1 `CSI c` as a sentinel. It parses `_G` OK replies per image id, and the DA1 answer for sixel. If nothing answers, a watchdog thread sends DSR after about a second. It also probes kitty's text-sizing protocol: on the alt screen it writes `OSC 66;s=2; ` and `OSC 66;n=1:d=2; ` and reads back the cursor column. Mode order is iterm2 → kitty local → kitty remote → sixel → ascii. iterm2 is used only for terminals recognised by env (iTerm2, WezTerm, mintty, Konsole).",
+          "provenance": {"source": "https://github.com/mfontanini/presenterm/blob/HEAD/src/terminal/capabilities.rs", "confidence": "high"},
+          "note": "[measured] Also read src/terminal/emulator.rs (preferred_protocol, is_detected) and src/terminal/image/protocols/kitty.rs."
+        },
+        "where_it_draws": {
+          "value": "A fullscreen alternate screen, one slide at a time. Images are cell-anchored placements, sized as a percentage of terminal width (`![image:width:50%](x.png)`) and redrawn on each slide change. Nothing goes to scrollback.",
+          "provenance": {"source": "https://mfontanini.github.io/presenterm/features/images.html", "confidence": "medium"},
+          "note": "[inferred] Sizing syntax is measured from the docs. The alt-screen slide model is inferred from the app's shape and the EnterAlternateScreen use in capabilities.rs."
+        },
+        "input_model": {
+          "value": "Keyboard only, through configurable `bindings`. Defaults: next l/j/→/PgDn/↓/space; previous h/k/←/PgUp/↑; n/p fast skip; gg/G first/last slide; <number>G go to slide; ? opens the bindings modal; Esc closes a modal; Ctrl+C or q exits; Ctrl+Z suspends.",
+          "provenance": {"source": "https://github.com/mfontanini/presenterm/blob/HEAD/docs/src/configuration/settings.md", "confidence": "high"},
+          "note": "[measured]"
+        },
+        "activity": {
+          "value": "8,871 stars · pushed 2026-05-22 · latest release v0.16.1 (2026-02-20)",
+          "provenance": {"source": "measured 2026-09-24: gh api repos/mfontanini/presenterm", "confidence": "high"},
+          "note": "[measured]"
+        },
+        "td_overlap": {
+          "value": "pane-content, same-stack",
+          "provenance": {"source": "https://github.com/mfontanini/presenterm", "confidence": "medium"},
+          "note": "[inferred] It renders Markdown, the file type TD opens on Ctrl+click, inside a pane, and it is written in Rust."
+        },
+        "steal_for_td": {
+          "value": "Answer the kitty query truthfully for each transmission medium. Support t=f (and t=t) as well as t=d: presenterm switches to 'local' mode whenever the t=f query succeeds, and then hands TD a file path instead of base64, which is the cheapest path for a terminal on the same machine. After that, implement OSC 66 text sizing. presenterm, glow (on main) and mcat (--md-kitty-headers) all probe for it to draw large Markdown headings.",
+          "provenance": {"source": "https://github.com/mfontanini/presenterm/blob/HEAD/src/terminal/capabilities.rs", "confidence": "medium"},
+          "note": "[inferred]"
+        },
+        "trap": {
+          "value": "Brand shortcuts hide what the terminal can actually do. If TD ever sets TERM_PROGRAM to a name presenterm recognises (WezTerm, say), presenterm switches to iTerm2 OSC 1337 without querying. And if nobody answers the probe, it falls back to ASCII blocks without saying so. Never impersonate another terminal's TERM or TERM_PROGRAM; answer the queries.",
+          "provenance": {"source": "https://github.com/mfontanini/presenterm/blob/HEAD/src/terminal/emulator.rs", "confidence": "medium"},
+          "note": "[inferred]"
+        },
+        "primary_sources": {
+          "value": "https://github.com/mfontanini/presenterm https://mfontanini.github.io/presenterm/features/images.html https://github.com/mfontanini/presenterm/blob/HEAD/src/terminal/emulator.rs https://github.com/mfontanini/presenterm/blob/HEAD/src/terminal/capabilities.rs https://github.com/mfontanini/presenterm/blob/HEAD/src/terminal/image/protocols/kitty.rs https://github.com/mfontanini/presenterm/blob/HEAD/docs/src/configuration/settings.md https://github.com/mfontanini/presenterm/blob/HEAD/docs/src/features/code/mermaid.md",
+          "provenance": {"source": "https://github.com/mfontanini/presenterm", "confidence": "high"},
+          "note": "[measured]"
+        }
+      }
+    },
+    {
+      "id": "yazi",
+      "fields": {
+        "what_it_is": {
+          "value": "Yazi: an async Rust terminal file manager with Lua plugins and built-in previews. Images are decoded and downscaled in-process, video thumbnails come from ffmpeg, PDF first pages from pdftoppm, and it also previews archives, code and directories. Markdown and HTML previews come from third-party plugins.",
+          "provenance": {"source": "https://github.com/sxyazi/yazi/blob/HEAD/README.md", "confidence": "high"},
+          "note": "[measured] The pdftoppm and ffmpeg preview deps come from https://yazi-rs.github.io/docs/configuration/yazi."
+        },
+        "license": {
+          "value": "MIT",
+          "provenance": {"source": "measured 2026-09-24: gh api repos/sxyazi/yazi", "confidence": "high"},
+          "note": "[measured]"
+        },
+        "language": {
+          "value": "Rust (about 94% of bytes), Lua (about 5%)",
+          "provenance": {"source": "measured 2026-09-24: gh api repos/sxyazi/yazi/languages", "confidence": "high"},
+          "note": "[measured] Rust 2,002,465 B; Lua 105,908; JS 13,708; Nix 6,811."
+        },
+        "graphics_mechanism": {
+          "value": "Drivers in yazi-adapter: Kgp (kitty Unicode placeholders: `a=T,C=1,U=1`, then U+10EEEE plus row and column diacritics per cell); KgpOld (kitty classic: `a=t` transmit, then one placement per cell with `a=p,p=N,x,y,w,h,c=1,r=1,C=1`, so an image costs cols×rows placements); Iip (iTerm2 OSC 1337); Sixel; and fallbacks to Überzug++ (X11/Wayland overlay windows) and Chafa. Detection starts from the env brand and adds one probe burst: XTVERSION `CSI >q`; kitty `a=q,t=d` (id 278941603) and `a=q,t=s` over shared memory (id 916472805); `CSI 16t` for cell size; OSC 11 background; `CSI ?996n` colour scheme; DECRQM 12; DECRQSS cursor style; `CSI ?u`. DA1 `CSI 0c` closes the burst, with a 3 s timeout; if the brand is tmux, the burst is re-sent through passthrough. The brand (from TERM, TERM_PROGRAM, env vars, or an XTVERSION substring) selects the driver list: Kitty, Ghostty, Rio → Kgp; Konsole → KgpOld; iTerm2, WezTerm, VSCode, Tabby, Hyper, Bobcat → Iip then Sixel; foot, Windows Terminal, BlackBox → Sixel. An Unknown brand gets only what its probe proved: Sixel if DA1 contains 4, KgpOld if a=q returned OK, and never Unicode placeholders. If nothing is proven, x11 sessions get ueberzug X11, Wayland with a Hyprland/Sway/Niri/Wayfire socket gets ueberzug Wayland, and anything else gets chafa.",
+          "provenance": {"source": "https://github.com/sxyazi/yazi/blob/HEAD/yazi-adapter/src/drivers/drivers.rs", "confidence": "high"},
+          "note": "[measured] Read yazi-emulator/src/{probe,brand,emulator}.rs, yazi-tty/src/sequence/query.rs, and yazi-adapter/src/drivers/{kgp,kgp_old,ueberzug}.rs."
+        },
+        "where_it_draws": {
+          "value": "Cell-anchored placement inside its own preview pane in a fullscreen alt-screen TUI. Images are erased and redrawn whenever the preview changes or any UI element overlaps the shown rect (ClearInventory → image_erase), so they never scroll with text. The Überzug++ fallbacks draw overlay windows instead.",
+          "provenance": {"source": "https://github.com/sxyazi/yazi/blob/HEAD/yazi-adapter/src/adapter.rs", "confidence": "high"},
+          "note": "[measured]"
+        },
+        "input_model": {
+          "value": "Vim-like keys with which-key menus. Mouse support is opt-in through `mgr.mouse_events` (click, scroll, touch, move, drag), delivered to the plugin system. It also detects CSI u (kitty keyboard) and supports OSC 52 clipboard and drag-and-drop.",
+          "provenance": {"source": "https://yazi-rs.github.io/docs/configuration/yazi", "confidence": "high"},
+          "note": "[measured] mouse_events values come from the config docs. CSI u, OSC 52 and DnD are in the README feature list."
+        },
+        "activity": {
+          "value": "42,397 stars · pushed 2026-09-21 · latest release v26.9.1 (2026-09-01)",
+          "provenance": {"source": "measured 2026-09-24: gh api repos/sxyazi/yazi", "confidence": "high"},
+          "note": "[measured]"
+        },
+        "td_overlap": {
+          "value": "pane-content, same-stack",
+          "provenance": {"source": "https://github.com/sxyazi/yazi", "confidence": "medium"},
+          "note": "[inferred] Its preview pane shows the image, PDF and video files TD wants to open, and it is Rust (ratatui)."
+        },
+        "steal_for_td": {
+          "value": "Answer yazi's probe burst correctly: a=q OK for both t=d and t=s, DA1 within milliseconds, and XTVERSION with a stable 'TerminalDelight <version>' string. Then upstream a two-line Brand::TerminalDelight → [Kgp] entry in yazi-emulator/src/brand.rs and yazi-adapter/src/drivers/drivers.rs. Until that lands, an unknown terminal gets only KgpOld, which costs one kitty placement per cell.",
+          "provenance": {"source": "https://github.com/sxyazi/yazi/blob/HEAD/yazi-emulator/src/brand.rs", "confidence": "medium"},
+          "note": "[inferred]"
+        },
+        "trap": {
+          "value": "If TD neither answers the kitty query nor advertises sixel in DA1, yazi on Omarchy falls through to Überzug++ Wayland overlay windows without any warning, because HYPRLAND_INSTANCE_SIGNATURE is set. Images will then float over the wrong spot of a split TD window. Don't set TERM=xterm-kitty to jump the queue either: brand detection trusts TERM first, so impersonating kitty commits TD to kitty-only behaviour it may not have.",
+          "provenance": {"source": "https://github.com/sxyazi/yazi/blob/HEAD/yazi-adapter/src/drivers/drivers.rs", "confidence": "medium"},
+          "note": "[inferred] Drivers::matches() fallback chain, plus Ueberzug::supported_compositor() in ueberzug.rs."
+        },
+        "primary_sources": {
+          "value": "https://yazi-rs.github.io/docs/image-preview https://yazi-rs.github.io/docs/configuration/yazi https://github.com/sxyazi/yazi/blob/HEAD/README.md https://github.com/sxyazi/yazi/blob/HEAD/yazi-emulator/src/probe.rs https://github.com/sxyazi/yazi/blob/HEAD/yazi-emulator/src/brand.rs https://github.com/sxyazi/yazi/blob/HEAD/yazi-emulator/src/emulator.rs https://github.com/sxyazi/yazi/blob/HEAD/yazi-tty/src/sequence/query.rs https://github.com/sxyazi/yazi/blob/HEAD/yazi-adapter/src/adapter.rs https://github.com/sxyazi/yazi/blob/HEAD/yazi-adapter/src/drivers/drivers.rs https://github.com/sxyazi/yazi/blob/HEAD/yazi-adapter/src/drivers/kgp.rs https://github.com/sxyazi/yazi/blob/HEAD/yazi-adapter/src/drivers/kgp_old.rs https://github.com/sxyazi/yazi/blob/HEAD/yazi-adapter/src/drivers/ueberzug.rs",
+          "provenance": {"source": "https://github.com/sxyazi/yazi", "confidence": "high"},
+          "note": "[measured] The docs pages were read via WebFetch, which summarises, so the table on them counts as medium. Source files were read verbatim via gh api."
+        }
+      }
+    },
+    {
+      "id": "euporie",
+      "fields": {
+        "what_it_is": {
+          "value": "euporie: Jupyter notebooks, consoles and notebook previews in the terminal, written in Python on its own prompt_toolkit extension, 'apptk'. It renders rich kernel output (Markdown, HTML, LaTeX, SVG, PDF, images, ipywidgets) and can open terminals as tabs through ptterm.",
+          "provenance": {"source": "https://github.com/joouha/euporie/blob/HEAD/README.rst", "confidence": "high"},
+          "note": "[measured] The terminal-tabs detail is from changelog/+terminal-tabs.added.rst."
+        },
+        "license": {
+          "value": "MIT",
+          "provenance": {"source": "measured 2026-09-24: gh api repos/joouha/euporie", "confidence": "high"},
+          "note": "[measured]"
+        },
+        "language": {
+          "value": "Python (about 99.9% of bytes)",
+          "provenance": {"source": "measured 2026-09-24: gh api repos/joouha/euporie/languages", "confidence": "high"},
+          "note": "[measured] Python 3,146,572 B; Shell 1,217; Dockerfile 553."
+        },
+        "graphics_mechanism": {
+          "value": "Draws through Kitty graphics (classic placements with source-rect cropping, or `kitty-unicode`: a `U=1` virtual placement plus a U+10EEEE placeholder grid), iTerm2 inline images, Sixel, or Unicode/ANSI art. Sixel goes through timg, chafa.py, img2sixel or ImageMagick, and is cropped with sixelcrop when partly scrolled out. The Unicode/ANSI fallback uses chafa, timg or viu. Other formats are rasterised first: SVG via cairosvg or ImageMagick, PDF's first page via ImageMagick, LaTeX via flatlatex, sympy or dvipng. HTML, and Markdown (converted markdown-it → HTML), go through euporie's own pure-Python HTML/CSS layout engine to styled text cells, with w3m, elinks or lynx as fallback. Startup detection sends: kitty `a=q` (id 4294967295, wrapped for multiplexer passthrough), DA1 `CSI c` (sixel), XTVERSION `CSI >q` (iTerm), DECRQM `CSI ?1016$p` (SGR-pixel mouse), `CSI ?u` (CSI-u), OSC 10/11/12/4 colours, and `CSI 14t` pixel size. DSR `CSI 5n` goes last as the 'all answers received' sentinel.",
+          "provenance": {"source": "https://github.com/joouha/euporie/blob/HEAD/docs/pages/terminal_graphics.rst", "confidence": "high"},
+          "note": "[measured] Query strings are from packages/apptk/src/apptk/output/vt100.py. The kitty-unicode control is in packages/apptk/src/apptk/layout/graphics.py, and markdown→html in packages/apptk/src/apptk/convert/formats/html.py."
+        },
+        "where_it_draws": {
+          "value": "A fullscreen app. Graphics are cell-anchored to their output cell in a scrolling notebook and cropped as they scroll partly out of view. Graphics also render inside floating dialogs, and when a float covers some of them, only the covered ones are hidden.",
+          "provenance": {"source": "https://github.com/joouha/euporie/blob/HEAD/packages/apptk/src/apptk/layout/graphics.py", "confidence": "medium"},
+          "note": "[inferred] Cropping is measured in graphics.py (bbox, sixelcrop). The float behaviour is from changelog/+graphics-obscured.changed.rst and +graphics-refactor.changed.rst, which are unreleased changelog fragments."
+        },
+        "input_model": {
+          "value": "Micro (default), Vim, Emacs or Helix key bindings, plus a command palette. Full mouse support, including SGR-pixel mouse (DECSET 1016) for pixel-precise positions. It turns on xterm modifyOtherKeys (`CSI >4;1m`) and kitty `CSI >1u` so Ctrl+Enter and Shift+Enter work, and uses OSC 52 for the clipboard.",
+          "provenance": {"source": "https://github.com/joouha/euporie/blob/HEAD/packages/apptk/src/apptk/output/vt100.py", "confidence": "high"},
+          "note": "[measured] Key-binding modes are listed in the README and in the apptk key_binding/bindings file names."
+        },
+        "activity": {
+          "value": "2,665 stars · pushed 2026-09-18 · latest release v2.10.4 (2026-02-23)",
+          "provenance": {"source": "measured 2026-09-24: gh api repos/joouha/euporie", "confidence": "high"},
+          "note": "[measured]"
+        },
+        "td_overlap": {
+          "value": "pane-content, floating",
+          "provenance": {"source": "https://github.com/joouha/euporie", "confidence": "medium"},
+          "note": "[inferred] It renders HTML, Markdown and PDF outputs inside panes, and draws graphics inside its own floats, which is the in-TUI analogue of TD's floating square. Python, so not same-stack."
+        },
+        "steal_for_td": {
+          "value": "Implement SGR-pixel mouse (DECSET 1016) and answer its DECRQM query (`CSI ?1016$p`). euporie and awrit both switch to pixel-precise mouse reports when it's available, and that is what lets a click land on a point inside an image or a rendered web page instead of on a whole cell.",
+          "provenance": {"source": "https://github.com/joouha/euporie/blob/HEAD/packages/apptk/src/apptk/output/vt100.py", "confidence": "medium"},
+          "note": "[inferred]"
+        },
+        "trap": {
+          "value": "Overlap is the hard part. euporie had to add logic that hides only the covered graphics when one of its own floats sits on top. TD's floating square will sit over kitty placements owned by whatever program runs in that pane. TD must composite its float above every program image, including Unicode-placeholder images that live in the grid, and never let them bleed through.",
+          "provenance": {"source": "https://github.com/joouha/euporie/blob/HEAD/changelog/+graphics-obscured.changed.rst", "confidence": "medium"},
+          "note": "[inferred]"
+        },
+        "primary_sources": {
+          "value": "https://github.com/joouha/euporie/blob/HEAD/README.rst https://github.com/joouha/euporie/blob/HEAD/docs/pages/terminal_graphics.rst https://github.com/joouha/euporie/blob/HEAD/docs/pages/multiplexers.rst https://github.com/joouha/euporie/blob/HEAD/packages/apptk/src/apptk/output/vt100.py https://github.com/joouha/euporie/blob/HEAD/packages/apptk/src/apptk/layout/graphics.py https://github.com/joouha/euporie/blob/HEAD/packages/apptk/src/apptk/convert/formats/html.py https://github.com/joouha/euporie/blob/HEAD/packages/euporie-core/src/euporie/core/widgets/webview.py https://github.com/joouha/euporie/blob/HEAD/changelog/+graphics-obscured.changed.rst",
+          "provenance": {"source": "https://github.com/joouha/euporie", "confidence": "high"},
+          "note": "[measured]"
+        }
+      }
+    },
+    {
+      "id": "mcat",
+      "label": "mcat — Markdown/HTML/PDF/Office to terminal images",
+      "group": "D · Programs that put pixels in a terminal",
+      "fields": {
+        "what_it_is": {
+          "value": "mcat: a Rust 'cat' for rich files. It shows images, video, PDF, Markdown, HTML, Office documents and archives in the terminal. Its pipeline converts input to Markdown, then HTML, then a PNG (via headless Chromium), then an inline terminal image, and it can stop at any stage (`-o md|html|image`).",
+          "provenance": {"source": "https://github.com/Skardyy/mcat/blob/HEAD/README.md", "confidence": "high"},
+          "note": "[measured]"
+        },
+        "license": {
+          "value": "MIT",
+          "provenance": {"source": "measured 2026-09-24: gh api repos/Skardyy/mcat", "confidence": "high"},
+          "note": "[measured]"
+        },
+        "language": {
+          "value": "Rust (about 99.5% of bytes)",
+          "provenance": {"source": "measured 2026-09-24: gh api repos/Skardyy/mcat/languages", "confidence": "high"},
+          "note": "[measured] Rust 464,097 B; CSS 2,245."
+        },
+        "graphics_mechanism": {
+          "value": "Its `rasteroid` crate has four encoders. Kitty sends payloads through shared memory (`t=s,S=`), uses U+10EEEE Unicode placeholders, and animates GIF and video. The others are iTerm2 OSC 1337, Sixel and ASCII. HTML and Markdown become images through headless Chromium driven over the DevTools Protocol (`--headless=new`, then Page.getLayoutMetrics → Emulation.setDeviceMetricsOverride → Page.captureScreenshot). Video goes through FFmpeg. Detection reads env only and sends no escape query. It picks kitty if TERM, TERM_PROGRAM or LC_TERMINAL contains 'kitty' or 'ghostty'. It picks iTerm2 for mintty, wezterm, iterm2, rio, warp or KONSOLE_VERSION, and sixel only for foot, Windows Terminal or sixel-tmux. Everything else gets ASCII. CLI flags can force an encoder. Pixel size comes from TIOCGWINSZ (crossterm window_size) unless the MCAT_SPX override is set. Kitty text-sizing headers are experimental (`--md-kitty-headers`).",
+          "provenance": {"source": "https://github.com/Skardyy/mcat/blob/HEAD/crates/rasteroid/src/lib.rs", "confidence": "high"},
+          "note": "[measured] Read crates/rasteroid/src/{kitty_encoder,iterm_encoder,sixel_encoder,term_misc}.rs, crates/core/src/cdp.rs and crates/core/src/config.rs. The exact forcing flag names are inferred from the config fields kitty/iterm/sixel/ascii."
+        },
+        "where_it_draws": {
+          "value": "Inline in scrollback by default. The image prints at the cursor, the cursor is parked below it, and it scrolls away with later output. The Markdown viewer prints ANSI-styled text with its images embedded inline. `-I` opens a fullscreen interactive zoom and pan viewer.",
+          "provenance": {"source": "https://github.com/Skardyy/mcat/blob/HEAD/crates/rasteroid/src/iterm_encoder.rs", "confidence": "medium"},
+          "note": "[inferred] park_cursor_below is in iterm_encoder.rs, and inline Markdown images are in crates/core/src/markdown_viewer/image_preprocessor.rs (MdImageMode). Scrolling with text assumes the host terminal anchors images to cells."
+        },
+        "input_model": {
+          "value": "A one-shot CLI that takes files, URLs or stdin; `mcat .` opens a file picker. The `-I` viewer takes arrows or hjkl to pan, +/- to zoom, 0 to reset, n/p for next and previous image, g/G for first and last, and q or Esc to quit.",
+          "provenance": {"source": "https://github.com/Skardyy/mcat/blob/HEAD/crates/core/src/image_viewer.rs", "confidence": "high"},
+          "note": "[measured]"
+        },
+        "activity": {
+          "value": "1,419 stars · pushed 2026-09-14 · latest release v0.6.5 (2026-08-29)",
+          "provenance": {"source": "measured 2026-09-24: gh api repos/Skardyy/mcat", "confidence": "high"},
+          "note": "[measured]"
+        },
+        "td_overlap": {
+          "value": "pane-content, same-stack",
+          "provenance": {"source": "https://github.com/Skardyy/mcat", "confidence": "medium"},
+          "note": "[inferred] It renders exactly the Markdown, HTML and PDF files TD opens on Ctrl+click, and it is Rust."
+        },
+        "steal_for_td": {
+          "value": "Use mcat as TD's zero-code static-preview converter. On Ctrl+click of a .md, .html, .pdf or .docx file, `mcat <file> -o image` produces a PNG that TD can draw natively in its floating square. TD owns those pixels, so no protocol is involved. Swap in a live view later.",
+          "provenance": {"source": "https://github.com/Skardyy/mcat/blob/HEAD/README.md", "confidence": "medium"},
+          "note": "[inferred] The `-o image` stage is documented in the README ('mcat index.html -o image > page.png')."
+        },
+        "trap": {
+          "value": "mcat never asks the terminal what it can do. Without 'kitty' or 'ghostty' in TERM or TERM_PROGRAM it degrades to ASCII inside TD, even if TD implements kitty graphics perfectly. Fix this upstream, by adding TD to is_kitty_capable or adding an a=q probe, rather than impersonating kitty.",
+          "provenance": {"source": "https://github.com/Skardyy/mcat/blob/HEAD/crates/rasteroid/src/kitty_encoder.rs", "confidence": "medium"},
+          "note": "[inferred] is_kitty_capable() is only `env.term_contains(\"kitty\") || env.term_contains(\"ghostty\")`."
+        },
+        "primary_sources": {
+          "value": "https://github.com/Skardyy/mcat/blob/HEAD/README.md https://github.com/Skardyy/mcat/blob/HEAD/crates/rasteroid/src/lib.rs https://github.com/Skardyy/mcat/blob/HEAD/crates/rasteroid/src/kitty_encoder.rs https://github.com/Skardyy/mcat/blob/HEAD/crates/rasteroid/src/iterm_encoder.rs https://github.com/Skardyy/mcat/blob/HEAD/crates/rasteroid/src/sixel_encoder.rs https://github.com/Skardyy/mcat/blob/HEAD/crates/rasteroid/src/term_misc.rs https://github.com/Skardyy/mcat/blob/HEAD/crates/core/src/cdp.rs https://github.com/Skardyy/mcat/blob/HEAD/crates/core/src/config.rs https://github.com/Skardyy/mcat/blob/HEAD/crates/core/src/image_viewer.rs https://github.com/Skardyy/mcat/blob/HEAD/crates/core/src/markdown_viewer/image_preprocessor.rs",
+          "provenance": {"source": "https://github.com/Skardyy/mcat", "confidence": "high"},
+          "note": "[measured]"
+        }
+      }
+    },
+    {
+      "id": "tdf",
+      "label": "tdf — terminal PDF viewer (ratatui-image + kittage)",
+      "group": "D · Programs that put pixels in a terminal",
+      "fields": {
+        "what_it_is": {
+          "value": "tdf: a terminal PDF viewer, with optional EPUB and CBZ support. It renders pages with MuPDF on a background thread and shows them as images, with search, hot reload when the file changes, and a reactive layout. Built on ratatui.",
+          "provenance": {"source": "https://github.com/itsjunetime/tdf/blob/HEAD/README.md", "confidence": "high"},
+          "note": "[measured] The MuPDF dependency is in Cargo.toml."
+        },
+        "license": {
+          "value": "AGPL-3.0",
+          "provenance": {"source": "measured 2026-09-24: gh api repos/itsjunetime/tdf", "confidence": "high"},
+          "note": "[measured] Cargo.toml says AGPL-3.0-only, while the README says contributions are treated as MPL-2.0."
+        },
+        "language": {
+          "value": "Rust (about 99.5% of bytes)",
+          "provenance": {"source": "measured 2026-09-24: gh api repos/itsjunetime/tdf/languages", "confidence": "high"},
+          "note": "[measured] Rust 107,017 B; Shell 338; Nix 169."
+        },
+        "graphics_mechanism": {
+          "value": "Two paths. On Kitty it uses its author's `kittage` crate: it tests shared memory with an `a=q` on a `t=s` image (do_shms_work), transmits pages as kitty images layered by z-index with the cursor held in place, and clears with a delete-all. Everywhere else, ratatui-image's Picker (`from_query_stdio`) picks Sixel, iTerm2 or half-blocks. It needs the cell pixel size, taken from TIOCGWINSZ first and then from `CSI 14t` read back from stdin until a 't'. It also queries OSC 10/11 foreground and background colours for its invert mode.",
+          "provenance": {"source": "https://github.com/itsjunetime/tdf/blob/HEAD/src/main.rs", "confidence": "high"},
+          "note": "[measured] Also read src/kitty.rs and Cargo.toml (ratatui-image 11.0, kittage 0.4.0, crossterm 0.29)."
+        },
+        "where_it_draws": {
+          "value": "A fullscreen alternate screen. Pages are cell-anchored images laid out side by side (fit or fill) and re-placed on navigation. Nothing goes to scrollback.",
+          "provenance": {"source": "https://github.com/itsjunetime/tdf/blob/HEAD/src/main.rs", "confidence": "high"},
+          "note": "[measured] EnterAlternateScreen and the kitty z-index loop are in main.rs."
+        },
+        "input_model": {
+          "value": "Keys: l/h/←/→ one page; j/k/↓/↑ a screenful; g<n> go to page; / search; n/N next and previous hit; i invert; f fullscreen; r rotate; z fill/fit; o/O zoom; H/J/K/L pan (kitty only); q or Esc quit; Ctrl+Z suspend. Mouse capture is on, and the wheel scrolls in all four directions.",
+          "provenance": {"source": "https://github.com/itsjunetime/tdf/blob/HEAD/src/tui.rs", "confidence": "high"},
+          "note": "[measured] From the help text and MouseEventKind handling in tui.rs."
+        },
+        "activity": {
+          "value": "1,978 stars · pushed 2026-08-16 · latest release v0.5.0 (2025-12-03)",
+          "provenance": {"source": "measured 2026-09-24: gh api repos/itsjunetime/tdf", "confidence": "high"},
+          "note": "[measured]"
+        },
+        "td_overlap": {
+          "value": "pane-content, same-stack",
+          "provenance": {"source": "https://github.com/itsjunetime/tdf", "confidence": "medium"},
+          "note": "[inferred] It shows PDFs as pane content, and it is Rust built on ratatui."
+        },
+        "steal_for_td": {
+          "value": "Implement kitty's image storage quota with the standard ENOENT reply. tdf keeps many page images resident, and when kitty or Ghostty evicts one for memory and answers ENOENT, tdf re-renders that page. A TD that drops evicted images without replying, or never evicts at all, breaks that contract.",
+          "provenance": {"source": "https://github.com/itsjunetime/tdf/blob/HEAD/src/main.rs", "confidence": "medium"},
+          "note": "[inferred] From the main.rs comment: 'This is the error that kitty & ghostty provide us when they delete an image due to memory constraints'."
+        },
+        "trap": {
+          "value": "Answer the size and colour queries, or tdf fails. When the TIOCGWINSZ pixel fields are 0 it sends CSI 14t and blocks reading stdin until a 't', with no timeout. Missing OSC 10/11 replies show up as 'please file a bug with tdf with your terminal emulator'. Stock alacritty_terminal answers 14t; TD has to keep that working per pane.",
+          "provenance": {"source": "https://github.com/itsjunetime/tdf/blob/HEAD/src/main.rs", "confidence": "medium"},
+          "note": "[inferred] From get_font_size_through_stdio() and query_osc_color() in main.rs. The alacritty 14t answer was read in alacritty_terminal/src/term/mod.rs text_area_size_pixels."
+        },
+        "primary_sources": {
+          "value": "https://github.com/itsjunetime/tdf/blob/HEAD/README.md https://github.com/itsjunetime/tdf/blob/HEAD/Cargo.toml https://github.com/itsjunetime/tdf/blob/HEAD/src/main.rs https://github.com/itsjunetime/tdf/blob/HEAD/src/kitty.rs https://github.com/itsjunetime/tdf/blob/HEAD/src/tui.rs",
+          "provenance": {"source": "https://github.com/itsjunetime/tdf", "confidence": "high"},
+          "note": "[measured]"
+        }
+      }
+    },
+    {
+      "id": "w3m",
+      "label": "w3m — text browser with inline images (kitty/sixel/iTerm2)",
+      "group": "D · Programs that put pixels in a terminal",
+      "fields": {
+        "what_it_is": {
+          "value": "w3m: the classic C pager and text web browser. The maintained fork is Debian's tats/w3m. It renders HTML, tables included, as text and can show inline images through several terminal image methods.",
+          "provenance": {"source": "https://github.com/tats/w3m", "confidence": "high"},
+          "note": "[measured] Repo description 'Debian's w3m: WWW browsable pager'. The image methods are in rc.c."
+        },
+        "license": {
+          "value": "NOASSERTION on GitHub. COPYING holds w3m's own permissive licence: use, modification and redistribution are granted as long as the copyright notice is kept.",
+          "provenance": {"source": "measured 2026-09-24: gh api repos/tats/w3m", "confidence": "high"},
+          "note": "[measured] Also gh api repos/tats/w3m/license (path COPYING, 'Other')."
+        },
+        "language": {
+          "value": "C (about 61% of bytes; the rest is mostly HTML and Roff documentation)",
+          "provenance": {"source": "measured 2026-09-24: gh api repos/tats/w3m/languages", "confidence": "high"},
+          "note": "[measured] C 1,611,439 of about 2,647,927 B."
+        },
+        "graphics_mechanism": {
+          "value": "The `inline_img_protocol` option picks the method. 0 (the default) is an external command, w3mimgdisplay, which draws straight onto the terminal's X11 window found through WINDOWID, or onto the Linux framebuffer. 1 is OSC 5379 for mlterm (`-ri`). 2 is Sixel through img2sixel (`-sixel`). 3 is iTerm2 OSC 1337. 4 is Kitty: each image is converted to PNG with ImageMagick `convert` and sent as `ESC_G f=100,a=T` with a source crop x,y,w,h and a cell box c,r, in m=1/m=0 chunks. Cell pixel size comes from TIOCGWINSZ ws_xpixel/ws_ypixel, falling back to `CSI 14t` + `CSI 18t`.",
+          "provenance": {"source": "https://github.com/tats/w3m/blob/HEAD/terms.c", "confidence": "high"},
+          "note": "[measured] Read rc.c (inlineimgstr), fm.h (INLINE_IMG_* constants), main.c (-ri and -sixel flags), terms.c (put_image_kitty, put_image_sixel, pixel-size code) and w3mimg/x11/x11_w3mimg.c (WINDOWID)."
+        },
+        "where_it_draws": {
+          "value": "A fullscreen pager. With kitty, sixel or iTerm2, images are cell-anchored and re-sent whenever the page is redrawn or scrolled. The default w3mimgdisplay path paints into the terminal's X11 window from outside the terminal, overlay-style, and does not work for Wayland-native terminals.",
+          "provenance": {"source": "https://github.com/tats/w3m/blob/HEAD/terms.c", "confidence": "medium"},
+          "note": "[inferred] The redraw behaviour is inferred from put_image_* being called per draw. The Wayland limitation is inferred from the X11/framebuffer-only backends in w3mimg.c."
+        },
+        "input_model": {
+          "value": "Keyboard pager and browser keys, following links with Enter. xterm mouse reporting (`CSI ?1000h` + `CSI ?1006h` SGR) lets you click links and scroll.",
+          "provenance": {"source": "https://github.com/tats/w3m/blob/HEAD/terms.c", "confidence": "high"},
+          "note": "[measured] See the XTERM_ON macro in terms.c. The key set is from general knowledge and was not re-read, so treat it as medium."
+        },
+        "activity": {
+          "value": "1,080 stars · pushed 2024-08-19 · no GitHub releases; latest tag v0.5.3+git20230121",
+          "provenance": {"source": "measured 2026-09-24: gh api repos/tats/w3m", "confidence": "high"},
+          "note": "[measured] releases/latest returns 404. Tags came from gh api repos/tats/w3m/tags."
+        },
+        "td_overlap": {
+          "value": "pane-content",
+          "provenance": {"source": "https://github.com/tats/w3m", "confidence": "medium"},
+          "note": "[inferred] It renders HTML, TD's brief format, as text in a pane. Written in C."
+        },
+        "steal_for_td": {
+          "value": "Make w3m's kitty subset TD's tracer bullet: PNG payload (f=100), chunked transmission (m=1…m=0), transmit-and-display (a=T) with a source-rect crop (x,y,w,h) and a cell box (c,r). It is the smallest slice that a real client uses, and the same verbs cover presenterm's and mcat's simple paths. Animation, t=s and placeholders come after.",
+          "provenance": {"source": "https://github.com/tats/w3m/blob/HEAD/terms.c", "confidence": "medium"},
+          "note": "[inferred]"
+        },
+        "trap": {
+          "value": "w3m's default image path (w3mimgdisplay over X11 WINDOWID) paints outside the terminal's control and does nothing useful on Hyprland, and its kitty mode shells out to ImageMagick for every image. Don't count w3m as a working HTML viewer for briefs either: it ignores CSS layout and scripts, so SVG figures and styled briefs lose most of what makes them readable.",
+          "provenance": {"source": "https://github.com/tats/w3m/blob/HEAD/w3mimg/x11/x11_w3mimg.c", "confidence": "medium"},
+          "note": "[inferred]"
+        },
+        "primary_sources": {
+          "value": "https://github.com/tats/w3m https://github.com/tats/w3m/blob/HEAD/rc.c https://github.com/tats/w3m/blob/HEAD/terms.c https://github.com/tats/w3m/blob/HEAD/fm.h https://github.com/tats/w3m/blob/HEAD/main.c https://github.com/tats/w3m/blob/HEAD/w3mimg/x11/x11_w3mimg.c https://github.com/tats/w3m/blob/HEAD/COPYING",
+          "provenance": {"source": "https://github.com/tats/w3m", "confidence": "high"},
+          "note": "[measured]"
+        }
+      }
+    },
+    {
+      "id": "glow",
+      "label": "glow — text-only Markdown renderer (contrast case)",
+      "group": "D · Programs that put pixels in a terminal",
+      "fields": {
+        "what_it_is": {
+          "value": "Glow: Charm's Markdown renderer, both a CLI and a TUI pager and file browser. It renders Markdown to ANSI-styled text using glamour stylesheets. It is included as the contrast case: it draws text only, never pixels.",
+          "provenance": {"source": "https://github.com/charmbracelet/glow/blob/HEAD/README.md", "confidence": "high"},
+          "note": "[measured]"
+        },
+        "license": {
+          "value": "MIT",
+          "provenance": {"source": "measured 2026-09-24: gh api repos/charmbracelet/glow", "confidence": "high"},
+          "note": "[measured]"
+        },
+        "language": {
+          "value": "Go (about 99.9% of bytes)",
+          "provenance": {"source": "measured 2026-09-24: gh api repos/charmbracelet/glow/languages", "confidence": "high"},
+          "note": "[measured] Go 114,211 B; Dockerfile 97."
+        },
+        "graphics_mechanism": {
+          "value": "No graphics protocol. glamour styles headings, code and tables with ANSI escapes, and an image becomes its alt text plus its URL, both wrapped in OSC 8 hyperlinks. New on main since 2026-09-22, after v3.0.0 and so unreleased: headers are drawn with kitty's text-sizing protocol, OSC 66. Support is detected by writing `CSI 6n`, `OSC 66;w=2; BEL`, `CSI 6n` and checking whether the cursor advanced two cells, with an 800 ms timeout. GLOW_TEXT_SIZING=on/off overrides detection, and KITTY_WINDOW_ID/TERM checks are the fallback. When text sizing is on, glow bypasses Bubble Tea's cell renderer with a raw painter, because that renderer discards OSC 66.",
+          "provenance": {"source": "https://github.com/charmbracelet/glow/blob/HEAD/utils/textsize.go", "confidence": "high"},
+          "note": "[measured] Also read ui/rawpaint.go and glamour ansi/image.go (https://github.com/charmbracelet/glamour/blob/HEAD/ansi/image.go). Commit 'feat: text sizing protocol for headers (#1029)' is dated 2026-09-22."
+        },
+        "where_it_draws": {
+          "value": "In CLI mode it prints inline into scrollback, optionally through $PAGER / less -r. In TUI mode it is a fullscreen alt-screen pager (1049) with a stash and file browser.",
+          "provenance": {"source": "https://github.com/charmbracelet/glow/blob/HEAD/ui/rawpaint.go", "confidence": "high"},
+          "note": "[measured] The pager flag is in the README."
+        },
+        "input_model": {
+          "value": "less-like keys in the pager, with ? to list them. The mouse wheel is on by default in TUI mode (`mouse: true`, which enables 1002 + 1006). Width is configurable, and the style auto-detects dark or light.",
+          "provenance": {"source": "https://github.com/charmbracelet/glow/blob/HEAD/README.md", "confidence": "high"},
+          "note": "[measured] The 1002/1006 enable is in ui/rawpaint.go start()."
+        },
+        "activity": {
+          "value": "27,456 stars · pushed 2026-09-22 · latest release v3.0.0 (2026-08-11)",
+          "provenance": {"source": "measured 2026-09-24: gh api repos/charmbracelet/glow", "confidence": "high"},
+          "note": "[measured]"
+        },
+        "td_overlap": {
+          "value": "pane-content",
+          "provenance": {"source": "https://github.com/charmbracelet/glow", "confidence": "medium"},
+          "note": "[inferred] It renders Markdown, TD's primary click target, as pane content. Written in Go."
+        },
+        "steal_for_td": {
+          "value": "Make Ctrl+click follow OSC 8 targets, not only the visible text. glamour wraps every image URL (and, inferred, every link) in an OSC 8 hyperlink, so a Markdown doc rendered by glow in a TD pane already carries clickable file paths for its images. TD's open-on-click should resolve the OSC 8 URI against the pane's cwd and open it in a split or float.",
+          "provenance": {"source": "https://github.com/charmbracelet/glamour/blob/HEAD/ansi/image.go", "confidence": "medium"},
+          "note": "[inferred]"
+        },
+        "trap": {
+          "value": "Glow is a baseline, not the answer for briefs. Images and SVG figures shrink to alt text, so a drawn brief loses its figures. Its OSC 66 probe only checks how far the cursor moves, so a TD that advances two cells without actually drawing scaled text would pass the probe and then show broken headings.",
+          "provenance": {"source": "https://github.com/charmbracelet/glow/blob/HEAD/utils/textsize.go", "confidence": "medium"},
+          "note": "[inferred]"
+        },
+        "primary_sources": {
+          "value": "https://github.com/charmbracelet/glow/blob/HEAD/README.md https://github.com/charmbracelet/glow/blob/HEAD/utils/textsize.go https://github.com/charmbracelet/glow/blob/HEAD/ui/rawpaint.go https://github.com/charmbracelet/glow/releases/tag/v3.0.0 https://github.com/charmbracelet/glamour/blob/HEAD/ansi/image.go",
+          "provenance": {"source": "https://github.com/charmbracelet/glow", "confidence": "high"},
+          "note": "[measured]"
+        }
+      }
+    }
+  ],
+  "bubbles": [
+    {
+      "kind": "gap-note",
+      "subjectId": "yazi",
+      "note": "Stock alacritty_terminal can't host any subject in this cluster yet, because its VT parser (vte master, v0.15) drops the sequences they rely on. ESC _ (0x5F) goes into SosPmApcString and the bytes are discarded, so kitty `ESC_G…` graphics never reach the Handler. DCS hook/unhook are logged as unhandled, so no Sixel. DA1 answers `CSI ?6c`, which lacks attribute 4, so nobody detects sixel. CSI t handles only 14 (text-area pixels) and 18 (chars), with no 16t for cell size. There is no XTVERSION (`CSI >q`) handler. The kitty keyboard protocol sits behind a `kitty_keyboard` config flag, and awrit exits without it. TD needs a parser patch or a byte-stream pre-filter for APC/DCS before any client-side detection matters.",
+      "why": "This decides TD's first engineering slice. Every client in the cluster detects kitty with an APC `a=q` query, sixel with DA1 attribute 4, and cell size with 14t/16t or TIOCGWINSZ.",
+      "source": "https://github.com/alacritty/vte/blob/HEAD/src/lib.rs"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "yazi",
+      "note": "Conformance checklist, taken from the detection code of yazi, euporie, presenterm, awrit, ueberzugpp, tdf, w3m and glow. TD should answer each of these promptly and truthfully: DA1 `CSI c` (include 4 only if sixel is real); XTVERSION `CSI >q` (yazi maps the substring to a brand); `CSI 14t`, `CSI 16t`, `CSI 18t`; XTSMGRAPHICS `CSI ?1;1;0S` and `CSI ?2;1;0S`; kitty `ESC_G a=q` with each medium, t=d, t=f and t=s (presenterm asks t=f and t=d separately, yazi t=d and t=s); awrit's frame probes `a=f,r=2` and `a=c,C=1,r=2,c=1`; OSC 10/11/12/4 `?`; `CSI ?996n`; DECRQM `CSI ?1016$p` and `CSI ?12$p`; DECRQSS `ESC P $q q ESC \\`; `CSI ?u`; DSR `CSI 5n` and `CSI 6n`; and the OSC 66 cursor-advance probe. TIOCGWINSZ must carry per-pane ws_xpixel/ws_ypixel, because ueberzugpp, mcat, tdf and w3m read it before any escape.",
+      "why": "One test list, sourced from real clients, becomes TD's acceptance test for 'programs can show pixels', and each line traces back to a client that breaks without it.",
+      "source": "https://github.com/sxyazi/yazi/blob/HEAD/yazi-tty/src/sequence/query.rs"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "yazi",
+      "note": "yazi's per-terminal image table as of 2026-09-24 (docs page plus README). kitty ≥0.28.0 and Ghostty: kitty Unicode placeholders. iTerm2, WezTerm, Warp (macOS/Linux), Tabby, VSCode, Bobcat: iTerm2 inline images. Konsole: kitty old protocol. foot, Windows Terminal ≥v1.22.10352.0, st with the sixel patch, Black Box: Sixel. Rio: marked unsupported in the docs ('renders images at incorrect sizes'), yet drivers.rs maps Rio to Kgp. X11/Wayland: via Überzug++ (Wayland only on Hyprland, Sway, Niri, Wayfire). Fallback: Chafa ≥1.16.0. The brand comes from TERM, TERM_PROGRAM and special env vars (KITTY_WINDOW_ID, KONSOLE_VERSION, ITERM_SESSION_ID, WEZTERM_EXECUTABLE, GHOSTTY_RESOURCES_DIR, WT_Session, WARP_HONOR_PS1, VSCODE_INJECTION, TABBY_CONFIG_DIRECTORY), then from the XTVERSION substring. `ya env` prints the choice.",
+      "why": "It shows what TD must be listed as, and the exact env and XTVERSION hooks by which a new terminal gets onto the list.",
+      "source": "https://yazi-rs.github.io/docs/image-preview"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "glow",
+      "note": "Kitty's text-sizing protocol (OSC 66) is spreading through the Markdown renderers. presenterm probes it (`OSC 66;s=2;` and `n=1:d=2`) for big titles. mcat has an experimental `--md-kitty-headers` (MCAT_MD_KITTY_HEADERS). glow main gained it on 2026-09-22, drawing headers at 2× and bypassing Bubble Tea's renderer to do so. All three detect it by the cursor-advance probe.",
+      "why": "TD's Markdown story can come in two tiers. Ctrl+click opens a native view, and third-party renderers running inside TD get scaled headings the moment TD implements OSC 66. That is cheap next to pixel graphics, and three clients are already asking for it.",
+      "source": "https://github.com/charmbracelet/glow/blob/HEAD/utils/textsize.go"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "awrit",
+      "note": "Candidate for cluster A: cmux (manaflow-ai/cmux). A Ghostty-based macOS terminal 'with vertical tabs and notifications for AI coding agents', with notification rings on panes that need attention, a sidebar showing git branch, PR, ports and last notification, and an in-app browser split with a scriptable API ported from vercel-labs/agent-browser. 27,387 stars, pushed 2026-09-24, Swift, licence NOASSERTION. awrit's README now recommends it as awrit's replacement.",
+      "why": "It is the nearest shipped analogue to TD's agent-panes plus open-a-web-page-in-a-split idea, so cluster A should cover it.",
+      "source": "https://github.com/manaflow-ai/cmux"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "tdf",
+      "note": "`kittage` (0.4.0) is a Rust client library for the kitty graphics protocol by tdf's author. It covers shm images, query actions, display locations with z-index, cursor-movement policy, delete configs, and typed terminal errors such as NoEntity/ENOENT.",
+      "why": "TD's kitty-graphics conformance tests could drive TD with a real third-party Rust client (kittage, plus ratatui-image from cluster D2) instead of hand-written escape strings.",
+      "source": "https://github.com/itsjunetime/tdf/blob/HEAD/Cargo.toml"
+    },
+    {
+      "kind": "gap-note",
+      "subjectId": "ueberzugpp",
+      "note": "On Hyprland, ueberzugpp positions its overlay by `activewindow.at + col*font_width + padding`, and when monitor scale is above 1.0 it applies `res/2 + 10`, which is right only at exactly 2×. It also probes Hyprland's Lua IPC (`/dispatch workspace __ueberzugpp_probe__`, checking for 'hl.dispatch'), so it already follows Hyprland 0.56's Lua config. I measured none of this at runtime; it is read from source.",
+      "why": "Parker's Legion runs Hyprland. If yazi ever falls back to ueberzugpp inside TD, expect misplaced images at fractional scales, and this is the explanation.",
+      "source": "https://github.com/jstkdng/ueberzugpp/blob/HEAD/src/canvas/wayland/config/hyprland.cpp"
+    },
+    {
+      "kind": "gap-note",
+      "subjectId": "euporie",
+      "note": "Not run: none of these programs was executed; every claim comes from source or docs. The yazi docs pages were read through WebFetch, whose summariser misreported detection as env-var only. The source shows a full escape-sequence probe, so trust the source-file citations over the docs summary.",
+      "why": "Evidence labelling: runtime behaviour inside TD still needs a smoke test per client once TD's parser changes land.",
+      "source": "https://github.com/sxyazi/yazi/blob/HEAD/yazi-emulator/src/probe.rs"
+    }
+  ],
+  "tokens": 150000
+}

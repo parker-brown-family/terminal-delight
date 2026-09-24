@@ -1,0 +1,556 @@
+{
+  "updates": [
+    {
+      "id": "notcurses",
+      "fields": {
+        "what_it_is": {
+          "value": "A C library (plus tools such as notcurses-info, ncplayer, ncls) for full-screen and direct-mode TUIs built from z-ordered 'planes'; it blits images and video into the terminal with selectable blitters, from ASCII/half/quadrant/sextant/octant/braille cells up to true pixel graphics via Sixel, the Kitty graphics protocol or the Linux framebuffer console.",
+          "provenance": {"source": "https://github.com/dankamongmen/notcurses/blob/master/README.md", "confidence": "high"},
+          "note": "[measured] README says 'Portable support for bitmapped graphics, using Sixel, Kitty, and even the Linux framebuffer console'; blitter enum NCBLIT_1x1..NCBLIT_PIXEL read in USAGE.md."
+        },
+        "license": {
+          "value": "Apache-2.0",
+          "provenance": {"source": "https://github.com/dankamongmen/notcurses/blob/master/COPYRIGHT", "confidence": "high"},
+          "note": "[measured] 2026-09-24: gh api repos/dankamongmen/notcurses returns spdx NOASSERTION; the COPYRIGHT file states Apache License 2.0 (src/fetch/ncart.c carries MIT from Neofetch)."
+        },
+        "language": {
+          "value": "C (about 3.5 MB), C++ (0.6 MB), Python bindings, CMake",
+          "provenance": {"source": "measured 2026-09-24: gh api repos/dankamongmen/notcurses/languages", "confidence": "high"},
+          "note": "[measured] C=3525855 bytes, C++=635203, Python=73359, CMake=35051."
+        },
+        "graphics_mechanism": {
+          "value": "Pixel blitter chosen at init from query replies: Kitty graphics if ANY 'ESC _G ... ST' reply arrives to its 'ESC _Gi=1,a=q; ST' probe ('kitty trumps sixel'); else Sixel if DA1 contains attribute 4 (XTSMGRAPHICS color-register/geometry answers are discarded without it); else Linux fbcon; else Unicode cell blitters. Kitty path: f=32 RGBA, a=t transmit + a=p place with C=1, 4096-byte base64 chunks, deletes with a=d; text over images is done by punching alpha=0 holes. Only a terminal identified by XTVERSION as Kitty >=0.20 gets the animation fast path (a=f frame edits, a=c composition); an unknown terminal answering a=q gets NCPIXEL_KITTY_STATIC (full retransmit on change).",
+          "provenance": {"source": "https://github.com/dankamongmen/notcurses/blob/master/src/lib/termdesc.c", "confidence": "high"},
+          "note": "[measured] termdesc.c lines ~383 (KITTYQUERY), 1285-1293 ('kitty trumps sixel'), 1527-1534 (fallback to KITTY_STATIC), 735-759 (Kitty version gates); in.c da1_attrs_cb and kittygraph_cb; kitty.c header comment and escape strings."
+        },
+        "where_it_draws": {
+          "value": "Full-screen alternate screen by default (sends smcup first); bitmaps are 'sprixels' anchored to cells of a plane at a z-level above text, moved with Kitty placement commands, wiped per cell. ncdirect mode (direct.c) instead prints inline into normal scrollback, where images scroll with text.",
+          "provenance": {"source": "https://github.com/dankamongmen/notcurses/blob/master/src/lib/termdesc.c", "confidence": "medium"},
+          "note": "[measured] SMCUP sent unless noaltscreen (send_initial_queries); kitty.c comment on z-axis and alpha cut-outs. [inferred] ncdirect inline behaviour from the direct.c module name and README tooling, not read line by line."
+        },
+        "input_model": {
+          "value": "Notcurses owns stdin through its own input thread and escape automaton: enables the Kitty keyboard protocol (CSI > u push, CSI = 27 u) and XTMODKEYS, queries pixel-precise mouse mode 1016, and reads all capability replies from the same stream before handing events to the app.",
+          "provenance": {"source": "https://github.com/dankamongmen/notcurses/blob/master/src/lib/in.c", "confidence": "high"},
+          "note": "[measured] KKBDSUPPORT, KKBDQUERY, XTMODKEYS and PIXELMOUSEQUERY defines in termdesc.c; reply callbacks in in.c."
+        },
+        "activity": {
+          "value": "4.7k stars · pushed 2026-05-18 · latest release v3.0.17 (2025-10-28)",
+          "provenance": {"source": "measured 2026-09-24: gh api repos/dankamongmen/notcurses", "confidence": "high"},
+          "note": "[measured] stars 4715, created 2019-11-17, releases/latest v3.0.17 published 2025-10-28."
+        },
+        "td_overlap": {
+          "value": "none",
+          "provenance": {"source": "https://github.com/dankamongmen/notcurses", "confidence": "high"},
+          "note": "[inferred] A C client library; TD must answer its queries (host-protocol is the terminal's tag, not the client's)."
+        },
+        "steal_for_td": {
+          "value": "Turn notcurses' 'Notes for terminal authors' plus its exact startup query blob into a TD conformance test: feed the literal DIRECTIVES string (OSC 10/11 ?, CSI ?u, CSI ?2026$p, CSI ?1016$p, CSI ?1;3;256S, ESC _Gi=1,a=q; ST, CSI ?2;1;0S, CSI ?1;1;0S, CSI 14t, CSI 18t, CSI c) plus IDQUERIES (CSI =c, CSI >0q, DCS +q544e;524742;687061 ST, CSI >c) into TD's VT and assert every reply, then run notcurses-info inside a TD pane as the smoke test.",
+          "provenance": {"source": "https://github.com/dankamongmen/notcurses/blob/master/TERMINALS.md", "confidence": "medium"},
+          "note": "[inferred] Built from the measured query defines in termdesc.c and the TERMINALS.md author checklist (implement XTVERSION, XTGETTCAP, Kitty graphics, XTSMGRAPHICS if Sixel)."
+        },
+        "trap": {
+          "value": "Never leave DA1 unanswered or malformed: TERMINALS.md says notcurses_init() hangs without a properly bracketed DA1 reply. And do not spoof Kitty's XTVERSION to unlock the animated path: notcurses then applies Kitty-only heuristics (default-background +1 colour hack, disabled synchronized-update, version gates) that assume Kitty's quirks.",
+          "provenance": {"source": "https://github.com/dankamongmen/notcurses/blob/master/TERMINALS.md", "confidence": "high"},
+          "note": "[measured] hang warning in TERMINALS.md 'Queries' and 'Notes for terminal authors'; Kitty heuristics in termdesc.c apply_kitty_heuristics."
+        },
+        "primary_sources": {
+          "value": "https://github.com/dankamongmen/notcurses/blob/master/TERMINALS.md https://github.com/dankamongmen/notcurses/blob/master/src/lib/termdesc.c https://github.com/dankamongmen/notcurses/blob/master/src/lib/in.c https://github.com/dankamongmen/notcurses/blob/master/src/lib/kitty.c https://github.com/dankamongmen/notcurses/blob/master/README.md https://github.com/dankamongmen/notcurses/blob/master/USAGE.md https://github.com/dankamongmen/notcurses/blob/master/COPYRIGHT",
+          "provenance": {"source": "https://github.com/dankamongmen/notcurses", "confidence": "high"},
+          "note": "[measured] All read via gh api contents on 2026-09-24."
+        }
+      }
+    },
+    {
+      "id": "mpv-terminal-vo",
+      "fields": {
+        "what_it_is": {
+          "value": "mpv, the media player, ships three terminal video outputs: --vo=kitty (Kitty graphics protocol, optional POSIX shared-memory transfer), --vo=sixel (via libsixel) and --vo=tct (true-colour Unicode half-block art), so a video plays as pixels inside the terminal grid.",
+          "provenance": {"source": "https://github.com/mpv-player/mpv/blob/master/DOCS/man/vo.rst", "confidence": "high"},
+          "note": "[measured] vo.rst sections ``tct``, ``kitty``, ``sixel`` (rendered at https://mpv.io/manual/master/#video-output-drivers)."
+        },
+        "license": {
+          "value": "GPL-2.0-or-later (default build); LGPL-2.1-or-later when built with -Dgpl=false",
+          "provenance": {"source": "https://github.com/mpv-player/mpv/blob/master/Copyright", "confidence": "high"},
+          "note": "[measured] 2026-09-24: gh api repos/mpv-player/mpv returns spdx NOASSERTION; the Copyright file states GPLv2+ by default, LGPLv2.1+ without GPL-only files."
+        },
+        "language": {
+          "value": "C (about 7.5 MB), Lua (0.5 MB), Swift, Meson",
+          "provenance": {"source": "measured 2026-09-24: gh api repos/mpv-player/mpv/languages", "confidence": "high"},
+          "note": "[measured] C=7496919, Lua=506896, Swift=196938, Meson=94729."
+        },
+        "graphics_mechanism": {
+          "value": "vo_kitty: every frame is 'CSI row;col f' then 'ESC _Ga=T,f=24,s=W,v=H,C=1,q=2,m=1;' + base64 RGB in 4096-byte chunks ending m=0; with --vo-kitty-use-shm=yes it instead writes the frame into a shm_open() object and sends 'ESC _Ga=T,t=s,f=24,s=W,v=H,C=1,q=2,m=1;<base64 shm name> ST' (the terminal unlinks it). No image id, no capability query: the user picks the VO. vo_sixel encodes each frame with libsixel's sixel_encode; vo_tct writes coloured U+2584 half blocks.",
+          "provenance": {"source": "https://github.com/mpv-player/mpv/blob/master/video/out/vo_kitty.c", "confidence": "high"},
+          "note": "[measured] KITTY_ESC_IMG / KITTY_ESC_IMG_SHM defines (lines ~80-84) and flip_page(); vo_sixel.c includes <sixel.h> and calls sixel_encode."
+        },
+        "where_it_draws": {
+          "value": "Fullscreen-ish in the alternate screen by default (--vo-kitty-alt-screen / --vo-sixel-alt-screen=yes, 'ESC[?1049h'), redrawing each frame at a fixed cell origin computed from terminal size and aspect; with alt-screen=no the last frame stays in scrollback with the cursor after it. Size comes only from TIOCGWINSZ (rows, cols, ws_xpixel, ws_ypixel); if the pixel fields are 0 it falls back to 320x240 px (80x25 cells). No CSI 14t/16t query. Sixel skips the last row and rounds height down to a multiple of 6.",
+          "provenance": {"source": "https://github.com/mpv-player/mpv/blob/master/osdep/terminal-unix.c", "confidence": "high"},
+          "note": "[measured] terminal_get_size2() uses ioctl TIOCGWINSZ and returns early if ws_xpixel/ws_ypixel are 0; defaults and alt-screen options in vo.rst; SIGWINCH handler in vo_kitty.c."
+        },
+        "input_model": {
+          "value": "mpv keeps its normal terminal key input (its own keybindings on stdin) and, while a terminal VO is active, turns on any-event mouse tracking 'ESC[?1003h' (terminal_set_mouse_input(true)), turning it off on uninit.",
+          "provenance": {"source": "https://github.com/mpv-player/mpv/blob/master/video/out/vo_kitty.c", "confidence": "high"},
+          "note": "[measured] terminal_set_mouse_input calls in vo_kitty.c and vo_sixel.c; TERM_ESC_ENABLE_MOUSE is '\\033[?1003h' in osdep/terminal.h."
+        },
+        "activity": {
+          "value": "37.1k stars · pushed 2026-09-23 · latest release v0.41.0 (2025-12-21)",
+          "provenance": {"source": "measured 2026-09-24: gh api repos/mpv-player/mpv", "confidence": "high"},
+          "note": "[measured] stars 37104, created 2012-10-13."
+        },
+        "td_overlap": {
+          "value": "none",
+          "provenance": {"source": "https://github.com/mpv-player/mpv", "confidence": "high"},
+          "note": "[inferred] C client; TD would be the host that renders its Kitty/Sixel output."
+        },
+        "steal_for_td": {
+          "value": "Make 'mpv --vo=kitty --vo-kitty-use-shm=yes file.mp4' TD's video acceptance test: it exercises the whole local fast path at 30-60 fps (t=s shared memory read then unlink, a=T with C=1 at a CUP-positioned cell, f=24 RGB) and depends on TD setting correct ws_xpixel/ws_ypixel via TIOCSWINSZ on every resize, because mpv never asks the terminal.",
+          "provenance": {"source": "https://github.com/mpv-player/mpv/blob/master/DOCS/man/vo.rst", "confidence": "medium"},
+          "note": "[inferred] From the measured shm option ('much faster than sending the data as escape codes ... only works on the local machine') and terminal_get_size2."
+        },
+        "trap": {
+          "value": "Two host-side traps. (1) The shm escape carries m=1 but is a single escape with no m=0 follow-up; Kitty's spec says chunking applies only to t=d, so a host that honours m=1 for t=s waits forever. (2) Every frame is a new id-less image and mpv only sends 'a=d' on reconfigure/exit, so the host must evict images that no longer have visible placements (Kitty's quota rule) or a video leaks GPU/RAM per frame.",
+          "provenance": {"source": "https://github.com/mpv-player/mpv/blob/master/video/out/vo_kitty.c", "confidence": "medium"},
+          "note": "[measured] m=1 in KITTY_ESC_IMG_SHM and delete-all only in config/uninit paths. [inferred] consequences, checked against the Kitty spec text 'Chunking via the m key applies specifically to direct transmission' and 'existing images without placements will be preferentially deleted' (https://sw.kovidgoyal.net/kitty/graphics-protocol/, via WebFetch summary)."
+        },
+        "primary_sources": {
+          "value": "https://github.com/mpv-player/mpv/blob/master/DOCS/man/vo.rst https://github.com/mpv-player/mpv/blob/master/video/out/vo_kitty.c https://github.com/mpv-player/mpv/blob/master/video/out/vo_sixel.c https://github.com/mpv-player/mpv/blob/master/osdep/terminal-unix.c https://github.com/mpv-player/mpv/blob/master/osdep/terminal.h https://github.com/mpv-player/mpv/blob/master/Copyright synthesis:https://sw.kovidgoyal.net/kitty/graphics-protocol/",
+          "provenance": {"source": "https://github.com/mpv-player/mpv", "confidence": "high"},
+          "note": "[measured] mpv files read via gh api 2026-09-24; the Kitty spec was read through a WebFetch model summary, hence synthesis."
+        }
+      }
+    },
+    {
+      "id": "ratatui-image",
+      "fields": {
+        "what_it_is": {
+          "value": "A Rust image widget crate for ratatui (now hosted at ratatui/ratatui-image; benjajaja/ratatui-image redirects) that detects the terminal's graphics protocol and cell size, then renders images inside a ratatui layout area via Kitty (Unicode placeholders), Sixel, iTerm2, or half-block/libchafa symbol fallback.",
+          "provenance": {"source": "https://github.com/ratatui/ratatui-image/blob/master/README.md", "confidence": "high"},
+          "note": "[measured] README and Cargo.toml (default features include chafa-dyn, linking libchafa for the non-protocol fallback)."
+        },
+        "license": {
+          "value": "MIT",
+          "provenance": {"source": "measured 2026-09-24: gh api repos/ratatui/ratatui-image", "confidence": "high"},
+          "note": "[measured] spdx MIT; Cargo.toml license = \"MIT\"."
+        },
+        "language": {
+          "value": "Rust (plus Nix for the screenshot-test VMs)",
+          "provenance": {"source": "measured 2026-09-24: gh api repos/ratatui/ratatui-image/languages", "confidence": "high"},
+          "note": "[measured] Rust=186810, Nix=14184."
+        },
+        "graphics_mechanism": {
+          "value": "Picker::from_query_stdio() enters raw mode and writes one batch: 'ESC _Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA ST' (Kitty), optionally 'ESC _Gi=32,...,o=z;<zlib> ST' (compression) and 'ESC _Gi=33,s=1,v=1,a=q,t=s,f=32;<shm name> ST' (shared memory), 'CSI c' (DA1, attribute 4 = Sixel, 28 = rectangular ops), 'CSI 16t' (cell size, reply CSI 6;h;w t), optional 'OSC 11;? BEL' and a Text-Sizing probe (CPR, OSC 66;w=2, CPR, OSC 66;s=2, CPR), then 'CSI 5n' as the sentinel (reply CSI 0n). Kitty counts only on the exact reply 'ESC _Gi=31;OK ST'; Kitty beats Sixel. Cell size falls back to TIOCGWINSZ xpixel/cols. Kitty rendering transmits once (a=T,U=1,f=32, t=d or t=s, optional o=z) and then draws U+10EEEE placeholder cells with row/column/id-high-byte diacritics and the image id in a 24-bit foreground colour. Sixel frames are encoded with icy_sixel.",
+          "provenance": {"source": "https://github.com/ratatui/ratatui-image/blob/master/src/picker/cap_parser.rs", "confidence": "high"},
+          "note": "[measured] Parser::query() and reply parsing in cap_parser.rs; interpret_parser_responses and font_size_fallback in src/picker.rs; PLACEHOLDER and U=1 in src/protocol/kitty.rs; icy_sixel::sixel_encode in src/protocol/sixel.rs."
+        },
+        "where_it_draws": {
+          "value": "Inside a ratatui Rect (cell-anchored), normally on the TUI's alternate screen. With Kitty the pixels are bound to placeholder characters in grid cells, so they move, clip and scroll with the TUI's own redraws; Sixel is immediate-mode, so the widget skips the covered cells to avoid overwriting the image.",
+          "provenance": {"source": "https://github.com/ratatui/ratatui-image/blob/master/README.md", "confidence": "high"},
+          "note": "[measured] README 'Render the image by the means of the guessed protocol' section and kitty.rs module doc."
+        },
+        "input_model": {
+          "value": "None of its own: the host ratatui app (crossterm/termion backend) owns keys and mouse. Only during detection does ratatui-image read stdin itself, in raw mode with a timeout, discarding non-reply events.",
+          "provenance": {"source": "https://github.com/ratatui/ratatui-image/blob/master/src/picker.rs", "confidence": "high"},
+          "note": "[measured] enable_raw_mode, poll_and_parse and poll_stdin in picker.rs."
+        },
+        "activity": {
+          "value": "401 stars · pushed 2026-09-17 · latest release v12.0.0-rc.0 (2026-09-17) · 908k crates.io downloads",
+          "provenance": {"source": "measured 2026-09-24: gh api repos/ratatui/ratatui-image", "confidence": "high"},
+          "note": "[measured] created 2023-06-17; downloads from https://crates.io/api/v1/crates?q=kitty%20image (908326)."
+        },
+        "td_overlap": {
+          "value": "same-stack",
+          "provenance": {"source": "https://github.com/ratatui/ratatui-image", "confidence": "high"},
+          "note": "[inferred] Rust; also the most likely image client TD's own agent-pane TUIs would use."
+        },
+        "steal_for_td": {
+          "value": "Implement Kitty Unicode placeholders early, not as a later extra: when a cell holds U+10EEEE, read the image id from its 24-bit fg colour plus the third combining diacritic and the row/column from the first two, and draw that slice of the virtual (U=1) placement. The pixels then live in alacritty_terminal's grid, so scrolling, pane splits, reflow and clipping come free. It is the only Kitty path ratatui-image uses, and the one tmux passthrough relies on.",
+          "provenance": {"source": "https://github.com/ratatui/ratatui-image/blob/master/src/protocol/kitty.rs", "confidence": "medium"},
+          "note": "[inferred] From the measured placeholder encoding (id.to_be_bytes into Color::Rgb and diacritic(id_extra)) and the README note that WezTerm/Konsole are blacklisted because neither implements placeholders."
+        },
+        "trap": {
+          "value": "Implementing classic Kitty placements without placeholders gets TD the worst outcome: ratatui-image sees 'OK', chooses Kitty, and then nothing renders. That is why it blacklists Kitty and Sixel on WezTerm and Konsole. The detection also requires the exact reply 'ESC _Gi=31;OK ST'; any other body, or no reply, drops to Sixel or half-blocks.",
+          "provenance": {"source": "https://github.com/ratatui/ratatui-image/blob/master/src/picker.rs", "confidence": "high"},
+          "note": "[measured] blacklist_protocols for WEZTERM_EXECUTABLE/KONSOLE_VERSION with comment 'Neither implement the placeholder part of kitty correctly'; match on \"_Gi=31;OK\\x1b\" in cap_parser.rs."
+        },
+        "primary_sources": {
+          "value": "https://github.com/ratatui/ratatui-image/blob/master/README.md https://github.com/ratatui/ratatui-image/blob/master/src/picker.rs https://github.com/ratatui/ratatui-image/blob/master/src/picker/cap_parser.rs https://github.com/ratatui/ratatui-image/blob/master/src/protocol/kitty.rs https://github.com/ratatui/ratatui-image/blob/master/src/protocol/sixel.rs https://github.com/ratatui/ratatui-image/blob/master/Cargo.toml",
+          "provenance": {"source": "https://github.com/ratatui/ratatui-image", "confidence": "high"},
+          "note": "[measured] Read via gh api 2026-09-24."
+        }
+      }
+    },
+    {
+      "id": "chafa",
+      "fields": {
+        "what_it_is": {
+          "value": "A C library (libchafa) and CLI that convert images and animations to terminal output: Unicode symbol mosaics chosen per cell, or Sixel, Kitty and iTerm2 pixel graphics. libchafa is embedded by others, for example as ratatui-image's default non-protocol fallback.",
+          "provenance": {"source": "https://github.com/hpjansson/chafa/blob/master/README.md", "confidence": "high"},
+          "note": "[measured] README: 'core functionality is provided by a C library'; hpjansson.org/chafa: 'Outputs to all popular terminal graphics formats: Sixels, Kitty, iTerm2, Unicode mosaics'; ratatui-image Cargo.toml feature chafa-dyn."
+        },
+        "license": {
+          "value": "LGPL-3.0 (library and tools; README says 'Lesser GPL')",
+          "provenance": {"source": "measured 2026-09-24: gh api repos/hpjansson/chafa", "confidence": "high"},
+          "note": "[measured] spdx LGPL-3.0; whether -or-later applies was not checked."
+        },
+        "language": {
+          "value": "C (about 2.6 MB), with small C++, Shell and M4 parts",
+          "provenance": {"source": "measured 2026-09-24: gh api repos/hpjansson/chafa/languages", "confidence": "high"},
+          "note": "[measured] C=2581726, C++=97989, Shell=41984."
+        },
+        "graphics_mechanism": {
+          "value": "Terminal choice is env-first: a built-in term DB matches TERM, TERM_PROGRAM, KITTY_PID, GHOSTTY_BIN_DIR, VTE_VERSION, WEZTERM_EXECUTABLE and similar to a sequence set. Only entries such as kitty, ghostty, WezTerm and Warp get Kitty sequences. Active probing (added in 1.16.0) sends 'CSI 0c', 'OSC 10;? ST', 'OSC 11;? ST', 'CSI 18t', 'CSI 14t', 'CSI 16t' and learns geometry, colours and Sixel (DA1 attribute 4) only; it never probes Kitty. Best pixel mode is Kitty, then Sixels, then iTerm2. Kitty output is immediate 'ESC _Ga=T,f=,s=,v=,c=cols,r=rows,m=1,q=2' (the terminal does the scaling), with a U=1 virtual-placement variant for multiplexer passthrough; iTerm2 uses 'OSC 1337;File=inline=1;...'.",
+          "provenance": {"source": "https://github.com/hpjansson/chafa/blob/master/chafa/chafa-term-db.c", "confidence": "high"},
+          "note": "[measured] Query strings at chafa-term-db.c ~244-263, env entries ~585-846, kitty_seqs/kitty_virt_seqs ~424-444; probe list in chafa-term.c chafa_term_sync_probe; DA1 attr 4 handling in handle_primary_da_event; priority in chafa-term-info.c chafa_term_info_get_best_pixel_mode; NEWS 1.16.0 'we can determine geometry, colors and sixel capabilities this way'."
+        },
+        "where_it_draws": {
+          "value": "Inline in normal scrollback at the cursor, one image after another (or in a --grid layout with --label); animations redraw in place. Output scrolls away with text like any other printed output.",
+          "provenance": {"source": "https://github.com/hpjansson/chafa/blob/master/NEWS", "confidence": "medium"},
+          "note": "[inferred] From the Kitty a=T sequence (default cursor movement), --grid/--label in NEWS 1.16.0, and the CLI's print-to-stdout design. Placement code was not traced."
+        },
+        "input_model": {
+          "value": "Non-interactive CLI: reads only probe replies (from stdio, or the controlling tty when redirected, via --probe-mode=any|ctty|stdio, --probe=auto|on|off with a timeout) and tries to restore the terminal on SIGINT.",
+          "provenance": {"source": "https://github.com/hpjansson/chafa/blob/master/NEWS", "confidence": "high"},
+          "note": "[measured] NEWS entries for 1.16.0 and 1.18.1."
+        },
+        "activity": {
+          "value": "5.3k stars · pushed 2026-09-23 · latest release 1.18.3 (2026-09-23)",
+          "provenance": {"source": "measured 2026-09-24: gh api repos/hpjansson/chafa", "confidence": "high"},
+          "note": "[measured] stars 5272, created 2018-04-24."
+        },
+        "td_overlap": {
+          "value": "none",
+          "provenance": {"source": "https://github.com/hpjansson/chafa", "confidence": "high"},
+          "note": "[inferred] C client; TD is the host."
+        },
+        "steal_for_td": {
+          "value": "Upstream a chafa term-DB entry keyed on a TD-owned variable (for example TERM_PROGRAM=terminal-delight, plus TERM_PROGRAM_VERSION) that maps to kitty_seqs and kitty_virt_seqs. Chafa's probe can never discover Kitty, so without that entry TD gets Sixel at best, even once it implements Kitty.",
+          "provenance": {"source": "https://github.com/hpjansson/chafa/blob/master/chafa/chafa-term-db.c", "confidence": "medium"},
+          "note": "[inferred] From the measured env-only Kitty entries and the probe list lacking any a=q."
+        },
+        "trap": {
+          "value": "Do not set TERM=xterm-kitty, KITTY_PID or TERM_PROGRAM=ghostty to get Kitty output from chafa. Those keys also drive other programs' terminal-specific quirks (timg, notcurses, ratatui-image), so a spoof buys chafa and breaks the rest. Chafa's 1.18.3 fix is related: tmux 'claims the capability on its own behalf regardless of what's outside it'.",
+          "provenance": {"source": "https://github.com/hpjansson/chafa/blob/master/NEWS", "confidence": "medium"},
+          "note": "[inferred] Cross-program reasoning over the measured env heuristics in chafa-term-db.c, timg term-query.cc and notcurses termdesc.c; the tmux quote is [measured] from NEWS 1.18.3."
+        },
+        "primary_sources": {
+          "value": "https://github.com/hpjansson/chafa/blob/master/NEWS https://github.com/hpjansson/chafa/blob/master/chafa/chafa-term-db.c https://github.com/hpjansson/chafa/blob/master/chafa/chafa-term.c https://github.com/hpjansson/chafa/blob/master/chafa/chafa-term-info.c https://github.com/hpjansson/chafa/blob/master/chafa/chafa-term-seq-def.h https://github.com/hpjansson/chafa/blob/master/README.md synthesis:https://hpjansson.org/chafa/",
+          "provenance": {"source": "https://github.com/hpjansson/chafa", "confidence": "high"},
+          "note": "[measured] Repo files read via gh api; the homepage was read through a WebFetch summary."
+        }
+      }
+    },
+    {
+      "id": "timg",
+      "fields": {
+        "what_it_is": {
+          "value": "A C++ terminal image and video viewer (images, animated GIFs, videos via libav, PDFs, SVG, webcams) that shows them with Kitty, iTerm2 or Sixel graphics, or with half/quarter-block characters.",
+          "provenance": {"source": "https://github.com/hzeller/timg/blob/main/README.md", "confidence": "high"},
+          "note": "[measured] README intro and the -p pixelation option list."
+        },
+        "license": {
+          "value": "GPL-2.0",
+          "provenance": {"source": "measured 2026-09-24: gh api repos/hzeller/timg", "confidence": "high"},
+          "note": "[measured] spdx GPL-2.0."
+        },
+        "language": {
+          "value": "C++ (about 346 KB), CMake",
+          "provenance": {"source": "measured 2026-09-24: gh api repos/hzeller/timg/languages", "confidence": "high"},
+          "note": "[measured] C++=346362, CMake=26283, Shell=16097."
+        },
+        "graphics_mechanism": {
+          "value": "QuerySupportedGraphicsProtocol(): env guesses first (TERM=xterm-kitty or xterm-ghostty means Kitty; TERM_PROGRAM=vscode or WarpTerminal means iTerm2); then 'CSI >q' (XTVERSION) + 'CSI 5n' within 250 ms, substring-matching the reply for iTerm2, Konsole 2, WezTerm, kitty, ghostty, mlterm, XTerm, foot, tmux and WindowsTerminal; if still unknown, 'CSI c' and Sixel when DA1 contains ';4;' or ';4c'. It deliberately never sends the Kitty a=q query ('messes up some other terminals'). Cell pixels come from TIOCGWINSZ, or 'CSI 16t' when those fields look implausible. Kitty output is PNG (a=T,f=100) with a U=1 placeholder variant for tmux.",
+          "provenance": {"source": "https://github.com/hzeller/timg/blob/main/src/term-query.cc", "confidence": "high"},
+          "note": "[measured] term-query.cc lines ~226-406; kitty-canvas.cc 'Ga=T,i=%u,q=2,f=100' and ',U=1,c=%d,r=%d'."
+        },
+        "where_it_draws": {
+          "value": "Inline in normal scrollback at the cursor (with optional --grid, --title, --center, --clear). For animations, video and --scroll it moves the cursor back up an exact number of cell rows and redraws in place, which is why it needs the cell pixel size.",
+          "provenance": {"source": "https://github.com/hzeller/timg/blob/main/src/term-query.cc", "confidence": "medium"},
+          "note": "[measured] comment in DetermineTermSize: pixel size is 'needed to jump up the exact number of character cells needed for animations and grid display'. [inferred] exact cursor sequences not traced."
+        },
+        "input_model": {
+          "value": "No interactive controls: it plays or loops, and Ctrl-C stops it (README examples). The only stdin it reads is query replies.",
+          "provenance": {"source": "https://github.com/hzeller/timg/blob/main/README.md", "confidence": "medium"},
+          "note": "[measured] README 'stop with Ctrl-C' examples. [inferred] absence of other key handling, from the option list only."
+        },
+        "activity": {
+          "value": "2.8k stars · pushed 2026-08-05 · latest release v1.6.3 (2025-09-27)",
+          "provenance": {"source": "measured 2026-09-24: gh api repos/hzeller/timg", "confidence": "high"},
+          "note": "[measured] stars 2763, created 2016-06-18."
+        },
+        "td_overlap": {
+          "value": "none",
+          "provenance": {"source": "https://github.com/hzeller/timg", "confidence": "high"},
+          "note": "[inferred] C++ client."
+        },
+        "steal_for_td": {
+          "value": "Answer XTVERSION with a stable, unique name ('DCS >| terminal-delight <version> ST') and send timg a one-line upstream patch adding that name to its Kitty list. timg only chooses Kitty from TERM or an XTVERSION substring, so without the patch TD gets Sixel even after Kitty works.",
+          "provenance": {"source": "https://github.com/hzeller/timg/blob/main/src/term-query.cc", "confidence": "medium"},
+          "note": "[inferred] From the measured find_str list. README also invites 'Please file an issue with timg if auto-detect does not work'."
+        },
+        "trap": {
+          "value": "Sixel cursor placement after an image is inconsistent enough that timg carries per-terminal workarounds (known_broken_cursor_placement, full_cell_jump, TIMG_SIXEL_NEWLINE_WORKAROUND) keyed on XTVERSION names. If TD implements Sixel, it must pick and document one cursor-after-image rule (xterm's or foot's) and never change it, or every client's workaround table goes stale.",
+          "provenance": {"source": "https://github.com/hzeller/timg/blob/main/src/term-query.cc", "confidence": "medium"},
+          "note": "[measured] the workaround flags and the terminals they are set for. [inferred] the lesson for TD."
+        },
+        "primary_sources": {
+          "value": "https://github.com/hzeller/timg/blob/main/src/term-query.cc https://github.com/hzeller/timg/blob/main/src/kitty-canvas.cc https://github.com/hzeller/timg/blob/main/README.md",
+          "provenance": {"source": "https://github.com/hzeller/timg", "confidence": "high"},
+          "note": "[measured] Read via gh api 2026-09-24."
+        }
+      }
+    },
+    {
+      "id": "icy-sixel",
+      "label": "icy_sixel — pure-Rust Sixel encoder and streaming decoder",
+      "group": "D · Programs that put pixels in a terminal",
+      "fields": {
+        "what_it_is": {
+          "value": "A pure-Rust Sixel library with an encoder (Wu quantisation and Floyd-Steinberg dithering) and a clean-room, SIMD-accelerated decoder to RGBA. Version 0.7.0 adds a streaming decoder a terminal host can feed from its escape parser: begin_frame() after the parser has consumed the DCS header and 'q', or begin_dcs() from 'ESC P', then feed()/finish(). ratatui-image and viuer use it as their encoder.",
+          "provenance": {"source": "https://github.com/mkrueger/icy_sixel/blob/main/crates/icy_sixel/README.md", "confidence": "high"},
+          "note": "[measured] Library README sections 'Incremental ... Decoding' and 'Incremental Complete DCS Decoding'; ratatui-image and viuer Cargo.toml depend on icy_sixel."
+        },
+        "license": {
+          "value": "MIT OR Apache-2.0",
+          "provenance": {"source": "https://github.com/mkrueger/icy_sixel/blob/main/crates/icy_sixel/Cargo.toml", "confidence": "high"},
+          "note": "[measured] Cargo.toml license = \"MIT OR Apache-2.0\"; 2026-09-24 gh api repos/mkrueger/icy_sixel reports only Apache-2.0."
+        },
+        "language": {
+          "value": "Rust",
+          "provenance": {"source": "measured 2026-09-24: gh api repos/mkrueger/icy_sixel/languages", "confidence": "high"},
+          "note": "[measured] Rust=217820 bytes; no C dependencies per README."
+        },
+        "graphics_mechanism": {
+          "value": "Host-side Sixel decode: SixelDecoder yields RGBA plus a palette that persists across images (finish() commits palette changes). Honours P1 (pixel aspect) and P2 (background/transparency). Streaming feed() reports bytes consumed and statuses NeedMoreData, Terminated(byte), Complete (ST consumed) or Cancelled (CAN/SUB). Measured by the author: 1-KiB-chunk streaming within about 5% of batch decode (6.49 ms for a photo on a Ryzen 9950X3D).",
+          "provenance": {"source": "https://github.com/mkrueger/icy_sixel/blob/main/README.md", "confidence": "high"},
+          "note": "[measured] Root README benchmark table (dated 2026-09-06) and library README API notes. Benchmarks are the author's, not re-run."
+        },
+        "where_it_draws": {
+          "value": "Nowhere by itself; it is a codec. In a host it produces an RGBA buffer that the terminal places at the cursor cell. In a client it produces the DCS string printed inline.",
+          "provenance": {"source": "https://github.com/mkrueger/icy_sixel/blob/main/crates/icy_sixel/README.md", "confidence": "high"},
+          "note": "[measured] API returns images and strings; no rendering layer."
+        },
+        "input_model": {
+          "value": "Not applicable (library). The icy_sixel-cli 'sixel animate' command plays GIFs; its input handling was not examined.",
+          "provenance": {"source": "https://github.com/mkrueger/icy_sixel/blob/main/README.md", "confidence": "medium"},
+          "note": "[measured] CLI commands encode/decode/animate listed. [inferred] no interactive input model worth recording."
+        },
+        "activity": {
+          "value": "33 stars · pushed 2026-09-06 · latest release v0.7.0 (2026-09-06) · 1.16M crates.io downloads",
+          "provenance": {"source": "measured 2026-09-24: gh api repos/mkrueger/icy_sixel", "confidence": "high"},
+          "note": "[measured] Few stars but very high downloads (1159507), because ratatui-image, viuer and others depend on it."
+        },
+        "td_overlap": {
+          "value": "same-stack, host-protocol",
+          "provenance": {"source": "https://github.com/mkrueger/icy_sixel", "confidence": "high"},
+          "note": "[inferred] A Rust crate TD would use to implement the Sixel host protocol."
+        },
+        "steal_for_td": {
+          "value": "Wire icy_sixel's begin_frame() into TD's DCS path: when the escape parser reports hook(params, ..., action 'q'), open a frame with DcsSettings(P1, P2, ...); forward put() bytes in batches (1 KiB or larger, since byte-at-a-time is 1.7-2.2x slower); call finish() on ST and upload the RGBA as a gpui texture anchored at the cursor cell.",
+          "provenance": {"source": "https://github.com/mkrueger/icy_sixel/blob/main/crates/icy_sixel/README.md", "confidence": "medium"},
+          "note": "[inferred] From the measured streaming API. Note that alacritty's vte ansi module currently leaves hook/put/unhook unhandled (see bubbles), so TD needs its own Perform hook or a pre-parser."
+        },
+        "trap": {
+          "value": "It is not a memory budget. Limits are generous (six-pixel bands up to 1,000,000 pixels, input height up to 999,996) and the README warns streaming 'is not constant-memory image storage'. Any decode error kills the session and the outer parser must discard the rest of that DCS. TD needs its own per-pane byte and pixel caps in front of it.",
+          "provenance": {"source": "https://github.com/mkrueger/icy_sixel/blob/main/crates/icy_sixel/README.md", "confidence": "high"},
+          "note": "[measured] 'Image Size Limits' section and error semantics in the library README."
+        },
+        "primary_sources": {
+          "value": "https://github.com/mkrueger/icy_sixel/blob/main/README.md https://github.com/mkrueger/icy_sixel/blob/main/crates/icy_sixel/README.md https://github.com/mkrueger/icy_sixel/blob/main/crates/icy_sixel/Cargo.toml https://crates.io/api/v1/crates?q=sixel",
+          "provenance": {"source": "https://github.com/mkrueger/icy_sixel", "confidence": "high"},
+          "note": "[measured] Read via gh api and the crates.io API 2026-09-24."
+        }
+      }
+    },
+    {
+      "id": "rio-vt",
+      "label": "rio-vt — Rio's embeddable VT core with Sixel, iTerm2 and Kitty graphics parsing",
+      "group": "D · Programs that put pixels in a terminal",
+      "fields": {
+        "what_it_is": {
+          "value": "rio-vt is Rio terminal's VT core, published as its own crate in 2026 with no renderer or GPU dependencies: escape parser, grid ('crosswords', Alacritty-derived) with scrollback, PTY event model. Unlike alacritty_terminal it parses graphics. Sixel, iTerm2 and Kitty images arrive as RioEvent::UpdateGraphics for the embedder to draw, and it ships sixel and kitty_image examples.",
+          "provenance": {"source": "https://github.com/raphamorim/rio/blob/main/rio-vt/README.md", "confidence": "high"},
+          "note": "[measured] README; crates.io metadata: rio-vt 0.5.28, created 2026-07-26. Rio the terminal is a cluster-B subject; this entry is the reusable host-side crate."
+        },
+        "license": {
+          "value": "MIT (the sixel.rs module comes from ayosec's Alacritty PR #4763 under Apache-2.0)",
+          "provenance": {"source": "measured 2026-09-24: gh api repos/raphamorim/rio", "confidence": "high"},
+          "note": "[measured] repo spdx MIT; rio-vt/src/ansi/sixel.rs header: 'sixel.rs was retired from a alacritty PR made by ayosec. Alacritty is licensed under Apache 2.0'."
+        },
+        "language": {
+          "value": "Rust (repo: Rust about 7.4 MB, small Slang/C/GLSL for the renderer)",
+          "provenance": {"source": "measured 2026-09-24: gh api repos/raphamorim/rio/languages", "confidence": "high"},
+          "note": "[measured] Rust=7420967, Slang=37056, C=34470, GLSL=32835."
+        },
+        "graphics_mechanism": {
+          "value": "Host-side parsing for all three protocols. The parser has a real ApcString state (apc_start, apc_put_slice, apc_end) feeding kitty_graphics_protocol::parse. That module handles t=d/f/t/s media, chunk accumulation with a stale-chunk timeout, and 400 MiB payload and dimension caps 'matching upstream kitty'; it encodes replies that respect q=0/1/2. kitty_virtual.rs handles Unicode-placeholder virtual placements. The DCS Sixel parser allows up to 1024 colour registers and 4096x4096 images. Rio answers DA1 'CSI ?62;4;6;22;52c', XTVERSION 'DCS >|Rio <version> ST', and CSI 16t with 'CSI 6;h;w t', and implements XTSMGRAPHICS.",
+          "provenance": {"source": "https://github.com/raphamorim/rio/tree/main/rio-vt/src/ansi", "confidence": "high"},
+          "note": "[measured] src/performer/parser/mod.rs (ApcString), src/ansi/kitty_graphics_protocol.rs header constants and parse_transmission_medium, src/ansi/sixel.rs limitations, src/crosswords/mod.rs identify_terminal/report_version/graphics_attribute."
+        },
+        "where_it_draws": {
+          "value": "It draws nothing; the embedder renders. In Rio, graphics are cell-anchored in the grid and scroll with text. rio-vt hands the frontend decoded image data plus placement events.",
+          "provenance": {"source": "https://github.com/raphamorim/rio/blob/main/rio-vt/README.md", "confidence": "medium"},
+          "note": "[measured] 'Pull-based rendering' and UpdateGraphics sections. [inferred] scrolling behaviour in Rio itself (cluster B)."
+        },
+        "input_model": {
+          "value": "Library: the embedder feeds PTY bytes (Processor::advance, or performer::Machine on a reader thread) and writes RioEvent::PtyWrite replies back to the PTY. Keyboard encoding belongs to the frontend.",
+          "provenance": {"source": "https://github.com/raphamorim/rio/blob/main/rio-vt/README.md", "confidence": "high"},
+          "note": "[measured] README quick start and 'Receiving events'."
+        },
+        "activity": {
+          "value": "Rio repo 7.5k stars · pushed 2026-09-20 · latest release v0.5.28 (2026-09-17); rio-vt crate 69k downloads since 2026-07-26",
+          "provenance": {"source": "measured 2026-09-24: gh api repos/raphamorim/rio", "confidence": "high"},
+          "note": "[measured] stars 7541; crate downloads from https://crates.io/api/v1/crates/rio-vt."
+        },
+        "td_overlap": {
+          "value": "same-stack, host-protocol",
+          "provenance": {"source": "https://github.com/raphamorim/rio/tree/main/rio-vt", "confidence": "high"},
+          "note": "[inferred] A Rust VT core with an Alacritty-lineage grid and Sixel code from Alacritty's own graphics PR; the closest host-side graphics implementation to TD's stack."
+        },
+        "steal_for_td": {
+          "value": "Lift rio-vt's graphics layer instead of writing one: its APC state, kitty_graphics_protocol.rs (chunking, media types, caps, q= replies), kitty_virtual.rs (placeholders) and the ayosec-derived sixel.rs, sitting in a small pre-parser in front of alacritty_terminal. Copy Rio's reply strings as TD's first answer set (DA1 with ;4, XTVERSION, CSI 16t, XTSMGRAPHICS).",
+          "provenance": {"source": "https://github.com/raphamorim/rio/blob/main/rio-vt/src/ansi/kitty_graphics_protocol.rs", "confidence": "medium"},
+          "note": "[inferred] Recommendation. MIT and Apache-2.0 attribution must travel with the code."
+        },
+        "trap": {
+          "value": "Do not switch TD's engine to rio-vt to get graphics. It is a sibling of alacritty_terminal with its own grid, event and PTY model, and a swap would touch every pane, selection and search path TD already has. Take the modules, keep the engine, and budget for the Apache-2.0 NOTICE the Sixel code carries inside an MIT crate.",
+          "provenance": {"source": "https://github.com/raphamorim/rio/blob/main/rio-vt/README.md", "confidence": "low"},
+          "note": "[hunch] Judgement about migration cost; nobody has measured it against TD's code."
+        },
+        "primary_sources": {
+          "value": "https://github.com/raphamorim/rio/blob/main/rio-vt/README.md https://github.com/raphamorim/rio/blob/main/rio-vt/Cargo.toml https://github.com/raphamorim/rio/blob/main/rio-vt/src/ansi/kitty_graphics_protocol.rs https://github.com/raphamorim/rio/blob/main/rio-vt/src/ansi/sixel.rs https://github.com/raphamorim/rio/blob/main/rio-vt/src/ansi/kitty_virtual.rs https://github.com/raphamorim/rio/blob/main/rio-vt/src/performer/parser/mod.rs https://github.com/raphamorim/rio/blob/main/rio-vt/src/performer/handler.rs https://github.com/raphamorim/rio/blob/main/rio-vt/src/crosswords/mod.rs https://crates.io/api/v1/crates/rio-vt",
+          "provenance": {"source": "https://github.com/raphamorim/rio/tree/main/rio-vt", "confidence": "high"},
+          "note": "[measured] Read via gh api and crates.io API 2026-09-24."
+        }
+      }
+    },
+    {
+      "id": "viuer",
+      "label": "viuer / viu — Rust image-printing crate and CLI",
+      "group": "D · Programs that put pixels in a terminal",
+      "fields": {
+        "what_it_is": {
+          "value": "viuer is a Rust library that prints images into the terminal (Kitty, iTerm2, optional Sixel, or half-block fallback); viu is its CLI front end. Many Rust CLIs use it to show an image inline.",
+          "provenance": {"source": "https://github.com/atanunq/viuer", "confidence": "high"},
+          "note": "[measured] PrinterType enum in src/printer/mod.rs; viu's Cargo.toml depends on viuer 0.11."
+        },
+        "license": {
+          "value": "MIT",
+          "provenance": {"source": "measured 2026-09-24: gh api repos/atanunq/viuer", "confidence": "high"},
+          "note": "[measured] spdx MIT (viu also MIT)."
+        },
+        "language": {
+          "value": "Rust",
+          "provenance": {"source": "measured 2026-09-24: gh api repos/atanunq/viuer/languages", "confidence": "high"},
+          "note": "[measured] Rust=70140."
+        },
+        "graphics_mechanism": {
+          "value": "choose_printer(): Sixel first if built with the sixel/icy_sixel feature and DA1 contains ';4;' or ';4c'; otherwise iTerm2 by env (TERM_PROGRAM, LC_TERMINAL, KONSOLE_VERSION); otherwise Kitty if 'ESC _Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA ST' followed by 'CSI c' returns 'ESC _Gi=31;OK ST' first. Next a t=t temp-file probe ('ESC _Gi=31,s=1,v=1,a=q,t=t;<b64 path> ST') decides local file transfer ('a=T,t=t,f=32,c=,r=') versus direct base64 ('a=T,t=d,f=32,m=1'); otherwise half blocks.",
+          "provenance": {"source": "https://github.com/atanunq/viuer/blob/master/src/printer/kitty.rs", "confidence": "high"},
+          "note": "[measured] has_remote_support, has_local_support and print paths in kitty.rs; check_device_attrs in sixel_util.rs; choose_printer in src/lib.rs; iterm.rs env checks."
+        },
+        "where_it_draws": {
+          "value": "Inline in normal scrollback at the cursor (or at a configured x/y offset via CUP); the image scrolls away with text.",
+          "provenance": {"source": "https://github.com/atanunq/viuer/blob/master/src/printer/kitty.rs", "confidence": "medium"},
+          "note": "[measured] tests show a CUP such as 'ESC[4;5H' before the a=T escape. [inferred] scroll behaviour follows from a=T without C=1."
+        },
+        "input_model": {
+          "value": "None beyond reading query replies from the terminal via console/crossterm key reads during detection.",
+          "provenance": {"source": "https://github.com/atanunq/viuer/blob/master/src/printer/kitty.rs", "confidence": "high"},
+          "note": "[measured] stdin.read_key loops in kitty.rs and sixel_util.rs."
+        },
+        "activity": {
+          "value": "364 stars · pushed 2025-12-09 · latest release v0.11.0 (2025-12-09); viu 3.3k stars, v1.6.1 (2025-12-15)",
+          "provenance": {"source": "measured 2026-09-24: gh api repos/atanunq/viuer", "confidence": "high"},
+          "note": "[measured] Also gh api repos/atanunq/viu: 3284 stars."
+        },
+        "td_overlap": {
+          "value": "same-stack",
+          "provenance": {"source": "https://github.com/atanunq/viuer", "confidence": "high"},
+          "note": "[inferred] Rust client library."
+        },
+        "steal_for_td": {
+          "value": "Reply to queries strictly in arrival order, and support t=t temp-file transmission restricted to real temp directories (unlink after reading). viuer only recognises Kitty when the 'ESC _Gi=31;OK ST' reply comes before the DA1 reply, and uses t=t to skip base64 for local images.",
+          "provenance": {"source": "https://github.com/atanunq/viuer/blob/master/src/printer/kitty.rs", "confidence": "medium"},
+          "note": "[inferred] From the measured prefix comparison (response[..expected.len()] == expected) and the comment 'most terminals will reply in a FIFO order'."
+        },
+        "trap": {
+          "value": "Advertising Sixel in DA1 changes which path Rust CLIs take: a viuer built with the sixel feature picks Sixel over Kitty whenever DA1 has attribute 4. If TD's Sixel is weaker than its Kitty, advertising ';4' makes those tools look worse.",
+          "provenance": {"source": "https://github.com/atanunq/viuer/blob/master/src/lib.rs", "confidence": "high"},
+          "note": "[measured] choose_printer order in src/lib.rs. [inferred] the consequence for TD."
+        },
+        "primary_sources": {
+          "value": "https://github.com/atanunq/viuer/blob/master/src/lib.rs https://github.com/atanunq/viuer/blob/master/src/printer/kitty.rs https://github.com/atanunq/viuer/blob/master/src/printer/sixel_util.rs https://github.com/atanunq/viuer/blob/master/src/printer/iterm.rs https://github.com/atanunq/viuer/blob/master/src/printer/mod.rs https://github.com/atanunq/viu/blob/master/Cargo.toml",
+          "provenance": {"source": "https://github.com/atanunq/viuer", "confidence": "high"},
+          "note": "[measured] Read via gh api 2026-09-24."
+        }
+      }
+    }
+  ],
+  "bubbles": [
+    {
+      "kind": "serendipity",
+      "subjectId": "notcurses",
+      "note": "Consolidated list of the queries TD must answer for these clients to pick pixels (measured from source). DA1 'CSI c' or 'CSI 0c': include 4 only if Sixel works (notcurses, ratatui-image, timg, viuer and chafa all key Sixel on it; notcurses discards XTSMGRAPHICS answers without it and hangs if DA1 is missing). Kitty 'ESC _Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA ST' must get exactly 'ESC _Gi=31;OK ST', before the DA1 reply (ratatui-image, viuer); notcurses sends 'ESC _Gi=1,a=q; ST' and accepts any _G reply; ratatui-image may add i=32 (o=z) and i=33 (t=s) probes. XTVERSION 'CSI >0q' or 'CSI >q' gets 'DCS >| name version ST' (notcurses, timg). XTGETTCAP 'DCS +q544e;524742;687061 ST' (TN, RGB, hpa; notcurses). Size: CSI 14t (text area in px, reply CSI 4;h;w t), CSI 16t (cell px, reply CSI 6;h;w t), CSI 18t (cells), plus correct ws_xpixel/ws_ypixel in TIOCGWINSZ, which is mpv's ONLY source and a fallback for timg and ratatui-image. XTSMGRAPHICS 'CSI ?2;1;0S', 'CSI ?1;1;0S', 'CSI ?1;3;256S' (notcurses). OSC 10/11 '?' and OSC 4 palette queries; DECRQM 'CSI ?2026$p' and 'CSI ?1016$p'; Kitty keyboard 'CSI ?u'; 'CSI 6n' and 'CSI 5n' sentinels (reply 'CSI 0n'). Clients that pick Kitty only by name, whatever TD answers: chafa (env term DB), timg (TERM or XTVERSION substring). Those need upstream entries.",
+      "why": "This is the host-side contract for the whole cluster in one place; it can become TD's capability-reply test fixture.",
+      "source": "https://github.com/dankamongmen/notcurses/blob/master/src/lib/termdesc.c"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "zed-terminal",
+      "note": "Same-stack gap, measured in alacritty's own code (alacritty/vte master at abeae76, alacritty/alacritty master): (1) vte's Parser sends 'ESC _' (APC) to State::SosPmApcString and drops every byte with no Perform callback, so Kitty graphics never reach alacritty_terminal. (2) vte's ansi Performer implements hook/put/unhook as 'unhandled' debug logs, so a Sixel DCS is dropped too. (3) CSI t handles only 14, 18, 22 and 23; CSI 16t (cell size) is unhandled. No XTVERSION ('CSI > q') handler. (4) alacritty_terminal answers DA1 with 'ESC[?6c' (no 4, so no Sixel) and DA2 with 'ESC[>0;version;1c'. (5) CSI 14t goes out as Event::TextAreaSizeRequest, which the embedder must answer. TD therefore needs a byte pre-parser, or a patched vte, in front of alacritty_terminal for APC and DCS, and its own replies for DA1, XTVERSION, 16t and XTSMGRAPHICS.",
+      "why": "This is the single biggest implementation fact for TD's pixels phase, and it applies equally to Zed's terminal (cluster A).",
+      "source": "https://github.com/alacritty/vte/blob/master/src/lib.rs"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "mpv-terminal-vo",
+      "note": "alacritty_terminal's tty sets ws_xpixel = ws_col * cell_width and ws_ypixel = ws_row * cell_height as integer c_ushort (tty/unix.rs ToWinsize for WindowSize). TD must pass real cell pixel sizes in WindowSize on every resize. gpui cell widths are fractional, so truncating to integers makes the pixel size clients compute drift from the real grid by up to one pixel per column across a wide pane (this last part is [inferred], not measured).",
+      "why": "mpv sizes video only from these fields; timg and ratatui-image fall back to them; a zero or wrong value silently gives 320x240 video or misaligned images.",
+      "source": "https://github.com/alacritty/alacritty/blob/master/alacritty_terminal/src/tty/unix.rs"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "wezterm",
+      "note": "WezTerm's escape parser is now an in-repo crate, wezterm-escape-parser (src/apc.rs for Kitty APC, src/parser/sixel.rs), with host state in term/src/terminalstate/kitty.rs and sixel.rs. It is NOT published on crates.io (the API returns 'does not exist'); the published termwiz is 0.23.3 (2025-03-20). It is a second vendorable MIT host-side parser if rio-vt's modules do not fit.",
+      "why": "Gives TD a fallback source for host-side Kitty and Sixel parsing, with a different design from Rio's.",
+      "source": "https://github.com/wezterm/wezterm/tree/main/wezterm-escape-parser"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "zellij",
+      "note": "zellij-org/sixel-image (MIT, 0.2.1, 276k downloads) plus sixel-tokenizer is the Sixel deserialise, crop and serialise library Zellij uses to keep sixels inside pane bounds. It is a Sixel-to-Sixel model rather than an RGBA decoder, so it suits a multiplexer that re-emits sixels to an outer terminal, not TD's GPU renderer.",
+      "why": "Relevant to cluster C (Zellij) and to any future TD mode that forwards graphics to an outer terminal (TD inside tmux, or remote).",
+      "source": "https://github.com/zellij-org/sixel-image/blob/main/README.md"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "ratatui-image",
+      "note": "ratatui-image keeps a public screenshot matrix: flake-based VM tests run its demo in xterm, foot, kitty, wezterm, ghostty, rio, mlterm and others and post screenshots on each pull request. Its README compatibility table records why terminals fail: Alacritty's Sixel fork 'does not clear graphics'; Contour 'Does not clear graphics'; Warp lacks placeholders.",
+      "why": "A ready conformance harness TD could join. 'Does not clear graphics' is the most common failure it records, so image deletion and erase semantics deserve their own TD tests.",
+      "source": "https://benjajaja.github.io/ratatui-image-screenshots/"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "tmux",
+      "note": "Chafa 1.18.3 (2026-09-23): 'Sixels are no longer used inside tmux when the outer terminal can't display them. tmux claims the capability on its own behalf regardless of what's outside it, so we now ask what its client supports instead.' timg: Kitty inside tmux >= 3.3 only works in a Kitty terminal with -pk, using U=1 placeholders.",
+      "why": "For cluster C (tmux): multiplexers can advertise graphics they cannot deliver, so clients have started to bypass them.",
+      "source": "https://github.com/hpjansson/chafa/blob/master/NEWS"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "kitty",
+      "note": "Kitty spec (via WebFetch summary): the recommended support check is 'send the above query action followed by a request for the primary device attributes'. The terminal 'must read the data from the memory object and then unlink and close it' for t=s. 'When the terminal is running out of quota space for new images, existing images without placements will be preferentially deleted.'",
+      "why": "Three host obligations the clients in this cluster rely on: FIFO replies, shm unlink, and quota eviction. Cluster B should confirm them against the page.",
+      "source": "https://sw.kovidgoyal.net/kitty/graphics-protocol/"
+    },
+    {
+      "kind": "gap-note",
+      "subjectId": "chafa",
+      "note": "Not traced: exactly when chafa chooses its U=1 virtual-placement Kitty sequences over immediate a=T (I assume tmux passthrough), and chafa's cursor placement after images. Not checked as candidates: lsix (hackerb9/lsix, GPL-3.0, 4.2k stars, last push 2024-06-20, a shell Sixel client that uses DA1 and XTSMGRAPHICS), Textual's textual-image, and ytui or tui-video players.",
+      "why": "Candidates for a later round if the host-contract list needs more clients.",
+      "source": "https://github.com/hackerb9/lsix"
+    }
+  ],
+  "tokens": 230000
+}

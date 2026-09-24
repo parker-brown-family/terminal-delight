@@ -1,0 +1,321 @@
+{
+  "updates": [
+    {
+      "id": "carbonyl",
+      "fields": {
+        "what_it_is": {
+          "value": "A Chromium-based browser that runs inside a terminal: a modified Chromium headless shell (the runtime) loads a Rust core (libcarbonyl) that turns Blink/Skia output into terminal cells. README: 'It supports pretty much all Web APIs including WebGL, WebGPU, audio and video playback, animations'.",
+          "provenance": { "source": "https://github.com/fathyb/carbonyl", "confidence": "high" },
+          "note": "[measured] README read via gh api 2026-09-24"
+        },
+        "license": {
+          "value": "BSD-3-Clause",
+          "provenance": { "source": "measured 2026-09-24: gh api repos/fathyb/carbonyl", "confidence": "high" },
+          "note": "[measured]"
+        },
+        "language": {
+          "value": "Rust core (89 KB) + C++ Chromium patches (14 KB) + JavaScript/Shell build tooling; the runtime is a modified Chromium headless shell",
+          "provenance": { "source": "measured 2026-09-24: gh api repos/fathyb/carbonyl/languages", "confidence": "high" },
+          "note": "[measured] README: 'The core is written in Rust … The runtime is a modified version of the Chromium headless shell and takes more than an hour to build from scratch.'"
+        },
+        "graphics_mechanism": {
+          "value": "Unicode lower half block U+2584 with 24-bit colour: background = top pixel, foreground = bottom pixel, so each cell is two square pixels. Text is NOT rasterised: a custom Skia device (TextCaptureDevice) intercepts glyph runs and sends them over Mojo (CarbonylRenderService.DrawText) to be printed as real characters. Pixels arrive from the GPU process through a custom SoftwareOutputDevice/LayeredWindowUpdater into shared memory. Renders at a 1/7 device scale factor ('49 pixels on the web renders to 1 block'). No Kitty or Sixel output in the released version: Sixel (PR #206) and Kitty (PR #221) renderers are open, unmerged PRs.",
+          "provenance": { "source": "https://fathy.fr/carbonyl", "confidence": "high" },
+          "note": "[measured] quotes from the author's blog post (fetched 2026-09-24); PR state measured via gh api search/issues"
+        },
+        "where_it_draws": {
+          "value": "Fullscreen: the whole terminal grid is the browser viewport, redrawn in place (it does not write into scrollback).",
+          "provenance": { "source": "https://github.com/fathyb/carbonyl", "confidence": "medium" },
+          "note": "[inferred] from README ('natively renders to the terminal resolution') and the demo videos; not stated in one sentence"
+        },
+        "input_model": {
+          "value": "A blocked thread reads stdin, parses terminal mouse/key sequences and posts them as tasks to Chromium's main thread via TaskRunner. Known gaps from the tracker: no right-click emulation (#163), TAB inserts a tab instead of moving focus (#97), UTF-8/CJK input forwarded byte-by-byte and garbled (#223).",
+          "provenance": { "source": "https://fathy.fr/carbonyl", "confidence": "high" },
+          "note": "[measured] blog quote + issue titles via gh api 2026-09-24"
+        },
+        "activity": {
+          "value": "19.5k stars · last commit 2023-02-26 · pushed 2024-07-01 · only release v0.0.3 (2023-02-18) · 90 open issues incl. 'Is project alive?' (#196, 2024-11) and 'Community fork of carbonyl' (#210, 2025-11)",
+          "provenance": { "source": "measured 2026-09-24: gh api repos/fathyb/carbonyl", "confidence": "high" },
+          "note": "[measured] effectively dormant for three and a half years"
+        },
+        "td_overlap": {
+          "value": "same-stack",
+          "note": "[measured] Rust core; it is a client program, not a host — nothing it does needs TD to implement a graphics protocol, which is exactly why it works everywhere"
+        },
+        "steal_for_td": {
+          "value": "Render at the destination resolution, and keep text as text. Carbonyl beats browsh ~50x on CPU because it lays the page out at the terminal's resolution instead of downscaling a full framebuffer, and it prints glyphs as characters instead of pixels. For TD's HTML-brief pane: size the webview/rasteriser to the pane's pixel box and re-lay-out on resize, never render big and scale.",
+          "provenance": { "source": "https://github.com/fathyb/carbonyl", "confidence": "medium" },
+          "note": "[inferred] from the README's browsh comparison and the blog's 1/7 scale-factor trick"
+        },
+        "trap": {
+          "value": "Owning a browser engine is a maintenance cliff: a Chromium fork that takes over an hour to build froze at v0.0.3 in Feb 2023 with an ageing Chromium inside. TD should borrow the platform's webview (or hand off to the browser) for HTML, not vendor an engine.",
+          "provenance": { "source": "https://github.com/fathyb/carbonyl/issues/196", "confidence": "medium" },
+          "note": "[inferred] from release/commit dates and the 'Is project alive?' issue"
+        },
+        "primary_sources": {
+          "value": "https://github.com/fathyb/carbonyl https://fathy.fr/carbonyl https://github.com/fathyb/carbonyl/issues/11 https://github.com/fathyb/carbonyl/pull/206 https://github.com/fathyb/carbonyl/pull/221 https://github.com/fathyb/carbonyl/issues/196 https://github.com/fathyb/carbonyl/issues/210 https://github.com/fathyb/carbonyl/issues/2",
+          "provenance": { "source": "https://github.com/fathyb/carbonyl", "confidence": "high" },
+          "note": "[measured]"
+        }
+      }
+    },
+    {
+      "id": "rtv",
+      "fields": {
+        "what_it_is": {
+          "value": "NOT a project in its own right: a re-upload of Santitub/rtv (a Rust terminal video player created 2026-08-20) under a 12-day-old account. The copy's own commits rewrite every outbound README link (build badge, FFmpeg builds, git clone URL, yt-dlp, termux-docker, pyte, even the example video URLs) to the uploader's GitHub Pages site, whose page has two download buttons for jiffle/1.9.zip (487,623 bytes); a byte-identical-size zip is committed into the Rust source tree as src/Software-2.0-alpha.3.zip. This is the known GitHub malware-lure pattern. Nothing was downloaded, built or run.",
+          "provenance": { "source": "measured 2026-09-24: gh api repos/Laotian-telephonebell2559/rtv/commits/fb68eedb (README diff) and repos/Laotian-telephonebell2559/laotian-telephonebell2559.github.io/contents/index.html", "confidence": "high" },
+          "note": "[measured] metadata and text files only, via gh api"
+        },
+        "license": {
+          "value": "Apache-2.0 per GitHub's detection (LICENSE.APACHE + LICENSE.MIT copied from the original, whose Cargo.toml says 'MIT OR Apache-2.0'). The licence is the original author's; the lure adds nothing licensable.",
+          "provenance": { "source": "measured 2026-09-24: gh api repos/Laotian-telephonebell2559/rtv", "confidence": "high" },
+          "note": "[measured]"
+        },
+        "language": {
+          "value": "Rust (copied from Santitub/rtv) plus a binary zip in src/",
+          "provenance": { "source": "measured 2026-09-24: gh api repos/Laotian-telephonebell2559/rtv/git/trees/main?recursive=1", "confidence": "high" },
+          "note": "[measured]"
+        },
+        "graphics_mechanism": {
+          "value": "The copied code is Santitub/rtv's: Kitty graphics / iTerm2 / Sixel / half-blocks / ASCII backends in src/renderer.rs. The copy itself contributes only the zip lure.",
+          "provenance": { "source": "https://github.com/Santitub/rtv/blob/main/src/renderer.rs", "confidence": "high" },
+          "note": "[measured] renderer.rs read via gh api; see subject rtv-santitub for the real project"
+        },
+        "where_it_draws": {
+          "value": "n/a for the lure; the original plays video in the alt screen",
+          "flagged": true,
+          "note": "[inferred] the copy is a distribution vehicle, not software to evaluate"
+        },
+        "input_model": {
+          "value": "n/a for the lure",
+          "flagged": true,
+          "note": "[inferred] see rtv-santitub"
+        },
+        "activity": {
+          "value": "0 stars, 0 forks, issues disabled · repo created 2026-08-23, owner account created 2026-08-12 with 2 public repos (this and the Pages lure), 0 followers · 11 commits: 8 authored by Santitub on 2026-08-20 (three days BEFORE the repo existed), then 3 by the uploader: zip added 2026-08-27/28, links rewritten 2026-09-23 · topics are unrelated SEO bait (jt1078, reddit, voice-cloning, visual-studio)",
+          "provenance": { "source": "measured 2026-09-24: gh api repos/Laotian-telephonebell2559/rtv, users/Laotian-telephonebell2559, repos/Laotian-telephonebell2559/rtv/commits", "confidence": "high" },
+          "note": "[measured]"
+        },
+        "td_overlap": { "value": "none", "note": "[measured] a lure; the real project is rtv-santitub" },
+        "steal_for_td": {
+          "value": "Nothing from the copy. The lesson is for TD's Ctrl+click feature itself: a clicked link or path must open a viewer, never execute or auto-download — and an in-terminal HTML viewer should not follow downloads without asking.",
+          "note": "[inferred]"
+        },
+        "trap": {
+          "value": "Trusting a slick README. The tells here were all visible from metadata: account age, commits older than the repo, a zip inside src/, every link pointing at one github.io page, issues disabled, junk topics. Do not cite, clone or link it; cite Santitub/rtv instead.",
+          "provenance": { "source": "measured 2026-09-24: gh api repos/Laotian-telephonebell2559/rtv/git/trees/main?recursive=1", "confidence": "high" },
+          "note": "[measured]"
+        },
+        "primary_sources": {
+          "value": "gh api repos/Laotian-telephonebell2559/rtv (metadata, commits, tree, README diff) · gh api repos/Laotian-telephonebell2559/laotian-telephonebell2559.github.io (tree, index.html hrefs) · https://github.com/Santitub/rtv (the original)",
+          "provenance": { "source": "measured 2026-09-24: gh api repos/Laotian-telephonebell2559/rtv", "confidence": "high" },
+          "note": "[measured] no browser visit, no download"
+        }
+      }
+    },
+    {
+      "id": "rtv-santitub",
+      "label": "rtv (Santitub) — the original Rust terminal video player",
+      "group": "D · Programs that put pixels in a terminal",
+      "fields": {
+        "what_it_is": {
+          "value": "A Rust terminal video player: FFmpeg decode (ffmpeg-the-third), audio-master-clock A/V sync 'ffplay-style', hardware decode, YouTube/Twitch via yt-dlp, and an optional wgpu/egui GUI window; renders through Kitty graphics, iTerm2, Sixel, half-blocks or ASCII.",
+          "provenance": { "source": "https://github.com/Santitub/rtv", "confidence": "high" },
+          "note": "[measured] README + Cargo.toml read via gh api"
+        },
+        "license": {
+          "value": "MIT OR Apache-2.0 (Cargo.toml); GitHub detects Apache-2.0",
+          "provenance": { "source": "https://github.com/Santitub/rtv/blob/main/Cargo.toml", "confidence": "high" },
+          "note": "[measured]"
+        },
+        "language": {
+          "value": "Rust (473 KB) + Python test harness (168 KB)",
+          "provenance": { "source": "measured 2026-09-24: gh api repos/Santitub/rtv/languages", "confidence": "high" },
+          "note": "[measured]"
+        },
+        "graphics_mechanism": {
+          "value": "Kitty graphics with shared memory locally and zlib (o=z) over ssh, q=2 and m=1 chunking; iTerm2 inline images; Sixel with a fixed 6x7x6 palette + ordered Bayer dithering + RLE; half-blocks; ASCII. Cell pixel size learned from ioctl TIOCGWINSZ plus CSI 16t / 14t probes.",
+          "provenance": { "source": "https://github.com/Santitub/rtv", "confidence": "high" },
+          "note": "[measured] README comparison table vs mpv's vo_kitty/vo_sixel/vo_tct"
+        },
+        "where_it_draws": {
+          "value": "Alt screen, fullscreen in the terminal; letterbox aligned to whole cells so bars land on cell boundaries (fit_aspect in renderer.rs)",
+          "provenance": { "source": "https://github.com/Santitub/rtv/blob/main/src/renderer.rs", "confidence": "high" },
+          "note": "[measured]"
+        },
+        "input_model": {
+          "value": "Keys (←/→ keyframe seeks) and mouse seeking (tests/integration_mouse_seek.py), auto-hiding controls",
+          "provenance": { "source": "https://github.com/Santitub/rtv", "confidence": "medium" },
+          "note": "[inferred] from README bullets and test file names"
+        },
+        "activity": {
+          "value": "3 stars · created 2026-08-20 · 9 commits, all on 2026-08-20 · release 1.0.0 (2026-08-20) with Linux/macOS/Windows/Termux assets · owner account since 2023 with 61 public repos",
+          "provenance": { "source": "measured 2026-09-24: gh api repos/Santitub/rtv", "confidence": "high" },
+          "note": "[measured] brand-new, single-day history: judge as a demo, not a dependency"
+        },
+        "td_overlap": { "value": "same-stack", "note": "[measured] Rust" },
+        "steal_for_td": {
+          "value": "Answer the pixel-size questions every video client asks: fill ws_xpixel/ws_ypixel in each pane's TIOCSWINSZ and answer CSI 14 t (text area in pixels) and CSI 16 t (cell size in pixels) per pane — rtv and mpv both size their frames from these, and a split pane that reports the whole window's pixels gets a wrongly scaled picture.",
+          "provenance": { "source": "https://github.com/Santitub/rtv", "confidence": "medium" },
+          "note": "[inferred] the README names these probes; the per-pane consequence is our reasoning"
+        },
+        "trap": {
+          "value": "Backend choice is environment sniffing: detect_backend() picks Kitty only for KITTY_WINDOW_ID, TERM containing 'kitty', or TERM_PROGRAM ghostty/wezterm; Sixel only for TERM/TERM_PROGRAM names of known Sixel terminals; everything else gets half-blocks. A new terminal is invisible to it unless the user passes --backend.",
+          "provenance": { "source": "https://github.com/Santitub/rtv/blob/main/src/renderer.rs", "confidence": "high" },
+          "note": "[measured] lines 62-100 of renderer.rs"
+        },
+        "primary_sources": {
+          "value": "https://github.com/Santitub/rtv https://github.com/Santitub/rtv/blob/main/src/renderer.rs https://github.com/Santitub/rtv/blob/main/Cargo.toml",
+          "provenance": { "source": "https://github.com/Santitub/rtv", "confidence": "high" },
+          "note": "[measured]"
+        }
+      }
+    },
+    {
+      "id": "hyperion-tui",
+      "fields": {
+        "what_it_is": {
+          "value": "Concept artwork, not a located project: a retro CRT showing 'HYPERION TUI v2.7.19' with a Windows 95 'System Settings' dialog embedded in the terminal layout, posted on X by Fred Nix (@NixFred, an Omarchy plugin author) on 2026-09-23 crediting an idea by @0xBOYD (Andrew Boyd, Standard Agents). A reply joked 'in GUI in TUI you can open ANOTHER TUI'.",
+          "provenance": { "source": "operator-supplied screenshot (Parker, 2026-09-24) + https://github.com/nixfred (Fred Nix: 'Omarchy freak', twitter NixFred)", "confidence": "medium" },
+          "note": "[inferred] the post could not be read: x.com returned HTTP 402, xcancel.com HTTP 451, and the Servo reader's engine is not built on this box. No repo, package or page named 'HYPERION TUI' with a Win95 dialog was found (web search; GitHub repo + code search; Fred Nix's 136 repos; Boyd's and Standard Agents' repos). The only GitHub code hits for 'HYPERION TUI' are hereugo-ak/Hyperion, an unrelated Textual multi-agent consulting app."
+        },
+        "license": { "value": "unknown — no project located", "flagged": true, "note": "[hunch] likely an image, not software" },
+        "language": { "value": "unknown — no project located", "flagged": true, "note": "[hunch]" },
+        "graphics_mechanism": { "value": "unknown — the artefact is a picture; nothing running was found", "flagged": true, "note": "[hunch]" },
+        "where_it_draws": { "value": "depicted: a GUI dialog as a tile inside a TUI layout", "flagged": true, "note": "[inferred] from Parker's description of the image" },
+        "input_model": { "value": "not depicted", "flagged": true, "note": "[hunch]" },
+        "activity": { "value": "one X post, 2026-09-23", "flagged": true, "note": "[inferred] post URL not retrieved" },
+        "td_overlap": { "value": "tui-wm, floating", "note": "[inferred] the image shows a terminal layout hosting a GUI window" },
+        "steal_for_td": {
+          "value": "Treat an embedded viewer as a real window inside the pane: title bar, close box, drag handle, and it must nest — the reply's joke (a TUI inside the GUI inside the TUI) is literally a TD terminal pane opened inside a floating panel. Design the floating square so it can hold a terminal, not only an image.",
+          "note": "[inferred]"
+        },
+        "trap": {
+          "value": "A mockup has no input model: it never says where keys go, how you leave the dialog, or whether it scrolls with the text. Decide focus and escape before drawing chrome.",
+          "note": "[inferred]"
+        },
+        "primary_sources": {
+          "value": "operator-supplied screenshot · https://github.com/nixfred (read) · https://x.com/NixFred (not readable: HTTP 402/451)",
+          "provenance": { "source": "https://github.com/nixfred", "confidence": "medium" },
+          "note": "[inferred]"
+        }
+      }
+    },
+    {
+      "id": "boyd-jev-pokemon",
+      "fields": {
+        "what_it_is": {
+          "value": "`npx jev-plays-pokemon` — a Node.js terminal client for 'Jev plays Pokémon Red'. The server renders the whole dashboard as a terminal byte stream (tag 0x01) plus raw game frames (tag 0x03); the client writes the stream verbatim, adds a Jev-moderated chat panel, and overlays the Game Boy screen as a Kitty graphics image. Web twin at jev-plays-pokemon.standardagents.ai, which says 'Jev beat the Elite Four and the Champion and entered the Hall of Fame on September 23, 2026' and credits 'an experiment by 0xBoyd'.",
+          "provenance": { "source": "https://unpkg.com/jev-plays-pokemon@0.3.9/src/app.mjs", "confidence": "high" },
+          "note": "[measured] package source read as text from unpkg; site via WebFetch 2026-09-24"
+        },
+        "license": {
+          "value": "MIT",
+          "provenance": { "source": "https://registry.npmjs.org/jev-plays-pokemon/latest", "confidence": "high" },
+          "note": "[measured]"
+        },
+        "language": {
+          "value": "JavaScript (Node ≥18, ES modules; single dependency: ws)",
+          "provenance": { "source": "https://registry.npmjs.org/jev-plays-pokemon/latest", "confidence": "high" },
+          "note": "[measured]"
+        },
+        "graphics_mechanism": {
+          "value": "Kitty graphics protocol. Each 160×144 RGB frame is upscaled 4× nearest-neighbour on the client ('Terminals scale Kitty images with smoothing, which blurs pixel art. A picture sent at a whole multiple of the Game Boy size keeps sharp pixel edges'), zlib-deflated and sent as ESC_G a=T,f=24,o=z,s=640,v=576,i=77,p=1,c=<cols>,r=<rows>,C=1,q=2 in 4096-byte chunks, at most 15 fps. Fallback: the stream's own half-block cells. So the 'crisp pixels' in Boyd's screenshot are Kitty graphics, not Sixel or half-blocks.",
+          "provenance": { "source": "https://unpkg.com/jev-plays-pokemon@0.3.9/src/kitty.mjs", "confidence": "high" },
+          "note": "[measured] that the screenshot itself came from a Kitty-capable terminal is [inferred]: half-blocks would not look crisp"
+        },
+        "where_it_draws": {
+          "value": "Cell-anchored placement over the game area of the alt screen: save cursor, move to the frame's row/col, place with C=1 (cursor does not move), restore. Re-placed after every clear because 'Ghostty deletes every Kitty placement on ESC[2J'; deleted with a=d,d=I,i=77 on resize or when the chat overlays it.",
+          "provenance": { "source": "https://unpkg.com/jev-plays-pokemon@0.3.9/src/kitty.mjs", "confidence": "high" },
+          "note": "[measured]"
+        },
+        "input_model": {
+          "value": "Keys type into the chat input while chat is visible; SGR mouse reporting only while chat is on (buttons, cursor placement, wheel over the list); Shift+drag selects text; Tab toggles chat over the stream on small terminals; OSC 52 copies the GitHub device code; output wrapped in synchronized-update mode (CSI ?2026 h/l).",
+          "provenance": { "source": "https://unpkg.com/jev-plays-pokemon@0.3.9/README.md", "confidence": "high" },
+          "note": "[measured] README + app.mjs"
+        },
+        "activity": {
+          "value": "npm: 16 versions, 0.1.0 (2026-09-16) → 0.3.9 (2026-09-17), published by GitHub Actions trusted publishing; maintainer 'boyd'. Source repository not public (no repository field; absent from github.com/standardagents and github.com/andrew-boyd).",
+          "provenance": { "source": "https://registry.npmjs.org/jev-plays-pokemon", "confidence": "high" },
+          "note": "[measured]"
+        },
+        "td_overlap": { "value": "none", "note": "[measured] a client program; its relevance is as a test case TD must pass" },
+        "steal_for_td": {
+          "value": "Scale images nearest-neighbour when enlarging by a whole factor (or when the source is small), so pixel art stays crisp without every client pre-upscaling 4× and paying 16× the bytes. Boyd had to work around smoothing on the client; TD can fix it in the host.",
+          "provenance": { "source": "https://unpkg.com/jev-plays-pokemon@0.3.9/src/kitty.mjs", "confidence": "medium" },
+          "note": "[inferred]"
+        },
+        "trap": {
+          "value": "Detection by environment: kittySupported() returns false under TMUX and true only for TERM_PROGRAM=ghostty|WezTerm or KITTY_WINDOW_ID. In TD this client draws half-blocks unless run with --kitty. Don't impersonate another terminal's TERM_PROGRAM; set an honest one, answer the Kitty a=q query, and send upstream patches for query-based detection.",
+          "provenance": { "source": "https://unpkg.com/jev-plays-pokemon@0.3.9/src/app.mjs", "confidence": "high" },
+          "note": "[measured] app.mjs line 91"
+        },
+        "primary_sources": {
+          "value": "https://www.npmjs.com/package/jev-plays-pokemon https://unpkg.com/jev-plays-pokemon@0.3.9/README.md https://unpkg.com/jev-plays-pokemon@0.3.9/src/kitty.mjs https://unpkg.com/jev-plays-pokemon@0.3.9/src/app.mjs https://jev-plays-pokemon.standardagents.ai/ synthesis: https://x.com/0xBOYD/status/2100418365986578908 (search-result title only)",
+          "provenance": { "source": "https://www.npmjs.com/package/jev-plays-pokemon", "confidence": "high" },
+          "note": "[measured]"
+        }
+      }
+    }
+  ],
+  "bubbles": [
+    {
+      "kind": "serendipity",
+      "note": "Claim (a) — Omarchy's default terminal: PARTLY RIGHT. Foot is the default ('Foot is the default terminal for Omarchy'), but the officially supported alternatives are three, not two: 'We fully support Alacritty, Ghostty, and Kitty as options as well.' Same at the source: manual/15-terminal.md and default/xdg-terminal-exec/hyprland-xdg-terminals.list (foot.desktop) at tag v4.0.4; bin/omarchy-install-terminal accepts alacritty|foot|ghostty|kitty. The older Omarchy 3 manual on learn.omacom.io still says Alacritty is the default.",
+      "why": "Parker's desktop default (Foot) implements Sixel only, not Kitty graphics — so Omarchy users' baseline for 'pixels in a terminal' is Sixel.",
+      "source": "https://omarchy.org/manual/terminal/"
+    },
+    {
+      "kind": "serendipity",
+      "note": "Omarchy v4.0.4 ships herdr (github.com/omacom-io/herdr, 'terminal workspace manager', called 'Herdr (agent manager)' in the hotkeys) in install/omarchy-base.packages, bound to Super+Ctrl+Return, with agent layouts hdl/hds/hdlm/hsl mirroring the tmux ones (tdl = editor + AI agent + terminal).",
+      "why": "Agent-pane multiplexing is now a default Omarchy feature; TD's agent panes compete with it on Parker's own desktop.",
+      "source": "https://github.com/basecamp/omarchy/blob/v4.0.4/manual/21-tuis.md"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "boyd-jev-pokemon",
+      "note": "Boyd (@0xBOYD) is Andrew Boyd of Standard Agents (github.com/andrew-boyd, company 'Standard Agents'), the org behind dmux; he also forks omarchy/omarchy-pkgs, and Standard Agents publishes Omarchy-adjacent repos (touchbar-doom, t1bridge, fingerprint-tui) and dmux-rs, a native Rust tmux control-mode renderer whose roadmap lists 'Images (kitty graphics translation)' as a later phase.",
+      "why": "The two posts Parker shared and the dmux example come from the same small Omarchy/Standard Agents circle.",
+      "source": "https://github.com/standardagents/dmux-rs/blob/main/ROADMAP.md"
+    },
+    {
+      "kind": "serendipity",
+      "note": "Claim (c) — Carbonyl: ACCURATE WITH CAVEATS. It is real Chromium (a modified headless shell) and supports JS/WebAssembly and media per its README. Caveats the summary omits: the picture is half-block cells (2 pixels per cell) at a 1/7 device scale factor, not Kitty/Sixel (those are unmerged PRs #206, #221); audio plays on the machine running Carbonyl through its sound stack, not through the terminal (issue #2: over SSH you forward PulseAudio yourself); and the project has been dormant since v0.0.3 in Feb 2023.",
+      "why": "Verification requested by Parker.",
+      "source": "https://github.com/fathyb/carbonyl"
+    },
+    {
+      "kind": "serendipity",
+      "note": "Claim (b) — rtv at github.com/Laotian-telephonebell2559/rtv: NOT LEGITIMATE. It is a copy of Santitub/rtv with every README link redirected to a GitHub Pages page offering a 487,623-byte zip download, and the same-size zip committed into src/. The 'brand-new Rust project … Kitty + Sixel, audio sync, MIT/Apache-2.0' description is true of the ORIGINAL (Santitub/rtv, created 2026-08-20, 3 stars, one day of commits), not of this repo.",
+      "why": "Verification requested by Parker; security judgement from metadata only.",
+      "source": "https://github.com/Santitub/rtv"
+    },
+    {
+      "kind": "serendipity",
+      "note": "Parker's own servo-reader (`sr`) already has `--images {auto,kitty,sixel,off}` — inline images in terminal output via Kitty or Sixel.",
+      "why": "A first-party client TD can test its graphics support against.",
+      "source": "file:///home/parker/BROWN-FAMILY-SPORTS/Software/servo-reader"
+    },
+    {
+      "kind": "serendipity",
+      "note": "gpui's own webview route does not reach TD's platform: longbridge/gpui-component's crates/webview (published as gpui-wry 0.6.5, Apache-2.0, over wry) says 'The WebView will render on top of the GPUI window, any GPUI elements behind the WebView bounds will be covered' and 'Only supports macOS and Windows currently', and recommends 'a separate window or a Popup layer'.",
+      "why": "TD runs on Linux/Wayland. An embedded HTML pane in gpui on Omarchy needs another route: a Rust HTML/CSS renderer drawing into a gpui image (DioxusLabs/blitz, Apache-2.0, 4.2k stars, pushed 2026-09-24; or embedded Servo, MPL-2.0 — the engine Parker's servo-reader already drives), or a compositor-positioned separate window (the ueberzug++ approach).",
+      "source": "https://github.com/longbridge/gpui-component/blob/main/crates/webview/README.md"
+    },
+    {
+      "kind": "serendipity",
+      "note": "In-house prior art for the Markdown half of the feature: markdown-delight (Parker's gpui Markdown editor, same zed-upstream gpui checkout as TD) already turns comrak's AST into gpui elements in app/src/render.rs (parse_with_meta → Block → block_element → AnyElement). It renders headings, paragraphs, code, quotes, lists, tables and rules; images are reduced to their alt/link text and raw HTML blocks are shown as literal lines.",
+      "why": "TD's Ctrl+click-a-.md pane can reuse this renderer as a shared crate instead of adding a new engine; images and HTML are the parts still to build.",
+      "source": "file:///home/parker/BROWN-FAMILY-SPORTS/Software/markdown-delight/app/src/render.rs"
+    },
+    {
+      "kind": "gap-note",
+      "subjectId": "hyperion-tui",
+      "note": "The Servo escalation tier could not run: `sr` reports 'ServoNotBuilt: servoshell binary not found'. X/xcancel returned 402/451 to the cheap tier. The only remaining tier is a human-driven browser (web-scrape skill tier 3) or Parker pasting the post URL.",
+      "why": "Explains why license/language/graphics_mechanism stay unmet for this subject.",
+      "source": "https://x.com/NixFred"
+    }
+  ],
+  "tokens": 60000
+}

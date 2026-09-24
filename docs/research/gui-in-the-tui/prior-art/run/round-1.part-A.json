@@ -1,0 +1,699 @@
+{
+  "updates": [
+    {
+      "id": "waveterm",
+      "fields": {
+        "what_it_is": {
+          "value": "Wave Terminal is an open-source, AI-integrated desktop terminal (Electron front end, Go backend) whose tabs are tiled 'blocks'. Each block holds one widget: an xterm.js terminal, a file/directory preview, a code editor, a web browser, sysinfo, or Wave AI. The `wsh` CLI, available in every terminal block, opens previews (`wsh view`), editors (`wsh edit`) and web blocks (`wsh web open`) beside the terminal.",
+          "provenance": {"source": "https://github.com/wavetermdev/waveterm/blob/main/docs/docs/wsh-reference.mdx", "confidence": "high"},
+          "note": "[measured] read wsh-reference.mdx (view/edit/web sections) and docs/tabs.mdx ('The tabs are comprised of tiled blocks. The contents of each block is a single widget') this session."
+        },
+        "license": {
+          "value": "Apache-2.0",
+          "provenance": {"source": "measured 2026-09-24: gh api repos/wavetermdev/waveterm", "confidence": "high"},
+          "note": "[measured] .license.spdx_id = Apache-2.0."
+        },
+        "language": {
+          "value": "Go (~2.49 MB) and TypeScript (~2.23 MB), plus CSS/SCSS; Electron ^41 shell",
+          "provenance": {"source": "measured 2026-09-24: gh api repos/wavetermdev/waveterm/languages", "confidence": "high"},
+          "note": "[measured] languages endpoint; Electron version from package.json (\"electron\": \"^41.1.0\")."
+        },
+        "graphics_mechanism": {
+          "value": "Everything is Electron DOM. Terminal blocks are xterm.js 6 with the WebGL or DOM renderer. Web blocks are Electron <webview> tags (WebviewTag, per-block partition). Preview blocks route by MIME type to React renderers: react-markdown for Markdown, plus specialised views for image, video, audio and PDF, and a streaming view for media. The terminal has no image protocol: there is no @xterm/addon-image in package.json, and 'Support a graphics protocol' (sixel/kitty/iTerm) is issue #2172, open since 2025-05-17.",
+          "provenance": {"source": "https://github.com/wavetermdev/waveterm/blob/main/frontend/app/view/preview/preview-model.tsx", "confidence": "high"},
+          "note": "[measured] preview-model.tsx mime checks (application/pdf, video/, audio/, image/, text/markdown); webview.tsx imports WebviewTag; package.json xterm addons = fit, search, serialize, web-links, webgl only; issue #2172 read via gh api."
+        },
+        "where_it_draws": {
+          "value": "Split pane. Each preview, web or editor view is a tile ('block') in the tab's tiling layout, created beside the terminal. Blocks can be dragged to re-dock, and 'magnified' (Cmd+M) to fill the tab over the others, the nearest thing Wave has to a floating panel. Nothing is drawn inline in terminal scrollback, so nothing scrolls with text.",
+          "provenance": {"source": "https://github.com/wavetermdev/waveterm/blob/main/docs/docs/tabs.mdx", "confidence": "high"},
+          "note": "[measured] tabs.mdx 'Tab Layout System' (drag blocks by header, resize nodes, 'Magnify a block'); wsh view -m 'opens in magnified block'."
+        },
+        "input_model": {
+          "value": "Block focus model: click, or Ctrl+Shift+arrows/hjkl/1-9, moves focus between blocks, and the focused block receives keys. In web blocks Cmd+L focuses the URL bar and Escape hands focus to the page. Wave ships a dedicated 'Refocus the current block' key (Cmd+I, 'useful if the block has lost input focus'), which tells you embedded content does steal focus. In terminal blocks, links activate only on Cmd+click (macOS) or Ctrl+click (Linux/Windows).",
+          "provenance": {"source": "https://github.com/wavetermdev/waveterm/blob/main/docs/docs/keybindings.mdx", "confidence": "high"},
+          "note": "[measured] keybindings.mdx table; modifier check read in frontend/app/view/term/termwrap.ts (WebLinksAddon handler: metaKey on macOS, ctrlKey elsewhere)."
+        },
+        "activity": {
+          "value": "22.4k stars · pushed 2026-09-10 · latest release v0.14.5 (2026-04-16)",
+          "provenance": {"source": "measured 2026-09-24: gh api repos/wavetermdev/waveterm", "confidence": "high"},
+          "note": "[measured] stargazers_count 22356; releases/latest v0.14.5 2026-04-16T16:01:54Z; created 2022-06-08."
+        },
+        "td_overlap": {
+          "value": "open-on-click, pane-content, host-protocol, agent-panes",
+          "provenance": {"source": "https://github.com/wavetermdev/waveterm/blob/main/frontend/app/store/global.ts", "confidence": "medium"},
+          "note": "[inferred] open-on-click covers URLs only: openLink() creates a 'web' block when web:openlinksinternally is set, otherwise opens the external browser; file paths are not linkified. host-protocol here is the wsh CLI/RPC, not a graphics escape. agent-panes: Claude Code tab badges via hooks + `wsh badge` (docs/docs/claude-code.mdx)."
+        },
+        "steal_for_td": {
+          "value": "Give Ctrl+click and a CLI the same verb: `td view [-m] [-r <pane>] <path>` over TD's ctl socket, with one resolver that picks the renderer by MIME type (Markdown, image, PDF, video, directory). `-m` opens the result as the floating square; `-r` replaces an existing preview pane instead of adding another split. Wave's `wsh view -m` and `wsh web open -r <blockid>` are this pair, minus the click.",
+          "provenance": {"source": "https://github.com/wavetermdev/waveterm/blob/main/docs/docs/wsh-reference.mdx", "confidence": "medium"},
+          "note": "[inferred] analysis; flags -m/--magnified and -r/--replace are measured from wsh-reference.mdx ('--replace and --magnified cannot be used together')."
+        },
+        "trap": {
+          "value": "Wave never linkified file paths in terminal output. Only URLs go through its WebLinksAddon, so a good preview system is reachable only by typing `wsh view`. Its terminal also has no graphics protocol (#2172). The click is the feature: don't ship the preview pane without the path detector.",
+          "provenance": {"source": "https://github.com/wavetermdev/waveterm/blob/main/frontend/app/view/term/termwrap.ts", "confidence": "medium"},
+          "note": "[inferred] from termwrap.ts (the only link provider is WebLinksAddon; no registerLinkProvider for paths found by gh code search) and issue #2172. Absence of path links is a code-search result, not a statement by the project."
+        },
+        "primary_sources": {
+          "value": "https://github.com/wavetermdev/waveterm https://github.com/wavetermdev/waveterm/blob/main/docs/docs/wsh-reference.mdx https://github.com/wavetermdev/waveterm/blob/main/docs/docs/keybindings.mdx https://github.com/wavetermdev/waveterm/blob/main/docs/docs/tabs.mdx https://github.com/wavetermdev/waveterm/blob/main/docs/docs/claude-code.mdx https://github.com/wavetermdev/waveterm/blob/main/frontend/app/view/term/termwrap.ts https://github.com/wavetermdev/waveterm/blob/main/frontend/app/store/global.ts https://github.com/wavetermdev/waveterm/blob/main/frontend/app/view/preview/preview-model.tsx https://github.com/wavetermdev/waveterm/blob/main/frontend/app/view/webview/webview.tsx https://github.com/wavetermdev/waveterm/blob/main/package.json https://github.com/wavetermdev/waveterm/issues/2172",
+          "provenance": {"source": "https://github.com/wavetermdev/waveterm", "confidence": "high"},
+          "note": "[measured] all read via gh api this session."
+        }
+      }
+    },
+    {
+      "id": "warp",
+      "fields": {
+        "what_it_is": {
+          "value": "Warp is a Rust, GPU-rendered terminal, now billed as an 'agentic development environment', that groups output into command 'blocks'. It renders Markdown (including Mermaid) in a built-in viewer pane, opens files in its own editor pane, and draws inline images via the Kitty and iTerm2 image protocols. NOT closed source any more: the client was open-sourced in late April 2026 (AGPL-3.0; UI framework MIT).",
+          "provenance": {"source": "https://github.com/warpdotdev/Warp", "confidence": "high"},
+          "note": "[measured] README: 'Warp's client codebase is open source and lives in this repository'; Licensing section; 65 MB of Rust in the repo. The brief's 'closed source' premise is out of date. Open-sourcing date from synthesis (itsfoss, 2026-04-29)."
+        },
+        "license": {
+          "value": "AGPL-3.0 (client); warpui_core and warpui crates MIT",
+          "provenance": {"source": "measured 2026-09-24: gh api repos/warpdotdev/Warp", "confidence": "high"},
+          "note": "[measured] spdx_id AGPL-3.0; README Licensing section names the MIT crates. [inferred] The Oz cloud agent platform stays proprietary (synthesis: https://itsfoss.com/news/warp-goes-open-source/)."
+        },
+        "language": {
+          "value": "Rust (~65.6 MB of ~67 MB), plus Shell, Python, Objective-C, WGSL and Metal shaders",
+          "provenance": {"source": "measured 2026-09-24: gh api repos/warpdotdev/Warp/languages", "confidence": "high"},
+          "note": "[measured] languages endpoint."
+        },
+        "graphics_mechanism": {
+          "value": "Native GPU drawing through Warp's own Rust UI framework (warpui; WGSL and Metal shaders in the repo). The terminal model is an Alacritty-derived fork (crates/warp_terminal/src/model ships LICENSE-ALACRITTY) extended with three pieces: a Kitty graphics protocol parser (kitty.rs: StoreOnly, StoreAndDisplay, DisplayStoredImage, QuerySupport, Delete; zlib payloads), an iTerm2 inline-image parser (iterm_image.rs), and an ImageMap that keys each image placement to an absolute grid point. Markdown files open in a FileNotebookView-backed file pane, with Mermaid rendered as SVG.",
+          "provenance": {"source": "https://github.com/warpdotdev/Warp/blob/master/crates/warp_terminal/src/model/kitty.rs", "confidence": "high"},
+          "note": "[measured] read kitty.rs, image_map.rs, grid/image.rs, app/src/pane_group/pane/file_pane.rs via gh api; Mermaid-as-SVG from docs.warp.dev Markdown Viewer page."
+        },
+        "where_it_draws": {
+          "value": "Two places. Kitty/iTerm2 images are cell-anchored in the block's grid: ImageMap stores placements by absolute row and corrects for lines truncated from scrollback, so images scroll with the output. Markdown files open rendered in a split pane beside the terminal. Other files open in Warp's code-editor pane, or an external editor chosen in Settings > Code > Editor and Code Review.",
+          "provenance": {"source": "https://docs.warp.dev/terminal/more-features/markdown-viewer/", "confidence": "high"},
+          "note": "[measured] docs: rendered Markdown in 'a split pane'; image_map.rs comment on absolute positions and num_lines_truncated_at_last_update. Whether a Ctrl+clicked .png opens inside Warp is not documented; see gap bubble."
+        },
+        "input_model": {
+          "value": "Cmd+click (macOS) or Ctrl+click (Linux, Windows) opens a detected path or URL. Without the modifier, a hover tooltip offers 'Open File/Folder/Link'; right-click copies the absolute path. After opening, open_highlighted_link() puts focus back on the terminal's input editor, not the new pane. Path detection runs on a background thread (dropping any previous scan), resolves relative paths against the hovered block's own pwd, and is skipped for remote sessions and while vim or nano is running.",
+          "provenance": {"source": "https://github.com/warpdotdev/Warp/blob/master/app/src/terminal/view/link_detection.rs", "confidence": "high"},
+          "note": "[measured] link_detection.rs: ctx.focus(&self.input) in open_highlighted_link; scan_for_file_path comments; modifier behaviour from https://docs.warp.dev/terminal/more-features/files-and-links/."
+        },
+        "activity": {
+          "value": "65.2k stars · pushed 2026-09-24 · latest GitHub release v0.2026.06.03.09.49.stable_00 (2026-06-03)",
+          "provenance": {"source": "measured 2026-09-24: gh api repos/warpdotdev/Warp", "confidence": "high"},
+          "note": "[measured] stars 65159. [inferred] Warp ships builds outside GitHub releases, so the GitHub 'latest' may lag the shipping app."
+        },
+        "td_overlap": {
+          "value": "open-on-click, pane-content, host-protocol, agent-panes, same-stack",
+          "provenance": {"source": "https://github.com/warpdotdev/Warp", "confidence": "medium"},
+          "note": "[inferred] same-stack: Rust plus an Alacritty-derived terminal model (not the alacritty_terminal crate, not gpui). agent-panes: built-in agent plus third-party CLI agents (README)."
+        },
+        "steal_for_td": {
+          "value": "Anchor every image placement to an absolute scrollback row plus a lines-truncated counter, as Warp's ImageMap does, so Kitty/iTerm2 images (and TD's own inline previews) stay glued to their text when alacritty_terminal evicts history. Store the truncation count at insert time and correct the key on read. That's the layer alacritty_terminal lacks.",
+          "provenance": {"source": "https://github.com/warpdotdev/Warp/blob/master/crates/warp_terminal/src/model/image_map.rs", "confidence": "medium"},
+          "note": "[inferred] analysis over measured code. AGPL-3.0: read for the pattern, don't paste it into TD unless TD is AGPL-compatible."
+        },
+        "trap": {
+          "value": "Parsing a protocol isn't enough if the terminal doesn't advertise it. Warp parses Kitty graphics, but #12058 (open) reports its DA1 reply is just '62', so apps that negotiate capability never send images. Related, #12566: the image cache is keyed by (asset, size) with no eviction, so resizing a Markdown viewer that holds an image piles up copies.",
+          "provenance": {"source": "https://github.com/warpdotdev/warp/issues/12058", "confidence": "high"},
+          "note": "[measured] both issues read via gh api (created 2026-06-02 and 2026-06-12, open)."
+        },
+        "primary_sources": {
+          "value": "https://github.com/warpdotdev/Warp https://github.com/warpdotdev/Warp/blob/master/crates/warp_terminal/src/model/kitty.rs https://github.com/warpdotdev/Warp/blob/master/crates/warp_terminal/src/model/image_map.rs https://github.com/warpdotdev/Warp/blob/master/crates/warp_terminal/src/model/grid/image.rs https://github.com/warpdotdev/Warp/blob/master/app/src/terminal/view/link_detection.rs https://github.com/warpdotdev/Warp/blob/master/app/src/pane_group/pane/file_pane.rs https://docs.warp.dev/terminal/more-features/markdown-viewer/ https://docs.warp.dev/terminal/more-features/files-and-links/ https://github.com/warpdotdev/warp/issues/12058 https://github.com/warpdotdev/warp/issues/12566 https://github.com/warpdotdev/warp/issues/8741 synthesis:https://itsfoss.com/news/warp-goes-open-source/",
+          "provenance": {"source": "https://github.com/warpdotdev/Warp", "confidence": "high"},
+          "note": "[measured] repo files via gh api; docs via WebFetch; itsfoss is secondary."
+        }
+      }
+    },
+    {
+      "id": "zed-terminal",
+      "fields": {
+        "what_it_is": {
+          "value": "Zed's integrated terminal is a terminal view inside the Zed editor, built on gpui (Zed's GPU UI framework) and alacritty_terminal (a Zed fork pinned by git rev): TD's exact stack. It draws no graphics inside the terminal, but Cmd/Ctrl-clicking a path in its output opens the file as a workspace item. Images open in Zed's ImageView; Markdown opens as an editor tab, with a separate 'open preview to the side' action.",
+          "provenance": {"source": "https://github.com/zed-industries/zed/blob/main/crates/terminal_view/src/terminal_path_like_target.rs", "confidence": "high"},
+          "note": "[measured] terminal Cargo.toml depends on alacritty_terminal + gpui; workspace Cargo.toml pins alacritty_terminal to github.com/zed-industries/alacritty rev 4c129667; image_viewer registers ImageView as a ProjectItem; markdown_preview exports OpenPreviewToTheSide."
+        },
+        "license": {
+          "value": "GPL-3.0-or-later (crates/terminal, terminal_view, image_viewer); gpui is Apache-2.0",
+          "provenance": {"source": "measured 2026-09-24: gh api repos/zed-industries/zed", "confidence": "high"},
+          "note": "[measured] repo-level spdx_id is NOASSERTION (mixed licences); per-crate licence fields read from each Cargo.toml."
+        },
+        "language": {
+          "value": "Rust (~60.3 MB), with WGSL/Metal/HLSL shaders for gpui",
+          "provenance": {"source": "measured 2026-09-24: gh api repos/zed-industries/zed/languages", "confidence": "high"},
+          "note": "[measured] languages endpoint."
+        },
+        "graphics_mechanism": {
+          "value": "Native GPU drawing via gpui. terminal_element paints alacritty_terminal cells as text runs and quads. The image viewer decodes into a gpui RenderImage and releases it with window.drop_image when replaced. The terminal supports no image protocol. The Kitty/iTerm2/sixel request (#20860) was closed as not_planned on 2024-11-19: 'Zed uses Alacritty and does not modify it... all related issues should go there'. A PR swapping in rio-vt, which parses sixel/Kitty/iTerm2, was closed unmerged within minutes (#62149, 2026-08-04).",
+          "provenance": {"source": "https://github.com/zed-industries/zed/issues/20860", "confidence": "high"},
+          "note": "[measured] issue + comments and PR #62149 read via gh api; drop_image calls seen in crates/image_viewer/src/image_viewer.rs."
+        },
+        "where_it_draws": {
+          "value": "Split pane / tab. The terminal lives in a dock panel or a center pane. A clicked path goes through workspace.open_paths and opens as a tab in the center pane group: images as an ImageView tab, source files in an editor at row:column, and directories reveal the project panel. Markdown preview is a separate split via 'open preview to the side'. Nothing is drawn inline in the scrollback.",
+          "provenance": {"source": "https://github.com/zed-industries/zed/blob/main/crates/editor/src/items.rs", "confidence": "high"},
+          "note": "[measured] open_resolved_target() in editor/src/items.rs calls workspace.open_paths, then go_to_singleton_buffer_point for row/col, or emits ActivateProjectPanel for directories."
+        },
+        "input_model": {
+          "value": "Hold the 'secondary' modifier (Cmd on macOS, Ctrl on Linux/Windows) and click. Hovering first resolves the target asynchronously and shows a tooltip, and the click opens only if the hover resolved something. When a TUI has mouse reporting on, clicks go to the program unless Shift is held or the open_links_in_mouse_mode setting is on. Relative paths resolve against the cwd in force at the clicked line (cwd_history), trying the closest worktree first and stripping git's a/ and b/ prefixes.",
+          "provenance": {"source": "https://github.com/zed-industries/zed/blob/main/crates/terminal/src/terminal.rs", "confidence": "high"},
+          "note": "[measured] terminal.rs mouse_down/mouse_up (modifiers.secondary(), open_links_in_mouse_mode), cwd_at_line(); workspace/src/path_link.rs prefixes_to_strip ['a','b','.']; terminal_path_like_target.rs (hover before open)."
+        },
+        "activity": {
+          "value": "90.8k stars · pushed 2026-09-24 · latest release v1.21.0 (2026-09-23)",
+          "provenance": {"source": "measured 2026-09-24: gh api repos/zed-industries/zed", "confidence": "high"},
+          "note": "[measured] stars 90825."
+        },
+        "td_overlap": {
+          "value": "open-on-click, pane-content, same-stack",
+          "provenance": {"source": "https://github.com/zed-industries/zed/blob/main/crates/terminal/Cargo.toml", "confidence": "high"},
+          "note": "[measured] gpui + alacritty_terminal. agent-panes left out: Zed's agent panel wasn't examined this session."
+        },
+        "steal_for_td": {
+          "value": "Copy Zed's cwd_history. At every command boundary (OSC 133/OSC 7 in TD), push (scrollback_position, cwd). When a path is Ctrl+clicked, resolve it against the cwd in force at that line. Then hand the absolute path to one 'open target' resolver that picks the pane item by file type: image viewer, Markdown preview, or HTML brief. It's about 50 lines in crates/terminal/src/terminal.rs, written against the same alacritty_terminal grid TD uses.",
+          "provenance": {"source": "https://github.com/zed-industries/zed/blob/main/crates/terminal/src/terminal.rs", "confidence": "medium"},
+          "note": "[inferred] analysis. record_cwd_change/cwd_at_line measured. Zed's cwd comes from PTY process polling (pty_info.rs) plus command boundaries. GPL-3.0: reimplement the pattern, don't paste code."
+        },
+        "trap": {
+          "value": "Don't wait for alacritty_terminal to grow graphics. Zed did, and closed image support as not_planned, deferring to alacritty#910, which has been open since 2017 (225 comments). Also mind the scrollback cap: cwd_at_line gives up once history_size reaches scrolling_history, because 'evictions move retained lines without changing history_size, so stored row offsets no longer identify their original lines'. Any row-keyed anchor TD keeps (cwd, image, preview) needs a monotonic line counter.",
+          "provenance": {"source": "https://github.com/alacritty/alacritty/issues/910", "confidence": "high"},
+          "note": "[measured] alacritty#910 state open, 225 comments; graphics PR alacritty#4763 still open; comment quoted from zed terminal.rs cwd_at_line."
+        },
+        "primary_sources": {
+          "value": "https://github.com/zed-industries/zed/blob/main/crates/terminal/src/terminal.rs https://github.com/zed-industries/zed/blob/main/crates/terminal/src/alacritty/hyperlinks.rs https://github.com/zed-industries/zed/blob/main/crates/terminal/Cargo.toml https://github.com/zed-industries/zed/blob/main/crates/terminal_view/src/terminal_path_like_target.rs https://github.com/zed-industries/zed/blob/main/crates/workspace/src/path_link.rs https://github.com/zed-industries/zed/blob/main/crates/editor/src/items.rs https://github.com/zed-industries/zed/blob/main/crates/image_viewer/src/image_viewer.rs https://github.com/zed-industries/zed/blob/main/crates/markdown_preview/src/markdown_preview.rs https://github.com/zed-industries/zed/issues/20860 https://github.com/zed-industries/zed/pull/62149 https://github.com/zed-industries/zed/issues/13605 https://github.com/alacritty/alacritty/issues/910",
+          "provenance": {"source": "https://github.com/zed-industries/zed", "confidence": "high"},
+          "note": "[measured] all via gh api this session."
+        }
+      }
+    },
+    {
+      "id": "extraterm",
+      "fields": {
+        "what_it_is": {
+          "value": "Extraterm is a TypeScript terminal emulator: Qt via NodeGui since v0.60, with the older Electron build frozen at v0.59.4. Its shell integration wraps each command's output in a 'frame', and its `show` command displays files, both highlighted text and common image formats, directly in the terminal. Frames can be popped out into their own tab.",
+          "provenance": {"source": "https://extraterm.org/guide.html", "confidence": "high"},
+          "note": "[measured] guide: show is 'a general tool for showing the contents of a file inside the terminal... can also show the most common image formats directly in the terminal'; README download section for the Qt/Electron split."
+        },
+        "license": {
+          "value": "MIT",
+          "provenance": {"source": "measured 2026-09-24: gh api repos/sedwards2009/extraterm", "confidence": "high"},
+          "note": "[measured] spdx_id MIT."
+        },
+        "language": {
+          "value": "TypeScript (~1.99 MB) on NodeGui 0.74 (Qt bindings for Node/V8)",
+          "provenance": {"source": "measured 2026-09-24: gh api repos/sedwards2009/extraterm/languages", "confidence": "high"},
+          "note": "[measured] languages endpoint; @nodegui/nodegui 0.74.0 in package.json."
+        },
+        "graphics_mechanism": {
+          "value": "Native Qt widgets inserted into the terminal as 'blocks'. `show` sends a file to the terminal as a 'bulk file' with a MIME type over Extraterm's shell-integration channel (main/src/bulk_file_handling). The terminal hands it to a registered block type, such as the ImageBlock extension (registerBlock('image-block'), a Qt image widget in a sized scroll area). Since v0.77.0 (2024-05-14) it also parses the iTerm2 inline image protocol (main/src/emulator/ITermParameters.ts, 128 MB payload cap). No Kitty graphics or sixel found in the tree.",
+          "provenance": {"source": "https://github.com/sedwards2009/extraterm/blob/master/extensions/ImageBlock/src/ImageBlockExtension.ts", "confidence": "medium"},
+          "note": "[measured] ImageBlockExtension.ts, ITermParameters.ts, v0.77.0 release post. [inferred] The exact wire format of the bulk-file channel wasn't read; see gap bubble."
+        },
+        "where_it_draws": {
+          "value": "Inline in scrollback. Frames and image blocks sit between terminal lines and scroll with them, and a frame's title bar stays visible while you scroll through long output. A frame's 'pop out' icon, or dragging its title bar up to the tab bar, moves the output into its own tab.",
+          "provenance": {"source": "https://extraterm.org/guide.html", "confidence": "high"},
+          "note": "[measured] guide: 'the frame's title bar will remain visible'; 'Frames can be dragged by their title bars up into a group of tabs to move them out of their terminal and into their own tab.'"
+        },
+        "input_model": {
+          "value": "Frames have title-bar controls: delete, pop out, and a numbered tag that the `from` command uses to pipe a frame's content into a new command. In selection mode a frame's content can be edited in place before reuse. How keys are routed between the terminal and a focused block widget isn't documented beyond that.",
+          "provenance": {"source": "https://extraterm.org/guide.html", "confidence": "medium"},
+          "note": "[measured] for frame controls/from/selection-mode editing; [hunch] nothing found on keyboard focus into image blocks."
+        },
+        "activity": {
+          "value": "2.8k stars · pushed 2026-06-05 · latest release v0.82.0 (2026-05-10)",
+          "provenance": {"source": "measured 2026-09-24: gh api repos/sedwards2009/extraterm", "confidence": "high"},
+          "note": "[measured] stars 2826."
+        },
+        "td_overlap": {
+          "value": "pane-content, host-protocol",
+          "provenance": {"source": "https://extraterm.org/guide.html", "confidence": "medium"},
+          "note": "[inferred] pane-content via frame pop-out to a tab; host-protocol via iTerm2 IIP and the show/bulk-file channel. Links go through the OpenLink extension to external handlers, so no open-on-click-inside."
+        },
+        "steal_for_td": {
+          "value": "Make placement reversible. Extraterm output can live inline as a frame and be popped out (icon, or drag to the tab bar) into its own tab. TD's floating square should have a one-key 'dock to split' and the split an 'undock to float', so the choice made at Ctrl+click time is never final.",
+          "provenance": {"source": "https://extraterm.org/guide.html", "confidence": "medium"},
+          "note": "[inferred] analysis."
+        },
+        "trap": {
+          "value": "Extraterm built its rich frames on a DOM (Electron), then had to rewrite the UI on Qt (#348, 2021). The rewrite dropped splits and panes ('using desktop or operating system's window management' instead) and left the Electron build frozen at v0.59.4. A rich-output design tied to one toolkit's layout engine can cost a full rewrite.",
+          "provenance": {"source": "https://github.com/sedwards2009/extraterm/issues/348", "confidence": "medium"},
+          "note": "[measured] #348 marks splits/panes as axed; performance motive from synthesis (extraterm.org Qt transition update / search summary), so medium."
+        },
+        "primary_sources": {
+          "value": "https://github.com/sedwards2009/extraterm https://extraterm.org/guide.html https://github.com/sedwards2009/extraterm/blob/master/extensions/ImageBlock/src/ImageBlockExtension.ts https://github.com/sedwards2009/extraterm/blob/master/main/src/emulator/ITermParameters.ts https://github.com/sedwards2009/extraterm/blob/master/docs/_posts/2024-05-14-extraterm-v0.77.0-released.md https://github.com/sedwards2009/extraterm/issues/348 synthesis:https://extraterm.org/news/2022/01/01/qt-transition-update.html",
+          "provenance": {"source": "https://github.com/sedwards2009/extraterm", "confidence": "high"},
+          "note": "[measured] the Qt transition post was seen only as a search summary, hence synthesis."
+        }
+      }
+    },
+    {
+      "id": "domterm",
+      "fields": {
+        "what_it_is": {
+          "value": "DomTerm is a terminal emulator and multiplexer whose screen is a live DOM document. Programs can print HTML, SVG and images inline (`domterm html`, `domterm hcat`, `domterm imgcat`), and sixel graphics render too. Tabs and panes are GoldenLayout tiles, and `domterm browse URL` opens a web page in a sub-window. Front ends: Electron, Qt WebEngine (qtdomterm), a Rust wry webview, or any browser over WebSocket.",
+          "provenance": {"source": "https://domterm.org/", "confidence": "high"},
+          "note": "[measured] domterm.org feature list, domterm-application.html, repo tree (dt-wry/, qtdomterm/, electron/, hlib/goldenlayout.js)."
+        },
+        "license": {
+          "value": "BSD-3-Clause",
+          "provenance": {"source": "measured 2026-09-24: gh api repos/PerBothner/DomTerm", "confidence": "high"},
+          "note": "[measured] gh api reports NOASSERTION; COPYING (read via gh api) carries the 3-clause BSD text."
+        },
+        "language": {
+          "value": "C++ (~1.43 MB, lws-term backend) and JavaScript (~0.97 MB, hlib front end), plus Java, C and a small Rust wry front end",
+          "provenance": {"source": "measured 2026-09-24: gh api repos/PerBothner/DomTerm/languages", "confidence": "high"},
+          "note": "[measured] languages endpoint; directory names from the git tree."
+        },
+        "graphics_mechanism": {
+          "value": "DOM in an embedded browser engine. OSC 72 inserts an HTML fragment into the output; the HTML 'is sanity-checked for safety', <html>/<body>/<style> are ignored, and the allow-policy lives in terminal.js (elementInfo/allowAttribute), which the docs call 'a work-in-progress'. OSC 721 replaces a previously inserted fragment by key. Images travel as data: URIs, so they work over ssh. Sixel is decoded by a bundled WASM decoder (hlib/sixel-decode.js, node-sixel).",
+          "provenance": {"source": "https://domterm.org/Wire-byte-protocol.html", "confidence": "high"},
+          "note": "[measured] Wire-byte-protocol page; hlib/sixel-decode.js header read via gh api."
+        },
+        "where_it_draws": {
+          "value": "Inline in scrollback: inserted HTML and images are elements in the terminal document and scroll with the text. Panes and tabs are GoldenLayout tiles that can be dragged and docked. `browse` opens 'a new browser window or sub-window'.",
+          "provenance": {"source": "https://domterm.org/domterm-application.html", "confidence": "high"},
+          "note": "[measured] docs; GoldenLayout from hlib/goldenlayout.js and the latest commit 'Update golden-layout' (2026-09-11)."
+        },
+        "input_model": {
+          "value": "Plain links open on a normal click. 'Subtle' links, including auto-detected file:line links, need Ctrl+click or the context menu's Open Link. Clicked file: links go to the backend, which runs the command in open.file.application (templates for Emacs, Atom and others, with %F/%+P substitutions); other URLs use open.link.application. So a Ctrl+clicked path leaves DomTerm for an external viewer rather than opening inside it.",
+          "provenance": {"source": "https://domterm.org/Link-handling.html", "confidence": "high"},
+          "note": "[measured] Link-handling page."
+        },
+        "activity": {
+          "value": "398 stars · pushed 2026-09-11 · latest GitHub release 3.2.0 (2024-01-25)",
+          "provenance": {"source": "measured 2026-09-24: gh api repos/PerBothner/DomTerm", "confidence": "high"},
+          "note": "[measured] recent commits: 2026-09-11 golden-layout update; 2026-08-15 WIP on KDDockWidgets / Qt Advanced Docking System."
+        },
+        "td_overlap": {
+          "value": "host-protocol, pane-content",
+          "provenance": {"source": "https://domterm.org/Wire-byte-protocol.html", "confidence": "medium"},
+          "note": "[inferred] host-protocol = OSC 72/721 plus sixel; pane-content = browse sub-windows in GoldenLayout. Clicked paths go to external apps, so no open-on-click-inside."
+        },
+        "steal_for_td": {
+          "value": "Keyed replace. OSC 721 lets a program update an already-inserted rich element in place by key. Give TD previews a stable key (the resolved path, or a program-chosen id) so that a second Ctrl+click, a `td view`, or a file-change event updates the existing floating square or pane instead of stacking a new one.",
+          "provenance": {"source": "https://domterm.org/Wire-byte-protocol.html", "confidence": "medium"},
+          "note": "[inferred] analysis."
+        },
+        "trap": {
+          "value": "Once the PTY can inject HTML, the sanitizer is a security boundary you maintain forever, and DomTerm's own docs call its allowed-element policy 'a work-in-progress'. TD should render HTML briefs only from a user action (Ctrl+click on a local file), never from bytes a program wrote to the terminal.",
+          "provenance": {"source": "https://domterm.org/Wire-byte-protocol.html", "confidence": "medium"},
+          "note": "[inferred] from the doc's own wording."
+        },
+        "primary_sources": {
+          "value": "https://domterm.org/ https://domterm.org/domterm-application.html https://domterm.org/Link-handling.html https://domterm.org/Wire-byte-protocol.html https://github.com/PerBothner/DomTerm https://github.com/PerBothner/DomTerm/blob/master/COPYING https://github.com/PerBothner/DomTerm/blob/master/hlib/domterm-overlays.js https://github.com/PerBothner/DomTerm/blob/master/hlib/sixel-decode.js",
+          "provenance": {"source": "https://domterm.org/", "confidence": "high"},
+          "note": "[measured] docs via WebFetch (summarised by the fetch model, quotes checked), repo via gh api."
+        }
+      }
+    },
+    {
+      "id": "hyper",
+      "fields": {
+        "what_it_is": {
+          "value": "Hyper is Vercel's Electron terminal, built on xterm.js with React/Redux and customised through npm plugins that decorate its React components. Inline images exist only on the 4.0 canary line, as an opt-in xterm.js image addon (sixel and iTerm2).",
+          "provenance": {"source": "https://github.com/vercel/hyper", "confidence": "high"},
+          "note": "[measured] package.json on the canary branch (version 4.0.0-canary.5, xterm 5.3.0, xterm-addon-image 0.5.0); PLUGINS.md."
+        },
+        "license": {
+          "value": "MIT",
+          "provenance": {"source": "measured 2026-09-24: gh api repos/vercel/hyper", "confidence": "high"},
+          "note": "[measured] spdx_id MIT."
+        },
+        "language": {
+          "value": "TypeScript (~0.30 MB); Electron 22.3.25 in 4.0.0-canary.5",
+          "provenance": {"source": "measured 2026-09-24: gh api repos/vercel/hyper/languages", "confidence": "high"},
+          "note": "[measured] languages endpoint; Electron from package.json."
+        },
+        "graphics_mechanism": {
+          "value": "DOM and canvas via xterm.js 5.3. When `imageSupport` is set, lib/components/term.tsx loads xterm-addon-image 0.5.0, which decodes sixel and iTerm2 IIP and draws onto a layer above the WebGL/canvas text renderer. Added by PR #6987 ('Add support for displaying Sixels'), merged to canary on 2023-06-16. Links use xterm-addon-web-links and shell.openExternal, i.e. the OS browser.",
+          "provenance": {"source": "https://github.com/vercel/hyper/blob/canary/lib/components/term.tsx", "confidence": "high"},
+          "note": "[measured] term.tsx lines importing ImageAddon/WebLinksAddon; PR #6987 merged_at via gh api."
+        },
+        "where_it_draws": {
+          "value": "Inline in scrollback: images are cell-anchored by the xterm.js image addon and scroll with the text. Clicked links leave Hyper for the default external handler; there's no built-in preview pane.",
+          "provenance": {"source": "https://github.com/vercel/hyper/blob/canary/lib/components/term.tsx", "confidence": "medium"},
+          "note": "[inferred] cell anchoring is xterm addon-image behaviour, not re-read in the addon source this session; external open measured."
+        },
+        "input_model": {
+          "value": "xterm.js owns keyboard focus in the active term. Web links fire on click, or only with a modifier when `webLinksActivationKey` is set (ctrl, meta, shift or alt). Plugins can remap keys via decorateKeymaps and wrap Term/Terms as React higher-order components, but must call onDecorated or they break the chain for other plugins.",
+          "provenance": {"source": "https://github.com/vercel/hyper/blob/canary/PLUGINS.md", "confidence": "high"},
+          "note": "[measured] PLUGINS.md warning about onDecorated; term.tsx shallActivateWebLink."
+        },
+        "activity": {
+          "value": "44.7k stars · pushed 2026-08-21 · latest stable v3.4.1 (2023-01-08); newest prerelease v4.0.0-canary.5 (2023-07-13)",
+          "provenance": {"source": "measured 2026-09-24: gh api repos/vercel/hyper", "confidence": "high"},
+          "note": "[measured] recent commits are chores (2026-08-21 workflow delete, 2026-05-21 pnpm switch); last dependency bumps April 2024. Effectively dormant."
+        },
+        "td_overlap": {
+          "value": "host-protocol",
+          "provenance": {"source": "https://github.com/vercel/hyper/blob/canary/lib/components/term.tsx", "confidence": "medium"},
+          "note": "[inferred] canary-only sixel/IIP. No open-on-click-inside, no panes of non-terminal content in core."
+        },
+        "steal_for_td": {
+          "value": "Put the image-protocol decoders behind one capability switch that the grid consults. Hyper just loads the addon when imageSupport is true, so TD could ship sixel/Kitty/iTerm2 decoding dark, turn it on per profile, and bisect regressions without touching the text renderer. Low value: Hyper adds little TD doesn't get elsewhere in this cluster.",
+          "provenance": {"source": "https://github.com/vercel/hyper/blob/canary/lib/components/term.tsx", "confidence": "low"},
+          "note": "[inferred] weak idea, stated as such."
+        },
+        "trap": {
+          "value": "Shipping on canary isn't shipping. Sixel support merged to canary in June 2023, but the stable line is still v3.4.1 from January 2023, so most Hyper users never got images (#6748). A 2026 report (#8209) finds Windows ConPTY swallowing sixel even on canary. TD's graphics must land in the build Parker actually runs.",
+          "provenance": {"source": "https://github.com/vercel/hyper/issues/8209", "confidence": "high"},
+          "note": "[measured] release dates, PR #6987 merge date, issues #6748/#8209 via gh api."
+        },
+        "primary_sources": {
+          "value": "https://github.com/vercel/hyper https://github.com/vercel/hyper/blob/canary/package.json https://github.com/vercel/hyper/blob/canary/lib/components/term.tsx https://github.com/vercel/hyper/blob/canary/PLUGINS.md https://github.com/vercel/hyper/pull/6987 https://github.com/vercel/hyper/issues/6748 https://github.com/vercel/hyper/issues/8209",
+          "provenance": {"source": "https://github.com/vercel/hyper", "confidence": "high"},
+          "note": "[measured] via gh api."
+        }
+      }
+    },
+    {
+      "id": "terminology",
+      "label": "Terminology — Enlightenment's terminal (tycat/typop, click-to-popup media)",
+      "group": "A · Terminals that are also a workspace",
+      "fields": {
+        "what_it_is": {
+          "value": "Terminology is the EFL (Enlightenment) terminal. Clicking a link to an image, video or Edje file pops the media up inside the terminal window. Its ty* helpers drive the same machinery from the shell over a private 'ESC } ... NUL' escape protocol: tycat (inline), typop (popup), tyq (queue), tybg (background), tyls (listing with thumbnails).",
+          "provenance": {"source": "https://github.com/borisfaure/terminology/blob/master/README.md", "confidence": "high"},
+          "note": "[measured] README companion tools + extended escapes; click-to-popup path read in src/bin/termio.c _activate_link()."
+        },
+        "license": {
+          "value": "BSD-2-Clause",
+          "provenance": {"source": "measured 2026-09-24: gh api repos/borisfaure/terminology", "confidence": "high"},
+          "note": "[measured] gh api reports NOASSERTION; COPYING opens 'Copyright notice for Terminology (BSD 2-Clause License)'."
+        },
+        "language": {
+          "value": "C (~1.45 MB) on EFL/Elementary, Meson build",
+          "provenance": {"source": "measured 2026-09-24: gh api repos/borisfaure/terminology/languages", "confidence": "high"},
+          "note": "[measured] languages endpoint."
+        },
+        "graphics_mechanism": {
+          "value": "Native EFL canvas (Evas, optionally OpenGL). The terminal's own escapes carry a local file path or URL, not pixels. `pn`/`pq` pop up media now or queued. `is`/`ic`/`if`/`it` reserve a WxH cell area, filled with a chosen 'replace character' between `ib`/`ie` markers, and draw the media over those cells: stretched, centred, filled, or as a cached thumbnail with a click-through link. `ij` embeds a live Edje object that can send signals back on stdin. No sixel ('Sixel/ReGIS Graphics Attributes: TODO' in termptyesc.c) and no Kitty graphics.",
+          "provenance": {"source": "https://github.com/borisfaure/terminology/blob/master/README.md", "confidence": "high"},
+          "note": "[measured] README escape table; termptyesc.c grep for sixel/kitty."
+        },
+        "where_it_draws": {
+          "value": "Two ways. Popups (a click, typop, or `pn`) are a floating layer swallowed into the theme's 'terminology.popmedia' part over the terminal, with image, scale, edje and movie variants. Escape closes it, and hover-link detection pauses while it's up. Inline media (tycat, `is` and friends) is cell-anchored over placeholder characters in the grid, so it scrolls with the text.",
+          "provenance": {"source": "https://github.com/borisfaure/terminology/blob/master/src/bin/win.c", "confidence": "high"},
+          "note": "[measured] win.c _popmedia_show (elm_layout_content_set(term->bg, 'terminology.popmedia', o); termio_mouseover_suspend_pushpop), Escape handling near line 1883."
+        },
+        "input_model": {
+          "value": "The inverse of TD's plan. With helper.inline_please on, a plain click on a media link pops it up inside Terminology, and Ctrl+click skips the popup and runs the external helper (xdg-open, or a per-type command for image, video or general). Link activation waits 0.2 s so a double-click can cancel it. Unknown URLs get an HTTP HEAD (2.5 s timeout) to learn their type first. Links that arrived via OSC 8 escapes are gated by a separate setting (active_links_escape).",
+          "provenance": {"source": "https://github.com/borisfaure/terminology/blob/master/src/bin/termio.c", "confidence": "high"},
+          "note": "[measured] termio.c _should_inline() returns false when Control is held; _cb_link_up schedules a 0.2 s timer; win.c _popmedia_unknown HEAD request with ecore_timer_add(2.5)."
+        },
+        "activity": {
+          "value": "738 stars on the GitHub mirror (canonical repo is git.enlightenment.org) · pushed 2026-09-22 · latest tag v1.14.0 (2025-03-23)",
+          "provenance": {"source": "measured 2026-09-24: gh api repos/borisfaure/terminology", "confidence": "high"},
+          "note": "[measured] no GitHub releases; tag date from gh api commits/v1.14.0."
+        },
+        "td_overlap": {
+          "value": "open-on-click, floating, host-protocol",
+          "provenance": {"source": "https://github.com/borisfaure/terminology/blob/master/src/bin/termio.c", "confidence": "high"},
+          "note": "[measured] click opens media inside the terminal as a floating popup. The closest prior art in this cluster to TD's Ctrl+click-opens-inside, with the modifier meaning reversed."
+        },
+        "steal_for_td": {
+          "value": "Split trust by who asked. In Terminology a user's click may fall back to launching an external program, but a popup requested by an escape sequence may only render inline and never falls back to xdg-open (_popmedia_unknown's fallback_allowed = from_user_interaction). TD should route Ctrl+click and program-requested previews through the same popup code, with that one boolean deciding whether anything outside TD may be launched.",
+          "provenance": {"source": "https://github.com/borisfaure/terminology/blob/master/src/bin/win.c", "confidence": "medium"},
+          "note": "[inferred] analysis; code comment measured: 'If it comes from a user interaction (click on a link), allow fallback to xdg-open. Otherwise, it's from terminology's escape code. Thus don't allow fallback and only display content inline.'"
+        },
+        "trap": {
+          "value": "A private protocol that passes file paths keeps the feature local and lonely. 'ESC }' escapes name a path on the terminal's own machine, so remote hosts need tysend, and without sixel or Kitty support, mainstream image tools can't target Terminology at all. TD should speak Kitty graphics and keep a private protocol only for what Kitty can't express.",
+          "provenance": {"source": "https://github.com/borisfaure/terminology/blob/master/README.md", "confidence": "medium"},
+          "note": "[inferred] from README (paths, tysend) and termptyesc.c (sixel TODO). That tools like chafa/timg/yazi skip Terminology is a [hunch], not checked this session."
+        },
+        "primary_sources": {
+          "value": "https://github.com/borisfaure/terminology https://github.com/borisfaure/terminology/blob/master/README.md https://github.com/borisfaure/terminology/blob/master/src/bin/termio.c https://github.com/borisfaure/terminology/blob/master/src/bin/win.c https://github.com/borisfaure/terminology/blob/master/src/bin/termptyesc.c https://github.com/borisfaure/terminology/blob/master/COPYING",
+          "provenance": {"source": "https://github.com/borisfaure/terminology", "confidence": "high"},
+          "note": "[measured] GitHub mirror read via gh api; canonical host is git.enlightenment.org/enlightenment/terminology."
+        }
+      }
+    },
+    {
+      "id": "vscode-terminal",
+      "label": "VS Code integrated terminal — xterm.js link providers + image addon",
+      "group": "A · Terminals that are also a workspace",
+      "fields": {
+        "what_it_is": {
+          "value": "The integrated terminal in Visual Studio Code is an xterm.js terminal inside the editor workbench. It detects URLs, file and folder paths, and fallback 'word' links; Ctrl/Cmd+click opens a file in an editor tab at line:column. With terminal.integrated.enableImages on, it renders sixel and iTerm2 inline images.",
+          "provenance": {"source": "https://code.visualstudio.com/docs/terminal/basics", "confidence": "high"},
+          "note": "[measured] Links section of terminal basics; Image support section of terminal advanced."
+        },
+        "license": {
+          "value": "MIT",
+          "provenance": {"source": "measured 2026-09-24: gh api repos/microsoft/vscode", "confidence": "high"},
+          "note": "[measured] for the Code-OSS repo. [inferred] Microsoft's branded VS Code build ships under a separate product licence."
+        },
+        "language": {
+          "value": "TypeScript (~174.5 MB), plus CSS, JavaScript, Rust (CLI)",
+          "provenance": {"source": "measured 2026-09-24: gh api repos/microsoft/vscode/languages", "confidence": "high"},
+          "note": "[measured] languages endpoint."
+        },
+        "graphics_mechanism": {
+          "value": "DOM and canvas via xterm.js: the image addon decodes sixel and iTerm2 IIP and draws above the WebGL/DOM text renderer. Documented limits: images aren't serialized (a reload loses them), aren't included in copy-as-HTML, animated GIFs don't play, and images shorter than a cell render wrongly.",
+          "provenance": {"source": "https://code.visualstudio.com/docs/terminal/advanced", "confidence": "high"},
+          "note": "[measured] 'Image support' section. The addon internals were not re-read here."
+        },
+        "where_it_draws": {
+          "value": "Images: inline in scrollback, cell-anchored, scrolling with the text. Clicked files open in a new pinned editor tab in the editor area; folders open a new VS Code window, or reveal in the explorer when inside the workspace. The terminal itself can live in the panel or as an editor tab.",
+          "provenance": {"source": "https://github.com/microsoft/vscode/blob/main/src/vs/workbench/contrib/terminalContrib/links/browser/terminalLinkOpeners.ts", "confidence": "high"},
+          "note": "[measured] TerminalLocalFileLinkOpener -> editorService.openEditor; folder openers in the same file; docs: folder links 'will open a new VS Code window at the folder'. [inferred] image files land in VS Code's built-in image preview editor."
+        },
+        "input_model": {
+          "value": "Ctrl/Cmd+click activates links. Low-confidence word links only underline while Ctrl/Cmd is held, and unresolved ones fall back to a Quick Open search. 'Open Detected Link' lists every detected link in a quick pick for keyboard users. Keys go to the shell, except commands listed in terminal.integrated.commandsToSkipShell, which the workbench keeps; sendKeybindingsToShell flips that.",
+          "provenance": {"source": "https://code.visualstudio.com/docs/terminal/advanced", "confidence": "high"},
+          "note": "[measured] docs; TerminalSearchLinkOpener -> quickInputService.quickAccess.show(text) in terminalLinkOpeners.ts."
+        },
+        "activity": {
+          "value": "192.9k stars · pushed 2026-09-24 · latest release 1.139.0 (2026-09-23)",
+          "provenance": {"source": "measured 2026-09-24: gh api repos/microsoft/vscode", "confidence": "high"},
+          "note": "[measured] stars 192860."
+        },
+        "td_overlap": {
+          "value": "open-on-click, pane-content, host-protocol",
+          "provenance": {"source": "https://code.visualstudio.com/docs/terminal/basics", "confidence": "high"},
+          "note": "[measured] Ctrl+click opens inside the app (editor tab); sixel/IIP via the image addon."
+        },
+        "steal_for_td": {
+          "value": "Open with revealIfOpened. TerminalLocalFileLinkOpener calls editorService.openEditor with { pinned: true, selection, revealIfOpened: true }, so Ctrl+clicking a file that's already open focuses that editor and jumps to the line instead of opening a duplicate. TD should do the same: if a pane or floating square already shows that path, raise and scroll it rather than add another split.",
+          "provenance": {"source": "https://github.com/microsoft/vscode/blob/main/src/vs/workbench/contrib/terminalContrib/links/browser/terminalLinkOpeners.ts", "confidence": "medium"},
+          "note": "[inferred] analysis over measured code (lines ~41-52)."
+        },
+        "trap": {
+          "value": "Images vanish on reload because the addon's images aren't serialized; the VS Code docs list it as a known limitation. TD's sessions outlive its window through the client/server split, so image placements have to be part of what gets persisted, or reattached panes will show holes.",
+          "provenance": {"source": "https://code.visualstudio.com/docs/terminal/advanced", "confidence": "medium"},
+          "note": "[inferred] the VS Code limitation is measured; its application to TD's session model is inference from what I know of TD, not checked in TD's code this session."
+        },
+        "primary_sources": {
+          "value": "https://code.visualstudio.com/docs/terminal/basics https://code.visualstudio.com/docs/terminal/advanced https://github.com/microsoft/vscode/blob/main/src/vs/workbench/contrib/terminalContrib/links/browser/terminalLinkOpeners.ts https://github.com/microsoft/vscode",
+          "provenance": {"source": "https://github.com/microsoft/vscode", "confidence": "high"},
+          "note": "[measured] docs via WebFetch, source via gh api."
+        }
+      }
+    },
+    {
+      "id": "emacs-eaf",
+      "label": "Emacs Application Framework (EAF) — Qt browser/PDF/video inside Emacs windows",
+      "group": "A · Terminals that are also a workspace",
+      "fields": {
+        "what_it_is": {
+          "value": "EAF is a framework that lets Emacs host graphical Python/Qt6 applications, each shown in an Emacs window as if it were a buffer: a QtWebEngine browser, PDF viewer, video and music players, image viewer, Markdown and Org previewers, a terminal, a git client and more. Emacs, a text UI, becomes the window manager for mixed content.",
+          "provenance": {"source": "https://github.com/emacs-eaf/emacs-application-framework", "confidence": "high"},
+          "note": "[measured] README feature list; core/webengine.py present."
+        },
+        "license": {
+          "value": "GPL-3.0",
+          "provenance": {"source": "measured 2026-09-24: gh api repos/emacs-eaf/emacs-application-framework", "confidence": "high"},
+          "note": "[measured] spdx_id GPL-3.0."
+        },
+        "language": {
+          "value": "Python (~188 KB) and Emacs Lisp (~159 KB), plus JavaScript; apps use PyQt6",
+          "provenance": {"source": "measured 2026-09-24: gh api repos/emacs-eaf/emacs-application-framework/languages", "confidence": "high"},
+          "note": "[measured] languages endpoint; PyQt6 imports in core/view.py."
+        },
+        "graphics_mechanism": {
+          "value": "A separate OS window. Each app is a PyQt6 widget (QGraphicsView, QtWebEngine for web apps) running in a separate Python process that talks to Emacs over EPC. On X11, XWayland and Windows, the Qt window is reparented into the Emacs frame (QWindow.setParent(QWindow.fromWinId(emacs_xid))) and positioned over the Emacs window's rectangle. Native Wayland can't reparent, so EAF makes the window frameless and always-on-top; on Hyprland it asks the compositor to float and move it with `hyprctl --batch 'keyword windowrule float,title:...; keyword windowrule move X Y,...'`.",
+          "provenance": {"source": "https://github.com/emacs-eaf/emacs-application-framework/blob/master/core/view.py", "confidence": "high"},
+          "note": "[measured] view.py reparent() and locate(); eaf.el docstring: 'When Emacs running in macOS, Wayland native or terminal environment, we can't use cross-process reparent technicality like we does in X11, XWayland or Windows.'"
+        },
+        "where_it_draws": {
+          "value": "A separate OS window laid over an Emacs window (the pane), sized and positioned to match it. Nothing scrolls with text; Emacs's own window splits decide the layout.",
+          "provenance": {"source": "https://github.com/emacs-eaf/emacs-application-framework/blob/master/core/view.py", "confidence": "high"},
+          "note": "[measured] qwindow.setPosition(QPoint(self.x, self.y))."
+        },
+        "input_model": {
+          "value": "Emacs keeps keyboard focus. The EAF buffer's keymap remaps self-insert and listed keys to eaf-send-key, which forwards them to the Python app over EPC. Mouse presses, releases and wheel events in the Qt view refocus the Emacs buffer (eventFilter). On native-Wayland Sway/Hyprland, a helper called reinput grabs input devices through libinput/evdev (EVIOCGRAB) and re-injects them through uinput when the EAF window gains or loses activation.",
+          "provenance": {"source": "https://github.com/emacs-eaf/emacs-application-framework/blob/master/eaf.el", "confidence": "high"},
+          "note": "[measured] eaf.el define-key remap to eaf-send-key; view.py eventFilter + focus()/lose_focus() writing to reinput; reinput/main.c includes libinput/libevdev-uinput and calls ioctl EVIOCGRAB."
+        },
+        "activity": {
+          "value": "3.5k stars · pushed 2026-08-23 · no GitHub releases (installed from git)",
+          "provenance": {"source": "measured 2026-09-24: gh api repos/emacs-eaf/emacs-application-framework", "confidence": "high"},
+          "note": "[measured] stars 3489; releases/latest 404."
+        },
+        "td_overlap": {
+          "value": "pane-content, tui-wm",
+          "provenance": {"source": "https://github.com/emacs-eaf/emacs-application-framework", "confidence": "high"},
+          "note": "[measured] Emacs window = pane hosting a browser/PDF/video; Emacs is the layout manager."
+        },
+        "steal_for_td": {
+          "value": "Keep keybindings in the host. EAF never lets the embedded app own the keyboard: the host keymap sees every key first and forwards the rest, so the editor's bindings keep working over a browser or PDF. TD's preview panes and floating squares should route keys through TD's keymap first (pane navigation, close, dock/undock) and forward only the remainder to the viewer.",
+          "provenance": {"source": "https://github.com/emacs-eaf/emacs-application-framework/blob/master/eaf.el", "confidence": "medium"},
+          "note": "[inferred] analysis."
+        },
+        "trap": {
+          "value": "Never glue a separate OS window over a pane on Wayland. EAF's native-Wayland path is a frameless always-on-top window moved by `hyprctl keyword windowrule`, plus a root-level libinput/uinput grabber just to get keys back. The reparent path only works on X11/XWayland. TD, on Hyprland, should draw previews inside its own gpui scene.",
+          "provenance": {"source": "https://github.com/emacs-eaf/emacs-application-framework/blob/master/core/view.py", "confidence": "high"},
+          "note": "[measured] code paths. [hunch] the legacy `keyword windowrule` syntax may also break on this box's Lua-configured Hyprland 0.56; not tested."
+        },
+        "primary_sources": {
+          "value": "https://github.com/emacs-eaf/emacs-application-framework https://github.com/emacs-eaf/emacs-application-framework/blob/master/core/view.py https://github.com/emacs-eaf/emacs-application-framework/blob/master/eaf.el https://github.com/emacs-eaf/emacs-application-framework/blob/master/reinput/main.c",
+          "provenance": {"source": "https://github.com/emacs-eaf/emacs-application-framework", "confidence": "high"},
+          "note": "[measured] via gh api."
+        }
+      }
+    },
+    {
+      "id": "cmux",
+      "label": "cmux — Ghostty-based terminal for coding agents, with browser and Markdown panels",
+      "group": "A · Terminals that are also a workspace",
+      "fields": {
+        "what_it_is": {
+          "value": "cmux is an open-source native macOS terminal (Swift/AppKit on libghostty) built for running many AI coding agents at once. It has vertical tabs with git, PR and port metadata; notification rings driven by OSC 9/99/777 and `cmux notify`; a scriptable in-app browser split; and Markdown-viewer and file-preview panels. All of it is controllable through a CLI and a Unix-socket API.",
+          "provenance": {"source": "https://github.com/manaflow-ai/cmux", "confidence": "high"},
+          "note": "[measured] README; skills/cmux-markdown/SKILL.md."
+        },
+        "license": {
+          "value": "GPL-3.0-or-later",
+          "provenance": {"source": "measured 2026-09-24: gh api repos/manaflow-ai/cmux", "confidence": "high"},
+          "note": "[measured] gh api reports NOASSERTION; LICENSE header: 'licensed under the GNU General Public License v3.0 or later (GPL-3.0-or-later)'; Manaflow may offer separate commercial terms."
+        },
+        "language": {
+          "value": "Swift (~87.6 MB), plus Rust (~18.7 MB), TypeScript, Python, Zig (Ghostty) and others",
+          "provenance": {"source": "measured 2026-09-24: gh api repos/manaflow-ai/cmux/languages", "confidence": "high"},
+          "note": "[measured] languages endpoint."
+        },
+        "graphics_mechanism": {
+          "value": "Native. libghostty draws the terminals on the GPU. Browser panes are WKWebView (Sources/Panels/WKWebView+*.swift), with an automation API ported from vercel-labs/agent-browser. Markdown panels render headings, code, tables and inline images, and re-render when the file changes. Inline terminal images come from Ghostty's Kitty graphics support; passthrough under tmux (#2782) and agent-image thumbnails (#7683) are open requests.",
+          "provenance": {"source": "https://github.com/manaflow-ai/cmux/blob/main/skills/cmux-markdown/SKILL.md", "confidence": "medium"},
+          "note": "[measured] WKWebView files via gh code search, markdown rendering list from SKILL.md. [inferred] Ghostty Kitty support carrying through to cmux surfaces wasn't tested."
+        },
+        "where_it_draws": {
+          "value": "Split pane. `cmux markdown open plan.md` opens 'as a horizontal split to the right of the source surface'; Cmd+Shift+L opens a browser in a split. Panels are restored across sessions, re-reading the file from disk. cmux itself draws nothing inline in the scrollback.",
+          "provenance": {"source": "https://github.com/manaflow-ai/cmux/blob/main/skills/cmux-markdown/references/commands.md", "confidence": "high"},
+          "note": "[measured] commands.md 'Panel behavior'; README shortcut table."
+        },
+        "input_model": {
+          "value": "Panes are 'surfaces', focused by click or shortcut. Commands arriving over the socket or CLI follow a written no-focus-steal policy: they never activate the app or raise windows, and only an explicit allowlist (focus_window, focus_pane, focus_surface and a few more) may move in-app focus. Markdown panels are read-only with text selection. Cmd+click on a path opens the file preview, but path:line suffixes aren't parsed (#9830).",
+          "provenance": {"source": "https://github.com/manaflow-ai/cmux/blob/main/docs/socket-focus-steal-audit.todo.md", "confidence": "high"},
+          "note": "[measured] socket-focus-steal-audit.todo.md policy section; issue #9830 body."
+        },
+        "activity": {
+          "value": "27.4k stars · pushed 2026-09-24 · latest release v0.64.25 (2026-09-17) · repo created 2026-01-28",
+          "provenance": {"source": "measured 2026-09-24: gh api repos/manaflow-ai/cmux", "confidence": "high"},
+          "note": "[measured] stars 27387."
+        },
+        "td_overlap": {
+          "value": "open-on-click, pane-content, agent-panes, host-protocol",
+          "provenance": {"source": "https://github.com/manaflow-ai/cmux", "confidence": "medium"},
+          "note": "[inferred] open-on-click per #9830 (Cmd+click opens the file preview, buggy for path:line); host-protocol via Ghostty (inferred) plus OSC 9/99/777 notifications (measured)."
+        },
+        "steal_for_td": {
+          "value": "Adopt cmux's no-focus-steal rule for anything that opens a pane without a click. `cmux markdown open` splits to the right of the calling surface and live-reloads on every write, including atomic replaces, and socket commands may not move focus unless they are explicit focus verbs. An agent in one TD pane can then open its plan or brief beside itself while Parker keeps typing in another pane.",
+          "provenance": {"source": "https://github.com/manaflow-ai/cmux/blob/main/docs/socket-focus-steal-audit.todo.md", "confidence": "medium"},
+          "note": "[inferred] analysis; behaviour measured from SKILL.md and the policy doc."
+        },
+        "trap": {
+          "value": "#9830: Cmd+clicking `src/main.py:1292`, the format every agent and compiler prints, opens Safari. The :line suffix never reaches the open path, and file:// URLs get mangled into '<cwd>/file:/...'. Test TD's Ctrl+click against real agent output (path:line, path:line:col, percent-encoded file:// URLs) before shipping.",
+          "provenance": {"source": "https://github.com/manaflow-ai/cmux/issues/9830", "confidence": "high"},
+          "note": "[measured] issue body (cmux 0.64.22, opened 2026-08-07, open)."
+        },
+        "primary_sources": {
+          "value": "https://github.com/manaflow-ai/cmux https://github.com/manaflow-ai/cmux/blob/main/LICENSE https://github.com/manaflow-ai/cmux/blob/main/skills/cmux-markdown/SKILL.md https://github.com/manaflow-ai/cmux/blob/main/skills/cmux-markdown/references/commands.md https://github.com/manaflow-ai/cmux/blob/main/docs/socket-focus-steal-audit.todo.md https://github.com/manaflow-ai/cmux/issues/9830 https://github.com/manaflow-ai/cmux/issues/7683 https://github.com/manaflow-ai/cmux/issues/1311",
+          "provenance": {"source": "https://github.com/manaflow-ai/cmux", "confidence": "high"},
+          "note": "[measured] via gh api."
+        }
+      }
+    }
+  ],
+  "bubbles": [
+    {
+      "kind": "serendipity",
+      "subjectId": "warp",
+      "note": "Warp's client has been open source since late April 2026 (AGPL-3.0; warpui/warpui_core MIT). The brief's 'closed source' premise is out of date. Its Alacritty-derived terminal model with Kitty + iTerm2 image support (crates/warp_terminal/src/model/kitty.rs, iterm_image.rs, image_map.rs) is readable reference code for TD.",
+      "why": "Closest readable implementation of image protocols on an Alacritty-style grid in Rust. AGPL means read the pattern, don't copy code; the MIT warpui crates can be copied.",
+      "source": "https://github.com/warpdotdev/Warp"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "zed-terminal",
+      "note": "rio-vt (crates.io, 0.5.28, 2026-09-17; created 2026-07-26) is Rio's terminal core extracted as an embeddable crate (VT parser, grid, PTY, selection, search). It parses sixel, Kitty graphics and iTerm2 behind a `graphics` feature. Its author proposed it as a drop-in alacritty_terminal replacement in Zed (PR #62149, parse-throughput benchmarks 1.1-7.8x alacritty), and Zed declined within minutes.",
+      "why": "A possible path for TD to get graphics parsing without forking alacritty_terminal. Belongs with cluster B's Rio subject; needs its own falsifiable evaluation.",
+      "source": "https://github.com/zed-industries/zed/pull/62149"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "zed-terminal",
+      "note": "alacritty/alacritty#910 'Add support for libsixel' has been open since 2017-11-21 (225 comments), and the graphics PR alacritty#4763 is still open. Zed closed its own terminal-images request (#20860) as not_planned, pointing there.",
+      "why": "TD is on alacritty_terminal: graphics won't arrive upstream on any useful timescale, so TD owns the image layer (parse APC/DCS itself or switch cores).",
+      "source": "https://github.com/alacritty/alacritty/issues/910"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "zed-terminal",
+      "note": "Licence boundary: Zed's crates/terminal, terminal_view and image_viewer are GPL-3.0-or-later; gpui is Apache-2.0. Warp's terminal is AGPL-3.0. Patterns can be reimplemented freely, but pasting code carries the licence.",
+      "why": "TD shares Zed's stack, so copying terminal_view code is tempting; TD's own licence decides whether that's allowed.",
+      "source": "https://github.com/zed-industries/zed/blob/main/crates/terminal/Cargo.toml"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "cmux",
+      "note": "cmux #7683 (open, 2026-07-09) asks for inline thumbnails of images that agents read or write (Claude Code 'Read(/tmp/x.png)' lines), detected by the terminal with no graphics escapes from the agent, clickable to a larger preview. The author's design note: 'an overlay anchored to the row (like link hints / ghost text) is likely the right shape rather than mutating the cell grid.'",
+      "why": "The exact TD use case: agents running in TD panes print image paths and never emit Kitty graphics. Row-anchored overlays plus Ctrl+click-to-open fit TD's plan.",
+      "source": "https://github.com/manaflow-ai/cmux/issues/7683"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "warp",
+      "note": "Warp #8741 (open, 11 upvotes) asks for a CLI for its built-in markdown viewer, editor and split panes (`warp open --viewer --split right --size 33% file.md`), because they're reachable only by clicking. Wave (`wsh view`) and cmux (`cmux markdown open`) already have this.",
+      "why": "Evidence that users want the click and the CLI to be the same verb; TD's ctl socket is the natural home for it.",
+      "source": "https://github.com/warpdotdev/warp/issues/8741"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "warp",
+      "note": "Warp #9913 (open, 2026-05-02) proposes replacing Warp's Alacritty-derived core with libghostty-rs. Together with Zed PR #62149 (rio-vt), two Rust terminals are weighing an alacritty-core replacement.",
+      "why": "libghostty(-rs) is a candidate subject for cluster B, and a core option TD might evaluate alongside rio-vt.",
+      "source": "https://github.com/warpdotdev/warp/issues/9913"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "domterm",
+      "note": "DomTerm ships a Rust front end built on wry (Tauri's webview library; dt-wry/src/main.rs), alongside Electron and Qt WebEngine.",
+      "why": "If TD ever renders HTML briefs with a real engine, wry is the Rust-native option to weigh against Servo. Note that on Linux wry means WebKitGTK, a separate toolkit inside a gpui app.",
+      "source": "https://github.com/PerBothner/DomTerm/tree/master/dt-wry"
+    },
+    {
+      "kind": "gap-note",
+      "subjectId": "warp",
+      "note": "Couldn't confirm whether Ctrl+clicking an image path (png/jpg) opens it inside Warp or hands it to the external editor. The docs name only the Markdown viewer as an in-app target. The file_pane/FileNotebookView code wasn't traced far enough to settle it.",
+      "why": "Matters for whether Warp is prior art for click-an-image-to-view-inside.",
+      "source": "https://docs.warp.dev/terminal/more-features/files-and-links/"
+    },
+    {
+      "kind": "gap-note",
+      "subjectId": "extraterm",
+      "note": "The wire format of Extraterm's `show` channel (bulk-file escape sequence) wasn't read. graphics_mechanism infers it from main/src/bulk_file_handling and the ImageBlock extension. Also unverified: whether iTerm2-protocol images become ImageBlocks or cell overlays.",
+      "why": "Leaves graphics_mechanism at medium confidence.",
+      "source": "https://github.com/sedwards2009/extraterm/tree/master/main/src/bulk_file_handling"
+    },
+    {
+      "kind": "gap-note",
+      "subjectId": "tabby",
+      "note": "Tabby (Eugeny/tabby; MIT; 74.7k stars; pushed 2026-09-24; v1.0.236 2026-09-23) was considered but not added. It uses @xterm/addon-image ^0.7.0 (tabby-terminal/src/frontends/xtermFrontend.ts), the same mechanism as Hyper and VS Code, so it adds no new idea for TD. cmux took the slot because it pairs agent panes with in-app Markdown/browser panels.",
+      "why": "Records why a suggested candidate was dropped, so the next round needn't redo it.",
+      "source": "https://github.com/Eugeny/tabby"
+    },
+    {
+      "kind": "gap-note",
+      "subjectId": "zed-terminal",
+      "note": "Zed's agent panel (a pane type hosting external agents) wasn't examined this session, so agent-panes was left out of Zed's td_overlap. Worth a check if the closeness score matters.",
+      "why": "The tag may be missing from Zed's overlap.",
+      "source": "https://github.com/zed-industries/zed"
+    }
+  ],
+  "tokens": 270000
+}

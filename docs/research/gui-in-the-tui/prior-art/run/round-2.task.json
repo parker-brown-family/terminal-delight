@@ -1,0 +1,91 @@
+{
+  "round": 2,
+  "rubric": "gui-in-the-tui-prior-art",
+  "integrityRules": [
+    "Never invent a value (phone, name, figure). If unfound, omit it or set `flagged: true` with a note like \"verify by phone\".",
+    "Every value must carry `provenance.source` (a URL) OR be `flagged`. Unsourced, unflagged values are rejected by the harness.",
+    "Only fill the gap fields listed for each subject — do not re-research satisfied fields.",
+    "Emit a `bubbles` entry of kind \"serendipity\" for anything useful you find that is outside the requested fields."
+  ],
+  "fields": [
+    {
+      "key": "what_it_is",
+      "requirement": "required",
+      "verify": "source-required",
+      "hint": "one or two sentences: what the project is and what graphical content it puts in or beside a terminal"
+    },
+    {
+      "key": "license",
+      "requirement": "required",
+      "verify": "source-required",
+      "hint": "SPDX id from the repo (gh api repos/O/R --jq .license.spdx_id) or 'proprietary' with the vendor page as source"
+    },
+    {
+      "key": "language",
+      "requirement": "required",
+      "verify": "source-required",
+      "hint": "primary implementation language(s), from the repo's language breakdown or docs"
+    },
+    {
+      "key": "graphics_mechanism",
+      "requirement": "required",
+      "verify": "source-required",
+      "hint": "HOW pixels or rich content get there: native GPU drawing, Kitty graphics protocol, Sixel, iTerm2 OSC 1337, Unicode half/quadrant/sextant blocks, separate overlay OS window, embedded webview/browser engine, DOM (Electron/xterm.js) … cite the doc or source file"
+    },
+    {
+      "key": "where_it_draws",
+      "requirement": "required",
+      "verify": "source-or-flag",
+      "hint": "split pane | floating panel | inline in scrollback | fullscreen | separate OS window | cell-anchored overlay — say which, and whether it scrolls with text"
+    },
+    {
+      "key": "input_model",
+      "requirement": "preferred",
+      "verify": "source-or-flag",
+      "hint": "how mouse and keys reach the embedded thing (focus model, mouse passthrough, keyboard capture, escape key)"
+    },
+    {
+      "key": "activity",
+      "requirement": "preferred",
+      "verify": "source-required",
+      "hint": "stars, last push / last release date — measured with `gh api repos/O/R` (source: 'measured 2026-09-24: gh api repos/O/R') or the vendor's release page"
+    },
+    {
+      "key": "td_overlap",
+      "requirement": "required",
+      "verify": "none",
+      "hint": "comma-separated tags from exactly this vocabulary: open-on-click, pane-content, floating, host-protocol, tui-wm, agent-panes, same-stack — or 'none'. Drives the derived closeness score."
+    },
+    {
+      "key": "steal_for_td",
+      "requirement": "required",
+      "verify": "none",
+      "hint": "THE one idea Terminal Delight should take from it, concrete enough to act on (inferred — say so in the note)"
+    },
+    {
+      "key": "trap",
+      "requirement": "preferred",
+      "verify": "none",
+      "hint": "what TD should avoid, learned from this project's design or its issue tracker"
+    },
+    {
+      "key": "primary_sources",
+      "requirement": "required",
+      "verify": "source-required",
+      "hint": "space-separated repo/docs URLs actually read; mark blog posts or AI summaries as 'synthesis:'"
+    }
+  ],
+  "tasks": [
+    {
+      "id": "hyperion-tui",
+      "label": "'GUI in the TUI' / HYPERION TUI v2.7.19 (Nix, @NixFred)",
+      "group": "E · The two posts Parker shared",
+      "gaps": [
+        "license",
+        "language",
+        "graphics_mechanism",
+        "activity"
+      ]
+    }
+  ]
+}

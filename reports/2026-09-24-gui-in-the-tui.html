@@ -1,0 +1,1937 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GUI in the TUI</title>
+<style>
+/* decision-brief — surfaces, ink, and the three structural components.
+ *
+ * ONE palette. No theme system, no theme toggle. tps-report shipped four themes and
+ * 165 theme-related rules; nobody ever switched. A brief is read once, quickly, to make
+ * a decision — the reader is not shopping for a skin.
+ *
+ * Categorical colours are the validated dataviz default palette (dark steps), which
+ * clears the CVD, chroma, lightness and contrast gates on the adjacent pairlist.
+ * If you change them, re-run the validator; do not eyeball it.
+ *
+ * What is here: tokens, the modal shell, tables, callouts, code. Everything else —
+ * cards, escalation lists, stat tiles, charts — is the brief's own business.
+ * Build what the material needs.
+ */
+:root {
+  color-scheme: dark;
+
+  --surface-0: #111110;   /* page */
+  --surface-1: #1a1a19;   /* panel */
+  --surface-2: #232321;   /* raised */
+  --surface-3: #2e2e2b;   /* control */
+  --line:      #3a3a36;
+
+  --text-primary:   #ffffff;
+  --text-secondary: #c3c2b7;
+  --text-muted:     #8b8a80;
+
+  /* categorical — assign in fixed order, never cycle */
+  --s1: #3987e5;  --s2: #d95926;  --s3: #199e70;  --s4: #c98500;
+  --s5: #d55181;  --s6: #008300;  --s7: #9085e9;  --s8: #e66767;
+
+  /* status — reserved. Never reuse as "series 5". Always ship with a label. */
+  --good:     #0ca30c;
+  --warning:  #fab219;
+  --serious:  #ec835a;
+  --critical: #d03b3b;
+
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, "JetBrains Mono", Menlo, Consolas, monospace;
+  --sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif;
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0; background: var(--surface-0); color: var(--text-primary);
+  font-family: var(--sans); font-size: 15px; line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+.wrap { max-width: 1180px; margin: 0 auto; padding: 0 24px 120px; }
+header.top .wrap { padding-bottom: 0; }   /* the wrap's bottom padding is for the page, not the header */
+
+/* ---- headings ----
+   A heading names the thing. It does not explain it — an em-dash gloss after a
+   heading breaks the heading. The body does the explaining. */
+h1 { font-size: 34px; line-height: 1.18; margin: 0 0 16px; letter-spacing: -.02em; font-weight: 650; }
+h2.sec {
+  font-size: 13px; font-family: var(--mono); letter-spacing: .13em; text-transform: uppercase;
+  color: var(--text-muted); margin: 56px 0 18px; padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+/* ---- modal shell: where depth lives ---- */
+dialog {
+  border: 1px solid var(--line); border-radius: 12px;
+  background: var(--surface-1); color: var(--text-primary);
+  max-width: 880px; width: calc(100vw - 44px); max-height: 86vh; padding: 0; overflow: hidden;
+}
+dialog::backdrop { background: rgba(0,0,0,.76); backdrop-filter: blur(3px); }
+.dlg-head {
+  position: sticky; top: 0; background: var(--surface-2);
+  border-bottom: 1px solid var(--line); padding: 20px 26px;
+  display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; z-index: 2;
+}
+.dlg-head h3 { margin: 0 0 5px; font-size: 20px; letter-spacing: -.015em; }
+.dlg-head .repo { font-family: var(--mono); font-size: 11.5px; color: var(--text-muted); margin: 0; }
+.x {
+  background: var(--surface-3); border: 1px solid var(--line); color: var(--text-secondary);
+  border-radius: 6px; width: 30px; height: 30px; font-size: 17px; line-height: 1;
+  cursor: pointer; flex: none;
+}
+.x:hover { background: var(--critical); color: #fff; border-color: var(--critical); }
+.dlg-body { padding: 24px 26px 34px; overflow-y: auto; max-height: calc(86vh - 78px); }
+.dlg-body h4 {
+  font-family: var(--mono); font-size: 11.5px; letter-spacing: .12em; text-transform: uppercase;
+  color: var(--text-muted); margin: 30px 0 12px; padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+}
+.dlg-body h4:first-child { margin-top: 0; }
+.dlg-body p  { margin: 0 0 13px; color: var(--text-secondary); font-size: 14.5px; }
+.dlg-body ul { margin: 0 0 15px; padding-left: 20px; color: var(--text-secondary); font-size: 14.5px; }
+.dlg-body li { margin-bottom: 8px; }
+.dlg-body strong { color: var(--text-primary); font-weight: 600; }
+
+/* ---- prose furniture ---- */
+code {
+  font-family: var(--mono); font-size: 12.5px; background: var(--surface-3);
+  padding: 1.5px 5px; border-radius: 4px; color: #e8d9a8; word-break: break-word;
+}
+pre {
+  background: var(--surface-0); border: 1px solid var(--line); border-radius: 7px;
+  padding: 15px 17px; overflow-x: auto; margin: 0 0 15px;
+}
+pre code { background: none; padding: 0; color: var(--text-secondary); font-size: 12.5px; line-height: 1.65; }
+
+table { width: 100%; border-collapse: collapse; margin: 0 0 17px; font-size: 13.5px; }
+th, td { text-align: left; padding: 9px 11px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th {
+  font-family: var(--mono); font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--text-muted); font-weight: 500; background: var(--surface-2);
+}
+td { color: var(--text-secondary); }
+td b, td strong { color: var(--text-primary); }
+
+blockquote {
+  margin: 0 0 15px; padding: 12px 18px; border-left: 3px solid var(--s1);
+  background: var(--surface-2); border-radius: 0 7px 7px 0;
+  color: var(--text-secondary); font-size: 14px; font-style: italic;
+}
+
+.callout {
+  border-left: 3px solid var(--warning); background: rgba(250,178,25,.07);
+  padding: 14px 18px; border-radius: 0 7px 7px 0; margin: 0 0 17px;
+}
+.callout.crit { border-color: var(--critical); background: rgba(208,59,59,.08); }
+.callout.good { border-color: var(--good);     background: rgba(12,163,12,.08); }
+.callout p:last-child { margin-bottom: 0; }
+.callout .lbl {
+  font-family: var(--mono); font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--text-muted); margin: 0 0 7px; display: block;
+}
+
+/* ---- confidence labels. Never assert without one. ---- */
+.tag {
+  display: inline-block; font-family: var(--mono); font-size: 10px; letter-spacing: .07em;
+  text-transform: uppercase; padding: 2.5px 7px; border-radius: 4px;
+  margin-right: 6px; font-weight: 600;
+}
+.tag.v { background: rgba(12,163,12,.18);  color: #6cd46c; border: 1px solid rgba(12,163,12,.4); }   /* measured */
+.tag.w { background: rgba(250,178,25,.14); color: #f5c95f; border: 1px solid rgba(250,178,25,.38); } /* inferred */
+.tag.c { background: rgba(208,59,59,.16);  color: #f08a8a; border: 1px solid rgba(208,59,59,.4); }   /* contradicted / hunch */
+
+footer {
+  margin-top: 70px; padding-top: 26px; border-top: 1px solid var(--line);
+  font-family: var(--mono); font-size: 11.5px; color: var(--text-muted);
+}
+footer p { margin: 0 0 7px; }
+
+@media (max-width: 640px) {
+  h1 { font-size: 26px; }
+  .wrap { padding: 0 16px 80px; }
+}
+
+/* decision-brief — reader notes, styling.
+   Depends on the surface/ink/status custom properties in base.css. */
+
+.notable { position: relative; }
+
+.note-btn {
+  position: absolute; top: 8px; right: 8px; z-index: 6;
+  width: 26px; height: 26px; line-height: 1; padding: 0;
+  background: var(--surface-3); border: 1px solid var(--line); border-radius: 6px;
+  color: var(--text-muted); font-size: 13px; cursor: pointer; opacity: 0;
+  transition: opacity .12s, background .12s, color .12s, border-color .12s;
+}
+/* Hidden until hover: a brief with 130 always-visible affordances reads as a form. */
+.notable:hover > .note-btn,
+.note-btn:focus-visible { opacity: 1; }
+.note-btn:hover { background: var(--warning); border-color: var(--warning); color: var(--surface-1); }
+
+.notable.has-note > .note-btn {
+  opacity: 1; background: var(--warning); border-color: var(--warning);
+  color: var(--surface-1); font-weight: 700;
+}
+.notable.has-note { box-shadow: inset 3px 0 0 var(--warning); }
+tr.notable.has-note > td:first-child { box-shadow: inset 3px 0 0 var(--warning); }
+
+/* Table rows can't host an absolutely-positioned child reliably — inline it. */
+tr.notable .note-btn {
+  position: static; opacity: .35; width: 22px; height: 22px; font-size: 11px;
+  margin-left: 6px; vertical-align: middle; display: inline-block;
+}
+tr.notable:hover .note-btn { opacity: 1; }
+
+/* ---- floating bar ---- */
+.notebar {
+  position: fixed; right: 18px; bottom: 18px; z-index: 900;
+  display: flex; gap: 8px; align-items: center;
+  background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px;
+  padding: 9px 11px; box-shadow: 0 10px 32px rgba(0,0,0,.55);
+  font-family: var(--mono); font-size: 11.5px;
+}
+.notebar .cnt { color: var(--text-muted); padding-right: 4px; }
+.notebar .cnt b { color: var(--warning); font-size: 14px; }
+.notebar button {
+  font-family: var(--mono); font-size: 11px; letter-spacing: .03em; cursor: pointer;
+  background: var(--surface-3); border: 1px solid var(--line); color: var(--text-secondary);
+  border-radius: 6px; padding: 6px 10px;
+  transition: background .12s, color .12s, border-color .12s;
+}
+.notebar button:hover { background: var(--warning); color: var(--surface-1); border-color: var(--warning); }
+.notebar button.primary {
+  background: rgba(250,178,25,.14); border-color: rgba(250,178,25,.45); color: #f5c95f;
+}
+.notebar button:disabled {
+  opacity: .4; cursor: default; background: var(--surface-3);
+  color: var(--text-muted); border-color: var(--line);
+}
+@media (max-width: 640px) {
+  .notebar { right: 8px; bottom: 8px; flex-wrap: wrap; max-width: calc(100vw - 16px); }
+}
+
+/* ---- note dialog ---- */
+dialog#d-note { max-width: 620px; }
+#note-list { margin: 0 0 18px; padding: 0; list-style: none; }
+#note-list li {
+  background: var(--surface-2); border: 1px solid var(--line);
+  border-left: 3px solid var(--warning); border-radius: 0 7px 7px 0;
+  padding: 11px 14px; margin-bottom: 9px; font-size: 14px; color: var(--text-secondary);
+}
+#note-list .nts {
+  font-family: var(--mono); font-size: 10px; color: var(--text-muted);
+  display: flex; justify-content: space-between; gap: 10px; margin-bottom: 6px;
+}
+#note-list .ndel {
+  background: none; border: none; color: var(--text-muted);
+  cursor: pointer; font-size: 11px; padding: 0;
+}
+#note-list .ndel:hover { color: var(--critical); }
+#note-none { color: var(--text-muted); font-size: 13.5px; margin: 0 0 16px; }
+
+#note-text {
+  width: 100%; min-height: 104px; background: var(--surface-0);
+  border: 1px solid var(--line); border-radius: 7px; color: var(--text-primary);
+  padding: 11px 13px; font-family: var(--sans); font-size: 14.5px;
+  resize: vertical; line-height: 1.55;
+}
+#note-text:focus { outline: none; border-color: var(--warning); }
+
+.note-actions { display: flex; gap: 9px; align-items: center; margin-top: 11px; }
+.note-actions button {
+  font-family: var(--mono); font-size: 11.5px; cursor: pointer; border-radius: 6px;
+  padding: 8px 14px; border: 1px solid var(--line);
+  background: var(--surface-3); color: var(--text-secondary);
+}
+.note-actions button.save {
+  background: var(--warning); border-color: var(--warning);
+  color: var(--surface-1); font-weight: 600;
+}
+.note-actions .hintk {
+  font-family: var(--mono); font-size: 10.5px; color: var(--text-muted); margin-left: auto;
+}
+
+/* ---- export dialog ---- */
+dialog#d-export { max-width: 780px; }
+#export-out {
+  width: 100%; min-height: 320px; background: var(--surface-0);
+  border: 1px solid var(--line); border-radius: 7px; color: var(--text-secondary);
+  padding: 13px; font-family: var(--mono); font-size: 12px; line-height: 1.55;
+  resize: vertical; white-space: pre;
+}
+.tokest { font-family: var(--mono); font-size: 11px; color: var(--text-muted); margin: 9px 0 0; }
+
+/* ---- GUI in the TUI: this brief's own components ---- */
+.kicker { font-family: var(--mono); font-size: 11px; letter-spacing: .09em;
+  text-transform: uppercase; color: var(--text-muted); margin: 38px 0 14px; }
+.lede { font-size: 16px; line-height: 1.65; color: var(--text-secondary); max-width: 70ch; margin: 0 0 18px; }
+.lede b { color: var(--text-primary); }
+.wrap > p, section > p { max-width: 76ch; color: var(--text-secondary); }
+.wrap > p b, section > p b { color: var(--text-primary); }
+p.bridge { font-size: 15.5px; color: var(--text-primary); }
+.amber { color: #f5c95f; }
+.mine { color: #c98500; font-family: var(--mono); font-size: 9.5px; border: 1px solid #c98500;
+  border-radius: 3px; padding: 0 4px; margin-left: 4px; white-space: nowrap; }
+
+figure { margin: 0 0 26px; border: 1px solid var(--line); border-radius: 10px;
+  background: var(--surface-1); padding: 16px 18px 14px; }
+figure > .lbl { display: block; font-family: var(--mono); font-size: 10.5px; letter-spacing: .1em;
+  text-transform: uppercase; color: var(--text-muted); margin: 0 0 13px; }
+figcaption { margin-top: 13px; font-size: 13.5px; color: var(--text-secondary); line-height: 1.6; }
+figcaption b { color: var(--text-primary); }
+.scroller { overflow-x: auto; }
+svg { display: block; width: 100%; height: auto; }
+.gutter { margin: 12px 0 0; font-family: var(--mono); font-size: 10.5px; color: var(--text-muted);
+  line-height: 1.55; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 10px 0 0; font-family: var(--mono);
+  font-size: 10.5px; color: var(--text-muted); }
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px;
+  vertical-align: -1px; border: 1px solid; }
+.legend .g { border-color: #199e70; } .legend .b { border-color: #3987e5; }
+.legend .a { border-color: #c98500; background: #1f1c14; } .legend .d { border-color: #8b8a80; border-style: dashed; }
+.legend .o { border-color: #ec835a; }
+
+/* ---- architecture, built up in frames ---- */
+.arch { display: grid; grid-template-columns: minmax(0,1fr) 66px minmax(0,1.25fr); gap: 0; min-width: 720px; }
+.zone { border: 1px solid var(--line); border-radius: 9px; padding: 22px 11px 11px; position: relative;
+  display: flex; flex-direction: column; gap: 7px; background: var(--surface-0); }
+.zone > .zl { position: absolute; top: 6px; left: 10px; font-family: var(--mono); font-size: 9px;
+  letter-spacing: .12em; text-transform: uppercase; color: var(--text-muted); }
+.zone.ext { border-style: dashed; }
+.wire { align-self: center; display: flex; flex-direction: column; align-items: center; gap: 4px;
+  font-family: var(--mono); font-size: 9px; color: var(--text-muted); text-align: center; }
+.wire::before { content: ''; display: block; width: 100%; height: 1px; background: var(--line); }
+.box { border: 1px solid var(--line); border-radius: 7px; background: var(--surface-2);
+  padding: 7px 9px; font-family: var(--mono); font-size: 11px; line-height: 1.4; min-width: 0; }
+.box b { color: var(--text-primary); font-weight: 600; font-size: 11.5px; }
+.box span { display: block; color: var(--text-muted); font-size: 10px; line-height: 1.45; margin-top: 2px; }
+.box code, .y code, .n code, .p code, .u code { font-size: inherit; background: none; padding: 0; color: inherit; }
+table.wide.progs td:nth-child(2) { min-width: 200px; }
+.box.g { border-color: #199e70; }
+.box.b { border-color: #3987e5; background: #152130; }
+.box.a { border-color: #c98500; background: #1f1c14; }
+.box.o { border-color: #ec835a; }
+.box.d { border-style: dashed; border-color: #6b6a62; background: transparent; }
+.box.ghost { visibility: hidden; }
+.box.in { margin-left: 16px; }
+.ext-row { display: flex; gap: 8px; margin: 0 0 9px; min-width: 720px; }
+.ext-row .box { flex: 1; }
+.ext-row.bottom { margin: 9px 0 0; }
+
+/* ---- the Ctrl+click journey (fig 01) ---- */
+.desk { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 10px; min-width: 640px; }
+.deskwin { border: 1px solid var(--line); border-radius: 8px; background: var(--surface-0); overflow: hidden; }
+.deskwin.away { border-style: dashed; border-color: #6b6a62; }
+.deskbar { padding: 6px 10px; border-bottom: 1px solid var(--line); background: var(--surface-2);
+  font-family: var(--mono); font-size: 10px; color: var(--text-muted); display: flex; justify-content: space-between; }
+.deskbody { padding: 9px 11px; font-family: var(--mono); font-size: 10.5px; color: var(--text-secondary);
+  line-height: 1.65; min-height: 150px; }
+.deskbody .hl { color: #8fbdf2; text-decoration: underline; }
+.deskbody .dim { color: var(--text-muted); }
+.handlers { width: 100%; margin: 12px 0 0; font-size: 12px; }
+.handlers td, .handlers th { padding: 5px 8px; }
+
+/* ---- pane mockups ---- */
+.tdwin { border: 1px solid #3a3a36; border-radius: 9px; background: #0c0d0b; overflow: hidden;
+  font-family: var(--mono); min-width: 700px; }
+.tdtabs { display: flex; gap: 2px; padding: 5px 8px 0; background: #151613; border-bottom: 1px solid #2a2b27; }
+.tdtabs span { font-size: 10px; padding: 4px 10px; border-radius: 5px 5px 0 0; color: #8b8a80; }
+.tdtabs span.on { background: #0c0d0b; color: #e8e6df; border: 1px solid #2a2b27; border-bottom-color: #0c0d0b; }
+.tdsplit { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 0; }
+.tdpane { position: relative; min-height: 420px; border-right: 1px solid #2a2b27; }
+.tdpane:last-child { border-right: 0; }
+.phead { display: flex; gap: 10px; align-items: center; padding: 5px 10px; font-size: 10px;
+  color: #8b8a80; border-bottom: 1px solid #1e1f1b; background: #10110f; }
+.mode { font-weight: 700; letter-spacing: .08em; padding: 1px 6px; border-radius: 3px; font-size: 9.5px; }
+.mode.claude { color: #ffb347; border: 1px solid #7a5a22; }
+.mode.doc { color: #8fbdf2; border: 1px solid #2d5580; }
+.grid { padding: 8px 12px; font-size: 11px; line-height: 1.62; color: #c7cbbf; white-space: pre-wrap; }
+.grid .dim { color: #6e7268; }
+.grid .ok { color: #7fd4a2; }
+.grid .lnk { color: #8fbdf2; text-decoration: underline; }
+.grid .cur { background: #c7cbbf; color: #0c0d0b; }
+.float { position: absolute; right: 22px; top: 92px; width: 54%; border: 1px solid #3987e5;
+  border-radius: 8px; background: #11151a; box-shadow: 0 18px 40px rgba(0,0,0,.6); overflow: hidden; }
+.fhead { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 5px 8px;
+  background: #16202b; border-bottom: 1px solid #243447; font-size: 10px; color: #b9c7d6; cursor: move; }
+.fhead .acts { display: flex; gap: 6px; color: #8b8a80; }
+.fhead .acts span { border: 1px solid #2f3b48; border-radius: 3px; padding: 0 5px; }
+.fbody { padding: 10px 14px 12px; font-family: var(--sans); font-size: 12px; line-height: 1.55; color: #cfd5cc; }
+.fbody h5 { margin: 0 0 6px; font-size: 15px; color: #e9ecef; font-weight: 650; }
+.fbody p { margin: 0 0 7px; }
+.fbody code { font-size: 10.5px; }
+.fbody .mh { font-family: var(--mono); font-size: 10px; color: #5fcda4; letter-spacing: .06em; margin: 8px 0 4px; }
+.fgrip { position: absolute; right: 3px; bottom: 2px; color: #3987e5; font-size: 11px; }
+.docpane .fbody { padding: 12px 16px; }
+.mocknote { margin: 10px 0 0; font-family: var(--mono); font-size: 10.5px; color: #f5c95f; }
+
+/* ---- stat row ---- */
+.stat-row { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 10px; margin: 4px 0 24px; }
+.tile { border: 1px solid var(--line); border-radius: 9px; padding: 12px 14px; background: var(--surface-1); }
+.tile .k { font-family: var(--mono); font-size: 10px; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--text-muted); margin-bottom: 4px; }
+.tile .v { font-size: 26px; font-weight: 650; color: var(--text-primary); line-height: 1.15; }
+.tile .v small { font-size: 12px; color: var(--text-muted); font-weight: 400; }
+.tile p { margin: 6px 0 0; font-size: 12px; color: var(--text-secondary); line-height: 1.5; }
+
+/* ---- option cards ---- */
+.cards { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 12px; margin: 0 0 12px; }
+.card { border: 1px solid var(--line); border-radius: 9px; background: var(--surface-1); padding: 14px 16px; }
+.card h3 { margin: 0 0 8px; font-size: 15px; color: var(--text-primary); }
+.card p { margin: 0 0 8px; font-size: 13px; color: var(--text-secondary); line-height: 1.55; }
+.card p:last-child { margin-bottom: 0; }
+.card .why { color: var(--text-muted); font-size: 12.5px; }
+.card.rec { border-color: var(--s3); box-shadow: 0 0 0 1px var(--s3) inset; }
+.card.rec .badge { color: var(--s3); font-family: var(--mono); font-size: 10.5px; letter-spacing: .08em;
+  text-transform: uppercase; display: block; margin-bottom: 6px; }
+.card.no { border-style: dashed; }
+.card.no .badge { color: var(--text-muted); font-family: var(--mono); font-size: 10.5px; letter-spacing: .08em;
+  text-transform: uppercase; display: block; margin-bottom: 6px; }
+
+.pgrid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 12px; margin: 0 0 12px; }
+
+/* ---- tables ---- */
+table.wide { width: 100%; font-size: 12.5px; }
+table.wide td, table.wide th { padding: 7px 9px; }
+table.wide td:first-child { color: var(--text-primary); white-space: nowrap; }
+.y, .n, .p, .u { font-family: var(--mono); font-size: 10px; padding: 1px 6px; border-radius: 3px;
+  border: 1px solid; white-space: nowrap; }
+.y { color: #5fcda4; border-color: rgba(25,158,112,.5); }
+.n { color: #f0a58a; border-color: rgba(236,131,90,.5); }
+.p { color: #f5c95f; border-color: rgba(201,133,0,.5); }
+.u { color: #a9a89e; border-color: rgba(139,138,128,.45); border-style: dashed; }
+
+/* ---- timeline ---- */
+.tracks { display: grid; gap: 12px; min-width: 700px; }
+.track { display: grid; grid-template-columns: 128px repeat(5, minmax(0,1fr)); gap: 8px; align-items: stretch; }
+.track > .tn { font-family: var(--mono); font-size: 10px; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--text-muted); align-self: center; }
+.step { border: 1px solid var(--line); border-radius: 7px; padding: 8px 9px; background: var(--surface-2);
+  font-size: 11.5px; color: var(--text-secondary); line-height: 1.45; }
+.step b { display: block; color: var(--text-primary); font-size: 12px; margin-bottom: 3px; }
+.step .sz { font-family: var(--mono); font-size: 9.5px; color: var(--text-muted); display: block; margin-top: 5px; }
+.step.go { border-color: #199e70; }
+.step.gate { border-color: #d03b3b; }
+.step.later { border-style: dashed; }
+
+/* ---- fence ---- */
+.fence { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 0 0 22px; }
+.fside { border: 1px solid var(--line); border-radius: 9px; padding: 14px 16px; background: var(--surface-1); }
+.fside.fin { border-color: rgba(25,158,112,.5); }
+.fside.fout { border-color: rgba(139,138,128,.4); border-style: dashed; }
+.fside h4 { margin: 0 0 10px; font-size: 12px; font-family: var(--mono); letter-spacing: .06em; text-transform: uppercase; }
+.fside.fin h4 { color: #5fcda4; } .fside.fout h4 { color: var(--text-muted); }
+.fside ul { margin: 0; padding-left: 17px; }
+.fside li { font-size: 13px; color: var(--text-secondary); line-height: 1.55; margin-bottom: 7px; }
+
+/* ---- the grill ---- */
+.grill { display: grid; gap: 12px; margin: 0 0 26px; }
+.grill .ask { border: 1px solid var(--line); border-left: 3px solid var(--critical); border-radius: 8px;
+  background: var(--surface-1); padding: 14px 16px; }
+.grill .ask h3 { margin: 0 0 8px; font-size: 15px; color: var(--text-primary); }
+.grill .ask p { margin: 0 0 8px; font-size: 13.5px; color: var(--text-secondary); line-height: 1.6; }
+.grill .ask p:last-child { margin-bottom: 0; }
+.grill .ask .rec b { color: #6cd46c; }
+
+/* ---- modal launchers ---- */
+.dlgrow { display: flex; flex-wrap: wrap; gap: 9px; margin: 0 0 20px; }
+.dlgrow button { font-family: var(--mono); font-size: 11.5px; padding: 9px 14px; border-radius: 7px;
+  border: 1px solid var(--line); background: var(--surface-2); color: var(--text-secondary); cursor: pointer; }
+.dlgrow button:hover { border-color: var(--s1); color: #fff; }
+dialog.sub .dlg-body table { font-size: 12.5px; }
+
+@media (max-width: 760px) {
+  .stat-row { grid-template-columns: repeat(2, minmax(0,1fr)); }
+  .cards, .pgrid, .fence { grid-template-columns: 1fr; }
+}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<p class="kicker">Terminal Delight &middot; research on a branch, nothing built &middot; 2026-09-24</p>
+
+<h1>GUI in the TUI</h1>
+
+<p class="lede">An agent in a Terminal Delight pane finishes a brief and prints its path. You
+Ctrl+click it, Hyprland tiles a Chromium window beside the terminal, and the document is now in a
+different window from the agent that wrote it. The idea on the table is to keep it where the work
+is: open the file in a new split in the same tab, or as a square floating over the pane that you
+can drag out of the way &mdash; Markdown, HTML briefs, images. Most of that is already on disk.
+TD draws images today, and a Markdown renderer built on the same GPU framework sits in
+markdown-delight. What is missing is the other half of the pictures you sent &mdash; programs inside
+the terminal drawing their own pixels, the way the Pok&eacute;mon dashboard draws its Game Boy screen
+&mdash; because the part of TD that reads program output throws those bytes away. This brief lays out both halves and what each costs, and closes on five decisions. The
+recommendation is a floating square for images and Markdown first.</p>
+
+<!-- ============================================================ 1 -->
+<h2 class="sec">A Ctrl+click on a path leaves the terminal</h2>
+
+<p>Every way of opening something from TD ends in the same place. Ctrl+click or Shift+click on a
+path in terminal output, the right-click &ldquo;Open link&rdquo; item, an artifact on the workbench
+and a deliverable on the attention rail all call one function, which hands the path to
+<code>xdg-open</code> &mdash; through <code>uwsm-app</code> on Omarchy, so the new window belongs to
+the desktop rather than to the pane (the function is <code>open_with_system</code> in
+<code>pane.rs</code>). <span class="tag v">measured</span> What opens next is decided by the
+desktop&rsquo;s file-type table.</p>
+
+<figure>
+  <span class="lbl">01 &middot; What a Ctrl+click does today</span>
+  <div class="scroller">
+    <div class="desk">
+      <div class="deskwin">
+        <div class="deskbar"><span>TD &middot; tab &ldquo;gui research&rdquo; &middot; CLAUDE</span><span>1576 &times; 950</span></div>
+        <div class="deskbody">
+          <span class="dim">&#x23FA;</span> Wrote the brief.<br>
+          Deliverable: GUI in the TUI &mdash;<br>
+          <span class="hl">file:///home/parker/Work/td-gui-in-the-tui/reports/2026-09-24-gui-in-the-tui.html</span><br>
+          <span class="dim">&nbsp;&nbsp;&#x2191; Ctrl+click here</span><br><br>
+          <span class="dim">&gt; &#x258C;</span>
+        </div>
+      </div>
+      <div class="deskwin away">
+        <div class="deskbar"><span>Chromium &middot; a new tiled window</span><span>TD shrinks to make room</span></div>
+        <div class="deskbody">
+          GUI in the TUI<br>
+          <span class="dim">the brief, in a browser, beside the terminal &mdash; the agent that wrote it and the
+          conversation about it are in the other window</span>
+        </div>
+      </div>
+    </div>
+  </div>
+  <table class="handlers">
+    <thead><tr><th>You click a</th><th>xdg-open sends it to</th><th>Where that lives</th></tr></thead>
+    <tbody>
+      <tr><td><code>.md</code></td><td>markdown-delight</td><td>its own window (single instance)</td></tr>
+      <tr><td><code>.html</code></td><td>Chromium</td><td>its own window</td></tr>
+      <tr><td><code>.png</code></td><td>imv</td><td>its own window</td></tr>
+      <tr><td><code>.pdf</code></td><td>Evince</td><td>its own window</td></tr>
+    </tbody>
+  </table>
+  <figcaption>Drawn from <code>pane.rs</code> and from <code>xdg-mime query default</code> on this
+  machine. <b>Every opener in TD leaves TD</b>: six call sites share one function, and the tiling
+  desktop makes room for the new window by shrinking the terminal you were working in.</figcaption>
+</figure>
+
+<p>It was a choice, and three of TD&rsquo;s own documents record it: the surface protocol
+(&ldquo;The window never hard-wires a viewer&rdquo;), the attention-spine plan (&ldquo;The desktop
+opens it, not the terminal&rdquo;), and a comment in the file that defines what a person can do to
+a work object, <code>surface.rs</code>:</p>
+
+<blockquote>Open it with the desktop&rsquo;s own handler. Never our own viewer: the person already
+told their machine where Markdown goes.</blockquote>
+
+<p>So the first thing this feature does is reverse a written rule, and it should do that on
+purpose. The reason to reverse it is in the two pictures that started this, and they turn out to be
+asking for two different things.</p>
+
+<!-- ============================================================ 2 -->
+<h2 class="sec">The picture you pointed at is two different machines</h2>
+
+<p>The first picture is artwork: a retro monitor showing a text-mode dashboard with a Windows 95
+settings dialog sitting inside it. The second is Boyd&rsquo;s dashboard from the week Jev beat
+Pok&eacute;mon Blue &mdash; a terminal layout of panels for the trainer, the goal, the battle and
+Jev&rsquo;s running cost, with the live Game Boy screen drawn in real pixels on the left. They look
+like one idea. Underneath there are two unrelated mechanisms, and TD has to build them
+separately.</p>
+
+<p>In the first mechanism, <b>TD draws the thing itself.</b> TD is a terminal emulator &mdash; a
+window drawn with gpui, the GPU framework Zed is built on &mdash; and anything gpui can draw, a pane
+can hold: an image, rendered Markdown, a panel with a title bar. Your Ctrl+click idea lives entirely
+on this side. TD opens the file and paints it, and no escape sequence is involved.</p>
+
+<p>In the second, <b>a program running inside the pane draws it</b>, by writing escape sequences into
+its output that mean &ldquo;put these pixels here&rdquo;. Three such protocols are in use &mdash;
+Kitty&rsquo;s, Sixel and iTerm2&rsquo;s &mdash; and a terminal shows the pixels only if it implements
+them. That is how a Game Boy screen gets into a terminal layout, how the file manager yazi previews
+images, and how mpv plays video in a terminal.</p>
+
+<figure>
+  <span class="lbl">02 &middot; Two ways a pixel reaches a pane</span>
+  <div class="scroller">
+    <svg viewBox="0 0 920 250" style="min-width:680px" role="img" aria-label="Two lanes. Top lane: Ctrl+click a path, TD reads the file, gpui draws it. Bottom lane: a program in the pane prints a Kitty, Sixel or iTerm2 escape sequence, TD's parser drops it today. Both lanes end in the same box: an image painted into a rectangle of the pane under the CRT glass, which TD already does eight times." font-family="ui-monospace, monospace">
+      <defs><marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#8b8a80"/></marker></defs>
+      <text x="10" y="20" font-size="10" fill="#8b8a80" letter-spacing="1.2">TD DRAWS IT &#x2014; WHAT CTRL+CLICK ASKS FOR</text>
+      <rect x="10" y="32" width="190" height="58" rx="7" fill="#152130" stroke="#3987e5"/>
+      <text x="22" y="56" font-size="12" fill="#fff">Ctrl+click a path</text>
+      <text x="22" y="75" font-size="10" fill="#8b8a80">.md &#xB7; .html &#xB7; .png</text>
+      <rect x="225" y="32" width="190" height="58" rx="7" fill="#152130" stroke="#3987e5"/>
+      <text x="237" y="56" font-size="12" fill="#fff">TD reads the file</text>
+      <text x="237" y="75" font-size="10" fill="#8b8a80">no escape sequences</text>
+      <rect x="440" y="32" width="210" height="58" rx="7" fill="#152130" stroke="#3987e5"/>
+      <text x="452" y="56" font-size="12" fill="#fff">gpui draws it</text>
+      <text x="452" y="75" font-size="10" fill="#8b8a80">img() &#xB7; Markdown elements</text>
+      <line x1="200" y1="61" x2="222" y2="61" stroke="#8b8a80" marker-end="url(#ar2)"/>
+      <line x1="415" y1="61" x2="437" y2="61" stroke="#8b8a80" marker-end="url(#ar2)"/>
+      <text x="10" y="140" font-size="10" fill="#8b8a80" letter-spacing="1.2">A PROGRAM DRAWS IT &#x2014; THE GAME BOY SCREEN, MPV, YAZI</text>
+      <rect x="10" y="152" width="190" height="58" rx="7" fill="#152130" stroke="#3987e5"/>
+      <text x="22" y="176" font-size="12" fill="#fff">program in the pane</text>
+      <text x="22" y="195" font-size="10" fill="#8b8a80">prints an escape sequence</text>
+      <rect x="225" y="152" width="190" height="58" rx="7" fill="#152130" stroke="#3987e5"/>
+      <text x="237" y="176" font-size="12" fill="#fff">Kitty &#xB7; Sixel &#xB7; iTerm2</text>
+      <text x="237" y="195" font-size="10" fill="#8b8a80">APC &#xB7; DCS &#xB7; OSC 1337</text>
+      <rect x="440" y="152" width="210" height="58" rx="7" fill="#2a1a14" stroke="#ec835a"/>
+      <text x="452" y="176" font-size="12" fill="#fff">TD&#x2019;s parser</text>
+      <text x="452" y="195" font-size="10" fill="#f0a58a">drops all three today</text>
+      <line x1="200" y1="181" x2="222" y2="181" stroke="#8b8a80" marker-end="url(#ar2)"/>
+      <line x1="415" y1="181" x2="437" y2="181" stroke="#8b8a80" marker-end="url(#ar2)"/>
+      <rect x="684" y="88" width="228" height="74" rx="7" fill="#12241c" stroke="#199e70"/>
+      <text x="696" y="112" font-size="12" fill="#fff">an image in a rectangle</text>
+      <text x="696" y="130" font-size="12" fill="#fff">of the pane, under the glass</text>
+      <text x="696" y="150" font-size="10" fill="#5fcda4">paint_image &#x2014; used 8&#xD7; today</text>
+      <polyline points="650,61 667,61 667,112 681,112" fill="none" stroke="#8b8a80" marker-end="url(#ar2)"/>
+      <polyline points="650,181 667,181 667,140 681,140" fill="none" stroke="#8b8a80" stroke-dasharray="4 3" marker-end="url(#ar2)"/>
+      <text x="10" y="240" font-size="10" fill="#8b8a80">the two ways in share nothing except the last box, and the last box already exists</text>
+    </svg>
+  </div>
+  <figcaption>Drawn from the code. <b>Both lanes end in the same primitive</b> &mdash; gpui painting
+  an image into a rectangle of the pane &mdash; so the drawing is shared even though the two ways in
+  are not. The top lane is the feature you described; the bottom lane is the meme.</figcaption>
+</figure>
+
+<div class="callout">
+  <span class="lbl">the pasted framing, in one paragraph</span>
+  <p>The summary pasted into this research described TD as a text UI running inside Foot or Ghostty,
+  probing them for Kitty or Sixel support, built on types called <code>SurfaceHost</code> and
+  <code>TubeTarget</code> over Ratatui. None of those types exist in the repository, TD does not use
+  Ratatui, and TD is the terminal &mdash; so the protocol question is which ones TD implements for
+  the programs running inside it. <span class="tag c">contradicted</span> Its
+  instinct to start with a still image was sound, and survives below. The claim-by-claim check is in
+  the modal <i>The pasted framing, checked</i>.</p>
+</div>
+
+<!-- ============================================================ 3 -->
+<h2 class="sec">Programs cannot draw pixels in TD today, because the parser drops them</h2>
+
+<p>The second lane is dark for a reason that sits in TD&rsquo;s shape. TD runs as two
+processes. A session host owns the pseudo-terminals, so shells and agents survive the window
+closing; it copies every byte it reads to the window, which parses the same bytes again into its own
+replica of the grid and draws it. Both sides parse with <code>alacritty_terminal</code>, the terminal
+library from the Alacritty project, taken unmodified from crates.io.</p>
+
+<figure>
+  <span class="lbl">03 &middot; TD today, host and window</span>
+  <div class="scroller">
+    <div class="ext-row">
+      <div class="box d"><b>programs in panes</b><span>shells, claude, codex &mdash; and anything that wants to draw: mpv, yazi, chafa</span></div>
+    </div>
+    <div class="arch">
+      <div class="zone">
+        <span class="zl">&#x25A3; session host &middot; its own process</span>
+        <div class="box g"><b>a PTY per pane</b><span>survives the window closing</span></div>
+        <div class="box g"><b>TeeReader</b><span>copies every read to the attached window</span></div>
+        <div class="box g"><b>alacritty Term</b><span>the authoritative grid &middot; the only side that answers queries</span></div>
+        <div class="box ghost"><b>graphics scanner</b><span>placeholder</span></div>
+        <div class="box ghost"><b>image store</b><span>placeholder</span></div>
+      </div>
+      <div class="wire">raw bytes<br>+ attach<br>snapshot</div>
+      <div class="zone">
+        <span class="zl">&#x25A3; window &middot; gpui on wgpu</span>
+        <div class="box g"><b>SocketPty &rarr; replica Term</b><span>parses the same bytes again</span></div>
+        <div class="box g"><b>tab &rarr; split tree</b><span>every leaf is a terminal view &middot; new splits stop at 4</span></div>
+        <div class="box g in"><b>pane faces</b><span>terminal grid (a row of styled text per line) &middot; workbench</span></div>
+        <div class="box ghost in"><b>document face</b><span>placeholder</span></div>
+        <div class="box g in"><b>sticky note on the glass</b><span>drawn over the grid, pre-warped, fixed in its corner</span></div>
+        <div class="box ghost in"><b>document square</b><span>placeholder</span></div>
+        <div class="box ghost in"><b>placeholder painter</b><span>placeholder</span></div>
+        <div class="box g"><b>CRT post-pass</b><span>bends each pane&rsquo;s screen rectangle (a &ldquo;tube&rdquo;)</span></div>
+      </div>
+    </div>
+    <div class="ext-row bottom">
+      <div class="box d"><b>xdg-open</b><span>markdown-delight &middot; Chromium &middot; imv &middot; Evince &mdash; every opener goes here today</span></div>
+    </div>
+  </div>
+  <div class="legend"><span><i class="g"></i>exists today</span><span><i class="d"></i>another program</span><span>empty slots are where later frames add pieces</span></div>
+  <figcaption>Drawn from <code>host.rs</code>, <code>term.rs</code>, <code>main.rs</code> and
+  <code>pane.rs</code> at <code>origin/main</code>. <b>The window never receives cells from the
+  host</b>; it receives bytes, and on attach a snapshot of the grid re-encoded as terminal text. That
+  detail decides how images can travel later.</figcaption>
+</figure>
+
+<p>Inside <code>alacritty_terminal</code> sits a parser called vte, and vte is where graphics end. A
+Kitty image arrives as an APC sequence, and vte has no callback for APC at all: it reads the bytes
+and discards them one at a time. A Sixel image arrives as a DCS sequence, which does reach a handler,
+and the handler logs it at debug level and drops it. When a program asks for the cell size in pixels,
+nothing answers; when it asks what the terminal supports, TD&rsquo;s reply leaves Sixel out.
+<span class="tag v">measured</span></p>
+
+<figure>
+  <span class="lbl">04 &middot; Where a graphics sequence dies</span>
+  <div class="scroller">
+    <svg viewBox="0 0 920 300" style="min-width:700px" role="img" aria-label="Pipeline from a program through the PTY, alacritty's event loop and the vte parser to alacritty's Term. Five outcomes: Kitty APC discarded byte by byte; Sixel DCS logged and dropped; iTerm2 OSC 1337 unhandled; CSI 16 t cell-size query never answered; device attributes answer ?6c without Sixel. Programs then fall back to block characters." font-family="ui-monospace, monospace">
+      <defs><marker id="ar4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#8b8a80"/></marker></defs>
+      <rect x="10" y="18" width="150" height="50" rx="7" fill="#232321" stroke="#6b6a62" stroke-dasharray="4 3"/>
+      <text x="22" y="40" font-size="12" fill="#fff">program</text>
+      <text x="22" y="57" font-size="10" fill="#8b8a80">yazi, chafa, mpv&#x2026;</text>
+      <rect x="185" y="18" width="150" height="50" rx="7" fill="#232321" stroke="#199e70"/>
+      <text x="197" y="40" font-size="12" fill="#fff">PTY</text>
+      <text x="197" y="57" font-size="10" fill="#8b8a80">read by the host</text>
+      <rect x="360" y="18" width="175" height="50" rx="7" fill="#232321" stroke="#199e70"/>
+      <text x="372" y="40" font-size="12" fill="#fff">alacritty event loop</text>
+      <text x="372" y="57" font-size="10" fill="#8b8a80">batches reads, holds lock</text>
+      <rect x="560" y="18" width="150" height="50" rx="7" fill="#232321" stroke="#199e70"/>
+      <text x="572" y="40" font-size="12" fill="#fff">vte parser</text>
+      <text x="572" y="57" font-size="10" fill="#8b8a80">0.15, crates.io</text>
+      <rect x="735" y="18" width="175" height="50" rx="7" fill="#232321" stroke="#199e70"/>
+      <text x="747" y="40" font-size="12" fill="#fff">alacritty Term</text>
+      <text x="747" y="57" font-size="10" fill="#8b8a80">grid, cursor, replies</text>
+      <line x1="160" y1="43" x2="182" y2="43" stroke="#8b8a80" marker-end="url(#ar4)"/>
+      <line x1="335" y1="43" x2="357" y2="43" stroke="#8b8a80" marker-end="url(#ar4)"/>
+      <line x1="535" y1="43" x2="557" y2="43" stroke="#8b8a80" marker-end="url(#ar4)"/>
+      <line x1="710" y1="43" x2="732" y2="43" stroke="#8b8a80" marker-end="url(#ar4)"/>
+      <text x="10" y="100" font-size="10" fill="#8b8a80" letter-spacing="1.2">WHAT A PROGRAM SENDS</text>
+      <text x="380" y="100" font-size="10" fill="#8b8a80" letter-spacing="1.2">WHAT HAPPENS TO IT</text>
+      <g font-size="11.5">
+        <text x="10" y="128" fill="#fff">ESC _ G &#x2026; ESC \</text><text x="200" y="128" fill="#8b8a80">Kitty image</text>
+        <text x="352" y="128" fill="#ec835a">&#x2715;</text><text x="380" y="128" fill="#c3c2b7">discarded byte by byte &#x2014; vte has no APC callback</text>
+        <text x="10" y="162" fill="#fff">ESC P &#x2026; q &#x2026; ESC \</text><text x="200" y="162" fill="#8b8a80">Sixel image</text>
+        <text x="352" y="162" fill="#ec835a">&#x2715;</text><text x="380" y="162" fill="#c3c2b7">reaches hook / put / unhook &#x2014; logged at debug, dropped</text>
+        <text x="10" y="196" fill="#fff">ESC ] 1337 ; File=</text><text x="200" y="196" fill="#8b8a80">iTerm2 image</text>
+        <text x="352" y="196" fill="#ec835a">&#x2715;</text><text x="380" y="196" fill="#c3c2b7">unhandled OSC &#x2014; formatted for a debug log, dropped</text>
+        <text x="10" y="230" fill="#fff">CSI 16 t</text><text x="200" y="230" fill="#8b8a80">cell size, please</text>
+        <text x="352" y="230" fill="#ec835a">&#x2715;</text><text x="380" y="230" fill="#c3c2b7">no arm for 16 &#x2014; never answered</text>
+        <text x="10" y="264" fill="#fff">CSI c</text><text x="200" y="264" fill="#8b8a80">what can you do?</text>
+        <text x="352" y="264" fill="#ec835a">&#x2715;</text><text x="380" y="264" fill="#c3c2b7">answers ?6c &#x2014; Sixel (attribute 4) not advertised</text>
+      </g>
+      <text x="10" y="292" font-size="10" fill="#8b8a80">each program then concludes the terminal cannot draw and falls back to block characters; nothing on screen says why</text>
+    </svg>
+  </div>
+  <figcaption>Drawn from vte 0.15 and alacritty_terminal 0.26 as TD builds them, with line numbers in
+  the graphics-protocols write-up. <b>Nothing a graphics program sends reaches TD</b>, and the
+  failure is silent: every program above decides the terminal cannot do images and draws text art
+  instead.</figcaption>
+</figure>
+
+<p>Upstream will not change this. vte&rsquo;s maintainers closed every pull request that added APC,
+one of them with <i>&ldquo;I&rsquo;m very hesitant to accept this sort of &lsquo;second rate escape
+sequence&rsquo;&rdquo;</i>, and Alacritty&rsquo;s own graphics pull request has been open since 2021
+with its maintainer writing that it <i>&ldquo;has little chance of ever getting upstreamed&rdquo;</i>.
+Zed, built on the same library, closed its request for terminal graphics as not planned, and on
+the day this research ran Alacritty&rsquo;s maintainer declined again, writing that GUIs in a terminal
+are <i>&ldquo;actively working to make terminals and terminal applications worse&rdquo;</i>.
+<span class="tag v">measured</span> TD&rsquo;s June review of competitors had already filed image
+protocols under &ldquo;defer, but flag as a future moat&rdquo;, sized extra-large.</p>
+
+<p class="bridge">So the meme&rsquo;s half is expensive and was deferred on purpose. The half you
+asked for costs far less.</p>
+
+<!-- ============================================================ 4 -->
+<h2 class="sec">Most of the first machine is already on disk</h2>
+
+<p>For Ctrl+click-a-file-and-see-it-in-the-pane, nearly every piece exists, and two of them were
+built here for other reasons.</p>
+
+<div class="stat-row">
+  <div class="tile"><div class="k">img() in TD today</div><div class="v">8 <small>call sites</small></div><p>tab badges, pane-header logos, the animated robot scenes on the agent wall</p></div>
+  <div class="tile"><div class="k">formats gpui decodes</div><div class="v">9 <small>+ SVG</small></div><p>PNG, JPEG, WebP, GIF, BMP, TIFF, ICO, PNM; animated GIF and WebP play</p></div>
+  <div class="tile"><div class="k">markdown-delight renderer</div><div class="v">482 <small>lines</small></div><p>one module, MIT, comrak; parses once, builds gpui elements per frame</p></div>
+  <div class="tile"><div class="k">the framework under both apps</div><div class="v">same <small>commit</small></div><p>TD and markdown-delight pin the same Zed commit; TD adds one method the renderer never calls</p></div>
+</div>
+
+<p>Images need nothing beyond a view to hold them. <span class="tag v">measured</span> Markdown needs
+markdown-delight&rsquo;s renderer, lifted into TD rather than shared, because the two apps build
+against two separate copies of Zed on disk and a shared crate would have to reconcile them. The
+lift needs three changes: a palette parameter (its colours are hard-coded to its green theme),
+link targets (it keeps a link&rsquo;s text and throws the address away), and drawn images.
+<span class="tag v">measured</span> Zed&rsquo;s own Markdown crates are not an option &mdash; they are
+GPL and pull in 53 to 94 other Zed crates. An earlier TD plan chose a different Markdown parser and
+new elements written from scratch; the lift reuses elements already written and debugged in
+markdown-delight.</p>
+
+<p>The renderer would have a second customer the day it lands. The workbench&rsquo;s
+<code>markdown</code> surface kind draws its body as plain lines today, so an agent&rsquo;s
+<code>## Heading</code> shows up with its hash marks. <span class="tag v">measured</span></p>
+
+<p class="bridge">With the drawing solved, the design question is where the document appears,
+and what a split is allowed to hold decides it.</p>
+
+<!-- ============================================================ 5 -->
+<h2 class="sec">A floating square is cheaper than a split, because a split can only hold a terminal</h2>
+
+<p>TD&rsquo;s tiling is a binary tree per tab whose leaves are terminal views. Every leaf owns a live
+terminal session, the saved layout stores each leaf as a recipe for starting a shell, and new splits
+stop at four panes. A pane that holds a document and no terminal would change what a leaf is, and
+with it every place the window walks the tree &mdash; sixty-three of them in the window&rsquo;s main
+file alone. <span class="tag v">measured</span></p>
+
+<p>There is a cheaper route to a split. Every pane already has two faces, the terminal and the
+workbench, chosen by one branch in the pane&rsquo;s render. <b>A third face &mdash; the document
+&mdash; gives a split that shows a file</b>, at the price of a shell idling behind it and one of the
+tab&rsquo;s four pane slots. <span class="tag w">inferred</span></p>
+
+<p>The floating square is cheaper still. It is a child of the pane&rsquo;s screen, drawn after the
+grid and before the glass &mdash; the layer the sticky note uses &mdash; so it needs no layout change
+at all. The sticky note looks like the model to copy for dragging, but it cannot be dragged; its
+position is computed from the pane&rsquo;s size. The drag to copy is the window&rsquo;s pane-drag
+state, which records a start point and engages only past a threshold. <span class="tag v">measured</span></p>
+
+<figure>
+  <span class="lbl">05 &middot; TD plus a document square and a document face</span>
+  <div class="scroller">
+    <div class="ext-row">
+      <div class="box d"><b>programs in panes</b><span>shells, claude, codex &mdash; and anything that wants to draw: mpv, yazi, chafa</span></div>
+    </div>
+    <div class="arch">
+      <div class="zone">
+        <span class="zl">&#x25A3; session host &middot; its own process</span>
+        <div class="box g"><b>a PTY per pane</b><span>survives the window closing</span></div>
+        <div class="box g"><b>TeeReader</b><span>copies every read to the attached window</span></div>
+        <div class="box g"><b>alacritty Term</b><span>the authoritative grid &middot; the only side that answers queries</span></div>
+        <div class="box ghost"><b>graphics scanner</b><span>placeholder</span></div>
+        <div class="box ghost"><b>image store</b><span>placeholder</span></div>
+      </div>
+      <div class="wire">raw bytes<br>+ attach<br>snapshot</div>
+      <div class="zone">
+        <span class="zl">&#x25A3; window &middot; gpui on wgpu</span>
+        <div class="box g"><b>SocketPty &rarr; replica Term</b><span>parses the same bytes again</span></div>
+        <div class="box g"><b>tab &rarr; split tree</b><span>every leaf is a terminal view &middot; new splits stop at 4</span></div>
+        <div class="box g in"><b>pane faces</b><span>terminal grid (a row of styled text per line) &middot; workbench</span></div>
+        <div class="box b in"><b>document face</b><span>a third face; &ldquo;open as split&rdquo; makes a pane and flips it here</span></div>
+        <div class="box g in"><b>sticky note on the glass</b><span>drawn over the grid, pre-warped, fixed in its corner</span></div>
+        <div class="box b in"><b>document square</b><span>floats over the grid, draggable &middot; img() for images, the lifted renderer for Markdown</span></div>
+        <div class="box ghost in"><b>placeholder painter</b><span>placeholder</span></div>
+        <div class="box g"><b>CRT post-pass</b><span>bends each pane&rsquo;s screen rectangle (a &ldquo;tube&rdquo;)</span></div>
+      </div>
+    </div>
+    <div class="ext-row bottom">
+      <div class="box d"><b>xdg-open</b><span>kept for Shift+click, the right-click menu, and every file type TD cannot draw</span></div>
+    </div>
+  </div>
+  <div class="legend"><span><i class="g"></i>exists today</span><span><i class="b"></i>added in this frame &mdash; proposed, not built</span><span><i class="d"></i>another program</span></div>
+  <figcaption>Nothing moved; two boxes appeared. <b>Both additions live inside the window and inside
+  one pane</b>, which is why neither touches the host, the wire or the tree &mdash; the document face
+  borrows a leaf the tree already knows how to hold.</figcaption>
+</figure>
+
+<figure>
+  <span class="lbl">06 &middot; The floating square, at roughly the size you would read it</span>
+  <div class="scroller">
+    <div class="tdwin">
+      <div class="tdtabs"><span class="on">gui research</span><span>td main</span><span>jev</span></div>
+      <div class="tdpane">
+        <div class="phead"><span class="mode claude">CLAUDE</span><span>gui in the tui &middot; ~/Work/td-gui-in-the-tui</span></div>
+<div class="grid"><span class="dim">&#x23FA;</span> Wrote the graphics-protocols write-up. No repo was changed and nothing is committed.
+
+<span class="ok">What decides it:</span>
+ &middot; Nothing reaches TD today. vte 0.15 throws away Kitty's escape sequences.
+ &middot; Size and identity answers are broken: CSI 16 t is never answered.
+ &middot; Kitty's Unicode placeholders need no fork.
+
+Deliverable: Graphics protocols research &mdash;
+<span class="lnk">/home/parker/Work/td-gui-in-the-tui/docs/research/gui-in-the-tui/graphics-protocols.md</span>
+
+## Links
+| <span class="lnk">file:///home/parker/Work/td-gui-in-the-tui/docs/research/…/graphics-protocols.md</span> | The write-up |
+| <span class="lnk">file:///home/parker/Work/td-gui-in-the-tui/app/src/host.rs</span> | Host tee |
+
+<span class="dim">&gt;</span> <span class="cur"> </span></div>
+        <div class="float">
+          <div class="fhead"><span>&#x2630; graphics-protocols.md &middot; Markdown</span><span class="acts"><span>&#x2922; split</span><span>&#x2197; desktop</span><span>&#x2715;</span></span></div>
+          <div class="fbody">
+            <h5>Terminal graphics protocols</h5>
+            <p>Research date 2026-09-24. Scope: what Terminal Delight (TD) itself must implement so
+            that programs running <i>inside</i> a TD pane &mdash; <code>mpv --vo=kitty</code>, yazi,
+            chafa, timg, presenterm, <code>kitten icat</code>, ratatui-image apps &mdash; can put real
+            pixels on screen.</p>
+            <div class="mh">SUMMARY &mdash; THE FACTS THAT DECIDE FEASIBILITY</div>
+            <p><b>1. Nothing a graphics client sends reaches TD&rsquo;s emulator today.</b> vte 0.15
+            routes <code>ESC _</code> (APC), <code>ESC ^</code> (PM) and <code>ESC X</code> (SOS) into
+            one state whose bytes go to <code>anywhere()</code>&hellip;</p>
+          </div>
+          <span class="fgrip">&#x25E2;</span>
+        </div>
+      </div>
+    </div>
+  </div>
+  <p class="mocknote">yellow = the proposal: the title strip, its three actions, the drag grip and
+  the size are unbuilt design, drawn so you can argue with them. The pane text is real output from
+  this session; the document is the real first lines of the Markdown file named.</p>
+  <figcaption>A reconstruction in HTML, not a screenshot, drawn near TD&rsquo;s cell size (TD
+  reports 6&times;14 logical pixels per cell on this monitor). <b>The square covers the lower half of
+  the conversation and leaves the prompt reachable</b>, which is the trade a float makes against a
+  split: nothing reflows, and something is always underneath.</figcaption>
+</figure>
+
+<figure>
+  <span class="lbl">07 &middot; The same file as a split</span>
+  <div class="scroller">
+    <div class="tdwin">
+      <div class="tdtabs"><span class="on">gui research</span><span>td main</span><span>jev</span></div>
+      <div class="tdsplit">
+        <div class="tdpane">
+          <div class="phead"><span class="mode claude">CLAUDE</span><span>gui in the tui</span></div>
+<div class="grid"><span class="dim">&#x23FA;</span> Wrote the graphics-protocols
+  write-up.
+
+<span class="ok">What decides it:</span>
+ &middot; Nothing reaches TD today.
+ &middot; CSI 16 t is never answered.
+ &middot; Placeholders need no fork.
+
+Deliverable: Graphics protocols
+research &mdash; <span class="lnk">/home/parker/Work/td-gui-
+in-the-tui/docs/research/gui-in-the-
+tui/graphics-protocols.md</span>
+
+<span class="dim">&gt;</span> <span class="cur"> </span></div>
+        </div>
+        <div class="tdpane docpane">
+          <div class="phead"><span class="mode doc">DOC</span><span>graphics-protocols.md &middot; &#x2197; desktop &middot; &#x2715;</span></div>
+          <div class="fbody">
+            <h5>Terminal graphics protocols</h5>
+            <p>Research date 2026-09-24. Scope: what Terminal Delight (TD) itself must implement so
+            that programs running <i>inside</i> a TD pane &mdash; <code>mpv --vo=kitty</code>, yazi,
+            chafa, timg, presenterm, <code>kitten icat</code>, ratatui-image apps &mdash; can put real
+            pixels on screen.</p>
+            <div class="mh">SUMMARY &mdash; THE FACTS THAT DECIDE FEASIBILITY</div>
+            <p><b>1. Nothing a graphics client sends reaches TD&rsquo;s emulator today.</b> vte 0.15
+            routes <code>ESC _</code> (APC), <code>ESC ^</code> (PM) and <code>ESC X</code> (SOS)
+            into one state whose bytes go to <code>anywhere()</code>, which only watches for CAN, SUB
+            and ESC; every other byte is discarded&hellip;</p>
+            <div class="mh">1. KITTY GRAPHICS PROTOCOL &mdash; IMPLEMENTER&rsquo;S ESSENTIALS</div>
+            <p>All citations are to <code>kitty/docs/graphics-protocol.rst</code>&hellip;</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <p class="mocknote">yellow = the proposal: a DOC mode label on the pane header and a blue phosphor
+  for it are invented here; TD&rsquo;s real modes are shell, claude, codex and remote.</p>
+  <figcaption>The split halves the conversation&rsquo;s width, so the agent&rsquo;s long paths wrap
+  and its copy chips stop firing on wrapped lines. <b>A split is the better shape for reading a long
+  document beside a live agent; the square is better for a glance.</b> Both can exist, and the order
+  is the decision.</figcaption>
+</figure>
+
+<p>Both shapes have to settle one thing about the glass. TD&rsquo;s CRT curvature is a post-pass over
+each pane&rsquo;s screen rectangle, and the first rectangle that contains a pixel wins, so anything
+painted inside a pane bends with it &mdash; a document included. The sticky note looks flat because
+its paths and glyphs are pre-warped; an image cannot be, because gpui&rsquo;s image sprite carries no
+transform. <span class="tag v">measured</span> A document therefore either bends with the tube and
+routes its clicks through the inverse map, the way the workbench already does, or it needs a flat
+rectangle registered in front of the pane&rsquo;s. That second option is exactly what the open issue
+<i>&ldquo;Exempt only an overlay&rsquo;s own rectangle from the CRT warp&rdquo;</i> asks for.</p>
+
+<p class="bridge">Images and Markdown are native and cheap. The HTML brief, the format agents here
+hand back for anything that needs a decision, is neither.</p>
+
+<!-- ============================================================ 6 -->
+<h2 class="sec">HTML is where it stops being cheap</h2>
+
+<p>A brief like this one is a web page: CSS grid, inline SVG, and a notes system written in
+JavaScript that tags every figure, opens a dialog and saves your notes into the file. gpui has no web
+engine, and on Linux it cannot show a texture it did not upload itself, so any foreign renderer
+reaches a pane as pixels copied through the CPU. <span class="tag v">measured</span> Four routes were
+tried or read.</p>
+
+<figure>
+  <span class="lbl">08 &middot; Four ways to show a brief in a pane</span>
+  <div class="cards">
+    <div class="card rec">
+      <span class="badge">recommended first</span>
+      <h3>A rendered page</h3>
+      <p>Headless Chromium turned a real brief into a 1000&times;1400 image in <b>0.99 s</b> and laid
+      it out correctly. The image view from the first rung shows it; an &ldquo;open live&rdquo; action
+      hands the file to Chromium. PDFs go the same way through <code>pdftoppm</code>, about 0.1 s a
+      page. <span class="tag v">measured</span></p>
+      <p class="why">What it costs: it is a picture. You can read and scroll it; you cannot add a
+      note, open a modal or copy text.</p>
+    </div>
+    <div class="card">
+      <h3>Servo, live in the pane</h3>
+      <p>Your Servo fork ran a real brief&rsquo;s notes code headless: <b>38 note buttons appeared,
+      the dialog opened, a note was added.</b> Saving failed two ways: a page opened from disk may not
+      use the browser&rsquo;s local storage, and Servo does not implement download links, so
+      &ldquo;save into file&rdquo; navigated away instead of saving. TD owns the file and could write it
+      itself.
+      <span class="tag v">measured</span></p>
+      <p class="why">Better at: annotation in place, which could beat the browser&rsquo;s
+      download-and-move-it-back loop. Costs: ~230 MB of release binary beside TD&rsquo;s 49.5 MB, a
+      ten-minute clean build, 378 MB for one brief, ~7 ms of CPU per changed frame. It also stacked a
+      four-tile row into one column; the fork is 1,537 commits behind Servo.</p>
+    </div>
+    <div class="card">
+      <h3>Blitz</h3>
+      <p>HTML and CSS in Rust with no JavaScript engine in its released crates, in beta. A brief
+      would render without its notes, modals or anything scripted. Not measured on a brief.
+      <span class="tag w">inferred</span></p>
+      <p class="why">Better at: staying in-process and small. It matters only if a static render
+      from Chromium ever feels too slow.</p>
+    </div>
+    <div class="card no">
+      <span class="badge">not available</span>
+      <h3>A WebKit view</h3>
+      <p>No route embeds WebKit into a window that is not GTK on Wayland: wry&rsquo;s child mode is
+      X11-only and gpui-kit&rsquo;s WebView supports macOS and Windows. WPE WebKit could export frames,
+      but the Rust wrapper for that path is three weeks old. <span class="tag v">measured</span></p>
+      <p class="why">Better at: nothing reachable today.</p>
+    </div>
+  </div>
+  <figcaption>From the document-renderers write-up; the Servo and Chromium numbers are runs on this
+  machine against <code>2026-09-09-client-server-review.html</code>. <b>The recommended rung keeps a
+  brief faithful and gives up annotation</b>, which stays in the browser until Servo passes a
+  fidelity test on the whole archive.</figcaption>
+</figure>
+
+<p>The question Servo leaves open is whether a current Servo lays out and runs your briefs well
+enough to embed at all, and it is cheap to settle before any TD code exists: rebuild Servo at
+upstream <code>main</code>, screenshot the 118 HTML reports under <code>~/Work/reports</code> and
+TD&rsquo;s <code>reports/</code> in both Servo and Chromium at the same size, and compare. Ninety-one
+of them carry the notes system. If a large share break, the live rung becomes headless Chromium
+streamed over its DevTools protocol, or nothing. A working demo of Servo inside a gpui window already
+exists, in a project called wgpu-graft; the way it polls every frame and never frees old ones are the
+parts a TD version would replace. The measurements are in the modal
+<i>Servo in a pane, measured</i>.</p>
+
+<p class="bridge">That settles the half you asked for. The meme&rsquo;s half &mdash; programs drawing
+into TD &mdash; looked extra-large in June, and one part of it is not.</p>
+
+<!-- ============================================================ 7 -->
+<h2 class="sec">Programs can draw into TD without a fork, through one trick of Kitty&rsquo;s</h2>
+
+<p>Kitty&rsquo;s protocol has a mode built for multiplexers like tmux, and it fits TD&rsquo;s
+host-and-window shape closely. The program sends the image once, tagged with an id. Then it
+<i>prints text</i>: a private-use character, U+10EEEE, in every cell the image should cover. The
+character&rsquo;s colour carries the image id, its underline colour carries the placement, and two
+combining marks after it give the row and column of the slice. The terminal draws that slice in
+place of the character.</p>
+
+<figure>
+  <span class="lbl">09 &middot; A placeholder image is text</span>
+  <div class="scroller">
+    <svg viewBox="0 0 920 290" style="min-width:700px" role="img" aria-label="Left: an image divided into a four by three grid of slices, sent once with image id 42. Right: a four by three block of terminal cells, each holding the character U+10EEEE. The highlighted cell's foreground colour encodes image id 42, its underline colour encodes placement 7, and combining marks encode row 1 and column 2, so the terminal paints slice row 1 column 2 there." font-family="ui-monospace, monospace">
+      <defs><marker id="ar9" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#8b8a80"/></marker></defs>
+      <text x="20" y="24" font-size="10" fill="#8b8a80" letter-spacing="1.2">THE IMAGE, SENT ONCE &#xB7; a=t, i=42</text>
+      <rect x="20" y="36" width="240" height="180" fill="#8bac0f"/>
+      <rect x="20" y="36" width="240" height="96" fill="#9bbc0f"/>
+      <circle cx="205" cy="74" r="22" fill="#e0f8d0"/>
+      <path d="M20,216 L20,150 L80,112 L130,150 L185,120 L260,160 L260,216 Z" fill="#306230"/>
+      <path d="M20,216 L20,184 L95,168 L170,190 L260,178 L260,216 Z" fill="#0f380f"/>
+      <g stroke="#111110" stroke-width="1.5" stroke-dasharray="3 3" fill="none">
+        <line x1="80" y1="36" x2="80" y2="216"/><line x1="140" y1="36" x2="140" y2="216"/><line x1="200" y1="36" x2="200" y2="216"/>
+        <line x1="20" y1="96" x2="260" y2="96"/><line x1="20" y1="156" x2="260" y2="156"/>
+      </g>
+      <rect x="140" y="96" width="60" height="60" fill="none" stroke="#3987e5" stroke-width="2.5"/>
+      <text x="20" y="236" font-size="10" fill="#8b8a80">slice row 1, column 2 is outlined</text>
+      <line x1="285" y1="126" x2="395" y2="126" stroke="#8b8a80" marker-end="url(#ar9)"/>
+      <text x="290" y="116" font-size="10" fill="#8b8a80">then prints</text>
+      <text x="290" y="144" font-size="10" fill="#8b8a80">12 characters</text>
+      <text x="410" y="24" font-size="10" fill="#8b8a80" letter-spacing="1.2">TWELVE TERMINAL CELLS</text>
+      <g font-size="9.5" fill="#c3c2b7">
+        <rect x="410" y="36" width="320" height="180" fill="#0c0d0b" stroke="#3a3a36"/>
+        <g stroke="#2a2b27"><line x1="490" y1="36" x2="490" y2="216"/><line x1="570" y1="36" x2="570" y2="216"/><line x1="650" y1="36" x2="650" y2="216"/><line x1="410" y1="96" x2="730" y2="96"/><line x1="410" y1="156" x2="730" y2="156"/></g>
+        <text x="420" y="62">U+10EEEE</text><text x="420" y="78" fill="#6e7268">r0 c0</text>
+        <text x="500" y="62">U+10EEEE</text><text x="500" y="78" fill="#6e7268">r0 c1</text>
+        <text x="580" y="62">U+10EEEE</text><text x="580" y="78" fill="#6e7268">r0 c2</text>
+        <text x="660" y="62">U+10EEEE</text><text x="660" y="78" fill="#6e7268">r0 c3</text>
+        <text x="420" y="122">U+10EEEE</text><text x="420" y="138" fill="#6e7268">r1 c0</text>
+        <text x="500" y="122">U+10EEEE</text><text x="500" y="138" fill="#6e7268">r1 c1</text>
+        <rect x="570" y="96" width="80" height="60" fill="#152130" stroke="#3987e5" stroke-width="2"/>
+        <text x="580" y="122" fill="#fff">U+10EEEE</text><text x="580" y="138" fill="#8fbdf2">r1 c2</text>
+        <text x="660" y="122">U+10EEEE</text><text x="660" y="138" fill="#6e7268">r1 c3</text>
+        <text x="420" y="182">U+10EEEE</text><text x="420" y="198" fill="#6e7268">r2 c0</text>
+        <text x="500" y="182">U+10EEEE</text><text x="500" y="198" fill="#6e7268">r2 c1</text>
+        <text x="580" y="182">U+10EEEE</text><text x="580" y="198" fill="#6e7268">r2 c2</text>
+        <text x="660" y="182">U+10EEEE</text><text x="660" y="198" fill="#6e7268">r2 c3</text>
+      </g>
+      <polyline points="650,126 752,126" fill="none" stroke="#3987e5"/>
+      <g font-size="10.5">
+        <text x="758" y="92" fill="#fff">foreground colour</text><text x="758" y="106" fill="#8b8a80">= image id 42</text>
+        <text x="758" y="130" fill="#fff">underline colour</text><text x="758" y="144" fill="#8b8a80">= placement 7</text>
+        <text x="758" y="168" fill="#fff">combining marks</text><text x="758" y="182" fill="#8b8a80">= row 1, column 2</text>
+      </g>
+      <text x="410" y="236" font-size="10" fill="#8b8a80">the terminal paints slice (1, 2) of image 42 where the outlined cell is</text>
+      <text x="20" y="276" font-size="10" fill="#8b8a80">the program prints characters, so TD&#x2019;s grid, scrollback and attach snapshot carry them like any text; only the image bytes need a channel of their own</text>
+    </svg>
+  </div>
+  <figcaption>Drawn from Kitty&rsquo;s protocol document, sections on Unicode placeholders; the
+  picture itself is a made-up four-colour scene. <b>Once the image is text, TD already knows how to
+  move it</b> &mdash; scrolling, scrollback, clearing and the alternate screen all carry the cells
+  that stand for it.</figcaption>
+</figure>
+
+<p>That is the part that fits TD. The grid already stores these cells without loss, and the attach
+snapshot the host sends the window already re-emits the combining marks and underline colours.
+<span class="tag v">measured</span> Sending an image, placing it by id, deleting it and answering the
+support query do not depend on where the cursor is, so a scanner reading the byte stream can handle
+all four without touching alacritty. TD already has two seats for one: the host&rsquo;s tee, which
+copies every read, and the window&rsquo;s byte counter. <span class="tag w">inferred</span></p>
+
+<figure>
+  <span class="lbl">10 &middot; TD plus a scanner, an image store and a placeholder painter</span>
+  <div class="scroller">
+    <div class="ext-row">
+      <div class="box d"><b>programs in panes</b><span>ratatui-image apps and <code>kitten icat --unicode-placeholder</code> light up here; yazi once it recognises TD</span></div>
+    </div>
+    <div class="arch">
+      <div class="zone">
+        <span class="zl">&#x25A3; session host &middot; its own process</span>
+        <div class="box g"><b>a PTY per pane</b><span>survives the window closing</span></div>
+        <div class="box g"><b>TeeReader</b><span>copies every read to the attached window</span></div>
+        <div class="box g"><b>alacritty Term</b><span>the authoritative grid &middot; the only side that answers queries</span></div>
+        <div class="box b"><b>graphics scanner</b><span>Kitty transmit / place-by-id / delete / query &middot; CSI 16 t &middot; XTVERSION</span></div>
+        <div class="box b"><b>image store</b><span>per screen, byte quota &middot; re-sent on attach</span></div>
+      </div>
+      <div class="wire">raw bytes<br>+ attach<br>snapshot<br><span class="amber">+ images</span></div>
+      <div class="zone">
+        <span class="zl">&#x25A3; window &middot; gpui on wgpu</span>
+        <div class="box g"><b>SocketPty &rarr; replica Term</b><span>parses the same bytes again &middot; decodes images from the stream</span></div>
+        <div class="box g"><b>tab &rarr; split tree</b><span>every leaf is a terminal view &middot; new splits stop at 4</span></div>
+        <div class="box g in"><b>pane faces</b><span>terminal grid (a row of styled text per line) &middot; workbench</span></div>
+        <div class="box g in"><b>document face</b><span>from the previous frame</span></div>
+        <div class="box g in"><b>sticky note on the glass</b><span>drawn over the grid, pre-warped, fixed in its corner</span></div>
+        <div class="box g in"><b>document square</b><span>from the previous frame</span></div>
+        <div class="box b in"><b>placeholder painter</b><span>U+10EEEE cells &rarr; slices of stored images, one clipped draw per row</span></div>
+        <div class="box g"><b>CRT post-pass</b><span>bends each pane&rsquo;s screen rectangle (a &ldquo;tube&rdquo;)</span></div>
+      </div>
+    </div>
+    <div class="ext-row bottom">
+      <div class="box d"><b>xdg-open</b><span>kept for Shift+click, the right-click menu, and every file type TD cannot draw</span></div>
+    </div>
+  </div>
+  <div class="legend"><span><i class="g"></i>exists, or added in an earlier frame</span><span><i class="b"></i>added in this frame &mdash; proposed, not built</span><span><i class="d"></i>another program</span></div>
+  <figcaption>The earlier frame&rsquo;s additions turn green and three new boxes appear, two of them in
+  the host. <b>This is the first frame that touches the host and the wire</b>: images must be answered
+  for by the host, decoded by the window, and re-sent when a window attaches, because the snapshot
+  carries cells and not pixels.</figcaption>
+</figure>
+
+<p>Two fixes ride along, and both are needed whatever else happens. TD tells programs its cells are 6 by 14
+pixels, which is the logical size with the fraction cut off; this monitor runs at 1.6&times;, so a
+program sizing an image from that draws it at about sixty percent of the screen&rsquo;s real
+resolution. And TD should answer the terminal-identity query, XTVERSION, so yazi can recognise it and
+choose placeholders. <span class="tag v">measured</span></p>
+
+<p class="bridge">Placeholders reach fewer programs than the trick deserves, though, and the rest need
+something harder.</p>
+
+<!-- ============================================================ 8 -->
+<h2 class="sec">Most programs place images at the cursor, and that part needs surgery</h2>
+
+<p>ratatui-image, the Rust library behind many TUI image widgets, always uses placeholders, and
+kitty&rsquo;s own image viewer, <code>kitten icat</code>, does when asked. Everything else on the list places images at the cursor,
+and so does every Sixel and iTerm2 image.</p>
+
+<figure>
+  <span class="lbl">11 &middot; Which programs light up at each step</span>
+  <div class="scroller">
+    <table class="wide progs">
+      <thead><tr><th>Program</th><th>How it places</th><th>Placeholders, no fork</th><th>+ cursor placement</th><th>+ Sixel</th></tr></thead>
+      <tbody>
+        <tr><td>ratatui-image apps</td><td>always placeholders</td><td><span class="y">works</span></td><td><span class="y">works</span></td><td><span class="y">works</span></td></tr>
+        <tr><td>kitten icat --unicode-placeholder</td><td>placeholders when asked</td><td><span class="y">works</span></td><td><span class="y">works</span></td><td>&mdash;</td></tr>
+        <tr><td>yazi</td><td>placeholders for terminals it recognises, one cursor placement per cell otherwise</td><td><span class="p">after XTVERSION + a yazi brand entry</span></td><td><span class="y">works</span></td><td><span class="y">works</span></td></tr>
+        <tr><td>mpv --vo=kitty</td><td>cursor, every frame, no image id</td><td><span class="n">blank</span></td><td><span class="y">works</span> <span class="p">throughput unmeasured</span></td><td>&mdash;</td></tr>
+        <tr><td>mpv --vo=sixel</td><td>cursor</td><td><span class="n">blank</span></td><td><span class="n">blank</span></td><td><span class="y">works</span></td></tr>
+        <tr><td>timg, chafa, presenterm</td><td>cursor (placeholders only inside tmux)</td><td><span class="n">blank</span></td><td><span class="y">works</span></td><td><span class="y">works</span></td></tr>
+        <tr><td>kitten icat (default)</td><td>cursor</td><td><span class="n">blank</span></td><td><span class="y">works</span></td><td>&mdash;</td></tr>
+        <tr><td>Boyd&rsquo;s Jev dashboard</td><td>cursor, 15 fps; turns Kitty on only for Ghostty, WezTerm or kitty by name</td><td><span class="n">half-blocks</span></td><td><span class="p">works with <code>--kitty</code>, or once it knows TD</span></td><td>&mdash;</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <figcaption>From each program&rsquo;s source at pinned commits, cited in the graphics-protocols
+  write-up; Boyd&rsquo;s client from its published package. <b>The no-fork step lights two rows and
+  makes a third conditional</b>; mpv, chafa, Boyd&rsquo;s dashboard and the rest need cursor
+  placement, which is the expensive part.</figcaption>
+</figure>
+
+<p>A scanner cannot place an image at the cursor, because at the moment it sees the bytes, alacritty
+may not have parsed the text in front of them. alacritty reads several chunks before parsing any of
+them, holds the grid locked while it does, and when a program asks it to hold the screen until a
+whole frame is ready &mdash; a synchronised update &mdash; it buffers for up to 150 ms before applying
+anything. <span class="tag v">measured</span> That leaves three routes, and the third was named in
+TD&rsquo;s own August review of its foundations:</p>
+
+<ul>
+  <li><b>Own the read loop:</b> replace alacritty&rsquo;s 486-line loop that reads the terminal and
+  feeds the parser with TD&rsquo;s own, parse up to each graphics sequence, then act with the cursor
+  in hand. No fork; the code that keeps a re-attaching window in step with the host, and the
+  window&rsquo;s socket reader, have to be re-expressed against the new loop.</li>
+  <li><b>Fork vte and alacritty_terminal</b>, the way Rio did. Rio is a Rust terminal on wgpu whose
+  core descends from alacritty; it forked the parser, added APC callbacks, and supports all three
+  protocols under the MIT licence. Two forks to rebase for ever after &mdash; though Rio&rsquo;s
+  graphics modules, now published inside its <code>rio-vt</code> crate, can be lifted whichever route
+  is chosen.</li>
+  <li><b>Swap the VT layer</b> &mdash; the library that turns program output into a grid &mdash; for
+  one that already speaks graphics. The August review: <i>&ldquo;Swap the VT seam (rio-vt /
+  libghostty-vt)&rdquo;</i> becomes right <i>&ldquo;when image support becomes a committed TD
+  feature.&rdquo;</i> herdr, the agent workspace Omarchy installs, already runs Ghostty&rsquo;s VT
+  library per pane; a pull request swapping rio-vt into Zed&rsquo;s terminal was closed unmerged, and
+  its diff maps the differences.</li>
+</ul>
+
+<p>Video has one more cost, from TD&rsquo;s split into host and window. mpv at 720p sends about 3.7 MB
+of base64 per frame &mdash; roughly 110 MB/s at 30 frames a second &mdash; and the host drops a window
+that falls 512 chunks behind. <span class="tag w">inferred</span> That wants a real mpv run through the
+split before anyone designs around it.</p>
+
+<p class="bridge">None of this is new territory. The last question is what other terminals learned
+building it.</p>
+
+<!-- ============================================================ 9 -->
+<h2 class="sec">Someone already ships the click, and no one surveyed ships the whole thing</h2>
+
+<p>The survey ran through research-delight, the research harness that declares what
+&ldquo;done&rdquo; means before it starts and refuses any value without a source. It covered 52
+projects &mdash; 32 seeded, 20 found along the way &mdash; and 51 met the bar; the one that never
+closed is the retro artwork, which three rounds could not tie to any software. Three projects sit
+closest to what you described, each on a different axis.</p>
+
+<figure>
+  <span class="lbl">12 &middot; Three projects, three axes</span>
+  <div class="pgrid">
+    <div class="card pa">
+      <h3>cmux &middot; the click</h3>
+      <p>A macOS terminal for running many coding agents, built on Ghostty&rsquo;s engine.
+      Cmd+click a Markdown path in terminal output and a live-reloading viewer opens in a split;
+      Cmd+click an HTML file and it opens in a browser pane. Agents open the same viewer from its
+      CLI, and a request that arrives over its socket may not move focus. No floating square.
+      <span class="tag v">measured</span></p>
+      <p class="why">Take its behaviour and its bug list, not its code (GPL, Swift). Cmd+clicking
+      <code>src/main.py:1292</code> &mdash; the shape every agent and compiler prints &mdash; opened
+      Safari; <code>file://</code> URLs were mangled; clicks were swallowed inside full-screen TUIs;
+      the viewer went blank after a resize.</p>
+    </div>
+    <div class="card pa">
+      <h3>Zed&rsquo;s terminal &middot; the stack</h3>
+      <p>gpui and alacritty_terminal, TD&rsquo;s own pair. Ctrl+click on a path opens a gpui image
+      viewer or a Markdown preview as a pane item, and a relative path is resolved against the
+      directory that was current <i>when that line was printed</i>, from a small history kept at each
+      command boundary. <span class="tag v">measured</span></p>
+      <p class="why">Take the per-line working directory, about fifty lines against the same grid TD
+      uses. Note the other half: Zed closed images inside its terminal as not planned.</p>
+    </div>
+    <div class="card pa">
+      <h3>Terminology &middot; the floating square</h3>
+      <p>Enlightenment&rsquo;s terminal. Clicking a media link pops the image or video up as a layer
+      inside the terminal window, and Escape closes it. Its trust rule is the one to copy: a
+      person&rsquo;s click may fall back to an outside program, a popup requested by program output
+      never can. <span class="tag v">measured</span></p>
+      <p class="why">Avoid its private escape protocol, which passes file paths instead of pixels and
+      left mainstream image tools unable to target it.</p>
+    </div>
+    <div class="card pa">
+      <h3>Close behind</h3>
+      <p><b>Wave Terminal</b> tiles terminal, web and preview blocks and has a magnified view, but
+      never turns a path in output into a link. <b>herdr</b>, the agent workspace Omarchy installs,
+      has Ctrl+click link handlers and overlay, popup, split, tab and zoomed placements, and runs
+      Ghostty&rsquo;s VT library per pane. <b>kitty</b>&rsquo;s open-actions table is the router
+      grammar to copy. <b>tmux 3.8</b> converts a floating pane to a tiled one and back.
+      <span class="tag v">measured</span></p>
+    </div>
+  </div>
+  <figcaption>From the research-delight run, every row sourced. <b>The click, the stack and the
+  floating square have each been built, and none of the 52 projects surveyed combines all three in a
+  Linux terminal for agents.</b> The full table is in the modal <i>Prior art, subject by
+  subject</i>.</figcaption>
+</figure>
+
+<p>Four of them converged on one shape, and it is worth taking whole. kitty&rsquo;s open-actions,
+herdr&rsquo;s link handlers, Wave&rsquo;s <code>wsh view</code> and Arcan&rsquo;s <code>open</code>
+each route a target by file type to a viewer, and each ended up with the same short list of
+placements: split, tab, float, and &ldquo;in place&rdquo;. For TD that is one router &mdash;
+something like <code>td open &lt;path&gt; --float|--split</code> &mdash; that Ctrl+click, a command
+line and an agent all call. It carries one flag for who asked: a person&rsquo;s click may fall back to
+the desktop, a program&rsquo;s request may not, and a program&rsquo;s request never takes focus from
+the pane you are typing in. <span class="tag w">inferred</span></p>
+
+<p>The two posts resolved as well. Boyd&rsquo;s dashboard is <code>npx jev-plays-pokemon</code>, an
+MIT Node client from Standard Agents &mdash; the company behind dmux, the other example you named.
+The Game Boy screen is Kitty graphics placed at the cursor, up to 15 frames a second, each frame
+scaled up four times with nearest-neighbour sampling first because, in the source&rsquo;s words,
+<i>&ldquo;Terminals scale Kitty images with smoothing, which blurs pixel art.&rdquo;</i> It turns
+Kitty on only when the terminal&rsquo;s name says Ghostty, WezTerm or kitty, so inside TD it would draw
+half-blocks until it learns TD&rsquo;s name and TD can place at the cursor. <span class="tag v">measured</span>
+The HYPERION artwork is, as far as three rounds of search could tell, concept art with no software
+behind it. <span class="tag w">hunch</span> dmux itself draws no pixels; its dialogs are separate
+processes in tmux popups, and its issue tracker is a record of what goes wrong when panes are
+coordinated from outside the program that owns them. TD owns its panes in-process, which is the
+advantage to keep.</p>
+
+<p class="bridge">The pieces exist and the shape has converged. What is left is the order.</p>
+
+<!-- ============================================================ 10 -->
+<h2 class="sec">Five things only you can settle</h2>
+
+<p>Everything above arranges into two tracks that share one drawing primitive and nothing else. They
+can run in either order, and the first rung of each is small.</p>
+
+<figure>
+  <span class="lbl">13 &middot; Two tracks, in order</span>
+  <div class="scroller">
+    <div class="tracks">
+      <div class="track">
+        <div class="tn">documents<br>(your Ctrl+click)</div>
+        <div class="step go"><b>Images and Markdown in a floating square</b>Ctrl+click routes here; lifted renderer<span class="sz">S + S</span></div>
+        <div class="step"><b>&ldquo;Open as split&rdquo;</b>the document face; takes a pane slot<span class="sz">S&ndash;M</span></div>
+        <div class="step"><b>HTML and PDF as rendered pages</b>Chromium and pdftoppm, &ldquo;open live&rdquo;<span class="sz">S</span></div>
+        <div class="step gate"><b>Gate: Servo against Chromium</b>every brief in the archive, on current Servo<span class="sz">S, before any TD code</span></div>
+        <div class="step later"><b>Live Servo pane</b>notes that save into the file<span class="sz">M&ndash;L, only if the gate passes</span></div>
+      </div>
+      <div class="track">
+        <div class="tn">program pixels<br>(the meme)</div>
+        <div class="step go"><b>Correct size answers</b>cell and window size, current, in real screen pixels<span class="sz">S &middot; correct regardless</span></div>
+        <div class="step"><b>Placeholders</b>scanner, image store, painter, images re-sent on attach<span class="sz">M &times; 3</span></div>
+        <div class="step"><b>Say it is TD</b>answer the terminal-name query; a yazi entry upstream<span class="sz">S</span></div>
+        <div class="step gate"><b>Gate: own the loop, or swap the VT seam</b>a one-pane spike decides<span class="sz">S</span></div>
+        <div class="step later"><b>Cursor placement, Sixel, iTerm2, video</b>mpv, chafa, timg, presenterm<span class="sz">L</span></div>
+      </div>
+    </div>
+  </div>
+  <div class="legend"><span><i class="g"></i>start here</span><span><i class="o" style="border-color:#d03b3b"></i>a gate: a measurement that can stop the track</span><span><i class="d"></i>only if the gate passes</span></div>
+  <figcaption>Sizes are the research agents&rsquo; estimates from reading the code (S about a day or
+  two, M a few days, L a week or more), not measurements. <b>The first box of each track is small and
+  useful whatever happens after it.</b></figcaption>
+</figure>
+
+<figure>
+  <span class="lbl">14 &middot; What the first build includes</span>
+  <div class="fence">
+    <div class="fside fin">
+      <h4>in the first build</h4>
+      <ul>
+        <li>Ctrl+click on a path TD already detects opens PNG, JPEG, WebP, GIF, SVG and Markdown in a floating square over the pane.</li>
+        <li>Shift+click, the right-click menu and every other type keep going to the desktop.</li>
+        <li>The square drags, closes on Esc, and offers &ldquo;open on the desktop&rdquo;.</li>
+        <li>The three documents that forbid a viewer are amended in the same change.</li>
+        <li>Correct size answers: the cell size, the current window size, in real screen pixels.</li>
+      </ul>
+    </div>
+    <div class="fside fout">
+      <h4>not in it</h4>
+      <ul>
+        <li>HTML and PDF (the next rung, as rendered pages).</li>
+        <li>Any web engine inside TD.</li>
+        <li>Program graphics beyond the size answers.</li>
+        <li>Editing, comments on Markdown, or search inside the square.</li>
+        <li>GUI applications in panes &mdash; a nested compositor, recorded in August as &ldquo;a different product&rdquo;.</li>
+        <li>OSC 8 links and bare relative paths, which TD&rsquo;s link detection skips today.</li>
+      </ul>
+    </div>
+  </div>
+  <figcaption>My proposal for the first rung. <b>The refusals matter as much as the inclusions</b>:
+  each item on the right is a place this feature could grow into a browser, and the first build stops
+  short of all of them.</figcaption>
+</figure>
+
+<div class="grill">
+  <div class="ask">
+    <h3>1 &middot; Reverse &ldquo;never our own viewer&rdquo;, and give the two clicks different jobs?</h3>
+    <p>Today Ctrl+click and Shift+click do the same thing. The proposal gives Ctrl+click to TD for the
+    types it can draw and leaves Shift+click on the desktop handler, so nothing you use now
+    disappears. It reverses a rule written in three places, and those places should change in the same
+    commit.</p>
+    <p class="rec"><b>Recommendation:</b> yes. The rule was about not second-guessing your desktop,
+    and Shift+click keeps that path one modifier away.</p>
+  </div>
+  <div class="ask">
+    <h3>2 &middot; Floating square first, split second?</h3>
+    <p>The square lives inside one pane and changes nothing about tabs or layout. The split, as a third
+    face, spawns a shell behind the document and spends one of four pane slots. The two mockups above
+    show both.</p>
+    <p class="rec"><b>Recommendation:</b> the square first; the split right after, as its
+    &ldquo;&#x2922; split&rdquo; action, once the square has shown what reading in TD feels like.</p>
+  </div>
+  <div class="ask">
+    <h3>3 &middot; Should a document bend with the glass?</h3>
+    <p>Bending costs nothing and matches everything else in the pane; clicks go through the inverse map
+    the way the workbench&rsquo;s already do. Dense text on a strongly curved tall pane may read badly,
+    and hit-testing already drifts low at maximum warp. Flat needs the warp-exemption change the open
+    issue asks for.</p>
+    <p class="rec"><b>Recommendation:</b> let it bend in the first build, look at a real brief at your
+    usual warp, and land the exemption only if it reads badly.</p>
+  </div>
+  <div class="ask">
+    <h3>4 &middot; HTML as a rendered page now, and Servo only after the fidelity test?</h3>
+    <p>A rendered page is faithful and cheap and cannot be annotated. Servo can be annotated, costs
+    about 230 MB and a ten-minute build, and already broke one layout.</p>
+    <p class="rec"><b>Recommendation:</b> yes. Run the 118-report comparison on upstream Servo before a
+    line of TD code depends on it.</p>
+  </div>
+  <div class="ask">
+    <h3>5 &middot; Start the program-pixel track now, or park it after the size answers?</h3>
+    <p>What TD tells programs about its size is wrong today whatever else happens: the cell size is
+    never answered and the pixel sizes are logical and truncated. Placeholders are three medium pieces
+    and light up ratatui-image apps. Boyd&rsquo;s dashboard, mpv and the rest place at the cursor and
+    need the loop-or-swap decision.</p>
+    <p class="rec"><b>Recommendation:</b> fix the size answers with the first build; start placeholders
+    when you want a pixel dashboard inside TD; take the loop-or-swap decision only when video, or yazi
+    previews everywhere, becomes a goal.</p>
+  </div>
+</div>
+
+<h2 class="sec">Where these numbers came from</h2>
+
+<p>Six modals. The first is the one to open if you open only one.</p>
+
+<div class="dlgrow">
+  <button data-dlg="d-provenance">What each picture is drawn from</button>
+  <button data-dlg="d-method">Method and limits</button>
+  <button data-dlg="d-framing">The pasted framing, checked</button>
+  <button data-dlg="d-servo">Servo in a pane, measured</button>
+  <button data-dlg="d-checklist">The protocol checklist</button>
+  <button data-dlg="d-priorart">Prior art, subject by subject</button>
+</div>
+
+<p class="foot">Written against TD&rsquo;s main branch as it stood on the morning of 2026-09-24
+(commit de7776b), on a research branch in its own worktree, <code>~/Work/td-gui-in-the-tui</code>. The
+four write-ups behind every claim are on the same branch, in <code>docs/research/gui-in-the-tui/</code>.
+Nothing in TD was built or changed.</p>
+
+</div>
+
+<!-- ============================================================ modals -->
+
+<dialog id="d-provenance" class="sub">
+  <div class="dlg-head"><div><h3>What each picture is drawn from</h3><p class="repo">theirs, the code&rsquo;s, and mine</p></div><button class="x" data-close>&times;</button></div>
+  <div class="dlg-body">
+    <h4>Drawn from the code</h4>
+    <ul>
+      <li><strong>01</strong> &mdash; <code>open_with_system</code> and its six call sites (<code>pane.rs:696-702</code>, <code>:6242</code>, <code>:7417</code>; <code>pane/bench.rs:2120</code>, <code>:3356</code>; <code>main.rs:19430</code>, <code>:20258</code>); handlers from <code>xdg-mime query default</code> on this machine.</li>
+      <li><strong>03, 05, 10</strong> &mdash; the green boxes: host and tee (<code>host.rs:129-163</code>, <code>:671-713</code>), replica and socket reader (<code>term.rs:289-310</code>, <code>socketpty.rs</code>), split tree (<code>main.rs:309-320</code>, <code>MAX_PANES</code> at <code>:118</code>), faces (<code>pane.rs:8677</code>), sticky note (<code>sticky.rs:407-444</code>), warp (<code>warp.rs</code>, <code>crt_pass.wgsl:63-78</code>). The blue boxes are proposals placed at the seams listed in <code>td-internals.md</code>.</li>
+      <li><strong>04</strong> &mdash; vte 0.15 <code>lib.rs:182,377,438-450</code> (APC), <code>ansi.rs:1311-1326</code> (DCS), <code>ansi.rs:1739-1745</code> (no 16 t); alacritty_terminal 0.26 <code>term/mod.rs:1261</code> (<code>?6c</code>).</li>
+      <li><strong>11</strong> &mdash; ratatui-image, yazi, chafa, timg, presenterm and mpv at pinned commits; paths in <code>graphics-protocols.md</code> &sect;1.10.</li>
+    </ul>
+    <h4>Drawn from someone else&rsquo;s design</h4>
+    <ul>
+      <li><strong>09</strong> &mdash; Kitty&rsquo;s protocol document, Unicode placeholders (<code>graphics-protocol.rst:555-742</code>). The picture in it is invented.</li>
+      <li><strong>08</strong> &mdash; runs on this machine plus the projects&rsquo; own documentation for Blitz, wry and gpui-kit.</li>
+    </ul>
+    <h4>Mine</h4>
+    <ul>
+      <li><strong>02</strong> &mdash; the two-lane framing is my reading of the two screenshots.</li>
+      <li><strong>06, 07</strong> &mdash; the floating square, its title strip and actions, the DOC mode label and its colour are invented. The terminal text is real output from this session; the document text is the real start of <code>graphics-protocols.md</code>.</li>
+      <li><strong>13, 14</strong> &mdash; the ordering and the fence are my proposal; the sizes are the agents&rsquo; estimates.</li>
+    </ul>
+    <h4>The one estimated geometry</h4>
+    <p>&ldquo;Near TD&rsquo;s cell size&rdquo; in figure 06: TD reports 6&times;14 logical pixels per cell in this pane (a read-only <code>TIOCGWINSZ</code>: 189&times;49 cells, 1134&times;686 px), and the mockup&rsquo;s 11 px monospace is about 6.6 px per character. The square&rsquo;s 54% width is a choice, not a measurement.</p>
+  </div>
+</dialog>
+
+<dialog id="d-method" class="sub">
+  <div class="dlg-head"><div><h3>Method and limits</h3><p class="repo">four research agents, then checks by hand</p></div><button class="x" data-close>&times;</button></div>
+  <div class="dlg-body">
+    <h4>How it was done</h4>
+    <p>Four research agents read in parallel, each writing one file under <code>docs/research/gui-in-the-tui/</code>: TD&rsquo;s internals (read-only, at <code>origin/main</code>), the graphics protocols from an emulator&rsquo;s side (against local checkouts of Ghostty, kitty, WezTerm and Alacritty and the vte and alacritty_terminal sources TD builds), document renderers inside gpui (markdown-delight, Zed&rsquo;s gpui, the Servo fork, the web), and a prior-art survey run through research-delight with servo-reader for pages a plain fetch could not read. I then checked the load-bearing claims against the code myself: the no-viewer comment, the <code>img()</code> call sites, the Ctrl+click path, vte&rsquo;s <code>anywhere()</code> and the <code>?6c</code> reply.</p>
+    <h4>What was run, and what was not</h4>
+    <ul>
+      <li><strong>Run on this machine:</strong> the Servo notes probe on a copy of a brief, headless Chromium and Servo screenshots, a CPU benchmark of the readback copy, <code>pdftoppm</code> on one page, <code>mpv --vo=help</code> and <code>--list-options</code>, a read-only <code>TIOCGWINSZ</code> on three panes.</li>
+      <li><strong>Not run:</strong> TD itself with any of this in it. No image was drawn in a pane, no document square exists, no escape sequence was fed to TD. Every statement about TD&rsquo;s future behaviour is inferred from its code.</li>
+      <li><strong>Not established:</strong> that the host answers <code>CSI 14 t</code> with the size a pane was spawned at (read in the code, not reproduced); how much memory a placeholder cell costs; mpv throughput through the host and window; whether dense text reads well under the warp.</li>
+    </ul>
+    <h4>What the method misses</h4>
+    <p>Reading code finds what exists and where it attaches; it cannot say how a feature feels. The estimates in figure 13 are from reading, not from building. The Servo fidelity finding rests on one brief.</p>
+    <h4>An earlier pass</h4>
+    <p>A first pass at this research ran on a smaller model by mistake and produced documents with invented APIs and the pasted framing taken at face value. It is kept out of the review surface at <code>refs/attempts/gui-in-the-tui/haiku-pass</code>, and nothing here draws on it.</p>
+  </div>
+</dialog>
+
+<dialog id="d-framing" class="sub">
+  <div class="dlg-head"><div><h3>The pasted framing, checked</h3><p class="repo">claim by claim, with the source that settles each</p></div><button class="x" data-close>&times;</button></div>
+  <div class="dlg-body">
+    <table>
+      <thead><tr><th>Claim</th><th>Verdict</th><th>Why</th></tr></thead>
+      <tbody>
+        <tr><td>TD&rsquo;s architecture is SurfaceHost &rarr; TubeTarget &rarr; EffectGraph &rarr; compositor</td><td><span class="tag c">contradicted</span></td><td>Zero hits in code or docs. &ldquo;Tube&rdquo; is real and means a warp-registered pane rectangle; the chain is canvas &rarr; <code>register_tube</code> &rarr; the CRT post-pass.</td></tr>
+        <tr><td>CellTarget = Ratatui</td><td><span class="tag c">contradicted</span></td><td>TD has no Ratatui dependency; the grid is gpui text.</td></tr>
+        <tr><td>TD probes its terminal for Kitty or Sixel; stock Foot gives Sixel, Ghostty gives Kitty</td><td><span class="tag c">contradicted</span> as applied to TD</td><td>True of those terminals, and irrelevant: TD is the terminal. A program inside TD gets what TD implements.</td></tr>
+        <tr><td>mpv has <code>--vo=kitty</code> and <code>--vo=sixel</code> with left, top, rows and cols</td><td><span class="tag v">measured</span>, corrected</td><td>The options exist (mpv 0.41.0). <code>rows</code> and <code>cols</code> describe the terminal&rsquo;s size, not the image&rsquo;s.</td></tr>
+        <tr><td>ratatui-image autodetects Kitty, Sixel and iTerm2 and supports Foot and Ghostty</td><td><span class="tag v">measured</span>, corrected</td><td>Kitty and Sixel are queried; iTerm2 is chosen from environment variables only. Foot and Ghostty are rows in its README, not special code. MIT is right.</td></tr>
+        <tr><td>Carbonyl is Chromium in a terminal</td><td><span class="tag v">measured</span>, with limits</td><td>It draws with block characters at cell resolution and has had no commit since 2023-02-26; a brief would be unreadable at that resolution (a hunch).</td></tr>
+        <tr><td>rtv, at the account the summary linked, is a new MIT/Apache Rust video player worth borrowing from</td><td><span class="tag c">do not use</span></td><td>A copy of <code>Santitub/rtv</code> on an account opened twelve days before it, whose own commits add a zip inside <code>src/</code> and rewrite every README link to a page with download buttons. That is a known malware lure. Judged from metadata only; nothing was downloaded. The description is true of the original, <code>Santitub/rtv</code>.</td></tr>
+        <tr><td>Omarchy&rsquo;s default terminal is Foot, with Ghostty and Kitty supported</td><td><span class="tag v">measured</span>, corrected</td><td>Foot is the default (manual and the v4.0.4 install scripts); the supported alternatives are three: Alacritty, Ghostty and Kitty.</td></tr>
+        <tr><td>Start with one surface that shows a PNG and resizes correctly</td><td><span class="tag v">agreed</span></td><td>Images are the first rung here too, drawn natively with <code>img()</code> rather than through a protocol.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</dialog>
+
+<dialog id="d-servo" class="sub">
+  <div class="dlg-head"><div><h3>Servo in a pane, measured</h3><p class="repo">the fork at <code>t3/native-read</code>, upstream base 2026-06-17</p></div><button class="x" data-close>&times;</button></div>
+  <div class="dlg-body">
+    <h4>The notes probe</h4>
+    <table>
+      <thead><tr><th>Check</th><th>Result</th></tr></thead>
+      <tbody>
+        <tr><td>Page load to settled</td><td>1.7 s</td></tr>
+        <tr><td>Note buttons tagged by notes.js</td><td>38</td></tr>
+        <tr><td><code>showModal</code> on the note dialog</td><td>opened, on top</td></tr>
+        <tr><td>Add a note</td><td>note count 1</td></tr>
+        <tr><td>localStorage on <code>file://</code></td><td>SecurityError: opaque origin</td></tr>
+        <tr><td>&ldquo;save into file&rdquo;</td><td>navigated to <code>blob:null/&hellip;</code>; no file written</td></tr>
+      </tbody>
+    </table>
+    <p>Clicks were dispatched from JavaScript because servo-agent&rsquo;s click command failed against Servo&rsquo;s WebDriver, so a trusted click is untested. The probe ran against servo-agent&rsquo;s working tree, which carries uncommitted edits from 2026-09-23 that are not from this session.</p>
+    <h4>Frames into gpui</h4>
+    <p>gpui on Linux cannot display a texture it did not upload (<code>surface()</code> is macOS-only; the wgpu renderer drops surface batches). So Servo&rsquo;s frames come back through the CPU. A benchmark of the copies per 1000&times;1400 frame &mdash; Servo&rsquo;s vertical flip, the RGBA-to-BGRA swap and gpui&rsquo;s atlas staging copy &mdash; measured <strong>6.98&ndash;7.11 ms</strong>, before the GPU transfers, which were not measured. Reading back only when Servo reports a new frame costs nothing while a brief sits still. Zero-copy needs a GL-to-Vulkan hand-off and a new <code>gpui_wgpu</code> patch.</p>
+    <h4>Size</h4>
+    <ul>
+      <li>Clean dev build of servoshell: 596.4 s, 1,005 units.</li>
+      <li>Debug binary 2.0 GB; <code>target/</code> 19 GB; release about 230 MB (Servo&rsquo;s own benchmark bot). TD&rsquo;s release binary: 49.5 MB.</li>
+      <li>One brief headless: 378 MB peak resident.</li>
+    </ul>
+    <h4>Fidelity</h4>
+    <p>The same brief&rsquo;s four stat tiles use <code>repeat(auto-fit, minmax(148px, 1fr))</code>. Chromium drew them in a row; the fork stacked them in one column. The fork is 1,537 commits behind Servo <code>main</code>, so this may already be fixed.</p>
+  </div>
+</dialog>
+
+<dialog id="d-checklist" class="sub">
+  <div class="dlg-head"><div><h3>The protocol checklist</h3><p class="repo">from graphics-protocols.md, ordered so each stage ships something a real program uses</p></div><button class="x" data-close>&times;</button></div>
+  <div class="dlg-body">
+    <table>
+      <thead><tr><th>#</th><th>Item</th><th>Size</th></tr></thead>
+      <tbody>
+        <tr><td>1</td><td>Fix the size answers: a live CSI 14 t in host and window-owned panes, CSI 16 t from a scanner, pixel fields consistent</td><td>S</td></tr>
+        <tr><td>2</td><td>A byte-scanner seat in the host&rsquo;s tee and the window&rsquo;s socket reader</td><td>M</td></tr>
+        <tr><td>3</td><td>A Kitty command parser, vendored from WezTerm&rsquo;s MIT <code>apc.rs</code></td><td>S</td></tr>
+        <tr><td>4</td><td>An image store per screen with a byte quota (kitty and Ghostty use 320 MB)</td><td>M</td></tr>
+        <tr><td>5</td><td>Query replies from the host, exactly once &mdash; shipped together with 6, never before</td><td>S</td></tr>
+        <tr><td>6</td><td>The placeholder painter: one clipped draw per row, drop retired images</td><td>M</td></tr>
+        <tr><td>7</td><td>Attach and side channel: re-send referenced images; turn file and shared-memory transfers into inline data for the window</td><td>M</td></tr>
+        <tr><td>8</td><td>Answer XTVERSION; offer yazi a brand entry upstream</td><td>S</td></tr>
+        <tr><td>9</td><td>Decide: own the read loop, or swap the VT seam &mdash; a one-pane spike</td><td>S</td></tr>
+        <tr><td>10</td><td>Own the read loop (or carry parser patches, borrowing Rio&rsquo;s)</td><td>L</td></tr>
+        <tr><td>11</td><td>Cursor placements as TD-internal placeholder cells; position-based deletes</td><td>M</td></tr>
+        <tr><td>12</td><td>Sixel, then add attribute 4 to the device-attributes reply</td><td>M</td></tr>
+        <tr><td>13</td><td>iTerm2 OSC 1337, including the multipart form</td><td>S/M</td></tr>
+        <tr><td>14</td><td>Measure mpv through the host and window; decide queue depth or frame dropping from the number</td><td>M</td></tr>
+        <tr><td>15</td><td>Deferred: animation, relative placements, images over or under text</td><td>&mdash;</td></tr>
+      </tbody>
+    </table>
+    <p>kitty&rsquo;s own code is GPL-3.0 and is read, never copied. The reusable, licence-compatible pieces are WezTerm&rsquo;s parser (MIT), Rio&rsquo;s protocol modules (MIT), <code>icy_sixel</code> (MIT or Apache-2.0) and Ghostty&rsquo;s diacritics table (MIT).</p>
+  </div>
+</dialog>
+
+<dialog id="d-priorart" class="sub">
+  <div class="dlg-head"><div><h3>Prior art, subject by subject</h3><p class="repo">from the research-delight run</p></div><button class="x" data-close>&times;</button></div>
+  <div class="dlg-body">
+    <p>52 subjects went through research-delight&rsquo;s rubric; these are the ones that bear on a
+    decision. Every row is sourced in the run&rsquo;s own table:</p>
+    <p><code>docs/research/gui-in-the-tui/prior-art/run/gui-in-the-tui-prior-art.html</code></p>
+    <table>
+      <thead><tr><th>Subject</th><th>What it does here</th><th>Take for TD</th><th>Avoid</th></tr></thead>
+      <tbody>
+        <tr><td>cmux</td><td>Click a Markdown path, a live viewer opens in a split; HTML opens a browser pane; agents open viewers from a CLI without taking focus. GPL, Swift, macOS.</td><td>No focus-stealing for program-requested opens.</td><td>Its bug list: <code>path:line</code> opened Safari, <code>file://</code> mangled, clicks lost in full-screen TUIs.</td></tr>
+        <tr><td>Zed&rsquo;s terminal</td><td>gpui + alacritty_terminal. A click opens a gpui image viewer or Markdown preview as a pane item.</td><td>Resolve a relative path against the directory current when its line was printed.</td><td>Row-keyed anchors break when scrollback evicts lines; keep a monotonic line counter.</td></tr>
+        <tr><td>Terminology</td><td>A clicked media link pops up as a layer inside the terminal; Esc closes it.</td><td>Trust by who asked: only a person&rsquo;s click may reach an outside program.</td><td>A private escape protocol that passes file paths.</td></tr>
+        <tr><td>Wave Terminal</td><td>Terminal, web and preview blocks tiled in one tab; <code>wsh view -m</code> magnifies.</td><td>One verb for the click and the CLI; &ldquo;replace this preview&rdquo; instead of another split.</td><td>It never turns a path in output into a link.</td></tr>
+        <tr><td>herdr</td><td>The agent workspace Omarchy installs: Ctrl+click link handlers; overlay, popup, split, tab and zoomed placements; Ghostty&rsquo;s VT library per pane.</td><td>Its handler table and placement names, which you already use.</td><td>Its re-emitter workarounds; TD draws images itself, as scene layers.</td></tr>
+        <tr><td>kitty</td><td>Defines the Kitty graphics protocol; open-actions decide what a click does.</td><td>The open-actions rule grammar as TD&rsquo;s router config.</td><td>File and shared-memory transfers without its security rules. GPL: read, never copy.</td></tr>
+        <tr><td>tmux 3.7 / 3.8</td><td>Floating panes; 3.8 converts float to tile and back, with modal flags.</td><td>&ldquo;Pop out to float&rdquo; and &ldquo;dock into a split&rdquo; on the square.</td><td>Images as overlays keyed to screen coordinates; anchor them to cells.</td></tr>
+        <tr><td>Zellij</td><td>One floating layer toggled by a key; pinned floats; Kitty re-encoded for the host since 0.45.</td><td>One key to show or hide every square; a pin flag.</td><td>Images that outlive a hidden pane and show through the next one.</td></tr>
+        <tr><td>Warp</td><td>Rust GPU terminal, AGPL since April 2026; Alacritty-derived model with Kitty and iTerm2 images; a Markdown viewer pane.</td><td>Anchor each image to an absolute scrollback row plus an evicted-lines counter.</td><td>Parsing Kitty while the device-attributes reply does not advertise it.</td></tr>
+        <tr><td>VS Code terminal</td><td>Ctrl+click opens files in editor tabs, focusing one already open.</td><td>Raise an existing viewer of the same file rather than opening a second.</td><td>Images lost on reload; TD&rsquo;s reattach must carry them.</td></tr>
+        <tr><td>Emacs EAF</td><td>Qt browser and PDF apps as separate windows laid over Emacs windows.</td><td>The host keymap sees every key first.</td><td>Gluing an OS window over a pane on Wayland (it moves them with <code>hyprctl</code> rules).</td></tr>
+        <tr><td>Extraterm</td><td>Command output in frames that pop out into tabs.</td><td>Make placement reversible.</td><td>Tying rich output to one toolkit cost it a rewrite.</td></tr>
+        <tr><td>dmux</td><td>Agent panes on tmux; dialogs are separate processes in popups; a file-browser pane bound to its source pane.</td><td>A viewer as a child of the pane that opened it, sized by a width policy.</td><td>Coordinating panes from outside through signals and temp files.</td></tr>
+        <tr><td>dmux-rs</td><td>Standard Agents&rsquo; Rust front end on alacritty_terminal 0.25; a second parser checks every pane cell for cell.</td><td>That shadow verifier, before graphics are added.</td><td>Waiting for alacritty to grow graphics.</td></tr>
+        <tr><td>rio-vt</td><td>Rio&rsquo;s VT core as a crate: Kitty with placeholders, Sixel, iTerm2; a full reply set. MIT.</td><td>Lift the graphics modules and the reply strings.</td><td>Swapping the whole engine to get them (a hunch).</td></tr>
+        <tr><td>ayosec&rsquo;s alacritty fork</td><td>Sixel inside alacritty_terminal via a patched vte. Apache-2.0.</td><td>The crate half is vendorable.</td><td>Sixel only, and a version behind TD&rsquo;s.</td></tr>
+        <tr><td>Ghostty</td><td>Kitty graphics only, with placeholders; refuses Sixel.</td><td>Kitty first.</td><td>&mdash;</td></tr>
+        <tr><td>mcat</td><td>Markdown, HTML and PDF to terminal images through headless Chromium.</td><td>The rendered-page rung already exists as a tool.</td><td>&mdash;</td></tr>
+        <tr><td>jev-plays-pokemon</td><td>Kitty at the cursor, pre-scaled 4&times; nearest-neighbour; picks Kitty by terminal name.</td><td>TD can scale small images nearest-neighbour itself and spare clients 16&times; the bytes.</td><td>Impersonating another terminal&rsquo;s name; report TD&rsquo;s own.</td></tr>
+        <tr><td>Arcan + cat9</td><td><code>open(target, placement)</code> routed by MIME type, including &ldquo;swallow&rdquo; and &ldquo;embed at row&rdquo;.</td><td>The placement vocabulary.</td><td>Requiring programs to adopt a new protocol.</td></tr>
+        <tr><td>Carbonyl</td><td>Chromium drawn in half-block characters; dormant since February 2023.</td><td>&mdash;</td><td>Unreadable at cell resolution for a brief (a hunch).</td></tr>
+        <tr><td>HYPERION TUI</td><td>Concept art; no software found.</td><td>Design the square so it could hold a terminal too.</td><td>Chrome before input: decide focus and escape first.</td></tr>
+      </tbody>
+    </table>
+    <h4>One ordering detail</h4>
+    <p>Advertising Sixel in the device-attributes reply changes which path Rust image tools take: a viuer
+    built with Sixel picks it over Kitty whenever attribute 4 is present. Until TD&rsquo;s Sixel is as
+    good as its Kitty, leave the 4 out.</p>
+  </div>
+</dialog>
+
+<!-- decision-brief — the markup the notes system needs.
+     Paste immediately before the closing </body>. notes.js finds these by id.
+     Nothing here needs editing except NOTES_FILE. -->
+
+<div class="notebar" id="notebar">
+  <span class="cnt"><b id="note-count">0</b> notes</span>
+  <button id="btn-export" class="primary" data-note-action="export"
+          title="Anchored note map for pasting into a prompt">&#x1F4CB; copy map</button>
+  <button id="btn-embed" data-note-action="embed"
+          title="Download this file with your notes baked in">&#x1F4BE; save into file</button>
+  <button id="btn-clear" data-note-action="clear" title="Delete every note">&#x2715;</button>
+</div>
+
+<dialog id="d-note">
+  <div class="dlg-head">
+    <div>
+      <h3 id="note-title">Note</h3>
+      <p class="repo" id="note-anchor">&nbsp;</p>
+    </div>
+    <button class="x" data-close>&times;</button>
+  </div>
+  <div class="dlg-body">
+    <ul id="note-list"></ul>
+    <p id="note-none">No notes on this yet.</p>
+    <textarea id="note-text"
+      placeholder="Your note. Saved against this element and readable by an agent once you save into the file."></textarea>
+    <div class="note-actions">
+      <button class="save" data-note-action="add">Add note</button>
+      <button data-close>Close</button>
+      <span class="hintk">Ctrl+Enter to add</span>
+    </div>
+  </div>
+</dialog>
+
+<dialog id="d-export">
+  <div class="dlg-head">
+    <div>
+      <h3>Note map</h3>
+      <p class="repo">Anchored to element ids in this file &middot; paste straight into a prompt</p>
+    </div>
+    <button class="x" data-close>&times;</button>
+  </div>
+  <div class="dlg-body">
+    <p style="margin-bottom:12px">
+      Each line is anchored to an element id, so an agent can locate the passage without you
+      pasting the file. Prompt shape: <em>"read my notes in <code>&lt;filename&gt;</code> and act
+      on them."</em>
+    </p>
+    <textarea id="export-out" readonly></textarea>
+    <p class="tokest" id="export-est"></p>
+    <div class="note-actions">
+      <button class="save" data-note-action="copy">Copy to clipboard</button>
+      <button data-close>Close</button>
+    </div>
+  </div>
+</dialog>
+
+<!-- Notes are baked in here by "save into file". Leave it empty and leave it in. -->
+<script type="application/json" id="report-notes">{}</script>
+
+<script>
+  /* Set before notes.js runs. Used for the storage key and the download filename. */
+  window.NOTES_FILE = '2026-09-24-gui-in-the-tui.html';
+</script>
+<script>
+/* decision-brief — reader notes.
+ *
+ * Drop-in. No build step, no dependencies. Paste this file's contents inline inside a
+ * script element, after the document body — a decision brief must survive being emailed
+ * as one file, so never load it with a src attribute.
+ *
+ * NOTHING IN THIS FILE MAY CONTAIN THE LITERAL CLOSING SCRIPT TAG, not even inside a
+ * comment or a string: an HTML parser ends the script element at the first one it sees,
+ * and everything after it silently becomes page content. Write it broken up, e.g.
+ * "<\/script>", if you ever need to emit one.
+ *
+ * Three outputs, in the order they matter:
+ *   1. copy map    — anchored note map, ~1% of the tokens of the whole document
+ *   2. save into   — bakes notes into a downloadable copy so an agent can READ them
+ *   3. localStorage — live persistence between reloads
+ *
+ * Why the map exists: pasting a whole annotated report into a prompt costs thousands of
+ * tokens; pasting bare notes loses which passage each one is about. The map is the third
+ * option — [element-id] + note, so the agent greps the id and finds the passage itself.
+ *
+ * Configure before this script runs (all optional):
+ *   window.NOTES_FILE    — filename used for the storage key and the download. Default: location basename.
+ *   window.NOTES_TARGETS — [[selector, prefix], ...] overriding what gets an affordance.
+ */
+(function () {
+  'use strict';
+
+  var FILE = window.NOTES_FILE ||
+    (location.pathname.split('/').pop() || 'decision-brief.html');
+  var KEY = 'notes:' + FILE;
+
+  /* Default targets. A prefix keeps exported anchors readable and grouped.
+     Override wholesale with window.NOTES_TARGETS if a brief's shape differs.
+
+     THE GRILL COMES FIRST, AND IT IS NOT OPTIONAL. Until 2026-09-02 this list
+     covered five of the seven components layout.md tells you to build and
+     omitted the grill — so the one section whose entire purpose is a decision
+     the reader has to make was the one section the reader could not comment on.
+     Two briefs shipped that way, each having invented its own class name
+     (`grill-q`, then `q`) because nothing here named one. Both spellings are
+     matched below; `.ask` is the name to use going forward. If you add a
+     component, add it here in the same commit.
+
+     FIGURES ARE SECOND, for the same reason. The 2026-09-15 attention-spine
+     brief carried eleven pictures and had to override NOTES_TARGETS wholesale
+     to make any of them annotatable, because `figure` was not here — a fork of
+     this list living in one report, where nothing else would inherit it. The
+     pictures are the part a reader argues with, so they are in the default list
+     now. `titleOf()` already reads `.lbl`, so a figure labelled `03 · What
+     opening costs` anchors as `fig-03-what-opening-costs`. */
+  var TARGETS = window.NOTES_TARGETS || [
+    ['.grill .q, .grill-q, .ask', 'ask'],
+    ['figure', 'fig'],
+    ['.card', 'verdict'],
+    ['.esc-list li', 'readfirst'],
+    ['.finding', 'finding'],
+    ['.tile', 'stat'],
+    ['table.wide tr', 'row'],
+    ['.bar-row', 'chart'],
+    ['.callout', 'callout'],
+    ['dialog .dlg-body > h4', 'sub']
+  ];
+
+  /* Notes baked into the file win on first load — a fresh browser should see what the
+     author saved. After that localStorage is the live copy. */
+  var baked = {};
+  try {
+    var island = document.getElementById('report-notes');
+    if (island) baked = JSON.parse(island.textContent || '{}');
+  } catch (e) { /* a malformed island must not break the page */ }
+
+  var N;
+  try { N = JSON.parse(localStorage.getItem(KEY) || 'null') || baked; }
+  catch (e) { N = baked; }
+
+  var active = null, activeTitle = '';
+
+  function save() {
+    try { localStorage.setItem(KEY, JSON.stringify(N)); } catch (e) {}
+  }
+  function esc(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+  function slug(s) {
+    return String(s || 'x').toLowerCase().replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '').slice(0, 44) || 'x';
+  }
+  function titleOf(el) {
+    var h = el.querySelector('h2,h3,h4,.bar-lab,.k,.lbl,td:first-child,th:first-child');
+    var t = ((h ? h.textContent : el.textContent) || 'item').replace(/\s+/g, ' ').trim();
+    return t.length > 72 ? t.slice(0, 69) + '…' : t;
+  }
+
+  /* ---- give every target a stable anchor id and a note affordance ---- */
+  function tag() {
+    var used = {};
+    TARGETS.forEach(function (pair) {
+      var sel = pair[0], pre = pair[1];
+      Array.prototype.forEach.call(document.querySelectorAll(sel), function (el, i) {
+        if (el.classList.contains('notable')) return;
+        if (el.tagName === 'TR' && el.querySelector('th')) return;   // header rows
+        if (el.closest('#d-note, #d-export, .notebar')) return;
+
+        /* Numbered lists anchor by position; everything else by a SHORT title slug.
+           Long slugs make the exported map unreadable, which defeats the map. */
+        var id;
+        var num = el.querySelector('.esc-n');
+        if (num) id = pre + '-' + num.textContent.trim();
+        else id = pre + '-' + slug(titleOf(el)).split('-').slice(0, 4).join('-');
+
+        var base = id, n = 2;
+        while (used[id]) id = base + '-' + (n++);
+        used[id] = 1;
+
+        el.classList.add('notable');
+        el.dataset.nid = id;
+        el.dataset.ntitle = titleOf(el);
+        if (!el.id) el.id = id;                      // a real anchor in the file
+
+        var b = document.createElement('button');
+        b.className = 'note-btn';
+        b.type = 'button';
+        b.title = 'Add a note';
+        b.innerHTML = '&#x1F4AC;';
+        b.addEventListener('click', function (ev) {
+          ev.preventDefault(); ev.stopPropagation(); open(el);
+        });
+        el.appendChild(b);
+      });
+    });
+  }
+
+  function badges() {
+    var total = 0;
+    Array.prototype.forEach.call(document.querySelectorAll('.notable'), function (el) {
+      var n = (N[el.dataset.nid] || []).length;
+      total += n;
+      el.classList.toggle('has-note', n > 0);
+      var b = el.querySelector(':scope > .note-btn');
+      if (b) b.innerHTML = n ? String(n) : '&#x1F4AC;';
+    });
+    var c = document.getElementById('note-count');
+    if (c) c.textContent = total;
+    ['btn-export', 'btn-embed', 'btn-clear'].forEach(function (id) {
+      var b = document.getElementById(id);
+      if (b) b.disabled = total === 0;
+    });
+  }
+
+  function render() {
+    var list = N[active] || [];
+    var ul = document.getElementById('note-list');
+    document.getElementById('note-none').style.display = list.length ? 'none' : 'block';
+    ul.innerHTML = list.map(function (n, i) {
+      return '<li><div class="nts"><span>' + esc(n.ts) + '</span>' +
+        '<button class="ndel" data-i="' + i + '">delete</button></div>' + esc(n.text) + '</li>';
+    }).join('');
+    Array.prototype.forEach.call(ul.querySelectorAll('.ndel'), function (b) {
+      b.addEventListener('click', function () { del(+b.dataset.i); });
+    });
+  }
+
+  function open(el) {
+    active = el.dataset.nid;
+    activeTitle = el.dataset.ntitle;
+    document.getElementById('note-title').textContent = activeTitle;
+    document.getElementById('note-anchor').textContent = '#' + active;
+    render();
+    document.getElementById('d-note').showModal();
+    document.getElementById('note-text').focus();
+  }
+
+  function add() {
+    var ta = document.getElementById('note-text');
+    var t = ta.value.trim();
+    if (!t || !active) return;
+    (N[active] = N[active] || []).push({
+      text: t,
+      title: activeTitle,
+      ts: new Date().toISOString().slice(0, 16).replace('T', ' ')
+    });
+    ta.value = '';
+    save(); render(); badges();
+  }
+
+  function del(i) {
+    N[active].splice(i, 1);
+    if (!N[active].length) delete N[active];
+    save(); render(); badges();
+  }
+
+  /* ---- the map: anchored, compact, prompt-ready ---- */
+  function buildMap() {
+    var count = 0, els = 0;
+    for (var k in N) { if (N.hasOwnProperty(k)) { els++; count += N[k].length; } }
+    var out = [
+      'NOTES — ' + FILE,
+      count + ' notes on ' + els + ' elements.',
+      'Each [anchor] is an element id in that file — search it to find the passage.',
+      ''
+    ];
+    /* Document order, not object order: the map should read the way the brief reads. */
+    Array.prototype.forEach.call(document.querySelectorAll('.notable'), function (el) {
+      var list = N[el.dataset.nid];
+      if (!list || !list.length) return;
+      out.push('[' + el.dataset.nid + '] ' + el.dataset.ntitle);
+      list.forEach(function (n) { out.push('  · ' + n.text.replace(/\n+/g, ' ')); });
+      out.push('');
+    });
+    return out.join('\n');
+  }
+
+  function exportNotes() {
+    var txt = buildMap();
+    document.getElementById('export-out').value = txt;
+    var est = document.getElementById('export-est');
+    if (est) {
+      est.textContent = txt.length + ' characters ≈ ' + Math.ceil(txt.length / 4) +
+        ' tokens — versus ~' + Math.ceil(document.body.innerText.length / 4) +
+        ' for the whole document.';
+    }
+    document.getElementById('d-export').showModal();
+  }
+
+  function copyExport(btn) {
+    var ta = document.getElementById('export-out');
+    ta.select();
+    try { document.execCommand('copy'); } catch (e) {}
+    if (btn) {
+      var o = btn.textContent;
+      btn.textContent = 'Copied';
+      setTimeout(function () { btn.textContent = o; }, 1400);
+    }
+  }
+
+  /* ---- bake notes into a downloadable copy of this file ----
+     localStorage is invisible to an agent. This is what makes
+     "read my notes in <file>" work. */
+  function embedNotes() {
+    var doc = document.documentElement.cloneNode(true);
+    Array.prototype.forEach.call(doc.querySelectorAll('.note-btn'), function (n) { n.remove(); });
+    Array.prototype.forEach.call(doc.querySelectorAll('.notable'), function (n) {
+      n.classList.remove('notable', 'has-note');
+    });
+    var island = doc.querySelector('#report-notes');
+    if (island) island.textContent = JSON.stringify(N, null, 1);
+    /* A plain-text mirror as well, so grep and ctx_read find the notes
+       without anyone having to parse JSON out of a script tag. */
+    var body = doc.querySelector('body');
+    if (body) body.appendChild(document.createComment('\nREADER NOTES —\n' + buildMap() + '\n'));
+
+    var blob = new Blob(['<!DOCTYPE html>\n' + doc.outerHTML], { type: 'text/html' });
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = FILE;
+    a.click();
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 4000);
+
+    var b = document.getElementById('btn-embed');
+    if (b) { var o = b.innerHTML; b.innerHTML = 'saved &#x2713;'; setTimeout(function () { b.innerHTML = o; }, 2200); }
+  }
+
+  function clearNotes() {
+    if (!confirm('Delete every note in this brief?')) return;
+    N = {}; save(); badges();
+  }
+
+  /* ---- wiring ---- */
+  function init() {
+    var ta = document.getElementById('note-text');
+    if (ta) {
+      ta.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); add(); }
+      });
+    }
+    document.addEventListener('click', function (e) {
+      var t = e.target.closest('[data-note-action]');
+      if (!t) return;
+      var a = t.dataset.noteAction;
+      if (a === 'add') add();
+      else if (a === 'export') exportNotes();
+      else if (a === 'embed') embedNotes();
+      else if (a === 'clear') clearNotes();
+      else if (a === 'copy') copyExport(t);
+    });
+    ['d-note', 'd-export'].forEach(function (id) {
+      var d = document.getElementById(id);
+      if (!d) return;
+      Array.prototype.forEach.call(d.querySelectorAll('[data-close]'), function (x) {
+        x.addEventListener('click', function () { d.close(); });
+      });
+      d.addEventListener('click', function (e) { if (e.target === d) d.close(); });
+    });
+    tag();
+    badges();
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+  else init();
+})();
+
+</script>
+
+<script>
+(function () {
+  document.querySelectorAll('[data-dlg]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      var d = document.getElementById(b.dataset.dlg);
+      if (d && typeof d.showModal === 'function') d.showModal();
+    });
+  });
+  document.querySelectorAll('dialog.sub').forEach(function (d) {
+    d.querySelectorAll('[data-close]').forEach(function (x) {
+      x.addEventListener('click', function () { d.close(); });
+    });
+    d.addEventListener('click', function (e) { if (e.target === d) d.close(); });
+  });
+})();
+</script>
+</body>
+</html>

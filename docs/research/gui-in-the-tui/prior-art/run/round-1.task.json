@@ -1,0 +1,656 @@
+{
+  "round": 1,
+  "rubric": "gui-in-the-tui-prior-art",
+  "integrityRules": [
+    "Never invent a value (phone, name, figure). If unfound, omit it or set `flagged: true` with a note like \"verify by phone\".",
+    "Every value must carry `provenance.source` (a URL) OR be `flagged`. Unsourced, unflagged values are rejected by the harness.",
+    "Only fill the gap fields listed for each subject — do not re-research satisfied fields.",
+    "Emit a `bubbles` entry of kind \"serendipity\" for anything useful you find that is outside the requested fields."
+  ],
+  "fields": [
+    {
+      "key": "what_it_is",
+      "requirement": "required",
+      "verify": "source-required",
+      "hint": "one or two sentences: what the project is and what graphical content it puts in or beside a terminal"
+    },
+    {
+      "key": "license",
+      "requirement": "required",
+      "verify": "source-required",
+      "hint": "SPDX id from the repo (gh api repos/O/R --jq .license.spdx_id) or 'proprietary' with the vendor page as source"
+    },
+    {
+      "key": "language",
+      "requirement": "required",
+      "verify": "source-required",
+      "hint": "primary implementation language(s), from the repo's language breakdown or docs"
+    },
+    {
+      "key": "graphics_mechanism",
+      "requirement": "required",
+      "verify": "source-required",
+      "hint": "HOW pixels or rich content get there: native GPU drawing, Kitty graphics protocol, Sixel, iTerm2 OSC 1337, Unicode half/quadrant/sextant blocks, separate overlay OS window, embedded webview/browser engine, DOM (Electron/xterm.js) … cite the doc or source file"
+    },
+    {
+      "key": "where_it_draws",
+      "requirement": "required",
+      "verify": "source-or-flag",
+      "hint": "split pane | floating panel | inline in scrollback | fullscreen | separate OS window | cell-anchored overlay — say which, and whether it scrolls with text"
+    },
+    {
+      "key": "input_model",
+      "requirement": "preferred",
+      "verify": "source-or-flag",
+      "hint": "how mouse and keys reach the embedded thing (focus model, mouse passthrough, keyboard capture, escape key)"
+    },
+    {
+      "key": "activity",
+      "requirement": "preferred",
+      "verify": "source-required",
+      "hint": "stars, last push / last release date — measured with `gh api repos/O/R` (source: 'measured 2026-09-24: gh api repos/O/R') or the vendor's release page"
+    },
+    {
+      "key": "td_overlap",
+      "requirement": "required",
+      "verify": "none",
+      "hint": "comma-separated tags from exactly this vocabulary: open-on-click, pane-content, floating, host-protocol, tui-wm, agent-panes, same-stack — or 'none'. Drives the derived closeness score."
+    },
+    {
+      "key": "steal_for_td",
+      "requirement": "required",
+      "verify": "none",
+      "hint": "THE one idea Terminal Delight should take from it, concrete enough to act on (inferred — say so in the note)"
+    },
+    {
+      "key": "trap",
+      "requirement": "preferred",
+      "verify": "none",
+      "hint": "what TD should avoid, learned from this project's design or its issue tracker"
+    },
+    {
+      "key": "primary_sources",
+      "requirement": "required",
+      "verify": "source-required",
+      "hint": "space-separated repo/docs URLs actually read; mark blog posts or AI summaries as 'synthesis:'"
+    }
+  ],
+  "tasks": [
+    {
+      "id": "waveterm",
+      "label": "Wave Terminal — terminal, web and preview blocks",
+      "group": "A · Terminals that are also a workspace",
+      "gaps": [
+        "what_it_is",
+        "license",
+        "language",
+        "graphics_mechanism",
+        "where_it_draws",
+        "input_model",
+        "activity",
+        "td_overlap",
+        "steal_for_td",
+        "trap",
+        "primary_sources"
+      ]
+    },
+    {
+      "id": "warp",
+      "label": "Warp — blocks, closed source",
+      "group": "A · Terminals that are also a workspace",
+      "gaps": [
+        "what_it_is",
+        "license",
+        "language",
+        "graphics_mechanism",
+        "where_it_draws",
+        "input_model",
+        "activity",
+        "td_overlap",
+        "steal_for_td",
+        "trap",
+        "primary_sources"
+      ]
+    },
+    {
+      "id": "zed-terminal",
+      "label": "Zed's terminal — gpui + alacritty_terminal",
+      "group": "A · Terminals that are also a workspace",
+      "gaps": [
+        "what_it_is",
+        "license",
+        "language",
+        "graphics_mechanism",
+        "where_it_draws",
+        "input_model",
+        "activity",
+        "td_overlap",
+        "steal_for_td",
+        "trap",
+        "primary_sources"
+      ]
+    },
+    {
+      "id": "extraterm",
+      "label": "Extraterm — frames and rich output",
+      "group": "A · Terminals that are also a workspace",
+      "gaps": [
+        "what_it_is",
+        "license",
+        "language",
+        "graphics_mechanism",
+        "where_it_draws",
+        "input_model",
+        "activity",
+        "td_overlap",
+        "steal_for_td",
+        "trap",
+        "primary_sources"
+      ]
+    },
+    {
+      "id": "domterm",
+      "label": "DomTerm — HTML in the terminal",
+      "group": "A · Terminals that are also a workspace",
+      "gaps": [
+        "what_it_is",
+        "license",
+        "language",
+        "graphics_mechanism",
+        "where_it_draws",
+        "input_model",
+        "activity",
+        "td_overlap",
+        "steal_for_td",
+        "trap",
+        "primary_sources"
+      ]
+    },
+    {
+      "id": "hyper",
+      "label": "Hyper — Electron terminal",
+      "group": "A · Terminals that are also a workspace",
+      "gaps": [
+        "what_it_is",
+        "license",
+        "language",
+        "graphics_mechanism",
+        "where_it_draws",
+        "input_model",
+        "activity",
+        "td_overlap",
+        "steal_for_td",
+        "trap",
+        "primary_sources"
+      ]
+    },
+    {
+      "id": "kitty",
+      "label": "Kitty — graphics protocol, kittens, icat, overlays",
+      "group": "B · Terminals that draw pixels for programs",
+      "gaps": [
+        "what_it_is",
+        "license",
+        "language",
+        "graphics_mechanism",
+        "where_it_draws",
+        "input_model",
+        "activity",
+        "td_overlap",
+        "steal_for_td",
+        "trap",
+        "primary_sources"
+      ]
+    },
+    {
+      "id": "wezterm",
+      "label": "WezTerm",
+      "group": "B · Terminals that draw pixels for programs",
+      "gaps": [
+        "what_it_is",
+        "license",
+        "language",
+        "graphics_mechanism",
+        "where_it_draws",
+        "input_model",
+        "activity",
+        "td_overlap",
+        "steal_for_td",
+        "trap",
+        "primary_sources"
+      ]
+    },
+    {
+      "id": "ghostty",
+      "label": "Ghostty",
+      "group": "B · Terminals that draw pixels for programs",
+      "gaps": [
+        "what_it_is",
+        "license",
+        "language",
+        "graphics_mechanism",
+        "where_it_draws",
+        "input_model",
+        "activity",
+        "td_overlap",
+        "steal_for_td",
+        "trap",
+        "primary_sources"
+      ]
+    },
+    {
+      "id": "rio",
+      "label": "Rio",
+      "group": "B · Terminals that draw pixels for programs",
+      "gaps": [
+        "what_it_is",
+        "license",
+        "language",
+        "graphics_mechanism",
+        "where_it_draws",
+        "input_model",
+        "activity",
+        "td_overlap",
+        "steal_for_td",
+        "trap",
+        "primary_sources"
+      ]
+    },
+    {
+      "id": "contour",
+      "label": "Contour",
+      "group": "B · Terminals that draw pixels for programs",
+      "gaps": [
+        "what_it_is",
+        "license",
+        "language",
+        "graphics_mechanism",
+        "where_it_draws",
+        "input_model",
+        "activity",
+        "td_overlap",
+        "steal_for_td",
+        "trap",
+        "primary_sources"
+      ]
+    },
+    {
+      "id": "foot",
+      "label": "foot",
+      "group": "B · Terminals that draw pixels for programs",
+      "gaps": [
+        "what_it_is",
+        "license",
+        "language",
+        "graphics_mechanism",
+        "where_it_draws",
+        "input_model",
+        "activity",
+        "td_overlap",
+        "steal_for_td",
+        "trap",
+        "primary_sources"
+      ]
+    },
+    {
+      "id": "iterm2",
+      "label": "iTerm2 — OSC 1337 inline images",
+      "group": "B · Terminals that draw pixels for programs",
+      "gaps": [
+        "what_it_is",
+        "license",
+        "language",
+        "graphics_mechanism",
+        "where_it_draws",
+        "input_model",
+        "activity",
+        "td_overlap",
+        "steal_for_td",
+        "trap",
+        "primary_sources"
+      ]
+    },
+    {
+      "id": "dmux",
+      "label": "dmux — agent panes on tmux (named by Parker)",
+      "group": "C · Multiplexers and TUI-as-window-manager",
+      "gaps": [
+        "what_it_is",
+        "license",
+        "language",
+        "graphics_mechanism",
+        "where_it_draws",
+        "input_model",
+        "activity",
+        "td_overlap",
+        "steal_for_td",
+        "trap",
+        "primary_sources"
+      ]
+    },
+    {
+      "id": "tmux",
+      "label": "tmux — display-popup, image passthrough",
+      "group": "C · Multiplexers and TUI-as-window-manager",
+      "gaps": [
+        "what_it_is",
+        "license",
+        "language",
+        "graphics_mechanism",
+        "where_it_draws",
+        "input_model",
+        "activity",
+        "td_overlap",
+        "steal_for_td",
+        "trap",
+        "primary_sources"
+      ]
+    },
+    {
+      "id": "zellij",
+      "label": "Zellij — floating panes, plugins",
+      "group": "C · Multiplexers and TUI-as-window-manager",
+      "gaps": [
+        "what_it_is",
+        "license",
+        "language",
+        "graphics_mechanism",
+        "where_it_draws",
+        "input_model",
+        "activity",
+        "td_overlap",
+        "steal_for_td",
+        "trap",
+        "primary_sources"
+      ]
+    },
+    {
+      "id": "arcan-cat9-durden",
+      "label": "Arcan + cat9 + durden",
+      "group": "C · Multiplexers and TUI-as-window-manager",
+      "gaps": [
+        "what_it_is",
+        "license",
+        "language",
+        "graphics_mechanism",
+        "where_it_draws",
+        "input_model",
+        "activity",
+        "td_overlap",
+        "steal_for_td",
+        "trap",
+        "primary_sources"
+      ]
+    },
+    {
+      "id": "ueberzugpp",
+      "label": "ueberzug++",
+      "group": "D · Programs that put pixels in a terminal",
+      "gaps": [
+        "what_it_is",
+        "license",
+        "language",
+        "graphics_mechanism",
+        "where_it_draws",
+        "input_model",
+        "activity",
+        "td_overlap",
+        "steal_for_td",
+        "trap",
+        "primary_sources"
+      ]
+    },
+    {
+      "id": "awrit",
+      "label": "awrit — Chromium in Kitty",
+      "group": "D · Programs that put pixels in a terminal",
+      "gaps": [
+        "what_it_is",
+        "license",
+        "language",
+        "graphics_mechanism",
+        "where_it_draws",
+        "input_model",
+        "activity",
+        "td_overlap",
+        "steal_for_td",
+        "trap",
+        "primary_sources"
+      ]
+    },
+    {
+      "id": "carbonyl",
+      "label": "Carbonyl — Chromium in a terminal",
+      "group": "D · Programs that put pixels in a terminal",
+      "gaps": [
+        "what_it_is",
+        "license",
+        "language",
+        "graphics_mechanism",
+        "where_it_draws",
+        "input_model",
+        "activity",
+        "td_overlap",
+        "steal_for_td",
+        "trap",
+        "primary_sources"
+      ]
+    },
+    {
+      "id": "browsh",
+      "label": "browsh",
+      "group": "D · Programs that put pixels in a terminal",
+      "gaps": [
+        "what_it_is",
+        "license",
+        "language",
+        "graphics_mechanism",
+        "where_it_draws",
+        "input_model",
+        "activity",
+        "td_overlap",
+        "steal_for_td",
+        "trap",
+        "primary_sources"
+      ]
+    },
+    {
+      "id": "presenterm",
+      "label": "presenterm",
+      "group": "D · Programs that put pixels in a terminal",
+      "gaps": [
+        "what_it_is",
+        "license",
+        "language",
+        "graphics_mechanism",
+        "where_it_draws",
+        "input_model",
+        "activity",
+        "td_overlap",
+        "steal_for_td",
+        "trap",
+        "primary_sources"
+      ]
+    },
+    {
+      "id": "yazi",
+      "label": "yazi — file manager with previews",
+      "group": "D · Programs that put pixels in a terminal",
+      "gaps": [
+        "what_it_is",
+        "license",
+        "language",
+        "graphics_mechanism",
+        "where_it_draws",
+        "input_model",
+        "activity",
+        "td_overlap",
+        "steal_for_td",
+        "trap",
+        "primary_sources"
+      ]
+    },
+    {
+      "id": "euporie",
+      "label": "euporie — Jupyter in the terminal",
+      "group": "D · Programs that put pixels in a terminal",
+      "gaps": [
+        "what_it_is",
+        "license",
+        "language",
+        "graphics_mechanism",
+        "where_it_draws",
+        "input_model",
+        "activity",
+        "td_overlap",
+        "steal_for_td",
+        "trap",
+        "primary_sources"
+      ]
+    },
+    {
+      "id": "notcurses",
+      "label": "notcurses",
+      "group": "D · Programs that put pixels in a terminal",
+      "gaps": [
+        "what_it_is",
+        "license",
+        "language",
+        "graphics_mechanism",
+        "where_it_draws",
+        "input_model",
+        "activity",
+        "td_overlap",
+        "steal_for_td",
+        "trap",
+        "primary_sources"
+      ]
+    },
+    {
+      "id": "mpv-terminal-vo",
+      "label": "mpv — vo=kitty / vo=sixel / vo=tct",
+      "group": "D · Programs that put pixels in a terminal",
+      "gaps": [
+        "what_it_is",
+        "license",
+        "language",
+        "graphics_mechanism",
+        "where_it_draws",
+        "input_model",
+        "activity",
+        "td_overlap",
+        "steal_for_td",
+        "trap",
+        "primary_sources"
+      ]
+    },
+    {
+      "id": "ratatui-image",
+      "label": "ratatui-image",
+      "group": "D · Programs that put pixels in a terminal",
+      "gaps": [
+        "what_it_is",
+        "license",
+        "language",
+        "graphics_mechanism",
+        "where_it_draws",
+        "input_model",
+        "activity",
+        "td_overlap",
+        "steal_for_td",
+        "trap",
+        "primary_sources"
+      ]
+    },
+    {
+      "id": "chafa",
+      "label": "chafa",
+      "group": "D · Programs that put pixels in a terminal",
+      "gaps": [
+        "what_it_is",
+        "license",
+        "language",
+        "graphics_mechanism",
+        "where_it_draws",
+        "input_model",
+        "activity",
+        "td_overlap",
+        "steal_for_td",
+        "trap",
+        "primary_sources"
+      ]
+    },
+    {
+      "id": "timg",
+      "label": "timg",
+      "group": "D · Programs that put pixels in a terminal",
+      "gaps": [
+        "what_it_is",
+        "license",
+        "language",
+        "graphics_mechanism",
+        "where_it_draws",
+        "input_model",
+        "activity",
+        "td_overlap",
+        "steal_for_td",
+        "trap",
+        "primary_sources"
+      ]
+    },
+    {
+      "id": "rtv",
+      "label": "rtv (Laotian-telephonebell2559) — claimed FFmpeg-in-terminal, metadata only",
+      "group": "D · Programs that put pixels in a terminal",
+      "gaps": [
+        "what_it_is",
+        "license",
+        "language",
+        "graphics_mechanism",
+        "where_it_draws",
+        "input_model",
+        "activity",
+        "td_overlap",
+        "steal_for_td",
+        "trap",
+        "primary_sources"
+      ]
+    },
+    {
+      "id": "hyperion-tui",
+      "label": "'GUI in the TUI' / HYPERION TUI v2.7.19 (Nix, @NixFred)",
+      "group": "E · The two posts Parker shared",
+      "gaps": [
+        "what_it_is",
+        "license",
+        "language",
+        "graphics_mechanism",
+        "where_it_draws",
+        "input_model",
+        "activity",
+        "td_overlap",
+        "steal_for_td",
+        "trap",
+        "primary_sources"
+      ]
+    },
+    {
+      "id": "boyd-jev-pokemon",
+      "label": "Boyd's Jev-plays-Pokemon dashboard (@0xBOYD)",
+      "group": "E · The two posts Parker shared",
+      "gaps": [
+        "what_it_is",
+        "license",
+        "language",
+        "graphics_mechanism",
+        "where_it_draws",
+        "input_model",
+        "activity",
+        "td_overlap",
+        "steal_for_td",
+        "trap",
+        "primary_sources"
+      ]
+    }
+  ]
+}

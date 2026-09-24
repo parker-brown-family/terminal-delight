@@ -1,0 +1,4702 @@
+{
+  "done": false,
+  "stopReason": "no-progress",
+  "rounds": [
+    {
+      "round": 1,
+      "pendingBefore": 32,
+      "gapsTargeted": 352,
+      "fieldsFilled": 572,
+      "tokens": 1025000,
+      "meanScoreAfter": 0.993,
+      "completeAfter": 51
+    },
+    {
+      "round": 2,
+      "pendingBefore": 1,
+      "gapsTargeted": 4,
+      "fieldsFilled": 0,
+      "tokens": 8000,
+      "meanScoreAfter": 0.993,
+      "completeAfter": 51
+    },
+    {
+      "round": 3,
+      "pendingBefore": 1,
+      "gapsTargeted": 4,
+      "fieldsFilled": 0,
+      "tokens": 5000,
+      "meanScoreAfter": 0.993,
+      "completeAfter": 51
+    }
+  ],
+  "totalTokens": 1038000,
+  "score": {
+    "scores": [
+      {
+        "id": "waveterm",
+        "label": "Wave Terminal — terminal, web and preview blocks",
+        "group": "A · Terminals that are also a workspace",
+        "fields": [
+          {
+            "key": "what_it_is",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "license",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "language",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "graphics_mechanism",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "where_it_draws",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "input_model",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "activity",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "td_overlap",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "steal_for_td",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "trap",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "primary_sources",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          }
+        ],
+        "requiredTotal": 8,
+        "requiredMet": 8,
+        "preferredTotal": 3,
+        "preferredMet": 3,
+        "score": 1,
+        "complete": true,
+        "gaps": []
+      },
+      {
+        "id": "warp",
+        "label": "Warp — blocks, Markdown viewer (client AGPL since 2026-04)",
+        "group": "A · Terminals that are also a workspace",
+        "fields": [
+          {
+            "key": "what_it_is",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "license",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "language",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "graphics_mechanism",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "where_it_draws",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "input_model",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "activity",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "td_overlap",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "steal_for_td",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "trap",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "primary_sources",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          }
+        ],
+        "requiredTotal": 8,
+        "requiredMet": 8,
+        "preferredTotal": 3,
+        "preferredMet": 3,
+        "score": 1,
+        "complete": true,
+        "gaps": []
+      },
+      {
+        "id": "zed-terminal",
+        "label": "Zed's terminal — gpui + alacritty_terminal",
+        "group": "A · Terminals that are also a workspace",
+        "fields": [
+          {
+            "key": "what_it_is",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "license",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "language",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "graphics_mechanism",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "where_it_draws",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "input_model",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "activity",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "td_overlap",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "steal_for_td",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "trap",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "primary_sources",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          }
+        ],
+        "requiredTotal": 8,
+        "requiredMet": 8,
+        "preferredTotal": 3,
+        "preferredMet": 3,
+        "score": 1,
+        "complete": true,
+        "gaps": []
+      },
+      {
+        "id": "extraterm",
+        "label": "Extraterm — frames and rich output",
+        "group": "A · Terminals that are also a workspace",
+        "fields": [
+          {
+            "key": "what_it_is",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "license",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "language",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "graphics_mechanism",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "where_it_draws",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "input_model",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "activity",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "td_overlap",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "steal_for_td",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "trap",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "primary_sources",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          }
+        ],
+        "requiredTotal": 8,
+        "requiredMet": 8,
+        "preferredTotal": 3,
+        "preferredMet": 3,
+        "score": 1,
+        "complete": true,
+        "gaps": []
+      },
+      {
+        "id": "domterm",
+        "label": "DomTerm — HTML in the terminal",
+        "group": "A · Terminals that are also a workspace",
+        "fields": [
+          {
+            "key": "what_it_is",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "license",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "language",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "graphics_mechanism",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "where_it_draws",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "input_model",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "activity",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "td_overlap",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "steal_for_td",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "trap",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "primary_sources",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          }
+        ],
+        "requiredTotal": 8,
+        "requiredMet": 8,
+        "preferredTotal": 3,
+        "preferredMet": 3,
+        "score": 1,
+        "complete": true,
+        "gaps": []
+      },
+      {
+        "id": "hyper",
+        "label": "Hyper — Electron terminal",
+        "group": "A · Terminals that are also a workspace",
+        "fields": [
+          {
+            "key": "what_it_is",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "license",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "language",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "graphics_mechanism",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "where_it_draws",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "input_model",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "activity",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "td_overlap",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "steal_for_td",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "trap",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "primary_sources",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          }
+        ],
+        "requiredTotal": 8,
+        "requiredMet": 8,
+        "preferredTotal": 3,
+        "preferredMet": 3,
+        "score": 1,
+        "complete": true,
+        "gaps": []
+      },
+      {
+        "id": "kitty",
+        "label": "Kitty — graphics protocol, kittens, icat, overlays",
+        "group": "B · Terminals that draw pixels for programs",
+        "fields": [
+          {
+            "key": "what_it_is",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "license",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "language",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "graphics_mechanism",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "where_it_draws",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "input_model",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "activity",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "td_overlap",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "steal_for_td",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "trap",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "primary_sources",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          }
+        ],
+        "requiredTotal": 8,
+        "requiredMet": 8,
+        "preferredTotal": 3,
+        "preferredMet": 3,
+        "score": 1,
+        "complete": true,
+        "gaps": []
+      },
+      {
+        "id": "wezterm",
+        "label": "WezTerm",
+        "group": "B · Terminals that draw pixels for programs",
+        "fields": [
+          {
+            "key": "what_it_is",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "license",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "language",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "graphics_mechanism",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "where_it_draws",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "input_model",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "activity",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "td_overlap",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "steal_for_td",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "trap",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "primary_sources",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          }
+        ],
+        "requiredTotal": 8,
+        "requiredMet": 8,
+        "preferredTotal": 3,
+        "preferredMet": 3,
+        "score": 1,
+        "complete": true,
+        "gaps": []
+      },
+      {
+        "id": "ghostty",
+        "label": "Ghostty",
+        "group": "B · Terminals that draw pixels for programs",
+        "fields": [
+          {
+            "key": "what_it_is",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "license",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "language",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "graphics_mechanism",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "where_it_draws",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "input_model",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "activity",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "td_overlap",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "steal_for_td",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "trap",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "primary_sources",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          }
+        ],
+        "requiredTotal": 8,
+        "requiredMet": 8,
+        "preferredTotal": 3,
+        "preferredMet": 3,
+        "score": 1,
+        "complete": true,
+        "gaps": []
+      },
+      {
+        "id": "rio",
+        "label": "Rio",
+        "group": "B · Terminals that draw pixels for programs",
+        "fields": [
+          {
+            "key": "what_it_is",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "license",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "language",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "graphics_mechanism",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "where_it_draws",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "input_model",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "activity",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "td_overlap",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "steal_for_td",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "trap",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "primary_sources",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          }
+        ],
+        "requiredTotal": 8,
+        "requiredMet": 8,
+        "preferredTotal": 3,
+        "preferredMet": 3,
+        "score": 1,
+        "complete": true,
+        "gaps": []
+      },
+      {
+        "id": "contour",
+        "label": "Contour",
+        "group": "B · Terminals that draw pixels for programs",
+        "fields": [
+          {
+            "key": "what_it_is",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "license",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "language",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "graphics_mechanism",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "where_it_draws",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "input_model",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "activity",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "td_overlap",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "steal_for_td",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "trap",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "primary_sources",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          }
+        ],
+        "requiredTotal": 8,
+        "requiredMet": 8,
+        "preferredTotal": 3,
+        "preferredMet": 3,
+        "score": 1,
+        "complete": true,
+        "gaps": []
+      },
+      {
+        "id": "foot",
+        "label": "foot",
+        "group": "B · Terminals that draw pixels for programs",
+        "fields": [
+          {
+            "key": "what_it_is",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "license",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "language",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "graphics_mechanism",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "where_it_draws",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "input_model",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "activity",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "td_overlap",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "steal_for_td",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "trap",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "primary_sources",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          }
+        ],
+        "requiredTotal": 8,
+        "requiredMet": 8,
+        "preferredTotal": 3,
+        "preferredMet": 3,
+        "score": 1,
+        "complete": true,
+        "gaps": []
+      },
+      {
+        "id": "iterm2",
+        "label": "iTerm2 — OSC 1337 inline images",
+        "group": "B · Terminals that draw pixels for programs",
+        "fields": [
+          {
+            "key": "what_it_is",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "license",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "language",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "graphics_mechanism",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "where_it_draws",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "input_model",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "activity",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "td_overlap",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "steal_for_td",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "trap",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "primary_sources",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          }
+        ],
+        "requiredTotal": 8,
+        "requiredMet": 8,
+        "preferredTotal": 3,
+        "preferredMet": 3,
+        "score": 1,
+        "complete": true,
+        "gaps": []
+      },
+      {
+        "id": "dmux",
+        "label": "dmux — agent panes on tmux (named by Parker)",
+        "group": "C · Multiplexers and TUI-as-window-manager",
+        "fields": [
+          {
+            "key": "what_it_is",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "license",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "language",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "graphics_mechanism",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "where_it_draws",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "input_model",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "activity",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "td_overlap",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "steal_for_td",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "trap",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "primary_sources",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          }
+        ],
+        "requiredTotal": 8,
+        "requiredMet": 8,
+        "preferredTotal": 3,
+        "preferredMet": 3,
+        "score": 1,
+        "complete": true,
+        "gaps": []
+      },
+      {
+        "id": "tmux",
+        "label": "tmux — display-popup, image passthrough",
+        "group": "C · Multiplexers and TUI-as-window-manager",
+        "fields": [
+          {
+            "key": "what_it_is",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "license",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "language",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "graphics_mechanism",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "where_it_draws",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "input_model",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "activity",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "td_overlap",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "steal_for_td",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "trap",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "primary_sources",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          }
+        ],
+        "requiredTotal": 8,
+        "requiredMet": 8,
+        "preferredTotal": 3,
+        "preferredMet": 3,
+        "score": 1,
+        "complete": true,
+        "gaps": []
+      },
+      {
+        "id": "zellij",
+        "label": "Zellij — floating panes, plugins",
+        "group": "C · Multiplexers and TUI-as-window-manager",
+        "fields": [
+          {
+            "key": "what_it_is",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "license",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "language",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "graphics_mechanism",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "where_it_draws",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "input_model",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "activity",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "td_overlap",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "steal_for_td",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "trap",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "primary_sources",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          }
+        ],
+        "requiredTotal": 8,
+        "requiredMet": 8,
+        "preferredTotal": 3,
+        "preferredMet": 3,
+        "score": 1,
+        "complete": true,
+        "gaps": []
+      },
+      {
+        "id": "arcan-cat9-durden",
+        "label": "Arcan + cat9 + durden",
+        "group": "C · Multiplexers and TUI-as-window-manager",
+        "fields": [
+          {
+            "key": "what_it_is",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "license",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "language",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "graphics_mechanism",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "where_it_draws",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "input_model",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "activity",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "td_overlap",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "steal_for_td",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "trap",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "primary_sources",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          }
+        ],
+        "requiredTotal": 8,
+        "requiredMet": 8,
+        "preferredTotal": 3,
+        "preferredMet": 3,
+        "score": 1,
+        "complete": true,
+        "gaps": []
+      },
+      {
+        "id": "ueberzugpp",
+        "label": "ueberzug++",
+        "group": "D · Programs that put pixels in a terminal",
+        "fields": [
+          {
+            "key": "what_it_is",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "license",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "language",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "graphics_mechanism",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "where_it_draws",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "input_model",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "activity",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "td_overlap",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "steal_for_td",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "trap",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "primary_sources",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          }
+        ],
+        "requiredTotal": 8,
+        "requiredMet": 8,
+        "preferredTotal": 3,
+        "preferredMet": 3,
+        "score": 1,
+        "complete": true,
+        "gaps": []
+      },
+      {
+        "id": "awrit",
+        "label": "awrit — Chromium in Kitty",
+        "group": "D · Programs that put pixels in a terminal",
+        "fields": [
+          {
+            "key": "what_it_is",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "license",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "language",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "graphics_mechanism",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "where_it_draws",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "input_model",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "activity",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "td_overlap",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "steal_for_td",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "trap",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "primary_sources",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          }
+        ],
+        "requiredTotal": 8,
+        "requiredMet": 8,
+        "preferredTotal": 3,
+        "preferredMet": 3,
+        "score": 1,
+        "complete": true,
+        "gaps": []
+      },
+      {
+        "id": "carbonyl",
+        "label": "Carbonyl — Chromium in a terminal",
+        "group": "D · Programs that put pixels in a terminal",
+        "fields": [
+          {
+            "key": "what_it_is",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "license",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "language",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "graphics_mechanism",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "where_it_draws",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "input_model",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "activity",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "td_overlap",
+            "requirement": "required",
+            "status": "unverified",
+            "satisfied": true
+          },
+          {
+            "key": "steal_for_td",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "trap",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "primary_sources",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          }
+        ],
+        "requiredTotal": 8,
+        "requiredMet": 8,
+        "preferredTotal": 3,
+        "preferredMet": 3,
+        "score": 1,
+        "complete": true,
+        "gaps": []
+      },
+      {
+        "id": "browsh",
+        "label": "browsh",
+        "group": "D · Programs that put pixels in a terminal",
+        "fields": [
+          {
+            "key": "what_it_is",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "license",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "language",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "graphics_mechanism",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "where_it_draws",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "input_model",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "activity",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "td_overlap",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "steal_for_td",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "trap",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "primary_sources",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          }
+        ],
+        "requiredTotal": 8,
+        "requiredMet": 8,
+        "preferredTotal": 3,
+        "preferredMet": 3,
+        "score": 1,
+        "complete": true,
+        "gaps": []
+      },
+      {
+        "id": "presenterm",
+        "label": "presenterm",
+        "group": "D · Programs that put pixels in a terminal",
+        "fields": [
+          {
+            "key": "what_it_is",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "license",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "language",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "graphics_mechanism",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "where_it_draws",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "input_model",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "activity",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "td_overlap",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "steal_for_td",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "trap",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "primary_sources",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          }
+        ],
+        "requiredTotal": 8,
+        "requiredMet": 8,
+        "preferredTotal": 3,
+        "preferredMet": 3,
+        "score": 1,
+        "complete": true,
+        "gaps": []
+      },
+      {
+        "id": "yazi",
+        "label": "yazi — file manager with previews",
+        "group": "D · Programs that put pixels in a terminal",
+        "fields": [
+          {
+            "key": "what_it_is",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "license",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "language",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "graphics_mechanism",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "where_it_draws",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "input_model",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "activity",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "td_overlap",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "steal_for_td",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "trap",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "primary_sources",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          }
+        ],
+        "requiredTotal": 8,
+        "requiredMet": 8,
+        "preferredTotal": 3,
+        "preferredMet": 3,
+        "score": 1,
+        "complete": true,
+        "gaps": []
+      },
+      {
+        "id": "euporie",
+        "label": "euporie — Jupyter in the terminal",
+        "group": "D · Programs that put pixels in a terminal",
+        "fields": [
+          {
+            "key": "what_it_is",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "license",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "language",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "graphics_mechanism",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "where_it_draws",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "input_model",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "activity",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "td_overlap",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "steal_for_td",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "trap",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "primary_sources",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          }
+        ],
+        "requiredTotal": 8,
+        "requiredMet": 8,
+        "preferredTotal": 3,
+        "preferredMet": 3,
+        "score": 1,
+        "complete": true,
+        "gaps": []
+      },
+      {
+        "id": "notcurses",
+        "label": "notcurses",
+        "group": "D · Programs that put pixels in a terminal",
+        "fields": [
+          {
+            "key": "what_it_is",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "license",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "language",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "graphics_mechanism",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "where_it_draws",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "input_model",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "activity",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "td_overlap",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "steal_for_td",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "trap",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "primary_sources",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          }
+        ],
+        "requiredTotal": 8,
+        "requiredMet": 8,
+        "preferredTotal": 3,
+        "preferredMet": 3,
+        "score": 1,
+        "complete": true,
+        "gaps": []
+      },
+      {
+        "id": "mpv-terminal-vo",
+        "label": "mpv — vo=kitty / vo=sixel / vo=tct",
+        "group": "D · Programs that put pixels in a terminal",
+        "fields": [
+          {
+            "key": "what_it_is",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "license",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "language",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "graphics_mechanism",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "where_it_draws",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "input_model",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "activity",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "td_overlap",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "steal_for_td",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "trap",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "primary_sources",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          }
+        ],
+        "requiredTotal": 8,
+        "requiredMet": 8,
+        "preferredTotal": 3,
+        "preferredMet": 3,
+        "score": 1,
+        "complete": true,
+        "gaps": []
+      },
+      {
+        "id": "ratatui-image",
+        "label": "ratatui-image",
+        "group": "D · Programs that put pixels in a terminal",
+        "fields": [
+          {
+            "key": "what_it_is",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "license",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "language",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "graphics_mechanism",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "where_it_draws",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "input_model",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "activity",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "td_overlap",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "steal_for_td",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "trap",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "primary_sources",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          }
+        ],
+        "requiredTotal": 8,
+        "requiredMet": 8,
+        "preferredTotal": 3,
+        "preferredMet": 3,
+        "score": 1,
+        "complete": true,
+        "gaps": []
+      },
+      {
+        "id": "chafa",
+        "label": "chafa",
+        "group": "D · Programs that put pixels in a terminal",
+        "fields": [
+          {
+            "key": "what_it_is",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "license",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "language",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "graphics_mechanism",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "where_it_draws",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "input_model",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "activity",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "td_overlap",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "steal_for_td",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "trap",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "primary_sources",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          }
+        ],
+        "requiredTotal": 8,
+        "requiredMet": 8,
+        "preferredTotal": 3,
+        "preferredMet": 3,
+        "score": 1,
+        "complete": true,
+        "gaps": []
+      },
+      {
+        "id": "timg",
+        "label": "timg",
+        "group": "D · Programs that put pixels in a terminal",
+        "fields": [
+          {
+            "key": "what_it_is",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "license",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "language",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "graphics_mechanism",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "where_it_draws",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "input_model",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "activity",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "td_overlap",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "steal_for_td",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "trap",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "primary_sources",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          }
+        ],
+        "requiredTotal": 8,
+        "requiredMet": 8,
+        "preferredTotal": 3,
+        "preferredMet": 3,
+        "score": 1,
+        "complete": true,
+        "gaps": []
+      },
+      {
+        "id": "rtv",
+        "label": "rtv (Laotian-telephonebell2559) — claimed FFmpeg-in-terminal, metadata only",
+        "group": "D · Programs that put pixels in a terminal",
+        "fields": [
+          {
+            "key": "what_it_is",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "license",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "language",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "graphics_mechanism",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "where_it_draws",
+            "requirement": "required",
+            "status": "flagged",
+            "satisfied": true
+          },
+          {
+            "key": "input_model",
+            "requirement": "preferred",
+            "status": "flagged",
+            "satisfied": true
+          },
+          {
+            "key": "activity",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "td_overlap",
+            "requirement": "required",
+            "status": "unverified",
+            "satisfied": true
+          },
+          {
+            "key": "steal_for_td",
+            "requirement": "required",
+            "status": "unverified",
+            "satisfied": true
+          },
+          {
+            "key": "trap",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "primary_sources",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          }
+        ],
+        "requiredTotal": 8,
+        "requiredMet": 8,
+        "preferredTotal": 3,
+        "preferredMet": 3,
+        "score": 1,
+        "complete": true,
+        "gaps": []
+      },
+      {
+        "id": "hyperion-tui",
+        "label": "'GUI in the TUI' / HYPERION TUI v2.7.19 (Nix, @NixFred)",
+        "group": "E · The two posts Parker shared",
+        "fields": [
+          {
+            "key": "what_it_is",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "license",
+            "requirement": "required",
+            "status": "flagged",
+            "satisfied": false
+          },
+          {
+            "key": "language",
+            "requirement": "required",
+            "status": "flagged",
+            "satisfied": false
+          },
+          {
+            "key": "graphics_mechanism",
+            "requirement": "required",
+            "status": "flagged",
+            "satisfied": false
+          },
+          {
+            "key": "where_it_draws",
+            "requirement": "required",
+            "status": "flagged",
+            "satisfied": true
+          },
+          {
+            "key": "input_model",
+            "requirement": "preferred",
+            "status": "flagged",
+            "satisfied": true
+          },
+          {
+            "key": "activity",
+            "requirement": "preferred",
+            "status": "flagged",
+            "satisfied": false
+          },
+          {
+            "key": "td_overlap",
+            "requirement": "required",
+            "status": "unverified",
+            "satisfied": true
+          },
+          {
+            "key": "steal_for_td",
+            "requirement": "required",
+            "status": "unverified",
+            "satisfied": true
+          },
+          {
+            "key": "trap",
+            "requirement": "preferred",
+            "status": "unverified",
+            "satisfied": true
+          },
+          {
+            "key": "primary_sources",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          }
+        ],
+        "requiredTotal": 8,
+        "requiredMet": 5,
+        "preferredTotal": 3,
+        "preferredMet": 2,
+        "score": 0.633,
+        "complete": false,
+        "gaps": [
+          "license",
+          "language",
+          "graphics_mechanism",
+          "activity"
+        ]
+      },
+      {
+        "id": "boyd-jev-pokemon",
+        "label": "Boyd's Jev-plays-Pokemon dashboard (@0xBOYD)",
+        "group": "E · The two posts Parker shared",
+        "fields": [
+          {
+            "key": "what_it_is",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "license",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "language",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "graphics_mechanism",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "where_it_draws",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "input_model",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "activity",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "td_overlap",
+            "requirement": "required",
+            "status": "unverified",
+            "satisfied": true
+          },
+          {
+            "key": "steal_for_td",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "trap",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "primary_sources",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          }
+        ],
+        "requiredTotal": 8,
+        "requiredMet": 8,
+        "preferredTotal": 3,
+        "preferredMet": 3,
+        "score": 1,
+        "complete": true,
+        "gaps": []
+      },
+      {
+        "id": "terminology",
+        "label": "Terminology — Enlightenment's terminal (tycat/typop, click-to-popup media)",
+        "group": "A · Terminals that are also a workspace",
+        "fields": [
+          {
+            "key": "what_it_is",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "license",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "language",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "graphics_mechanism",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "where_it_draws",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "input_model",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "activity",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "td_overlap",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "steal_for_td",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "trap",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "primary_sources",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          }
+        ],
+        "requiredTotal": 8,
+        "requiredMet": 8,
+        "preferredTotal": 3,
+        "preferredMet": 3,
+        "score": 1,
+        "complete": true,
+        "gaps": []
+      },
+      {
+        "id": "vscode-terminal",
+        "label": "VS Code integrated terminal — xterm.js link providers + image addon",
+        "group": "A · Terminals that are also a workspace",
+        "fields": [
+          {
+            "key": "what_it_is",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "license",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "language",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "graphics_mechanism",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "where_it_draws",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "input_model",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "activity",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "td_overlap",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "steal_for_td",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "trap",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "primary_sources",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          }
+        ],
+        "requiredTotal": 8,
+        "requiredMet": 8,
+        "preferredTotal": 3,
+        "preferredMet": 3,
+        "score": 1,
+        "complete": true,
+        "gaps": []
+      },
+      {
+        "id": "emacs-eaf",
+        "label": "Emacs Application Framework (EAF) — Qt browser/PDF/video inside Emacs windows",
+        "group": "A · Terminals that are also a workspace",
+        "fields": [
+          {
+            "key": "what_it_is",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "license",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "language",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "graphics_mechanism",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "where_it_draws",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "input_model",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "activity",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "td_overlap",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "steal_for_td",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "trap",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "primary_sources",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          }
+        ],
+        "requiredTotal": 8,
+        "requiredMet": 8,
+        "preferredTotal": 3,
+        "preferredMet": 3,
+        "score": 1,
+        "complete": true,
+        "gaps": []
+      },
+      {
+        "id": "cmux",
+        "label": "cmux — Ghostty-based terminal for coding agents, with browser and Markdown panels",
+        "group": "A · Terminals that are also a workspace",
+        "fields": [
+          {
+            "key": "what_it_is",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "license",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "language",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "graphics_mechanism",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "where_it_draws",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "input_model",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "activity",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "td_overlap",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "steal_for_td",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "trap",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "primary_sources",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          }
+        ],
+        "requiredTotal": 8,
+        "requiredMet": 8,
+        "preferredTotal": 3,
+        "preferredMet": 3,
+        "score": 1,
+        "complete": true,
+        "gaps": []
+      },
+      {
+        "id": "alacritty-upstream",
+        "label": "Alacritty (upstream) — the engine TD runs on, and why it refuses images",
+        "group": "B · Terminals that draw pixels for programs",
+        "fields": [
+          {
+            "key": "what_it_is",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "license",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "language",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "graphics_mechanism",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "where_it_draws",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "input_model",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "activity",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "td_overlap",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "steal_for_td",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "trap",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "primary_sources",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          }
+        ],
+        "requiredTotal": 8,
+        "requiredMet": 8,
+        "preferredTotal": 3,
+        "preferredMet": 3,
+        "score": 1,
+        "complete": true,
+        "gaps": []
+      },
+      {
+        "id": "alacritty-graphics-fork",
+        "label": "ayosec/alacritty 'graphics' — Sixel inside alacritty_terminal",
+        "group": "B · Terminals that draw pixels for programs",
+        "fields": [
+          {
+            "key": "what_it_is",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "license",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "language",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "graphics_mechanism",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "where_it_draws",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "input_model",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "activity",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "td_overlap",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "steal_for_td",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "trap",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "primary_sources",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          }
+        ],
+        "requiredTotal": 8,
+        "requiredMet": 8,
+        "preferredTotal": 3,
+        "preferredMet": 3,
+        "score": 1,
+        "complete": true,
+        "gaps": []
+      },
+      {
+        "id": "xtermjs-addon-image",
+        "label": "xterm.js @xterm/addon-image — Sixel + iTerm2 IIP (+ partial Kitty) in the browser terminal",
+        "group": "B · Terminals that draw pixels for programs",
+        "fields": [
+          {
+            "key": "what_it_is",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "license",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "language",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "graphics_mechanism",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "where_it_draws",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "input_model",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "activity",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "td_overlap",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "steal_for_td",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "trap",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "primary_sources",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          }
+        ],
+        "requiredTotal": 8,
+        "requiredMet": 8,
+        "preferredTotal": 3,
+        "preferredMet": 3,
+        "score": 1,
+        "complete": true,
+        "gaps": []
+      },
+      {
+        "id": "cosmic-term",
+        "label": "COSMIC Terminal — Rust + alacritty_terminal, no images (yet)",
+        "group": "B · Terminals that draw pixels for programs",
+        "fields": [
+          {
+            "key": "what_it_is",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "license",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "language",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "graphics_mechanism",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "where_it_draws",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "input_model",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "activity",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "td_overlap",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "steal_for_td",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "trap",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "primary_sources",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          }
+        ],
+        "requiredTotal": 8,
+        "requiredMet": 8,
+        "preferredTotal": 3,
+        "preferredMet": 3,
+        "score": 1,
+        "complete": true,
+        "gaps": []
+      },
+      {
+        "id": "herdr",
+        "label": "herdr — agent workspace runtime (Omarchy's default)",
+        "group": "C · Multiplexers and TUI-as-window-manager",
+        "fields": [
+          {
+            "key": "what_it_is",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "license",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "language",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "graphics_mechanism",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "where_it_draws",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "input_model",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "activity",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "td_overlap",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "steal_for_td",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "trap",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "primary_sources",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          }
+        ],
+        "requiredTotal": 8,
+        "requiredMet": 8,
+        "preferredTotal": 3,
+        "preferredMet": 3,
+        "score": 1,
+        "complete": true,
+        "gaps": []
+      },
+      {
+        "id": "dmux-rs",
+        "label": "dmux-rs — native Rust tmux control-mode renderer for dmux",
+        "group": "C · Multiplexers and TUI-as-window-manager",
+        "fields": [
+          {
+            "key": "what_it_is",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "license",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "language",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "graphics_mechanism",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "where_it_draws",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "input_model",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "activity",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "td_overlap",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "steal_for_td",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "trap",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "primary_sources",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          }
+        ],
+        "requiredTotal": 8,
+        "requiredMet": 8,
+        "preferredTotal": 3,
+        "preferredMet": 3,
+        "score": 1,
+        "complete": true,
+        "gaps": []
+      },
+      {
+        "id": "claude-squad",
+        "label": "Claude Squad — agent sessions on tmux + worktrees",
+        "group": "C · Multiplexers and TUI-as-window-manager",
+        "fields": [
+          {
+            "key": "what_it_is",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "license",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "language",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "graphics_mechanism",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "where_it_draws",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "input_model",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "activity",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "td_overlap",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "steal_for_td",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "trap",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "primary_sources",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          }
+        ],
+        "requiredTotal": 8,
+        "requiredMet": 8,
+        "preferredTotal": 3,
+        "preferredMet": 3,
+        "score": 1,
+        "complete": true,
+        "gaps": []
+      },
+      {
+        "id": "twin",
+        "label": "twin — text-mode window environment",
+        "group": "C · Multiplexers and TUI-as-window-manager",
+        "fields": [
+          {
+            "key": "what_it_is",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "license",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "language",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "graphics_mechanism",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "where_it_draws",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "input_model",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "activity",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "td_overlap",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "steal_for_td",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "trap",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "primary_sources",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          }
+        ],
+        "requiredTotal": 8,
+        "requiredMet": 8,
+        "preferredTotal": 3,
+        "preferredMet": 3,
+        "score": 1,
+        "complete": true,
+        "gaps": []
+      },
+      {
+        "id": "mcat",
+        "label": "mcat — Markdown/HTML/PDF/Office to terminal images",
+        "group": "D · Programs that put pixels in a terminal",
+        "fields": [
+          {
+            "key": "what_it_is",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "license",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "language",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "graphics_mechanism",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "where_it_draws",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "input_model",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "activity",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "td_overlap",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "steal_for_td",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "trap",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "primary_sources",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          }
+        ],
+        "requiredTotal": 8,
+        "requiredMet": 8,
+        "preferredTotal": 3,
+        "preferredMet": 3,
+        "score": 1,
+        "complete": true,
+        "gaps": []
+      },
+      {
+        "id": "tdf",
+        "label": "tdf — terminal PDF viewer (ratatui-image + kittage)",
+        "group": "D · Programs that put pixels in a terminal",
+        "fields": [
+          {
+            "key": "what_it_is",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "license",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "language",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "graphics_mechanism",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "where_it_draws",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "input_model",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "activity",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "td_overlap",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "steal_for_td",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "trap",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "primary_sources",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          }
+        ],
+        "requiredTotal": 8,
+        "requiredMet": 8,
+        "preferredTotal": 3,
+        "preferredMet": 3,
+        "score": 1,
+        "complete": true,
+        "gaps": []
+      },
+      {
+        "id": "w3m",
+        "label": "w3m — text browser with inline images (kitty/sixel/iTerm2)",
+        "group": "D · Programs that put pixels in a terminal",
+        "fields": [
+          {
+            "key": "what_it_is",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "license",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "language",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "graphics_mechanism",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "where_it_draws",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "input_model",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "activity",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "td_overlap",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "steal_for_td",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "trap",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "primary_sources",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          }
+        ],
+        "requiredTotal": 8,
+        "requiredMet": 8,
+        "preferredTotal": 3,
+        "preferredMet": 3,
+        "score": 1,
+        "complete": true,
+        "gaps": []
+      },
+      {
+        "id": "glow",
+        "label": "glow — text-only Markdown renderer (contrast case)",
+        "group": "D · Programs that put pixels in a terminal",
+        "fields": [
+          {
+            "key": "what_it_is",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "license",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "language",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "graphics_mechanism",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "where_it_draws",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "input_model",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "activity",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "td_overlap",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "steal_for_td",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "trap",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "primary_sources",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          }
+        ],
+        "requiredTotal": 8,
+        "requiredMet": 8,
+        "preferredTotal": 3,
+        "preferredMet": 3,
+        "score": 1,
+        "complete": true,
+        "gaps": []
+      },
+      {
+        "id": "icy-sixel",
+        "label": "icy_sixel — pure-Rust Sixel encoder and streaming decoder",
+        "group": "D · Programs that put pixels in a terminal",
+        "fields": [
+          {
+            "key": "what_it_is",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "license",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "language",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "graphics_mechanism",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "where_it_draws",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "input_model",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "activity",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "td_overlap",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "steal_for_td",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "trap",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "primary_sources",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          }
+        ],
+        "requiredTotal": 8,
+        "requiredMet": 8,
+        "preferredTotal": 3,
+        "preferredMet": 3,
+        "score": 1,
+        "complete": true,
+        "gaps": []
+      },
+      {
+        "id": "rio-vt",
+        "label": "rio-vt — Rio's embeddable VT core with Sixel, iTerm2 and Kitty graphics parsing",
+        "group": "D · Programs that put pixels in a terminal",
+        "fields": [
+          {
+            "key": "what_it_is",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "license",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "language",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "graphics_mechanism",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "where_it_draws",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "input_model",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "activity",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "td_overlap",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "steal_for_td",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "trap",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "primary_sources",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          }
+        ],
+        "requiredTotal": 8,
+        "requiredMet": 8,
+        "preferredTotal": 3,
+        "preferredMet": 3,
+        "score": 1,
+        "complete": true,
+        "gaps": []
+      },
+      {
+        "id": "viuer",
+        "label": "viuer / viu — Rust image-printing crate and CLI",
+        "group": "D · Programs that put pixels in a terminal",
+        "fields": [
+          {
+            "key": "what_it_is",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "license",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "language",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "graphics_mechanism",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "where_it_draws",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "input_model",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "activity",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "td_overlap",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "steal_for_td",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "trap",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "primary_sources",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          }
+        ],
+        "requiredTotal": 8,
+        "requiredMet": 8,
+        "preferredTotal": 3,
+        "preferredMet": 3,
+        "score": 1,
+        "complete": true,
+        "gaps": []
+      },
+      {
+        "id": "rtv-santitub",
+        "label": "rtv (Santitub) — the original Rust terminal video player",
+        "group": "D · Programs that put pixels in a terminal",
+        "fields": [
+          {
+            "key": "what_it_is",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "license",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "language",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "graphics_mechanism",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "where_it_draws",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "input_model",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "activity",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "td_overlap",
+            "requirement": "required",
+            "status": "unverified",
+            "satisfied": true
+          },
+          {
+            "key": "steal_for_td",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "trap",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "primary_sources",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          }
+        ],
+        "requiredTotal": 8,
+        "requiredMet": 8,
+        "preferredTotal": 3,
+        "preferredMet": 3,
+        "score": 1,
+        "complete": true,
+        "gaps": []
+      }
+    ],
+    "completeCount": 51,
+    "total": 52,
+    "done": false,
+    "pending": [
+      {
+        "id": "hyperion-tui",
+        "gaps": [
+          "license",
+          "language",
+          "graphics_mechanism",
+          "activity"
+        ]
+      }
+    ],
+    "meanScore": 0.993
+  },
+  "bubbles": [
+    {
+      "kind": "serendipity",
+      "subjectId": "warp",
+      "note": "Warp's client has been open source since late April 2026 (AGPL-3.0; warpui/warpui_core MIT). The brief's 'closed source' premise is out of date. Its Alacritty-derived terminal model with Kitty + iTerm2 image support (crates/warp_terminal/src/model/kitty.rs, iterm_image.rs, image_map.rs) is readable reference code for TD.",
+      "why": "Closest readable implementation of image protocols on an Alacritty-style grid in Rust. AGPL means read the pattern, don't copy code; the MIT warpui crates can be copied.",
+      "source": "https://github.com/warpdotdev/Warp"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "zed-terminal",
+      "note": "rio-vt (crates.io, 0.5.28, 2026-09-17; created 2026-07-26) is Rio's terminal core extracted as an embeddable crate (VT parser, grid, PTY, selection, search). It parses sixel, Kitty graphics and iTerm2 behind a `graphics` feature. Its author proposed it as a drop-in alacritty_terminal replacement in Zed (PR #62149, parse-throughput benchmarks 1.1-7.8x alacritty), and Zed declined within minutes.",
+      "why": "A possible path for TD to get graphics parsing without forking alacritty_terminal. Belongs with cluster B's Rio subject; needs its own falsifiable evaluation.",
+      "source": "https://github.com/zed-industries/zed/pull/62149"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "zed-terminal",
+      "note": "alacritty/alacritty#910 'Add support for libsixel' has been open since 2017-11-21 (225 comments), and the graphics PR alacritty#4763 is still open. Zed closed its own terminal-images request (#20860) as not_planned, pointing there.",
+      "why": "TD is on alacritty_terminal: graphics won't arrive upstream on any useful timescale, so TD owns the image layer (parse APC/DCS itself or switch cores).",
+      "source": "https://github.com/alacritty/alacritty/issues/910"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "zed-terminal",
+      "note": "Licence boundary: Zed's crates/terminal, terminal_view and image_viewer are GPL-3.0-or-later; gpui is Apache-2.0. Warp's terminal is AGPL-3.0. Patterns can be reimplemented freely, but pasting code carries the licence.",
+      "why": "TD shares Zed's stack, so copying terminal_view code is tempting; TD's own licence decides whether that's allowed.",
+      "source": "https://github.com/zed-industries/zed/blob/main/crates/terminal/Cargo.toml"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "cmux",
+      "note": "cmux #7683 (open, 2026-07-09) asks for inline thumbnails of images that agents read or write (Claude Code 'Read(/tmp/x.png)' lines), detected by the terminal with no graphics escapes from the agent, clickable to a larger preview. The author's design note: 'an overlay anchored to the row (like link hints / ghost text) is likely the right shape rather than mutating the cell grid.'",
+      "why": "The exact TD use case: agents running in TD panes print image paths and never emit Kitty graphics. Row-anchored overlays plus Ctrl+click-to-open fit TD's plan.",
+      "source": "https://github.com/manaflow-ai/cmux/issues/7683"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "warp",
+      "note": "Warp #8741 (open, 11 upvotes) asks for a CLI for its built-in markdown viewer, editor and split panes (`warp open --viewer --split right --size 33% file.md`), because they're reachable only by clicking. Wave (`wsh view`) and cmux (`cmux markdown open`) already have this.",
+      "why": "Evidence that users want the click and the CLI to be the same verb; TD's ctl socket is the natural home for it.",
+      "source": "https://github.com/warpdotdev/warp/issues/8741"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "warp",
+      "note": "Warp #9913 (open, 2026-05-02) proposes replacing Warp's Alacritty-derived core with libghostty-rs. Together with Zed PR #62149 (rio-vt), two Rust terminals are weighing an alacritty-core replacement.",
+      "why": "libghostty(-rs) is a candidate subject for cluster B, and a core option TD might evaluate alongside rio-vt.",
+      "source": "https://github.com/warpdotdev/warp/issues/9913"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "domterm",
+      "note": "DomTerm ships a Rust front end built on wry (Tauri's webview library; dt-wry/src/main.rs), alongside Electron and Qt WebEngine.",
+      "why": "If TD ever renders HTML briefs with a real engine, wry is the Rust-native option to weigh against Servo. Note that on Linux wry means WebKitGTK, a separate toolkit inside a gpui app.",
+      "source": "https://github.com/PerBothner/DomTerm/tree/master/dt-wry"
+    },
+    {
+      "kind": "gap-note",
+      "subjectId": "warp",
+      "note": "Couldn't confirm whether Ctrl+clicking an image path (png/jpg) opens it inside Warp or hands it to the external editor. The docs name only the Markdown viewer as an in-app target. The file_pane/FileNotebookView code wasn't traced far enough to settle it.",
+      "why": "Matters for whether Warp is prior art for click-an-image-to-view-inside.",
+      "source": "https://docs.warp.dev/terminal/more-features/files-and-links/"
+    },
+    {
+      "kind": "gap-note",
+      "subjectId": "extraterm",
+      "note": "The wire format of Extraterm's `show` channel (bulk-file escape sequence) wasn't read. graphics_mechanism infers it from main/src/bulk_file_handling and the ImageBlock extension. Also unverified: whether iTerm2-protocol images become ImageBlocks or cell overlays.",
+      "why": "Leaves graphics_mechanism at medium confidence.",
+      "source": "https://github.com/sedwards2009/extraterm/tree/master/main/src/bulk_file_handling"
+    },
+    {
+      "kind": "gap-note",
+      "subjectId": "tabby",
+      "note": "Tabby (Eugeny/tabby; MIT; 74.7k stars; pushed 2026-09-24; v1.0.236 2026-09-23) was considered but not added. It uses @xterm/addon-image ^0.7.0 (tabby-terminal/src/frontends/xtermFrontend.ts), the same mechanism as Hyper and VS Code, so it adds no new idea for TD. cmux took the slot because it pairs agent panes with in-app Markdown/browser panels.",
+      "why": "Records why a suggested candidate was dropped, so the next round needn't redo it.",
+      "source": "https://github.com/Eugeny/tabby"
+    },
+    {
+      "kind": "gap-note",
+      "subjectId": "zed-terminal",
+      "note": "Zed's agent panel (a pane type hosting external agents) wasn't examined this session, so agent-panes was left out of Zed's td_overlap. Worth a check if the closeness score matters.",
+      "why": "The tag may be missing from Zed's overlap.",
+      "source": "https://github.com/zed-industries/zed"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "alacritty-upstream",
+      "note": "Neither image protocol can reach TD's alacritty_terminal Handler today. Upstream vte sends ESC _ (APC, used by Kitty's `ESC _G`) to State::SosPmApcString and discards the bytes (vte src/lib.rs line 379). The vte ansi Performer's DCS `hook`/`put`, which Sixel's `DCS q` needs, are debug-log stubs (src/ansi.rs line 1311). So TD has three options: (a) a patched vte, as ayosec's `vte-graphics` 0.15.0 does; (b) a byte pre-filter in front of the parser that extracts APC G and DCS q, which then needs the cursor position and must emit the cursor moves itself; or (c) a different core such as rio-vt, which parses both natively.",
+      "why": "This is the single fact that decides how much of the graphics work touches TD's VT dependency. No approach avoids a parser change.",
+      "source": "https://github.com/alacritty/vte/blob/master/src/lib.rs"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "alacritty-upstream",
+      "note": "TD already answers pixel-geometry queries correctly. app/src/host.rs handles TermEvent::TextAreaSizeRequest by formatting WindowSize{num_lines, num_cols, cell_width: geom.cell_width, cell_height: geom.cell_height} and writing the reply to the PTY. alacritty_terminal also fills TIOCSWINSZ ws_xpixel/ws_ypixel from those same cell sizes (tty/unix.rs lines 431-435). Kitty, Sixel and IIP clients size images from these numbers, so this prerequisite is already done. The only 8x16 and 8x20 hard-codes are in the socketpty test and the term.rs bench.",
+      "why": "It removes one prerequisite from TD's image plan, and it shows the host (server) side owns geometry, which is where the image store should live too.",
+      "source": "file:///home/parker/Work/terminal-delight/app/src/host.rs"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "kitty",
+      "note": "Queries a Kitty-graphics host must answer: (1) a=q query: reply `ESC _Gi=<id>;OK ESC \\`, or `ENOENT:<msg>` or another error code. It must reply immediately and must not store the image. (2) Detection: clients send `ESC _Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA ESC \\` followed by `ESC [c`; the graphics reply arriving before the DA1 reply means supported. (3) Quiet modes q=1 (suppress OK) and q=2 (suppress errors too). (4) After a placement the cursor moves right by cols and down by rows unless C=1. (5) When over quota, delete images that have no placements first. (6) Deletes via a=d with d=i/p/z etc.; uppercase also frees the data.",
+      "why": "This is the minimum surface for a=q-probing clients (yazi, chafa, timg, kitty icat, ratatui-image) to pick TD up as a Kitty host.",
+      "source": "https://sw.kovidgoyal.net/kitty/graphics-protocol/"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "kitty",
+      "note": "Unicode placeholders are the multiplexer-safe form of the Kitty protocol. The program creates a virtual placement (a=p,U=1), then prints U+10EEEE cells whose foreground colour encodes the image id (256-colour or 24-bit, with a third diacritic carrying the most significant byte) and whose combining diacritics encode row and column (U+0305 = 0, U+030D = 1, and so on). Anything that treats them as text (tmux, vim, TD's own server/client mirror) repositions the image for free. Support today: Ghostty (graphics_unicode.zig), iTerm2 3.7 (a placeholder fix is in the 3.7 notes), Rio (#1891/#1893, fixed 2026-08-24), and the ekollof cosmic-term fork (rowcol_diacritics.rs). WezTerm does not have it yet (PR #7924 open).",
+      "why": "Because the image rides in ordinary cells, TD's grid, selection, scrollback and client/server mirroring already carry it. This is likely the cheapest correct first Kitty feature for a multiplexing terminal.",
+      "source": "https://sw.kovidgoyal.net/kitty/graphics-protocol/"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "alacritty-graphics-fork",
+      "note": "Queries a Sixel host must answer, as implemented in the ayosec fork and xterm.js: advertise Sixel in DA1 (the VT220+ '4' attribute; chrisduerr notes '4' means nothing while Alacritty reports VT102). Answer XTSMGRAPHICS `CSI ? Pi ; Pa ; Pv S` for Pi=1 (colour registers, 1024 in the fork) and Pi=2 (Sixel geometry, capped at 4096x4096; the fork answers via TextAreaSizeRequest). Honour DECSDM (DECSET/DECRST 80, Sixel display or scrolling mode) and choose the shared or private palette mode. Also answer CSI 14 t, 16 t and 18 t pixel and char size reports.",
+      "why": "Sixel clients (chafa, notcurses, mpv vo=sixel, lsix) probe these before drawing. A missing or incorrect reply makes them fall back to half-block characters.",
+      "source": "https://github.com/ayosec/alacritty/blob/graphics/alacritty_terminal/src/graphics/mod.rs"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "rio",
+      "note": "Rio's maintainer opened zed-industries/zed PR #62149 on 2026-08-04, 'terminal: Replace alacritty_terminal with rio-vt'. It swaps Zed's (gpui) terminal core through the existing seam in crates/terminal/src/alacritty.rs, now rio.rs, keeping the public Cell, Content, Modes and Point shapes so that nine dependent crates compile untouched. It claims 2-8x parse throughput over alacritty_terminal 0.26 (maintainer's own benchmark, self-disclosed as an interested party). A Zed member (mikayla-maki) closed it the same day: 'we're not able to field this kind of PR'.",
+      "why": "This is a same-stack (gpui) precedent for replacing alacritty_terminal with an image-capable core, and the diff maps the API differences TD would hit. The throughput numbers are unverified.",
+      "source": "https://github.com/zed-industries/zed/pull/62149"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "zed-terminal",
+      "note": "Zed's position on terminal images (for cluster A's zed-terminal row): issue #20860 'Graphics support in the integrated terminal' was closed with 'Zed uses Alacritty and does not modify it in any way, esp. related to graphics: all related issues should go there.' So Zed, the other gpui + alacritty_terminal terminal, has no inline images, and TD would be first in that stack.",
+      "why": "It fills a graphics_mechanism fact for cluster A and confirms TD has no gpui prior art to copy for pixels.",
+      "source": "https://github.com/zed-industries/zed/issues/20860"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "ghostty",
+      "note": "libghostty-vt, the embeddable VT core extracted from Ghostty (Zig and C API, zero-dependency), now exposes the Kitty graphics protocol to embedders. Ghostling, the minimal libghostty demo terminal (MIT, 1.1k stars), added a full Kitty renderer in PR #13 with 273 lines of C. Ghostel embeds libghostty-vt in Emacs.",
+      "why": "It is a second embeddable core with Kitty graphics besides rio-vt, and a possible candidate subject for cluster A or D. It is not same-stack (Zig, C ABI), but it is the smallest worked example of the embedder's rendering half.",
+      "source": "https://github.com/ghostty-org/ghostling/pull/13"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "contour",
+      "note": "The Good Image Protocol (Contour, experimental) is the only protocol here designed around compositing layers and named pools. Upload with `DCS u n=<name>,f=<fmt>;!<b64> ST`, render with `DCS r n=<name>,c=<cols>,r=<rows> ST`, release with `DCS d n=<name> ST`. Layers are below, replace and above; the pool uses LRU eviction; it advertises as DA1 code 90. `contour cat` is the reference client. The spec repo has 36 stars and last pushed 2026-04-12, so nobody but Contour has adopted it.",
+      "why": "Named images and explicit layers map neatly onto TD's own 'floating square' idea, but adoption is effectively zero, so it is a design reference, not a protocol to implement.",
+      "source": "https://github.com/contour-terminal/terminal-good-image-protocol"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "kitty",
+      "note": "kitty's `launch --type=os-panel` creates an OS window 'as a desktop panel' (layer-shell on Wayland). Separately, `--type=overlay` versus `overlay-main` differ in whether the overlay counts as a main window. These are kitty's native equivalents of TD's 'floating square' and 'split pane' targets, reached from open-actions.",
+      "why": "It shows kitty already offers the three destinations TD is designing (overlay over the pane, split, and a panel outside the terminal) behind one launch verb.",
+      "source": "https://sw.kovidgoyal.net/kitty/launch/"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "euporie",
+      "note": "Alacritty's maintainer cited euporie on the day of this run (2026-09-24, issue #910): 'Euporie and its example screenshots are a great example for why I think terminals should not support protocols like Sixel. If your argument for images in terminals is writing GUIs in a terminal, then you're actively working to make terminals and terminal applications worse (imo).'",
+      "why": "This is the strongest current statement of the counter-position to 'GUI in the TUI', aimed at a cluster D subject. It is useful for the brief's 'why not' section.",
+      "source": "https://github.com/alacritty/alacritty/issues/910#issuecomment-5818203716"
+    },
+    {
+      "kind": "gap-note",
+      "subjectId": "windows-terminal",
+      "note": "I did not research Windows Terminal (Sixel since 1.22 per the brief) or Konsole (Sixel plus Kitty) as subjects. Measured metadata only: microsoft/terminal is MIT, 105.0k stars, C++, latest release v1.24.11911.0 (2026-07-16). I judged both low-value for a Linux, gpui-based TD.",
+      "why": "Explicitly deprioritised by the brief ('only if notable'). Recorded so a later round knows they were considered, not missed.",
+      "source": "https://github.com/microsoft/terminal"
+    },
+    {
+      "kind": "gap-note",
+      "subjectId": "rio",
+      "note": "Rio's input model (hint and hyperlink bindings) and where_it_draws were not read in docs beyond the features list, so both carry medium confidence. The rioterm.com docs pages for hints and hyperlinks would settle it.",
+      "why": "Only the Rio fields at medium confidence need this follow-up.",
+      "source": "https://rioterm.com/docs/features"
+    },
+    {
+      "kind": "gap-note",
+      "subjectId": "ghostty",
+      "note": "Ghostty's where_it_draws is inferred from protocol semantics plus the presence of graphics_unicode.zig and graphics_render.zig. I did not read the renderer, so how virtual placements interact with scrollback and alt-screen is unverified. image-storage-limit being separate for primary and alternate screens is measured.",
+      "why": "Only this one field is lower confidence.",
+      "source": "https://github.com/ghostty-org/ghostty/tree/main/src/terminal/kitty"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "boyd-jev-pokemon",
+      "note": "Boyd (@0xBOYD) is Andrew Boyd, 'Founder @standardagents. AgentBuilder, dmux, formkit', and dmux.ai credits him beside Justin Schroeder (@jpschroeder). The Jev-plays-Pokemon post and dmux come from the same people.",
+      "why": "Cluster E can connect Boyd's dashboard to dmux / dmux-rs. Parker named both, so they are probably one lineage.",
+      "source": "https://github.com/andrew-boyd"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "dmux-rs",
+      "note": "Alacritty's maintainer (chrisduerr, 2026-07-07) on alacritty#910: Alacritty should not implement Sixel, 'Many of the usecases you've listed are things I never want to see in my terminal'. Zellij's maintainer cited this as 'the last straw' for adding Kitty graphics to Zellij (PR #5428).",
+      "why": "TD's VT engine is alacritty_terminal, so upstream will not add image parsing. TD owns graphics parsing and the image store, or swaps/augments the engine.",
+      "source": "https://github.com/alacritty/alacritty/issues/910#issuecomment-4905562551"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "herdr",
+      "note": "herdr drives a vendored libghostty-vt from Rust over its C ABI as its per-pane VT engine, and that engine already parses Kitty graphics (herdr sets a 64 MiB image storage limit and a PNG decode callback). cmux uses libghostty too.",
+      "why": "A proven Rust-reachable VT engine with Kitty graphics built in, usable as TD's graphics path or as the independent oracle for a dmux-rs-style shadow verifier against alacritty_terminal.",
+      "source": "https://github.com/herdrdev/herdr/blob/master/src/ghostty/mod.rs"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "dmux",
+      "note": "dmux's PaneAnalyzer is an LLM prompt-and-parse step over the last 50 lines of a pane: state ∈ {option_dialog, open_prompt, in_progress}, the options with keys, potentialHarm {hasRisk, description}, a summary, with a 5 s content-hash cache. Cheap regex heuristics (spinner glyphs, prompt patterns, progress words) run first and the LLM is the escalation. PR #88 (closed) tried a 45 s 'task adherence' LLM check.",
+      "why": "This is exactly the typed judgment TypeSafe/Jev is for: a Choice over the three states plus a Noul for 'this option is risky', batched over one pane state. A TD attention rail could do it on the in-process grid with no capture-pane.",
+      "source": "https://github.com/standardagents/dmux/blob/main/src/services/PaneAnalyzer.ts"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "dmux",
+      "note": "dmux deleted its HTTP API, SSE stream, Vue web dashboard and tunnel/QR remote on 2026-02-20 (commit 75cd109) and stayed tmux + TUI only, and dmux-rs marks 'web/remote ✂' (dropped). Meanwhile agent-deck ships `agent-deck web` (127.0.0.1:8420) and zellij added a web client with PWA and mobile UI in 0.45.",
+      "why": "The agent-multiplexer field is split on browser surfaces. Standard Agents dropped theirs, which is evidence for keeping TD's rich content inside the terminal window rather than beside it in a browser.",
+      "source": "https://github.com/standardagents/dmux/commit/75cd109c0f9fef710b84fddbf60c7a45b7d946a5"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "tmux",
+      "note": "tmux PR #5445 introduces a per-terminal 'imagescroll' feature after direct testing: only WezTerm and Ghostty are confirmed to move SIXEL/Kitty image content with a scrolled region (mintty scrolls text in margins but drops the image); everything else gets an explicit redraw after scroll.",
+      "why": "Cluster B can use this capability matrix, and TD should know it if it ever re-emits images to a host (e.g. TD inside SSH or a nested terminal).",
+      "source": "https://github.com/tmux/tmux/pull/5445"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "tmux",
+      "note": "tmux itself is converging on TD's floating-square idea: 3.7 (2026-06-26) added non-modal floating panes; 3.8-rc (2026-09-09) adds modal panes (-O, -K, -C), float↔tile via break-pane/join-pane, keyboard move/resize, and JSON layout strings that include floating panes.",
+      "why": "Users of TD agent panes running tmux inside will soon have floats inside floats; TD's own floating layer should not fight tmux's for the mouse.",
+      "source": "https://github.com/tmux/tmux/blob/master/CHANGES"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "cmux",
+      "note": "cmux has a skill (skills/cmux-markdown) telling agents to write plan.md and run `cmux markdown open plan.md` so the plan appears in a live-reloading split beside the agent.",
+      "why": "Direct precedent for letting agents, not only humans, open TD viewers, and it fits Parker's 'Deliverable:' line convention, which already names the one file an agent wants opened.",
+      "source": "https://github.com/manaflow-ai/cmux/blob/main/skills/cmux-markdown/SKILL.md"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "zellij",
+      "note": "Zellij's plugin API has an 'in place' placement family (open_file_in_place, open_terminal_in_place, open_command_pane_in_place: 'temporarily replacing the focused pane'); herdr's overlay placement does the same with zoom and restores focus and zoom on close; cat9 calls it 'swallow'.",
+      "why": "Three independent projects converge on a third placement beyond split and float, which TD's open-on-click should offer.",
+      "source": "https://zellij.dev/documentation/plugin-api-commands.html"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "claude-squad",
+      "note": "Other agent multiplexers checked, not added as subjects: asheshgoplani/agent-deck (MIT, 947 stars, v1.16.16 2026-09-20; tmux-based, web UI on 127.0.0.1:8420, phone-driven 'conductor', MCP manager); stravu/crystal, renamed Nimbalyst (MIT, 3.1k stars, desktop app, last push 2026-02-26); devflowinc/uzi (MIT, 582 stars, dormant since 2025-06-04).",
+      "why": "Candidate subjects if the survey widens the agent-multiplexer set; agent-deck is the most active.",
+      "source": "https://github.com/asheshgoplani/agent-deck"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "ratatui-image",
+      "note": "Candidate for cluster D: lnqs/textual-image (LGPL-3.0, 183 stars, v0.13.1 2026-05-29, pushed 2026-09-24) renders images in Textual/rich apps. Textualize/textual (MIT, 37.3k stars, v8.2.8) and textual-web (MIT, 1.5k stars, last release 2024-02-20) run TUIs in a browser.",
+      "why": "Textual is the Python counterpart of ratatui for widget-level image placement; not added to cluster C because it is a framework rather than a multiplexer or window manager.",
+      "source": "https://github.com/lnqs/textual-image"
+    },
+    {
+      "kind": "gap-note",
+      "subjectId": "arcan-cat9-durden",
+      "note": "The letoram/arcan GitHub master reports Zig as 19.2 MB of 20 MB, with July 2026 commits like 'windows: arcan.exe LINKS' and merges of 'worktree-agent-…' branches, while the README still describes a cmake C build and says the GitHub repo is going defunct in favour of fossil.arcan-fe.com. Not verified whether this is upstream Arcan or a mirror oddity. The three arcan-fe.com posts were read through WebFetch extraction, not in full.",
+      "why": "The language field and any claim about Arcan's current codebase should be re-checked against fossil.arcan-fe.com before it is relied on.",
+      "source": "https://github.com/letoram/arcan/commits/master"
+    },
+    {
+      "kind": "gap-note",
+      "subjectId": "herdr",
+      "note": "Not verified: whether herdr link handlers fire on plain-text file paths (non-OSC 8) or only on detected URLs and OSC 8 file:// links. Also, Omarchy's manual links omacom-io/herdr, a 23-star fork of herdrdev/herdr; which binary Omarchy actually packages was not checked.",
+      "why": "Decides how much path detection TD must do itself compared with what herdr users already get.",
+      "source": "https://github.com/herdrdev/herdr/blob/master/docs/next/website/src/content/docs/plugins.mdx"
+    },
+    {
+      "kind": "gap-note",
+      "subjectId": "cmux",
+      "note": "Not verified: whether cmux terminal panes render Kitty graphics from programs (libghostty's Ghostty terminal does), and whether cmux has any floating/overlay placement for viewers; only split placement was found.",
+      "why": "Affects cmux's host-protocol and floating tags.",
+      "source": "https://github.com/manaflow-ai/cmux/blob/main/README.md"
+    },
+    {
+      "kind": "gap-note",
+      "subjectId": "yazi",
+      "note": "Stock alacritty_terminal can't host any subject in this cluster yet, because its VT parser (vte master, v0.15) drops the sequences they rely on. ESC _ (0x5F) goes into SosPmApcString and the bytes are discarded, so kitty `ESC_G…` graphics never reach the Handler. DCS hook/unhook are logged as unhandled, so no Sixel. DA1 answers `CSI ?6c`, which lacks attribute 4, so nobody detects sixel. CSI t handles only 14 (text-area pixels) and 18 (chars), with no 16t for cell size. There is no XTVERSION (`CSI >q`) handler. The kitty keyboard protocol sits behind a `kitty_keyboard` config flag, and awrit exits without it. TD needs a parser patch or a byte-stream pre-filter for APC/DCS before any client-side detection matters.",
+      "why": "This decides TD's first engineering slice. Every client in the cluster detects kitty with an APC `a=q` query, sixel with DA1 attribute 4, and cell size with 14t/16t or TIOCGWINSZ.",
+      "source": "https://github.com/alacritty/vte/blob/HEAD/src/lib.rs"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "yazi",
+      "note": "Conformance checklist, taken from the detection code of yazi, euporie, presenterm, awrit, ueberzugpp, tdf, w3m and glow. TD should answer each of these promptly and truthfully: DA1 `CSI c` (include 4 only if sixel is real); XTVERSION `CSI >q` (yazi maps the substring to a brand); `CSI 14t`, `CSI 16t`, `CSI 18t`; XTSMGRAPHICS `CSI ?1;1;0S` and `CSI ?2;1;0S`; kitty `ESC_G a=q` with each medium, t=d, t=f and t=s (presenterm asks t=f and t=d separately, yazi t=d and t=s); awrit's frame probes `a=f,r=2` and `a=c,C=1,r=2,c=1`; OSC 10/11/12/4 `?`; `CSI ?996n`; DECRQM `CSI ?1016$p` and `CSI ?12$p`; DECRQSS `ESC P $q q ESC \\`; `CSI ?u`; DSR `CSI 5n` and `CSI 6n`; and the OSC 66 cursor-advance probe. TIOCGWINSZ must carry per-pane ws_xpixel/ws_ypixel, because ueberzugpp, mcat, tdf and w3m read it before any escape.",
+      "why": "One test list, sourced from real clients, becomes TD's acceptance test for 'programs can show pixels', and each line traces back to a client that breaks without it.",
+      "source": "https://github.com/sxyazi/yazi/blob/HEAD/yazi-tty/src/sequence/query.rs"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "yazi",
+      "note": "yazi's per-terminal image table as of 2026-09-24 (docs page plus README). kitty ≥0.28.0 and Ghostty: kitty Unicode placeholders. iTerm2, WezTerm, Warp (macOS/Linux), Tabby, VSCode, Bobcat: iTerm2 inline images. Konsole: kitty old protocol. foot, Windows Terminal ≥v1.22.10352.0, st with the sixel patch, Black Box: Sixel. Rio: marked unsupported in the docs ('renders images at incorrect sizes'), yet drivers.rs maps Rio to Kgp. X11/Wayland: via Überzug++ (Wayland only on Hyprland, Sway, Niri, Wayfire). Fallback: Chafa ≥1.16.0. The brand comes from TERM, TERM_PROGRAM and special env vars (KITTY_WINDOW_ID, KONSOLE_VERSION, ITERM_SESSION_ID, WEZTERM_EXECUTABLE, GHOSTTY_RESOURCES_DIR, WT_Session, WARP_HONOR_PS1, VSCODE_INJECTION, TABBY_CONFIG_DIRECTORY), then from the XTVERSION substring. `ya env` prints the choice.",
+      "why": "It shows what TD must be listed as, and the exact env and XTVERSION hooks by which a new terminal gets onto the list.",
+      "source": "https://yazi-rs.github.io/docs/image-preview"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "glow",
+      "note": "Kitty's text-sizing protocol (OSC 66) is spreading through the Markdown renderers. presenterm probes it (`OSC 66;s=2;` and `n=1:d=2`) for big titles. mcat has an experimental `--md-kitty-headers` (MCAT_MD_KITTY_HEADERS). glow main gained it on 2026-09-22, drawing headers at 2× and bypassing Bubble Tea's renderer to do so. All three detect it by the cursor-advance probe.",
+      "why": "TD's Markdown story can come in two tiers. Ctrl+click opens a native view, and third-party renderers running inside TD get scaled headings the moment TD implements OSC 66. That is cheap next to pixel graphics, and three clients are already asking for it.",
+      "source": "https://github.com/charmbracelet/glow/blob/HEAD/utils/textsize.go"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "awrit",
+      "note": "Candidate for cluster A: cmux (manaflow-ai/cmux). A Ghostty-based macOS terminal 'with vertical tabs and notifications for AI coding agents', with notification rings on panes that need attention, a sidebar showing git branch, PR, ports and last notification, and an in-app browser split with a scriptable API ported from vercel-labs/agent-browser. 27,387 stars, pushed 2026-09-24, Swift, licence NOASSERTION. awrit's README now recommends it as awrit's replacement.",
+      "why": "It is the nearest shipped analogue to TD's agent-panes plus open-a-web-page-in-a-split idea, so cluster A should cover it.",
+      "source": "https://github.com/manaflow-ai/cmux"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "tdf",
+      "note": "`kittage` (0.4.0) is a Rust client library for the kitty graphics protocol by tdf's author. It covers shm images, query actions, display locations with z-index, cursor-movement policy, delete configs, and typed terminal errors such as NoEntity/ENOENT.",
+      "why": "TD's kitty-graphics conformance tests could drive TD with a real third-party Rust client (kittage, plus ratatui-image from cluster D2) instead of hand-written escape strings.",
+      "source": "https://github.com/itsjunetime/tdf/blob/HEAD/Cargo.toml"
+    },
+    {
+      "kind": "gap-note",
+      "subjectId": "ueberzugpp",
+      "note": "On Hyprland, ueberzugpp positions its overlay by `activewindow.at + col*font_width + padding`, and when monitor scale is above 1.0 it applies `res/2 + 10`, which is right only at exactly 2×. It also probes Hyprland's Lua IPC (`/dispatch workspace __ueberzugpp_probe__`, checking for 'hl.dispatch'), so it already follows Hyprland 0.56's Lua config. I measured none of this at runtime; it is read from source.",
+      "why": "Parker's Legion runs Hyprland. If yazi ever falls back to ueberzugpp inside TD, expect misplaced images at fractional scales, and this is the explanation.",
+      "source": "https://github.com/jstkdng/ueberzugpp/blob/HEAD/src/canvas/wayland/config/hyprland.cpp"
+    },
+    {
+      "kind": "gap-note",
+      "subjectId": "euporie",
+      "note": "Not run: none of these programs was executed; every claim comes from source or docs. The yazi docs pages were read through WebFetch, whose summariser misreported detection as env-var only. The source shows a full escape-sequence probe, so trust the source-file citations over the docs summary.",
+      "why": "Evidence labelling: runtime behaviour inside TD still needs a smoke test per client once TD's parser changes land.",
+      "source": "https://github.com/sxyazi/yazi/blob/HEAD/yazi-emulator/src/probe.rs"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "notcurses",
+      "note": "Consolidated list of the queries TD must answer for these clients to pick pixels (measured from source). DA1 'CSI c' or 'CSI 0c': include 4 only if Sixel works (notcurses, ratatui-image, timg, viuer and chafa all key Sixel on it; notcurses discards XTSMGRAPHICS answers without it and hangs if DA1 is missing). Kitty 'ESC _Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA ST' must get exactly 'ESC _Gi=31;OK ST', before the DA1 reply (ratatui-image, viuer); notcurses sends 'ESC _Gi=1,a=q; ST' and accepts any _G reply; ratatui-image may add i=32 (o=z) and i=33 (t=s) probes. XTVERSION 'CSI >0q' or 'CSI >q' gets 'DCS >| name version ST' (notcurses, timg). XTGETTCAP 'DCS +q544e;524742;687061 ST' (TN, RGB, hpa; notcurses). Size: CSI 14t (text area in px, reply CSI 4;h;w t), CSI 16t (cell px, reply CSI 6;h;w t), CSI 18t (cells), plus correct ws_xpixel/ws_ypixel in TIOCGWINSZ, which is mpv's ONLY source and a fallback for timg and ratatui-image. XTSMGRAPHICS 'CSI ?2;1;0S', 'CSI ?1;1;0S', 'CSI ?1;3;256S' (notcurses). OSC 10/11 '?' and OSC 4 palette queries; DECRQM 'CSI ?2026$p' and 'CSI ?1016$p'; Kitty keyboard 'CSI ?u'; 'CSI 6n' and 'CSI 5n' sentinels (reply 'CSI 0n'). Clients that pick Kitty only by name, whatever TD answers: chafa (env term DB), timg (TERM or XTVERSION substring). Those need upstream entries.",
+      "why": "This is the host-side contract for the whole cluster in one place; it can become TD's capability-reply test fixture.",
+      "source": "https://github.com/dankamongmen/notcurses/blob/master/src/lib/termdesc.c"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "zed-terminal",
+      "note": "Same-stack gap, measured in alacritty's own code (alacritty/vte master at abeae76, alacritty/alacritty master): (1) vte's Parser sends 'ESC _' (APC) to State::SosPmApcString and drops every byte with no Perform callback, so Kitty graphics never reach alacritty_terminal. (2) vte's ansi Performer implements hook/put/unhook as 'unhandled' debug logs, so a Sixel DCS is dropped too. (3) CSI t handles only 14, 18, 22 and 23; CSI 16t (cell size) is unhandled. No XTVERSION ('CSI > q') handler. (4) alacritty_terminal answers DA1 with 'ESC[?6c' (no 4, so no Sixel) and DA2 with 'ESC[>0;version;1c'. (5) CSI 14t goes out as Event::TextAreaSizeRequest, which the embedder must answer. TD therefore needs a byte pre-parser, or a patched vte, in front of alacritty_terminal for APC and DCS, and its own replies for DA1, XTVERSION, 16t and XTSMGRAPHICS.",
+      "why": "This is the single biggest implementation fact for TD's pixels phase, and it applies equally to Zed's terminal (cluster A).",
+      "source": "https://github.com/alacritty/vte/blob/master/src/lib.rs"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "mpv-terminal-vo",
+      "note": "alacritty_terminal's tty sets ws_xpixel = ws_col * cell_width and ws_ypixel = ws_row * cell_height as integer c_ushort (tty/unix.rs ToWinsize for WindowSize). TD must pass real cell pixel sizes in WindowSize on every resize. gpui cell widths are fractional, so truncating to integers makes the pixel size clients compute drift from the real grid by up to one pixel per column across a wide pane (this last part is [inferred], not measured).",
+      "why": "mpv sizes video only from these fields; timg and ratatui-image fall back to them; a zero or wrong value silently gives 320x240 video or misaligned images.",
+      "source": "https://github.com/alacritty/alacritty/blob/master/alacritty_terminal/src/tty/unix.rs"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "wezterm",
+      "note": "WezTerm's escape parser is now an in-repo crate, wezterm-escape-parser (src/apc.rs for Kitty APC, src/parser/sixel.rs), with host state in term/src/terminalstate/kitty.rs and sixel.rs. It is NOT published on crates.io (the API returns 'does not exist'); the published termwiz is 0.23.3 (2025-03-20). It is a second vendorable MIT host-side parser if rio-vt's modules do not fit.",
+      "why": "Gives TD a fallback source for host-side Kitty and Sixel parsing, with a different design from Rio's.",
+      "source": "https://github.com/wezterm/wezterm/tree/main/wezterm-escape-parser"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "zellij",
+      "note": "zellij-org/sixel-image (MIT, 0.2.1, 276k downloads) plus sixel-tokenizer is the Sixel deserialise, crop and serialise library Zellij uses to keep sixels inside pane bounds. It is a Sixel-to-Sixel model rather than an RGBA decoder, so it suits a multiplexer that re-emits sixels to an outer terminal, not TD's GPU renderer.",
+      "why": "Relevant to cluster C (Zellij) and to any future TD mode that forwards graphics to an outer terminal (TD inside tmux, or remote).",
+      "source": "https://github.com/zellij-org/sixel-image/blob/main/README.md"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "ratatui-image",
+      "note": "ratatui-image keeps a public screenshot matrix: flake-based VM tests run its demo in xterm, foot, kitty, wezterm, ghostty, rio, mlterm and others and post screenshots on each pull request. Its README compatibility table records why terminals fail: Alacritty's Sixel fork 'does not clear graphics'; Contour 'Does not clear graphics'; Warp lacks placeholders.",
+      "why": "A ready conformance harness TD could join. 'Does not clear graphics' is the most common failure it records, so image deletion and erase semantics deserve their own TD tests.",
+      "source": "https://benjajaja.github.io/ratatui-image-screenshots/"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "tmux",
+      "note": "Chafa 1.18.3 (2026-09-23): 'Sixels are no longer used inside tmux when the outer terminal can't display them. tmux claims the capability on its own behalf regardless of what's outside it, so we now ask what its client supports instead.' timg: Kitty inside tmux >= 3.3 only works in a Kitty terminal with -pk, using U=1 placeholders.",
+      "why": "For cluster C (tmux): multiplexers can advertise graphics they cannot deliver, so clients have started to bypass them.",
+      "source": "https://github.com/hpjansson/chafa/blob/master/NEWS"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "kitty",
+      "note": "Kitty spec (via WebFetch summary): the recommended support check is 'send the above query action followed by a request for the primary device attributes'. The terminal 'must read the data from the memory object and then unlink and close it' for t=s. 'When the terminal is running out of quota space for new images, existing images without placements will be preferentially deleted.'",
+      "why": "Three host obligations the clients in this cluster rely on: FIFO replies, shm unlink, and quota eviction. Cluster B should confirm them against the page.",
+      "source": "https://sw.kovidgoyal.net/kitty/graphics-protocol/"
+    },
+    {
+      "kind": "gap-note",
+      "subjectId": "chafa",
+      "note": "Not traced: exactly when chafa chooses its U=1 virtual-placement Kitty sequences over immediate a=T (I assume tmux passthrough), and chafa's cursor placement after images. Not checked as candidates: lsix (hackerb9/lsix, GPL-3.0, 4.2k stars, last push 2024-06-20, a shell Sixel client that uses DA1 and XTSMGRAPHICS), Textual's textual-image, and ytui or tui-video players.",
+      "why": "Candidates for a later round if the host-contract list needs more clients.",
+      "source": "https://github.com/hackerb9/lsix"
+    },
+    {
+      "kind": "serendipity",
+      "note": "Claim (a) — Omarchy's default terminal: PARTLY RIGHT. Foot is the default ('Foot is the default terminal for Omarchy'), but the officially supported alternatives are three, not two: 'We fully support Alacritty, Ghostty, and Kitty as options as well.' Same at the source: manual/15-terminal.md and default/xdg-terminal-exec/hyprland-xdg-terminals.list (foot.desktop) at tag v4.0.4; bin/omarchy-install-terminal accepts alacritty|foot|ghostty|kitty. The older Omarchy 3 manual on learn.omacom.io still says Alacritty is the default.",
+      "why": "Parker's desktop default (Foot) implements Sixel only, not Kitty graphics — so Omarchy users' baseline for 'pixels in a terminal' is Sixel.",
+      "source": "https://omarchy.org/manual/terminal/"
+    },
+    {
+      "kind": "serendipity",
+      "note": "Omarchy v4.0.4 ships herdr (github.com/omacom-io/herdr, 'terminal workspace manager', called 'Herdr (agent manager)' in the hotkeys) in install/omarchy-base.packages, bound to Super+Ctrl+Return, with agent layouts hdl/hds/hdlm/hsl mirroring the tmux ones (tdl = editor + AI agent + terminal).",
+      "why": "Agent-pane multiplexing is now a default Omarchy feature; TD's agent panes compete with it on Parker's own desktop.",
+      "source": "https://github.com/basecamp/omarchy/blob/v4.0.4/manual/21-tuis.md"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "boyd-jev-pokemon",
+      "note": "Boyd (@0xBOYD) is Andrew Boyd of Standard Agents (github.com/andrew-boyd, company 'Standard Agents'), the org behind dmux; he also forks omarchy/omarchy-pkgs, and Standard Agents publishes Omarchy-adjacent repos (touchbar-doom, t1bridge, fingerprint-tui) and dmux-rs, a native Rust tmux control-mode renderer whose roadmap lists 'Images (kitty graphics translation)' as a later phase.",
+      "why": "The two posts Parker shared and the dmux example come from the same small Omarchy/Standard Agents circle.",
+      "source": "https://github.com/standardagents/dmux-rs/blob/main/ROADMAP.md"
+    },
+    {
+      "kind": "serendipity",
+      "note": "Claim (c) — Carbonyl: ACCURATE WITH CAVEATS. It is real Chromium (a modified headless shell) and supports JS/WebAssembly and media per its README. Caveats the summary omits: the picture is half-block cells (2 pixels per cell) at a 1/7 device scale factor, not Kitty/Sixel (those are unmerged PRs #206, #221); audio plays on the machine running Carbonyl through its sound stack, not through the terminal (issue #2: over SSH you forward PulseAudio yourself); and the project has been dormant since v0.0.3 in Feb 2023.",
+      "why": "Verification requested by Parker.",
+      "source": "https://github.com/fathyb/carbonyl"
+    },
+    {
+      "kind": "serendipity",
+      "note": "Claim (b) — rtv at github.com/Laotian-telephonebell2559/rtv: NOT LEGITIMATE. It is a copy of Santitub/rtv with every README link redirected to a GitHub Pages page offering a 487,623-byte zip download, and the same-size zip committed into src/. The 'brand-new Rust project … Kitty + Sixel, audio sync, MIT/Apache-2.0' description is true of the ORIGINAL (Santitub/rtv, created 2026-08-20, 3 stars, one day of commits), not of this repo.",
+      "why": "Verification requested by Parker; security judgement from metadata only.",
+      "source": "https://github.com/Santitub/rtv"
+    },
+    {
+      "kind": "serendipity",
+      "note": "Parker's own servo-reader (`sr`) already has `--images {auto,kitty,sixel,off}` — inline images in terminal output via Kitty or Sixel.",
+      "why": "A first-party client TD can test its graphics support against.",
+      "source": "file:///home/parker/BROWN-FAMILY-SPORTS/Software/servo-reader"
+    },
+    {
+      "kind": "serendipity",
+      "note": "gpui's own webview route does not reach TD's platform: longbridge/gpui-component's crates/webview (published as gpui-wry 0.6.5, Apache-2.0, over wry) says 'The WebView will render on top of the GPUI window, any GPUI elements behind the WebView bounds will be covered' and 'Only supports macOS and Windows currently', and recommends 'a separate window or a Popup layer'.",
+      "why": "TD runs on Linux/Wayland. An embedded HTML pane in gpui on Omarchy needs another route: a Rust HTML/CSS renderer drawing into a gpui image (DioxusLabs/blitz, Apache-2.0, 4.2k stars, pushed 2026-09-24; or embedded Servo, MPL-2.0 — the engine Parker's servo-reader already drives), or a compositor-positioned separate window (the ueberzug++ approach).",
+      "source": "https://github.com/longbridge/gpui-component/blob/main/crates/webview/README.md"
+    },
+    {
+      "kind": "serendipity",
+      "note": "In-house prior art for the Markdown half of the feature: markdown-delight (Parker's gpui Markdown editor, same zed-upstream gpui checkout as TD) already turns comrak's AST into gpui elements in app/src/render.rs (parse_with_meta → Block → block_element → AnyElement). It renders headings, paragraphs, code, quotes, lists, tables and rules; images are reduced to their alt/link text and raw HTML blocks are shown as literal lines.",
+      "why": "TD's Ctrl+click-a-.md pane can reuse this renderer as a shared crate instead of adding a new engine; images and HTML are the parts still to build.",
+      "source": "file:///home/parker/BROWN-FAMILY-SPORTS/Software/markdown-delight/app/src/render.rs"
+    },
+    {
+      "kind": "gap-note",
+      "subjectId": "hyperion-tui",
+      "note": "The Servo escalation tier could not run: `sr` reports 'ServoNotBuilt: servoshell binary not found'. X/xcancel returned 402/451 to the cheap tier. The only remaining tier is a human-driven browser (web-scrape skill tier 3) or Parker pasting the post URL.",
+      "why": "Explains why license/language/graphics_mechanism stay unmet for this subject.",
+      "source": "https://x.com/NixFred"
+    },
+    {
+      "kind": "gap-note",
+      "subjectId": "hyperion-tui",
+      "note": "Round 2 re-searched for the project behind the 'HYPERION TUI v2.7.19' artwork: GitHub code search for \"HYPERION TUI\" (9 hits, all hereugo-ak/Hyperion — an unrelated Textual multi-agent app — and two HYPERION_RUST_INTEGRATION.md files), code search for \"System Settings\" + win95 + tui (no TUI hits), repository search for win95 tui and 'gui inside' terminal since 2026-08-15 (nothing), and web search for the post's own wording (not indexed). license, language, graphics_mechanism and activity stay flagged: no running software was found to cite.",
+      "why": "Unfindable with the cheap tier; the Servo tier is unavailable on this box (servoshell not built) and X answers 402/451.",
+      "source": "https://github.com/search?q=%22HYPERION+TUI%22&type=code"
+    },
+    {
+      "kind": "gap-note",
+      "subjectId": "hyperion-tui",
+      "note": "One coincidence, recorded as a hunch and NOT asserted: kygura/hyperion (Go, Bubble Tea v2 'operator console' TUI) opened a pull request titled 'JEV strategy runtime prototype: core, operator TUI, wire contract' on 2026-09-23, the same day as Nix's post. Same name, same model, same day — but its README has no Windows 95 dialog, no 'v2.7.19', and no link to @NixFred or @0xBOYD was found.",
+      "why": "If Parker can open the X post, the image credit or reply thread would settle whether the art depicts this project or nothing at all.",
+      "source": "https://github.com/kygura/hyperion/pull/19"
+    },
+    {
+      "kind": "gap-note",
+      "subjectId": "hyperion-tui",
+      "note": "Round 3 tried the people instead of the words: Fred Nix's public GitHub activity 2026-09-22..24 (blip, LANarchy, omacontra, Glide, infomarchy, omarchy-elgato-control — no TUI or Hyperion work), nixfred.com (a one-line landing page), and Andrew Boyd's public activity since 2026-09-15 (omarchy and omarchy-pkgs pushes, a jevpilot star — nothing GUI-in-TUI). Two consecutive rounds without progress: the harness should now stop this subject as unfindable.",
+      "why": "The artwork most likely depicts an idea rather than shipped software; only the X thread can say.",
+      "source": "https://github.com/nixfred"
+    },
+    {
+      "kind": "serendipity",
+      "note": "Correction to a round-1 bubble that said TD already answers pixel-geometry queries correctly. Read in this worktree (not run): app/src/host.rs answers CSI 14 t through TermEvent::TextAreaSizeRequest, but the reply is built from the `geom` value captured when the pane's event thread was spawned (spawn_pane's parameter, a Copy PaneGeom), while resize() updates only the pane's Mutex<PaneGeom> — so after a resize the pixel answer would still describe the pane's spawn size. And CSI 16 t (cell size in pixels) is not answered at all: vte 0.15 dispatches only 14, 18, 22 and 23 for CSI t. The pty's ws_xpixel/ws_ypixel do follow resizes (Msg::Resize carries cell sizes), so mpv-style clients are fine; query-style clients (rtv, ratatui-image's font-size probe, notcurses) are the ones exposed.",
+      "why": "Pixel size per pane is the first thing every image client asks; a split pane that answers with stale or whole-window numbers draws images at the wrong scale. Worth a falsifiable issue: resize a pane, send CSI 14 t, compare against the pane's geometry.",
+      "source": "file:///home/parker/Work/td-gui-in-the-tui/app/src/host.rs"
+    }
+  ]
+}

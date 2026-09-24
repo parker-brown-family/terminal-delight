@@ -1,0 +1,20 @@
+{
+  "updates": [],
+  "bubbles": [
+    {
+      "kind": "gap-note",
+      "subjectId": "hyperion-tui",
+      "note": "Round 2 re-searched for the project behind the 'HYPERION TUI v2.7.19' artwork: GitHub code search for \"HYPERION TUI\" (9 hits, all hereugo-ak/Hyperion — an unrelated Textual multi-agent app — and two HYPERION_RUST_INTEGRATION.md files), code search for \"System Settings\" + win95 + tui (no TUI hits), repository search for win95 tui and 'gui inside' terminal since 2026-08-15 (nothing), and web search for the post's own wording (not indexed). license, language, graphics_mechanism and activity stay flagged: no running software was found to cite.",
+      "why": "Unfindable with the cheap tier; the Servo tier is unavailable on this box (servoshell not built) and X answers 402/451.",
+      "source": "https://github.com/search?q=%22HYPERION+TUI%22&type=code"
+    },
+    {
+      "kind": "gap-note",
+      "subjectId": "hyperion-tui",
+      "note": "One coincidence, recorded as a hunch and NOT asserted: kygura/hyperion (Go, Bubble Tea v2 'operator console' TUI) opened a pull request titled 'JEV strategy runtime prototype: core, operator TUI, wire contract' on 2026-09-23, the same day as Nix's post. Same name, same model, same day — but its README has no Windows 95 dialog, no 'v2.7.19', and no link to @NixFred or @0xBOYD was found.",
+      "why": "If Parker can open the X post, the image credit or reply thread would settle whether the art depicts this project or nothing at all.",
+      "source": "https://github.com/kygura/hyperion/pull/19"
+    }
+  ],
+  "tokens": 8000
+}

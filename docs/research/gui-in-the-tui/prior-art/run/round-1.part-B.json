@@ -1,0 +1,773 @@
+{
+  "updates": [
+    {
+      "id": "kitty",
+      "fields": {
+        "what_it_is": {
+          "value": "GPU terminal emulator whose author wrote the Kitty graphics protocol (APC G), the de facto modern way for programs to put raster images and animations into a terminal. It also ships kittens (icat displays images; hints labels paths and URLs) and open-actions, which decide what happens when you click a file or hyperlink.",
+          "provenance": { "source": "https://sw.kovidgoyal.net/kitty/graphics-protocol/", "confidence": "high" },
+          "note": "[measured] Read the graphics-protocol, icat, hints and open_actions pages on 2026-09-24."
+        },
+        "license": {
+          "value": "GPL-3.0",
+          "provenance": { "source": "measured 2026-09-24: gh api repos/kovidgoyal/kitty", "confidence": "high" },
+          "note": "[measured] .license.spdx_id = GPL-3.0"
+        },
+        "language": {
+          "value": "Python, C, Go, Objective-C (bytes: Python 3.44M, C 2.56M, Go 2.12M, ObjC 0.44M)",
+          "provenance": { "source": "measured 2026-09-24: gh api repos/kovidgoyal/kitty/languages", "confidence": "high" },
+          "note": "[measured] Kittens (icat, hints) are Go; the core and renderer are C and Python."
+        },
+        "graphics_mechanism": {
+          "value": "Kitty graphics protocol, which kitty defines and hosts: APC `ESC _G<k=v,...>;<base64>ESC \\`. Image data arrives by one of four transmission mediums: direct in the escape (t=d), a file path (t=f), a temp file (t=t) or POSIX shared memory (t=s). Images are uploaded once by id and then placed as placements with z-index; negative z draws under text, and below INT32_MIN/2 also under non-default cell backgrounds. Also supported: relative placements (P=/Q= parent), client- and terminal-driven animation (a=f frames, since 0.20.0), and Unicode placeholders, where the codepoint U+10EEEE carries the image id in its foreground colour and diacritics carry the row and column, so images survive tmux and vim. kitty has no Sixel support. Rendering is native OpenGL textures.",
+          "provenance": { "source": "https://sw.kovidgoyal.net/kitty/graphics-protocol/", "confidence": "high" },
+          "note": "[measured] All mechanism details come from the spec page. The spec page does not mention Sixel at all, so 'no Sixel' is general knowledge rather than a quoted statement."
+        },
+        "where_it_draws": {
+          "value": "Protocol images draw as cell-anchored overlays inline in the scrollback. The spec says the graphics should also scroll with the text, automatically. They layer above or below text by z-index, and after a placement the cursor moves right by the placement's columns and down by its rows unless C=1. Separately, clicked files can open in a kitty overlay window that covers the active window (`launch --type=overlay`), in a split (`--location=hsplit|vsplit|split`), in a tab, in an OS window, or in an os-panel (a desktop panel).",
+          "provenance": { "source": "https://sw.kovidgoyal.net/kitty/launch/", "confidence": "high" },
+          "note": "[measured] Scroll behaviour and z rules come from graphics-protocol; launch types come from the launch page."
+        },
+        "input_model": {
+          "value": "Protocol images are inert pixels and receive no input. Ctrl+Shift+click on a hyperlink runs the first matching rule in open-actions.conf. Criteria are protocol, mime, ext, file glob, url regex and fragment_matches, and ${FILE_PATH}, ${URL} and ${FILE} are substituted into the action. An overlay window takes keyboard focus and returns it to the window beneath when it closes. The hints kitten (ctrl+shift+e for URLs, ctrl+shift+p then f for paths) is keyboard label selection. --program decides the result: paste it (-), copy it (@), use the default opener, or `launch` it.",
+          "provenance": { "source": "https://sw.kovidgoyal.net/kitty/open_actions/", "confidence": "high" },
+          "note": "[measured] open_actions example read verbatim: `protocol file / mime image/* / action launch --type=overlay kitten icat --hold -- ${FILE_PATH}`."
+        },
+        "activity": {
+          "value": "35.1k stars · pushed 2026-09-24 · latest release v0.49.1 (2026-09-24)",
+          "provenance": { "source": "measured 2026-09-24: gh api repos/kovidgoyal/kitty", "confidence": "high" },
+          "note": "[measured] Created 2016-10-16."
+        },
+        "td_overlap": {
+          "value": "open-on-click, pane-content, host-protocol",
+          "provenance": { "source": "https://sw.kovidgoyal.net/kitty/open_actions/", "confidence": "high" },
+          "note": "[measured] open-actions is click-to-open. Launching icat into an overlay or split is content in a pane. It is the reference host for the protocol TD would implement. It is not same-stack (C, Python and Go)."
+        },
+        "steal_for_td": {
+          "value": "Copy kitty's open-actions table as TD's Ctrl+click router. It is an ordered, first-match-wins list of rules. Each rule has criteria (protocol, mime, ext, file glob, url regex) and an action with ${FILE_PATH}, ${URL} and ${FILE} substituted. Ship defaults along these lines: image/* opens a floating square in the current pane; text/markdown and text/html open a split-pane viewer; anything else goes to xdg-open. TD's actions are its own pane types rather than kitty's `launch --type=overlay`, but the rule grammar, the ordering and the substitution variables transfer unchanged, and a user who knows kitty can already write TD rules.",
+          "provenance": { "source": "https://sw.kovidgoyal.net/kitty/open_actions/", "confidence": "medium" },
+          "note": "[inferred] Analysis over the open_actions page, which says processing stops at the first match."
+        },
+        "trap": {
+          "value": "The file and shared-memory transmission mediums (t=f, t=t, t=s) come with mandatory security rules. The terminal must refuse device, socket and other special files, and may refuse /proc, /sys and /dev. It may delete a temp file only when it sits in a known temp dir and its path contains `tty-graphics-protocol`. And every file-access failure must return an identical error, so a remote or sandboxed client cannot learn which files exist. Start TD with t=d (direct) only. Add t=f, t=t and t=s later, and only with these rules implemented and tested.",
+          "provenance": { "source": "https://sw.kovidgoyal.net/kitty/graphics-protocol/", "confidence": "high" },
+          "note": "[inferred] The rules are quoted from the spec; the advice to stage them after direct transmission is my analysis."
+        },
+        "primary_sources": {
+          "value": "https://sw.kovidgoyal.net/kitty/graphics-protocol/ https://sw.kovidgoyal.net/kitty/open_actions/ https://sw.kovidgoyal.net/kitty/kittens/hints/ https://sw.kovidgoyal.net/kitty/launch/ https://sw.kovidgoyal.net/kitty/kittens/icat/ https://github.com/kovidgoyal/kitty",
+          "provenance": { "source": "https://github.com/kovidgoyal/kitty", "confidence": "high" },
+          "note": "[measured] Pages read via WebFetch (a small model summarised them, so quotes are close but not byte-verified); repository metadata via gh api."
+        }
+      }
+    },
+    {
+      "id": "wezterm",
+      "fields": {
+        "what_it_is": {
+          "value": "Cross-platform GPU terminal emulator and multiplexer in Rust, configured in Lua. It lets programs draw images through the iTerm2 inline-image protocol (with a built-in `wezterm imgcat`), Sixel and a partial Kitty graphics implementation.",
+          "provenance": { "source": "https://github.com/wezterm/wezterm/blob/main/docs/features.md", "confidence": "high" },
+          "note": "[measured] features.md lists: iTerm2 compatible image protocol support with imgcat; Kitty graphics support; Sixel graphics support (experimental, since 20200620-160318-e00b076c)."
+        },
+        "license": {
+          "value": "MIT",
+          "provenance": { "source": "https://github.com/wezterm/wezterm/blob/main/LICENSE.md", "confidence": "high" },
+          "note": "[measured] gh api reports spdx_id NOASSERTION, but the LICENSE.md file reads 'MIT License, Copyright (c) 2018-Present Wez Furlong'."
+        },
+        "language": {
+          "value": "Rust (15.6M bytes), plus Python, Shell and Nix",
+          "provenance": { "source": "measured 2026-09-24: gh api repos/wezterm/wezterm/languages", "confidence": "high" },
+          "note": "[measured]"
+        },
+        "graphics_mechanism": {
+          "value": "Three host protocols: iTerm2 OSC 1337 (since 20220319-142410-0fcdea07), Sixel (experimental) and Kitty APC G, which the code enables by default (`enable_kitty_graphics` defaults to true). All three decode into one shared cell model, `wezterm_cell::image::ImageCell`, which holds texture coordinates, a z_index and padding, and the GPU renderer allocates quads from it. The Kitty support has gaps. Tracking issue #986 leaves these unchecked: animation control, shared-memory transmission and Unicode placeholders (PR #7924 is still open).",
+          "provenance": { "source": "https://github.com/wezterm/wezterm/issues/986", "confidence": "high" },
+          "note": "[measured] Read #986's checklist, term/src/terminalstate/kitty.rs, wezterm-cell/src/image.rs and config/src/config.rs (`#[dynamic(default = \"default_true\")] pub enable_kitty_graphics`). The #986 body still says to enable it via config, which is stale relative to the code."
+        },
+        "where_it_draws": {
+          "value": "Images draw inline in scrollback, attached to terminal cells, so they scroll with text. Negative z_index draws under the text layer. #986 notes that wezterm maps Kitty placements onto cells at placement time, whereas the spec models them independently of cells. imgcat does not fully work through wezterm's own multiplexer sessions.",
+          "provenance": { "source": "https://github.com/wezterm/wezterm/blob/main/wezterm-cell/src/image.rs", "confidence": "high" },
+          "note": "[measured] image.rs doc comment: negative z_index renders beneath the text layer, and below INT32_MIN/2 it draws under cells with a background. The multiplexer caveat is from imgcat.html."
+        },
+        "input_model": {
+          "value": "Images are inert. By default a plain left-click release runs CompleteSelectionOrOpenLinkAtMouseCursor, so clicking a matched link opens it. When a program has grabbed the mouse, holding Shift bypasses the grab (configurable via bypass_mouse_reporting_modifiers). Which text counts as a link is decided by hyperlink_rules (regex, format and highlight). Clicks can be rerouted in Lua through the `open-uri` event, for example to SpawnCommandInNewWindow; returning false suppresses the default browser open. Quick Select (Ctrl+Shift+Space) is a keyboard label mode over URLs, paths and hashes, drawn in the pane itself.",
+          "provenance": { "source": "https://wezterm.org/config/mouse.html", "confidence": "high" },
+          "note": "[measured] Also read hyperlink_rules.html, quickselect.html and docs/config/lua/window-events/open-uri.md."
+        },
+        "activity": {
+          "value": "29.0k stars · pushed 2026-09-21 · latest release 20240203-110809-5046fc22 (2024-02-03); nightlies only since",
+          "provenance": { "source": "measured 2026-09-24: gh api repos/wezterm/wezterm", "confidence": "high" },
+          "note": "[measured] There has been no tagged stable release for about 2.6 years while main keeps moving."
+        },
+        "td_overlap": {
+          "value": "open-on-click, host-protocol, same-stack",
+          "provenance": { "source": "https://github.com/wezterm/wezterm", "confidence": "high" },
+          "note": "[measured] Rust counts as same-stack. It uses its own VT core (termwiz and wezterm-term), not alacritty_terminal or gpui. The open-uri event routes clicks to arbitrary actions."
+        },
+        "steal_for_td": {
+          "value": "Build one protocol-agnostic image model and make every decoder feed it. WezTerm put Kitty support 'on top of existing iTerm2/sixel image data model' (#986). All three protocols write into one side table that attaches an image slice to grid cells, holding an image id, a texture rectangle, a z-index and a placement id, and a single gpui paint pass reads that table. With this in place, adding Sixel after Kitty (or GIP after both) touches only a decoder and never the renderer.",
+          "provenance": { "source": "https://github.com/wezterm/wezterm/issues/986", "confidence": "medium" },
+          "note": "[inferred] Analysis over #986's checklist and wezterm-cell/src/image.rs."
+        },
+        "trap": {
+          "value": "Do not advertise a half-conformant Kitty implementation. Issue #3817 is titled 'Kitty graphics protocol horribly non-conformant', and #1663 and #2084 are w/h and behaviour mismatches against kitty. Clients like yazi and chafa probe with a=q and then assume the full protocol. Answer a=q only for what TD really implements, and return errors for the parts it does not, such as animation and shared memory.",
+          "provenance": { "source": "https://github.com/wezterm/wezterm/issues/3817", "confidence": "medium" },
+          "note": "[inferred] The issue titles are measured via gh api search. That clients assume the full protocol after a successful probe is inferred."
+        },
+        "primary_sources": {
+          "value": "https://github.com/wezterm/wezterm/blob/main/docs/features.md https://wezterm.org/imgcat.html https://wezterm.org/config/lua/config/hyperlink_rules.html https://wezterm.org/config/mouse.html https://wezterm.org/quickselect.html https://github.com/wezterm/wezterm/blob/main/docs/config/lua/window-events/open-uri.md https://github.com/wezterm/wezterm/issues/986 https://github.com/wezterm/wezterm/issues/3817 https://github.com/wezterm/wezterm/pull/7924 https://github.com/wezterm/wezterm/blob/main/term/src/terminalstate/kitty.rs https://github.com/wezterm/wezterm/blob/main/wezterm-cell/src/image.rs https://github.com/wezterm/wezterm/blob/main/config/src/config.rs https://github.com/wezterm/wezterm/blob/main/LICENSE.md",
+          "provenance": { "source": "https://github.com/wezterm/wezterm", "confidence": "high" },
+          "note": "[measured]"
+        }
+      }
+    },
+    {
+      "id": "ghostty",
+      "fields": {
+        "what_it_is": {
+          "value": "Fast, native-UI GPU terminal emulator in Zig. For programs it implements the Kitty graphics protocol, including Unicode placeholders and, since August 2026 on main, animation. It deliberately refuses Sixel. Its VT core is also shipped as an embeddable library, libghostty, which exposes Kitty graphics to other apps.",
+          "provenance": { "source": "https://github.com/ghostty-org/ghostty/discussions/2496", "confidence": "high" },
+          "note": "[measured] The src/terminal/kitty/ tree has graphics_*.zig, including graphics_unicode.zig and graphics_animation.zig (first commit 2026-08-21 'terminal/kitty: animation frame storage, composition, and playback')."
+        },
+        "license": {
+          "value": "MIT",
+          "provenance": { "source": "measured 2026-09-24: gh api repos/ghostty-org/ghostty", "confidence": "high" },
+          "note": "[measured]"
+        },
+        "language": {
+          "value": "Zig (12.6M bytes), Swift (1.44M, macOS UI), C (1.08M), C++ (0.73M)",
+          "provenance": { "source": "measured 2026-09-24: gh api repos/ghostty-org/ghostty/languages", "confidence": "high" },
+          "note": "[measured] The Linux UI is GTK."
+        },
+        "graphics_mechanism": {
+          "value": "Kitty graphics protocol only, APC G. It covers storage, placements, Unicode placeholders (graphics_unicode.zig) and animation (graphics_animation.zig). Frames are composed eagerly into full RGBA buffers, unlike kitty's lazy delta chain, trading memory for simplicity. Image bytes are capped per screen by `image-storage-limit`, default 320 MB and separate for the primary and alternate screens; setting it to 0 disables all image protocols. No Sixel: Mitchell Hashimoto said on 2024-11-22 that 'Ghostty will not support sixels', and Sixel was removed from the TODO list in PR #2772.",
+          "provenance": { "source": "https://github.com/ghostty-org/ghostty/blob/main/src/config/Config.zig", "confidence": "high" },
+          "note": "[measured] Config.zig doc comment read verbatim. The Sixel quote came from WebFetch of discussion #2496 (a small model summarised the page, so the wording may be abridged)."
+        },
+        "where_it_draws": {
+          "value": "Images draw inline, cell-anchored to Kitty placements, and scroll with text. Virtual placements drawn through U+10EEEE placeholder cells move wherever the host program redraws those cells. Images are not in a separate pane or window.",
+          "provenance": { "source": "https://github.com/ghostty-org/ghostty/tree/main/src/terminal/kitty", "confidence": "medium" },
+          "note": "[inferred] Inferred from the protocol semantics plus the placeholder module's presence. I did not read the renderer code line by line."
+        },
+        "input_model": {
+          "value": "Images are inert. `link-url` matches URLs on hover with Ctrl held (Linux) or Cmd (macOS) and opens them in the system default app. `link` maps any regex, including file paths, to a click action. `link-previews` shows a preview of the matched URL; setting it to 'osc8' limits previews to OSC 8 hyperlinks.",
+          "provenance": { "source": "https://ghostty.org/docs/config/reference", "confidence": "high" },
+          "note": "[measured] Quoted from the config reference via WebFetch."
+        },
+        "activity": {
+          "value": "61.5k stars · pushed 2026-09-24 · latest tag v1.3.1 (2026-03-13; no GitHub Release objects)",
+          "provenance": { "source": "measured 2026-09-24: gh api repos/ghostty-org/ghostty", "confidence": "high" },
+          "note": "[measured] releases/latest returns 404; the tag date comes from the v1.3.1 commit. Kitty animation is on main and not in a tagged release."
+        },
+        "td_overlap": {
+          "value": "open-on-click, host-protocol",
+          "provenance": { "source": "https://ghostty.org/docs/config/reference", "confidence": "high" },
+          "note": "[measured] Ctrl+hover and click, plus regex links. Zig, so not same-stack."
+        },
+        "steal_for_td": {
+          "value": "Take Ghostty's scope decision and its budget knob. Ship the Kitty protocol first, with Unicode placeholders, and not Sixel. Put a per-screen image byte budget in TD's config, primary and alternate counted separately, and make 0 the single kill switch for every image protocol. With about 20 agent panes open, a per-pane budget with a global ceiling is what stops one `icat` loop from eating the box.",
+          "provenance": { "source": "https://github.com/ghostty-org/ghostty/blob/main/src/config/Config.zig", "confidence": "medium" },
+          "note": "[inferred] Analysis over image-storage-limit and discussion #2496. The global ceiling is my addition."
+        },
+        "trap": {
+          "value": "Cache image textures across frames. Ghostling, the libghostty demo, gained a Kitty renderer in PR #13 (273 lines), and Mitchell's PR text says: 'This has very bad performance... our render loop recreates and destroys the 2D image texture on every frame.' In gpui, an image asset rebuilt per frame repeats that mistake. Key textures by image id and a content hash, and re-upload only when the protocol mutates the image.",
+          "provenance": { "source": "https://github.com/ghostty-org/ghostling/pull/13", "confidence": "high" },
+          "note": "[measured] PR body read via gh api: +273/-3, merged 2026-04-06."
+        },
+        "primary_sources": {
+          "value": "https://github.com/ghostty-org/ghostty/discussions/2496 https://github.com/ghostty-org/ghostty/pull/2772 https://github.com/ghostty-org/ghostty/tree/main/src/terminal/kitty https://github.com/ghostty-org/ghostty/blob/main/src/terminal/kitty/graphics_animation.zig https://github.com/ghostty-org/ghostty/blob/main/src/config/Config.zig https://ghostty.org/docs/config/reference https://github.com/ghostty-org/ghostling https://github.com/ghostty-org/ghostling/pull/13 synthesis:https://x.com/mitchellh/status/2041253090205249584 synthesis:https://mitchellh.com/writing/libghostty-is-coming",
+          "provenance": { "source": "https://github.com/ghostty-org/ghostty", "confidence": "high" },
+          "note": "[measured] The two synthesis entries were seen only as web-search snippets, not opened."
+        }
+      }
+    },
+    {
+      "id": "rio",
+      "fields": {
+        "what_it_is": {
+          "value": "Hardware-accelerated terminal in Rust, aimed at desktops and browsers. It implements Sixel, iTerm2 inline images and the Kitty graphics protocol. Its VT core is published as the `rio-vt` crate. The crate descends from alacritty_terminal: its Crosswords module was 'originally taken from' alacritty_terminal's term/mod.rs, and its Sixel parser was 'retired from' ayosec's alacritty PR #4763.",
+          "provenance": { "source": "https://github.com/raphamorim/rio/blob/main/rio-vt/README.md", "confidence": "high" },
+          "note": "[measured] Lineage comments read in rio-vt/src/crosswords/mod.rs line 13 and rio-vt/src/ansi/sixel.rs lines 1-3. Protocol list from rioterm.com/docs/features."
+        },
+        "license": {
+          "value": "MIT",
+          "provenance": { "source": "measured 2026-09-24: gh api repos/raphamorim/rio", "confidence": "high" },
+          "note": "[measured] The Sixel parser inside it derives from Apache-2.0 alacritty code, and the file header says so."
+        },
+        "language": {
+          "value": "Rust (7.42M bytes), plus Slang, C and GLSL shaders",
+          "provenance": { "source": "measured 2026-09-24: gh api repos/raphamorim/rio/languages", "confidence": "high" },
+          "note": "[measured] The renderer, sugarloaf, prefers native Metal and Vulkan backends; wgpu is an optional feature that is off by default on macOS and Linux (sugarloaf/Cargo.toml)."
+        },
+        "graphics_mechanism": {
+          "value": "Host protocols Sixel (DCS), iTerm2 OSC 1337 and Kitty APC G, including Unicode placeholders; #1891 and #1893, fixed 2026-08-24, made placeholders draw after a=t plus a=p,U=1. rio-vt drains decoded images into a `RioEvent::UpdateGraphics` event, with `pending` for Sixel and iTerm2 and `pending_images` for Kitty, and the frontend receives it through its EventListener. The value types (image data, glyph protocol) live in a leaf crate, `rio-graphics`, with no GPU dependency. sugarloaf draws the image layers.",
+          "provenance": { "source": "https://github.com/raphamorim/rio/blob/main/rio-vt/README.md", "confidence": "high" },
+          "note": "[measured] rio-vt ships examples/sixel.rs and examples/kitty_image.rs as references for the graphics event flow."
+        },
+        "where_it_draws": {
+          "value": "Images draw inline, cell-anchored in the grid, and scroll with text. Rio also has split panels, but images are not opened into them.",
+          "provenance": { "source": "https://rioterm.com/docs/features", "confidence": "medium" },
+          "note": "[inferred] Inferred from protocol semantics and the features page. I did not read sugarloaf's image-layer code."
+        },
+        "input_model": {
+          "value": "Images are inert. Rio lists Hyperlinks and Hints, the latter inherited in spirit from alacritty's regex hints, for acting on matched text. I did not verify the exact bindings.",
+          "provenance": { "source": "https://rioterm.com/docs/features", "confidence": "medium" },
+          "note": "[inferred] The features page only names the capabilities."
+        },
+        "activity": {
+          "value": "7.5k stars · pushed 2026-09-20 · latest release v0.5.28 (2026-09-17)",
+          "provenance": { "source": "measured 2026-09-24: gh api repos/raphamorim/rio", "confidence": "high" },
+          "note": "[measured] rio-vt 0.5.28 is on crates.io (updated 2026-09-17), with 69,340 downloads."
+        },
+        "td_overlap": {
+          "value": "host-protocol, same-stack",
+          "provenance": { "source": "https://github.com/raphamorim/rio/blob/main/rio-vt/README.md", "confidence": "high" },
+          "note": "[measured] Rust, and descended from alacritty_terminal. Its maintainer proposed swapping rio-vt into Zed's gpui terminal (zed PR #62149)."
+        },
+        "steal_for_td": {
+          "value": "Spike rio-vt behind TD's terminal-backend seam before forking alacritty_terminal. rio-vt is a crates.io Rust VT core with alacritty_terminal lineage that already parses Sixel, iTerm2 and Kitty, placeholders included, and hands decoded images out as events. Rio's maintainer did exactly this swap for Zed, the other gpui terminal, in PR #62149: `crates/terminal/src/alacritty.rs` became `rio.rs` behind the same surface, and the view crates compiled untouched. Zed declined the PR, but the diff (+1768/-1479) is a worked map of the API differences.",
+          "provenance": { "source": "https://github.com/zed-industries/zed/pull/62149", "confidence": "medium" },
+          "note": "[inferred] The PR body is measured. That TD's code has an equivalent seam is not checked; TD depends on alacritty_terminal 0.26 in app/Cargo.toml."
+        },
+        "trap": {
+          "value": "Multi-terminal image bookkeeping is where Rio broke. Its July 2026 graphics fixes are all state-lifetime bugs: image store keys were not scoped per terminal (#1752), GPU textures were not evicted when their pixels were freed (#1755), byte accounting drifted (#1756), and on Vulkan only one of two image layers drew (#1761). TD has many panes and a client/server split, so key every image by session or pane and tie GPU texture lifetime to the store entry.",
+          "provenance": { "source": "https://github.com/raphamorim/rio/pull/1752", "confidence": "high" },
+          "note": "[measured] Titles and dates from gh api search/issues (repo:raphamorim/rio kitty graphics)."
+        },
+        "primary_sources": {
+          "value": "https://github.com/raphamorim/rio https://github.com/raphamorim/rio/blob/main/rio-vt/README.md https://github.com/raphamorim/rio/blob/main/rio-graphics/Cargo.toml https://github.com/raphamorim/rio/blob/main/rio-vt/src/crosswords/mod.rs https://github.com/raphamorim/rio/blob/main/rio-vt/src/ansi/sixel.rs https://github.com/raphamorim/rio/blob/main/sugarloaf/Cargo.toml https://rioterm.com/docs/features https://github.com/raphamorim/rio/issues/1891 https://github.com/raphamorim/rio/pull/1752 https://github.com/zed-industries/zed/pull/62149 https://crates.io/crates/rio-vt",
+          "provenance": { "source": "https://github.com/raphamorim/rio", "confidence": "high" },
+          "note": "[measured]"
+        }
+      }
+    },
+    {
+      "id": "contour",
+      "fields": {
+        "what_it_is": {
+          "value": "Modern C++/Qt terminal with the widest image-protocol coverage in this cluster. It has Sixel, ReGIS vector graphics, Kitty graphics (added in 0.7.0), iTerm2 inline images, and its own experimental Good Image Protocol (GIP). Since 0.7.0 it also has tabs, splits and a daemon mode whose sessions outlive the window.",
+          "provenance": { "source": "https://github.com/contour-terminal/contour/releases/tag/v0.7.0.8982", "confidence": "high" },
+          "note": "[measured] Release notes read via gh api releases/latest; README feature list read."
+        },
+        "license": {
+          "value": "Apache-2.0",
+          "provenance": { "source": "measured 2026-09-24: gh api repos/contour-terminal/contour", "confidence": "high" },
+          "note": "[measured]"
+        },
+        "language": {
+          "value": "C++ (12.0M bytes), plus QML, CMake and Shell",
+          "provenance": { "source": "measured 2026-09-24: gh api repos/contour-terminal/contour/languages", "confidence": "high" },
+          "note": "[measured]"
+        },
+        "graphics_mechanism": {
+          "value": "Host protocols: Sixel (DCS), ReGIS (VT330/VT340), Kitty APC G (transmit, display, place and delete; PNG and raw RGB/RGBA; chunked; PR #2004, merged 2026-07-19), and iTerm2 OSC 1337, both inline images and the capabilities report. The experimental GIP is DCS-based with u/r/s/d operations: upload, render, upload-and-render, release. It has named image pools with LRU eviction, three compositing layers (below, replace, above), resize and alignment policies, and advertises itself as DA1 code 90; `contour cat` displays a file through it. Kitty animation (a=f/a=a/a=c) is still an open PR, #2109.",
+          "provenance": { "source": "https://github.com/contour-terminal/contour/pull/2004", "confidence": "high" },
+          "note": "[measured] GIP synopsis from the contour-terminal/terminal-good-image-protocol README."
+        },
+        "where_it_draws": {
+          "value": "Images draw inline in scrollback, anchored to cells, and scroll with text. GIP adds explicit layers (below, replace or above the text). Daemon-mode clients mirror sessions 'images, hyperlinks and sized text included'.",
+          "provenance": { "source": "https://github.com/contour-terminal/terminal-good-image-protocol", "confidence": "medium" },
+          "note": "[inferred] Scrolling is inferred from protocol semantics; the layer and daemon claims are measured from the README and release notes."
+        },
+        "input_model": {
+          "value": "Images are inert. Clickable hyperlinks come via OSC 8. Contour has vi-like input modes for selection and a read-only mode that blocks accidental input to the running app. I found no documented click-a-file-path-to-open feature.",
+          "provenance": { "source": "https://github.com/contour-terminal/contour/blob/master/docs/vt-extensions/clickable-links.md", "confidence": "medium" },
+          "note": "[inferred] Assembled from the README feature list and the clickable-links doc. The absence of path-click is a not-found, not a confirmed absence."
+        },
+        "activity": {
+          "value": "3.0k stars · pushed 2026-09-24 · latest release v0.7.0.8982 (2026-08-17)",
+          "provenance": { "source": "measured 2026-09-24: gh api repos/contour-terminal/contour", "confidence": "high" },
+          "note": "[measured]"
+        },
+        "td_overlap": {
+          "value": "host-protocol",
+          "provenance": { "source": "https://github.com/contour-terminal/contour", "confidence": "high" },
+          "note": "[measured] C++, so not same-stack. The 0.7.0 splits and tabs do not host opened content."
+        },
+        "steal_for_td": {
+          "value": "Keep image state in the session, not the window. Contour 0.7.0's daemon hosts sessions in a background process, and a reattached `contour client` gets 'images, hyperlinks and sized text included'. The daemon even speaks tmux control mode. TD already splits client and server (the host owns the Term), so decoded image stores and placements belong on the host side of that split and should be replayed to a client that reconnects. The client should hold only GPU textures, which it can rebuild.",
+          "provenance": { "source": "https://github.com/contour-terminal/contour/releases/tag/v0.7.0.8982", "confidence": "medium" },
+          "note": "[inferred] TD's host owning the Term is checked in TD's app/src/host.rs, where the TextAreaSizeRequest handler sits (around line 705)."
+        },
+        "trap": {
+          "value": "Treat the Sixel decoder input as hostile. Contour's 0.7.0 notes fix a crash where 'a 30-byte escape sequence in any file, log or command output was enough to take the terminal down': an extreme raster aspect ratio taken straight off the wire wrapped the bounds guard (#2049; also #1945). Clamp every dimension and ratio before allocating, and fuzz the decoder.",
+          "provenance": { "source": "https://github.com/contour-terminal/contour/releases/tag/v0.7.0.8982", "confidence": "high" },
+          "note": "[measured] Quoted from the release notes."
+        },
+        "primary_sources": {
+          "value": "https://github.com/contour-terminal/contour https://github.com/contour-terminal/contour/releases/tag/v0.7.0.8982 https://github.com/contour-terminal/contour/pull/2004 https://github.com/contour-terminal/contour/issues/100 https://github.com/contour-terminal/contour/issues/2108 https://github.com/contour-terminal/terminal-good-image-protocol https://github.com/contour-terminal/contour/blob/master/docs/vt-extensions/clickable-links.md",
+          "provenance": { "source": "https://github.com/contour-terminal/contour", "confidence": "high" },
+          "note": "[measured]"
+        }
+      }
+    },
+    {
+      "id": "foot",
+      "fields": {
+        "what_it_is": {
+          "value": "Fast, lightweight, Wayland-native terminal written in C. Sixel is its only image protocol. Its maintainer has declined Kitty graphics and iTerm2 images, and says he does not want another image protocol in foot.",
+          "provenance": { "source": "https://codeberg.org/dnkl/foot/issues/481", "confidence": "high" },
+          "note": "[measured] dnkl, 2022-01-25: 'At this point, I'm fairly sure I don't want _another_ image protocol in foot... we/I might replace sixel in the future, but probably not with any of the currently existing alternatives.' Reaffirmed 2026-06-12 when #2342 (Kitty request) was closed as a duplicate: 'I don't really see us implementing another graphics protocol.'"
+        },
+        "license": {
+          "value": "MIT",
+          "provenance": { "source": "https://codeberg.org/dnkl/foot/src/branch/master/LICENSE", "confidence": "high" },
+          "note": "[measured] The LICENSE file's first line is 'MIT License, Copyright (c) 2019 Daniel Eklöf'. The Codeberg API's licenses field was empty."
+        },
+        "language": {
+          "value": "C (1.74M bytes), plus Python, Meson and Shell",
+          "provenance": { "source": "https://codeberg.org/api/v1/repos/dnkl/foot/languages", "confidence": "high" },
+          "note": "[measured]"
+        },
+        "graphics_mechanism": {
+          "value": "Sixel (DCS) only, drawn by foot's own Wayland renderer into wl_shm buffers. The maintainer's view is that most Sixel slowness comes from client encoders such as libsixel and ImageMagick, not from terminals. Quality is limited by the palette and by the protocol's 0-100 range per colour component.",
+          "provenance": { "source": "https://codeberg.org/dnkl/foot/issues/481", "confidence": "medium" },
+          "note": "[inferred] Sixel-only and the encoder and palette points are measured from #481. 'wl_shm, own renderer' is from general knowledge of foot's architecture and not re-read today."
+        },
+        "where_it_draws": {
+          "value": "Sixel images draw inline in scrollback and scroll with text.",
+          "provenance": { "source": "https://codeberg.org/dnkl/foot/src/branch/master/README.md", "confidence": "medium" },
+          "note": "[inferred] The README lists Sixel image support with a screenshot. I did not read the scroll semantics in foot's docs; this is standard Sixel scrolling-mode behaviour."
+        },
+        "input_model": {
+          "value": "Images are inert. Ctrl+Shift+O enters URL mode, which tags every visible URL with a jump label (key sequence). Typing the label runs `show-urls-launch`, which opens it with xdg-open by default and is configurable via `url-launch`; `show-urls-copy` copies it instead. OSC 8 hyperlinks are supported. Escape, Ctrl+C, Ctrl+G or Ctrl+D leaves URL mode.",
+          "provenance": { "source": "https://codeberg.org/dnkl/foot/src/branch/master/README.md", "confidence": "high" },
+          "note": "[measured] README lines 171-173, 217-223 and 320-335."
+        },
+        "activity": {
+          "value": "2.2k stars (Codeberg) · updated 2026-09-18 · latest release 1.28.0 (2026-09-02)",
+          "provenance": { "source": "https://codeberg.org/api/v1/repos/dnkl/foot", "confidence": "high" },
+          "note": "[measured] stars_count=2218; created 2019-11-18."
+        },
+        "td_overlap": {
+          "value": "host-protocol",
+          "provenance": { "source": "https://codeberg.org/dnkl/foot", "confidence": "high" },
+          "note": "[measured] Wayland-native like TD on Hyprland, but C. URL mode is keyboard-driven, not a click."
+        },
+        "steal_for_td": {
+          "value": "Give Ctrl+click a keyboard twin, the way foot's URL mode works. One chord labels every visible file path and URL with a short jump label, and typing the label sends it through the same open-action router the mouse uses. That covers keyboard-only use and gives an agent-pane user a way to open the brief an agent just printed without reaching for the mouse.",
+          "provenance": { "source": "https://codeberg.org/dnkl/foot/src/branch/master/README.md", "confidence": "medium" },
+          "note": "[inferred] Analysis. kitty hints, WezTerm Quick Select and alacritty's hint binding are the same idea."
+        },
+        "trap": {
+          "value": "Every protocol you add is a second image system to keep conformant. dnkl would only have accepted another protocol if it was 'small and clean... piggy backing on the image infrastructure we already have in place for sixels', with no new decoder dependencies, and in the end refused any. If TD does both Kitty and Sixel, they must share one image store and renderer, or the second one doubles maintenance.",
+          "provenance": { "source": "https://codeberg.org/dnkl/foot/issues/481", "confidence": "medium" },
+          "note": "[inferred] Quote measured from dnkl's 2021-05-07 comment; the conclusion is mine."
+        },
+        "primary_sources": {
+          "value": "https://codeberg.org/dnkl/foot https://codeberg.org/dnkl/foot/src/branch/master/README.md https://codeberg.org/dnkl/foot/issues/481 https://codeberg.org/dnkl/foot/issues/2342 https://codeberg.org/dnkl/foot/src/branch/master/LICENSE https://codeberg.org/api/v1/repos/dnkl/foot",
+          "provenance": { "source": "https://codeberg.org/dnkl/foot", "confidence": "high" },
+          "note": "[measured] Via the Codeberg API and raw files."
+        }
+      }
+    },
+    {
+      "id": "iterm2",
+      "fields": {
+        "what_it_is": {
+          "value": "macOS terminal that originated the OSC 1337 inline-images protocol and `imgcat`. As of 3.7 it also implements the Kitty graphics protocol, placeholders included, and decodes Sixel through a bundled libsixel. Semantic History makes Cmd-click on a filename in output open it.",
+          "provenance": { "source": "https://iterm2.com/documentation-images.html", "confidence": "high" },
+          "note": "[measured] Kitty support is evidenced by sources/InlineImages/KittyImageController.swift and 3.7 release notes that fix Kitty placeholder and animation bugs. Sixel is evidenced by PR #679, which updated the bundled libsixel."
+        },
+        "license": {
+          "value": "GPL-2.0",
+          "provenance": { "source": "measured 2026-09-24: gh api repos/gnachman/iTerm2", "confidence": "high" },
+          "note": "[measured]"
+        },
+        "language": {
+          "value": "Objective-C (20.2M bytes), Swift (18.5M), Python (2.3M, API library), HTML",
+          "provenance": { "source": "measured 2026-09-24: gh api repos/gnachman/iTerm2/languages", "confidence": "high" },
+          "note": "[measured]"
+        },
+        "graphics_mechanism": {
+          "value": "OSC 1337: `ESC ] 1337 ; File=[args] : <base64> ^G`. Arguments are name (base64), size, width and height (N cells, Npx, N% or auto), preserveAspectRatio and inline (1 displays the file, 0 downloads it). Since 3.5 there is a multipart form, MultipartFile, then FilePart chunks, then FileEnd, which avoids tmux size limits. Animated GIFs have been supported since 2.9.20150512. Kitty APC G is also supported, handled by KittyImageController.swift. Sixel DCS goes through libsixel, decoded in the sandboxed process `iTerm2SandboxedWorker`.",
+          "provenance": { "source": "https://iterm2.com/documentation-images.html", "confidence": "high" },
+          "note": "[measured] The sandboxed-worker detail is quoted in PR #679's body."
+        },
+        "where_it_draws": {
+          "value": "Images draw inline in scrollback; the image occupies cells and scrolls with text. Files sent with inline=0 are downloaded, not drawn.",
+          "provenance": { "source": "https://iterm2.com/documentation-images.html", "confidence": "medium" },
+          "note": "[inferred] The docs page does not state scrolling explicitly; this is inferred from inline placement at the cursor."
+        },
+        "input_model": {
+          "value": "Images are inert. Cmd-click runs Semantic History, configured per profile. The options are open with the default app, open with an editor (text files; others go to the default app), open a URL template, run a command, or always run a command even when the clicked text is not an existing file. Substitutions are \\1 filename, \\2 line number, \\3 text before the click, \\4 text after, and \\5 the working directory of the clicked line. The per-line working directory, tracked by shell integration, is what resolves relative paths.",
+          "provenance": { "source": "https://iterm2.com/documentation-preferences-profiles-advanced.html", "confidence": "high" },
+          "note": "[measured]"
+        },
+        "activity": {
+          "value": "18.1k stars · pushed 2026-09-24 · latest stable 3.7.3 (2026-09-22, per iterm2.com/downloads)",
+          "provenance": { "source": "https://iterm2.com/downloads.html", "confidence": "high" },
+          "note": "[measured] Stars and push date via gh api repos/gnachman/iTerm2. There are no GitHub Releases; nightlies are tagged."
+        },
+        "td_overlap": {
+          "value": "open-on-click, host-protocol",
+          "provenance": { "source": "https://iterm2.com/documentation-preferences-profiles-advanced.html", "confidence": "high" },
+          "note": "[measured] Semantic History is the canonical click-a-path-in-output feature. macOS only."
+        },
+        "steal_for_td": {
+          "value": "Resolve a clicked relative path against the working directory at the moment that line was printed, not the pane's current cwd. iTerm2's Semantic History records a cwd per line (\\5) through shell integration. TD's agent panes print paths like `docs/brief.html` from wherever the agent was, often a different directory from the shell's cwd now. Stamp each grid line with the last OSC 7 cwd seen (or the agent's reported cwd), and look up that stamp on Ctrl+click.",
+          "provenance": { "source": "https://iterm2.com/documentation-preferences-profiles-advanced.html", "confidence": "medium" },
+          "note": "[inferred] Analysis. The OSC 7 stamping mechanism is my proposal, not iTerm2's documented implementation."
+        },
+        "trap": {
+          "value": "Do not decode images in-process with a C library. CVE-2026-44637 is a heap out-of-bounds write in libsixel's SIXEL decoder, and iTerm2 reached it 'directly' from bytes written to the terminal, so any `cat` of a crafted file could trigger it. iTerm2 had at least confined decoding to a sandboxed worker (PR #679, merged 2026-06-26). TD should decode in memory-safe Rust, where the ayosec and Rio Sixel parsers already exist, and cap dimensions before allocating.",
+          "provenance": { "source": "https://github.com/gnachman/iTerm2/pull/679", "confidence": "high" },
+          "note": "[measured] Read the PR body via gh api."
+        },
+        "primary_sources": {
+          "value": "https://iterm2.com/documentation-images.html https://iterm2.com/documentation-preferences-profiles-advanced.html https://iterm2.com/downloads.html https://github.com/gnachman/iTerm2/blob/master/docs/notes-3.7.txt https://github.com/gnachman/iTerm2/pull/679 https://github.com/gnachman/iTerm2",
+          "provenance": { "source": "https://github.com/gnachman/iTerm2", "confidence": "high" },
+          "note": "[measured] iterm2.com pages via WebFetch (model-summarised)."
+        }
+      }
+    },
+    {
+      "id": "alacritty-upstream",
+      "label": "Alacritty (upstream) — the engine TD runs on, and why it refuses images",
+      "group": "B · Terminals that draw pixels for programs",
+      "fields": {
+        "what_it_is": {
+          "value": "Minimal OpenGL terminal whose `alacritty_terminal` crate is TD's VT engine. Upstream deliberately has no image protocol. Issue #910 (open since 2017, 225 comments) and ayosec's PR #4763 (open since 2021, 255 comments) are kept open but will not be merged. Maintainer Christian Duerr: 'This PR not being merged is all about image protocols being bad, not about maintainers not having time.'",
+          "provenance": { "source": "https://github.com/alacritty/alacritty/pull/4763", "confidence": "high" },
+          "note": "[measured] Maintainer comments pulled via gh api. Further quotes: 'a massive patch for a mediocre protocol' (2024-05-28); 'Opting out of performance is not something that aligns with Alacritty's goals' (2024-05-28); 'this has little chance of ever getting upstreamed... There's nothing wrong with alternative Alacritty distributions' (2025-08-29)."
+        },
+        "license": {
+          "value": "Apache-2.0",
+          "provenance": { "source": "measured 2026-09-24: gh api repos/alacritty/alacritty", "confidence": "high" },
+          "note": "[measured]"
+        },
+        "language": {
+          "value": "Rust (1.14M bytes), plus Shell, GLSL and Makefile",
+          "provenance": { "source": "measured 2026-09-24: gh api repos/alacritty/alacritty/languages", "confidence": "high" },
+          "note": "[measured]"
+        },
+        "graphics_mechanism": {
+          "value": "None for programs. The parser throws the bytes away before any handler sees them. Upstream `vte` routes ESC _ (APC, which Kitty uses) into `State::SosPmApcString`, where the bytes are ignored. The ansi Handler's DCS `hook`/`put` are '[unhandled hook]' debug stubs, so Sixel (DCS q) never arrives either. What exists is pixel-size reporting: `WindowSize` carries cell_width and cell_height, which fill TIOCSWINSZ ws_xpixel/ws_ypixel, and `Event::TextAreaSizeRequest` answers CSI 14 t.",
+          "provenance": { "source": "https://github.com/alacritty/vte/blob/master/src/lib.rs", "confidence": "high" },
+          "note": "[measured] vte src/lib.rs lines 361 and 379 (0x58 and 0x5E..=0x5F go to SosPmApcString); vte src/ansi.rs line 1311 (hook is a debug stub); alacritty_terminal/src/tty/unix.rs lines 431-435 and event.rs line 43."
+        },
+        "where_it_draws": {
+          "value": "Nowhere: text only. Tabs and splits are also out of scope ('best left to a window manager or terminal multiplexer').",
+          "provenance": { "source": "https://github.com/alacritty/alacritty/issues/910", "confidence": "high" },
+          "note": "[measured] The README FAQ was read via ayosec's fork, whose README is unchanged from upstream."
+        },
+        "input_model": {
+          "value": "Hints: a regex over each line (plus OSC 8 hyperlinks when `hyperlinks = true`) with post-processing heuristics. A match is underlined on mouse hover when `mouse.enabled` is on, and clicking it with the configured mods runs `command` (xdg-open by default) or an action (Copy, Paste, Select, MoveViModeCursor). Ctrl+Shift+O starts keyboard label selection. When an app captures the mouse, hold Shift to bypass it.",
+          "provenance": { "source": "https://alacritty.org/config-alacritty.html", "confidence": "high" },
+          "note": "[measured] Hint detection in alacritty/src/display/hint.rs is built entirely on alacritty_terminal APIs: term::search::{RegexSearch, RegexIter, Match} and term::cell::Hyperlink."
+        },
+        "activity": {
+          "value": "65.8k stars · pushed 2026-08-31 · latest release v0.17.0 (2026-04-06)",
+          "provenance": { "source": "measured 2026-09-24: gh api repos/alacritty/alacritty", "confidence": "high" },
+          "note": "[measured]"
+        },
+        "td_overlap": {
+          "value": "open-on-click, same-stack",
+          "provenance": { "source": "https://github.com/alacritty/alacritty/blob/master/alacritty/src/display/hint.rs", "confidence": "high" },
+          "note": "[measured] TD depends on alacritty_terminal = \"0.26\" (TD app/Cargo.toml line 19)."
+        },
+        "steal_for_td": {
+          "value": "Port alacritty's hint detection for TD's Ctrl+click. It is Apache-2.0 and uses only alacritty_terminal APIs TD already links: `regex_match_at` plus the `post_processing` trimming heuristics, and OSC 8 `Hyperlink` lookup on the cell under the mouse. TD's source has no RegexSearch or RegexIter use today, so this is a copy-in rather than a new design, and it yields the path under the cursor that TD's open-action router needs.",
+          "provenance": { "source": "https://github.com/alacritty/alacritty/blob/master/alacritty/src/display/hint.rs", "confidence": "medium" },
+          "note": "[inferred] A grep of TD's app/src found no RegexSearch, RegexIter or regex_search (measured). Portability is inferred from hint.rs's imports."
+        },
+        "trap": {
+          "value": "Do not wait for upstream, and do not patch alacritty_terminal in place expecting a merge. The maintainer measured 'a consistent performance decrease' from graphics cells, rejects opt-in switches for performance, and has kept saying no through 2026-09-24. Any graphics TD adds will live in a fork, a vendored copy or a different core. Because images need parser changes (APC and DCS are dropped inside vte), even a 'side-car' approach needs either a patched vte or a byte pre-filter in front of the parser.",
+          "provenance": { "source": "https://github.com/alacritty/alacritty/pull/4763", "confidence": "high" },
+          "note": "[measured] Quotes from chrisduerr's comments; the pre-filter option is my inference."
+        },
+        "primary_sources": {
+          "value": "https://github.com/alacritty/alacritty/issues/910 https://github.com/alacritty/alacritty/pull/4763 https://alacritty.org/config-alacritty.html https://github.com/alacritty/alacritty/blob/master/alacritty/src/display/hint.rs https://github.com/alacritty/alacritty/blob/master/alacritty_terminal/src/event.rs https://github.com/alacritty/alacritty/blob/master/alacritty_terminal/src/tty/unix.rs https://github.com/alacritty/vte/blob/master/src/lib.rs https://github.com/alacritty/vte/blob/master/src/ansi.rs https://github.com/zed-industries/zed/issues/20860",
+          "provenance": { "source": "https://github.com/alacritty/alacritty", "confidence": "high" },
+          "note": "[measured]"
+        }
+      }
+    },
+    {
+      "id": "alacritty-graphics-fork",
+      "label": "ayosec/alacritty 'graphics' — Sixel inside alacritty_terminal",
+      "group": "B · Terminals that draw pixels for programs",
+      "fields": {
+        "what_it_is": {
+          "value": "A long-maintained Alacritty fork (default branch `graphics`) that adds Sixel. Crucially for TD, the protocol state lives in the alacritty_terminal crate itself: a new graphics module, a per-cell graphics field and Term hooks. Only the OpenGL drawing sits in the alacritty binary crate. Upstream keeps the matching PR #4763 open as a pointer 'because ayosec has demonstrated to be a responsible maintainer of this patch set'.",
+          "provenance": { "source": "https://github.com/alacritty/alacritty/compare/master...ayosec:alacritty:graphics", "confidence": "high" },
+          "note": "[measured] The compare API shows 85 commits ahead and 17 behind upstream master. alacritty_terminal changes: graphics/mod.rs +666, graphics/sixel.rs +809, term/mod.rs +105/-1, term/cell.rs +34/-1, grid/mod.rs +12, grid/row.rs +6/-2, Cargo.toml +2/-1 (vte swap), lib.rs +1, plus sixel test fixtures. Renderer changes in the alacritty crate: renderer/graphics/{mod,draw,shader}.rs about 800 lines plus two GLSL shaders."
+        },
+        "license": {
+          "value": "Apache-2.0",
+          "provenance": { "source": "measured 2026-09-24: gh api repos/ayosec/alacritty", "confidence": "high" },
+          "note": "[measured]"
+        },
+        "language": {
+          "value": "Rust (1.23M bytes), plus Shell, GLSL and Makefile",
+          "provenance": { "source": "measured 2026-09-24: gh api repos/ayosec/alacritty/languages", "confidence": "high" },
+          "note": "[measured]"
+        },
+        "graphics_mechanism": {
+          "value": "Sixel only; docs/features.md says 'up to 1024 colors... limited to 4096x4096 pixels'. It swaps `vte` for the `vte-graphics` 0.15.0 crate (described as 'vte fork for the Alacritty's graphics patch') so DCS q reaches the Handler. `Graphics` on Term keeps a pending Vec<GraphicData> of RGB or RGBA pixels. Each covered cell gets a `GraphicCell` holding an Arc<TextureRef> plus x/y offsets. Drop impls push Remove or ClearSubregion ops into a shared queue, and the renderer drains everything with `Graphics::take_queues() -> Option<UpdateQueues { pending, remove_queue, clear_subregions }>`. It also answers XTSMGRAPHICS (`CSI ? Pi ; Pa ; Pv S`) and handles the shared or private Sixel palette.",
+          "provenance": { "source": "https://github.com/ayosec/alacritty/blob/graphics/alacritty_terminal/src/graphics/mod.rs", "confidence": "high" },
+          "note": "[measured] Read graphics/mod.rs lines 1-514 and alacritty_terminal/Cargo.toml line 27: `vte = { version = \"0.15.0\", package = \"vte-graphics\", ... }`."
+        },
+        "where_it_draws": {
+          "value": "Images draw inline and are attached to grid cells, so they scroll with text into scrollback and are freed when those cells are overwritten or dropped. With Sixel display mode set (DECSDM, TermMode::SIXEL_DISPLAY) an image starts at (0,0), the grid never scrolls and the cursor stays put.",
+          "provenance": { "source": "https://github.com/ayosec/alacritty/blob/graphics/alacritty_terminal/src/graphics/mod.rs", "confidence": "high" },
+          "note": "[measured] From the insert_graphic comments, lines 495-503."
+        },
+        "input_model": {
+          "value": "Same as upstream Alacritty: hints, selection and Shift to bypass mouse capture. Graphics are inert. Writing text over a graphic clears that subregion via ClearSubregion.",
+          "provenance": { "source": "https://github.com/ayosec/alacritty/blob/graphics/alacritty_terminal/src/graphics/mod.rs", "confidence": "medium" },
+          "note": "[inferred] Inferred from GraphicCell's Drop impl."
+        },
+        "activity": {
+          "value": "223 stars · pushed 2026-04-06 · latest release v0.17.0-graphics (2026-04-06)",
+          "provenance": { "source": "measured 2026-09-24: gh api repos/ayosec/alacritty", "confidence": "high" },
+          "note": "[measured] Tracks each upstream release. vte-graphics was last updated on crates.io 2025-02-24."
+        },
+        "td_overlap": {
+          "value": "host-protocol, same-stack",
+          "provenance": { "source": "https://github.com/ayosec/alacritty/tree/graphics", "confidence": "high" },
+          "note": "[measured] It changes the exact crate TD uses."
+        },
+        "steal_for_td": {
+          "value": "Reuse the fork's alacritty_terminal half and write only a gpui consumer. Vendor ayosec's alacritty_terminal (about 1.6k added lines, all in the crate TD already uses), take `vte-graphics`, and each frame in TD's gpui paint call `term.graphics.take_queues()`. Upload `pending` RGBA as gpui image textures keyed by GraphicId, drop the ones in `remove_queue`, and paint each visible `GraphicCell` as a sub-rectangle (offset_x, offset_y, cell size) of its texture. The Sixel decode, the palette, XTSMGRAPHICS and the grid bookkeeping all come for free; TD writes only the paint. The same TextureRef and GraphicCell model can then take a Kitty decoder, as ekollof's cosmic-term fork did in graphics/kitty.rs (1,511 lines).",
+          "provenance": { "source": "https://github.com/ayosec/alacritty/blob/graphics/alacritty_terminal/src/graphics/mod.rs", "confidence": "medium" },
+          "note": "[inferred] Line counts are measured via the compare API. That the queue API maps cleanly onto gpui textures is inferred, not prototyped."
+        },
+        "trap": {
+          "value": "Version skew and a forked parser. The fork's alacritty_terminal reports version 0.25.2-dev on the graphics branch while TD is on crates.io 0.26. It depends on vte-graphics, a single-maintainer fork last published 2025-02-24. It is Sixel-only, with no Kitty and no Unicode placeholders. Vendoring means owning every upstream rebase. Pin to a tag, keep the diff isolated to graphics/, cell.rs and term hooks, and run vtebench before and after, because the extra per-cell graphics field is exactly what upstream measured as a slowdown.",
+          "provenance": { "source": "https://github.com/ayosec/alacritty/blob/graphics/alacritty_terminal/Cargo.toml", "confidence": "high" },
+          "note": "[measured] Versions measured; the advice is inferred."
+        },
+        "primary_sources": {
+          "value": "https://github.com/ayosec/alacritty/tree/graphics https://github.com/ayosec/alacritty/blob/graphics/alacritty_terminal/src/graphics/mod.rs https://github.com/ayosec/alacritty/blob/graphics/alacritty_terminal/Cargo.toml https://github.com/ayosec/alacritty/blob/graphics/docs/features.md https://github.com/alacritty/alacritty/compare/master...ayosec:alacritty:graphics https://crates.io/crates/vte-graphics https://github.com/alacritty/alacritty/pull/4763 https://github.com/ekollof/cosmic-term",
+          "provenance": { "source": "https://github.com/ayosec/alacritty", "confidence": "high" },
+          "note": "[measured] Files fetched via gh api contents?ref=graphics."
+        }
+      }
+    },
+    {
+      "id": "xtermjs-addon-image",
+      "label": "xterm.js @xterm/addon-image — Sixel + iTerm2 IIP (+ partial Kitty) in the browser terminal",
+      "group": "B · Terminals that draw pixels for programs",
+      "fields": {
+        "what_it_is": {
+          "value": "Official xterm.js addon that gives any xterm.js-based terminal inline images. That covers the terminals in VS Code, Hyper and Wave, among others. It supports SIXEL, iTerm2's inline image protocol (IIP) and, as work in progress, Kitty's graphics protocol.",
+          "provenance": { "source": "https://github.com/xtermjs/xterm.js/blob/master/addons/addon-image/README.md", "confidence": "high" },
+          "note": "[measured] README: 'Supports SIXEL, iTerm's inline image protocol (IIP) and partially Kitty's terminal graphics prtocol (TGP)'. The list of host apps is from the brief and general knowledge, not re-verified."
+        },
+        "license": {
+          "value": "MIT",
+          "provenance": { "source": "measured 2026-09-24: gh api repos/xtermjs/xterm.js", "confidence": "high" },
+          "note": "[measured] The addon lives in the xterm.js monorepo."
+        },
+        "language": {
+          "value": "TypeScript (3.36M bytes, whole monorepo), plus JavaScript, Shell and CSS",
+          "provenance": { "source": "measured 2026-09-24: gh api repos/xtermjs/xterm.js/languages", "confidence": "high" },
+          "note": "[measured]"
+        },
+        "graphics_mechanism": {
+          "value": "The DOM or canvas implementation of three host protocols. The SIXEL decoder is streamed, with a palette up to 4096 registers, DECSET 80 scrolling control and XTSMGRAPHICS. IIP accepts PNG, JPEG, GIF, QOI, WEBP and AVIF, with the browser doing every decode except QOI. Kitty is marked WIP. The addon turns on CSI 14 t, 16 t and 18 t size reports by default. Images are split into per-cell tiles on a canvas layer. Limits: pixelLimit 16,777,216; sixelSizeLimit, iipSizeLimit and kittySizeLimit 32 MiB each; FIFO storageLimit 128 MB of unpacked RGBA.",
+          "provenance": { "source": "https://github.com/xtermjs/xterm.js/blob/master/addons/addon-image/README.md", "confidence": "high" },
+          "note": "[measured] Option defaults read from the README's IImageAddonOptions block."
+        },
+        "where_it_draws": {
+          "value": "Images draw inline in scrollback as buffer-cell tiles and scroll with text. Images on the alternate buffer are erased when the buffer switches. Evicted images that are still in scrollback show a placeholder pattern when showPlaceholder is true.",
+          "provenance": { "source": "https://github.com/xtermjs/xterm.js/blob/master/addons/addon-image/README.md", "confidence": "high" },
+          "note": "[measured]"
+        },
+        "input_model": {
+          "value": "Images are inert to the user. The host app gets `getImageAtBufferCell(x, y)`, which returns the original, unresized image as a canvas for an absolute buffer position, and `extractTileAtBufferCell(x, y)`, which returns the single tile. With these a host app can build click-an-image-to-open itself.",
+          "provenance": { "source": "https://github.com/xtermjs/xterm.js/blob/master/addons/addon-image/README.md", "confidence": "high" },
+          "note": "[measured]"
+        },
+        "activity": {
+          "value": "21.2k stars (xterm.js) · pushed 2026-09-13 · latest release 6.0.0 (2025-12-22)",
+          "provenance": { "source": "measured 2026-09-24: gh api repos/xtermjs/xterm.js", "confidence": "high" },
+          "note": "[measured] These are repository-level numbers; the addon has no separate repo."
+        },
+        "td_overlap": {
+          "value": "host-protocol",
+          "provenance": { "source": "https://github.com/xtermjs/xterm.js/blob/master/addons/addon-image/README.md", "confidence": "high" },
+          "note": "[measured] TypeScript in the DOM, so not same-stack."
+        },
+        "steal_for_td": {
+          "value": "Make an inline image clickable into TD's viewer. Give the terminal core a `image_at_cell(point)` that returns the original-resolution image behind any grid cell, as xterm.js's getImageAtBufferCell does. Ctrl+click on an inline Kitty or Sixel image then opens it in TD's floating square or split viewer at full size. That joins TD's two planned features, programs drawing pixels and click-to-open, into one gesture. Also borrow the eviction placeholder: an image evicted from storage but still in scrollback draws a hatch, not a blank.",
+          "provenance": { "source": "https://github.com/xtermjs/xterm.js/blob/master/addons/addon-image/README.md", "confidence": "medium" },
+          "note": "[inferred] Analysis; the API is measured."
+        },
+        "trap": {
+          "value": "Image memory is per terminal instance and adds up. The addon's storageLimit is per Terminal, and the README tells embedders to lower it at runtime 'if you have multiple terminal instances running, that all add to one upper memory limit'. Its default is 128 MB of unpacked RGBA per instance. At TD's roughly 20 panes, per-pane defaults like that reach gigabytes, so the budget has to be global and each pane has to draw from it.",
+          "provenance": { "source": "https://github.com/xtermjs/xterm.js/blob/master/addons/addon-image/README.md", "confidence": "high" },
+          "note": "[measured] The quote is from the Storage section; the pane arithmetic is mine."
+        },
+        "primary_sources": {
+          "value": "https://github.com/xtermjs/xterm.js/blob/master/addons/addon-image/README.md https://github.com/xtermjs/xterm.js",
+          "provenance": { "source": "https://github.com/xtermjs/xterm.js", "confidence": "high" },
+          "note": "[measured]"
+        }
+      }
+    },
+    {
+      "id": "cosmic-term",
+      "label": "COSMIC Terminal — Rust + alacritty_terminal, no images (yet)",
+      "group": "B · Terminals that draw pixels for programs",
+      "fields": {
+        "what_it_is": {
+          "value": "System 76's terminal for the COSMIC desktop, built with Rust, libcosmic/iced and `alacritty_terminal`, which is the same engine split as TD. It has no image protocol. Requests for Kitty (#438) and Sixel (#399) are open, and the maintainer says support 'would need to be implemented natively here', not by adopting the ayosec fork.",
+          "provenance": { "source": "https://github.com/pop-os/cosmic-term/issues/438", "confidence": "high" },
+          "note": "[measured] mmstick (MEMBER), 2026-05-14: 'This is not a fork of alacritty. It would need to be implemented natively here.'"
+        },
+        "license": {
+          "value": "GPL-3.0",
+          "provenance": { "source": "measured 2026-09-24: gh api repos/pop-os/cosmic-term", "confidence": "high" },
+          "note": "[measured]"
+        },
+        "language": {
+          "value": "Rust (377k bytes), plus Fluent (i18n), Just and Shell",
+          "provenance": { "source": "measured 2026-09-24: gh api repos/pop-os/cosmic-term/languages", "confidence": "high" },
+          "note": "[measured] Cargo.toml: alacritty_terminal = \"0.25.1\"; libcosmic from git; cosmic-text."
+        },
+        "graphics_mechanism": {
+          "value": "None upstream. A community fork, ekollof/cosmic-term (0 stars, LLM-assisted by its author's own account), shows the vendoring path. It replaces the dependency with a local `vendor_alacritty_terminal` copied from ayosec's graphics branch, adds graphics/kitty.rs (+1,511 lines) and rowcol_diacritics.rs (+41, the placeholder diacritics table), and draws the images from a frontend terminal_graphics.rs (+372) plus terminal_box.rs (+464).",
+          "provenance": { "source": "https://github.com/ekollof/cosmic-term", "confidence": "high" },
+          "note": "[measured] Line counts from gh api compare pop-os/cosmic-term master...ekollof:cosmic-term:master; Cargo.toml comment: '# Sixel/graphics-capable fork of alacritty_terminal (ayosec/alacritty graphics branch).'"
+        },
+        "where_it_draws": {
+          "value": "Upstream draws no images. In the ekollof fork they draw inline and cell-anchored, as in the ayosec model.",
+          "provenance": { "source": "https://github.com/pop-os/cosmic-term/issues/438", "confidence": "medium" },
+          "note": "[inferred] The fork's behaviour is inferred from its dependency on ayosec's model plus the screenshot in #438."
+        },
+        "input_model": {
+          "value": "Not applicable for images, since upstream has none. The rest of the input model was not researched.",
+          "provenance": { "source": "https://github.com/pop-os/cosmic-term/issues/438", "confidence": "low" },
+          "note": "[hunch] Out of scope for this cluster; I did not read cosmic-term's link or mouse handling."
+        },
+        "activity": {
+          "value": "593 stars · pushed 2026-09-23 · latest tag epoch-1.9.0 (no GitHub Releases)",
+          "provenance": { "source": "measured 2026-09-24: gh api repos/pop-os/cosmic-term", "confidence": "high" },
+          "note": "[measured]"
+        },
+        "td_overlap": {
+          "value": "same-stack",
+          "provenance": { "source": "https://github.com/pop-os/cosmic-term/blob/master/Cargo.toml", "confidence": "high" },
+          "note": "[measured] Rust + alacritty_terminal with a non-Alacritty GPU frontend, which is TD's shape with iced in place of gpui."
+        },
+        "steal_for_td": {
+          "value": "Use the ekollof fork as TD's size estimate and file layout for Kitty plus Sixel on alacritty_terminal. Decode lives in the vendored terminal crate: ayosec's Sixel, a new kitty.rs of about 1.5k lines, and a 41-line diacritics table. The UI crate only paints, about 840 lines across terminal_graphics.rs and terminal_box.rs. That puts the gpui side of TD's work at under 1k lines once the core side exists, and it separates the two for review.",
+          "provenance": { "source": "https://github.com/ekollof/cosmic-term", "confidence": "medium" },
+          "note": "[inferred] The counts are measured. The fork is unreviewed and LLM-assisted, so treat the split as a map, not code to copy."
+        },
+        "trap": {
+          "value": "A vendored copy of alacritty_terminal silently stops receiving upstream fixes. The ekollof fork copies the whole crate (term/mod.rs +3,737 and grid, tty and search), so every upstream VT fix now needs a manual port. And COSMIC's own maintainers will not take the fork route. If TD vendors, keep a clean patch series on top of a pinned upstream tag, not a snapshot.",
+          "provenance": { "source": "https://github.com/pop-os/cosmic-term/issues/438", "confidence": "medium" },
+          "note": "[inferred] Analysis over the measured compare output and the maintainer's comment."
+        },
+        "primary_sources": {
+          "value": "https://github.com/pop-os/cosmic-term https://github.com/pop-os/cosmic-term/blob/master/Cargo.toml https://github.com/pop-os/cosmic-term/issues/438 https://github.com/pop-os/cosmic-term/issues/399 https://github.com/ekollof/cosmic-term",
+          "provenance": { "source": "https://github.com/pop-os/cosmic-term", "confidence": "high" },
+          "note": "[measured]"
+        }
+      }
+    }
+  ],
+  "bubbles": [
+    {
+      "kind": "serendipity",
+      "subjectId": "alacritty-upstream",
+      "note": "Neither image protocol can reach TD's alacritty_terminal Handler today. Upstream vte sends ESC _ (APC, used by Kitty's `ESC _G`) to State::SosPmApcString and discards the bytes (vte src/lib.rs line 379). The vte ansi Performer's DCS `hook`/`put`, which Sixel's `DCS q` needs, are debug-log stubs (src/ansi.rs line 1311). So TD has three options: (a) a patched vte, as ayosec's `vte-graphics` 0.15.0 does; (b) a byte pre-filter in front of the parser that extracts APC G and DCS q, which then needs the cursor position and must emit the cursor moves itself; or (c) a different core such as rio-vt, which parses both natively.",
+      "why": "This is the single fact that decides how much of the graphics work touches TD's VT dependency. No approach avoids a parser change.",
+      "source": "https://github.com/alacritty/vte/blob/master/src/lib.rs"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "alacritty-upstream",
+      "note": "TD already answers pixel-geometry queries correctly. app/src/host.rs handles TermEvent::TextAreaSizeRequest by formatting WindowSize{num_lines, num_cols, cell_width: geom.cell_width, cell_height: geom.cell_height} and writing the reply to the PTY. alacritty_terminal also fills TIOCSWINSZ ws_xpixel/ws_ypixel from those same cell sizes (tty/unix.rs lines 431-435). Kitty, Sixel and IIP clients size images from these numbers, so this prerequisite is already done. The only 8x16 and 8x20 hard-codes are in the socketpty test and the term.rs bench.",
+      "why": "It removes one prerequisite from TD's image plan, and it shows the host (server) side owns geometry, which is where the image store should live too.",
+      "source": "file:///home/parker/Work/terminal-delight/app/src/host.rs"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "kitty",
+      "note": "Queries a Kitty-graphics host must answer: (1) a=q query: reply `ESC _Gi=<id>;OK ESC \\`, or `ENOENT:<msg>` or another error code. It must reply immediately and must not store the image. (2) Detection: clients send `ESC _Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA ESC \\` followed by `ESC [c`; the graphics reply arriving before the DA1 reply means supported. (3) Quiet modes q=1 (suppress OK) and q=2 (suppress errors too). (4) After a placement the cursor moves right by cols and down by rows unless C=1. (5) When over quota, delete images that have no placements first. (6) Deletes via a=d with d=i/p/z etc.; uppercase also frees the data.",
+      "why": "This is the minimum surface for a=q-probing clients (yazi, chafa, timg, kitty icat, ratatui-image) to pick TD up as a Kitty host.",
+      "source": "https://sw.kovidgoyal.net/kitty/graphics-protocol/"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "kitty",
+      "note": "Unicode placeholders are the multiplexer-safe form of the Kitty protocol. The program creates a virtual placement (a=p,U=1), then prints U+10EEEE cells whose foreground colour encodes the image id (256-colour or 24-bit, with a third diacritic carrying the most significant byte) and whose combining diacritics encode row and column (U+0305 = 0, U+030D = 1, and so on). Anything that treats them as text (tmux, vim, TD's own server/client mirror) repositions the image for free. Support today: Ghostty (graphics_unicode.zig), iTerm2 3.7 (a placeholder fix is in the 3.7 notes), Rio (#1891/#1893, fixed 2026-08-24), and the ekollof cosmic-term fork (rowcol_diacritics.rs). WezTerm does not have it yet (PR #7924 open).",
+      "why": "Because the image rides in ordinary cells, TD's grid, selection, scrollback and client/server mirroring already carry it. This is likely the cheapest correct first Kitty feature for a multiplexing terminal.",
+      "source": "https://sw.kovidgoyal.net/kitty/graphics-protocol/"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "alacritty-graphics-fork",
+      "note": "Queries a Sixel host must answer, as implemented in the ayosec fork and xterm.js: advertise Sixel in DA1 (the VT220+ '4' attribute; chrisduerr notes '4' means nothing while Alacritty reports VT102). Answer XTSMGRAPHICS `CSI ? Pi ; Pa ; Pv S` for Pi=1 (colour registers, 1024 in the fork) and Pi=2 (Sixel geometry, capped at 4096x4096; the fork answers via TextAreaSizeRequest). Honour DECSDM (DECSET/DECRST 80, Sixel display or scrolling mode) and choose the shared or private palette mode. Also answer CSI 14 t, 16 t and 18 t pixel and char size reports.",
+      "why": "Sixel clients (chafa, notcurses, mpv vo=sixel, lsix) probe these before drawing. A missing or incorrect reply makes them fall back to half-block characters.",
+      "source": "https://github.com/ayosec/alacritty/blob/graphics/alacritty_terminal/src/graphics/mod.rs"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "rio",
+      "note": "Rio's maintainer opened zed-industries/zed PR #62149 on 2026-08-04, 'terminal: Replace alacritty_terminal with rio-vt'. It swaps Zed's (gpui) terminal core through the existing seam in crates/terminal/src/alacritty.rs, now rio.rs, keeping the public Cell, Content, Modes and Point shapes so that nine dependent crates compile untouched. It claims 2-8x parse throughput over alacritty_terminal 0.26 (maintainer's own benchmark, self-disclosed as an interested party). A Zed member (mikayla-maki) closed it the same day: 'we're not able to field this kind of PR'.",
+      "why": "This is a same-stack (gpui) precedent for replacing alacritty_terminal with an image-capable core, and the diff maps the API differences TD would hit. The throughput numbers are unverified.",
+      "source": "https://github.com/zed-industries/zed/pull/62149"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "zed-terminal",
+      "note": "Zed's position on terminal images (for cluster A's zed-terminal row): issue #20860 'Graphics support in the integrated terminal' was closed with 'Zed uses Alacritty and does not modify it in any way, esp. related to graphics: all related issues should go there.' So Zed, the other gpui + alacritty_terminal terminal, has no inline images, and TD would be first in that stack.",
+      "why": "It fills a graphics_mechanism fact for cluster A and confirms TD has no gpui prior art to copy for pixels.",
+      "source": "https://github.com/zed-industries/zed/issues/20860"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "ghostty",
+      "note": "libghostty-vt, the embeddable VT core extracted from Ghostty (Zig and C API, zero-dependency), now exposes the Kitty graphics protocol to embedders. Ghostling, the minimal libghostty demo terminal (MIT, 1.1k stars), added a full Kitty renderer in PR #13 with 273 lines of C. Ghostel embeds libghostty-vt in Emacs.",
+      "why": "It is a second embeddable core with Kitty graphics besides rio-vt, and a possible candidate subject for cluster A or D. It is not same-stack (Zig, C ABI), but it is the smallest worked example of the embedder's rendering half.",
+      "source": "https://github.com/ghostty-org/ghostling/pull/13"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "contour",
+      "note": "The Good Image Protocol (Contour, experimental) is the only protocol here designed around compositing layers and named pools. Upload with `DCS u n=<name>,f=<fmt>;!<b64> ST`, render with `DCS r n=<name>,c=<cols>,r=<rows> ST`, release with `DCS d n=<name> ST`. Layers are below, replace and above; the pool uses LRU eviction; it advertises as DA1 code 90. `contour cat` is the reference client. The spec repo has 36 stars and last pushed 2026-04-12, so nobody but Contour has adopted it.",
+      "why": "Named images and explicit layers map neatly onto TD's own 'floating square' idea, but adoption is effectively zero, so it is a design reference, not a protocol to implement.",
+      "source": "https://github.com/contour-terminal/terminal-good-image-protocol"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "kitty",
+      "note": "kitty's `launch --type=os-panel` creates an OS window 'as a desktop panel' (layer-shell on Wayland). Separately, `--type=overlay` versus `overlay-main` differ in whether the overlay counts as a main window. These are kitty's native equivalents of TD's 'floating square' and 'split pane' targets, reached from open-actions.",
+      "why": "It shows kitty already offers the three destinations TD is designing (overlay over the pane, split, and a panel outside the terminal) behind one launch verb.",
+      "source": "https://sw.kovidgoyal.net/kitty/launch/"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "euporie",
+      "note": "Alacritty's maintainer cited euporie on the day of this run (2026-09-24, issue #910): 'Euporie and its example screenshots are a great example for why I think terminals should not support protocols like Sixel. If your argument for images in terminals is writing GUIs in a terminal, then you're actively working to make terminals and terminal applications worse (imo).'",
+      "why": "This is the strongest current statement of the counter-position to 'GUI in the TUI', aimed at a cluster D subject. It is useful for the brief's 'why not' section.",
+      "source": "https://github.com/alacritty/alacritty/issues/910#issuecomment-5818203716"
+    },
+    {
+      "kind": "gap-note",
+      "subjectId": "windows-terminal",
+      "note": "I did not research Windows Terminal (Sixel since 1.22 per the brief) or Konsole (Sixel plus Kitty) as subjects. Measured metadata only: microsoft/terminal is MIT, 105.0k stars, C++, latest release v1.24.11911.0 (2026-07-16). I judged both low-value for a Linux, gpui-based TD.",
+      "why": "Explicitly deprioritised by the brief ('only if notable'). Recorded so a later round knows they were considered, not missed.",
+      "source": "https://github.com/microsoft/terminal"
+    },
+    {
+      "kind": "gap-note",
+      "subjectId": "rio",
+      "note": "Rio's input model (hint and hyperlink bindings) and where_it_draws were not read in docs beyond the features list, so both carry medium confidence. The rioterm.com docs pages for hints and hyperlinks would settle it.",
+      "why": "Only the Rio fields at medium confidence need this follow-up.",
+      "source": "https://rioterm.com/docs/features"
+    },
+    {
+      "kind": "gap-note",
+      "subjectId": "ghostty",
+      "note": "Ghostty's where_it_draws is inferred from protocol semantics plus the presence of graphics_unicode.zig and graphics_render.zig. I did not read the renderer, so how virtual placements interact with scrollback and alt-screen is unverified. image-storage-limit being separate for primary and alternate screens is measured.",
+      "why": "Only this one field is lower confidence.",
+      "source": "https://github.com/ghostty-org/ghostty/tree/main/src/terminal/kitty"
+    }
+  ],
+  "tokens": 125000
+}
