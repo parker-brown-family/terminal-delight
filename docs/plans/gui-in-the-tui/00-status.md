@@ -5,8 +5,8 @@
 
 - Gate 1 — Product: **APPROVED 2026-09-24** — through Parker's notes on the research brief and his chat message the same day. `01-product.md` records those decisions; its success metric and announcement are mine and were not in his notes — strike them if wrong.
 - Gate 2 — Architecture: **APPROVED 2026-09-24** — Parker: "LGTM --- LFG!" on `02-architecture.md` as drafted, before the snapshot spike reported. If the spike contradicts the notes-layer design (anchor ids that differ from a browser's, or an unsafe write), Gate 2 goes back to in progress.
-- Gate 3 — Program Design: awaiting approval — `03-program-design.md` joins the two halves (`…td-wiring.md`, `…docs.md`); page `reports/2026-09-24-ten-slices.html`
-- Gate 4 — Slice plan: awaiting approval — `04-slices.md`, ten slices
+- Gate 3 — Program Design: **APPROVED 2026-09-24** — Parker concurred with all six asks on `reports/2026-09-24-ten-slices.html` (his saved copy is the one in the repo) and wrote "full concur full send full alignment". No notes, nothing changed.
+- Gate 4 — Slice plan: **APPROVED 2026-09-24** — same page, same concurs; `04-slices.md` as drafted.
 
 ## Slices
 - [ ] Slice 1 — tracer bullet: Alt+click a PNG, it floats in the hyperglow, Esc closes it, textures given back (counted over 100 cycles)
@@ -21,7 +21,7 @@
 - [ ] Slice 10 — guards: fixture drift watch, format version, licences, status closed
 
 ## Notes for a fresh session
-- Calibration: Gate 2 came back as a bare approval (nothing changed). If Gate 3 does too, the 7/10 was high: fold the slice plan into Gate 3 and start building.
+- Calibration: Gates 2, 3 and 4 all came back as bare approvals — nothing changed, nothing questioned. Only Gate 1 moved the plan (Parker's gestures and the notes requirement). Recorded as evidence that the 7/10 bought more gates than it needed; the post-hoc number goes in "Turned out to be" when the slices are done.
 - The decision-brief notes format gained CONCUR stamps on 2026-09-24 (skill commit 250188f): a second island, `report-concurs`. TD's notes layer reads and writes both, guarded by shared round-trip fixtures.
 - The research behind this is on the local branch `research/gui-in-the-tui` in `~/Work/td-gui-in-the-tui` (commits b26b67a, 4a2a6d1): the brief `reports/2026-09-24-gui-in-the-tui.html` and four write-ups under `docs/research/gui-in-the-tui/`. That branch quotes outside source and is not meant to merge; cite it by commit.
 - Parker's annotated copy of the research brief, with his eleven notes, is `~/Downloads/2026-09-24-gui-in-the-tui.html`.
