@@ -5,11 +5,20 @@
 
 - Gate 1 — Product: **APPROVED 2026-09-24** — through Parker's notes on the research brief and his chat message the same day. `01-product.md` records those decisions; its success metric and announcement are mine and were not in his notes — strike them if wrong.
 - Gate 2 — Architecture: **APPROVED 2026-09-24** — Parker: "LGTM --- LFG!" on `02-architecture.md` as drafted, before the snapshot spike reported. If the spike contradicts the notes-layer design (anchor ids that differ from a browser's, or an unsafe write), Gate 2 goes back to in progress.
-- Gate 3 — Program Design: in progress
-- Gate 4 — Slice plan: pending
+- Gate 3 — Program Design: awaiting approval — `03-program-design.md` joins the two halves (`…td-wiring.md`, `…docs.md`); page `reports/2026-09-24-ten-slices.html`
+- Gate 4 — Slice plan: awaiting approval — `04-slices.md`, ten slices
 
 ## Slices
-_Written at Gate 4. The tracer-bullet candidate: Alt+click on a PNG path opens it in a floating square with the hyperglow, Esc closes it._
+- [ ] Slice 1 — tracer bullet: Alt+click a PNG, it floats in the hyperglow, Esc closes it, textures given back (counted over 100 cycles)
+- [ ] Slice 2 — the floating square, whole: drag, strip actions, bent-glass hits, the chip, the click table, the menu, zoom and pan, help and languages
+- [ ] Slice 3 — Markdown: lifted renderer, TD palette, links, images, scroll, watcher, workbench cards
+- [ ] Slice 4 — the split: Ctrl+Alt+click beside, focus kept, dedupe, four-pane fallback, promotion, alt+k, keys swallowed
+- [ ] Slice 5 — the layout remembers: saved document panes, missing files, replica repair
+- [ ] Slice 6 — HTML read-only: engine trait, pipe client, snapshot engine, tiles, cache, links and modals, missing-Chromium fallback
+- [ ] Slice 7 — notes read: badges, buttons, note box, concur stamps, copy map, shared fixtures (agent-skills first)
+- [ ] Slice 8 — notes write: add, delete, concur, save in place with verify, backup and read-back, refusals, on-disk changes
+- [ ] Slice 9 — size answers: live 14 t (#718), replica filter, serverless 14 t, device pixels, 16 t scanner (independent)
+- [ ] Slice 10 — guards: fixture drift watch, format version, licences, status closed
 
 ## Notes for a fresh session
 - Calibration: Gate 2 came back as a bare approval (nothing changed). If Gate 3 does too, the 7/10 was high: fold the slice plan into Gate 3 and start building.
