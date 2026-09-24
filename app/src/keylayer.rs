@@ -123,6 +123,13 @@ pub enum Layer {
     /// The inline rename box in the header, also drawn on both faces, also a
     /// caret you can see. Same terms as [`Layer::Sticky`].
     Rename,
+    /// A document floating over the terminal face. Escape closes it, and that
+    /// is all it takes: every other key still reaches the shell underneath,
+    /// which is the whole point of reading beside it rather than instead of it.
+    ///
+    /// Below [`Layer::Sticky`] and [`Layer::Rename`], so a caret blinking
+    /// somewhere else on the pane keeps its own Escape.
+    Float,
     /// The workbench face and everything stacked on it. Claimed whenever that
     /// face is showing; what the bench then does with the key is its own ladder,
     /// and it may decline.
@@ -177,6 +184,8 @@ pub struct Up {
     /// what the bench does with it is its own ladder's call, and it may well be
     /// nothing.
     pub bench: bool,
+    /// A document is floating over the terminal face.
+    pub float: bool,
 }
 
 /// One rung: the layer, and whether it claims this keystroke.
@@ -187,7 +196,7 @@ type Rung = (Layer, fn(&Key, &Up) -> bool);
 /// Written as a list of pairs rather than a chain of early returns so that the
 /// order is one readable column and adding a surface cannot accidentally be
 /// written in the middle of an unrelated branch.
-const LADDER: [Rung; 11] = [
+const LADDER: [Rung; 12] = [
     (Layer::Help, |k, _| k.key == "f1"),
     (Layer::Face, |k, _| k.alt && !k.control && k.key == "k"),
     (Layer::Window, |k, _| window_chord(k.key, k.alt, k.control)),
@@ -200,6 +209,7 @@ const LADDER: [Rung; 11] = [
     (Layer::PaneChord, pane_chord),
     (Layer::Sticky, |_, u| u.sticky),
     (Layer::Rename, |_, u| u.rename),
+    (Layer::Float, |k, u| u.float && k.key == "escape"),
     (Layer::Bench, |_, u| u.bench),
 ];
 
@@ -428,13 +438,14 @@ mod tests {
     /// Every surface, alone, with a key it claims.
     #[test]
     fn a_surface_that_is_alone_gets_what_it_claims() {
-        let cases: [(fn(&mut Up), Key, Layer); 7] = [
+        let cases: [(fn(&mut Up), Key, Layer); 8] = [
             (|u| u.paint = true, ch("r"), Layer::Paint),
             (|u| u.ctx_menu = true, named("escape"), Layer::CtxMenu),
             (|u| u.header_menu = true, named("escape"), Layer::HeaderMenu),
             (|u| u.reader = true, named("pageup"), Layer::Reader),
             (|u| u.sticky = true, ch("a"), Layer::Sticky),
             (|u| u.rename = true, ch("a"), Layer::Rename),
+            (|u| u.float = true, named("escape"), Layer::Float),
             (|u| u.bench = true, ch("a"), Layer::Bench),
         ];
         for (set, key, want) in cases {
@@ -446,7 +457,7 @@ mod tests {
 
     /// The ladder is total and monotone over every combination of state.
     ///
-    /// All 256 state combinations against a corpus of twelve keys, and the answer
+    /// All 512 state combinations against a corpus of twelve keys, and the answer
     /// is always the FIRST rung that claims — the whole contract stated as a
     /// property rather than as rows. A variant moved in the enum fails this
     /// without anybody having to remember to add a case for it.
@@ -466,7 +477,7 @@ mod tests {
             named("left"),
             named("enter"),
         ];
-        for bits in 0u16..256 {
+        for bits in 0u16..512 {
             let up = Up {
                 paint: bits & 1 != 0,
                 ctx_menu: bits & 2 != 0,
@@ -476,6 +487,7 @@ mod tests {
                 rename: bits & 32 != 0,
                 note: bits & 64 != 0,
                 bench: bits & 128 != 0,
+                float: bits & 256 != 0,
             };
             for k in &keys {
                 let want = LADDER
@@ -502,13 +514,14 @@ mod tests {
     fn of_any_two_layers_the_earlier_declared_one_wins() {
         // Escape is claimed by every one of these, which is what lets them be
         // compared pairwise at all.
-        let setters: [fn(&mut Up); 7] = [
+        let setters: [fn(&mut Up); 8] = [
             |u| u.paint = true,
             |u| u.ctx_menu = true,
             |u| u.header_menu = true,
             |u| u.reader = true,
             |u| u.sticky = true,
             |u| u.rename = true,
+            |u| u.float = true,
             |u| u.bench = true,
         ];
         let k = named("escape");
@@ -538,6 +551,41 @@ mod tests {
                 );
             }
         }
+    }
+
+    // ── the floating document ───────────────────────────────────────────────
+
+    fn floating() -> Up {
+        Up {
+            float: true,
+            ..Up::default()
+        }
+    }
+
+    /// Escape closes the square before the shell underneath ever sees it, and
+    /// a letter goes past it to the shell: reading beside a prompt means you
+    /// can still type at the prompt.
+    #[test]
+    fn escape_closes_a_floating_document_before_it_reaches_the_terminal() {
+        assert_eq!(route(&named("escape"), &floating()), Layer::Float);
+        assert_eq!(route(&ch("a"), &floating()), Layer::Terminal);
+        assert_eq!(route(&ctrl("c"), &floating()), Layer::Terminal);
+        assert_eq!(route(&named("enter"), &floating()), Layer::Terminal);
+    }
+
+    /// A caret somewhere else on the pane keeps its own Escape: a note being
+    /// written or a name being typed is reverted first, the square second.
+    #[test]
+    fn a_caret_elsewhere_on_the_pane_keeps_escape_over_a_float() {
+        let mut up = floating();
+        up.sticky = true;
+        assert_eq!(route(&named("escape"), &up), Layer::Sticky);
+        let mut up = floating();
+        up.rename = true;
+        assert_eq!(route(&named("escape"), &up), Layer::Rename);
+        let mut up = floating();
+        up.ctx_menu = true;
+        assert_eq!(route(&named("escape"), &up), Layer::CtxMenu);
     }
 
     // ── the bugs, as rows ───────────────────────────────────────────────────
@@ -917,6 +965,7 @@ mod tests {
             rename: true,
             note: true,
             bench: true,
+            float: true,
         };
         assert_eq!(route(&named("f1"), &everything), Layer::Help);
     }

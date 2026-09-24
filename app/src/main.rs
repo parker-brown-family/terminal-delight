@@ -40,6 +40,8 @@ mod demo;
 mod derive;
 mod dirlogo;
 mod doc;
+mod docopen;
+mod docview;
 mod emphasis;
 mod engstate;
 mod fav;
@@ -7553,6 +7555,40 @@ impl Workspace {
             |v| v.bench.face() == workbench::Face::Workbench && v.bench_can_submit(),
             "no pane is showing a bench with a round it can send",
             |view, cx| view.bench_submit_round(cx),
+        )
+    }
+
+    /// Open a document in a floating square on the focused pane — Alt+click,
+    /// from the control socket.
+    ///
+    /// The ctl family's reason applies again: the gesture belongs to a hand,
+    /// and the thing most worth proving about it — that a square closed a
+    /// hundred times gives a hundred textures back — cannot be proved by a hand.
+    /// Refuses, in words, a path TD cannot draw rather than opening an empty
+    /// square.
+    pub(crate) fn doc_here(&mut self, path: &std::path::Path, cx: &mut Context<Self>) -> String {
+        let Some(target) = crate::docopen::drawable_document(path) else {
+            let why = format!("{} is not a file TD can draw", path.display());
+            eprintln!("terminal-delight: doc here: {why}");
+            return format!("err {why}");
+        };
+        self.bench_apply(
+            cx,
+            |v| v.bench.face() == workbench::Face::Terminal,
+            "no pane is showing its terminal face",
+            |view, cx| view.open_float(target, None, cx),
+        )
+    }
+
+    /// Close a floating square: the focused pane's, else the first open one.
+    pub(crate) fn doc_close(&mut self, cx: &mut Context<Self>) -> String {
+        self.bench_apply(
+            cx,
+            |v| v.has_float(),
+            "no pane has a floating document open",
+            |view, cx| {
+                view.close_float(cx);
+            },
         )
     }
 
