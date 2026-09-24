@@ -1729,27 +1729,42 @@ impl TerminalView {
     /// in the list underneath it. Parker: *"the current model is not
     /// highlighted in the options list"*. Two copies of "what is this dial on"
     /// can only ever agree by accident.
+    ///
+    /// **The transcript outranks the launch command for the model.** It is the
+    /// only source that knows a VERSION — `--model opus` says an alias, the
+    /// transcript says `claude-opus-5-5` — and it is the only one that follows
+    /// a `/model` typed straight into the terminal. The one thing that beats it
+    /// is a press on this dial whose family the transcript has not caught up
+    /// with yet: the reply that would prove the switch has not been written.
     fn dial_now(&self, which: crate::workbench::Dial) -> (String, bool) {
         use crate::workbench::Dial;
         let harness = self.dial_harness();
         let launched = self.runtime().resume;
         match which {
-            Dial::Model => self
-                .wb_model
-                .clone()
-                .map(|m| (m, true))
-                .or_else(|| {
-                    launched
+            Dial::Model => {
+                let running = self
+                    .wb_running_model
+                    .as_deref()
+                    .and_then(crate::workbench::model_label);
+                match (self.wb_model.clone(), running) {
+                    (Some(told), Some(ran)) if !crate::workbench::same_model(&told, &ran) => {
+                        (told, true)
+                    }
+                    (_, Some(ran)) => (ran, true),
+                    (Some(told), None) => (told, true),
+                    (None, None) => launched
                         .as_deref()
                         .and_then(|c| crate::workbench::flag_value(c, "--model"))
                         .map(|m| (m, true))
-                })
-                // Nobody said, so the button says the one thing that is true
-                // anyway — which harness is in there. A faint CLAUDE is a
-                // better button than a crisp `model ?`, and it still never
-                // claims a model was chosen. It matches no row in the list,
-                // which is correct: nothing is lit because nothing is known.
-                .unwrap_or_else(|| (harness.label().to_string(), false)),
+                        // Nobody said, so the button says the one thing that
+                        // is true anyway — which harness is in there. A faint
+                        // CLAUDE is a better button than a crisp `model ?`, and
+                        // it still never claims a model was chosen. It matches
+                        // no row in the list, which is correct: nothing is lit
+                        // because nothing is known.
+                        .unwrap_or_else(|| (harness.label().to_string(), false)),
+                }
+            }
             Dial::Effort => self
                 .wb_effort
                 .map(|e| (e.id().to_string(), true))
@@ -1779,30 +1794,73 @@ impl TerminalView {
     /// `claude --help` and already clamped per harness. A second copy of that
     /// list here is how a menu goes stale and silently starts the wrong model.
     ///
-    /// The lit row is whatever [`Self::dial_now`] says the BUTTON is showing,
-    /// matched case-insensitively because the button uppercases what it draws
-    /// and a `--model Opus` on somebody's launch command is the same model as
-    /// `opus`. A value the list does not contain lights nothing — an agent
-    /// started on a model this window does not offer is a fact, and inventing
-    /// a nearest row for it would be a claim.
+    /// The lit row is whatever [`Self::dial_now`] says the BUTTON is showing.
+    /// For effort that is a case-insensitive match, because the button
+    /// uppercases what it draws. For the model it is
+    /// [`crate::workbench::same_model`], because the button can say `opus 5.5`
+    /// over a row whose alias is `opus`. A value the list does not contain
+    /// lights nothing — an agent started on a model this window does not offer
+    /// is a fact, and inventing a nearest row for it would be a claim.
+    ///
+    /// The row of the family the transcript says is running wears its version.
+    /// The others stay bare: what `sonnet` would resolve to is only known once
+    /// something answers on it, and a version written into the list by hand is
+    /// the stale menu the paragraph above warns about.
+    ///
+    /// These are LABELS. What a pick sends is the row's id, in
+    /// [`Self::bench_dial_pick`] — `opus 5.5` is not a word `/model` takes.
     fn dial_values(&self, which: crate::workbench::Dial) -> (Vec<String>, Option<usize>, bool) {
         use crate::workbench::Dial;
         let harness = self.dial_harness();
-        let vals: Vec<String> = match which {
-            Dial::Model => harness
-                .models()
-                .iter()
-                .map(|m| m.label.to_string())
-                .collect(),
-            Dial::Effort => harness
-                .efforts()
-                .iter()
-                .map(|e| e.id().to_string())
-                .collect(),
-        };
         let (now, chosen) = self.dial_now(which);
-        let at = vals.iter().position(|v| v.eq_ignore_ascii_case(&now));
-        (vals, at, chosen)
+        match which {
+            Dial::Model => {
+                let running = self
+                    .wb_running_model
+                    .as_deref()
+                    .and_then(crate::workbench::model_label);
+                let models = harness.models();
+                let vals = models
+                    .iter()
+                    .map(|m| match &running {
+                        Some(ran) if crate::workbench::same_model(m.id, ran) => ran.clone(),
+                        _ => m.label.to_string(),
+                    })
+                    .collect();
+                let at = models
+                    .iter()
+                    .position(|m| crate::workbench::same_model(m.id, &now));
+                (vals, at, chosen)
+            }
+            Dial::Effort => {
+                let vals: Vec<String> = harness
+                    .efforts()
+                    .iter()
+                    .map(|e| e.id().to_string())
+                    .collect();
+                let at = vals.iter().position(|v| v.eq_ignore_ascii_case(&now));
+                (vals, at, chosen)
+            }
+        }
+    }
+
+    /// What the transcript says this pane's agent last answered on, from the
+    /// window's vitals sweep.
+    ///
+    /// A NEW reading lets go of what the dial was told. Either the switch the
+    /// dial asked for has landed, and the reading now says it with a version,
+    /// or somebody typed `/model` in the terminal, and the dial's old word is
+    /// no longer true. A reading that did not change keeps it: a press whose
+    /// reply has not been written yet is still the newest thing known.
+    pub(crate) fn set_running_model(&mut self, id: Option<String>, cx: &mut Context<Self>) {
+        if self.wb_running_model == id {
+            return;
+        }
+        if id.is_some() {
+            self.wb_model = None;
+        }
+        self.wb_running_model = id;
+        cx.notify();
     }
 
     /// Take a value from an open dial: remember it, and tell the agent.
@@ -1825,8 +1883,14 @@ impl TerminalView {
         cx: &mut Context<Self>,
     ) {
         use crate::workbench::Dial;
-        let (vals, _, _) = self.dial_values(which);
-        let Some(value) = vals.get(at).cloned() else {
+        // The row's ID, never its label: the label can carry a version the
+        // harness's `/model` does not take as a word.
+        let harness = self.dial_harness();
+        let value = match which {
+            Dial::Model => harness.models().get(at).map(|m| m.id.to_string()),
+            Dial::Effort => harness.efforts().get(at).map(|e| e.id().to_string()),
+        };
+        let Some(value) = value else {
             return;
         };
         // Recorded BEFORE the write, and recorded as what we asked for rather

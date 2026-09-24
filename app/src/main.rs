@@ -7905,6 +7905,22 @@ impl Workspace {
         }
         self.vitals_refreshing = false;
         if changed {
+            // The Workbench's model dial names the version off this same
+            // reading — the pane cannot read the window's map, so it is told.
+            // Every leaf, not just the ones in `found`: a pane whose agent
+            // left has to hear `None` or it keeps the last one's version.
+            for tab in self.tabs.iter() {
+                let mut leaves = Vec::new();
+                tab.root.leaves(&mut leaves);
+                for leaf in leaves {
+                    let running = leaf
+                        .read(cx)
+                        .shell_pid()
+                        .and_then(|pid| self.agent_vitals.get(&pid))
+                        .and_then(|v| v.model_id.clone());
+                    leaf.update(cx, |p, cx| p.set_running_model(running, cx));
+                }
+            }
             cx.notify();
         }
     }
