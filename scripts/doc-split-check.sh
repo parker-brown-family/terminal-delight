@@ -16,7 +16,25 @@
 #                                       four panes
 #   4. d.png                         -> the tab is full, so it floats instead
 #                                       and says why; d.png is drawn in the square
-#   5. the layout file               -> four leaves
+#   5. the layout file               -> four leaves, three of them documents,
+#                                       the page's place written beside it
+#
+# Then the layout is put to work. The window is closed — its session host and
+# the terminals in it keep running — c.md is deleted, and a second window is
+# opened on the same session with TD_GUARD_FORCE_MISMATCH=1, which makes the
+# divergence guard throw away and rebuild every quiet pane every 30 seconds:
+#
+#   6. the restart                   -> a.png and b.png are drawn again on their
+#                                       panes; c.md's pane comes back and says
+#                                       it cannot read the file
+#   7. a square over the shell, then a forced replica repair of every pane
+#                                    -> no document is opened again and none is
+#                                       released: the views crossed to the
+#                                       rebuilt panes
+#   8. the layout, saved again       -> still four leaves and three documents;
+#                                       c.md is kept by path, with no place,
+#                                       because a page never read was never
+#                                       measured
 #
 #   scripts/doc-split-check.sh [--bin PATH] [--out DIR]
 #
@@ -74,12 +92,15 @@ cleanup() {
     sleep 0.1
   done
   rm -f "$HOME/.config/terminal-delight/sessions/$SESSION".*
+  # Every save rotates the previous layout into a backup directory named for
+  # the session; this one's are this run's alone.
+  rm -rf "$HOME/.config/terminal-delight/sessions/backups/$SESSION"
 }
 trap cleanup EXIT
 
-launch() { # launch <log>
+launch() { # launch <log> [extra environment, as NAME=value words]
   local said
-  said=$(hyprctl dispatch "hl.dsp.exec_cmd(\"sh -c 'TD_SESSION=$SESSION TD_DOCDEBUG=1 exec $TD > $1 2>&1'\", { workspace = \"$WS silent\", render_unfocused = true, no_initial_focus = true })" 2>&1)
+  said=$(hyprctl dispatch "hl.dsp.exec_cmd(\"sh -c 'TD_SESSION=$SESSION TD_DOCDEBUG=1 ${2:-} exec $TD > $1 2>&1'\", { workspace = \"$WS silent\", render_unfocused = true, no_initial_focus = true })" 2>&1)
   case "$said" in ok|"") ;; *) echo "hyprctl refused the launch: $said"; exit 1 ;; esac
   WIN=""
   for _ in $(seq 1 60); do
@@ -103,9 +124,44 @@ launch() { # launch <log>
 
 # The client prefixes each reply with the answering window's pid and a tab.
 ctl() { "$TD" ctl --pid "$WIN" "$@" 2>&1 | head -1 | sed 's/^[0-9]*\t//'; }
-drew() { grep -c "\[doc\] drew $OUT/$1 " "$LOG" 2>/dev/null || true; }
+said() { grep -c "\[doc\] $1 $OUT/$2" "$LOG" 2>/dev/null || true; } # said <verb> <file>
+drew() { said drew "$1 "; }
 wait_drew() { # wait_drew <file> <n>
   for _ in $(seq 1 50); do [ "$(drew "$1")" -ge "$2" ] && return 0; sleep 0.1; done
+  return 1
+}
+# The layout file, walked: "leaves=N docs=M" and one "doc <name> <scroll>" line
+# per document leaf, `-` for a scroll never measured.
+layout() {
+  python3 - "$LAYOUT" <<'EOF'
+import sys, tomllib, os
+try:
+    state = tomllib.load(open(sys.argv[1], "rb"))
+except (OSError, tomllib.TOMLDecodeError):
+    print("leaves=0 docs=0"); sys.exit()
+leaves, docs = 0, []
+def walk(n):
+    global leaves
+    if "Leaf" in n:
+        leaves += 1
+        d = n["Leaf"].get("document") if isinstance(n["Leaf"], dict) else None
+        if d:
+            docs.append((os.path.basename(d["path"]), d.get("scroll", "-")))
+    elif "Split" in n:
+        walk(n["Split"]["a"]); walk(n["Split"]["b"])
+for t in state.get("tabs", []):
+    n = t.get("node")
+    if isinstance(n, dict):
+        walk(n)
+print(f"leaves={leaves} docs={len(docs)}")
+for name, scroll in docs:
+    print(f"doc {name} {scroll}")
+EOF
+}
+# wait_layout <seconds> <python-ish grep pattern>: poll the layout until a line
+# matches, for the 30-second checkpoint that writes a measured place.
+wait_layout() {
+  for _ in $(seq 1 "$1"); do layout | grep -q "$2" && return 0; sleep 1; done
   return 1
 }
 fail=0
@@ -142,10 +198,48 @@ check "c.md, a Markdown page, was drawn" wait_drew c.md 1
 expect "ok float pane" doc beside "$OUT/d.png"
 check "d.png was drawn in the square instead" wait_drew d.png 1
 sleep 1
-cp "$LAYOUT" "$OUT/layout.toml" 2>/dev/null
-LEAVES=$(grep -o 'Leaf' "$OUT/layout.toml" 2>/dev/null | wc -l)
-check "the layout holds four leaves (it holds $LEAVES)" test "$LEAVES" -eq 4
+check "the layout holds four leaves, three of them documents ($(layout | head -1))" \
+  wait_layout 5 "^leaves=4 docs=3$"
+# The split saved at once, before the page was laid out, so its place was
+# unmeasured then; the checkpoint that follows writes where it is.
+check "c.md's place is written once it has been measured" wait_layout 40 "^doc c.md 0"
+cp "$LAYOUT" "$OUT/layout-before.toml" 2>/dev/null
+layout | sed 's/^/        /'
 
-echo "== window log: $LOG; layout copy: $OUT/layout.toml"
+echo "== the restart: window closed, host kept, c.md deleted"
+kill "$WIN" 2>/dev/null
+for _ in $(seq 1 50); do kill -0 "$WIN" 2>/dev/null || break; sleep 0.1; done
+WIN=""
+rm -f "$OUT/c.md"
+LOG="$OUT/window-2.log"
+launch "$LOG" "TD_GUARD_FORCE_MISMATCH=1"
+check "a.png came back on its pane" wait_drew a.png 1
+check "b.png came back on its pane" wait_drew b.png 1
+cannot() { [ "$(said "cannot read" c.md)" -ge 1 ]; }
+wait_cannot() { for _ in $(seq 1 50); do cannot && return 0; sleep 0.1; done; return 1; }
+check "c.md's pane came back and says it cannot read the file" wait_cannot
+expect "ok pane" doc here "$OUT/d.png"
+check "d.png floats over the shell" wait_drew d.png 1
+
+echo "== a forced replica repair of every pane (the guard runs every 30 s)"
+repaired() { grep -c "is being taken again anyway" "$LOG" 2>/dev/null || true; }
+wait_repair() { for _ in $(seq 1 75); do [ "$(repaired)" -ge 4 ] && return 0; sleep 1; done; return 1; }
+check "all four panes were taken again" wait_repair
+sleep 2
+for f in a.png b.png d.png; do
+  check "$f was not opened again (drawn $(drew $f) time)" test "$(drew $f)" -eq 1
+  check "$f was not released" test "$(said released $f)" -eq 0
+done
+BEFORE=$(stat -c %Y "$LAYOUT" 2>/dev/null || echo 0)
+saved_again() { [ "$(stat -c %Y "$LAYOUT" 2>/dev/null || echo 0)" -gt "$BEFORE" ]; }
+wait_saved() { for _ in $(seq 1 40); do saved_again && return 0; sleep 1; done; return 1; }
+check "the layout was saved again after the repair" wait_saved
+check "still four leaves and three documents ($(layout | head -1))" wait_layout 3 "^leaves=4 docs=3$"
+check "c.md is kept by its path, with no place (a page never read was never measured)" \
+  wait_layout 3 "^doc c.md -$"
+cp "$LAYOUT" "$OUT/layout-after.toml" 2>/dev/null
+layout | sed 's/^/        /'
+
+echo "== window logs: $OUT/window.log, $OUT/window-2.log; layouts: $OUT/layout-before.toml, $OUT/layout-after.toml"
 [ "$fail" -eq 0 ] && echo "== every step did what it should" || echo "== a step did not"
 exit "$fail"

@@ -2046,6 +2046,29 @@ pub struct Presentation {
     appearance: PaneTheme,
     note: Option<crate::sticky::Sticky>,
     peeled: Option<String>,
+    /// The document on the pane's Document face, and whether that face was
+    /// the one showing. The view itself travels, so the page is not opened,
+    /// decoded or laid out again and keeps its place.
+    doc: Option<(DocCarry, bool)>,
+    /// The floating square, where it was and what its strip was saying.
+    float: Option<FloatCarry>,
+}
+
+/// A document view on its way from a pane being replaced to its replacement.
+/// The view and the file it shows; its link subscription belonged to the old
+/// pane and is made again on the new one.
+#[derive(Clone)]
+pub(crate) struct DocCarry {
+    view: gpui::Entity<crate::docview::DocumentView>,
+    target: crate::docopen::DocTarget,
+}
+
+/// A floating square on its way across a replica repair.
+#[derive(Clone)]
+pub(crate) struct FloatCarry {
+    view: gpui::Entity<crate::docview::DocumentView>,
+    rect: crate::docopen::FloatRect,
+    note: Option<crate::docopen::FloatNote>,
 }
 
 /// What a pseudoterminal is told about its size: the grid, and one cell in
@@ -3216,6 +3239,20 @@ impl TerminalView {
             appearance: self.appearance.clone(),
             note: self.note.clone(),
             peeled: self.peeled.clone(),
+            doc: self.doc.as_ref().map(|d| {
+                (
+                    DocCarry {
+                        view: d.view.clone(),
+                        target: d.target.clone(),
+                    },
+                    self.bench.face() == crate::workbench::Face::Document,
+                )
+            }),
+            float: self.float.as_ref().map(|f| FloatCarry {
+                view: f.view.clone(),
+                rect: f.rect,
+                note: f.note,
+            }),
         }
     }
 
@@ -3228,7 +3265,7 @@ impl TerminalView {
     /// was the visible half of the repair — a pane that re-fired its ignition
     /// and came back in the house colours, every couple of minutes, while the
     /// user watched.
-    pub fn adopt_presentation(&mut self, from: Presentation) {
+    pub fn adopt_presentation(&mut self, from: Presentation, cx: &mut Context<Self>) {
         // `born` first and on purpose: it drives the one-shot CRT ignition and
         // nothing else, so inheriting it is the whole of "this is not a birth".
         self.born = from.born;
@@ -3238,6 +3275,22 @@ impl TerminalView {
         self.appearance = from.appearance;
         self.note = from.note;
         self.peeled = from.peeled;
+        // The document and the square are the window's decisions too, and a
+        // replica repair used to drop both: the page someone was reading beside
+        // their prompt turned back into a shell. The same views move across —
+        // nothing re-opened — and are subscribed again here, on the pane that
+        // now owns them.
+        if let Some((doc, on_face)) = from.doc {
+            self.show_document(doc.target, Some(doc.view), cx);
+            if !on_face {
+                self.bench.set_face(crate::workbench::Face::Terminal);
+            }
+        }
+        if let Some(f) = from.float {
+            let mut float = Self::float_of(f.view, f.rect, cx);
+            float.note = f.note;
+            self.float = Some(float);
+        }
     }
 
     /// Whether this pane has reported an ending that has not been explained yet.
@@ -4814,6 +4867,16 @@ impl TerminalView {
         if let Some(fragment) = fragment {
             view.update(cx, |v, cx| v.show_fragment(fragment, cx));
         }
+        Self::float_of(view, rect, cx)
+    }
+
+    /// A square around a view that already exists — a new one, or one carried
+    /// across a replica repair — with this pane subscribed to its links.
+    fn float_of(
+        view: gpui::Entity<crate::docview::DocumentView>,
+        rect: crate::docopen::FloatRect,
+        cx: &mut Context<Self>,
+    ) -> FloatingDoc {
         let links = cx.subscribe(&view, |pane, _, link: &crate::docview::FollowLink, cx| {
             pane.follow_doc_link(link, crate::docopen::DocSeat::Float, cx)
         });
@@ -5003,6 +5066,46 @@ impl TerminalView {
     /// The file this pane's Document face shows, if it has one.
     pub(crate) fn document_path(&self) -> Option<&std::path::Path> {
         self.doc.as_ref().map(|d| d.target.path.as_path())
+    }
+
+    /// The document this pane shows, for the layout file: its path, and where
+    /// the page is scrolled as a fraction of it. The scroll is `None` when it
+    /// was never measured — an image, or a page not laid out yet — and stays
+    /// `None` rather than being written as the top.
+    pub(crate) fn saved_document(&self, cx: &App) -> Option<(String, Option<f32>)> {
+        let doc = self.doc.as_ref()?;
+        let scroll = doc.view.read(cx).scroll().map(|s| s.top);
+        Some((doc.target.path.to_string_lossy().into_owned(), scroll))
+    }
+
+    /// Put a saved document back on this pane after a restart.
+    ///
+    /// Classified by its name alone, because the file may not be there: a
+    /// missing file keeps its pane and its face, and the view says it cannot
+    /// read it. "Not there right now" — an unmounted drive, a branch switched
+    /// away — is a different fact from "never was a document", and turning the
+    /// pane back into a shell would throw the difference away. A path whose
+    /// name is not a document TD draws was not written by this build, and the
+    /// leaf stays a terminal.
+    pub(crate) fn restore_document(
+        &mut self,
+        path: &str,
+        scroll: Option<f32>,
+        cx: &mut Context<Self>,
+    ) {
+        let path = std::path::PathBuf::from(path);
+        let Some(kind) = crate::docopen::doc_kind_by_name(&path) else {
+            eprintln!(
+                "terminal-delight: a saved pane named {} as its document, which is not a kind TD draws; it comes back as its terminal",
+                path.display()
+            );
+            return;
+        };
+        self.show_document(crate::docopen::DocTarget { path, kind }, None, cx);
+        if let (Some(top), Some(doc)) = (scroll, self.doc.as_ref()) {
+            let at = crate::docopen::DocScroll { top };
+            doc.view.update(cx, |v, cx| v.restore_scroll(at, cx));
+        }
     }
 
     /// The Document face's view, when that face is the one showing.
@@ -13458,6 +13561,61 @@ mod tests {
         assert!(show.contains("v.set_seat(crate::docopen::DocSeat::Face, cx)"));
     }
 
+    /// A replica repair throws the pane's picture of its grid away and builds
+    /// a new pane; the document on its face and the square over its terminal
+    /// are the window's decisions, and cross with the rest of its presentation.
+    /// The same views cross — nothing is opened again — and the new pane
+    /// subscribes to their links itself.
+    #[test]
+    fn a_repaired_replica_keeps_its_document() {
+        let code = live_code();
+        let lift = method_body(&code, "pub fn presentation(&self)");
+        assert!(lift.contains("doc: self.doc.as_ref().map("), "{lift}");
+        assert!(lift.contains("float: self.float.as_ref().map("), "{lift}");
+        assert!(
+            lift.contains("self.bench.face() == crate::workbench::Face::Document"),
+            "whether the document was the face showing"
+        );
+        let adopt = method_body(&code, "pub fn adopt_presentation(");
+        assert!(
+            adopt.contains("self.show_document(doc.target, Some(doc.view), cx)"),
+            "the document goes back on through the one way onto the face, carried"
+        );
+        assert!(
+            adopt.contains("Self::float_of(f.view, f.rect, cx)"),
+            "the square is rebuilt around the same view"
+        );
+        assert!(adopt.contains("float.note = f.note"));
+        assert!(
+            !adopt.contains("DocumentView::new("),
+            "a repair never opens the file again"
+        );
+    }
+
+    /// A saved document comes back by its name alone, so a file that has
+    /// gone keeps its pane and its face and the view says it cannot read it,
+    /// rather than the pane quietly turning back into a shell.
+    #[test]
+    fn a_missing_document_keeps_its_pane_on_restore() {
+        let code = live_code();
+        let restore = method_body(&code, "pub(crate) fn restore_document(");
+        assert!(
+            restore.contains("crate::docopen::doc_kind_by_name(&path)"),
+            "classified by name, which needs no file"
+        );
+        assert!(
+            !restore.contains("drawable_document("),
+            "drawable_document reads the file, and a missing one would lose the pane"
+        );
+        assert!(restore.contains("self.show_document("));
+        assert!(restore.contains("v.restore_scroll(at, cx)"));
+        let saved = method_body(&code, "pub(crate) fn saved_document(");
+        assert!(
+            saved.contains(".scroll().map(|s| s.top)"),
+            "an unmeasured scroll is carried as None, not as the top"
+        );
+    }
+
     /// Ctrl+Alt+click asks for the split, and a second Alt+click on the path
     /// the square is showing promotes the square: both through `OpenDoc`,
     /// because the tree the split changes belongs to the workspace.
@@ -13546,10 +13704,15 @@ mod tests {
     #[test]
     fn a_link_out_of_a_document_is_routed_by_the_pane() {
         let code = live_code();
+        // Every square is built around its view by `float_of`, which is where
+        // the subscription lives — a new square and one carried across a
+        // replica repair alike.
         let make = method(&code, "fn float_doc(");
+        assert!(make.contains("Self::float_of(view, rect, cx)"), "{make}");
+        let around = method(&code, "fn float_of(");
         assert!(
-            make.contains("cx.subscribe(") && make.contains("follow_doc_link("),
-            "{make}"
+            around.contains("cx.subscribe(") && around.contains("follow_doc_link("),
+            "{around}"
         );
         let follow = method(&code, "fn follow_doc_link(");
         assert!(follow.contains("docopen::link_route("), "{follow}");

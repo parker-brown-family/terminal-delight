@@ -1154,6 +1154,18 @@ impl MarkdownDoc {
         dropped
     }
 
+    /// Go to a fraction of the page — a place a saved layout kept — once the
+    /// page has been laid out. The same pending place a reload whose block
+    /// has gone falls back to, so the two cannot disagree about what a
+    /// fraction means.
+    pub fn restore_fraction(&mut self, top: f32) {
+        self.pending = Some(Pending::Block {
+            index: usize::MAX,
+            offset: 0.0,
+            fraction: Some(top.clamp(0.0, 1.0)),
+        });
+    }
+
     /// Go to a heading, now if the page has been laid out, or as soon as it is.
     pub fn go_to_fragment(&mut self, fragment: String, view_h: Option<f32>) {
         self.pending = Some(Pending::Fragment(fragment));
@@ -1297,6 +1309,30 @@ mod tests {
     /// markdown-delight's renderer kept only the text. The target has to come
     /// through the parse with the byte range it covers, or a press can find
     /// the words and never the destination.
+    /// A place a saved layout kept waits for the page to be laid out — the
+    /// file is still being read when a restore asks — and then puts the same
+    /// fraction of the page at the top of the view.
+    #[test]
+    fn a_saved_place_is_restored_once_the_page_is_laid_out() {
+        let mut md = MarkdownDoc::new();
+        md.restore_fraction(0.37);
+        md.settle(Some(100.0));
+        assert_eq!(md.top, 0.0, "nothing is laid out yet, so nothing moves");
+        assert!(md.pending.is_some(), "and the place is still waiting");
+        // The first paint of this parse: a column 1,000 pixels tall.
+        md.painted.set(Some(md.generation));
+        md.column.set(Some((0.0, 1000.0)));
+        md.settle(Some(100.0));
+        assert!((md.top - 370.0).abs() < 1e-3, "{}", md.top);
+        assert!(md.pending.is_none(), "restored once, then left alone");
+        let back = md.scroll().expect("measured now").top;
+        assert!((back - 0.37).abs() < 1e-4, "{back}");
+        // A place past the end is the end, never beyond it.
+        md.restore_fraction(1.7);
+        md.settle(Some(100.0));
+        assert!((md.top - 900.0).abs() < 1e-3, "{}", md.top);
+    }
+
     #[test]
     fn a_link_keeps_its_target() {
         let doc = parse("[a](b.md#x)", None);
