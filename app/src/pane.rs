@@ -221,15 +221,59 @@ pub fn eq_icon(accent: gpui::Hsla, scale: f32) -> gpui::Div {
     row
 }
 
-/// The Alt-held copy affordance: one reconstructed logical line and the PAINTED
-/// rows it occupies. The text is what lands on the clipboard — wrap seams already
-/// healed — and the row span is where the border is drawn, in painted order so it
-/// frames the text where the eye actually sees it.
+/// The Alt-held chip: one reconstructed logical line, the PAINTED rows it
+/// occupies, and what an Alt+click there would do. The text is what lands on
+/// the clipboard for a copy — wrap seams already healed — and the row span is
+/// where the border is drawn, in painted order so it frames the text where the
+/// eye actually sees it.
 #[derive(Debug, Clone, PartialEq)]
 struct CopyHint {
     text: String,
     first_paint: usize,
     last_paint: usize,
+    does: crate::docopen::AltClick,
+}
+
+/// The Alt chip, decided from what is under the pointer.
+///
+/// `line` is the logical line under the pointer as `(text, first painted row,
+/// last painted row)`; `pointer_row` is the painted row the pointer is on; `doc`
+/// is the document under the pointer, when a bare Alt is held. A document
+/// arms the chip on any line, a prose line or the alt screen included, because
+/// the pointer is on the path. A command line arms it for a copy, never on the
+/// alt screen. On the alt screen the frame is the one row under the pointer:
+/// its rows are a canvas, and "the logical line" means nothing there.
+fn alt_hint(
+    alt_screen: bool,
+    pointer_row: usize,
+    line: Option<(&str, usize, usize)>,
+    doc: Option<crate::docopen::DocTarget>,
+) -> Option<CopyHint> {
+    let is_command = !alt_screen && line.is_some_and(|(text, _, _)| is_copyable_command(text));
+    let does = crate::docopen::alt_click(alt_screen, is_command, doc)?;
+    let (text, first_paint, last_paint) = match line {
+        Some((text, first, last)) if !alt_screen => (text.to_string(), first, last),
+        _ => (String::new(), pointer_row, pointer_row),
+    };
+    Some(CopyHint {
+        text,
+        first_paint,
+        last_paint,
+        does,
+    })
+}
+
+/// What the chip says. Glyph, gesture, verb; the verb in the reader's language.
+fn chip_label(
+    does: &crate::docopen::AltClick,
+    copied: bool,
+    s: &'static crate::lang::Strings,
+) -> &'static str {
+    match does {
+        crate::docopen::AltClick::OpenHere(_) => s.chip_open_here,
+        crate::docopen::AltClick::Copy if copied => s.chip_copied,
+        crate::docopen::AltClick::Copy => s.chip_copy,
+    }
 }
 
 /// A document floating over the terminal face, opened by Alt+clicking its path.
@@ -243,6 +287,28 @@ pub(crate) struct FloatingDoc {
     /// Flat, relative to the screen's top-left, in logical pixels. Clamped to
     /// the screen again at every paint, so a pane that shrank keeps it inside.
     rect: crate::docopen::FloatRect,
+    /// The strip, pressed and perhaps moving.
+    drag: Option<crate::docopen::FloatDrag>,
+    /// The document's body is held: the press went to the view, and so do the
+    /// moves until the button comes up.
+    holding: bool,
+    /// Which control the pointer is over, for the wash that says it is one.
+    hover: Option<crate::docopen::FloatHit>,
+}
+
+impl FloatingDoc {
+    fn new(
+        view: gpui::Entity<crate::docview::DocumentView>,
+        rect: crate::docopen::FloatRect,
+    ) -> Self {
+        Self {
+            view,
+            rect,
+            drag: None,
+            holding: false,
+            hover: None,
+        }
+    }
 }
 
 /// A shift-clickable target lifted out of the grid: a web/file URL handed
@@ -892,6 +958,82 @@ fn maybe_mode_theme(base: &Theme, mode: &PaneMode, inherit: bool, tint: bool) ->
     }
 }
 
+/// Whether a pointer lands on a floating square, as the bent glass shows it.
+///
+/// `screen` is the tube in window pixels, `k` its curvature, `rect` the square
+/// relative to the screen, `pos` the pointer in window pixels. The pointer is
+/// un-bent with the tube's own inverse first, because the square is drawn flat
+/// and the barrel pass moves it: near a corner the difference is several
+/// pixels, which is the width of the strip a person grabs.
+fn point_on_float(
+    screen: (f32, f32, f32, f32),
+    k: (f32, f32),
+    rect: crate::docopen::FloatRect,
+    pos: (f32, f32),
+) -> bool {
+    let (x, y, w, h) = screen;
+    let (fx, fy) = crate::workbench::unwarp(screen, k.0, k.1, pos.0, pos.1);
+    crate::docopen::clamp_float(rect, w, h).contains(fx - x, fy - y)
+}
+
+/// Which part of a floating square a pointer is on, as the bent glass shows
+/// it, and the flat point it un-bent to.
+///
+/// The zones the square recorded as it painted decide: a strip button, the
+/// strip, or the body. A pointer inside the square that finds no zone — the
+/// one frame between opening it and its first paint — is still the square's,
+/// and lands on its body, so a press there never starts a selection behind it.
+fn float_hit_through_glass(
+    screen: (f32, f32, f32, f32),
+    k: (f32, f32),
+    rect: crate::docopen::FloatRect,
+    zones: &[crate::docopen::FloatZone],
+    pos: (f32, f32),
+) -> Option<(crate::docopen::FloatZone, (f32, f32))> {
+    let (fx, fy) = crate::workbench::unwarp(screen, k.0, k.1, pos.0, pos.1);
+    if let Some(zone) = crate::docopen::float_hit_at(zones, fx, fy) {
+        return Some((zone, (fx, fy)));
+    }
+    if !point_on_float(screen, k, rect, pos) {
+        return None;
+    }
+    let (x, y, w, h) = screen;
+    let r = crate::docopen::clamp_float(rect, w, h);
+    let body = crate::docopen::FloatZone {
+        x: x + r.x,
+        y: y + r.y,
+        w: r.w,
+        h: r.h,
+        hit: crate::docopen::FloatHit::Body,
+    };
+    Some((body, (fx, fy)))
+}
+
+/// Record, as it paints, the flat rectangle of the element this is a child of
+/// as one zone of the floating square — the bench's zone pattern
+/// (`benchdraw::zone`), for the square. A canvas that listens to nothing: the
+/// pane's own press finds the zone after un-bending the pointer. The parent
+/// must be `relative()` so `inset_0` measures it.
+fn float_zone(
+    into: std::rc::Rc<std::cell::RefCell<Vec<crate::docopen::FloatZone>>>,
+    hit: crate::docopen::FloatHit,
+) -> impl IntoElement {
+    canvas(
+        move |bounds, _window, _cx| {
+            into.borrow_mut().push(crate::docopen::FloatZone {
+                x: f32::from(bounds.origin.x),
+                y: f32::from(bounds.origin.y),
+                w: f32::from(bounds.size.width),
+                h: f32::from(bounds.size.height),
+                hit,
+            });
+        },
+        |_, _, _, _| {},
+    )
+    .absolute()
+    .inset_0()
+}
+
 const HEADER_H: f32 = 40.0;
 /// The smallest breathing border the grid ever keeps off any edge (px). On a
 /// flat or tiny pane the 2% term falls below this and the floor takes over.
@@ -926,24 +1068,6 @@ const DEEP_ASK_ROWS: i32 = 2000;
 /// pane (`k1=k2=0`) collapses term 2 and keeps just the breathing border.
 /// Used by the renderer, [`Self::sync_size`] (grid fit) and
 /// [`Self::viewport_cell`] (hit-test) so all three agree on where the grid sits.
-/// Whether a pointer lands on a floating square, as the bent glass shows it.
-///
-/// `screen` is the tube in window pixels, `k` its curvature, `rect` the square
-/// relative to the screen, `pos` the pointer in window pixels. The pointer is
-/// un-bent with the tube's own inverse first, because the square is drawn flat
-/// and the barrel pass moves it: near a corner the difference is several
-/// pixels, which is the width of the strip a person grabs.
-fn point_on_float(
-    screen: (f32, f32, f32, f32),
-    k: (f32, f32),
-    rect: crate::docopen::FloatRect,
-    pos: (f32, f32),
-) -> bool {
-    let (x, y, w, h) = screen;
-    let (fx, fy) = crate::workbench::unwarp(screen, k.0, k.1, pos.0, pos.1);
-    crate::docopen::clamp_float(rect, w, h).contains(fx - x, fy - y)
-}
-
 fn grid_pad(w: f32, h: f32, k1: f32, k2: f32) -> (f32, f32) {
     let over = 0.5 * (0.25 * k1 + 0.0625 * k2) * 1.15;
     (
@@ -2072,15 +2196,23 @@ pub struct TerminalView {
     /// Responsive header: when the pane narrows, controls tuck into a ⋯ overflow
     /// menu. `Some(pos)` = that menu is open, anchored at the ⋯ click. None = shut.
     hdr_overflow: Option<gpui::Point<Pixels>>,
-    /// The Alt-held copy affordance for the line under the pointer, or None when
-    /// Alt is up or the line does not read as a command. Recomputed only while
-    /// Alt is down, so ordinary mousing costs nothing.
+    /// The Alt-held chip for the line under the pointer, or None when Alt is
+    /// up or an Alt+click there would do nothing. It says which of the two it
+    /// would do: open the document under the pointer, or copy a command line.
+    /// Recomputed only while Alt is down, so ordinary mousing costs nothing.
     copy_hint: Option<CopyHint>,
     /// When the last Alt+click copy landed — drives the brief "copied"
     /// confirmation in the chip. No timer: the next pointer move repaints it.
     copy_flash: Option<Instant>,
     /// The document floating over the terminal face, if one is open.
     float: Option<FloatingDoc>,
+    /// Where the floating square's strip, buttons and body were laid out,
+    /// flat, recorded as they paint. Cleared at the top of every render.
+    float_zones: std::rc::Rc<std::cell::RefCell<Vec<crate::docopen::FloatZone>>>,
+    /// The last link asked whether it is a document, and the answer. The Alt
+    /// chip asks on every Alt-held move, and the answer reads the file's first
+    /// bytes, so the same link under a still pointer is not read twice.
+    doc_memo: std::cell::RefCell<Option<(String, Option<crate::docopen::DocTarget>)>>,
     /// Last-known OS focus, for edge-detected focus reporting (CSI I / CSI O).
     was_focused: bool,
     /// 🎰 GAMBA slot-machine reels — rolled while an agent in this pane is
@@ -3667,6 +3799,8 @@ impl TerminalView {
             copy_hint: None,
             copy_flash: None,
             float: None,
+            float_zones: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
+            doc_memo: std::cell::RefCell::new(None),
             was_focused: false,
             pending_pty: None,
             cell_px,
@@ -4303,48 +4437,59 @@ impl TerminalView {
     /// `stitch_wrapped_line` wants, since it maps a click column into the
     /// concatenated line. Anything doing width arithmetic (the copy reflow) must
     /// trim the padding first; see [`grid_logical_lines`].
-    /// Resolve the copy affordance for a pointer position: the logical line under
-    /// it, if that line reads as a command, plus the painted rows it covers.
-    /// `None` whenever nothing should be offered. Callers gate on Alt being held.
-    fn copy_hint_at(&self, pos: gpui::Point<Pixels>) -> Option<CopyHint> {
-        // A drag-selection owns the pointer — never compete with it.
-        if self.selecting || self.has_selection() {
+    /// Resolve the Alt chip for a pointer position: what an Alt+click there
+    /// would do, and the painted rows to frame. See [`alt_hint`] for the rule.
+    ///
+    /// `doc` is the document under the pointer when a bare Alt is held — the
+    /// caller resolves it, because the click needs it anyway and Ctrl+Alt must
+    /// not offer "open here" for a click that will not open here. `None`
+    /// whenever nothing should be offered: off the terminal face, over the
+    /// floating square (a press there is the square's), or on nothing.
+    /// Callers gate on Alt being held.
+    fn alt_hint_at(
+        &self,
+        pos: gpui::Point<Pixels>,
+        doc: Option<crate::docopen::DocTarget>,
+    ) -> Option<CopyHint> {
+        if self.bench.face() != crate::workbench::Face::Terminal {
+            return None;
+        }
+        if self.float_hit(pos).is_some() {
             return None;
         }
         // Alt-screen apps (vim, htop) lay their rows out as a canvas, not as
         // flowed text, so "rejoin what the width broke" means nothing there.
-        if self
+        let alt_screen = self
             .session
             .term
             .lock()
             .mode()
-            .contains(TermMode::ALT_SCREEN)
-        {
-            return None;
-        }
+            .contains(TermMode::ALT_SCREEN);
         let (prow, _, _) = self.viewport_cell(pos);
-        let grow = self.paint_row_to_grid_row(prow);
-        let line = self
-            .grid_logical_lines()
-            .into_iter()
-            .find(|l| l.first <= grow && grow <= l.last)?;
-        if !is_copyable_command(&line.text) {
-            return None;
-        }
+        // A drag-selection owns the pointer, so no line is offered for a copy
+        // while there is one — a document under the pointer still is, since
+        // Alt+click opens it whatever is selected.
+        let line = if alt_screen || self.selecting || self.has_selection() {
+            None
+        } else {
+            let grow = self.paint_row_to_grid_row(prow);
+            self.grid_logical_lines()
+                .into_iter()
+                .find(|l| l.first <= grow && grow <= l.last)
+        };
         // Map the GRID span back to painted rows. The paint transform can be an
         // arbitrary permutation (anchor-to-top reverses in groups), so invert it
         // by scanning every row rather than assuming the identity mapping.
-        let painted: Vec<usize> = (0..self.grid.rows)
-            .filter(|p| {
-                let g = self.paint_row_to_grid_row(*p);
-                line.first <= g && g <= line.last
-            })
-            .collect();
-        Some(CopyHint {
-            text: line.text,
-            first_paint: *painted.first()?,
-            last_paint: *painted.last()?,
-        })
+        let span = line.as_ref().and_then(|line| {
+            let painted: Vec<usize> = (0..self.grid.rows)
+                .filter(|p| {
+                    let g = self.paint_row_to_grid_row(*p);
+                    line.first <= g && g <= line.last
+                })
+                .collect();
+            Some((line.text.as_str(), *painted.first()?, *painted.last()?))
+        });
+        alt_hint(alt_screen, prow, span, doc)
     }
 
     fn grid_snapshot(&self) -> (Vec<Vec<char>>, Vec<bool>) {
@@ -4418,9 +4563,21 @@ impl TerminalView {
     /// document, and neither is a path whose bytes say it is not what its name
     /// claims (see [`crate::docopen::doc_kind`]).
     fn document_under(&self, pos: gpui::Point<Pixels>) -> Option<crate::docopen::DocTarget> {
-        let target = self.link_under(pos)?;
-        let path = reveal_target(&target)?;
-        crate::docopen::drawable_document(std::path::Path::new(&path))
+        self.document_of(&self.link_under(pos)?)
+    }
+
+    /// Whether a link `link_under` resolved is a document TD can draw.
+    /// Remembers the last answer, because the Alt chip asks on every move.
+    fn document_of(&self, link: &str) -> Option<crate::docopen::DocTarget> {
+        if let Some((seen, doc)) = self.doc_memo.borrow().as_ref() {
+            if seen == link {
+                return doc.clone();
+            }
+        }
+        let doc = reveal_target(link)
+            .and_then(|path| crate::docopen::drawable_document(std::path::Path::new(&path)));
+        *self.doc_memo.borrow_mut() = Some((link.to_string(), doc.clone()));
+        doc
     }
 
     /// The screen's size in logical pixels, once it has been laid out.
@@ -4451,7 +4608,125 @@ impl TerminalView {
         };
         let rect = crate::docopen::float_home(w, h, top, bottom);
         let view = cx.new(|cx| crate::docview::DocumentView::new(target, cx));
-        self.float = Some(FloatingDoc { view, rect });
+        self.float = Some(FloatingDoc::new(view, rect));
+        cx.notify();
+    }
+
+    /// The floating square, drawn with the hyperglow every surface that floats
+    /// wears (`float_shadows` plus a two-pixel rim in the accent). Only on the
+    /// terminal face: the bench is its own opaque surface, and a square over it
+    /// would belong to neither.
+    ///
+    /// A strip across the top carries the file's name and its controls — zoom
+    /// for a picture, "↗ desktop" and "✕ esc" for everything — and moves the
+    /// square when dragged. No element here carries a gpui handler: each
+    /// control records its flat rectangle as it paints ([`float_zone`]), and
+    /// the pane's own press un-bends the pointer and looks it up.
+    fn float_el(
+        &self,
+        th: &Theme,
+        face: crate::workbench::Face,
+        cx: &Context<Self>,
+    ) -> Option<gpui::AnyElement> {
+        use crate::docopen::FloatHit;
+        let float = self.float.as_ref()?;
+        if face != crate::workbench::Face::Terminal {
+            return None;
+        }
+        let s = crate::lang::current().strings();
+        let (w, h) = self.screen_size().unwrap_or((0.0, 0.0));
+        let r = crate::docopen::clamp_float(float.rect, w, h);
+        let view = float.view.read(cx);
+        let name = view
+            .target()
+            .path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let zoom = view.zoom_now();
+        let zones = self.float_zones.clone();
+        let acc = th.accent;
+        let button = |label: gpui::SharedString, hit: FloatHit| {
+            div()
+                .relative()
+                .flex_none()
+                .px(px(5.))
+                .rounded(px(3.))
+                .when(float.hover == Some(hit), |d| d.bg(acc.alpha(0.22)))
+                .child(label)
+                .child(float_zone(zones.clone(), hit))
+        };
+        let mut strip = div()
+            .relative()
+            .flex_none()
+            .h(px(22.))
+            .px(px(8.))
+            .flex()
+            .items_center()
+            .gap(px(4.))
+            .border_b_1()
+            .border_color(acc.alpha(0.4))
+            .text_size(px(11.))
+            .text_color(acc)
+            // First, so every control recorded after it is found over it.
+            .child(float_zone(zones.clone(), FloatHit::Strip))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(px(0.))
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .child(gpui::SharedString::from(format!("☰ {name}"))),
+            );
+        if let Some(zoom) = zoom {
+            let now: gpui::SharedString = match zoom {
+                crate::docview::ImageZoom::Fit => s.float_fit.into(),
+                crate::docview::ImageZoom::Scale(z) => format!("{:.0}%", z * 100.0).into(),
+            };
+            strip = strip
+                .child(button("−".into(), FloatHit::ZoomOut))
+                .child(button(now, FloatHit::ZoomFit))
+                .child(button("+".into(), FloatHit::ZoomIn))
+                .child(div().w(px(4.)));
+        }
+        strip = strip
+            .child(button(s.float_desktop.into(), FloatHit::Desktop))
+            .child(button("✕ esc".into(), FloatHit::Close));
+        Some(
+            div()
+                .absolute()
+                .left(px(r.x))
+                .top(px(r.y))
+                .w(px(r.w))
+                .h(px(r.h))
+                .flex()
+                .flex_col()
+                .bg(th.bg)
+                .border_2()
+                .border_color(th.accent)
+                .rounded(px(6.))
+                .shadow(crate::float_shadows(th.accent))
+                .overflow_hidden()
+                .child(strip)
+                .child(
+                    div()
+                        .relative()
+                        .flex_1()
+                        .min_h(px(0.))
+                        .child(float_zone(zones, FloatHit::Body))
+                        .child(float.view.clone()),
+                )
+                .into_any_element(),
+        )
+    }
+
+    /// Alt+click on a chip armed for a copy: the command line goes to both
+    /// clipboards, and the chip says so until the pointer next moves.
+    fn copy_chip(&mut self, hint: CopyHint, cx: &mut Context<Self>) {
+        cx.write_to_clipboard(ClipboardItem::new_string(hint.text.clone()));
+        cx.write_to_primary(ClipboardItem::new_string(hint.text.clone()));
+        self.copy_flash = Some(Instant::now());
+        self.copy_hint = Some(hint);
         cx.notify();
     }
 
@@ -4469,32 +4744,210 @@ impl TerminalView {
         was_open
     }
 
-    /// Whether a pointer lands on the floating square as the glass shows it.
-    ///
-    /// Through the warp's inverse, like the bench: the square is drawn inside
-    /// the bent tube, and gpui would hit-test its flat layout box and miss.
-    fn on_float(&self, pos: gpui::Point<Pixels>) -> bool {
-        let Some(float) = &self.float else {
-            return false;
-        };
-        if self.bench.face() != crate::workbench::Face::Terminal {
-            return false;
-        }
-        let Some(b) = self.content_bounds.lock().ok().and_then(|b| *b) else {
-            return false;
-        };
-        let screen = (
+    /// The screen (the warp tube) in window pixels, once it has been laid out.
+    fn tube_rect(&self) -> Option<(f32, f32, f32, f32)> {
+        let b = (*self.content_bounds.lock().ok()?)?;
+        Some((
             f32::from(b.origin.x),
             f32::from(b.origin.y),
             f32::from(b.size.width),
             f32::from(b.size.height),
-        );
-        point_on_float(
-            screen,
+        ))
+    }
+
+    /// Which part of the floating square a pointer is on as the glass shows
+    /// it, and the flat point it un-bent to. `None` when no square is up, or
+    /// the face is not the terminal's, or the pointer is off the square.
+    ///
+    /// Through the warp's inverse, like the bench: the square is drawn inside
+    /// the bent tube, and gpui would hit-test its flat layout box and miss.
+    fn float_hit(
+        &self,
+        pos: gpui::Point<Pixels>,
+    ) -> Option<(crate::docopen::FloatZone, (f32, f32))> {
+        let float = self.float.as_ref()?;
+        if self.bench.face() != crate::workbench::Face::Terminal {
+            return None;
+        }
+        let hit = float_hit_through_glass(
+            self.tube_rect()?,
             self.warp_k,
             float.rect,
+            &self.float_zones.borrow(),
             (f32::from(pos.x), f32::from(pos.y)),
-        )
+        );
+        if std::env::var_os("TD_HITDEBUG").is_some() {
+            eprintln!(
+                "[float-hit] pointer=({:.1},{:.1}) k=({:.3},{:.3}) zones={} -> {:?}",
+                f32::from(pos.x),
+                f32::from(pos.y),
+                self.warp_k.0,
+                self.warp_k.1,
+                self.float_zones.borrow().len(),
+                hit.map(|(z, flat)| (z.hit, flat))
+            );
+        }
+        hit
+    }
+
+    /// A press on the floating square: one of its controls, its strip, or the
+    /// document in it. Every press on the square is the square's, whatever it
+    /// lands on, so none of them starts a selection in the grid behind it.
+    fn float_press(
+        &mut self,
+        zone: crate::docopen::FloatZone,
+        flat: (f32, f32),
+        ev: &MouseDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use crate::docopen::FloatHit;
+        use crate::docview::ZoomStep;
+        let Some(float) = self.float.as_mut() else {
+            return;
+        };
+        let view = float.view.clone();
+        match zone.hit {
+            FloatHit::Close => {
+                self.close_float(cx);
+            }
+            FloatHit::Desktop => {
+                let path = view.read(cx).target().path.to_string_lossy().into_owned();
+                open_with_system(&path);
+            }
+            FloatHit::ZoomOut | FloatHit::ZoomFit | FloatHit::ZoomIn => {
+                let step = match zone.hit {
+                    FloatHit::ZoomOut => ZoomStep::Out,
+                    FloatHit::ZoomIn => ZoomStep::In,
+                    _ => ZoomStep::FitOrActual,
+                };
+                view.update(cx, |v, cx| v.zoom(step, cx));
+                // The strip's label reads the zoom, and the strip is ours.
+                cx.notify();
+            }
+            FloatHit::Strip => {
+                float.drag = Some(crate::docopen::FloatDrag::new(flat, float.rect));
+            }
+            FloatHit::Body => {
+                let at = gpui::point(px(flat.0 - zone.x), px(flat.1 - zone.y));
+                let mods = ev.modifiers;
+                float.holding = view.update(cx, |v, cx| v.press(at, mods, window, cx));
+            }
+        }
+    }
+
+    /// The pointer moved while the strip or the document is held. Answers
+    /// whether the move was the square's, so the grid's own drag code does
+    /// not also run and build a selection nobody can see.
+    fn float_drag_move(&mut self, ev: &MouseMoveEvent, cx: &mut Context<Self>) -> bool {
+        let Some(float) = self.float.as_ref() else {
+            return false;
+        };
+        if float.drag.is_none() && !float.holding {
+            return false;
+        }
+        // A release outside the window can go missing entirely; the next move
+        // with no button held is proof it happened.
+        if ev.pressed_button != Some(MouseButton::Left) {
+            self.float_drag_end(cx);
+            return false;
+        }
+        let Some(screen) = self.tube_rect() else {
+            return true;
+        };
+        let (k1, k2) = self.warp_k;
+        let flat = crate::workbench::unwarp(
+            screen,
+            k1,
+            k2,
+            f32::from(ev.position.x),
+            f32::from(ev.position.y),
+        );
+        let body = self
+            .float_zones
+            .borrow()
+            .iter()
+            .rev()
+            .find(|z| z.hit == crate::docopen::FloatHit::Body)
+            .copied();
+        let Some(float) = self.float.as_mut() else {
+            return false;
+        };
+        if let Some(drag) = float.drag.as_mut() {
+            let rect = crate::docopen::drag_to(drag, flat, screen.2, screen.3);
+            if rect != float.rect {
+                float.rect = rect;
+                cx.notify();
+            }
+        } else if let Some(body) = body {
+            let at = gpui::point(px(flat.0 - body.x), px(flat.1 - body.y));
+            float.view.update(cx, |v, cx| v.drag(at, cx));
+        }
+        true
+    }
+
+    /// The left button came up: a strip drag or a held document lets go.
+    /// Answers whether either was in progress.
+    fn float_drag_end(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(float) = self.float.as_mut() else {
+            return false;
+        };
+        let was_dragging = float.drag.take().is_some();
+        let was_holding = std::mem::take(&mut float.holding);
+        if was_holding {
+            float.view.update(cx, |v, cx| v.release(cx));
+        }
+        was_dragging || was_holding
+    }
+
+    /// The left button came up somewhere other than this pane. gpui hands a
+    /// pane its mouse-up only while the pointer is over it, and a square
+    /// dragged hard against an edge leaves the pointer outside; without this
+    /// the square would stay stuck to the pointer when it came back.
+    fn on_float_release_out(
+        &mut self,
+        _ev: &MouseUpEvent,
+        _w: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.float_drag_end(cx);
+    }
+
+    /// The pointer moved over the square: remember which control it is on, so
+    /// that control can say so. Notifies only on a change.
+    fn float_hover(&mut self, pos: gpui::Point<Pixels>, cx: &mut Context<Self>) {
+        if self.float.is_none() {
+            return;
+        }
+        let over = self.float_hit(pos).map(|(z, _)| z.hit).filter(|h| {
+            !matches!(
+                h,
+                crate::docopen::FloatHit::Strip | crate::docopen::FloatHit::Body
+            )
+        });
+        if let Some(float) = self.float.as_mut() {
+            if float.hover != over {
+                float.hover = over;
+                cx.notify();
+            }
+        }
+    }
+
+    /// A wheel turn over the floating square pans the document in it. Ctrl
+    /// held is the pane's text dial here as everywhere, so the chord is asked
+    /// first. Answers whether the turn was taken.
+    fn doc_wheel(&mut self, ev: &ScrollWheelEvent, cx: &mut Context<Self>) -> bool {
+        if self.size_by_wheel(ev, cx) {
+            return true;
+        }
+        if self.float_hit(ev.position).is_none() {
+            return false;
+        }
+        if let Some(float) = self.float.as_ref() {
+            let delta = ev.delta;
+            float.view.update(cx, |v, cx| v.wheel(delta, cx));
+        }
+        true
     }
 
     /// While drag-selecting, the signed scroll rate (lines/tick) for cursor
@@ -5510,7 +5963,22 @@ impl TerminalView {
         cx.notify();
     }
 
+    /// The pane's own wheel: over the floating square it pans the document,
+    /// anywhere else it scrolls. Ctrl+wheel is the text dial everywhere, the
+    /// square included, so it is decided first.
+    ///
+    /// The square is asked HERE and not in [`Self::scroll_by_wheel`], which
+    /// the FOCUS modal also calls with pointers over the modal: a square
+    /// hidden under the modal would otherwise take turns meant for the mirror.
     fn on_wheel(&mut self, ev: &ScrollWheelEvent, _w: &mut Window, cx: &mut Context<Self>) {
+        if self.size_by_wheel(ev, cx) {
+            cx.stop_propagation();
+            return;
+        }
+        if self.doc_wheel(ev, cx) {
+            cx.stop_propagation();
+            return;
+        }
         self.scroll_by_wheel(ev, cx);
     }
 
@@ -6366,10 +6834,15 @@ impl TerminalView {
         // THE FLOATING SQUARE lies over the grid and over the note, so a press
         // on it is its own and never the grid's behind it: a click on a picture
         // must not start a selection nobody can see. Found through the warp's
-        // inverse for the bench's reason. Its controls come with the next
-        // slice; until then the square takes the press and does nothing with it.
-        if ev.button == MouseButton::Left && self.on_float(ev.position) {
+        // inverse for the bench's reason, against zones its strip and body
+        // recorded as they painted. A right press is the square's too: the
+        // copy/paste tray would otherwise offer the link HIDDEN under it.
+        if let Some((zone, flat)) = self.float_hit(ev.position) {
+            if ev.button == MouseButton::Left {
+                self.float_press(zone, flat, ev, window, cx);
+            }
             cx.stop_propagation();
+            cx.notify();
             return;
         }
         // The note is a physical object lying on the glass, so a click lands on
@@ -6390,53 +6863,6 @@ impl TerminalView {
             cx.stop_propagation();
             return;
         }
-        // Alt+click on the armed copy chip takes the reconstructed line. Handled
-        // here rather than as a click target on the chip element: the chip is
-        // painted inside the warped tube, so gpui would hit-test it flat and land
-        // beside it, whereas `viewport_cell` (which `copy_hint_at` goes through)
-        // already inverts the warp. Falls through untouched when no chip is armed,
-        // so Alt+click still reaches an app that asked for mouse reporting.
-        //
-        // A DOCUMENT under the pointer wins over the copy: Alt+click on a path
-        // TD can draw opens it in a floating square beside the line, on any
-        // line and on the alt screen too, because the pointer is on the path
-        // and the path is what was meant. The decision is
-        // `docopen::alt_click`. Only a bare Alt: ctrl+alt on a document is the
-        // split's gesture and keeps doing what it did until the split exists.
-        if ev.button == MouseButton::Left && ev.modifiers.alt {
-            let doc = (!ev.modifiers.control
-                && !ev.modifiers.platform
-                && self.bench.face() == crate::workbench::Face::Terminal)
-                .then(|| self.document_under(ev.position))
-                .flatten();
-            let hint = self.copy_hint_at(ev.position);
-            let alt_screen = self
-                .session
-                .term
-                .lock()
-                .mode()
-                .contains(TermMode::ALT_SCREEN);
-            match crate::docopen::alt_click(alt_screen, hint.is_some(), doc) {
-                Some(crate::docopen::AltClick::OpenHere(target)) => {
-                    let (row, _, _) = self.viewport_cell(ev.position);
-                    self.open_float(target, Some(row), cx);
-                    cx.stop_propagation();
-                    return;
-                }
-                Some(crate::docopen::AltClick::Copy) => {
-                    if let Some(hint) = hint {
-                        cx.write_to_clipboard(ClipboardItem::new_string(hint.text.clone()));
-                        cx.write_to_primary(ClipboardItem::new_string(hint.text.clone()));
-                        self.copy_flash = Some(Instant::now());
-                        self.copy_hint = Some(hint);
-                        cx.stop_propagation();
-                        cx.notify();
-                        return;
-                    }
-                }
-                None => {}
-            }
-        }
         // right-click → copy/paste context menu at the cursor
         if ev.button == MouseButton::Right {
             self.ctx_menu = Some(ev.position);
@@ -6450,29 +6876,97 @@ impl TerminalView {
         if self.hdr_overflow.take().is_some() {
             cx.notify();
         }
-        // Super+Ctrl-click REVEALS the file instead of opening it: the file
-        // manager comes up with the item selected, which is the other question a
-        // printed path provokes ("where does this live?", "what else is beside
-        // it?"). Tested before the plain Ctrl-click branch below, because that
-        // one also matches when Super is held. A target with nothing on disk to
-        // show — an http link — falls through and simply opens, as before.
-        if ev.button == MouseButton::Left && ev.modifiers.platform && ev.modifiers.control {
-            if let Some(item) = self
-                .link_under(ev.position)
-                .as_deref()
-                .and_then(reveal_target)
-            {
-                reveal_with_system(&item);
-                cx.notify();
-                return;
+        // EVERY MODIFIED CLICK ON A PATH OR LINK, decided in one table:
+        // `docopen::click_intent`. Alt on a document opens it in a floating
+        // square beside the line; Alt on an armed chip copies the command
+        // line; Shift on a file reveals it in the file manager, Super+Ctrl
+        // too; Shift or Ctrl on anything else opens it with the desktop. A
+        // modified click on nothing falls through to a selection, and so does
+        // Alt+click with no chip armed, so it still reaches an app that asked
+        // for mouse reporting.
+        //
+        // Resolved here rather than as click targets on the chip or the
+        // link: both are painted inside the warped tube, so gpui would
+        // hit-test them flat and land beside them, whereas `viewport_cell`
+        // (which `link_under` and `alt_hint_at` go through) inverts the warp.
+        // The grid is read only when a modifier is held, so a plain click
+        // costs what it always did.
+        if ev.button == MouseButton::Left
+            && (ev.modifiers.alt || ev.modifiers.shift || ev.modifiers.control)
+        {
+            let mods = crate::docopen::Mods {
+                alt: ev.modifiers.alt,
+                control: ev.modifiers.control,
+                shift: ev.modifiers.shift,
+                platform: ev.modifiers.platform,
+            };
+            let link = self.link_under(ev.position);
+            let revealable = link.as_deref().and_then(reveal_target);
+            let doc = (mods.alt && self.bench.face() == crate::workbench::Face::Terminal)
+                .then(|| link.as_deref().and_then(|l| self.document_of(l)))
+                .flatten();
+            // The chip a copy would take, asked without the document: it is
+            // armed for a copy exactly when the line is a command line.
+            let copy = mods
+                .alt
+                .then(|| self.alt_hint_at(ev.position, None))
+                .flatten()
+                .filter(|h| h.does == crate::docopen::AltClick::Copy);
+            let intent = crate::docopen::click_intent(
+                mods,
+                doc.is_some(),
+                link.is_some(),
+                revealable.is_some(),
+                copy.is_some(),
+            );
+            use crate::docopen::ClickIntent;
+            // What the click did, if anything. The Alt gestures stop the event
+            // here, as the chip always has; opening and revealing let it
+            // bubble, as they always have.
+            enum Took {
+                Stop,
+                Bubble,
             }
-        }
-        // Shift- or Ctrl-click opens a link/path under the cursor with the system
-        // default tool, instead of starting a selection. A modified click that
-        // isn't on a link falls through to normal selection behaviour.
-        if (ev.modifiers.shift || ev.modifiers.control) && ev.button == MouseButton::Left {
-            if let Some(target) = self.link_under(ev.position) {
-                open_with_system(&target);
+            let took = match intent {
+                ClickIntent::OpenHere => {
+                    if let Some(target) = doc {
+                        let (row, _, _) = self.viewport_cell(ev.position);
+                        self.open_float(target, Some(row), cx);
+                    }
+                    Some(Took::Stop)
+                }
+                // The split this names arrives with the split. Until then
+                // Ctrl+Alt on a document does what it always did: copy an
+                // armed command line, or else open the path with the desktop.
+                ClickIntent::OpenBeside => match (copy, link) {
+                    (Some(hint), _) => {
+                        self.copy_chip(hint, cx);
+                        Some(Took::Stop)
+                    }
+                    (None, Some(target)) => {
+                        open_with_system(&target);
+                        Some(Took::Bubble)
+                    }
+                    (None, None) => None,
+                },
+                ClickIntent::CopyChip => copy.map(|hint| {
+                    self.copy_chip(hint, cx);
+                    Took::Stop
+                }),
+                ClickIntent::Reveal => revealable.map(|item| {
+                    reveal_with_system(&item);
+                    Took::Bubble
+                }),
+                ClickIntent::OpenWithDesktop => link.map(|target| {
+                    open_with_system(&target);
+                    Took::Bubble
+                }),
+                ClickIntent::Pass => None,
+            };
+            if let Some(took) = took {
+                if matches!(took, Took::Stop) {
+                    cx.stop_propagation();
+                }
                 cx.notify();
                 return;
             }
@@ -6501,14 +6995,25 @@ impl TerminalView {
         if self.bench.face() == crate::workbench::Face::Workbench {
             self.bench_hover(ev.position, cx);
         }
+        // A held strip or a held document owns the pointer, ahead of anything
+        // else that reads a move: the square follows the hand, or the picture
+        // in it does, and the grid behind builds no selection.
+        if self.float_drag_move(ev, cx) {
+            return;
+        }
+        // The square's controls light under the pointer. Notifies on a change.
+        self.float_hover(ev.position, cx);
         // The peel corner curls under the pointer. No-op with no note stuck here,
         // and it only notifies on a change, so ordinary mousing costs nothing.
         self.sticky_hover(ev.position, cx);
-        // The Alt-held copy affordance. Gated on the modifier so the grid is only
-        // re-read while Alt is actually down — ordinary mousing costs nothing, and
-        // nothing can arm by accident.
+        // The Alt-held chip. Gated on the modifier so the grid is only re-read
+        // while Alt is actually down — ordinary mousing costs nothing, and
+        // nothing can arm by accident. A document is asked about only for a
+        // bare Alt, the only Alt that opens one here.
         let hint = if ev.modifiers.alt {
-            self.copy_hint_at(ev.position)
+            let bare = !ev.modifiers.control && !ev.modifiers.platform;
+            let doc = bare.then(|| self.document_under(ev.position)).flatten();
+            self.alt_hint_at(ev.position, doc)
         } else {
             None
         };
@@ -6548,6 +7053,11 @@ impl TerminalView {
     }
 
     fn on_mouse_up(&mut self, _ev: &MouseUpEvent, _w: &mut Window, cx: &mut Context<Self>) {
+        // A held strip or document lets go first; the press was the square's,
+        // so its release is too.
+        if self.float_drag_end(cx) {
+            return;
+        }
         // The bench first: a press it deferred either fires now as a click or
         // settles as a selection. Returns false on the terminal face and on
         // any press it did not take, so the grid's own release still runs.
@@ -7603,6 +8113,8 @@ impl TerminalView {
 impl Render for TerminalView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let th = self.resolved_theme(cx);
+        // The floating square re-records where its controls are as it paints.
+        self.float_zones.borrow_mut().clear();
         // right-click context menu (Copy / Paste / Open link), anchored at the cursor
         let ctx_menu_el = self.ctx_menu.map(|pos| {
             let link = self.link_under(pos);
@@ -7627,6 +8139,22 @@ impl Render for TerminalView {
                     .hover(move |s| s.bg(acc.alpha(0.22)))
                     .child(label.to_string())
             };
+            // A link row: the action, and the click that does the same thing
+            // without the menu, dim at the right edge.
+            let link_row = |label: &str, keys: &'static str| {
+                div()
+                    .px(px(13.))
+                    .py(px(5.))
+                    .flex()
+                    .justify_between()
+                    .gap(px(18.))
+                    .cursor_pointer()
+                    .text_color(txt)
+                    .hover(move |s| s.bg(acc.alpha(0.22)))
+                    .child(label.to_string())
+                    .child(div().text_color(faint).child(keys))
+            };
+            let s = crate::lang::current().strings();
             let mut menu = div()
                 .flex()
                 .flex_col()
@@ -7641,32 +8169,78 @@ impl Render for TerminalView {
                 .font_family(ff)
                 .shadow_md();
             if let Some(l) = link {
-                // Reveal is offered only where there is a file to point at, so
-                // the item never appears dead on an http link.
+                // The rows come from `docopen::link_menu`, so a row is offered
+                // only where it does something: Open here on a document TD can
+                // draw, Reveal where there is a file to point at, never on an
+                // http link. Copy link copies what the click resolved — the
+                // absolute path, or the URL.
                 let item = reveal_target(&l);
-                menu = menu.child(row("Open link  ↗", true).on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(move |v, _, _, cx| {
-                        open_with_system(&l);
-                        v.ctx_menu = None;
-                        cx.stop_propagation();
-                        cx.notify();
-                    }),
-                ));
-                if let Some(item) = item {
-                    menu = menu.child(row("Reveal in folder  ⌖", true).on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(move |v, _, _, cx| {
-                            reveal_with_system(&item);
-                            v.ctx_menu = None;
-                            cx.stop_propagation();
-                            cx.notify();
-                        }),
-                    ));
+                // The square floats over the terminal face only.
+                let doc = (self.bench.face() == crate::workbench::Face::Terminal)
+                    .then(|| self.document_of(&l))
+                    .flatten();
+                let (row_at, _, _) = self.viewport_cell(pos);
+                for entry in crate::docopen::link_menu(doc.is_some(), item.is_some()) {
+                    let el = match entry {
+                        crate::docopen::LinkItem::OpenHere => {
+                            let doc = doc.clone();
+                            link_row(s.m_open_here, "alt+click").on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |v, _, _, cx| {
+                                    if let Some(doc) = doc.clone() {
+                                        v.open_float(doc, Some(row_at), cx);
+                                    }
+                                    v.ctx_menu = None;
+                                    cx.stop_propagation();
+                                    cx.notify();
+                                }),
+                            )
+                        }
+                        crate::docopen::LinkItem::OpenWithDesktop => {
+                            let l = l.clone();
+                            link_row(s.m_open_desktop, "ctrl+click").on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |v, _, _, cx| {
+                                    open_with_system(&l);
+                                    v.ctx_menu = None;
+                                    cx.stop_propagation();
+                                    cx.notify();
+                                }),
+                            )
+                        }
+                        crate::docopen::LinkItem::Reveal => {
+                            let item = item.clone().unwrap_or_default();
+                            link_row(s.m_reveal, "shift+click").on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |v, _, _, cx| {
+                                    reveal_with_system(&item);
+                                    v.ctx_menu = None;
+                                    cx.stop_propagation();
+                                    cx.notify();
+                                }),
+                            )
+                        }
+                        crate::docopen::LinkItem::CopyLink => {
+                            let l = l.clone();
+                            link_row(s.m_copy_link, "").on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |v, _, _, cx| {
+                                    cx.write_to_clipboard(ClipboardItem::new_string(l.clone()));
+                                    cx.write_to_primary(ClipboardItem::new_string(l.clone()));
+                                    v.ctx_menu = None;
+                                    cx.stop_propagation();
+                                    cx.notify();
+                                }),
+                            )
+                        }
+                    };
+                    menu = menu.child(el);
                 }
+                // A rule between what the link offers and what the pane does.
+                menu = menu.child(div().my(px(3.)).h(px(1.)).bg(faint.alpha(0.35)));
             }
             menu = menu
-                .child(row("Copy", has_sel).on_mouse_down(
+                .child(row(s.m_copy, has_sel).on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|v, _, _, cx| {
                         if !v.bench_copy(cx) {
@@ -7677,7 +8251,7 @@ impl Render for TerminalView {
                         cx.notify();
                     }),
                 ))
-                .child(row("Paste", true).on_mouse_down(
+                .child(row(s.m_paste, true).on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|v, _, _, cx| {
                         v.paste_clipboard(cx);
@@ -7686,7 +8260,7 @@ impl Render for TerminalView {
                         cx.notify();
                     }),
                 ))
-                .child(row("Clear scrollback", true).on_mouse_down(
+                .child(row(s.m_clear, true).on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|v, _, _, cx| {
                         v.clear_scrollback(cx);
@@ -8732,11 +9306,11 @@ impl Render for TerminalView {
                         .rounded(px(4.))
                         .text_color(acc)
                         .text_size(px(11.))
-                        .child(if copied {
-                            "✓ copied"
-                        } else {
-                            "⎘ alt+click"
-                        }),
+                        .child(chip_label(
+                            &hint.does,
+                            copied,
+                            crate::lang::current().strings(),
+                        )),
                 )
         });
         // The sticky note. Its geometry comes from the same `content_bounds` the
@@ -8773,67 +9347,7 @@ impl Render for TerminalView {
             )
         });
 
-        // The floating document, drawn with the hyperglow every surface that
-        // floats wears (`float_shadows` plus a two-pixel rim in the accent).
-        // Only on the terminal face: the bench is its own opaque surface, and a
-        // square over it would belong to neither.
-        let float_el = self
-            .float
-            .as_ref()
-            .filter(|_| face_now == crate::workbench::Face::Terminal)
-            .map(|float| {
-                let (w, h) = self.screen_size().unwrap_or((0.0, 0.0));
-                let r = crate::docopen::clamp_float(float.rect, w, h);
-                let name = float
-                    .view
-                    .read(cx)
-                    .target()
-                    .path
-                    .file_name()
-                    .map(|n| n.to_string_lossy().into_owned())
-                    .unwrap_or_default();
-                div()
-                    .absolute()
-                    .left(px(r.x))
-                    .top(px(r.y))
-                    .w(px(r.w))
-                    .h(px(r.h))
-                    .flex()
-                    .flex_col()
-                    .bg(th.bg)
-                    .border_2()
-                    .border_color(th.accent)
-                    .rounded(px(6.))
-                    .shadow(crate::float_shadows(th.accent))
-                    .overflow_hidden()
-                    .child(
-                        div()
-                            .flex_none()
-                            .h(px(22.))
-                            .px(px(8.))
-                            .flex()
-                            .items_center()
-                            .justify_between()
-                            .gap(px(8.))
-                            .border_b_1()
-                            .border_color(th.accent.alpha(0.4))
-                            .text_size(px(11.))
-                            .text_color(th.accent)
-                            .child(
-                                div()
-                                    .overflow_hidden()
-                                    .whitespace_nowrap()
-                                    .child(gpui::SharedString::from(name)),
-                            )
-                            .child(
-                                div()
-                                    .flex_none()
-                                    .text_color(th.accent.alpha(0.7))
-                                    .child("esc ✕"),
-                            ),
-                    )
-                    .child(div().flex_1().min_h(px(0.)).child(float.view.clone()))
-            });
+        let float_el = self.float_el(&th, face_now, cx);
 
         div()
             .track_focus(&self.focus_handle(cx))
@@ -8852,6 +9366,12 @@ impl Render for TerminalView {
             .on_mouse_down(MouseButton::Right, cx.listener(Self::on_mouse_down))
             .on_mouse_move(cx.listener(Self::on_mouse_move))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
+            // A square dragged against the pane's edge leaves the pointer
+            // outside it, and gpui hands this pane its mouse-up only while the
+            // pointer is over it. The release that ends the drag is caught
+            // here instead, or the square stays stuck to the hand. Guarded by
+            // `the_pane_releases_a_float_drag_outside_itself`.
+            .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_float_release_out))
             // A FILE DROPPED ON THIS PANE, and it is registered HERE for the
             // same reason every other bench gesture is: gpui hit-tests the
             // flat layout tree, the bench is drawn bent, and a drop target
@@ -9503,8 +10023,11 @@ mod tests {
             "the two handlers that actually consume a turn are {names:?}"
         );
 
-        // Four named handlers and one closure. A fifth is not forbidden — it
+        // Five named handlers and one closure. A sixth is not forbidden — it
         // is unreviewed, and the chord is what it has to be reviewed against.
+        // `doc_wheel` is the floating square's: ctrl+wheel over it is still
+        // the pane's text dial, and it asks the chord itself rather than
+        // trusting that `on_wheel` always asked first.
         let named: Vec<&str> = names
             .iter()
             .copied()
@@ -9513,6 +10036,7 @@ mod tests {
         assert_eq!(
             named,
             vec![
+                "doc_wheel",
                 "on_wheel",
                 "size_by_wheel",
                 "scroll_by_wheel",
@@ -12036,6 +12560,126 @@ mod tests {
             screen.1 + rect.y + rect.h / 2.0,
         );
         assert!(point_on_float(screen, (0.2, 0.05), rect, centre));
+
+        // The strip — the part a person grabs to move the square — is found
+        // through the same inverse. Zones are recorded flat, in window pixels,
+        // as the square paints; a pointer is un-bent before it is looked up.
+        use crate::docopen::{FloatHit, FloatZone};
+        let (x, y) = (screen.0 + rect.x, screen.1 + rect.y);
+        let zones = [
+            FloatZone {
+                x,
+                y,
+                w: rect.w,
+                h: 22.0,
+                hit: FloatHit::Strip,
+            },
+            FloatZone {
+                x: x + rect.w - 40.0,
+                y,
+                w: 40.0,
+                h: 22.0,
+                hit: FloatHit::Close,
+            },
+            FloatZone {
+                x,
+                y: y + 22.0,
+                w: rect.w,
+                h: rect.h - 22.0,
+                hit: FloatHit::Body,
+            },
+        ];
+        let flat_zone =
+            |pos: (f32, f32)| crate::docopen::float_hit_at(&zones, pos.0, pos.1).map(|z| z.hit);
+        let bent = |k: (f32, f32), pos: (f32, f32)| {
+            float_hit_through_glass(screen, k, rect, &zones, pos).map(|(z, _)| z.hit)
+        };
+        let mut strip_only_through_the_glass = 0;
+        for i in 0..400 {
+            for j in 0..320 {
+                let pos = (screen.0 + i as f32 * 2.5, screen.1 + j as f32 * 2.5);
+                assert_eq!(
+                    bent((0.0, 0.0), pos),
+                    flat_zone(pos),
+                    "a flat pane finds exactly the zone it drew: {pos:?}"
+                );
+                if bent((0.2, 0.05), pos) == Some(FloatHit::Strip)
+                    && flat_zone(pos) != Some(FloatHit::Strip)
+                {
+                    strip_only_through_the_glass += 1;
+                }
+            }
+        }
+        assert!(
+            strip_only_through_the_glass > 0,
+            "on a bent pane, somewhere a press misses the strip flat and finds it through the glass"
+        );
+        // Between opening the square and its first paint there are no zones,
+        // and a press on it is still its own.
+        assert_eq!(
+            float_hit_through_glass(screen, (0.2, 0.05), rect, &[], centre).map(|(z, _)| z.hit),
+            Some(FloatHit::Body)
+        );
+    }
+
+    /// The chip arms over a document on a line that is not a command — the
+    /// deliverable line in mockup 01 begins `Deliverable:` — and says it will
+    /// open it. A command line still arms for a copy, a path inside a command
+    /// line opens rather than copies, and prose with no document stays silent.
+    #[test]
+    fn the_alt_chip_offers_open_here_on_a_line_that_is_not_a_command() {
+        use crate::docopen::{AltClick, DocKind, DocTarget};
+        let doc = DocTarget {
+            path: "/tmp/graphics-protocols.md".into(),
+            kind: DocKind::Markdown,
+        };
+        let prose = "Deliverable: /tmp/graphics-protocols.md";
+        let command = "cargo test -p terminal-delight --lib host";
+
+        let hint = alt_hint(false, 5, Some((prose, 4, 6)), Some(doc.clone()))
+            .expect("a document arms the chip on a prose line");
+        assert_eq!(hint.does, AltClick::OpenHere(doc.clone()));
+        assert_eq!(
+            (hint.first_paint, hint.last_paint),
+            (4, 6),
+            "it frames the whole line"
+        );
+
+        let hint = alt_hint(false, 2, Some((command, 2, 2)), None).expect("a command copies");
+        assert_eq!(hint.does, AltClick::Copy);
+        assert_eq!(hint.text, command);
+
+        let hint = alt_hint(false, 2, Some((command, 2, 2)), Some(doc.clone()))
+            .expect("a path on a command line");
+        assert_eq!(hint.does, AltClick::OpenHere(doc.clone()));
+
+        assert_eq!(alt_hint(false, 5, Some((prose, 4, 6)), None), None);
+
+        // The alt screen: a document still arms, framing only the pointer's
+        // row; a line that reads as a command never does.
+        let hint =
+            alt_hint(true, 9, None, Some(doc.clone())).expect("a document on the alt screen");
+        assert_eq!(
+            (hint.first_paint, hint.last_paint, hint.does),
+            (9, 9, AltClick::OpenHere(doc))
+        );
+        assert_eq!(alt_hint(true, 2, Some((command, 2, 2)), None), None);
+    }
+
+    /// The chip names what the click will do, and the flash after a copy says
+    /// it happened — never after an open, which puts the square on screen.
+    #[test]
+    fn the_chip_says_open_here_over_a_document_and_copy_over_a_command() {
+        use crate::docopen::{AltClick, DocKind, DocTarget};
+        let en = crate::lang::Lang::En.strings();
+        let open = AltClick::OpenHere(DocTarget {
+            path: "/tmp/a.png".into(),
+            kind: DocKind::Image,
+        });
+        assert_eq!(chip_label(&open, false, en), "◳ alt+click · open here");
+        assert_eq!(chip_label(&open, true, en), "◳ alt+click · open here");
+        assert_eq!(chip_label(&AltClick::Copy, false, en), "⎘ alt+click · copy");
+        assert_eq!(chip_label(&AltClick::Copy, true, en), "✓ copied");
     }
 
     #[test]
@@ -12049,34 +12693,128 @@ mod tests {
         assert_eq!(reveal_target("https://example.com/a.png"), None);
     }
 
-    /// Alt+click is decided in one place, and the document is asked about
-    /// before the clipboard is written: otherwise a path inside a command line
-    /// copies the line instead of opening the path under the pointer.
+    /// Every modified click on a path is decided by one table,
+    /// `docopen::click_intent`, before anything opens, reveals or copies — so
+    /// the gestures cannot drift apart from the table the tests hold. The two
+    /// branches that used to decide it inline are gone: the one that made
+    /// Shift+click OPEN a file (it reveals now), and Super+Ctrl's own.
     #[test]
-    fn alt_click_asks_about_a_document_before_it_copies() {
+    fn the_pane_click_handler_decides_through_click_intent() {
         let code = live_code();
-        let at = code
-            .find("fn on_mouse_down(&mut self, ev: &MouseDownEvent")
-            .expect("on_mouse_down");
-        let end = code[at..].find("\n    fn ").expect("end of on_mouse_down");
-        let body = &code[at..at + end];
+        let body = method_body(&code, "fn on_mouse_down(&mut self, ev: &MouseDownEvent");
         let decide = body
-            .find("docopen::alt_click(")
-            .expect("Alt+click goes through docopen::alt_click");
-        let copy = body
-            .find("write_to_clipboard(")
-            .expect("the copy is still there");
-        assert!(
-            decide < copy,
-            "the document must be asked about before the copy"
-        );
+            .find("docopen::click_intent(")
+            .expect("on_mouse_down decides through docopen::click_intent");
+        for act in [
+            "open_with_system(",
+            "reveal_with_system(",
+            "self.copy_chip(",
+            "self.open_float(",
+        ] {
+            let at = body
+                .find(act)
+                .unwrap_or_else(|| panic!("{act} is still reachable"));
+            assert!(decide < at, "{act} must come after the table decides");
+        }
+        for gone in [
+            "(ev.modifiers.shift || ev.modifiers.control) &&",
+            "ev.modifiers.platform && ev.modifiers.control",
+            "docopen::alt_click(",
+        ] {
+            assert!(
+                !body.contains(gone),
+                "on_mouse_down decides `{gone}` inline again"
+            );
+        }
         let float = body
-            .find("self.on_float(")
+            .find("self.float_hit(")
             .expect("a press on the square is the square's");
         let sticky = body.find("self.sticky_click(").expect("sticky_click");
         assert!(
-            float < sticky,
-            "the square lies over the note, so it is asked first"
+            float < sticky && float < decide,
+            "the square lies over the note and the grid, so it is asked first"
+        );
+        // The copy path goes through the chip resolver, never the old one.
+        assert!(!code.contains("fn copy_hint_at("));
+    }
+
+    /// A square dragged against the pane's edge leaves the pointer outside
+    /// the pane, where gpui stops handing the pane its mouse-up. The release
+    /// is caught by `on_mouse_up_out` or the square stays stuck to the hand.
+    /// And a held square owns the pointer: its move is taken before the grid
+    /// can build a selection behind it, and its release before the bench's.
+    #[test]
+    fn the_pane_releases_a_float_drag_outside_itself() {
+        let code = live_code();
+        assert!(
+            code.contains(
+                ".on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_float_release_out))"
+            ),
+            "the pane root must catch a release outside itself"
+        );
+        let out = method_body(&code, "fn on_float_release_out(");
+        assert!(out.contains("self.float_drag_end(cx)"), "{out}");
+        let up = method_body(&code, "fn on_mouse_up(");
+        let end = up
+            .find("self.float_drag_end(cx)")
+            .expect("on_mouse_up ends a float drag");
+        let bench = up.find("self.bench_release_at(").expect("bench release");
+        assert!(end < bench, "the square's release comes first");
+        let mv = method_body(&code, "fn on_mouse_move(");
+        let drag = mv
+            .find("self.float_drag_move(ev, cx)")
+            .expect("on_mouse_move drags the square");
+        let select = mv.find("sel.update(").expect("the grid's selection drag");
+        assert!(drag < select, "the square's drag comes before the grid's");
+    }
+
+    /// The wheel over the floating square pans the document in it, un-bent,
+    /// through the view's own `wheel` — and the FOCUS modal, which scrolls the
+    /// mirror through `scroll_by_wheel` with pointers over the modal, can
+    /// never reach a square hidden underneath it. Ctrl+wheel stays the text
+    /// dial, over the square too.
+    #[test]
+    fn the_wheel_over_a_float_pans_the_document_not_the_scrollback() {
+        let code = live_code();
+        let on_wheel = method_body(&code, "fn on_wheel(");
+        let doc = on_wheel
+            .find("self.doc_wheel(ev, cx)")
+            .expect("on_wheel asks the square");
+        let scroll = on_wheel
+            .find("self.scroll_by_wheel(ev, cx)")
+            .expect("then scrolls");
+        assert!(doc < scroll);
+        let chord = on_wheel
+            .find("self.size_by_wheel(ev, cx)")
+            .expect("on_wheel asks the size chord");
+        assert!(
+            chord < doc,
+            "ctrl+wheel is the text dial, even over the square"
+        );
+        let scroll_body = method_body(&code, "pub fn scroll_by_wheel(");
+        assert!(!scroll_body.contains("doc_wheel("));
+        let doc_wheel = method_body(&code, "fn doc_wheel(");
+        assert!(doc_wheel.contains("self.float_hit(ev.position)"), "un-bent");
+        assert!(doc_wheel.contains("v.wheel(delta, cx)"), "through the view");
+    }
+
+    /// The right-click menu's link rows come from the same table the tests
+    /// hold, so a row appears exactly where it does something.
+    #[test]
+    fn the_link_menu_rows_come_from_the_table() {
+        let code = live_code();
+        assert!(code.contains("crate::docopen::link_menu(doc.is_some(), item.is_some())"));
+        for row in [
+            "s.m_open_here",
+            "s.m_open_desktop",
+            "s.m_reveal",
+            "s.m_copy_link",
+        ] {
+            assert!(code.contains(row), "the menu draws {row}");
+        }
+        assert!(
+            !code.contains("\"Open link  ↗\""),
+            "the old literal row is gone"
         );
     }
 

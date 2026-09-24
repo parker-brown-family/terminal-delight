@@ -19,6 +19,12 @@
 //! outside the screen. It is measured in the pane's own logical pixels, relative
 //! to the screen's top-left, so a resized pane carries it along.
 //!
+//! **What a modified click does** on a path or link is one table,
+//! [`click_intent`], and the right-click menu's link rows are another,
+//! [`link_menu`]. Moving the square by its strip and finding which of its
+//! controls a pointer is on are here too ([`drag_to`], [`float_hit_at`]); the
+//! pane un-bends the pointer before asking, so everything in this file is flat.
+//!
 //! # Why this module imports nothing
 //!
 //! Zero `use` statements, like `keylayer.rs`: it compiles standalone, so
@@ -141,6 +147,113 @@ pub fn alt_click(
     (line_is_command && !on_alt_screen).then_some(AltClick::Copy)
 }
 
+/// The modifier keys a click was made with, as the click table reads them.
+///
+/// Built from `gpui::Modifiers` where the click arrives, so this file keeps
+/// its zero imports. `platform` is Super on Linux.
+#[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
+pub struct Mods {
+    pub alt: bool,
+    pub control: bool,
+    pub shift: bool,
+    pub platform: bool,
+}
+
+/// What a left click on the grid does, before any selection starts.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ClickIntent {
+    /// Open the document under the pointer in a floating square.
+    OpenHere,
+    /// Ctrl+Alt on a document. The split it names arrives with the split
+    /// itself; until then the pane does what this click always did, which is
+    /// copy an armed command line or else open the path with the desktop.
+    OpenBeside,
+    /// Copy the command line the Alt chip is framing.
+    CopyChip,
+    /// Show the file in the file manager with the item selected.
+    Reveal,
+    /// Hand the link or path to the desktop's opener.
+    OpenWithDesktop,
+    /// None of the above: the click starts a selection, as a plain click does.
+    Pass,
+}
+
+/// Every modified left click on a path or link, as one table.
+///
+/// Read top to bottom; the first row that matches decides:
+///
+/// | held          | under the pointer          | does            |
+/// |---------------|----------------------------|-----------------|
+/// | ctrl+alt      | a document                 | OpenBeside      |
+/// | alt           | a document                 | OpenHere        |
+/// | alt           | an armed copy chip         | CopyChip        |
+/// | super+ctrl    | a file on this disk        | Reveal          |
+/// | shift         | a file on this disk        | Reveal          |
+/// | shift or ctrl | any link                   | OpenWithDesktop |
+/// | anything else |                            | Pass            |
+///
+/// Shift+click on a file used to open it, the same as Ctrl+click; it reveals
+/// now, so the two modifiers stop meaning one thing. A web link has nothing on
+/// disk to reveal, so Shift keeps opening it. Super keeps Alt out of the
+/// document rows: Super+Ctrl was already reveal, and nothing should change
+/// underneath a gesture somebody already knows.
+pub fn click_intent(
+    m: Mods,
+    on_document: bool,
+    on_link: bool,
+    revealable: bool,
+    chip_armed: bool,
+) -> ClickIntent {
+    if m.alt && on_document && !m.platform {
+        return if m.control {
+            ClickIntent::OpenBeside
+        } else {
+            ClickIntent::OpenHere
+        };
+    }
+    if m.alt && chip_armed {
+        return ClickIntent::CopyChip;
+    }
+    if m.platform && m.control && revealable {
+        return ClickIntent::Reveal;
+    }
+    if m.shift && revealable {
+        return ClickIntent::Reveal;
+    }
+    if (m.shift || m.control) && on_link {
+        return ClickIntent::OpenWithDesktop;
+    }
+    ClickIntent::Pass
+}
+
+/// One row of the link half of the right-click menu.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum LinkItem {
+    OpenHere,
+    OpenWithDesktop,
+    Reveal,
+    CopyLink,
+}
+
+/// The link rows of the right-click menu, in the order they are drawn.
+///
+/// Only rows that do something today: a document opens here, anything opens
+/// with the desktop, a file on this disk reveals, and every link can be
+/// copied. Copy link is what Alt+click used to give on a command line that
+/// was mostly a path; now that Alt+click opens the path, the copy lives here.
+pub fn link_menu(is_document: bool, revealable: bool) -> Vec<LinkItem> {
+    let mut items = Vec::with_capacity(4);
+    if is_document {
+        items.push(LinkItem::OpenHere);
+    }
+    items.push(LinkItem::OpenWithDesktop);
+    if revealable {
+        items.push(LinkItem::Reveal);
+    }
+    items.push(LinkItem::CopyLink);
+    items
+}
+
 /// The floating square: flat, in logical pixels, relative to the top-left of
 /// the pane's screen (the area below the header).
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -203,6 +316,105 @@ pub fn clamp_float(r: FloatRect, screen_w: f32, screen_h: f32) -> FloatRect {
         w,
         h,
     }
+}
+
+/// How far the pointer travels on the strip before a press becomes a drag.
+/// The literal the pane drag uses, so the two feel the same under the hand.
+pub const FLOAT_DRAG_ENGAGE: f32 = 6.0;
+
+/// A press on the square's strip, on its way to becoming a move.
+///
+/// Every point is flat (un-bent through the tube's inverse) and in window
+/// pixels. `origin` is where the square was when the press landed, so the
+/// square follows the pointer's travel rather than accumulating per-move
+/// rounding.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct FloatDrag {
+    pub start: (f32, f32),
+    pub at: (f32, f32),
+    pub origin: FloatRect,
+    pub engaged: bool,
+}
+
+impl FloatDrag {
+    pub fn new(start: (f32, f32), origin: FloatRect) -> Self {
+        Self {
+            start,
+            at: start,
+            origin,
+            engaged: false,
+        }
+    }
+}
+
+/// Move a drag to `flat` and answer where the square is drawn now.
+///
+/// Nothing moves until the pointer has travelled more than
+/// [`FLOAT_DRAG_ENGAGE`] from the press, so a click on the strip that wobbles
+/// a pixel does not nudge the square. Once engaged it stays engaged, even if
+/// the pointer comes back, and the square is clamped inside the screen: it
+/// can be pushed against an edge but never through it.
+pub fn drag_to(d: &mut FloatDrag, flat: (f32, f32), screen_w: f32, screen_h: f32) -> FloatRect {
+    d.at = flat;
+    let (dx, dy) = (flat.0 - d.start.0, flat.1 - d.start.1);
+    if !d.engaged && (dx * dx + dy * dy).sqrt() > FLOAT_DRAG_ENGAGE {
+        d.engaged = true;
+    }
+    if !d.engaged {
+        return d.origin;
+    }
+    clamp_float(
+        FloatRect {
+            x: d.origin.x + dx,
+            y: d.origin.y + dy,
+            ..d.origin
+        },
+        screen_w,
+        screen_h,
+    )
+}
+
+/// What part of the floating square a flat point is on.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum FloatHit {
+    /// The title strip, anywhere a button is not: pressing here moves it.
+    Strip,
+    /// "↗ desktop": open the file with the desktop's own application.
+    Desktop,
+    /// "✕ esc": close the square, as Escape does.
+    Close,
+    /// Zoom out one step.
+    ZoomOut,
+    /// Between fitting the square and one image pixel per device pixel.
+    ZoomFit,
+    /// Zoom in one step.
+    ZoomIn,
+    /// The document itself.
+    Body,
+}
+
+/// One region of the square as it was laid out, flat, in window pixels.
+/// Recorded while the square paints, so a button's width follows its font
+/// and nothing here guesses it.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct FloatZone {
+    pub x: f32,
+    pub y: f32,
+    pub w: f32,
+    pub h: f32,
+    pub hit: FloatHit,
+}
+
+/// The topmost zone containing a flat point: the last recorded wins, because
+/// zones are recorded in paint order and a button paints over its strip.
+/// Left and top edges are inside, right and bottom outside, so two zones that
+/// share an edge never both claim it.
+pub fn float_hit_at(zones: &[FloatZone], x: f32, y: f32) -> Option<FloatZone> {
+    zones
+        .iter()
+        .rev()
+        .find(|z| x >= z.x && x < z.x + z.w && y >= z.y && y < z.y + z.h)
+        .copied()
 }
 
 #[cfg(test)]
@@ -346,6 +558,267 @@ mod tests {
             (wide.h - 252.0).abs() < 1e-3 && inside(wide, 2000.0, 300.0),
             "{wide:?}"
         );
+    }
+
+    fn m(alt: bool, control: bool, shift: bool, platform: bool) -> Mods {
+        Mods {
+            alt,
+            control,
+            shift,
+            platform,
+        }
+    }
+
+    /// One row per line of the gesture table (mockup 04, "Every click on a
+    /// path, before and after"), plus the rows that must NOT change.
+    ///
+    /// `(mods, on_document, on_link, revealable, chip_armed) -> intent`. A
+    /// document is always a link and always revealable; a web link is a link
+    /// and nothing else.
+    #[test]
+    fn every_click_on_a_path_does_what_the_gesture_table_says() {
+        use ClickIntent::*;
+        let none = Mods::default();
+        let alt = m(true, false, false, false);
+        let ctrl = m(false, true, false, false);
+        let shift = m(false, false, true, false);
+        let ctrl_alt = m(true, true, false, false);
+        let super_ctrl = m(false, true, false, true);
+        let ctrl_shift = m(false, true, true, false);
+        let rows: [(&str, Mods, bool, bool, bool, bool, ClickIntent); 17] = [
+            // Ctrl+click opens with the desktop: unchanged, path or web link.
+            (
+                "ctrl, document",
+                ctrl,
+                true,
+                true,
+                true,
+                false,
+                OpenWithDesktop,
+            ),
+            (
+                "ctrl, plain path",
+                ctrl,
+                false,
+                true,
+                true,
+                false,
+                OpenWithDesktop,
+            ),
+            (
+                "ctrl, web link",
+                ctrl,
+                false,
+                true,
+                false,
+                false,
+                OpenWithDesktop,
+            ),
+            // Shift+click REVEALS a file now. It used to open it.
+            ("shift, plain path", shift, false, true, true, false, Reveal),
+            ("shift, document", shift, true, true, true, false, Reveal),
+            // ...but a web link has nothing on disk, so Shift keeps opening it.
+            (
+                "shift, web link",
+                shift,
+                false,
+                true,
+                false,
+                false,
+                OpenWithDesktop,
+            ),
+            // The ladder's order: shift is asked before ctrl.
+            (
+                "ctrl+shift, path",
+                ctrl_shift,
+                false,
+                true,
+                true,
+                false,
+                Reveal,
+            ),
+            // Alt on a document opens the square, even on a command line.
+            ("alt, document", alt, true, true, true, false, OpenHere),
+            ("alt, document, chip", alt, true, true, true, true, OpenHere),
+            // Alt anywhere else copies the command line, as it always did.
+            (
+                "alt, command line",
+                alt,
+                false,
+                false,
+                false,
+                true,
+                CopyChip,
+            ),
+            ("alt, nothing", alt, false, false, false, false, Pass),
+            // Ctrl+Alt on a document is the split's; off one it copies.
+            (
+                "ctrl+alt, document",
+                ctrl_alt,
+                true,
+                true,
+                true,
+                false,
+                OpenBeside,
+            ),
+            (
+                "ctrl+alt, command",
+                ctrl_alt,
+                false,
+                false,
+                false,
+                true,
+                CopyChip,
+            ),
+            // Super+Ctrl reveals, unchanged, and a web link still opens.
+            (
+                "super+ctrl, path",
+                super_ctrl,
+                false,
+                true,
+                true,
+                false,
+                Reveal,
+            ),
+            (
+                "super+ctrl, web",
+                super_ctrl,
+                false,
+                true,
+                false,
+                false,
+                OpenWithDesktop,
+            ),
+            // No modifier, or a modifier on nothing: a selection starts.
+            ("plain, document", none, true, true, true, true, Pass),
+            ("shift, nothing", shift, false, false, false, false, Pass),
+        ];
+        for (name, mods, doc, link, reveal, chip, want) in rows {
+            assert_eq!(click_intent(mods, doc, link, reveal, chip), want, "{name}");
+        }
+    }
+
+    /// A path TD can draw gets "Open here" first, and every link can be
+    /// copied, which is where the copy Alt+click gave up on a path now lives.
+    /// "Open beside" is the split's, and a row that did nothing would be worse
+    /// than no row, so it is not offered until the split exists.
+    #[test]
+    fn the_menu_on_a_document_path_offers_open_here_and_copy_link() {
+        assert_eq!(
+            link_menu(true, true),
+            vec![
+                LinkItem::OpenHere,
+                LinkItem::OpenWithDesktop,
+                LinkItem::Reveal,
+                LinkItem::CopyLink
+            ]
+        );
+        // A file TD cannot draw keeps everything but Open here.
+        assert_eq!(
+            link_menu(false, true),
+            vec![
+                LinkItem::OpenWithDesktop,
+                LinkItem::Reveal,
+                LinkItem::CopyLink
+            ]
+        );
+    }
+
+    #[test]
+    fn the_menu_on_a_web_link_offers_neither_open_here_nor_reveal() {
+        assert_eq!(
+            link_menu(false, false),
+            vec![LinkItem::OpenWithDesktop, LinkItem::CopyLink]
+        );
+    }
+
+    fn origin() -> FloatRect {
+        FloatRect {
+            x: 400.0,
+            y: 100.0,
+            w: 300.0,
+            h: 300.0,
+        }
+    }
+
+    /// A press that wobbles is a click, not a move: the square stays put
+    /// until the pointer has gone more than six pixels, then follows it
+    /// exactly, and keeps following when it comes back inside the six.
+    #[test]
+    fn a_float_drag_engages_only_past_six_pixels() {
+        let mut d = FloatDrag::new((500.0, 110.0), origin());
+        assert_eq!(drag_to(&mut d, (504.0, 113.0), 1000.0, 800.0), origin());
+        assert!(!d.engaged, "five pixels is a wobble");
+        let r = drag_to(&mut d, (507.0, 110.0), 1000.0, 800.0);
+        assert!(d.engaged, "seven pixels is a move");
+        assert_eq!((r.x, r.y), (407.0, 100.0));
+        let r = drag_to(&mut d, (501.0, 111.0), 1000.0, 800.0);
+        assert!(d.engaged, "an engaged drag stays engaged");
+        assert_eq!((r.x, r.y), (401.0, 101.0));
+        assert_eq!((r.w, r.h), (300.0, 300.0), "a move never resizes");
+    }
+
+    /// Dragged far past any edge, the square stops against it.
+    #[test]
+    fn a_float_dragged_past_the_edge_stays_inside_its_pane() {
+        let (w, h) = (1000.0, 800.0);
+        for to in [
+            (-5000.0, -5000.0),
+            (5000.0, -5000.0),
+            (5000.0, 5000.0),
+            (-5000.0, 5000.0),
+        ] {
+            let mut d = FloatDrag::new((500.0, 110.0), origin());
+            let r = drag_to(&mut d, to, w, h);
+            assert!(inside(r, w, h), "{to:?} -> {r:?}");
+            assert_eq!((r.w, r.h), (300.0, 300.0), "{to:?}: pushed, not squashed");
+        }
+        let mut d = FloatDrag::new((500.0, 110.0), origin());
+        let r = drag_to(&mut d, (5000.0, 110.0), w, h);
+        assert_eq!((r.x, r.y), (700.0, 100.0), "against the right edge");
+    }
+
+    /// A button paints over its strip, so it is found first; a point between
+    /// two zones that share an edge belongs to exactly one of them.
+    #[test]
+    fn a_strip_button_is_found_over_the_strip_it_sits_on() {
+        let zones = [
+            FloatZone {
+                x: 0.0,
+                y: 0.0,
+                w: 300.0,
+                h: 22.0,
+                hit: FloatHit::Strip,
+            },
+            FloatZone {
+                x: 240.0,
+                y: 0.0,
+                w: 30.0,
+                h: 22.0,
+                hit: FloatHit::Desktop,
+            },
+            FloatZone {
+                x: 270.0,
+                y: 0.0,
+                w: 30.0,
+                h: 22.0,
+                hit: FloatHit::Close,
+            },
+            FloatZone {
+                x: 0.0,
+                y: 22.0,
+                w: 300.0,
+                h: 278.0,
+                hit: FloatHit::Body,
+            },
+        ];
+        let hit = |x, y| float_hit_at(&zones, x, y).map(|z| z.hit);
+        assert_eq!(hit(10.0, 10.0), Some(FloatHit::Strip));
+        assert_eq!(hit(250.0, 10.0), Some(FloatHit::Desktop));
+        assert_eq!(hit(270.0, 10.0), Some(FloatHit::Close));
+        assert_eq!(hit(269.9, 10.0), Some(FloatHit::Desktop));
+        assert_eq!(hit(100.0, 22.0), Some(FloatHit::Body));
+        assert_eq!(hit(300.0, 10.0), None);
     }
 
     #[test]
