@@ -2388,6 +2388,63 @@ pub fn flag_value(cmd: &str, flag: &str) -> Option<String> {
     None
 }
 
+/// The Claude families a model id can name. A word in this list is a family;
+/// every other word in an id is a version, a date, or a vendor prefix.
+const CLAUDE_FAMILIES: [&str; 4] = ["opus", "fable", "sonnet", "haiku"];
+
+/// What the Workbench's model dial calls a model: `claude-opus-5-5` → `opus 5.5`.
+///
+/// The overview card drops the version on purpose — [`crate::vitals::model_name`]
+/// says OPUS, which is what fits a card. The dial has the room, and a dial that
+/// says only `opus` cannot tell Opus 5.5 from a session still pinned to 4.8.
+/// Parker: *"It just says Opus or Sonnet, whatever. We want to say Opus x.x."*
+///
+/// Claude ids come in two shapes, `claude-opus-5-5` and the older
+/// `claude-3-5-sonnet-20241022`, so the version is every short run of digits
+/// wherever it sits, and the eight-digit date stamp is not a version. `[1m]` is
+/// the context window, not the model. An id naming no Claude family is its own
+/// label: `gpt-5-codex` already says which one it is, and is already a row.
+///
+/// Idempotent: `opus 5.5` comes back as `opus 5.5`, so a label can be fed back
+/// through it and compared with an id.
+pub fn model_label(raw: &str) -> Option<String> {
+    let lower = raw.trim().to_ascii_lowercase();
+    let id = lower.split('[').next().unwrap_or("").trim();
+    if id.is_empty() || id == "<synthetic>" {
+        return None;
+    }
+    let words: Vec<&str> = id.split(['-', ' ', '.']).collect();
+    let Some(family) = words.iter().copied().find(|w| CLAUDE_FAMILIES.contains(w)) else {
+        return Some(id.to_string());
+    };
+    let version: Vec<&str> = words
+        .iter()
+        .copied()
+        .filter(|w| !w.is_empty() && w.len() <= 2 && w.chars().all(|c| c.is_ascii_digit()))
+        .collect();
+    Some(if version.is_empty() {
+        family.to_string()
+    } else {
+        format!("{family} {}", version.join("."))
+    })
+}
+
+/// Do two ways of naming a model name the same ROW of the dial?
+///
+/// `opus`, `Opus`, `claude-opus-5-5` and `opus 5.5` all do: the row is the
+/// alias the harness is given, and the alias is a family. So the `--model opus`
+/// a launcher passed and the `claude-opus-5-5` the transcript reports light the
+/// same row, and two versions of one family are the same row too — the list has
+/// one row per family, and lighting nothing for a 4.8 session would be a lie
+/// about which button is pressed.
+pub fn same_model(a: &str, b: &str) -> bool {
+    fn row(s: &str) -> Option<String> {
+        let label = model_label(s)?;
+        Some(label.split(' ').next().unwrap_or_default().to_string())
+    }
+    matches!((row(a), row(b)), (Some(x), Some(y)) if x == y)
+}
+
 /// Does this keystroke ask the composer for HISTORY rather than for an edit?
 ///
 /// Up and down mean two things in a box that has both rows and a history, and
@@ -7164,6 +7221,49 @@ mod tests {
         // A command that never says is the case the dial has to keep saying it
         // does not know about.
         assert_eq!(flag_value("claude --resume abc", "--model"), None);
+    }
+
+    #[test]
+    fn the_model_dial_names_the_version_the_transcript_reports() {
+        // Every id shape this box has actually produced.
+        for (id, want) in [
+            ("claude-opus-5-5", "opus 5.5"),
+            ("claude-opus-5", "opus 5"),
+            ("claude-opus-4-8", "opus 4.8"),
+            ("claude-sonnet-5", "sonnet 5"),
+            ("claude-fable-5-1", "fable 5.1"),
+            // The date stamp is not a version.
+            ("claude-haiku-4-5-20251001", "haiku 4.5"),
+            // The older shape puts the version BEFORE the family.
+            ("claude-3-5-sonnet-20241022", "sonnet 3.5"),
+            // The context window is not the model.
+            ("claude-opus-5-5[1m]", "opus 5.5"),
+            // An alias knows no version, and saying one would be a guess.
+            ("opus", "opus"),
+            ("Opus", "opus"),
+            // A label fed back in is itself.
+            ("opus 5.5", "opus 5.5"),
+            // Not a Claude family: the id is the label, and is the row.
+            ("gpt-5-codex", "gpt-5-codex"),
+        ] {
+            assert_eq!(model_label(id).as_deref(), Some(want), "{id}");
+        }
+        assert_eq!(model_label("<synthetic>"), None);
+        assert_eq!(model_label("  "), None);
+    }
+
+    #[test]
+    fn an_alias_and_the_version_it_resolved_to_light_the_same_row() {
+        assert!(same_model("opus", "claude-opus-5-5"));
+        assert!(same_model("OPUS 5.5", "opus"));
+        assert!(same_model("opus", "claude-opus-4-8"), "one row per family");
+        assert!(!same_model("opus", "claude-sonnet-5"));
+        // The haiku 4.5 in `claude-haiku-4-5` must not leak a row onto opus 4.x.
+        assert!(!same_model("opus", "claude-haiku-4-5-20251001"));
+        assert!(same_model("gpt-5-codex", "gpt-5-codex"));
+        assert!(!same_model("gpt-5", "gpt-5-codex"));
+        // The faint harness name the button falls back to lights nothing.
+        assert!(!same_model("claude", "opus"));
     }
 
     #[test]

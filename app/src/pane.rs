@@ -2260,6 +2260,13 @@ pub struct TerminalView {
     /// hand in the terminal genuinely has no answer here, and storing a
     /// plausible one would invent a fact about what is being billed.
     wb_model: Option<String>,
+    /// The model id this pane's agent last ANSWERED on, as its transcript
+    /// records it — `claude-opus-5-5`. Pushed by the window's vitals sweep,
+    /// which already reads the transcript for the card's bars.
+    ///
+    /// The one source that knows a version. [`Self::wb_model`] is what the
+    /// agent was told, which is an alias; this is what it resolved to.
+    wb_running_model: Option<String>,
     /// The effort level this pane's agent was told to use. `None` for the same
     /// reason as [`Self::wb_model`], and never the harness's default: a level
     /// nobody chose and a level someone chose are different facts.
@@ -3046,6 +3053,7 @@ impl TerminalView {
             // exist yet — is on opus at high, and the whole rule for these two
             // is that they never say anything nobody said to them.
             self.wb_model = None;
+            self.wb_running_model = None;
             self.wb_effort = None;
             self.wb_dial = None;
             // And the conversation with it. The next agent in this pane is a
@@ -3637,6 +3645,7 @@ impl TerminalView {
             wb_dial_sent: None,
             wb_asked: Vec::new(),
             wb_model: None,
+            wb_running_model: None,
             wb_effort: None,
             wb_had_agent: false,
             wb_channel: crate::channel::State::new(),
@@ -9099,6 +9108,7 @@ mod tests {
         };
         for field in [
             "wb_model",
+            "wb_running_model",
             "wb_effort",
             "wb_dial",
             "wb_dial_sent",
