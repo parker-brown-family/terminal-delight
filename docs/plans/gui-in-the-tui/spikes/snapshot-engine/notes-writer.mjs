@@ -9,7 +9,8 @@
 // in a latin1 view so string offsets equal byte offsets.
 //
 // Two escapes that notes.js itself does NOT apply (q7 shows its own save breaking on them):
-//   - inside an island, "</" becomes "<\/" and "<!" becomes "<!" — still valid JSON,
+//   - inside an island, "</" becomes "<\/" and "<!" becomes the JSON unicode escape for "<" followed by "!"
+//     (see islandJson below) — still valid JSON,
 //     JSON.parse returns the same strings, and the HTML tokenizer can no longer leave the
 //     script element early or enter its double-escaped state;
 //   - inside the comment, "-->" becomes "-- >" and "--!>" becomes "--! >", the only two
