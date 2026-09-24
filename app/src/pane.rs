@@ -2261,8 +2261,9 @@ pub struct TerminalView {
     /// plausible one would invent a fact about what is being billed.
     wb_model: Option<String>,
     /// The model id this pane's agent last ANSWERED on, as its transcript
-    /// records it — `claude-opus-5-5`. Pushed by the window's vitals sweep,
-    /// which already reads the transcript for the card's bars.
+    /// records it — `claude-opus-5-5`. Pushed by the window's 2s tool sweep,
+    /// which already reads the transcript's tail for the header's tool glyph.
+    /// Not the vitals sweep: that one only runs while the wall is open.
     ///
     /// The one source that knows a version. [`Self::wb_model`] is what the
     /// agent was told, which is an alias; this is what it resolved to.

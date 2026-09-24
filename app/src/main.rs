@@ -7905,22 +7905,6 @@ impl Workspace {
         }
         self.vitals_refreshing = false;
         if changed {
-            // The Workbench's model dial names the version off this same
-            // reading — the pane cannot read the window's map, so it is told.
-            // Every leaf, not just the ones in `found`: a pane whose agent
-            // left has to hear `None` or it keeps the last one's version.
-            for tab in self.tabs.iter() {
-                let mut leaves = Vec::new();
-                tab.root.leaves(&mut leaves);
-                for leaf in leaves {
-                    let running = leaf
-                        .read(cx)
-                        .shell_pid()
-                        .and_then(|pid| self.agent_vitals.get(&pid))
-                        .and_then(|v| v.model_id.clone());
-                    leaf.update(cx, |p, cx| p.set_running_model(running, cx));
-                }
-            }
             cx.notify();
         }
     }
@@ -12220,10 +12204,11 @@ impl Workspace {
     /// work than the wall already does per frame — a few `/proc` reads and the
     /// status line the HUD parses anyway. The transcript reading happens off
     /// this thread, in [`toolprop::resolve_probes`].
+    ///
+    /// Not gated on `follows_tool`: the same read also feeds the Workbench's
+    /// model dial, which a user who turned the tool glyphs off still sees. The
+    /// gate is applied where the face is, in [`Self::apply_tool_faces`].
     fn tool_probe_requests(&self, cx: &App) -> Vec<toolprop::ToolProbeReq> {
-        if !toolprop::follows_tool() {
-            return vec![];
-        }
         let mut out = vec![];
         for tab in &self.tabs {
             let mut leaves = vec![];
@@ -12263,14 +12248,23 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         self.tool_probe = probes.iter().map(|(id, pr, _)| (*id, pr.clone())).collect();
+        let follows = toolprop::follows_tool();
         for (id, probe, working) in probes {
-            let want = working
+            let want = (follows && working)
                 .then_some(probe.tool.as_deref())
                 .flatten()
                 .and_then(toolprop::face);
             let Some(leaf) = self.pane_by_id(id) else {
                 continue;
             };
+            // The Workbench's model dial names its version off this read.
+            // Idempotent, so an unchanged model costs no render. Only a
+            // reading is pushed: a sweep that could not bind the transcript
+            // this time knows nothing new, and the agent leaving is cleared by
+            // the pane itself on departure.
+            if let Some(model) = probe.model.clone() {
+                leaf.update(cx, |v, cx| v.set_running_model(Some(model), cx));
+            }
             if leaf.read(cx).tool_face != want {
                 leaf.update(cx, |v, cx| {
                     v.tool_face = want;

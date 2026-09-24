@@ -1845,7 +1845,7 @@ impl TerminalView {
     }
 
     /// What the transcript says this pane's agent last answered on, from the
-    /// window's vitals sweep.
+    /// window's tool sweep.
     ///
     /// A NEW reading lets go of what the dial was told. Either the switch the
     /// dial asked for has landed, and the reading now says it with a version,

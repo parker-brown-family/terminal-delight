@@ -222,10 +222,6 @@ pub struct Vitals {
     pub why: String,
     /// `OPUS`, `FABLE`, `GPT` — name only, no version.
     pub model: Option<String>,
-    /// The id the last assistant turn answered on, verbatim — `claude-opus-5-5`.
-    /// [`Self::model`] is the card's family-only reading of it; the Workbench's
-    /// dial names the version from this, through `workbench::model_label`.
-    pub model_id: Option<String>,
     /// `HIGH`, `MAX` — verbatim from the transcript, never invented.
     pub effort: Option<String>,
     pub tokens: u64,
@@ -1275,7 +1271,6 @@ pub fn from_body(body: &str, stamp: (u64, u64)) -> Option<Vitals> {
         call,
         why,
         model: t.model.as_deref().and_then(model_name),
-        model_id: t.model.clone(),
         effort: t.effort.as_deref().map(|e| e.to_uppercase()),
         tokens: win.tokens,
         limit: win.limit,
