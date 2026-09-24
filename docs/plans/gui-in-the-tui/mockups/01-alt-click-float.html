@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>01 · Alt+click opens the floating square</title>
+<link rel="stylesheet" href="td-mock.css"></head><body>
+
+<h1 class="mock">01 · Alt+click opens the floating square</h1>
+<p class="say">Left: Alt is held and the pointer is over a document path. The chip at the end of that line says what the
+click will do — <b>open here</b> — while the chip on a command line two rows up still says <b>copy</b>. Right: after
+the click, the document floats over the conversation in the glow TD's menus and modals use. Drag the title strip to move
+it; Esc closes it; <b>click it again to split</b> docks it beside the agent.</p>
+
+<div class="row">
+<div class="tdwin" style="width:480px">
+  <div class="tabs"><span class="on">gui research</span><span>td main</span></div>
+  <div class="pane focus" style="min-height:380px">
+    <div class="phead"><span class="mode claude">CLAUDE</span><span>gui in the tui · ~/Work/td-gui-in-the-tui</span></div>
+<div class="grid"><span class="dim">⏺</span> Wrote the graphics-protocols write-up.
+
+cargo test -p terminal-delight --lib host<span class="chip copy">⎘ alt+click · copy</span>
+
+Deliverable: Graphics protocols research —
+<span class="lnk hot">/home/parker/Work/td-gui-in-the-tui/docs/research/gui-in-the-tui/graphics-protocols.md</span><span class="chip">◳ alt+click · open here</span>
+
+<span class="dim">&gt;</span> <span class="cur"> </span></div>
+  </div>
+</div>
+
+<div class="tdwin" style="width:640px">
+  <div class="tabs"><span class="on">gui research</span><span>td main</span></div>
+  <div class="pane focus">
+    <div class="phead"><span class="mode claude">CLAUDE</span><span>gui in the tui · ~/Work/td-gui-in-the-tui</span></div>
+<div class="grid"><span class="dim">⏺</span> Wrote the graphics-protocols write-up.
+
+cargo test -p terminal-delight --lib host
+
+Deliverable: Graphics protocols research —
+<span class="lnk">/home/parker/Work/td-gui-in-the-tui/docs/research/…/graphics-protocols.md</span>
+
+<span class="dim">&gt;</span> <span class="cur"> </span></div>
+    <div class="float glow">
+      <div class="fhead"><span>☰ graphics-protocols.md</span>
+        <span class="acts"><span class="primary">⤢ click to split</span><span>↗ desktop</span><span>✕ esc</span></span></div>
+      <div class="doc">
+        <h2>Terminal graphics protocols</h2>
+        <p>Research date 2026-09-24. Scope: what Terminal Delight (TD) itself must implement so that programs running
+        <i>inside</i> a TD pane — <code>mpv --vo=kitty</code>, yazi, chafa, timg — can put real pixels on screen.</p>
+        <h3>Summary — the facts that decide feasibility</h3>
+        <p><b>1. Nothing a graphics client sends reaches TD's emulator today.</b> vte 0.15 routes <code>ESC _</code>
+        into one state whose bytes go to <code>anywhere()</code>…</p>
+      </div>
+      <span class="grip">◢</span>
+    </div>
+  </div>
+</div>
+</div>
+
+<p class="prop">yellow = proposal, not decided: the chip wording, the three actions and their labels, the square's size
+(56% of the pane) and its position under the pointer's line. Decided: Alt+click opens it, the hyperglow, a second click splits.</p>
+</body></html>
