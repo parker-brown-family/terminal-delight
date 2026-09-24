@@ -334,6 +334,12 @@ impl SnapshotEngine {
         lock(&self.shared.browser).as_ref().map(|b| b.child.id())
     }
 
+    /// Start the browser now, if none runs, and say whether it started.
+    #[allow(dead_code)] // called by app/tests/snapshot_engine.rs
+    pub fn warm(&self) -> Result<(), EngineError> {
+        self.call(|| self.cdp().map(|_| ()))
+    }
+
     /// The running browser's profile directory, if one is running.
     #[allow(dead_code)] // read by app/tests/snapshot_engine.rs
     pub fn profile_dir(&self) -> Option<PathBuf> {
@@ -400,9 +406,10 @@ impl SnapshotEngine {
             }
         };
         let stderr = Arc::new(Mutex::new(VecDeque::new()));
+        let mut drain = None;
         if let Some(mut err) = child.stderr.take() {
             let tail = stderr.clone();
-            let _ = std::thread::Builder::new()
+            drain = std::thread::Builder::new()
                 .name("td-chromium-stderr".into())
                 .spawn(move || {
                     let mut buf = [0u8; 4096];
@@ -417,7 +424,8 @@ impl SnapshotEngine {
                             t.pop_front();
                         }
                     }
-                });
+                })
+                .ok();
         }
         let browser = Browser {
             cdp: cdp.clone(),
@@ -426,8 +434,19 @@ impl SnapshotEngine {
             stderr,
         };
         if let Err(e) = cdp.call(None, "Browser.getVersion", json!({}), CALL) {
-            let tail = stderr_tail(&browser);
+            // Read the reason only once the browser is gone and its standard
+            // error has been drained to the end: a browser that hangs rather
+            // than exits says why only as it is killed.
+            let said = browser.stderr.clone();
             finish(browser);
+            if let Some(drain) = drain {
+                let until = Instant::now() + Duration::from_secs(2);
+                while !drain.is_finished() && Instant::now() < until {
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+            }
+            let bytes: Vec<u8> = lock(&said).iter().copied().collect();
+            let tail = why_it_died(&String::from_utf8_lossy(&bytes));
             return Err(EngineError::Launch(if tail.is_empty() {
                 e.to_string()
             } else {
@@ -614,12 +633,6 @@ impl SnapshotEngine {
         Self::evaluate(cdp, &s, EXTRACT_JS, "install the probe")?;
         Ok(())
     }
-}
-
-fn stderr_tail(b: &Browser) -> String {
-    let t = lock(&b.stderr);
-    let bytes: Vec<u8> = t.iter().copied().collect();
-    why_it_died(&String::from_utf8_lossy(&bytes))
 }
 
 /// The line of a browser's standard error that says why it would not start.

@@ -9,7 +9,10 @@
 //! way the engine does (chromium, chromium-browser, google-chrome-stable,
 //! google-chrome on PATH) and, finding none, prints `SKIPPED` with the sentence
 //! a person would see and returns. A machine without a browser cannot tell us
-//! anything about one, and it should not turn CI red for lacking one.
+//! anything about one, and it should not turn CI red for lacking one. The
+//! same goes for a browser that is there but cannot start its sandbox, which
+//! is GitHub's Ubuntu 24.04 runner: AppArmor forbids the user namespaces the
+//! sandbox needs, and TD never runs a browser without it.
 //!
 //! **Nothing started here outlives the test.** Every browser a test launches
 //! is recorded with its whole process tree while it runs; at the end the
@@ -142,13 +145,35 @@ impl Rig {
         let serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
         let binary = chromium(test)?;
         let runtime = scratch(&format!("{test}-runtime"));
-        Some(Rig {
+        let rig = Rig {
             engine: SnapshotEngine::with_idle(pref, binary, idle, runtime.clone()),
             runtime,
             seen: Vec::new(),
             profiles: Vec::new(),
             _serial: serial,
-        })
+        };
+        // A browser that is there but cannot start its sandbox — Ubuntu
+        // 24.04's AppArmor forbids the user namespaces it needs, as on
+        // GitHub's runners — is a machine that cannot run a browser safely,
+        // and says nothing about TD. TD never launches one without its
+        // sandbox, so these tests do not either: they skip, and say why.
+        // Any other failure to start is a failure.
+        match rig.engine.warm() {
+            Ok(()) => Some(rig),
+            Err(EngineError::Launch(why)) if why.contains("No usable sandbox") => {
+                let said = why
+                    .find("No usable sandbox")
+                    .map_or(why.as_str(), |i| &why[i..]);
+                let _ = writeln!(
+                    std::io::stderr().lock(),
+                    "SKIPPED snapshot_engine::{test}: the browser cannot start its sandbox here: {}",
+                    said.chars().take(160).collect::<String>()
+                );
+                let _ = std::fs::remove_dir_all(&rig.runtime);
+                None
+            }
+            Err(e) => panic!("the browser would not start: {e}"),
+        }
     }
 
     fn record(&mut self) {
