@@ -412,7 +412,8 @@ impl SnapshotEngine {
                         }
                         let mut t = lock(&tail);
                         t.extend(&buf[..n]);
-                        while t.len() > 4096 {
+                        // Enough for a crash's reason and the trace after it.
+                        while t.len() > 32 << 10 {
                             t.pop_front();
                         }
                     }
@@ -618,13 +619,38 @@ impl SnapshotEngine {
 fn stderr_tail(b: &Browser) -> String {
     let t = lock(&b.stderr);
     let bytes: Vec<u8> = t.iter().copied().collect();
-    String::from_utf8_lossy(&bytes)
+    why_it_died(&String::from_utf8_lossy(&bytes))
+}
+
+/// The line of a browser's standard error that says why it would not start.
+///
+/// A crash ends in a stack trace, so the last line is `[end of stack trace]`
+/// and says nothing. The last FATAL or ERROR line, or the sandbox's own
+/// complaint, is the reason; failing those, the last line that is not part
+/// of a trace.
+pub fn why_it_died(stderr: &str) -> String {
+    let lines: Vec<&str> = stderr
         .lines()
-        .rev()
-        .find(|l| !l.trim().is_empty())
-        .unwrap_or("")
-        .trim()
-        .to_string()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect();
+    // A stack frame, a register dump, or the trace's own bookends.
+    let in_trace = |l: &str| {
+        l.starts_with('#')
+            || l.starts_with("Received signal")
+            || l.contains("end of stack trace")
+            || (l.starts_with('r') && l.contains(": 0"))
+    };
+    // In order of how much they explain: the fatal line, the sandbox's own
+    // refusal, then any error but the crash reporter's own complaints, which
+    // follow every crash and explain none.
+    let last = |pick: &dyn Fn(&str) -> bool| lines.iter().rev().copied().find(|l| pick(l));
+    let line = last(&|l| l.contains("FATAL"))
+        .or_else(|| last(&|l| l.contains("No usable sandbox")))
+        .or_else(|| last(&|l| l.contains("ERROR") && !l.contains("crashpad")))
+        .or_else(|| last(&|l| !in_trace(l)))
+        .unwrap_or("");
+    line.chars().take(400).collect()
 }
 
 fn close_page(p: &LivePage) {
@@ -1118,6 +1144,30 @@ mod tests {
             "file:///r/2026-09-24-x.html"
         );
         assert_eq!(file_url(Path::new("/r/é.html")), "file:///r/%C3%A9.html");
+    }
+
+    #[test]
+    fn a_browser_that_will_not_start_says_why_rather_than_where_its_trace_ended() {
+        // The shape of a sandbox refusal on a host that restricts user
+        // namespaces: the reason, a stack trace, and the trace's last line.
+        let crash = "\
+[5155:5155:0924/232132.101:FATAL:zygote_host_impl_linux.cc(132)] No usable sandbox! If you are running on Ubuntu 23.10+ ...
+#0 0x55d0c0c2a1b2 base::debug::CollectStackTrace()
+#1 0x55d0c0c1f8c3 base::debug::StackTrace::StackTrace()
+Received signal 6
+#0 0x55d0c0c2a1b2 base::debug::CollectStackTrace()
+  r8: 0000000000000000  r9: 00007ffd4f0e8d10
+[end of stack trace]
+[0924/232731.767322:ERROR:third_party/crashpad/crashpad/util/file/file_io_posix.cc:145] open /sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq: No such file or directory (2)
+";
+        let why = why_it_died(crash);
+        assert!(why.contains("No usable sandbox"), "{why}");
+        // With no FATAL line, the last line that is not part of a trace.
+        assert_eq!(
+            why_it_died("something happened\n#0 0xabc foo()\n[end of stack trace]\n"),
+            "something happened"
+        );
+        assert_eq!(why_it_died(""), "");
     }
 
     #[test]
