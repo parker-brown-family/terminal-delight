@@ -142,6 +142,13 @@ struct TeeReader {
     /// anything was said since the last look is all a twelve-hour idle needs to
     /// know.
     spoke: Arc<AtomicBool>,
+    /// Watches the output for `CSI 16 t`, the cell-size question vte drops
+    /// without a word. See [`crate::ptyscan`].
+    cell_query: crate::ptyscan::CellSizeQuery,
+    /// Where a heard question goes: the channel the emulator's own events
+    /// travel on, so the thread that answers `14 t` answers `16 t` too, from
+    /// the same live geometry.
+    questions: Sender<TermEvent>,
 }
 
 impl Read for TeeReader {
@@ -157,8 +164,34 @@ impl Read for TeeReader {
                     *held = None;
                 }
             }
+            drop(held);
+            // Heard before the parser has seen this chunk, so this reply can
+            // overtake the answer to a question earlier in the same read. The
+            // usual probe asks for sizes first and device attributes last,
+            // which this keeps in order; see `ptyscan` for the rest.
+            for _ in 0..self.cell_query.feed(&buf[..read]) {
+                let _ = self
+                    .questions
+                    .send(TermEvent::TextAreaSizeRequest(Arc::new(cell_size_reply)));
+            }
         }
         Ok(read)
+    }
+}
+
+/// The answer to `CSI 16 t`: one cell, height then width, in the pixels the
+/// pseudoterminal was told.
+fn cell_size_reply(size: WindowSize) -> String {
+    format!("\x1b[6;{};{}t", size.cell_height, size.cell_width)
+}
+
+/// A pane's geometry in the shape alacritty and the kernel take it.
+fn window_size(geom: PaneGeom) -> WindowSize {
+    WindowSize {
+        num_lines: geom.rows,
+        num_cols: geom.cols,
+        cell_width: geom.cell_width,
+        cell_height: geom.cell_height,
     }
 }
 
@@ -173,7 +206,12 @@ struct TeePty {
 }
 
 impl TeePty {
-    fn new(inner: Pty, sink: Arc<Mutex<Option<Sink>>>, spoke: Arc<AtomicBool>) -> io::Result<Self> {
+    fn new(
+        inner: Pty,
+        sink: Arc<Mutex<Option<Sink>>>,
+        spoke: Arc<AtomicBool>,
+        questions: Sender<TermEvent>,
+    ) -> io::Result<Self> {
         // A second descriptor onto the same open file: readiness is reported
         // on the one the poller holds, reads happen on this one, and because
         // they share a description the two always agree.
@@ -184,6 +222,8 @@ impl TeePty {
                 master,
                 sink,
                 spoke,
+                cell_query: crate::ptyscan::CellSizeQuery::default(),
+                questions,
             },
         })
     }
@@ -259,7 +299,11 @@ struct HostPane {
     /// master may ask — which process group is in the foreground — which is
     /// why the watcher and the checkpoint had to move here with the terminals.
     master: File,
-    geom: Mutex<PaneGeom>,
+    /// The size the pane is now. Shared with the thread that answers a
+    /// program's size questions, which must read it at the moment it answers:
+    /// a copy taken at spawn answered every question with the size the pane
+    /// was born at (#718).
+    geom: Arc<Mutex<PaneGeom>>,
     ended: Arc<AtomicBool>,
     /// What the last checkpoint read: where the pane is, and what would put
     /// its agent back. Seeded with the spawn request, then replaced by
@@ -633,12 +677,6 @@ impl Host {
             cols: geom.cols as usize,
             rows: geom.rows as usize,
         };
-        let window_size = WindowSize {
-            num_lines: geom.rows,
-            num_cols: geom.cols,
-            cell_width: geom.cell_width,
-            cell_height: geom.cell_height,
-        };
 
         let mut options = tty::Options {
             working_directory: cwd
@@ -668,15 +706,17 @@ impl Host {
             options.shell = Some(tty::Shell::new(program.clone(), vec![]));
         }
 
-        let pty = tty::new(&options, window_size, 0)?;
+        let pty = tty::new(&options, window_size(geom), 0)?;
         let shell_pid = pty.child().id();
         // Taken before the pseudoterminal is handed to the event loop, and the
         // reason the foreground watcher can live here at all.
         let master = pty.file().try_clone()?;
         let sink: Arc<Mutex<Option<Sink>>> = Arc::new(Mutex::new(None));
-        let tee = TeePty::new(pty, sink.clone(), self.spoke.clone())?;
-
+        // Before the tee, which carries a sender of its own: it hears the one
+        // size question the parser cannot.
         let (events, incoming) = std::sync::mpsc::channel();
+        let tee = TeePty::new(pty, sink.clone(), self.spoke.clone(), events.clone())?;
+
         let proxy = HostProxy(events);
         let term = Arc::new(FairMutex::new(Term::new(
             Config::default(),
@@ -691,6 +731,8 @@ impl Host {
         let ended = Arc::new(AtomicBool::new(false));
         let exit_flag = ended.clone();
         let exit_sink = sink.clone();
+        let geom = Arc::new(Mutex::new(geom));
+        let live_geom = geom.clone();
         std::thread::spawn(move || {
             for event in incoming {
                 match event {
@@ -702,13 +744,12 @@ impl Host {
                     TermEvent::PtyWrite(text) => {
                         let _ = answers.0.send(Msg::Input(text.into_bytes().into()));
                     }
+                    // `CSI 14 t` from the parser and `CSI 16 t` from the tee,
+                    // both answered from the size the pane is at the moment
+                    // of asking — `resize` writes the same geometry this reads.
                     TermEvent::TextAreaSizeRequest(format) => {
-                        let reply = format(WindowSize {
-                            num_lines: geom.rows,
-                            num_cols: geom.cols,
-                            cell_width: geom.cell_width,
-                            cell_height: geom.cell_height,
-                        });
+                        let now = *live_geom.lock().expect("geom lock");
+                        let reply = format(window_size(now));
                         let _ = answers.0.send(Msg::Input(reply.into_bytes().into()));
                     }
                     // The program in this terminal is gone, so the stream
@@ -739,7 +780,7 @@ impl Host {
             sink,
             shell_pid,
             master,
-            geom: Mutex::new(geom),
+            geom,
             ended,
             // The directory it was asked for is a claim, and the first
             // checkpoint replaces it with a reading. Nothing is claimed about
@@ -812,13 +853,7 @@ impl Host {
             return Outcome::Err(format!("no pane {pane}"));
         };
         *p.geom.lock().expect("geom lock") = geom;
-        let window_size = WindowSize {
-            num_lines: geom.rows,
-            num_cols: geom.cols,
-            cell_width: geom.cell_width,
-            cell_height: geom.cell_height,
-        };
-        let _ = p.input.0.send(Msg::Resize(window_size));
+        let _ = p.input.0.send(Msg::Resize(window_size(geom)));
         p.term.lock().resize(GridSize {
             cols: geom.cols as usize,
             rows: geom.rows as usize,
@@ -2265,6 +2300,76 @@ mod owning {
         let info = &host.list_panes()[0];
         assert!(info.shell_pid > 0, "a pane has a real process");
         assert!(!info.attached, "nobody is watching yet");
+    }
+
+    /// Every row the pane is showing, top to bottom.
+    fn screen_rows(host: &Host, pane: PaneId) -> Vec<String> {
+        use alacritty_terminal::grid::Dimensions;
+        let lines = host.panes.lock().expect("panes")[&pane]
+            .term
+            .lock()
+            .screen_lines();
+        (0..lines as i32)
+            .filter_map(|row| host.row_text(pane, row))
+            .collect()
+    }
+
+    /// Ask the program in `pane` to send `question` to its terminal, and wait
+    /// for `reply` to appear on its screen.
+    ///
+    /// `cat` hands the question back to the terminal, which parses it as a
+    /// real query; the host's answer is then typed into the pane like any
+    /// keystroke, and the line discipline echoes it as `^[[…t`. So the answer
+    /// is readable on the screen without any client attached — which is also
+    /// how a program would see it.
+    fn answers_on_screen(host: &Host, pane: PaneId, question: &[u8], reply: &str) {
+        assert!(host.write_to(pane, question.to_vec()));
+        assert!(
+            within(Duration::from_secs(5), || screen_rows(host, pane)
+                .iter()
+                .any(|row| row.contains(reply))),
+            "no {reply:?} on the screen after {question:?}: {:?}",
+            screen_rows(host, pane)
+        );
+    }
+
+    /// #718. A program asking a hosted pane for its text area in pixels
+    /// (`CSI 14 t`) is told the size the pane is now.
+    ///
+    /// The answering thread used to build the reply from the geometry passed
+    /// into `spawn_pane`, captured by value when the thread started, while
+    /// `resize` wrote a different copy — so every pane answered with the size
+    /// it was born at, forever. Image programs (chafa, video players) size
+    /// what they draw from this reply, so after a split they drew at the old
+    /// size.
+    #[test]
+    fn a_size_question_is_answered_with_the_size_the_pane_is_now() {
+        let (host, pane) = host_with_cat_pane();
+        let now = PaneGeom {
+            cols: 50,
+            rows: 10,
+            cell_width: 10,
+            cell_height: 24,
+        };
+        assert!(host.resize(pane, now).is_ok());
+        // 10 rows of 24 pixels, 50 columns of 10: height first, as xterm says.
+        answers_on_screen(&host, pane, b"\x1b[14t\n", "[4;240;500t");
+    }
+
+    /// `CSI 16 t` asks for one cell in pixels. vte 0.15 has no arm for it,
+    /// so the host's tee watches the bytes for it and the same thread that
+    /// answers `14 t` answers it, from the same live geometry.
+    #[test]
+    fn a_cell_size_question_is_answered_by_the_host() {
+        let (host, pane) = host_with_cat_pane();
+        let now = PaneGeom {
+            cols: 50,
+            rows: 10,
+            cell_width: 10,
+            cell_height: 24,
+        };
+        assert!(host.resize(pane, now).is_ok());
+        answers_on_screen(&host, pane, b"\x1b[16t\n", "[6;24;10t");
     }
 
     #[test]
