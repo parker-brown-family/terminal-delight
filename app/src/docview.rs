@@ -14,7 +14,12 @@
 //! CRT pass bends the pane's pixels after layout, and gpui hit-tests the flat
 //! layout, so a handler in here would fire beside what it draws. Input reaches
 //! a document the way it reaches the workbench: the pane un-bends the pointer
-//! and decides. Guarded by `nothing_in_the_document_view_listens_for_the_mouse`.
+//! and decides, then calls [`DocumentView::press`], [`DocumentView::drag`],
+//! [`DocumentView::release`], [`DocumentView::wheel`] or
+//! [`DocumentView::zoom`] with flat, view-local numbers. The one thing the
+//! view does record for itself is its own size, measured at paint by a canvas
+//! that listens to nothing. Guarded by
+//! `nothing_in_the_document_view_listens_for_the_mouse`.
 //!
 //! # The image is ours, and it is given back
 //!
@@ -36,15 +41,36 @@
 
 pub mod image;
 
-use gpui::{div, prelude::*, px, App, Context, SharedString, Window};
+use std::cell::Cell;
+use std::rc::Rc;
+
+use gpui::{
+    canvas, div, prelude::*, px, App, Context, Modifiers, Pixels, Point, ScrollDelta, SharedString,
+    Size, Window,
+};
 
 use crate::docopen::{DocKind, DocTarget};
+
+pub use image::{ImageZoom, ZoomStep};
+
+/// How far one notch of a wheel that counts in lines moves a picture, in
+/// logical pixels. Three lines of text at a common size, which is what a
+/// notch scrolls in a browser.
+const WHEEL_LINE_PX: f32 = 48.0;
 
 /// A document on screen.
 pub struct DocumentView {
     target: DocTarget,
     backend: Backend,
+    /// The view's own size and the window's scale factor, as the last paint
+    /// measured them. `None` until it has painted once: an unmeasured view is
+    /// not a zero-sized one, and nothing that needs the size runs without it.
+    frame: Rc<Cell<Option<Frame>>>,
 }
+
+/// A view's measured size, in logical pixels, and the scale factor it was
+/// measured under.
+type Frame = (Size<Pixels>, f32);
 
 enum Backend {
     Image(image::ImageDoc),
@@ -69,8 +95,12 @@ impl DocumentView {
             DocKind::Image => Backend::Image(image::ImageDoc::load(&target.path, cx)),
             kind => Backend::Unshown(not_yet(kind).into()),
         };
-        cx.on_release(|view, cx| view.release(cx)).detach();
-        Self { target, backend }
+        cx.on_release(|view, cx| view.give_back(cx)).detach();
+        Self {
+            target,
+            backend,
+            frame: Rc::new(Cell::new(None)),
+        }
     }
 
     pub fn target(&self) -> &DocTarget {
@@ -79,9 +109,91 @@ impl DocumentView {
 
     /// Give back everything this view holds on the GPU. Runs from the release
     /// hook registered in [`Self::new`], once, as the view is dropped.
-    fn release(&mut self, cx: &mut App) {
+    fn give_back(&mut self, cx: &mut App) {
         if let Backend::Image(img) = &mut self.backend {
             img.release(&self.target.path, cx);
+        }
+    }
+
+    // ── input, already un-bent by the pane ──────────────────────────────────
+    //
+    // Every point below is flat and relative to the view's own top-left. The
+    // pane found it through the tube's inverse; nothing here asks gpui where
+    // the pointer is, because gpui would answer for the flat layout and the
+    // picture is bent.
+
+    /// A press on the document. Answers whether the view took it: an image
+    /// takes it as the start of a pan.
+    pub fn press(
+        &mut self,
+        at: Point<Pixels>,
+        _mods: Modifiers,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> bool {
+        match &mut self.backend {
+            Backend::Image(img) => img.press(at),
+            Backend::Unshown(_) => false,
+        }
+    }
+
+    /// The pointer moved with the left button still held since [`Self::press`].
+    pub fn drag(&mut self, at: Point<Pixels>, cx: &mut Context<Self>) {
+        let Some((view, sf)) = self.frame.get() else {
+            return;
+        };
+        if let Backend::Image(img) = &mut self.backend {
+            if img.drag(at, view, sf) {
+                cx.notify();
+            }
+        }
+    }
+
+    /// The held press ended, wherever the pointer is now.
+    pub fn release(&mut self, _cx: &mut Context<Self>) {
+        if let Backend::Image(img) = &mut self.backend {
+            img.end_pan();
+        }
+    }
+
+    /// A wheel turn over the document: it pans a picture larger than the
+    /// view. Ctrl+wheel never arrives here; that is the pane's text dial.
+    pub fn wheel(&mut self, delta: ScrollDelta, cx: &mut Context<Self>) {
+        let Some((view, sf)) = self.frame.get() else {
+            return;
+        };
+        let (dx, dy) = match delta {
+            ScrollDelta::Pixels(p) => (f32::from(p.x), f32::from(p.y)),
+            ScrollDelta::Lines(l) => (l.x * WHEEL_LINE_PX, l.y * WHEEL_LINE_PX),
+        };
+        if let Backend::Image(img) = &mut self.backend {
+            if img.pan_by(dx, dy, view, sf) {
+                cx.notify();
+            }
+        }
+    }
+
+    /// One press of a zoom control. Answers whether anything changed.
+    pub fn zoom(&mut self, step: ZoomStep, cx: &mut Context<Self>) -> bool {
+        let Some((view, sf)) = self.frame.get() else {
+            return false;
+        };
+        let changed = match &mut self.backend {
+            Backend::Image(img) => img.zoom(step, view, sf),
+            Backend::Unshown(_) => false,
+        };
+        if changed {
+            cx.notify();
+        }
+        changed
+    }
+
+    /// The zoom a picture is at, for the strip's label. `None` for a document
+    /// with no zoom to show, so the strip draws no zoom controls for it.
+    pub fn zoom_now(&self) -> Option<ImageZoom> {
+        match &self.backend {
+            Backend::Image(img) => Some(img.zoom_now()),
+            Backend::Unshown(_) => None,
         }
     }
 }
@@ -89,15 +201,42 @@ impl DocumentView {
 impl Render for DocumentView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let th = crate::theme::theme(cx);
+        let frame = self.frame.get();
         let body = match &mut self.backend {
-            Backend::Image(img) => img.element(&self.target.path, window, &th),
+            Backend::Image(img) => img.element(&self.target.path, frame, window, &th),
             Backend::Unshown(why) => div()
                 .p(px(14.))
                 .text_color(th.text.alpha(0.75))
                 .child(why.clone())
                 .into_any_element(),
         };
-        div().size_full().overflow_hidden().child(body)
+        // Measured, not listened to: a canvas records the box this view was
+        // given and the scale it paints at, and asks for one more frame when
+        // either changed, so a zoom placed against a stale size corrects
+        // itself at once.
+        let store = self.frame.clone();
+        let weak = cx.entity().downgrade();
+        let measure = canvas(
+            move |bounds, window, cx| {
+                let now = Some((bounds.size, window.scale_factor()));
+                if store.get() != now {
+                    store.set(now);
+                    let weak = weak.clone();
+                    cx.defer(move |cx| {
+                        let _ = weak.update(cx, |_, cx| cx.notify());
+                    });
+                }
+            },
+            |_, _, _, _| {},
+        )
+        .absolute()
+        .inset_0();
+        div()
+            .relative()
+            .size_full()
+            .overflow_hidden()
+            .child(measure)
+            .child(body)
     }
 }
 
@@ -160,7 +299,7 @@ mod tests {
         let new = src.split("pub fn new(").nth(1).expect("DocumentView::new");
         let new = new.split("\n    }\n").next().unwrap_or(new);
         assert!(
-            new.contains("cx.on_release(") && new.contains(".release(cx)"),
+            new.contains("cx.on_release(") && new.contains(".give_back(cx)"),
             "DocumentView::new must register its own release"
         );
     }

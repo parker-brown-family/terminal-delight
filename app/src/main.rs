@@ -27419,8 +27419,10 @@ impl Render for Workspace {
                 .child(section(
                     s.s_links,
                     vec![
-                        row(s.k_shift_ctrl_click, s.open_link),
+                        row(s.k_ctrl_click, s.open_link),
+                        row(s.k_shift_click, s.reveal_link),
                         row(s.k_super_ctrl_click, s.reveal_link),
+                        row(s.k_alt_click, s.open_here),
                     ],
                 ));
             let col_b = div()
@@ -28943,6 +28945,34 @@ impl Render for Workspace {
 #[allow(clippy::items_after_test_module)]
 mod tests {
     use super::*;
+
+    /// The help modal's LINKS section names every click on a path as it is
+    /// now: Ctrl opens with the desktop, Shift reveals (it used to open, and
+    /// shared a row with Ctrl), Super+Ctrl still reveals, and Alt opens the
+    /// floating square. Source-scanned because the modal needs a live window.
+    #[test]
+    fn the_help_names_every_click_on_a_path() {
+        let src = include_str!("main.rs");
+        let code = &src[..src
+            .find("\n#[cfg(test)]\n#[allow(clippy::items_after_test_module)]\nmod tests")
+            .unwrap_or(src.len())];
+        let at = code.find("s.s_links,").expect("the links section");
+        let section = &code[at..at + code[at..].find("],").expect("end of the section")];
+        let rows = [
+            "row(s.k_ctrl_click, s.open_link)",
+            "row(s.k_shift_click, s.reveal_link)",
+            "row(s.k_super_ctrl_click, s.reveal_link)",
+            "row(s.k_alt_click, s.open_here)",
+        ];
+        let mut last = 0;
+        for row in rows {
+            let pos = section
+                .find(row)
+                .unwrap_or_else(|| panic!("the help is missing {row}"));
+            assert!(pos >= last, "{row} is out of order");
+            last = pos;
+        }
+    }
 
     // ---- trays stay inside the render ----------------------------------
     //
