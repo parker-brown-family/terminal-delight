@@ -23,6 +23,55 @@ whole audit; see `app/src/vendor/README.md` for provenance and the re-sync
 recipe. Running them requires `python3` at runtime, which is a soft dependency:
 without it the usage panel says so and still draws whatever records are on disk.
 
+## Lifted: markdown-delight's Markdown renderer (MIT)
+
+`app/src/docview/markdown.rs` draws Markdown inside a pane, in a floating square
+and on the workbench's Markdown cards. It is lifted from **markdown-delight**
+(<https://github.com/parker-brown-family/markdown-delight>), `app/src/render.rs`
+with `BlockMeta`, `normalize` and `fingerprint` from `app/src/comments.rs`, at
+commit `425041bd36d31cd44d25984ee9cd71d071ead948`. Unlike the Omarchy scripts it
+is **edited**, not carried verbatim: its colours come from TD's theme instead of
+fixed constants, it keeps link targets and draws local images, and the file's
+header lists every change. markdown-delight's licence:
+
+```
+MIT License
+
+Copyright (c) 2026 Parker Brown / brown-family-sports
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+## comrak, and what it brings (BSD-2-Clause and permissive)
+
+The renderer parses with **comrak** 0.52 (<https://github.com/kivikakk/comrak>,
+BSD-2-Clause), built with `default-features = false`: its defaults add comrak's
+own command line and syntax highlighter (clap, syntect and the onig C library),
+which TD does not use. So built, comrak adds eight packages to the lock:
+`comrak` (BSD-2-Clause), `caseless`, `entities`, `phf_codegen` and `typed-arena`
+(MIT), `jetscii` and `unicode-normalization` (MIT OR Apache-2.0), and
+`finl_unicode`, whose licence is `(MIT OR Apache-2.0) AND Unicode-DFS-2016` for
+its Unicode data tables. The Unicode data licence is permissive and
+OSI-approved; `app/deny.toml` grants it to `finl_unicode` by name, as it already
+does for `unicode-ident`, rather than to every crate. Their notices ride in the
+generated bundle below like every other dependency's.
+
 ## No copyleft in the binary
 
 The pinned Zed dependency graph *would* otherwise link three

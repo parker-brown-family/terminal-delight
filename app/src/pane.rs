@@ -294,12 +294,16 @@ pub(crate) struct FloatingDoc {
     holding: bool,
     /// Which control the pointer is over, for the wash that says it is one.
     hover: Option<crate::docopen::FloatHit>,
+    /// A link pressed in the document comes back here to be routed
+    /// ([`TerminalView::follow_doc_link`]). Dropped with the square.
+    _links: gpui::Subscription,
 }
 
 impl FloatingDoc {
     fn new(
         view: gpui::Entity<crate::docview::DocumentView>,
         rect: crate::docopen::FloatRect,
+        links: gpui::Subscription,
     ) -> Self {
         Self {
             view,
@@ -307,6 +311,7 @@ impl FloatingDoc {
             drag: None,
             holding: false,
             hover: None,
+            _links: links,
         }
     }
 }
@@ -4607,8 +4612,7 @@ impl TerminalView {
             None => (0.0, 0.0),
         };
         let rect = crate::docopen::float_home(w, h, top, bottom);
-        let view = cx.new(|cx| crate::docview::DocumentView::new(target, cx));
-        self.float = Some(FloatingDoc::new(view, rect));
+        self.float = Some(Self::float_doc(target, None, rect, cx));
         cx.notify();
     }
 
@@ -4728,6 +4732,57 @@ impl TerminalView {
         self.copy_flash = Some(Instant::now());
         self.copy_hint = Some(hint);
         cx.notify();
+    }
+
+    /// A square's contents: the document's view, and the subscription that
+    /// brings its links back here. `fragment` names a heading to show once the
+    /// document has been laid out.
+    fn float_doc(
+        target: crate::docopen::DocTarget,
+        fragment: Option<String>,
+        rect: crate::docopen::FloatRect,
+        cx: &mut Context<Self>,
+    ) -> FloatingDoc {
+        let view = cx.new(|cx| crate::docview::DocumentView::new(target, cx));
+        if let Some(fragment) = fragment {
+            view.update(cx, |v, cx| v.show_fragment(fragment, cx));
+        }
+        let links = cx.subscribe(&view, |pane, _, link: &crate::docview::FollowLink, cx| {
+            pane.follow_doc_link(link, cx)
+        });
+        FloatingDoc::new(view, rect, links)
+    }
+
+    /// A link pressed inside the floating document, routed.
+    ///
+    /// A file TD can draw takes the square's place — same square, same spot,
+    /// the new document in it — so reading a set of linked notes stays in one
+    /// place beside the prompt. A web or mail address, or a local file TD does
+    /// not draw, goes to the desktop, as ctrl+click on a path does. Any other
+    /// scheme is refused: the decision is `docopen::link_route`. A heading in
+    /// the same document never comes here; the view scrolls to it itself.
+    fn follow_doc_link(&mut self, link: &crate::docview::FollowLink, cx: &mut Context<Self>) {
+        let doc = link
+            .target
+            .starts_with('/')
+            .then(|| crate::docopen::drawable_document(std::path::Path::new(&link.target)))
+            .flatten();
+        match crate::docopen::link_route(&link.target, doc.is_some()) {
+            crate::docopen::LinkRoute::Replace => {
+                let (Some(target), Some(rect)) = (doc, self.float.as_ref().map(|f| f.rect)) else {
+                    return;
+                };
+                // The old square's view is dropped here, and gives its
+                // textures back as it goes, like any other close.
+                self.float = Some(Self::float_doc(target, link.fragment.clone(), rect, cx));
+                cx.notify();
+            }
+            crate::docopen::LinkRoute::Desktop => open_with_system(&link.target),
+            crate::docopen::LinkRoute::Refuse => eprintln!(
+                "terminal-delight: not following {} from a document: only files, web and mail links open",
+                link.target
+            ),
+        }
     }
 
     /// Whether a floating square is open on this pane.
@@ -9347,6 +9402,14 @@ impl Render for TerminalView {
             )
         });
 
+        // The document inside the square paints in THIS pane's resolved theme,
+        // which a pane can hold apart from the window's. Handed down every
+        // frame the square is up; the view repaints only when the palette or
+        // the text size actually moved.
+        if let Some(float) = &self.float {
+            let theme = Arc::new(th.clone());
+            float.view.update(cx, |v, cx| v.set_theme(theme, cx));
+        }
         let float_el = self.float_el(&th, face_now, cx);
 
         div()
@@ -12835,6 +12898,55 @@ mod tests {
             code.contains("float_shadows(th.accent)"),
             "the square wears the hyperglow every floating surface wears"
         );
+    }
+
+    /// A function's body in the pane's live code, from its signature to the
+    /// first line that closes a method.
+    fn method(code: &str, sig: &str) -> String {
+        let at = code.find(sig).unwrap_or_else(|| panic!("{sig}"));
+        let end = code[at..].find("\n    }\n").unwrap_or(code.len() - at);
+        code[at..at + end].to_string()
+    }
+
+    /// A link out of a document is routed in one place: a file TD can draw
+    /// takes the square's place where the square already is, and the rest go
+    /// through the desktop or nowhere, as `docopen::link_route` decides.
+    #[test]
+    fn a_link_out_of_a_document_is_routed_by_the_pane() {
+        let code = live_code();
+        let make = method(&code, "fn float_doc(");
+        assert!(
+            make.contains("cx.subscribe(") && make.contains("follow_doc_link("),
+            "{make}"
+        );
+        let follow = method(&code, "fn follow_doc_link(");
+        assert!(follow.contains("docopen::link_route("), "{follow}");
+        let replace = follow
+            .split("LinkRoute::Replace =>")
+            .nth(1)
+            .expect("the replace arm");
+        assert!(
+            replace.contains("f.rect") && replace.contains("Self::float_doc("),
+            "the new document opens in the same square: {replace}"
+        );
+        assert!(follow.contains("open_with_system("), "{follow}");
+    }
+
+    /// The document paints in the pane's own resolved theme, handed down
+    /// before the square is built, not in whatever the window's theme is.
+    #[test]
+    fn the_float_paints_in_the_panes_own_theme() {
+        let code = live_code();
+        let render = code
+            .find("fn render(&mut self, window: &mut Window, cx: &mut Context<Self>)")
+            .expect("render");
+        let code = &code[render..];
+        let resolved = code
+            .find("self.resolved_theme(cx)")
+            .expect("the pane's theme");
+        let handed = code.find(".set_theme(").expect("handed to the document");
+        let built = code.find("let float_el = self").expect("the square");
+        assert!(resolved < handed && handed < built);
     }
 
     #[test]

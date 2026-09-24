@@ -28,10 +28,13 @@ confidence-threshold = 0.8
 
 # Per-crate license grants. The GPL-3.0 crates that used to live here (zlog,
 # ztracing, ztracing_macro) are gone — patch 0002 removed them from the graph,
-# so no GPL exception is needed and the binary is permissive-clean. The lone
-# remaining grant is a permissive-equivalent license-string clarification.
+# so no GPL exception is needed and the binary is permissive-clean. What remains
+# are permissive grants of the Unicode data licence (OSI-approved, and already
+# in about.toml's accepted set), one crate at a time rather than globally.
 exceptions = [
   { allow = ["Unicode-DFS-2016"], name = "unicode-ident" },
+  # comrak's Unicode case-folding tables: "(MIT OR Apache-2.0) AND Unicode-DFS-2016".
+  { allow = ["Unicode-DFS-2016"], name = "finl_unicode" },
 ]
 
 # First-party gpui workspace crates that ship without a `license` field. They are
