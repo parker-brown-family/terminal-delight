@@ -65,6 +65,10 @@ pub enum ZoomStep {
     /// Fit when zoomed, actual size when fitted.
     FitOrActual,
     In,
+    /// Fit, whatever the zoom is now: the Document face's `0`.
+    Fit,
+    /// One image pixel per device pixel: the Document face's `1`.
+    Actual,
 }
 
 fn img_wh(img: Size<DevicePixels>) -> (f32, f32) {
@@ -276,6 +280,8 @@ impl ImageDoc {
                 ImageZoom::Fit => ImageZoom::Scale(1.0),
                 ImageZoom::Scale(_) => ImageZoom::Fit,
             },
+            ZoomStep::Fit => ImageZoom::Fit,
+            ZoomStep::Actual => ImageZoom::Scale(1.0),
         };
         if next == self.zoom {
             return false;

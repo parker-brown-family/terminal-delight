@@ -69,14 +69,35 @@ pub const RAIL_HIDE_BELOW: f32 = 240.0;
 // which face is showing
 // ---------------------------------------------------------------------------
 
-/// A pane shows one of two faces. Both exist at all times; the terminal keeps
-/// running while the workbench is up, because an agent whose output stopped
-/// being read is not an agent whose work stopped.
+/// A pane shows one of its faces. The terminal and the workbench exist at all
+/// times; the terminal keeps running while the workbench is up, because an
+/// agent whose output stopped being read is not an agent whose work stopped.
+///
+/// The third, [`Face::Document`], exists only on a pane that was opened to
+/// show a document (Ctrl+Alt+click on a path, or a floating square promoted
+/// to a split). Its shell is still there underneath, alt+k away.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum Face {
     #[default]
     Terminal,
     Workbench,
+    Document,
+}
+
+/// Which face alt+k moves to.
+///
+/// With a document attached it moves between the document and its shell, and
+/// from the bench back to the document: the document is what that pane was
+/// opened for, so it is where the key goes home to. Without one, the two faces
+/// swap as they always have. The bench stays one click away on the header's
+/// slider either way.
+pub fn next_face(now: Face, has_document: bool) -> Face {
+    match (now, has_document) {
+        (Face::Document, _) => Face::Terminal,
+        (_, true) => Face::Document,
+        (Face::Terminal, false) => Face::Workbench,
+        (Face::Workbench, false) => Face::Terminal,
+    }
 }
 
 /// How much of the tube's vignette a face gets.
@@ -91,10 +112,13 @@ pub enum Face {
 /// scanlines, the bloom and the bend, which are.
 ///
 /// Decided 2026-09-17, the recommendation taken.
+///
+/// A document gets none either, for the bench's reason: the vignette darkens
+/// the edges of the content box, and a page or a picture is read to its edges.
 pub fn vignette_on(face: Face, vignette: f32) -> f32 {
     match face {
         Face::Terminal => vignette,
-        Face::Workbench => 0.0,
+        Face::Workbench | Face::Document => 0.0,
     }
 }
 
@@ -124,7 +148,7 @@ impl Face {
     pub fn other(self) -> Face {
         match self {
             Face::Terminal => Face::Workbench,
-            Face::Workbench => Face::Terminal,
+            Face::Workbench | Face::Document => Face::Terminal,
         }
     }
 
@@ -135,6 +159,7 @@ impl Face {
         match self {
             Face::Terminal => "TERM",
             Face::Workbench => "BENCH",
+            Face::Document => "DOC",
         }
     }
 }
@@ -4066,21 +4091,27 @@ impl Bench {
         self.face
     }
 
-    /// Flip the face. Returns the face now showing.
-    pub fn toggle_face(&mut self) -> Face {
-        self.face = self.face.other();
-        if self.face == Face::Workbench {
+    /// alt+k: step to the next face, as [`next_face`] walks them for a pane
+    /// that does or does not have a document attached. Returns the face now
+    /// showing.
+    pub fn toggle_face(&mut self, has_document: bool) -> Face {
+        self.set_face(next_face(self.face, has_document));
+        self.face
+    }
+
+    /// Show `face`. Assigns rather than toggling its way there: with three
+    /// faces a toggle from the terminal lands on the bench, so asking for the
+    /// document would have shown the bench instead.
+    pub fn set_face(&mut self, face: Face) {
+        if self.face == face {
+            return;
+        }
+        self.face = face;
+        if face == Face::Workbench {
             // Looking at the bench is what makes its contents seen — but only
             // the shelf actually on screen. A decision waiting on another tab
             // has not been looked at just because a document on this one was.
             self.mark_shelf_seen();
-        }
-        self.face
-    }
-
-    pub fn set_face(&mut self, face: Face) {
-        if self.face != face {
-            self.toggle_face();
         }
     }
 
@@ -6250,7 +6281,7 @@ mod tests {
         assert_eq!(b.unseen_total(), 1, "it arrived behind the terminal face");
 
         b.set_shelf(Shelf::Artifacts);
-        b.toggle_face();
+        b.toggle_face(false);
         assert_eq!(b.face(), Face::Workbench);
         assert_eq!(
             b.unseen_total(),
@@ -7501,6 +7532,14 @@ mod tests {
         assert_eq!(vignette_on(Face::Workbench, 0.0), 0.0);
         assert_eq!(vignette_on(Face::Terminal, 0.7), 0.7);
         assert_eq!(vignette_on(Face::Terminal, 0.0), 0.0);
+    }
+
+    /// A page or a picture is read to its edges, which is where the vignette
+    /// is darkest, so a document gets none, as the bench gets none.
+    #[test]
+    fn the_document_face_has_no_vignette() {
+        assert_eq!(vignette_on(Face::Document, 0.7), 0.0);
+        assert_eq!(vignette_on(Face::Document, 0.0), 0.0);
     }
 
     #[test]
@@ -9154,13 +9193,48 @@ mod tests {
             Face::Terminal,
             "a pane is a terminal until told otherwise"
         );
-        assert_eq!(b.toggle_face(), Face::Workbench);
-        assert_eq!(b.toggle_face(), Face::Terminal);
+        assert_eq!(b.toggle_face(false), Face::Workbench);
+        assert_eq!(b.toggle_face(false), Face::Terminal);
         b.set_face(Face::Terminal);
         assert_eq!(
             b.face(),
             Face::Terminal,
             "setting the face it already wears is not a flip"
+        );
+    }
+
+    /// Setting a face lands on that face. With two faces, "toggle if it
+    /// differs" was the same thing; with three, asking for the document from
+    /// the terminal toggled onto the bench.
+    #[test]
+    fn setting_the_document_face_lands_on_it_from_either_face() {
+        let mut b = Bench::new();
+        b.set_face(Face::Document);
+        assert_eq!(b.face(), Face::Document, "from the terminal");
+        let mut b = Bench::new();
+        b.set_face(Face::Workbench);
+        b.set_face(Face::Document);
+        assert_eq!(b.face(), Face::Document, "from the bench");
+        b.set_face(Face::Workbench);
+        assert_eq!(b.face(), Face::Workbench, "and back to the bench");
+        b.set_face(Face::Terminal);
+        assert_eq!(b.face(), Face::Terminal, "and to the terminal");
+    }
+
+    /// alt+k on a pane showing a document moves between the document and the
+    /// shell under it, and from the bench it goes home to the document. With no
+    /// document it swaps terminal and bench, as it always has.
+    #[test]
+    fn alt_k_on_a_document_pane_moves_between_the_document_and_its_shell() {
+        assert_eq!(next_face(Face::Document, true), Face::Terminal);
+        assert_eq!(next_face(Face::Terminal, true), Face::Document);
+        assert_eq!(next_face(Face::Workbench, true), Face::Document);
+        assert_eq!(next_face(Face::Terminal, false), Face::Workbench);
+        assert_eq!(next_face(Face::Workbench, false), Face::Terminal);
+        assert_eq!(
+            next_face(Face::Document, false),
+            Face::Terminal,
+            "a document face without a document goes to the shell, never nowhere"
         );
     }
 

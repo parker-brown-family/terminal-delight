@@ -163,6 +163,97 @@ pub fn link_route(target: &str, drawable: bool) -> LinkRoute {
     }
 }
 
+/// Where a document view is sitting: in a floating square over the terminal
+/// face, or filling a pane as its Document face. One view can move from the
+/// first to the second — promotion hands the square's view to the new pane
+/// rather than opening the file again — so the view is told which it is in.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum DocSeat {
+    Float,
+    Face,
+}
+
+/// Who asked for a document to open beside the pane. It decides one thing:
+/// what happens when the tab already holds four panes. A floating square
+/// asking to become a split stays the square it is and says why; anything
+/// else opens a square instead, so the document is on screen either way.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Asker {
+    /// Ctrl+Alt+click on a path in the grid.
+    Click,
+    /// "Open beside" in the right-click menu.
+    Menu,
+    /// The floating square's "⇲ split", or a second Alt+click on its path.
+    Float,
+    /// `ctl doc beside`, the gesture without a pointer.
+    Ctl,
+}
+
+/// Why a floating square is open when a split was asked for. Said in the
+/// square's own strip: TD has no general toast, and the square is where the
+/// person is already looking.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum FloatNote {
+    /// The tab already holds four panes, which is as many as a split may make.
+    FourPanes,
+}
+
+/// Whether an Alt+click on `clicked` promotes the square already floating,
+/// rather than opening another: it does when the square is showing that same
+/// file. The second click is the "yes, I want this beside me" the first one
+/// did not say.
+pub fn promotes(floating: Option<&std::path::Path>, clicked: &std::path::Path) -> bool {
+    floating == Some(clicked)
+}
+
+/// What a key does on a pane's Document face.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum DocKey {
+    /// `0`: fit the picture to the pane.
+    Fit,
+    /// `1`: one image pixel per device pixel.
+    Actual,
+    /// `+` (or `=`, the same key unshifted): one zoom step in.
+    ZoomIn,
+    /// `-`: one zoom step out.
+    ZoomOut,
+    /// An arrow: move the view by this many logical pixels, as a wheel turn
+    /// would — positive moves the document right and down.
+    Pan(f32, f32),
+    /// PageUp (`-1`) or PageDown (`1`): most of a screen at a time.
+    Page(i8),
+}
+
+/// How far one arrow press moves the document, in logical pixels: a wheel
+/// notch's worth, so the arrows and the wheel travel alike.
+pub const DOC_ARROW_STEP: f32 = 48.0;
+
+/// The Document face's own keys. `None` for every other key, which the face
+/// swallows all the same: the shell behind it is hidden, and typing into
+/// something nobody can see is the bug this face exists not to have.
+///
+/// Only unmodified keys (Shift aside, which `+` needs on most layouts) are the
+/// face's: a chord is somebody else's, and the window and the pane have
+/// already been asked for theirs before a key gets this far.
+pub fn doc_face_key(key: &str, alt: bool, control: bool, platform: bool) -> Option<DocKey> {
+    if alt || control || platform {
+        return None;
+    }
+    Some(match key {
+        "0" => DocKey::Fit,
+        "1" => DocKey::Actual,
+        "+" | "=" => DocKey::ZoomIn,
+        "-" => DocKey::ZoomOut,
+        "left" => DocKey::Pan(DOC_ARROW_STEP, 0.0),
+        "right" => DocKey::Pan(-DOC_ARROW_STEP, 0.0),
+        "up" => DocKey::Pan(0.0, DOC_ARROW_STEP),
+        "down" => DocKey::Pan(0.0, -DOC_ARROW_STEP),
+        "pageup" => DocKey::Page(-1),
+        "pagedown" => DocKey::Page(1),
+        _ => return None,
+    })
+}
+
 /// What an Alt+click on the pointer's line does.
 #[derive(Clone, PartialEq, Debug)]
 pub enum AltClick {
@@ -206,9 +297,8 @@ pub struct Mods {
 pub enum ClickIntent {
     /// Open the document under the pointer in a floating square.
     OpenHere,
-    /// Ctrl+Alt on a document. The split it names arrives with the split
-    /// itself; until then the pane does what this click always did, which is
-    /// copy an armed command line or else open the path with the desktop.
+    /// Ctrl+Alt on a document: open it in a new pane to the right of this
+    /// one, keeping focus where it was.
     OpenBeside,
     /// Copy the command line the Alt chip is framing.
     CopyChip,
@@ -272,6 +362,7 @@ pub fn click_intent(
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum LinkItem {
     OpenHere,
+    OpenBeside,
     OpenWithDesktop,
     Reveal,
     CopyLink,
@@ -279,14 +370,15 @@ pub enum LinkItem {
 
 /// The link rows of the right-click menu, in the order they are drawn.
 ///
-/// Only rows that do something today: a document opens here, anything opens
-/// with the desktop, a file on this disk reveals, and every link can be
+/// Only rows that do something: a document opens here or beside, anything
+/// opens with the desktop, a file on this disk reveals, and every link can be
 /// copied. Copy link is what Alt+click used to give on a command line that
 /// was mostly a path; now that Alt+click opens the path, the copy lives here.
 pub fn link_menu(is_document: bool, revealable: bool) -> Vec<LinkItem> {
-    let mut items = Vec::with_capacity(4);
+    let mut items = Vec::with_capacity(5);
     if is_document {
         items.push(LinkItem::OpenHere);
+        items.push(LinkItem::OpenBeside);
     }
     items.push(LinkItem::OpenWithDesktop);
     if revealable {
@@ -421,6 +513,8 @@ pub fn drag_to(d: &mut FloatDrag, flat: (f32, f32), screen_w: f32, screen_h: f32
 pub enum FloatHit {
     /// The title strip, anywhere a button is not: pressing here moves it.
     Strip,
+    /// "⇲ split": move the document into a pane of its own, beside this one.
+    Split,
     /// "↗ desktop": open the file with the desktop's own application.
     Desktop,
     /// "✕ esc": close the square, as Escape does.
@@ -762,16 +856,16 @@ mod tests {
         }
     }
 
-    /// A path TD can draw gets "Open here" first, and every link can be
-    /// copied, which is where the copy Alt+click gave up on a path now lives.
-    /// "Open beside" is the split's, and a row that did nothing would be worse
-    /// than no row, so it is not offered until the split exists.
+    /// A path TD can draw gets "Open here" and "Open beside" first, and every
+    /// link can be copied, which is where the copy Alt+click gave up on a path
+    /// now lives.
     #[test]
-    fn the_menu_on_a_document_path_offers_open_here_and_copy_link() {
+    fn the_menu_on_a_document_path_offers_open_here_open_beside_and_copy_link() {
         assert_eq!(
             link_menu(true, true),
             vec![
                 LinkItem::OpenHere,
+                LinkItem::OpenBeside,
                 LinkItem::OpenWithDesktop,
                 LinkItem::Reveal,
                 LinkItem::CopyLink
@@ -794,6 +888,45 @@ mod tests {
             link_menu(false, false),
             vec![LinkItem::OpenWithDesktop, LinkItem::CopyLink]
         );
+    }
+
+    /// Alt+click on the path the square is already showing is the second
+    /// click that promotes it to a split; on any other path it opens that
+    /// path instead, and with no square up it simply opens.
+    #[test]
+    fn a_second_alt_click_on_the_floating_path_promotes_it() {
+        let a = Path::new("/tmp/a.md");
+        let b = Path::new("/tmp/b.md");
+        assert!(promotes(Some(a), a));
+        assert!(!promotes(Some(a), b));
+        assert!(!promotes(None, a));
+    }
+
+    /// The Document face's keys, as the ruling lists them: 0 fits, 1 is actual
+    /// size, + and − step the zoom, the arrows pan, PageUp and PageDown page.
+    /// A chord is never the face's, and neither is a letter: those are
+    /// swallowed by the face, not acted on.
+    #[test]
+    fn the_document_face_keys_zoom_pan_and_page() {
+        let k = |key| doc_face_key(key, false, false, false);
+        assert_eq!(k("0"), Some(DocKey::Fit));
+        assert_eq!(k("1"), Some(DocKey::Actual));
+        assert_eq!(k("+"), Some(DocKey::ZoomIn));
+        assert_eq!(k("="), Some(DocKey::ZoomIn), "+ without its shift");
+        assert_eq!(k("-"), Some(DocKey::ZoomOut));
+        assert_eq!(k("pageup"), Some(DocKey::Page(-1)));
+        assert_eq!(k("pagedown"), Some(DocKey::Page(1)));
+        // An arrow moves the view, so the document moves the other way.
+        assert_eq!(k("down"), Some(DocKey::Pan(0.0, -DOC_ARROW_STEP)));
+        assert_eq!(k("up"), Some(DocKey::Pan(0.0, DOC_ARROW_STEP)));
+        assert_eq!(k("right"), Some(DocKey::Pan(-DOC_ARROW_STEP, 0.0)));
+        assert_eq!(k("left"), Some(DocKey::Pan(DOC_ARROW_STEP, 0.0)));
+        for other in ["a", "2", "enter", "escape", "space", "tab"] {
+            assert_eq!(k(other), None, "{other}");
+        }
+        assert_eq!(doc_face_key("0", false, true, false), None, "ctrl+0");
+        assert_eq!(doc_face_key("down", true, false, false), None, "alt+down");
+        assert_eq!(doc_face_key("1", false, false, true), None, "super+1");
     }
 
     fn origin() -> FloatRect {

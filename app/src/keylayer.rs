@@ -130,6 +130,12 @@ pub enum Layer {
     /// Below [`Layer::Sticky`] and [`Layer::Rename`], so a caret blinking
     /// somewhere else on the pane keeps its own Escape.
     Float,
+    /// The pane's Document face. Claims every key the window's and the pane's
+    /// chords leave: a few of them move the document (zoom, pan, page) and the
+    /// rest are swallowed, because the shell behind the document is hidden and
+    /// a letter typed into it would land where nobody can see it. alt+k, one
+    /// rung up at [`Layer::Face`], is the way back to that shell.
+    Document,
     /// The workbench face and everything stacked on it. Claimed whenever that
     /// face is showing; what the bench then does with the key is its own ladder,
     /// and it may decline.
@@ -186,6 +192,8 @@ pub struct Up {
     pub bench: bool,
     /// A document is floating over the terminal face.
     pub float: bool,
+    /// The pane is showing its DOCUMENT face.
+    pub document: bool,
 }
 
 /// One rung: the layer, and whether it claims this keystroke.
@@ -196,7 +204,7 @@ type Rung = (Layer, fn(&Key, &Up) -> bool);
 /// Written as a list of pairs rather than a chain of early returns so that the
 /// order is one readable column and adding a surface cannot accidentally be
 /// written in the middle of an unrelated branch.
-const LADDER: [Rung; 12] = [
+const LADDER: [Rung; 13] = [
     (Layer::Help, |k, _| k.key == "f1"),
     (Layer::Face, |k, _| k.alt && !k.control && k.key == "k"),
     (Layer::Window, |k, _| window_chord(k.key, k.alt, k.control)),
@@ -210,6 +218,7 @@ const LADDER: [Rung; 12] = [
     (Layer::Sticky, |_, u| u.sticky),
     (Layer::Rename, |_, u| u.rename),
     (Layer::Float, |k, u| u.float && k.key == "escape"),
+    (Layer::Document, |_, u| u.document),
     (Layer::Bench, |_, u| u.bench),
 ];
 
@@ -438,7 +447,7 @@ mod tests {
     /// Every surface, alone, with a key it claims.
     #[test]
     fn a_surface_that_is_alone_gets_what_it_claims() {
-        let cases: [(fn(&mut Up), Key, Layer); 8] = [
+        let cases: [(fn(&mut Up), Key, Layer); 9] = [
             (|u| u.paint = true, ch("r"), Layer::Paint),
             (|u| u.ctx_menu = true, named("escape"), Layer::CtxMenu),
             (|u| u.header_menu = true, named("escape"), Layer::HeaderMenu),
@@ -446,6 +455,7 @@ mod tests {
             (|u| u.sticky = true, ch("a"), Layer::Sticky),
             (|u| u.rename = true, ch("a"), Layer::Rename),
             (|u| u.float = true, named("escape"), Layer::Float),
+            (|u| u.document = true, ch("a"), Layer::Document),
             (|u| u.bench = true, ch("a"), Layer::Bench),
         ];
         for (set, key, want) in cases {
@@ -457,9 +467,9 @@ mod tests {
 
     /// The ladder is total and monotone over every combination of state.
     ///
-    /// All 512 state combinations against a corpus of twelve keys, and the answer
-    /// is always the FIRST rung that claims — the whole contract stated as a
-    /// property rather than as rows. A variant moved in the enum fails this
+    /// All 1,024 state combinations against a corpus of twelve keys, and the
+    /// answer is always the FIRST rung that claims — the whole contract stated
+    /// as a property rather than as rows. A variant moved in the enum fails this
     /// without anybody having to remember to add a case for it.
     #[test]
     fn the_topmost_claiming_layer_always_wins() {
@@ -477,7 +487,7 @@ mod tests {
             named("left"),
             named("enter"),
         ];
-        for bits in 0u16..512 {
+        for bits in 0u16..1024 {
             let up = Up {
                 paint: bits & 1 != 0,
                 ctx_menu: bits & 2 != 0,
@@ -488,6 +498,7 @@ mod tests {
                 note: bits & 64 != 0,
                 bench: bits & 128 != 0,
                 float: bits & 256 != 0,
+                document: bits & 512 != 0,
             };
             for k in &keys {
                 let want = LADDER
@@ -514,7 +525,7 @@ mod tests {
     fn of_any_two_layers_the_earlier_declared_one_wins() {
         // Escape is claimed by every one of these, which is what lets them be
         // compared pairwise at all.
-        let setters: [fn(&mut Up); 8] = [
+        let setters: [fn(&mut Up); 9] = [
             |u| u.paint = true,
             |u| u.ctx_menu = true,
             |u| u.header_menu = true,
@@ -522,6 +533,7 @@ mod tests {
             |u| u.sticky = true,
             |u| u.rename = true,
             |u| u.float = true,
+            |u| u.document = true,
             |u| u.bench = true,
         ];
         let k = named("escape");
@@ -586,6 +598,56 @@ mod tests {
         let mut up = floating();
         up.ctx_menu = true;
         assert_eq!(route(&named("escape"), &up), Layer::CtxMenu);
+    }
+
+    // ── the Document face ──────────────────────────────────────────────────
+
+    fn on_document() -> Up {
+        Up {
+            document: true,
+            ..Up::default()
+        }
+    }
+
+    /// A pane showing a document takes every key the window and the pane do
+    /// not: a letter, Enter, Escape and ctrl+c all stop at the document rather
+    /// than reaching a shell nobody can see. The chords still work, and alt+k
+    /// is the way back to the shell.
+    #[test]
+    fn the_document_face_claims_every_key_but_the_window_and_pane_chords() {
+        let doc = on_document();
+        for k in [
+            ch("a"),
+            ch("0"),
+            named("enter"),
+            named("escape"),
+            named("pagedown"),
+            named("down"),
+            ctrl("c"),
+            alt("m"),
+        ] {
+            assert_eq!(route(&k, &doc), Layer::Document, "{k:?}");
+        }
+        assert_eq!(route(&alt("w"), &doc), Layer::Window, "the window's chord");
+        assert_eq!(
+            route(&ctrl_shift("c"), &doc),
+            Layer::PaneChord,
+            "the pane's chord"
+        );
+        assert_eq!(route(&ctrl("w"), &doc), Layer::PaneChord, "closing the tab");
+        assert_eq!(route(&alt("k"), &doc), Layer::Face, "alt+k to the shell");
+        assert_eq!(route(&named("f1"), &doc), Layer::Help);
+        assert_eq!(
+            route(
+                &ch("a"),
+                &Up {
+                    rename: true,
+                    ..doc
+                }
+            ),
+            Layer::Rename,
+            "a caret in the header's rename box still takes its letters"
+        );
     }
 
     // ── the bugs, as rows ───────────────────────────────────────────────────
@@ -966,6 +1028,7 @@ mod tests {
             note: true,
             bench: true,
             float: true,
+            document: true,
         };
         assert_eq!(route(&named("f1"), &everything), Layer::Help);
     }

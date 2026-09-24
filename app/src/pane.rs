@@ -297,6 +297,8 @@ pub(crate) struct FloatingDoc {
     /// A link pressed in the document comes back here to be routed
     /// ([`TerminalView::follow_doc_link`]). Dropped with the square.
     _links: gpui::Subscription,
+    /// Why the square is up when a split was asked for, said in its strip.
+    note: Option<crate::docopen::FloatNote>,
 }
 
 impl FloatingDoc {
@@ -312,9 +314,53 @@ impl FloatingDoc {
             holding: false,
             hover: None,
             _links: links,
+            note: None,
         }
     }
 }
+
+/// What a pane's Document face is showing.
+///
+/// Set only by [`TerminalView::show_document`], which sets the face in the
+/// same breath: a pane on the Document face always has one of these, and
+/// `set_face(Document)` on a pane without one is refused. The target is kept
+/// beside the view so the workspace can ask which file a pane shows without
+/// reaching into the view.
+pub(crate) struct DocFace {
+    view: gpui::Entity<crate::docview::DocumentView>,
+    target: crate::docopen::DocTarget,
+    /// A link pressed in the document comes back here to be routed, as the
+    /// square's do. Made when the view arrives on the face, so a promoted
+    /// square's view is subscribed exactly once: its square's subscription
+    /// went with the square.
+    _links: gpui::Subscription,
+}
+
+/// A flat rectangle in window pixels, `(x, y, w, h)`: where something was
+/// laid out before the barrel pass bent it.
+type FlatRect = (f32, f32, f32, f32);
+
+/// A document asked to open BESIDE this pane: Ctrl+Alt+click, the menu's
+/// "Open beside", the floating square's "⇲ split", or `ctl doc beside`.
+///
+/// The pane cannot split itself — the tree is the workspace's — so it asks.
+/// The workspace answers by focusing a pane in the tab already showing the
+/// file, by splitting, or, at four panes, by floating the document here with
+/// a sentence saying why.
+pub struct OpenDoc {
+    pub target: crate::docopen::DocTarget,
+    /// The floating square's own view when the square is being promoted, so
+    /// the new pane takes it over instead of opening the file a second time.
+    pub carry: Option<gpui::Entity<crate::docview::DocumentView>>,
+    pub by: crate::docopen::Asker,
+    /// The painted row the click landed on, so a square opened instead of a
+    /// split opens beside the line, as Alt+click's does.
+    pub row: Option<usize>,
+    /// Where `ctl doc beside` waits for the outcome. `None` for a gesture.
+    pub reply: Option<std::sync::mpsc::Sender<String>>,
+}
+
+impl gpui::EventEmitter<OpenDoc> for TerminalView {}
 
 /// A shift-clickable target lifted out of the grid: a web/file URL handed
 /// straight to the system opener, or a filesystem path resolved against the
@@ -2218,6 +2264,15 @@ pub struct TerminalView {
     /// chip asks on every Alt-held move, and the answer reads the file's first
     /// bytes, so the same link under a still pointer is not read twice.
     doc_memo: std::cell::RefCell<Option<(String, Option<crate::docopen::DocTarget>)>>,
+    /// The document this pane was opened to show, on its Document face. See
+    /// [`DocFace`].
+    doc: Option<DocFace>,
+    /// Where the Document face's view was laid out, flat, in window pixels:
+    /// `(x, y, w, h)`, recorded as it paints. `None` until it has painted.
+    doc_rect: std::rc::Rc<std::cell::Cell<Option<FlatRect>>>,
+    /// The document on the Document face is held: a press went to the view,
+    /// and so do the moves until the button comes up.
+    doc_holding: bool,
     /// Last-known OS focus, for edge-detected focus reporting (CSI I / CSI O).
     was_focused: bool,
     /// 🎰 GAMBA slot-machine reels — rolled while an agent in this pane is
@@ -3806,6 +3861,9 @@ impl TerminalView {
             float: None,
             float_zones: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
             doc_memo: std::cell::RefCell::new(None),
+            doc: None,
+            doc_rect: std::rc::Rc::new(std::cell::Cell::new(None)),
+            doc_holding: false,
             was_focused: false,
             pending_pty: None,
             cell_px,
@@ -4680,7 +4738,15 @@ impl TerminalView {
                     .min_w(px(0.))
                     .overflow_hidden()
                     .whitespace_nowrap()
-                    .child(gpui::SharedString::from(format!("☰ {name}"))),
+                    .child(gpui::SharedString::from(match float.note {
+                        // Why this is a square when a split was asked for.
+                        // In the strip, because TD has no toast and this is
+                        // where the person is already looking.
+                        Some(crate::docopen::FloatNote::FourPanes) => {
+                            format!("☰ {name} · {}", s.float_four_panes)
+                        }
+                        None => format!("☰ {name}"),
+                    })),
             );
         if let Some(zoom) = zoom {
             let now: gpui::SharedString = match zoom {
@@ -4694,6 +4760,7 @@ impl TerminalView {
                 .child(div().w(px(4.)));
         }
         strip = strip
+            .child(button(s.float_split.into(), FloatHit::Split))
             .child(button(s.float_desktop.into(), FloatHit::Desktop))
             .child(button("✕ esc".into(), FloatHit::Close));
         Some(
@@ -4748,20 +4815,27 @@ impl TerminalView {
             view.update(cx, |v, cx| v.show_fragment(fragment, cx));
         }
         let links = cx.subscribe(&view, |pane, _, link: &crate::docview::FollowLink, cx| {
-            pane.follow_doc_link(link, cx)
+            pane.follow_doc_link(link, crate::docopen::DocSeat::Float, cx)
         });
         FloatingDoc::new(view, rect, links)
     }
 
-    /// A link pressed inside the floating document, routed.
+    /// A link pressed inside a document, routed. `seat` is where the document
+    /// that emitted it is sitting.
     ///
-    /// A file TD can draw takes the square's place — same square, same spot,
-    /// the new document in it — so reading a set of linked notes stays in one
-    /// place beside the prompt. A web or mail address, or a local file TD does
-    /// not draw, goes to the desktop, as ctrl+click on a path does. Any other
-    /// scheme is refused: the decision is `docopen::link_route`. A heading in
-    /// the same document never comes here; the view scrolls to it itself.
-    fn follow_doc_link(&mut self, link: &crate::docview::FollowLink, cx: &mut Context<Self>) {
+    /// A file TD can draw takes the document's place — the same square in the
+    /// same spot, or the same pane's Document face — so reading a set of
+    /// linked notes stays in one place beside the prompt. A web or mail
+    /// address, or a local file TD does not draw, goes to the desktop, as
+    /// ctrl+click on a path does. Any other scheme is refused: the decision is
+    /// `docopen::link_route`. A heading in the same document never comes here;
+    /// the view scrolls to it itself.
+    fn follow_doc_link(
+        &mut self,
+        link: &crate::docview::FollowLink,
+        seat: crate::docopen::DocSeat,
+        cx: &mut Context<Self>,
+    ) {
         let doc = link
             .target
             .starts_with('/')
@@ -4769,12 +4843,29 @@ impl TerminalView {
             .flatten();
         match crate::docopen::link_route(&link.target, doc.is_some()) {
             crate::docopen::LinkRoute::Replace => {
-                let (Some(target), Some(rect)) = (doc, self.float.as_ref().map(|f| f.rect)) else {
+                let Some(target) = doc else {
                     return;
                 };
-                // The old square's view is dropped here, and gives its
-                // textures back as it goes, like any other close.
-                self.float = Some(Self::float_doc(target, link.fragment.clone(), rect, cx));
+                // The old view is dropped here, and gives its textures back
+                // as it goes, like any other close.
+                match seat {
+                    crate::docopen::DocSeat::Float => {
+                        let Some(rect) = self.float.as_ref().map(|f| f.rect) else {
+                            return;
+                        };
+                        self.float =
+                            Some(Self::float_doc(target, link.fragment.clone(), rect, cx));
+                    }
+                    crate::docopen::DocSeat::Face => {
+                        if self.doc.is_none() {
+                            return;
+                        }
+                        self.show_document(target, None, cx);
+                        if let (Some(fragment), Some(doc)) = (link.fragment.clone(), &self.doc) {
+                            doc.view.update(cx, |v, cx| v.show_fragment(fragment, cx));
+                        }
+                    }
+                }
                 cx.notify();
             }
             crate::docopen::LinkRoute::Desktop => open_with_system(&link.target),
@@ -4797,6 +4888,267 @@ impl TerminalView {
             cx.notify();
         }
         was_open
+    }
+
+    /// Say in the square's strip why it is a square: a split was asked for
+    /// and the tab has no room for one.
+    pub(crate) fn note_float(&mut self, note: crate::docopen::FloatNote, cx: &mut Context<Self>) {
+        if let Some(float) = self.float.as_mut() {
+            float.note = Some(note);
+            cx.notify();
+        }
+    }
+
+    /// Take the square down and hand back its view, alive: the view is on
+    /// its way to a pane of its own. Nothing is released — the texture goes
+    /// with the view, and the view is still wanted.
+    pub(crate) fn release_float(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> Option<gpui::Entity<crate::docview::DocumentView>> {
+        let float = self.float.take()?;
+        cx.notify();
+        Some(float.view)
+    }
+
+    /// The path the floating square is showing, if one is up.
+    fn float_path(&self, cx: &App) -> Option<std::path::PathBuf> {
+        let float = self.float.as_ref()?;
+        Some(float.view.read(cx).target().path.clone())
+    }
+
+    /// Ask for the floating square to become a pane beside this one — its
+    /// "⇲ split", or a second Alt+click on its path. The square stays up
+    /// until the workspace answers: the view moves into the new pane, or, at
+    /// four panes, the square stays and says why.
+    fn promote_float(&mut self, cx: &mut Context<Self>) {
+        let Some(float) = self.float.as_ref() else {
+            return;
+        };
+        let view = float.view.clone();
+        let target = view.read(cx).target().clone();
+        cx.emit(OpenDoc {
+            target,
+            carry: Some(view),
+            by: crate::docopen::Asker::Float,
+            row: None,
+            reply: None,
+        });
+    }
+
+    /// Ask the workspace to open `target` in a pane beside this one. See
+    /// [`OpenDoc`] for what it may answer instead.
+    pub(crate) fn request_beside(
+        &mut self,
+        target: crate::docopen::DocTarget,
+        row: Option<usize>,
+        by: crate::docopen::Asker,
+        reply: Option<std::sync::mpsc::Sender<String>>,
+        cx: &mut Context<Self>,
+    ) {
+        cx.emit(OpenDoc {
+            target,
+            carry: None,
+            by,
+            row,
+            reply,
+        });
+    }
+
+    // ── the Document face ───────────────────────────────────────────────────
+    //
+    // A pane opened to show a document: Ctrl+Alt+click on a path, or a square
+    // promoted to a split. The view fills the pane's screen, bent with the
+    // glass like everything else on it, and every press, move, wheel and key
+    // reaches it through the pane — un-bent through the tube's inverse, the
+    // way the bench and the square are reached. The shell the pane was made
+    // with keeps running underneath, alt+k away.
+
+    /// Put a document on this pane's Document face, and the face with it.
+    ///
+    /// **The only way onto the face.** The document and the face are set
+    /// together here, so a pane on the Document face always has something to
+    /// show; [`Self::set_face`] refuses the face to a pane without one.
+    ///
+    /// `carry` is a floating square's view being promoted: it is moved in and
+    /// re-seated, never opened again, so its zoom, its place and its decoded
+    /// pixels come with it. Without one, the file is opened here.
+    pub(crate) fn show_document(
+        &mut self,
+        target: crate::docopen::DocTarget,
+        carry: Option<gpui::Entity<crate::docview::DocumentView>>,
+        cx: &mut Context<Self>,
+    ) {
+        let view = match carry {
+            Some(view) => view,
+            None => {
+                let target = target.clone();
+                cx.new(|cx| crate::docview::DocumentView::new(target, cx))
+            }
+        };
+        view.update(cx, |v, cx| v.set_seat(crate::docopen::DocSeat::Face, cx));
+        let links = cx.subscribe(&view, |pane, _, link: &crate::docview::FollowLink, cx| {
+            pane.follow_doc_link(link, crate::docopen::DocSeat::Face, cx)
+        });
+        self.doc = Some(DocFace {
+            view,
+            target,
+            _links: links,
+        });
+        self.doc_holding = false;
+        self.bench.set_face(crate::workbench::Face::Document);
+        cx.notify();
+    }
+
+    /// The file this pane's Document face shows, if it has one.
+    pub(crate) fn document_path(&self) -> Option<&std::path::Path> {
+        self.doc.as_ref().map(|d| d.target.path.as_path())
+    }
+
+    /// The Document face's view, when that face is the one showing.
+    fn doc_on_face(&self) -> Option<&DocFace> {
+        (self.bench.face() == crate::workbench::Face::Document)
+            .then_some(self.doc.as_ref())
+            .flatten()
+    }
+
+    /// A pointer, un-bent through the tube and made relative to the Document
+    /// face's view. `None` before the view has painted.
+    fn doc_face_local(&self, pos: gpui::Point<Pixels>) -> Option<gpui::Point<Pixels>> {
+        let (vx, vy, _, _) = self.doc_rect.get()?;
+        let screen = self.tube_rect()?;
+        let (k1, k2) = self.warp_k;
+        let (fx, fy) = crate::workbench::unwarp(screen, k1, k2, f32::from(pos.x), f32::from(pos.y));
+        Some(gpui::point(px(fx - vx), px(fy - vy)))
+    }
+
+    /// A press on the Document face. Every press there is the document's,
+    /// whatever it lands on: the grid behind it is hidden, so a selection
+    /// started there is one nobody could see, and the right-click tray would
+    /// offer the hidden terminal's links and a paste into its shell.
+    fn doc_face_press(
+        &mut self,
+        ev: &MouseDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(view) = self.doc_on_face().map(|d| d.view.clone()) else {
+            return false;
+        };
+        if ev.button == MouseButton::Left {
+            if let Some(at) = self.doc_face_local(ev.position) {
+                let mods = ev.modifiers;
+                self.doc_holding = view.update(cx, |v, cx| v.press(at, mods, window, cx));
+            }
+        }
+        true
+    }
+
+    /// The pointer moved while the Document face's view is held. Answers
+    /// whether the move was the document's.
+    fn doc_face_drag_move(&mut self, ev: &MouseMoveEvent, cx: &mut Context<Self>) -> bool {
+        if !self.doc_holding {
+            return false;
+        }
+        if ev.pressed_button != Some(MouseButton::Left) {
+            self.doc_face_release(cx);
+            return false;
+        }
+        let (Some(view), Some(at)) = (
+            self.doc_on_face().map(|d| d.view.clone()),
+            self.doc_face_local(ev.position),
+        ) else {
+            return true;
+        };
+        view.update(cx, |v, cx| v.drag(at, cx));
+        true
+    }
+
+    /// The left button came up over, or away from, a held Document face.
+    fn doc_face_release(&mut self, cx: &mut Context<Self>) -> bool {
+        if !std::mem::take(&mut self.doc_holding) {
+            return false;
+        }
+        if let Some(doc) = self.doc.as_ref() {
+            doc.view.update(cx, |v, cx| v.release(cx));
+        }
+        true
+    }
+
+    /// A key on the Document face. Always consumed: the face's own keys move
+    /// the document, and every other key stops here rather than typing into
+    /// a shell nobody can see. `keylayer` has already let the window's and
+    /// the pane's chords past, and alt+k with them.
+    fn doc_key(&mut self, ks: &Keystroke, cx: &mut Context<Self>) -> Handled {
+        use crate::docopen::DocKey;
+        use crate::docview::ZoomStep;
+        let Some(view) = self.doc_on_face().map(|d| d.view.clone()) else {
+            return Handled::Consumed;
+        };
+        let m = &ks.modifiers;
+        let Some(key) = crate::docopen::doc_face_key(&ks.key, m.alt, m.control, m.platform) else {
+            return Handled::Consumed;
+        };
+        let page_h = self.doc_rect.get().map_or(0.0, |(_, _, _, h)| h) * 0.9;
+        view.update(cx, |v, cx| match key {
+            DocKey::Fit => {
+                v.zoom(ZoomStep::Fit, cx);
+            }
+            DocKey::Actual => {
+                v.zoom(ZoomStep::Actual, cx);
+            }
+            DocKey::ZoomIn => {
+                v.zoom(ZoomStep::In, cx);
+            }
+            DocKey::ZoomOut => {
+                v.zoom(ZoomStep::Out, cx);
+            }
+            DocKey::Pan(dx, dy) => {
+                v.wheel(gpui::ScrollDelta::Pixels(point(px(dx), px(dy))), cx);
+            }
+            DocKey::Page(dir) => {
+                let dy = -f32::from(dir) * page_h;
+                v.wheel(gpui::ScrollDelta::Pixels(point(px(0.), px(dy))), cx);
+            }
+        });
+        Handled::Consumed
+    }
+
+    /// The Document face's view, filling the screen inside the same padding
+    /// the grid keeps off the bent edges, with a canvas that records where it
+    /// landed so a press can be made relative to it. Nothing here listens.
+    fn doc_face_el(&self, pad: (f32, f32)) -> Option<gpui::AnyElement> {
+        let doc = self.doc_on_face()?;
+        let store = self.doc_rect.clone();
+        Some(
+            div()
+                .absolute()
+                .inset_0()
+                .px(px(pad.0))
+                .py(px(pad.1))
+                .child(
+                    div()
+                        .relative()
+                        .size_full()
+                        .child(
+                            canvas(
+                                move |bounds, _window, _cx| {
+                                    store.set(Some((
+                                        f32::from(bounds.origin.x),
+                                        f32::from(bounds.origin.y),
+                                        f32::from(bounds.size.width),
+                                        f32::from(bounds.size.height),
+                                    )));
+                                },
+                                |_, _, _, _| {},
+                            )
+                            .absolute()
+                            .inset_0(),
+                        )
+                        .child(doc.view.clone()),
+                )
+                .into_any_element(),
+        )
     }
 
     /// The screen (the warp tube) in window pixels, once it has been laid out.
@@ -4865,6 +5217,9 @@ impl TerminalView {
         match zone.hit {
             FloatHit::Close => {
                 self.close_float(cx);
+            }
+            FloatHit::Split => {
+                self.promote_float(cx);
             }
             FloatHit::Desktop => {
                 let path = view.read(cx).target().path.to_string_lossy().into_owned();
@@ -4966,6 +5321,7 @@ impl TerminalView {
         cx: &mut Context<Self>,
     ) {
         self.float_drag_end(cx);
+        self.doc_face_release(cx);
     }
 
     /// The pointer moved over the square: remember which control it is on, so
@@ -4988,11 +5344,19 @@ impl TerminalView {
         }
     }
 
-    /// A wheel turn over the floating square pans the document in it. Ctrl
-    /// held is the pane's text dial here as everywhere, so the chord is asked
-    /// first. Answers whether the turn was taken.
+    /// A wheel turn on the Document face moves the document, and one over the
+    /// floating square pans the document in it. Ctrl held is the pane's text
+    /// dial here as everywhere, so the chord is asked first. Answers whether
+    /// the turn was taken.
     fn doc_wheel(&mut self, ev: &ScrollWheelEvent, cx: &mut Context<Self>) -> bool {
         if self.size_by_wheel(ev, cx) {
+            return true;
+        }
+        // Anywhere on the Document face: the whole screen is the document, so
+        // there is no scrollback under the pointer for the turn to reach.
+        if let Some(view) = self.doc_on_face().map(|d| d.view.clone()) {
+            let delta = ev.delta;
+            view.update(cx, |v, cx| v.wheel(delta, cx));
             return true;
         }
         if self.float_hit(ev.position).is_none() {
@@ -5277,7 +5641,10 @@ impl TerminalView {
         // The note is not lost, it is one keystroke away on the face where it
         // belongs, and the `Corner` machinery built to place it here went with
         // this decision rather than staying as an option nobody takes.
-        if self.bench.face() == crate::workbench::Face::Workbench {
+        //
+        // Nor on a document, for the same reason turned round: the note is
+        // the terminal's, and a page being read is not where it belongs.
+        if self.bench.face() != crate::workbench::Face::Terminal {
             return None;
         }
         let note = self.note.as_ref()?;
@@ -5647,6 +6014,9 @@ impl TerminalView {
                 self.close_float(cx);
                 Handled::Consumed
             }
+            // The Document face: its own keys move the document, and every
+            // other key it was handed stops there — the shell is hidden.
+            crate::keylayer::Layer::Document => self.doc_key(ks, cx),
             crate::keylayer::Layer::PaneChord => self.pane_chord_key(&k, ks, cx),
             // ── the WORKBENCH face, in one of its modes ─────────────────────
             //
@@ -5695,6 +6065,7 @@ impl TerminalView {
             note: self.note.is_some(),
             bench: self.bench.face() == crate::workbench::Face::Workbench,
             float: self.float.is_some() && self.bench.face() == crate::workbench::Face::Terminal,
+            document: self.bench.face() == crate::workbench::Face::Document,
         }
     }
 
@@ -6680,7 +7051,14 @@ impl TerminalView {
         cx.notify();
     }
     /// Paste the clipboard into the PTY, honouring bracketed-paste mode.
+    ///
+    /// Not while the Document face is showing: the shell is hidden behind the
+    /// document, and a paste would land where nobody can see it — the same
+    /// reason a file dropped on a document is not typed into it.
     fn paste_clipboard(&self, cx: &mut Context<Self>) {
+        if self.bench.face() == crate::workbench::Face::Document {
+            return;
+        }
         if let Some(text) = cx.read_from_clipboard().and_then(|i| i.text()) {
             self.paste_text(&text);
         }
@@ -6886,6 +7264,15 @@ impl TerminalView {
                 return;
             }
         }
+        // THE DOCUMENT FACE, through the same inverse. The whole screen is the
+        // document, so every press on it is the document's — a selection in
+        // the hidden grid, or the copy/paste tray offering the hidden shell's
+        // links, would be acting on something nobody can see.
+        if self.doc_face_press(ev, window, cx) {
+            cx.stop_propagation();
+            cx.notify();
+            return;
+        }
         // THE FLOATING SQUARE lies over the grid and over the note, so a press
         // on it is its own and never the grid's behind it: a click on a picture
         // must not start a selection nobody can see. Found through the warp's
@@ -6983,27 +7370,36 @@ impl TerminalView {
                 Bubble,
             }
             let took = match intent {
+                // A second Alt+click on the path the square is already
+                // showing promotes the square to a split: the click said
+                // "this one" twice. Any other path opens in the square.
                 ClickIntent::OpenHere => {
                     if let Some(target) = doc {
-                        let (row, _, _) = self.viewport_cell(ev.position);
-                        self.open_float(target, Some(row), cx);
+                        let floating = self.float_path(cx);
+                        if crate::docopen::promotes(floating.as_deref(), &target.path) {
+                            self.promote_float(cx);
+                        } else {
+                            let (row, _, _) = self.viewport_cell(ev.position);
+                            self.open_float(target, Some(row), cx);
+                        }
                     }
                     Some(Took::Stop)
                 }
-                // The split this names arrives with the split. Until then
-                // Ctrl+Alt on a document does what it always did: copy an
-                // armed command line, or else open the path with the desktop.
-                ClickIntent::OpenBeside => match (copy, link) {
-                    (Some(hint), _) => {
-                        self.copy_chip(hint, cx);
-                        Some(Took::Stop)
+                // A pane beside this one, and focus stays here. The workspace
+                // owns the tree, so the pane asks; see `OpenDoc`.
+                ClickIntent::OpenBeside => {
+                    if let Some(target) = doc {
+                        let (row, _, _) = self.viewport_cell(ev.position);
+                        self.request_beside(
+                            target,
+                            Some(row),
+                            crate::docopen::Asker::Click,
+                            None,
+                            cx,
+                        );
                     }
-                    (None, Some(target)) => {
-                        open_with_system(&target);
-                        Some(Took::Bubble)
-                    }
-                    (None, None) => None,
-                },
+                    Some(Took::Stop)
+                }
                 ClickIntent::CopyChip => copy.map(|hint| {
                     self.copy_chip(hint, cx);
                     Took::Stop
@@ -7054,6 +7450,11 @@ impl TerminalView {
         // else that reads a move: the square follows the hand, or the picture
         // in it does, and the grid behind builds no selection.
         if self.float_drag_move(ev, cx) {
+            return;
+        }
+        // The same for a document held on the Document face: a picture being
+        // panned follows the hand, and the hidden grid builds nothing.
+        if self.doc_face_drag_move(ev, cx) {
             return;
         }
         // The square's controls light under the pointer. Notifies on a change.
@@ -7111,6 +7512,9 @@ impl TerminalView {
         // A held strip or document lets go first; the press was the square's,
         // so its release is too.
         if self.float_drag_end(cx) {
+            return;
+        }
+        if self.doc_face_release(cx) {
             return;
         }
         // The bench first: a press it deferred either fires now as a click or
@@ -8098,7 +8502,15 @@ impl Focusable for TerminalView {
 // in that module and are tested there; this is the wiring.
 impl TerminalView {
     /// Show a face. Idempotent, so a click on the chip already lit is free.
+    ///
+    /// The Document face is refused to a pane with no document: there would be
+    /// nothing to draw, and a face that shows nothing while swallowing every
+    /// key is a pane that has silently stopped working. The only way onto it
+    /// is [`Self::show_document`], which brings the document with it.
     pub fn set_face(&mut self, face: crate::workbench::Face, cx: &mut Context<Self>) {
+        if face == crate::workbench::Face::Document && self.doc.is_none() {
+            return;
+        }
         if self.bench.face() != face {
             self.bench.set_face(face);
             // A pane whose face changed has changed what its keystrokes mean,
@@ -8107,8 +8519,11 @@ impl TerminalView {
         }
     }
 
+    /// alt+k. On a pane showing a document it moves between the document and
+    /// its shell; anywhere else it swaps the terminal and the bench. See
+    /// [`crate::workbench::next_face`].
     pub fn toggle_face(&mut self, cx: &mut Context<Self>) {
-        self.bench.toggle_face();
+        self.bench.toggle_face(self.doc.is_some());
         cx.notify();
     }
 
@@ -8244,6 +8659,26 @@ impl Render for TerminalView {
                                 cx.listener(move |v, _, _, cx| {
                                     if let Some(doc) = doc.clone() {
                                         v.open_float(doc, Some(row_at), cx);
+                                    }
+                                    v.ctx_menu = None;
+                                    cx.stop_propagation();
+                                    cx.notify();
+                                }),
+                            )
+                        }
+                        crate::docopen::LinkItem::OpenBeside => {
+                            let doc = doc.clone();
+                            link_row(s.m_open_beside, "ctrl+alt+click").on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |v, _, _, cx| {
+                                    if let Some(doc) = doc.clone() {
+                                        v.request_beside(
+                                            doc,
+                                            Some(row_at),
+                                            crate::docopen::Asker::Menu,
+                                            None,
+                                            cx,
+                                        );
                                     }
                                     v.ctx_menu = None;
                                     cx.stop_propagation();
@@ -8833,13 +9268,19 @@ impl Render for TerminalView {
                         }),
                     )
             };
+            // DOC · TERM · BENCH on a pane opened to show a document: the
+            // document is what that pane is for, so it leads.
+            let mut slider = sk.slider();
+            if self.doc.is_some() {
+                slider = slider.child(half(crate::workbench::Face::Document, cx));
+            }
             div()
                 .flex()
                 .flex_row()
                 .items_center()
                 .gap(px(2.))
                 .child(
-                    sk.slider()
+                    slider
                         .child(half(crate::workbench::Face::Terminal, cx))
                         .child(half(crate::workbench::Face::Workbench, cx)),
                 )
@@ -8887,6 +9328,9 @@ impl Render for TerminalView {
         // because building it needs `&mut self` and the tree below borrows the
         // pane for the rest of the frame.
         let on_bench = face_now == crate::workbench::Face::Workbench;
+        // The sticky note and the crawl are the terminal's alone: not on the
+        // bench (Parker's rule, see `note_layout`), and not on a document.
+        let on_terminal = face_now == crate::workbench::Face::Terminal;
         let pane_h = self
             .content_bounds
             .lock()
@@ -9054,7 +9498,19 @@ impl Render for TerminalView {
                 // the title doubles as the drag handle: grab it to move this
                 // sub-tab onto another tab, or drop it on a pane to split there.
                 // Right-click renames it (custom name wins over the OSC title).
-                let label = self.name.clone().unwrap_or_else(|| self.title.clone());
+                // On the Document face the title is the file's name, unless the
+                // pane was renamed: the shell's own title describes a terminal
+                // that is not on screen.
+                let shown = (face_now == crate::workbench::Face::Document)
+                    .then(|| self.document_path())
+                    .flatten()
+                    .and_then(|p| p.file_name())
+                    .map(|n| n.to_string_lossy().into_owned());
+                let label = self
+                    .name
+                    .clone()
+                    .or(shown)
+                    .unwrap_or_else(|| self.title.clone());
                 div()
                     .flex_1()
                     // min-width:0 lets the title actually shrink (a nowrap flex
@@ -9373,7 +9829,7 @@ impl Render for TerminalView {
         // INVERSE of that tube's distortion and the two must be measuring the
         // same rectangle or the cancellation is against the wrong curve.
         // Nothing on the bench face — see [`Self::note_layout`].
-        let note_el = self.note.clone().filter(|_| !on_bench).map(|note| {
+        let note_el = self.note.clone().filter(|_| on_terminal).map(|note| {
             let store = self.content_bounds.clone();
             let pal = crate::sticky::paper(th.text, th.accent);
             let peeling = self.note_hover == Some(crate::sticky::Hit::Peel);
@@ -9410,7 +9866,16 @@ impl Render for TerminalView {
             let theme = Arc::new(th.clone());
             float.view.update(cx, |v, cx| v.set_theme(theme, cx));
         }
+        // The Document face's view, the same way.
+        if let Some(doc) = self.doc_on_face() {
+            let theme = Arc::new(th.clone());
+            doc.view.update(cx, |v, cx| v.set_theme(theme, cx));
+        }
         let float_el = self.float_el(&th, face_now, cx);
+        // Inside the same padding the grid keeps off the bent edges, so the
+        // corners of a page are not the part the barrel pass pushes out of
+        // the tube.
+        let doc_el = self.doc_face_el((grid_pad_x, grid_pad_y));
 
         div()
             .track_focus(&self.focus_handle(cx))
@@ -9505,7 +9970,7 @@ impl Render for TerminalView {
                                     // pane's own crawl perspective (grade.crawl →
                                     // th.crawl/angle/depth). Identity when off, so
                                     // a crawling pane and a plain pane coexist.
-                                    let crawl = if th.crawl && !on_bench {
+                                    let crawl = if th.crawl && on_terminal {
                                         let (a, d) = crate::theme::crawl_coeffs(
                                             th.crawl_angle,
                                             th.crawl_depth,
@@ -9552,8 +10017,12 @@ impl Render for TerminalView {
                     // row shaped and measured every frame for pixels nobody can
                     // see. The terminal itself keeps running — an agent whose
                     // output stopped being watched is not an agent that stopped.
+                    // A document the same way: it fills the screen in the
+                    // grid's place, and the shell under it keeps running.
                     .child(if on_bench {
                         bench_el
+                    } else if let Some(doc_el) = doc_el {
+                        doc_el
                     } else {
                         div()
                             .px(px(grid_pad_x))
@@ -12861,6 +13330,168 @@ mod tests {
         assert!(doc_wheel.contains("v.wheel(delta, cx)"), "through the view");
     }
 
+    // ── the Document face ───────────────────────────────────────────────────
+
+    /// A key on the Document face either moves the document or stops there.
+    /// Nothing it is handed may reach the shell hidden behind it: no declining
+    /// to the terminal, no bytes to the pseudoterminal.
+    #[test]
+    fn the_document_face_swallows_typing() {
+        let code = live_code();
+        let on_key = method_body(&code, "fn on_key(&mut self, ev: &KeyDownEvent");
+        assert!(
+            on_key.contains("crate::keylayer::Layer::Document => self.doc_key(ks, cx)"),
+            "on_key hands the Document layer to doc_key"
+        );
+        let doc_key = method_body(&code, "fn doc_key(");
+        assert!(doc_key.contains("crate::docopen::doc_face_key("));
+        for leak in [
+            "Handled::Declined",
+            "terminal_key(",
+            "notifier",
+            "keystroke_bytes(",
+        ] {
+            assert!(
+                !doc_key.contains(leak),
+                "doc_key must not pass a key on to the hidden shell ({leak})"
+            );
+        }
+        // A paste is typing too: it does not reach the hidden shell either.
+        let paste = method_body(&code, "fn paste_clipboard(");
+        let guard = paste
+            .find("crate::workbench::Face::Document")
+            .expect("paste_clipboard refuses on the Document face");
+        let read = paste.find("read_from_clipboard").expect("the paste");
+        assert!(guard < read);
+    }
+
+    /// A file dropped on a document is not typed into the shell behind it:
+    /// the drop is let go before the terminal face's paste is reached.
+    #[test]
+    fn a_file_dropped_on_a_document_is_not_typed_into_the_hidden_shell() {
+        let src = include_str!("pane/bench.rs");
+        let code: String = src[..src.find("\n#[cfg(test)]").unwrap_or(src.len())]
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let drop = method_body(&code, "fn bench_drop(");
+        let guard = drop
+            .find("if self.bench.face() == crate::workbench::Face::Document {\n            return;")
+            .expect("bench_drop lets a drop on the Document face go");
+        let paste = drop
+            .find("self.paste_text(")
+            .expect("the terminal face pastes");
+        assert!(guard < paste, "the document is asked before the paste");
+    }
+
+    /// Every press on the Document face is the document's: it is asked before
+    /// the square, the note, the copy/paste tray and the grid's selection, and
+    /// a press it takes stops there.
+    #[test]
+    fn a_press_on_the_document_face_never_reaches_the_grid() {
+        let code = live_code();
+        let body = method_body(&code, "fn on_mouse_down(&mut self, ev: &MouseDownEvent");
+        let doc = body
+            .find("if self.doc_face_press(ev, window, cx) {")
+            .expect("on_mouse_down asks the Document face");
+        for later in [
+            "self.float_hit(",
+            "self.sticky_click(",
+            "self.ctx_menu = Some(",
+            "Selection::new(",
+        ] {
+            let at = body.find(later).unwrap_or_else(|| panic!("{later}"));
+            assert!(doc < at, "the Document face is asked before {later}");
+        }
+        let press = method_body(&code, "fn doc_face_press(");
+        assert!(
+            press.contains("self.doc_face_local(ev.position)"),
+            "the press is un-bent through the tube before the view sees it"
+        );
+        let local = method_body(&code, "fn doc_face_local(");
+        assert!(local.contains("crate::workbench::unwarp("));
+        // The move and the release of a held document come first too.
+        let mv = method_body(&code, "fn on_mouse_move(");
+        let held = mv.find("self.doc_face_drag_move(ev, cx)").expect("drag");
+        let select = mv.find("sel.update(").expect("the grid's selection drag");
+        assert!(held < select);
+        let up = method_body(&code, "fn on_mouse_up(");
+        assert!(up.contains("self.doc_face_release(cx)"));
+        let out = method_body(&code, "fn on_float_release_out(");
+        assert!(out.contains("self.doc_face_release(cx)"));
+    }
+
+    /// The Document face is reached one way: `show_document`, which sets the
+    /// document and the face together. `set_face` refuses the face to a pane
+    /// with no document, so "on the Document face" and "has a document" cannot
+    /// disagree through this pane's own API.
+    #[test]
+    fn the_document_face_comes_only_with_a_document() {
+        let code = live_code();
+        let set = method_body(&code, "pub fn set_face(");
+        let refuse = set
+            .find("face == crate::workbench::Face::Document && self.doc.is_none()")
+            .expect("set_face refuses the Document face without a document");
+        let assign = set.find("self.bench.set_face(face)").expect("assign");
+        assert!(refuse < assign);
+        let show = method_body(&code, "pub(crate) fn show_document(");
+        assert!(show.contains("self.doc = Some(DocFace {"));
+        assert!(show.contains("self.bench.set_face(crate::workbench::Face::Document)"));
+        // Its links are routed from the face, as the square's are from the
+        // square: a promoted view is subscribed again here, once.
+        assert!(show.contains("pane.follow_doc_link(link, crate::docopen::DocSeat::Face, cx)"));
+        assert_eq!(
+            code.matches("set_face(crate::workbench::Face::Document)")
+                .count(),
+            1,
+            "only show_document puts a pane on its Document face"
+        );
+        // A carried view is re-seated, never re-opened.
+        let carried = show
+            .find("Some(view) => view,")
+            .expect("the carry is used as is");
+        let opened = show
+            .find("crate::docview::DocumentView::new(")
+            .expect("without a carry, the file is opened");
+        assert!(carried < opened);
+        assert!(show.contains("v.set_seat(crate::docopen::DocSeat::Face, cx)"));
+    }
+
+    /// Ctrl+Alt+click asks for the split, and a second Alt+click on the path
+    /// the square is showing promotes the square: both through `OpenDoc`,
+    /// because the tree the split changes belongs to the workspace.
+    #[test]
+    fn the_split_gestures_ask_the_workspace() {
+        let code = live_code();
+        let body = method_body(&code, "fn on_mouse_down(&mut self, ev: &MouseDownEvent");
+        assert!(body.contains("crate::docopen::promotes(floating.as_deref(), &target.path)"));
+        assert!(body.contains("self.promote_float(cx)"));
+        assert!(body.contains("crate::docopen::Asker::Click"));
+        let promote = method_body(&code, "fn promote_float(");
+        assert!(promote.contains("carry: Some(view)"), "the view travels");
+        assert!(promote.contains("crate::docopen::Asker::Float"));
+        let press = method_body(&code, "fn float_press(");
+        assert!(press.contains("FloatHit::Split => {\n                self.promote_float(cx);"));
+    }
+
+    /// The wheel anywhere on the Document face moves the document, asked
+    /// before the floating square and never reaching the hidden scrollback.
+    #[test]
+    fn the_wheel_on_the_document_face_moves_the_document() {
+        let code = live_code();
+        let doc_wheel = method_body(&code, "fn doc_wheel(");
+        let face = doc_wheel
+            .find("self.doc_on_face()")
+            .expect("the face is asked");
+        let float = doc_wheel.find("self.float_hit(").expect("then the square");
+        assert!(face < float);
+        let chord = doc_wheel
+            .find("self.size_by_wheel(")
+            .expect("the text dial");
+        assert!(chord < face, "ctrl+wheel is still the text dial");
+    }
+
     /// The right-click menu's link rows come from the same table the tests
     /// hold, so a row appears exactly where it does something.
     #[test]
@@ -12869,6 +13500,7 @@ mod tests {
         assert!(code.contains("crate::docopen::link_menu(doc.is_some(), item.is_some())"));
         for row in [
             "s.m_open_here",
+            "s.m_open_beside",
             "s.m_open_desktop",
             "s.m_reveal",
             "s.m_copy_link",
