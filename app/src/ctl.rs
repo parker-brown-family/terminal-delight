@@ -96,6 +96,10 @@ pub(crate) enum Req {
     /// Put a line in the composer WITHOUT submitting it — what a person
     /// halfway through typing looks like. See [`Cmd::BenchType`].
     BenchType(String, mpsc::Sender<String>),
+    /// Open a document in a floating square. See [`Cmd::DocHere`].
+    DocHere(PathBuf, mpsc::Sender<String>),
+    /// Close a floating square. See [`Cmd::DocClose`].
+    DocClose(mpsc::Sender<String>),
 }
 
 /// Wait for the window to say what a bench verb actually did. The ticker
@@ -348,6 +352,13 @@ enum Cmd {
     /// script, so both were found by borrowing a person's keyboard, once by
     /// accident into the wrong window.
     BenchType(String),
+    /// Open a document in a floating square on the focused pane — what
+    /// Alt+clicking its path does, for a caller with no pointer. Takes an
+    /// absolute path: the socket has no working directory to resolve against.
+    DocHere(PathBuf),
+    /// Close the floating square, on the focused pane or the first one that
+    /// has a square open.
+    DocClose,
 }
 
 /// Which face `ctl bench` asks for.
@@ -417,6 +428,7 @@ pub fn socket_path(pid: u32) -> PathBuf {
 const USAGE: &str = "ping | whoami | paint on|off|toggle|status | \
      skin <name>|theme|status | \
      bench on|off|toggle|choose <n>|submit|say <text>|type <text> | \
+     doc here <absolute path> | doc close | \
      mcp status|on|off | mcp writes on|off | mcp expose agents|all | \
      mcp rpc <json> | mcp from <session> <pane|-> rpc <json> | \
      adopt {\"cwd\":\"/…\",\"run\":\"…\"} | \
@@ -444,6 +456,16 @@ fn parse_line(s: &str) -> Result<Cmd, String> {
             return Err("bench say: nothing to say".into());
         }
         return Ok(Cmd::BenchSay(line.to_string()));
+    }
+    // `doc here` carries a path, and paths hold spaces: take it verbatim.
+    if let Some(rest) = s.strip_prefix("doc here ") {
+        let path = rest.trim_end_matches(['\r', '\n']);
+        if !path.starts_with('/') {
+            return Err(format!(
+                "doc here: {path:?} is not an absolute path — the socket has no working directory"
+            ));
+        }
+        return Ok(Cmd::DocHere(PathBuf::from(path)));
     }
     // `tabs` carries a JSON op list — tab names hold spaces, so the remainder
     // is taken verbatim and parsed as JSON rather than split into words.
@@ -490,6 +512,7 @@ fn parse_line(s: &str) -> Result<Cmd, String> {
         // its last answer, the SUBMIT tab is the whole of how one ends, and a
         // capability reachable only by a mouse cannot be gated by anything.
         ["bench", "submit"] => Ok(Cmd::BenchSubmit),
+        ["doc", "close"] => Ok(Cmd::DocClose),
         ["skin", "status"] => Ok(Cmd::SkinStatus),
         // Any other single word is a skin id — `theme` and `custom` included,
         // which is why they are not special-cased here. The window is what knows
@@ -793,6 +816,22 @@ fn handle_conn(
                 "err ui gone".into()
             }
         }
+        Ok(Cmd::DocHere(path)) => {
+            let (rtx, rrx) = mpsc::channel();
+            if tx.send(Req::DocHere(path, rtx)).is_ok() {
+                bench_outcome(rrx)
+            } else {
+                "err ui gone".into()
+            }
+        }
+        Ok(Cmd::DocClose) => {
+            let (rtx, rrx) = mpsc::channel();
+            if tx.send(Req::DocClose(rtx)).is_ok() {
+                bench_outcome(rrx)
+            } else {
+                "err ui gone".into()
+            }
+        }
         Ok(Cmd::Bench(face)) => {
             if tx.send(Req::Bench(face)).is_ok() {
                 "ok".into()
@@ -901,6 +940,12 @@ pub fn start(cx: &mut Context<Workspace>) {
                     }
                     Req::BenchType(line, reply) => {
                         let _ = reply.send(ws.bench_type(&line, cx));
+                    }
+                    Req::DocHere(path, reply) => {
+                        let _ = reply.send(ws.doc_here(&path, cx));
+                    }
+                    Req::DocClose(reply) => {
+                        let _ = reply.send(ws.doc_close(cx));
                     }
                     // The same escalation the robot panel performs, and the same
                     // persistence: a grant made from the CLI shows in the panel
@@ -1919,6 +1964,24 @@ mod tests {
         // answering it would send a round they did not mean.
         assert!(parse_line("bench submit 1").is_err());
         assert!(parse_line("bench submit all").is_err());
+    }
+
+    /// A floating document can be opened and closed without a pointer, which
+    /// is how a hundred open-and-close cycles get counted at all. The path is
+    /// taken whole, spaces included, and must be absolute: the socket has no
+    /// working directory, and resolving against the window's own would open a
+    /// file the caller did not name.
+    #[test]
+    fn a_floating_document_opens_and_closes_without_a_pointer() {
+        assert!(matches!(
+            parse_line("doc here /tmp/two words.png"),
+            Ok(Cmd::DocHere(ref p)) if p == Path::new("/tmp/two words.png")
+        ));
+        assert!(parse_line("doc here shot.png").is_err());
+        assert!(parse_line("doc here ~/shot.png").is_err());
+        assert!(matches!(parse_line("doc close"), Ok(Cmd::DocClose)));
+        assert!(parse_line("doc close all").is_err());
+        assert!(USAGE.contains("doc here") && USAGE.contains("doc close"));
     }
 
     #[test]

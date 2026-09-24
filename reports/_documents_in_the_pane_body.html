@@ -1,0 +1,473 @@
+<div class="wrap">
+
+<p class="kicker">Terminal Delight &middot; the build plan for documents in the pane &middot; Gate 2 of 4, architecture, approved &middot; 2026-09-24</p>
+
+<h1>Documents in the Pane</h1>
+
+<p class="lede">Terminal Delight is going to open the documents agents hand back &mdash; Markdown, HTML
+briefs, images &mdash; inside its own panes, instead of sending each one to a desktop window. This
+morning&rsquo;s research brief ended on five questions about how, and your notes answered all of them. Alt+click floats a document over the pane in the glow TD&rsquo;s menus use, Ctrl+Alt+click opens it
+beside the agent, and Ctrl+click still hands it to the desktop. Two answers pulled against each other:
+HTML should start as a picture of the page, and a decision brief must keep its comments and its save. A
+picture runs no code, so the brief&rsquo;s own notes system cannot run inside it. The way through is to
+split the job. The engine supplies only pixels and the positions of things; TD draws the notes and writes
+them into the file itself, in the format the brief already uses. That split is also what lets an engine be
+unplugged, the modularity you asked for. This page lays out that architecture with a spike&rsquo;s
+measurements; you approved it this afternoon, and the calls at the end are still open to a note.</p>
+
+<!-- ============================================================ 1 -->
+<h2 class="sec">Your notes, drawn as the screens they describe</h2>
+
+<p>Start with what you decided, because every screen below is one of your notes drawn. The first is the
+whole click map: Alt is TD&rsquo;s modifier, so both new gestures carry it, and the old ones had to move out
+of their way without disappearing.</p>
+
+<figure>
+  <span class="lbl">01 &middot; Every click on a path, before and after</span>
+  <div class="scroller">{{mock:04-the-clicks:630}}</div>
+  <figcaption>A Gate 1 mockup, drawn in TD&rsquo;s default theme. <b>Nothing you use today disappears</b>:
+  Ctrl+click keeps the desktop, Shift+click takes over revealing a file, and the right-click menu names
+  every action, including the Copy link that Alt+click gives up on document lines.</figcaption>
+</figure>
+
+<p>That last point is a collision the plan has to settle. Today Alt+click copies a whole line whenever TD
+reads it as a command or it starts with a URL &mdash; and a bare <code>file://</code> link on its own line,
+the shape agents here are told to print, is exactly such a line. The proposed rule is that a document TD can
+draw under the pointer opens, anything else copies as it does now, and while Alt is held, the chip at
+the end of the line says which one the click will do.</p>
+
+<figure>
+  <span class="lbl">02 &middot; Alt held over a document, then the floating square</span>
+  <div class="scroller">{{mock:01-alt-click-float:1050}}</div>
+  <figcaption>The same mockup page as in the Gate 1 folder. <b>The chip turns a hidden rule into a visible
+  one</b>: &ldquo;copy&rdquo; on the command line, &ldquo;open here&rdquo; on the document path. The square
+  wears the modal stack TD already draws &mdash; a two-pixel accent border, a one-pixel ring, a soft halo
+  and a shadow cast down onto the pane.</figcaption>
+</figure>
+
+<figure>
+  <span class="lbl">03 &middot; Ctrl+Alt+click, the document beside the agent</span>
+  <div class="scroller">{{mock:02-ctrl-alt-click-split:632}}</div>
+  <figcaption>The split you asked for, for reading on one side and prompting on the other. <b>Focus stays on
+  the agent</b> in this proposal, so you can keep typing; the floating square&rsquo;s &ldquo;click to
+  split&rdquo; lands in the same place.</figcaption>
+</figure>
+
+<p class="bridge">Images and Markdown fit those screens without trouble. The brief is the case that
+pushes back.</p>
+
+<!-- ============================================================ 2 -->
+<h2 class="sec">A picture of a page cannot take a note</h2>
+
+<p>A decision brief does its annotation in JavaScript. When the page loads, its notes script walks the
+document, gives every figure, card and question an anchor id taken from its title, and hangs a note button
+on each; &ldquo;save into file&rdquo; copies the whole page with the notes baked into a small JSON block
+near the end, plus a plain-text map in a comment. None of that runs in a picture. So there were two ways to
+keep comments and save: embed a live browser engine now, against your note to start with an image, or have
+TD do the notes itself on top of the picture.</p>
+
+<figure>
+  <span class="lbl">04 &middot; The brief open in TD, with TD&rsquo;s notes on top</span>
+  <div class="scroller">{{mock:03-brief-with-notes:683}}</div>
+  <figcaption>A Gate 1 mockup. <b>The page is a picture and the note buttons are TD&rsquo;s</b>, placed on
+  the same figures and questions a browser would mark, with TD&rsquo;s own note box and bar. Saving writes
+  into the file on disk, where today a browser downloads a copy you have to move back.</figcaption>
+</figure>
+
+<p class="bridge">Doing the notes in TD sounds like a second notes system. The next section is why it is
+the smaller design, not the larger one.</p>
+
+<!-- ============================================================ 3 -->
+<h2 class="sec">The engine supplies pixels and positions, and TD owns the notes</h2>
+
+<p>The architecture builds up in three frames. The first adds the two placements to TD as it stands; the
+boxes from today never move.</p>
+
+<figure>
+  <span class="lbl">05 &middot; A router and two placements</span>
+  <div class="scroller">
+    <div class="ext-row"><div class="box d"><b>a path in terminal output</b><span>Alt+click &middot; Ctrl+Alt+click &middot; the right-click menu &middot; the square&rsquo;s &ldquo;click to split&rdquo;</span></div></div>
+    <div class="arch">
+      <div class="zone">
+        <span class="zl">&#x25A3; the pane &middot; TerminalView</span>
+        <div class="box g"><b>on_mouse_down</b><span>bench &rarr; sticky note &rarr; <i>new branches</i> &rarr; copy chip &rarr; menu &rarr; reveal &rarr; open</span></div>
+        <div class="box b"><b>router</b><span>open(document, placement, who asked) &middot; drawable? &middot; already open in this tab?</span></div>
+        <div class="box b"><b>floating square</b><span>child of the screen, over the grid, under the glass &middot; hyperglow &middot; drag &middot; Esc</span></div>
+        <div class="box g"><b>faces</b><span>terminal grid &middot; workbench</span></div>
+        <div class="box b in"><b>document face</b><span>the split&rsquo;s third face; a shell idles behind it</span></div>
+        <div class="box g"><b>sticky note &middot; CRT post-pass</b><span>unchanged; the square bends with the glass like everything in the tube</span></div>
+      </div>
+      <div class="wire">event</div>
+      <div class="zone">
+        <span class="zl">&#x25A3; the window &middot; Workspace</span>
+        <div class="box g"><b>wire_pane</b><span>subscribes to pane events</span></div>
+        <div class="box b"><b>OpenDoc &rarr; split beside</b><span>Workspace::split(Row), then flip the new pane to the document face &middot; at the four-pane cap: float instead</span></div>
+        <div class="box g"><b>split tree</b><span>leaves stay terminal views</span></div>
+        <div class="box b"><b>saved layout + a document path</b><span>a split showing a document survives a restart; a floating square does not</span></div>
+      </div>
+    </div>
+    <div class="ext-row bottom"><div class="box d"><b>xdg-open</b><span>Ctrl+click, and every file type TD cannot draw &middot; Shift+click now reveals instead</span></div></div>
+  </div>
+  <div class="legend"><span><i class="g"></i>exists today</span><span><i class="b"></i>added in this frame &mdash; proposed</span><span><i class="d"></i>outside TD</span></div>
+  <figcaption>Drawn from <code>pane.rs</code>, <code>main.rs</code> and <code>workbench.rs</code> at
+  <code>main</code>, references re-read today. <b>Neither placement changes the split tree or anything in
+  the session host</b>: the float lives inside one pane, and the split borrows a leaf the tree already
+  knows how to hold.</figcaption>
+</figure>
+
+<p>The second frame puts something in the placements. One document view per open file, and three backends
+behind it. Images need nothing new. Markdown is the renderer lifted from markdown-delight, taking TD&rsquo;s
+palette. HTML is where the modularity goes: a trait with one job, so a disappointing engine is swapped by
+configuration rather than rewritten.</p>
+
+<figure>
+  <span class="lbl">06 &middot; One document view, three backends</span>
+  <div class="scroller">
+    <div class="stack3">
+      <div class="box b wide"><b>document view</b><span>one per open file &middot; source, kind, scroll, zoom &middot; drawn inside whichever placement opened it</span></div>
+      <div class="tri">
+        <div class="box g"><b>image</b><span>gpui&rsquo;s own image element &middot; PNG, JPEG, WebP, GIF, SVG &middot; already used eight times in TD</span></div>
+        <div class="box b"><b>Markdown</b><span>markdown-delight&rsquo;s renderer, lifted &middot; + TD palette, clickable links, drawn images &middot; also fixes the workbench&rsquo;s plain-text Markdown</span></div>
+        <div class="box b"><b>HTML &rarr; page engine</b><span>a trait: render a page at a width and scale, return pixels and geometry &middot; chosen by a config key</span></div>
+      </div>
+    </div>
+  </div>
+  <div class="legend"><span><i class="g"></i>exists</span><span><i class="b"></i>proposed</span></div>
+  <figcaption>The lower boxes are the only place a format is known. <b>Everything above them &mdash; the
+  router, the placements, the glow, the drag &mdash; is written once for all three formats.</b></figcaption>
+</figure>
+
+<p>The third frame answers the brief. The page engine hands back a picture and a list of where things are;
+the notes layer, which belongs to TD and not to any engine, draws the note buttons at those places and
+reads and writes the brief file.</p>
+
+<figure>
+  <span class="lbl">07 &middot; The page engine, and the notes layer that sits above any engine</span>
+  <div class="scroller">
+    <div class="stack3">
+      <div class="tri2">
+        <div class="box b"><b>snapshot engine &middot; now</b><span>a headless browser renders the page once; the page&rsquo;s own notes script runs inside it to name the anchors; its notes UI is hidden</span></div>
+        <div class="box a dash"><b>live engine &middot; later</b><span>Servo in the window, or Chromium streamed over its DevTools protocol &middot; same trait, same notes layer &middot; only after the fidelity test <span class="mine">yours to argue</span></span></div>
+      </div>
+      <div class="box b wide"><b>what every engine returns</b><span>identity and layout generation &middot; the brief&rsquo;s notes capability, read from the running page &middot; tiles by device-pixel band, viewport first &middot; anchors with titles and rects (none when inside a closed modal) &middot; links and modal openers &middot; each modal on demand &middot; text &middot; diagnostics &mdash; and never the save</span></div>
+      <div class="box b wide"><b>notes layer &middot; TD&rsquo;s</b><span>badges from the brief&rsquo;s saved notes &middot; note buttons at the anchors &middot; a CONCUR stamp on every decision &middot; TD&rsquo;s note box &middot; copy map &middot; save into file</span></div>
+      <div class="box g wide"><b>the brief file on disk</b><span>TD writes three regions only: the notes block, the concur block and the reader-notes comment &middot; the same format the browser reads</span></div>
+    </div>
+  </div>
+  <div class="legend"><span><i class="g"></i>exists</span><span><i class="b"></i>proposed</span><span><i class="a"></i>later, and arguable</span></div>
+  <figcaption>The design that makes swapping safe. <b>An engine never touches the notes, so replacing the
+  snapshot with a live engine later cannot lose or corrupt one.</b> Hiding the brief&rsquo;s own notes UI
+  inside any engine keeps one notes UI and one writer.</figcaption>
+</figure>
+
+<p class="bridge">That design rests on two claims a spike could test before any TD code: that the anchors
+come out the same as a browser&rsquo;s, and that writing two regions of the file is safe.</p>
+
+<!-- ============================================================ 4 -->
+<h2 class="sec">What the spike measured</h2>
+
+
+<p>The spike ran on this machine against all 119 HTML reports in the two report folders, with headless
+Chromium driven from scripts and no TD code, and every write went to throwaway copies. Four numbers carry
+the design.</p>
+
+<div class="stat-row">
+  <div class="tile"><div class="k">same anchor ids as a browser</div><div class="v">93 <small>of 93</small></div><p>every notes-bearing brief, at every width tried; 7.4 ms to read 53 anchors once the page is up</p></div>
+  <div class="tile"><div class="k">what a TD save changes</div><div class="v">240 <small>bytes</small></div><p>on a 135 KB brief, in 1.4 ms; every byte outside the three regions identical</p></div>
+  <div class="tile"><div class="k">first pixels of a brief</div><div class="v">60&ndash;90 <small>ms</small></div><p>capture the visible part, decode, upload; the whole page takes 0.6&ndash;2.2 s cold</p></div>
+  <div class="tile"><div class="k">tallest brief, device px</div><div class="v">25,902</div><p>at your pane width and 1.6&times; scale; the GPU takes up to 32,768 in one texture</p></div>
+</div>
+
+<p>The write is the part that could hurt a file, so here is exactly what it touches. Everything else in the
+brief &mdash; the prose, the pictures, the modals, the brief&rsquo;s own script &mdash; is read and never
+written.</p>
+
+<figure>
+  <span class="lbl">08 &middot; The three regions of a brief TD writes</span>
+  <div class="filemap"><span class="k">&lt;!doctype html&gt; &hellip; &lt;body&gt;</span>
+  &hellip; the brief: prose, figures, cards, modals &mdash; untouched &hellip;
+  <span class="k">&lt;script &hellip; id="report-notes"&gt;</span><span class="w">{ "fig-02-two-ways-a": [ &hellip; ], &hellip; }</span><span class="k">&lt;/script&gt;</span>       &larr; 1 &middot; rewritten
+  <span class="k">&lt;script &hellip; id="report-concurs"&gt;</span><span class="w">{ "ask-3-&hellip;": "2026-09-24 12:40" }</span><span class="k">&lt;/script&gt;</span>  &larr; 2 &middot; rewritten, or inserted
+  <span class="k">&lt;script&gt;</span> window.NOTES_FILE = '&hellip;'; <span class="k">&lt;/script&gt;</span>
+  <span class="k">&lt;script&gt;</span> &hellip; the brief&rsquo;s own notes.js &hellip; <span class="k">&lt;/script&gt;</span>          &larr; read only; runs in the engine
+  <span class="k">&lt;!--</span>
+  <span class="w">READER NOTES &mdash; 11 notes on 9 elements. &hellip;</span>              &larr; 3 &middot; the last one, replaced
+  <span class="k">--&gt;&lt;/body&gt;&lt;/html&gt;</span></div>
+  <figcaption>Measured on copies of your saved brief and the one concur brief in the corpus. <b>The notes
+  block TD writes is byte for byte what the brief&rsquo;s own save writes for the same notes</b>, and a hostile
+  note &mdash; <code>&lt;/script&gt;</code>, <code>--&gt;</code>, a newline, Unicode &mdash; round-trips
+  because TD escapes <code>&lt;/</code> inside the block and breaks <code>--&gt;</code> inside the
+  comment.</figcaption>
+</figure>
+
+<p>Two findings belong to the brief skill rather than to TD, and both are now issues on its repository. A
+browser that ever stored notes for a brief&rsquo;s filename &mdash; even the empty set the delete-all button
+leaves behind &mdash; never shows the notes saved in the file again, and copies with the same name in
+different folders share that stored set; your Chromium holds 22 such entries. And a note containing
+<code>&lt;/script&gt;</code> breaks the page&rsquo;s own &ldquo;save into file&rdquo; and loses every note.
+Until the first is fixed in the skill, TD can only warn when it changes a brief that a browser may be
+shadowing. <span class="tag v">measured</span></p>
+
+<p>The picture is the other half. The tallest brief would fit in one GPU texture, but it would hold 153 MiB
+of video memory while open, so the page is cut into bands and only the ones near the screen stay on the
+GPU.</p>
+
+<figure>
+  <span class="lbl">09 &middot; How a tall brief becomes tiles</span>
+  <div class="scroller">
+    <svg viewBox="0 0 920 300" style="min-width:680px" role="img" aria-label="A column representing the tallest brief, 25,902 device pixels, cut into thirteen tiles 2,048 pixels tall. The four tiles around the visible band are resident on the GPU; the other nine are kept as PNGs in memory. Annotations give the sizes and costs." font-family="ui-monospace, monospace">
+      <text x="40" y="18" font-size="10" fill="#8b8a80" letter-spacing="1.2">THE TALLEST BRIEF &#xB7; 1549 &#xD7; 25,902 DEVICE PX</text>
+      <g stroke="#3a3a36">
+        <rect x="40" y="28" width="150" height="20.2" fill="#232321" stroke-dasharray="3 3"/>
+        <rect x="40" y="48.2" width="150" height="20.2" fill="#232321" stroke-dasharray="3 3"/>
+        <rect x="40" y="68.4" width="150" height="20.2" fill="#12241c" stroke="#199e70"/>
+        <rect x="40" y="88.6" width="150" height="20.2" fill="#12241c" stroke="#199e70"/>
+        <rect x="40" y="108.8" width="150" height="20.2" fill="#12241c" stroke="#199e70"/>
+        <rect x="40" y="129" width="150" height="20.2" fill="#12241c" stroke="#199e70"/>
+        <rect x="40" y="149.2" width="150" height="20.2" fill="#232321" stroke-dasharray="3 3"/>
+        <rect x="40" y="169.4" width="150" height="20.2" fill="#232321" stroke-dasharray="3 3"/>
+        <rect x="40" y="189.6" width="150" height="20.2" fill="#232321" stroke-dasharray="3 3"/>
+        <rect x="40" y="209.8" width="150" height="20.2" fill="#232321" stroke-dasharray="3 3"/>
+        <rect x="40" y="230" width="150" height="20.2" fill="#232321" stroke-dasharray="3 3"/>
+        <rect x="40" y="250.2" width="150" height="20.2" fill="#232321" stroke-dasharray="3 3"/>
+        <rect x="40" y="270.4" width="150" height="13.1" fill="#232321" stroke-dasharray="3 3"/>
+      </g>
+      <rect x="34" y="94" width="162" height="22.1" fill="none" stroke="#3987e5" stroke-width="2.5"/>
+      <text x="204" y="109" font-size="10.5" fill="#8fbdf2">&#x2190; what the pane shows (2,240 px)</text>
+      <text x="204" y="80" font-size="10.5" fill="#5fcda4">&#x2190; resident: the visible tiles &#xB1; one</text>
+      <text x="204" y="190" font-size="10.5" fill="#8b8a80">&#x2190; kept as PNGs in memory, not on the GPU</text>
+      <g font-size="11">
+        <text x="520" y="54" fill="#fff">13 tiles, 2,048 device px tall</text>
+        <text x="520" y="72" fill="#8b8a80">12.1 MiB each on the GPU; at most 5 resident = 61 MiB</text>
+        <text x="520" y="102" fill="#fff">the visible band first: 45&#x2013;73 ms to capture</text>
+        <text x="520" y="120" fill="#8b8a80">+ 10 ms decode + 4 ms upload; the rest fill in behind</text>
+        <text x="520" y="150" fill="#fff">a tile back from memory: ~20 ms decode, ~4 ms upload</text>
+        <text x="520" y="168" fill="#8b8a80">no browser call while you scroll; TD moves what it holds</text>
+        <text x="520" y="198" fill="#fff">the browser is asked again only when</text>
+        <text x="520" y="216" fill="#8b8a80">a scroll settles, a note changes, a resize: 70&#x2013;93 ms</text>
+      </g>
+      <text x="40" y="296" font-size="10" fill="#8b8a80">as one texture this brief would hold 153 MiB of video memory for as long as it is open</text>
+    </svg>
+  </div>
+  <figcaption>Drawn to scale from the spike&rsquo;s measurements of the corpus&rsquo;s tallest brief; the tile
+  height is a proposal, the times are measured. <b>Scrolling never waits on the browser</b>, because the
+  tiles near the screen are already on the GPU and the rest are one decode away.</figcaption>
+</figure>
+
+<p>The rest of the spike settled smaller questions the same way. Modals render on demand as their own
+images, about 150 ms each, opened by their id rather than through the page&rsquo;s wiring &mdash; which also
+makes the six briefs whose modal buttons do nothing in a browser work in TD. The corpus carries ten different
+copies of the notes script, so the engine runs each brief&rsquo;s own copy rather than a reimplementation, and
+a file with no notes block is shown read-only. And the live engine for later has a known gap: Chromium&rsquo;s
+screencast delivers frames at 39 % of the pixels your screen needs. The full report is in the modal <i>The
+spike, in full</i>.</p>
+
+
+<!-- ============================================================ 5 -->
+<h2 class="sec">Six calls to argue with before any code exists</h2>
+
+<p>You approved this architecture this afternoon, before the spike reported, and the spike then confirmed
+both claims it rests on: anchors come out as a browser names them, and a save changes only the three regions
+it should. These are the calls still cheapest to overrule, each with the recommendation the plan was approved
+with; a note on any of them changes it while that costs a sentence rather than a rewrite.</p>
+
+<div class="grill">
+  <div class="ask">
+    <h3>1 &middot; The split as a third pane face, with a shell idling behind the document?</h3>
+    <p>The alternative is a real non-terminal pane in the split tree, which touches the tree&rsquo;s leaf
+    type and the sixty-three places the window walks it. The face costs one of four pane slots and a sleeping
+    shell.</p>
+    <p class="rec"><b>Recommendation:</b> the face now. Revisit only if documents need to live in a tab of
+    their own.</p>
+  </div>
+  <div class="ask">
+    <h3>2 &middot; TD&rsquo;s notes layer is the only notes UI, in every engine?</h3>
+    <p>With the snapshot engine there is no choice. With a live engine later, the brief&rsquo;s own script
+    could do the notes and TD would only catch the save. One UI keeps the look in one place; the cost is
+    hiding a notes system that works, and following a format another writer keeps changing &mdash; the
+    brief skill added a CONCUR stamp to every decision today, in a second JSON block, while this plan was
+    being written.</p>
+    <p class="rec"><b>Recommendation:</b> yes, one notes UI, TD&rsquo;s, guarded by shared fixtures: a few
+    briefs with notes and concurs that both the skill and TD round-trip in their tests. A live engine later
+    removes the drift entirely, which is a reason to want one.</p>
+  </div>
+  <div class="ask">
+    <h3>3 &middot; Save writes the brief in place?</h3>
+    <p>In a browser, &ldquo;save into file&rdquo; downloads a copy you then move back. In TD it would
+    rewrite the notes block in the original file, atomically, keeping a backup. The spike measured it: rewriting only the notes block, the concur block and the reader-notes comment added 240 bytes to a 135 KB brief and left every other byte identical.</p>
+    <p class="rec"><b>Recommendation:</b> in place, with the guards in the modal <i>Risks to the file</i>.</p>
+  </div>
+  <div class="ask">
+    <h3>4 &middot; The first engine needs a system browser?</h3>
+    <p>Chromium is on this machine and is today&rsquo;s HTML handler. A fresh install without it would get
+    &ldquo;open with the desktop&rdquo; and a message instead of the page.</p>
+    <p class="rec"><b>Recommendation:</b> accept it for the first build; say so in the fallback message.</p>
+  </div>
+  <div class="ask">
+    <h3>5 &middot; Alt+click gives up copying on document lines?</h3>
+    <p>The chip says which the click will do, and Copy link moves to the right-click menu. If that turns out
+    to be the wrong trade, the rule flips to &ldquo;Alt+click on the chip copies, anywhere else on a document
+    path opens&rdquo;.</p>
+    <p class="rec"><b>Recommendation:</b> ship the rule as drawn in figure 02 and watch for the flip.</p>
+  </div>
+  <div class="ask">
+    <h3>6 &middot; Anything to overrule before Gate 3 builds on it?</h3>
+    <p>Gate 3 &mdash; the files, the types and their signatures, the call stacks and the test names &mdash; is
+    being drafted against this architecture now, and comes to you with the slice plan.</p>
+    <p class="rec"><b>Recommendation:</b> a note on anything that looks wrong; no note keeps the plan
+    moving.</p>
+  </div>
+</div>
+
+<figure>
+  <span class="lbl">10 &middot; What this gate does not touch</span>
+  <div class="fence">
+    <div class="fside fin">
+      <h4>changes</h4>
+      <ul>
+        <li>How a click on a path is routed, and the right-click menu.</li>
+        <li>A floating square inside a pane, and a third pane face.</li>
+        <li>A document view with image, Markdown and HTML backends.</li>
+        <li>TD&rsquo;s notes layer, which writes the notes block in a brief.</li>
+        <li>The size answers programs get: live, cell size included, in device pixels.</li>
+      </ul>
+    </div>
+    <div class="fside fout">
+      <h4>untouched</h4>
+      <ul>
+        <li>The session host&rsquo;s panes and the wire to the window.</li>
+        <li>alacritty_terminal and its parser; no fork.</li>
+        <li>The split tree&rsquo;s leaf type.</li>
+        <li>Program-drawn pixels (Kitty, Sixel) beyond the size answers.</li>
+        <li>Any live web engine.</li>
+      </ul>
+    </div>
+  </div>
+  <figcaption>The plan&rsquo;s fence. <b>Everything on the left lives in the window process</b>; the one
+  exception is the size-answer fix, which is a few lines in the host.</figcaption>
+</figure>
+
+<h2 class="sec">Where these come from</h2>
+
+<div class="dlgrow">
+  <button data-dlg="d-seams">The code seams, line by line</button>
+  <button data-dlg="d-spike">The spike, in full</button>
+  <button data-dlg="d-risks">Risks to the file</button>
+  <button data-dlg="d-method">What this page is drawn from</button>
+</div>
+
+<p class="foot">The plan lives on the branch <code>feat/documents-open-in-the-pane</code>, in the worktree
+<code>~/Work/td-gui-in-the-tui-build</code>, under <code>docs/plans/gui-in-the-tui/</code>: the status
+file, the product page (Gate 1, approved), the architecture page (this gate), the four mockups and the
+spike. The research behind it is on the local branch <code>research/gui-in-the-tui</code>.</p>
+
+</div>
+
+<dialog id="d-seams" class="sub">
+  <div class="dlg-head"><div><h3>The code seams, line by line</h3><p class="repo">at main, de7776b, re-read 2026-09-24</p></div><button class="x" data-close>&times;</button></div>
+  <div class="dlg-body">
+    <table>
+      <thead><tr><th>Seam</th><th>Where</th><th>What changes</th></tr></thead>
+      <tbody>
+        <tr><td>Click routing</td><td><code>pane.rs:6122</code> <code>on_mouse_down</code>; copy branch <code>:6196</code>; reveal <code>:6226</code>; open <code>:6240</code></td><td>Ctrl+Alt and Alt branches for drawable documents ahead of the copy branch; Shift moves to reveal</td></tr>
+        <tr><td>Link under the pointer</td><td><code>pane.rs:4293</code> <code>link_under</code></td><td>unchanged; a classifier on its result</td></tr>
+        <tr><td>Copy chip</td><td><code>pane.rs:4206</code> <code>copy_hint_at</code>; drawn <code>:8480-8507</code></td><td>label says &ldquo;open here&rdquo; over a drawable document</td></tr>
+        <tr><td>Right-click menu</td><td><code>pane.rs:7374-7434</code></td><td>Open here, Open beside, Copy link</td></tr>
+        <tr><td>The float&rsquo;s layer</td><td>screen div children, after the sticky note, <code>pane.rs:8723</code></td><td>a floating document child</td></tr>
+        <tr><td>Faces</td><td><code>workbench.rs:76-80</code> <code>enum Face</code>; branch <code>pane.rs:8677</code></td><td>a third face, Document</td></tr>
+        <tr><td>Pane events</td><td><code>main.rs:4211</code> <code>wire_pane</code>; <code>:4321</code> the drag subscription as the pattern</td><td>an OpenDoc event</td></tr>
+        <tr><td>Splitting</td><td><code>main.rs:9203</code> <code>Workspace::split</code>; cap <code>MAX_PANES = 4</code> at <code>:118</code></td><td>a split-with-document path; float at the cap</td></tr>
+        <tr><td>Drag state</td><td><code>main.rs:2857</code> <code>struct PaneDrag</code></td><td>its shape copied onto the pane for the square</td></tr>
+        <tr><td>Hyperglow</td><td><code>main.rs:22187</code> <code>float_shadows</code></td><td>reused as is</td></tr>
+        <tr><td>Saved layout</td><td><code>main.rs:735</code> <code>enum SavedNode</code></td><td>a document path on a leaf</td></tr>
+        <tr><td>Stale size answer</td><td><code>host.rs:705-711</code>, <code>:809-814</code></td><td>read live geometry (the stale-size issue)</td></tr>
+      </tbody>
+    </table>
+  </div>
+</dialog>
+
+<dialog id="d-spike" class="sub">
+  <div class="dlg-head"><div><h3>The spike, in full</h3><p class="repo">docs/plans/gui-in-the-tui/spikes/snapshot-engine.md</p></div><button class="x" data-close>&times;</button></div>
+  <div class="dlg-body">
+    
+    <p>Run on this machine against the 119 HTML reports in <code>~/Work/reports</code> and TD&rsquo;s
+    <code>reports/</code>, plus your saved brief; headless Chromium 151 driven by Playwright; a Rust probe on
+    TD&rsquo;s own wgpu revision. No TD code; every write to a throwaway copy.</p>
+    <ul>
+      <li><strong>Anchors:</strong> 53 in your saved brief (13 inside closed modals), all 9 of its note keys
+      among them with matching titles; ids identical at five width and scale combinations, and at 968 and 600
+      wide in all 93 notes-bearing briefs. 7.4 ms warm.</li>
+      <li><strong>Which notes script:</strong> 10 copies in the corpus &mdash; 3 skill releases in 81 briefs, 7
+      hand-edited forks in 12; one brief can show concurs. Today&rsquo;s script would add anchors to 2
+      briefs.</li>
+      <li><strong>Round trip:</strong> +240 bytes, 1.4 ms, other bytes identical; reopened with fresh storage the
+      badges sit on the right 10 elements, one inside a modal; concurs round-trip through their own block.</li>
+      <li><strong>Browser storage:</strong> an older stored map or an empty one beats the file; same-name copies
+      share one entry; 22 <code>notes:</code> keys in your Chromium profile.</li>
+      <li><strong>Page size:</strong> median 10,354 device px tall, 90th percentile 17,680, tallest 25,902; the
+      GPU accepts 32,768 (Chromium&rsquo;s own WebGPU reports 16,384).</li>
+      <li><strong>Render:</strong> whole page 0.6&ndash;2.2 s cold, 0.3&ndash;1.9 s warm; visible band 45&ndash;73 ms
+      plus ~14 ms to decode and upload; resize and re-anchor 70&ndash;93 ms. Chromium holds 265&ndash;570 MiB while a
+      brief is open.</li>
+      <li><strong>Modals:</strong> 285 in 75 briefs; ~150 ms each over the DevTools protocol; 30 scroll inside
+      and need a taller viewport (~0.7 s).</li>
+      <li><strong>Links and text:</strong> 79 links in 19 files; per-anchor and block text in under 10 ms.</li>
+      <li><strong>No notes block:</strong> 26 files, 11 of them build partials; injecting the script and letting
+      the page save fails; an explicit conversion works.</li>
+      <li><strong>Live engine:</strong> screencast frames at 968 &times; 1400, CSS resolution; the page&rsquo;s own
+      save re-serialises the whole page (41&ndash;295 changed lines) and appends another reader-notes comment
+      each time; an unanswered <code>confirm()</code> blocks the page.</li>
+      <li><strong>Not established:</strong> why a brief lays out 17&ndash;29 px taller from its third load;
+      whether headless text matches your desktop Chromium; how gpui&rsquo;s atlas behaves with many 12 MiB
+      tiles.</li>
+    </ul>
+    <p>The file, with methods and scripts: <code>docs/plans/gui-in-the-tui/spikes/snapshot-engine.md</code>.</p>
+
+  </div>
+</dialog>
+
+<dialog id="d-risks" class="sub">
+  <div class="dlg-head"><div><h3>Risks to the file</h3><p class="repo">every way TD writing notes could damage a brief, and the guard for each</p></div><button class="x" data-close>&times;</button></div>
+  <div class="dlg-body">
+    
+    <table>
+      <thead><tr><th>Risk</th><th>Guard</th></tr></thead>
+      <tbody>
+        <tr><td>A browser&rsquo;s stored notes hide what TD wrote (measured)</td><td>skill fix: an island revision the script prefers when newer (agent-skills issue 24); TD warns meanwhile</td></tr>
+        <tr><td>Anchors from a reimplementation drift from the brief&rsquo;s own script</td><td>always run the brief&rsquo;s own notes script in the engine</td></tr>
+        <tr><td>Writing over bytes that changed since the render (an agent regenerated the brief)</td><td>hash at write time; re-parse and apply a delta; re-render on mismatch</td></tr>
+        <tr><td>Note text ends the script or the comment early</td><td>escape <code>&lt;/</code> and <code>&lt;!</code> in the blocks; break <code>--&gt;</code> in the comment (both round-trip, measured)</td></tr>
+        <tr><td>Two notes blocks, or one after the script</td><td>write the first; refuse if it follows the script; re-render the written file and check the badges</td></tr>
+        <tr><td>Concurs where the brief cannot show them</td><td>offer concurs only where the engine reports support</td></tr>
+        <tr><td>A brief with no notes block, or a build partial</td><td>read-only; never write a file whose name starts with <code>_</code></td></tr>
+        <tr><td>A torn write</td><td>temp file beside the original, fsync, rename; keep the mode; refuse symlinks</td></tr>
+        <tr><td>No undo (<code>~/Work/reports</code> is not in git)</td><td>a short per-file backup ring in TD&rsquo;s state directory; say when a file is git-tracked</td></tr>
+        <tr><td>The notes format changes under TD (concurs landed today)</td><td>a format version on the block, unknown versions read-only, and golden fixtures both the skill and TD test against</td></tr>
+      </tbody>
+    </table>
+
+  </div>
+</dialog>
+
+<dialog id="d-method" class="sub">
+  <div class="dlg-head"><div><h3>What this page is drawn from</h3><p class="repo">mockups, code, and a spike</p></div><button class="x" data-close>&times;</button></div>
+  <div class="dlg-body">
+    <h4>Your notes</h4>
+    <p>Eleven notes on nine elements of the research brief, read from the copy you saved to
+    <code>~/Downloads/2026-09-24-gui-in-the-tui.html</code>, and your message the same afternoon. The product
+    page quotes each decision.</p>
+    <h4>Mockups</h4>
+    <p>Figures 01 to 04 are the Gate 1 mockups, embedded unchanged: plain HTML in TD&rsquo;s default theme,
+    with the glow copied from <code>float_shadows</code>. Wording, sizes and the DOC label are proposals,
+    marked in yellow on each.</p>
+    <h4>Code</h4>
+    <p>Every seam in figures 05 to 07 and in the seams modal was re-read at <code>main</code> today.</p>
+    <h4>The spike</h4>
+    <p>Figure 08 and the spike section come from a measurement run on this machine against the report
+    archive: headless Chromium driven by Playwright, no TD code. Its method is in the spike file.</p>
+    <h4>Not established</h4>
+    <p>How a floating document feels under the warp, how the square&rsquo;s drag interacts with the
+    pane&rsquo;s selection, and the Rust client for the browser&rsquo;s protocol &mdash; all Gate 3 or
+    later.</p>
+  </div>
+</dialog>

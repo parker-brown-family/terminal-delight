@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>02 · Ctrl+Alt+click opens a side-by-side split</title>
+<link rel="stylesheet" href="td-mock.css"></head><body>
+
+<h1 class="mock">02 · Ctrl+Alt+click opens a side-by-side split</h1>
+<p class="say">The document lands in a new pane to the right of the one you clicked in, and focus stays with the agent so
+you can keep typing while you read. The same result comes from the floating square's <b>click to split</b>. If the tab
+already shows this file in a split, TD brings that pane forward instead of opening a second one.</p>
+
+<div class="tdwin">
+  <div class="tabs"><span class="on">gui research</span><span>td main</span><span>jev</span></div>
+  <div class="split">
+    <div class="pane focus">
+      <div class="phead"><span class="mode claude">CLAUDE</span><span>gui in the tui</span></div>
+<div class="grid"><span class="dim">⏺</span> Wrote the graphics-protocols
+  write-up.
+
+<span style="color:#22c55e">What decides it:</span>
+ · Nothing reaches TD today.
+ · CSI 16 t is never answered.
+ · Placeholders need no fork.
+
+Deliverable: Graphics protocols
+research — <span class="lnk">/home/parker/Work/td-gui-
+in-the-tui/docs/research/gui-in-the-
+tui/graphics-protocols.md</span>
+
+<span class="dim">&gt;</span> which of these ships first?<span class="cur"> </span></div>
+    </div>
+    <div class="pane">
+      <div class="phead"><span class="mode docmode">DOC</span><span>graphics-protocols.md · ↗ desktop · ◳ float · ✕</span></div>
+      <div class="doc">
+        <h2>Terminal graphics protocols</h2>
+        <p>Research date 2026-09-24. Scope: what Terminal Delight (TD) itself must implement so that programs running
+        <i>inside</i> a TD pane — <code>mpv --vo=kitty</code>, yazi, chafa, timg, presenterm, <code>kitten icat</code>,
+        ratatui-image apps — can put real pixels on screen.</p>
+        <h3>Summary — the facts that decide feasibility</h3>
+        <p><b>1. Nothing a graphics client sends reaches TD's emulator today.</b> vte 0.15 routes <code>ESC _</code>
+        (APC), <code>ESC ^</code> (PM) and <code>ESC X</code> (SOS) into one state whose bytes go to
+        <code>anywhere()</code>, which only watches for CAN, SUB and ESC; every other byte is discarded.</p>
+        <p><b>2. So every client's detection fails, quietly.</b> Clients detect Kitty by sending <code>a=q</code>
+        followed by DA1…</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<p class="prop">yellow = proposal, not decided: focus staying on the agent, "bring the existing pane forward", the DOC label
+and its colour, and "◳ float" to send the split back to a floating square. When the tab already has four panes (TD's cap),
+the proposal is that Ctrl+Alt+click opens the floating square instead and says why.</p>
+</body></html>
