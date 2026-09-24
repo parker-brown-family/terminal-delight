@@ -301,6 +301,26 @@ pub struct ToolProbe {
     mtime: Option<std::time::SystemTime>,
     /// The tool named by the last structured event in the transcript.
     pub tool: Option<String>,
+    /// The model id the last assistant turn answered on — `claude-opus-5-5`.
+    /// Read here rather than by the wall's vitals sweep because this sweep
+    /// runs whether or not the wall is open, and the Workbench's model dial
+    /// is drawn when it is not.
+    pub model: Option<String>,
+}
+
+/// The model the last assistant record in a transcript tail answered on.
+///
+/// `<synthetic>` is Claude Code's own placeholder for a message no model wrote,
+/// so it is skipped rather than reported as the model.
+pub fn last_model(tail: &str) -> Option<String> {
+    tail.lines().rev().find_map(|line| {
+        let v: serde_json::Value = serde_json::from_str(line).ok()?;
+        if v.get("type")?.as_str()? != "assistant" {
+            return None;
+        }
+        let m = v.get("message")?.get("model")?.as_str()?;
+        (m != "<synthetic>").then(|| m.to_string())
+    })
 }
 
 /// One pane's place in a sweep, snapshotted on the main thread so that the I/O
@@ -366,17 +386,42 @@ fn probe_transcript(path: Option<PathBuf>, prev: &ToolProbe) -> ToolProbe {
     let tool = crate::mcp_tail::tail_tool_events(&path, 1)
         .pop()
         .map(|e| e.tool);
+    // A tail that holds no assistant record — a long tool result can fill it —
+    // says nothing about the model, so the last reading of the same file stands.
+    let model = crate::mcp_tail::read_tail_public(&path)
+        .as_deref()
+        .and_then(last_model)
+        .or_else(|| {
+            (prev.path.as_deref() == Some(path.as_path()))
+                .then(|| prev.model.clone())
+                .flatten()
+        });
     ToolProbe {
         path: Some(path),
         len,
         mtime,
         tool,
+        model,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_model_is_the_last_one_a_real_assistant_turn_answered_on() {
+        let tail = [
+            r#"{"type":"assistant","message":{"model":"claude-opus-5","content":[]}}"#,
+            r#"{"type":"assistant","message":{"model":"claude-opus-5-5","content":[]}}"#,
+            r#"{"type":"user","message":{"content":"hi"}}"#,
+            r#"{"type":"assistant","message":{"model":"<synthetic>","content":[]}}"#,
+            r#"{"partial line"#,
+        ]
+        .join("\n");
+        assert_eq!(last_model(&tail).as_deref(), Some("claude-opus-5-5"));
+        assert_eq!(last_model(r#"{"type":"user","message":{}}"#), None);
+    }
 
     /// The generated manifest parses, and carries the tools that dominate the
     /// count — if this fails the asset was hand-edited or the sync script broke.
