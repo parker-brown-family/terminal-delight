@@ -2392,6 +2392,15 @@ pub fn flag_value(cmd: &str, flag: &str) -> Option<String> {
 /// every other word in an id is a version, a date, or a vendor prefix.
 const CLAUDE_FAMILIES: [&str; 4] = ["opus", "fable", "sonnet", "haiku"];
 
+/// What each alias resolves to today. Bump when a model ships; a transcript
+/// that reports a different version still wins on the dial.
+const CURRENT_VERSION: [(&str, &str); 4] = [
+    ("opus", "5.5"),
+    ("fable", "5.1"),
+    ("sonnet", "5"),
+    ("haiku", "4.5"),
+];
+
 /// What the Workbench's model dial calls a model: `claude-opus-5-5` → `opus 5.5`.
 ///
 /// The overview card drops the version on purpose — [`crate::vitals::model_name`]
@@ -2423,7 +2432,12 @@ pub fn model_label(raw: &str) -> Option<String> {
         .filter(|w| !w.is_empty() && w.len() <= 2 && w.chars().all(|c| c.is_ascii_digit()))
         .collect();
     Some(if version.is_empty() {
-        family.to_string()
+        // A bare alias: name the version it currently resolves to, so the
+        // dial says OPUS 5.5 from launch rather than after the first reply.
+        match CURRENT_VERSION.iter().find(|(f, _)| *f == family) {
+            Some((_, v)) => format!("{family} {v}"),
+            None => family.to_string(),
+        }
     } else {
         format!("{family} {}", version.join("."))
     })
@@ -7238,9 +7252,11 @@ mod tests {
             ("claude-3-5-sonnet-20241022", "sonnet 3.5"),
             // The context window is not the model.
             ("claude-opus-5-5[1m]", "opus 5.5"),
-            // An alias knows no version, and saying one would be a guess.
-            ("opus", "opus"),
-            ("Opus", "opus"),
+            // A bare alias names the version it resolves to today.
+            ("opus", "opus 5.5"),
+            ("Opus", "opus 5.5"),
+            ("sonnet", "sonnet 5"),
+            ("haiku", "haiku 4.5"),
             // A label fed back in is itself.
             ("opus 5.5", "opus 5.5"),
             // Not a Claude family: the id is the label, and is the row.

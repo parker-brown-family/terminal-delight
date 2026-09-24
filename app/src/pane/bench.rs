@@ -1746,16 +1746,18 @@ impl TerminalView {
                     .wb_running_model
                     .as_deref()
                     .and_then(crate::workbench::model_label);
+                // An alias drawn with its version: `opus` → `opus 5.5`.
+                let named = |m: String| crate::workbench::model_label(&m).unwrap_or(m);
                 match (self.wb_model.clone(), running) {
                     (Some(told), Some(ran)) if !crate::workbench::same_model(&told, &ran) => {
-                        (told, true)
+                        (named(told), true)
                     }
                     (_, Some(ran)) => (ran, true),
-                    (Some(told), None) => (told, true),
+                    (Some(told), None) => (named(told), true),
                     (None, None) => launched
                         .as_deref()
                         .and_then(|c| crate::workbench::flag_value(c, "--model"))
-                        .map(|m| (m, true))
+                        .map(|m| (named(m), true))
                         // Nobody said, so the button says the one thing that
                         // is true anyway — which harness is in there. A faint
                         // CLAUDE is a better button than a crisp `model ?`, and
@@ -1824,7 +1826,8 @@ impl TerminalView {
                     .iter()
                     .map(|m| match &running {
                         Some(ran) if crate::workbench::same_model(m.id, ran) => ran.clone(),
-                        _ => m.label.to_string(),
+                        _ => crate::workbench::model_label(m.id)
+                            .unwrap_or_else(|| m.label.to_string()),
                     })
                     .collect();
                 let at = models
