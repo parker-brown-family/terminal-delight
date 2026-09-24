@@ -649,27 +649,120 @@ pub fn harness_confirm(rows: &[String], word: &str) -> Picker {
 }
 
 pub fn question_on_screen(rows: &[String]) -> Option<Question> {
-    let numbered = collect_options(rows)?;
-    let (first_line, options, cursor, submit) = numbered;
-    // The question is the nearest non-empty line above the first option that
-    // is not the picker's own header chrome.
-    let question = rows[..first_line]
-        .iter()
-        .rev()
-        .map(|r| without_side_panel(r.trim()))
-        .find(|r| r.len() > 8 && !r.starts_with(is_box_drawing) && !r.ends_with("to cancel"))?
-        .to_string();
+    if let Some((first_line, options, cursor, submit)) = collect_options(rows) {
+        // The question is the nearest non-empty line above the first option
+        // that is not the picker's own header chrome.
+        let question = rows[..first_line]
+            .iter()
+            .rev()
+            .map(|r| without_side_panel(r.trim()))
+            .find(|r| r.len() > 8 && !r.starts_with(is_box_drawing) && !r.ends_with("to cancel"))?
+            .to_string();
+        return Some(Question {
+            question,
+            options,
+            recommend: None,
+            answer: Answered::Waiting,
+            cursor: Some(cursor),
+            // The two halves of one row, set together or not at all.
+            submit: submit.map(|(at, _)| at),
+            submit_kind: submit.map(|(_, kind)| kind),
+            round: round_on_screen(rows),
+        });
+    }
+    let (first_line, options, cursor) = collect_bare_options(rows)?;
     Some(Question {
-        question,
+        question: bare_question(&rows[..first_line])?,
         options,
         recommend: None,
         answer: Answered::Waiting,
         cursor: Some(cursor),
-        // The two halves of one row, set together or not at all.
-        submit: submit.map(|(at, _)| at),
-        submit_kind: submit.map(|(_, kind)| kind),
-        round: round_on_screen(rows),
+        submit: None,
+        submit_kind: None,
+        round: None,
     })
+}
+
+/// A menu whose options carry NO numbers — Claude Code's folder-trust dialog:
+///
+/// ```text
+///  Security guide
+///  ❯ No, exit
+///    Yes, I trust this folder
+///  Enter to confirm · Esc to cancel
+/// ```
+///
+/// Captured off a real `claude` in an untrusted directory, 2026-09-24. It is
+/// the first thing a new agent in a new folder asks, and it went unanswered on
+/// the bench because every option reader here keys on `N.`.
+///
+/// Stricter than the numbered reader, because without numbers a quoted `>` in
+/// prose looks the same: the cursor row must carry `❯` or `›`, every option
+/// must start in the cursor label's column, and the block must end on the
+/// picker's own `Enter to confirm` / `Esc to cancel` footer.
+fn collect_bare_options(rows: &[String]) -> Option<(usize, Vec<Choice_>, usize)> {
+    // The label's column, not the glyph's: `❯` sits in the gutter and its
+    // label starts after it, which is where the unmarked options start too.
+    let (mark, col) = rows.iter().enumerate().find_map(|(i, r)| {
+        let label = r.trim_start().strip_prefix(['❯', '›'])?.trim_start();
+        if label.is_empty() || numbered_option(r).is_some() {
+            return None;
+        }
+        Some((i, r.chars().count() - label.chars().count()))
+    })?;
+    let in_block = |r: &String| {
+        let t = r.trim();
+        !t.is_empty()
+            && !t.starts_with(is_box_drawing)
+            && r.chars().take_while(|c| c.is_whitespace()).count() == col
+    };
+    let first = (0..mark)
+        .rev()
+        .take_while(|&i| in_block(&rows[i]))
+        .last()
+        .unwrap_or(mark);
+    let last = (mark + 1..rows.len())
+        .take_while(|&i| in_block(&rows[i]))
+        .last()
+        .unwrap_or(mark);
+    let footer = rows[last + 1..]
+        .iter()
+        .map(|r| r.trim())
+        .find(|t| !t.is_empty())?;
+    if !(footer.starts_with("Enter to confirm") || footer.contains("Esc to cancel")) {
+        return None;
+    }
+    let options: Vec<Choice_> = rows[first..=last]
+        .iter()
+        .map(|r| {
+            let t = r.trim_start();
+            let t = t.strip_prefix(['❯', '›']).unwrap_or(t);
+            Choice_ {
+                label: without_side_panel(t.trim()).chars().take(90).collect(),
+                what_happens: None,
+                checked: None,
+            }
+        })
+        .collect();
+    (options.len() >= 2).then_some((first, options, mark - first))
+}
+
+/// The question over a bare menu: the last sentence ending in `?` in the rows
+/// above it, cut at that `?`, because the trust dialog's question shares its
+/// row with the aside that follows it — and the line straight above the
+/// options is a link (`Security guide`), not a question. Falls back to the
+/// nearest line with some length to it.
+fn bare_question(above: &[String]) -> Option<String> {
+    let lines = || {
+        above
+            .iter()
+            .rev()
+            .map(|r| without_side_panel(r.trim()))
+            .take_while(|r| !r.starts_with(is_box_drawing))
+    };
+    lines()
+        .find_map(|r| r.find('?').map(|at| r[..=at].to_string()))
+        .or_else(|| lines().find(|r| r.len() > 8).map(str::to_string))
 }
 
 /// The consecutive `N. label` block, its first row, and which one the cursor
@@ -1148,6 +1241,78 @@ mod tests {
 
     fn rows(lines: &[&str]) -> Vec<String> {
         lines.iter().map(|s| s.to_string()).collect()
+    }
+
+    /// Captured off a real `claude --model opus` started in an untrusted
+    /// directory under tmux at 120 columns, 2026-09-24 — the rule above it and
+    /// the blank rows included, because the reader has to skip them.
+    fn trust_dialog(cursor_on_yes: bool) -> Vec<String> {
+        let (no, yes) = if cursor_on_yes {
+            ("   No, exit", " ❯ Yes, I trust this folder")
+        } else {
+            (" ❯ No, exit", "   Yes, I trust this folder")
+        };
+        rows(&[
+            &"─".repeat(120),
+            " Accessing workspace:",
+            "",
+            " /tmp/untrusted-dir",
+            "",
+            " Quick safety check: Is this a project you created or one you trust? (Like your own code, a well-known open source",
+            " project, or work from your team). If not, take a moment to review what's in this folder first.",
+            "",
+            " Claude Code'll be able to read, edit, and execute files here.",
+            "",
+            " Security guide",
+            "",
+            no,
+            yes,
+            "",
+            " Enter to confirm · Esc to cancel",
+        ])
+    }
+
+    #[test]
+    fn the_folder_trust_dialog_reaches_the_bench_as_a_question() {
+        // The bench only reads a question off a pane that is waiting on you.
+        assert!(
+            wants_human(&trust_dialog(false)),
+            "the dialog must read as waiting"
+        );
+        let q = question_on_screen(&trust_dialog(false)).expect("the trust dialog is a question");
+        assert_eq!(
+            q.question,
+            "Quick safety check: Is this a project you created or one you trust?"
+        );
+        let labels: Vec<&str> = q.options.iter().map(|o| o.label.as_str()).collect();
+        assert_eq!(labels, ["No, exit", "Yes, I trust this folder"]);
+        assert_eq!(q.cursor, Some(0), "the harness opens on No");
+        assert_eq!(q.submit, None);
+        // Moved, so the cursor is read rather than assumed to be the top row.
+        let moved = question_on_screen(&trust_dialog(true)).expect("still a question");
+        assert_eq!(moved.cursor, Some(1));
+    }
+
+    #[test]
+    fn a_marked_line_in_prose_is_not_a_bare_menu() {
+        // A `❯` with lines under it but no picker footer: an agent quoting a
+        // prompt, not a harness asking one.
+        let prose = rows(&[
+            " Did you mean this?",
+            " ❯ run the tests",
+            "   then ship it",
+            "",
+            " That is what I would do next.",
+        ]);
+        assert!(question_on_screen(&prose).is_none());
+        // One option is not a choice.
+        let single = rows(&[
+            " Ready?",
+            " ❯ Continue",
+            "",
+            " Enter to confirm · Esc to cancel",
+        ]);
+        assert!(question_on_screen(&single).is_none());
     }
 
     fn u_row(s: &str) -> String {
