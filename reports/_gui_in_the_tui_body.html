@@ -15,6 +15,21 @@ the terminal drawing their own pixels, the way the Pok&eacute;mon dashboard draw
 &mdash; because the part of TD that reads program output throws those bytes away. This brief lays out both halves and what each costs, and closes on five decisions. The
 recommendation is a floating square for images and Markdown first.</p>
 
+<div class="callout good">
+  <span class="lbl">decided &mdash; 2026-09-24, from your notes on this page</span>
+  <p><b>The five questions at the end are answered, and one answer changed the plan.</b> Ctrl+click
+  keeps opening with the desktop; Shift+click moves to <i>reveal in file manager</i>; <b>Alt+click</b>
+  opens the floating square, in the hyperglow your menus and modals use, and a second click promotes
+  it to a split; <b>Ctrl+Alt+click</b> opens a side-by-side split straight away. Images, Markdown and
+  HTML now; program pixels are future. Documents bend with the glass; the size answers ship with the
+  first build.</p>
+  <p>The change: an HTML brief opened in TD must keep <b>comments and save into file</b>. So the HTML
+  engine starts as an image of the page, as recommended, but TD draws the notes and writes them into
+  the file itself, in the brief&rsquo;s own format &mdash; and the engine sits behind a pluggable
+  interface so a live one can replace it. That design is Gate 2 of the build plan, on the branch
+  <code>feat/documents-open-in-the-pane</code>.</p>
+</div>
+
 <!-- ============================================================ 1 -->
 <h2 class="sec">A Ctrl+click on a path leaves the terminal</h2>
 
