@@ -909,7 +909,10 @@ fn compact(surface: &Surface, picks: Option<&Picks>, sk: &Skin, th: &Theme) -> D
     // close enough together that an unframed list reads as part of the rail.
     let list = sk.panel().flex().flex_col().gap(px(3.));
     match &surface.kind {
-        Kind::Markdown(m) => list.child(paragraph(first_lines(&m.body, 6), sk, th)),
+        // DELEGATES to the renderer the floating square uses, so a card and a
+        // document draw one Markdown. It used to print the first six raw
+        // lines, `#` and `**` included.
+        Kind::Markdown(m) => list.child(markdown(m, CardSize::Compact, sk, th)),
         Kind::Table(t) => list.children(
             t.rows
                 .iter()
@@ -990,7 +993,7 @@ fn compact(surface: &Surface, picks: Option<&Picks>, sk: &Skin, th: &Theme) -> D
 fn full(surface: &Surface, picks: Option<&Picks>, sk: &Skin, th: &Theme) -> Div {
     match &surface.kind {
         Kind::Artifact(a) => artifact(a, sk, th),
-        Kind::Markdown(m) => paragraph(m.body.clone(), sk, th),
+        Kind::Markdown(m) => markdown(m, CardSize::Full, sk, th),
         Kind::Table(t) => table(t, sk, th),
         Kind::Architecture(a) => architecture(a, sk, th),
         Kind::Changeset(c) => changeset(c, sk, th),
@@ -2319,6 +2322,41 @@ fn field_grid(fields: Vec<(&str, Option<String>)>, sk: &Skin, th: &Theme) -> Div
                     )),
                 })
         }))
+}
+
+/// Which of a card's two sizes a renderer that serves both is drawing.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum CardSize {
+    Compact,
+    Full,
+}
+
+/// How many source lines a compact Markdown card opens with.
+const COMPACT_MARKDOWN_LINES: usize = 6;
+
+/// A Markdown surface, at either size, drawn by the renderer the floating
+/// square draws Markdown files with (`docview::markdown`), in the bench's
+/// palette and through the pane's gauge.
+///
+/// Compact is the blocks whose source starts in the first six lines, then an
+/// ellipsis if more follow — the same cut the card made when it printed raw
+/// lines, now of rendered blocks, so a heading reads as a heading rather than
+/// as a line starting with `#`. Links are drawn in the accent without an
+/// underline, since nothing on a card can follow them, and pictures as the box
+/// that names them: a card holds no decoded images.
+fn markdown(m: &crate::surface::Markdown, size: CardSize, sk: &Skin, th: &Theme) -> Div {
+    use crate::docview::markdown as md;
+    let doc = md::parsed(&m.body);
+    let style = md::MdStyle::bench(sk, th);
+    match size {
+        CardSize::Full => md::document(&doc, &style, None, None, None),
+        CardSize::Compact => {
+            let (count, more) = md::opening(&doc, COMPACT_MARKDOWN_LINES);
+            md::column(&doc, count, &style, None, None, None).when(more, |col| {
+                col.child(micro("…", Step::Small, sk.ink.ink_faint, sk, th))
+            })
+        }
+    }
 }
 
 fn paragraph(text: String, sk: &Skin, th: &Theme) -> Div {
@@ -4442,6 +4480,29 @@ mod tests {
     /// show less, and neither is listed.
     #[test]
     fn an_interactive_kind_has_one_renderer_for_both_sizes() {
+        for (kind, renderer) in DELEGATED {
+            assert_both_sizes_delegate(kind, renderer);
+        }
+    }
+
+    /// The kinds whose two card sizes route to one renderer.
+    const DELEGATED: [(&str, &str); 4] = [
+        ("Kind::Question(q)", "question("),
+        ("Kind::Response(r)", "response("),
+        // A comment joins the list for the same reason, one step earlier:
+        // it is short enough that a compact form could only be the same
+        // thing, so a second renderer would exist purely to drift.
+        ("Kind::Comment(_)", "comment("),
+        // Markdown for a different reason: the floating square draws Markdown
+        // files with the lifted renderer, and a card that drew the same text
+        // any other way would be a second Markdown to keep in step. The
+        // compact form may show fewer blocks; it may not draw them otherwise.
+        ("Kind::Markdown(m)", "markdown("),
+    ];
+
+    /// `kind`'s arm, in both `compact` and `full`, hands off to `renderer` on
+    /// its own line. Comments are stripped before matching.
+    fn assert_both_sizes_delegate(kind: &str, renderer: &str) {
         let src = include_str!("benchdraw.rs");
         let (code, _tests) = src.split_once("\n#[cfg(test)]").expect("a test module");
         let stripped: String = code
@@ -4456,26 +4517,64 @@ mod tests {
             .split_once("fn full(")
             .expect("a full renderer");
         let full_body = rest;
-        for (kind, renderer) in [
-            ("Kind::Question(q)", "question("),
-            ("Kind::Response(r)", "response("),
-            // A comment joins the list for the same reason, one step earlier:
-            // it is short enough that a compact form could only be the same
-            // thing, so a second renderer would exist purely to drift.
-            ("Kind::Comment(_)", "comment("),
-        ] {
-            for (which, body) in [("compact", compact_body), ("full", full_body)] {
-                let arm = body
-                    .split_once(kind)
-                    .unwrap_or_else(|| panic!("{which} has no arm for {kind}"))
-                    .1;
-                let arm = arm.split_once('\n').map(|(a, _)| a).unwrap_or(arm);
-                assert!(
-                    arm.contains(renderer),
-                    "{which}'s {kind} arm does not delegate to {renderer}: {arm}"
-                );
-            }
+        for (which, body) in [("compact", compact_body), ("full", full_body)] {
+            let arm = body
+                .split_once(kind)
+                .unwrap_or_else(|| panic!("{which} has no arm for {kind}"))
+                .1;
+            let arm = arm.split_once('\n').map(|(a, _)| a).unwrap_or(arm);
+            assert!(
+                arm.contains(renderer),
+                "{which}'s {kind} arm does not delegate to {renderer}: {arm}"
+            );
         }
+    }
+
+    /// A Markdown card and a Markdown document are drawn by one renderer at
+    /// both card sizes. Before this, `full` printed the body line by line and
+    /// `compact` printed its first six raw lines, so a card showed `# Title`
+    /// where the square beside it showed a heading.
+    #[test]
+    fn a_markdown_surface_is_drawn_by_the_document_renderer_at_both_sizes() {
+        assert!(
+            DELEGATED.contains(&("Kind::Markdown(m)", "markdown(")),
+            "the delegation list walks Markdown"
+        );
+        assert_both_sizes_delegate("Kind::Markdown(m)", "markdown(");
+        let src = include_str!("benchdraw.rs");
+        let (code, _) = src.split_once("\n#[cfg(test)]").expect("a test module");
+        let body = code
+            .split("fn markdown(")
+            .nth(1)
+            .expect("benchdraw has a markdown renderer");
+        let body = body.split("\n}\n").next().unwrap_or(body);
+        assert!(
+            body.contains("md::document(") && body.contains("md::column("),
+            "both sizes go through docview::markdown: {body}"
+        );
+    }
+
+    /// The compact card cuts at six source lines, and what it shows is
+    /// rendered: a heading's words, never the `#` or `**` around them.
+    #[test]
+    fn a_compact_markdown_card_shows_no_markdown_syntax() {
+        use crate::docview::markdown as md;
+        let doc = md::parsed("# Title\n**bold**");
+        let (count, more) = md::opening(&doc, COMPACT_MARKDOWN_LINES);
+        assert_eq!((count, more), (2, false));
+        assert_eq!(md::block_plain(&doc.blocks[0]), "Title");
+        assert_eq!(md::block_plain(&doc.blocks[1]), "bold");
+        for b in &doc.blocks[..count] {
+            let shown = md::block_plain(b);
+            assert!(!shown.contains('#') && !shown.contains("**"), "{shown}");
+        }
+        let long = "# Title\n\none\n\ntwo\n\nthree\n\nfour\n";
+        let (count, more) = md::opening(&md::parsed(long), COMPACT_MARKDOWN_LINES);
+        assert_eq!(
+            (count, more),
+            (3, true),
+            "blocks on lines 1, 3 and 5; more after"
+        );
     }
 
     /// A weight fixture with everything filled in, so each test can knock one

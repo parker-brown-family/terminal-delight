@@ -121,6 +121,48 @@ pub fn drawable_document(path: &std::path::Path) -> Option<DocTarget> {
     })
 }
 
+/// Where a document is scrolled: the top edge of the view as a fraction of the
+/// document's height, `0.0..=1.0`. A fraction rather than pixels, because it
+/// survives the page reflowing at another width.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct DocScroll {
+    pub top: f32,
+}
+
+/// What following a link out of a document does.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum LinkRoute {
+    /// A file TD can draw: it takes the square's place, where the square is.
+    Replace,
+    /// A web or mail address, or a local file TD does not draw: the desktop.
+    Desktop,
+    /// Any other scheme. A document is somebody's text, and a click on it
+    /// should not reach every URL handler the desktop has registered.
+    Refuse,
+}
+
+/// Where a link a document emitted goes. `target` is an absolute path or a
+/// URL; `drawable` is whether the path is a document TD can draw, which the
+/// caller asks [`drawable_document`], the one step here that reads the disk.
+pub fn link_route(target: &str, drawable: bool) -> LinkRoute {
+    if target.starts_with('/') {
+        return if drawable {
+            LinkRoute::Replace
+        } else {
+            LinkRoute::Desktop
+        };
+    }
+    let lower = target.to_ascii_lowercase();
+    if ["http://", "https://", "mailto:"]
+        .iter()
+        .any(|s| lower.starts_with(s))
+    {
+        LinkRoute::Desktop
+    } else {
+        LinkRoute::Refuse
+    }
+}
+
 /// What an Alt+click on the pointer's line does.
 #[derive(Clone, PartialEq, Debug)]
 pub enum AltClick {
@@ -526,6 +568,28 @@ mod tests {
         assert_eq!(alt_click(false, true, None), Some(AltClick::Copy));
         assert_eq!(alt_click(true, true, None), None);
         assert_eq!(alt_click(false, false, None), None);
+    }
+
+    /// A link inside a document either takes the square's place, when it names
+    /// a file TD can draw, or goes to the desktop. Nothing else is opened: a
+    /// document is somebody's text, and its links are not all worth following.
+    #[test]
+    fn a_followed_link_replaces_the_square_or_goes_to_the_desktop() {
+        assert_eq!(link_route("/docs/next.md", true), LinkRoute::Replace);
+        assert_eq!(link_route("/docs/shot.png", true), LinkRoute::Replace);
+        assert_eq!(link_route("/docs/data.csv", false), LinkRoute::Desktop);
+        assert_eq!(
+            link_route("https://example.com/a.md", false),
+            LinkRoute::Desktop
+        );
+        assert_eq!(link_route("HTTP://example.com", false), LinkRoute::Desktop);
+        assert_eq!(
+            link_route("mailto:p@example.com", false),
+            LinkRoute::Desktop
+        );
+        for refused in ["javascript:alert(1)", "ssh://host", "steam://run/1", "x"] {
+            assert_eq!(link_route(refused, false), LinkRoute::Refuse, "{refused}");
+        }
     }
 
     fn inside(r: FloatRect, w: f32, h: f32) -> bool {

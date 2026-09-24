@@ -445,6 +445,20 @@ impl ImageDoc {
             eprintln!("[doc] released {}", path.display());
         }
     }
+
+    /// An image that has not started decoding, for tests that need a backend
+    /// without a window.
+    #[cfg(test)]
+    pub(crate) fn unloaded() -> Self {
+        Self {
+            loaded: None,
+            zoom: ImageZoom::Fit,
+            centre: None,
+            pan: None,
+            drawn: false,
+            _load: Task::ready(()),
+        }
+    }
 }
 
 #[cfg(test)]

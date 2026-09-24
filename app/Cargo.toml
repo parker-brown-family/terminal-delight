@@ -17,6 +17,11 @@ zed_rev = "abbe85a3321bf6cb7f5b241e623d9c2e16c29187"
 
 [dependencies]
 alacritty_terminal = "0.26"
+# CommonMark + GFM for Markdown drawn in the pane (docview/markdown.rs, lifted
+# from markdown-delight at the same version so the copy compiles unchanged).
+# Without its defaults: they bring clap, syntect and the onig C library for
+# comrak's own CLI and highlighter, and the renderer uses none of them.
+comrak = { version = "0.52", default-features = false }
 futures = "0.3"
 # The same poller alacritty_terminal registers its PTY with. Named directly
 # because `EventedReadWrite` is spelled in these types and the crate does not
