@@ -2729,6 +2729,13 @@ impl TerminalView {
         if text.is_empty() {
             return;
         }
+        // On the DOCUMENT face the shell is hidden behind the page, and a path
+        // typed into it would land where nobody can see it — at a prompt, or
+        // worse, inside whatever program that shell is running. Nothing on the
+        // document takes a drop, so the drop is let go.
+        if self.bench.face() == crate::workbench::Face::Document {
+            return;
+        }
         // On the TERMINAL face there is no composer to aim at and no mirror to
         // keep: the path goes to the process as a paste, which is what every
         // other terminal on this machine does with a dropped file.

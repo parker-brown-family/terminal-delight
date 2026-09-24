@@ -140,6 +140,50 @@ fn may_split(leaves: usize) -> bool {
     leaves < MAX_PANES
 }
 
+/// What a request to open a document beside a pane becomes.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Beside {
+    /// A pane in the tab already shows the file: that pane, by its index in
+    /// the leaves given. Focused rather than opened twice.
+    Focus(usize),
+    /// Split the pane that asked, the document on the right.
+    Split,
+    /// The tab is full: the document floats over the pane that asked instead.
+    Float,
+}
+
+/// Where a document asked for beside a pane goes, decided over a tab's leaves.
+///
+/// A leaf already showing `path` wins, whatever the count, so a second
+/// Ctrl+Alt+click on the same path brings its pane forward rather than making
+/// another. Only then does the cap ask: under four panes the tab splits, and at
+/// four the document floats. `showing` answers which file a leaf's Document
+/// face shows, if any.
+fn beside<L>(
+    leaves: &[L],
+    showing: impl Fn(&L) -> Option<PathBuf>,
+    path: &std::path::Path,
+) -> Beside {
+    if let Some(i) = leaves
+        .iter()
+        .position(|l| showing(l).as_deref() == Some(path))
+    {
+        return Beside::Focus(i);
+    }
+    if may_split(leaves.len()) {
+        Beside::Split
+    } else {
+        Beside::Float
+    }
+}
+
+/// Two spellings of one file are one file: `a/../b.md` and a symlink to it
+/// both name what `b.md` names. Falls back to the path as given when the
+/// file cannot be resolved, so a missing file still compares by its name.
+fn same_file_key(path: &std::path::Path) -> PathBuf {
+    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
 /// A tube that has been switched off. A closing pane is dropped immediately —
 /// that drop IS the close, it releases the PTY — so the shutdown cannot be
 /// played by the pane itself; it leaves behind the stage (its last painted
@@ -4335,6 +4379,13 @@ fn wire_pane(pane: &Entity<TerminalView>, window: &mut Window, cx: &mut Context<
         cx.notify();
     })
     .detach();
+    // A document asked for beside this pane: Ctrl+Alt+click, the menu's
+    // "Open beside", the floating square's "⇲ split", or `ctl doc beside`.
+    // The tree is ours, so the pane asks and the workspace decides.
+    cx.subscribe_in(pane, window, |ws, pane, ev: &pane::OpenDoc, window, cx| {
+        ws.open_doc_beside(pane.clone(), ev, window, cx);
+    })
+    .detach();
     // the header × → close just this pane (window-aware: refocuses what's left)
     cx.subscribe_in(pane, window, |ws, pane, _ev: &ClosePane, window, cx| {
         ws.close_pane(pane.entity_id(), window, cx);
@@ -7498,9 +7549,18 @@ impl Workspace {
         }
         let leaves: Vec<Entity<TerminalView>> = leaves.into_iter().cloned().collect();
         for leaf in leaves {
-            leaf.update(cx, |view, cx| match want {
-                Some(f) => view.set_face(f, cx),
-                None => view.toggle_face(cx),
+            leaf.update(cx, |view, cx| {
+                // A pane showing a document is left on it. `bench off` turns a
+                // window of benches back to its terminals; it was never meant
+                // to take away a page somebody opened beside their prompt.
+                if view.bench.face() == workbench::Face::Document {
+                    return;
+                }
+                // `toggle` swaps terminal and bench, as the verb says — not
+                // alt+k's walk, which on a pane with a document turned to its
+                // shell would step onto the document instead.
+                let face = want.unwrap_or_else(|| view.bench.face().other());
+                view.set_face(face, cx);
             });
         }
         cx.notify();
@@ -9301,6 +9361,201 @@ impl Workspace {
         });
         self.save(cx);
         cx.notify();
+    }
+
+    /// A document asked for beside `from` — see [`pane::OpenDoc`] for who
+    /// asks. A pane in the same tab already showing the file is brought
+    /// forward; otherwise the tab splits, or, at four panes, the document
+    /// floats over `from` with a line in its strip saying why.
+    fn open_doc_beside(
+        &mut self,
+        from: Entity<TerminalView>,
+        ev: &pane::OpenDoc,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use docopen::{Asker, FloatNote};
+        let answer = |said: String| {
+            if let Some(reply) = ev.reply.as_ref() {
+                let _ = reply.send(said);
+            }
+        };
+        // A mouse-down can be dispatched twice for one physical click, and a
+        // second split for the same click is the one thing worse than none.
+        // A script and the square's own button are asked once each.
+        if matches!(ev.by, Asker::Click | Asker::Menu) && !self.debounced() {
+            return;
+        }
+        let Some(tab) = self.tab_with_leaf(from.entity_id()) else {
+            answer("err the pane that asked is in no tab".into());
+            return;
+        };
+        let leaves: Vec<Entity<TerminalView>> = {
+            let mut ls = vec![];
+            self.tabs[tab].root.leaves(&mut ls);
+            ls.into_iter().cloned().collect()
+        };
+        let wanted = same_file_key(&ev.target.path);
+        let pane_name = |p: Option<u64>| p.map_or_else(|| "?".to_string(), |p| p.to_string());
+        match beside(
+            &leaves,
+            |l| l.read(cx).document_path().map(same_file_key),
+            &wanted,
+        ) {
+            Beside::Focus(i) => {
+                let shown = leaves[i].clone();
+                // A square asking to become a split of a file already split
+                // is a duplicate of what is on screen: it goes.
+                if ev.carry.is_some() {
+                    from.update(cx, |v, cx| {
+                        v.close_float(cx);
+                    });
+                }
+                // Brought forward: onto its document, if someone had turned
+                // it to its shell, and focused — deferred, for `split`'s
+                // reason, so the click still being dispatched cannot take the
+                // focus back.
+                shown.update(cx, |v, cx| v.set_face(workbench::Face::Document, cx));
+                let focus = shown.clone();
+                cx.defer_in(window, move |_ws, window, cx| {
+                    window.focus(&focus.focus_handle(cx), cx);
+                    cx.notify();
+                });
+                answer(format!(
+                    "ok focused pane {} — it already shows this file",
+                    pane_name(shown.read(cx).pane_id())
+                ));
+            }
+            Beside::Split => {
+                let made = self.split_with_document(
+                    tab,
+                    &from,
+                    ev.target.clone(),
+                    ev.carry.clone(),
+                    window,
+                    cx,
+                );
+                answer(format!(
+                    "ok beside pane {} — opened in pane {}",
+                    pane_name(from.read(cx).pane_id()),
+                    pane_name(made.read(cx).pane_id())
+                ));
+            }
+            Beside::Float => {
+                from.update(cx, |v, cx| {
+                    // A square asking to become a split stays the square it
+                    // is; anything else gets a square, so the document is on
+                    // screen either way.
+                    if ev.by != Asker::Float || !v.has_float() {
+                        v.open_float(ev.target.clone(), ev.row, cx);
+                    }
+                    v.note_float(FloatNote::FourPanes, cx);
+                });
+                answer(format!(
+                    "ok float pane {} — the tab has four panes, so it floats instead",
+                    pane_name(from.read(cx).pane_id())
+                ));
+            }
+        }
+        cx.notify();
+    }
+
+    /// Open `target` in a new pane to the RIGHT of `from` — a side-by-side
+    /// row with a vertical divider, for reading beside the prompt — and give
+    /// focus back to `from`, so the next keystroke still lands where the
+    /// person was typing.
+    ///
+    /// `carry` is a floating square's view being promoted. The square comes
+    /// down and its view moves into the new pane, re-seated; the file is not
+    /// opened a second time, so the zoom, the place and the decoded pixels all
+    /// come along.
+    ///
+    /// The new pane gets a shell in `from`'s directory, as a split's does: the
+    /// Document face sits over a terminal like every face, alt+k away.
+    fn split_with_document(
+        &mut self,
+        tab: usize,
+        from: &Entity<TerminalView>,
+        target: docopen::DocTarget,
+        carry: Option<Entity<docview::DocumentView>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<TerminalView> {
+        let cwd = from.read(cx).runtime().cwd;
+        let new_pane = self.make_pane_in_mode(
+            session::PaneRestore {
+                cwd,
+                ..Default::default()
+            },
+            window,
+            cx,
+        );
+        // The square goes before its view is handed on, so for no frame is
+        // one view drawn in two places.
+        if carry.is_some() {
+            from.update(cx, |v, cx| {
+                v.release_float(cx);
+            });
+        }
+        new_pane.update(cx, |v, cx| v.show_document(target, carry, cx));
+        let from_id = from.entity_id();
+        self.tabs[tab].root.split_leaf(
+            &|p| p.entity_id() == from_id,
+            SplitDir::Row,
+            new_pane.clone(),
+        );
+        // Deferred, for `split`'s reason: making the pane focused it, and the
+        // click that asked is still being dispatched.
+        let from = from.clone();
+        cx.defer_in(window, move |_ws, window, cx| {
+            window.focus(&from.focus_handle(cx), cx);
+            cx.notify();
+        });
+        self.save(cx);
+        cx.notify();
+        new_pane
+    }
+
+    /// The tab holding a pane, wherever it sits in that tab's tree.
+    /// [`Self::tab_index_of`] matches a tab's FIRST leaf only, which is right
+    /// for the tab key it was written for and wrong for a pane in a split.
+    fn tab_with_leaf(&self, pane: EntityId) -> Option<usize> {
+        self.tabs.iter().position(|t| {
+            let mut leaves = vec![];
+            t.root.leaves(&mut leaves);
+            leaves.iter().any(|p| p.entity_id() == pane)
+        })
+    }
+
+    /// `ctl doc beside <path>`: what Ctrl+Alt+click on that path does, on the
+    /// focused pane when it is showing its terminal, else the first pane that
+    /// is. Goes through the same request the click makes, so this drives the
+    /// gesture rather than working around it; the answer comes back once the
+    /// workspace has decided, through `reply`.
+    pub(crate) fn doc_beside(
+        &mut self,
+        path: &std::path::Path,
+        reply: std::sync::mpsc::Sender<String>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(target) = crate::docopen::drawable_document(path) else {
+            let why = format!("{} is not a file TD can draw", path.display());
+            eprintln!("terminal-delight: doc beside: {why}");
+            let _ = reply.send(format!("err {why}"));
+            return;
+        };
+        let (_, leaves, focused) = self.bench_targets();
+        let flags: Vec<bool> = leaves
+            .iter()
+            .map(|l| l.read(cx).bench.face() == workbench::Face::Terminal)
+            .collect();
+        let Some(i) = workbench::bench_target(&flags, focused) else {
+            let _ = reply.send("err no pane is showing its terminal face".into());
+            return;
+        };
+        leaves[i].update(cx, |v, cx| {
+            v.request_beside(target, None, docopen::Asker::Ctl, Some(reply), cx)
+        });
     }
 
     /// Where a tab-reorder release at cursor `pos` lands, now that tabs can wrap
@@ -27423,6 +27678,7 @@ impl Render for Workspace {
                         row(s.k_shift_click, s.reveal_link),
                         row(s.k_super_ctrl_click, s.reveal_link),
                         row(s.k_alt_click, s.open_here),
+                        row(s.k_ctrl_alt_click, s.open_beside),
                     ],
                 ));
             let col_b = div()
@@ -28948,8 +29204,9 @@ mod tests {
 
     /// The help modal's LINKS section names every click on a path as it is
     /// now: Ctrl opens with the desktop, Shift reveals (it used to open, and
-    /// shared a row with Ctrl), Super+Ctrl still reveals, and Alt opens the
-    /// floating square. Source-scanned because the modal needs a live window.
+    /// shared a row with Ctrl), Super+Ctrl still reveals, Alt opens the
+    /// floating square, and Ctrl+Alt opens a pane beside. Source-scanned
+    /// because the modal needs a live window.
     #[test]
     fn the_help_names_every_click_on_a_path() {
         let src = include_str!("main.rs");
@@ -28963,6 +29220,7 @@ mod tests {
             "row(s.k_shift_click, s.reveal_link)",
             "row(s.k_super_ctrl_click, s.reveal_link)",
             "row(s.k_alt_click, s.open_here)",
+            "row(s.k_ctrl_alt_click, s.open_beside)",
         ];
         let mut last = 0;
         for row in rows {
@@ -32301,6 +32559,124 @@ mod tests {
         // the invariant, not the values.
         const _: () = assert!(MAX_PANES < LEGACY_PANE_CEILING);
         const _: () = assert!(LEGACY_PANE_CEILING == 8, "the CRT warp draws eight tubes");
+    }
+
+    /// This file's own code, cut at its test module, and the body of one
+    /// function in it — for the rules a `Workspace` cannot be built to test,
+    /// since it needs a live gpui `Window`.
+    fn live_fn(sig: &str) -> &'static str {
+        let src = include_str!("main.rs");
+        let code = &src[..src
+            .find("\n#[cfg(test)]\n#[allow(clippy::items_after_test_module)]\nmod tests")
+            .unwrap_or(src.len())];
+        let at = code.find(sig).unwrap_or_else(|| panic!("{sig} not found"));
+        let end = code[at..].find("\n    }\n").expect("end of fn");
+        &code[at..at + end]
+    }
+
+    /// Ctrl+Alt+click on a path a pane in the tab is already showing brings
+    /// that pane forward; it does not open the file a second time, and it does
+    /// not matter how many panes the tab holds.
+    #[test]
+    fn a_document_already_showing_in_the_tab_is_focused_not_opened_twice() {
+        let a = std::path::Path::new("/tmp/a.md");
+        let b = std::path::Path::new("/tmp/b.png");
+        // Leaves stand for panes: which file each one's Document face shows.
+        let three: [Option<&std::path::Path>; 3] = [None, Some(b), Some(a)];
+        let showing = |l: &Option<&std::path::Path>| l.map(|p| p.to_path_buf());
+        assert_eq!(beside(&three, showing, b), Beside::Focus(1));
+        assert_eq!(beside(&three, showing, a), Beside::Focus(2));
+        // A full tab still focuses what it already shows, rather than floating
+        // a second copy over the pane that asked.
+        let four: [Option<&std::path::Path>; 4] = [None, None, None, Some(a)];
+        assert_eq!(beside(&four, showing, a), Beside::Focus(3));
+    }
+
+    /// Four panes is the cap on a split, so the fifth is refused and the
+    /// document floats over the pane that asked instead; three still split.
+    #[test]
+    fn a_fifth_pane_is_refused_and_the_document_floats_instead() {
+        let a = std::path::Path::new("/tmp/a.md");
+        let showing = |l: &Option<&std::path::Path>| l.map(|p| p.to_path_buf());
+        let three: [Option<&std::path::Path>; 3] = [None; 3];
+        let four: [Option<&std::path::Path>; 4] = [None; 4];
+        let one: [Option<&std::path::Path>; 1] = [None];
+        assert_eq!(beside(&one, showing, a), Beside::Split);
+        assert_eq!(beside(&three, showing, a), Beside::Split);
+        assert_eq!(beside(&four, showing, a), Beside::Float);
+        // A legacy tab above the cap floats too; it is never "corrected".
+        let six: [Option<&std::path::Path>; 6] = [None; 6];
+        assert_eq!(beside(&six, showing, a), Beside::Float);
+    }
+
+    /// The split puts the document on the RIGHT of the clicked pane, side by
+    /// side, shows it through the one way onto the Document face, hands focus
+    /// back to the pane that was clicked once the click has settled, and
+    /// writes the layout down. Source-scanned: the workspace needs a Window.
+    #[test]
+    fn the_document_split_keeps_focus_on_the_pane_that_was_clicked() {
+        let split = live_fn("fn split_with_document(");
+        assert!(
+            split.contains("SplitDir::Row"),
+            "a side-by-side row, a vertical divider"
+        );
+        assert!(
+            split.contains(".split_leaf("),
+            "split_leaf puts the new pane on side b, the right"
+        );
+        assert!(
+            split.contains(".show_document(target, carry, cx)"),
+            "the Document face is reached through show_document"
+        );
+        let deferred = split
+            .find("cx.defer_in(window, move |_ws, window, cx| {")
+            .expect("focus is handed back after the click settles");
+        let refocus = split
+            .find("window.focus(&from.focus_handle(cx), cx)")
+            .expect("focus goes back to the pane that was clicked");
+        assert!(deferred < refocus, "inside the deferred closure");
+        assert!(split.contains("self.save(cx)"), "the layout is written");
+        // And the request that reaches it is decided by `beside`, so the
+        // dedupe and the cap are the ones the tests above hold.
+        let open = live_fn("fn open_doc_beside(");
+        assert!(open.contains("match beside("), "{open}");
+        assert!(open.contains("Beside::Focus(i)") && open.contains("Beside::Float"));
+    }
+
+    /// `ctl bench off` turns a window of benches back to its terminals. A pane
+    /// showing a document is not a bench, and is left on its document.
+    #[test]
+    fn ctl_bench_off_leaves_a_document_pane_on_its_document() {
+        let faces = live_fn("pub(crate) fn set_all_faces(");
+        let guard = faces
+            .find("if view.bench.face() == workbench::Face::Document {")
+            .expect("set_all_faces skips a pane on its Document face");
+        let set = faces.find("view.set_face(").expect("the faces are set");
+        assert!(guard < set, "the guard comes before any face is set");
+        assert!(
+            !faces.contains("view.toggle_face("),
+            "toggle is terminal ⇄ bench, not alt+k's walk onto a document"
+        );
+    }
+
+    /// Promoting the floating square moves its view into the new pane; the
+    /// file is never opened a second time for it. The square comes down
+    /// before its view is shown anywhere else.
+    #[test]
+    fn promotion_moves_the_view_and_never_reopens_the_file() {
+        let split = live_fn("fn split_with_document(");
+        let release = split
+            .find("v.release_float(cx)")
+            .expect("the square comes down");
+        let show = split.find(".show_document(").expect("the face goes up");
+        assert!(
+            release < show,
+            "the square first, so no view is drawn twice"
+        );
+        assert!(
+            !split.contains("DocumentView::new("),
+            "the split never makes a view of its own"
+        );
     }
 
     #[test]

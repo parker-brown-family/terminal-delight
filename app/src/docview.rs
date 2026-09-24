@@ -68,7 +68,7 @@ use gpui::{
     Point, RenderImage, Resource, ScrollDelta, SharedString, Size, Task, Window,
 };
 
-use crate::docopen::{DocKind, DocScroll, DocTarget};
+use crate::docopen::{DocKind, DocScroll, DocSeat, DocTarget};
 use crate::theme::Theme;
 
 pub use image::{ImageZoom, ZoomStep};
@@ -89,6 +89,9 @@ pub struct DocumentView {
     /// The pane's resolved theme, handed down by [`Self::set_theme`]; the
     /// window's until the pane first paints the square.
     theme: Option<Arc<Theme>>,
+    /// The floating square, or a pane's Document face. A view is made for
+    /// one and can be moved to the other; see [`Self::set_seat`].
+    seat: DocSeat,
     /// The view's own size and the window's scale factor, as the last paint
     /// measured them. `None` until it has painted once: an unmeasured view is
     /// not a zero-sized one, and nothing that needs the size runs without it.
@@ -350,6 +353,7 @@ impl DocumentView {
             target,
             backend,
             theme: None,
+            seat: DocSeat::Float,
             frame: Rc::new(Cell::new(None)),
             painted_at: Rc::new(Cell::new(None)),
             links: markdown::LinkSink::default(),
@@ -363,6 +367,23 @@ impl DocumentView {
             view._watch = view.watch(cx);
         }
         view
+    }
+
+    /// Move this view between the floating square and a pane's Document face.
+    ///
+    /// The document, its zoom and its place all stay: promoting a square to a
+    /// split hands this same view to the new pane rather than opening the file
+    /// again, so nothing is decoded or laid out twice. Only the box it is drawn
+    /// in changes, which is why the size it measured in the old seat is
+    /// forgotten until it paints in the new one — a zoom pressed in between
+    /// would otherwise be placed against the square's size.
+    pub fn set_seat(&mut self, seat: DocSeat, cx: &mut Context<Self>) {
+        if self.seat == seat {
+            return;
+        }
+        self.seat = seat;
+        self.frame.set(None);
+        cx.notify();
     }
 
     pub fn target(&self) -> &DocTarget {

@@ -98,6 +98,9 @@ pub(crate) enum Req {
     BenchType(String, mpsc::Sender<String>),
     /// Open a document in a floating square. See [`Cmd::DocHere`].
     DocHere(PathBuf, mpsc::Sender<String>),
+    /// Open a document in a pane beside the focused one. See
+    /// [`Cmd::DocBeside`].
+    DocBeside(PathBuf, mpsc::Sender<String>),
     /// Close a floating square. See [`Cmd::DocClose`].
     DocClose(mpsc::Sender<String>),
 }
@@ -356,6 +359,10 @@ enum Cmd {
     /// Alt+clicking its path does, for a caller with no pointer. Takes an
     /// absolute path: the socket has no working directory to resolve against.
     DocHere(PathBuf),
+    /// Open a document in a pane beside the focused one — what Ctrl+Alt+
+    /// clicking its path does, split, dedupe and four-pane cap included.
+    /// Absolute, for `DocHere`'s reason.
+    DocBeside(PathBuf),
     /// Close the floating square, on the focused pane or the first one that
     /// has a square open.
     DocClose,
@@ -428,7 +435,7 @@ pub fn socket_path(pid: u32) -> PathBuf {
 const USAGE: &str = "ping | whoami | paint on|off|toggle|status | \
      skin <name>|theme|status | \
      bench on|off|toggle|choose <n>|submit|say <text>|type <text> | \
-     doc here <absolute path> | doc close | \
+     doc here <absolute path> | doc beside <absolute path> | doc close | \
      mcp status|on|off | mcp writes on|off | mcp expose agents|all | \
      mcp rpc <json> | mcp from <session> <pane|-> rpc <json> | \
      adopt {\"cwd\":\"/…\",\"run\":\"…\"} | \
@@ -457,15 +464,22 @@ fn parse_line(s: &str) -> Result<Cmd, String> {
         }
         return Ok(Cmd::BenchSay(line.to_string()));
     }
-    // `doc here` carries a path, and paths hold spaces: take it verbatim.
-    if let Some(rest) = s.strip_prefix("doc here ") {
-        let path = rest.trim_end_matches(['\r', '\n']);
-        if !path.starts_with('/') {
-            return Err(format!(
-                "doc here: {path:?} is not an absolute path — the socket has no working directory"
-            ));
+    // `doc here` and `doc beside` carry a path, and paths hold spaces: take
+    // it verbatim.
+    for (verb, make) in [
+        ("doc here ", Cmd::DocHere as fn(PathBuf) -> Cmd),
+        ("doc beside ", Cmd::DocBeside),
+    ] {
+        if let Some(rest) = s.strip_prefix(verb) {
+            let path = rest.trim_end_matches(['\r', '\n']);
+            if !path.starts_with('/') {
+                return Err(format!(
+                    "{}: {path:?} is not an absolute path — the socket has no working directory",
+                    verb.trim_end()
+                ));
+            }
+            return Ok(make(PathBuf::from(path)));
         }
-        return Ok(Cmd::DocHere(PathBuf::from(path)));
     }
     // `tabs` carries a JSON op list — tab names hold spaces, so the remainder
     // is taken verbatim and parsed as JSON rather than split into words.
@@ -824,6 +838,14 @@ fn handle_conn(
                 "err ui gone".into()
             }
         }
+        Ok(Cmd::DocBeside(path)) => {
+            let (rtx, rrx) = mpsc::channel();
+            if tx.send(Req::DocBeside(path, rtx)).is_ok() {
+                bench_outcome(rrx)
+            } else {
+                "err ui gone".into()
+            }
+        }
         Ok(Cmd::DocClose) => {
             let (rtx, rrx) = mpsc::channel();
             if tx.send(Req::DocClose(rtx)).is_ok() {
@@ -944,6 +966,10 @@ pub fn start(cx: &mut Context<Workspace>) {
                     Req::DocHere(path, reply) => {
                         let _ = reply.send(ws.doc_here(&path, cx));
                     }
+                    // The split needs a Window, which this ticker has none
+                    // of: the pane is asked, as a click asks it, and the
+                    // workspace answers from the subscription that has one.
+                    Req::DocBeside(path, reply) => ws.doc_beside(&path, reply, cx),
                     Req::DocClose(reply) => {
                         let _ = reply.send(ws.doc_close(cx));
                     }
@@ -1982,6 +2008,21 @@ mod tests {
         assert!(matches!(parse_line("doc close"), Ok(Cmd::DocClose)));
         assert!(parse_line("doc close all").is_err());
         assert!(USAGE.contains("doc here") && USAGE.contains("doc close"));
+    }
+
+    /// The split can be asked for without a pointer too — Ctrl+Alt+click's
+    /// verb — on the same terms as `doc here`: the whole path, spaces and all,
+    /// and only an absolute one.
+    #[test]
+    fn a_document_opens_beside_a_pane_without_a_pointer() {
+        assert!(matches!(
+            parse_line("doc beside /tmp/two words.md"),
+            Ok(Cmd::DocBeside(ref p)) if p == Path::new("/tmp/two words.md")
+        ));
+        assert!(parse_line("doc beside notes.md").is_err());
+        assert!(parse_line("doc beside ~/notes.md").is_err());
+        assert!(parse_line("doc beside").is_err(), "no path is not a path");
+        assert!(USAGE.contains("doc beside <absolute path>"));
     }
 
     #[test]
