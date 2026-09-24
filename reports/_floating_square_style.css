@@ -1,0 +1,41 @@
+/* ---- the reconstruction: a pane in the default `hacker` theme with the square up ---- */
+.hk { position: relative; min-width: 700px; height: 360px; border-radius: 9px; overflow: hidden;
+  background: #03100a; border: 1px solid #1d3b2a; font-family: var(--mono); }
+.hk .hdr { height: 24px; display: flex; align-items: center; gap: 10px; padding: 0 10px;
+  font-size: 10.5px; color: #4f8f69; border-bottom: 1px solid #12301f; }
+.hk .scr { padding: 10px 14px; font-size: 11.5px; line-height: 1.62; color: #86efac; white-space: pre; }
+.hk .scr .dim { color: #3f7a57; }
+.hk .scr .lnk { text-decoration: underline; text-decoration-color: #22c55e; }
+.hk .sq { position: absolute; right: 12px; top: 124px; width: 56%; height: 216px;
+  border: 2px solid #22c55e; border-radius: 6px; background: #03100a; overflow: hidden;
+  box-shadow: 0 0 0 1px rgba(34,197,94,.9), 0 1px 22px 2px rgba(34,197,94,.5),
+    0 30px 64px -8px rgba(0,0,0,.62), 0 8px 22px -2px rgba(0,0,0,.5); }
+.hk .strip { height: 22px; display: flex; align-items: center; justify-content: space-between;
+  padding: 0 8px; font-size: 11px; color: #22c55e; border-bottom: 1px solid rgba(34,197,94,.4); }
+.hk .strip .esc { color: rgba(34,197,94,.7); }
+.hk .pic { position: absolute; inset: 22px 0 0 0; display: flex; align-items: center; justify-content: center; }
+.hk .pic i { display: block; height: 88%; aspect-ratio: 1 / 1; border-radius: 2px;
+  background: linear-gradient(135deg, #1b3a8a 0%, #3b6fd1 38%, #9bc4f5 60%, #f2d48a 82%, #e0874a 100%); }
+.hk .tag { position: absolute; left: 12px; bottom: 10px; font-size: 10px; color: #f5c95f;
+  border: 1px solid rgba(245,201,95,.5); border-radius: 4px; padding: 1px 6px; background: rgba(0,0,0,.4); }
+
+/* ---- the slice board ---- */
+.board { display: grid; grid-template-columns: repeat(5, minmax(0,1fr)); gap: 8px; min-width: 700px; }
+.board .s { border: 1px solid #3a3a36; border-radius: 8px; padding: 9px 10px; background: #161614;
+  font-size: 12px; line-height: 1.4; color: #b8b6ac; }
+.board .s b { display: block; color: #e9e8e2; font-size: 12.5px; margin-bottom: 3px; }
+.board .s em { display: block; font-style: normal; font-family: var(--mono); font-size: 10px;
+  margin-top: 6px; color: #8b8a80; }
+.board .s.merged { border-color: #3ecf8e; background: #10231a; }
+.board .s.merged em { color: #3ecf8e; }
+.board .s.review { border-color: #3987e5; background: #111b28; }
+.board .s.review em { color: #6fa8ee; }
+.board .s.building { border: 1px dashed #3987e5; }
+.board .s.building em { color: #6fa8ee; }
+.legend2 { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 10px; font-family: var(--mono);
+  font-size: 10.5px; color: #8b8a80; }
+.legend2 i { display: inline-block; width: 11px; height: 11px; border-radius: 3px; margin-right: 5px;
+  vertical-align: -1px; border: 1px solid #3a3a36; }
+.legend2 .m { border-color: #3ecf8e; background: #10231a; }
+.legend2 .r { border-color: #3987e5; background: #111b28; }
+.legend2 .b { border: 1px dashed #3987e5; }

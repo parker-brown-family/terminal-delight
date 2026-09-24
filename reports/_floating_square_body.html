@@ -1,0 +1,185 @@
+<div class="wrap">
+
+<p class="kicker">Terminal Delight &middot; documents in the pane &middot; the build &middot; 2026-09-24</p>
+
+<h1>Floating Square</h1>
+
+<p class="lede">This morning you approved ten slices for opening documents inside Terminal Delight&rsquo;s panes,
+and the first one is built. Alt+click the path of a picture in any pane and the picture opens in a square
+beside the line that printed it; Escape puts it away. Before anything else was stacked on top of it, one
+question needed a number rather than a belief. A square you open and close all day holds a decoded picture
+and a texture on the graphics card, so does closing it give that memory back?</p>
+
+<!-- ============================================================ 1 -->
+<h2 class="sec">What you can do today</h2>
+
+<p>The square opens just below the line you clicked, or above it when the line sits near the bottom of the
+pane. It wears the glow every menu and modal in Terminal Delight wears, and it bends with the glass, because it
+is drawn inside the screen rather than laid over it. Typing still reaches the shell beside it; Escape is the
+only key the square takes.</p>
+
+<figure>
+  <span class="lbl">01 &middot; Alt+click on the path opens the picture below its line</span>
+  <div class="scroller">
+    <div class="hk" role="img" aria-label="A reconstruction of a Terminal Delight pane in the hacker theme: a shell prints the path of a screenshot, and a square with a green glowing border, a strip reading pane-3.png and esc, and the picture inside it, sits right-aligned just below that line.">
+      <div class="hdr"><span>&#9679; shell</span><span>~/Work/td</span></div>
+      <div class="scr"><span class="dim">~/Work/td $</span> scripts/shoot --pane 3
+wrote <span class="lnk">/home/parker/Pictures/td/pane-3.png</span>
+<span class="dim">~/Work/td $</span> &#9612;</div>
+      <div class="sq">
+        <div class="strip"><span>pane-3.png</span><span class="esc">esc &#10005;</span></div>
+        <div class="pic"><i></i></div>
+      </div>
+      <span class="tag">reconstruction, drawn from the code&rsquo;s own numbers</span>
+    </div>
+  </div>
+  <figcaption>Drawn rather than photographed, because a photograph would have meant putting a window on your
+  screen. <b>The square is 56% of the pane&rsquo;s width, 12 pixels in from its right edge and 6 below the
+  clicked line</b>, the numbers in <code>docopen.rs</code>, in the default hacker theme&rsquo;s colours. The
+  real one also bends with the tube, which this drawing does not.</figcaption>
+</figure>
+
+<div class="scroller">
+<table class="wide">
+  <thead><tr><th>You do</th><th>Today</th></tr></thead>
+  <tbody>
+    <tr><td>Alt+click a PNG, JPEG, WebP, GIF, BMP or SVG path</td><td>the picture opens in the square</td></tr>
+    <tr><td>Escape</td><td>the square closes; every other key goes to the shell</td></tr>
+    <tr><td>Alt+click a Markdown or HTML path</td><td>a square that says it is not drawn here yet, and that ctrl+click opens it with the desktop</td></tr>
+    <tr><td>Alt+click a command line</td><td>copies the line, as before</td></tr>
+    <tr><td>Ctrl+Alt+click a document</td><td>what it did before, until the split arrives in slice 4</td></tr>
+  </tbody>
+</table>
+</div>
+
+<!-- ============================================================ 2 -->
+<h2 class="sec">Where a picture&rsquo;s memory goes</h2>
+
+<p>gpui, the toolkit Terminal Delight draws with, decodes a picture once and keeps it. The pixels stay in its
+cache for as long as the program runs, and the texture stays on the graphics card until something asks for it
+back. For an icon that is the right trade. For a 4K screenshot it is 33 MB twice over, and a day of opening
+screenshots would carry every one of them until the window closed. The program design listed this among the
+decisions it was least sure of, at up to 61 MiB per closed brief if it went wrong.</p>
+
+<p>So the square owns its picture. It asks gpui to decode the file, takes the result straight back out of
+gpui&rsquo;s cache so nothing else holds it, and registers a hook that runs when the square is dropped and
+hands the texture back to the graphics card. Escape drops the square, and so does closing the pane, closing
+the tab, or the window rebuilding a pane after it loses its connection to the session. Each of those runs the
+same hook, so none of them has to remember to.</p>
+
+<!-- ============================================================ 3 -->
+<h2 class="sec">A hundred squares</h2>
+
+<p>No test in the suite can see a texture, so the proof runs a live window. A script starts Terminal Delight on
+a hidden workspace, where nothing appears on your screen and focus never moves, and drives it through the
+control socket: open a 4096-pixel square picture, wait for the window to report that it drew it, close it,
+wait for the release, and read the window&rsquo;s graphics memory from <code>nvidia-smi</code>. Then again, a
+hundred times.</p>
+
+<figure>
+  <span class="lbl">02 &middot; GPU memory after each close</span>
+  <div class="scroller">
+{{soakchart}}
+  </div>
+  <figcaption>Measured on this laptop&rsquo;s RTX 3080, from the samples committed beside the plan. <b>The
+  build that gives textures back ends every one of its hundred closes where it started</b>; the same build
+  with its one release call removed keeps each picture, 64 MiB at a time. The dashed amber line continues that
+  rate and is a projection, not a measurement.</figcaption>
+</figure>
+
+<p>The failing build matters as much as the passing one. A script that could not see a leak would draw a flat
+line whatever the code did, so the same run was pointed at a build with the release removed, and it failed the
+way it should. The window&rsquo;s ordinary memory rose 15 MiB across the hundred cycles, under a quarter of
+one decoded picture. That is recorded as measured, not as zero.</p>
+
+<!-- ============================================================ 4 -->
+<h2 class="sec">Where the ten slices stand</h2>
+
+<p>The rest of the plan is already moving. Three slices touch different files, so three agents are building
+them side by side, and each lands as its own pull request once its checks pass.</p>
+
+<figure>
+  <span class="lbl">03 &middot; The ten slices, at the time of writing</span>
+  <div class="scroller">
+    <div class="board" role="img" aria-label="Ten slices in two rows. Slice 9, size answers, is merged. Slice 1, the floating square, is in review. Slices 2, 3 and 6 are being built. Slices 4, 5, 7, 8 and 10 wait for the slices they depend on.">
+      <div class="s review"><b>1 &middot; Alt+click a picture</b>the square, Escape, textures given back<em>in review</em></div>
+      <div class="s building"><b>2 &middot; The square, whole</b>drag, its buttons, zoom, the chip, the menu<em>being built</em></div>
+      <div class="s building"><b>3 &middot; Markdown</b>drawn in your palette, links followed<em>being built</em></div>
+      <div class="s"><b>4 &middot; The split</b>Ctrl+Alt+click opens it beside you<em>waits for 2</em></div>
+      <div class="s"><b>5 &middot; Remembered</b>document panes survive a restart<em>waits for 4</em></div>
+      <div class="s building"><b>6 &middot; HTML, read-only</b>your briefs drawn by headless Chromium<em>being built</em></div>
+      <div class="s"><b>7 &middot; Notes, read</b>badges, buttons, concur stamps<em>waits for 6</em></div>
+      <div class="s"><b>8 &middot; Notes, write</b>saved into the brief itself<em>waits for 7</em></div>
+      <div class="s merged"><b>9 &middot; Size answers</b>programs told the pane&rsquo;s real size<em>merged</em></div>
+      <div class="s"><b>10 &middot; Guards</b>format watch, licences<em>last</em></div>
+    </div>
+  </div>
+  <div class="legend2"><span><i class="m"></i>merged</span><span><i class="r"></i>in review</span><span><i class="b"></i>being built now</span><span><i></i>waiting</span></div>
+  <figcaption>From the plan&rsquo;s slice list and the pull requests open when this page was written. <b>Pictures get
+  their full controls in slice 2 and Markdown is drawn from slice 3; your briefs arrive in slice 6 and saved
+  notes in slice 8.</b> The split and the notes wait on the slices they stand on.</figcaption>
+</figure>
+
+<p>The size answers are already on main. A program that asks a pane how big it is in pixels now hears the size
+the pane is now, where it used to hear the size the pane was when it started, and that closes the stale-size
+issue you had open. The agent that built it found one more gap on the way: colour queries go unanswered in
+every pane. That is filed as its own issue rather than fixed on the side.</p>
+
+<!-- ============================================================ 5 -->
+<h2 class="sec">One thing for you</h2>
+
+<div class="grill">
+  <div class="ask">
+    <h3>1 &middot; Install the build on your launcher when slice 2 merges?</h3>
+    <p>The plan puts the first install after slice 2, when the square can be dragged, zoomed and closed with its
+    own button. Installing points the launcher at the new build and nothing more: the windows you have open keep
+    running what they run until you restart one.</p>
+    <p class="rec"><b>Recommendation:</b> yes. I will install it with the repository&rsquo;s own landing script
+    and tell you which restart picks it up.</p>
+  </div>
+</div>
+
+<div class="dlgrow">
+  <button data-dlg="d-tests">The twenty tests, and the three broken on purpose</button>
+</div>
+
+<p class="foot">The code is on the branch <code>feat/documents-open-in-the-pane</code>, in
+<a href="https://github.com/parker-brown-family/terminal-delight/pull/721">the slice 1 pull request</a>; the
+size answers merged in <a href="https://github.com/parker-brown-family/terminal-delight/pull/720">their own
+pull request</a>. The soak is <code>scripts/doc-float-soak.sh</code>, and the samples behind figure 02 are in
+<code>docs/plans/gui-in-the-tui/evidence/</code>.</p>
+
+</div>
+
+<dialog id="d-tests" class="sub">
+  <div class="dlg-head"><div><h3>The twenty tests</h3><p class="repo">each fails without the code it guards; the three marked were checked by removing that code</p></div><button class="x" data-close>&times;</button></div>
+  <div class="dlg-body">
+    <table>
+      <thead><tr><th>Test</th><th>Proves</th></tr></thead>
+      <tbody>
+        <tr><td>a markdown, html or image name is drawable and anything else is not</td><td>the file names that open, in either case, and the ones that do not</td></tr>
+        <tr><td>a png name on bytes that are not an image is not drawable</td><td>a picture&rsquo;s name has to be backed by a picture&rsquo;s first bytes</td></tr>
+        <tr><td>an image with no extension is recognised by its first bytes</td><td>a screenshot saved without a suffix still opens</td></tr>
+        <tr><td>svg, markdown and html are by name whatever the bytes</td><td>text formats are judged by name alone</td></tr>
+        <tr><td>a directory named like a document is not drawable</td><td>a folder called <code>notes.md</code> falls through to what the click did before</td></tr>
+        <tr><td>alt click opens a document and copies a command line</td><td>the document under the pointer wins; a command line still copies</td></tr>
+        <tr><td>a float opens below its line and above it near the bottom</td><td>where the square goes, and that it is always inside the pane</td></tr>
+        <tr><td>a float is clamped inside a screen that shrank</td><td>a pane made smaller keeps its square inside it</td></tr>
+        <tr><td>a press on a bent float is found where the glass shows it &#9670;</td><td>a click lands on the square where the curved glass draws it, not where the flat layout put it</td></tr>
+        <tr><td>a file url is decoded before it is classified</td><td><code>file://</code> links with spaces open like plain paths</td></tr>
+        <tr><td>alt click asks about a document before it copies</td><td>a path inside a command line opens the path</td></tr>
+        <tr><td>the float is drawn inside the screen after the note</td><td>the square bends with the glass and wears the glow</td></tr>
+        <tr><td>escape closes a floating document before it reaches the terminal &#9670;</td><td>Escape is the square&rsquo;s; letters, Enter and ctrl+c go to the shell</td></tr>
+        <tr><td>a caret elsewhere on the pane keeps escape over a float</td><td>a note or a name being typed is reverted before the square closes</td></tr>
+        <tr><td>the key ladder&rsquo;s two property tests, extended</td><td>512 combinations of what is open, and the topmost always wins</td></tr>
+        <tr><td>releasing an image drops its texture &#9670;</td><td>the release hands the texture back and the decode never enters gpui&rsquo;s cache</td></tr>
+        <tr><td>a document view releases itself when it is dropped</td><td>every way a square ends runs the release</td></tr>
+        <tr><td>nothing in the document view listens for the mouse</td><td>no handler inside the square can fire beside what it draws</td></tr>
+        <tr><td>a markdown or html square says what opens it instead</td><td>a document not drawn yet names the gesture that works</td></tr>
+        <tr><td>an image past the atlas limit is refused rather than drawn blank</td><td>a picture too large for the graphics card says so</td></tr>
+        <tr><td>a floating document opens and closes without a pointer</td><td>the control socket verbs the soak drives</td></tr>
+      </tbody>
+    </table>
+    <p>&#9670; checked by removing the code it guards and watching it fail.</p>
+  </div>
+</dialog>
