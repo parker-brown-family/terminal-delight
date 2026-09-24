@@ -18,7 +18,7 @@ mod bench;
 use crate::term;
 use crate::theme::{self, PaneTheme, Theme};
 use alacritty_terminal::{
-    event::{Event as TermEvent, Notify},
+    event::{Event as TermEvent, Notify, WindowSize},
     grid::{Dimensions, Scroll},
     index::{Column, Line, Point as TermPoint, Side},
     selection::{Selection, SelectionType},
@@ -1842,6 +1842,20 @@ pub struct Presentation {
     peeled: Option<String>,
 }
 
+/// What a pseudoterminal is told about its size: the grid, and one cell in
+/// device pixels. Compared whole, so a window moving to a monitor with another
+/// scale factor re-announces the size even when the grid has not changed.
+#[derive(Clone, Copy, PartialEq, Debug)]
+struct PtySize {
+    grid: term::GridSize,
+    cell_px: (u16, u16),
+}
+
+/// The cell a window-owned pane's shell is spawned with, before the first
+/// layout pass measures one: the same numbers a hosted pane is born at
+/// (`main.rs`, `born_geom`).
+const BORN_CELL_PX: (u16, u16) = (8, 20);
+
 pub struct TerminalView {
     focus_handle: FocusHandle,
     session: term::Session,
@@ -1933,8 +1947,12 @@ pub struct TerminalView {
     /// Per-pane appearance: retained theme/grade overrides plus two independent
     /// follow-outer switches. A pristine pane inherits both groups (+ mode tint).
     pub appearance: PaneTheme,
-    /// Debounced PTY resize: (target grid, when it stabilized).
-    pending_grid: Option<(term::GridSize, Instant)>,
+    /// Debounced PTY resize: (what the PTY is to be told, when it stabilized).
+    pending_pty: Option<(PtySize, Instant)>,
+    /// The cell, in device pixels, the PTY was last told — beside `grid`, the
+    /// grid it was last told. Together they are the kernel's winsize, and a
+    /// window-owned pane answers `CSI 14 t` from them.
+    cell_px: (u16, u16),
     /// Scroll-settle debounce: (display_offset, when last seen). Prevents spurious
     /// agent-done notifications when ▲/▼ message navigation scrolls away from the prompt.
     last_scroll_offset: Option<(i32, Instant)>,
@@ -3185,11 +3203,12 @@ impl TerminalView {
             rows: 28,
         };
         let cwd = restore.cwd.clone().map(std::path::PathBuf::from);
-        let session = term::spawn_in(grid, 8, 20, cwd).expect("spawn shell");
+        let (cell_w, cell_h) = BORN_CELL_PX;
+        let session = term::spawn_in(grid, cell_w, cell_h, cwd).expect("spawn shell");
         if let Some(cmd) = restore.resume.as_deref() {
             session.notifier.notify(format!("{cmd}\n").into_bytes());
         }
-        Self::around(session, None, None, &restore, grid, cx)
+        Self::around(session, None, None, &restore, grid, BORN_CELL_PX, cx)
     }
 
     /// A pane showing a terminal this window does not own.
@@ -3200,24 +3219,39 @@ impl TerminalView {
     /// differs is what the pane may assume about the process at the far end:
     /// there is no descriptor to ask the kernel through, and the pid it has is
     /// somebody else's child.
+    ///
+    /// `grid` and `cell_px` are the size the host holds the terminal at, so the
+    /// pane re-announces a size only once its own layout measures a different
+    /// one.
     pub fn new_attached(
         session: term::Session,
         guard: crate::gridwire::ReplicaGuard,
         pane_id: u64,
         restore: crate::session::PaneRestore,
         grid: term::GridSize,
+        cell_px: (u16, u16),
         cx: &mut Context<Self>,
     ) -> Self {
-        Self::around(session, Some(guard), Some(pane_id), &restore, grid, cx)
+        Self::around(
+            session,
+            Some(guard),
+            Some(pane_id),
+            &restore,
+            grid,
+            cell_px,
+            cx,
+        )
     }
 
     /// Everything a pane is once its terminal exists, whichever kind it is.
+    /// `grid` and `cell_px` are what its pseudoterminal was last told.
     fn around(
         session: term::Session,
         guard: Option<crate::gridwire::ReplicaGuard>,
         pane_id: Option<u64>,
         restore: &crate::session::PaneRestore,
         grid: term::GridSize,
+        cell_px: (u16, u16),
         cx: &mut Context<Self>,
     ) -> Self {
         let mut session = session;
@@ -3505,13 +3539,15 @@ impl TerminalView {
                     }
                     // reap a finished bell clip so ffplay zombies don't pile up
                     view.bell_player.reap();
-                    // debounced PTY resize: fire once the drag settles
-                    if let Some((grid, since)) = view.pending_grid {
+                    // debounced PTY resize: fire once the drag settles. The
+                    // cell goes over in device pixels, as `sync_size` staged it.
+                    if let Some((size, since)) = view.pending_pty {
                         if since.elapsed() > std::time::Duration::from_millis(140) {
-                            view.pending_grid = None;
-                            view.grid = grid;
+                            view.pending_pty = None;
+                            view.grid = size.grid;
+                            view.cell_px = size.cell_px;
                             view.session
-                                .resize(grid, view.cell_w as u16, view.cell_h as u16);
+                                .resize(size.grid, size.cell_px.0, size.cell_px.1);
                             cx.notify();
                         }
                     }
@@ -3598,7 +3634,8 @@ impl TerminalView {
             copy_hint: None,
             copy_flash: None,
             was_focused: false,
-            pending_grid: None,
+            pending_pty: None,
+            cell_px,
             last_scroll_offset: None,
             seeking: false,
             theme_cache: RefCell::new(None),
@@ -3917,6 +3954,15 @@ impl TerminalView {
                 cx.notify();
             }
             TermEvent::PtyWrite(text) => self.session.notifier.notify(text.into_bytes()),
+            // A program asking for the text area in pixels (`CSI 14 t`). Only a
+            // terminal this window owns gets here: on a replica the host has
+            // answered and `term::EventProxy` swallows the question. `CSI 16 t`
+            // is not heard at all in a window-owned pane — vte drops it, and the
+            // scanner that hears it runs in the host's tee.
+            TermEvent::TextAreaSizeRequest(format) => self
+                .session
+                .notifier
+                .notify(format(self.pty_window_size()).into_bytes()),
             TermEvent::Title(title) => {
                 self.title = title;
                 cx.notify();
@@ -4009,15 +4055,38 @@ impl TerminalView {
         let (avail_w, avail_h) = (tube_w - pad_x * 2., tube_h - pad_y * 2.);
         let cols = ((avail_w / self.cell_w).floor() as usize).max(10);
         let rows = ((avail_h / self.cell_h).floor() as usize).max(3);
-        let target = term::GridSize { cols, rows };
-        if target.cols != self.grid.cols || target.rows != self.grid.rows {
+        // The cell in device pixels: what a program drawing an image into this
+        // terminal actually has, and what `14 t` and `16 t` report. The scale
+        // is read here because this runs with the window every frame, and the
+        // resize ticker that applies it has none.
+        let target = PtySize {
+            grid: term::GridSize { cols, rows },
+            cell_px: crate::ptyscan::device_cell(self.cell_w, self.cell_h, window.scale_factor()),
+        };
+        let told = PtySize {
+            grid: self.grid,
+            cell_px: self.cell_px,
+        };
+        if target != told {
             // stage it; the effects clock applies once the size stops moving
-            match self.pending_grid {
-                Some((g, _)) if g.cols == cols && g.rows == rows => {}
-                _ => self.pending_grid = Some((target, Instant::now())),
+            match self.pending_pty {
+                Some((staged, _)) if staged == target => {}
+                _ => self.pending_pty = Some((target, Instant::now())),
             }
         } else {
-            self.pending_grid = None;
+            self.pending_pty = None;
+        }
+    }
+
+    /// The size this pane's pseudoterminal was last told, in the shape a size
+    /// question's formatter takes. It is the kernel's winsize, so an answer
+    /// built from it agrees with what `TIOCGWINSZ` says.
+    fn pty_window_size(&self) -> WindowSize {
+        WindowSize {
+            num_lines: self.grid.rows as u16,
+            num_cols: self.grid.cols as u16,
+            cell_width: self.cell_px.0,
+            cell_height: self.cell_px.1,
         }
     }
 
@@ -11713,6 +11782,94 @@ mod tests {
             "TerminalView::bench_drop exists but the root div never registers a drop \
              listener for gpui::ExternalPaths, so a dropped file reaches nothing — \
              register it beside the mouse listeners in `render`"
+        );
+    }
+
+    /// This file's production source, cut at the test module, with comment
+    /// lines dropped and every run of whitespace squashed to one space — so a
+    /// scan can neither satisfy itself with its own needle nor be passed by
+    /// the prose explaining the line it looks for, and rustfmt moving a call
+    /// onto two lines does not hide it.
+    fn production_source() -> String {
+        let src = include_str!("pane.rs");
+        src[..src.find("\n#[cfg(test)]").unwrap_or(src.len())]
+            .lines()
+            .map(|l| l.split("//").next().unwrap_or(""))
+            .collect::<Vec<_>>()
+            .join("\n")
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    /// One method's body out of [`production_source`], up to the next method.
+    fn method_body(code: &str, signature: &str) -> String {
+        let at = code
+            .find(signature)
+            .unwrap_or_else(|| panic!("{signature}"));
+        let rest = &code[at + signature.len()..];
+        let end = rest.find(" fn ").unwrap_or(rest.len());
+        rest[..end].to_string()
+    }
+
+    /// A pane that owns its pseudoterminal (`TD_NO_SESSIOND=1`) answers
+    /// `CSI 14 t` itself, from what the PTY was last told.
+    ///
+    /// alacritty does not answer this one inline: it hands the event to the
+    /// listener with a formatter, and `handle_term_event` had no arm for it,
+    /// so a program asking a window-owned pane for its size in pixels waited
+    /// for a reply that never came. A hosted pane is answered by the host and
+    /// its replica swallows the question (`term::EventProxy`), so this arm is
+    /// reached only by a terminal this window owns.
+    #[test]
+    fn a_window_owned_pane_answers_the_text_area_question() {
+        let body = method_body(&production_source(), "fn handle_term_event(");
+        assert!(
+            body.contains("TermEvent::TextAreaSizeRequest("),
+            "handle_term_event has no arm for TextAreaSizeRequest, so a window-owned \
+             pane never answers `CSI 14 t` and the program asking hangs until it \
+             gives up"
+        );
+        assert!(
+            body.contains("pty_window_size()"),
+            "the size answer must be built from what the PTY was last told \
+             (`pty_window_size`), or it can disagree with the kernel's own winsize"
+        );
+    }
+
+    /// The PTY is told its cell in device pixels, not in logical pixels cut to
+    /// an integer.
+    ///
+    /// `view.cell_w as u16` told a 6.3 × 14.7 cell on a 1.6× monitor that it
+    /// was 6 × 14, which is neither the logical size nor the pixels a program
+    /// drawing an image actually has. The size staged by `sync_size` now
+    /// carries the cell through `ptyscan::device_cell`, with the window's
+    /// scale factor, and the debounced resize hands that on unchanged.
+    #[test]
+    fn the_resize_carries_device_pixels() {
+        let code = production_source();
+        for truncation in ["cell_w as u16", "cell_h as u16"] {
+            assert!(
+                !code.contains(truncation),
+                "the PTY is told `{truncation}`: a logical cell cut to an integer \
+                 instead of its size in device pixels"
+            );
+        }
+        let ticker = method_body(&code, "fn around(");
+        let tight: String = ticker.split_whitespace().collect();
+        let at = tight
+            .find("view.session.resize(")
+            .expect("the debounced resize in the ticker");
+        let call = &tight[at..at + tight[at..].find(';').expect("end of the call")];
+        assert!(
+            call.contains("cell_px"),
+            "the debounced resize must hand the PTY the staged device-pixel cell: {call}"
+        );
+        let sync = method_body(&code, "fn sync_size(");
+        assert!(
+            sync.contains("device_cell(") && sync.contains("scale_factor()"),
+            "sync_size must stage the cell in device pixels, measured with the \
+             window's scale factor"
         );
     }
 

@@ -24,7 +24,7 @@ use alacritty_terminal::{
 use futures::channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
 
 /// Grid dimensions for Term::new (the crate's own TermSize lives in its test module).
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct GridSize {
     pub cols: usize,
     pub rows: usize,
@@ -56,7 +56,8 @@ pub struct EventProxy {
 }
 
 /// Who answers the questions a program asks the terminal — what are you (DA),
-/// where is the cursor (DSR) — each of which must be answered exactly once.
+/// where is the cursor (DSR), how big is the text area (`CSI 14 t`) — each of
+/// which must be answered exactly once.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Answers {
     /// This process owns the pseudoterminal, so it answers. Note that it does
@@ -91,7 +92,15 @@ impl EventListener for EventProxy {
         // answer still means the emulation has moved on. A replica whose
         // generation stopped advancing would freeze every cache built on it.
         self.generation.fetch_add(1, Ordering::Relaxed);
-        if !self.answers_here && matches!(event, TermEvent::PtyWrite(_)) {
+        // `CSI 14 t` travels as its own event rather than as a `PtyWrite`, so
+        // it has to be named: the host answers it from the geometry it holds,
+        // and a pane answering it too would type a second reply at the program.
+        if !self.answers_here
+            && matches!(
+                event,
+                TermEvent::PtyWrite(_) | TermEvent::TextAreaSizeRequest(_)
+            )
+        {
             return;
         }
         let _ = self.events.unbounded_send(event);
@@ -778,6 +787,55 @@ mod attached {
             matches!(rx.try_recv(), Ok(TermEvent::PtyWrite(_))),
             "a terminal we own must still forward its own answers"
         );
+    }
+
+    #[test]
+    fn a_replica_swallows_a_size_question_the_host_answers() {
+        // `CSI 14 t` asks for the text area in pixels. The host answers it
+        // from the geometry it holds; a replica forwarding it too would hand
+        // the pane a question that, once the pane learned to answer it, would
+        // be answered twice — and the second reply reaches the program as
+        // typed input. alacritty sends this one as its own event rather than
+        // as a `PtyWrite`, so the filter has to name it.
+        let reply: Arc<dyn Fn(WindowSize) -> String + Sync + Send> =
+            Arc::new(|size| format!("{}x{}", size.num_cols, size.num_lines));
+
+        let (tx, mut rx) = unbounded();
+        let replica = EventProxy::new(tx, Arc::new(AtomicU64::new(0)), Answers::Elsewhere);
+        replica.send_event(TermEvent::TextAreaSizeRequest(reply.clone()));
+        assert!(
+            rx.try_recv().is_err(),
+            "a replica forwarded a size question the host has already answered"
+        );
+
+        let (tx, mut rx) = unbounded();
+        let local = EventProxy::new(tx, Arc::new(AtomicU64::new(0)), Answers::Here);
+        local.send_event(TermEvent::TextAreaSizeRequest(reply));
+        assert!(
+            matches!(rx.try_recv(), Ok(TermEvent::TextAreaSizeRequest(_))),
+            "a terminal we own must still hand the question to its pane"
+        );
+
+        // And end to end: the question arriving on a real replica's byte
+        // stream is parsed, and nothing about it reaches the pane. The marker
+        // follows it in the same write, so once the marker is on the grid the
+        // parser has already been past the question.
+        let mut pair = attached(20, 5, Some(1));
+        let mut events = pair.session.events.take().expect("events");
+        pair.host.write_all(b"\x1b[14tdone").expect("host writes");
+        let term = pair.session.term.clone();
+        assert!(
+            within(Duration::from_secs(5), || {
+                term.lock().grid()[Line(0)][Column(3)].c == 'e'
+            }),
+            "the host's bytes never reached the replica"
+        );
+        while let Ok(event) = events.try_recv() {
+            assert!(
+                !matches!(event, TermEvent::TextAreaSizeRequest(_)),
+                "a replica passed a size question on to its pane"
+            );
+        }
     }
 
     #[test]

@@ -65,6 +65,7 @@ mod palette;
 mod pane;
 mod paneident;
 mod plugins;
+mod ptyscan;
 mod recover;
 mod screenread;
 mod session;
@@ -4863,8 +4864,13 @@ fn make_pane_attached(
     // The pid is the host's, and only an attribute: this window did not start
     // that process and will never signal it.
     let (session, guard) = term::attach_in(grid, streams, Some(info.shell_pid))?;
-    let pane =
-        cx.new(|cx| TerminalView::new_attached(session, guard, pane_id.0, restore, grid, cx));
+    // The host's cell as well as its grid: a pane that believed the cell were
+    // anything else would re-announce the size on its first frame and wake
+    // every agent in the window with a resize that changed nothing.
+    let cell_px = (geom.cell_width, geom.cell_height);
+    let pane = cx.new(|cx| {
+        TerminalView::new_attached(session, guard, pane_id.0, restore, grid, cell_px, cx)
+    });
     pane.update(cx, |view, cx| {
         view.appearance = PaneTheme::house();
         // The host has been watching this terminal; a window that has just
