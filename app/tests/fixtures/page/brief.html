@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Snapshot engine fixture</title>
+<!--
+  A synthetic decision brief for app/tests/snapshot_engine.rs. Shaped like the
+  decision-brief skill's output (cards, figures, a finding, a content dialog
+  opened by a data-dlg button, a report-notes island, a fixed notebar and
+  per-element note buttons), with a small tagging script that follows
+  notes.js's own rules for ids: a prefix, then the first four words of the
+  element's title as a slug. No real brief's content is in it.
+
+  The test removes everything between the NOTES-CHROME markers to make the
+  same page without the notes UI, so keep those markers exact.
+-->
+<style>
+  html, body { margin: 0; background: #10141c; color: #d8dee9; font: 16px/1.5 sans-serif; }
+  main { padding: 24px 28px 120px; }
+  h1 { font-size: 28px; margin: 0 0 16px; }
+  .card, .finding, figure { position: relative; margin: 0 0 40px; padding: 18px 20px; border: 1px solid #3b4252; border-radius: 8px; }
+  .card { background: #1a2130; }
+  .finding { background: #1f2a24; }
+  figure { background: #161b26; }
+  figure svg { display: block; width: 100%; height: 240px; }
+  .lbl { font-weight: 700; }
+  p.filler { min-height: 520px; margin: 0 0 24px; color: #9aa4b5; }
+  .note-btn { position: absolute; top: 8px; right: 8px; width: 26px; height: 26px; border: 0; border-radius: 50%; background: #ff2d55; color: #fff; }
+  .notebar { position: fixed; left: 0; right: 0; bottom: 0; height: 56px; background: #ffcc00; color: #000; font-weight: 700; padding: 16px; box-sizing: border-box; }
+  button[data-dlg] { background: #2e3440; color: #eceff4; border: 1px solid #4c566a; border-radius: 4px; padding: 6px 12px; }
+  dialog { width: min(560px, 92vw); padding: 0; border: 1px solid #4c566a; border-radius: 10px; background: #1a2130; color: #d8dee9; }
+  dialog::backdrop { background: rgba(0,0,0,.76); }
+  .dlg-head { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; border-bottom: 1px solid #3b4252; }
+  .dlg-head h3 { margin: 0; }
+  .dlg-body { padding: 16px; overflow-y: auto; max-height: calc(86vh - 78px); }
+  .dlg-body p { min-height: 180px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Snapshot engine fixture</h1>
+  <p><a id="jump" href="#sec-2">Jump to the second section</a> ·
+     <a id="web" href="https://example.com/brief">a page on the web</a> ·
+     <a id="sibling" href="other%20brief.html#top">another brief</a> ·
+     <button data-dlg="d-evidence">Evidence</button></p>
+
+  <section class="card"><h3>Tiles not pages</h3><p>Five on the GPU, the rest as PNG.</p></section>
+  <p class="filler">Filler that makes the page long enough to cut into several bands.</p>
+
+  <figure><svg viewBox="0 0 400 120" aria-label="bands"><rect x="10" y="10" width="380" height="100" fill="#5e81ac"/></svg>
+    <figcaption><span class="lbl">01 · The page in bands</span></figcaption></figure>
+  <p class="filler">More filler.</p>
+
+  <section class="card"><h3>One browser</h3><p>Per TD process, over a pipe.</p></section>
+
+  <section id="sec-2" class="finding"><h3>Anchors hold</h3><p>The same ids at every width.</p></section>
+  <p class="filler">Still more filler.</p>
+
+  <figure><svg viewBox="0 0 400 120" aria-label="gpu"><rect x="10" y="10" width="380" height="100" fill="#a3be8c"/></svg>
+    <figcaption><span class="lbl">02 · Five on the GPU</span></figcaption></figure>
+  <p class="filler">The last of the filler.</p>
+
+  <section class="card"><h3>No network</h3><p>A brief cannot phone home.</p></section>
+</main>
+
+<dialog id="d-evidence">
+  <div class="dlg-head"><h3>Evidence</h3><button class="x" data-close>&times;</button></div>
+  <div class="dlg-body">
+    <h4>First source</h4>
+    <p>What the first source says. <a href="https://example.com/source">the source</a></p>
+    <h4>Second source</h4>
+    <p>What the second source says.</p>
+    <p>And a long tail, so the body scrolls in a short viewport.</p>
+  </div>
+</dialog>
+
+<script type="application/json" id="report-notes">{}</script>
+
+<!--NOTES-CHROME-->
+<div class="notebar" id="notebar"><span class="cnt">0 notes</span> · copy map · save into file</div>
+<!--/NOTES-CHROME-->
+
+<script>
+(function () {
+  var TARGETS = [['.card', 'verdict'], ['figure', 'fig'], ['.finding', 'finding'], ['dialog .dlg-body > h4', 'sub']];
+  function slug(s) {
+    return String(s || 'x').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 44) || 'x';
+  }
+  function titleOf(el) {
+    var h = el.querySelector('h2,h3,h4,.bar-lab,.k,.lbl,td:first-child,th:first-child');
+    var t = ((h ? h.textContent : el.textContent) || 'item').replace(/\s+/g, ' ').trim();
+    return t.length > 72 ? t.slice(0, 69) + '…' : t;
+  }
+  var used = {};
+  TARGETS.forEach(function (pair) {
+    Array.prototype.forEach.call(document.querySelectorAll(pair[0]), function (el) {
+      var id = pair[1] + '-' + slug(titleOf(el)).split('-').slice(0, 4).join('-');
+      var base = id, n = 2;
+      while (used[id]) id = base + '-' + (n++);
+      used[id] = 1;
+      el.classList.add('notable');
+      el.dataset.nid = id;
+      el.dataset.ntitle = titleOf(el);
+      /*NOTES-CHROME*/
+      var b = document.createElement('button');
+      b.className = 'note-btn';
+      b.type = 'button';
+      b.textContent = '1';
+      el.appendChild(b);
+      /*/NOTES-CHROME*/
+    });
+  });
+  document.addEventListener('click', function (e) {
+    var t = e.target.closest('[data-dlg]');
+    if (t) { var d = document.getElementById(t.dataset.dlg); if (d && !d.open) d.showModal(); return; }
+    var x = e.target.closest('[data-close]');
+    if (x) { var dd = x.closest('dialog'); if (dd) dd.close(); }
+  });
+})();
+</script>
+</body>
+</html>
