@@ -73,8 +73,9 @@ case "$IMG" in /*) ;; *) IMG="$(pwd)/$IMG" ;; esac
 
 WIN=""
 # Everything this run made goes with it: the window, the session host it
-# spawned, and the host's lock files and layout, which are written as those
-# processes exit, so they are removed only once both are gone.
+# spawned, the host's lock files and layout, and the backups directory every
+# layout save rotates into. Those are written as the processes exit, so they
+# are removed only once both are gone.
 cleanup() {
   local pids
   pids="$WIN $(pgrep -f "serve --session $SESSION" 2>/dev/null)"
@@ -86,6 +87,7 @@ cleanup() {
     sleep 0.1
   done
   rm -f "$HOME/.config/terminal-delight/sessions/$SESSION".*
+  rm -rf "$HOME/.config/terminal-delight/sessions/backups/$SESSION"
 }
 trap cleanup EXIT
 
