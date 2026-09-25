@@ -1379,6 +1379,36 @@ impl State {
         out
     }
 
+    /// Read the picker off the screen AT THE MOMENT OF A PRESS, for the card
+    /// being pressed, and record its cursor. Returns whether it did.
+    ///
+    /// The once-a-second sweep is the usual source of a cursor, and a press
+    /// that arrived when the sweep had not supplied one fell to
+    /// [`Route::Sentence`]: the choice was written down for the agent to read
+    /// on its next turn. An agent blocked inside that very picker has no next
+    /// turn. Measured 2026-09-25 on pane 102, a two-question round after its
+    /// hook was released as stale: `Coffee` went down as keys and the picker
+    /// ticked it, then `Dogs` and SUBMIT both went to `actions.jsonl` as
+    /// sentences while the terminal sat on `❯ 1. Cats` with Pet unanswered.
+    /// The bench said "2 of 2 answered"; the agent never moved.
+    ///
+    /// Strict for the same reason the sweep is: the screen's question has to
+    /// be THIS card's by [`State::matching`], so a picker for some other
+    /// question is never driven on this card's behalf.
+    pub fn read_picker(&mut self, id: &SurfaceId, rows: &[String]) -> bool {
+        let Some(q) = crate::screenread::question_on_screen(rows) else {
+            return false;
+        };
+        let Some(cursor) = q.cursor else {
+            return false;
+        };
+        if self.matching(&q.question).as_ref() != Some(id) {
+            return false;
+        }
+        self.saw_cursor(id, cursor, q.submit, q.submit_kind);
+        true
+    }
+
     /// The screen reader saw the picker for this card, and where its highlight is.
     pub fn saw_cursor(
         &mut self,
@@ -3452,6 +3482,89 @@ mod tests {
         assert!(
             matches!(st.submit(&multi, 1_200), Press::Keys { .. }),
             "the picker is on its last question and says so"
+        );
+    }
+
+    /// A press the sweep supplied no cursor for reads the picker itself.
+    ///
+    /// Parker's round on 2026-09-25, rows as his terminal showed them: Drink
+    /// answered by keys, then the picker on Pet with `❯ 1. Cats`. Without a
+    /// cursor, `Dogs` took the sentence road the blocked agent never reads —
+    /// the first half below pins that it still would, so this test fails if
+    /// `read_picker` is not what changed the outcome.
+    #[test]
+    fn a_press_with_no_swept_cursor_reads_the_picker_on_the_screen() {
+        let event = json!({
+            "td": "0.1", "type": "question", "at_ms": 1000, "pid": 42,
+            "tool_use_id": "toolu_01PET",
+            "questions": [
+                {"question": "Coffee or tea?", "header": "Drink", "multiSelect": false,
+                 "options": [{"label": "Coffee", "description": "Coffee, every time"},
+                             {"label": "Tea", "description": "Tea, every time"},
+                             {"label": "Neither", "description": "Something else, or nothing"}]},
+                {"question": "Cats or dogs?", "header": "Pet", "multiSelect": false,
+                 "options": [{"label": "Cats", "description": "Cats"},
+                             {"label": "Dogs", "description": "Dogs"},
+                             {"label": "Both", "description": "No need to pick"}]}
+            ]
+        });
+        let pet_screen: Vec<String> = [
+            "\u{2190}  \u{2612} Drink  \u{2610} Pet  \u{2714} Submit  \u{2192}",
+            "",
+            "Cats or dogs?",
+            "",
+            "\u{276f} 1. Cats",
+            "     Cats",
+            "  2. Dogs",
+            "     Dogs",
+            "  3. Both",
+            "     No need to pick",
+            "  4. Type something.",
+            "  5. Chat about this",
+            "",
+            "Enter to select \u{b7} Tab/Arrow keys to navigate \u{b7} Esc to cancel",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+
+        // The failure, as it happened: no cursor for Pet, so Dogs is spoken.
+        let mut st = State::new();
+        let Effect::Present(cards) = st.take(Inbound::parse(&event).unwrap(), 1_000) else {
+            panic!()
+        };
+        let (drink, pet) = (cards[0].id.clone(), cards[1].id.clone());
+        st.saw_cursor(&drink, 0, None, None);
+        assert!(matches!(st.press(&drink, 0, 1_100), Press::Keys { .. }));
+        assert!(
+            matches!(st.press(&pet, 1, 1_200), Press::Sentence { .. }),
+            "without a cursor the press is spoken — the bug this guards"
+        );
+
+        // The repair: the press reads the screen first, and goes by keys.
+        let mut st = State::new();
+        let Effect::Present(cards) = st.take(Inbound::parse(&event).unwrap(), 1_000) else {
+            panic!()
+        };
+        let (drink, pet) = (cards[0].id.clone(), cards[1].id.clone());
+        st.saw_cursor(&drink, 0, None, None);
+        assert!(matches!(st.press(&drink, 0, 1_100), Press::Keys { .. }));
+        assert!(
+            st.read_picker(&pet, &pet_screen),
+            "the screen is Pet's picker"
+        );
+        match st.press(&pet, 1, 1_200) {
+            Press::Keys { bytes, .. } => assert_eq!(bytes, b"\x1b[B\r", "one down to Dogs"),
+            other => panic!("Dogs must reach the picker: {other:?}"),
+        }
+        // And a screen showing some other question drives nothing here.
+        let mut st = State::new();
+        let Effect::Present(cards) = st.take(Inbound::parse(&event).unwrap(), 1_000) else {
+            panic!()
+        };
+        assert!(
+            !st.read_picker(&cards[0].id, &pet_screen),
+            "Pet's picker is not Drink's"
         );
     }
 
