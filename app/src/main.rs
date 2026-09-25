@@ -19176,21 +19176,19 @@ impl Workspace {
             // VISIBLY detach ... indent differently ... further to the
             // right."* `ml` rather than `pl`: additive to whatever
             // depth-based padding the row already set, so this never has
-            // to know or preserve that value. A real (non-inset) shadow
-            // reads as LIFTED rather than pressed-in, which inset gives
-            // the plain cursor below — the two must never be confusable,
-            // since a person mid-carry needs the stronger one to win at a
-            // glance.
+            // to know or preserve that value.
+            //
+            // The first shape of this shadow-and-0.24-alpha answer to that
+            // ask came back "way too much ... brutally glaring": the shift
+            // alone already says "not an ordinary walk"; the colour only
+            // has to say WHOSE, the same job `STANDING_WASH` already does
+            // for the project/group holding the active task. Parker: *"about
+            // equivalent to the secondary highlight with group and project
+            // but COLOURED like the SELECTED one."* Same wash, `th.cursor`
+            // in place of the branch's own colour, no shadow.
             return d
                 .ml(px(BAR_CARRY_INDENT * s))
-                .bg(th.cursor.alpha(0.24))
-                .shadow(vec![BoxShadow {
-                    color: th.cursor.alpha(0.95),
-                    offset: point(px(0.), px(1.)),
-                    blur_radius: px(8.),
-                    spread_radius: px(1.),
-                    inset: false,
-                }]);
+                .bg(th.cursor.alpha(STANDING_WASH));
         }
         d.bg(th.cursor.alpha(0.14)).shadow(vec![BoxShadow {
             color: th.cursor.alpha(0.85),
