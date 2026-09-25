@@ -3,7 +3,7 @@
   "title": "Pictures",
   "description": "Programs that draw pictures with the Kitty graphics protocol, such as kitten icat or chafa, show them in a Terminal Delight pane. A picture stays while its pane is on screen and is forgotten when its tab is hidden.",
   "updated": "2026-09-25",
-  "trueOf": "feat/core-swap-rio at 2823b8c",
+  "trueOf": "main at 1e2eb6c",
   "summary": "Pictures programs draw, and when they go"
 }
 </script>
@@ -24,6 +24,8 @@
   <tbody>
     <tr><td>Formats: PNG (<code>f=100</code>), RGB (<code>f=24</code>), RGBA (<code>f=32</code>)</td><td>Drawn</td></tr>
     <tr><td>Sending: inline data (<code>t=d</code>), a file (<code>t=f</code>), a temporary file (<code>t=t</code>), shared memory (<code>t=s</code>)</td><td>All four</td></tr>
+    <tr><td>A file, temporary file or shared memory that also says more chunks follow (<code>m=1</code>), as mpv's shared-memory mode sends every frame</td><td>Not drawn yet: the picture waits for a chunk that never comes (<a href="https://github.com/parker-brown-family/terminal-delight/issues/833">issue 833</a>)</td></tr>
+    <tr><td>One picture command, as a single escape sequence</td><td>Up to 4 MiB. The protocol's chunks are 4 KB each, so only a sender that skips chunking meets the limit</td></tr>
     <tr><td>Placement in cells (<code>c=</code>, <code>r=</code>), cropping (<code>x= y= w= h=</code>), offsets within a cell (<code>X=</code>, <code>Y=</code>)</td><td>Drawn</td></tr>
     <tr><td>Stacking (<code>z=</code>)</td><td>Negative draws under the text, zero and above over it</td></tr>
     <tr><td>Deleting (<code>a=d</code>)</td><td>Honoured</td></tr>
@@ -32,6 +34,7 @@
   </tbody>
 </table>
 <p>A picture is not drawn while the rows are read upside down (the anchor-to-top read) or in <a href="/text-crawl">text crawl</a>, where it has no single cell to sit in. It is still held, and it returns with the plain read.</p>
+<p>A temporary file (<code>t=t</code>) is deleted by kitty's rule: only when its name contains <code>tty-graphics-protocol</code> and it sits in <code>/tmp</code>, <code>/dev/shm</code> or <code>$TMPDIR</code>. Terminal Delight deletes it itself after the core has read it, because the core's own check looks for that marker anywhere in the path. Shared memory (<code>t=s</code>) reaches the core only when it names a regular file in <code>/dev/shm</code>.</p>
 
 <h2 id="technical-attentional">When a picture goes</h2>
 <figure class="td-fig">
@@ -77,7 +80,7 @@
 <p><code>kitten icat</code> decides from the first two answers together. Before the core swap it waited ten seconds in every pane and then gave up, because the old device-attributes answer was too short for its detector.<sup><a href="#s3">3</a></sup></p>
 
 <h2 id="technical-hosted">Panes on a session host</h2>
-<p>A pane on a <a href="/sessions">session host</a> is parsed twice: by the host, which answers the program, and by your window, which draws. A picture sent as a temporary file or as shared memory is deleted by the first terminal that reads it, and the host reads first, so for those two methods the host rewrites the picture into its copy of the stream as inline data before its own core deletes the original. Inline data and plain files reach the window as the program sent them.<sup><a href="#s4">4</a></sup></p>
+<p>A pane on a <a href="/sessions">session host</a> is parsed twice: by the host, which answers the program, and by your window, which draws. A picture sent as a temporary file or as shared memory is deleted by the first terminal that reads it, and the host reads first, so for those two methods the host rewrites the picture into its copy of the stream as inline data before the original is deleted. Inline data and plain files reach the window as the program sent them.<sup><a href="#s4">4</a></sup></p>
 <p>A window attached to a session host started before the core swap still draws pictures sent as inline data or a file, because the bytes pass through the old host to the window's own core. That host answers the questions in the table above the old way, so <code>kitten icat</code> still waits there until the host is replaced.</p>
 
 <h2 id="technical-try">Try it</h2>
