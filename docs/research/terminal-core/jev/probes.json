@@ -1,0 +1,577 @@
+{
+ "claim-check": {
+  "anchors": [
+   {
+    "ok": true,
+    "anchor": "aswell-base",
+    "question": "check.support",
+    "want": [
+     "states"
+    ],
+    "got": "states",
+    "detail": "states conf 0.54",
+    "stable": "3/3",
+    "route": "accept"
+   },
+   {
+    "ok": true,
+    "anchor": "aswell-flip",
+    "question": "check.support",
+    "want": [
+     "contradicts"
+    ],
+    "got": "contradicts",
+    "detail": "contradicts conf 0.90",
+    "stable": "3/3",
+    "route": "human"
+   },
+   {
+    "ok": true,
+    "anchor": "build-base",
+    "question": "check.support",
+    "want": [
+     "implies",
+     "states"
+    ],
+    "got": "implies",
+    "detail": "implies conf 0.46",
+    "stable": "3/3",
+    "route": "flag:inferred"
+   },
+   {
+    "ok": true,
+    "anchor": "build-flip",
+    "question": "check.support",
+    "want": [
+     "contradicts"
+    ],
+    "got": "contradicts",
+    "detail": "contradicts conf 0.68",
+    "stable": "3/3",
+    "route": "human"
+   },
+   {
+    "ok": true,
+    "anchor": "hedge-base",
+    "question": "check.support",
+    "want": [
+     "states"
+    ],
+    "got": "states",
+    "detail": "states conf 0.97",
+    "stable": "3/3",
+    "route": "accept"
+   },
+   {
+    "ok": true,
+    "anchor": "hedge-flip",
+    "question": "check.support",
+    "want": [
+     "contradicts"
+    ],
+    "got": "contradicts",
+    "detail": "contradicts",
+    "stable": "3/3",
+    "route": "human"
+   },
+   {
+    "ok": false,
+    "anchor": "implies-base",
+    "question": "check.support",
+    "want": [
+     "implies",
+     "states"
+    ],
+    "got": "silent",
+    "detail": "silent conf 0.76",
+    "stable": "0/3",
+    "route": "flag:unsupported"
+   },
+   {
+    "ok": true,
+    "anchor": "implies-flip",
+    "question": "check.support",
+    "want": [
+     "contradicts"
+    ],
+    "got": "contradicts",
+    "detail": "contradicts conf 0.89",
+    "stable": "3/3",
+    "route": "human"
+   },
+   {
+    "ok": true,
+    "anchor": "less-base",
+    "question": "check.support",
+    "want": [
+     "states"
+    ],
+    "got": "states",
+    "detail": "states conf 0.89",
+    "stable": "3/3",
+    "route": "accept"
+   },
+   {
+    "ok": true,
+    "anchor": "less-flip",
+    "question": "check.support",
+    "want": [
+     "contradicts"
+    ],
+    "got": "contradicts",
+    "detail": "contradicts",
+    "stable": "3/3",
+    "route": "human"
+   },
+   {
+    "ok": true,
+    "anchor": "more-base",
+    "question": "check.support",
+    "want": [
+     "states"
+    ],
+    "got": "states",
+    "detail": "states conf 0.99",
+    "stable": "3/3",
+    "route": "accept"
+   },
+   {
+    "ok": true,
+    "anchor": "more-flip",
+    "question": "check.support",
+    "want": [
+     "states_part"
+    ],
+    "got": "states_part",
+    "detail": "states_part",
+    "stable": "3/3",
+    "route": "flag:overclaims"
+   },
+   {
+    "ok": true,
+    "anchor": "no-base",
+    "question": "check.support",
+    "want": [
+     "states"
+    ],
+    "got": "states",
+    "detail": "states conf 0.52",
+    "stable": "3/3",
+    "route": "accept"
+   },
+   {
+    "ok": true,
+    "anchor": "no-flip",
+    "question": "check.support",
+    "want": [
+     "silent"
+    ],
+    "got": "silent",
+    "detail": "silent",
+    "stable": "3/3",
+    "route": "flag:unsupported"
+   },
+   {
+    "ok": false,
+    "anchor": "number-base",
+    "question": "check.support",
+    "want": [
+     "states"
+    ],
+    "got": "states_part",
+    "detail": "states_part conf 0.58",
+    "stable": "0/3",
+    "route": "flag:overclaims"
+   },
+   {
+    "ok": true,
+    "anchor": "number-flip",
+    "question": "check.support",
+    "want": [
+     "contradicts",
+     "states_part",
+     "states",
+     "silent"
+    ],
+    "got": "contradicts",
+    "detail": "contradicts conf 0.81",
+    "stable": "3/3",
+    "route": "human"
+   },
+   {
+    "ok": true,
+    "anchor": "other-base",
+    "question": "check.support",
+    "want": [
+     "states"
+    ],
+    "got": "states",
+    "detail": "states conf 0.92",
+    "stable": "3/3",
+    "route": "accept"
+   },
+   {
+    "ok": true,
+    "anchor": "other-base",
+    "question": "check.other_subject",
+    "want": [
+     "same",
+     "unclear"
+    ],
+    "got": "same",
+    "detail": "0.020",
+    "stable": "3/3",
+    "route": "accept"
+   },
+   {
+    "ok": true,
+    "anchor": "other-flip",
+    "question": "check.other_subject",
+    "want": [
+     "other"
+    ],
+    "got": "other",
+    "detail": "0.970",
+    "stable": "3/3",
+    "route": "human"
+   },
+   {
+    "ok": true,
+    "anchor": "reverse-base",
+    "question": "check.support",
+    "want": [
+     "states",
+     "states_part"
+    ],
+    "got": "states",
+    "detail": "states conf 0.88",
+    "stable": "3/3",
+    "route": "accept"
+   },
+   {
+    "ok": true,
+    "anchor": "reverse-flip",
+    "question": "check.support",
+    "want": [
+     "contradicts"
+    ],
+    "got": "contradicts",
+    "detail": "contradicts conf 0.93",
+    "stable": "3/3",
+    "route": "human"
+   },
+   {
+    "ok": true,
+    "anchor": "unrelated-base",
+    "question": "check.support",
+    "want": [
+     "silent"
+    ],
+    "got": "silent",
+    "detail": "silent conf 0.55",
+    "stable": "3/3",
+    "route": "flag:unsupported"
+   },
+   {
+    "ok": true,
+    "anchor": "unrelated-flip",
+    "question": "check.support",
+    "want": [
+     "states"
+    ],
+    "got": "states",
+    "detail": "states conf 0.97",
+    "stable": "3/3",
+    "route": "accept"
+   }
+  ],
+  "jitter": {
+   "check.support": 0.0095,
+   "check.other_subject": 0.0
+  },
+  "landed": [
+   21,
+   23
+  ],
+  "raw": "ok   aswell-base                        check.support                want ['states']   got states       (states conf 0.54) [3/3] \u2192 accept\nok   aswell-flip                        check.support                want ['contradicts'] got contradicts  (contradicts conf 0.90) [3/3] \u2192 human\nok   build-base                         check.support                want ['implies', 'states'] got implies      (implies conf 0.46) [3/3] \u2192 flag:inferred\nok   build-flip                         check.support                want ['contradicts'] got contradicts  (contradicts conf 0.68) [3/3] \u2192 human\nok   hedge-base                         check.support                want ['states']   got states       (states conf 0.97) [3/3] \u2192 accept\nok   hedge-flip                         check.support                want ['contradicts'] got contradicts  (contradicts) [3/3] \u2192 human\nMISS implies-base                       check.support                want ['implies', 'states'] got silent       (silent conf 0.76) [0/3] \u2192 flag:unsupported\nok   implies-flip                       check.support                want ['contradicts'] got contradicts  (contradicts conf 0.89) [3/3] \u2192 human\nok   less-base                          check.support                want ['states']   got states       (states conf 0.89) [3/3] \u2192 accept\nok   less-flip                          check.support                want ['contradicts'] got contradicts  (contradicts) [3/3] \u2192 human\nok   more-base                          check.support                want ['states']   got states       (states conf 0.99) [3/3] \u2192 accept\nok   more-flip                          check.support                want ['states_part'] got states_part  (states_part) [3/3] \u2192 flag:overclaims\nok   no-base                            check.support                want ['states']   got states       (states conf 0.52) [3/3] \u2192 accept\nok   no-flip                            check.support                want ['silent']   got silent       (silent) [3/3] \u2192 flag:unsupported\nMISS number-base                        check.support                want ['states']   got states_part  (states_part conf 0.58) [0/3] \u2192 flag:overclaims\nok   number-flip                        check.support                want ['contradicts', 'states_part', 'states', 'silent'] got contradicts  (contradicts conf 0.81) [3/3] \u2192 human\nok   other-base                         check.support                want ['states']   got states       (states conf 0.92) [3/3] \u2192 accept\nok   other-base                         check.other_subject          want ['same', 'unclear'] got same         (0.020) [3/3] \u2192 accept\nok   other-flip                         check.other_subject          want ['other']    got other        (0.970) [3/3] \u2192 human\nok   reverse-base                       check.support                want ['states', 'states_part'] got states       (states conf 0.88) [3/3] \u2192 accept\nok   reverse-flip                       check.support                want ['contradicts'] got contradicts  (contradicts conf 0.93) [3/3] \u2192 human\nok   unrelated-base                     check.support                want ['silent']   got silent       (silent conf 0.55) [3/3] \u2192 flag:unsupported\nok   unrelated-flip                     check.support                want ['states']   got states       (states conf 0.97) [3/3] \u2192 accept\n\njitter (sd across repeats, mean over anchors):\n  check.support                    0.0095\n  check.other_subject              0.0000\n\n21/23 anchors landed where the meaning map said they would\n"
+ },
+ "core-fit": {
+  "anchors": [
+   {
+    "ok": true,
+    "anchor": "cells-base",
+    "question": "assess.cell_contents",
+    "want": [
+     "provides"
+    ],
+    "got": "provides",
+    "detail": "provides conf 0.66",
+    "stable": "3/3",
+    "route": "accept"
+   },
+   {
+    "ok": true,
+    "anchor": "cells-base",
+    "question": "assess.wide_chars",
+    "want": [
+     "provides",
+     "provides_with_work"
+    ],
+    "got": "provides",
+    "detail": "provides conf 0.43",
+    "stable": "3/3",
+    "route": "accept"
+   },
+   {
+    "ok": true,
+    "anchor": "cells-base",
+    "question": "assess.zero_width",
+    "want": [
+     "provides",
+     "provides_with_work"
+    ],
+    "got": "provides_with_work",
+    "detail": "provides_with_work conf 0.47",
+    "stable": "3/3",
+    "route": "accept"
+   },
+   {
+    "ok": true,
+    "anchor": "cells-flip",
+    "question": "assess.cell_contents",
+    "want": [
+     "does_not"
+    ],
+    "got": "does_not",
+    "detail": "does_not",
+    "stable": "3/3",
+    "route": "flag:gap"
+   },
+   {
+    "ok": true,
+    "anchor": "claim-vs-shown",
+    "question": "assess.placements_readable",
+    "want": [
+     "evidence_silent",
+     "provides_with_work"
+    ],
+    "got": "evidence_silent",
+    "detail": "evidence_silent conf 0.87",
+    "stable": "3/3",
+    "route": "unknown"
+   },
+   {
+    "ok": true,
+    "anchor": "claim-vs-shown",
+    "question": "assess.feed_loop",
+    "want": [
+     "evidence_silent",
+     "provides_with_work",
+     "provides"
+    ],
+    "got": "evidence_silent",
+    "detail": "evidence_silent conf 0.94",
+    "stable": "3/3",
+    "route": "unknown"
+   },
+   {
+    "ok": true,
+    "anchor": "loop-base",
+    "question": "assess.feed_loop",
+    "want": [
+     "provides"
+    ],
+    "got": "provides",
+    "detail": "provides conf 0.96",
+    "stable": "3/3",
+    "route": "accept"
+   },
+   {
+    "ok": true,
+    "anchor": "loop-flip",
+    "question": "assess.feed_loop",
+    "want": [
+     "does_not"
+    ],
+    "got": "does_not",
+    "detail": "does_not",
+    "stable": "3/3",
+    "route": "flag:gap"
+   },
+   {
+    "ok": true,
+    "anchor": "place-base",
+    "question": "assess.placements_readable",
+    "want": [
+     "provides",
+     "provides_with_work"
+    ],
+    "got": "provides_with_work",
+    "detail": "provides_with_work conf 0.49",
+    "stable": "3/3",
+    "route": "accept"
+   },
+   {
+    "ok": true,
+    "anchor": "place-flip",
+    "question": "assess.placements_readable",
+    "want": [
+     "does_not"
+    ],
+    "got": "does_not",
+    "detail": "does_not conf 0.94",
+    "stable": "3/3",
+    "route": "flag:gap"
+   },
+   {
+    "ok": true,
+    "anchor": "silent-base",
+    "question": "assess.cell_contents",
+    "want": [
+     "provides"
+    ],
+    "got": "provides",
+    "detail": "provides conf 0.73",
+    "stable": "3/3",
+    "route": "accept"
+   },
+   {
+    "ok": true,
+    "anchor": "silent-flip",
+    "question": "assess.cell_contents",
+    "want": [
+     "evidence_silent"
+    ],
+    "got": "evidence_silent",
+    "detail": "evidence_silent conf 0.87",
+    "stable": "3/3",
+    "route": "unknown"
+   },
+   {
+    "ok": true,
+    "anchor": "silent-flip",
+    "question": "assess.scrollback_read",
+    "want": [
+     "evidence_silent"
+    ],
+    "got": "evidence_silent",
+    "detail": "evidence_silent conf 0.97",
+    "stable": "3/3",
+    "route": "unknown"
+   },
+   {
+    "ok": true,
+    "anchor": "snap-base",
+    "question": "assess.snapshot",
+    "want": [
+     "provides"
+    ],
+    "got": "provides",
+    "detail": "provides conf 0.50",
+    "stable": "3/3",
+    "route": "accept"
+   },
+   {
+    "ok": true,
+    "anchor": "snap-flip",
+    "question": "assess.snapshot",
+    "want": [
+     "does_not"
+    ],
+    "got": "does_not",
+    "detail": "does_not",
+    "stable": "3/3",
+    "route": "accept"
+   },
+   {
+    "ok": true,
+    "anchor": "thread-base",
+    "question": "assess.threading",
+    "want": [
+     "provides"
+    ],
+    "got": "provides",
+    "detail": "provides conf 0.61",
+    "stable": "3/3",
+    "route": "accept"
+   },
+   {
+    "ok": true,
+    "anchor": "thread-flip",
+    "question": "assess.threading",
+    "want": [
+     "does_not"
+    ],
+    "got": "does_not",
+    "detail": "does_not",
+    "stable": "3/3",
+    "route": "accept"
+   },
+   {
+    "ok": true,
+    "anchor": "traj-active",
+    "question": "maturity.api_trajectory",
+    "want": [
+     "active_pre_1_0"
+    ],
+    "got": "active_pre_1_0",
+    "detail": "active_pre_1_0 conf 0.97",
+    "stable": "3/3",
+    "route": "accept"
+   },
+   {
+    "ok": true,
+    "anchor": "traj-dormant",
+    "question": "maturity.api_trajectory",
+    "want": [
+     "dormant"
+    ],
+    "got": "dormant",
+    "detail": "dormant",
+    "stable": "3/3",
+    "route": "accept"
+   },
+   {
+    "ok": true,
+    "anchor": "traj-silent",
+    "question": "maturity.api_trajectory",
+    "want": [
+     "not_established",
+     "active_pre_1_0"
+    ],
+    "got": "active_pre_1_0",
+    "detail": "active_pre_1_0 conf 0.81",
+    "stable": "3/3",
+    "route": "accept"
+   },
+   {
+    "ok": true,
+    "anchor": "traj-unstable",
+    "question": "maturity.api_trajectory",
+    "want": [
+     "declared_unstable"
+    ],
+    "got": "declared_unstable",
+    "detail": "declared_unstable",
+    "stable": "3/3",
+    "route": "accept"
+   }
+  ],
+  "jitter": {
+   "assess.cell_contents": 0.0085,
+   "assess.wide_chars": 0.0216,
+   "assess.zero_width": 0.017,
+   "assess.placements_readable": 0.0086,
+   "assess.feed_loop": 0.0,
+   "assess.scrollback_read": 0.0047,
+   "assess.snapshot": 0.0,
+   "assess.threading": 0.0108,
+   "maturity.api_trajectory": 0.0053
+  },
+  "landed": [
+   21,
+   21
+  ],
+  "raw": "ok   cells-base                         assess.cell_contents         want ['provides'] got provides     (provides conf 0.66) [3/3] \u2192 accept\nok   cells-base                         assess.wide_chars            want ['provides', 'provides_with_work'] got provides     (provides conf 0.43) [3/3] \u2192 accept\nok   cells-base                         assess.zero_width            want ['provides', 'provides_with_work'] got provides_with_work (provides_with_work conf 0.47) [3/3] \u2192 accept\nok   cells-flip                         assess.cell_contents         want ['does_not'] got does_not     (does_not) [3/3] \u2192 flag:gap\nok   claim-vs-shown                     assess.placements_readable   want ['evidence_silent', 'provides_with_work'] got evidence_silent (evidence_silent conf 0.87) [3/3] \u2192 unknown\nok   claim-vs-shown                     assess.feed_loop             want ['evidence_silent', 'provides_with_work', 'provides'] got evidence_silent (evidence_silent conf 0.94) [3/3] \u2192 unknown\nok   loop-base                          assess.feed_loop             want ['provides'] got provides     (provides conf 0.96) [3/3] \u2192 accept\nok   loop-flip                          assess.feed_loop             want ['does_not'] got does_not     (does_not) [3/3] \u2192 flag:gap\nok   place-base                         assess.placements_readable   want ['provides', 'provides_with_work'] got provides_with_work (provides_with_work conf 0.49) [3/3] \u2192 accept\nok   place-flip                         assess.placements_readable   want ['does_not'] got does_not     (does_not conf 0.94) [3/3] \u2192 flag:gap\nok   silent-base                        assess.cell_contents         want ['provides'] got provides     (provides conf 0.73) [3/3] \u2192 accept\nok   silent-flip                        assess.cell_contents         want ['evidence_silent'] got evidence_silent (evidence_silent conf 0.87) [3/3] \u2192 unknown\nok   silent-flip                        assess.scrollback_read       want ['evidence_silent'] got evidence_silent (evidence_silent conf 0.97) [3/3] \u2192 unknown\nok   snap-base                          assess.snapshot              want ['provides'] got provides     (provides conf 0.50) [3/3] \u2192 accept\nok   snap-flip                          assess.snapshot              want ['does_not'] got does_not     (does_not) [3/3] \u2192 accept\nok   thread-base                        assess.threading             want ['provides'] got provides     (provides conf 0.61) [3/3] \u2192 accept\nok   thread-flip                        assess.threading             want ['does_not'] got does_not     (does_not) [3/3] \u2192 accept\nok   traj-active                        maturity.api_trajectory      want ['active_pre_1_0'] got active_pre_1_0 (active_pre_1_0 conf 0.97) [3/3] \u2192 accept\nok   traj-dormant                       maturity.api_trajectory      want ['dormant']  got dormant      (dormant) [3/3] \u2192 accept\nok   traj-silent                        maturity.api_trajectory      want ['not_established', 'active_pre_1_0'] got active_pre_1_0 (active_pre_1_0 conf 0.81) [3/3] \u2192 accept\nok   traj-unstable                      maturity.api_trajectory      want ['declared_unstable'] got declared_unstable (declared_unstable) [3/3] \u2192 accept\n\njitter (sd across repeats, mean over anchors):\n  assess.cell_contents             0.0085\n  assess.wide_chars                0.0216\n  assess.zero_width                0.0170\n  assess.placements_readable       0.0086\n  assess.feed_loop                 0.0000\n  assess.scrollback_read           0.0047\n  assess.snapshot                  0.0000\n  assess.threading                 0.0108\n  maturity.api_trajectory          0.0053\n\n21/21 anchors landed where the meaning map said they would\n"
+ }
+}

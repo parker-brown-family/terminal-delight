@@ -1,0 +1,22 @@
+{
+  "call": "assess",
+  "item": {
+    "id": "trap/d",
+    "label": "Core D (a fixture)",
+    "kitty_tags": "unknown",
+    "evidence": {
+      "kitty_graphics": {
+        "recorded": "Implements Kitty transmit and direct placement."
+      }
+    }
+  },
+  "expect": {
+    "cell_contents": [
+      "evidence_silent"
+    ],
+    "scrollback_read": [
+      "evidence_silent"
+    ]
+  },
+  "written": "2026-09-25, before any call"
+}

@@ -1,0 +1,21 @@
+{
+  "call": "check",
+  "item": {
+    "id": "trap/other-flip",
+    "subject": "rio-vt \u2014 Rio's embeddable core",
+    "field": "kitty_graphics",
+    "field_means": "kitty_graphics: which parts of the Kitty graphics protocol it implements",
+    "value": "implements the Kitty graphics protocol, including Unicode placeholders",
+    "quote": "Ghostty implements the Kitty graphics protocol, including virtual placements rendered through Unicode placeholders.",
+    "source": "fixture",
+    "measured_by_command": false,
+    "labelled_inferred": false
+  },
+  "expect": {
+    "other_subject": [
+      "other"
+    ]
+  },
+  "written": "2026-09-25, before any call",
+  "pair": "other-than"
+}

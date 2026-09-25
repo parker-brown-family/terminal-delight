@@ -1,0 +1,19 @@
+{
+  "call": "assess",
+  "item": {
+    "id": "trap/e",
+    "label": "Core E (a fixture)",
+    "kitty_tags": "unknown",
+    "evidence": {
+      "threading_and_loop": {
+        "recorded": "`Term` is Send; embedders wrap it in a `Mutex` shared between the reader thread and the renderer."
+      }
+    }
+  },
+  "expect": {
+    "threading": [
+      "provides"
+    ]
+  },
+  "written": "2026-09-25, before any call"
+}

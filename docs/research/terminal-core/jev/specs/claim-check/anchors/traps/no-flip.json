@@ -1,0 +1,21 @@
+{
+  "call": "check",
+  "item": {
+    "id": "trap/no-flip",
+    "subject": "rio-vt \u2014 Rio's embeddable core",
+    "field": "license",
+    "field_means": "license: the SPDX licence identifier",
+    "value": "MIT",
+    "quote": "pub fn visible_rows(&self) -> Vec<Row<Square>>",
+    "source": "fixture",
+    "measured_by_command": false,
+    "labelled_inferred": false
+  },
+  "expect": {
+    "support": [
+      "silent"
+    ]
+  },
+  "written": "2026-09-25, before any call",
+  "pair": "no"
+}

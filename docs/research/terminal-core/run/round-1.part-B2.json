@@ -1,0 +1,339 @@
+{
+  "updates": [
+    {
+      "id": "vt100-rust",
+      "fields": {
+        "what_it_is": {
+          "value": "vt100 is a Rust crate that parses a terminal byte stream (through vte 0.15) into an in-memory screen — grid, scrollback, cursor, input modes — for building terminal emulators or screen/tmux-style programs; written and maintained essentially alone by Jesse Luehrs (doy).",
+          "provenance": { "source": "https://github.com/doy/vt100-rust/blob/fc26fd9c3d72f9af8a214741c100920734500de7/README.md", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"This is essentially the terminal parser component of a graphical terminal emulator pulled out into a separate crate. Although you can use this crate to build a graphical terminal emulator, it also contains functionality necessary for implementing terminal applications that want to run other terminal applications - programs like `screen` or `tmux` for example.\" — [measured] README at fc26fd9 (line wraps collapsed). Authorship: Cargo.toml `authors = [\"Jesse Luehrs <doy@tozt.net>\"]`; the vte dependency is `vte = \"0.15.0\"` in the same file."
+        },
+        "license": {
+          "value": "MIT — compatible: an MIT product may link it, and may copy its code if the notice is kept",
+          "provenance": { "source": "measured 2026-09-25: gh api repos/doy/vt100-rust --jq .license.spdx_id", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"MIT\" — [measured] the API's spdx_id. The crates.io licence field is MIT on all 32 published versions (curl https://crates.io/api/v1/crates/vt100), and Cargo.toml says `license = \"MIT\"`."
+        },
+        "language": {
+          "value": "Rust",
+          "provenance": { "source": "measured 2026-09-25: gh api repos/doy/vt100-rust/languages", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"{\\\"Rust\\\":201002,\\\"Shell\\\":1115}\" — [measured] byte counts per language; the Shell bytes are the bin/ helper scripts."
+        },
+        "integration_path": {
+          "value": "crates.io crate: vt100 = \"0.16\" (0.16.2). It depends on vte 0.15.0, the parser version TD already builds through alacritty_terminal 0.26, so cargo would unify the two.",
+          "provenance": { "source": "https://github.com/doy/vt100-rust/blob/fc26fd9c3d72f9af8a214741c100920734500de7/Cargo.toml", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"name = \\\"vt100\\\"\\nversion = \\\"0.16.2\\\"\" — [measured] Cargo.toml [package]; [dependencies] carries `vte = \"0.15.0\"`. Published on crates.io as vt100 (curl https://crates.io/api/v1/crates/vt100: max_version 0.16.2)."
+        },
+        "build_requirements": {
+          "value": "cargo only — three pure-Rust dependencies (itoa, unicode-width, vte); rust-version 1.70",
+          "provenance": { "source": "https://github.com/doy/vt100-rust/blob/fc26fd9c3d72f9af8a214741c100920734500de7/Cargo.toml", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"[dependencies]\\nitoa = \\\"1.0.15\\\"\\nunicode-width = \\\"0.2.1\\\"\\nvte = \\\"0.15.0\\\"\" — [measured] the whole [dependencies] table; `rust-version = \"1.70\"` sits in [package]. No build.rs, no C, no system library."
+        },
+        "latest_release": {
+          "value": "0.16.2, published 2025-07-12",
+          "provenance": { "source": "measured 2026-09-25: curl -s https://crates.io/api/v1/crates/vt100 | jq -r '.versions[] | .num + \" \" + .created_at' | head -1", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"0.16.2 2025-07-12T01:05:19.727192Z\" — [measured] newest crates.io version; the git tag v0.16.2 matches (gh api repos/doy/vt100-rust/tags)."
+        },
+        "first_release": {
+          "value": "0.1.0, published 2016-04-28",
+          "provenance": { "source": "measured 2026-09-25: curl -s https://crates.io/api/v1/crates/vt100 | jq -r '.versions[] | .num + \" \" + .created_at' | tail -1", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"0.1.0 2016-04-28T07:46:30.746445Z\" — [measured] oldest crates.io version; the crate has always been the embeddable form."
+        },
+        "releases_last_12mo": {
+          "value": "0",
+          "provenance": { "source": "measured 2026-09-25: curl -s https://crates.io/api/v1/crates/vt100 | jq '[.versions[] | select(.created_at >= \"2025-09-25\")] | length'", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"0\" — [measured] no version published since 2025-09-25. The last three (0.16.0, 0.16.1, 0.16.2) landed 8–12 July 2025; before them the gap from 0.15.2 (2023-02-05) was 29 months."
+        },
+        "api_stability": {
+          "value": "Pre-1.0 (0.16.x) and breaking in minor bumps: 0.16.0 removed eight Screen methods for a callback API, dropped `Cell: Default`, and stopped `Screen` implementing `vte::Perform`. The 0.16.0 CHANGELOG also announces a `Parser::process_cb` that the shipped API does not contain (it has `Parser::new_with_callbacks`).",
+          "provenance": { "source": "https://github.com/doy/vt100-rust/blob/fc26fd9c3d72f9af8a214741c100920734500de7/CHANGELOG.md", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"These methods on `Screen` have been removed in favor of the new callback API described above\" — [measured] CHANGELOG [0.16.0] - 2025-07-08, which also lists \"`Cell` no longer implements `Default`.\" and \"`Screen` no longer implements `vte::Perform`.\" No stability statement found in README or lib docs. The process_cb mismatch is checked against docs.rs/vt100/0.16.2 (methods: new, new_with_callbacks, process, screen, screen_mut, callbacks, callbacks_mut)."
+        },
+        "maintainers": {
+          "value": "0 contributors with >= 10% of commits in the last 12 months — no commit at all since 2025-09-25 (last push 2025-07-12). Lead and near-sole maintainer: Jesse Luehrs (doy), 410 of 415 all-time contributions and 33 of 37 commits in the 12 months before the window. 15 pull requests are open, 13 of them filed since December 2025, none merged.",
+          "provenance": { "source": "measured 2026-09-25: gh api \"repos/doy/vt100-rust/commits?since=2025-09-25T00:00:00Z&per_page=100\" --jq 'length'", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"0\" — [measured] commits in the window. Also measured: gh api repos/doy/vt100-rust/contributors → \"doy 410\" and five contributors with 1 each; commits 2024-09-25..2025-09-25 grouped by author → doy 33, four others 1 each; gh api \"repos/doy/vt100-rust/pulls?state=open\" --jq length → 15. The pattern is bursts (Jan 2025, Jul 2025) then silence: on the issue asking for a release doy replied 2025-07-08 \"done, sorry for the delay!\" (issue #18)."
+        },
+        "adoption": {
+          "value": "11,872,883 all-time downloads and 4,120,207 in the last 90 days; 242 reverse dependencies. Embedded by tui-term (ratatui's pseudoterminal widget, default feature), indicatif (optional in_memory feature), presenterm, git-branchless-lib, atuin-hex, completest-pty. Forked and republished as shpool_vt100 (shpool), mprocs-vt100 (mprocs) and vt100-ctt (0.17.1, 2026-02-07).",
+          "provenance": { "source": "measured 2026-09-25: curl -s https://crates.io/api/v1/crates/vt100 | jq '.crate.downloads, .crate.recent_downloads'", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"11872883\\n4120207\" — [measured] crates.io totals (recent = 90 days). Reverse deps: curl https://crates.io/api/v1/crates/vt100/reverse_dependencies → meta.total 242. indicatif Cargo.toml: `in_memory = [\"vt100\"]`; tui-term Cargo.toml: `default = [\"vt100\"]`; forks found with curl \"https://crates.io/api/v1/crates?q=vt100&sort=downloads\"."
+        },
+        "kitty_graphics": {
+          "value": "none. vt100 hands every byte to vte 0.15, whose state machine sends ESC _ (APC) into SosPmApcString and discards the payload without calling the performer. vt100's own vte::Perform impl and its Callbacks trait have no APC entry point, so a Kitty graphics command never reaches vt100 or the embedder; TD would have to pre-filter bytes before Parser::process.",
+          "provenance": { "source": "vte@0.15.0:src/lib.rs:377 and :182 (crates.io registry source, ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/vte-0.15.0)", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"0x5E..=0x5F => self.state = State::SosPmApcString,\" — [measured] ESC ^ (PM) and ESC _ (APC) enter the string state; line 182 routes it `State::SosPmApcString => self.anywhere(performer, byte),` and anywhere() (lib.rs:438-450) acts only on 0x18/0x1A/0x1B, otherwise `_ => ()`. vt100's `impl<CB: crate::callbacks::Callbacks> vte::Perform for WrappedScreen<CB>` (src/perform.rs:33) and Callbacks (src/callbacks.rs) have no APC method."
+        },
+        "kitty_tags": {
+          "value": "none",
+          "note": "[inferred] from kitty_graphics: APC is dropped inside vte before vt100 sees it. unknown: none."
+        },
+        "sixel": {
+          "value": "no — vt100's vte::Perform impl defines print, execute, esc_dispatch, csi_dispatch and osc_dispatch only; DCS hook/put/unhook fall to vte's empty default methods, so a Sixel DCS is parsed and thrown away",
+          "provenance": { "source": "vte@0.15.0:src/lib.rs:779 (crates.io registry source); https://github.com/doy/vt100-rust/blob/fc26fd9c3d72f9af8a214741c100920734500de7/src/perform.rs#L33-L239", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"fn hook(&mut self, _params: &Params, _intermediates: &[u8], _ignore: bool, _action: char) {}\" — [measured] vte's default hook is empty (put and unhook likewise, lib.rs:783 and :789); perform.rs:33-239 implements no hook, put or unhook."
+        },
+        "iterm2_images": {
+          "value": "no — vt100 matches OSC 0, 1, 2 and 52 only; OSC 1337 goes to Callbacks::unhandled_osc, so an embedder sees the raw params but vt100 stores no picture",
+          "provenance": { "source": "https://github.com/doy/vt100-rust/blob/fc26fd9c3d72f9af8a214741c100920734500de7/src/perform.rs#L198-L237", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"self.callbacks.unhandled_osc(&mut self.screen, params);\" — [measured] the catch-all arm of osc_dispatch after `[b\"0\", s]`, `[b\"1\", s]`, `[b\"2\", s]` and `[b\"52\", ty, data]`."
+        },
+        "picture_anchoring": {
+          "value": "n/a — no picture model; a Cell is 32 bytes of text and attributes",
+          "provenance": { "source": "https://github.com/doy/vt100-rust/blob/fc26fd9c3d72f9af8a214741c100920734500de7/src/cell.rs#L10-L17", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"pub struct Cell {\\n    contents: [u8; CONTENT_BYTES],\\n    len: u8,\\n    attrs: crate::attrs::Attrs,\\n}\" — [measured] the whole cell; no image, placement or link field anywhere in src/."
+        },
+        "vt_conformance": {
+          "value": "no published vttest or esctest results. Conformance rests on 34 recorded fixture cases (tests/data/fixtures: input + expected pairs) and an example, examples/real_terminal_compare.rs, that replays a byte stream against the real host terminal and compares cursor positions.",
+          "provenance": { "source": "measured 2026-09-25: ls tests/data/fixtures | wc -l (in a clone of doy/vt100-rust at fc26fd9); grep -rni 'vttest\\|esctest\\|conformance' --include=*.rs --include=*.md . returned nothing", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"68\" — [measured] 68 files = 34 cases, each a name plus name.in (e.g. absolute_movement, alternate_buffer, combining, decstbm). The grep found no vttest/esctest mention."
+        },
+        "vt_features": {
+          "value": "kitty-keyboard: no — CSI with a > < = private marker takes the Some(i) arm and goes to unhandled_csi (perform.rs:186-194)\nosc8-hyperlinks: no — OSC 8 goes to unhandled_osc and Cell has no link field (perform.rs:234-236, cell.rs:12-16)\nsync-output-2026: no — decset handles 1, 6, 9, 25, 47, 1000, 1002, 1003, 1005, 1006, 1049, 2004 only; 2026 is unhandled (screen.rs:1146-1170)\nosc52-clipboard: yes — copy_to_clipboard / paste_from_clipboard callbacks, added in 0.16.0 (perform.rs:210-233, callbacks.rs:27)\ngrapheme-clusters: no — width is per codepoint (unicode-width); zero-width codepoints are appended to the previous cell up to 18 bytes, with no UAX #29 segmentation (screen.rs:705-760, cell.rs:57)\nreflow-on-resize: no — Grid::set_size truncates or pads rows and clears wrap flags when the width changes (grid.rs:66-81); a reflow PR (#38) was closed unmerged on 2026-08-06\nalt-screen: yes — modes 47 and 1049 (screen.rs:1150, 1164-1168)\nbracketed-paste: yes — mode 2004 (screen.rs:1169)\nmouse-sgr: yes — mode 1006 sets MouseProtocolEncoding::Sgr (screen.rs:1161-1163)",
+          "provenance": { "source": "https://github.com/doy/vt100-rust/blob/fc26fd9c3d72f9af8a214741c100920734500de7/src/screen.rs#L1146-L1170", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"[1006] => { self.set_mouse_encoding(MouseProtocolEncoding::Sgr); } [1049] => { self.decsc(); self.alternate_grid.clear(); self.enter_alternate_grid(); } [2004] => self.set_mode(MODE_BRACKETED_PASTE), _ => unhandled(self),\" — [measured] the end of the decset match (whitespace collapsed); every other line cites its own file:line at fc26fd9. Grid::set_size opens with `if size.cols != self.size.cols { for row in &mut self.rows { row.wrap(false); } }`."
+        },
+        "performance_evidence": {
+          "value": "No published throughput. Memory is 32 bytes per cell, fixed by a compile-time assertion (22 content bytes, a length byte, attributes). The repository ships a replay benchmark (examples/process.rs loops 7,625 recorded frames for 30 s and prints the iteration count) and a perf/flamegraph script (bin/perf), but no results; this round did not build or run them.",
+          "provenance": { "source": "https://github.com/doy/vt100-rust/blob/fc26fd9c3d72f9af8a214741c100920734500de7/src/cell.rs#L3-L17", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"// chosen to make the size of the cell struct 32 bytes\\nconst CONTENT_BYTES: usize = 22;\" — [measured] and line 17: `const _: () = assert!(std::mem::size_of::<Cell>() == 32);`. Benchmark harness: examples/process.rs line 4 `(1..=7625).map(|i| {`. Throughput is unmeasured, not zero."
+        },
+        "grid_api": {
+          "value": "Parser::screen() -> &Screen; Screen::cell(row, col) -> Option<&Cell> (random access; no row iterator, but rows()/rows_formatted() give per-row text or bytes). Cell exposes contents() -> &str (at most one non-zero-width char plus combining marks), is_wide(), is_wide_continuation(), fgcolor()/bgcolor() (Color::Default | Idx(u8) | Rgb(u8,u8,u8)), bold(), dim(), italic(), underline(), inverse(). No underline colour or style, no strikethrough, no blink, no hyperlink. Screen gives cursor_position() -> (row, col), hide_cursor(), row_wrapped(row), alternate_screen(), application_keypad(), application_cursor(), bracketed_paste(), mouse_protocol_mode()/encoding(); scrollback is read by set_scrollback(offset), which shifts what cell() returns.",
+          "provenance": { "source": "https://github.com/doy/vt100-rust/blob/fc26fd9c3d72f9af8a214741c100920734500de7/src/screen.rs#L531-L540", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"pub fn cell(&self, row: u16, col: u16) -> Option<&crate::Cell> {\" — [measured] signature; Cell::contents doc (cell.rs:80-89): \"Can include multiple unicode characters if combining characters are used, but will contain at most one character with a non-zero character width.\" The flag list is every pub fn in cell.rs; TD's renderer also wants underline colour, which vt100 does not model."
+        },
+        "damage_tracking": {
+          "value": "no per-row dirty report; change is computed by diffing against a cloned previous Screen — contents_diff(&prev) and rows_diff(&prev, ...) return the bytes that turn prev into current",
+          "provenance": { "source": "https://github.com/doy/vt100-rust/blob/fc26fd9c3d72f9af8a214741c100920734500de7/src/screen.rs#L300-L311", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"Returns a terminal byte stream sufficient to turn the visible contents of the screen described by `prev` into the visible contents of the screen described by `self`.\" — [measured] doc of contents_diff (line wraps collapsed); Screen derives Clone (screen.rs:54), which is how an embedder keeps `prev`."
+        },
+        "state_snapshot": {
+          "value": "Yes, as VT bytes, but visible screen only: Screen::state_formatted() returns escape codes reproducing the visible cells, cursor and input modes (keypad, cursor keys, bracketed paste, mouse); state_diff(&prev) returns the delta; Screen is Clone. It does not carry scrollback (the encoder walks visible_rows()), the alternate-screen flag, the primary grid under an alt screen, scroll region, origin mode, tab stops or title, and nothing is serde-serializable. That is narrower than TD's own gridwire::encode_snapshot, which already ships every scrollback row.",
+          "provenance": { "source": "https://github.com/doy/vt100-rust/blob/fc26fd9c3d72f9af8a214741c100920734500de7/src/screen.rs#L219-L229", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"Return escape codes sufficient to reproduce the entire contents of the current terminal state. This is a convenience wrapper around [`contents_formatted`](Self::contents_formatted) and [`input_mode_formatted`](Self::input_mode_formatted).\" — [measured] the doc says 'entire', the code does not: Grid::write_contents_formatted iterates `for (i, row) in self.visible_rows().enumerate() {` (grid.rs:227), and input_mode_formatted documents \"Supported modes are: application keypad, application cursor, bracketed paste, xterm mouse support\" — no alt-screen switch is emitted. shpool relies on this for reattach (see bubble)."
+        },
+        "threading_and_loop": {
+          "value": "The embedder owns the loop: Parser::process(&mut self, &[u8]) is synchronous, and the crate has no PTY, no thread and no event loop (dependencies are itoa, unicode-width, vte). Parser<CB> is Send and Sync whenever the callbacks type is; no internal locks.",
+          "provenance": { "source": "https://docs.rs/vt100/0.16.2/vt100/struct.Parser.html", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"impl<CB> Send for Parser<CB> where CB: Send\\nimpl<CB> Sync for Parser<CB> where CB: Sync\" — [measured] docs.rs auto-trait list; parser.rs:48 `pub fn process(&mut self, bytes: &[u8]) {`; no Rc, RefCell or Arc anywhere in src/."
+        },
+        "reply_channel": {
+          "value": "None built in: vt100 never writes a reply. Device attributes (CSI c), device status and cursor report (CSI 6n), DECRQM and window-size queries reach the embedder only as Callbacks::unhandled_csi(screen, i1, i2, params, c), so TD would compose and write every answer itself. Kitty a=q never arrives (APC dies in vte). It fits TD's answer-exactly-once rule — the replica installs no-op callbacks — but TD writes all reply bytes.",
+          "provenance": { "source": "https://github.com/doy/vt100-rust/blob/fc26fd9c3d72f9af8a214741c100920734500de7/src/perform.rs#L157-L165", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"self.callbacks.unhandled_csi( &mut self.screen, None, None, &params.iter().collect::<Vec<_>>(), c, );\" — [measured] the catch-all of csi_dispatch with no intermediate, reached by 'c' and 'n' because the match covers only @ A-H J K L M P S T X d m r t (perform.rs:104-166). Callbacks (callbacks.rs:3-67) has no reply or pty-write method."
+        },
+        "td_migration": {
+          "value": "Rewrite all seven files, and end with less than today. host.rs and term.rs lose alacritty's EventLoop, Term and TermMode: vt100 has no PTY or loop, so TD writes its own read loop (keeping alacritty_terminal::tty for spawning, or taking portable-pty) and hand-builds every DA/DSR/CSI 14 t reply from unhandled_csi. socketpty.rs's EventedPty adapter only exists for alacritty's loop and would be replaced. gridwire.rs's encode_snapshot could shrink to state_formatted(), but that drops the scrollback TD ships today, so TD keeps its own encoder and ports grid_hash to vt100's Cell. pane.rs's 51 grid reads move to Screen::cell() and lose underline colour, strikethrough, hyperlinks and selection helpers. main.rs's setup_env/WindowSize and bench.rs's TermMode::BRACKETED_PASTE become small edits. Pictures still need a byte pre-filter in front of Parser::process, as on alacritty.",
+          "note": "[inferred] from TD's imports (grep alacritty_terminal in app/src at 426f072) against the vt100 API above."
+        },
+        "biggest_risk": {
+          "value": "It is a sideways-to-downward move onto a dormant one-person crate (no commit since July 2025, 15 open PRs) with fewer features than the alacritty_terminal TD already has — no reflow, hyperlinks, sync output, kitty keyboard or pictures — so TD would pay a full migration and still write Kitty graphics itself.",
+          "note": "[inferred] from maintainers, vt_features and kitty_graphics above."
+        },
+        "primary_sources": {
+          "value": "https://github.com/doy/vt100-rust (README.md, Cargo.toml, CHANGELOG.md, src/{lib,parser,perform,callbacks,cell,screen,grid}.rs, examples/process.rs, examples/real_terminal_compare.rs at fc26fd9c3d72f9af8a214741c100920734500de7) https://crates.io/api/v1/crates/vt100 https://crates.io/api/v1/crates/vt100/reverse_dependencies https://docs.rs/vt100/0.16.2/vt100/struct.Parser.html https://api.github.com/repos/doy/vt100-rust/issues https://api.github.com/repos/doy/vt100-rust/contributors https://raw.githubusercontent.com/console-rs/indicatif/main/Cargo.toml https://github.com/a-kenji/tui-term/blob/development/Cargo.toml https://github.com/shell-pool/shpool/blob/master/README.md vte-0.15.0 crate source (src/lib.rs; local registry copy)",
+          "provenance": { "source": "https://crates.io/api/v1/crates/vt100", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"Library for parsing terminal data\" — [measured] the crate's own description field; the value lists every source read this session for this subject."
+        }
+      },
+      "insights": []
+    },
+    {
+      "id": "td-own-core",
+      "fields": {
+        "what_it_is": {
+          "value": "The option that TD writes its own emulator core in-tree — grid, scrollback, reflow, modes, replies and a picture store — on top of a parser crate: vte 0.15 (Apache-2.0 OR MIT; its optional `ansi` module already decodes sequences into a Handler trait but drops APC) or wezterm's vtparse (MIT; delivers APC through apc_dispatch). Maintained by TD itself. Prior art: Warp (started by forking alacritty_terminal's model) and Zellij (its own grid.rs on vte 0.15).",
+          "provenance": { "source": "/home/parker/Work/td-terminal-core/docs/research/terminal-core/terminal-core.plan.ts (subject td-own-core)", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"TD writes its own emulator core on a parser (prior art: Warp, Zellij)\" — [measured] the plan's definition of the option. Parser facts: vte-0.15.0 Cargo.toml `license = \"Apache-2.0 OR MIT\"`; vtparse-0.6.2 src/lib.rs `fn apc_dispatch(&mut self, data: Vec<u8>);` under the doc \"Called when an APC string is terminated by ST\"."
+        },
+        "license": {
+          "value": "MIT (TD's own) — compatible. Parser options: vte 0.15 Apache-2.0 OR MIT, vtparse MIT. Code copied in from Zellij (MIT) or alacritty_terminal (Apache-2.0) must keep its notice; Warp's terminal model is AGPL-3.0-only and can be read but not copied.",
+          "provenance": { "source": "/home/parker/Work/td-terminal-core/LICENSE (at 426f072)", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"MIT License\\n\\nCopyright (c) 2026 Parker Brown\" — [measured] TD's LICENSE; app/Cargo.toml says `license = \"MIT\"`. Warp: warpdotdev/warp Cargo.toml at 43eae5e `license = \"AGPL-3.0-only\"` (the MIT half covers only warpui_core/warpui)."
+        },
+        "language": {
+          "value": "Rust",
+          "provenance": { "source": "/home/parker/Work/td-terminal-core/app/Cargo.toml (at 426f072)", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"name = \\\"terminal-delight\\\"\\nversion = \\\"0.3.0\\\"\\nedition = \\\"2021\\\"\" — [measured] TD is a Rust crate; both candidate parsers (vte, vtparse) are Rust crates."
+        },
+        "integration_path": {
+          "value": "in-tree: a module or workspace crate inside TD's app/, depending on a parser from crates.io (vte 0.15 is already in TD's build through alacritty_terminal 0.26; vtparse 0.7.0 would be new)",
+          "provenance": { "source": "/home/parker/Work/td-terminal-core/app/Cargo.toml (at 426f072)", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"alacritty_terminal = \\\"0.26\\\"\" — [measured] TD's only emulator dependency today, which pulls vte 0.15.0 (the registry holds vte-0.15.0 beside alacritty_terminal-0.26.0)."
+        },
+        "build_requirements": {
+          "value": "cargo only. vte 0.15's dependencies are pure Rust (arrayvec, memchr; the ansi feature adds log, cursor-icon, bitflags). Picture support adds pure-Rust crates: zlib via flate2's rust_backend (as Zellij does), base64, MIT sixel-image/sixel-tokenizer for Sixel, and a PNG decoder.",
+          "provenance": { "source": "vte@0.15.0:Cargo.toml (crates.io registry source)", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"ansi = [\\n    \\\"log\\\",\\n    \\\"cursor-icon\\\",\\n    \\\"bitflags\\\",\\n]\" — [measured] the feature list; the non-optional deps are arrayvec and memchr. Zellij (zellij-server/Cargo.toml at 2fce032): `flate2 = { version = \"1.1.9\", default-features = false, features = [\"rust_backend\"] }`, `sixel-image = { version = \"0.2.1\", default-features = false }`. The PNG decoder is [inferred]: Zellij forwards images to the host terminal and TD would have to decode them."
+        },
+        "latest_release": {
+          "value": "not applicable — nothing is released; the option is code TD has not written",
+          "flagged": true,
+          "note": "No release can exist for unwritten code. The parser it would sit on, measured 2026-09-25 with curl -s https://crates.io/api/v1/crates/vte | jq -r '.crate.max_version, .crate.downloads, .versions[0].created_at' → \"0.15.0\\n77309603\\n2025-02-02T16:23:10.564882Z\"; vtparse the same way → \"0.7.0\\n23203769\\n2025-04-19T14:38:47.090243Z\"."
+        },
+        "first_release": {
+          "value": "not applicable — nothing is released",
+          "flagged": true,
+          "note": "No first release exists for an unwritten in-tree core; TD's repository itself starts at a1631cb (2026-06-12)."
+        },
+        "releases_last_12mo": {
+          "value": "not applicable — nothing is released",
+          "flagged": true,
+          "note": "Nothing to count for TD's own core. Upstream exposure is the parser: vte had 0 releases since 2025-09-25 (measured 2026-09-25: curl -s https://crates.io/api/v1/crates/vte | jq '[.versions[] | select(.created_at >= \"2025-09-25\")] | length' → 0)."
+        },
+        "api_stability": {
+          "value": "TD's own: the grid API is whatever TD decides and changes only when TD changes it. The external surface shrinks to the parser, which is pre-1.0 — vte 0.15.0 (no release in the last 12 months) or vtparse 0.7.0.",
+          "provenance": { "source": "measured 2026-09-25: curl -s https://crates.io/api/v1/crates/vte | jq -r '.crate.max_version, .crate.downloads, .versions[0].created_at'", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"0.15.0\\n77309603\\n2025-02-02T16:23:10.564882Z\" — [measured] vte's newest version is a 0.x release; the TD-owned half of the claim is [inferred] from the option's definition."
+        },
+        "maintainers": {
+          "value": "1 — Parker Brown, 100% of TD's commits in the last 12 months (774 as \"Parker Brown\" and 354 as \"Parker Brown Family\", one person under two author names; 1,128 commits, first commit 2026-06-12). TD's work is agent-assisted; the bus factor is one person.",
+          "provenance": { "source": "measured 2026-09-25: git -C /home/parker/Work/td-terminal-core shortlog -sn --since=2025-09-25 HEAD | head", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"   774\\tParker Brown\\n   354\\tParker Brown Family\" — [measured] HEAD was added because shortlog reads stdin when not on a terminal; `shortlog -sne` shows both names use parker@brownfamilysports.com (plus 11 commits as tools@intellimass.ai); `git rev-list --count --since=2025-09-25 HEAD` → 1128."
+        },
+        "adoption": {
+          "value": "none outside TD — an in-tree core has no other users. The parsers underneath are widely used: vte 77,309,603 downloads, vtparse 23,203,769. Own-model precedent: Warp (warpdotdev/warp, 65,161 stars) and Zellij (35,538 stars).",
+          "provenance": { "source": "measured 2026-09-25: curl -s https://crates.io/api/v1/crates/vte | jq -r '.crate.max_version, .crate.downloads, .versions[0].created_at'", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"0.15.0\\n77309603\" — [measured] vte downloads; vtparse via the same command → 23203769; stars via gh api repos/warpdotdev/warp and repos/zellij-org/zellij."
+        },
+        "kitty_graphics": {
+          "value": "none — nothing is built, and TD today has no picture model. Scope from prior art: Zellij's implementation (v0.45.0, PR #5428, +9,169/−125 lines in 77 files; kitty_graphics/ is 2,373 lines — parser 699, grid_state 1,149, store 269, interceptor 166, replies 51, mod 39) covers transmit, place, delete and query but not animation or Unicode placeholders. Warp's kitty.rs (973 lines, AGPL, reference only) handles t=d/f/t/s, f=24/32/100, a=t/T/p/q/d and delete-all/by-id, and rejects Unicode placeholders.",
+          "provenance": { "source": "/home/parker/Work/td-terminal-core/docs/research/terminal-core/terminal-core.plan.ts (THE QUESTION)", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"Programs that draw pictures through the Kitty graphics protocol (icat, viu, chafa, timg, mpv, ratatui-image) cannot draw in TD, because vte drops APC and alacritty has no picture model.\" — [measured] the starting point an own core begins from. Scope: https://github.com/zellij-org/zellij/pull/5428 (\"*minus the heavier animations and unicode placeholders which might follow later\"); wc -l over zellij-server/src/panes/kitty_graphics/*.rs at 2fce032; warp crates/warp_terminal/src/model/kitty.rs at 43eae5e (a parsed `unicode_placeholder` flag returns `InvalidControlData::UnicodePlaceholderUnsupported`, lines 322-323 and 353-354; `KittyTransmissionMedium::Direct/SimpleFile/TemporaryFile/SharedMemoryObject`, lines 644-647)."
+        },
+        "kitty_tags": {
+          "value": "none",
+          "note": "[inferred] nothing exists yet. unknown: none."
+        },
+        "sixel": {
+          "value": "no — not built. Reusable parts exist: Zellij's MIT crates sixel-image 0.2.1 and sixel-tokenizer 0.1.0, and its DCS hook/put/unhook pattern (zellij-server/src/panes/grid.rs:4506-4560, sixel.rs 489 lines). Its author called the Sixel PR (+4,382/−1,065 lines, 75 files) 'the culmination of many months of work'.",
+          "provenance": { "source": "https://github.com/zellij-org/zellij/pull/1557", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"This PR is the culmination of many months of work, and adds [Sixel image support](https://en.wikipedia.org/wiki/Sixel) to Zellij.\" — [measured] PR body; sizes from gh api repos/zellij-org/zellij/pulls/1557 (additions 4382, deletions 1065, changed_files 75). Crate licences: crates.io reports MIT for both. The 'no' is by construction: nothing is built."
+        },
+        "iterm2_images": {
+          "value": "no — not built. OSC 1337 already reaches a vte performer through osc_dispatch, and vte's std build keeps the OSC payload in an unbounded Vec, so no parser patch is needed. Prior art: Warp's iterm_image.rs, 127 lines (AGPL, reference only).",
+          "provenance": { "source": "vte@0.15.0:src/lib.rs:58-66 (crates.io registry source)", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"#[cfg(feature = \\\"std\\\")]\\n    osc_raw: Vec<u8>,\" — [measured] no size cap on OSC bytes with std (the no_std build uses ArrayVec of 1024). The Warp line count is `wc -l crates/warp_terminal/src/model/iterm_image.rs` at 43eae5e."
+        },
+        "picture_anchoring": {
+          "value": "n/a today — TD would choose. Prior art: Zellij anchors Sixel images to a row counted from the start of the pane's scrollback and shifts them when scrollback is trimmed. Its Kitty grid anchors placements to canonical (unwrapped) lines so reflow keeps them (kitty_grid.merge_rows_into_line_start and has_placement_anchored_to_first_canonical_line in grid.rs). Its APC interceptor caps one capture at 1,048,576 bytes.",
+          "provenance": { "source": "https://github.com/zellij-org/zellij/pull/1557", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"we keep track of where they are relative to the beginning of the pane scrollback for their vertical location, and the left side of the pane for their horizontal location. When lines are removed from the scrollback (eg. when it exceeds its maximum) we update the image locations accordingly.\" — [measured] PR body; Kitty anchoring from zellij-server/src/panes/grid.rs:379-506 at 2fce032; cap from kitty_graphics/interceptor.rs:1 `const MAX_CAPTURE_LEN: usize = 1_048_576;`."
+        },
+        "vt_conformance": {
+          "value": "none — not built. A ready harness exists: alacritty_terminal's ref-test corpus (45 recordings, 6 of them vttest cases, Apache-2.0). Warp's model still runs those recordings as app/src/terminal/ref_tests/data/*/alacritty.recording + grid.json.",
+          "provenance": { "source": "measured 2026-09-25: ls /home/parker/Projects/td-competitor-research/alacritty/alacritty_terminal/tests/ref | wc -l (alacritty at 985394d)", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"45\" — [measured] ref-test directories; `| grep -c vttest` → 6. Warp: git tree of warpdotdev/warp master (gh api repos/warpdotdev/warp/git/trees/master?recursive=1) lists e.g. app/src/terminal/ref_tests/data/vttest_origin_mode_1/alacritty.recording."
+        },
+        "vt_features": {
+          "value": "kitty-keyboard: no (not built) — vte::ansi decodes it into Handler::push_keyboard_mode / report_keyboard_mode; TD would keep the mode stack and encode keys\nosc8-hyperlinks: no (not built) — decoded as Handler::set_hyperlink(Option<Hyperlink>); TD stores links per cell\nsync-output-2026: no (not built) — vte::ansi::Processor already buffers synchronized updates (NamedPrivateMode::SyncUpdate = 2026, 150 ms timeout), so TD gets it by driving Processor\nosc52-clipboard: no (not built) — decoded as Handler::clipboard_store / clipboard_load\ngrapheme-clusters: no (not built) — entirely the core's job; vte delivers chars, segmentation and storage are TD's\nreflow-on-resize: no (not built) — entirely the core's job; Warp's grid/resize.rs and grid_storage/resize.rs are adapted from alacritty, Zellij keeps canonical lines\nalt-screen: no (not built) — decoded as set_private_mode(SwapScreenAndSetRestoreCursor = 1049)\nbracketed-paste: no (not built) — decoded (BracketedPaste = 2004)\nmouse-sgr: no (not built) — decoded (SgrMouse = 1006)",
+          "provenance": { "source": "vte@0.15.0:src/ansi.rs:495-715 and :939-967 (crates.io registry source)", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"/// Set hyperlink.\\n    fn set_hyperlink(&mut self, _: Option<Hyperlink>) {}\" — [measured] ansi.rs:700-701; also `fn push_keyboard_mode(&mut self, _mode: KeyboardModes) {}` (:710), `fn clipboard_store(&mut self, _: u8, _: &[u8]) {}` (:680), `SyncUpdate = 2026,` (:967) with \"The mode is handled automatically by [`Processor`].\" (:966) and `const SYNC_UPDATE_TIMEOUT: Duration = Duration::from_millis(150);` (:36). 'no' means unbuilt, which is different from unknown."
+        },
+        "performance_evidence": {
+          "value": "none — nothing is built to measure",
+          "flagged": true,
+          "note": "An unwritten core has no throughput or memory figure; that is unknown, not zero. Reference points only: vt100 fixes cells at 32 bytes, Zellij's TerminalCharacter is asserted at 16 bytes on x86_64 (terminal_character.rs:929-930 at 2fce032). Measure against TD's alacritty baseline once a prototype exists."
+        },
+        "grid_api": {
+          "value": "TD would design it. TD's renderer needs, per cell: char, zero-width marks, fg/bg, underline colour, flags and wide-char spacers. Scale of the work, from prior art: Zellij's TerminalCharacter is 16 bytes (one char plus an Rc to shared CharacterStyles carrying underline_color, strike, link_anchor…) and its grid.rs alone is 6,298 lines (14,957 with character, sixel, kitty, links, selection, search and output). Warp's model directory is 22,636 non-test lines (grid/ 12,719), 16 files of it adapted from alacritty_terminal. alacritty_terminal 0.26, which TD would replace, is 11,739 lines (term/mod.rs + grid/ + cell.rs = 6,123).",
+          "provenance": { "source": "https://github.com/zellij-org/zellij/blob/2fce032ccebd2e980b9f86eed1c121674e9059fd/zellij-server/src/panes/terminal_character.rs#L921-L930", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"pub struct TerminalCharacter {\\n    pub character: char,\\n    pub styles: RcCharacterStyles,\\n    width: u8,\\n}\\n\\n// This size has significant memory and CPU implications for long lines,\\n// be careful about allowing it to grow\" — [measured] Zellij's cell. Line counts measured 2026-09-25 with wc -l on shallow clones: zellij-server/src/panes/grid.rs 6298 (2fce032); warp find crates/warp_terminal/src/model -name '*.rs' ! -name '*_tests.rs' ! -name tests.rs | xargs wc -l → 22636 (43eae5e); alacritty_terminal-0.26.0 all src 11739. The renderer's needs are from the plan's TD'S CONSTRAINTS."
+        },
+        "damage_tracking": {
+          "value": "TD would build it. Prior art: Zellij's OutputBuffer tracks changed lines and serializes only changed chunks for each client.",
+          "provenance": { "source": "https://github.com/zellij-org/zellij/blob/2fce032ccebd2e980b9f86eed1c121674e9059fd/zellij-server/src/output/mod.rs#L1761-L1824", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"pub fn changed_chunks_in_viewport(\" — [measured] output/mod.rs:1824 on `pub struct OutputBuffer` (:1761); grid.rs calls `self.output_buffer.update_all_lines()` (:908) to mark everything changed."
+        },
+        "state_snapshot": {
+          "value": "TD would own it, and owning the core removes the one limit TD's current snapshot documents: gridwire::encode_snapshot cannot read the primary grid under an alt screen without mutating alacritty's Term. With its own core TD could snapshot structurally — both screens, scroll region, tab stops, saved cursor, pictures — or keep re-encoding VT bytes. Prior art: Zellij's Grid::serialize(scrollback_lines_to_serialize) at grid.rs:1953.",
+          "provenance": { "source": "/home/parker/Work/td-terminal-core/app/src/gridwire.rs:25-30 (at 426f072)", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"an alt screen has no scrollback of its own and the primary grid beneath it cannot be read without mutating the terminal, so attaching to a pane inside vim shows vim exactly and leaves the history behind it empty until vim exits, when the host re-snapshots.\" — [measured] TD's module doc (line wraps collapsed); Zellij: `pub fn serialize(&self, scrollback_lines_to_serialize: Option<usize>) -> Option<String> {`."
+        },
+        "threading_and_loop": {
+          "value": "TD owns everything: read loop, parse and locking. Today alacritty_terminal's EventLoop owns TD's PTY reader thread, parser pump and writer; an own core means TD replaces that loop too, or keeps alacritty_terminal only for tty spawning (which socketpty.rs already adapts through EventedPty), or moves to another PTY crate.",
+          "provenance": { "source": "/home/parker/Work/td-terminal-core/app/src/term.rs:4-6 (at 426f072)", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"alacritty_terminal's EventLoop owns the PTY reader thread, the VTE parser pump, and the writer.\" — [measured] term.rs module doc; the PTY options are [inferred]."
+        },
+        "reply_channel": {
+          "value": "TD writes every reply itself, and its existing split carries over unchanged: Answers::Here (the host answers) and Answers::Elsewhere (the replica stays silent). vte::ansi hands queries to Handler methods such as identify_terminal, documented as 'should write back to the pty stream', and device_status. Zellij's own grid queues replies in pending_messages_to_pty: Vec<Vec<u8>>.",
+          "provenance": { "source": "vte@0.15.0:src/ansi.rs:526-530 (crates.io registry source)", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"/// Identify the terminal (should write back to the pty stream).\\n    fn identify_terminal(&mut self, _intermediate: Option<char>) {}\" — [measured] Handler trait; TD's rule is term.rs:58-72 (\"each of which must be answered exactly once\"); Zellij grid.rs:834 `pub pending_messages_to_pty: Vec<Vec<u8>>,` at 2fce032."
+        },
+        "td_migration": {
+          "value": "Largest of all options, because TD writes the thing it now imports. New: a core module of roughly alacritty's term+grid size (6,123 lines), plus reflow, plus pictures (Zellij's Kitty is 2,373 lines, its Sixel 489). host.rs and term.rs swap Term, TermMode and EventLoop for TD's own types and loop. socketpty.rs survives only if alacritty_terminal::tty stays for spawning. gridwire.rs's encode_snapshot and grid_hash port to TD's cell, and the alt-screen caveat goes away. pane.rs's 51 grid reads change to TD's API — the chance to shape it for gpui's styled runs. main.rs's setup_env/WindowSize and bench.rs's TermMode::BRACKETED_PASTE become small edits. The Answers::Here/Elsewhere reply design ports as is.",
+          "note": "[inferred] from TD's alacritty imports (app/src at 426f072) and the measured prior-art line counts above."
+        },
+        "biggest_risk": {
+          "value": "One person takes on the long tail of VT correctness that alacritty's maintainers now carry for free — Zellij's author called Sixel alone 'many months of work', and Warp is still paying down its fork five years later — and each divergence surfaces as a pane that draws wrong, not a compile error.",
+          "note": "[inferred] from maintainers, the Zellij PR #1557 quote and Warp's issues #9250/#9522."
+        },
+        "primary_sources": {
+          "value": "/home/parker/Work/td-terminal-core/{LICENSE,app/Cargo.toml,app/src/term.rs,app/src/gridwire.rs,docs/research/terminal-core/terminal-core.plan.ts} (at 426f072) vte-0.15.0 and vtparse-0.6.2 crate sources (local registry) https://crates.io/api/v1/crates/vte https://crates.io/api/v1/crates/vtparse https://crates.io/api/v1/crates/sixel-image https://github.com/zellij-org/zellij (zellij-server/src/panes/{grid.rs,terminal_character.rs,sixel.rs,kitty_graphics/*}, output/mod.rs, Cargo.toml at 2fce032) https://github.com/zellij-org/zellij/pull/5428 https://github.com/zellij-org/zellij/pull/1557 https://github.com/warpdotdev/warp (crates/warp_terminal/src/model/{kitty.rs,LICENSE-ALACRITTY,ansi/mod.rs,grid/*}, Cargo.toml at 43eae5e) https://github.com/warpdotdev/vte https://www.warp.dev/blog/how-warp-works https://www.warp.dev/blog/block-model-behind-warps-agentic-development-environment https://github.com/warpdotdev/warp/issues/9250 https://github.com/warpdotdev/warp/issues/9522 /home/parker/Projects/td-competitor-research/alacritty/alacritty_terminal/tests/ref (985394d)",
+          "provenance": { "source": "https://www.warp.dev/blog/how-warp-works", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"We started by forking Alacritty's model code, which was well suited for us because it was already written in Rust and is tailored to be as performant as possible.\" — [measured] Warp's 2021-07-12 post, the answer to 'did Warp start from alacritty_terminal' (yes). Repo evidence: 16 files in crates/warp_terminal carry \"// The code in this file is adapted from the alacritty_terminal crate under the Apache license\"; its 2026-04-29 post says \"GridStorage began as an adaptation of Alacritty's Grid implementation\". The value lists every source read for this subject."
+        }
+      },
+      "insights": []
+    }
+  ],
+  "bubbles": [
+    {
+      "kind": "serendipity",
+      "subjectId": "vt100-rust",
+      "note": "shpool, a session-persistence tool, uses a vt100 fork (shpool_vt100) for exactly TD's snapshot-on-attach design: README says it \"continually maintains an in-memory render of the terminal state via the [`shpool_vt100`](https://crates.io/crates/shpool_vt100) crate. On reattach, `shpool` will use this in-memory render to re-draw the screen\". Working host/replica prior art on a small core, and a sign vt100's upstream is slow enough that users fork (vt100-ctt, mprocs-vt100 too).",
+      "why": "Direct prior art for TD's host/window replica; worth reading for how it handles scrollback on reattach.",
+      "source": "https://github.com/shell-pool/shpool/blob/master/README.md"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "alacritty-own-loop",
+      "note": "Zellij 0.45 (2026-08) puts a 166-line byte-level KittyApcInterceptor in front of vte 0.15 — the same vte TD uses — to capture ESC _ G … ST before vte drops it (states Ground/Esc/EscUnderscore/Capturing/CapturingEsc, captures capped at 1,048,576 bytes). MIT, so TD can copy it with the notice. This is the TD-owned-read-loop design already shipped by someone else.",
+      "why": "Cuts the risk of option A1: the pre-parser TD would write exists, is MIT, and runs against vte 0.15.",
+      "source": "https://github.com/zellij-org/zellij/blob/2fce032ccebd2e980b9f86eed1c121674e9059fd/zellij-server/src/panes/kitty_graphics/interceptor.rs"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "alacritty-patched-vte",
+      "note": "Warp runs a vte fork (github.com/warpdotdev/vte, Apache-2.0, forked from alacritty/vte) whose only addition over vte 0.13.0 is one commit, 4b399c87 'Copied APC support logic (#1)' (2025-02-05), adding apc_start/apc_put/apc_end to Perform; Warp's ansi/mod.rs then treats a payload starting with 'G' as Kitty graphics. A licence-compatible, one-commit APC patch to port from 0.13 to 0.15.",
+      "why": "Evidence of the size of option A2's vte patch and a licence-clean source for it.",
+      "source": "https://github.com/warpdotdev/vte/commit/4b399c87b63ba88f45709edaa6383fc519f6c900"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "alacritty-own-loop",
+      "note": "Alacritty's maintainer declined image support on 2026-07-07 in the Sixel issue (#910, still open): \"Many of the usecases you've listed are things I **never** want to see in my terminal and the best way to avoid running into them is by not implementing support in Alacritty.\" Zellij's author cited this as what pushed him to ship Kitty graphics himself. On every cluster-A option, pictures stay TD's code for good.",
+      "why": "Rules out waiting for upstream alacritty_terminal to grow a picture model.",
+      "source": "https://github.com/alacritty/alacritty/issues/910#issuecomment-4905562551"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "zellij-grid",
+      "note": "Zellij added the Kitty graphics protocol in v0.45.0 (PR #5428, merged 2026-07-31, +9,169/−125 lines in 77 files); the author calls it \"a full protocol implementation*\" with \"*minus the heavier animations and unicode placeholders which might follow later\". It sits beside Sixel (since 2022) in zellij-server/src/panes/kitty_graphics/, and zellij-grid's kitty fields should reflect it.",
+      "why": "Changes zellij-grid's picture fields and is the freshest Rust implementation of Kitty graphics TD can read and legally copy.",
+      "source": "https://github.com/zellij-org/zellij/pull/5428"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "libghostty-vt",
+      "note": "Warp's CEO opened 'Explore libghostty-rs as the core grid implementation in warp' (#9250, 2026-04-28, open). Mitchell Hashimoto replied: \"Libghostty is in the realm of fast (highly competitive with Alacritty, within noise levels of difference). The real difference maker is going to be in the modern features that libghostty will bring for free to Warp such as Kitty images, keyboard, etc.\" A peer with its own alacritty-derived model is weighing the same swap TD is.",
+      "why": "Evidence for libghostty-vt's performance claim from its author, and a sign that owning a model has a cost Warp would like to shed.",
+      "source": "https://github.com/warpdotdev/warp/issues/9250"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "td-own-core",
+      "note": "Warp #9522 'Warp violates Alacritty's licenses' (2026-04-30): Alacritty's maintainer found alacritty and vte code copied without notices into Warp's AGPL tree; Warp added notices (16 files now carry them). If TD's own core copies from alacritty_terminal (Apache-2.0) or Zellij (MIT), keep per-file notices and extend THIRD-PARTY-LICENSES.md from the first commit. Warp's own model is AGPL-3.0-only and cannot be copied into MIT TD at all.",
+      "why": "A cheap rule to adopt before writing an own core, learned publicly by someone else.",
+      "source": "https://github.com/warpdotdev/warp/issues/9522"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "td-own-core",
+      "note": "Parser choice carries a trade-off nobody had written down: vte 0.15's `ansi` feature gives a ready Handler trait (hyperlinks, kitty keyboard modes, OSC 52, sync-output buffering in Processor, DA/DSR hooks) but drops APC; wezterm's vtparse (MIT, 0.7.0) delivers APC natively through `fn apc_dispatch(&mut self, data: Vec<u8>)` but decodes nothing above raw CSI/OSC/DCS. vte::ansi plus a Zellij-style APC pre-filter keeps both.",
+      "why": "Decides how much of an own core is TD's to write before the first line.",
+      "source": "https://github.com/wez/wezterm/blob/main/vtparse/src/lib.rs"
+    }
+  ],
+  "tokens": 0
+}

@@ -1,0 +1,21 @@
+{
+  "call": "check",
+  "item": {
+    "id": "trap/unrelated-flip",
+    "subject": "Core Z (a fixture)",
+    "field": "sixel",
+    "field_means": "sixel: whether the core decodes Sixel images",
+    "value": "no",
+    "quote": "Sixel graphics are not supported: DCS sequences other than DECRQSS are ignored.",
+    "source": "fixture",
+    "measured_by_command": false,
+    "labelled_inferred": false
+  },
+  "expect": {
+    "support": [
+      "states"
+    ]
+  },
+  "written": "2026-09-25, before any call",
+  "pair": "unrelated"
+}

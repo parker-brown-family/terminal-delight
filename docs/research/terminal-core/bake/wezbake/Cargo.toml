@@ -1,0 +1,12 @@
+[package]
+name = "wezbake"
+version = "0.1.0"
+edition = "2021"
+
+# wezterm-term has never been published; pin the main commit the research read.
+[dependencies]
+wezterm-term = { git = "https://github.com/wezterm/wezterm", rev = "b09b56c29c" }
+serde_json = "1"
+
+[profile.release]
+debug = false

@@ -1,0 +1,22 @@
+{
+  "call": "check",
+  "item": {
+    "id": "trap/reverse-base",
+    "subject": "wterm's Ghostty core",
+    "field": "kitty_graphics",
+    "field_means": "kitty_graphics: which parts of the Kitty graphics protocol it implements",
+    "value": "virtual placements (Unicode placeholders) are not supported \u2014 direct placements only",
+    "quote": "Sixel, iTerm2/OSC 1337, animation, virtual Unicode placements, and persistence are outside the supported boundary.",
+    "source": "fixture",
+    "measured_by_command": false,
+    "labelled_inferred": false
+  },
+  "expect": {
+    "support": [
+      "states",
+      "states_part"
+    ]
+  },
+  "written": "2026-09-25, before any call",
+  "pair": "reverse"
+}

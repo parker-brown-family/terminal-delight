@@ -1,0 +1,23 @@
+{
+  "call": "maturity",
+  "item": {
+    "id": "trap/n",
+    "label": "Core N (a fixture)",
+    "kitty_tags": "unknown",
+    "evidence": {},
+    "maturity": {
+      "api_stability": {
+        "recorded": "This library is currently in development and the API is not yet stable. Breaking changes are expected."
+      },
+      "releases_last_12mo": {
+        "recorded": "4"
+      }
+    }
+  },
+  "expect": {
+    "api_trajectory": [
+      "declared_unstable"
+    ]
+  },
+  "written": "2026-09-25, before any call"
+}

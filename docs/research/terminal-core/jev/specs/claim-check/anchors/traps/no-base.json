@@ -1,0 +1,21 @@
+{
+  "call": "check",
+  "item": {
+    "id": "trap/no-base",
+    "subject": "rio-vt \u2014 Rio's embeddable core",
+    "field": "license",
+    "field_means": "license: the SPDX licence identifier",
+    "value": "MIT",
+    "quote": "[package]\nname = \"rio-vt\"\nlicense = \"MIT\"",
+    "source": "fixture",
+    "measured_by_command": false,
+    "labelled_inferred": false
+  },
+  "expect": {
+    "support": [
+      "states"
+    ]
+  },
+  "written": "2026-09-25, before any call",
+  "pair": "no"
+}

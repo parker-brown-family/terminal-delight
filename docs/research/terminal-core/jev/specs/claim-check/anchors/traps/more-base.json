@@ -1,0 +1,21 @@
+{
+  "call": "check",
+  "item": {
+    "id": "trap/more-base",
+    "subject": "vt100 (doy) \u2014 the crate under tui-term",
+    "field": "sixel",
+    "field_means": "sixel: whether the core decodes Sixel images",
+    "value": "yes \u2014 Sixel via the sixel-image crate",
+    "quote": "Sixel graphics are supported: DCS q sequences are decoded with the sixel-image crate.",
+    "source": "fixture",
+    "measured_by_command": false,
+    "labelled_inferred": false
+  },
+  "expect": {
+    "support": [
+      "states"
+    ]
+  },
+  "written": "2026-09-25, before any call",
+  "pair": "more"
+}

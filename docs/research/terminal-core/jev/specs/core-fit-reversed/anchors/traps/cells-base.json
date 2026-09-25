@@ -1,0 +1,25 @@
+{
+  "call": "assess",
+  "item": {
+    "id": "trap/a",
+    "label": "Core A (a fixture)",
+    "kitty_tags": "unknown",
+    "evidence": {
+      "grid_api": {
+        "recorded": "Each cell is a `Cell { c: char, fg: Color, bg: Color, flags: Flags, extra: Option<Vec<char>> }`; Flags has BOLD, ITALIC, UNDERLINE, INVERSE, WIDE_CHAR and WIDE_CHAR_SPACER; `extra` holds combining marks. `grid.row(i)` returns a row by index, including rows in history."
+      }
+    }
+  },
+  "expect": {
+    "cell_contents": [
+      "provides"
+    ],
+    "wide_chars": [
+      "provides"
+    ],
+    "zero_width": [
+      "provides"
+    ]
+  },
+  "written": "2026-09-25, before any call"
+}

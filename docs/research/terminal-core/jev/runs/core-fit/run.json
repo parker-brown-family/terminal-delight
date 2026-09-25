@@ -1,0 +1,11 @@
+{
+  "spec": "core-fit",
+  "version": 2,
+  "items": 14,
+  "wall_s": 0.9,
+  "model_requested": "jev-latest",
+  "items_file": "/home/parker/Work/td-terminal-core/docs/research/terminal-core/jev/items/cores.json",
+  "sample": null,
+  "seed": 20260924,
+  "started": "2026-09-25T09:45:51+00:00"
+}

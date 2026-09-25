@@ -1,0 +1,22 @@
+{
+  "call": "check",
+  "item": {
+    "id": "trap/build-base",
+    "subject": "Core Y (a fixture)",
+    "field": "build_requirements",
+    "field_means": "build_requirements: toolchains beyond stable cargo",
+    "value": "cargo only",
+    "quote": "[dependencies]\nitoa = \"1.0\"\nunicode-width = \"0.2\"\nvte = \"0.15\"\n# no build script, no build-dependencies",
+    "source": "fixture",
+    "measured_by_command": false,
+    "labelled_inferred": false
+  },
+  "expect": {
+    "support": [
+      "implies",
+      "states"
+    ]
+  },
+  "written": "2026-09-25, before any call",
+  "pair": "implies-build"
+}

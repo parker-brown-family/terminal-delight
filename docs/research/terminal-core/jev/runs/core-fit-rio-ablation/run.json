@@ -1,0 +1,11 @@
+{
+  "spec": "core-fit",
+  "version": 2,
+  "items": 4,
+  "wall_s": 0.6,
+  "model_requested": "jev-latest",
+  "items_file": "items/rio-ablation.json",
+  "sample": null,
+  "seed": 20260924,
+  "started": "2026-09-25T09:49:34+00:00"
+}

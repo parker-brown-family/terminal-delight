@@ -1,0 +1,513 @@
+{
+  "updates": [
+    {
+      "id": "rio-vt",
+      "fields": {
+        "what_it_is": {
+          "value": "Rio's terminal core published as a standalone Rust crate: a VT parser forked from alacritty's vte, a grid with scrollback, selection, search, an optional PTY driver, and Sixel, Kitty and iTerm2 image decoding, with no renderer, GPU or font code. Written and maintained by Raphael Amorim (raphamorim) inside the Rio repository.",
+          "provenance": {
+            "source": "https://github.com/raphamorim/rio/blob/37624389e8dde79ba25a8147a5e809c01d16d1c9/rio-vt/Cargo.toml#L9",
+            "confidence": "high",
+            "retrievedAt": "2026-09-25"
+          },
+          "note": "quote: \"Embeddable terminal core extracted from Rio: VT state machine, grid, PTY driver, selection, search\" — [measured] the crate's own description, also returned by the crates.io API. The image protocols are named in the announcement ('the sixel / Kitty / iTerm2 image protocols'), the parser lineage in rio-vt/src/performer/parser/mod.rs:7 ('Forked from Alacritty's VTE'), the author in the workspace Cargo.toml:24 (authors = Raphael Amorim); maintenance share measured under maintainers."
+        },
+        "license": {
+          "value": "MIT — an MIT product may link it",
+          "provenance": {
+            "source": "measured 2026-09-25: curl -s -A 'td-research' https://crates.io/api/v1/crates/rio-vt | jq -r '.versions[] | [.num,.created_at,.license,.downloads,.yanked,.rust_version] | @tsv'",
+            "confidence": "high",
+            "retrievedAt": "2026-09-25"
+          },
+          "note": "quote: \"0.5.28\t2026-09-17T20:55:27.005329Z\tMIT\t469\tfalse\" — [measured] every published version lists MIT; gh api repos/raphamorim/rio --jq .license.spdx_id also returns MIT. The Sixel decoder credits ayosec's Apache-2.0 alacritty PR (rio-vt/src/ansi/sixel.rs:1-3), which is MIT-compatible too."
+        },
+        "language": {
+          "value": "Rust, with a safe-Rust public API; the simdutf dependency compiles bundled C++",
+          "provenance": {
+            "source": "https://github.com/raphamorim/rio/blob/37624389e8dde79ba25a8147a5e809c01d16d1c9/rio-vt/README.md#L190-L191",
+            "confidence": "high",
+            "retrievedAt": "2026-09-25"
+          },
+          "note": "quote: \"The public API of `rio-vt` is safe Rust. All `unsafe` and raw-pointer\nhandling lives in the separate `librio` C-ABI shim.\" — [measured] gh api repos/raphamorim/rio --jq .language returns Rust; the C++ comes from simdutf 0.7.0 (see build_requirements)."
+        },
+        "integration_path": {
+          "value": "crates.io crate: rio-vt = \"0.5\". The default `pty` feature brings Rio's PTY driver (drop it with default-features = false); the opt-in `graphics` feature is required to decode PNG (Kitty f=100) and iTerm2 images.",
+          "provenance": {
+            "source": "https://github.com/raphamorim/rio/blob/37624389e8dde79ba25a8147a5e809c01d16d1c9/rio-vt/README.md#L14",
+            "confidence": "high",
+            "retrievedAt": "2026-09-25"
+          },
+          "note": "quote: \"- **Rust embedders** depend on `rio-vt` directly (this crate).\" — [measured] features read in rio-vt/Cargo.toml:59-80 (default = pty at :61; graphics at :77 pulls the image crate and rio-graphics image/glyph). The README's own feature table (README.md:29-34) lists neither pty nor graphics."
+        },
+        "build_requirements": {
+          "value": "Stable Rust 1.96.1 or newer (workspace rust-version; TD's rustc 1.98.0 qualifies) plus a C++11 compiler, because the non-optional simdutf 0.7.0 dependency builds bundled C++ through the cc crate. No other native toolchain found for the default features; network only for crates.io. Not compiled this session.",
+          "provenance": {
+            "source": "file:///home/parker/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/simdutf-0.7.0/build.rs (simdutf 0.7.0 from crates.io) and https://github.com/raphamorim/rio/blob/37624389e8dde79ba25a8147a5e809c01d16d1c9/rio-vt/Cargo.toml#L41",
+            "confidence": "medium",
+            "retrievedAt": "2026-09-25"
+          },
+          "note": "quote: \"fn cpp11(cc: &mut cc::Build) {\n    cc.cpp(true);\" — [measured] simdutf's build.rs goes on to compile cpp/simdutfrs.cpp with -std=c++11. rio-vt 0.5.28's published dependency list (curl -s -A 'td-research' https://crates.io/api/v1/crates/rio-vt/0.5.28/dependencies) shows 'simdutf ^0.7.0 optional=false' for cfg(not(target_arch = \"wasm32\")); rust-version = 1.96.1 at Cargo.toml:28. 'Nothing else native' is inferred from manifests: the default PTY stack adds teletypewriter, corcovado, signal-hook and dirs, all Rust."
+        },
+        "latest_release": {
+          "value": "0.5.28, published to crates.io 2026-09-17",
+          "provenance": {
+            "source": "measured 2026-09-25: curl -s -A 'td-research' https://crates.io/api/v1/crates/rio-vt | jq -r '.versions[] | [.num,.created_at,.license,.downloads,.yanked,.rust_version] | @tsv'",
+            "confidence": "high",
+            "retrievedAt": "2026-09-25"
+          },
+          "note": "quote: \"0.5.28\t2026-09-17T20:55:27.005329Z\tMIT\t469\tfalse\" — [measured] first row of the version list; the rio checkout read this session (37624389) carries tag v0.5.28. Plain curl without -A returned an empty body because crates.io requires a User-Agent, hence -A."
+        },
+        "first_release": {
+          "value": "0.5.0, published 2026-07-27; a 772-byte 0.0.1 placeholder described 'nothing to see here' was published the day before",
+          "provenance": {
+            "source": "measured 2026-09-25: curl -s -A 'td-research' https://crates.io/api/v1/crates/rio-vt | jq -r '.versions[] | [.num,.created_at,.license,.downloads,.yanked,.rust_version] | @tsv'",
+            "confidence": "high",
+            "retrievedAt": "2026-09-25"
+          },
+          "note": "quote: \"0.5.0\t2026-07-27T15:53:42.161270Z\tMIT\t1582\tfalse\" — [measured] the 0.0.1 row is dated 2026-07-26T10:35:19Z; its crate_size (772) and description came from a second query of the same endpoint."
+        },
+        "releases_last_12mo": {
+          "value": "26 (22 stable 0.5.x, 4 alphas) — the crate's entire history, 2026-07-26 to 2026-09-17",
+          "provenance": {
+            "source": "measured 2026-09-25: curl -s -A 'td-research' https://crates.io/api/v1/crates/rio-vt | jq -r '[.versions[] | select(.created_at >= \"2025-09-25\")] | \"count=\\(length) stable=\\([.[] | select(.num | test(\"-\") | not)] | length)\"'",
+            "confidence": "high",
+            "retrievedAt": "2026-09-25"
+          },
+          "note": "quote: \"count=26 stable=22\" — [measured] Rio's changelog has 29 releases (0.5.0-0.5.28) in the same weeks; 0.5.2, 0.5.6, 0.5.14, 0.5.17, 0.5.21-0.5.23 and 0.5.27 were not published as rio-vt."
+        },
+        "api_stability": {
+          "value": "Pre-1.0 and versioned in lockstep with the Rio app (0.5.x), with no stated stability promise. Public types have changed inside the 0.5 series (0.5.8 moved Msg::Resize, RioEvent::TextAreaSizeRequest and OnResize from teletypewriter::WinsizeBuilder to rio_vt::event::WindowSize), and 26 versions shipped in eight weeks.",
+          "provenance": {
+            "source": "https://rioterm.com/blog/2026/07/27/rio-vt-and-librio",
+            "confidence": "high",
+            "retrievedAt": "2026-09-25"
+          },
+          "note": "quote: \"rio-vt is on crates.io, versioned alongside Rio (0.5), so any Rust project can depend on it today.\" — [measured] no stability or semver statement found in the post, the crate README or https://rioterm.com/docs/rio-vt. The 0.5.8 change is in https://rioterm.com/changelog ('they now carry rio_vt::event::WindowSize and the PTY driver converts at the one place it calls set_winsize'); 0.5.17 made the PTY driver a feature. The README has drifted from the code: it calls EventListener::event() required, but the trait at rio-vt/src/event/mod.rs:428-436 has no event() method."
+        },
+        "maintainers": {
+          "value": "1 contributor above 10%: raphamorim (Raphael Amorim, author and lead) with 1053 of 1144 commits (92%) to the Rio repository in the 12 months to 2026-09-25; next is github-actions[bot] at 2.5%. The rio-vt/ path alone had 94 commits in that window, 92 by raphamorim.",
+          "provenance": {
+            "source": "measured 2026-09-25: gh api repos/raphamorim/rio/stats/contributors | jq -r '[.[] | {login:.author.login, c:([.weeks[] | select(.w >= 1758758400) | .c] | add)}] | map(select(.c>0)) | sort_by(-.c) as $a | ($a | map(.c) | add) as $t | \"total=\\($t) contributors=\\($a|length)\", ($a[:12][] | \"\\(.login)\\t\\(.c)\\t\\((.c*1000/$t|floor)/10)%\")'",
+            "confidence": "high",
+            "retrievedAt": "2026-09-25"
+          },
+          "note": "quote: \"total=1144 contributors=41\nraphamorim\t1053\t92%\" — [measured] 1758758400 is 2025-09-25T00:00:00Z. Path count from gh api --paginate 'repos/raphamorim/rio/commits?path=rio-vt&since=2025-09-25T00:00:00Z&per_page=100' --jq '.[] | (.author.login // .commit.author.name)' | sort | uniq -c: 92 raphamorim, 1 marc2332, 1 gold-silver-copper."
+        },
+        "adoption": {
+          "value": "70,499 crates.io downloads, all since 2026-07-26; 7 reverse dependencies on crates.io (librio-vt, hyprburst, rio-backend, tui-test-rs, codewhale-tui, demand, vtcode-core); named embedders: Rio and its Canario frontend, and Lovable according to the author.",
+          "provenance": {
+            "source": "measured 2026-09-25: curl -s -A 'td-research' 'https://crates.io/api/v1/crates/rio-vt/reverse_dependencies' | jq -r '\"total=\\(.meta.total) \" + ([.versions[].crate] | join(\",\"))'",
+            "confidence": "high",
+            "retrievedAt": "2026-09-25"
+          },
+          "note": "quote: \"total=7 librio-vt,hyprburst,rio-backend,tui-test-rs,codewhale-tui,demand,vtcode-core\" — [measured] downloads from curl -s -A 'td-research' https://crates.io/api/v1/crates/rio-vt ('downloads=70499 max_version=0.5.28'); Lovable from the announcement ('rio-vt is already used in production by companies like Lovable'), not independently verified; Canario is Rio's own frontend per https://rioterm.com/changelog."
+        },
+        "kitty_graphics": {
+          "value": "Broad, inside the crate. Transmission: t=d with chunking, t=f, t=t (path must contain tty-graphics-protocol; deleted after reading), t=s (shm_open on Unix, a file mapping on Windows). Formats: f=8, f=16, f=24, f=32 raw and f=100 PNG; PNG decodes only with the non-default `graphics` feature, otherwise EINVAL. o=z zlib with a decompressed-size cap. Placement: a=T and a=p at the cursor with x/y/w/h source rectangle, c/r cell span, X/Y sub-cell offset, C=1, z index. U=1 virtual placements are stored as metadata and ansi/kitty_virtual.rs supplies the placeholder decoders, but scanning cells for U+10EEEE and compositing is the embedder's renderer's job. Deletes: a/A, i/I, n/N, c/C, p/P, x/X, y/Y, z/Z, q/Q, r/R. a=q runs the real load path and answers OK or the error, honouring q=. Limits: 320 MiB image store per terminal with eviction of unreferenced images; 10000 px per axis and 400 MiB payload at parse; 4096x4096 display cap. Not implemented: animation (a=f, a=a, a=c answered EINVAL:unsupported action) and relative placements (P/Q/H/V parsed, never used).",
+          "provenance": {
+            "source": "https://github.com/raphamorim/rio/blob/37624389e8dde79ba25a8147a5e809c01d16d1c9/rio-vt/src/ansi/kitty_graphics_protocol.rs#L724-L747",
+            "confidence": "high",
+            "retrievedAt": "2026-09-25"
+          },
+          "note": "quote: \"// A query must behave exactly like a transmission — decode\n            // the payload, read the file, or map and unlink the shared\n            // memory — and report whether that worked, without storing\n            // anything.\" — [measured] the quote is the comment on the Action::Query arm. Deletes: crosswords/mod.rs:5048-5240, match arms a, i, c, p, x, y, z, n, q, r with their uppercase forms. Media and formats: kitty_graphics_protocol.rs:154-174, 909-935, 1040-1324; PNG gate :1355-1361; animation :757-792; P/Q/H/V parsed at :878-881 and read nowhere else in the crate (grep). Virtual placements: crosswords/mod.rs:5788-5823 and ansi/kitty_virtual.rs:422-687, consumed by frontends/rioterm/src/renderer/mod.rs:977-1127 and librio/src/render_state.rs:6. Quota ansi/graphics.rs:617-619 and :698; caps kitty_graphics_protocol.rs:8-16 and rio-graphics/src/lib.rs:92. Read at raphamorim/rio@37624389 (v0.5.28)."
+        },
+        "kitty_tags": {
+          "value": "transmit-direct, transmit-file, transmit-temp, transmit-shm, format-png, format-raw, compression, place-direct, place-virtual, delete-by-id, delete-by-position, query-reply, z-layers",
+          "note": "[inferred] from the source read for kitty_graphics. Not tagged: animation (a=f/a/c rejected with EINVAL:unsupported action, kitty_graphics_protocol.rs:757-792). Caveats on tagged items: format-png only with the non-default `graphics` feature; place-virtual means the crate records U=1 placements and ships the decode helpers, while the per-frame U+10EEEE scan and drawing belong to the embedder (Rio's renderer and librio both do it); z-layers means the crate keeps z_index per placement and deletes by z, with drawing order left to the renderer (Rio's sorts by z at renderer/mod.rs:545). unknown: none"
+        },
+        "sixel": {
+          "value": "yes — DCS q is decoded inside the crate by rio-vt/src/ansi/sixel.rs (ported from ayosec's alacritty PR): up to 1024 colours, 4096x4096, pixel aspect ratio ignored. Decoded images become AtlasPlacements anchored to an absolute row; DA1 advertises 4; no `graphics` feature needed.",
+          "provenance": {
+            "source": "https://github.com/raphamorim/rio/blob/37624389e8dde79ba25a8147a5e809c01d16d1c9/rio-vt/src/ansi/sixel.rs#L5-L20",
+            "confidence": "high",
+            "retrievedAt": "2026-09-25"
+          },
+          "note": "quote: \"//! This module implements a parser for the Sixel protocol, and it is based on the\n//! chapter [SIXEL GRAPHICS EXTENSION] of the DEC reference manual.\" — [measured] limits from the same header (sixel.rs:10-20); dispatch at performer/handler.rs:1028 and crosswords/mod.rs:4609-4635; DA1 string \\x1b[?62;4;6;22;52c at crosswords/mod.rs:3941; sixel.rs carries no graphics-feature gate (grep of the crate's cfg(feature = \"graphics\") sites)."
+        },
+        "iterm2_images": {
+          "value": "yes, with the non-default `graphics` feature — OSC 1337 File= is parsed by rio-vt/src/ansi/iterm2_image_protocol.rs (width and height in cells, pixels, percent or auto) and placed as an AtlasPlacement; without `graphics` the payload is parsed and dropped",
+          "provenance": {
+            "source": "https://github.com/raphamorim/rio/blob/37624389e8dde79ba25a8147a5e809c01d16d1c9/rio-vt/src/ansi/iterm2_image_protocol.rs#L44-L50",
+            "confidence": "high",
+            "retrievedAt": "2026-09-25"
+          },
+          "note": "quote: \"// Image decoding needs the `graphics` feature; without it iTerm2\n        // image payloads are parsed but not displayed.\" — [measured] dispatch at performer/handler.rs:1259-1264; size parameters at iterm2_image_protocol.rs:130-202. MultipartFile handling was not looked for."
+        },
+        "picture_anchoring": {
+          "value": "Absolute row counter in side tables, not per-cell: Kitty placements keep dest_row and Sixel/iTerm2 AtlasPlacements keep abs_row = lines_evicted + history + screen_row, so pictures scroll and survive scrollback eviction. On a column reflow a recorded ReflowRemap moves each placement to where its anchor row's content landed (Sixel/iTerm2 pieces on dropped rows are destroyed; Kitty ones stay). Text written over a Sixel/iTerm2 picture splits it into cropped children. Quota: total_limit 320 MiB per terminal, evicting images not in use.",
+          "provenance": {
+            "source": "https://github.com/raphamorim/rio/blob/37624389e8dde79ba25a8147a5e809c01d16d1c9/rio-vt/src/ansi/graphics.rs#L381-L383",
+            "confidence": "high",
+            "retrievedAt": "2026-09-25"
+          },
+          "note": "quote: \"/// Anchor row in the stable absolute space\n    /// (`lines_evicted + history + screen_row` at insert).\n    pub abs_row: i64,\" — [measured] Kitty dest_row at graphics.rs:64-65 and crosswords/mod.rs:5623-5628; reflow remap at crosswords/mod.rs:838-960 and crosswords/grid/mod.rs:101-118; overwrite splits described at graphics.rs:370-376; quota graphics.rs:617-619 and :698 (320 * 1024 * 1024); the per-cell graphics flag was retired, crosswords/square.rs:136-140."
+        },
+        "vt_conformance": {
+          "value": "No vttest or esctest results found. The project publishes a per-sequence support matrix (IMPLEMENTED / PARTIAL / REJECTED) for Rio, which runs this core.",
+          "provenance": {
+            "source": "https://rioterm.com/docs/escape-sequence-support",
+            "confidence": "high",
+            "retrievedAt": "2026-09-25"
+          },
+          "note": "quote: \"This list includes all escape sequences Rio currently supports.\" — [measured] grep -rli 'vttest|esctest' over the rio repository at 37624389 found nothing. The matrix documents the Rio app, whose VT layer is rio-vt (rio-backend re-exports it; rio-vt/README.md architecture section)."
+        },
+        "vt_features": {
+          "value": "kitty-keyboard: yes — keyboard mode stack, push_keyboard_mode (crosswords/mod.rs:3979)\nosc8-hyperlinks: yes — set_hyperlink stores links in per-cell Extras (crosswords/mod.rs:4221; square.rs:203-206)\nsync-output-2026: yes — mode 2026 SyncUpdate buffered in Processor with a timeout (ansi/mode.rs:72; performer/handler.rs:600-621)\nosc52-clipboard: yes — clipboard_store / clipboard_load raise ClipboardStore / ClipboardLoad (crosswords/mod.rs:3537, 4308); DA1 advertises 52\ngrapheme-clusters: yes — mode 2027 GraphemeCluster, on by default (ansi/mode.rs:73; crosswords/mod.rs:517-522)\nreflow-on-resize: yes — grow_columns / shrink_columns with reflow (crosswords/grid/resize.rs:103, 301)\nalt-screen: yes — mode 1049 and swap_alt (ansi/mode.rs:70; crosswords/mod.rs:2387)\nbracketed-paste: yes — mode 2004 (ansi/mode.rs:71)\nmouse-sgr: yes — mode 1006 SgrMouse (ansi/mode.rs:67)",
+          "provenance": {
+            "source": "https://github.com/raphamorim/rio/blob/37624389e8dde79ba25a8147a5e809c01d16d1c9/rio-vt/src/ansi/mode.rs#L70-L73",
+            "confidence": "high",
+            "retrievedAt": "2026-09-25"
+          },
+          "note": "quote: \"1049 => Self::Named(NamedPrivateMode::SwapScreenAndSetRestoreCursor),\n            2004 => Self::Named(NamedPrivateMode::BracketedPaste),\n            2026 => Self::Named(NamedPrivateMode::SyncUpdate),\n            2027 => Self::Named(NamedPrivateMode::GraphemeCluster),\" — [measured] each other line cites its file:line in rio-vt/src at raphamorim/rio@37624389."
+        },
+        "performance_evidence": {
+          "value": "Author's benchmark (rio-vt-benchmark; Criterion medians on an Apple Silicon Mac, fixed 80x24; rio-vt 0.5 / vt100 0.15 / alacritty_terminal 0.26). Parse MiB/s: mixed 302 / 221 / 254; ascii_plain 835 / 196 / 279; sgr_churn 235 / 349 / 332; scroll_storm 274 / 101 / 266; alt_screen_redraw 588 / 231 / 282; unicode_wide 248 / 203 / 337. Screen serialize: 4.3 µs ANSI and 3.8 µs plain, vs vt100 18.6 / 13.9 µs. Resize 80x24 to 100x40 and back: 5.0 µs vs vt100 7.5 µs vs alacritty 227 µs. Memory: 8 bytes per cell (packed u64) plus per-grid style and extras tables. Not reproduced on TD hardware.",
+          "provenance": {
+            "source": "https://rioterm.com/blog/2026/07/27/rio-vt-and-librio",
+            "confidence": "medium",
+            "retrievedAt": "2026-09-25"
+          },
+          "note": "quote: \"The numbers below are Criterion medians on an Apple Silicon Mac (rio-vt 0.5, vt100 0.15, alacritty_terminal 0.26).\" — [measured] table values copied from the same post, where the author concedes sgr_churn to vt100 and unicode_wide to alacritty. Cell size from rio-vt/src/crosswords/square.rs:6-10 ('the cell itself is 8 bytes'). An in-repo Criterion bench exists (rio-vt/benches/vt_input.rs); not run."
+        },
+        "grid_api": {
+          "value": "Crosswords<U: EventListener>, descended from alacritty's Term: visible_rows() -> Vec<Row<Square>>, fill_visible_rows(&mut Vec<Row<Square>>), snapshot_visible(damage, rows, row_styles, extras) for incremental copies with resolved styles, and pub grid: Grid<Square> indexed by Line and Column with display_iter(). A Square is a packed u64: c() base char, wide() Normal / Wide / Spacer / LeadingSpacer, cell_flags() WRAPLINE / HYPERLINK / GRAPHEME, plus style and extras ids. grid.style_of(&square) -> Style { fg, bg, underline_color: Option<AnsiColor>, flags: StyleFlags } (bold, dim, italic, inverse, hidden, strikeout, five underline kinds, blink). Zero-width marks: grid.cell_text(pos) yields the base char then the marks (Square::c() alone drops them); hyperlinks: cell_hyperlink(line, col). Cursor: cursor() -> CursorState; modes: mode() -> Mode, keyboard_mode().",
+          "provenance": {
+            "source": "https://github.com/raphamorim/rio/blob/37624389e8dde79ba25a8147a5e809c01d16d1c9/rio-vt/src/crosswords/style.rs#L112-L117",
+            "confidence": "high",
+            "retrievedAt": "2026-09-25"
+          },
+          "note": "quote: \"pub struct Style {\n    pub fg: AnsiColor,\n    pub bg: AnsiColor,\n    pub underline_color: Option<AnsiColor>,\n    pub flags: StyleFlags,\n}\" — [measured] Square bit layout at crosswords/square.rs:20-42, Wide :69-81, CellFlags :129-146, Extras :200-206; cell_text at crosswords/grid/mod.rs:606-622 ('Prefer this over [`Square::c`], which returns the base character alone and so drops the marks'); visible_rows, snapshot_visible, cursor and mode at crosswords/mod.rs:2171-2359; StyleFlags at style.rs:29-43."
+        },
+        "damage_tracking": {
+          "value": "yes — per viewport line since the last reset: damage() returns TermDamage::Full or Partial(iterator of damaged lines) and reset_damage() clears it; snapshot_visible also marks each copied row dirty; a coarse TerminalDamage { Noop, Full, Partial, CursorOnly } signal travels in events",
+          "provenance": {
+            "source": "https://github.com/raphamorim/rio/blob/37624389e8dde79ba25a8147a5e809c01d16d1c9/rio-vt/src/crosswords/mod.rs#L178-L186",
+            "confidence": "high",
+            "retrievedAt": "2026-09-25"
+          },
+          "note": "quote: \"/// Terminal damage information collected since the last [`Term::reset_damage`] call.\" — [measured] damage() at crosswords/mod.rs:592 and reset_damage() at :637; TerminalDamage at event/mod.rs:105-126. The 0.5.21 changelog entry describes a property test asserting that every changed row is covered by reported damage."
+        },
+        "state_snapshot": {
+          "value": "Partial. Crosswords::contents_formatted() / format(FormatOptions::vt()) re-emits the visible screen as VT bytes: reset, clear, home, SGR runs with colours in their original named / indexed / RGB form, then cursor position and cursor visibility. It writes only each cell's base character, so combining marks are dropped, and carries no scrollback, hyperlinks, other modes, alt-screen state or pictures. librio's Surface::serialize() adds scrollback and OSC 8 links, but librio is publish = false. Crosswords implements neither Clone nor serde.",
+          "provenance": {
+            "source": "https://github.com/raphamorim/rio/blob/37624389e8dde79ba25a8147a5e809c01d16d1c9/rio-vt/src/crosswords/formatter.rs#L64-L66",
+            "confidence": "high",
+            "retrievedAt": "2026-09-25"
+          },
+          "note": "quote: \"/// The visible screen as a VT/ANSI byte blob (vt100 `contents_formatted`\n    /// equivalent): clear + home, cells with SGR, then the cursor restored.\n    pub fn contents_formatted(&self) -> Vec<u8> {\" — [measured] base character only: format_vt pushes square.c() at formatter.rs:128-129; DECTCEM is the only mode restored (:142-155); librio's serialize at librio/src/lib.rs:896-900 and publish = false at librio/Cargo.toml:11; no derive(Serialize) outside ansi/mod.rs and config/colors (grep). TD's own gridwire.rs encoder already carries more (scrollback, marks, modes)."
+        },
+        "threading_and_loop": {
+          "value": "The embedder chooses. Headless, the embedder owns the loop and calls Processor::advance(&mut term, bytes) on a Crosswords it holds, with no threads. With the default `pty` feature, performer::Machine spawns a 'PTY reader' thread that polls a teletypewriter PTY through corcovado and parses into an Arc<FairMutex<Crosswords<U>>> shared with the renderer (U: EventListener + Send + 'static). Crosswords has no internal locking. The PTY layer (teletypewriter) is included and can be dropped with default-features = false. Synchronized updates: an embedder loop should poll Processor::sync_timeout(); otherwise advance() flushes an expired update when the next bytes arrive.",
+          "provenance": {
+            "source": "https://github.com/raphamorim/rio/blob/37624389e8dde79ba25a8147a5e809c01d16d1c9/rio-vt/README.md#L43-L44",
+            "confidence": "high",
+            "retrievedAt": "2026-09-25"
+          },
+          "note": "quote: \"Create a grid, feed it bytes through the parser, and read cells back. No\nPTY, no renderer, no threads:\" — [measured] Machine at rio-vt/src/performer/mod.rs:121-131, 203-215, 372-380; advance and the sync fallback at performer/handler.rs:598-621; no Rc, RefCell or Cell in the crate (grep), so Send follows the listener type."
+        },
+        "reply_channel": {
+          "value": "An event callback. Replies (DA1/DA2, DSR/CPR, DECRQM, XTGETTCAP, Kitty acks and a=q answers) are sent as RioEvent::PtyWrite(route_id, String) through EventListener::send_event. Window-size reports arrive as TextAreaSizeRequest, OSC colour queries as ColorRequest and OSC 52 reads as ClipboardLoad, each carrying a formatter closure the embedder applies before writing. The embedder does the PTY write, so a TD replica can drop these events and let the host answer once — the same shape as alacritty's Event.",
+          "provenance": {
+            "source": "https://github.com/raphamorim/rio/blob/37624389e8dde79ba25a8147a5e809c01d16d1c9/rio-vt/src/event/mod.rs#L242-L246",
+            "confidence": "high",
+            "retrievedAt": "2026-09-25"
+          },
+          "note": "quote: \"/// Write some text to the PTY identified by `route_id`. Routing\n    /// by panel (rather than the focused context) is required so\n    /// CSI / OSC reply bytes land on the shell that asked for them\n    /// even if the user focuses a different split mid-flight.\n    PtyWrite(usize, String),\" — [measured] formatter closures at event/mod.rs:217-252; DA1 sent via PtyWrite at crosswords/mod.rs:3941-3943; Kitty replies at :5283-5287; TextAreaSizeRequest raised at :4466-4494; EventListener trait at event/mod.rs:428-436."
+        },
+        "td_migration": {
+          "value": "A moderate rewrite, the smallest of the non-alacritty cores, because rio-vt's Crosswords, Grid, Storage, Row, selection, search and parser are forks of alacritty_terminal and vte (file headers cite alacritty e35e5ad) and its events mirror alacritty's (PtyWrite, TextAreaSizeRequest, ColorRequest, ClipboardLoad with formatter closures). term.rs: Term::new + Config become Crosswords::new(size, cursor shape, listener, WindowId, route_id, scrollback limit) with CrosswordsSize::new_with_dimensions, since Kitty spans need cell pixel sizes; TermEvent matching becomes RioEvent. host.rs and socketpty.rs: alacritty's EventLoop, Notifier, Msg and tty traits give way either to rio_vt::performer::Machine with a teletypewriter::EventedPty impl for SocketPty (corcovado polling instead of the polling crate) or to a TD-owned loop with default-features = false that calls Processor::advance and polls sync_timeout(); either way the attach fence must be re-proved. gridwire.rs: re-encode from Square + grid.style_of + cell_text + Wide + WRAPLINE instead of Cell and Flags, and hash resolved Style values rather than style ids, which are interned per grid and will differ between host and replica; pictures need their own channel because no snapshot carries them. pane.rs (51 grid reads): Cell fields become Square::c / wide plus Style plus Extras, Point / Side / Selection move to rio_vt types, TermMode becomes Mode; add a picture layer that drains UpdateGraphics, reads kitty_placements and atlas_placements, scans visible rows for U+10EEEE with the kitty_virtual helpers and paints in gpui. main.rs and pane/bench.rs: type renames. The window replica would decode pictures too unless the host forwards them.",
+          "note": "[inferred] reasoning over TD's seven alacritty-importing files in /home/parker/Work/td-terminal-core/app/src (grep counts of alacritty_terminal: gridwire.rs 19, term.rs 18, socketpty.rs 12, host.rs 8, main.rs 3, pane.rs 3 imports but 51 grid reads, pane/bench.rs 1) against the APIs cited in grid_api, threading_and_loop, reply_channel and state_snapshot; nothing was built."
+        },
+        "biggest_risk": {
+          "value": "TD would bind its most central dependency to a two-month-old crate written by one person (92% of the repository's commits), versioned with Rio's app and already changing public types in patch releases, so each Rio release could become a TD migration.",
+          "note": "[inferred] judgement from the measured maintainers, api_stability, latest_release and kitty_graphics fields."
+        },
+        "primary_sources": {
+          "value": "https://github.com/raphamorim/rio/blob/37624389e8dde79ba25a8147a5e809c01d16d1c9/rio-vt/README.md https://github.com/raphamorim/rio/blob/37624389e8dde79ba25a8147a5e809c01d16d1c9/rio-vt/Cargo.toml https://github.com/raphamorim/rio/blob/37624389e8dde79ba25a8147a5e809c01d16d1c9/Cargo.toml https://github.com/raphamorim/rio/blob/37624389e8dde79ba25a8147a5e809c01d16d1c9/rio-vt/src/lib.rs https://github.com/raphamorim/rio/blob/37624389e8dde79ba25a8147a5e809c01d16d1c9/rio-vt/src/crosswords/square.rs https://github.com/raphamorim/rio/blob/37624389e8dde79ba25a8147a5e809c01d16d1c9/rio-vt/src/crosswords/style.rs https://github.com/raphamorim/rio/blob/37624389e8dde79ba25a8147a5e809c01d16d1c9/rio-vt/src/crosswords/grid/mod.rs https://github.com/raphamorim/rio/blob/37624389e8dde79ba25a8147a5e809c01d16d1c9/rio-vt/src/crosswords/mod.rs https://github.com/raphamorim/rio/blob/37624389e8dde79ba25a8147a5e809c01d16d1c9/rio-vt/src/crosswords/formatter.rs https://github.com/raphamorim/rio/blob/37624389e8dde79ba25a8147a5e809c01d16d1c9/rio-vt/src/performer/handler.rs https://github.com/raphamorim/rio/blob/37624389e8dde79ba25a8147a5e809c01d16d1c9/rio-vt/src/performer/mod.rs https://github.com/raphamorim/rio/blob/37624389e8dde79ba25a8147a5e809c01d16d1c9/rio-vt/src/event/mod.rs https://github.com/raphamorim/rio/blob/37624389e8dde79ba25a8147a5e809c01d16d1c9/rio-vt/src/ansi/mod.rs https://github.com/raphamorim/rio/blob/37624389e8dde79ba25a8147a5e809c01d16d1c9/rio-vt/src/ansi/mode.rs https://github.com/raphamorim/rio/blob/37624389e8dde79ba25a8147a5e809c01d16d1c9/rio-vt/src/ansi/kitty_graphics_protocol.rs https://github.com/raphamorim/rio/blob/37624389e8dde79ba25a8147a5e809c01d16d1c9/rio-vt/src/ansi/kitty_virtual.rs https://github.com/raphamorim/rio/blob/37624389e8dde79ba25a8147a5e809c01d16d1c9/rio-vt/src/ansi/graphics.rs https://github.com/raphamorim/rio/blob/37624389e8dde79ba25a8147a5e809c01d16d1c9/rio-vt/src/ansi/sixel.rs https://github.com/raphamorim/rio/blob/37624389e8dde79ba25a8147a5e809c01d16d1c9/rio-vt/src/ansi/iterm2_image_protocol.rs https://github.com/raphamorim/rio/blob/37624389e8dde79ba25a8147a5e809c01d16d1c9/rio-graphics/Cargo.toml https://github.com/raphamorim/rio/blob/37624389e8dde79ba25a8147a5e809c01d16d1c9/librio/src/lib.rs https://github.com/raphamorim/rio/blob/37624389e8dde79ba25a8147a5e809c01d16d1c9/librio/Cargo.toml https://rioterm.com/blog/2026/07/27/rio-vt-and-librio https://rioterm.com/changelog https://rioterm.com/docs/escape-sequence-support https://rioterm.com/docs/features/kitty-graphics-protocol https://rioterm.com/docs/rio-vt https://crates.io/api/v1/crates/rio-vt https://crates.io/api/v1/crates/rio-vt/reverse_dependencies https://crates.io/api/v1/crates/rio-vt/0.5.28/dependencies https://api.github.com/repos/raphamorim/rio https://api.github.com/repos/raphamorim/rio/stats/contributors file:///home/parker/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/simdutf-0.7.0/build.rs synthesis:file:///tmp/claude-1000/-home-parker-Work-terminal-delight/2aae45b7-7163-4590-8990-5cc58ef8f92f/scratchpad/graphics-protocols.md synthesis:file:///home/parker/Work/td-terminal-core/docs/2026-08-29-foundation-interrogation-zed-gpui-quickshell.md",
+          "provenance": {
+            "source": "https://github.com/raphamorim/rio/blob/37624389e8dde79ba25a8147a5e809c01d16d1c9/rio-vt/README.md#L3-L6",
+            "confidence": "high",
+            "retrievedAt": "2026-09-25"
+          },
+          "note": "quote: \"Rio's embeddable terminal core: the VT state machine, ANSI/escape parser,\ngrid with scrollback, selection, search, and PTY-facing event model,\" — [measured] the list of what was read this session; the quote is the opening of the first entry. Source files were read in a depth-50 clone of raphamorim/rio at 37624389 (tag v0.5.28)."
+        }
+      },
+      "insights": []
+    },
+    {
+      "id": "wezterm-term",
+      "fields": {
+        "what_it_is": {
+          "value": "WezTerm's terminal emulator model, crate wezterm-term (directory term/ of the wezterm repository): escape parsing, screen and scrollback model, keyboard and mouse encoding, and Sixel, iTerm2 and Kitty pictures, with no GUI and no PTY. termwiz is the sibling crate that is published (terminal I/O, surfaces, a re-export of the escape parser) and holds no emulator. Created by Wez Furlong; the last year's commits come mostly from Benoit de Chezelles (bew), Wez Furlong and xtqqczze.",
+          "provenance": {
+            "source": "https://github.com/wezterm/wezterm/blob/c4b1d89fd3cf4b44fdab03df6ac7df925a690060/term/README.md#L3-L11",
+            "confidence": "high",
+            "retrievedAt": "2026-09-25"
+          },
+          "note": "quote: \"This crate provides the core of the virtual terminal emulator implementation\nused by [wezterm](https://wezterm.org/).\" — [measured] same README, lines 9-11: 'terminal escape sequence parsing, keyboard and mouse input encoding, a model for the screen cells including scrollback, sixel and iTerm2 image support'. termwiz's role from termwiz/src/lib.rs:68 ('pub use wezterm_escape_parser as escape;'); maintainers measured under maintainers. Read at wezterm@c4b1d89 (2026-06-20); upstream main was b09b56c29c (2026-09-17)."
+        },
+        "license": {
+          "value": "MIT — an MIT product may link it",
+          "provenance": {
+            "source": "https://github.com/wezterm/wezterm/blob/c4b1d89fd3cf4b44fdab03df6ac7df925a690060/LICENSE.md#L1",
+            "confidence": "high",
+            "retrievedAt": "2026-09-25"
+          },
+          "note": "quote: \"MIT License\" — [measured] term/Cargo.toml:8 and termwiz/Cargo.toml:8 both declare license MIT, and crates.io lists termwiz as MIT. gh api repos/wezterm/wezterm --jq .license.spdx_id returns NOASSERTION because GitHub does not classify LICENSE.md, not because the licence differs."
+        },
+        "language": {
+          "value": "Rust",
+          "provenance": {
+            "source": "measured 2026-09-25: gh api repos/wezterm/wezterm --jq .language",
+            "confidence": "high",
+            "retrievedAt": "2026-09-25"
+          },
+          "note": "quote: \"Rust\" — [measured] wezterm-term and every workspace crate it depends on are Rust (term/Cargo.toml)."
+        },
+        "integration_path": {
+          "value": "git dependency only (or fork + [patch]): wezterm-term has never been published to crates.io and depends on unpublished workspace crates (wezterm-escape-parser, wezterm-cell, wezterm-surface) and on termwiz 0.24.0, while crates.io carries termwiz 0.23.3. A third-party fork, tattoy-wezterm-term 0.1.0-fork.5 (2025-07-11), is on crates.io.",
+          "provenance": {
+            "source": "measured 2026-09-25: curl -s -A 'td-research' https://crates.io/api/v1/crates/wezterm-term | jq -r '.errors[0].detail'",
+            "confidence": "high",
+            "retrievedAt": "2026-09-25"
+          },
+          "note": "quote: \"crate `wezterm-term` does not exist\" — [measured] the same endpoint answered 'does not exist' for wezterm-escape-parser, wezterm-cell and wezterm-surface; termwiz 0.24.0 at termwiz/Cargo.toml:4 against crates.io max_version=0.23.3; the fork from its crates.io endpoint (downloads=11430 max_version=0.1.0-fork.5)."
+        },
+        "build_requirements": {
+          "value": "cargo only as far as the lockfile shows: no C compiler, cmake or system library in wezterm-term's dependency closure (the only cc user, libfuzzer-sys, is reachable only under cfg(fuzzing) via rav1e). But resolving it needs the wezterm git workspace and network access to github.com, because the workspace pins finl_unicode to a branch of wez's fork. Not compiled this session.",
+          "provenance": {
+            "source": "measured 2026-09-25: cd /home/parker/Projects/td-competitor-research/wezterm && cargo tree -p wezterm-term -e normal,build --offline --locked --prefix none",
+            "confidence": "medium",
+            "retrievedAt": "2026-09-25"
+          },
+          "note": "quote: \"unable to update https://github.com/wez/finl_unicode.git?branch=no_std#a1892f26\" — [measured] the git pin is at Cargo.toml:95 (finl_unicode with git = wez/finl_unicode.git, branch no_std). The closure was computed by walking Cargo.lock from wezterm-term with a scratch script (/tmp/claude-1000/-home-parker-Work-terminal-delight/2aae45b7-7163-4590-8990-5cc58ef8f92f/scratchpad/lock_closure.py): cc appears only through libfuzzer-sys, which rav1e 0.8.1 declares under [target.\"cfg(fuzzing)\".dependencies]. The workspace [patch.crates-io] only vendors cairo, which wezterm-term does not use."
+        },
+        "latest_release": {
+          "value": "None for wezterm-term, which has never been released. The newest WezTerm stable release is 20240203-110809-5046fc22 (2024-02-03); termwiz's newest crates.io release is 0.23.3 (2025-03-20). A TD git dependency would pin a main commit (b09b56c29c, 2026-09-17, at retrieval).",
+          "provenance": {
+            "source": "measured 2026-09-25: gh api repos/wezterm/wezterm/releases/latest --jq '[.tag_name,.published_at]|@tsv'",
+            "confidence": "high",
+            "retrievedAt": "2026-09-25"
+          },
+          "note": "quote: \"20240203-110809-5046fc22\t2024-02-03T18:32:26Z\" — [measured] termwiz from curl -s -A 'td-research' https://crates.io/api/v1/crates/termwiz ('max_version=0.23.3 updated_at=2025-03-20T14:21:29.064502Z'); main head from gh api 'repos/wezterm/wezterm/commits?per_page=8'."
+        },
+        "first_release": {
+          "value": "wezterm-term: never released; it became its own crate inside the repository on 2018-01-31 ('move term to its own crate'). termwiz 0.1.0 reached crates.io on 2019-05-28; the tattoy fork first appeared on crates.io 2025-06-25.",
+          "provenance": {
+            "source": "measured 2026-09-25: curl -s -A 'td-research' https://crates.io/api/v1/crates/termwiz | jq -r '.crate | \"downloads=\\(.downloads) max_version=\\(.max_version) updated_at=\\(.updated_at) created_at=\\(.created_at)\"'",
+            "confidence": "high",
+            "retrievedAt": "2026-09-25"
+          },
+          "note": "quote: \"created_at=2019-05-28T02:59:39.419620Z\" — [measured] the earliest commit touching term/Cargo.toml from gh api --paginate 'repos/wezterm/wezterm/commits?path=term/Cargo.toml&per_page=100' is 11e6d538fc at 2018-01-31T18:50:21Z; the fork's created_at=2025-06-25T21:53:05Z from its crates.io endpoint."
+        },
+        "releases_last_12mo": {
+          "value": "0 — no WezTerm GitHub release since 2024-02-03, no termwiz crates.io version since 2025-03-20, and wezterm-term is unpublished",
+          "provenance": {
+            "source": "measured 2026-09-25: curl -s -A 'td-research' https://crates.io/api/v1/crates/termwiz | jq -r '[.versions[] | select(.created_at >= \"2025-09-25\")] | \"count=\\(length)\"'",
+            "confidence": "high",
+            "retrievedAt": "2026-09-25"
+          },
+          "note": "quote: \"count=0\" — [measured] GitHub releases from gh api repos/wezterm/wezterm/releases --jq '.[] | [.tag_name, .published_at, .prerelease, .draft] | @tsv': the newest is 20240203-110809-5046fc22."
+        },
+        "api_stability": {
+          "value": "No stated stability contract and no semver releases: wezterm-term is version 0.1.0 and unpublished, termwiz is pre-1.0, and the escape parser moved out of published termwiz into the unpublished wezterm-escape-parser, so published termwiz no longer matches what wezterm-term compiles against. Accessors intended for downstream users only began arriving on 2026-09-09 (#8045).",
+          "provenance": {
+            "source": "measured 2026-09-25: gh api repos/wezterm/wezterm/commits/9fa147c953 --jq '.commit.message, (.files[] | \"\\(.filename) +\\(.additions) -\\(.deletions)\")'",
+            "confidence": "high",
+            "retrievedAt": "2026-09-25"
+          },
+          "note": "quote: \"Add mouse and focus accessors to TerminalState so downstream programs\nusing wezterm-term crate can introspect the state and act in it.\" — [measured] version from term/Cargo.toml:4; the parser move from termwiz/src/lib.rs:68 ('pub use wezterm_escape_parser as escape;') and commit 6c7e3722b1 (2025-05-10) 'term: normalize imports to wezterm-xxx rather than termwiz re-exports'; docs/escape-sequences.md opens by calling itself a 'living document'."
+        },
+        "maintainers": {
+          "value": "3 contributors above 10% of 141 commits in the last 12 months: bew (Benoit de Chezelles) 57 (40.4%), wez (Wez Furlong, creator and lead) 36 (25.5%), xtqqczze 19 (13.4%). Activity resumed in mid-2026: by commit date, 147 of 182 commits since 2025-09-25 landed June to September 2026, after one in March and none in February, April or May; wez last committed on 2026-08-12. 'Stalled' now describes releases, not commits.",
+          "provenance": {
+            "source": "measured 2026-09-25: gh api repos/wezterm/wezterm/stats/contributors | jq -r '[.[] | {login:.author.login, c:([.weeks[] | select(.w >= 1758758400) | .c] | add)}] | map(select(.c>0)) | sort_by(-.c) as $a | ($a | map(.c) | add) as $t | \"total=\\($t) contributors=\\($a|length)\", ($a[:10][] | \"\\(.login)\\t\\(.c)\\t\\((.c*1000/$t|floor)/10)%\")'",
+            "confidence": "high",
+            "retrievedAt": "2026-09-25"
+          },
+          "note": "quote: \"total=141 contributors=18\nbew\t57\t40.4%\nwez\t36\t25.5%\nxtqqczze\t19\t13.4%\" — [measured] monthly counts from gh api --paginate 'repos/wezterm/wezterm/commits?since=2025-09-25T00:00:00Z&per_page=100' --jq '.[] | .commit.committer.date[:7]' | sort | uniq -c: 2025-10 15, 2025-11 5, 2025-12 1, 2026-01 13, 2026-03 1, 2026-06 45, 2026-07 23, 2026-08 58, 2026-09 21 (stats groups by author week, the list by committer date, hence 141 vs 182). Name from gh api users/bew. Only 6 of those commits touched term/."
+        },
+        "adoption": {
+          "value": "wezterm-term itself has no crates.io presence. Its crates.io fork tattoy-wezterm-term has 11,430 downloads and 4 reverse dependencies (shadow-terminal, agent-tui-infra, fission-widgets, triaged). termwiz, the published sibling without the emulator, has 23,532,960 downloads and 46 reverse dependencies. Named products embedding wezterm-term: WezTerm, and Tattoy through its fork.",
+          "provenance": {
+            "source": "measured 2026-09-25: curl -s -A 'td-research' 'https://crates.io/api/v1/crates/tattoy-wezterm-term/reverse_dependencies' | jq -r '\"total=\\(.meta.total) \" + ([.versions[].crate] | join(\",\"))'",
+            "confidence": "high",
+            "retrievedAt": "2026-09-25"
+          },
+          "note": "quote: \"total=4 shadow-terminal,agent-tui-infra,fission-widgets,triaged\" — [measured] termwiz from curl -s -A 'td-research' https://crates.io/api/v1/crates/termwiz (downloads=23532960) and its reverse_dependencies endpoint (total=46); fork downloads from its crate endpoint (downloads=11430); Tattoy's use from the fork's description 'Tattoy fork of the Virtual Terminal Emulator core from wezterm'."
+        },
+        "kitty_graphics": {
+          "value": "Partial, and off unless the embedder turns it on (TerminalConfiguration::enable_kitty_graphics returns false by default). Transmission: t=d with chunking, t=f, t=t, t=s (POSIX shm through the kitty-shm feature, which termwiz's use_image enables). Formats f=24, f=32, f=100; o=z. a=t, a=T, a=p direct placements with source rectangle, c/r, X/Y offsets, C and z. a=q answers OK or ERROR. Animation frames a=f and composition a=c are handled; a=a playback control is not parsed. Deletes: only a/A and i/I; every other d= value (n/N, c, p, q, r, x, y, z) is logged as unhandled. No U=1 virtual placements or Unicode placeholders (no U key parsed, no U+10EEEE handling). Quota: 320 MiB hard-coded with a FIXME, pruning unreferenced image data. Same code on main b09b56c29c.",
+          "provenance": {
+            "source": "https://github.com/wezterm/wezterm/blob/c4b1d89fd3cf4b44fdab03df6ac7df925a690060/term/src/terminalstate/kitty.rs#L270-L272",
+            "confidence": "high",
+            "retrievedAt": "2026-09-25"
+          },
+          "note": "quote: \"KittyImage::Delete { what, verbosity } => {\n                log::warn!(\"unhandled KittyImage::Delete {:?} {:?}\", what, verbosity);\" — [measured] dispatch at kitty.rs:174-290 (Query :181-199, Delete ByImageId :241-263, All :264-269, TransmitFrame and ComposeFrame :273-286); quota :46-68; default off at term/src/config.rs:175-177; media at wezterm-escape-parser/src/apc.rs:20-60, 111-126 and shm :265-400 behind kitty-shm (enabled by termwiz/Cargo.toml:54); formats apc.rs:467-474; o=z :507; parse_apc actions :1079-1112 with no 'a'; placement keys :582-611 with no U. Upstream main copies of kitty.rs and apc.rs fetched raw on 2026-09-25: same 979-line kitty.rs, same FIXME and unhandled-delete lines, no U key."
+        },
+        "kitty_tags": {
+          "value": "transmit-direct, transmit-file, transmit-temp, transmit-shm, format-png, format-raw, compression, place-direct, delete-by-id, query-reply, z-layers, animation",
+          "note": "[inferred] from the source read for kitty_graphics. Not tagged: place-virtual (no U key, no placeholder code) and delete-by-position (c, p, q, x, y, z unhandled). Partial items tagged: delete-by-id covers d=i/I only (n/N and r/R unhandled); animation covers frame load a=f and composition a=c but not a=a playback control; z-layers means z_index is stored on each ImageCell and WezTerm's GUI draws negative z below text (wezterm-gui/src/termwindow/render/screen_line.rs:473, 668), which TD's renderer would do itself. All of it is disabled unless the embedder's TerminalConfiguration enables Kitty graphics. unknown: none"
+        },
+        "sixel": {
+          "value": "yes — the parser yields Action::Sixel and TerminalState::sixel (term/src/terminalstate/sixel.rs) paints it into cells as image slices; DA1 advertises 4; colour registers are shared by default (private registers per graphic off) with a VT340 colour table seeded",
+          "provenance": {
+            "source": "https://github.com/wezterm/wezterm/blob/c4b1d89fd3cf4b44fdab03df6ac7df925a690060/term/src/terminalstate/sixel.rs#L10",
+            "confidence": "high",
+            "retrievedAt": "2026-09-25"
+          },
+          "note": "quote: \"pub(crate) fn sixel(&mut self, sixel: Box<Sixel>) {\" — [measured] dispatch at term/src/terminalstate/performer.rs:279 ('Action::Sixel(sixel) => self.sixel(sixel),'); DA1 builds ';4 // Sixel graphics' at terminalstate/mod.rs:1287-1294; default_color_map 'Match colors to the VT340 color table' at mod.rs:403-406 and use_private_color_registers_for_each_graphic: false at :536."
+        },
+        "iterm2_images": {
+          "value": "yes — OSC 1337 File= is handled by TerminalState::set_image (term/src/terminalstate/iterm.rs), including doNotMoveCursor; no MultipartFile support found",
+          "provenance": {
+            "source": "https://github.com/wezterm/wezterm/blob/c4b1d89fd3cf4b44fdab03df6ac7df925a690060/term/src/terminalstate/performer.rs#L828",
+            "confidence": "high",
+            "retrievedAt": "2026-09-25"
+          },
+          "note": "quote: \"ITermProprietary::File(image) => self.set_image(*image),\" — [measured] set_image at iterm.rs:10; doNotMoveCursor read at wezterm-escape-parser/src/osc.rs:1043; grep -rni MultipartFile over the checkout's .rs files found nothing."
+        },
+        "picture_anchoring": {
+          "value": "Per-cell attribute: every covered cell's CellAttributes holds a Vec<Box<ImageCell>> with that cell's texture-coordinate slice, an Arc<ImageData>, z_index, padding and the Kitty image and placement ids. Pictures therefore scroll into scrollback and are freed with their lines, and on reflow their slices wrap like text (inferred from the storage). Writing a cell drops its image slices unless they carry a Kitty placement id, so Sixel and iTerm2 pictures erase under text. Quota: 320 MiB for Kitty image data only (kitty.rs:47); other pictures live as long as their cells.",
+          "provenance": {
+            "source": "https://github.com/wezterm/wezterm/blob/c4b1d89fd3cf4b44fdab03df6ac7df925a690060/wezterm-cell/src/image.rs#L81-L86",
+            "confidence": "high",
+            "retrievedAt": "2026-09-25"
+          },
+          "note": "quote: \"pub struct ImageCell {\n    /// Texture coordinate for the top left of this cell.\n    /// (0,0) is the top left of the ImageData. (1, 1) is\n    /// the bottom right.\n    top_left: TextureCoordinate,\" — [measured] FatAttributes.image at wezterm-cell/src/lib.rs:94-96; ImageCell fields image.rs:81-100; overwrite rule at wezterm-surface/src/line/vecstorage.rs:23-34 (keeps images only if has_placement_id()); rewrap at term/src/screen.rs:100. The scroll and reflow consequences are inferred from per-cell storage, not traced through rewrap_lines."
+        },
+        "vt_conformance": {
+          "value": "An old claim: the 20200620 release notes say it passes esctest 'to a similar degree as iTerm2'; docs/escape-sequences.md is a per-sequence reference that calls itself a living document. No current vttest or esctest results found.",
+          "provenance": {
+            "source": "https://github.com/wezterm/wezterm/blob/c4b1d89fd3cf4b44fdab03df6ac7df925a690060/docs/changelog.md#L2319-L2321",
+            "confidence": "high",
+            "retrievedAt": "2026-09-25"
+          },
+          "note": "quote: \"* Improved terminal emulation conformance; added left/right margin support\n  and now passes [esctest](https://gitlab.freedesktop.org/terminal-wg/esctest)\n  to a similar degree as iTerm2\" — [measured] section heading 20200620-160318-e00b076c at docs/changelog.md:2291; the living-document note at docs/escape-sequences.md:1-4."
+        },
+        "vt_features": {
+          "value": "kitty-keyboard: yes, opt-in — flag stack at term/src/terminalstate/performer.rs:530-549; TerminalConfiguration::enable_kitty_keyboard defaults to false (term/src/config.rs:179-181)\nosc8-hyperlinks: yes — CellAttributes::hyperlink (wezterm-cell/src/lib.rs:464)\nsync-output-2026: no, not in wezterm-term — mode 2026 is ignored with 'This is handled in wezterm's mux' (term/src/terminalstate/mod.rs:1573-1589); WezTerm's mux buffers parsed actions until the mode resets (mux/src/lib.rs:160-185), so an embedder re-implements it\nosc52-clipboard: yes — OperatingSystemCommand::SetSelection through the Clipboard trait (performer.rs:789); DA1 advertises 52\ngrapheme-clusters: yes — a cell holds a grapheme string (Cell::str; Screen::set_cell_grapheme at term/src/screen.rs:411)\nreflow-on-resize: yes — Screen::rewrap_lines (term/src/screen.rs:100)\nalt-screen: yes — modes 1047 / 1049 (terminalstate/mod.rs:1674-1891) and is_alt_screen_active (mod.rs:755)\nbracketed-paste: yes — terminalstate/mod.rs:1663-1669\nmouse-sgr: yes — terminalstate/mod.rs:1818-1826",
+          "provenance": {
+            "source": "https://github.com/wezterm/wezterm/blob/c4b1d89fd3cf4b44fdab03df6ac7df925a690060/term/src/terminalstate/mod.rs#L1573-L1577",
+            "confidence": "high",
+            "retrievedAt": "2026-09-25"
+          },
+          "note": "quote: \"Mode::SetDecPrivateMode(DecPrivateMode::Code(\n                DecPrivateModeCode::SynchronizedOutput,\n            )) => {\n                // This is handled in wezterm's mux\" — [measured] each other line cites its own file:line at wezterm@c4b1d89; the quote backs the one 'no', which matters most to TD."
+        },
+        "performance_evidence": {
+          "value": "unknown",
+          "flagged": true,
+          "note": "Searched term/ (no benches directory), termwiz/benches (only cell.rs, a cell-construction micro-benchmark), vtparse/ and wezterm-escape-parser/ (no benches), docs/, and the rio-vt benchmark post (which compares rio-vt, vt100 and alacritty_terminal only). No published parse-throughput or per-cell memory figure for wezterm-term was found; establishing one needs a local Criterion run on the same workloads."
+        },
+        "grid_api": {
+          "value": "Terminal derefs to TerminalState; screen() -> &Screen. Screen::lines_in_phys_range(range) -> Vec<Line>, visible_lines(), all_lines(), with_phys_lines(range, f), and conversions between physical, visible and stable row indices. Line::visible_cells() yields CellRef values (cell_index(), str() for the whole grapheme, width(), attrs()) and skips the blank cell a wide character covers. CellAttributes: foreground(), background(), underline_color(), intensity, underline kind, italic, reverse, strikethrough, invisible, overline, wrapped, hyperlink(), images(). Cursor: TerminalState::cursor_pos() -> CursorPosition. Modes through accessors such as is_alt_screen_active(), plus mouse and focus accessors added on main in September 2026 (#8045).",
+          "provenance": {
+            "source": "https://github.com/wezterm/wezterm/blob/c4b1d89fd3cf4b44fdab03df6ac7df925a690060/wezterm-surface/src/line/line.rs#L1020-L1027",
+            "confidence": "high",
+            "retrievedAt": "2026-09-25"
+          },
+          "note": "quote: \"/// For instance, a double-width cell overlaps the following (blank)\n    /// cell, so that blank cell is omitted from the iterator results.\" — [measured] visible_cells at line.rs:1027; Screen methods at term/src/screen.rs:350-982; CellAttributes at wezterm-cell/src/lib.rs:56-100 and 464-480; Cell::str, width and attrs at lib.rs:807-820; screen() and cursor_pos() at term/src/terminalstate/mod.rs:697 and 945; #8045 from gh api repos/wezterm/wezterm/commits/9fa147c953."
+        },
+        "damage_tracking": {
+          "value": "yes — by sequence number: each Line records the seqno of its last change, TerminalState::current_seqno() gives the current one, and Screen::get_changed_stable_rows(range, seqno) returns the stable rows changed since a given seqno",
+          "provenance": {
+            "source": "https://github.com/wezterm/wezterm/blob/c4b1d89fd3cf4b44fdab03df6ac7df925a690060/term/src/screen.rs#L909-L913",
+            "confidence": "high",
+            "retrievedAt": "2026-09-25"
+          },
+          "note": "quote: \"pub fn get_changed_stable_rows(\n        &self,\n        stable_lines: Range<StableRowIndex>,\n        seqno: SequenceNo,\n    ) -> Vec<StableRowIndex> {\" — [measured] Line::changed_since and current_seqno at wezterm-surface/src/line/line.rs:283-287; TerminalState::current_seqno at term/src/terminalstate/mod.rs:592. WezTerm's mux ships these as dirty_lines ranges (codec/src/lib.rs:919)."
+        },
+        "state_snapshot": {
+          "value": "No whole-terminal serializer and no VT re-encoder. With the use_serde feature, Line and Cell (with hyperlinks and image cells) are serde types, and WezTerm's own client/server mux sends SerializedLines (stable-row-indexed lines plus hyperlinks and images) with cursor, dimensions and dirty ranges: a line-level replica protocol rather than VT bytes. Modes, scroll regions, tab stops and parser state are not in that message (inferred from its fields).",
+          "provenance": {
+            "source": "https://github.com/wezterm/wezterm/blob/c4b1d89fd3cf4b44fdab03df6ac7df925a690060/codec/src/lib.rs#L974-L978",
+            "confidence": "high",
+            "retrievedAt": "2026-09-25"
+          },
+          "note": "quote: \"pub struct SerializedLines {\n    lines: Vec<(StableRowIndex, Line)>,\n    hyperlinks: Vec<LineHyperlink>,\n    images: Vec<SerializedImageCell>,\n}\" — [measured] use_serde feature at term/Cargo.toml:13-14; GetPaneRenderChangesResponse (cursor_position, dimensions, dirty_lines, bonus_lines: SerializedLines, seqno) at codec/src/lib.rs:914-928."
+        },
+        "threading_and_loop": {
+          "value": "The embedder owns the read loop and the PTY: feed bytes with Terminal::advance_bytes(bytes), or parse elsewhere and apply with perform_actions(Vec<Action>), which is what WezTerm's mux does from a reader thread. No PTY layer in the crate (WezTerm's is the separate portable-pty crate). Terminal::new spawns one writer thread per terminal (ThreadedWriter) that pushes replies into the supplied writer. WezTerm keeps each Terminal behind a Mutex; the configuration, clipboard and alert handler are Send + Sync trait objects.",
+          "provenance": {
+            "source": "https://github.com/wezterm/wezterm/blob/c4b1d89fd3cf4b44fdab03df6ac7df925a690060/term/README.md#L13-L16",
+            "confidence": "high",
+            "retrievedAt": "2026-09-25"
+          },
+          "note": "quote: \"This crate does not provide any kind of gui, nor does it directly\nmanage a PTY; you provide a `std::io::Write` implementation that\ncould connect to a PTY, and supply bytes to the model via the\n`advance_bytes` method.\" — [measured] advance_bytes and perform_actions at term/src/terminal.rs:159-185; ThreadedWriter spawns std::thread at term/src/terminalstate/mod.rs:446-478; Mutex<Terminal> at mux/src/localpane.rs:126; the Send + Sync bounds at terminal.rs:13 (Clipboard), :76 (AlertHandler) and config.rs:135 (TerminalConfiguration); pty/Cargo.toml:2 names portable-pty."
+        },
+        "reply_channel": {
+          "value": "A Box<dyn std::io::Write + Send> passed to Terminal::new. DA1/DA2, DSR, DECRQM, window-size reports and Kitty a=q replies are written straight into it (through the per-terminal ThreadedWriter), as are keyboard and mouse encodings; title, bell, clipboard and palette changes go to an AlertHandler. There is no reply event to filter, so a TD replica would pass std::io::sink() and only the host's terminal would answer.",
+          "provenance": {
+            "source": "https://github.com/wezterm/wezterm/blob/c4b1d89fd3cf4b44fdab03df6ac7df925a690060/term/src/terminal.rs#L141-L144",
+            "confidence": "high",
+            "retrievedAt": "2026-09-25"
+          },
+          "note": "quote: \"/// `writer` is anything that implements `std::io::Write`; it\n    /// is used to send input to the connected program; both keyboard\n    /// and mouse input is encoded and written to that stream, as\n    /// are answerback responses to a number of escape sequences.\" — [measured] Kitty replies via write!(self.writer, ...) at term/src/terminalstate/kitty.rs:351-387; DA1 written at terminalstate/mod.rs:1287-1296; AlertHandler at terminal.rs:76."
+        },
+        "td_migration": {
+          "value": "The largest rewrite of the Rust candidates, since nothing maps one-to-one. host.rs and socketpty.rs: alacritty's EventLoop, Notifier and tty traits go with no replacement, so TD writes its own PTY read loop (which the Kitty work needs anyway), feeds Terminal::advance_bytes, and re-implements DEC 2026 synchronized output, which wezterm-term leaves to WezTerm's mux. term.rs: Term and Config become Terminal::new(TerminalSize, Arc<dyn TerminalConfiguration>, term_program, term_version, writer) with a TD TerminalConfiguration that switches on Kitty graphics and keyboard; the host passes the PTY writer, the replica std::io::sink(). gridwire.rs: rewrite the encoder over Screen, Line, CellRef and CellAttributes with stable row indices; pictures sit as ImageCell slices inside cell attributes, which a VT re-encode cannot carry, so either add a picture channel or replace gridwire with WezTerm-style serde SerializedLines. pane.rs (51 grid reads): Line::visible_cells and CellRef::str (grapheme strings instead of a char plus zero-width list), CellAttributes getters, per-cell image slices drawn in gpui with negative z under text; selection must be rebuilt because WezTerm keeps it in wezterm-gui (wezterm-gui/src/selection.rs), not in the crate. main.rs and pane/bench.rs: renames. Build: a git dependency on the wezterm workspace, which brings the finl_unicode git fork with it.",
+          "note": "[inferred] reasoning over TD's seven alacritty-importing files in /home/parker/Work/td-terminal-core/app/src (grep counts of alacritty_terminal: gridwire.rs 19, term.rs 18, socketpty.rs 12, host.rs 8, main.rs 3, pane.rs 3 imports but 51 grid reads, pane/bench.rs 1) against the APIs cited in grid_api, threading_and_loop, reply_channel and state_snapshot; nothing was built."
+        },
+        "biggest_risk": {
+          "value": "TD would take a git dependency on an unpublished crate with no release since February 2024 and no embedding contract, whose Kitty support lacks the Unicode placeholders that ratatui-image and yazi rely on, so TD would end up maintaining its own fork of WezTerm's core.",
+          "note": "[inferred] judgement from the measured maintainers, api_stability, latest_release and kitty_graphics fields."
+        },
+        "primary_sources": {
+          "value": "https://github.com/wezterm/wezterm/blob/c4b1d89fd3cf4b44fdab03df6ac7df925a690060/term/README.md https://github.com/wezterm/wezterm/blob/c4b1d89fd3cf4b44fdab03df6ac7df925a690060/term/Cargo.toml https://github.com/wezterm/wezterm/blob/c4b1d89fd3cf4b44fdab03df6ac7df925a690060/Cargo.toml https://github.com/wezterm/wezterm/blob/c4b1d89fd3cf4b44fdab03df6ac7df925a690060/LICENSE.md https://github.com/wezterm/wezterm/blob/c4b1d89fd3cf4b44fdab03df6ac7df925a690060/term/src/terminal.rs https://github.com/wezterm/wezterm/blob/c4b1d89fd3cf4b44fdab03df6ac7df925a690060/term/src/config.rs https://github.com/wezterm/wezterm/blob/c4b1d89fd3cf4b44fdab03df6ac7df925a690060/term/src/screen.rs https://github.com/wezterm/wezterm/blob/c4b1d89fd3cf4b44fdab03df6ac7df925a690060/term/src/terminalstate/mod.rs https://github.com/wezterm/wezterm/blob/c4b1d89fd3cf4b44fdab03df6ac7df925a690060/term/src/terminalstate/kitty.rs https://github.com/wezterm/wezterm/blob/c4b1d89fd3cf4b44fdab03df6ac7df925a690060/term/src/terminalstate/performer.rs https://github.com/wezterm/wezterm/blob/c4b1d89fd3cf4b44fdab03df6ac7df925a690060/term/src/terminalstate/sixel.rs https://github.com/wezterm/wezterm/blob/c4b1d89fd3cf4b44fdab03df6ac7df925a690060/term/src/terminalstate/image.rs https://github.com/wezterm/wezterm/blob/c4b1d89fd3cf4b44fdab03df6ac7df925a690060/wezterm-escape-parser/src/apc.rs https://github.com/wezterm/wezterm/blob/c4b1d89fd3cf4b44fdab03df6ac7df925a690060/wezterm-escape-parser/src/osc.rs https://github.com/wezterm/wezterm/blob/c4b1d89fd3cf4b44fdab03df6ac7df925a690060/wezterm-escape-parser/Cargo.toml https://github.com/wezterm/wezterm/blob/c4b1d89fd3cf4b44fdab03df6ac7df925a690060/wezterm-cell/src/lib.rs https://github.com/wezterm/wezterm/blob/c4b1d89fd3cf4b44fdab03df6ac7df925a690060/wezterm-cell/src/image.rs https://github.com/wezterm/wezterm/blob/c4b1d89fd3cf4b44fdab03df6ac7df925a690060/wezterm-surface/src/line/line.rs https://github.com/wezterm/wezterm/blob/c4b1d89fd3cf4b44fdab03df6ac7df925a690060/wezterm-surface/src/line/vecstorage.rs https://github.com/wezterm/wezterm/blob/c4b1d89fd3cf4b44fdab03df6ac7df925a690060/termwiz/Cargo.toml https://github.com/wezterm/wezterm/blob/c4b1d89fd3cf4b44fdab03df6ac7df925a690060/termwiz/src/lib.rs https://github.com/wezterm/wezterm/blob/c4b1d89fd3cf4b44fdab03df6ac7df925a690060/codec/src/lib.rs https://github.com/wezterm/wezterm/blob/c4b1d89fd3cf4b44fdab03df6ac7df925a690060/mux/src/lib.rs https://github.com/wezterm/wezterm/blob/c4b1d89fd3cf4b44fdab03df6ac7df925a690060/mux/src/localpane.rs https://github.com/wezterm/wezterm/blob/c4b1d89fd3cf4b44fdab03df6ac7df925a690060/docs/changelog.md https://github.com/wezterm/wezterm/blob/c4b1d89fd3cf4b44fdab03df6ac7df925a690060/docs/escape-sequences.md https://raw.githubusercontent.com/wezterm/wezterm/main/term/src/terminalstate/kitty.rs https://raw.githubusercontent.com/wezterm/wezterm/main/wezterm-escape-parser/src/apc.rs https://api.github.com/repos/wezterm/wezterm https://api.github.com/repos/wezterm/wezterm/releases https://api.github.com/repos/wezterm/wezterm/stats/contributors https://api.github.com/repos/wezterm/wezterm/commits/9fa147c953 https://crates.io/api/v1/crates/wezterm-term https://crates.io/api/v1/crates/termwiz https://crates.io/api/v1/crates/termwiz/reverse_dependencies https://crates.io/api/v1/crates/tattoy-wezterm-term https://crates.io/api/v1/crates/tattoy-wezterm-term/reverse_dependencies synthesis:file:///tmp/claude-1000/-home-parker-Work-terminal-delight/2aae45b7-7163-4590-8990-5cc58ef8f92f/scratchpad/graphics-protocols.md synthesis:file:///home/parker/Work/td-terminal-core/docs/2026-08-29-foundation-interrogation-zed-gpui-quickshell.md",
+          "provenance": {
+            "source": "https://github.com/wezterm/wezterm/blob/c4b1d89fd3cf4b44fdab03df6ac7df925a690060/term/README.md#L1-L3",
+            "confidence": "high",
+            "retrievedAt": "2026-09-25"
+          },
+          "note": "quote: \"# wezterm-term\n\nThis crate provides the core of the virtual terminal emulator implementation\" — [measured] the list of what was read this session; the quote is the opening of the first entry. Source files were read in the local checkout /home/parker/Projects/td-competitor-research/wezterm at c4b1d89 (2026-06-20); kitty.rs and apc.rs were re-checked on upstream main."
+        }
+      },
+      "insights": []
+    }
+  ],
+  "bubbles": [
+    {
+      "kind": "serendipity",
+      "subjectId": "rio-vt",
+      "note": "Published rio-vt 0.5.28 depends on parking_lot ^0.12.5 with features nightly and hardware-lock-elision. Cargo unifies features, so adopting rio-vt would switch lock elision on for every parking_lot user in TD's graph, gpui included. On Linux x86 the nightly feature only affects wasm atomics in parking_lot_core 0.9.12 (lib.rs:48), so stable Rust still builds, but lock behaviour changes process-wide.",
+      "why": "a dependency swap that silently alters gpui's locking is worth a check before any spike",
+      "source": "measured 2026-09-25: curl -s -A 'td-research' https://crates.io/api/v1/crates/rio-vt/0.5.28/dependencies | jq -r '.dependencies[] | select(.crate_id==\"parking_lot\")' (features=nightly,hardware-lock-elision); https://github.com/raphamorim/rio/blob/37624389e8dde79ba25a8147a5e809c01d16d1c9/Cargo.toml#L49-L52"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "rio-vt",
+      "note": "rio-vt's README has drifted from its code: it says EventListener::event() is required (no such method in event/mod.rs:428-436), its feature table omits the default `pty` feature and the `graphics` feature that PNG and iTerm2 decoding need. An embedder following the README gets Kitty PNG answered with EINVAL.",
+      "why": "a spike should enable `graphics` explicitly and read the source, not the README",
+      "source": "https://github.com/raphamorim/rio/blob/37624389e8dde79ba25a8147a5e809c01d16d1c9/rio-vt/README.md"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "rio-vt",
+      "note": "Crosswords::contents_formatted() writes only each cell's base character (formatter.rs:128-129), so a replica restored from it loses combining marks; librio's Surface::serialize() (librio/src/lib.rs:896-960, MIT, built only on rio-vt's public API) handles scrollback and OSC 8 and is a portable reference if TD adopts rio-vt, though TD's gridwire.rs already does more.",
+      "why": "TD's host/replica hash comparison would flag the mark loss immediately",
+      "source": "https://github.com/raphamorim/rio/blob/37624389e8dde79ba25a8147a5e809c01d16d1c9/rio-vt/src/crosswords/formatter.rs#L111-L135"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "wezterm-term",
+      "note": "The foundation review's 'maintainer absent' is out of date for commits: 147 of 182 commits since 2025-09-25 landed June to September 2026, Benoit de Chezelles (bew) is now the top committer, and a September 2026 commit (#8045) adds TerminalState accessors explicitly 'for downstream users'. It remains accurate for releases (none since 2024-02-03).",
+      "why": "the review's option F reasoning cites WezTerm as stalled; half of that premise has changed",
+      "source": "measured 2026-09-25: gh api --paginate 'repos/wezterm/wezterm/commits?since=2025-09-25T00:00:00Z&per_page=100' --jq '.[] | .commit.committer.date[:7]' | sort | uniq -c"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "wezterm-term",
+      "note": "WezTerm's own mux is prior art for TD's host/replica split, done differently: the server keeps the only emulator and clients receive serde SerializedLines plus dirty stable-row ranges keyed by sequence number (codec GetPaneRenderChangesResponse), with images shipped as SerializedImageCell, instead of re-encoded VT bytes and a hash check.",
+      "why": "a line-level wire protocol would carry pictures to the window, which TD's VT snapshot cannot",
+      "source": "https://github.com/wezterm/wezterm/blob/c4b1d89fd3cf4b44fdab03df6ac7df925a690060/codec/src/lib.rs#L914-L978"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "wezterm-term",
+      "note": "crates.io rejects requests without a User-Agent: the brief's example command 'curl -s https://crates.io/api/v1/crates/rio-vt' returned an empty body on 2026-09-25, while the same request with -A 'td-research' returned the JSON. Other gatherers using the bare command may record a crate as missing when it is not.",
+      "why": "a silent empty response reads like absence, and absence is not zero",
+      "source": "measured 2026-09-25: curl -s https://crates.io/api/v1/crates/rio-vt (0-byte body) vs curl -s -A 'td-research' https://crates.io/api/v1/crates/rio-vt"
+    }
+  ],
+  "tokens": 0
+}

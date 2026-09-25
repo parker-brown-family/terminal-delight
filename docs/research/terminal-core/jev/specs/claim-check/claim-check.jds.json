@@ -1,0 +1,461 @@
+{
+  "jds": "0.1",
+  "id": "claim-check",
+  "version": 3,
+  "title": "Does the passage a research agent quoted state the fact it recorded?",
+  "status": "shadow",
+  "decision": {
+    "statement": "For each fact a research agent recorded about a candidate terminal core, decide whether the verbatim passage it quoted states that fact, so the decision record for Terminal Delight's core shows only facts their own sources support, and every other fact is marked or sent to a person.",
+    "consumer": "Parker, reading the terminal-core decision page; and the agent assembling it, which renders each fact with its verdict",
+    "acts_on_result": "marks each fact supported, overclaims, unsupported or needs-a-person on the page; never edits a fact, never deletes one, never decides which core TD uses",
+    "consequence": "medium",
+    "frequency": {
+      "decisions_per_run": 400,
+      "runs_per_day": 1
+    },
+    "latency_class": "background",
+    "latency_budget_ms": null,
+    "code_owns": [
+      "whether a quote exists at all",
+      "whether every number of two or more digits in the value appears in the quote or the measuring command",
+      "whether the source is the project's own (repository, crate page, docs) or a command run this session",
+      "whether the agent labelled the fact inferred",
+      "the verdict rule"
+    ],
+    "not_decided_here": [
+      "whether the fact is true in the world",
+      "which core TD should use",
+      "whether the quote was copied exactly from its source"
+    ]
+  },
+  "axes": [
+    {
+      "id": "support",
+      "means": "how the quoted passage bears on the recorded fact",
+      "source": "jev",
+      "questions": [
+        "check.support"
+      ],
+      "consumer_uses_it_for": "a fact whose quote does not state it is shown as unverified or overclaiming, never as a finding"
+    },
+    {
+      "id": "other_subject",
+      "means": "whether the quote is about a different project than the one the fact is recorded for",
+      "source": "jev",
+      "questions": [
+        "check.other_subject"
+      ],
+      "consumer_uses_it_for": "a quote about Ghostty cannot support a fact about rio-vt, however well it matches"
+    },
+    {
+      "id": "quote_present",
+      "means": "the agent supplied a quote",
+      "source": "code",
+      "compute": "builders.py:quote_present",
+      "consumer_uses_it_for": "items without one never reach Jev; claims.py counts them separately"
+    },
+    {
+      "id": "numbers_match",
+      "means": "every multi-digit number in the headline appears in the quote or the command: match, mismatch, or none (no number to check)",
+      "source": "code",
+      "compute": "builders.py:numbers_match",
+      "consumer_uses_it_for": "Jev reads counts and dates literally but cannot be trusted to compare them; a missing number goes to a person"
+    },
+    {
+      "id": "primary_source",
+      "means": "the source is the project's own or a command run this session",
+      "source": "code",
+      "compute": "builders.py:primary_source",
+      "consumer_uses_it_for": "shown beside the verdict; a supported fact from a secondary source is still marked secondary"
+    },
+    {
+      "id": "elaborated",
+      "means": "the value carries more than its headline",
+      "source": "code",
+      "compute": "builders.py:elaborated",
+      "consumer_uses_it_for": "the page marks the elaboration as the agent's, unchecked, so a supported headline never lends its badge to the sentences after it"
+    },
+    {
+      "id": "verdict",
+      "means": "what the page shows for this fact",
+      "source": "combination",
+      "compute": "'human' if axis.numbers_match == 'mismatch' else ('human' if axis.support == 'contradicts' or conf(check.support) < 0.305 or axis.other_subject >= 0.755 else ('supported' if axis.support == 'states' else ('inferred' if axis.support == 'implies' else ('overclaims' if axis.support == 'states_part' else 'unsupported'))))",
+      "consumer_uses_it_for": "the badge on every fact in the decision record"
+    }
+  ],
+  "output": {
+    "record": {
+      "support": "states | states_part | implies | contradicts | silent | null",
+      "other_subject": "probability | null",
+      "numbers_match": "match | mismatch | none",
+      "primary_source": "true | false | null (null: no source URL could be parsed)",
+      "verdict": "supported | inferred | overclaims | unsupported | human | null",
+      "elaborated": "true | false"
+    },
+    "combination": "version 3: as version 2, plus 'inferred' for a headline that follows directly from quoted code, configuration or command output; the contested edge moves to 0.305 for five options.",
+    "unknown_rendering": "unchecked facts render with a grey 'unchecked' badge, never as supported"
+  },
+  "frames": {
+    "claim_packet": {
+      "builder": "builders.py:claim_packet",
+      "fields": {
+        "subject": {
+          "provenance": "computed",
+          "from": "the research plan's subject label"
+        },
+        "claim.field": {
+          "provenance": "computed",
+          "from": "the rubric's description of the field"
+        },
+        "claim.value": {
+          "provenance": "asserted",
+          "from": "reported by the research agent; its headline only",
+          "transform": "the value up to its first dash, semicolon, colon or sentence end (builders.headline); the elaboration after it is not sent"
+        },
+        "quote": {
+          "provenance": "asserted",
+          "from": "the research agent, which says it copied the passage from the cited source; not re-fetched here",
+          "absent": "omit: the item never reaches Jev"
+        }
+      },
+      "est_tokens": 220,
+      "privacy_class": "public",
+      "snapshot": "the research-delight run's round and part file"
+    }
+  },
+  "calls": [
+    {
+      "id": "check",
+      "frame": "claim_packet",
+      "when": "always",
+      "reason": "sub-decision",
+      "questions": {
+        "support": {
+          "type": "choice",
+          "instructions": {
+            "question": "How does `quote` bear on the claim that, for `subject`, `claim.field` is `claim.value`?",
+            "judge_by": "only the words in `quote`; ignore anything you know about the project from elsewhere",
+            "note": "`quote` may be a sentence from documentation, a line of source code, a function signature, or the output of a command"
+          },
+          "criteria": {
+            "states": {
+              "means": "The quote says what `claim.value` says, in the same or other words. Extra detail in the quote does not matter.",
+              "not_for": "A claim that adds a fact the quote does not contain."
+            },
+            "states_part": {
+              "means": "The quote supports some of `claim.value`, and `claim.value` also asserts something the quote does not say.",
+              "not_for": "A claim that only rewords or summarises the quote."
+            },
+            "implies": {
+              "means": "The quote is code, configuration, a signature or command output from which `claim.value` follows directly: a reader who knows the format would conclude it, though the quote does not say it in words.",
+              "not_for": "A quote that only touches the topic without settling it, or one that needs facts from outside the quote."
+            },
+            "contradicts": {
+              "means": "The quote says something that cannot be true if `claim.value` is true."
+            },
+            "silent": {
+              "means": "The quote neither supports nor contradicts `claim.value`: it is about something else, or too vague to decide."
+            }
+          }
+        },
+        "other_subject": {
+          "type": "noul",
+          "instructions": {
+            "question": "Is `quote` about a different project, library or program than `subject`?",
+            "judge_by": "the names and descriptions in `quote`"
+          },
+          "criteria": {
+            "true": "The quote names or describes a project, library or program other than `subject`, and not `subject` itself.",
+            "false": "The quote is about `subject`, about a part of it, or names no project at all."
+          }
+        }
+      }
+    }
+  ],
+  "meaning": {
+    "check.support": {
+      "type": "choice",
+      "options": {
+        "states": {
+          "means": "the fact is what the passage says",
+          "route": "accept"
+        },
+        "states_part": {
+          "means": "the agent recorded more than its passage carries: a summary that added a feature, a version, or a scope",
+          "route": "flag:overclaims"
+        },
+        "contradicts": {
+          "means": "the passage and the fact disagree: a negation dropped, a yes that should be a no",
+          "route": "human"
+        },
+        "silent": {
+          "means": "the passage does not bear on the fact: the wrong excerpt, or an excerpt too general to decide",
+          "route": "flag:unsupported"
+        },
+        "implies": {
+          "means": "the fact is the agent's reading of its evidence: checkable, and not the source's own words",
+          "route": "flag:inferred"
+        }
+      },
+      "confidence_bands": [
+        {
+          "id": "contested",
+          "range": [
+            0.0,
+            0.305
+          ],
+          "means": "two readings are live across five options",
+          "route": "human"
+        },
+        {
+          "id": "clear",
+          "range": [
+            0.305,
+            1.0
+          ],
+          "means": "one reading dominates",
+          "route": "per-option"
+        }
+      ],
+      "confusable": [
+        {
+          "pair": [
+            "states",
+            "states_part"
+          ],
+          "margin": 0.2,
+          "means": "a claim that summarises its quote with a small addition; harmless when the addition is a wording, not a fact",
+          "route": "accept"
+        },
+        {
+          "pair": [
+            "states_part",
+            "silent"
+          ],
+          "margin": 0.2,
+          "means": "a quote that touches the topic but carries none of the claim's specifics",
+          "route": "flag:unsupported"
+        },
+        {
+          "pair": [
+            "implies",
+            "silent"
+          ],
+          "margin": 0.2,
+          "means": "code that bears on the fact only through knowledge outside the quote",
+          "route": "flag:unsupported"
+        }
+      ],
+      "escape": "silent",
+      "expect": {
+        "option_shares": {
+          "states": [
+            0.1,
+            0.45
+          ],
+          "implies": [
+            0.15,
+            0.5
+          ],
+          "states_part": [
+            0.08,
+            0.35
+          ],
+          "contradicts": [
+            0.0,
+            0.08
+          ],
+          "silent": [
+            0.03,
+            0.2
+          ]
+        },
+        "confidence_median": [
+          0.4,
+          1.0
+        ],
+        "why": "the v2 sample showed most quotes are premises (code, manifests, command output); implies should absorb most of v2's silent; five options spread confidence thinner"
+      },
+      "calibration": "measured: n=40 stratified labels by the assembling agent, 2026-09-25; 'states' 8/8, 'contradicts' 0/8",
+      "known_failures": [
+        "a value that negates the quote with a synonym ('no virtual placements' against 'virtual Unicode placements … are outside the supported boundary') may read as silent rather than states",
+        "numbers are read literally but compared unreliably: numbers_match carries that axis instead",
+        "measured on v3: 'contradicts' was wrong in 8 of 8 sampled cases, each a headline stated as an absence or a qualification ('Replies are events, not writes' against 'Write some text to the PTY'); jev-1.13's literal reading of negations. It routes to a person, which is where it belongs. The assembling agent read all 17 by hand: none was a contradiction in its source. Two (Contour's and alacritty's performance figures) were reconciled by the elaboration that the headline check leaves out: decomposing the value removed the context that explained the figure."
+      ]
+    },
+    "check.other_subject": {
+      "type": "noul",
+      "proposition": "the quote is about a project other than the fact's subject",
+      "bands": [
+        {
+          "id": "same",
+          "range": [
+            0.0,
+            0.255
+          ],
+          "means": "the quote is about the subject or names no project",
+          "route": "accept"
+        },
+        {
+          "id": "unclear",
+          "range": [
+            0.255,
+            0.755
+          ],
+          "means": "the quote names a dependency, a fork or a sibling (Rio for rio-vt, Ghostty for libghostty-vt, alacritty for alacritty_terminal)",
+          "route": "accept"
+        },
+        {
+          "id": "other",
+          "range": [
+            0.755,
+            1.0
+          ],
+          "means": "the quote describes another project outright",
+          "route": "human"
+        }
+      ],
+      "expect": {
+        "band_shares": {
+          "other": [
+            0.0,
+            0.08
+          ]
+        },
+        "why": "subjects in this run are often parts of a larger project; their quotes name the parent"
+      },
+      "calibration": "assumed",
+      "known_failures": [
+        "an option framed around another project (ghostty-shadow, alacritty-own-loop) quotes its parts by design"
+      ]
+    }
+  },
+  "invariants": [
+    {
+      "id": "stated-but-numbers-missing",
+      "when": "check.support == 'states' and axis.numbers_match == 'mismatch'",
+      "means": "Jev read the quote as stating the fact, but a number in the fact is not in the quote: Jev compared numbers loosely, or the agent's count differs from its own evidence",
+      "route": "human"
+    },
+    {
+      "id": "silent-from-a-command",
+      "when": "check.support == 'silent' and item.measured_by_command == True",
+      "means": "a measured fact whose quoted output does not bear on it: the agent quoted the wrong part of the output",
+      "route": "feedback:quote-rule"
+    }
+  ],
+  "max_depth": 1,
+  "economics": {
+    "price_per_mtok_usd": 0.042,
+    "p50_ms_per_call": 200,
+    "tokens_per_question": 20,
+    "split_tolerance_usd_per_day": 0.1
+  },
+  "evaluation": {
+    "anchors": "anchors",
+    "jitter": {
+      "repeats": 3,
+      "measured_sd": {}
+    },
+    "labels": {
+      "rubric": "the spec's own v3 criteria, applied to the headline and quote only",
+      "n": 40,
+      "owner": "the assembling agent (not Parker)",
+      "file": "labels/claim-check-v3.labels.json",
+      "design": "stratified: eight items per Jev answer, seed 11, labelled before reading Jev's answers",
+      "exact_agreement": "24/40",
+      "precision_by_jev_answer": {
+        "states": {
+          "hits": 8,
+          "n": 8
+        },
+        "states_part": {
+          "hits": 5,
+          "n": 8
+        },
+        "implies": {
+          "hits": 5,
+          "n": 8
+        },
+        "silent": {
+          "hits": 6,
+          "n": 8
+        },
+        "contradicts": {
+          "hits": 0,
+          "n": 8
+        }
+      },
+      "population_estimate": 0.683,
+      "population_estimate_method": "each answer's sample precision weighted by how often Jev gave that answer in the v3 run (states 37, states_part 103, implies 38, silent 120, contradicts 17); eight items per stratum, so the interval is wide"
+    },
+    "falsifiers": [
+      {
+        "text": "more than 30% of facts land in 'silent': the quote rule was not followed, or the question is worded badly, not the research",
+        "check": "share('check.support', 'silent') > 0.30"
+      },
+      {
+        "text": "fewer than 2% of facts land outside 'states': the check approves everything and discriminates nothing",
+        "check": "share('check.support', 'states') > 0.98"
+      }
+    ],
+    "runs": [
+      {
+        "name": "v1",
+        "version": 1,
+        "items": 315,
+        "surprises": [
+          "share choosing states: expected [0.55, 0.95], observed 0.035",
+          "share choosing states_part: expected [0.02, 0.25], observed 0.87"
+        ],
+        "verdict_null": 112
+      },
+      {
+        "name": "v2",
+        "version": 2,
+        "items": 315,
+        "surprises": [
+          "share choosing states: expected [0.6, 0.95], observed 0.143",
+          "share choosing states_part: expected [0.0, 0.15], observed 0.368",
+          "share choosing silent: expected [0.03, 0.3], observed 0.435"
+        ],
+        "hand_read": "seed 7, ten 'silent' items: eight quotes were premises the agent reasoned from, one headline cut wrongly, one genuinely unrelated"
+      },
+      {
+        "name": "v3",
+        "version": 3,
+        "items": 315,
+        "surprises": [
+          "share choosing implies: expected [0.15, 0.5], observed 0.121",
+          "share choosing silent: expected [0.03, 0.2], observed 0.381"
+        ]
+      }
+    ]
+  },
+  "changelog": [
+    {
+      "version": 1,
+      "date": "2026-09-25",
+      "change": "first version, written before any call and before the round-1 facts were read",
+      "evidence": "none yet: this is the prediction"
+    },
+    {
+      "version": 2,
+      "date": "2026-09-25",
+      "change": "check the headline of each value instead of the whole value; numbers_match returns 'none' instead of None; traps rewritten around the headline",
+      "evidence": "run v1 over 315 facts: 87% states_part because values are composite (e.g. 'MIT — an MIT product may link it' against the quote 'MIT'), and 112 null verdicts from a None axis. The world differed from the map's expectation, and the question was the wrong unit; Jev's answers were right."
+    },
+    {
+      "version": 3,
+      "date": "2026-09-25",
+      "change": "add option 'implies' and verdict 'inferred'; contested edge 0.305; headline keeps 'label: answer'; traps for implies",
+      "evidence": "run v2: 44% silent; a seeded hand-read of ten found eight premises-not-statements. The question conflated 'the source says it' with 'the agent concluded it from the source'."
+    },
+    {
+      "version": 3,
+      "date": "2026-09-25",
+      "change": "status draft → shadow; labels and measured precision recorded; no question changed",
+      "evidence": "40 stratified hand labels: exact agreement 24/40; 'states' precision 8/8, 'contradicts' 0/8"
+    }
+  ]
+}

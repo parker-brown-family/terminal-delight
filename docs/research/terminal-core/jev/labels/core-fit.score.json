@@ -1,0 +1,522 @@
+{
+ "runs/core-fit-v1": {
+  "scored": 36,
+  "right": 33,
+  "wrong": 3,
+  "unknown": 0,
+  "rows": [
+   {
+    "core": "alacritty-own-loop",
+    "req": "cell_contents",
+    "truth": "pass",
+    "jev": "provides",
+    "verdict": "right"
+   },
+   {
+    "core": "alacritty-own-loop",
+    "req": "zero_width",
+    "truth": "pass",
+    "jev": "does_not",
+    "verdict": "wrong"
+   },
+   {
+    "core": "alacritty-own-loop",
+    "req": "underline_colour",
+    "truth": "pass",
+    "jev": "provides",
+    "verdict": "right"
+   },
+   {
+    "core": "alacritty-own-loop",
+    "req": "wide_chars",
+    "truth": "pass",
+    "jev": "provides",
+    "verdict": "right"
+   },
+   {
+    "core": "alacritty-own-loop",
+    "req": "scrollback_read",
+    "truth": "pass",
+    "jev": "provides_with_work",
+    "verdict": "right"
+   },
+   {
+    "core": "alacritty-own-loop",
+    "req": "damage",
+    "truth": "pass",
+    "jev": "provides",
+    "verdict": "right"
+   },
+   {
+    "core": "alacritty-own-loop",
+    "req": "snapshot",
+    "truth": "fail",
+    "jev": "does_not",
+    "verdict": "right"
+   },
+   {
+    "core": "alacritty-own-loop",
+    "req": "feed_loop",
+    "truth": "pass",
+    "jev": "provides_with_work",
+    "verdict": "right"
+   },
+   {
+    "core": "alacritty-own-loop",
+    "req": "replies_out",
+    "truth": "pass",
+    "jev": "provides_with_work",
+    "verdict": "right"
+   },
+   {
+    "core": "alacritty-own-loop",
+    "req": "threading",
+    "truth": "pass",
+    "jev": "provides_with_work",
+    "verdict": "right"
+   },
+   {
+    "core": "alacritty-own-loop",
+    "req": "placements_readable",
+    "truth": "fail",
+    "jev": "does_not",
+    "verdict": "right"
+   },
+   {
+    "core": "alacritty-own-loop",
+    "req": "placeholders",
+    "truth": "fail",
+    "jev": "does_not",
+    "verdict": "right"
+   },
+   {
+    "core": "alacritty-own-loop",
+    "req": "media_policy",
+    "truth": "fail",
+    "jev": "does_not",
+    "verdict": "right"
+   },
+   {
+    "core": "rio-vt",
+    "req": "cell_contents",
+    "truth": "pass",
+    "jev": "provides",
+    "verdict": "right"
+   },
+   {
+    "core": "rio-vt",
+    "req": "zero_width",
+    "truth": "pass",
+    "jev": "provides",
+    "verdict": "right"
+   },
+   {
+    "core": "rio-vt",
+    "req": "underline_colour",
+    "truth": "pass",
+    "jev": "provides",
+    "verdict": "right"
+   },
+   {
+    "core": "rio-vt",
+    "req": "wide_chars",
+    "truth": "pass",
+    "jev": "provides_with_work",
+    "verdict": "right"
+   },
+   {
+    "core": "rio-vt",
+    "req": "damage",
+    "truth": "pass",
+    "jev": "provides",
+    "verdict": "right"
+   },
+   {
+    "core": "rio-vt",
+    "req": "snapshot",
+    "truth": "fail",
+    "jev": "does_not",
+    "verdict": "right"
+   },
+   {
+    "core": "rio-vt",
+    "req": "feed_loop",
+    "truth": "pass",
+    "jev": "provides",
+    "verdict": "right"
+   },
+   {
+    "core": "rio-vt",
+    "req": "replies_out",
+    "truth": "pass",
+    "jev": "provides",
+    "verdict": "right"
+   },
+   {
+    "core": "rio-vt",
+    "req": "placements_readable",
+    "truth": "pass",
+    "jev": "does_not",
+    "verdict": "wrong"
+   },
+   {
+    "core": "rio-vt",
+    "req": "placeholders",
+    "truth": "pass",
+    "jev": "does_not",
+    "verdict": "wrong"
+   },
+   {
+    "core": "libghostty-vt",
+    "req": "cell_contents",
+    "truth": "pass",
+    "jev": "provides",
+    "verdict": "right"
+   },
+   {
+    "core": "libghostty-vt",
+    "req": "zero_width",
+    "truth": "pass",
+    "jev": "provides",
+    "verdict": "right"
+   },
+   {
+    "core": "libghostty-vt",
+    "req": "underline_colour",
+    "truth": "pass",
+    "jev": "provides",
+    "verdict": "right"
+   },
+   {
+    "core": "libghostty-vt",
+    "req": "wide_chars",
+    "truth": "pass",
+    "jev": "provides",
+    "verdict": "right"
+   },
+   {
+    "core": "libghostty-vt",
+    "req": "scrollback_read",
+    "truth": "pass",
+    "jev": "provides_with_work",
+    "verdict": "right"
+   },
+   {
+    "core": "libghostty-vt",
+    "req": "damage",
+    "truth": "pass",
+    "jev": "provides",
+    "verdict": "right"
+   },
+   {
+    "core": "libghostty-vt",
+    "req": "snapshot",
+    "truth": "pass",
+    "jev": "provides_with_work",
+    "verdict": "right"
+   },
+   {
+    "core": "libghostty-vt",
+    "req": "feed_loop",
+    "truth": "pass",
+    "jev": "provides",
+    "verdict": "right"
+   },
+   {
+    "core": "libghostty-vt",
+    "req": "replies_out",
+    "truth": "pass",
+    "jev": "provides",
+    "verdict": "right"
+   },
+   {
+    "core": "libghostty-vt",
+    "req": "threading",
+    "truth": "fail",
+    "jev": "does_not",
+    "verdict": "right"
+   },
+   {
+    "core": "libghostty-vt",
+    "req": "placements_readable",
+    "truth": "pass",
+    "jev": "provides_with_work",
+    "verdict": "right"
+   },
+   {
+    "core": "libghostty-vt",
+    "req": "placeholders",
+    "truth": "pass",
+    "jev": "provides_with_work",
+    "verdict": "right"
+   },
+   {
+    "core": "libghostty-vt",
+    "req": "media_policy",
+    "truth": "pass",
+    "jev": "provides_with_work",
+    "verdict": "right"
+   }
+  ]
+ },
+ "runs/core-fit": {
+  "scored": 36,
+  "right": 32,
+  "wrong": 0,
+  "unknown": 4,
+  "rows": [
+   {
+    "core": "alacritty-own-loop",
+    "req": "cell_contents",
+    "truth": "pass",
+    "jev": "provides",
+    "verdict": "right"
+   },
+   {
+    "core": "alacritty-own-loop",
+    "req": "zero_width",
+    "truth": "pass",
+    "jev": "provides_with_work",
+    "verdict": "right"
+   },
+   {
+    "core": "alacritty-own-loop",
+    "req": "underline_colour",
+    "truth": "pass",
+    "jev": "provides",
+    "verdict": "right"
+   },
+   {
+    "core": "alacritty-own-loop",
+    "req": "wide_chars",
+    "truth": "pass",
+    "jev": "provides",
+    "verdict": "right"
+   },
+   {
+    "core": "alacritty-own-loop",
+    "req": "scrollback_read",
+    "truth": "pass",
+    "jev": "provides_with_work",
+    "verdict": "right"
+   },
+   {
+    "core": "alacritty-own-loop",
+    "req": "damage",
+    "truth": "pass",
+    "jev": "provides",
+    "verdict": "right"
+   },
+   {
+    "core": "alacritty-own-loop",
+    "req": "snapshot",
+    "truth": "fail",
+    "jev": "does_not",
+    "verdict": "right"
+   },
+   {
+    "core": "alacritty-own-loop",
+    "req": "feed_loop",
+    "truth": "pass",
+    "jev": "provides",
+    "verdict": "right"
+   },
+   {
+    "core": "alacritty-own-loop",
+    "req": "replies_out",
+    "truth": "pass",
+    "jev": "provides",
+    "verdict": "right"
+   },
+   {
+    "core": "alacritty-own-loop",
+    "req": "threading",
+    "truth": "pass",
+    "jev": "provides_with_work",
+    "verdict": "right"
+   },
+   {
+    "core": "alacritty-own-loop",
+    "req": "placements_readable",
+    "truth": "fail",
+    "jev": "does_not",
+    "verdict": "right"
+   },
+   {
+    "core": "alacritty-own-loop",
+    "req": "placeholders",
+    "truth": "fail",
+    "jev": "does_not",
+    "verdict": "right"
+   },
+   {
+    "core": "alacritty-own-loop",
+    "req": "media_policy",
+    "truth": "fail",
+    "jev": "does_not",
+    "verdict": "right"
+   },
+   {
+    "core": "rio-vt",
+    "req": "cell_contents",
+    "truth": "pass",
+    "jev": "provides",
+    "verdict": "right"
+   },
+   {
+    "core": "rio-vt",
+    "req": "zero_width",
+    "truth": "pass",
+    "jev": "provides",
+    "verdict": "right"
+   },
+   {
+    "core": "rio-vt",
+    "req": "underline_colour",
+    "truth": "pass",
+    "jev": "provides",
+    "verdict": "right"
+   },
+   {
+    "core": "rio-vt",
+    "req": "wide_chars",
+    "truth": "pass",
+    "jev": "provides",
+    "verdict": "right"
+   },
+   {
+    "core": "rio-vt",
+    "req": "damage",
+    "truth": "pass",
+    "jev": "provides",
+    "verdict": "right"
+   },
+   {
+    "core": "rio-vt",
+    "req": "snapshot",
+    "truth": "fail",
+    "jev": "does_not",
+    "verdict": "right"
+   },
+   {
+    "core": "rio-vt",
+    "req": "feed_loop",
+    "truth": "pass",
+    "jev": "provides",
+    "verdict": "right"
+   },
+   {
+    "core": "rio-vt",
+    "req": "replies_out",
+    "truth": "pass",
+    "jev": "provides",
+    "verdict": "right"
+   },
+   {
+    "core": "rio-vt",
+    "req": "placements_readable",
+    "truth": "pass",
+    "jev": null,
+    "verdict": "unknown"
+   },
+   {
+    "core": "rio-vt",
+    "req": "placeholders",
+    "truth": "pass",
+    "jev": null,
+    "verdict": "unknown"
+   },
+   {
+    "core": "libghostty-vt",
+    "req": "cell_contents",
+    "truth": "pass",
+    "jev": "provides",
+    "verdict": "right"
+   },
+   {
+    "core": "libghostty-vt",
+    "req": "zero_width",
+    "truth": "pass",
+    "jev": "provides",
+    "verdict": "right"
+   },
+   {
+    "core": "libghostty-vt",
+    "req": "underline_colour",
+    "truth": "pass",
+    "jev": "provides",
+    "verdict": "right"
+   },
+   {
+    "core": "libghostty-vt",
+    "req": "wide_chars",
+    "truth": "pass",
+    "jev": "provides",
+    "verdict": "right"
+   },
+   {
+    "core": "libghostty-vt",
+    "req": "scrollback_read",
+    "truth": "pass",
+    "jev": null,
+    "verdict": "unknown"
+   },
+   {
+    "core": "libghostty-vt",
+    "req": "damage",
+    "truth": "pass",
+    "jev": "provides",
+    "verdict": "right"
+   },
+   {
+    "core": "libghostty-vt",
+    "req": "snapshot",
+    "truth": "pass",
+    "jev": "provides_with_work",
+    "verdict": "right"
+   },
+   {
+    "core": "libghostty-vt",
+    "req": "feed_loop",
+    "truth": "pass",
+    "jev": "provides",
+    "verdict": "right"
+   },
+   {
+    "core": "libghostty-vt",
+    "req": "replies_out",
+    "truth": "pass",
+    "jev": "provides",
+    "verdict": "right"
+   },
+   {
+    "core": "libghostty-vt",
+    "req": "threading",
+    "truth": "fail",
+    "jev": "does_not",
+    "verdict": "right"
+   },
+   {
+    "core": "libghostty-vt",
+    "req": "placements_readable",
+    "truth": "pass",
+    "jev": "provides_with_work",
+    "verdict": "right"
+   },
+   {
+    "core": "libghostty-vt",
+    "req": "placeholders",
+    "truth": "pass",
+    "jev": null,
+    "verdict": "unknown"
+   },
+   {
+    "core": "libghostty-vt",
+    "req": "media_policy",
+    "truth": "pass",
+    "jev": "provides_with_work",
+    "verdict": "right"
+   }
+  ]
+ }
+}

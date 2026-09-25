@@ -1,0 +1,144 @@
+{
+ "n": 40,
+ "exact": 24,
+ "collapsed": 25,
+ "exact_share": 0.6,
+ "collapsed_share": 0.625,
+ "jev_silent_labelled_silent": 6,
+ "jev_silent_n": 8,
+ "confusion_label_by_jev": {
+  "states": {
+   "states": 8,
+   "states_part": 1,
+   "implies": 1,
+   "silent": 0,
+   "contradicts": 0
+  },
+  "states_part": {
+   "states": 0,
+   "states_part": 5,
+   "implies": 0,
+   "silent": 1,
+   "contradicts": 2
+  },
+  "implies": {
+   "states": 0,
+   "states_part": 2,
+   "implies": 5,
+   "silent": 1,
+   "contradicts": 4
+  },
+  "silent": {
+   "states": 0,
+   "states_part": 0,
+   "implies": 2,
+   "silent": 6,
+   "contradicts": 2
+  },
+  "contradicts": {
+   "states": 0,
+   "states_part": 0,
+   "implies": 0,
+   "silent": 0,
+   "contradicts": 0
+  }
+ },
+ "disagreements": [
+  {
+   "item": "td-own-core/damage_tracking",
+   "label": "silent",
+   "jev": "implies",
+   "why": "a prior-art function name does not settle that TD would build it"
+  },
+  {
+   "item": "libghostty-vt/releases_last_12mo",
+   "label": "states",
+   "jev": "implies",
+   "why": "the output lists exactly those four versions and dates"
+  },
+  {
+   "item": "alacritty-own-loop/state_snapshot",
+   "label": "implies",
+   "jev": "silent",
+   "why": "the grid derives Serialize under a feature, so a partial snapshot exists"
+  },
+  {
+   "item": "alacritty-own-loop/performance_evidence",
+   "label": "silent",
+   "jev": "contradicts",
+   "why": "a benchmark figure is shown but not whether it is alacritty_terminal-only"
+  },
+  {
+   "item": "rio-vt/threading_and_loop",
+   "label": "implies",
+   "jev": "contradicts",
+   "why": "no PTY and no threads built in means the embedder chooses"
+  },
+  {
+   "item": "ghostty-shadow/releases_last_12mo",
+   "label": "states_part",
+   "jev": "contradicts",
+   "why": "four of the seven releases are shown"
+  },
+  {
+   "item": "zellij-grid/latest_release",
+   "label": "states",
+   "jev": "states_part",
+   "why": "the tag and date match"
+  },
+  {
+   "item": "kitty-core/reply_channel",
+   "label": "implies",
+   "jev": "contradicts",
+   "why": "responses are written to the child inside kitty itself"
+  },
+  {
+   "item": "wezterm-term/integration_path",
+   "label": "implies",
+   "jev": "contradicts",
+   "why": "no such crate on crates.io, so a git dependency"
+  },
+  {
+   "item": "contour-vtbackend/iterm2_images",
+   "label": "states_part",
+   "jev": "contradicts",
+   "why": "inline images are stated; 'partial' is not"
+  },
+  {
+   "item": "kitty-core/what_it_is",
+   "label": "states_part",
+   "jev": "silent",
+   "why": "the quote describes kitty the terminal, not its core as a component"
+  },
+  {
+   "item": "zellij-grid/iterm2_images",
+   "label": "silent",
+   "jev": "implies",
+   "why": "a catch-all for unhandled OSCs needs outside knowledge that 1337 has no arm"
+  },
+  {
+   "item": "alacritty-graphics-fork/integration_path",
+   "label": "silent",
+   "jev": "contradicts",
+   "why": "a vte-graphics dependency line does not show a git dependency"
+  },
+  {
+   "item": "kitty-core/maintainers",
+   "label": "implies",
+   "jev": "states_part",
+   "why": "2375 of 3004 is the only one above 10%: arithmetic over the quote"
+  },
+  {
+   "item": "alacritty-own-loop/reply_channel",
+   "label": "implies",
+   "jev": "contradicts",
+   "why": "PtyWrite is an event variant, so replies are events"
+  },
+  {
+   "item": "alacritty-patched-vte/integration_path",
+   "label": "implies",
+   "jev": "states_part",
+   "why": "a patch branch on a fork exists"
+  }
+ ]
+}

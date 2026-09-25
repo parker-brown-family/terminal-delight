@@ -1,0 +1,19 @@
+{
+  "call": "assess",
+  "item": {
+    "id": "trap/l",
+    "label": "Core L (a fixture)",
+    "kitty_tags": "unknown",
+    "evidence": {
+      "state_snapshot": {
+        "recorded": "There is no serialisation; the state exists only in memory while the terminal runs."
+      }
+    }
+  },
+  "expect": {
+    "snapshot": [
+      "does_not"
+    ]
+  },
+  "written": "2026-09-25, before any call"
+}

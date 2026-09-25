@@ -1,0 +1,21 @@
+{
+  "call": "maturity",
+  "item": {
+    "id": "trap/q",
+    "label": "Core Q (a fixture)",
+    "kitty_tags": "unknown",
+    "evidence": {},
+    "maturity": {
+      "latest_release": {
+        "recorded": "0.5.28 on 2026-09-17"
+      }
+    }
+  },
+  "expect": {
+    "api_trajectory": [
+      "not_established",
+      "active_pre_1_0"
+    ]
+  },
+  "written": "2026-09-25, before any call"
+}

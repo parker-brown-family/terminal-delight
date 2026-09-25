@@ -1,0 +1,1427 @@
+{
+ "weights": {
+  "pictures": 3.0,
+  "fit": 3.0,
+  "td_work": 2.5,
+  "trajectory": 2.0,
+  "bus_factor": 1.5,
+  "build": 1.5,
+  "vt_features": 1.0,
+  "other_protocols": 0.5
+ },
+ "rows": {
+  "alacritty-own-loop": {
+   "id": "alacritty-own-loop",
+   "label": "alacritty_terminal 0.26 + a TD-owned read loop; TD writes Kitty graphics itself",
+   "group": "A · Keep alacritty_terminal",
+   "reference": false,
+   "dims": {
+    "pictures": {
+     "score": 0.0,
+     "shown": "0/14",
+     "source": "code over the agents' kitty_tags"
+    },
+    "pictures_measured": {
+     "score": 0.0,
+     "shown": "0/6",
+     "source": "measured: the bake-off",
+     "note": "alacritty_terminal 0.26 as it runs in TD today: every picture dropped"
+    },
+    "other_protocols": {
+     "score": 0.0,
+     "shown": "Sixel no, iTerm2 no",
+     "source": "code over the agents' values"
+    },
+    "fit": {
+     "score": 0.625,
+     "coverage": 1.0,
+     "shown": "20.0/32",
+     "answers": {
+      "cell_contents": "provides",
+      "zero_width": "provides_with_work",
+      "underline_colour": "provides",
+      "wide_chars": "provides",
+      "scrollback_read": "provides_with_work",
+      "damage": "provides",
+      "snapshot": "does_not",
+      "feed_loop": "provides",
+      "replies_out": "provides",
+      "threading": "provides_with_work",
+      "placements_readable": "does_not",
+      "placeholders": "does_not",
+      "media_policy": "does_not"
+     },
+     "must_have_gaps": 1,
+     "source": "Jev (core-fit.assess), combined by code"
+    },
+    "trajectory": {
+     "score": 0.6,
+     "shown": "active_pre_1_0",
+     "source": "Jev (core-fit.maturity)"
+    },
+    "bus_factor": {
+     "score": 0.6,
+     "shown": "2",
+     "source": "code: the first count in the agents' value"
+    },
+    "build": {
+     "score": 1.0,
+     "shown": "cargo only",
+     "source": "hand-read from the agents' value"
+    },
+    "vt_features": {
+     "score": 0.8888888888888888,
+     "shown": "8 yes, 1 no, 1 unknown",
+     "source": "code over the agents' value"
+    },
+    "td_work": {
+     "score": 0.5,
+     "shown": "L",
+     "note": "TD's own read loop at three call sites, plus the whole Kitty implementation (store, placements, placeholders, deletes, queries)",
+     "source": "estimate: the assembling agent"
+    },
+    "performance": {
+     "score": 0.48492462311557794,
+     "shown": "39.8 ms",
+     "source": "measured: one parse of a 13 MB mpv recording"
+    }
+   },
+   "facts": {
+    "licence": {
+     "value": "Apache-2.0 — permissive; an MIT product may link it (keep the licence text and NOTICE in TD's third-party licences)",
+     "gate": "compatible"
+    },
+    "evidence": {
+     "claims": 23,
+     "supported": 2,
+     "inferred": 3,
+     "overclaims": 2,
+     "unsupported": 6,
+     "human": 10,
+     "None": 0
+    },
+    "risk": "Owning the loop means re-proving, against code TD now owns, the one hard invariant of the host/window split — every byte lands on exactly one side of an attach snapshot — while a stream splitter that disagrees with vte about where a string ends (CAN/SUB, ESC inside OSC, buffered synchronized updates) corrupts panes without failing loudly.",
+    "migration": "host.rs: replace EventLoop::new(…).spawn() (host.rs:726-729) with a TD reader per pane that splits the stream at Kitty APC terminators, advances the Processor for the bytes before each, then handles the command with &mut Term; re-prove the attach fence (host.rs:18-29), which today relies on alacritty's lease discipline; the TeeReader (host.rs:134-180) becomes a step inside TD's loop. socketpty.rs: shrinks to a socket read in TD's loop, and the two hand-copied pub(crate) poll tokens (:40-50) go away. term.rs: window-owned panes move from EventLoop/Notifier to the same loop; the PtyWrite bounce and the replica's reply filter stay. gridwire.rs: grid encoding and grid_hash unchanged; add re-sending referenced images on attach. pane.rs: the 51 grid reads stay; the renderer learns to draw U+10EEEE cells from an image store. main.rs, pane/bench.rs: no change (they only use WindowSize, tty::setup_env, TermMode). No fork."
+   },
+   "score": 0.5075925925925926,
+   "coverage": 1.0
+  },
+  "alacritty-patched-vte": {
+   "id": "alacritty-patched-vte",
+   "label": "alacritty_terminal + patched vte (an APC callback) and a patched Term",
+   "group": "A · Keep alacritty_terminal",
+   "reference": false,
+   "dims": {
+    "pictures": {
+     "score": 0.0,
+     "shown": "0/14",
+     "source": "code over the agents' kitty_tags"
+    },
+    "pictures_measured": {
+     "score": null,
+     "shown": "not run",
+     "source": "not run",
+     "note": null
+    },
+    "other_protocols": {
+     "score": 0.0,
+     "shown": "Sixel no, iTerm2 no",
+     "source": "code over the agents' values"
+    },
+    "fit": {
+     "score": 0.4230769230769231,
+     "coverage": 0.8125,
+     "shown": "11.0/26",
+     "answers": {
+      "cell_contents": "provides",
+      "zero_width": null,
+      "underline_colour": "provides",
+      "wide_chars": "provides",
+      "scrollback_read": null,
+      "damage": "provides",
+      "snapshot": "does_not",
+      "feed_loop": "does_not",
+      "replies_out": "does_not",
+      "threading": "provides_with_work",
+      "placements_readable": "does_not",
+      "placeholders": "does_not",
+      "media_policy": "does_not"
+     },
+     "must_have_gaps": null,
+     "source": "Jev (core-fit.assess), combined by code"
+    },
+    "trajectory": {
+     "score": 0.3,
+     "shown": "declared_unstable",
+     "source": "Jev (core-fit.maturity)"
+    },
+    "bus_factor": {
+     "score": 0.3,
+     "shown": "1",
+     "source": "hand-read: vte upstream is one maintainer with three commits in a year"
+    },
+    "build": {
+     "score": 0.9,
+     "shown": "cargo, plus a git dependency",
+     "source": "hand-read from the agents' value"
+    },
+    "vt_features": {
+     "score": 0.8888888888888888,
+     "shown": "8 yes, 1 no, 0 unknown",
+     "source": "code over the agents' value"
+    },
+    "td_work": {
+     "score": 0.5,
+     "shown": "L",
+     "note": "an APC patch to vte (one small commit exists in Warp's fork and a lapsed upstream PR) plus the Kitty implementation in TD",
+     "source": "estimate: the assembling agent"
+    },
+    "performance": {
+     "score": null,
+     "shown": "not measured",
+     "source": "not measured"
+    }
+   },
+   "facts": {
+    "licence": {
+     "value": "Apache-2.0 OR MIT (vte and the PR #115 fork boazy/vte) together with Apache-2.0 (alacritty_terminal) — an MIT product may link both",
+     "gate": "compatible"
+    },
+    "evidence": {
+     "claims": 23,
+     "supported": 2,
+     "inferred": 3,
+     "overclaims": 3,
+     "unsupported": 8,
+     "human": 7,
+     "None": 0
+    },
+    "risk": "TD becomes the permanent maintainer of two forks — a vte whose APC PR upstream closed for inactivity and whose maintainer has floated a rewrite, and an alacritty_terminal whose Term must be re-patched on every release — unless TD finishes PR #115 upstream itself.",
+    "migration": "Cargo.toml: add [patch.crates-io] vte = TD's fork (PR #115's Perform callbacks plus forwarding through ansi::Processor to new ansi::Handler methods, which PR #115 does not do) and point alacritty_terminal at a TD fork whose Term holds an image store and implements those methods. host.rs, term.rs, socketpty.rs: unchanged — alacritty's EventLoop still drives parsing, so the attach fence and SocketPty survive. gridwire.rs: the snapshot must re-send images the host's Term holds (Kitty a=t ahead of the rows) and grid_hash must decide whether placements count. pane.rs: the 51 grid reads stay; the renderer reads placements from the patched Term and draws them. main.rs, pane/bench.rs: no change. Ongoing: rebase both forks on every alacritty_terminal release (2 stable in the last 12 months). A no-alacritty-fork variant — a TD Handler wrapper delegating all 71 ansi::Handler methods to Term — needs TD to call Processor::advance itself, which is the own-loop route's host.rs rewrite."
+   },
+   "score": 0.38720797720797717,
+   "coverage": 1.0
+  },
+  "alacritty-graphics-fork": {
+   "id": "alacritty-graphics-fork",
+   "label": "ayosec's alacritty graphics fork / vte-graphics (Sixel)",
+   "group": "A · Keep alacritty_terminal",
+   "reference": false,
+   "dims": {
+    "pictures": {
+     "score": 0.0,
+     "shown": "0/14",
+     "source": "code over the agents' kitty_tags"
+    },
+    "pictures_measured": {
+     "score": null,
+     "shown": "not run",
+     "source": "not run",
+     "note": null
+    },
+    "other_protocols": {
+     "score": 0.5,
+     "shown": "Sixel yes, iTerm2 no",
+     "source": "code over the agents' values"
+    },
+    "fit": {
+     "score": 0.5555555555555556,
+     "coverage": 0.5625,
+     "shown": "10.0/18",
+     "answers": {
+      "cell_contents": "provides",
+      "zero_width": null,
+      "underline_colour": null,
+      "wide_chars": null,
+      "scrollback_read": null,
+      "damage": "provides",
+      "snapshot": "does_not",
+      "feed_loop": "does_not",
+      "replies_out": "provides",
+      "threading": "provides",
+      "placements_readable": null,
+      "placeholders": "does_not",
+      "media_policy": "does_not"
+     },
+     "must_have_gaps": null,
+     "source": "Jev (core-fit.assess), combined by code"
+    },
+    "trajectory": {
+     "score": 0.6,
+     "shown": "active_pre_1_0",
+     "source": "Jev (core-fit.maturity)"
+    },
+    "bus_factor": {
+     "score": 0.3,
+     "shown": "1",
+     "source": "hand-read: ayosec alone carries the graphics layer"
+    },
+    "build": {
+     "score": 0.9,
+     "shown": "cargo, plus a git dependency",
+     "source": "hand-read from the agents' value"
+    },
+    "vt_features": {
+     "score": 0.8888888888888888,
+     "shown": "8 yes, 1 no, 0 unknown",
+     "source": "code over the agents' value"
+    },
+    "td_work": {
+     "score": 0.25,
+     "shown": "XL",
+     "note": "a git dependency on a one-person fork that brings Sixel only; Kitty still has to be written, and its per-cell pictures leave the Term for a renderer TD's host does not have",
+     "source": "estimate: the assembling agent"
+    },
+    "performance": {
+     "score": null,
+     "shown": "not measured",
+     "source": "not measured"
+    }
+   },
+   "facts": {
+    "licence": {
+     "value": "Apache-2.0 (fork repo and its alacritty_terminal); vte-graphics is Apache-2.0 OR MIT — an MIT product may link both",
+     "gate": "compatible"
+    },
+    "evidence": {
+     "claims": 23,
+     "supported": 2,
+     "inferred": 1,
+     "overclaims": 6,
+     "unsupported": 10,
+     "human": 4,
+     "None": 0
+    },
+    "risk": "It buys only Sixel, from a single maintainer whose PR upstream calls unlikely ever to merge, and its texture-in-the-renderer model assumes a renderer next to the Term — which TD's session host does not have — so TD would still write a host-side picture store, snapshot re-encoding and Kitty support, now on top of a fork.",
+    "migration": "Cargo.toml: alacritty_terminal becomes a git dependency on ayosec/alacritty at v0.17.0-graphics; TD's imports still compile (0.26.0 plus additions, vte-graphics re-exported as alacritty_terminal::vte). term.rs: GridSize must implement the fork's Dimensions::cell_width/cell_height (default 0.0) or Sixel sizing breaks. host.rs: the host has no renderer, so it must drain graphics_take_queues() every cycle and keep the decoded pixels itself for attaching windows. gridwire.rs: per-cell texture references have no VT encoding — the snapshot must re-encode each live picture (e.g. as Sixel at its origin) or attaching windows lose every picture, and grid_hash must treat Flags::GRAPHICS the same on both sides. socketpty.rs: unchanged (the replica decodes the same DCS bytes). pane.rs: the renderer uploads pending pixels as gpui images, applies removals and cleared subregions, and draws per-cell slices; the 51 grid reads stay. main.rs, pane/bench.rs: none. DA1 starts advertising Sixel. Kitty stays absent."
+   },
+   "score": 0.4287037037037038,
+   "coverage": 1.0
+  },
+  "rio-vt": {
+   "id": "rio-vt",
+   "label": "rio-vt — Rio's embeddable core (crates.io)",
+   "group": "B · Swap to a Rust core",
+   "reference": false,
+   "dims": {
+    "pictures": {
+     "score": 0.9285714285714286,
+     "shown": "13/14",
+     "source": "code over the agents' kitty_tags"
+    },
+    "pictures_measured": {
+     "score": 1.0,
+     "shown": "6/6",
+     "source": "measured: the bake-off",
+     "note": "rio-vt 0.5.28"
+    },
+    "other_protocols": {
+     "score": 1.0,
+     "shown": "Sixel yes, iTerm2 yes,",
+     "source": "code over the agents' values"
+    },
+    "fit": {
+     "score": 0.7407407407407407,
+     "coverage": 0.84375,
+     "shown": "20.0/27",
+     "answers": {
+      "cell_contents": "provides",
+      "zero_width": "provides",
+      "underline_colour": "provides",
+      "wide_chars": "provides",
+      "scrollback_read": "does_not",
+      "damage": "provides",
+      "snapshot": "does_not",
+      "feed_loop": "provides",
+      "replies_out": "provides",
+      "threading": "provides_with_work",
+      "placements_readable": null,
+      "placeholders": null,
+      "media_policy": "does_not"
+     },
+     "must_have_gaps": null,
+     "source": "Jev (core-fit.assess), combined by code"
+    },
+    "trajectory": {
+     "score": 0.6,
+     "shown": "active_pre_1_0",
+     "source": "Jev (core-fit.maturity)"
+    },
+    "bus_factor": {
+     "score": 0.3,
+     "shown": "1",
+     "source": "code: the first count in the agents' value"
+    },
+    "build": {
+     "score": 0.7,
+     "shown": "cargo, plus a C++11 compiler through the cc crate (simdutf); built on this box by the bake-off",
+     "source": "hand-read from the agents' value"
+    },
+    "vt_features": {
+     "score": 1.0,
+     "shown": "9 yes, 0 no, 0 unknown",
+     "source": "code over the agents' value"
+    },
+    "td_work": {
+     "score": 0.5,
+     "shown": "L",
+     "note": "rewrite the seven files that read alacritty's grid onto rio-vt's Crosswords; pictures, placeholders and replies come with it",
+     "source": "estimate: the assembling agent"
+    },
+    "performance": {
+     "score": 0.4742014742014742,
+     "shown": "40.7 ms",
+     "source": "measured: one parse of a 13 MB mpv recording"
+    }
+   },
+   "facts": {
+    "licence": {
+     "value": "MIT — an MIT product may link it",
+     "gate": "compatible"
+    },
+    "evidence": {
+     "claims": 23,
+     "supported": 4,
+     "inferred": 0,
+     "overclaims": 7,
+     "unsupported": 7,
+     "human": 5,
+     "None": 0
+    },
+    "risk": "TD would bind its most central dependency to a two-month-old crate written by one person (92% of the repository's commits), versioned with Rio's app and already changing public types in patch releases, so each Rio release could become a TD migration.",
+    "migration": "A moderate rewrite, the smallest of the non-alacritty cores, because rio-vt's Crosswords, Grid, Storage, Row, selection, search and parser are forks of alacritty_terminal and vte (file headers cite alacritty e35e5ad) and its events mirror alacritty's (PtyWrite, TextAreaSizeRequest, ColorRequest, ClipboardLoad with formatter closures). term.rs: Term::new + Config become Crosswords::new(size, cursor shape, listener, WindowId, route_id, scrollback limit) with CrosswordsSize::new_with_dimensions, since Kitty spans need cell pixel sizes; TermEvent matching becomes RioEvent. host.rs and socketpty.rs: alacritty's EventLoop, Notifier, Msg and tty traits give way either to rio_vt::performer::Machine with a teletypewriter::EventedPty impl for SocketPty (corcovado polling instead of the polling crate) or to a TD-owned loop with default-features = false that calls Processor::advance and polls sync_timeout(); either way the attach fence must be re-proved. gridwire.rs: re-encode from Square + grid.style_of + cell_text + Wide + WRAPLINE instead of Cell and Flags, and hash resolved Style values rather than style ids, which are interned per grid and will differ between host and replica; pictures need their own channel because no snapshot carries them. pane.rs (51 grid reads): Cell fields become Square::c / wide plus Style plus Extras, Point / Side / Selection move to rio_vt types, TermMode becomes Mode; add a picture layer that drains UpdateGraphics, reads kitty_placements and atlas_placements, scans visible rows for U+10EEEE with the kitty_virtual helpers and paints in gpui. main.rs and pane/bench.rs: type renames. The window replica would decode pictures too unless the host forwards them."
+   },
+   "score": 0.6971957671957673,
+   "coverage": 1.0
+  },
+  "wezterm-term": {
+   "id": "wezterm-term",
+   "label": "wezterm-term / termwiz — WezTerm's core",
+   "group": "B · Swap to a Rust core",
+   "reference": false,
+   "dims": {
+    "pictures": {
+     "score": 0.8571428571428571,
+     "shown": "12/14",
+     "source": "code over the agents' kitty_tags"
+    },
+    "pictures_measured": {
+     "score": 0.6666666666666666,
+     "shown": "4/6",
+     "source": "measured: the bake-off",
+     "note": "wezterm-term git b09b56c29c: every direct placement right; both placeholder programs wrong, because it ignores U=1, draws at the cursor, and the placeholder characters land as text"
+    },
+    "other_protocols": {
+     "score": 1.0,
+     "shown": "Sixel yes, iTerm2 yes",
+     "source": "code over the agents' values"
+    },
+    "fit": {
+     "score": 0.59375,
+     "coverage": 1.0,
+     "shown": "19.0/32",
+     "answers": {
+      "cell_contents": "provides",
+      "zero_width": "provides",
+      "underline_colour": "provides",
+      "wide_chars": "provides_with_work",
+      "scrollback_read": "provides",
+      "damage": "provides_with_work",
+      "snapshot": "does_not",
+      "feed_loop": "provides",
+      "replies_out": "does_not",
+      "threading": "provides_with_work",
+      "placements_readable": "provides_with_work",
+      "placeholders": "does_not",
+      "media_policy": "does_not"
+     },
+     "must_have_gaps": 1,
+     "source": "Jev (core-fit.assess), combined by code"
+    },
+    "trajectory": {
+     "score": 0.6,
+     "shown": "active_pre_1_0",
+     "source": "Jev (core-fit.maturity)"
+    },
+    "bus_factor": {
+     "score": 1.0,
+     "shown": "3",
+     "source": "code: the first count in the agents' value"
+    },
+    "build": {
+     "score": 0.9,
+     "shown": "cargo, plus the wezterm git workspace",
+     "source": "hand-read from the agents' value"
+    },
+    "vt_features": {
+     "score": 0.8888888888888888,
+     "shown": "8 yes, 1 no, 0 unknown",
+     "source": "code over the agents' value"
+    },
+    "td_work": {
+     "score": 0.25,
+     "shown": "XL",
+     "note": "the seven files rewritten onto an unpublished git dependency whose releases stopped in 2024 though its commits resumed in 2026, and a fork to add placeholders, which the bake-off showed it prints as text",
+     "source": "estimate: the assembling agent"
+    },
+    "performance": {
+     "score": 0.1765782250686185,
+     "shown": "109.3 ms",
+     "source": "measured: one parse of a 13 MB mpv recording"
+    }
+   },
+   "facts": {
+    "licence": {
+     "value": "MIT — an MIT product may link it",
+     "gate": "compatible"
+    },
+    "evidence": {
+     "claims": 22,
+     "supported": 2,
+     "inferred": 4,
+     "overclaims": 4,
+     "unsupported": 7,
+     "human": 5,
+     "None": 0
+    },
+    "risk": "TD would take a git dependency on an unpublished crate with no release since February 2024 and no embedding contract, whose Kitty support lacks the Unicode placeholders that ratatui-image and yazi rely on, so TD would end up maintaining its own fork of WezTerm's core.",
+    "migration": "The largest rewrite of the Rust candidates, since nothing maps one-to-one. host.rs and socketpty.rs: alacritty's EventLoop, Notifier and tty traits go with no replacement, so TD writes its own PTY read loop (which the Kitty work needs anyway), feeds Terminal::advance_bytes, and re-implements DEC 2026 synchronized output, which wezterm-term leaves to WezTerm's mux. term.rs: Term and Config become Terminal::new(TerminalSize, Arc<dyn TerminalConfiguration>, term_program, term_version, writer) with a TD TerminalConfiguration that switches on Kitty graphics and keyboard; the host passes the PTY writer, the replica std::io::sink(). gridwire.rs: rewrite the encoder over Screen, Line, CellRef and CellAttributes with stable row indices; pictures sit as ImageCell slices inside cell attributes, which a VT re-encode cannot carry, so either add a picture channel or replace gridwire with WezTerm-style serde SerializedLines. pane.rs (51 grid reads): Line::visible_cells and CellRef::str (grapheme strings instead of a char plus zero-width list), CellAttributes getters, per-cell image slices drawn in gpui with negative z under text; selection must be rebuilt because WezTerm keeps it in wezterm-gui (wezterm-gui/src/selection.rs), not in the crate. main.rs and pane/bench.rs: renames. Build: a git dependency on the wezterm workspace, which brings the finl_unicode git fork with it."
+   },
+   "score": 0.6944378306878307,
+   "coverage": 1.0
+  },
+  "vt100-rust": {
+   "id": "vt100-rust",
+   "label": "vt100 (doy) — the crate under tui-term",
+   "group": "B · Swap to a Rust core",
+   "reference": false,
+   "dims": {
+    "pictures": {
+     "score": 0.0,
+     "shown": "0/14",
+     "source": "code over the agents' kitty_tags"
+    },
+    "pictures_measured": {
+     "score": null,
+     "shown": "not run",
+     "source": "not run",
+     "note": null
+    },
+    "other_protocols": {
+     "score": 0.0,
+     "shown": "Sixel no, iTerm2 no",
+     "source": "code over the agents' values"
+    },
+    "fit": {
+     "score": 0.578125,
+     "coverage": 1.0,
+     "shown": "18.5/32",
+     "answers": {
+      "cell_contents": "provides",
+      "zero_width": "provides",
+      "underline_colour": "does_not",
+      "wide_chars": "provides",
+      "scrollback_read": "provides",
+      "damage": "does_not",
+      "snapshot": "does_not",
+      "feed_loop": "provides",
+      "replies_out": "provides_with_work",
+      "threading": "provides",
+      "placements_readable": "does_not",
+      "placeholders": "does_not",
+      "media_policy": "does_not"
+     },
+     "must_have_gaps": 1,
+     "source": "Jev (core-fit.assess), combined by code"
+    },
+    "trajectory": {
+     "score": 0.1,
+     "shown": "dormant",
+     "source": "Jev (core-fit.maturity)"
+    },
+    "bus_factor": {
+     "score": 0.0,
+     "shown": "0",
+     "source": "code: the first count in the agents' value"
+    },
+    "build": {
+     "score": 1.0,
+     "shown": "cargo only",
+     "source": "hand-read from the agents' value"
+    },
+    "vt_features": {
+     "score": 0.4,
+     "shown": "4 yes, 6 no, 0 unknown",
+     "source": "code over the agents' value"
+    },
+    "td_work": {
+     "score": 0.25,
+     "shown": "XL",
+     "note": "a dormant core with no pictures and a visible-rows-only snapshot; TD would still write every picture feature",
+     "source": "estimate: the assembling agent"
+    },
+    "performance": {
+     "score": null,
+     "shown": "not measured",
+     "source": "not measured"
+    }
+   },
+   "facts": {
+    "licence": {
+     "value": "MIT — compatible: an MIT product may link it, and may copy its code if the notice is kept",
+     "gate": "compatible"
+    },
+    "evidence": {
+     "claims": 23,
+     "supported": 2,
+     "inferred": 5,
+     "overclaims": 1,
+     "unsupported": 8,
+     "human": 7,
+     "None": 0
+    },
+    "risk": "It is a sideways-to-downward move onto a dormant one-person crate (no commit since July 2025, 15 open PRs) with fewer features than the alacritty_terminal TD already has — no reflow, hyperlinks, sync output, kitty keyboard or pictures — so TD would pay a full migration and still write Kitty graphics itself.",
+    "migration": "Rewrite all seven files, and end with less than today. host.rs and term.rs lose alacritty's EventLoop, Term and TermMode: vt100 has no PTY or loop, so TD writes its own read loop (keeping alacritty_terminal::tty for spawning, or taking portable-pty) and hand-builds every DA/DSR/CSI 14 t reply from unhandled_csi. socketpty.rs's EventedPty adapter only exists for alacritty's loop and would be replaced. gridwire.rs's encode_snapshot could shrink to state_formatted(), but that drops the scrollback TD ships today, so TD keeps its own encoder and ports grid_hash to vt100's Cell. pane.rs's 51 grid reads move to Screen::cell() and lose underline colour, strikethrough, hyperlinks and selection helpers. main.rs's setup_env/WindowSize and bench.rs's TermMode::BRACKETED_PASTE become small edits. Pictures still need a byte pre-filter in front of Parser::process, as on alacritty."
+   },
+   "score": 0.2972916666666667,
+   "coverage": 1.0
+  },
+  "td-own-core": {
+   "id": "td-own-core",
+   "label": "TD writes its own emulator core on a parser (prior art: Warp, Zellij)",
+   "group": "B · Swap to a Rust core",
+   "reference": false,
+   "dims": {
+    "pictures": {
+     "score": 0.0,
+     "shown": "0/14",
+     "source": "code over the agents' kitty_tags"
+    },
+    "pictures_measured": {
+     "score": null,
+     "shown": "not run",
+     "source": "not run",
+     "note": null
+    },
+    "other_protocols": {
+     "score": 0.0,
+     "shown": "Sixel no, iTerm2 no",
+     "source": "code over the agents' values"
+    },
+    "fit": {
+     "score": 0.19444444444444445,
+     "coverage": 0.5625,
+     "shown": "3.5/18",
+     "answers": {
+      "cell_contents": "provides_with_work",
+      "zero_width": null,
+      "underline_colour": "provides_with_work",
+      "wide_chars": null,
+      "scrollback_read": null,
+      "damage": null,
+      "snapshot": "provides_with_work",
+      "feed_loop": "does_not",
+      "replies_out": "does_not",
+      "threading": null,
+      "placements_readable": "does_not",
+      "placeholders": "does_not",
+      "media_policy": null
+     },
+     "must_have_gaps": null,
+     "source": "Jev (core-fit.assess), combined by code"
+    },
+    "trajectory": {
+     "score": 0.7,
+     "shown": "owned_by_td",
+     "source": "Jev (core-fit.maturity)"
+    },
+    "bus_factor": {
+     "score": 0.3,
+     "shown": "1",
+     "source": "code: the first count in the agents' value"
+    },
+    "build": {
+     "score": 1.0,
+     "shown": "cargo only",
+     "source": "hand-read from the agents' value"
+    },
+    "vt_features": {
+     "score": 0.0,
+     "shown": "0 yes, 9 no, 0 unknown",
+     "source": "code over the agents' value"
+    },
+    "td_work": {
+     "score": 0.1,
+     "shown": "XXL",
+     "note": "a whole emulator: grid, scrollback, reflow, modes and pictures; Zellij's grid alone is 6,298 lines",
+     "source": "estimate: the assembling agent"
+    },
+    "performance": {
+     "score": null,
+     "shown": "not measured",
+     "source": "not measured"
+    }
+   },
+   "facts": {
+    "licence": {
+     "value": "MIT (TD's own) — compatible. Parser options: vte 0.15 Apache-2.0 OR MIT, vtparse MIT. Code copied in from Zellij (MIT) or alacritty_terminal (Apache-2.0) must keep its notice; Warp's terminal model is AGPL-3.0-only and can be read but not copied.",
+     "gate": "compatible"
+    },
+    "evidence": {
+     "claims": 19,
+     "supported": 1,
+     "inferred": 2,
+     "overclaims": 4,
+     "unsupported": 6,
+     "human": 6,
+     "None": 0
+    },
+    "risk": "One person takes on the long tail of VT correctness that alacritty's maintainers now carry for free — Zellij's author called Sixel alone 'many months of work', and Warp is still paying down its fork five years later — and each divergence surfaces as a pane that draws wrong, not a compile error.",
+    "migration": "Largest of all options, because TD writes the thing it now imports. New: a core module of roughly alacritty's term+grid size (6,123 lines), plus reflow, plus pictures (Zellij's Kitty is 2,373 lines, its Sixel 489). host.rs and term.rs swap Term, TermMode and EventLoop for TD's own types and loop. socketpty.rs survives only if alacritty_terminal::tty stays for spawning. gridwire.rs's encode_snapshot and grid_hash port to TD's cell, and the alt-screen caveat goes away. pane.rs's 51 grid reads change to TD's API — the chance to shape it for gpui's styled runs. main.rs's setup_env/WindowSize and bench.rs's TermMode::BRACKETED_PASTE become small edits. The Answers::Here/Elsewhere reply design ports as is."
+   },
+   "score": 0.2788888888888889,
+   "coverage": 1.0
+  },
+  "libghostty-vt": {
+   "id": "libghostty-vt",
+   "label": "libghostty-vt — Ghostty's core as a library, via Rust bindings",
+   "group": "C · Swap to a core across a C boundary",
+   "reference": false,
+   "dims": {
+    "pictures": {
+     "score": 1.0,
+     "shown": "14/14",
+     "source": "code over the agents' kitty_tags"
+    },
+    "pictures_measured": {
+     "score": 1.0,
+     "shown": "6/6",
+     "source": "measured: the bake-off",
+     "note": "libghostty-vt 0.2.1 with an embedder PNG decoder"
+    },
+    "other_protocols": {
+     "score": 0.0,
+     "shown": "Sixel no, iTerm2 no",
+     "source": "code over the agents' values"
+    },
+    "fit": {
+     "score": 0.8148148148148148,
+     "coverage": 0.84375,
+     "shown": "22.0/27",
+     "answers": {
+      "cell_contents": "provides",
+      "zero_width": "provides",
+      "underline_colour": "provides",
+      "wide_chars": "provides",
+      "scrollback_read": null,
+      "damage": "provides",
+      "snapshot": "provides_with_work",
+      "feed_loop": "provides",
+      "replies_out": "provides",
+      "threading": "does_not",
+      "placements_readable": "provides_with_work",
+      "placeholders": null,
+      "media_policy": "provides_with_work"
+     },
+     "must_have_gaps": null,
+     "source": "Jev (core-fit.assess), combined by code"
+    },
+    "trajectory": {
+     "score": 0.3,
+     "shown": "declared_unstable",
+     "source": "Jev (core-fit.maturity)"
+    },
+    "bus_factor": {
+     "score": 0.3,
+     "shown": "1",
+     "source": "code: the first count in the agents' value"
+    },
+    "build": {
+     "score": 0.4,
+     "shown": "a Zig 0.15 toolchain, and a git clone of ghostty at build time",
+     "source": "hand-read from the agents' value"
+    },
+    "vt_features": {
+     "score": 1.0,
+     "shown": "9 yes, 0 no, 0 unknown",
+     "source": "code over the agents' value"
+    },
+    "td_work": {
+     "score": 0.5,
+     "shown": "L",
+     "note": "the seven files rewritten across a C boundary, a Zig toolchain in TD's build, single-thread handles, and a PNG decoder TD supplies",
+     "source": "estimate: the assembling agent"
+    },
+    "performance": {
+     "score": 1.0,
+     "shown": "19.3 ms",
+     "source": "measured: one parse of a 13 MB mpv recording"
+    }
+   },
+   "facts": {
+    "licence": {
+     "value": "MIT (ghostty-org/ghostty, which contains libghostty-vt); the Rust bindings are MIT OR Apache-2.0. An MIT product may link both.",
+     "gate": "compatible"
+    },
+    "evidence": {
+     "claims": 23,
+     "supported": 6,
+     "inferred": 0,
+     "overclaims": 6,
+     "unsupported": 3,
+     "human": 8,
+     "None": 0
+    },
+    "risk": "TD would depend on an untagged, self-declared unstable C API through third-party bindings that pin a single upstream commit and have already changed the Zig toolchain they need (0.15 to 0.16) between the published crate and master, so every upgrade becomes an FFI and toolchain migration on someone else's schedule.",
+    "migration": "Large rewrite. host.rs: replace alacritty's EventLoop / Notifier / FairMutex / tty (PTY spawn, read loop, OnResize) with a TD-owned PTY and read thread that calls vt_write and takes replies from on_pty_write; libghostty has no PTY layer, and the !Send Rust types force one emulation thread per pane or a TD-owned unsafe Send wrapper over the -sys crate. socketpty.rs: its EventedPty / EventedReadWrite shim for alacritty's loop goes away; the window replica becomes a Terminal fed socket bytes with no WRITE_PTY installed. term.rs: Term / Config / EventProxy / Processor wiring and the PtyWrite, TextAreaSizeRequest and clipboard event mapping become ghostty effect callbacks. gridwire.rs: encode_snapshot (TD's own VT re-encoder) can give way to the VT formatter or the binary snapshot, and grid_hash is rewritten over RenderState rows and cells; neither snapshot route carries Kitty images, so image state needs its own host-to-window path. pane.rs: its 51 grid reads move from alacritty Grid indexing to RenderState row and cell iteration across FFI (per-cell calls or the CELLS_RAW bulk view), flags are remapped (WIDE / SPACER_TAIL / SPACER_HEAD, GhosttyStyle), and a new image layer plus U+10EEEE placeholder decoding is added. main.rs: WindowSize-based resize announcements become ghostty_terminal_resize(cols, rows, cell_w_px, cell_h_px). pane/bench.rs: fixtures rebuilt on the new types. Build: Zig 0.16 plus a pinned, prefetched ghostty source in CI, AppImage and AUR."
+   },
+   "score": 0.622962962962963,
+   "coverage": 1.0
+  },
+  "libvterm": {
+   "id": "libvterm",
+   "label": "libvterm — Neovim's C terminal library",
+   "group": "C · Swap to a core across a C boundary",
+   "reference": false,
+   "dims": {
+    "pictures": {
+     "score": 0.0,
+     "shown": "0/14",
+     "source": "code over the agents' kitty_tags"
+    },
+    "pictures_measured": {
+     "score": null,
+     "shown": "not run",
+     "source": "not run",
+     "note": null
+    },
+    "other_protocols": {
+     "score": 0.0,
+     "shown": "Sixel no, iTerm2 no",
+     "source": "code over the agents' values"
+    },
+    "fit": {
+     "score": 0.484375,
+     "coverage": 1.0,
+     "shown": "15.5/32",
+     "answers": {
+      "cell_contents": "provides",
+      "zero_width": "provides",
+      "underline_colour": "does_not",
+      "wide_chars": "provides",
+      "scrollback_read": "does_not",
+      "damage": "provides",
+      "snapshot": "does_not",
+      "feed_loop": "provides",
+      "replies_out": "provides_with_work",
+      "threading": "does_not",
+      "placements_readable": "does_not",
+      "placeholders": "does_not",
+      "media_policy": "does_not"
+     },
+     "must_have_gaps": 2,
+     "source": "Jev (core-fit.assess), combined by code"
+    },
+    "trajectory": {
+     "score": 0.1,
+     "shown": "dormant",
+     "source": "Jev (core-fit.maturity)"
+    },
+    "bus_factor": {
+     "score": 0.0,
+     "shown": "0",
+     "source": "code: the first count in the agents' value"
+    },
+    "build": {
+     "score": 0.7,
+     "shown": "a C99 compiler through the cc crate",
+     "source": "hand-read from the agents' value"
+    },
+    "vt_features": {
+     "score": 0.6666666666666666,
+     "shown": "8 yes, 4 no, 0 unknown",
+     "source": "code over the agents' value"
+    },
+    "td_work": {
+     "score": 0.25,
+     "shown": "XL",
+     "note": "C bindings last published in 2016, a dormant upstream and no pictures",
+     "source": "estimate: the assembling agent"
+    },
+    "performance": {
+     "score": null,
+     "shown": "not measured",
+     "source": "not measured"
+    }
+   },
+   "facts": {
+    "licence": {
+     "value": "MIT — an MIT product may link or copy it (keep the copyright notice).",
+     "gate": "compatible"
+    },
+    "evidence": {
+     "claims": 23,
+     "supported": 1,
+     "inferred": 3,
+     "overclaims": 4,
+     "unsupported": 9,
+     "human": 6,
+     "None": 0
+    },
+    "risk": "Upstream libvterm has been silent since July 2024 and its living line of development now sits inside Neovim, tangled with nvim headers, so TD would choose between a frozen C core lacking Kitty keyboard, mode 2026, OSC 8, grapheme clusters and any picture model, or a private fork of Neovim's copy that TD alone maintains — and in both cases TD still writes Kitty graphics itself.",
+    "migration": "Everything that imports alacritty_terminal changes. host.rs, term.rs and socketpty.rs lose alacritty's EventLoop, tty and FairMutex: TD would own the PTY read loop and call vterm_input_write per chunk, with vterm_output_set_callback wired to the PTY writer on the host and to a discard sink on the window replica. A new TD-owned -sys crate (bindgen + cc over the 0.3.3 tarball) and a safe wrapper replace the Term type. pane.rs's 51 grid reads move to vterm_screen_get_cell, which has no underline colour and no hyperlink, so TD loses SGR 58 and OSC 8 rendering unless it tracks them itself from the fallbacks. libvterm keeps no scrollback: TD would build a scrollback store from sb_pushline/sb_popline and reflow it itself. gridwire.rs's snapshot re-encoder would read that store plus the screen and must reconstruct modes libvterm does not expose (DECCKM, bracketed paste, mouse encoding). Kitty graphics would still be written entirely by TD, fed from the APC fallback. main.rs and pane/bench.rs change with the Term type."
+   },
+   "score": 0.26631944444444444,
+   "coverage": 1.0
+  },
+  "contour-vtbackend": {
+   "id": "contour-vtbackend",
+   "label": "Contour's vtbackend (C++)",
+   "group": "C · Swap to a core across a C boundary",
+   "reference": false,
+   "dims": {
+    "pictures": {
+     "score": 0.5,
+     "shown": "7/14",
+     "source": "code over the agents' kitty_tags"
+    },
+    "pictures_measured": {
+     "score": null,
+     "shown": "not run",
+     "source": "not run",
+     "note": null
+    },
+    "other_protocols": {
+     "score": 0.75,
+     "shown": "Sixel yes, iTerm2 partial",
+     "source": "code over the agents' values"
+    },
+    "fit": {
+     "score": 0.75,
+     "coverage": 0.8125,
+     "shown": "19.5/26",
+     "answers": {
+      "cell_contents": "provides",
+      "zero_width": "provides",
+      "underline_colour": "provides",
+      "wide_chars": null,
+      "scrollback_read": "provides",
+      "damage": "provides",
+      "snapshot": "provides_with_work",
+      "feed_loop": "does_not",
+      "replies_out": null,
+      "threading": "provides_with_work",
+      "placements_readable": "provides_with_work",
+      "placeholders": "provides",
+      "media_policy": "provides"
+     },
+     "must_have_gaps": null,
+     "source": "Jev (core-fit.assess), combined by code"
+    },
+    "trajectory": {
+     "score": 0.3,
+     "shown": "declared_unstable",
+     "source": "Jev (core-fit.maturity)"
+    },
+    "bus_factor": {
+     "score": 0.3,
+     "shown": "1",
+     "source": "code: the first count in the agents' value"
+    },
+    "build": {
+     "score": 0.15,
+     "shown": "a C++23 compiler and CMake 3.25, with network at configure time",
+     "source": "hand-read from the agents' value"
+    },
+    "vt_features": {
+     "score": 1.0,
+     "shown": "9 yes, 0 no, 0 unknown",
+     "source": "code over the agents' value"
+    },
+    "td_work": {
+     "score": 0.1,
+     "shown": "XXL",
+     "note": "a C++23 bridge TD writes itself, to a core with no C interface or install rule",
+     "source": "estimate: the assembling agent"
+    },
+    "performance": {
+     "score": null,
+     "shown": "not measured",
+     "source": "not measured"
+    }
+   },
+   "facts": {
+    "licence": {
+     "value": "Apache-2.0 — permissive; an MIT product may link it, carrying Apache-2.0's notice and attribution obligations.",
+     "gate": "compatible"
+    },
+    "evidence": {
+     "claims": 23,
+     "supported": 2,
+     "inferred": 2,
+     "overclaims": 6,
+     "unsupported": 5,
+     "human": 8,
+     "None": 0
+    },
+    "risk": "vtbackend is an internal C++23 static target with no C ABI, no install rule and one author writing about 92% of the last year's commits, who moved its headers twice in August 2026 — TD's shim would be bound to an API nobody has promised to keep, rebuilt through a CMake tree that drags in font libraries TD does not need.",
+    "migration": "A larger rewrite than any Rust core. TD first needs a build: a vendored Contour tree configured by CMake from build.rs (C++23 compiler, CMake >= 3.25, libunicode/GSL/boxed-cpp/reflection-cpp, and fontconfig/freetype/harfbuzz/cairo just to configure text_shaper), plus an extern \"C\" shim TD writes over vtbackend::Terminal, Screen, Grid and CellProxy, bound with bindgen or cxx. host.rs, term.rs and socketpty.rs: replace alacritty's EventLoop with a C++ vtpty::Pty subclass in the shim that forwards read() to TD's PTY or socket and surfaces write(), where Terminal::reply lands, so the host writes replies once and the replica's Pty discards them; or feed bytes with Terminal::writeToScreen. pane.rs's 51 grid reads become shim calls returning codepoints, width, flags, fg/bg/underline colour, a hyperlink id and an ImageFragment per cell. gridwire.rs could adopt Contour's per-line revision stamps instead of hashing, but its VT re-encoding would have to reproduce images that Contour holds as per-cell fragments. main.rs and pane/bench.rs change with the type. gpui must learn to draw ImageFragment pixel data exported through the shim."
+   },
+   "score": 0.4433333333333333,
+   "coverage": 1.0
+  },
+  "kitty-core": {
+   "id": "kitty-core",
+   "label": "kitty's own core (C, GPL-3.0) — licence check",
+   "group": "C · Swap to a core across a C boundary",
+   "reference": false,
+   "dims": {
+    "pictures": {
+     "score": 1.0,
+     "shown": "14/14",
+     "source": "code over the agents' kitty_tags"
+    },
+    "pictures_measured": {
+     "score": null,
+     "shown": "not run",
+     "source": "not run",
+     "note": null
+    },
+    "other_protocols": {
+     "score": 0.0,
+     "shown": "Sixel no, iTerm2 no",
+     "source": "code over the agents' values"
+    },
+    "fit": {
+     "score": 0.0,
+     "coverage": 0.9375,
+     "shown": "0.0/30",
+     "answers": {
+      "cell_contents": "does_not",
+      "zero_width": "does_not",
+      "underline_colour": "does_not",
+      "wide_chars": "does_not",
+      "scrollback_read": "does_not",
+      "damage": "does_not",
+      "snapshot": "does_not",
+      "feed_loop": "does_not",
+      "replies_out": "does_not",
+      "threading": null,
+      "placements_readable": "does_not",
+      "placeholders": "does_not",
+      "media_policy": "does_not"
+     },
+     "must_have_gaps": 7,
+     "source": "Jev (core-fit.assess), combined by code"
+    },
+    "trajectory": {
+     "score": 0.3,
+     "shown": "declared_unstable",
+     "source": "Jev (core-fit.maturity)"
+    },
+    "bus_factor": {
+     "score": 0.3,
+     "shown": "1",
+     "source": "code: the first count in the agents' value"
+    },
+    "build": {
+     "score": null,
+     "shown": "not applicable",
+     "source": "hand-read from the agents' value"
+    },
+    "vt_features": {
+     "score": 1.0,
+     "shown": "9 yes, 0 no, 0 unknown",
+     "source": "code over the agents' value"
+    },
+    "td_work": {
+     "score": null,
+     "shown": "n/a",
+     "note": "GPL-3.0: not usable in an MIT product",
+     "source": "estimate: the assembling agent"
+    },
+    "performance": {
+     "score": null,
+     "shown": "not measured",
+     "source": "not measured"
+    }
+   },
+   "facts": {
+    "licence": {
+     "value": "GPL-3.0 — an MIT product may not link it or copy from it.",
+     "gate": "blocked"
+    },
+    "evidence": {
+     "claims": 22,
+     "supported": 1,
+     "inferred": 0,
+     "overclaims": 5,
+     "unsupported": 10,
+     "human": 6,
+     "None": 0
+    },
+    "risk": "Working from kitty/graphics.c as the reference while writing TD's own graphics code invites line-by-line transliteration, which would put GPL-3.0-derived code into an MIT product.",
+    "migration": "None — this core cannot be adopted: GPL-3.0 bars linking or copying into MIT TD, and it is a CPython extension. None of TD's seven alacritty-importing files (host.rs, term.rs, socketpty.rs, gridwire.rs, pane.rs, main.rs, pane/bench.rs) change because of it. Its role is a behavioural oracle: whichever core TD picks, TD's Kitty responses, placements and deletes should be compared against real kitty."
+   },
+   "score": null,
+   "coverage": 0.0
+  },
+  "ghostty-shadow": {
+   "id": "ghostty-shadow",
+   "label": "Hybrid: alacritty for text, libghostty-vt beside it for pictures only",
+   "group": "D · Hybrids and references",
+   "reference": false,
+   "dims": {
+    "pictures": {
+     "score": 0.9285714285714286,
+     "shown": "13/14",
+     "source": "code over the agents' kitty_tags"
+    },
+    "pictures_measured": {
+     "score": 1.0,
+     "shown": "6/6",
+     "source": "measured: the bake-off",
+     "note": "its picture half is libghostty-vt; the cursor divergence is not measured by the bake-off"
+    },
+    "other_protocols": {
+     "score": 0.0,
+     "shown": "Sixel no., iTerm2 no.",
+     "source": "code over the agents' values"
+    },
+    "fit": {
+     "score": 0.5740740740740741,
+     "coverage": 0.84375,
+     "shown": "15.5/27",
+     "answers": {
+      "cell_contents": "provides_with_work",
+      "zero_width": null,
+      "underline_colour": "provides",
+      "wide_chars": "provides",
+      "scrollback_read": "provides",
+      "damage": null,
+      "snapshot": "does_not",
+      "feed_loop": "provides_with_work",
+      "replies_out": "provides_with_work",
+      "threading": "does_not",
+      "placements_readable": "provides_with_work",
+      "placeholders": "provides_with_work",
+      "media_policy": "provides_with_work"
+     },
+     "must_have_gaps": null,
+     "source": "Jev (core-fit.assess), combined by code"
+    },
+    "trajectory": {
+     "score": 0.3,
+     "shown": "declared_unstable",
+     "source": "Jev (core-fit.maturity)"
+    },
+    "bus_factor": {
+     "score": 0.3,
+     "shown": "1",
+     "source": "hand-read: each of its three upstreams is carried by one or two people"
+    },
+    "build": {
+     "score": 0.4,
+     "shown": "a Zig 0.15 toolchain, and a git clone of ghostty at build time",
+     "source": "hand-read from the agents' value"
+    },
+    "vt_features": {
+     "score": 0.8888888888888888,
+     "shown": "8 yes, 1 no, 1 unknown",
+     "source": "code over the agents' value"
+    },
+    "td_work": {
+     "score": 0.5,
+     "shown": "L",
+     "note": "libghostty-vt beside alacritty, plus reconciliation whenever the two cursors disagree after a placement",
+     "source": "estimate: the assembling agent"
+    },
+    "performance": {
+     "score": null,
+     "shown": "not measured",
+     "source": "not measured"
+    }
+   },
+   "facts": {
+    "licence": {
+     "value": "Apache-2.0 (alacritty_terminal) + MIT OR Apache-2.0 (the libghostty-vt and libghostty-vt-sys crates) + MIT (ghostty, the Zig source that is compiled and statically linked). All are permissive, so an MIT product may link every part if it keeps the notices.",
+     "gate": "compatible"
+    },
+    "evidence": {
+     "claims": 23,
+     "supported": 1,
+     "inferred": 0,
+     "overclaims": 5,
+     "unsupported": 10,
+     "human": 7,
+     "None": 0
+    },
+    "risk": "A direct placement without C=1 is the default in chafa, viu, kitten icat and timg; only mpv sends C=1. On such a placement libghostty moves its cursor right by the image's columns and down by its rows (rows−1 since ghostty's 2026-08-18 fix, the full row count at the crates.io 0.2.1 pin), scrolling when it reaches the bottom. alacritty never sees the APC and leaves its cursor where it was. From the very next byte of text the two grids disagree, and every picture after that is painted at a libghostty row that no longer matches alacritty's cells.",
+    "migration": "Text-side change: the smallest of any picture option. Seam work: the largest. The seven files, one by one. pane.rs: its 51 grid reads stay. It gains a picture pass that walks the shadow's placements, copied out as Send-able values (image id, generation, RGBA bytes, viewport row/col, grid size, z), and paints them in gpui above or below the text by z. For U=1 it also scans alacritty's cells for U+10EEEE placeholders. host.rs: TeeReader::read feeds a per-pane libghostty Terminal on the reader thread before alacritty parses (thread-local, because the handle is !Send). It enables the file, temp and shm media, installs a PNG decoder, and filters write_pty down to Kitty APC replies. To stop the divergence it must also rewrite the stream: find each direct placement without C=1, inject the equivalent cursor motion into alacritty's input at that byte offset, and forward the rewritten bytes to clients so the replica still hashes equal. That means TD frames Kitty APC itself anyway, which is the approach Zellij takes in front of the same vte 0.15. gridwire.rs: encode_snapshot and grid_hash cover text only. The attach protocol needs a picture message (image bytes plus placements), because the replica window cannot re-read temp or shm transmissions the host already consumed. ReplicaGuard either gains a picture check or treats pictures as host-authoritative. term.rs: the hostless EventLoop path needs the same tap. socketpty.rs: unchanged. main.rs: wiring and config (storage limit, media policy). pane/bench.rs: add a benchmark for the second parser. Build: Zig 0.15.2 or 0.16 plus git/network, or a vendored ghostty source, in the AppImage and AUR builds."
+   },
+   "score": 0.5531216931216931,
+   "coverage": 1.0
+  },
+  "zellij-grid": {
+   "id": "zellij-grid",
+   "label": "Zellij — a Rust multiplexer whose server owns its own grid (host/client prior art)",
+   "group": "D · Hybrids and references",
+   "reference": true,
+   "dims": {
+    "pictures": {
+     "score": 0.7857142857142857,
+     "shown": "11/14",
+     "source": "code over the agents' kitty_tags"
+    },
+    "pictures_measured": {
+     "score": null,
+     "shown": "not run",
+     "source": "not run",
+     "note": null
+    },
+    "other_protocols": {
+     "score": 0.5,
+     "shown": "Sixel yes, iTerm2 no",
+     "source": "code over the agents' values"
+    },
+    "fit": {
+     "score": 0.12962962962962962,
+     "coverage": 0.84375,
+     "shown": "3.5/27",
+     "answers": {
+      "cell_contents": "provides_with_work",
+      "zero_width": "does_not",
+      "underline_colour": null,
+      "wide_chars": "does_not",
+      "scrollback_read": null,
+      "damage": "provides",
+      "snapshot": "does_not",
+      "feed_loop": "does_not",
+      "replies_out": "does_not",
+      "threading": "does_not",
+      "placements_readable": "does_not",
+      "placeholders": "does_not",
+      "media_policy": "does_not"
+     },
+     "must_have_gaps": null,
+     "source": "Jev (core-fit.assess), combined by code"
+    },
+    "trajectory": {
+     "score": 0.6,
+     "shown": "active_pre_1_0",
+     "source": "Jev (core-fit.maturity)"
+    },
+    "bus_factor": {
+     "score": 0.3,
+     "shown": "1",
+     "source": "code: the first count in the agents' value"
+    },
+    "build": {
+     "score": null,
+     "shown": "not applicable",
+     "source": "hand-read from the agents' value"
+    },
+    "vt_features": {
+     "score": 0.875,
+     "shown": "7 yes, 1 no, 0 unknown",
+     "source": "code over the agents' value"
+    },
+    "td_work": {
+     "score": null,
+     "shown": "reference",
+     "note": null,
+     "source": "estimate: the assembling agent"
+    },
+    "performance": {
+     "score": null,
+     "shown": "not measured",
+     "source": "not measured"
+    }
+   },
+   "facts": {
+    "licence": {
+     "value": "MIT — an MIT product may link it, and may copy its source files provided the copyright and licence notice travel with them.",
+     "gate": "compatible"
+    },
+    "evidence": {
+     "claims": 23,
+     "supported": 2,
+     "inferred": 4,
+     "overclaims": 5,
+     "unsupported": 2,
+     "human": 10,
+     "None": 0
+    },
+    "risk": "Reading Zellij as the model for TD's host/window split misleads, because its clients are dumb VT sinks with no replica, and the part worth copying — its Kitty code, merged on 2026-07-31 — is anchored to Zellij's own canonical-line grid, so a port onto alacritty's grid inherits eight-week-old edge cases with none of Zellij's tests carried over.",
+    "migration": "Nothing to adopt wholesale — Zellij is not a library TD can link. What TD can take, and what it costs: (1) copy, with the MIT notice, kitty_graphics/interceptor.rs, parser.rs, store.rs and replies.rs (about 1,200 lines). The interceptor sits in front of vte 0.15, the same parser TD uses, but alacritty's EventLoop owns the read loop in host.rs, term.rs and socketpty.rs, so TD must feed bytes through the interceptor before Processor::advance — owning the read loop (as in alacritty-own-loop) rather than patching vte. (2) Rewrite grid_state.rs's anchoring (canonical_line over lines_above, viewport and lines_below) onto alacritty's Grid (WRAPLINE flags, display_offset) in term.rs, since alacritty keeps no canonical-line index. (3) gridwire.rs: Zellij answers an attach with a full re-render and a per-client HostKittyState reset that re-transmits each image once and re-places it with C=1; TD's encode_snapshot needs the same picture section so the window replica's store matches, and grid_hash must cover placements. (4) pane.rs paints from placements. main.rs and pane/bench.rs change only in wiring. Zellij's host/client model differs from TD's: its client holds no emulator (the server composites and sends a VT line diff per client), so it confirms the host owning truth and writing replies once, but offers nothing for TD's replica-and-hash design."
+   }
+  },
+  "zmx": {
+   "id": "zmx",
+   "label": "zmx — server-side snapshots with libghostty-vt (host/replica prior art)",
+   "group": "D · Hybrids and references",
+   "reference": true,
+   "dims": {
+    "pictures": {
+     "score": 0.0,
+     "shown": "0/14",
+     "source": "code over the agents' kitty_tags"
+    },
+    "pictures_measured": {
+     "score": null,
+     "shown": "not run",
+     "source": "not run",
+     "note": null
+    },
+    "other_protocols": {
+     "score": 0.0,
+     "shown": "Sixel no, iTerm2 no",
+     "source": "code over the agents' values"
+    },
+    "fit": {
+     "score": 0.16666666666666666,
+     "coverage": 0.75,
+     "shown": "4.0/24",
+     "answers": {
+      "cell_contents": "provides_with_work",
+      "zero_width": null,
+      "underline_colour": null,
+      "wide_chars": null,
+      "scrollback_read": "provides_with_work",
+      "damage": "does_not",
+      "snapshot": "provides_with_work",
+      "feed_loop": "does_not",
+      "replies_out": "does_not",
+      "threading": "does_not",
+      "placements_readable": "does_not",
+      "placeholders": "does_not",
+      "media_policy": "does_not"
+     },
+     "must_have_gaps": null,
+     "source": "Jev (core-fit.assess), combined by code"
+    },
+    "trajectory": {
+     "score": 0.3,
+     "shown": "declared_unstable",
+     "source": "Jev (core-fit.maturity)"
+    },
+    "bus_factor": {
+     "score": 0.3,
+     "shown": "1",
+     "source": "code: the first count in the agents' value"
+    },
+    "build": {
+     "score": null,
+     "shown": "not applicable",
+     "source": "hand-read from the agents' value"
+    },
+    "vt_features": {
+     "score": 1.0,
+     "shown": "7 yes, 0 no, 0 unknown",
+     "source": "code over the agents' value"
+    },
+    "td_work": {
+     "score": null,
+     "shown": "reference",
+     "note": null,
+     "source": "estimate: the assembling agent"
+    },
+    "performance": {
+     "score": null,
+     "shown": "not measured",
+     "source": "not measured"
+    }
+   },
+   "facts": {
+    "licence": {
+     "value": "MIT — an MIT product may copy or adapt its code with the notice kept; its libghostty-vt dependency is MIT too.",
+     "gate": "compatible"
+    },
+    "evidence": {
+     "claims": 22,
+     "supported": 1,
+     "inferred": 2,
+     "overclaims": 5,
+     "unsupported": 7,
+     "human": 7,
+     "None": 0
+    },
+    "risk": "Taking zmx as the model for TD's re-attach would carry text only: its snapshot drops every Kitty, Sixel and iTerm2 picture (the formatter has no image output and the issue asking for it has been open since December 2025), so a re-attached TD window would still need its own picture replay path.",
+    "migration": "Nothing to adopt as code (zmx is an application); five design points TD's host/replica could borrow, mostly in host.rs and gridwire.rs: (1) resize the host grid to the attaching window's size BEFORE snapshotting, then resize the PTY and SIGWINCH the foreground process group even when the size is unchanged, so TUIs repaint after the snapshot (loop.zig L967-1016); (2) strip DECSET 2026 from the snapshot so a replica does not sit deferring renders; (3) replay title (OSC 2), cwd (OSC 7), dynamic colours and the scroll region, which gridwire.rs does not carry today; (4) answer DA only while no window is attached and otherwise let exactly one leader's replies through — TD already writes replies once from the host, so this is a check, not a change; (5) feed and broadcast on one thread so the snapshot/stream seam cannot exist — TD instead fences alacritty's reader thread with a lease in host.rs. Points NOT to copy: zmx's snapshot has the same alt-screen gap as gridwire, emits modes before content (TD's modes-last order is deliberately safer), drops OSC 8 links and all pictures, and has no equivalent of grid_hash / ReplicaGuard. If TD ever moves its host to libghostty-vt, zmx shows that the formatter can replace gridwire::encode_snapshot for text, and ghostty's binary snapshot (ghostty_snapshot_*) is the better candidate for a libghostty-vt replica; pane.rs, term.rs, socketpty.rs, main.rs and pane/bench.rs are untouched by anything zmx teaches."
+   }
+  }
+ },
+ "ranked": [
+  "rio-vt",
+  "wezterm-term",
+  "libghostty-vt",
+  "ghostty-shadow",
+  "alacritty-own-loop",
+  "contour-vtbackend",
+  "alacritty-graphics-fork",
+  "alacritty-patched-vte",
+  "vt100-rust",
+  "td-own-core",
+  "libvterm",
+  "kitty-core"
+ ],
+ "baseline": [
+  "libghostty-vt",
+  "rio-vt",
+  "ghostty-shadow",
+  "wezterm-term",
+  "contour-vtbackend",
+  "alacritty-own-loop",
+  "vt100-rust",
+  "td-own-core",
+  "alacritty-graphics-fork",
+  "alacritty-patched-vte",
+  "libvterm",
+  "kitty-core"
+ ],
+ "sensitivity": {
+  "samples": 10000,
+  "top1": {
+   "alacritty-own-loop": 0.0101,
+   "alacritty-patched-vte": 0.0,
+   "alacritty-graphics-fork": 0.0,
+   "rio-vt": 0.3683,
+   "wezterm-term": 0.6153,
+   "vt100-rust": 0.0,
+   "td-own-core": 0.0,
+   "libghostty-vt": 0.0063,
+   "libvterm": 0.0,
+   "contour-vtbackend": 0.0,
+   "kitty-core": 0.0,
+   "ghostty-shadow": 0.0
+  },
+  "top3": {
+   "alacritty-own-loop": 0.3707,
+   "alacritty-patched-vte": 0.0022,
+   "alacritty-graphics-fork": 0.0995,
+   "rio-vt": 0.9918,
+   "wezterm-term": 0.9823,
+   "vt100-rust": 0.0003,
+   "td-own-core": 0.0015,
+   "libghostty-vt": 0.3901,
+   "libvterm": 0.0,
+   "contour-vtbackend": 0.1547,
+   "kitty-core": 0.0,
+   "ghostty-shadow": 0.0069
+  }
+ },
+ "order_without_pictures": [
+  "wezterm-term",
+  "rio-vt",
+  "alacritty-own-loop",
+  "alacritty-graphics-fork",
+  "libghostty-vt",
+  "alacritty-patched-vte",
+  "ghostty-shadow",
+  "contour-vtbackend",
+  "vt100-rust",
+  "td-own-core",
+  "libvterm",
+  "kitty-core"
+ ]
+}

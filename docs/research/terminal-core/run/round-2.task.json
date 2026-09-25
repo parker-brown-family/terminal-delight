@@ -1,0 +1,186 @@
+{
+  "round": 2,
+  "rubric": "terminal-core-candidates",
+  "integrityRules": [
+    "Never invent a value (phone, name, figure). If unfound, omit it or set `flagged: true` with a note like \"verify by phone\".",
+    "Every value must carry `provenance.source` (a URL) OR be `flagged`. Unsourced, unflagged values are rejected by the harness.",
+    "Only fill the gap fields listed for each subject — do not re-research satisfied fields.",
+    "Emit a `bubbles` entry of kind \"serendipity\" for anything useful you find that is outside the requested fields."
+  ],
+  "fields": [
+    {
+      "key": "what_it_is",
+      "requirement": "required",
+      "verify": "source-required",
+      "hint": "one or two sentences: what this core/option is and who maintains it"
+    },
+    {
+      "key": "license",
+      "requirement": "required",
+      "verify": "source-required",
+      "hint": "SPDX id, measured with `gh api repos/O/R --jq .license.spdx_id` or the crate's license field; say whether an MIT product may link it"
+    },
+    {
+      "key": "language",
+      "requirement": "required",
+      "verify": "source-required",
+      "hint": "implementation language(s)"
+    },
+    {
+      "key": "integration_path",
+      "requirement": "required",
+      "verify": "source-or-flag",
+      "hint": "how TD would consume it: crates.io crate | git dependency | C ABI through Rust bindings (name the binding crate) | fork + [patch] | not a library (reference only)"
+    },
+    {
+      "key": "build_requirements",
+      "requirement": "required",
+      "verify": "source-or-flag",
+      "hint": "every toolchain and system library beyond stable cargo (e.g. Zig with version, C/C++ compiler, cmake, network access at build time); 'cargo only' if none"
+    },
+    {
+      "key": "latest_release",
+      "requirement": "required",
+      "verify": "source-required",
+      "hint": "version and date of the newest release TD could depend on (crates.io API, GitHub releases, or tag)"
+    },
+    {
+      "key": "first_release",
+      "requirement": "preferred",
+      "verify": "source-required",
+      "hint": "date of the first published release of the embeddable form"
+    },
+    {
+      "key": "releases_last_12mo",
+      "requirement": "preferred",
+      "verify": "source-required",
+      "hint": "count of releases in the 12 months before 2026-09-25, measured from crates.io versions or GitHub tags; give the command"
+    },
+    {
+      "key": "api_stability",
+      "requirement": "required",
+      "verify": "source-or-flag",
+      "hint": "the project's own words about API stability (quote it), or the semver situation (pre-1.0? breaking changes in recent releases?)"
+    },
+    {
+      "key": "maintainers",
+      "requirement": "required",
+      "verify": "source-required",
+      "hint": "people carrying the work: number of contributors with >= 10% of commits in the last 12 months, measured (gh api repos/O/R/stats/contributors or commits); name the lead maintainer"
+    },
+    {
+      "key": "adoption",
+      "requirement": "preferred",
+      "verify": "source-required",
+      "hint": "downloads (crates.io), dependents, and named products that embed it"
+    },
+    {
+      "key": "kitty_graphics",
+      "requirement": "required",
+      "verify": "source-required",
+      "hint": "what of the Kitty graphics protocol it implements, citing source files: transmit media, formats, direct and virtual placements, deletes, query replies, z-layers, animation, quotas. 'none' if none, with the evidence that it drops APC"
+    },
+    {
+      "key": "kitty_tags",
+      "requirement": "required",
+      "verify": "none",
+      "hint": "comma-separated tags from exactly this vocabulary for what is IMPLEMENTED (not planned): transmit-direct, transmit-file, transmit-temp, transmit-shm, format-png, format-raw, compression, place-direct, place-virtual, delete-by-id, delete-by-position, query-reply, z-layers, animation — or 'none'. Unknowns are listed in the note as 'unknown: tag, tag'. Drives the derived kitty_coverage."
+    },
+    {
+      "key": "sixel",
+      "requirement": "required",
+      "verify": "source-or-flag",
+      "hint": "Sixel support: yes / no / partial, with the source file or doc"
+    },
+    {
+      "key": "iterm2_images",
+      "requirement": "required",
+      "verify": "source-or-flag",
+      "hint": "iTerm2 OSC 1337 inline images: yes / no / partial"
+    },
+    {
+      "key": "picture_anchoring",
+      "requirement": "preferred",
+      "verify": "source-or-flag",
+      "hint": "how a placed picture is tied to the grid so it scrolls, survives scrollback and reflow: tracked pin, absolute row counter, per-cell attribute, placeholder cells, or n/a; and its storage quota"
+    },
+    {
+      "key": "vt_conformance",
+      "requirement": "preferred",
+      "verify": "source-or-flag",
+      "hint": "published conformance evidence: vttest / esctest results, a conformance matrix, or the project's stated coverage"
+    },
+    {
+      "key": "vt_features",
+      "requirement": "required",
+      "verify": "source-or-flag",
+      "hint": "for each of kitty-keyboard, osc8-hyperlinks, sync-output-2026, osc52-clipboard, grapheme-clusters, reflow-on-resize, alt-screen, bracketed-paste, mouse-sgr: yes / no / unknown, one line, citing where each was established"
+    },
+    {
+      "key": "performance_evidence",
+      "requirement": "preferred",
+      "verify": "source-or-flag",
+      "hint": "published or measured parse throughput and memory per cell; name the benchmark and the machine"
+    },
+    {
+      "key": "grid_api",
+      "requirement": "required",
+      "verify": "source-required",
+      "hint": "how an embedder reads the screen: the types and methods for iterating rows/cells and what a cell carries (char, zero-width/grapheme, fg/bg, underline colour, flags, wide spacer), the cursor, the modes. Quote the doc comment or signature"
+    },
+    {
+      "key": "damage_tracking",
+      "requirement": "preferred",
+      "verify": "source-or-flag",
+      "hint": "does it report which rows changed since the last read"
+    },
+    {
+      "key": "state_snapshot",
+      "requirement": "required",
+      "verify": "source-or-flag",
+      "hint": "can the full terminal state be serialized, snapshotted, or replayed for a client that attaches later (TD's host/window replica)? Name the API, or 'no'"
+    },
+    {
+      "key": "threading_and_loop",
+      "requirement": "required",
+      "verify": "source-or-flag",
+      "hint": "who owns the read/parse loop (embedder or the library), thread-safety (Send/Sync, locks), and whether it includes a PTY layer"
+    },
+    {
+      "key": "reply_channel",
+      "requirement": "required",
+      "verify": "source-or-flag",
+      "hint": "how answers to program queries (device attributes, window-size reports, Kitty a=q) reach the embedder so it can write them to the PTY exactly once"
+    },
+    {
+      "key": "td_migration",
+      "requirement": "required",
+      "verify": "none",
+      "hint": "INFERRED: what TD would have to rewrite to adopt this, in terms of TD's seven alacritty-importing files (host.rs, term.rs, socketpty.rs, gridwire.rs, pane.rs, main.rs, pane/bench.rs) — label it inferred"
+    },
+    {
+      "key": "biggest_risk",
+      "requirement": "required",
+      "verify": "none",
+      "hint": "INFERRED: the one thing most likely to make this choice a regret, in one sentence"
+    },
+    {
+      "key": "primary_sources",
+      "requirement": "required",
+      "verify": "source-required",
+      "hint": "space-separated URLs actually read this session; mark secondary write-ups 'synthesis:'"
+    }
+  ],
+  "tasks": [
+    {
+      "id": "td-own-core",
+      "label": "TD writes its own emulator core on a parser (prior art: Warp, Zellij)",
+      "group": "B · Swap to a Rust core",
+      "gaps": [
+        "latest_release",
+        "first_release",
+        "releases_last_12mo"
+      ]
+    }
+  ]
+}

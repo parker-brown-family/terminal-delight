@@ -1,0 +1,26 @@
+{
+  "call": "maturity",
+  "item": {
+    "id": "trap/o",
+    "label": "Core O (a fixture)",
+    "kitty_tags": "unknown",
+    "evidence": {},
+    "maturity": {
+      "api_stability": {
+        "recorded": "Pre-1.0 (0.3.3) with no stability statement."
+      },
+      "releases_last_12mo": {
+        "recorded": "0 \u2014 nothing released since 2023-11-22"
+      },
+      "maintainers": {
+        "recorded": "0 contributors in the last 12 months; no commits since 2024-07-24"
+      }
+    }
+  },
+  "expect": {
+    "api_trajectory": [
+      "dormant"
+    ]
+  },
+  "written": "2026-09-25, before any call"
+}

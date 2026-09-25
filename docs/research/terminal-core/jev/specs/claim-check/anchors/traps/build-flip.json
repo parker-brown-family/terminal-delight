@@ -1,0 +1,21 @@
+{
+  "call": "check",
+  "item": {
+    "id": "trap/build-flip",
+    "subject": "Core Y (a fixture)",
+    "field": "build_requirements",
+    "field_means": "build_requirements: toolchains beyond stable cargo",
+    "value": "cargo only",
+    "quote": "[package]\nbuild = \"build.rs\"\n\n[build-dependencies]\ncc = \"1.0\"   # compiles vendor/libvterm/*.c",
+    "source": "fixture",
+    "measured_by_command": false,
+    "labelled_inferred": false
+  },
+  "expect": {
+    "support": [
+      "contradicts"
+    ]
+  },
+  "written": "2026-09-25, before any call",
+  "pair": "implies-build"
+}

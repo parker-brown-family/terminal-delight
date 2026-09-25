@@ -1,0 +1,323 @@
+{
+  "updates": [
+    {
+      "id": "libvterm",
+      "fields": {
+        "what_it_is": {
+          "value": "libvterm is an abstract C99 VT220/xterm terminal-emulation library that draws nothing itself and reports screen changes to its embedder through callbacks. Upstream is written and maintained by Paul \"LeoNerd\" Evans (Launchpad, Bazaar); Neovim adopted a heavily modified copy into its own tree (src/nvim/vterm) in January 2025, and Vim vendors another modified copy (src/libvterm).",
+          "provenance": { "source": "https://www.leonerd.org.uk/code/libvterm/", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"An abstract library implementation of a VT220/xterm/ECMA-48 terminal emulator.\" — [measured] homepage heading. Maintainer from CONTRIBUTING in the 0.3.3 tarball (Email: Paul 'LeoNerd' Evans); Neovim adoption from commit d8bc08db7 'refactor: adopt vterm' (2025-01-03); Vim copy from vim/vim src/libvterm/README ('This is a MODIFIED version of libvterm.')."
+        },
+        "license": {
+          "value": "MIT — an MIT product may link or copy it (keep the copyright notice).",
+          "provenance": { "source": "measured 2026-09-25: curl -sL 'https://api.launchpad.net/devel/libvterm' | jq '{display_name,owner_link,date_created,licenses,homepage_url,programming_language,summary,vcs}'", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"MIT / X / Expat Licence\" — [measured] Launchpad's licence field for the project. The 0.3.3 tarball LICENSE and Neovim's src/nvim/vterm/LICENSE both read 'The MIT License / Copyright (c) 2008 Paul Evans'; gh api repos/neovim/libvterm reports spdx_id MIT."
+        },
+        "language": {
+          "value": "C (C99)",
+          "provenance": { "source": "https://www.leonerd.org.uk/code/libvterm/libvterm-0.3.3.tar.gz (Makefile line 11)", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"override CFLAGS +=-Wall -Iinclude -std=c99 -Wpedantic\" — [measured] 0.3.3 Makefile; Launchpad also lists programming_language C99. src/ holds 9 .c files, 5,845 lines."
+        },
+        "integration_path": {
+          "value": "C ABI through Rust bindings, but no usable binding exists: the only crate, vterm-sys 0.1.0 (ajh/libvterm-rs), was last published 2016-04-23, three years before libvterm's first tagged release, so TD would write and own its own -sys crate (bindgen over include/vterm.h plus the cc crate compiling the 9 C files of the 0.3.3 tarball). Neovim's more capable copy is not consumable as a library: it includes nvim/grid.h, nvim/mbyte.h, nvim/memory.h and nvim/tui/termkey/termkey.h, and replaces the cell's chars[] with Neovim's schar_T.",
+          "provenance": { "source": "measured 2026-09-25: curl -s -A td-research https://crates.io/api/v1/crates/vterm-sys | jq -c '.crate | {name,max_version,updated_at,downloads,description,repository}'", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"{\"name\":\"vterm-sys\",\"max_version\":\"0.1.0\",\"updated_at\":\"2016-04-23T19:00:01.450519Z\",\"downloads\":7108,\"description\":\"FFI bindings to libvterm\"\" — [measured] crates.io; a crates.io search for 'libvterm' returns only vterm-sys and shpool-vterm (the latter describes itself as an in-memory terminal for shpool, not a libvterm binding). Neovim's nvim-internal includes measured by grep over neovim@378128a src/nvim/vterm (screen.c:4-6, state.c:5-6, vterm.c:7, keyboard.c:4)."
+        },
+        "build_requirements": {
+          "value": "Built from the release tarball through the cc crate: a C99 compiler only (the tarball ships the generated fullwidth.inc and encoding/*.inc tables). Upstream's own Makefile additionally needs libtool and perl (perl regenerates those tables). No network at build time.",
+          "provenance": { "source": "https://www.leonerd.org.uk/code/libvterm/libvterm-0.3.3.tar.gz (Makefile lines 1-5, 62-67)", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"LIBTOOL ?= libtool\" — [measured] 0.3.3 Makefile; lines 64 and 67 run 'perl -CSD tbl2inc_c.pl' and 'perl find-wide-chars.pl'. The unpacked tarball contains src/fullwidth.inc, src/encoding/DECdrawing.inc and uk.inc, so a cc-crate build can skip perl. [inferred] that the cc route works; not built."
+        },
+        "latest_release": {
+          "value": "0.3.3 — tarball dated 2023-11-22 (VERSION bump committed 2023-08-03). Launchpad's release list stops at v0.3 (2022-09-06); trunk was last modified 2024-07-24 with unreleased changes (a premove state callback and sb_pushline4).",
+          "provenance": { "source": "measured 2026-09-25: curl -sIL https://www.leonerd.org.uk/code/libvterm/libvterm-0.3.3.tar.gz | grep -i -E '^(HTTP|last-modified|content-length)'", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"last-modified: Wed, 22 Nov 2023 12:09:55 GMT\" — [measured] the newest tarball linked from the homepage; include/vterm.h in it defines VTERM_VERSION_PATCH 3. Bump commit 9d6d211 'Bumped VERSION to 0.3.3' (2023-08-03) and post-release commits to 2024-07-24 read on github.com/neovim/libvterm branch mirror."
+        },
+        "first_release": {
+          "value": "v0.1 on 2019-08-26 (first release on Launchpad); the project itself dates from 2008 (copyright) and was registered on Launchpad on 2010-08-01.",
+          "provenance": { "source": "measured 2026-09-25: curl -sL 'https://api.launchpad.net/devel/libvterm/releases' | jq -r '.total_size, (.entries[] | \"\\(.version) \\(.date_released)\")'", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"v0.1 2019-08-26T15:30:00+00:00\" — [measured] Launchpad lists three releases: v0.1 2019-08-26, v0.2 2021-09-21, v0.3 2022-09-06; 0.3.1 and 0.3.3 exist only as tarballs on leonerd.org.uk."
+        },
+        "releases_last_12mo": {
+          "value": "0 upstream (newest tarball 2023-11-22; trunk untouched since 2024-07-24). Neovim's adopted copy has no releases of its own; it ships inside Neovim.",
+          "provenance": { "source": "measured 2026-09-25: curl -sL 'https://api.launchpad.net/devel/~libvterm/libvterm/trunk' | jq '{bzr_identity,revision_count,last_scanned,date_last_modified,owner_link,lifecycle_status}'", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"\"date_last_modified\": \"2024-07-24T21:16:08.037000+00:00\"\" — [measured] Launchpad trunk (lp:libvterm, 844 revisions); tarball dates from curl -I: 0.3 2022-09-16, 0.3.1 2023-01-15, 0.3.3 2023-11-22."
+        },
+        "api_stability": {
+          "value": "Pre-1.0 (0.3.3) with no stability statement. The header marks APIs as deprecated for removal and calls the cell layout ABI-sensitive; VTermBuilder reserves an unused ABI-version field. Both large consumers (Neovim, Vim) carry modified forks whose APIs have diverged (Neovim swapped the cell's chars[] for schar_T and added a URI attribute).",
+          "provenance": { "source": "https://www.leonerd.org.uk/code/libvterm/libvterm-0.3.3.tar.gz (include/vterm.h lines 21-24, 326, 359-360)", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"These are deprecated and will be removed in a later version\" — [measured] vterm.h:360, on the output-buffer functions; vterm.h:22-23 says changing VTERM_MAX_CHARS_PER_CELL 'will be ABI-incompatible'. Neovim divergence from neovim@378128a src/nvim/vterm/vterm_defs.h:72-78."
+        },
+        "maintainers": {
+          "value": "Upstream: 0 contributors with >= 10% of commits in the last 12 months, because there were no upstream commits (trunk last modified 2024-07-24); lead and near-sole author Paul \"LeoNerd\" Evans (435 of 447 commits reachable on the mirror branch). Neovim's adopted copy: 12 commits touching src/nvim/vterm since 2025-09-25, 1 contributor >= 10% (zeertzjq, 5 of 12; seven others 1 each).",
+          "provenance": { "source": "measured 2026-09-25: git clone --depth 200 https://github.com/neovim/libvterm.git && git fetch --depth 400 origin mirror && git shortlog -sn FETCH_HEAD; gh api 'repos/neovim/neovim/commits?path=src/nvim/vterm&since=2025-09-25T00:00:00Z&per_page=100' --paginate --jq '.[].author.login' | sort | uniq -c | sort -rn", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"435\tPaul \"LeoNerd\" Evans\" — [measured] shortlog of the upstream mirror branch (shallow, 447 commits reachable; James McCoy 11, Florian Walch 1). The Neovim count's output began '5 zeertzjq'. Trunk date from the Launchpad API (date_last_modified 2024-07-24)."
+        },
+        "adoption": {
+          "value": "Embedded by Vim (modified copy in src/libvterm), Neovim (adopted into src/nvim/vterm, 2025), emacs-libvterm (akermu/emacs-libvterm, 1,997 stars), pangoterm, ConnectBot's Android termlib; GitHub code search for vterm_screen_get_cell also returns MacVim, mlterm and cgdb. Rust: vterm-sys has 7,108 all-time downloads and was last published in 2016.",
+          "provenance": { "source": "https://github.com/vim/vim/blob/master/src/libvterm/README", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"This is a MODIFIED version of libvterm.\" — [measured] Vim's README, which also says 'revisions up to 843 have been included'. Other names from: gh search repos libvterm (emacs-libvterm 'Emacs libvterm integration', connectbot/termlib 'terminal emulator Android Compose component using libvterm'), the homepage (pangoterm), gh search code 'vterm_screen_get_cell' (arakiken/mlterm, cgdb/cgdb, macvim-dev/macvim), crates.io API for vterm-sys downloads."
+        },
+        "kitty_graphics": {
+          "value": "none. The parser recognises APC and hands its payload, as string fragments, to an embedder-supplied VTermStateFallbacks.apc callback; the state layer handles no APC itself, and the screen cell has no image slot. Neovim forwards APC to Lua as a TermRequest event and draws nothing.",
+          "provenance": { "source": "https://www.leonerd.org.uk/code/libvterm/libvterm-0.3.3.tar.gz (src/state.c lines 1913-1923; src/parser.c lines 84-86)", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"/* No DEBUG_LOG because all APCs are unhandled */\" — [measured] state.c on_apc, which only calls state->fallbacks->apc. Neovim: news-0.11.txt 'The |terminal| emits a |TermRequest| autocommand event when the child process emits an APC control sequence.' and terminal.c on_apc (neovim@378128a lines 411-432)."
+        },
+        "kitty_tags": {
+          "value": "none",
+          "note": "[inferred] from state.c on_apc: every APC is unhandled unless the embedder's fallback takes it. unknown: (none)."
+        },
+        "sixel": {
+          "value": "no — the only DCS the state layer handles is DECRQSS (DCS $q); every other DCS, Sixel included, goes to the embedder's fallback or is dropped.",
+          "provenance": { "source": "https://www.leonerd.org.uk/code/libvterm/libvterm-0.3.3.tar.gz (src/state.c lines 1897-1911)", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"else if(state->fallbacks && state->fallbacks->dcs)\" — [measured] on_dcs, which first checks for the two-byte command '$q' and otherwise defers to the fallback, logging 'Unhandled DCS'. doc/seqs.txt lists no Sixel sequence."
+        },
+        "iterm2_images": {
+          "value": "no — on_osc handles OSC 0, 1, 2 and 52 only; OSC 1337 goes to the embedder's fallback.",
+          "provenance": { "source": "https://www.leonerd.org.uk/code/libvterm/libvterm-0.3.3.tar.gz (src/state.c lines 1777-1808)", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"if(state->fallbacks && state->fallbacks->osc)\" — [measured] the default branch of on_osc after cases 0, 1, 2 and 52."
+        },
+        "picture_anchoring": {
+          "value": "n/a — no picture model. A cell has no image slot, and scrolled-off lines leave the library through the sb_pushline callback, so any anchoring and any storage quota would be TD's own, attached to its own scrollback store.",
+          "provenance": { "source": "https://www.leonerd.org.uk/code/libvterm/libvterm-0.3.3.tar.gz (include/vterm.h lines 527-544)", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"int (*sb_pushline)(int cols, const VTermScreenCell *cells, void *user);\" — [measured] VTermScreenCallbacks; VTermScreenCell (vterm.h:527-532) carries chars, width, attrs, fg and bg only."
+        },
+        "vt_conformance": {
+          "value": "No published vttest or esctest pass results. The repository keeps doc/seqs.txt, a per-sequence matrix marking each supported sequence as VT100/VT220/VT320/xterm, and its test suite includes eight scripted replays of vttest screens (t/90vttest_01-movement-1..4, t/90vttest_02-screen-1..4) among 43 .test files.",
+          "provenance": { "source": "https://github.com/neovim/libvterm/blob/mirror/doc/seqs.txt", "confidence": "medium", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"123x   CSI m            = SGR, Set Graphic Rendition\" — [measured] a seqs.txt row (the leading digits are the VT100/VT220/VT320 levels, x = xterm); test names listed from the 0.3.3 tarball's t/ directory. [inferred] that the vttest replays cover only chapters 1 and 2."
+        },
+        "vt_features": {
+          "value": "upstream 0.3.3 | Neovim's adopted copy\nkitty-keyboard: no upstream — keyboard.c emits a fixed 'CSI %d;%du' only for ambiguous Ctrl chords (keyboard.c:43-45) and state.c has no CSI >u/<u/?u/=u handler; Neovim: partial — handlers at src/nvim/vterm/state.c:1681-1693, and news-0.11 says only 'Disambiguate escape codes' mode is supported\nosc8-hyperlinks: no upstream — on_osc handles only 0/1/2/52 (state.c:1777-1808) and the cell has no URI; Neovim: yes — VTERM_ATTR_URI and 'int uri' per cell (vterm_defs.h:77,194), set from terminal.c:374-382\nsync-output-2026: no upstream — set_dec_mode has no 2026 case (state.c:749-841); Neovim: yes — case 2026 sets VTERM_PROP_SYNCOUTPUT (src/nvim/vterm/state.c:839-840; news-0.12)\nosc52-clipboard: yes — OSC 52 set and query through VTermSelectionCallbacks (vterm.h:452-455; state.c:1795-1799); Neovim itself refuses reads (terminal.txt:205-207)\ngrapheme-clusters: partial upstream — only combining codepoints join a cell, at most 6 codepoints (VTERM_MAX_CHARS_PER_CELL), with Markus Kuhn's Unicode 5.0 combining table (unicode.c:3,61); Neovim: yes — grapheme state via utf_iscomposing (src/nvim/vterm/state.c:341-406)\nreflow-on-resize: yes for the visible screen — vterm_screen_enable_reflow (vterm.h:554); scrollback is the embedder's and is not reflowed (Neovim news-0.11: 'Lines that are not visible and kept in scrollback are not reflown')\nalt-screen: yes — DEC 47/1047/1049 (state.c:820-831), vterm_screen_enable_altscreen (vterm.h:559)\nbracketed-paste: yes — DEC 2004 (state.c:833-835), vterm_keyboard_start_paste/end_paste (vterm.h:371-372)\nmouse-sgr: yes — DEC 1006 selects MOUSE_SGR (state.c:812-814)",
+          "provenance": { "source": "https://www.leonerd.org.uk/code/libvterm/libvterm-0.3.3.tar.gz (src/state.c, src/keyboard.c, include/vterm.h); https://github.com/neovim/neovim/tree/378128aab90558d729117a2b0fc948e682f6ab01/src/nvim/vterm", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"  case 1006:\n    state->mouse_protocol = val ? MOUSE_SGR : MOUSE_X10;\n    break;\" — [measured] state.c:812-814; each line of the value names the file and line it was read from. Neovim news quotes from news-0.11.txt:359-375 and news-0.12.txt:375."
+        },
+        "performance_evidence": {
+          "value": "No published parse-throughput benchmark found (web search 2026-09-25 returned none; the repo has none). Memory per visible cell is about 36 bytes, inferred from the internal ScreenCell: six uint32 codepoints plus a 12-byte ScreenPen (two 4-byte VTermColor and a bitfield word). Scrollback memory is the embedder's, since lines leave through sb_pushline.",
+          "provenance": { "source": "https://www.leonerd.org.uk/code/libvterm/libvterm-0.3.3.tar.gz (src/screen.c lines 14-42)", "confidence": "medium", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"  uint32_t chars[VTERM_MAX_CHARS_PER_CELL];\n  ScreenPen pen;\" — [inferred] byte count computed from the struct layout on a typical 64-bit ABI, not measured with sizeof; the homepage also says it 'avoids calling malloc() during normal running state'."
+        },
+        "grid_api": {
+          "value": "C API, pull and push. Pull: vterm_screen_get_cell(screen, VTermPos{row,col}, &cell) fills a VTermScreenCell: chars[6] (base plus up to 5 combining codepoints), width (1, or 2 on the lead cell of a wide char; the trailing cell holds chars[0] = (uint32_t)-1), attrs (bold, underline 2-bit incl. double/curly, italic, blink, reverse, conceal, strike, font 0-9, dwl/dhl, small, baseline) and fg/bg VTermColor (RGB or indexed, with default-fg/bg flags). No underline colour and no hyperlink upstream. Also vterm_screen_get_chars/get_text/get_attrs_extent/is_eol. Push: VTermScreenCallbacks damage, moverect, movecursor, settermprop, bell, resize, sb_pushline, sb_popline, sb_clear. Cursor: vterm_state_get_cursorpos plus the movecursor callback. Modes reach the embedder only as VTermProp values (cursor visible/blink/shape, altscreen, title, icon name, reverse, mouse, focus report); DECCKM, bracketed paste and the mouse encoding have no getter.",
+          "provenance": { "source": "https://www.leonerd.org.uk/code/libvterm/libvterm-0.3.3.tar.gz (include/vterm.h lines 252-265, 499-544, 576-600; src/screen.c lines 189-190, 971-1007)", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"int vterm_screen_get_cell(const VTermScreen *screen, VTermPos pos, VTermScreenCell *cell);\" — [measured] vterm.h:598; cell struct at vterm.h:527-532; wide-char marker at screen.c:190 and width reconstruction at screen.c:1000-1004. The missing mode getters are [inferred] from the VTermProp enum (vterm.h:252-265) and the absence of any state getter for them."
+        },
+        "damage_tracking": {
+          "value": "yes — the screen layer reports changed rectangles through a damage(VTermRect) callback, with a moverect callback for scrolls; the embedder picks the merge granularity (cell, row, screen, or screen+scroll) with vterm_screen_set_damage_merge and forces out buffered damage with vterm_screen_flush_damage.",
+          "provenance": { "source": "https://www.leonerd.org.uk/code/libvterm/libvterm-0.3.3.tar.gz (include/vterm.h lines 534-536, 561-571)", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"int (*damage)(VTermRect rect, void *user);\" — [measured] VTermScreenCallbacks; VTermDamageSize enumerates VTERM_DAMAGE_CELL, _ROW, _SCREEN, _SCROLL (vterm.h:561-568); merge logic in screen.c:104-158."
+        },
+        "state_snapshot": {
+          "value": "no — vterm.h has no serialize, snapshot or save-state API. An embedder can read the visible cells, cursor, palette and pen back out, but scrollback lives outside the library and several modes (DECCKM, bracketed paste, mouse encoding) are not readable, so a re-attaching replica would have to be fed the same bytes or TD would have to track those modes itself.",
+          "provenance": { "source": "measured 2026-09-25: grep -c -i -E 'serial|snapshot|dump|save_state|restore' libvterm-0.3.3/include/vterm.h", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"0\" — [measured] the grep's output over the public header; the mode gap is [inferred] from the VTermProp enum (vterm.h:252-265)."
+        },
+        "threading_and_loop": {
+          "value": "The embedder owns the loop: it reads its PTY and pushes bytes with vterm_input_write, and all callbacks fire synchronously inside that call. No PTY layer. No locks or atomics anywhere in the library, so a VTerm is single-threaded; Send/Sync would be whatever TD's Rust wrapper declares.",
+          "provenance": { "source": "https://www.leonerd.org.uk/code/libvterm/libvterm-0.3.3.tar.gz (include/vterm.h line 353); measured 2026-09-25: grep -rn -l -E 'pthread|mutex|atomic' src include || echo 'no pthread/mutex/atomic in src or include'", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"size_t vterm_input_write(VTerm *vt, const char *bytes, size_t len);\" — [measured] vterm.h:353; the grep printed 'no pthread/mutex/atomic in src or include'. The homepage: it 'invokes callback function pointers that its embedding program should provide'."
+        },
+        "reply_channel": {
+          "value": "An output callback: vterm_output_set_callback(vt, fn, user) receives every byte the terminal sends back — DA1 (?1;2c), DA2 (>0;100;0c), DSR/CPR, DECRQM, DECRQSS, XTVERSION (>|libvterm(M.m)), OSC 52 query replies, focus in/out, and key/mouse encodings. Without the callback, bytes collect in a deprecated internal buffer. XTWINOPS window-size reports (CSI t) are not answered and fall to the CSI fallback. One callback per VTerm, so TD's host would install the PTY writer and the window replica a discarding one; Kitty a=q replies would be TD's own.",
+          "provenance": { "source": "https://www.leonerd.org.uk/code/libvterm/libvterm-0.3.3.tar.gz (include/vterm.h lines 355-366; src/state.c lines 913-922, 1250-1258, 1385-1388, 1540-1544; src/vterm.c lines 140-155)", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"void vterm_output_set_callback(VTerm *vt, VTermOutputCallback *func, void *user);\" — [measured] vterm.h:357, preceded by the comment 'Setting output callback will override the buffer logic'. No 't' case in state.c's CSI switch (grep for XTWINOPS/case 0x74 found nothing)."
+        },
+        "td_migration": {
+          "value": "Everything that imports alacritty_terminal changes. host.rs, term.rs and socketpty.rs lose alacritty's EventLoop, tty and FairMutex: TD would own the PTY read loop and call vterm_input_write per chunk, with vterm_output_set_callback wired to the PTY writer on the host and to a discard sink on the window replica. A new TD-owned -sys crate (bindgen + cc over the 0.3.3 tarball) and a safe wrapper replace the Term type. pane.rs's 51 grid reads move to vterm_screen_get_cell, which has no underline colour and no hyperlink, so TD loses SGR 58 and OSC 8 rendering unless it tracks them itself from the fallbacks. libvterm keeps no scrollback: TD would build a scrollback store from sb_pushline/sb_popline and reflow it itself. gridwire.rs's snapshot re-encoder would read that store plus the screen and must reconstruct modes libvterm does not expose (DECCKM, bracketed paste, mouse encoding). Kitty graphics would still be written entirely by TD, fed from the APC fallback. main.rs and pane/bench.rs change with the Term type.",
+          "note": "[inferred] from libvterm's header and TD's seven alacritty-importing files (host.rs 4,707 lines, term.rs 1,756, socketpty.rs 442, gridwire.rs 1,462, pane.rs 14,523, main.rs 37,783, pane/bench.rs 4,419); nothing was built."
+        },
+        "biggest_risk": {
+          "value": "Upstream libvterm has been silent since July 2024 and its living line of development now sits inside Neovim, tangled with nvim headers, so TD would choose between a frozen C core lacking Kitty keyboard, mode 2026, OSC 8, grapheme clusters and any picture model, or a private fork of Neovim's copy that TD alone maintains — and in both cases TD still writes Kitty graphics itself.",
+          "note": "[inferred]"
+        },
+        "primary_sources": {
+          "value": "https://www.leonerd.org.uk/code/libvterm/ https://www.leonerd.org.uk/code/libvterm/libvterm-0.3.3.tar.gz https://api.launchpad.net/devel/libvterm https://api.launchpad.net/devel/libvterm/releases https://api.launchpad.net/devel/~libvterm/libvterm/trunk https://github.com/neovim/libvterm/blob/nvim/README.md https://github.com/neovim/libvterm/tree/mirror https://github.com/neovim/libvterm/blob/mirror/doc/seqs.txt https://github.com/neovim/neovim/tree/378128aab90558d729117a2b0fc948e682f6ab01/src/nvim/vterm https://github.com/neovim/neovim/blob/378128aab90558d729117a2b0fc948e682f6ab01/src/nvim/terminal.c https://github.com/neovim/neovim/blob/378128aab90558d729117a2b0fc948e682f6ab01/runtime/doc/terminal.txt https://github.com/neovim/neovim/blob/378128aab90558d729117a2b0fc948e682f6ab01/runtime/doc/news-0.11.txt https://github.com/neovim/neovim/blob/378128aab90558d729117a2b0fc948e682f6ab01/runtime/doc/news-0.12.txt https://github.com/neovim/neovim/commit/d8bc08db7fd8d0efbf2e9ebf39fecb6f732f84e8 https://github.com/vim/vim/blob/master/src/libvterm/README https://crates.io/api/v1/crates/vterm-sys https://github.com/ajh/libvterm-rs",
+          "provenance": { "source": "https://www.leonerd.org.uk/code/libvterm/", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"The primary revision control repository is a Bazaar branch at\" — [measured] the homepage line naming the canonical source (bazaar.leonerd.org.uk/c/libvterm, mirrored on Launchpad as lp:libvterm and on GitHub as neovim/libvterm branch mirror, which is archived). All URLs above were read this session; none is a secondary write-up."
+        }
+      },
+      "insights": [
+        "Canonical libvterm is a Bazaar branch (bazaar.leonerd.org.uk, lp:libvterm); the GitHub repo neovim/libvterm is archived and its README says Neovim no longer uses it.",
+        "The capable libvterm today is Neovim's in-tree fork (Kitty keyboard partial, OSC 8, mode 2026, grapheme clusters), but it depends on nvim internals and is not a library."
+      ]
+    },
+    {
+      "id": "contour-vtbackend",
+      "fields": {
+        "what_it_is": {
+          "value": "vtbackend is the terminal-model library inside Contour, a C++ terminal emulator: grid and scrollback, screen state, the VT interpreter (fed by vtparser) and input encoding. Contour's GUI, its headless conformance runner and its daemon all consume it. Maintained almost entirely by Christian Parpart.",
+          "provenance": { "source": "https://github.com/contour-terminal/contour/blob/2ec3c63cfd268f1e466d992e2352fe328d833106/docs/internals/software-architecture/index.md#L105-L116", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"`vtbackend` contains the core logic of the terminal emulator. It maintains the state of the terminal.\" — [measured] line 108; maintainer share from the commit count in the maintainers field."
+        },
+        "license": {
+          "value": "Apache-2.0 — permissive; an MIT product may link it, carrying Apache-2.0's notice and attribution obligations.",
+          "provenance": { "source": "measured 2026-09-25: gh api repos/contour-terminal/contour --jq '[.stargazers_count, .forks_count, .license.spdx_id] | @tsv'", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"3032\t152\tApache-2.0\" — [measured] the third column is the SPDX id; every vtbackend source file opens '// SPDX-License-Identifier: Apache-2.0' (e.g. graphics/KittyGraphics.hpp:1)."
+        },
+        "language": {
+          "value": "C++23 (a few QML/Objective-C++ files elsewhere in Contour; vtbackend is pure C++).",
+          "provenance": { "source": "https://github.com/contour-terminal/contour/blob/2ec3c63cfd268f1e466d992e2352fe328d833106/CMakeLists.txt#L21-L24", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"set(CMAKE_CXX_STANDARD 23)\" — [measured] CMakeLists.txt:22; README badge 'standard-C++ 23'; gh api languages reports C++ at 12,010,341 bytes."
+        },
+        "integration_path": {
+          "value": "None ready-made: vendor or fork the Contour tree, write and maintain a C shim over vtbackend, build it with CMake from build.rs and bind it with bindgen or cxx. vtbackend is a STATIC CMake target with no install rule for the library, no extern \"C\" declaration anywhere in src/vtbackend, and no Rust binding on crates.io.",
+          "provenance": { "source": "https://github.com/contour-terminal/contour/blob/2ec3c63cfd268f1e466d992e2352fe328d833106/src/vtbackend/CMakeLists.txt#L145", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"add_library(vtbackend STATIC ${vtbackend_SOURCES} ${vtbackend_HEADERS})\" — [measured] the only install() rules in the file are for bench-headless (lines 283, 288). grep -rn 'extern \"C\"' src/vtbackend | wc -l printed 0; curl 'https://crates.io/api/v1/crates?q=vtbackend' | jq -c .meta printed {\"total\":0,...}."
+        },
+        "build_requirements": {
+          "value": "C++23 compiler (GCC or Clang presets), CMake >= 3.25, and by default network at configure time: CPM downloads CPM.cmake and fetches libunicode >= 0.9.3, Microsoft GSL 3.1.0, boxed-cpp 1.4.3 and reflection-cpp 0.4.0 unless found on the system. vtbackend links GSL, Threads, a Tracy shim, crispy::core, libunicode, vtparser and vtpty; vtpty optionally pulls libssh2 and utempter. Configuring the tree also adds text_shaper unconditionally, which requires fontconfig, freetype, harfbuzz and cairo; x86_64 builds add -maes. Not cargo-only.",
+          "provenance": { "source": "https://github.com/contour-terminal/contour/blob/2ec3c63cfd268f1e466d992e2352fe328d833106/CMakeLists.txt#L171", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"option(CONTOUR_USE_CPM \"Use CPM to fetch dependencies [default: ON]\" ON)\" — [measured] plus CMakeLists.txt:1 (cmake_minimum_required 3.25), :282 (CPM.cmake download), cmake/ContourThirdParties.cmake:93-225 (versions), src/vtbackend/CMakeLists.txt:161-169 (links), src/crispy/CMakeLists.txt:54,59 (boxed-cpp, reflection-cpp, -maes), src/CMakeLists.txt:10 and src/text_shaper/CMakeLists.txt:34-57 (font libraries). [inferred] that carving vtbackend out without the font stack means patching the tree."
+        },
+        "latest_release": {
+          "value": "Contour v0.7.0.8982, published 2026-08-17. vtbackend has never been released separately; it ships only inside Contour's source tree.",
+          "provenance": { "source": "measured 2026-09-25: gh api repos/contour-terminal/contour/releases --jq '.[0:5][] | [.tag_name, .published_at] | @tsv'", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"v0.7.0.8982\t2026-08-17T18:29:18Z\" — [measured] the first line of the output; metainfo.xml:163 also dates release 0.7.0 on 2026-08-17. A 0.7.1 section is marked type=development."
+        },
+        "first_release": {
+          "value": "Contour v0.1.0 on 2020-12-24 (first non-prerelease; first preview v0.1.0_prerelease_85 on 2020-10-30). There is no separate first release of vtbackend.",
+          "provenance": { "source": "measured 2026-09-25: gh api repos/contour-terminal/contour/releases --paginate --jq '.[] | [.tag_name, .published_at, .prerelease] | @tsv' | tail -9", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"v0.1.0\t2020-12-24T13:51:45Z\tfalse\" — [measured] the repository itself was created 2019-08-14 (gh api .created_at)."
+        },
+        "releases_last_12mo": {
+          "value": "3 (v0.6.2.8008 2026-01-07, v0.6.3.8249 2026-04-09, v0.7.0.8982 2026-08-17)",
+          "provenance": { "source": "measured 2026-09-25: gh api repos/contour-terminal/contour/releases --paginate --jq '.[] | select(.published_at >= \"2025-09-25\") | .tag_name' | wc -l", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"3\" — [measured] the count; the three tags and dates come from the @tsv listing used for latest_release."
+        },
+        "api_stability": {
+          "value": "No stated API contract for vtbackend: pre-1.0 (0.7.0), not installed as a library, and its own architecture doc calls its layers 'concerns, not enforced layers'. Its headers were renamed .h to .hpp on 2026-08-06 and its cell and line storage moved into grid/ on 2026-08-20. The 0.7.0 notes say the daemon's flags and wire protocol 'may still change between releases', and Contour's draft extension API rejects native C++ plugins for 'an ABI that breaks on every compiler and standard-library change'.",
+          "provenance": { "source": "measured 2026-09-25: gh api 'repos/contour-terminal/contour/commits?path=src/vtbackend/grid/Grid.hpp&per_page=100' --paginate --jq '.[] | \"\\(.sha[0:9]) \\(.commit.author.date[0:10]) \\(.commit.message | split(\"\\n\")[0])\"' | tail -3", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"7b1825f32 2026-08-20 refactor: move the vtbackend cell and line storage into grid/\nf58a20587 2026-08-06 refactor: rename C++ headers from .h to .hpp\" — [measured] the oldest commits on the file's current path; other phrases from docs/internals/software-architecture/index.md:189, metainfo.xml:233 and docs/drafts/extension-api.md:1110-1111."
+        },
+        "maintainers": {
+          "value": "1 contributor with >= 10% of commits in the last 12 months: Christian Parpart (christianparpart), 1,225 of 1,336 commits (about 92%), and the lead. Next: Yaraslau Tamashevich, 75 (about 6%, split across two author identities).",
+          "provenance": { "source": "measured 2026-09-25: gh api 'repos/contour-terminal/contour/commits?since=2025-09-25T00:00:00Z&per_page=100' --paginate --jq '.[] | (.author.login // .commit.author.name)' | sort | uniq -c | sort -rn", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"1224 christianparpart\" — [measured] plus one commit under the name 'Christian Parpart'; the same query piped to wc -l printed 1336. Yaraslaut 56 + 'Yaraslau Tamashevich' 19."
+        },
+        "adoption": {
+          "value": "Contour itself (3,032 GitHub stars, 152 forks) and downstream packaging (deepin-community/contour, macos-powerpc/powerpc-ports). No third-party program embedding vtbackend found: GitHub code search for '#include <vtbackend/' returned 30 of 30 hits in contour-terminal/contour, and no crate exists on crates.io.",
+          "provenance": { "source": "measured 2026-09-25: gh search code '#include <vtbackend/' --limit 30 --json repository --jq '.[].repository.nameWithOwner' | sort | uniq -c | sort -rn", "confidence": "medium", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"30 contour-terminal/contour\" — [measured] code search is capped at 30 results; a second search for 'vtbackend::Terminal' found only contour-terminal/contour, deepin-community/contour and macos-powerpc/powerpc-ports. Stars and forks from gh api repos/contour-terminal/contour."
+        },
+        "kitty_graphics": {
+          "value": "Partial, shipped in 0.7.0: graphics/KittyGraphics.{hpp,cpp} parse, screen/Screen.cpp (processAPC, processKittyGraphics) executes. Transmit: direct (t=d) only; t=f, t=t and t=s parse but are answered 'ENOTSUP:only direct transmission is supported'. Formats: f=24, f=32, f=100 (PNG). Compression o=z parses but is answered 'ENOTSUP:compressed payloads are not supported'. Chunked m=1, capped at 32 MiB. a=t/a=T store and display; a=p places a stored image at the cursor with c=/r= cell sizing and C=1. Deletes: d=i/I by id (lower case keeps the data, upper case frees it) and d=a/A; every other target, positional and n/N/r/R included, clears all placements. a=q validates exactly as a transmit would and replies OK or the error. z<0 draws on a Below layer, otherwise Above (two layers). a=f/a/c answered 'ENOTSUP:animation not supported'. No U=1 virtual placements (the U key is ignored as unknown). Stored-image quota 128 MiB, ENOSPC on overflow.",
+          "provenance": { "source": "https://github.com/contour-terminal/contour/blob/2ec3c63cfd268f1e466d992e2352fe328d833106/src/vtbackend/screen/Screen.cpp#L5371-L5663", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"Adds the kitty graphics protocol (APC G): transmitting, displaying, placing and deleting images, in PNG or raw RGB/RGBA, including chunked transmission\" — [measured] metainfo.xml:273 (0.7.0 notes); the details were read in Screen.cpp:5399-5419 (validateKittyTransmission), 5443-5473 (deletes), 5536-5568 (actions), 5617-5625 (quota), 5662 (layers), KittyGraphics.hpp:19,26 (caps) and KittyGraphics.cpp:34-129 (keys; no case 'U')."
+        },
+        "kitty_tags": {
+          "value": "transmit-direct, format-png, format-raw, place-direct, delete-by-id, query-reply, z-layers",
+          "note": "[inferred] from Screen.cpp and KittyGraphics.cpp at 2ec3c63. delete-by-id is partial (d=i/I only; d=n/N/r/R fall through to delete-all). z-layers is two-level (z<0 below text, otherwise above). Explicitly not implemented: transmit-file, transmit-temp, transmit-shm and compression (ENOTSUP), place-virtual (U key ignored), delete-by-position (falls through to delete-all), animation (ENOTSUP). unknown: (none)."
+        },
+        "sixel": {
+          "value": "yes — DECSIXEL (DCS … q) hooks the SixelParser; XTSMGRAPHICS answers, and DEC modes 80 (sixel scrolling), 1070 (private colour registers) and 8452 (cursor next to graphic) exist.",
+          "provenance": { "source": "https://github.com/contour-terminal/contour/blob/2ec3c63cfd268f1e466d992e2352fe328d833106/README.md#L38", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"✅ Sixel inline images\" — [measured] README.md:38; code in src/vtbackend/vt/Functions.hpp:848 (DECSIXEL), screen/Screen.cpp:7265 (hookSixel), graphics/SixelParser.cpp (758 lines), core/Primitives.hpp:1382-1383,1421 (modes)."
+        },
+        "iterm2_images": {
+          "value": "partial — OSC 1337 File=…:<base64> is drawn only with inline=1, decoded as PNG only, and width/height are honoured only as cell counts (the px and % forms are ignored); no MultipartFile/FilePart; OSC 1337;Capabilities is answered with what Contour really supports.",
+          "provenance": { "source": "https://github.com/contour-terminal/contour/blob/2ec3c63cfd268f1e466d992e2352fe328d833106/src/vtbackend/screen/Screen.cpp#L4666-L4783", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"Adds the iTerm2 OSC 1337 extensions: the capabilities report and inline images\" — [measured] metainfo.xml:274 (0.7.0); limits read in Screen.cpp:4738-4768 ('Only the cell-valued forms of width/height are honoured', 'PNG is the one Contour can decode'); grep for MultipartFile/FilePart in src/vtbackend found nothing."
+        },
+        "picture_anchoring": {
+          "value": "Per-cell attribute: each covered cell carries a shared ImageFragment (a slice of a RasterizedImage) in its line's imageFragments map, so a picture scrolls into scrollback and reflows with its lines; kitty placements are not tracked separately. Quotas: 128 MiB of stored kitty image data, 32 MiB per chunked transmission, default maxImageSize 800x600 px. A kitty delete walks only the visible page, so fragments already in scrollback appear to survive it.",
+          "provenance": { "source": "https://github.com/contour-terminal/contour/blob/2ec3c63cfd268f1e466d992e2352fe328d833106/src/vtbackend/screen/Screen.cpp#L5421-L5441", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"Placements are not tracked separately: a placement IS the image fragments sitting in the cells\" — [measured] Screen.cpp:5423; ImageFragment 'occupies one full grid cell' (core/Image.hpp:289); storage in grid/LineSoA.hpp:108; maxImageSize in screen/Settings.hpp:53. The scrollback-survival point is [inferred] from the loop over pageSize().lines at Screen.cpp:5426, not tested."
+        },
+        "vt_conformance": {
+          "value": "A harness, not published numbers: src/vtconformance drives vttest (golden screen dumps) and esctest (self-asserting) against a headless vtbackend::Terminal; esctest gates the build, and known gaps are ratcheted in src/vtconformance/test/known-gaps.txt. The doc says 'For the numbers, run the suite.' The 0.7.0 notes claim 'a large round of VT conformance work'.",
+          "provenance": { "source": "https://github.com/contour-terminal/contour/blob/2ec3c63cfd268f1e466d992e2352fe328d833106/docs/internals/vt-conformance.md#L1-L17", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"drives **vttest** and **esctest** against a headless `vtbackend::Terminal`\" — [measured] line 7; line 13: 'It **gates the build**.' No pass counts were run or found."
+        },
+        "vt_features": {
+          "value": "kitty-keyboard: yes — CSIUENTER/CSIULEAVE/CSIUQUERY/CSIUENHCE (CSI >u, <u, ?u, =u) in vt/Functions.hpp:722-725; 0.6.3 notes fix its flag gating\nosc8-hyperlinks: yes — HYPERLINK = OSC(8) in vt/Functions.hpp:865; per-cell hyperlink() in grid/CellProxy.hpp:109\nsync-output-2026: yes — { DECMode::BatchedRendering, 2026 } in core/Primitives.hpp:1418\nosc52-clipboard: yes — CLIPBOARD = OSC(52) in vt/Functions.hpp:854; reads gated by Settings::allowClipboardRead (screen/Terminal.hpp:315-318)\ngrapheme-clusters: yes — up to 16 codepoints per cell (MaxGraphemeClusterSize, grid/LineSoA.hpp:37), DEC mode 2027 (core/Primitives.hpp:1419), libunicode\nreflow-on-resize: yes — { DECMode::TextReflow, 2028 } in core/Primitives.hpp:1420; grid/ holds 'the scrollback ring, its reflow' (docs/internals/software-architecture/index.md:154)\nalt-screen: yes — modes 47/1047/1049 in core/Primitives.hpp:1104-1139,1379\nbracketed-paste: yes — { DECMode::BracketedPaste, 2004 } in core/Primitives.hpp:1380\nmouse-sgr: yes — { DECMode::MouseSGR, 1006 } in core/Primitives.hpp:1385 (plus 1016 SGR-pixels)",
+          "provenance": { "source": "https://github.com/contour-terminal/contour/blob/2ec3c63cfd268f1e466d992e2352fe328d833106/src/vtbackend/core/Primitives.hpp#L1370-L1423", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"{ DECMode::BatchedRendering, 2026 },\" — [measured] the DEC mode table; every line of the value names the file and line it was read from (paths under src/vtbackend unless docs/)."
+        },
+        "performance_evidence": {
+          "value": "No published throughput or bytes-per-cell figure found in the README or docs. The tree ships bench-headless (termbench-pro, LIBTERMINAL_BUILD_BENCH_HEADLESS), and the unreleased 0.7.1 notes report the kitty APC bulk-parse fix: the parser's share of an image-heavy run fell from 47% to 6.6%, 7.55 s to 1.06 s over 1.4 GB (machine not stated).",
+          "provenance": { "source": "https://github.com/contour-terminal/contour/blob/2ec3c63cfd268f1e466d992e2352fe328d833106/metainfo.xml#L114", "confidence": "medium", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"An image-heavy workload's time in the parser falls from 47% of its wall clock to 6.6% — 7.55 s to 1.06 s over 1.4 GB of payload\" — [measured] 0.7.1 (type=development) notes; bench target in src/vtbackend/CMakeLists.txt:12,259-272. A grep of docs/ and README for MB/s, throughput and per-cell found no figure."
+        },
+        "grid_api": {
+          "value": "C++ only. Screen::at(LineOffset, ColumnOffset) and Grid::lineAt(LineOffset) yield a CellProxy (pointer + index into struct-of-arrays LineSoA storage) with codepoint(i)/codepoints() (a grapheme cluster of up to 16 codepoints), width(), flags() (CellFlags), foregroundColor(), backgroundColor(), underlineColor(), hyperlink() (HyperlinkId), imageFragment() and textScale() (OSC 66). Grid::historyLineCount() and isLineWrapped() cover scrollback; the cursor is Screen::cursor(); modes are Terminal::isModeEnabled(DECMode|AnsiMode). Renderers normally consume a RenderBuffer of RenderCell (codepoints, image, position, attributes, width) built under the state mutex.",
+          "provenance": { "source": "https://github.com/contour-terminal/contour/blob/2ec3c63cfd268f1e466d992e2352fe328d833106/src/vtbackend/grid/CellProxy.hpp#L59-L129", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"[[nodiscard]] Color underlineColor() const noexcept { return _line->sgr[_col].underlineColor; }\" — [measured] CellProxy.hpp:107; other accessors at lines 61-129; Grid.hpp:629-700; Screen.hpp:817-834; Terminal.hpp:737-738; render/RenderBuffer.hpp:62-76."
+        },
+        "damage_tracking": {
+          "value": "yes — every Line has a dirty bit and a revision stamped from the grid's monotonic sequence, read by Grid::forEachLineChangedSince to produce the daemon's per-line deltas (added 2026-07-28, 'track line-level changes and give rows a stable identity'); Terminal also has markCellDirty/markRegionDirty and a screenUpdated() event.",
+          "provenance": { "source": "https://github.com/contour-terminal/contour/blob/2ec3c63cfd268f1e466d992e2352fe328d833106/src/vtbackend/grid/Line.hpp#L146-L171", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"A one-byte dirty bit set by every mutating entry point below, and a revision stamped\" — [measured] Line.hpp:148; forEachLineChangedSince named in docs/internals/vthost.md:35; commit 0b3a2f4a8 from the Grid.hpp commit listing; Terminal.hpp:2023-2024."
+        },
+        "state_snapshot": {
+          "value": "Yes, inside Contour: the vthost daemon serves attach snapshots of each session's grid plus per-line deltas addressed by stable row ids (the native cells+deltas protocol, GridWire/ImageWire), paced and split across frames; its tmux control-mode path replays text and SGR only and cannot recover images. None of it is a stable external API; a consumer would reach it through vtbackend's C++ Grid (forEachLineChangedSince, Line::revision) or vt/VTWriter.",
+          "provenance": { "source": "https://github.com/contour-terminal/contour/blob/2ec3c63cfd268f1e466d992e2352fe328d833106/docs/internals/vthost.md", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"Attach snapshots are now paced against the connection's send queue and split across frames, so attaching succeeds whatever the scrollback depth\" — [measured] metainfo.xml:149 (0.7.1 notes); vthost.md:11-12 describes 'the native cells+deltas protocol — the server emulates, the client renders', and vthost.md:72-75 records the tmux image limitation."
+        },
+        "threading_and_loop": {
+          "value": "The library parses under its own lock; the embedder owns the thread. Terminal holds a plain std::mutex (_stateMutex); Terminal::processInputOnce() reads from its vtpty::Pty and parses under that lock, called in a loop by the embedder's thread (the GUI's TerminalSession::mainLoop, the daemon's per-session blocking-read pump); writeToScreen(string_view) parses bytes from elsewhere. It includes a PTY layer (vtpty: UnixPty, ConPty, SshSession, MockPty, MockViewPty), and the Terminal constructor takes std::unique_ptr<vtpty::Pty>. Events callbacks fire on the parser thread with the mutex held.",
+          "provenance": { "source": "https://github.com/contour-terminal/contour/blob/2ec3c63cfd268f1e466d992e2352fe328d833106/docs/internals/vthost.md#L21-L27", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"A hosted session is `{Pty, vtbackend::Terminal}` owned by the daemon's\" — [measured] vthost.md:23, continuing 'pumped by a dedicated blocking-read thread'; code at screen/Terminal.hpp:465-469 (constructor), 977 (writeToScreen), 1763 (processInputOnce), 2407 (_stateMutex); screen/Terminal.cpp:365-434; src/vtpty/Pty.hpp:90-153."
+        },
+        "reply_channel": {
+          "value": "Replies go out through the Pty: Terminal::reply() queues bytes in the InputGenerator and flushInput() writes them with vtpty::Pty::write(); the kitty a=q answer uses the same reply(). The embedder decides 'exactly once' by what its Pty::write does — a host Pty that forwards, a replica Pty that discards (MockViewPty keeps them in stdinBuffer()).",
+          "provenance": { "source": "https://github.com/contour-terminal/contour/blob/2ec3c63cfd268f1e466d992e2352fe328d833106/docs/internals/vthost.md#L38-L41", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"The pump loop flushes the terminal's queued replies (DA1, DSR, OSC color\" — [measured] vthost.md:38; code at screen/Terminal.cpp:3566-3586 (reply), screen/Screen.cpp:5382-5396 (replyKittyGraphics), src/vtpty/Pty.hpp:141-146 (write), src/vtpty/MockViewPty.hpp:33."
+        },
+        "td_migration": {
+          "value": "A larger rewrite than any Rust core. TD first needs a build: a vendored Contour tree configured by CMake from build.rs (C++23 compiler, CMake >= 3.25, libunicode/GSL/boxed-cpp/reflection-cpp, and fontconfig/freetype/harfbuzz/cairo just to configure text_shaper), plus an extern \"C\" shim TD writes over vtbackend::Terminal, Screen, Grid and CellProxy, bound with bindgen or cxx. host.rs, term.rs and socketpty.rs: replace alacritty's EventLoop with a C++ vtpty::Pty subclass in the shim that forwards read() to TD's PTY or socket and surfaces write(), where Terminal::reply lands, so the host writes replies once and the replica's Pty discards them; or feed bytes with Terminal::writeToScreen. pane.rs's 51 grid reads become shim calls returning codepoints, width, flags, fg/bg/underline colour, a hyperlink id and an ImageFragment per cell. gridwire.rs could adopt Contour's per-line revision stamps instead of hashing, but its VT re-encoding would have to reproduce images that Contour holds as per-cell fragments. main.rs and pane/bench.rs change with the type. gpui must learn to draw ImageFragment pixel data exported through the shim.",
+          "note": "[inferred] from vtbackend's headers and TD's seven alacritty-importing files; nothing was built."
+        },
+        "biggest_risk": {
+          "value": "vtbackend is an internal C++23 static target with no C ABI, no install rule and one author writing about 92% of the last year's commits, who moved its headers twice in August 2026 — TD's shim would be bound to an API nobody has promised to keep, rebuilt through a CMake tree that drags in font libraries TD does not need.",
+          "note": "[inferred]"
+        },
+        "primary_sources": {
+          "value": "https://github.com/contour-terminal/contour/blob/2ec3c63cfd268f1e466d992e2352fe328d833106/README.md https://github.com/contour-terminal/contour/blob/2ec3c63cfd268f1e466d992e2352fe328d833106/metainfo.xml https://github.com/contour-terminal/contour/blob/2ec3c63cfd268f1e466d992e2352fe328d833106/CMakeLists.txt https://github.com/contour-terminal/contour/blob/2ec3c63cfd268f1e466d992e2352fe328d833106/cmake/ContourThirdParties.cmake https://github.com/contour-terminal/contour/blob/2ec3c63cfd268f1e466d992e2352fe328d833106/src/CMakeLists.txt https://github.com/contour-terminal/contour/blob/2ec3c63cfd268f1e466d992e2352fe328d833106/src/vtbackend/CMakeLists.txt https://github.com/contour-terminal/contour/blob/2ec3c63cfd268f1e466d992e2352fe328d833106/src/crispy/CMakeLists.txt https://github.com/contour-terminal/contour/blob/2ec3c63cfd268f1e466d992e2352fe328d833106/src/text_shaper/CMakeLists.txt https://github.com/contour-terminal/contour/blob/2ec3c63cfd268f1e466d992e2352fe328d833106/src/vtbackend/graphics/KittyGraphics.hpp https://github.com/contour-terminal/contour/blob/2ec3c63cfd268f1e466d992e2352fe328d833106/src/vtbackend/graphics/KittyGraphics.cpp https://github.com/contour-terminal/contour/blob/2ec3c63cfd268f1e466d992e2352fe328d833106/src/vtbackend/screen/Screen.cpp https://github.com/contour-terminal/contour/blob/2ec3c63cfd268f1e466d992e2352fe328d833106/src/vtbackend/screen/Terminal.hpp https://github.com/contour-terminal/contour/blob/2ec3c63cfd268f1e466d992e2352fe328d833106/src/vtbackend/screen/Terminal.cpp https://github.com/contour-terminal/contour/blob/2ec3c63cfd268f1e466d992e2352fe328d833106/src/vtbackend/grid/CellProxy.hpp https://github.com/contour-terminal/contour/blob/2ec3c63cfd268f1e466d992e2352fe328d833106/src/vtbackend/grid/Line.hpp https://github.com/contour-terminal/contour/blob/2ec3c63cfd268f1e466d992e2352fe328d833106/src/vtbackend/core/Image.hpp https://github.com/contour-terminal/contour/blob/2ec3c63cfd268f1e466d992e2352fe328d833106/src/vtbackend/core/Primitives.hpp https://github.com/contour-terminal/contour/blob/2ec3c63cfd268f1e466d992e2352fe328d833106/src/vtbackend/vt/Functions.hpp https://github.com/contour-terminal/contour/blob/2ec3c63cfd268f1e466d992e2352fe328d833106/src/vtpty/Pty.hpp https://github.com/contour-terminal/contour/blob/2ec3c63cfd268f1e466d992e2352fe328d833106/src/vtpty/MockViewPty.hpp https://github.com/contour-terminal/contour/blob/2ec3c63cfd268f1e466d992e2352fe328d833106/docs/internals/software-architecture/index.md https://github.com/contour-terminal/contour/blob/2ec3c63cfd268f1e466d992e2352fe328d833106/docs/internals/vt-conformance.md https://github.com/contour-terminal/contour/blob/2ec3c63cfd268f1e466d992e2352fe328d833106/docs/internals/vthost.md https://github.com/contour-terminal/contour/blob/2ec3c63cfd268f1e466d992e2352fe328d833106/docs/drafts/extension-api.md https://github.com/contour-terminal/contour/releases https://api.github.com/repos/contour-terminal/contour synthesis:/tmp/claude-1000/-home-parker-Work-terminal-delight/2aae45b7-7163-4590-8990-5cc58ef8f92f/scratchpad/graphics-protocols.md",
+          "provenance": { "source": "https://github.com/contour-terminal/contour", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"Modern C++ Terminal Emulator\" — [measured] the repository description from gh api repos/contour-terminal/contour. Files read from a shallow clone at 2ec3c63 (2026-09-24). The morning write-up (synthesis) only supplied leads; its claim that 0.7.0 added iTerm2 OSC 1337 alongside Kitty graphics was re-verified at metainfo.xml:273-274."
+        }
+      },
+      "insights": [
+        "Contour's vtbackend has, since 0.7.0, the broadest picture support of the C-boundary candidates read here (Sixel, 7 of 14 Kitty tags, partial iTerm2, ReGIS, experimental Good Image Protocol), but no way for Rust to reach it short of a hand-written C shim.",
+        "Contour's daemon (src/vthost) already solves TD's host/replica problem on top of vtbackend, with per-line revision deltas instead of VT re-encoding."
+      ]
+    }
+  ],
+  "bubbles": [
+    {
+      "kind": "serendipity",
+      "subjectId": "contour-vtbackend",
+      "note": "Contour 0.7.0 ships an experimental daemon (src/vthost) that is TD's host/replica architecture built on vtbackend: a Qt-free daemon owns {Pty, vtbackend::Terminal} per session, clients render per-line deltas addressed by stable row ids ('wezterm's model'), attach snapshots are paced and split across frames, images travel on their own wire (ImageWire; ImagePool answers FetchImage with ImageGone once an image is dropped), and only the host pump flushes replies (DA1, DSR, OSC colour queries). The doc also records the trap TD's VT-byte replay would hit: tmux capture-pane carries only text and SGR, so a client attaching after an image was drawn cannot recover it.",
+      "why": "Direct prior art for TD's re-attach snapshot and exactly-once replies once pictures exist, whichever core TD picks; it also belongs beside the zellij-grid and zmx references.",
+      "source": "https://github.com/contour-terminal/contour/blob/2ec3c63cfd268f1e466d992e2352fe328d833106/docs/internals/vthost.md"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "contour-vtbackend",
+      "note": "Contour refuses Kitty file, temp-file and shared-memory transmission on purpose ('Reading a path or a shared-memory object the application names would let it point the terminal at any file the user can read. Not implemented deliberately.') and answers a=q with the same validation a real transmit gets, so a probing program falls back instead of failing later. It also caps chunked payloads at 32 MiB and stored images at 128 MiB, both justified in comments as attack bounds.",
+      "why": "A ready-made security and detection stance for whichever option has TD writing Kitty graphics itself (alacritty-own-loop, alacritty-patched-vte, td-own-core).",
+      "source": "https://github.com/contour-terminal/contour/blob/2ec3c63cfd268f1e466d992e2352fe328d833106/src/vtbackend/screen/Screen.cpp#L5399-L5419"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "libvterm",
+      "note": "Neovim routes every APC (and DCS, and any OSC other than 8 and 52) to Lua as a TermRequest autocommand, carrying the sequence and the cursor position; news-0.11: 'The |terminal| emits a |TermRequest| autocommand event when the child process emits an APC control sequence.' Kitty graphics commands therefore reach Neovim plugins but nothing draws them.",
+      "why": "Shows the 'pass APC to the embedder' seam in production, which is the shape TD would need on any core that drops pictures.",
+      "source": "https://github.com/neovim/neovim/blob/378128aab90558d729117a2b0fc948e682f6ab01/runtime/doc/news-0.11.txt"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "libvterm",
+      "note": "A crates.io search for 'libvterm' also returns shpool-vterm 0.2.6 ('An in-memory terminal to support session restore in shpool.'; 9,798 downloads, 6,376 recent, updated 2026-09-23). Only its description was read; whether it wraps libvterm or is pure Rust is unknown.",
+      "why": "Possible session-restore prior art for TD's host/replica snapshot, relevant to the td-own-core and zellij-grid subjects; a hunch until its source is read.",
+      "source": "https://crates.io/api/v1/crates/shpool-vterm"
+    },
+    {
+      "kind": "gap-note",
+      "subjectId": "libvterm",
+      "note": "performance_evidence carries no measured throughput: no benchmark exists in the libvterm repository, and a web search (2026-09-25) found none. The per-cell memory figure is inferred from the ScreenCell struct, not measured with sizeof. Establishing throughput would mean running vtebench or a parse loop against a built libvterm, which this round's rules forbid.",
+      "source": "https://www.leonerd.org.uk/code/libvterm/"
+    }
+  ],
+  "tokens": 0
+}

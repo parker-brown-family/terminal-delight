@@ -1,0 +1,21 @@
+{
+  "call": "check",
+  "item": {
+    "id": "trap/number-base",
+    "subject": "rio-vt \u2014 Rio's embeddable core",
+    "field": "releases_last_12mo",
+    "field_means": "releases_last_12mo: releases in the 12 months before 2026-09-25",
+    "value": "26 releases",
+    "quote": "total versions: 26 (0.0.1 on 2026-07-26 \u2026 0.5.28 on 2026-09-17)",
+    "source": "fixture",
+    "measured_by_command": true,
+    "labelled_inferred": false
+  },
+  "expect": {
+    "support": [
+      "states"
+    ]
+  },
+  "written": "2026-09-25, before any call",
+  "pair": "number"
+}

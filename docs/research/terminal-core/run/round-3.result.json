@@ -1,0 +1,8 @@
+{
+  "updates": [],
+  "bubbles": [
+    { "kind": "gap-note", "subjectId": "td-own-core",
+      "note": "latest_release, first_release and releases_last_12mo cannot be sourced: the option is a core TD has not written, so there is no release to cite. Round 1 recorded them as flagged 'not applicable'. They stay open by design; this is an unfillable gap, not an unfound one." }
+  ],
+  "tokens": 0
+}

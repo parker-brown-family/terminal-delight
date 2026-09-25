@@ -1,0 +1,31 @@
+{
+  "what": "wall time to feed the four-frame mpv recording (12,988,693 bytes) through each core and read back its state, three runs each on one machine, 2026-09-25; wezterm's figure has its 300 ms reply-drain sleep subtracted",
+  "runs_ms": {
+    "wezterm-term": [
+      109.0,
+      109.3,
+      110.9
+    ],
+    "rio-vt": [
+      40.7,
+      41.3,
+      38.5
+    ],
+    "alacritty_terminal": [
+      39.3,
+      39.8,
+      55.1
+    ],
+    "libghostty-vt": [
+      19.6,
+      19.3,
+      14.9
+    ]
+  },
+  "median_ms": {
+    "wezterm-term": 109.3,
+    "rio-vt": 40.7,
+    "alacritty_terminal": 39.8,
+    "libghostty-vt": 19.3
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "spec": "claim-check",
+  "version": 2,
+  "items": 315,
+  "wall_s": 8.2,
+  "model_requested": "jev-latest",
+  "items_file": "/home/parker/Work/td-terminal-core/docs/research/terminal-core/jev/items/claims.json",
+  "sample": null,
+  "seed": 20260924,
+  "started": "2026-09-25T09:39:00+00:00"
+}

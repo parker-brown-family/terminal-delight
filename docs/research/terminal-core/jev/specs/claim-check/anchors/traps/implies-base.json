@@ -1,0 +1,22 @@
+{
+  "call": "check",
+  "item": {
+    "id": "trap/implies-base",
+    "subject": "Core X (a fixture)",
+    "field": "sixel",
+    "field_means": "sixel: whether the core decodes Sixel images",
+    "value": "no",
+    "quote": "fn hook(&mut self, params: &Params, intermediates: &[u8], ignore: bool, action: char) {\n    debug!(\"[unhandled hook] params={:?}, action: {:?}\", params, action);\n}",
+    "source": "fixture",
+    "measured_by_command": false,
+    "labelled_inferred": false
+  },
+  "expect": {
+    "support": [
+      "implies",
+      "states"
+    ]
+  },
+  "written": "2026-09-25, before any call",
+  "pair": "implies"
+}

@@ -1,0 +1,930 @@
+[
+ {
+  "id": "alacritty-own-loop",
+  "label": "alacritty_terminal 0.26 + a TD-owned read loop; TD writes Kitty graphics itself",
+  "group": "A · Keep alacritty_terminal",
+  "kitty_tags": "none",
+  "evidence": {
+   "grid_api": {
+    "recorded": "Term::grid() -> &Grid<Cell> (grid_mut() for writes), indexed as grid[Line(i)][Column(j)] or walked with renderable_content().display_iter; a Cell has pub c: char, fg and bg: Color, flags: Flags (INVERSE, BOLD, ITALIC, UNDERLINE / DOUBLE_UNDERLINE / UNDERCURL / DOTTED / DASHED, WRAPLINE, WIDE_CHAR, WIDE_CHAR_SPACER, LEADING_WIDE_CHAR_SPACER, DIM, HIDDEN, STRIKEOUT) and extra: Option<Arc<CellExtra>> exposed through zerowidth(), underline_color() and the hyperlink; the cursor through RenderableContent.cursor or grid().cursor.point; modes through Term::mode() -> &TermMode.",
+    "quoted": "pub c: char,\n    pub fg: Color,\n    pub bg: Color,\n    pub flags: Flags,\n    pub extra: Option<Arc<CellExtra>>,",
+    "check": "overclaims"
+   },
+   "damage_tracking": {
+    "recorded": "yes — Term::damage() returns TermDamage::Full or TermDamage::Partial, an iterator of LineDamageBounds { line, left, right } for viewport rows changed since the last reset_damage(); selection and the vi cursor are excluded, and scrolling with a display offset reports Full",
+    "quoted": "/// Terminal damage information collected since the last [`Term::reset_damage`] call.",
+    "check": "supported"
+   },
+   "state_snapshot": {
+    "recorded": "partial — Grid<T> (cells, scrollback, cursor) derives Serialize/Deserialize under the default `serde` feature, but Term — modes, cursor style, colours, tab stops, keyboard-mode and title stacks — and the parser state have no serialize or replay API. TD already wrote its own: gridwire.rs re-encodes the grid as VT bytes and both sides compare grid_hash.",
+    "quoted": "#[cfg_attr(feature = \"serde\", derive(Serialize, Deserialize))]\npub struct Grid<T> {",
+    "check": "unsupported"
+   },
+   "threading_and_loop": {
+    "recorded": "By default the library owns the loop: EventLoop::spawn starts a \"PTY reader\" thread that owns the PTY, takes a lease plus an unfair lock on Arc<FairMutex<Term>> and calls Processor::advance on up to 1 MiB at a time. It includes a PTY layer (tty::Pty over rustix-openpty; ConPTY on Windows). Under this option the embedder owns the loop: Term is a plain struct with no internal locking, Processor::advance(&mut term, bytes) is public, and TD must flush a pending synchronized update (Processor::stop_sync / sync_bytes_count, both public) before acting on a graphics command.",
+    "quoted": "state.parser.advance(&mut **terminal, &buf[..unprocessed]);",
+    "check": "unsupported"
+   },
+   "reply_channel": {
+    "recorded": "Replies are events, not writes: Term calls EventListener::send_event(Event::PtyWrite(String)) for DA, DSR and mode reports, and TextAreaSizeRequest / ColorRequest / ClipboardLoad carry formatter closures. Nothing in the library writes them to the PTY; the embedder does, which is how TD answers exactly once in the host (host.rs:744) while the window replica swallows PtyWrite and TextAreaSizeRequest (term.rs:95-101). Kitty a=q replies would be written by TD's own loop, since vte never sees the query.",
+    "quoted": "/// Write some text to the PTY.\n    PtyWrite(String),",
+    "check": "human"
+   },
+   "kitty_graphics": {
+    "recorded": "none today. vte 0.15 (under alacritty_terminal 0.26) sends ESC _ (APC), ESC ^ (PM) and ESC X (SOS) into State::SosPmApcString, whose bytes go to anywhere(), which reacts only to CAN, SUB and ESC; the Perform trait has no APC method, so every Kitty graphics command is discarded before alacritty sees it. Under this option TD would write the whole protocol itself in its read loop — not started.",
+    "quoted": "State::SosPmApcString => self.anywhere(performer, byte),",
+    "check": "unsupported"
+   },
+   "picture_anchoring": {
+    "recorded": "n/a today — a Cell carries c, fg, bg, flags and an optional CellExtra (zero-width chars, underline colour, hyperlink), with no picture field, and alacritty offers no tracked pin or scroll counter. Planned under this option: TD writes TD-internal Kitty placeholder cells (U+10EEEE plus diacritics) so a picture scrolls, enters scrollback, reflows and is snapshotted as text; the image-byte quota would be TD's own.",
+    "quoted": "pub c: char,\n    pub fg: Color,\n    pub bg: Color,\n    pub flags: Flags,\n    pub extra: Option<Arc<CellExtra>>,",
+    "check": "unsupported"
+   },
+   "integration_path": {
+    "recorded": "crates.io crate, unforked — alacritty_terminal = \"0.26\" exactly as TD depends on it today; TD stops calling event_loop::EventLoop and drives vte::ansi::Processor::advance (re-exported as alacritty_terminal::vte) from its own loop.",
+    "quoted": "alacritty_terminal = \"0.26\"",
+    "check": "overclaims"
+   }
+  },
+  "maturity": {
+   "api_stability": {
+    "recorded": "Pre-1.0 (0.x) with breaking changes in minor releases, marked in bold in the crate changelog: 0.26.0 changed ChildEvent::Exited and Event::ChildExit to carry ExitStatus; 0.25.0 replaced Options::hold with Options::drain_on_exit. No stability promise beyond that. TD also depends on two pub(crate) poll-token values copied by hand (socketpty.rs:40-50), which only this option removes.",
+    "check": "human"
+   },
+   "latest_release": {
+    "recorded": "0.26.0, published 2026-04-06",
+    "check": "human"
+   },
+   "releases_last_12mo": {
+    "recorded": "3 versions between 2025-09-25 and 2026-09-25: 0.25.1 (2025-10-18), 0.26.0-rc1 (2026-03-21), 0.26.0 (2026-04-06) — 2 stable releases and 1 release candidate",
+    "check": "inferred"
+   },
+   "maintainers": {
+    "recorded": "2 contributors with >= 10% of the 41 commits to alacritty/alacritty in the 12 months to 2026-09-25: chrisduerr 14 (34%), kchibisov 6 (15%); lead maintainer Christian Duerr (chrisduerr), co-maintainer Kirill Chibisov. Only 8 of the 41 touched alacritty_terminal/.",
+    "check": "human"
+   }
+  },
+  "measured": "Fed six recorded image programs through its public Processor::advance, alacritty_terminal 0.26 dropped every picture and kept no image state; its Term was driven from the harness's own loop and its replies arrived as PtyWrite events."
+ },
+ {
+  "id": "alacritty-patched-vte",
+  "label": "alacritty_terminal + patched vte (an APC callback) and a patched Term",
+  "group": "A · Keep alacritty_terminal",
+  "kitty_tags": "none",
+  "evidence": {
+   "grid_api": {
+    "recorded": "Same as alacritty_terminal 0.26 — Term::grid() -> &Grid<Cell>, Cell { c, fg, bg, flags, extra } with zerowidth(), underline_color(), hyperlink; plus whatever picture accessor TD's Term patch adds",
+    "quoted": "pub c: char,\n    pub fg: Color,\n    pub bg: Color,\n    pub flags: Flags,\n    pub extra: Option<Arc<CellExtra>>,",
+    "check": "human"
+   },
+   "damage_tracking": {
+    "recorded": "yes — Term::damage() / reset_damage(), TermDamage::Full or Partial(LineDamageBounds) per viewport row; unchanged by the patch",
+    "quoted": "/// Terminal damage information collected since the last [`Term::reset_damage`] call.",
+    "check": "supported"
+   },
+   "state_snapshot": {
+    "recorded": "partial — Grid<T> is serde-serialisable, Term state is not, and there is no replay API; TD's gridwire.rs does its own VT re-encode. A patched Term holding pictures must also expose them so the host can re-send each image to an attaching window.",
+    "quoted": "#[cfg_attr(feature = \"serde\", derive(Serialize, Deserialize))]\npub struct Grid<T> {",
+    "check": "unsupported"
+   },
+   "threading_and_loop": {
+    "recorded": "Library-owned, unchanged: alacritty's EventLoop keeps the PTY reader thread, the FairMutex lease and Processor::advance, so graphics commands would reach the patched Term in stream order, under the Term lock, with the cursor where the program left it. Includes the PTY layer.",
+    "quoted": "state.parser.advance(&mut **terminal, &buf[..unprocessed]);",
+    "check": "unsupported"
+   },
+   "reply_channel": {
+    "recorded": "Same event path as upstream: a Kitty a=q answer from the patched Term would go out as Event::PtyWrite, which TD's host already writes exactly once (host.rs:744) and the window replica already swallows (term.rs:95-101), so a=q needs no new channel",
+    "quoted": "/// Write some text to the PTY.\n    PtyWrite(String),",
+    "check": "unsupported"
+   },
+   "kitty_graphics": {
+    "recorded": "none — unpatched vte 0.15 discards APC; the patch would only deliver APC bytes (apc_start, then apc_put per byte, then apc_end), and the protocol itself (parse, store, place, delete, answer a=q) would be TD-written inside the patched Term. Nothing of it exists.",
+    "quoted": "State::SosPmApcString => self.anywhere(performer, byte),",
+    "check": "unsupported"
+   },
+   "picture_anchoring": {
+    "recorded": "n/a — nothing places pictures yet, and alacritty's Cell has no picture field. What this option makes possible, unlike the own-loop route, is an anchor inside the patched grid (a picture store keyed to an absolute row counter, which is how Rio did it after forking vte) rather than TD-internal placeholder cells; no quota exists until TD writes one.",
+    "quoted": "pub c: char,\n    pub fg: Color,\n    pub bg: Color,\n    pub flags: Flags,\n    pub extra: Option<Arc<CellExtra>>,",
+    "check": "unsupported"
+   },
+   "integration_path": {
+    "recorded": "fork + [patch]: [patch.crates-io] vte = { git = <a vte 0.15.0 fork with APC callbacks> }, which alacritty_terminal's `vte = \"0.15.0\"` requirement then resolves to — boazy/vte@37413f0 declares version 0.15.0 — and alacritty_terminal = { git = <TD fork> } whose Term implements the new callbacks. PR #115 changes one file (src/lib.rs) and adds the callbacks only to the low-level Perform trait; forwarding them through vte's ansi Processor to ansi::Handler, which alacritty_terminal uses, is further TD work.",
+    "quoted": "boazy/vte:parserless-apc-support +287 -5 files=1 commits=5",
+    "check": "overclaims"
+   }
+  },
+  "maturity": {
+   "api_stability": {
+    "recorded": "vte is pre-1.0 and its maintainer has warned that a vte rewrite could invalidate the APC work; the patch itself only adds default-bodied methods to Perform, so it is additive for other Perform implementors",
+    "check": "human"
+   },
+   "latest_release": {
+    "recorded": "No patched release exists. Base: vte 0.15.0 (2025-02-02) + alacritty_terminal 0.26.0 (2026-04-06). Patch: PR #115 head boazy/vte@37413f0 (2025-03-12), rebased onto vte's v0.15.0 commit 3b3da71c.",
+    "check": "unsupported"
+   },
+   "releases_last_12mo": {
+    "recorded": "0 — vte has published nothing since 0.15.0 (2025-02-02); the patch branches have no releases",
+    "check": "human"
+   },
+   "maintainers": {
+    "recorded": "vte upstream: 3 commits in the 12 months to 2026-09-25 (weiznich 2, dsal3389 1) — each over 10% of a trivial total — and no release; lead maintainer Christian Duerr (chrisduerr), who published 0.13.1 through 0.15.0. The APC patch and the Term patch would be carried by TD alone.",
+    "check": "unsupported"
+   }
+  }
+ },
+ {
+  "id": "alacritty-graphics-fork",
+  "label": "ayosec's alacritty graphics fork / vte-graphics (Sixel)",
+  "group": "A · Keep alacritty_terminal",
+  "kitty_tags": "none",
+  "evidence": {
+   "grid_api": {
+    "recorded": "Upstream's API (Term::grid() -> &Grid<Cell>, Cell { c, fg, bg, flags, extra }) plus Cell::graphics() -> Option<&GraphicsCell>, take_graphics()/set_graphics(), Flags::GRAPHICS, and Term::graphics_take_queues() -> Option<UpdateQueues> (pending pixels, removals, cleared subregions) for the renderer",
+    "quoted": "pub fn graphics(&self) -> Option<&GraphicsCell> {",
+    "check": "overclaims"
+   },
+   "damage_tracking": {
+    "recorded": "yes — upstream's Term::damage() / reset_damage() with per-row LineDamageBounds, carried unchanged into the fork",
+    "quoted": "/// Terminal damage information collected since the last [`Term::reset_damage`] call.",
+    "check": "supported"
+   },
+   "state_snapshot": {
+    "recorded": "partial, and weaker for pictures than it looks: Grid<Cell> still derives serde, but a GraphicCell holds only a reference to a texture in the display; the pixels leave the Term through graphics_take_queues() (UpdateQueues.pending: Vec<GraphicData>). A snapshot of the Term therefore cannot re-create pictures, and there is no replay API.",
+    "quoted": "/// Reference to a texture stored in the display.",
+    "check": "unsupported"
+   },
+   "threading_and_loop": {
+    "recorded": "Library-owned, as upstream: alacritty's EventLoop thread reads the PTY and runs Processor::advance under the FairMutex; Sixel bytes are decoded inside advance (dcs_put feeds the Sixel parser) and finished images are queued for whichever thread renders. Includes the PTY layer.",
+    "quoted": "('q', []) => {\n                self.graphics.start_sixel_graphic(params);",
+    "check": "unsupported"
+   },
+   "reply_channel": {
+    "recorded": "Upstream's event path: replies go out as Event::PtyWrite for the embedder to write; the fork adds a Sixel-advertising DA1 and XTSMGRAPHICS answers sent through the same event proxy",
+    "quoted": "let text = String::from(\"\\\\x1b[?62;4;6;22c\");",
+    "check": "unsupported"
+   },
+   "kitty_graphics": {
+    "recorded": "none — the fork has no Kitty or APC code, and vte-graphics keeps upstream vte's APC drop unchanged",
+    "quoted": "State::SosPmApcString => self.anywhere(performer, byte),",
+    "check": "unsupported"
+   },
+   "picture_anchoring": {
+    "recorded": "per-cell attribute: every covered cell gets Flags::GRAPHICS and CellExtra.graphics, a SmallVec of GraphicCell (Arc<TextureRef> + x/y pixel offset), at most 20 per cell — so pictures scroll, enter scrollback and are overwritten along with the text grid. Pixel data leaves the Term through graphics_take_queues() into the renderer's textures, and a texture is freed when its last cell reference drops. No byte quota found; each image is capped at 4096×4096.",
+    "quoted": "/// Max. number of graphics stored in a single cell.\nconst MAX_GRAPHICS_PER_CELL: usize = 20;",
+    "check": "overclaims"
+   },
+   "integration_path": {
+    "recorded": "git dependency — alacritty_terminal = { git = \"https://github.com/ayosec/alacritty\", tag = \"v0.17.0-graphics\" }. The fork's alacritty_terminal (version 0.26.0 plus the graphics module) is not published on crates.io; it pulls vte-graphics 0.15.0 from crates.io under the name vte, and re-exports it as alacritty_terminal::vte.",
+    "quoted": "vte = { version = \"0.15.0\", package = \"vte-graphics\", default-features = false, features = [\"std\", \"ansi\"] }",
+    "check": "human"
+   }
+  },
+  "maturity": {
+   "api_stability": {
+    "recorded": "No stated policy. The fork follows upstream release by release — v0.17.0-graphics is 87 commits ahead of alacritty v0.17.0 and 0 behind — and keeps the crate version at 0.26.0 while adding public API (a graphics module, Cell::graphics(), Flags::GRAPHICS, Dimensions::cell_width/cell_height with 0.0 defaults). Pre-1.0 like upstream.",
+    "check": "unsupported"
+   },
+   "latest_release": {
+    "recorded": "v0.17.0-graphics, 2026-04-06 (GitHub release; its alacritty_terminal is 0.26.0 + graphics on vte-graphics 0.15.0 of 2025-02-24)",
+    "check": "overclaims"
+   },
+   "releases_last_12mo": {
+    "recorded": "3 GitHub releases: v0.16.0-graphics (2025-10-18), v0.16.1-graphics (2025-10-25), v0.17.0-graphics (2026-04-06); vte-graphics 0",
+    "check": "inferred"
+   },
+   "maintainers": {
+    "recorded": "ayosec alone carries the graphics layer. Of 27 commits on the graphics branch since 2025-09-25, 3 are ayosec's (2 merges of upstream, 1 fix); the rest are upstream commits merged in (chrisduerr 9, kchibisov 6, others 1 each). All 3 vte-graphics versions were published by ayosec. Upstream's lead, Christian Duerr, does not maintain the graphics code.",
+    "check": "human"
+   }
+  }
+ },
+ {
+  "id": "rio-vt",
+  "label": "rio-vt — Rio's embeddable core (crates.io)",
+  "group": "B · Swap to a Rust core",
+  "kitty_tags": "transmit-direct, transmit-file, transmit-temp, transmit-shm, format-png, format-raw, compression, place-direct, place-virtual, delete-by-id, delete-by-position, query-reply, z-layers",
+  "evidence": {
+   "grid_api": {
+    "recorded": "Crosswords<U: EventListener>, descended from alacritty's Term: visible_rows() -> Vec<Row<Square>>, fill_visible_rows(&mut Vec<Row<Square>>), snapshot_visible(damage, rows, row_styles, extras) for incremental copies with resolved styles, and pub grid: Grid<Square> indexed by Line and Column with display_iter(). A Square is a packed u64: c() base char, wide() Normal / Wide / Spacer / LeadingSpacer, cell_flags() WRAPLINE / HYPERLINK / GRAPHEME, plus style and extras ids. grid.style_of(&square) -> Style { fg, bg, underline_color: Option<AnsiColor>, flags: StyleFlags } (bold, dim, italic, inverse, hidden, strikeout, five underline kinds, blink). Zero-width marks: grid.cell_text(pos) yields the base char then the marks (Square::c() alone drops them); hyperlinks: cell_hyperlink(line, col). Cursor: cursor() -> CursorState; modes: mode() -> Mode, keyboard_mode().",
+    "quoted": "pub struct Style {\n    pub fg: AnsiColor,\n    pub bg: AnsiColor,\n    pub underline_color: Option<AnsiColor>,\n    pub flags: StyleFlags,\n}",
+    "check": "unsupported"
+   },
+   "damage_tracking": {
+    "recorded": "yes — per viewport line since the last reset: damage() returns TermDamage::Full or Partial(iterator of damaged lines) and reset_damage() clears it; snapshot_visible also marks each copied row dirty; a coarse TerminalDamage { Noop, Full, Partial, CursorOnly } signal travels in events",
+    "quoted": "/// Terminal damage information collected since the last [`Term::reset_damage`] call.",
+    "check": "unsupported"
+   },
+   "state_snapshot": {
+    "recorded": "Partial. Crosswords::contents_formatted() / format(FormatOptions::vt()) re-emits the visible screen as VT bytes: reset, clear, home, SGR runs with colours in their original named / indexed / RGB form, then cursor position and cursor visibility. It writes only each cell's base character, so combining marks are dropped, and carries no scrollback, hyperlinks, other modes, alt-screen state or pictures. librio's Surface::serialize() adds scrollback and OSC 8 links, but librio is publish = false. Crosswords implements neither Clone nor serde.",
+    "quoted": "/// The visible screen as a VT/ANSI byte blob (vt100 `contents_formatted`\n    /// equivalent): clear + home, cells with SGR, then the cursor restored.\n    pub fn contents_formatted(&self) -> Vec<u8> {",
+    "check": "overclaims"
+   },
+   "threading_and_loop": {
+    "recorded": "The embedder chooses. Headless, the embedder owns the loop and calls Processor::advance(&mut term, bytes) on a Crosswords it holds, with no threads. With the default `pty` feature, performer::Machine spawns a 'PTY reader' thread that polls a teletypewriter PTY through corcovado and parses into an Arc<FairMutex<Crosswords<U>>> shared with the renderer (U: EventListener + Send + 'static). Crosswords has no internal locking. The PTY layer (teletypewriter) is included and can be dropped with default-features = false. Synchronized updates: an embedder loop should poll Processor::sync_timeout(); otherwise advance() flushes an expired update when the next bytes arrive.",
+    "quoted": "Create a grid, feed it bytes through the parser, and read cells back. No\nPTY, no renderer, no threads:",
+    "check": "human"
+   },
+   "reply_channel": {
+    "recorded": "An event callback. Replies (DA1/DA2, DSR/CPR, DECRQM, XTGETTCAP, Kitty acks and a=q answers) are sent as RioEvent::PtyWrite(route_id, String) through EventListener::send_event. Window-size reports arrive as TextAreaSizeRequest, OSC colour queries as ColorRequest and OSC 52 reads as ClipboardLoad, each carrying a formatter closure the embedder applies before writing. The embedder does the PTY write, so a TD replica can drop these events and let the host answer once — the same shape as alacritty's Event.",
+    "quoted": "/// Write some text to the PTY identified by `route_id`. Routing\n    /// by panel (rather than the focused context) is required so\n    /// CSI / OSC reply bytes land on the shell that asked for them\n    /// even if the user focuses a different split mid-flight.\n    PtyWrite(usize, String),",
+    "check": "unsupported"
+   },
+   "kitty_graphics": {
+    "recorded": "Broad, inside the crate. Transmission: t=d with chunking, t=f, t=t (path must contain tty-graphics-protocol; deleted after reading), t=s (shm_open on Unix, a file mapping on Windows). Formats: f=8, f=16, f=24, f=32 raw and f=100 PNG; PNG decodes only with the non-default `graphics` feature, otherwise EINVAL. o=z zlib with a decompressed-size cap. Placement: a=T and a=p at the cursor with x/y/w/h source rectangle, c/r cell span, X/Y sub-cell offset, C=1, z index. U=1 virtual placements are stored as metadata and ansi/kitty_virtual.rs supplies the placeholder decoders, but scanning cells for U+10EEEE and compositing is the embedder's renderer's job. Deletes: a/A, i/I, n/N, c/C, p/P, x/X, y/Y, z/Z, q/Q, r/R. a=q runs the real load path and answers OK or the error, honouring q=. Limits: 320 MiB image store per terminal with eviction of unreferenced images; 10000 px per axis and 400 MiB payload at parse; 4096x4096 display cap. Not implemented: animation (a=f, a=a, a=c answered EINVAL:unsupported action) and relative placements (P/Q/H/V parsed, never used).",
+    "quoted": "// A query must behave exactly like a transmission — decode\n            // the payload, read the file, or map and unlink the shared\n            // memory — and report whether that worked, without storing\n            // anything.",
+    "check": "unsupported"
+   },
+   "picture_anchoring": {
+    "recorded": "Absolute row counter in side tables, not per-cell: Kitty placements keep dest_row and Sixel/iTerm2 AtlasPlacements keep abs_row = lines_evicted + history + screen_row, so pictures scroll and survive scrollback eviction. On a column reflow a recorded ReflowRemap moves each placement to where its anchor row's content landed (Sixel/iTerm2 pieces on dropped rows are destroyed; Kitty ones stay). Text written over a Sixel/iTerm2 picture splits it into cropped children. Quota: total_limit 320 MiB per terminal, evicting images not in use.",
+    "quoted": "/// Anchor row in the stable absolute space\n    /// (`lines_evicted + history + screen_row` at insert).\n    pub abs_row: i64,",
+    "check": "overclaims"
+   },
+   "integration_path": {
+    "recorded": "crates.io crate: rio-vt = \"0.5\". The default `pty` feature brings Rio's PTY driver (drop it with default-features = false); the opt-in `graphics` feature is required to decode PNG (Kitty f=100) and iTerm2 images.",
+    "quoted": "- **Rust embedders** depend on `rio-vt` directly (this crate).",
+    "check": "supported"
+   }
+  },
+  "maturity": {
+   "api_stability": {
+    "recorded": "Pre-1.0 and versioned in lockstep with the Rio app (0.5.x), with no stated stability promise. Public types have changed inside the 0.5 series (0.5.8 moved Msg::Resize, RioEvent::TextAreaSizeRequest and OnResize from teletypewriter::WinsizeBuilder to rio_vt::event::WindowSize), and 26 versions shipped in eight weeks.",
+    "check": "human"
+   },
+   "latest_release": {
+    "recorded": "0.5.28, published to crates.io 2026-09-17",
+    "check": "human"
+   },
+   "releases_last_12mo": {
+    "recorded": "26 (22 stable 0.5.x, 4 alphas) — the crate's entire history, 2026-07-26 to 2026-09-17",
+    "check": "overclaims"
+   },
+   "maintainers": {
+    "recorded": "1 contributor above 10%: raphamorim (Raphael Amorim, author and lead) with 1053 of 1144 commits (92%) to the Rio repository in the 12 months to 2026-09-25; next is github-actions[bot] at 2.5%. The rio-vt/ path alone had 94 commits in that window, 92 by raphamorim.",
+    "check": "overclaims"
+   }
+  },
+  "measured": "Fed six recorded image programs through Processor::advance, rio-vt 0.5.28 stored their pictures and the harness read each placement (image id, row, column, columns, rows) from the public map graphics.kitty_placements, and virtual placements from graphics.kitty_virtual_placements; replies arrived as PtyWrite events."
+ },
+ {
+  "id": "wezterm-term",
+  "label": "wezterm-term / termwiz — WezTerm's core",
+  "group": "B · Swap to a Rust core",
+  "kitty_tags": "transmit-direct, transmit-file, transmit-temp, transmit-shm, format-png, format-raw, compression, place-direct, delete-by-id, query-reply, z-layers, animation",
+  "evidence": {
+   "grid_api": {
+    "recorded": "Terminal derefs to TerminalState; screen() -> &Screen. Screen::lines_in_phys_range(range) -> Vec<Line>, visible_lines(), all_lines(), with_phys_lines(range, f), and conversions between physical, visible and stable row indices. Line::visible_cells() yields CellRef values (cell_index(), str() for the whole grapheme, width(), attrs()) and skips the blank cell a wide character covers. CellAttributes: foreground(), background(), underline_color(), intensity, underline kind, italic, reverse, strikethrough, invisible, overline, wrapped, hyperlink(), images(). Cursor: TerminalState::cursor_pos() -> CursorPosition. Modes through accessors such as is_alt_screen_active(), plus mouse and focus accessors added on main in September 2026 (#8045).",
+    "quoted": "/// For instance, a double-width cell overlaps the following (blank)\n    /// cell, so that blank cell is omitted from the iterator results.",
+    "check": "unsupported"
+   },
+   "damage_tracking": {
+    "recorded": "yes — by sequence number: each Line records the seqno of its last change, TerminalState::current_seqno() gives the current one, and Screen::get_changed_stable_rows(range, seqno) returns the stable rows changed since a given seqno",
+    "quoted": "pub fn get_changed_stable_rows(\n        &self,\n        stable_lines: Range<StableRowIndex>,\n        seqno: SequenceNo,\n    ) -> Vec<StableRowIndex> {",
+    "check": "inferred"
+   },
+   "state_snapshot": {
+    "recorded": "No whole-terminal serializer and no VT re-encoder. With the use_serde feature, Line and Cell (with hyperlinks and image cells) are serde types, and WezTerm's own client/server mux sends SerializedLines (stable-row-indexed lines plus hyperlinks and images) with cursor, dimensions and dirty ranges: a line-level replica protocol rather than VT bytes. Modes, scroll regions, tab stops and parser state are not in that message (inferred from its fields).",
+    "quoted": "pub struct SerializedLines {\n    lines: Vec<(StableRowIndex, Line)>,\n    hyperlinks: Vec<LineHyperlink>,\n    images: Vec<SerializedImageCell>,\n}",
+    "check": "human"
+   },
+   "threading_and_loop": {
+    "recorded": "The embedder owns the read loop and the PTY: feed bytes with Terminal::advance_bytes(bytes), or parse elsewhere and apply with perform_actions(Vec<Action>), which is what WezTerm's mux does from a reader thread. No PTY layer in the crate (WezTerm's is the separate portable-pty crate). Terminal::new spawns one writer thread per terminal (ThreadedWriter) that pushes replies into the supplied writer. WezTerm keeps each Terminal behind a Mutex; the configuration, clipboard and alert handler are Send + Sync trait objects.",
+    "quoted": "This crate does not provide any kind of gui, nor does it directly\nmanage a PTY; you provide a `std::io::Write` implementation that\ncould connect to a PTY, and supply bytes to the model via the\n`advance_bytes` method.",
+    "check": "overclaims"
+   },
+   "reply_channel": {
+    "recorded": "A Box<dyn std::io::Write + Send> passed to Terminal::new. DA1/DA2, DSR, DECRQM, window-size reports and Kitty a=q replies are written straight into it (through the per-terminal ThreadedWriter), as are keyboard and mouse encodings; title, bell, clipboard and palette changes go to an AlertHandler. There is no reply event to filter, so a TD replica would pass std::io::sink() and only the host's terminal would answer.",
+    "quoted": "/// `writer` is anything that implements `std::io::Write`; it\n    /// is used to send input to the connected program; both keyboard\n    /// and mouse input is encoded and written to that stream, as\n    /// are answerback responses to a number of escape sequences.",
+    "check": "overclaims"
+   },
+   "kitty_graphics": {
+    "recorded": "Partial, and off unless the embedder turns it on (TerminalConfiguration::enable_kitty_graphics returns false by default). Transmission: t=d with chunking, t=f, t=t, t=s (POSIX shm through the kitty-shm feature, which termwiz's use_image enables). Formats f=24, f=32, f=100; o=z. a=t, a=T, a=p direct placements with source rectangle, c/r, X/Y offsets, C and z. a=q answers OK or ERROR. Animation frames a=f and composition a=c are handled; a=a playback control is not parsed. Deletes: only a/A and i/I; every other d= value (n/N, c, p, q, r, x, y, z) is logged as unhandled. No U=1 virtual placements or Unicode placeholders (no U key parsed, no U+10EEEE handling). Quota: 320 MiB hard-coded with a FIXME, pruning unreferenced image data. Same code on main b09b56c29c.",
+    "quoted": "KittyImage::Delete { what, verbosity } => {\n                log::warn!(\"unhandled KittyImage::Delete {:?} {:?}\", what, verbosity);",
+    "check": "unsupported"
+   },
+   "picture_anchoring": {
+    "recorded": "Per-cell attribute: every covered cell's CellAttributes holds a Vec<Box<ImageCell>> with that cell's texture-coordinate slice, an Arc<ImageData>, z_index, padding and the Kitty image and placement ids. Pictures therefore scroll into scrollback and are freed with their lines, and on reflow their slices wrap like text (inferred from the storage). Writing a cell drops its image slices unless they carry a Kitty placement id, so Sixel and iTerm2 pictures erase under text. Quota: 320 MiB for Kitty image data only (kitty.rs:47); other pictures live as long as their cells.",
+    "quoted": "pub struct ImageCell {\n    /// Texture coordinate for the top left of this cell.\n    /// (0,0) is the top left of the ImageData. (1, 1) is\n    /// the bottom right.\n    top_left: TextureCoordinate,",
+    "check": "overclaims"
+   },
+   "integration_path": {
+    "recorded": "git dependency only (or fork + [patch]): wezterm-term has never been published to crates.io and depends on unpublished workspace crates (wezterm-escape-parser, wezterm-cell, wezterm-surface) and on termwiz 0.24.0, while crates.io carries termwiz 0.23.3. A third-party fork, tattoy-wezterm-term 0.1.0-fork.5 (2025-07-11), is on crates.io.",
+    "quoted": "crate `wezterm-term` does not exist",
+    "check": "human"
+   }
+  },
+  "maturity": {
+   "api_stability": {
+    "recorded": "No stated stability contract and no semver releases: wezterm-term is version 0.1.0 and unpublished, termwiz is pre-1.0, and the escape parser moved out of published termwiz into the unpublished wezterm-escape-parser, so published termwiz no longer matches what wezterm-term compiles against. Accessors intended for downstream users only began arriving on 2026-09-09 (#8045).",
+    "check": "unsupported"
+   },
+   "latest_release": {
+    "recorded": "None for wezterm-term, which has never been released. The newest WezTerm stable release is 20240203-110809-5046fc22 (2024-02-03); termwiz's newest crates.io release is 0.23.3 (2025-03-20). A TD git dependency would pin a main commit (b09b56c29c, 2026-09-17, at retrieval).",
+    "check": "human"
+   },
+   "releases_last_12mo": {
+    "recorded": "0 — no WezTerm GitHub release since 2024-02-03, no termwiz crates.io version since 2025-03-20, and wezterm-term is unpublished",
+    "check": "inferred"
+   },
+   "maintainers": {
+    "recorded": "3 contributors above 10% of 141 commits in the last 12 months: bew (Benoit de Chezelles) 57 (40.4%), wez (Wez Furlong, creator and lead) 36 (25.5%), xtqqczze 19 (13.4%). Activity resumed in mid-2026: by commit date, 147 of 182 commits since 2025-09-25 landed June to September 2026, after one in March and none in February, April or May; wez last committed on 2026-08-12. 'Stalled' now describes releases, not commits.",
+    "check": "human"
+   }
+  }
+ },
+ {
+  "id": "vt100-rust",
+  "label": "vt100 (doy) — the crate under tui-term",
+  "group": "B · Swap to a Rust core",
+  "kitty_tags": "none",
+  "evidence": {
+   "grid_api": {
+    "recorded": "Parser::screen() -> &Screen; Screen::cell(row, col) -> Option<&Cell> (random access; no row iterator, but rows()/rows_formatted() give per-row text or bytes). Cell exposes contents() -> &str (at most one non-zero-width char plus combining marks), is_wide(), is_wide_continuation(), fgcolor()/bgcolor() (Color::Default | Idx(u8) | Rgb(u8,u8,u8)), bold(), dim(), italic(), underline(), inverse(). No underline colour or style, no strikethrough, no blink, no hyperlink. Screen gives cursor_position() -> (row, col), hide_cursor(), row_wrapped(row), alternate_screen(), application_keypad(), application_cursor(), bracketed_paste(), mouse_protocol_mode()/encoding(); scrollback is read by set_scrollback(offset), which shifts what cell() returns.",
+    "quoted": "pub fn cell(&self, row: u16, col: u16) -> Option<&crate::Cell> {",
+    "check": "human"
+   },
+   "damage_tracking": {
+    "recorded": "no per-row dirty report; change is computed by diffing against a cloned previous Screen — contents_diff(&prev) and rows_diff(&prev, ...) return the bytes that turn prev into current",
+    "quoted": "Returns a terminal byte stream sufficient to turn the visible contents of the screen described by `prev` into the visible contents of the screen described by `self`.",
+    "check": "unsupported"
+   },
+   "state_snapshot": {
+    "recorded": "Yes, as VT bytes, but visible screen only: Screen::state_formatted() returns escape codes reproducing the visible cells, cursor and input modes (keypad, cursor keys, bracketed paste, mouse); state_diff(&prev) returns the delta; Screen is Clone. It does not carry scrollback (the encoder walks visible_rows()), the alternate-screen flag, the primary grid under an alt screen, scroll region, origin mode, tab stops or title, and nothing is serde-serializable. That is narrower than TD's own gridwire::encode_snapshot, which already ships every scrollback row.",
+    "quoted": "Return escape codes sufficient to reproduce the entire contents of the current terminal state. This is a convenience wrapper around [`contents_formatted`](Self::contents_formatted) and [`input_mode_formatted`](Self::input_mode_formatted).",
+    "check": "overclaims"
+   },
+   "threading_and_loop": {
+    "recorded": "The embedder owns the loop: Parser::process(&mut self, &[u8]) is synchronous, and the crate has no PTY, no thread and no event loop (dependencies are itoa, unicode-width, vte). Parser<CB> is Send and Sync whenever the callbacks type is; no internal locks.",
+    "quoted": "impl<CB> Send for Parser<CB> where CB: Send\\nimpl<CB> Sync for Parser<CB> where CB: Sync",
+    "check": "unsupported"
+   },
+   "reply_channel": {
+    "recorded": "None built in: vt100 never writes a reply. Device attributes (CSI c), device status and cursor report (CSI 6n), DECRQM and window-size queries reach the embedder only as Callbacks::unhandled_csi(screen, i1, i2, params, c), so TD would compose and write every answer itself. Kitty a=q never arrives (APC dies in vte). It fits TD's answer-exactly-once rule — the replica installs no-op callbacks — but TD writes all reply bytes.",
+    "quoted": "self.callbacks.unhandled_csi( &mut self.screen, None, None, &params.iter().collect::<Vec<_>>(), c, );",
+    "check": "inferred"
+   },
+   "kitty_graphics": {
+    "recorded": "none. vt100 hands every byte to vte 0.15, whose state machine sends ESC _ (APC) into SosPmApcString and discards the payload without calling the performer. vt100's own vte::Perform impl and its Callbacks trait have no APC entry point, so a Kitty graphics command never reaches vt100 or the embedder; TD would have to pre-filter bytes before Parser::process.",
+    "quoted": "0x5E..=0x5F => self.state = State::SosPmApcString,",
+    "check": "unsupported"
+   },
+   "picture_anchoring": {
+    "recorded": "n/a — no picture model; a Cell is 32 bytes of text and attributes",
+    "quoted": "pub struct Cell {\\n    contents: [u8; CONTENT_BYTES],\\n    len: u8,\\n    attrs: crate::attrs::Attrs,\\n}",
+    "check": "unsupported"
+   },
+   "integration_path": {
+    "recorded": "crates.io crate: vt100 = \"0.16\" (0.16.2). It depends on vte 0.15.0, the parser version TD already builds through alacritty_terminal 0.26, so cargo would unify the two.",
+    "quoted": "name = \"vt100\"\\nversion = \"0.16.2\"",
+    "check": "inferred"
+   }
+  },
+  "maturity": {
+   "api_stability": {
+    "recorded": "Pre-1.0 (0.16.x) and breaking in minor bumps: 0.16.0 removed eight Screen methods for a callback API, dropped `Cell: Default`, and stopped `Screen` implementing `vte::Perform`. The 0.16.0 CHANGELOG also announces a `Parser::process_cb` that the shipped API does not contain (it has `Parser::new_with_callbacks`).",
+    "check": "human"
+   },
+   "latest_release": {
+    "recorded": "0.16.2, published 2025-07-12",
+    "check": "human"
+   },
+   "releases_last_12mo": {
+    "recorded": "0",
+    "check": "supported"
+   },
+   "maintainers": {
+    "recorded": "0 contributors with >= 10% of commits in the last 12 months — no commit at all since 2025-09-25 (last push 2025-07-12). Lead and near-sole maintainer: Jesse Luehrs (doy), 410 of 415 all-time contributions and 33 of 37 commits in the 12 months before the window. 15 pull requests are open, 13 of them filed since December 2025, none merged.",
+    "check": "human"
+   }
+  }
+ },
+ {
+  "id": "td-own-core",
+  "label": "TD writes its own emulator core on a parser (prior art: Warp, Zellij)",
+  "group": "B · Swap to a Rust core",
+  "kitty_tags": "none",
+  "evidence": {
+   "grid_api": {
+    "recorded": "TD would design it. TD's renderer needs, per cell: char, zero-width marks, fg/bg, underline colour, flags and wide-char spacers. Scale of the work, from prior art: Zellij's TerminalCharacter is 16 bytes (one char plus an Rc to shared CharacterStyles carrying underline_color, strike, link_anchor…) and its grid.rs alone is 6,298 lines (14,957 with character, sixel, kitty, links, selection, search and output). Warp's model directory is 22,636 non-test lines (grid/ 12,719), 16 files of it adapted from alacritty_terminal. alacritty_terminal 0.26, which TD would replace, is 11,739 lines (term/mod.rs + grid/ + cell.rs = 6,123).",
+    "quoted": "pub struct TerminalCharacter {\\n    pub character: char,\\n    pub styles: RcCharacterStyles,\\n    width: u8,\\n}\\n\\n// This size has significant memory and CPU implications for long lines,\\n// be careful about allowing it to grow",
+    "check": "human"
+   },
+   "damage_tracking": {
+    "recorded": "TD would build it. Prior art: Zellij's OutputBuffer tracks changed lines and serializes only changed chunks for each client.",
+    "quoted": "pub fn changed_chunks_in_viewport(",
+    "check": "inferred"
+   },
+   "state_snapshot": {
+    "recorded": "TD would own it, and owning the core removes the one limit TD's current snapshot documents: gridwire::encode_snapshot cannot read the primary grid under an alt screen without mutating alacritty's Term. With its own core TD could snapshot structurally — both screens, scroll region, tab stops, saved cursor, pictures — or keep re-encoding VT bytes. Prior art: Zellij's Grid::serialize(scrollback_lines_to_serialize) at grid.rs:1953.",
+    "quoted": "an alt screen has no scrollback of its own and the primary grid beneath it cannot be read without mutating the terminal, so attaching to a pane inside vim shows vim exactly and leaves the history behind it empty until vim exits, when the host re-snapshots.",
+    "check": "human"
+   },
+   "threading_and_loop": {
+    "recorded": "TD owns everything: read loop, parse and locking. Today alacritty_terminal's EventLoop owns TD's PTY reader thread, parser pump and writer; an own core means TD replaces that loop too, or keeps alacritty_terminal only for tty spawning (which socketpty.rs already adapts through EventedPty), or moves to another PTY crate.",
+    "quoted": "alacritty_terminal's EventLoop owns the PTY reader thread, the VTE parser pump, and the writer.",
+    "check": "overclaims"
+   },
+   "reply_channel": {
+    "recorded": "TD writes every reply itself, and its existing split carries over unchanged: Answers::Here (the host answers) and Answers::Elsewhere (the replica stays silent). vte::ansi hands queries to Handler methods such as identify_terminal, documented as 'should write back to the pty stream', and device_status. Zellij's own grid queues replies in pending_messages_to_pty: Vec<Vec<u8>>.",
+    "quoted": "/// Identify the terminal (should write back to the pty stream).\\n    fn identify_terminal(&mut self, _intermediate: Option<char>) {}",
+    "check": "overclaims"
+   },
+   "kitty_graphics": {
+    "recorded": "none — nothing is built, and TD today has no picture model. Scope from prior art: Zellij's implementation (v0.45.0, PR #5428, +9,169/−125 lines in 77 files; kitty_graphics/ is 2,373 lines — parser 699, grid_state 1,149, store 269, interceptor 166, replies 51, mod 39) covers transmit, place, delete and query but not animation or Unicode placeholders. Warp's kitty.rs (973 lines, AGPL, reference only) handles t=d/f/t/s, f=24/32/100, a=t/T/p/q/d and delete-all/by-id, and rejects Unicode placeholders.",
+    "quoted": "Programs that draw pictures through the Kitty graphics protocol (icat, viu, chafa, timg, mpv, ratatui-image) cannot draw in TD, because vte drops APC and alacritty has no picture model.",
+    "check": "supported"
+   },
+   "picture_anchoring": {
+    "recorded": "n/a today — TD would choose. Prior art: Zellij anchors Sixel images to a row counted from the start of the pane's scrollback and shifts them when scrollback is trimmed. Its Kitty grid anchors placements to canonical (unwrapped) lines so reflow keeps them (kitty_grid.merge_rows_into_line_start and has_placement_anchored_to_first_canonical_line in grid.rs). Its APC interceptor caps one capture at 1,048,576 bytes.",
+    "quoted": "we keep track of where they are relative to the beginning of the pane scrollback for their vertical location, and the left side of the pane for their horizontal location. When lines are removed from the scrollback (eg. when it exceeds its maximum) we update the image locations accordingly.",
+    "check": "human"
+   },
+   "integration_path": {
+    "recorded": "in-tree: a module or workspace crate inside TD's app/, depending on a parser from crates.io (vte 0.15 is already in TD's build through alacritty_terminal 0.26; vtparse 0.7.0 would be new)",
+    "quoted": "alacritty_terminal = \"0.26\"",
+    "check": "human"
+   }
+  },
+  "maturity": {
+   "api_stability": {
+    "recorded": "TD's own: the grid API is whatever TD decides and changes only when TD changes it. The external surface shrinks to the parser, which is pre-1.0 — vte 0.15.0 (no release in the last 12 months) or vtparse 0.7.0.",
+    "check": "unsupported"
+   },
+   "latest_release": {
+    "recorded": "not applicable — nothing is released; the option is code TD has not written",
+    "check": null
+   },
+   "releases_last_12mo": {
+    "recorded": "not applicable — nothing is released",
+    "check": null
+   },
+   "maintainers": {
+    "recorded": "1 — Parker Brown, 100% of TD's commits in the last 12 months (774 as \"Parker Brown\" and 354 as \"Parker Brown Family\", one person under two author names; 1,128 commits, first commit 2026-06-12). TD's work is agent-assisted; the bus factor is one person.",
+    "check": "inferred"
+   }
+  }
+ },
+ {
+  "id": "libghostty-vt",
+  "label": "libghostty-vt — Ghostty's core as a library, via Rust bindings",
+  "group": "C · Swap to a core across a C boundary",
+  "kitty_tags": "transmit-direct, transmit-file, transmit-temp, transmit-shm, format-png, format-raw, compression, place-direct, place-virtual, delete-by-id, delete-by-position, query-reply, z-layers, animation",
+  "evidence": {
+   "grid_api": {
+    "recorded": "RenderState: ghostty_render_state_new, then ghostty_render_state_update (or begin_update / end_update to hold the terminal lock only for the first phase); a row iterator yields ROW_DATA_DIRTY, ROW_DATA_RAW (wrap, wrap-continuation, grapheme, styled, hyperlink, semantic-prompt, kitty-placeholder flags), ROW_DATA_CELLS and a bulk CELLS_RAW view; each cell yields RAW GhosttyCell (codepoint, content tag, wide = NARROW / WIDE / SPACER_TAIL / SPACER_HEAD, has_hyperlink, protected), STYLE GhosttyStyle {fg_color, bg_color, underline_color, bold, italic, faint, blink, inverse, invisible, strikethrough, overline, underline style}, GRAPHEMES_LEN / BUF / UTF8 (base plus extra codepoints), resolved FG_COLOR / BG_COLOR, SELECTED. Cursor: GhosttyRenderStateCursor {viewport_x, viewport_y, wide_tail, visible, blinking, password_input, visual_style}. Modes: ghostty_terminal_get(GHOSTTY_TERMINAL_DATA_MODE). Random access (not for render loops): ghostty_terminal_grid_ref plus ghostty_grid_ref_hyperlink_uri. Rust: RenderState / RowIterator / CellIterator with cell.graphemes(), style(), fg_color(), bg_color().",
+    "quoted": "A style describes the visual attributes of a terminal cell, including foreground, background, and underline colors, as well as flags for bold, italic, underline, and other text decorations.",
+    "check": "unsupported"
+   },
+   "damage_tracking": {
+    "recorded": "yes — the render state keeps a global dirty state (FALSE / PARTIAL / FULL) and a per-row dirty flag; the embedder clears both with ghostty_render_state_clean after drawing a frame. Kitty graphics add storage and per-image generation stamps.",
+    "quoted": "The render state API keeps track of dirty state at two independent layers: a global dirty state that indicates whether the entire frame is clean, partially dirty, or fully dirty, and a per-row dirty state that allows tracking which rows in a partially dirty frame have changed.",
+    "check": "supported"
+   },
+   "state_snapshot": {
+    "recorded": "Yes, two routes. (1) Binary snapshot: ghostty_snapshot_encode / _encode_buf / _encode_alloc and ghostty_snapshot_decoder_new / _ready / _next / _decode — 'GHOSTSNP' v1, CRC32C-framed records, a READY marker after the active screens and the unfinished VT-parser continuation, then history pages newest-first so a client can render before scrollback arrives. Format v1 is WIP with no compatibility guarantee; the C API landed 2026-08-03, so it is absent from crate 0.2.1 and present on libghostty-rs master. (2) VT formatter: ghostty_formatter_terminal_new with GHOSTTY_FORMATTER_FORMAT_VT re-encodes the screen as VT bytes with optional extras (cursor, SGR, OSC 8, protection, kitty keyboard, charsets, palette, modes, scrolling region, tabstops, pwd) — the route zmx takes through the Zig API. Neither route carries Kitty image or placement state.",
+    "quoted": "A snapshot is an ordered, CRC-protected record stream. Its READY marker follows enough state to render and resume the terminal, including any unfinished VT parser input. Older scrollback pages follow READY and the FINISH marker terminates the complete snapshot.",
+    "check": "overclaims"
+   },
+   "threading_and_loop": {
+    "recorded": "The embedder owns the read loop: libghostty-vt has no PTY layer, no event loop, no timer and no background thread; bytes go in through ghostty_terminal_vt_write, and every effect callback runs synchronously on the calling thread (no re-entrant vt_write). The C API has no internal locking; the render docs expect a lock held across render-state update. The Rust bindings make every type !Send and !Sync, so a terminal lives on one thread and talks through channels.",
+    "quoted": "In particular, all libghostty-vt types are !Send, meaning they cannot be transferred across threads, since the C API is allowed to use thread-local state; they are also !Sync, meaning they cannot be shared across threads, since data races may occur as the C API is not guarded with mutexes or other synchronization mechanisms.",
+    "check": "unsupported"
+   },
+   "reply_channel": {
+    "recorded": "A per-terminal WRITE_PTY callback receives every reply byte string (DSR, DECRQM, mode 2048 size reports, Kitty graphics a=q and transmit responses). DA1/DA2/DA3, XTWINOPS size, XTVERSION, ENQ and colour-scheme queries are answered by embedder callbacks that return data for the terminal to encode. With no WRITE_PTY installed, reply-producing sequences are silently dropped — so a window replica that installs none, next to a host that installs one, gives exactly-once replies by construction.",
+    "quoted": "Feeds raw bytes through the terminal's VT stream parser, updating terminal state accordingly. By default, sequences that require output (queries, device status reports) are silently ignored. Use ghostty_terminal_set() with GHOSTTY_TERMINAL_OPT_WRITE_PTY to install a callback that receives response data.",
+    "check": "human"
+   },
+   "kitty_graphics": {
+    "recorded": "Full core implementation behind the C API (build feature kitty_graphics, on by default). Actions q, t, T, p, d, f, a, c. Media: direct, file, temporary file, shared memory (file/temp/shm are opt-in per terminal; temp is restricted to a directory the embedder names). Formats: RGB (24), RGBA (32), PNG (100) — PNG only if the embedder installs a decode callback, otherwise rejected. zlib compression (o=z), inflated before storage. Placements: direct (anchored to tracked page-list pins), virtual (U=1) and relative (P/Q parent chains). Deletes a, i, n, c, f, p, q, r, x, y, z with upper-case freeing variants. Query and transmit replies go out through the WRITE_PTY callback. z-index with BELOW_BG / BELOW_TEXT / ABOVE_TEXT iterator filters. Animation frames (a=f, a=a, a=c) composed eagerly into RGBA; the current frame is exposed, but timed playback is driven by the Ghostty app renderer (ImageStorage.animationTick) and has no C API entry point, so an embedder sees client-driven frame changes only. Storage quota per screen (0 disables) and a 65 MiB APC buffer cap. Read side: GhosttyKittyGraphics handle, placement iterator with layer filter, image lookup returning decoded pixels plus generation stamps, and render_info geometry. Unicode placeholders: the API reports is_virtual and a per-row KITTY_VIRTUAL_PLACEHOLDER flag, but position/rect calls return NO_VALUE for virtual placements, so the embedder must decode U+10EEEE cells (diacritics, fg-colour image id) itself.",
+    "quoted": "Before images can be stored, Kitty graphics must be enabled on the terminal by setting a non-zero storage limit with GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_STORAGE_LIMIT, and a PNG decoder callback must be installed via ghostty_sys_set() with GHOSTTY_SYS_OPT_DECODE_PNG.",
+    "check": "overclaims"
+   },
+   "picture_anchoring": {
+    "recorded": "Tracked pin: each direct placement's location is a *PageList.Pin tracked by the page list, so scrolling, scrollback pruning and resize/reflow move it with the text. Virtual placements anchor through placeholder cells in the grid; relative placements resolve through the parent chain at render time. Quota: storage limit per screen (320 MB default inside the Zig storage struct; C API terminals must set a non-zero limit, 0 disables and deletes everything), plus a 65 MiB APC buffer cap for Kitty payloads.",
+    "quoted": "Converts the placement's internal pin to viewport-relative column and row coordinates. The returned coordinates represent the top-left corner of the placement in the viewport's grid coordinate space.",
+    "check": "overclaims"
+   },
+   "integration_path": {
+    "recorded": "C ABI through Rust bindings: crate libghostty-vt (safe wrapper) over libghostty-vt-sys (raw FFI, checked-in bindgen output), from crates.io 0.2.1 or as a git dependency on Uzaaft/libghostty-rs master (master is needed for the snapshot API). The bindings are third-party; ghostty-org publishes no Rust crate.",
+    "quoted": "- `crates/libghostty-vt-sys` — raw FFI bindings generated from `ghostty/vt.h`",
+    "check": "human"
+   }
+  },
+  "maturity": {
+   "api_stability": {
+    "recorded": "Unstable by the project's own words: pre-1.0, untagged, breaking changes expected. The snapshot format v1 carries no binary-compatibility guarantee. The bindings' checked-in FFI tracks one pinned ghostty commit and promises no compatibility with other C API revisions; between crate 0.2.1 and bindings master the Zig requirement moved 0.15 -> 0.16 and the snapshot module was added.",
+    "check": "supported"
+   },
+   "latest_release": {
+    "recorded": "libghostty-vt 0.2.1 and libghostty-vt-sys 0.2.1, 2026-07-18 on crates.io, pinning ghostty commit a887df42 (2026-07-11). libghostty itself has no tagged release: ghostty's tags are application versions (newest v1.3.1, 2026-03-13) plus the moving 'tip'.",
+    "check": "human"
+   },
+   "releases_last_12mo": {
+    "recorded": "4 crate releases of libghostty-vt (0.1.0 and 0.1.1 on 2026-03-28, 0.2.0 on 2026-06-16, 0.2.1 on 2026-07-18); 0 tagged libghostty releases.",
+    "check": "human"
+   },
+   "maintainers": {
+    "recorded": "ghostty: 1 contributor with >=10% of the 5,707 default-branch commits since 2025-09-25 — mitchellh (Mitchell Hashimoto, lead) with 2,914 (51%); next are github-actions[bot] 306 (5.4%) and jcollie 288 (5.0%). Rust bindings libghostty-rs: 2 contributors >=10% of 205 commits — Uzaaft 118 (57.6%) and pluiedev 75 (36.6%).",
+    "check": "human"
+   }
+  },
+  "measured": "Fed six recorded image programs through vt_write, libghostty-vt 0.2.1 stored their pictures and the harness read each placement's image, viewport row and column, and size in cells through PlacementIterator; virtual placements are flagged; PNG needed a decoder the harness supplied; replies arrived through on_pty_write."
+ },
+ {
+  "id": "libvterm",
+  "label": "libvterm — Neovim's C terminal library",
+  "group": "C · Swap to a core across a C boundary",
+  "kitty_tags": "none",
+  "evidence": {
+   "grid_api": {
+    "recorded": "C API, pull and push. Pull: vterm_screen_get_cell(screen, VTermPos{row,col}, &cell) fills a VTermScreenCell: chars[6] (base plus up to 5 combining codepoints), width (1, or 2 on the lead cell of a wide char; the trailing cell holds chars[0] = (uint32_t)-1), attrs (bold, underline 2-bit incl. double/curly, italic, blink, reverse, conceal, strike, font 0-9, dwl/dhl, small, baseline) and fg/bg VTermColor (RGB or indexed, with default-fg/bg flags). No underline colour and no hyperlink upstream. Also vterm_screen_get_chars/get_text/get_attrs_extent/is_eol. Push: VTermScreenCallbacks damage, moverect, movecursor, settermprop, bell, resize, sb_pushline, sb_popline, sb_clear. Cursor: vterm_state_get_cursorpos plus the movecursor callback. Modes reach the embedder only as VTermProp values (cursor visible/blink/shape, altscreen, title, icon name, reverse, mouse, focus report); DECCKM, bracketed paste and the mouse encoding have no getter.",
+    "quoted": "int vterm_screen_get_cell(const VTermScreen *screen, VTermPos pos, VTermScreenCell *cell);",
+    "check": "overclaims"
+   },
+   "damage_tracking": {
+    "recorded": "yes — the screen layer reports changed rectangles through a damage(VTermRect) callback, with a moverect callback for scrolls; the embedder picks the merge granularity (cell, row, screen, or screen+scroll) with vterm_screen_set_damage_merge and forces out buffered damage with vterm_screen_flush_damage.",
+    "quoted": "int (*damage)(VTermRect rect, void *user);",
+    "check": "inferred"
+   },
+   "state_snapshot": {
+    "recorded": "no — vterm.h has no serialize, snapshot or save-state API. An embedder can read the visible cells, cursor, palette and pen back out, but scrollback lives outside the library and several modes (DECCKM, bracketed paste, mouse encoding) are not readable, so a re-attaching replica would have to be fed the same bytes or TD would have to track those modes itself.",
+    "quoted": "0",
+    "check": "unsupported"
+   },
+   "threading_and_loop": {
+    "recorded": "The embedder owns the loop: it reads its PTY and pushes bytes with vterm_input_write, and all callbacks fire synchronously inside that call. No PTY layer. No locks or atomics anywhere in the library, so a VTerm is single-threaded; Send/Sync would be whatever TD's Rust wrapper declares.",
+    "quoted": "size_t vterm_input_write(VTerm *vt, const char *bytes, size_t len);",
+    "check": "unsupported"
+   },
+   "reply_channel": {
+    "recorded": "An output callback: vterm_output_set_callback(vt, fn, user) receives every byte the terminal sends back — DA1 (?1;2c), DA2 (>0;100;0c), DSR/CPR, DECRQM, DECRQSS, XTVERSION (>|libvterm(M.m)), OSC 52 query replies, focus in/out, and key/mouse encodings. Without the callback, bytes collect in a deprecated internal buffer. XTWINOPS window-size reports (CSI t) are not answered and fall to the CSI fallback. One callback per VTerm, so TD's host would install the PTY writer and the window replica a discarding one; Kitty a=q replies would be TD's own.",
+    "quoted": "void vterm_output_set_callback(VTerm *vt, VTermOutputCallback *func, void *user);",
+    "check": "inferred"
+   },
+   "kitty_graphics": {
+    "recorded": "none. The parser recognises APC and hands its payload, as string fragments, to an embedder-supplied VTermStateFallbacks.apc callback; the state layer handles no APC itself, and the screen cell has no image slot. Neovim forwards APC to Lua as a TermRequest event and draws nothing.",
+    "quoted": "/* No DEBUG_LOG because all APCs are unhandled */",
+    "check": "unsupported"
+   },
+   "picture_anchoring": {
+    "recorded": "n/a — no picture model. A cell has no image slot, and scrolled-off lines leave the library through the sb_pushline callback, so any anchoring and any storage quota would be TD's own, attached to its own scrollback store.",
+    "quoted": "int (*sb_pushline)(int cols, const VTermScreenCell *cells, void *user);",
+    "check": "unsupported"
+   },
+   "integration_path": {
+    "recorded": "C ABI through Rust bindings, but no usable binding exists: the only crate, vterm-sys 0.1.0 (ajh/libvterm-rs), was last published 2016-04-23, three years before libvterm's first tagged release, so TD would write and own its own -sys crate (bindgen over include/vterm.h plus the cc crate compiling the 9 C files of the 0.3.3 tarball). Neovim's more capable copy is not consumable as a library: it includes nvim/grid.h, nvim/mbyte.h, nvim/memory.h and nvim/tui/termkey/termkey.h, and replaces the cell's chars[] with Neovim's schar_T.",
+    "quoted": "{\"name\":\"vterm-sys\",\"max_version\":\"0.1.0\",\"updated_at\":\"2016-04-23T19:00:01.450519Z\",\"downloads\":7108,\"description\":\"FFI bindings to libvterm\"",
+    "check": "overclaims"
+   }
+  },
+  "maturity": {
+   "api_stability": {
+    "recorded": "Pre-1.0 (0.3.3) with no stability statement. The header marks APIs as deprecated for removal and calls the cell layout ABI-sensitive; VTermBuilder reserves an unused ABI-version field. Both large consumers (Neovim, Vim) carry modified forks whose APIs have diverged (Neovim swapped the cell's chars[] for schar_T and added a URI attribute).",
+    "check": "human"
+   },
+   "latest_release": {
+    "recorded": "0.3.3 — tarball dated 2023-11-22 (VERSION bump committed 2023-08-03). Launchpad's release list stops at v0.3 (2022-09-06); trunk was last modified 2024-07-24 with unreleased changes (a premove state callback and sb_pushline4).",
+    "check": "unsupported"
+   },
+   "releases_last_12mo": {
+    "recorded": "0 upstream (newest tarball 2023-11-22; trunk untouched since 2024-07-24). Neovim's adopted copy has no releases of its own; it ships inside Neovim.",
+    "check": "human"
+   },
+   "maintainers": {
+    "recorded": "Upstream: 0 contributors with >= 10% of commits in the last 12 months, because there were no upstream commits (trunk last modified 2024-07-24); lead and near-sole author Paul \"LeoNerd\" Evans (435 of 447 commits reachable on the mirror branch). Neovim's adopted copy: 12 commits touching src/nvim/vterm since 2025-09-25, 1 contributor >= 10% (zeertzjq, 5 of 12; seven others 1 each).",
+    "check": "human"
+   }
+  }
+ },
+ {
+  "id": "contour-vtbackend",
+  "label": "Contour's vtbackend (C++)",
+  "group": "C · Swap to a core across a C boundary",
+  "kitty_tags": "transmit-direct, format-png, format-raw, place-direct, delete-by-id, query-reply, z-layers",
+  "evidence": {
+   "grid_api": {
+    "recorded": "C++ only. Screen::at(LineOffset, ColumnOffset) and Grid::lineAt(LineOffset) yield a CellProxy (pointer + index into struct-of-arrays LineSoA storage) with codepoint(i)/codepoints() (a grapheme cluster of up to 16 codepoints), width(), flags() (CellFlags), foregroundColor(), backgroundColor(), underlineColor(), hyperlink() (HyperlinkId), imageFragment() and textScale() (OSC 66). Grid::historyLineCount() and isLineWrapped() cover scrollback; the cursor is Screen::cursor(); modes are Terminal::isModeEnabled(DECMode|AnsiMode). Renderers normally consume a RenderBuffer of RenderCell (codepoints, image, position, attributes, width) built under the state mutex.",
+    "quoted": "[[nodiscard]] Color underlineColor() const noexcept { return _line->sgr[_col].underlineColor; }",
+    "check": "inferred"
+   },
+   "damage_tracking": {
+    "recorded": "yes — every Line has a dirty bit and a revision stamped from the grid's monotonic sequence, read by Grid::forEachLineChangedSince to produce the daemon's per-line deltas (added 2026-07-28, 'track line-level changes and give rows a stable identity'); Terminal also has markCellDirty/markRegionDirty and a screenUpdated() event.",
+    "quoted": "A one-byte dirty bit set by every mutating entry point below, and a revision stamped",
+    "check": "inferred"
+   },
+   "state_snapshot": {
+    "recorded": "Yes, inside Contour: the vthost daemon serves attach snapshots of each session's grid plus per-line deltas addressed by stable row ids (the native cells+deltas protocol, GridWire/ImageWire), paced and split across frames; its tmux control-mode path replays text and SGR only and cannot recover images. None of it is a stable external API; a consumer would reach it through vtbackend's C++ Grid (forEachLineChangedSince, Line::revision) or vt/VTWriter.",
+    "quoted": "Attach snapshots are now paced against the connection's send queue and split across frames, so attaching succeeds whatever the scrollback depth",
+    "check": "overclaims"
+   },
+   "threading_and_loop": {
+    "recorded": "The library parses under its own lock; the embedder owns the thread. Terminal holds a plain std::mutex (_stateMutex); Terminal::processInputOnce() reads from its vtpty::Pty and parses under that lock, called in a loop by the embedder's thread (the GUI's TerminalSession::mainLoop, the daemon's per-session blocking-read pump); writeToScreen(string_view) parses bytes from elsewhere. It includes a PTY layer (vtpty: UnixPty, ConPty, SshSession, MockPty, MockViewPty), and the Terminal constructor takes std::unique_ptr<vtpty::Pty>. Events callbacks fire on the parser thread with the mutex held.",
+    "quoted": "A hosted session is `{Pty, vtbackend::Terminal}` owned by the daemon's",
+    "check": "unsupported"
+   },
+   "reply_channel": {
+    "recorded": "Replies go out through the Pty: Terminal::reply() queues bytes in the InputGenerator and flushInput() writes them with vtpty::Pty::write(); the kitty a=q answer uses the same reply(). The embedder decides 'exactly once' by what its Pty::write does — a host Pty that forwards, a replica Pty that discards (MockViewPty keeps them in stdinBuffer()).",
+    "quoted": "The pump loop flushes the terminal's queued replies (DA1, DSR, OSC color",
+    "check": "unsupported"
+   },
+   "kitty_graphics": {
+    "recorded": "Partial, shipped in 0.7.0: graphics/KittyGraphics.{hpp,cpp} parse, screen/Screen.cpp (processAPC, processKittyGraphics) executes. Transmit: direct (t=d) only; t=f, t=t and t=s parse but are answered 'ENOTSUP:only direct transmission is supported'. Formats: f=24, f=32, f=100 (PNG). Compression o=z parses but is answered 'ENOTSUP:compressed payloads are not supported'. Chunked m=1, capped at 32 MiB. a=t/a=T store and display; a=p places a stored image at the cursor with c=/r= cell sizing and C=1. Deletes: d=i/I by id (lower case keeps the data, upper case frees it) and d=a/A; every other target, positional and n/N/r/R included, clears all placements. a=q validates exactly as a transmit would and replies OK or the error. z<0 draws on a Below layer, otherwise Above (two layers). a=f/a/c answered 'ENOTSUP:animation not supported'. No U=1 virtual placements (the U key is ignored as unknown). Stored-image quota 128 MiB, ENOSPC on overflow.",
+    "quoted": "Adds the kitty graphics protocol (APC G): transmitting, displaying, placing and deleting images, in PNG or raw RGB/RGBA, including chunked transmission",
+    "check": "overclaims"
+   },
+   "picture_anchoring": {
+    "recorded": "Per-cell attribute: each covered cell carries a shared ImageFragment (a slice of a RasterizedImage) in its line's imageFragments map, so a picture scrolls into scrollback and reflows with its lines; kitty placements are not tracked separately. Quotas: 128 MiB of stored kitty image data, 32 MiB per chunked transmission, default maxImageSize 800x600 px. A kitty delete walks only the visible page, so fragments already in scrollback appear to survive it.",
+    "quoted": "Placements are not tracked separately: a placement IS the image fragments sitting in the cells",
+    "check": "overclaims"
+   },
+   "integration_path": {
+    "recorded": "None ready-made: vendor or fork the Contour tree, write and maintain a C shim over vtbackend, build it with CMake from build.rs and bind it with bindgen or cxx. vtbackend is a STATIC CMake target with no install rule for the library, no extern \"C\" declaration anywhere in src/vtbackend, and no Rust binding on crates.io.",
+    "quoted": "add_library(vtbackend STATIC ${vtbackend_SOURCES} ${vtbackend_HEADERS})",
+    "check": "unsupported"
+   }
+  },
+  "maturity": {
+   "api_stability": {
+    "recorded": "No stated API contract for vtbackend: pre-1.0 (0.7.0), not installed as a library, and its own architecture doc calls its layers 'concerns, not enforced layers'. Its headers were renamed .h to .hpp on 2026-08-06 and its cell and line storage moved into grid/ on 2026-08-20. The 0.7.0 notes say the daemon's flags and wire protocol 'may still change between releases', and Contour's draft extension API rejects native C++ plugins for 'an ABI that breaks on every compiler and standard-library change'.",
+    "check": "unsupported"
+   },
+   "latest_release": {
+    "recorded": "Contour v0.7.0.8982, published 2026-08-17. vtbackend has never been released separately; it ships only inside Contour's source tree.",
+    "check": "human"
+   },
+   "releases_last_12mo": {
+    "recorded": "3 (v0.6.2.8008 2026-01-07, v0.6.3.8249 2026-04-09, v0.7.0.8982 2026-08-17)",
+    "check": "human"
+   },
+   "maintainers": {
+    "recorded": "1 contributor with >= 10% of commits in the last 12 months: Christian Parpart (christianparpart), 1,225 of 1,336 commits (about 92%), and the lead. Next: Yaraslau Tamashevich, 75 (about 6%, split across two author identities).",
+    "check": "human"
+   }
+  }
+ },
+ {
+  "id": "kitty-core",
+  "label": "kitty's own core (C, GPL-3.0) — licence check",
+  "group": "C · Swap to a core across a C boundary",
+  "kitty_tags": "transmit-direct, transmit-file, transmit-temp, transmit-shm, format-png, format-raw, compression, place-direct, place-virtual, delete-by-id, delete-by-position, query-reply, z-layers, animation",
+  "evidence": {
+   "grid_api": {
+    "recorded": "No embedder API. Internally a Screen holds LineBufs (main, alt) and a HistoryBuf; each Line pairs GPUCell {fg, bg, decoration_fg (underline colour), sprite_idx, CellAttrs: decoration, bold, italic, reverse, strike, dim, blink, mark, width} with CPUCell {ch_or_idx (a codepoint, or an index into a text cache for multi-codepoint graphemes), hyperlink_id, next_char_was_wrapped, multicell / scale / width fields}; LineAttrs carries has_dirty_text and has_image_placeholders. Python reaches all of it through fast_data_types.",
+    "quoted": "color_type fg, bg, decoration_fg;",
+    "check": "unsupported"
+   },
+   "damage_tracking": {
+    "recorded": "Internally yes, not exposed to embedders: a per-line LineAttrs.has_dirty_text bit and a Screen-level is_dirty flag.",
+    "quoted": "uint8_t has_dirty_text : 1;",
+    "check": "overclaims"
+   },
+   "state_snapshot": {
+    "recorded": "No serialize/restore API. The nearest is remote control `kitty @ get-text --extent all --ansi --add-cursor`, which exports text with SGR codes and the cursor — not modes, and not images (no such option) — so it is not a restorable snapshot.",
+    "quoted": "By default, only plain text is returned. With this flag, the text will include the ANSI formatting escape codes for colors, bold, italic, etc.",
+    "check": "unsupported"
+   },
+   "threading_and_loop": {
+    "recorded": "kitty owns the loop: ChildMonitor starts an I/O thread (io_loop) that reads each child PTY and parses into its Screen under children_lock; kitty spawns the children itself (child.c), so it includes a PTY layer. Nothing is embeddable.",
+    "quoted": "ret = pthread_create(&self->io_thread, NULL, io_loop, self);",
+    "check": "unsupported"
+   },
+   "reply_channel": {
+    "recorded": "Internal only: write_escape_code_to_child queues reply bytes onto the window's child PTY through schedule_write_to_child; Kitty graphics responses go out as APC from screen_handle_graphics_command.",
+    "quoted": "if (response != NULL) write_escape_code_to_child(self, ESC_APC, response);",
+    "check": "human"
+   },
+   "kitty_graphics": {
+    "recorded": "Reference implementation (kitty wrote the protocol), kitty/graphics.c. grman_handle_command dispatches t / T / q / p / d / f / a / c (graphics.c:2219-2306). Media: direct, file, temporary file and POSIX shared memory (:558-577). Formats RGB 24, RGBA 32, PNG 100 (:549); zlib o=z (:612-613). Placements: direct with cursor movement (handle_put_command, :1128), virtual placements for Unicode placeholders (:1140-1141) drawn from U+10EEEE cells (data-types.h:132, screen.c:1183), relative placements through parent chains (:1183-1203). Deletes a, i, r, p, q, x, y, z, c, n, f with upper-case freeing variants (:2137-2175). Query replies (:2233-2241), which need an image id and are written back as APC (screen.c:1605-1606). z-index layers below background / below text / above text (:1271-1273). Animation: frame load, control and compose (:1574, :1750, :2288-2298). Quota: DEFAULT_STORAGE_LIMIT 320 MiB per screen with eviction (:27, :80, :281-297); max image side 10,000 px (:26).",
+    "quoted": "case 'f': // file\n        case 't': // temporary file\n        case 's': // POSIX shared memory",
+    "check": "unsupported"
+   },
+   "picture_anchoring": {
+    "recorded": "Integer row counter per placement: each ImageRef keeps start_row / start_column, shifted by the scroll amount on every scroll and dropped once it passes the limit. On resize only a same-width vertical shrink is adjusted; placements are not reflowed when the column count changes. Virtual placements anchor through U+10EEEE placeholder cells, which move and reflow with the text. Quota 320 MiB per screen.",
+    "quoted": "ref->start_row += d->amt;",
+    "check": "overclaims"
+   },
+   "integration_path": {
+    "recorded": "not a library (reference only) — the core is a CPython extension module with no C API meant for embedders, and GPL-3.0 besides.",
+    "quoted": "PyInit_fast_data_types(void) {",
+    "check": "human"
+   }
+  },
+  "maturity": {
+   "api_stability": {
+    "recorded": "No public embedding API exists to be stable: the C core's types are CPython objects internal to kitty/fast_data_types. kitty's stable contracts are its escape-code protocols, not its code.",
+    "check": "unsupported"
+   },
+   "latest_release": {
+    "recorded": "kitty v0.49.1, 2026-09-24 — an application release; there is no library artifact TD could depend on.",
+    "check": "human"
+   },
+   "releases_last_12mo": {
+    "recorded": "17 application releases (v0.43.0 on 2025-09-28 through v0.49.1 on 2026-09-24); 0 library releases.",
+    "check": "human"
+   },
+   "maintainers": {
+    "recorded": "1 contributor with >=10% of commits since 2025-09-25: kovidgoyal (Kovid Goyal, lead) with 2,375 of 3,004 (79%); next is an unlinked-author bucket with 217 (7.2%) and dependabot 63 (2.1%).",
+    "check": "human"
+   }
+  }
+ },
+ {
+  "id": "ghostty-shadow",
+  "label": "Hybrid: alacritty for text, libghostty-vt beside it for pictures only",
+  "group": "D · Hybrids and references",
+  "kitty_tags": "transmit-direct, transmit-file, transmit-temp, transmit-shm, format-png, format-raw, compression, place-direct, place-virtual, delete-by-id, delete-by-position, query-reply, z-layers",
+  "evidence": {
+   "grid_api": {
+    "recorded": "Text uses alacritty's API unchanged: Term::grid() -> &Grid<Cell>, Term::renderable_content(), Cell { c, fg, bg, flags, extra: Option<Arc<CellExtra>> } with CellExtra { zerowidth, underline_color, hyperlink }, flags including WIDE_CHAR and WIDE_CHAR_SPACER, and Term::mode(). Pictures use libghostty-vt's Rust kitty::graphics API: Terminal::kitty_graphics() -> Graphics; a PlacementIterator whose iteration yields image_id, z, pixel_size, grid_size, source_rect and viewport_pos -> Option<ViewportPos>; and Graphics::image(id) -> Image with width, height, format and data() -> &[u8]. viewport_pos is None for virtual placements.",
+    "quoted": "image that has scrolled up by 2 rows returns row=-2, meaning its top 2 rows are above the visible area but its bottom 2 rows are still on screen. Embedders should use these coordinates directly when computing the destination rectangle for rendering; the embedder is responsible for clipping the portion of the image that falls outside the viewport.",
+    "check": "unsupported"
+   },
+   "damage_tracking": {
+    "recorded": "Yes for text; pictures get only change stamps. alacritty's Term::damage() returns TermDamage::Full or Partial (a line iterator) since the last reset_damage(). libghostty exposes a storage-wide generation stamp, bumped on any transmit, placement or delete, plus per-image stamps, but no per-row picture damage. Placement geometry moves with scrolling, so TD must recompute positions on every dirty frame.",
+    "quoted": "@ref GHOSTTY_KITTY_GRAPHICS_DATA_GENERATION is a storage-wide stamp updated on any transmit, placement, or delete. If unchanged, the placement set and all image data are identical and both placement snapshots and per-image staleness checks can be skipped. Placement geometry can still change independently (scrolling moves placements)",
+    "check": "unsupported"
+   },
+   "state_snapshot": {
+    "recorded": "No, not for pictures. TD's gridwire::encode_snapshot re-encodes only alacritty's grid as VT bytes. libghostty-vt's own binary snapshot (C API added upstream on 2026-08-03, after crate 0.2.1's pin) says Kitty image and placement state is not part of it. So a re-attaching window would get text and no pictures unless TD ships image bytes and placements itself. The window's replica also cannot re-parse t=t or t=s transmissions, because the protocol makes the first terminal that reads them, the host's shadow, delete the file or unlink the shared memory.",
+    "quoted": "// Kitty image and placement state is not part of this snapshot // version, but the placeholder is still a valid Unicode scalar.",
+    "check": "human"
+   },
+   "threading_and_loop": {
+    "recorded": "The loop is split. alacritty's EventLoop owns the PTY reader thread and parser, and TD's host.rs TeeReader already copies every read on that thread while holding the lease. libghostty-vt owns no loop, thread or PTY: the embedder calls vt_write. Its Rust handles are !Send + !Sync, so the shadow Terminal must live on one thread. It can be created lazily on alacritty's reader thread (e.g. thread-local per pane) and fed inside TeeReader::read before alacritty parses the chunk. The alternative is a dedicated thread fed through a channel, which loses the ordering that both the attach fence and the a=q reply depend on.",
+    "quoted": "Handle types (`Terminal`, `RenderState`, `KeyEncoder`, etc.) are `!Send + !Sync` by design. Callers should drive all operations from a single thread.",
+    "check": "human"
+   },
+   "reply_channel": {
+    "recorded": "There are two reply channels, and TD must merge them by hand. alacritty emits Event::PtyWrite(String), which TD bounces to the PTY. libghostty-vt calls its write_pty callback (Rust: Terminal::on_pty_write) for every reply it generates, DA and DSR included. To keep 'exactly once', TD must drop every libghostty reply except Kitty APC responses (ESC _ G ...). Ordering matters as well. kitty's detection recipe is a=q followed by DA1, and a terminal that answers DA1 first is judged to lack pictures. So the shadow must parse each chunk, and write its a=q answer, before alacritty answers a DA1 in the same chunk; viu and kitten icat both send a=q and then CSI c in the captures.",
+    "quoted": "To check if a terminal emulator supports the graphics protocol the best way is to send the above *query action* followed by a request for the `primary device attributes <https://vt100.net/docs/vt510-rm/DA1.html>`_. If you get back an answer for the device attributes without getting back an answer for the *query action* the terminal emulator does not support the graphics protocol.",
+    "check": "unsupported"
+   },
+   "kitty_graphics": {
+    "recorded": "All of it comes from libghostty-vt; alacritty contributes nothing, because vte 0.15 swallows APC. At the crates.io 0.2.1 pin (ghostty a887df4) libghostty-vt covers: transmission t=d/f/t/s, where f, t and s are off by default in the library build and TD must enable each one; formats f=24/32/100, where PNG works only with a TD-supplied decoder callback; zlib compression (o=z); direct placements (a=T/a=p) held on tracked pins and virtual U=1 placements; deletes a/i/n/c/f/p/q/r/x/y/z; a=q query replies; and z-index layers exposed as BELOW_BG/BELOW_TEXT/ABOVE_TEXT. Animation (a=f/a/c) returns 'ERROR: unimplemented action' at this pin. Upstream added animation on 2026-08-21 and relative placements (P/Q) on 2026-08-20, both after the pin. Quota: 10 MB by default in the library build, set by the embedder.",
+    "quoted": "pub const Medium = lib.Enum(lib.target, &.{ \"direct\", // d \"file\", // f \"temporary_file\", // t \"shared_memory\", // s }); pub const Compression = lib.Enum(lib.target, &.{ \"none\", \"zlib_deflate\", // z });",
+    "check": "unsupported"
+   },
+   "picture_anchoring": {
+    "recorded": "Tracked pins in libghostty's own page list: a direct placement's location is `pin: *PageList.Pin`, which moves with scrolling and reflow in libghostty's grid, not alacritty's. U=1 virtual placements use placeholder cells instead. TD would map libghostty viewport rows onto alacritty viewport rows one to one, which holds only while the two grids stay in lockstep; scrollback caps also differ (alacritty counts lines, libghostty counts bytes). Quota: an embedder-set byte limit, 10 MB by default in the library build (the Ghostty app uses 320 MB); zero disables Kitty graphics.",
+    "quoted": "pub const Location = union(enum) { /// Exactly placed on a screen pin. pin: *PageList.Pin, /// Virtual placement (U=1) for unicode placeholders. virtual: void, };",
+    "check": "overclaims"
+   },
+   "integration_path": {
+    "recorded": "Two paths at once. alacritty_terminal stays a crates.io crate, as today. libghostty-vt is a C ABI reached through Rust bindings: the crates.io crates `libghostty-vt` 0.2.1 (safe API, including kitty::graphics) on top of `libghostty-vt-sys` 0.2.1. The -sys build script fetches ghostty's Zig source, compiles it, and statically links libghostty-vt.a; the `link-dynamic` feature switches to the shared library.",
+    "quoted": "- Fetches and builds `libghostty-vt.a` from ghostty sources via Zig by default.",
+    "check": "human"
+   }
+  },
+  "maturity": {
+   "api_stability": {
+    "recorded": "Unstable on the picture side and pre-1.0 on both. libghostty-vt's own docs say breaking changes are expected. Ghostty's README says the functionality is stable but the API signatures are in flux. The crate went 0.1 to 0.2, a semver break, within three months. libghostty's Kitty cursor-placement behaviour itself changed upstream on 2026-08-18 (commit afb61e1) to match kitty. alacritty_terminal is 0.x, and 0.25 to 0.26 is breaking by semver.",
+    "check": "human"
+   },
+   "latest_release": {
+    "recorded": "libghostty-vt 0.2.1 (crates.io, 2026-07-18; it pins ghostty a887df4 of 2026-07-11) + alacritty_terminal 0.26.0 (crates.io, 2026-04-06). The newest Ghostty application tag is v1.3.1.",
+    "check": "overclaims"
+   },
+   "releases_last_12mo": {
+    "recorded": "7 in total: libghostty-vt 4 (0.1.0 and 0.1.1 on 2026-03-28, 0.2.0 on 2026-06-16, 0.2.1 on 2026-07-18) and alacritty_terminal 3 (0.25.1 on 2025-10-18, 0.26.0-rc1 on 2026-03-21, 0.26.0 on 2026-04-06).",
+    "check": "human"
+   },
+   "maintainers": {
+    "recorded": "Three upstreams, each carried by one or two people. ghostty: 1 contributor at >=10% of 5,707 commits since 2025-09-25, Mitchell Hashimoto (mitchellh), at 51.1%. libghostty-rs bindings: 2 of 232 commits, Uzaaft with 138 and pluiedev with 86. alacritty: 2 of 25 commits, chrisduerr with 14 and kchibisov with 7. Leads are mitchellh (ghostty), Uzaaft (bindings) and chrisduerr (alacritty).",
+    "check": "human"
+   }
+  },
+  "measured": "Its picture half is libghostty-vt, which in the bake-off stored every picture and exposed placements through PlacementIterator; the text half, alacritty_terminal, dropped them all."
+ },
+ {
+  "id": "zellij-grid",
+  "label": "Zellij — a Rust multiplexer whose server owns its own grid (host/client prior art)",
+  "group": "D · Hybrids and references",
+  "kitty_tags": "transmit-direct, transmit-file, transmit-temp, format-png, format-raw, compression, place-direct, delete-by-id, delete-by-position, query-reply, z-layers",
+  "evidence": {
+   "grid_api": {
+    "recorded": "Internal Rust API with no stable embedder surface. Grid holds lines_above, viewport and lines_below as VecDeque<Row> (pub(crate)), a Cursor {x, y, pending_styles, charsets, shape}, and modes as pub fields (cursor_key_mode, bracketed_paste_mode, insert_mode, mouse_mode, mouse_tracking, sixel_scrolling …). Row {columns: VecDeque<TerminalCharacter>, is_canonical (false marks a soft-wrapped continuation), bg_color}. TerminalCharacter {character: char, styles: RcCharacterStyles, width: u8} — one char, no zero-width marks. CharacterStyles carries foreground, background, underline_color, strike, hidden, reverse, slow/fast blink, underline, bold, dim, italic, link_anchor. Readers call Grid::read_changes(x_offset, y_offset) -> (Vec<CharacterChunk>, Vec<SixelImageChunk>, Vec<KittyImageChunk>) and cursor_coordinates() -> Option<(usize, usize, bool)>.",
+    "quoted": "pub struct Grid {\\n    pub(crate) lines_above: VecDeque<Row>,\\n    pub(crate) viewport: VecDeque<Row>,\\n    pub(crate) lines_below: VecDeque<Row>,",
+    "check": "inferred"
+   },
+   "damage_tracking": {
+    "recorded": "yes, at line granularity: OutputBuffer keeps changed_lines: HashSet<usize> plus should_update_all_lines; Grid::read_changes returns only the changed lines (as whole-line CharacterChunks) and clears the buffer; the first render and any forced render send every line.",
+    "quoted": "pub struct OutputBuffer {\\n    pub changed_lines: HashSet<usize>, // line index\\n    pub should_update_all_lines: bool,",
+    "check": "inferred"
+   },
+   "state_snapshot": {
+    "recorded": "No emulator-state snapshot is sent to clients, because clients hold no terminal state: on attach Tab::add_client calls set_force_render, the next render sends every visible line of every pane, and Screen::add_client clears that client's HostKittyState so its pictures are re-transmitted. For disk resurrection Zellij serializes layout and commands every second and, when enabled, the viewport plus N scrollback lines as styled ANSI text via Grid::serialize — no cursor, modes or pictures.",
+    "quoted": "self.connected_clients.borrow_mut().insert(client_id);\\n            self.mode_info.borrow_mut().insert(\\n                client_id,\\n                mode_info.unwrap_or_else(|| self.default_mode_info.clone()),\\n            );\\n        }\\n        self.set_force_render();",
+    "check": "unsupported"
+   },
+   "threading_and_loop": {
+    "recorded": "Zellij owns the whole loop. A 'pty' thread starts an async TerminalBytes reader per pane (64 KiB reads) that sends ScreenInstruction::PtyBytes to the single 'screen' thread; the screen thread owns every Grid (built on Rc<RefCell<…>>, so not Send) and runs vte there; writes to PTYs go through a 'pty_writer' thread; other threads are wasm (plugins), background_jobs, server_listener and server_router. It includes its own PTY layer (os_input_output).",
+    "quoted": "pub async fn listen(&mut self) -> Result<()> {\\n        // This function reads bytes from the pty and then sends them as\\n        // ScreenInstruction::PtyBytes to screen to be parsed there",
+    "check": "overclaims"
+   },
+   "reply_channel": {
+    "recorded": "Grid pushes every reply (DA, DSR, DECRQM, kitty-keyboard ?u, Kitty graphics OK and errors) onto pending_messages_to_pty; after each handle_pty_bytes the Tab drains them and writes each to that pane's PTY once, on the server. Queries only a real terminal can answer (CSI 14t/16t pixel sizes, OSC 10/11/4 colours, an OSC 52 read) are forwarded to a client's host terminal, and the pane stops parsing until the reply or a 500 ms cache fallback lands, so the answer arrives in the right stream position.",
+    "quoted": "for message in messages_to_pty {\\n                self.write_to_pane_id_without_preprocessing(message, PaneId::Terminal(pid))\\n                    .with_context(err_context)?;",
+    "check": "human"
+   },
+   "kitty_graphics": {
+    "recorded": "Yes, since v0.45.0 (PR #5428 'Support the Kitty Image Protocol', merged 2026-07-31). Zellij terminates the protocol in the server and re-emits pictures to each client's host terminal. Because vte 0.15 drops APC, a byte-level KittyApcInterceptor runs ahead of vte in TerminalPane::handle_pty_bytes and captures ESC _ G … ESC \\ (1 MiB cap per escape). kitty_graphics/parser.rs: actions a=t, a=T, a=p, a=d, a=q; media t=d, t=f, t=t (temp files under /tmp, /dev/shm or named tty-graphics-protocol are deleted); t=s answered ENOTSUPPORTED; formats f=24, f=32, f=100 (PNG decoded to RGBA); o=z zlib; m=0/1 chunking; x/y/w/h source rect, c/r scaling, X/Y cell offsets, z index, C=1; U=1 virtual placements and a=f/a/c animation answered ENOTSUPPORTED. grid_state.rs delete handles d=a/A, i/I, n/N, c/C, p/P, q/Q, x/X, y/Y, z/Z, r/R. replies.rs writes OK or error replies honouring q=; a=q answers OK only when the client's host terminal supports graphics. store.rs keeps a 320 MiB LRU store. A direct placement without C=1 advances Zellij's cursor (grid.rs advance_cursor_after_kitty_placement). output/mod.rs re-transmits each image once per client (a=t, f=32) and places it with a=p … C=1, deleting stale host placements.",
+    "quoted": "command.action = match value[0] {\\n                    b't' => KittyAction::Transmit,\\n                    b'T' => KittyAction::TransmitAndDisplay,\\n                    b'p' => KittyAction::Display,\\n                    b'd' => KittyAction::Delete,\\n                    b'q' => KittyAction::Query,",
+    "check": "human"
+   },
+   "picture_anchoring": {
+    "recorded": "Kitty: each placement carries a KittyVerticalAnchor {canonical_line, offset_px_from_line_start} — an index into logical (unwrapped) lines across scrollback, viewport and lines below — which is re-projected to pixels after reflow or a cell-size change and shifted on scroll; horizontal position is in pixels. Quota: 320 MiB (335,544,320 bytes) LRU over unreferenced images, 100 MiB per decoded image, 10,000 px max dimension. Sixel: an absolute pixel rect from the scrollback top, moved up one cell height per scrolled line and reaped once it leaves the top.",
+    "quoted": "pub struct KittyVerticalAnchor {\\n    pub canonical_line: usize,\\n    pub offset_px_from_line_start: isize,\\n}",
+    "check": "overclaims"
+   },
+   "integration_path": {
+    "recorded": "not a library (reference only). zellij-server is published on crates.io (0.45.1) and exposes `pub mod panes` with `Grid`, but Grid::new takes Zellij-internal Palette, LinkHandler, SixelImageStore, KittyImageStore and Style values behind Rc<RefCell<…>>; the only library entry point (unreleased) runs the whole application as a 'distribution'. The realistic reuse is copying MIT source files — the Kitty APC interceptor, command parser and image store — into TD.",
+    "quoted": "/// A distribution bundles its own plugins, configuration and layouts into the executable.",
+    "check": "human"
+   }
+  },
+  "maturity": {
+   "api_stability": {
+    "recorded": "Pre-1.0 (0.45.1) and no stated API promise for zellij-server as a library — it is the application's own internals. Measured break: Grid::new gained a kitty_image_store parameter between v0.44.3 and v0.45.x; the CHANGELOG has labelled whole releases '(BREAKING CHANGE)'.",
+    "check": "human"
+   },
+   "latest_release": {
+    "recorded": "v0.45.1, 2026-08-28 (GitHub release; zellij-server 0.45.1 published to crates.io the same day). Kitty graphics first shipped in v0.45.0 (2026-08-20); main at 2fce032 (2026-09-25) is ahead with unreleased Kitty fixes.",
+    "check": "human"
+   },
+   "releases_last_12mo": {
+    "recorded": "6 (v0.44.0, v0.44.1, v0.44.2, v0.44.3, v0.45.0, v0.45.1 between 2025-09-25 and 2026-09-25)",
+    "check": "inferred"
+   },
+   "maintainers": {
+    "recorded": "1 contributor above 10% of the 298 commits since 2025-09-25: imsnif (Aram Drevekenin), 200 commits (67%); next is divens with 24 (8%). Lead maintainer: Aram Drevekenin.",
+    "check": "human"
+   }
+  }
+ },
+ {
+  "id": "zmx",
+  "label": "zmx — server-side snapshots with libghostty-vt (host/replica prior art)",
+  "group": "D · Hybrids and references",
+  "kitty_tags": "none",
+  "evidence": {
+   "grid_api": {
+    "recorded": "zmx never iterates cells itself. It uses libghostty-vt's Zig API: ghostty_vt.Terminal.init(io, gpa, {cols, rows, max_scrollback_lines, max_scrollback_bytes}); term.vtStream() and vt_stream.nextSlice(bytes) to feed PTY output; term.resize(gpa, {cols, rows}); term.modes.get/set; term.screens.active.pages with getTopLeft(.screen/.active) and pin(.{.active = .{x, y}}) to bound scrollback and viewport; ghostty_vt.Selection.init(tl, br, false); ghostty_vt.formatter.TerminalFormatter.init(term, .vt) with .content and .extra; term.getTitle(), term.getPwd(), term.colors (dynamic fg/bg/cursor); term.screens.active.cursor for logging; ghostty_vt.Parser for input classification.",
+    "quoted": "var term = try initTerminal(gpa, io, init_size, daemon.cfg);\n    defer term.deinit(gpa);\n    var vt_stream = term.vtStream();\n    defer vt_stream.deinit();",
+    "check": "unsupported"
+   },
+   "damage_tracking": {
+    "recorded": "no — zmx neither reads nor reports damage: each PTY read is forwarded raw to every client and the whole screen is re-serialized only when a client re-attaches.",
+    "quoted": "const broadcast_data = util.rewritePromptRedraw(gpa, buf[0..n]) orelse buf[0..n];\n                    defer if (broadcast_data.ptr != buf[0..n].ptr) gpa.free(broadcast_data);\n                    for (daemon.clients.items) |client| {\n                        ipc.appendMessage(gpa, &client.write_buf, .Output, broadcast_data) catch |err| {",
+    "check": "unsupported"
+   },
+   "state_snapshot": {
+    "recorded": "yes — util.serializeTerminalState(alloc, term) re-encodes the server's libghostty-vt Terminal as VT bytes with ghostty's TerminalFormatter(.vt) and sends them as one Output message, on re-attach only (not first attach): phase 1 = scrollback as styled text with no extras, then CSI 2J / CSI H / SGR 0; phase 2 = the active screen with modes, scroll region, Kitty keyboard and modifyOtherKeys, cursor, charsets and protection; then OSC 7 cwd, OSC 2 title and OSC 10/11/12 dynamic colours. Not carried: palette, tabstops (deliberately), DECSET 2026 (deliberately stripped), per-cell OSC 8 links, the primary screen under an alt screen, and every picture. Against TD's gridwire::encode_snapshot: same strategy (re-emit the grid as VT bytes for a stock emulator), but zmx also carries scroll region, charsets, title, cwd and dynamic colours, which TD does not; both lose the primary grid beneath an alt screen; ghostty's formatter emits modes BEFORE content, where TD restores modes last on purpose; and zmx has no replica emulator on the client and no equivalent of TD's grid_hash check. libghostty-vt also has a binary snapshot API (ghostty_snapshot_*) that zmx does not use.",
+    "quoted": "// Phase 1: Emit scrollback content (plain text with styles, no terminal extras).\n    // These lines scroll past the visible area into the terminal's scrollback buffer.\n    // Phase 2: Clear visible screen, then emit visible content with full extras.",
+    "check": "overclaims"
+   },
+   "threading_and_loop": {
+    "recorded": "zmx owns the whole loop: one double-forked daemon process per session, holding the PTY it created with forkpty(); a single-threaded poll(2) loop over the server socket, the PTY master, a signal pipe and each client socket; every PTY read (up to 4096 bytes) is fed to the libghostty-vt stream and broadcast to clients in the same iteration, so there are no threads, no locks and no snapshot/stream seam to fence. Clients are also single-threaded poll(2) loops that pipe stdin to the socket and Output to stdout.",
+    "quoted": "- The `daemon` and client processes communicate via a unix socket\n- Both `daemon` and `client` loops leverage `poll(2)`\n- Each session creates its own unix socket file\n- We restore terminal state and output using `libghostty-vt`",
+    "check": "unsupported"
+   },
+   "reply_channel": {
+    "recorded": "Two regimes. With no terminal client attached, zmx itself scans PTY output for DA1/DA2 queries and queues fixed answers (ESC[?62;22c, ESC[>1;10;0c) into the PTY write buffer; nothing else is answered, because the server's libghostty-vt stream is readonly and ignores queries (Kitty a=q, DSR, XTVERSION go unanswered). With clients attached, queries reach every client's own terminal raw, and only the leader client's input — which carries its terminal's replies — is forwarded to the PTY; a non-leader's input is dropped unless it looks like typing (which makes it leader), so each reply is written once.",
+    "quoted": "// When no real terminal client has attached yet, respond to\n                    // terminal queries (e.g. DA1/DA2) on behalf of the terminal.\n                    // This prevents fish from waiting 10s for unanswered queries.",
+    "check": "overclaims"
+   },
+   "kitty_graphics": {
+    "recorded": "None restored, passthrough live. While a client is attached, every PTY read is broadcast raw to it, so Kitty APC reaches the client's own terminal and draws there if that terminal supports it (pixel sizes are forwarded in the winsize since 0.7.0). The server-side libghostty-vt Terminal parses the APC with the readonly stream (kitty_graphics on by default, 10 MB lib quota, direct medium only, PNG disabled without a decode_png hook, which zmx does not set), but zmx never renders or replays those images: the TerminalFormatter it uses for the re-attach snapshot emits no Kitty images, so pictures vanish on re-attach (issue #14, open since 2025-12-04). With no client attached, a=q queries go unanswered.",
+    "quoted": "`ghostty-vt.TerminalFormatter` does *not* currently support kitty protocol images: https://github.com/ghostty-org/ghostty/blob/08c9661683edc1e9e63d8e6abd469a68faaee575/src/terminal/formatter.zig#L457\n\nThis is what we use to print a snapshot of the terminal to `zmx` clients.",
+    "check": "overclaims"
+   },
+   "picture_anchoring": {
+    "recorded": "n/a — zmx anchors no pictures. Live pictures are anchored by the client's own terminal and are lost on re-attach; the server-side libghostty-vt tracks Kitty placements with its own grid pins but zmx never replays them. Server-side storage quota is libghostty's embedded default of 10 MB per session terminal (zmx's initTerminal does not override it).",
+    "quoted": "// libghostty we start with a much lower limit since this is an\n        // embedded library and we want to be more conservative with memory\n        // usage by default.\n        .lib => 10 * 1000 * 1000, // 10MB",
+    "check": "unsupported"
+   },
+   "integration_path": {
+    "recorded": "not a library (reference only) — zmx builds a single executable and exports no module or C API; TD could borrow its design (and, being MIT, its code), or run panes inside zmx sessions as a process substrate, but not link it.",
+    "quoted": "const exe = b.addExecutable(.{\n            .name = \"zmx\",",
+    "check": "inferred"
+   }
+  },
+  "maturity": {
+   "api_stability": {
+    "recorded": "Pre-1.0 application (0.8.1) with no library API to be stable; the README says it has not reached a stable state, an IPC change between versions kills running sessions, and the CHANGELOG marks *BREAKING* changes in 0.1.0, 0.5.0 and 0.7.0. It pins libghostty-vt to a dev commit, whose own snapshot format is declared work-in-progress.",
+    "check": "human"
+   },
+   "latest_release": {
+    "recorded": "v0.8.1, published 2026-09-05",
+    "check": "human"
+   },
+   "releases_last_12mo": {
+    "recorded": "15 version tags (v0.0.1 through v0.8.1, all between 2025-11-28 and 2026-09-05), of which 5 have GitHub Release objects; two non-version tags ('rm', 'remove') excluded",
+    "check": "human"
+   },
+   "maintainers": {
+    "recorded": "1 contributor with >= 10% of commits in the 12 months to 2026-09-25: Eric Bower (neurosnap), 369 of 478 commits (77%); the next, chronologos, has 13 (2.7%). A single-maintainer project by its own contract ('programs that a single person can maintain').",
+    "check": "human"
+   }
+  }
+ }
+]
