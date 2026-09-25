@@ -1283,6 +1283,42 @@ fn ansi_to_hsla(color: AnsiColor, th: &Theme, default: Hsla) -> Hsla {
     }
 }
 
+/// What a program asking this pane for a colour (`OSC 4 ; n ; ?`, `OSC 10`,
+/// `11` or `12 ; ?`) is told: the colour the pane draws it in, graded as the
+/// pane grades it, so a program choosing light or dark styling sees the
+/// background it will actually be drawn on. `index` is alacritty's: a palette
+/// entry below 256, then the default foreground, background and cursor.
+/// `None` for an index TD draws nothing in, which is left unanswered.
+///
+/// A palette entry is answered as ink. It can be drawn as either, and a
+/// program asking for one is almost always about to write text in it.
+///
+/// TD draws from the theme and ignores colours a program sets for itself
+/// (`OSC 4`/`10`/`11` with a value), so the answer is the theme's and never
+/// the program's own override. Anything else would describe a colour nobody
+/// can see.
+fn asked_colour(index: usize, th: &Theme) -> Option<Hsla> {
+    let g = &th.grade;
+    Some(match index {
+        i if i < 256 => graded(shape(idx_color(i as u8), th), g, Channel::Text),
+        i if i == NamedColor::Foreground as usize => graded(th.text, g, Channel::Text),
+        i if i == NamedColor::Background as usize => graded(th.bg, g, Channel::Bg),
+        i if i == NamedColor::Cursor as usize => graded(th.cursor, g, Channel::Text),
+        _ => return None,
+    })
+}
+
+/// A colour as the eight-bit channels a colour reply carries.
+fn rgb8(c: Hsla) -> alacritty_terminal::vte::ansi::Rgb {
+    let c = c.to_rgb();
+    let byte = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
+    alacritty_terminal::vte::ansi::Rgb {
+        r: byte(c.r),
+        g: byte(c.g),
+        b: byte(c.b),
+    }
+}
+
 /// A short set of words worth popping in the accent (shell verbs + common
 /// language keywords). Kept small on purpose — generic highlighting, not a
 /// per-language grammar.
@@ -4284,6 +4320,22 @@ impl TerminalView {
                 .session
                 .notifier
                 .notify(format(self.pty_window_size()).into_bytes()),
+            // A program asking what colour something is drawn in: the
+            // background most often, to choose light or dark styling. Codex
+            // asks for the foreground and the background as it starts, and
+            // waits 100 ms for replies that never came.
+            //
+            // Answered HERE in both modes, which is why a replica forwards
+            // this question instead of swallowing it. The host has no theme
+            // and answers nothing; this pane is the one place that knows the
+            // colours it draws. The reply goes back through the notifier the
+            // way a hosted pane's keystrokes do, so no host has to be
+            // restarted for it.
+            TermEvent::ColorRequest(index, format) => {
+                if let Some(c) = asked_colour(index, &self.resolved_theme(cx)) {
+                    self.session.notifier.notify(format(rgb8(c)).into_bytes());
+                }
+            }
             TermEvent::Title(title) => {
                 self.title = title;
                 cx.notify();
@@ -14326,6 +14378,65 @@ mod tests {
             "the size answer must be built from what the PTY was last told \
              (`pty_window_size`), or it can disagree with the kernel's own winsize"
         );
+    }
+
+    /// A pane answers a colour question itself, in both modes, from its own
+    /// theme, back through the notifier (issue 719). A replica passes the
+    /// question on (`term::a_replica_passes_a_colour_question_to_its_pane`)
+    /// and the host leaves it alone (`host::a_colour_question_is_left_to_the_window`),
+    /// so this arm is the one reply.
+    #[test]
+    fn a_pane_answers_a_colour_question_from_its_own_theme() {
+        let body = method_body(&production_source(), "fn handle_term_event(");
+        let arm = body
+            .split("TermEvent::ColorRequest(")
+            .nth(1)
+            .expect("handle_term_event has no arm for a colour question");
+        let arm = &arm[..arm.find("TermEvent::").unwrap_or(arm.len())];
+        assert!(
+            arm.contains("asked_colour(index, &self.resolved_theme(cx))"),
+            "{arm}"
+        );
+        assert!(arm.contains("self.session.notifier.notify("), "{arm}");
+    }
+
+    /// What a program asking for a colour is told is the colour the pane
+    /// draws: Codex asks for the foreground and background as it starts, and
+    /// Neovim for the background to pick light or dark. A dimmed pane reports
+    /// the dimmer background it is actually drawn on, and a palette entry is
+    /// the one cells are drawn from, shaped by the pane's colour mode.
+    #[test]
+    fn a_colour_question_is_answered_with_the_colour_the_pane_draws() {
+        use crate::theme::{Grade, GradeKey};
+        let (fg, bg, cursor) = (
+            NamedColor::Foreground as usize,
+            NamedColor::Background as usize,
+            NamedColor::Cursor as usize,
+        );
+        let th = themed(Grade::neutral());
+        assert_eq!(asked_colour(bg, &th), Some(th.bg));
+        assert_eq!(asked_colour(fg, &th), Some(th.text));
+        assert_eq!(asked_colour(cursor, &th), Some(th.cursor));
+        for i in [0_u8, 1, 9, 15, 16, 196, 231, 232, 255] {
+            assert_eq!(
+                asked_colour(i as usize, &th),
+                Some(shape(idx_color(i), &th)),
+                "palette entry {i}"
+            );
+        }
+        assert_eq!(asked_colour(NamedColor::DimBlack as usize, &th), None);
+
+        let mut dim = Grade::neutral();
+        dim.set(GradeKey::Brightness, 0.25);
+        let th = themed(dim);
+        let drawn = graded(th.bg, &dim, Channel::Bg);
+        assert_ne!(drawn, th.bg, "the grade must move the background");
+        assert_eq!(asked_colour(bg, &th), Some(drawn));
+
+        let white = rgb8(gpui::hsla(0.0, 0.0, 1.0, 1.0));
+        assert_eq!((white.r, white.g, white.b), (255, 255, 255));
+        let black = rgb8(gpui::hsla(0.3, 0.8, 0.0, 1.0));
+        assert_eq!((black.r, black.g, black.b), (0, 0, 0));
     }
 
     /// The PTY is told its cell in device pixels, not in logical pixels cut to

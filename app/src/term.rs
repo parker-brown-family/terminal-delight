@@ -95,6 +95,11 @@ impl EventListener for EventProxy {
         // `CSI 14 t` travels as its own event rather than as a `PtyWrite`, so
         // it has to be named: the host answers it from the geometry it holds,
         // and a pane answering it too would type a second reply at the program.
+        //
+        // A colour question (`ColorRequest`) is the opposite case and is
+        // passed on deliberately. The host has no theme and answers nothing;
+        // the pane answers from the colours it draws, so swallowing it here
+        // would leave it unanswered, which was issue 719.
         if !self.answers_here
             && matches!(
                 event,
@@ -787,6 +792,52 @@ mod attached {
             matches!(rx.try_recv(), Ok(TermEvent::PtyWrite(_))),
             "a terminal we own must still forward its own answers"
         );
+    }
+
+    /// A colour question reaches the pane from a replica, because the pane is
+    /// what answers it: the host has no theme (issue 719). First the filter
+    /// on its own, then end to end over a real replica's byte stream, where
+    /// the question arrives exactly once, with a reply format that ends the
+    /// way the question did.
+    #[test]
+    fn a_replica_passes_a_colour_question_to_its_pane() {
+        use alacritty_terminal::vte::ansi::Rgb;
+        let reply: Arc<dyn Fn(Rgb) -> String + Sync + Send> =
+            Arc::new(|c| format!("{:02x}{:02x}{:02x}", c.r, c.g, c.b));
+        let (tx, mut rx) = unbounded();
+        let replica = EventProxy::new(tx, Arc::new(AtomicU64::new(0)), Answers::Elsewhere);
+        replica.send_event(TermEvent::ColorRequest(257, reply));
+        assert!(
+            matches!(rx.try_recv(), Ok(TermEvent::ColorRequest(257, _))),
+            "a replica swallowed a colour question nobody else answers"
+        );
+
+        let mut pair = attached(20, 5, Some(1));
+        let mut events = pair.session.events.take().expect("events");
+        pair.host
+            .write_all(b"\x1b]11;?\x07done")
+            .expect("host writes");
+        let term = pair.session.term.clone();
+        assert!(
+            within(Duration::from_secs(5), || {
+                term.lock().grid()[Line(0)][Column(3)].c == 'e'
+            }),
+            "the host's bytes never reached the replica"
+        );
+        let mut asked = 0;
+        while let Ok(event) = events.try_recv() {
+            if let TermEvent::ColorRequest(index, format) = event {
+                assert_eq!(index, 257, "OSC 11 asks for the default background");
+                let bg = Rgb {
+                    r: 0x10,
+                    g: 0x14,
+                    b: 0x1c,
+                };
+                assert_eq!(format(bg), "\x1b]11;rgb:1010/1414/1c1c\x07");
+                asked += 1;
+            }
+        }
+        assert_eq!(asked, 1, "one question, one event");
     }
 
     #[test]

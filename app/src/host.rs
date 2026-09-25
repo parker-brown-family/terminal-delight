@@ -2372,6 +2372,27 @@ mod owning {
         answers_on_screen(&host, pane, b"\x1b[16t\n", "[6;24;10t");
     }
 
+    /// The host leaves a colour question (`OSC 11 ; ?`) to the window, which
+    /// answers it from the pane's theme. The host has no theme, and an answer
+    /// from here as well would reach the program as typed input: two replies
+    /// to one question (issue 719).
+    ///
+    /// The first marker is typed after the question, so once it is on the
+    /// screen the host has parsed the question and written any reply into
+    /// the pane's input. The second marker is typed after that, so once it is
+    /// on the screen any reply has been echoed ahead of it.
+    #[test]
+    fn a_colour_question_is_left_to_the_window() {
+        let (host, pane) = host_with_cat_pane();
+        answers_on_screen(&host, pane, b"\x1b]11;?\x07\nfirst\n", "first");
+        answers_on_screen(&host, pane, b"second\n", "second");
+        let rows = screen_rows(&host, pane);
+        assert!(
+            !rows.iter().any(|row| row.contains("]11;rgb:")),
+            "the host answered a colour question: {rows:?}"
+        );
+    }
+
     #[test]
     fn attaching_delivers_the_history_it_missed_and_then_the_live_bytes() {
         // The whole point of the handover: a client that was not there for the
