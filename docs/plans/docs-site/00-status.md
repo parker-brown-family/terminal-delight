@@ -69,6 +69,21 @@ box, the same pattern as parker.brownfamilysports.com, not Cloudflare Pages.
   DNS-only or proxied.
 - The neighbouring sites answered 200 before and after the reload.
 
+## Round two (2026-09-25), from Parker's review
+
+- **No second top bar.** The family strip (`assets/kiosk-chrome.js`) stacked a
+  bar over the Omarchy kiosk's own navigation: *"the double topper bar for
+  other kiosks is a NO"*. The file now only boots the theme; no page changed.
+  The agent wall's palette picker lived in that strip and went with it.
+- **One top bar on info and docs:** Overview · Docs · Omarchy · Global.
+- **Install, not Download.** *"It is poor form to trap someone without their
+  reading first."* The bar's button and the hero open the new Install page.
+- **`cargo install terminal-delight` does not exist**, so it is on no button.
+  The crate is unpublished (`publish = false`, gpui is a path dependency). The
+  Install page says why. A one-line `$` install would need an install script
+  served from the docs domain — not built, Parker's call.
+- **Warp half as strong again:** `CURVE` 0.26 → 0.39.
+
 ## Open — Parker's call
 
 - info's `/docsite/` links switch to the subdomain when this branch merges.

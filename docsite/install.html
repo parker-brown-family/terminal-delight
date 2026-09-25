@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="en" data-crt-default="off">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'self' 'unsafe-inline'; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'none'" />
+  <title>Install · Terminal Delight docs</title>
+  <meta name="description" content="Terminal Delight ships as one file, terminal-delight-x86_64.AppImage, for 64-bit Linux on X11 or Wayland. Download it, make it executable, run it." />
+  <meta name="td:updated" content="2026-09-25 · true of main at 81ec545, release v0.3.0" />
+  <link rel="icon" href="/favicon.ico" sizes="any" />
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  <meta property="og:title" content="Install · Terminal Delight docs" />
+  <meta property="og:description" content="One AppImage for 64-bit Linux on X11 or Wayland. Download it, make it executable, run it." />
+  <meta property="og:type" content="article" />
+
+  <script>(function(){var s={};try{s=JSON.parse(localStorage.getItem('td-shell'))||{}}catch(e){}var r=document.documentElement;r.dataset.theme=s.theme||(matchMedia('(prefers-color-scheme: light)').matches?'paper':'glass');r.dataset.crt=s.crt||r.dataset.crtDefault||'off';})();</script>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/assets/td-shell.css" />
+  <style>
+    .meta-row { margin-top: 14px; font: 12.5px/1.5 var(--mono); color: var(--ink-3); }
+    .src { font-size: 14px; }
+    .src li { margin: .25em 0; }
+    .invite { margin-top: 1.6em; padding-top: 14px; border-top: 1px dashed var(--line-2); color: var(--ink-2); font-size: 15px; }
+  </style>
+</head>
+<body>
+
+<header class="td-top">
+  <button class="td-icon td-menu" data-td-menu aria-label="Open the docs menu">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+  </button>
+  <a class="td-brand" href="/docsite/" aria-label="Terminal Delight docs">
+    <svg viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="13" fill="#1a1e24"/><path d="M9 12Q32 8.5 55 12Q59 32 55 52Q32 55.5 9 52Q5 32 9 12Z" fill="#05080a"/><clipPath id="bm"><path d="M9 12Q32 8.5 55 12Q59 32 55 52Q32 55.5 9 52Q5 32 9 12Z"/></clipPath><g clip-path="url(#bm)"><rect x="5" y="6" width="24" height="52" fill="#39ff7a" opacity=".92"/><rect x="34" y="6" width="25" height="24" fill="#ffb84d" opacity=".92"/><rect x="34" y="34" width="25" height="24" fill="#57d6ff" opacity=".92"/></g><path d="M31.5 6Q33 32 31.5 58" stroke="#1a1e24" stroke-width="5" fill="none"/><path d="M31 32Q45 33 60 31.5" stroke="#1a1e24" stroke-width="4.5" fill="none"/></svg>
+    <span class="word">terminal delight<span class="cur"></span></span>
+  </a>
+  <nav class="td-sections" aria-label="Sections">
+    <a href="/info">Overview</a>
+    <a href="/docsite/" aria-current="page">Docs</a>
+    <a href="/omarchy">Omarchy</a>
+    <a href="/global">Global</a>
+  </nav>
+  <button class="td-search" type="button" aria-label="Search the docs">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+    <span>Search docs</span><kbd>Ctrl K</kbd>
+  </button>
+  <div class="td-actions">
+    <a class="td-icon gh" href="https://github.com/parker-brown-family/terminal-delight" aria-label="Source on GitHub" title="Source on GitHub">
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 .5a11.5 11.5 0 0 0-3.64 22.41c.58.1.79-.25.79-.56v-2c-3.2.7-3.88-1.37-3.88-1.37-.52-1.33-1.28-1.69-1.28-1.69-1.04-.71.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.76 2.7 1.25 3.36.96.1-.75.4-1.25.73-1.54-2.55-.29-5.24-1.28-5.24-5.69 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.17 1.18a11 11 0 0 1 5.77 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.84 1.19 3.1 0 4.42-2.7 5.39-5.26 5.68.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .5Z"/></svg>
+    </a>
+    <button class="td-icon" data-td-toggle="crt" aria-pressed="false" aria-label="CRT texture">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M4 5.5Q12 4 20 5.5Q21.4 12 20 18.5Q12 20 4 18.5Q2.6 12 4 5.5Z"/><path d="M6.5 9.5h11M6.5 12h11M6.5 14.5h7" stroke-width="1.3" opacity=".75"/></svg>
+    </button>
+    <button class="td-icon td-theme" data-td-toggle="theme" aria-label="Switch between glass and paper">
+      <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 3v2M12 19v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M3 12h2M19 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4"/><circle cx="12" cy="12" r="4"/></svg>
+      <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5Z"/></svg>
+    </button>
+    <a class="td-btn primary hide-sm" href="/docsite/install" aria-current="page">Install</a>
+  </div>
+</header>
+
+<nav class="td-spine" aria-label="Documentation">
+  <div class="td-group"><h6>Get started</h6><ul>
+    <li><a href="/docsite/">Introduction</a></li>
+    <li><a href="/docsite/install" aria-current="page">Install</a></li>
+    <li><a href="/docsite/" class="is-soon">First launch</a></li>
+    <li><a href="/docsite/" class="is-soon">Keys</a></li>
+  </ul></div>
+  <div class="td-group"><h6>Agents</h6><ul>
+    <li><a href="/docsite/" class="is-soon">Agent wall</a></li>
+    <li><a href="/docsite/" class="is-soon">Launching an agent</a></li>
+    <li><a href="/docsite/" class="is-soon">Attention</a></li>
+    <li><a href="/docsite/" class="is-soon">Graveyard</a></li>
+    <li><a href="/docsite/" class="is-soon">Usage and vitals</a></li>
+  </ul></div>
+  <div class="td-group"><h6>The bench</h6><ul>
+    <li><a href="/docsite/workbench.html">Workbench</a></li>
+    <li><a href="/docsite/" class="is-soon">Surface protocol</a></li>
+    <li><a href="/docsite/" class="is-soon">Comments</a></li>
+  </ul></div>
+  <div class="td-group"><h6>Workspace</h6><ul>
+    <li><a href="/docsite/" class="is-soon">Left bar and tasks</a></li>
+    <li><a href="/docsite/" class="is-soon">Panes and tabs</a></li>
+    <li><a href="/docsite/" class="is-soon">Sticky notes</a></li>
+    <li><a href="/docsite/" class="is-soon">Sessions and restarts</a></li>
+  </ul></div>
+  <div class="td-group"><h6>The look</h6><ul>
+    <li><a href="/docsite/" class="is-soon">Themes</a></li>
+    <li><a href="/docsite/" class="is-soon">Skins</a></li>
+    <li><a href="/docsite/" class="is-soon">CRT</a></li>
+    <li><a href="/docsite/" class="is-soon">Focus reader</a></li>
+    <li><a href="/docsite/" class="is-soon">Text crawl</a></li>
+  </ul></div>
+  <div class="td-group"><h6>MCP and scripting</h6><ul>
+    <li><a href="/docsite/" class="is-soon">MCP server</a></li>
+    <li><a href="/docsite/" class="is-soon">Agent to agent</a></li>
+    <li><a href="/docsite/" class="is-soon">ctl</a></li>
+    <li><a href="/docsite/" class="is-soon">Plugins</a></li>
+  </ul></div>
+  <div class="td-group"><h6>Desktop</h6><ul>
+    <li><a href="/omarchy">Omarchy ↗</a></li>
+  </ul></div>
+  <div class="td-group"><h6>Reference</h6><ul>
+    <li><a href="/docsite/" class="is-soon">Config files</a></li>
+    <li><a href="/docsite/" class="is-soon">Environment flags</a></li>
+    <li><a href="/docsite/" class="is-soon">Languages</a></li>
+  </ul></div>
+</nav>
+
+<main id="tube" tabindex="-1">
+  <article class="td-doc">
+    <p class="td-kicker">Get started</p>
+    <h1>Install</h1>
+    <p class="meta-row">Updated 2026-09-25 · true of release v0.3.0 and main at 81ec545</p>
+
+    <div class="reg">
+      <input type="radio" name="register" id="r-brief" checked aria-controls="brief">
+      <input type="radio" name="register" id="r-technical" aria-controls="technical">
+      <div class="reg-tabs" role="tablist" aria-label="Registers">
+        <label for="r-brief" role="tab">Brief</label>
+        <label for="r-technical" role="tab">Technical</label>
+      </div>
+
+      <div class="reg-body">
+
+        <!-- BRIEF ============================================================ -->
+        <section class="reg-panel" id="brief" role="tabpanel" data-register="Brief">
+          <div class="reg-head"><span class="reg-kicker">Brief</span>
+            <button class="td-copy" data-copy><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/></svg> Copy</button></div>
+
+          <p class="lede">Terminal Delight ships as one file, <code>terminal-delight-x86_64.AppImage</code>, for 64-bit Linux on X11 or Wayland. Download it, make it executable, and run it:</p>
+<pre class="cmd"><code>curl -LO https://github.com/parker-brown-family/terminal-delight/releases/latest/download/terminal-delight-x86_64.AppImage
+chmod +x terminal-delight-x86_64.AppImage
+./terminal-delight-x86_64.AppImage</code></pre>
+          <p>Nothing is installed system-wide. It runs from wherever you put it, uses your system's graphics driver like any other native app, and keeps its settings in <code>~/.config/terminal-delight/</code>.</p>
+          <p>The rest of these docs call it <code>terminal-delight</code>. To get that command, move the file into a folder on your PATH under that name:</p>
+<pre class="cmd"><code>mv terminal-delight-x86_64.AppImage ~/.local/bin/terminal-delight</code></pre>
+          <p class="invite">Technical covers what the AppImage needs from your system, building from source, why there is no <code>cargo install</code>, where everything is kept, and how to remove it.</p>
+        </section>
+
+        <!-- TECHNICAL ======================================================== -->
+        <section class="reg-panel" id="technical" role="tabpanel" data-register="Technical">
+          <div class="reg-head"><span class="reg-kicker">Technical</span>
+            <button class="td-copy" data-copy><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/></svg> Copy</button></div>
+          <h2>Setup</h2>
+
+          <p>Terminal Delight is built on gpui, the UI framework from the Zed editor, and it needs a gpui that crates.io does not have. That one fact decides how it is distributed: a prebuilt AppImage for running it, and a build against a pinned Zed checkout for changing it.</p>
+
+          <h3>What the AppImage needs</h3>
+          <table>
+            <thead><tr><th>Needs</th><th>Detail</th></tr></thead>
+            <tbody>
+              <tr><td>Architecture</td><td>x86_64. It is the only asset on the release.</td></tr>
+              <tr><td>Display</td><td>X11 or Wayland.</td></tr>
+              <tr><td>Graphics</td><td>A working Vulkan or OpenGL driver, taken from your system. The renderer is wgpu, which targets NVIDIA, AMD and Intel. At startup the app reports the GPU and driver it found.</td></tr>
+              <tr><td>Fonts</td><td>Nothing to install. It walks an explicit monospace fallback chain and warns at startup if the default font is missing.</td></tr>
+              <tr><td>Sound (optional)</td><td><code>ffplay</code>, from ffmpeg, plays the bell when an agent finishes. Without it the bell stays silent. The default sounds are bundled and copied into place on first run.</td></tr>
+            </tbody>
+          </table>
+          <p>Wider testing on AMD, Intel, Wayland and fractional scaling is open work for 1.0, and so is a Flatpak.<sup><a href="#s2">2</a></sup></p>
+
+          <h3>The file</h3>
+          <p>The latest release is v0.3.0, published 2026-09-18. Its one asset is <code>terminal-delight-x86_64.AppImage</code>, 31.6 MB. The address <code>…/releases/latest/download/terminal-delight-x86_64.AppImage</code> always redirects to the newest release, so the command in the Brief keeps working after the next one ships. To update, download it again over the old file.</p>
+          <p>The AppImage's launcher passes every argument through to the program, so the subcommands work through it: <code>ctl</code>, <code>mcp</code>, <code>serve</code>, <code>skin</code>, <code>surface</code>, <code>conversation</code>, <code>probe</code>, <code>bindings</code>, <code>agent-usage</code> and <code>agent-vitals</code>.</p>
+          <p>The binary is MIT-licensed. The two GPL crates that Zed's dependency graph would otherwise link are cut out at build time, <code>cargo deny</code> passes with no GPL exceptions, and the licences of everything bundled are listed in <code>THIRD-PARTY-LICENSES.md</code>.</p>
+
+          <h3>Building from source</h3>
+<pre class="cmd"><code># dependencies, on Ubuntu: Vulkan and the build libraries
+bash scripts/setup-deps.sh
+# clone the pinned Zed checkout and apply the patches
+bash scripts/prepare-gpui.sh
+# run it
+cd app &amp;&amp; cargo run
+# or build a release binary: app/target/release/terminal-delight
+cd app &amp;&amp; cargo build --release</code></pre>
+          <p><code>prepare-gpui.sh</code> sets up a sibling <code>zed-upstream/</code> directory at Zed commit <code>abbe85a</code> and applies five patches from <code>docs/patches/</code>: <code>0001-td-crt-pass</code> (the per-pane barrel warp), <code>0002-focus-blur</code>, <code>0003-text-crawl</code>, <code>0004-warp-tube-cap-32</code>, and <code>0002-sever-gpl-crates</code>. CI builds the same way. <code>CONTRIBUTING.md</code> has the CI bar and the clean-room rule.</p>
+
+          <h3>Why there is no <code>cargo install</code></h3>
+          <p>The crate is not on crates.io, and it cannot be published as it stands. <code>app/Cargo.toml</code> sets <code>publish = false</code>, and gpui is a path dependency on the pinned Zed checkout. The gpui that is on crates.io ships an older renderer, blade, with known problems on NVIDIA under X11.</p>
+
+          <h3>Where things are kept</h3>
+          <table>
+            <thead><tr><th>Path</th><th>Holds</th></tr></thead>
+            <tbody>
+              <tr><td><code>~/.config/terminal-delight/theme.toml</code></td><td>Your own theme. Changes are picked up while the app runs.</td></tr>
+              <tr><td><code>~/.config/terminal-delight/skin.toml</code></td><td>A skin override for the chrome. <code>$TD_SKIN</code> does the same.</td></tr>
+              <tr><td><code>~/.config/terminal-delight/launch.toml</code></td><td>What a new agent opens with.</td></tr>
+              <tr><td><code>~/.config/terminal-delight/notifications.toml</code></td><td>What a finished agent may do to the rest of the desktop.</td></tr>
+              <tr><td><code>~/.config/terminal-delight/sessions/</code></td><td>One file per window session: its layout, each pane's working directory, and each agent's resume command, so the work reopens after a restart.</td></tr>
+              <tr><td><code>~/.config/terminal-delight/plugins/</code></td><td>Plugins, one folder each with a <code>plugin.json</code>.</td></tr>
+              <tr><td><code>~/.local/state/terminal-delight/</code></td><td>The workbench's surfaces and conversations.</td></tr>
+            </tbody>
+          </table>
+          <p><code>$XDG_CONFIG_HOME</code> and <code>$XDG_STATE_HOME</code> replace <code>~/.config</code> and <code>~/.local/state</code> when they are set.</p>
+
+          <h3>Agent hooks</h3>
+          <p>For an agent's replies to reach the <a href="/docsite/workbench.html">workbench</a> on their own, Claude Code needs Terminal Delight's hooks. Their installer lives in the source tree, not in the AppImage:</p>
+<pre class="cmd"><code>scripts/install-agent-hooks.sh</code></pre>
+          <p>It puts <code>td-agent-hooks</code> in <code>~/.local/bin</code> and adds it to <code>~/.claude/settings.json</code> on five events: <code>UserPromptSubmit</code>, <code>PreToolUse</code> and <code>PostToolUse</code> for <code>AskUserQuestion</code>, <code>Stop</code>, and <code>Notification</code>. It appends to any hooks already there and keeps a timestamped backup of the file. Running it twice changes nothing.</p>
+
+          <h3>Removing it</h3>
+          <ul>
+            <li>Delete the AppImage, or <code>~/.local/bin/terminal-delight</code> if you moved it there.</li>
+            <li>Delete <code>~/.config/terminal-delight/</code> and <code>~/.local/state/terminal-delight/</code> to remove your settings, sessions and saved work.</li>
+            <li>If you installed the hooks, run <code>scripts/install-agent-hooks.sh --uninstall</code>.</li>
+          </ul>
+
+          <h3>What would prove this wrong</h3>
+          <p>This page claims the three commands in the Brief give you a working Terminal Delight on a 64-bit Linux desktop with a working graphics driver. If they don't, that is a bug. Open an issue with your distribution, your GPU, and the lines the app prints at startup, which name the GPU and driver it found.<sup><a href="#s3">3</a></sup></p>
+        </section>
+      </div>
+    </div>
+
+    <h2 style="font-size:15px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3);margin-top:64px">Sources</h2>
+    <ol class="src">
+      <li id="s1"><a href="https://github.com/parker-brown-family/terminal-delight/releases/tag/v0.3.0">Release v0.3.0</a>, and the <a href="https://github.com/parker-brown-family/terminal-delight#install">Install</a> and <a href="https://github.com/parker-brown-family/terminal-delight#build-from-source">Build from source</a> sections of the README.</li>
+      <li id="s2"><a href="https://github.com/parker-brown-family/terminal-delight/blob/main/docs/features/09-packaging.md">Packaging and platform</a>, in the feature catalogue.</li>
+      <li id="s3"><a href="https://github.com/parker-brown-family/terminal-delight/issues/new">Open an issue</a>.</li>
+      <li>The code this page was checked against: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/scripts/build-appimage.sh">build-appimage.sh</a>, <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/Cargo.toml">app/Cargo.toml</a>, <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/instance.rs">instance.rs</a>, <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/scripts/install-agent-hooks.sh">install-agent-hooks.sh</a>.</li>
+    </ol>
+
+    <nav class="td-pager" aria-label="Next and previous">
+      <a href="/docsite/"><small>Previous</small><span>← Introduction</span></a>
+      <a href="/docsite/workbench.html"><small>Next</small><span>Workbench →</span></a>
+    </nav>
+    <footer class="td-foot"><span>Terminal Delight · MIT</span><a href="https://github.com/parker-brown-family/terminal-delight/blob/main/docsite/install.html">Edit this page</a><a href="/info">Kiosks</a></footer>
+  </article>
+</main>
+<div id="td-fx" aria-hidden="true"><div class="scan"></div><div class="vig"></div><div class="bloom"></div><div class="band"></div></div>
+<script src="/assets/td-shell.js"></script>
+</body>
+</html>

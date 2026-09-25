@@ -53,7 +53,8 @@
      actually scrolling so the scroll stays native-speed. The curve comes back
      180 ms after the last scroll event. */
 
-  var CURVE = 0.26;
+  /* 0.26 was the first cut; Parker asked for half as much again. */
+  var CURVE = 0.39;
   var built = '';
 
   function ensureFilter() {
@@ -191,7 +192,7 @@
       if (tag === 'A') { out.push(n.textContent.trim() + ' (' + n.href + ')'); return; }
       if (tag === 'LI') { out.push('\n- '); n.childNodes.forEach(walk); return; }
       if (tag === 'TR') { out.push('\n' + Array.prototype.map.call(n.cells, function (c) { return c.textContent.trim(); }).join(' | ')); return; }
-      if (tag === 'PRE') { out.push('\n\n' + n.textContent.replace(/\n$/, '') + '\n\n'); return; }
+      if (tag === 'PRE') { var c = n.querySelector('code'); out.push('\n\n' + (c || n).textContent.replace(/\n$/, '') + '\n\n'); return; }
       if (tag === 'BR') { out.push('\n'); return; }
       var block = /^(P|DIV|SECTION|FIGURE|FIGCAPTION|UL|OL|TABLE|BLOCKQUOTE)$/.test(tag);
       if (block) out.push('\n\n');
@@ -223,6 +224,25 @@
     if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done, done);
     window.__tdLastCopy = text;
   }
+
+  /* A command block carries its own copy button, which takes the commands
+     and nothing else — no prompt, no comment header, no surrounding prose. */
+  document.querySelectorAll('pre.cmd').forEach(function (pre) {
+    var b = document.createElement('button');
+    b.className = 'td-copy'; b.type = 'button'; b.setAttribute('data-copy-code', '');
+    b.setAttribute('aria-label', 'Copy these commands');
+    b.appendChild(document.createTextNode('Copy'));
+    pre.appendChild(b);
+  });
+  document.addEventListener('click', function (e) {
+    var b = e.target.closest('[data-copy-code]');
+    if (!b) return;
+    var code = b.closest('pre').querySelector('code');
+    var text = (code || b.closest('pre')).textContent.trim();
+    window.__tdLastCopy = text;
+    var done = function () { b.classList.add('done'); b.lastChild.nodeValue = 'Copied'; setTimeout(function () { b.classList.remove('done'); b.lastChild.nodeValue = 'Copy'; }, 1400); };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done, done); else done();
+  });
 
   document.addEventListener('click', function (e) {
     var b = e.target.closest('[data-copy]');

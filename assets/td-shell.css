@@ -255,6 +255,11 @@ a { color: inherit; }
   background: var(--bg-2); border: 1px solid var(--line); border-radius: 10px;
 }
 .td-doc pre code { padding: 0; border: 0; background: none; font-size: inherit; color: inherit; }
+/* Commands wrap on screen so a long URL never runs under the Copy button;
+   the copy takes the text node, so what lands on the clipboard is still one
+   line per command. */
+.td-doc pre.cmd { position: relative; padding-right: 76px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.td-doc pre.cmd .td-copy { position: absolute; top: 10px; right: 10px; height: 26px; padding: 0 10px; background: var(--bg-2); }
 .td-doc kbd, .td-kiosk kbd {
   font: 600 .8em/1 var(--mono); padding: .22em .45em; border-radius: 5px;
   color: var(--ink); background: var(--bg-3); border: 1px solid var(--line-2); border-bottom-width: 2px;
@@ -282,15 +287,17 @@ a { color: inherit; }
 }
 .reg-tabs label:hover { color: var(--ink); }
 .reg-panel { display: none; }
-#r-brief:checked ~ .reg-body .reg-panel:nth-child(1),
-#r-story:checked ~ .reg-body .reg-panel:nth-child(2),
-#r-technical:checked ~ .reg-body .reg-panel:nth-child(3) { display: block; }
-#r-brief:checked ~ .reg-tabs label:nth-of-type(1),
-#r-story:checked ~ .reg-tabs label:nth-of-type(2),
-#r-technical:checked ~ .reg-tabs label:nth-of-type(3) { color: var(--ink); border-bottom-color: var(--acc); }
-#r-brief:focus-visible ~ .reg-tabs label:nth-of-type(1),
-#r-story:focus-visible ~ .reg-tabs label:nth-of-type(2),
-#r-technical:focus-visible ~ .reg-tabs label:nth-of-type(3) { outline: 2px solid var(--acc-2); outline-offset: -3px; }
+/* Matched by id, not position: a page may carry Brief and Technical with no
+   Story, and a positional rule would then show the wrong panel. */
+#r-brief:checked ~ .reg-body #brief,
+#r-story:checked ~ .reg-body #story,
+#r-technical:checked ~ .reg-body #technical { display: block; }
+#r-brief:checked ~ .reg-tabs label[for="r-brief"],
+#r-story:checked ~ .reg-tabs label[for="r-story"],
+#r-technical:checked ~ .reg-tabs label[for="r-technical"] { color: var(--ink); border-bottom-color: var(--acc); }
+#r-brief:focus-visible ~ .reg-tabs label[for="r-brief"],
+#r-story:focus-visible ~ .reg-tabs label[for="r-story"],
+#r-technical:focus-visible ~ .reg-tabs label[for="r-technical"] { outline: 2px solid var(--acc-2); outline-offset: -3px; }
 
 .reg-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 14px; }
 .reg-kicker { font: 600 11px/1 var(--mono); letter-spacing: .16em; text-transform: uppercase; color: var(--ink-3); }

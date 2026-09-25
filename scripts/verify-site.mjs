@@ -53,7 +53,7 @@ const overflow = page => page.evaluate(() => {
   return { doc: document.documentElement.scrollWidth - innerWidth, tube: t ? t.scrollWidth - t.clientWidth : 0 };
 });
 
-for (const [path, name] of [['/info', 'info'], ['/docsite/', 'docs-index'], ['/docsite/workbench.html', 'workbench']]) {
+for (const [path, name] of [['/info', 'info'], ['/docsite/', 'docs-index'], ['/docsite/workbench.html', 'workbench'], ['/docsite/install', 'install']]) {
   for (const w of [1440, 968, 390]) {
     for (const prefs of [{ theme: 'glass', crt: 'on' }, { theme: 'paper', crt: 'off' }, { theme: 'paper', crt: 'on' }]) {
       const { ctx, page, errors } = await open(path, { w, h: w === 390 ? 844 : 900, prefs });
@@ -118,6 +118,39 @@ for (const [path, name] of [['/info', 'info'], ['/docsite/', 'docs-index'], ['/d
   ok('palette finds Workbench', await page.evaluate(() => [...document.querySelectorAll('.td-pal li')].some(li => /Workbench/.test(li.textContent))));
   await ctx.close();
 }
+// one top bar everywhere: the same four sections, and Install where Download was
+for (const path of ['/info', '/docsite/', '/docsite/workbench.html', '/docsite/install']) {
+  const { ctx, page } = await open(path, { prefs: { theme: 'glass', crt: 'off' } });
+  const bar = await page.evaluate(() => ({
+    sections: [...document.querySelectorAll('.td-sections a')].map(a => a.textContent.trim()),
+    button: (document.querySelector('.td-actions .td-btn.primary') || {}).textContent,
+    href: (document.querySelector('.td-actions .td-btn.primary') || {}).href || '',
+    download: [...document.querySelectorAll('.td-top a, .td-top button')].some(el => /download/i.test(el.textContent)),
+  }));
+  ok(`${path}: top bar reads Overview · Docs · Omarchy · Global`, bar.sections.join('|') === 'Overview|Docs|Omarchy|Global', bar.sections.join('|'));
+  ok(`${path}: the bar's button is Install`, (bar.button || '').trim() === 'Install', bar.button);
+  ok(`${path}: Install opens the install page`, /\/install$/.test(bar.href), bar.href);
+  ok(`${path}: nothing in the bar says Download`, !bar.download);
+  await ctx.close();
+}
+
+// the install page: two registers, deep link to technical, command copy is commands only
+{
+  const { ctx, page } = await open('/docsite/install#technical', { prefs: { theme: 'glass', crt: 'off' } });
+  const vis = () => page.evaluate(() => [...document.querySelectorAll('.reg-panel')].filter(p => p.offsetParent !== null).map(p => p.id));
+  ok('install: deep link opens Technical', JSON.stringify(await vis()) === '["technical"]', JSON.stringify(await vis()));
+  ok('install: two register tabs', await page.evaluate(() => document.querySelectorAll('.reg-tabs label').length === 2));
+  await page.click('label[for="r-brief"]');
+  ok('install: Brief tab shows Brief', JSON.stringify(await vis()) === '["brief"]', JSON.stringify(await vis()));
+  await page.click('#brief pre.cmd [data-copy-code]');
+  const cmd = await page.evaluate(() => window.__tdLastCopy || '');
+  ok('install: copying the commands copies three lines of commands', cmd.split('\n').length === 3 && cmd.startsWith('curl -LO https://') && !/copy/i.test(cmd), JSON.stringify(cmd));
+  await page.click('#brief .reg-head .td-copy');
+  const reg = await page.evaluate(() => window.__tdLastCopy || '');
+  ok('install: register copy carries the commands without a button label', reg.includes('chmod +x terminal-delight-x86_64.AppImage') && !/\nCopy\n|Copy$/.test(reg), reg.slice(-200));
+  await ctx.close();
+}
+
 // no-JS: tabs still work, default is Brief
 {
   const ctx = await browser.newContext({ viewport: { width: 1200, height: 900 }, javaScriptEnabled: false });
