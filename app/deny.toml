@@ -85,4 +85,8 @@ allow-git = [
   "https://github.com/zed-industries/wgpu.git",
   "https://github.com/zed-industries/font-kit",
   "https://github.com/zed-industries/xim-rs.git",
+  # proptest, pinned by the Zed workspace to a git revision, and reached only
+  # through gpui's `test-support` feature — a dev-dependency for the pane
+  # harness (src/pane/harness.rs). It is in no build that ships.
+  "https://github.com/proptest-rs/proptest",
 ]

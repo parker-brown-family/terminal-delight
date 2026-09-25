@@ -38,6 +38,14 @@ serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0"
 toml = "0.8"
 
+[dev-dependencies]
+# gpui's headless test platform — `TestAppContext`, `VisualTestContext`, the
+# deterministic dispatcher — so a real `TerminalView` can be built and driven
+# with real mouse and key events in `cargo test` (src/pane/harness.rs). Dev
+# only: cargo's feature resolver keeps `test-support` out of `cargo build`,
+# `cargo check` and `cargo clippy`, so the shipped binary is unchanged.
+gpui = { path = "../../zed-upstream/crates/gpui", features = ["test-support"] }
+
 [profile.dev]
 # gpui is heavy; keep our own code debuggable but deps optimized
 opt-level = 0

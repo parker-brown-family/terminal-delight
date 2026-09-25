@@ -323,6 +323,39 @@ pub fn attach_in(
     Ok((session, guard))
 }
 
+/// A terminal this process owns, running `program` rather than the user's
+/// shell: a real pseudoterminal, a real child, and everything above the child
+/// — the event loop, the parser, the `Term` — the code a pane runs.
+///
+/// For tests, which need to choose what the terminal prints. [`spawn_in`]
+/// deliberately runs whatever shell the person has, and a test that depended
+/// on their prompt or their rc files would be testing their machine.
+#[cfg(test)]
+pub(crate) fn spawn_program(
+    size: GridSize,
+    cell_px: (u16, u16),
+    program: &str,
+    args: &[&str],
+) -> io::Result<Session> {
+    let window_size = WindowSize {
+        num_lines: size.rows as u16,
+        num_cols: size.cols as u16,
+        cell_width: cell_px.0,
+        cell_height: cell_px.1,
+    };
+    let options = tty::Options {
+        shell: Some(tty::Shell::new(
+            program.to_string(),
+            args.iter().map(|a| a.to_string()).collect(),
+        )),
+        ..Default::default()
+    };
+    let pty = tty::new(&options, window_size, 0)?;
+    let master = pty.file().try_clone().ok();
+    let shell_pid = pty.child().id();
+    wire_event_loop(pty, size, master, Some(shell_pid), Answers::Here)
+}
+
 /// How long a keystroke takes to come back, with and without the seam.
 ///
 /// This is the instrument behind the flip gate: the split becomes the default
@@ -425,24 +458,7 @@ mod echo_bench {
             cols: 100,
             rows: 28,
         };
-        let window_size = WindowSize {
-            num_lines: size.rows as u16,
-            num_cols: size.cols as u16,
-            cell_width: 8,
-            cell_height: 20,
-        };
-        let options = tty::Options {
-            shell: Some(tty::Shell::new(
-                prog.to_string(),
-                args.iter().map(|a| a.to_string()).collect(),
-            )),
-            ..Default::default()
-        };
-        let pty = tty::new(&options, window_size, 0).expect("a pseudoterminal");
-        let master = pty.file().try_clone().ok();
-        let shell_pid = pty.child().id();
-        wire_event_loop(pty, size, master, Some(shell_pid), Answers::Here)
-            .expect("wire the event loop")
+        spawn_program(size, (8, 20), prog, args).expect("a pseudoterminal")
     }
 
     /// The same shape, two socket hops away: a real session host in its own

@@ -896,21 +896,31 @@ fn resolve_path(p: &str, cwd: Option<&str>) -> Option<String> {
 
 /// Spawn a helper detached from us — its own session, no inherited stdio — so
 /// it outlives the click and never blocks the UI.
+///
+/// A test build starts nothing: a pane driven by the harness that reached the
+/// desktop would open a file manager or a browser on the machine running
+/// `cargo test`. The launch is written down instead, so a test can say what
+/// would have gone to the desktop ([`harness::desktop_launches`]).
 fn spawn_detached(program: &str, args: &[&str]) {
-    use std::os::unix::process::CommandExt;
-    use std::process::{Command, Stdio};
-    let mut cmd = Command::new(program);
-    cmd.args(args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    unsafe {
-        cmd.pre_exec(|| {
-            libc::setsid();
-            Ok(())
-        });
+    #[cfg(test)]
+    harness::record_launch(program, args);
+    #[cfg(not(test))]
+    {
+        use std::os::unix::process::CommandExt;
+        use std::process::{Command, Stdio};
+        let mut cmd = Command::new(program);
+        cmd.args(args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        unsafe {
+            cmd.pre_exec(|| {
+                libc::setsid();
+                Ok(())
+            });
+        }
+        let _ = cmd.spawn();
     }
-    let _ = cmd.spawn();
 }
 
 /// Is this session managed by uwsm (Omarchy's, and any `uwsm start`ed Wayland
@@ -15953,3 +15963,12 @@ mod tests {
         assert!(method(&code, "fn ask_to_send(").contains("docview::SendNotes"));
     }
 }
+
+// A real pane under gpui's headless test platform, and the tests that drive
+// it. Declared after `mod tests` on purpose: the source scans in there read
+// this file only up to its first `#[cfg(test)]`, so anything test-only placed
+// above it would cut them short.
+#[cfg(test)]
+mod behaviour;
+#[cfg(test)]
+mod harness;

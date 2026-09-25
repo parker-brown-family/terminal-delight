@@ -269,6 +269,17 @@ pub fn engine(cx: &mut App) -> EngineAnswer {
     answer
 }
 
+/// Put `answer` where [`engine`] keeps the one it made, as though it had
+/// made it: for a test, which must neither look for a browser on the machine
+/// nor read the person's `documents.toml`. An `Err` stands for 30 seconds of
+/// the machine's clock, as a real one does, far longer than any test.
+#[cfg(test)]
+pub(crate) fn set_engine(cx: &mut App, answer: EngineAnswer) {
+    cx.set_global(Engines {
+        slot: Some((answer, Instant::now())),
+    });
+}
+
 /// For the router, before it places an HTML document: is there an engine to
 /// draw it? A cached PATH lookup; no browser starts.
 pub fn html_ready(cx: &mut App) -> Result<(), Unavailable> {
