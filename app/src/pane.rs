@@ -1206,6 +1206,32 @@ pub(crate) fn laid_out_length(logical: f32, scale: f32) -> f32 {
 /// device pixels the way gpui rounds every authored padding before layout.
 /// Anything that turns a row into a position adds this, not the raw padding,
 /// or it lands up to half a device pixel off the drawn grid.
+/// A picture's pixels as a gpui texture: cropped to the part the program asked
+/// to show, and turned from RGBA into the BGRA gpui uploads.
+fn picture_texture(
+    data: &crate::vt::PictureData,
+    crop: [f32; 4],
+) -> Option<Arc<gpui::RenderImage>> {
+    let mut pixels = image::RgbaImage::from_raw(data.width, data.height, data.rgba.clone())?;
+    if crop != [0.0, 0.0, 1.0, 1.0] {
+        let (w, h) = (data.width as f32, data.height as f32);
+        let x = (crop[0] * w).round().clamp(0.0, w) as u32;
+        let y = (crop[1] * h).round().clamp(0.0, h) as u32;
+        let right = (crop[2] * w).round().clamp(0.0, w) as u32;
+        let bottom = (crop[3] * h).round().clamp(0.0, h) as u32;
+        if right <= x || bottom <= y {
+            return None;
+        }
+        pixels = image::imageops::crop_imm(&pixels, x, y, right - x, bottom - y).to_image();
+    }
+    for pixel in pixels.as_chunks_mut::<4>().0 {
+        pixel.swap(0, 2);
+    }
+    Some(Arc::new(gpui::RenderImage::new(vec![image::Frame::new(
+        pixels,
+    )])))
+}
+
 fn grid_pad_drawn(w: f32, h: f32, k1: f32, k2: f32, scale: f32) -> (f32, f32) {
     let (x, y) = grid_pad(w, h, k1, k2);
     (laid_out_length(x, scale), laid_out_length(y, scale))
@@ -2475,6 +2501,11 @@ pub struct TerminalView {
     /// selection); cleared whenever a normal key or a fresh mouse-down resets the
     /// selection.
     kbd_sel: Option<(TermPoint, TermPoint)>,
+    /// The pictures programs have drawn in this pane, as gpui textures, keyed by
+    /// image and crop. Built the first frame a picture is on screen, dropped the
+    /// frame it leaves, and all dropped when the pane's tab is hidden: pictures
+    /// in Terminal Delight are attentional, not kept.
+    pictures: std::collections::HashMap<(crate::vt::PictureKey, [u32; 4]), Arc<gpui::RenderImage>>,
     /// When the current agent "thinking" spell began — used to ring the bell on
     /// the thinking→done edge (agents don't reliably emit a terminal BEL).
     think_since: Option<Instant>,
@@ -4091,6 +4122,7 @@ impl TerminalView {
             peeled: None,
             note_hover: None,
             kbd_sel: None,
+            pictures: Default::default(),
             think_since: None,
             not_thinking_since: None,
             tokens_banked: 0,
@@ -4383,6 +4415,94 @@ impl TerminalView {
     /// screen at ring time)? Only meaningful while [`Self::has_bell`] is true.
     pub fn bell_blocked(&self) -> bool {
         self.bell && self.bell_blocked
+    }
+
+    /// The pictures on this pane's screen, as elements to lay over the grid:
+    /// those under the text (a negative z), then those over it.
+    ///
+    /// Positioned in the grid's own cells: the core reports each picture's
+    /// cell and its size in device pixels, and this converts with the ratio
+    /// between the cell the pane lays out and the cell it told the core.
+    /// Nothing is drawn while the rows are permuted (the anchor-to-top
+    /// inverted read) or in crawl, where a picture would have no one cell to
+    /// sit in; the pictures are still held and come back with the plain read.
+    fn picture_elements(
+        &mut self,
+        pad: (f32, f32),
+        crawl: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> (Vec<gpui::AnyElement>, Vec<gpui::AnyElement>) {
+        let (cell_px_w, cell_px_h) = self.cell_px;
+        let placed = if crawl || self.paint_inverted || cell_px_w == 0 || cell_px_h == 0 {
+            Vec::new()
+        } else {
+            let term = self.session.term.lock();
+            let pictures = term.pictures();
+            let mut placed = Vec::with_capacity(pictures.len());
+            for picture in pictures {
+                let key = (picture.key, picture.crop.map(f32::to_bits));
+                let texture = match self.pictures.get(&key) {
+                    Some(texture) => texture.clone(),
+                    None => {
+                        let Some(texture) = term
+                            .picture_data(picture.key)
+                            .and_then(|data| picture_texture(&data, picture.crop))
+                        else {
+                            continue;
+                        };
+                        self.pictures.insert(key, texture.clone());
+                        texture
+                    }
+                };
+                placed.push((key, picture, texture));
+            }
+            placed
+        };
+        // A texture whose picture has left the screen goes now, not later.
+        let gone: Vec<_> = self
+            .pictures
+            .keys()
+            .filter(|key| !placed.iter().any(|(k, ..)| k == *key))
+            .copied()
+            .collect();
+        for key in gone {
+            if let Some(texture) = self.pictures.remove(&key) {
+                cx.drop_image(texture, Some(window));
+            }
+        }
+        let (sx, sy) = (
+            self.cell_w / cell_px_w.max(1) as f32,
+            self.cell_h / cell_px_h.max(1) as f32,
+        );
+        let (mut under, mut over) = (Vec::new(), Vec::new());
+        for (_, picture, texture) in placed {
+            let row = picture.line + self.paint_offset as i32;
+            let left = pad.0 + picture.column as f32 * self.cell_w + picture.offset.0 * sx;
+            let top = pad.1 + row as f32 * self.cell_h + picture.offset.1 * sy;
+            let el = gpui::img(gpui::ImageSource::Render(texture))
+                .absolute()
+                .left(px(left))
+                .top(px(top))
+                .w(px(picture.size.0 * sx))
+                .h(px(picture.size.1 * sy))
+                .into_any_element();
+            if picture.z < 0 {
+                under.push(el);
+            } else {
+                over.push(el);
+            }
+        }
+        (under, over)
+    }
+
+    /// Forget every picture this pane holds — the textures here and the images
+    /// in the core. Called when its tab stops being shown.
+    pub fn forget_pictures(&mut self, cx: &mut Context<Self>) {
+        self.session.term.lock().forget_pictures();
+        for (_, texture) in self.pictures.drain() {
+            cx.drop_image(texture, None);
+        }
     }
 
     fn handle_term_event(&mut self, event: TermEvent, cx: &mut Context<Self>) -> bool {
@@ -9704,6 +9824,13 @@ impl Render for TerminalView {
         // corners of a page are not the part the barrel pass pushes out of
         // the tube.
         let doc_el = self.doc_face_el((grid_pad_x, grid_pad_y));
+        // The pictures programs drew, over the grid in its own cells — and only
+        // over the grid: the bench and a document face show no terminal.
+        let (pictures_under, pictures_over) = if on_bench || doc_el.is_some() {
+            (Vec::new(), Vec::new())
+        } else {
+            self.picture_elements((grid_pad_x, grid_pad_y), th.crawl, window, cx)
+        };
 
         div()
             .track_focus(&self.focus_handle(cx))
@@ -9847,6 +9974,7 @@ impl Render for TerminalView {
                     // output stopped being watched is not an agent that stopped.
                     // A document the same way: it fills the screen in the
                     // grid's place, and the shell under it keeps running.
+                    .children(pictures_under)
                     .child(if on_bench {
                         bench_el
                     } else if let Some(doc_el) = doc_el {
@@ -9885,6 +10013,7 @@ impl Render for TerminalView {
                             }))
                             .into_any_element()
                     })
+                    .children(pictures_over)
                     .children(copy_el)
                     .children(bench_hint_el)
                     // The sticky note, INSIDE the screen and therefore inside the

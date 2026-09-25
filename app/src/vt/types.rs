@@ -616,6 +616,47 @@ pub trait Listener: Send + Sync {
     fn send_event(&self, event: Event);
 }
 
+/// Which image a picture shows, as the program last sent it.
+///
+/// Stable for as long as the image is unchanged, so a renderer can keep one
+/// texture per key; a program sending the same image id again gets a new key,
+/// because the time it was sent is part of it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct PictureKey {
+    pub image: u32,
+    pub sent: std::time::Instant,
+}
+
+/// A picture a program drew with the Kitty graphics protocol, where it sits on
+/// the screen right now. Pixel sizes are device pixels, the unit the core was
+/// told a cell is.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Picture {
+    pub key: PictureKey,
+    /// The viewport row of its top-left cell: negative when it starts above
+    /// the top of the screen and is partly scrolled off.
+    pub line: i32,
+    pub column: usize,
+    /// Where inside that cell it starts.
+    pub offset: (f32, f32),
+    /// The size it is drawn at.
+    pub size: (f32, f32),
+    /// The part of the image shown, as fractions of it: left, top, right,
+    /// bottom. `[0, 0, 1, 1]` is all of it.
+    pub crop: [f32; 4],
+    /// Stacking order; negative is under the text.
+    pub z: i32,
+}
+
+/// An image's pixels: eight bits per channel, row by row, red green blue
+/// alpha.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PictureData {
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Vec<u8>,
+}
+
 #[cfg(test)]
 mod frozen {
     //! The numbers below are the wire format between a window and a session

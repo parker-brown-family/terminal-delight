@@ -4446,6 +4446,11 @@ struct Workspace {
     /// guess about how stale is acceptable, and this needs no guess — the answer
     /// is "not stale at all within one paint, recomputed for the next".
     rail_frame: u64,
+    /// The panes the last frame showed: the active tab's. Compared with this
+    /// frame's so a pane that has left the screen, by whatever route — a tab
+    /// click, a keyboard jump, a pane moved to another tab — can forget the
+    /// pictures it held. See [`Workspace::forget_pictures_out_of_sight`].
+    shown_panes: Vec<gpui::WeakEntity<TerminalView>>,
     /// The projection, memoised for the frame that built it.
     ///
     /// **Why this exists.** `rail_rows` walks every tab and every pane, reads
@@ -5750,6 +5755,7 @@ impl Workspace {
             rail_bounds: Arc::new(Mutex::new(None)),
             rail_hits: Arc::new(Mutex::new(Vec::new())),
             rail_frame: 0,
+            shown_panes: Vec::new(),
             rail_memo: std::cell::RefCell::new(None),
             rail_shown: Arc::new(Mutex::new(Vec::new())),
             rail_band: Arc::new(Mutex::new(Vec::new())),
@@ -17840,6 +17846,36 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Pictures are attentional, in Parker's word: a picture a program drew is
+    /// there while its pane is looked at, and a pane whose tab has stopped
+    /// being shown forgets every picture it held, textures and images both.
+    /// Come back and the screen is the text, as it would be in a terminal that
+    /// had never kept the picture.
+    ///
+    /// Asked every frame against the last frame's answer, rather than hooked
+    /// into `activate_tab`, because a tab stops being shown by more routes than
+    /// one function: a tree click, a keyboard jump, a notification, a pane
+    /// carried to another tab. A pane that was shown and is not now is the
+    /// definition, whatever moved it.
+    fn forget_pictures_out_of_sight(&mut self, cx: &mut Context<Self>) {
+        let mut leaves = vec![];
+        if let Some(tab) = self.tabs.get(self.active) {
+            tab.root.leaves(&mut leaves);
+        }
+        let shown: Vec<gpui::WeakEntity<TerminalView>> =
+            leaves.into_iter().map(|pane| pane.downgrade()).collect();
+        let hidden: Vec<Entity<TerminalView>> = self
+            .shown_panes
+            .iter()
+            .filter(|pane| !shown.contains(pane))
+            .filter_map(gpui::WeakEntity::upgrade)
+            .collect();
+        for pane in hidden {
+            pane.update(cx, |view, cx| view.forget_pictures(cx));
+        }
+        self.shown_panes = shown;
+    }
+
     fn reap(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         // An attached pane that reports an ending has not said which ending.
         // Ask before acting on it — this runs every frame, but only speaks to
@@ -24397,6 +24433,7 @@ impl Render for Workspace {
         // then shared by every surface that asks. See [`Workspace::rail_memo`].
         self.rail_frame = self.rail_frame.wrapping_add(1);
         self.reap(window, cx);
+        self.forget_pictures_out_of_sight(cx);
         // Holdings past their window, let go of here because the render pass is
         // the only clock a workspace has — and because the tray that offers them
         // is built further down this same pass, so it can never draw an offer

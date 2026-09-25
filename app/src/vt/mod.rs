@@ -91,6 +91,9 @@ trait Backend: Send + Sized {
     fn semantic_search_right(&self, point: Point) -> Point;
     #[cfg(test)]
     fn hyperlink(&self, point: Point) -> Option<Hyperlink>;
+    fn pictures(&self) -> Vec<Picture>;
+    fn picture_data(&self, key: PictureKey) -> Option<PictureData>;
+    fn forget_pictures(&mut self);
 }
 
 /// One terminal: a core, its parser, and the size it was last told.
@@ -345,6 +348,27 @@ impl Term {
             self.clamp_line(point.line),
             Column(point.column.0.min(self.last_column().0)),
         )
+    }
+
+    // --- pictures ------------------------------------------------------
+
+    /// The pictures a program has drawn that are on the screen now, lowest
+    /// first. Cheap: no pixels, only where each one is.
+    pub fn pictures(&self) -> Vec<Picture> {
+        self.core.pictures()
+    }
+
+    /// One image's pixels, if the key still names what the core holds — asked
+    /// only by a renderer that has no texture for it yet.
+    pub fn picture_data(&self, key: PictureKey) -> Option<PictureData> {
+        self.core.picture_data(key)
+    }
+
+    /// Forget every picture — from the screen and from the core. Pictures in
+    /// Terminal Delight are attentional: they are there while their pane is
+    /// looked at, and gone once it has been hidden.
+    pub fn forget_pictures(&mut self) {
+        self.core.forget_pictures();
     }
 
     /// The OSC 8 hyperlink on a cell, which only the tests read.

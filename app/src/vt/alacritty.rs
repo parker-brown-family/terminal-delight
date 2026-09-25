@@ -26,8 +26,8 @@ use alacritty_terminal::vte::ansi::{
 use super::Hyperlink;
 use super::{
     Backend, Cell, ClipboardType, Color, Column, Cursor, CursorShape, Event, Flags, Line, Listener,
-    NamedColor, Point, Rgb, Scroll, SelectionRange, SelectionType, Side, TermMode, TermSize,
-    WindowSize,
+    NamedColor, Picture, PictureData, PictureKey, Point, Rgb, Scroll, SelectionRange,
+    SelectionType, Side, TermMode, TermSize, WindowSize,
 };
 
 /// alacritty's view of a size.
@@ -286,6 +286,18 @@ impl Backend for Core {
     fn semantic_search_right(&self, point: Point) -> Point {
         point_out(self.term.semantic_search_right(point_in(point)))
     }
+
+    fn pictures(&self) -> Vec<Picture> {
+        // alacritty drops Kitty graphics in its parser, so there is never a
+        // picture to show. That is why it is the fallback.
+        Vec::new()
+    }
+
+    fn picture_data(&self, _key: PictureKey) -> Option<PictureData> {
+        None
+    }
+
+    fn forget_pictures(&mut self) {}
 
     #[cfg(test)]
     fn hyperlink(&self, point: Point) -> Option<Hyperlink> {

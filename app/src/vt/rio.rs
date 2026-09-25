@@ -16,6 +16,7 @@
 use std::sync::Arc;
 use std::time::Instant;
 
+use rio_vt::ansi::graphics::{kitty_overlay_geometry, OverlayViewport};
 use rio_vt::ansi::CursorShape as RShape;
 use rio_vt::clipboard::ClipboardType as RClipboard;
 use rio_vt::config::colors::{AnsiColor, ColorRgb};
@@ -32,8 +33,8 @@ use rio_vt::selection::{Selection, SelectionType as RType};
 use super::Hyperlink;
 use super::{
     Backend, Cell, ClipboardType, Color, Column, Cursor, CursorShape, Event, Flags, Line, Listener,
-    NamedColor, Point, Rgb, Scroll, SelectionRange, SelectionType, Side, TermMode, TermSize,
-    WindowSize,
+    NamedColor, Picture, PictureData, PictureKey, Point, Rgb, Scroll, SelectionRange,
+    SelectionType, Side, TermMode, TermSize, WindowSize,
 };
 
 /// The modes TD reads from rio-vt: bits 0 to 17, which rio numbers exactly as
@@ -401,6 +402,98 @@ impl Backend for Core {
         point(self.term.semantic_search_right(pos(at)))
     }
 
+    fn pictures(&self) -> Vec<Picture> {
+        let graphics = &self.term.graphics;
+        if graphics.kitty_placements.is_empty() {
+            return Vec::new();
+        }
+        // A placement's row is absolute: counted from the first line this
+        // terminal ever had, so it stays glued to its text as history grows
+        // and old lines are evicted. The screen's top is that far down, less
+        // however far the view is scrolled back.
+        let base = self.term.lines_evicted() as i64 + self.term.history_size() as i64;
+        let offset = self.term.display_offset() as i64;
+        let viewport = OverlayViewport {
+            cell_width: graphics.cell_width,
+            cell_height: graphics.cell_height,
+            origin_x: 0.0,
+            origin_y: 0.0,
+            history_size: base,
+            display_offset: offset,
+            screen_lines: self.term.screen_lines() as i64,
+        };
+        let mut out: Vec<Picture> = graphics
+            .kitty_placements
+            .values()
+            .filter_map(|placement| {
+                let image = graphics.kitty_images.get(&placement.image_id)?;
+                let geometry = kitty_overlay_geometry(
+                    placement,
+                    image.data.width,
+                    image.data.height,
+                    &viewport,
+                )?;
+                let line = placement.dest_row - (base - offset);
+                Some(Picture {
+                    key: PictureKey {
+                        image: placement.image_id,
+                        sent: image.transmission_time,
+                    },
+                    line: line as i32,
+                    column: placement.dest_col,
+                    offset: (
+                        geometry.x - placement.dest_col as f32 * graphics.cell_width,
+                        geometry.y - line as f32 * graphics.cell_height,
+                    ),
+                    size: (geometry.width, geometry.height),
+                    crop: geometry.source_rect,
+                    z: placement.z_index,
+                })
+            })
+            .collect();
+        // Lowest first, and a stable order among equals, so two pictures in
+        // one place do not trade places from frame to frame.
+        out.sort_by(|a, b| {
+            (a.z, a.line, a.column, a.key.image).cmp(&(b.z, b.line, b.column, b.key.image))
+        });
+        out
+    }
+
+    fn picture_data(&self, key: PictureKey) -> Option<PictureData> {
+        let image = self.term.graphics.kitty_images.get(&key.image)?;
+        if image.transmission_time != key.sent {
+            return None;
+        }
+        let data = &image.data;
+        // Three bytes a pixel or four: the protocol's `f=24` and `f=32`, and a
+        // decoded PNG, which rio-vt keeps as four.
+        let pixels = data.width * data.height;
+        let rgba = if data.pixels.len() == pixels * 4 {
+            data.pixels.clone()
+        } else if data.pixels.len() == pixels * 3 {
+            data.pixels
+                .as_chunks::<3>()
+                .0
+                .iter()
+                .flat_map(|&[r, g, b]| [r, g, b, 0xff])
+                .collect()
+        } else {
+            return None;
+        };
+        Some(PictureData {
+            width: data.width as u32,
+            height: data.height as u32,
+            rgba,
+        })
+    }
+
+    fn forget_pictures(&mut self) {
+        let graphics = &mut self.term.graphics;
+        graphics.kitty_placements.clear();
+        graphics.kitty_virtual_placements.clear();
+        graphics.delete_kitty_images(|_, _| true);
+    }
+
     #[cfg(test)]
     fn hyperlink(&self, at: Point) -> Option<Hyperlink> {
         let link = self
@@ -478,6 +571,88 @@ mod tests {
     fn a_cell_size_question_is_answered_from_the_cell_the_core_was_given() {
         let (replies, _) = replies_to(b"\x1b[16t");
         assert_eq!(replies, vec!["\x1b[6;16;8t".to_string()]);
+    }
+
+    /// A 2x1 picture — one red pixel, one green — placed at the cursor,
+    /// covering `c` columns and `r` rows.
+    fn place(term: &mut Term, c: u32, r: u32) {
+        let body = format!("\x1b_Gi=7,s=2,v=1,a=T,t=d,f=24,c={c},r={r};/wAAAP8A\x1b\\");
+        term.advance(body.as_bytes());
+    }
+
+    #[test]
+    fn a_placed_picture_is_on_the_screen_where_the_cursor_was() {
+        let mut term = Term::new(TermSize::new(40, 10, 8, 16), Arc::new(Heard::default()));
+        term.advance(b"\x1b[3;5H");
+        place(&mut term, 4, 2);
+        let pictures = term.pictures();
+        assert_eq!(pictures.len(), 1, "{pictures:?}");
+        let p = &pictures[0];
+        assert_eq!((p.line, p.column), (2, 4), "row 3, column 5, from zero");
+        assert_eq!(p.size, (32.0, 32.0), "4 cells of 8 by 2 cells of 16");
+        assert_eq!(p.crop, [0.0, 0.0, 1.0, 1.0]);
+
+        let data = term.picture_data(p.key).expect("its pixels");
+        assert_eq!((data.width, data.height), (2, 1));
+        assert_eq!(data.rgba, vec![0xff, 0, 0, 0xff, 0, 0xff, 0, 0xff]);
+    }
+
+    #[test]
+    fn a_picture_moves_up_with_its_text_as_output_scrolls() {
+        let mut term = Term::new(TermSize::new(40, 5, 8, 16), Arc::new(Heard::default()));
+        // Two rows tall, so that two lines up it is still half on the screen:
+        // a picture wholly above the top is not on the screen and is not
+        // reported.
+        term.advance(b"\x1b[2;1H");
+        place(&mut term, 2, 2);
+        assert_eq!(term.pictures()[0].line, 1);
+        term.advance(b"\x1b[5;1H\r\n\r\n");
+        assert_eq!(
+            term.pictures()[0].line,
+            -1,
+            "two lines up, its top row now above the screen"
+        );
+        term.scroll_display(crate::vt::Scroll::Delta(1));
+        assert_eq!(
+            term.pictures()[0].line,
+            0,
+            "and back in view, scrolled back one"
+        );
+    }
+
+    #[test]
+    fn a_resent_image_gets_a_new_key_so_a_renderer_redraws_it() {
+        let mut term = Term::new(TermSize::new(40, 10, 8, 16), Arc::new(Heard::default()));
+        place(&mut term, 2, 1);
+        let first = term.pictures()[0].key;
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        place(&mut term, 2, 1);
+        let second = term.pictures()[0].key;
+        assert_ne!(first, second);
+        assert!(
+            term.picture_data(first).is_none(),
+            "an old key must not hand back new pixels"
+        );
+    }
+
+    #[test]
+    fn forgetting_pictures_takes_them_off_the_screen_and_out_of_the_core() {
+        let mut term = Term::new(TermSize::new(40, 10, 8, 16), Arc::new(Heard::default()));
+        place(&mut term, 2, 1);
+        let key = term.pictures()[0].key;
+        term.forget_pictures();
+        assert!(term.pictures().is_empty());
+        assert!(term.picture_data(key).is_none(), "the pixels are gone too");
+    }
+
+    #[test]
+    fn a_picture_needs_a_cell_size_to_be_placed() {
+        // rio-vt's own default is a 0x0 cell, which acknowledges a picture and
+        // then drops it. TD always tells the core its cell; this is why.
+        let heard = Arc::new(Heard::default());
+        let mut term = Term::new(TermSize::new(40, 10, 0, 0), heard.clone());
+        place(&mut term, 2, 1);
+        assert!(term.pictures().is_empty());
     }
 
     #[test]

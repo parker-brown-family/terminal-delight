@@ -5775,6 +5775,7 @@ dependencies = [
  "gpui",
  "gpui_platform",
  "gpui_wgpu",
+ "image",
  "libc",
  "parking_lot",
  "polling",

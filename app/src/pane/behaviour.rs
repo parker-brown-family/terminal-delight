@@ -1326,3 +1326,45 @@ fn a_markdown_block_opens_its_note_box_from_the_button_under_the_pointer(cx: &mu
     );
     assert_eq!(report["notes"], 0, "and nothing was written");
 }
+
+/// A program draws a picture with the Kitty graphics protocol — here two
+/// pixels, red and green, over four cells by two — and the pane builds one
+/// texture for it and lays it over the grid. Then the pane's tab is hidden,
+/// which is the one thing that makes a picture go: the texture is dropped and
+/// the core forgets the image, so coming back shows only the text.
+///
+/// rio-vt only: alacritty drops the picture in its parser, so on the fallback
+/// there is nothing to show.
+#[cfg(not(feature = "core-alacritty"))]
+#[gpui::test]
+fn a_picture_a_program_draws_is_shown_and_then_forgotten_when_hidden(cx: &mut TestAppContext) {
+    let mut pane = Pane::running(
+        cx,
+        "printf '\\033_Gi=5,s=2,v=1,a=T,t=d,f=24,c=4,r=2;/wAAAP8A\\033\\\\'; echo; echo ready; exec cat",
+    );
+    pane.wait_for("ready");
+    pane.redraw();
+    assert_eq!(
+        pane.read(|v| v.session.term.lock().pictures().len()),
+        1,
+        "the core holds the picture"
+    );
+    assert_eq!(
+        pane.read(|v| v.pictures.len()),
+        1,
+        "one texture for one picture on the screen"
+    );
+
+    let view = pane.view.clone();
+    view.update(pane.cx, |v, cx| v.forget_pictures(cx));
+    pane.redraw();
+    assert_eq!(pane.read(|v| v.pictures.len()), 0, "the texture is gone");
+    assert!(
+        pane.read(|v| v.session.term.lock().pictures().is_empty()),
+        "and so is the image, so a redraw cannot bring it back"
+    );
+    assert!(
+        pane.rows().iter().any(|r| r.contains("ready")),
+        "the text is untouched"
+    );
+}
