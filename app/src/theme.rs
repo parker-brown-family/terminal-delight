@@ -4690,3 +4690,27 @@ pub fn init(cx: &mut App) {
     })
     .detach();
 }
+
+/// What [`init`] installs, from the embedded themes alone, with `outer` as the
+/// window's choice: no theme file read or seeded, no hot-reload watcher. For a
+/// test that builds a real pane, which must neither read the person's own
+/// theme nor write one into their config.
+#[cfg(test)]
+pub(crate) fn init_embedded(cx: &mut App, outer: ThemeChoice) {
+    let builtins = BUILTIN_THEMES
+        .iter()
+        .map(|(id, src)| {
+            (
+                (*id).to_string(),
+                Arc::new(parse(src).expect("embedded theme parses")),
+            )
+        })
+        .collect();
+    cx.set_global(ThemeRegistry {
+        builtins,
+        custom: Arc::new(parse(DEFAULT_THEME_TOML).expect("embedded theme parses")),
+    });
+    let active = resolve(cx, &outer);
+    cx.set_global(OuterChoice(outer));
+    cx.set_global(ActiveTheme(active));
+}

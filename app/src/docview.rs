@@ -269,6 +269,17 @@ pub fn engine(cx: &mut App) -> EngineAnswer {
     answer
 }
 
+/// Put `answer` where [`engine`] keeps the one it made, as though it had
+/// made it: for a test, which must neither look for a browser on the machine
+/// nor read the person's `documents.toml`. An `Err` stands for 30 seconds of
+/// the machine's clock, as a real one does, far longer than any test.
+#[cfg(test)]
+pub(crate) fn set_engine(cx: &mut App, answer: EngineAnswer) {
+    cx.set_global(Engines {
+        slot: Some((answer, Instant::now())),
+    });
+}
+
 /// For the router, before it places an HTML document: is there an engine to
 /// draw it? A cached PATH lookup; no browser starts.
 pub fn html_ready(cx: &mut App) -> Result<(), Unavailable> {
@@ -640,6 +651,14 @@ impl DocumentView {
 
     pub fn key(&mut self, ks: &Keystroke, cx: &mut Context<Self>) -> bool {
         self.backend.key(ks, self.seat == DocSeat::Float, cx)
+    }
+
+    /// Which seat the view is in, and the palette it was last handed, for a
+    /// test driving a pane: both are the pane's decisions, and neither shows
+    /// in anything else a test can read.
+    #[cfg(test)]
+    pub(crate) fn seat_and_theme(&self) -> (DocSeat, Option<Arc<Theme>>) {
+        (self.seat, self.theme.clone())
     }
 
     /// Whether a note is being written in a brief's note box: while it is,

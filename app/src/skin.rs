@@ -1870,6 +1870,27 @@ pub fn init(cx: &mut App) {
     .detach();
 }
 
+/// What [`init`] installs on a machine with no `skin.toml` — follow the
+/// theme's skin — from the builtins alone, with no file read and no watcher.
+/// For a test that builds a real pane.
+#[cfg(test)]
+pub(crate) fn init_embedded(cx: &mut App) {
+    let builtins = BUILTIN_SKINS
+        .iter()
+        .map(|(id, src)| {
+            (
+                (*id).to_string(),
+                Arc::new(parse(src).expect("embedded skin parses")),
+            )
+        })
+        .collect();
+    cx.set_global(SkinRegistry {
+        builtins,
+        custom: Arc::new(SkinSpec::default()),
+        active_id: FOLLOW_THEME.to_string(),
+    });
+}
+
 // ---------------------------------------------------------------------------
 // The `skin` verb — resolve headlessly and print what came out
 // ---------------------------------------------------------------------------
