@@ -1036,6 +1036,21 @@ fn maybe_mode_theme(base: &Theme, mode: &PaneMode, inherit: bool, tint: bool) ->
     }
 }
 
+/// The arrow a resize shows: the diagonal that runs through the corner being
+/// held, or the axis of the edge.
+fn resize_cursor(e: crate::docopen::Edges) -> gpui::CursorStyle {
+    let vertical = e.top || e.bottom;
+    let horizontal = e.left || e.right;
+    match (horizontal, vertical) {
+        (true, true) if (e.left && e.top) || (e.right && e.bottom) => {
+            gpui::CursorStyle::ResizeUpLeftDownRight
+        }
+        (true, true) => gpui::CursorStyle::ResizeUpRightDownLeft,
+        (false, true) => gpui::CursorStyle::ResizeUpDown,
+        _ => gpui::CursorStyle::ResizeLeftRight,
+    }
+}
+
 /// Whether a pointer lands on a floating square, as the bent glass shows it.
 ///
 /// `screen` is the tube in window pixels, `k` its curvature, `rect` the square
@@ -5700,12 +5715,7 @@ impl TerminalView {
             (None, Some(crate::docopen::FloatHit::Resize(e))) => e,
             _ => return None,
         };
-        let style = match (edges.left, edges.right, edges.bottom) {
-            (true, _, true) => gpui::CursorStyle::ResizeUpRightDownLeft,
-            (_, true, true) => gpui::CursorStyle::ResizeUpLeftDownRight,
-            (false, false, true) => gpui::CursorStyle::ResizeUpDown,
-            _ => gpui::CursorStyle::ResizeLeftRight,
-        };
+        let style = resize_cursor(edges);
         Some(
             div()
                 .absolute()
@@ -13675,21 +13685,52 @@ mod tests {
             Some(FloatHit::Close),
             "the button keeps its edge pixels"
         );
-        assert_eq!(
-            hit(498.0, 250.0),
+        let grip = |left, right, top, bottom| {
             Some(FloatHit::Resize(Edges {
-                left: false,
-                right: true,
-                bottom: false
+                left,
+                right,
+                top,
+                bottom,
             }))
+        };
+        assert_eq!(hit(498.0, 250.0), grip(false, true, false, false));
+        assert_eq!(hit(102.0, 396.0), grip(true, false, false, true));
+        assert_eq!(
+            hit(102.0, 102.0),
+            grip(true, false, true, false),
+            "top left, over the strip"
+        );
+        let arrow = |left, right, top, bottom| {
+            super::resize_cursor(Edges {
+                left,
+                right,
+                top,
+                bottom,
+            })
+        };
+        assert_eq!(
+            arrow(true, false, true, false),
+            gpui::CursorStyle::ResizeUpLeftDownRight
         );
         assert_eq!(
-            hit(102.0, 396.0),
-            Some(FloatHit::Resize(Edges {
-                left: true,
-                right: false,
-                bottom: true
-            }))
+            arrow(false, true, false, true),
+            gpui::CursorStyle::ResizeUpLeftDownRight
+        );
+        assert_eq!(
+            arrow(false, true, true, false),
+            gpui::CursorStyle::ResizeUpRightDownLeft
+        );
+        assert_eq!(
+            arrow(true, false, false, true),
+            gpui::CursorStyle::ResizeUpRightDownLeft
+        );
+        assert_eq!(
+            arrow(false, false, false, true),
+            gpui::CursorStyle::ResizeUpDown
+        );
+        assert_eq!(
+            arrow(true, false, false, false),
+            gpui::CursorStyle::ResizeLeftRight
         );
         assert_eq!(hit(300.0, 250.0), Some(FloatHit::Body));
         assert_eq!(hit(300.0, 110.0), Some(FloatHit::Strip));
@@ -13861,9 +13902,10 @@ mod tests {
         let flat_zone = |pos: (f32, f32)| {
             let drawn = crate::docopen::float_hit_at(&zones, pos.0, pos.1).map(|z| z.hit);
             if matches!(drawn, Some(FloatHit::Strip) | Some(FloatHit::Body)) {
-                if let Some(e) =
-                    crate::docopen::float_edge_at(rect, pos.0 - screen.0, pos.1 - screen.1)
-                {
+                // Un-bent the same way a press is (the identity, up to the
+                // float rounding a boundary sample can land on).
+                let (fx, fy) = crate::workbench::unwarp(screen, 0.0, 0.0, pos.0, pos.1);
+                if let Some(e) = crate::docopen::float_edge_at(rect, fx - screen.0, fy - screen.1) {
                     return Some(FloatHit::Resize(e));
                 }
             }

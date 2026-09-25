@@ -493,11 +493,13 @@ impl FloatDrag {
 }
 
 /// Which edges of the square a resize moves. The top edge is the strip, and
-/// pressing the strip moves the square, so the top never resizes.
+/// pressing the strip moves the square, so the top only ever moves as half of
+/// a top corner.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Edges {
     pub left: bool,
     pub right: bool,
+    pub top: bool,
     pub bottom: bool,
 }
 
@@ -505,19 +507,38 @@ pub struct Edges {
 /// pixels: wide enough to find with a trackpad, narrow enough to leave the
 /// document its clicks.
 pub const FLOAT_GRIP: f32 = 7.0;
+/// How far in from a corner a press grabs the corner, on both axes: twice the
+/// edge's grip, because a corner is the thing a hand reaches for.
+pub const FLOAT_CORNER: f32 = 14.0;
 /// The smallest a resize leaves the square: the strip's controls still fit.
 pub const FLOAT_MIN_W: f32 = 200.0;
 pub const FLOAT_MIN_H: f32 = 120.0;
 
-/// The edges a screen-relative point grabs: within [`FLOAT_GRIP`] of the
-/// left, right or bottom border, inside the square. A bottom corner grabs two.
+/// The edges a screen-relative point grabs, inside the square. Any of the
+/// four corners, within [`FLOAT_CORNER`] of it on both axes, grabs the two
+/// edges that meet there. Otherwise the left, right or bottom border within
+/// [`FLOAT_GRIP`] grabs that edge alone; the top border between its corners
+/// is the strip, which moves the square.
 pub fn float_edge_at(r: FloatRect, x: f32, y: f32) -> Option<Edges> {
     if !r.contains(x, y) {
         return None;
     }
+    let near_left = x < r.x + FLOAT_CORNER;
+    let near_right = x >= r.x + r.w - FLOAT_CORNER;
+    let near_top = y < r.y + FLOAT_CORNER;
+    let near_bottom = y >= r.y + r.h - FLOAT_CORNER;
+    if (near_left || near_right) && (near_top || near_bottom) {
+        return Some(Edges {
+            left: near_left,
+            right: near_right,
+            top: near_top,
+            bottom: near_bottom,
+        });
+    }
     let edges = Edges {
         left: x < r.x + FLOAT_GRIP,
         right: x >= r.x + r.w - FLOAT_GRIP,
+        top: false,
         bottom: y >= r.y + r.h - FLOAT_GRIP,
     };
     (edges.left || edges.right || edges.bottom).then_some(edges)
@@ -566,6 +587,12 @@ pub fn drag_to(d: &mut FloatDrag, flat: (f32, f32), screen_w: f32, screen_h: f32
     }
     if edges.bottom {
         r.h = (o.h + dy).min(screen_h - o.y).max(FLOAT_MIN_H);
+    }
+    if edges.top {
+        let bottom_side = o.y + o.h;
+        let y = (o.y + dy).min(bottom_side - FLOAT_MIN_H).max(0.0);
+        r.y = y;
+        r.h = bottom_side - y;
     }
     clamp_float(r, screen_w, screen_h)
 }
@@ -635,122 +662,90 @@ mod tests {
         }
     }
 
-    /// Parker: "gotta be able to RESIZE the floating box". The left, right
-    /// and bottom edges grab, a bottom corner grabs two, and the top is the
-    /// strip, which moves the square rather than resizing it.
+    fn e(left: bool, right: bool, top: bool, bottom: bool) -> Edges {
+        Edges {
+            left,
+            right,
+            top,
+            bottom,
+        }
+    }
+
+    /// Parker: "gotta be able to RESIZE the floating box", then "gotta resize
+    /// corners from ANY of the 4 corners". Each corner grabs the two edges
+    /// that meet there; the left, right and bottom edges grab alone; the top
+    /// between its corners is the strip, which moves the square.
     #[test]
     fn a_float_edge_is_grabbed_within_its_grip() {
         let r = sq();
-        let e = |x, y| float_edge_at(r, x, y);
+        let at = |x, y| float_edge_at(r, x, y);
+        assert_eq!(at(102.0, 200.0), Some(e(true, false, false, false)));
+        assert_eq!(at(498.0, 200.0), Some(e(false, true, false, false)));
+        assert_eq!(at(300.0, 346.0), Some(e(false, false, false, true)));
         assert_eq!(
-            e(102.0, 200.0),
-            Some(Edges {
-                left: true,
-                right: false,
-                bottom: false
-            })
+            at(105.0, 55.0),
+            Some(e(true, false, true, false)),
+            "top left"
         );
         assert_eq!(
-            e(498.0, 200.0),
-            Some(Edges {
-                left: false,
-                right: true,
-                bottom: false
-            })
+            at(492.0, 55.0),
+            Some(e(false, true, true, false)),
+            "top right"
         );
         assert_eq!(
-            e(300.0, 346.0),
-            Some(Edges {
-                left: false,
-                right: false,
-                bottom: true
-            })
+            at(105.0, 342.0),
+            Some(e(true, false, false, true)),
+            "bottom left"
         );
         assert_eq!(
-            e(497.0, 347.0),
-            Some(Edges {
-                left: false,
-                right: true,
-                bottom: true
-            })
+            at(492.0, 342.0),
+            Some(e(false, true, false, true)),
+            "bottom right"
         );
-        assert_eq!(e(300.0, 52.0), None, "the top is the strip");
-        assert_eq!(e(300.0, 200.0), None, "the middle is the document");
-        assert_eq!(e(90.0, 200.0), None, "outside the square grabs nothing");
+        assert_eq!(
+            at(300.0, 52.0),
+            None,
+            "the top between its corners is the strip"
+        );
+        assert_eq!(at(300.0, 200.0), None, "the middle is the document");
+        assert_eq!(at(90.0, 200.0), None, "outside the square grabs nothing");
     }
 
     #[test]
     fn a_float_resizes_from_the_edge_it_was_grabbed_by() {
         let (sw, sh) = (1000.0, 800.0);
         // The bottom-right corner, dragged out 150 by 80.
-        let mut d = FloatDrag::resize(
-            (498.0, 348.0),
-            sq(),
-            Edges {
-                left: false,
-                right: true,
-                bottom: true,
-            },
-        );
+        let mut d = FloatDrag::resize((498.0, 348.0), sq(), e(false, true, false, true));
         let r = drag_to(&mut d, (648.0, 428.0), sw, sh);
         assert_eq!((r.x, r.y, r.w, r.h), (100.0, 50.0, 550.0, 380.0));
+        // The top-left corner, dragged up and left: the bottom-right stays put.
+        let mut d = FloatDrag::resize((102.0, 52.0), sq(), e(true, false, true, false));
+        let r = drag_to(&mut d, (72.0, 22.0), sw, sh);
+        assert_eq!((r.x, r.y, r.w, r.h), (70.0, 20.0, 430.0, 330.0));
+        // The top-right corner shrinks it no smaller than the minimum, and the
+        // bottom stays where it was.
+        let mut d = FloatDrag::resize((498.0, 52.0), sq(), e(false, true, true, false));
+        let r = drag_to(&mut d, (0.0, 900.0), sw, sh);
+        assert_eq!((r.w, r.h, r.y + r.h), (FLOAT_MIN_W, FLOAT_MIN_H, 350.0));
         // The left edge, dragged right: the right side stays put.
-        let mut d = FloatDrag::resize(
-            (101.0, 200.0),
-            sq(),
-            Edges {
-                left: true,
-                right: false,
-                bottom: false,
-            },
-        );
+        let mut d = FloatDrag::resize((101.0, 200.0), sq(), e(true, false, false, false));
         let r = drag_to(&mut d, (151.0, 200.0), sw, sh);
-        assert_eq!((r.x, r.w), (150.0, 350.0));
-        assert_eq!(r.x + r.w, 500.0);
+        assert_eq!((r.x, r.w, r.x + r.w), (150.0, 350.0, 500.0));
         // Never smaller than the minimum, from either side.
-        let mut d = FloatDrag::resize(
-            (101.0, 200.0),
-            sq(),
-            Edges {
-                left: true,
-                right: false,
-                bottom: false,
-            },
-        );
+        let mut d = FloatDrag::resize((101.0, 200.0), sq(), e(true, false, false, false));
         let r = drag_to(&mut d, (900.0, 200.0), sw, sh);
         assert_eq!((r.w, r.x + r.w), (FLOAT_MIN_W, 500.0));
-        let mut d = FloatDrag::resize(
-            (300.0, 348.0),
-            sq(),
-            Edges {
-                left: false,
-                right: false,
-                bottom: true,
-            },
-        );
+        let mut d = FloatDrag::resize((300.0, 348.0), sq(), e(false, false, false, true));
         assert_eq!(drag_to(&mut d, (300.0, 0.0), sw, sh).h, FLOAT_MIN_H);
         // Never past the screen.
-        let mut d = FloatDrag::resize(
-            (498.0, 348.0),
-            sq(),
-            Edges {
-                left: false,
-                right: true,
-                bottom: true,
-            },
-        );
+        let mut d = FloatDrag::resize((498.0, 348.0), sq(), e(false, true, false, true));
         let r = drag_to(&mut d, (5000.0, 5000.0), sw, sh);
         assert!(r.x + r.w <= sw && r.y + r.h <= sh, "{r:?}");
+        let mut d = FloatDrag::resize((102.0, 52.0), sq(), e(true, false, true, false));
+        let r = drag_to(&mut d, (-500.0, -500.0), sw, sh);
+        assert!(r.x >= 0.0 && r.y >= 0.0, "{r:?}");
         // A wobble under the engage distance changes nothing.
-        let mut d = FloatDrag::resize(
-            (498.0, 348.0),
-            sq(),
-            Edges {
-                left: false,
-                right: true,
-                bottom: true,
-            },
-        );
+        let mut d = FloatDrag::resize((498.0, 348.0), sq(), e(false, true, false, true));
         assert_eq!(drag_to(&mut d, (501.0, 350.0), sw, sh), sq());
     }
 
