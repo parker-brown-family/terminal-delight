@@ -57,6 +57,14 @@ jobs:
       - name: Let Chromium start its sandbox
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
+      # The first Chromium launch on a fresh runner pays one-time costs (the
+      # font cache, and whatever else a cold start sets up) that once took
+      # longer than the engine's 30 s start limit, failing the first real-browser
+      # test (run 36112126088). Paying them here keeps that out of the tests; a
+      # launch that fails here is left for the tests to report.
+      - name: Warm Chromium once
+        run: timeout 180 chromium --headless=new --no-first-run --disable-gpu --dump-dom about:blank >/dev/null 2>&1 || true
+
       - name: Test
         run: cargo test --locked
 
