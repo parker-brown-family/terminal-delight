@@ -85,3 +85,13 @@
   .defs { grid-template-columns: minmax(0, 1fr); gap: 2px 0; }
   .defs dd { margin-bottom: 8px; }
 }
+
+/* The CRT page's barrel figure (docsite/tools/barrel-figure.mjs): the frame is
+   the pane, .tube is where content lands, the corners left over are black glass. */
+.barrel .frame { fill: #050806; stroke: var(--line-2); }
+.barrel .tube { fill: color-mix(in srgb, var(--acc) 7%, #06100a); stroke: none; }
+.barrel .g { stroke: var(--ink-3); stroke-width: .6; fill: none; opacity: .75; }
+.barrel .g2 { stroke: var(--acc); stroke-width: 1.2; fill: none; }
+.barrel text { font-family: var(--mono); }
+.barrel .t1 { fill: var(--ink); font-size: 13px; font-weight: 600; }
+.barrel .t2 { fill: var(--ink-3); font-size: 11px; }
