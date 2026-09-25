@@ -105,6 +105,36 @@ The true warp of live text needs the HTML-in-Canvas API (`texElementImage2D`).
 It is in Chrome 152 and Chromium 151 on this box, but only behind
 `--enable-blink-features=CanvasDrawElement`, so visitors do not have it.
 
+## Round four (2026-09-25): the page bends, the text survives
+
+Glass-only was rejected: *"nothing is curved though -- the warped border
+doesn't curve anything inside of it"*. curved-glass-web's engine
+(`packages/webgl-warp`) never bends the DOM. It draws content into a canvas
+and bends that in a shader with LINEAR sampling. Our content is HTML, so
+`assets/td-glass.js` draws it into the canvas by snapshot: an SVG
+foreignObject of the tube with every stylesheet inlined (fonts as data:),
+2× resolution, one tall texture, and the shader samples the scrolled slice.
+A throwaway spike proved it before the build; Parker: *"heck to the yes!
+Send it!"*
+
+- Clicks are mapped through the barrel to the element drawn under the
+  pointer. Only pointer-made clicks are redirected. Redirecting a label's
+  own follow-up click cancelled the radio, and the verifier caught it.
+- Hover re-snapshots when the pointer reaches something clickable.
+- Animated things are `<canvas data-glass-live>` islands, copied into the
+  texture as they draw. The first is the Global card's title: the app's nine
+  names every 1.5 s, through a burst of tracking-bar squiggle.
+- Fonts are self-hosted (`assets/fonts`, OFL, 80 KB). The four pages no
+  longer load anything from Google, and their CSP is `font-src 'self'`.
+- Fallback: no WebGL2, a pane under 600px, paper, or a page taller than the
+  GPU's texture limit gets the flat glass overlay.
+- `verify-site.mjs`: 259 checks. The corner case, a 10px channel dot where
+  the page under the pointer is something else, is proven by mutation. With
+  the redirect off exactly that check fails.
+
+Not done: tiling for a docs page taller than one texture (Chrome allows
+8192–16384px). Hover redraws are about 100 ms behind the pointer.
+
 ## Open — Parker's call
 
 - info's `/docsite/` links switch to the subdomain when this branch merges.
