@@ -1050,15 +1050,32 @@ fn float_hit_through_glass(
     zones: &[crate::docopen::FloatZone],
     pos: (f32, f32),
 ) -> Option<(crate::docopen::FloatZone, (f32, f32))> {
+    use crate::docopen::FloatHit;
     let (fx, fy) = crate::workbench::unwarp(screen, k.0, k.1, pos.0, pos.1);
-    if let Some(zone) = crate::docopen::float_hit_at(zones, fx, fy) {
-        return Some((zone, (fx, fy)));
+    let zone = crate::docopen::float_hit_at(zones, fx, fy);
+    // A button keeps its whole face, even the pixels that lie in an edge's
+    // grip; past the buttons, an edge outranks the strip and the document.
+    if let Some(z) = zone.filter(|z| !matches!(z.hit, FloatHit::Strip | FloatHit::Body)) {
+        return Some((z, (fx, fy)));
+    }
+    let (x, y, w, h) = screen;
+    let r = crate::docopen::clamp_float(rect, w, h);
+    if let Some(edges) = crate::docopen::float_edge_at(r, fx - x, fy - y) {
+        let grip = crate::docopen::FloatZone {
+            x: x + r.x,
+            y: y + r.y,
+            w: r.w,
+            h: r.h,
+            hit: FloatHit::Resize(edges),
+        };
+        return Some((grip, (fx, fy)));
+    }
+    if let Some(z) = zone {
+        return Some((z, (fx, fy)));
     }
     if !point_on_float(screen, k, rect, pos) {
         return None;
     }
-    let (x, y, w, h) = screen;
-    let r = crate::docopen::clamp_float(rect, w, h);
     let body = crate::docopen::FloatZone {
         x: x + r.x,
         y: y + r.y,
@@ -5481,6 +5498,9 @@ impl TerminalView {
             FloatHit::Strip => {
                 float.drag = Some(crate::docopen::FloatDrag::new(flat, float.rect));
             }
+            FloatHit::Resize(edges) => {
+                float.drag = Some(crate::docopen::FloatDrag::resize(flat, float.rect, edges));
+            }
             FloatHit::Body => {
                 let at = gpui::point(px(flat.0 - zone.x), px(flat.1 - zone.y));
                 let mods = ev.modifiers;
@@ -5565,6 +5585,43 @@ impl TerminalView {
     ) {
         self.float_drag_end(cx);
         self.doc_face_release(cx);
+    }
+
+    /// The pointer's shape over the square's edges: a resize arrow while the
+    /// un-bent pointer is in an edge's grip, or while a resize is held. Asked
+    /// against a hitbox covering the whole screen, the bench's pointer-hook
+    /// pattern, because a cursor asked for by the square's own layout box
+    /// would sit where gpui laid the square out, not where the glass shows it.
+    fn float_resize_cursor(&self) -> Option<gpui::AnyElement> {
+        let float = self.float.as_ref()?;
+        let edges = match (float.drag.and_then(|d| d.edges), float.hover) {
+            (Some(e), _) => e,
+            (None, Some(crate::docopen::FloatHit::Resize(e))) => e,
+            _ => return None,
+        };
+        let style = match (edges.left, edges.right, edges.bottom) {
+            (true, _, true) => gpui::CursorStyle::ResizeUpRightDownLeft,
+            (_, true, true) => gpui::CursorStyle::ResizeUpLeftDownRight,
+            (false, false, true) => gpui::CursorStyle::ResizeUpDown,
+            _ => gpui::CursorStyle::ResizeLeftRight,
+        };
+        Some(
+            div()
+                .absolute()
+                .inset_0()
+                .child(
+                    canvas(
+                        |bounds, window, _cx| {
+                            window.insert_hitbox(bounds, gpui::HitboxBehavior::Normal)
+                        },
+                        move |_bounds, hitbox, window, _cx| {
+                            window.set_cursor_style(style, &hitbox);
+                        },
+                    )
+                    .size_full(),
+                )
+                .into_any_element(),
+        )
     }
 
     /// The pointer moved over the square: remember which control it is on, so
@@ -10191,6 +10248,9 @@ impl Render for TerminalView {
             doc.view.update(cx, |v, cx| v.set_theme(theme, cx));
         }
         let float_el = self.float_el(&th, face_now, cx);
+        let float_cursor = (face_now == crate::workbench::Face::Terminal)
+            .then(|| self.float_resize_cursor())
+            .flatten();
         // Inside the same padding the grid keeps off the bent edges, so the
         // corners of a page are not the part the barrel pass pushes out of
         // the tube.
@@ -10394,6 +10454,7 @@ impl Render for TerminalView {
                     // glow from smearing over the header, where the barrel pass
                     // never straightens anything.
                     .children(float_el)
+                    .children(float_cursor)
                     // The tube fires. Last child of the SCREEN, so it paints
                     // over the grid but stays inside the registered warp tube —
                     // the curvature and scanlines in the effect are the shader
@@ -13368,6 +13429,71 @@ mod tests {
 
     // ── the floating document ───────────────────────────────────────────────
 
+    /// Parker: "gotta be able to RESIZE the floating box". An edge's grip
+    /// outranks the strip and the document under it, and never a button: the
+    /// ✕ at the strip's right end keeps every pixel of its face.
+    #[test]
+    fn an_edge_resizes_the_square_but_never_steals_a_button() {
+        use crate::docopen::{Edges, FloatHit, FloatRect, FloatZone};
+        let screen = (0.0, 0.0, 1000.0, 800.0);
+        let rect = FloatRect {
+            x: 100.0,
+            y: 100.0,
+            w: 400.0,
+            h: 300.0,
+        };
+        let zones = [
+            FloatZone {
+                x: 100.0,
+                y: 100.0,
+                w: 400.0,
+                h: 22.0,
+                hit: FloatHit::Strip,
+            },
+            FloatZone {
+                x: 440.0,
+                y: 100.0,
+                w: 60.0,
+                h: 22.0,
+                hit: FloatHit::Close,
+            },
+            FloatZone {
+                x: 100.0,
+                y: 122.0,
+                w: 400.0,
+                h: 278.0,
+                hit: FloatHit::Body,
+            },
+        ];
+        let hit = |x: f32, y: f32| {
+            float_hit_through_glass(screen, (0.0, 0.0), rect, &zones, (x, y)).map(|(z, _)| z.hit)
+        };
+        assert_eq!(
+            hit(498.0, 110.0),
+            Some(FloatHit::Close),
+            "the button keeps its edge pixels"
+        );
+        assert_eq!(
+            hit(498.0, 250.0),
+            Some(FloatHit::Resize(Edges {
+                left: false,
+                right: true,
+                bottom: false
+            }))
+        );
+        assert_eq!(
+            hit(102.0, 396.0),
+            Some(FloatHit::Resize(Edges {
+                left: true,
+                right: false,
+                bottom: true
+            }))
+        );
+        assert_eq!(hit(300.0, 250.0), Some(FloatHit::Body));
+        assert_eq!(hit(300.0, 110.0), Some(FloatHit::Strip));
+        assert_eq!(hit(50.0, 50.0), None);
+    }
+
     /// Parker, at scale 1.6: the Alt chip's box sat on the line at the top of
     /// the pane and a little higher every row down, half a row off by the
     /// bottom. gpui draws each row at its height rounded to whole device
@@ -13528,8 +13654,19 @@ mod tests {
                 hit: FloatHit::Body,
             },
         ];
-        let flat_zone =
-            |pos: (f32, f32)| crate::docopen::float_hit_at(&zones, pos.0, pos.1).map(|z| z.hit);
+        // Flat, a press finds the zone it drew, except that an edge's grip
+        // outranks the strip and the document (the resize), never a button.
+        let flat_zone = |pos: (f32, f32)| {
+            let drawn = crate::docopen::float_hit_at(&zones, pos.0, pos.1).map(|z| z.hit);
+            if matches!(drawn, Some(FloatHit::Strip) | Some(FloatHit::Body)) {
+                if let Some(e) =
+                    crate::docopen::float_edge_at(rect, pos.0 - screen.0, pos.1 - screen.1)
+                {
+                    return Some(FloatHit::Resize(e));
+                }
+            }
+            drawn
+        };
         let bent = |k: (f32, f32), pos: (f32, f32)| {
             float_hit_through_glass(screen, k, rect, &zones, pos).map(|(z, _)| z.hit)
         };
