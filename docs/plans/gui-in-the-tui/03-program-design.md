@@ -5,6 +5,8 @@ _Gate 3. Two halves were designed in parallel against the build worktree at de77
 - _`03-program-design.td-wiring.md` — the click to the view: router, classifier, floating square, `Document` face, split, saved layout, chip, menu, keys, and the size answers._
 - _`03-program-design.docs.md` — the view and everything under it: image, Markdown and HTML backends, the page engine and its Chromium client, the page cache, and TD's notes layer._
 
+_**As built:** where the code went another way, and why, is `05-as-built.md`; read it before trusting a `file:line` here._
+
 _This page is the join: where the halves meet, the rulings that reconcile them, the combined file list, the test plan's shape, and the least-confident decisions merged and ranked. Where this page and a half disagree, this page wins._
 
 ## Rulings that join the halves
