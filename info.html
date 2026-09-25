@@ -53,8 +53,10 @@
        app/themes/*.toml. Picking a chip swaps the whole set. */
     .win {
       --w-bg: #03100a; --w-surface: #071a10; --w-text: #86efac; --w-acc: #22c55e; --w-faint: #14401f; --w-cur: #4ade80; --w-you: #7aa5ff; --w-warn: #f5c542;
+      /* the chrome's status marks keep their meaning whatever the palette */
+      --w-red: #e5484d; --w-green: #3fb950; --w-blue: #4f8ff7;
       margin: 46px auto 0; max-width: 1020px; text-align: left;
-      font: 11px/1.45 var(--mono); color: var(--w-text);
+      font: 11px/1.4 var(--sans); color: var(--w-text);
       background: var(--w-bg); border: 1px solid color-mix(in srgb, var(--w-acc) 45%, var(--w-faint)); border-radius: 14px;
       box-shadow: 0 40px 90px -40px rgba(0, 0, 0, .85), 0 0 0 1px rgba(0, 0, 0, .3);
       overflow: hidden; transition: background .35s, color .35s, border-color .35s;
@@ -66,68 +68,145 @@
     .win[data-wear="quiet-command"] { --w-bg: #f3f6f9; --w-surface: #ffffff; --w-text: #101828; --w-acc: #2f6fdd; --w-faint: #d9e1ea; --w-cur: #2f6fdd; --w-you: #2f6fdd; --w-warn: #b7791f; }
     .win[data-wear="tactical-overdrive"] { --w-bg: #061015; --w-surface: #101f26; --w-text: #eefaff; --w-acc: #31d7ff; --w-faint: #1b3947; --w-cur: #7df2ff; --w-you: #ffb86b; --w-warn: #ffd166; }
 
-    .w-top { display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 12px; border-bottom: 1px solid var(--w-faint); }
-    .w-top .mk { width: 14px; height: 14px; border-radius: 3px; background: linear-gradient(90deg, var(--w-acc) 0 48%, transparent 48% 56%, var(--w-cur) 56%); }
-    .w-tab { padding: 3px 9px; border: 1px solid var(--w-faint); border-radius: 5px; opacity: .7; }
-    .w-tab.on { opacity: 1; border-color: var(--w-acc); background: color-mix(in srgb, var(--w-acc) 14%, transparent); }
-    .w-top .sp { flex: 1; }
-    .w-top .bat { padding: 2px 7px; border: 1px solid var(--w-faint); border-radius: 5px; }
+    /* Drawn from the app as it looks after the chrome rework (Parker's
+       captures of 2026-09-25): the worktree chip and activity strip across
+       the top, the grouped task tree with its status marks and vitals, the
+       pane with TERM/BENCH, the bench's strip, WOKEN card, response card and
+       composer, the STANDS NOW rail, and the counters along the foot. The
+       content is staged; the anatomy and the strings are the app's. */
+    .w-top { display: flex; align-items: center; gap: 10px; height: 36px; padding: 0 12px; border-bottom: 1px solid var(--w-faint); white-space: nowrap; }
+    .w-mark { width: 14px; height: 14px; flex: none; display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; gap: 1.5px; }
+    .w-mark i { border-radius: 1.5px; }
+    .w-mark i:nth-child(1) { grid-row: span 2; background: #39ff7a; } .w-mark i:nth-child(2) { background: #ffb84d; } .w-mark i:nth-child(3) { background: #57d6ff; }
+    .w-chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 7px; border: 1px solid var(--w-faint); border-radius: 5px; font: 600 9.5px/1 var(--mono); letter-spacing: .04em; }
+    .w-chip .red { color: var(--w-red); background: color-mix(in srgb, var(--w-red) 16%, transparent); padding: 2px 5px; border-radius: 3px; }
+    .w-spark { display: flex; align-items: flex-end; gap: 1.5px; height: 12px; }
+    .w-spark i { width: 2px; background: var(--w-warn); border-radius: 1px; }
+    .w-sep { width: 1px; height: 16px; background: var(--w-faint); }
+    .w-dots { display: flex; align-items: center; gap: 4px; }
+    .w-dots i { width: 5px; height: 5px; border-radius: 50%; background: color-mix(in srgb, var(--w-text) 25%, transparent); }
+    .w-dots i.r { background: var(--w-red); } .w-dots i.pill { width: 14px; border-radius: 3px; background: var(--w-warn); }
+    .w-branch { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--w-red); }
+    .w-count { margin-left: auto; display: inline-flex; gap: 7px; padding: 4px 8px; border: 1px solid var(--w-faint); border-radius: 5px; font: 600 9.5px/1 var(--mono); }
+    .w-count .a { color: var(--w-warn); } .w-count .ok { color: var(--w-green); } .w-count .q { opacity: .5; }
 
-    .w-body { display: grid; grid-template-columns: 150px minmax(0, 1.55fr) minmax(0, 1fr); gap: 8px; padding: 8px; height: 390px; }
-    .w-bar { display: flex; flex-direction: column; gap: 3px; padding: 8px; border: 1px solid var(--w-faint); border-radius: 8px; background: var(--w-surface); min-width: 0; }
-    .w-bar .all { padding: 3px 7px; border: 1px solid var(--w-faint); border-radius: 4px; margin-bottom: 6px; opacity: .8; }
-    .w-bar .grp { font-weight: 700; margin-top: 6px; opacity: .9; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .w-bar .it { padding: 3px 7px; border-radius: 4px; display: flex; gap: 6px; align-items: center; opacity: .78; white-space: nowrap; }
-    .w-bar .it.on { opacity: 1; background: color-mix(in srgb, var(--w-acc) 16%, transparent); box-shadow: inset 2px 0 0 var(--w-acc); }
-    .w-bar .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--w-acc); flex: none; }
-    .w-bar .dot.warn { background: var(--w-warn); animation: w-hey .7s steps(1) infinite; }
-    .w-bar .dot.idle { background: var(--w-faint); }
-    @keyframes w-hey { 50% { opacity: .15; } }
-    .w-bar .vit { margin-top: auto; display: grid; gap: 5px; }
-    .w-bar .vit div { display: grid; grid-template-columns: 1fr auto; gap: 6px; align-items: center; }
-    .w-bar .vit i { display: block; height: 4px; border-radius: 2px; background: linear-gradient(90deg, var(--w-acc) var(--v), var(--w-faint) var(--v)); }
+    .w-body { display: grid; grid-template-columns: 196px minmax(0, 1fr) 14px; gap: 8px; padding: 8px 8px 0; height: 452px; }
+    .w-side { display: flex; flex-direction: column; min-width: 0; padding: 8px 6px; border: 1px solid var(--w-faint); border-radius: 8px; background: var(--w-surface); }
+    .w-side .ctl { display: flex; justify-content: flex-end; gap: 7px; align-items: center; margin: 0 4px 6px; font-size: 9px; opacity: .8; }
+    .w-side .ctl b { display: grid; place-items: center; width: 15px; height: 15px; border: 1px solid var(--w-warn); border-radius: 4px; font-weight: 400; }
+    .w-row { display: flex; align-items: center; gap: 6px; height: 19px; padding: 0 6px; border-radius: 4px; white-space: nowrap; font-size: 10.5px; color: color-mix(in srgb, var(--w-text) 88%, transparent); }
+    .w-row .tw { width: 8px; flex: none; font-size: 7px; opacity: .55; }
+    .w-row .g { width: 7px; height: 7px; flex: none; border-radius: 50%; background: var(--c); }
+    .w-row .rail { width: 2px; height: 12px; flex: none; background: var(--c); border-radius: 1px; }
+    .w-row.grp { font-weight: 600; font-size: 10px; letter-spacing: .05em; text-transform: uppercase; }
+    .w-row.grp.open { background: color-mix(in srgb, var(--w-text) 7%, transparent); }
+    .w-row.l1 { padding-left: 16px; } .w-row.l2 { padding-left: 26px; }
+    .w-row.l1.grp { letter-spacing: .04em; }
+    .w-row.here { box-shadow: inset 0 0 0 1px var(--w-blue); background: color-mix(in srgb, var(--w-blue) 12%, transparent); }
+    .w-row .st { margin-left: auto; display: flex; gap: 4px; align-items: center; font-size: 8.5px; }
+    .w-row .up { color: var(--w-green); } .w-row .bot { color: var(--w-blue); } .w-row .pin { color: var(--w-red); }
+    .w-row .ok { color: var(--w-bg); background: var(--w-green); border-radius: 2px; padding: 0 2px; font-size: 8px; }
+    .w-unfiled { margin: 6px 6px 0; font-size: 9px; letter-spacing: .08em; opacity: .35; display: flex; gap: 6px; align-items: center; }
+    .w-unfiled::after { content: ""; flex: 1; height: 1px; background: currentColor; }
+    .w-vit { margin-top: auto; display: grid; gap: 7px; padding: 0 2px; }
+    .w-vit > div { display: grid; grid-template-columns: 18px minmax(0, 1fr) 30px; gap: 7px; align-items: center; font-size: 10px; }
+    .w-vit .ic { width: 18px; height: 18px; display: grid; place-items: center; border: 1px solid var(--w-faint); border-radius: 4px; font: 700 9px/1 var(--mono); }
+    .w-vit .bars { display: grid; gap: 2px; }
+    .w-vit .bars i { height: 3px; border-radius: 2px; background: linear-gradient(90deg, var(--k, var(--w-green)) var(--v), color-mix(in srgb, var(--w-text) 12%, transparent) var(--v)); }
 
-    .w-pane { display: flex; flex-direction: column; min-width: 0; border: 1px solid var(--w-faint); border-radius: 8px; overflow: hidden; }
-    .w-pane.focus { border-color: var(--w-acc); box-shadow: 0 0 0 1px color-mix(in srgb, var(--w-acc) 40%, transparent); }
-    .w-head { display: flex; align-items: center; gap: 7px; height: 28px; padding: 0 9px; border-bottom: 1px solid var(--w-faint); background: var(--w-surface); white-space: nowrap; overflow: hidden; }
-    .w-head .who { color: var(--w-acc); font-weight: 700; }
+    .w-pane { display: flex; flex-direction: column; min-width: 0; overflow: hidden; border: 1.5px solid var(--w-acc); border-radius: 9px; background: var(--w-bg); }
+    .w-head { display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 10px; border-bottom: 1px solid var(--w-faint); background: var(--w-surface); white-space: nowrap; overflow: hidden; }
+    .w-tile { width: 18px; height: 18px; flex: none; border-radius: 4px; border: 1px solid var(--w-faint); display: grid; place-items: center; background: var(--w-bg); }
+    .w-tile .w-mark { width: 10px; height: 10px; }
+    .w-head .who { color: var(--w-blue); font-size: 10.5px; }
     .w-head .sp { flex: 1; }
-    .w-seg { display: inline-flex; border: 1px solid var(--w-faint); border-radius: 5px; overflow: hidden; }
-    .w-seg span, .w-seg label { padding: 1px 7px; opacity: .6; }
-    .w-seg span.on { opacity: 1; background: color-mix(in srgb, var(--w-acc) 22%, transparent); }
-    .w-col { display: grid; grid-template-rows: 1fr 1fr; gap: 8px; min-width: 0; }
+    .w-seg { display: inline-flex; border: 1px solid var(--w-faint); border-radius: 5px; overflow: hidden; font: 600 9px/1 var(--sans); letter-spacing: .03em; }
+    .w-seg span, .w-seg label { padding: 4px 7px; opacity: .55; }
+    .w-seg span.on { opacity: 1; background: color-mix(in srgb, var(--w-text) 16%, transparent); }
+    .w-ib { width: 22px; height: 16px; flex: none; display: grid; place-items: center; border: 1px solid var(--w-acc); border-radius: 4px; font-size: 9px; line-height: 1; }
+    .w-head .live, .w-head .x { color: var(--w-blue); font-size: 10px; }
 
-    .w-bench { flex: 1; display: grid; grid-template-columns: minmax(0, 1fr) 118px; gap: 8px; padding: 9px; min-height: 0; }
-    .w-status { display: flex; align-items: center; gap: 7px; margin-bottom: 8px; white-space: nowrap; }
-    .w-status .pill { padding: 1px 7px; border: 1px solid var(--w-faint); border-radius: 4px; opacity: .85; }
-    .w-card { border: 1px solid var(--w-faint); border-radius: 7px; padding: 8px 9px; margin-bottom: 7px; background: color-mix(in srgb, var(--w-surface) 70%, transparent); }
-    .w-card.you { border-color: color-mix(in srgb, var(--w-you) 60%, var(--w-faint)); }
-    .w-card.you .k { color: var(--w-you); }
-    .w-card.resp { border-color: color-mix(in srgb, var(--w-acc) 55%, var(--w-faint)); }
-    .w-card.ask { border-color: color-mix(in srgb, var(--w-warn) 60%, var(--w-faint)); }
-    .w-card.ask .k { color: var(--w-warn); }
-    .w-card .k { font-size: 9px; letter-spacing: .14em; text-transform: uppercase; opacity: .75; }
-    .w-card .t { font-size: 12.5px; font-weight: 700; margin: 3px 0 5px; }
-    .w-card .tabs { display: flex; gap: 10px; font-size: 9.5px; opacity: .75; margin-bottom: 4px; }
-    .w-card .tabs b { opacity: 1; border-bottom: 1px solid var(--w-acc); font-weight: 600; }
-    .w-card p { margin: 0; opacity: .85; }
-    .w-card .opts { display: flex; gap: 6px; margin-top: 7px; }
-    .w-card .opts span { padding: 2px 8px; border: 1px solid var(--w-faint); border-radius: 4px; }
-    .w-card .opts span.rec { border-color: var(--w-acc); }
-    .w-rail { border: 1px solid var(--w-faint); border-radius: 7px; padding: 6px; display: flex; flex-direction: column; gap: 5px; min-width: 0; }
-    .w-rail .rt { display: flex; flex-wrap: wrap; gap: 3px; font-size: 8.5px; }
-    .w-rail .rt span { padding: 1px 4px; border: 1px solid var(--w-faint); border-radius: 3px; opacity: .7; }
-    .w-rail .rt span.on { opacity: 1; border-color: var(--w-acc); }
-    .w-rail .now { border-left: 2px solid var(--w-acc); padding: 4px 6px; font-size: 9px; background: color-mix(in srgb, var(--w-acc) 8%, transparent); }
-    .w-rail .now b { display: block; font-size: 8px; letter-spacing: .12em; color: var(--w-acc); }
-    .w-compose { margin: 0 9px 9px; padding: 7px 9px; border: 1px solid color-mix(in srgb, var(--w-you) 55%, var(--w-faint)); border-radius: 7px; }
-    .w-compose small { display: block; font-size: 8px; letter-spacing: .1em; color: var(--w-you); opacity: .8; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .w-term { flex: 1; padding: 8px 10px; white-space: pre; overflow: hidden; }
+    .w-bench { flex: 1; display: grid; grid-template-columns: minmax(0, 1fr) 168px; gap: 10px; padding: 10px; min-height: 0; }
+    .w-bench > .main { display: flex; flex-direction: column; gap: 8px; min-width: 0; min-height: 0; }
+    .w-strip { display: flex; align-items: center; gap: 7px; padding: 5px 8px; border: 1px solid var(--w-faint); border-radius: 6px; background: color-mix(in srgb, var(--w-acc) 6%, transparent); white-space: nowrap; }
+    .w-strip .st { font-size: 15px; }
+    .w-strip .st.wait { color: var(--w-warn); }
+    .w-strip .ago { font-size: 8.5px; opacity: .55; }
+    .w-strip .sp { flex: 1; }
+    .w-strip .b { padding: 4px 7px; border: 1px solid var(--w-faint); border-radius: 4px; font: 600 8.5px/1 var(--sans); letter-spacing: .04em; }
+    .w-woken { padding: 6px 10px; border: 1px solid var(--w-warn); border-radius: 7px; }
+    .w-woken .k { font: italic 600 8.5px/1.3 var(--sans); letter-spacing: .07em; text-transform: uppercase; color: var(--w-warn); }
+    .w-woken p { margin: 2px 0 0; font-size: 10.5px; opacity: .85; }
+    .w-resp { padding: 8px 11px 10px; border: 1px solid var(--w-acc); border-radius: 7px; min-height: 0; overflow: hidden; }
+    .w-resp.ask { border-color: var(--w-warn); }
+    .w-resp .hd { display: flex; align-items: center; gap: 7px; }
+    .w-resp .chip { padding: 1px 5px; border: 1px solid var(--w-acc); border-radius: 3px; font-size: 8.5px; color: var(--w-warn); }
+    .w-resp.ask .chip { border-color: var(--w-warn); }
+    .w-resp .t { font-size: 14px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .w-resp .prov { margin-top: 3px; font-size: 8.5px; opacity: .4; }
+    .w-resp .wt { margin-top: 5px; font-size: 9px; opacity: .45; }
+    .w-resp p { margin: 7px 0 0; font-size: 10.5px; line-height: 1.5; opacity: .88; }
+    .w-resp .opts { display: flex; gap: 6px; margin-top: 8px; }
+    .w-resp .opts span { padding: 3px 8px; border: 1px solid var(--w-faint); border-radius: 4px; font-size: 9.5px; }
+    .w-resp .opts span.rec { border-color: var(--w-green); color: var(--w-green); }
+    .w-compose { margin-top: auto; padding: 8px 11px; border: 1px solid var(--w-blue); border-radius: 8px; font-size: 10px; opacity: .9; }
+    .w-compose small { display: block; margin-top: 3px; font-size: 7.5px; letter-spacing: .08em; color: var(--w-blue); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .w-rail { display: flex; flex-direction: column; gap: 7px; min-width: 0; padding: 7px; overflow: hidden; border: 1px solid var(--w-acc); border-radius: 8px; }
+    .w-rail .tabs { display: flex; flex-wrap: wrap; gap: 3px; font-size: 8.5px; }
+    .w-rail .tabs span { padding: 2px 5px; border: 1px solid var(--w-faint); border-radius: 4px; opacity: .75; }
+    .w-rail .tabs span.on { opacity: 1; color: var(--w-blue); border-color: var(--w-blue); background: color-mix(in srgb, var(--w-blue) 12%, transparent); }
+    .w-rail .tabs span.art { color: var(--w-warn); opacity: 1; }
+    .w-stand { padding: 6px 8px; border-left: 2px solid var(--w-warn); border-radius: 3px; font-size: 10px; line-height: 1.35; background: color-mix(in srgb, var(--w-text) 5%, transparent); }
+    .w-stand.now { background: color-mix(in srgb, var(--w-text) 11%, transparent); }
+    .w-stand .k { display: block; margin-bottom: 3px; text-align: center; font-size: 7.5px; letter-spacing: .1em; color: var(--w-warn); }
+    .w-stand small { display: block; margin-top: 3px; font-size: 8.5px; opacity: .4; }
+    .w-mini { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 6px 0; border: 1px solid var(--w-faint); border-radius: 6px; font: 600 8.5px/1 var(--mono); }
+    .w-mini .n { color: var(--w-green); }
+    .w-term { flex: 1; padding: 9px 11px; white-space: pre; overflow: hidden; font: 10.5px/1.5 var(--mono); }
     .w-term .p { color: var(--w-acc); }
     .w-term .d { opacity: .55; }
-    .w-term .ok { color: var(--w-acc); }
     .w-term .cur { display: inline-block; width: .6em; height: 1.1em; vertical-align: -2px; background: var(--w-cur); animation: td-blink 1.06s steps(1) infinite; }
-    .w-foot { display: flex; justify-content: flex-end; gap: 8px; padding: 0 12px 8px; opacity: .7; }
+    .w-foot { display: flex; align-items: center; justify-content: flex-end; gap: 6px; height: 36px; padding: 0 10px; font-size: 10px; white-space: nowrap; }
+    .w-foot .w-ib { width: 24px; height: 18px; font-size: 10px; }
+    .w-foot .bat { display: inline-flex; gap: 5px; align-items: center; padding: 2px 7px; border: 1px solid var(--w-faint); border-radius: 4px; font-size: 9.5px; }
+    .w-foot .lay { width: 18px; height: 18px; display: grid; place-items: center; border: 1px solid var(--w-faint); border-radius: 4px; font-size: 9px; }
+
+    /* the busy window: a terminal pane and a bench pane side by side */
+    .w-body.two { grid-template-columns: 168px minmax(0, 1.08fr) minmax(0, 1fr) 14px; }
+    .w-pane.focus { box-shadow: 0 0 0 1px color-mix(in srgb, var(--w-acc) 30%, transparent), 0 0 26px -10px color-mix(in srgb, var(--w-acc) 70%, transparent); }
+    .w-pane.dim { border-color: color-mix(in srgb, var(--w-text) 22%, transparent); }
+    .w-pane.dim .w-bench { grid-template-columns: minmax(0, 1fr) 112px; gap: 8px; padding: 9px; }
+    .w-tx { position: relative; flex: 1; min-height: 0; overflow: hidden; padding: 10px 12px; font: 9.5px/1.6 var(--mono); }
+    .w-tx > div:not(.w-note):not(.w-doc) { white-space: pre; overflow: hidden; text-overflow: ellipsis; }
+    .w-tx .tool { color: var(--w-green); } .w-tx .dim { opacity: .5; } .w-tx .lk { color: var(--w-blue); text-decoration: underline; }
+    .w-tx .fl { color: var(--w-green); } .w-tx .warn { color: var(--w-warn); } .w-tx .red { color: var(--w-red); }
+    .w-tx .rule { height: 0; margin: 5px 0; border-top: 1px solid color-mix(in srgb, var(--w-text) 25%, transparent); }
+    .w-tx .cur { display: inline-block; width: .6em; height: 1.1em; vertical-align: -2px; background: var(--w-cur); animation: td-blink 1.06s steps(1) infinite; }
+    .w-note {
+      position: absolute; top: 12px; right: 14px; width: 112px; padding: 15px 9px 9px;
+      background: #e7cf98; color: #3b2a10; font: 800 11px/1.15 var(--mono); letter-spacing: .02em; text-transform: uppercase;
+      border-radius: 2px; transform: rotate(-4deg); box-shadow: 0 10px 16px -8px rgba(0, 0, 0, .7);
+    }
+    .w-note::before { content: ""; position: absolute; top: -5px; left: 50%; width: 12px; height: 12px; margin-left: -6px; border-radius: 50%; background: radial-gradient(circle at 35% 35%, #9cc0ff, #2f5fd0); box-shadow: 0 2px 3px rgba(0, 0, 0, .5); }
+    .w-doc {
+      position: absolute; left: 24%; right: 6%; top: 74px; overflow: hidden;
+      background: var(--w-bg); border: 1.5px solid var(--w-warn); border-radius: 8px;
+      box-shadow: 0 18px 36px -12px rgba(0, 0, 0, .85); font: 9.5px/1.5 var(--sans);
+    }
+    .w-doc .dh { display: flex; align-items: center; gap: 10px; padding: 5px 9px; border-bottom: 1px solid var(--w-faint); font: 8.5px/1 var(--mono); color: var(--w-warn); white-space: nowrap; }
+    .w-doc .dh .sp { flex: 1; } .w-doc .dh .a { opacity: .75; }
+    .w-doc .db { padding: 8px 11px 10px; }
+    .w-doc h5 { margin: 0 0 5px; font: 600 12.5px/1.25 var(--sans); color: var(--w-warn); }
+    .w-doc p { margin: 0 0 5px; opacity: .88; }
+    .w-doc ul { margin: 0; padding-left: 13px; } .w-doc li { margin: 2px 0; }
+    .w-doc li::marker { color: var(--w-warn); }
+    .w-resp .x { margin-bottom: 3px; color: var(--w-blue); font-size: 9px; }
+    .w-resp .path { margin-top: 6px; font: 9px/1.45 var(--mono); opacity: .8; word-break: break-all; }
+    .w-resp .acts { display: flex; gap: 6px; margin-top: 9px; }
+    .w-resp .acts span { padding: 4px 10px; border: 1px solid var(--w-faint); border-radius: 4px; font-size: 10px; }
+    .w-resp .acts .open { color: var(--w-blue); border-color: var(--w-blue); background: color-mix(in srgb, var(--w-blue) 14%, transparent); }
+    .w-stand .kind { display: block; margin-bottom: 3px; text-align: center; font-size: 7.5px; letter-spacing: .06em; opacity: .55; }
+    .w-strip .note { font-size: 8.5px; opacity: .6; }
 
     .wear { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin: 18px auto 0; }
     .wear button {
@@ -162,18 +241,18 @@
 
     /* ---------------------------------------------------- the bench */
     .flip > input { position: absolute; opacity: 0; width: 1px; height: 1px; }
-    .flip .win { margin: 0; max-width: none; }
+    .flip .win { margin: 0; max-width: none; border: 1.5px solid var(--w-acc); border-radius: 9px; }
     .flip .w-seg label { cursor: pointer; }
     #face-term:checked ~ .win .w-seg label[for="face-term"],
     #face-bench:checked ~ .win .w-seg label[for="face-bench"] { opacity: 1; background: color-mix(in srgb, var(--w-acc) 22%, transparent); }
     #face-term:focus-visible ~ .win .w-seg label[for="face-term"],
     #face-bench:focus-visible ~ .win .w-seg label[for="face-bench"] { outline: 2px solid var(--w-acc); outline-offset: -2px; }
-    .flip .face { display: none; height: 300px; }
+    .flip .face { display: none; height: 400px; }
     #face-term:checked ~ .win .face.term, #face-bench:checked ~ .win .face.bench { display: flex; flex-direction: column; }
-    .bench-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 56px; align-items: center; }
-    .bench-row ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 14px; }
-    .bench-row li { display: grid; grid-template-columns: 96px 1fr; gap: 14px; font-size: 15.5px; color: var(--ink-2); }
-    .bench-row li b { font: 600 12px/1.9 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--ink); }
+    .flip .face.bench .w-bench { grid-template-columns: minmax(0, 1fr) 190px; }
+    .shelves { margin: 22px 0 0; padding: 0; list-style: none; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 18px; }
+    .shelves li { display: grid; gap: 4px; font-size: 14.5px; line-height: 1.5; color: var(--ink-2); }
+    .shelves li b { font: 600 11.5px/1.4 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--ink); }
 
     /* ---------------------------------------------------- the glass */
     .glass-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
@@ -221,25 +300,40 @@
     .foot .ch a { width: 10px; height: 10px; border-radius: 50%; border: 1px solid var(--line-2); background: var(--bg-2); }
     .foot .ch a:hover { background: var(--acc); border-color: var(--acc); box-shadow: 0 0 10px var(--glow); }
 
-    @media (max-width: 1180px) {
-      .w-body { grid-template-columns: 130px minmax(0, 1fr); }
-      .w-body > .w-col { display: none; }
+    /* The drawn windows answer to their own width, not the viewport's: the
+       space they get depends on the spine beside the page as much as on the
+       window, so a viewport rule leaves them cramped at one width and sparse
+       at another. */
+    .win { container-type: inline-size; }
+    .w-strip { overflow: hidden; }
+    @container (max-width: 980px) {
+      .w-body.two { grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); }
+      .w-body > .w-side, .w-body > .w-mini { display: none; }
+      .w-branch { display: none; }
+      .flip .face.bench .w-bench { grid-template-columns: minmax(0, 1fr) 150px; }
+    }
+    @container (max-width: 760px) {
+      .w-pane.dim .w-bench { grid-template-columns: minmax(0, 1fr); }
+      .w-pane.dim .w-rail { display: none; }
+    }
+    @container (max-width: 600px) {
+      .w-body.two { grid-template-columns: minmax(0, 1fr); height: 380px; padding: 8px; }
+      .w-body.two > .w-pane.dim { display: none; }
+      .w-bench, .flip .face.bench .w-bench { grid-template-columns: minmax(0, 1fr); }
+      .w-rail, .w-spark, .w-dots, .w-sep, .w-woken, .w-strip .b, .w-note, .w-head .w-ib, .w-count .q { display: none; }
+      .w-doc { left: 8%; right: 8%; }
+      .w-foot .w-ib { display: none; }
     }
     @media (max-width: 900px) {
       .td-kiosk { padding: 0 22px; }
       .stop { padding: 60px 0 64px; }
-      .stop-head, .bench-row, .install, .glass-row, .kiosks { grid-template-columns: minmax(0, 1fr); }
+      .stop-head, .install, .glass-row, .kiosks { grid-template-columns: minmax(0, 1fr); }
       .cards { grid-template-columns: minmax(0, 1fr); }
       .cards .agent:nth-child(n+3) { display: none; }
-      .bench-row { gap: 28px; }
+      .shelves { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
     @media (max-width: 640px) {
-      .w-body { grid-template-columns: minmax(0, 1fr); height: 340px; }
-      .w-body > .w-bar { display: none; }
-      .w-bench { grid-template-columns: minmax(0, 1fr); }
-      .w-rail { display: none; }
-      .w-top .w-tab:nth-of-type(n+3) { display: none; }
-      .bench-row li { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+      .shelves { grid-template-columns: minmax(0, 1fr); }
       .switch { padding: 16px; gap: 12px; }
       .switch svg { width: 34px; height: 34px; }
     }
@@ -281,8 +375,8 @@
     <h6>This page</h6>
     <ul>
       <li><a href="#terminal"><span class="n">01</span>Terminal</a></li>
-      <li><a href="#wall"><span class="n">02</span>Wall</a></li>
-      <li><a href="#bench"><span class="n">03</span>Bench</a></li>
+      <li><a href="#bench"><span class="n">02</span>Bench</a></li>
+      <li><a href="#wall"><span class="n">03</span>Wall</a></li>
       <li><a href="#glass"><span class="n">04</span>Glass</a></li>
       <li><a href="#kiosks"><span class="n">05</span>Kiosks</a></li>
       <li><a href="#install"><span class="n">06</span>Install</a></li>
@@ -322,52 +416,102 @@
         <a class="td-btn" href="https://docs.terminal-delight.brownfamilysports.com/">Read the docs →</a>
       </div>
 
-      <div class="win" id="win" role="img" aria-label="A drawing of the Terminal Delight window: a left bar of tasks, an agent pane showing its workbench, and two terminal panes.">
-        <div class="w-top"><span class="mk"></span><span class="w-tab">1</span><span class="w-tab on">2 ×</span><span class="w-tab">+</span><span class="sp"></span><span class="bat">▭ 80%</span></div>
-        <div class="w-body">
-          <div class="w-bar">
-            <div class="all">ALL</div>
-            <div class="grp">terminal-delight</div>
-            <div class="it on"><i class="dot"></i>docs site</div>
-            <div class="it"><i class="dot warn"></i>left bar</div>
-            <div class="it"><i class="dot idle"></i>crt pass</div>
-            <div class="grp">jev-integrations</div>
-            <div class="it"><i class="dot"></i>lead scoring</div>
-            <div class="vit">
-              <div><i style="--v:79%"></i><span>79%</span></div>
-              <div><i style="--v:60%"></i><span>60%</span></div>
+      <div class="win" id="win" role="img" aria-label="A drawing of the Terminal Delight window: the worktree and activity strip along the top, a left bar of task groups with their status marks and usage bars, an agent's terminal with a sticky note and a document open over it, and a second agent pane showing its workbench — an artifact to open, the composer, and a rail of what stands now.">
+        <div class="w-top">
+          <span class="w-mark"><i></i><i></i><i></i></span>
+          <span class="w-chip">1 WORKTREE <span class="red">1 SHARED</span></span>
+          <span class="w-spark"><i style="height:30%"></i><i style="height:55%"></i><i style="height:40%"></i><i style="height:85%"></i><i style="height:60%"></i><i style="height:35%"></i><i style="height:70%"></i><i style="height:45%"></i><i style="height:25%"></i><i style="height:20%"></i></span>
+          <span class="w-sep"></span>
+          <span class="w-dots"><i></i><i></i><i></i><i></i><i class="r"></i><i class="r"></i><i class="r"></i><i></i><i class="pill"></i><i></i><i class="r"></i><i></i></span>
+          <span class="w-branch">◇ docs/site · feat/left-bar-groups converge on 1 file</span>
+          <span class="w-count"><span class="a">▶ 3</span><span class="q">│</span><span>0</span><span>✕ 0</span><span class="ok">✓ 1</span><span>○ 16</span><span class="q">? 0</span></span>
+        </div>
+        <div class="w-body two">
+          <div class="w-side">
+            <div class="ctl"><span>▼</span><b>+</b><span>◀</span></div>
+            <div class="w-row grp"><span class="tw">▼</span><i class="g" style="--c:#e8834a"></i>Global</div>
+            <div class="w-row l1"><span class="tw"></span>release notes</div>
+            <div class="w-row grp open"><span class="tw">▼</span><i class="g" style="--c:#3ec6d1"></i>Terminal Delight</div>
+            <div class="w-row grp l1"><span class="tw">▼</span><i class="rail" style="--c:#3ec6d1"></i>Workbench</div>
+            <div class="w-row l2"><i class="rail" style="--c:#3ec6d1"></i>model dials<span class="st"><span class="bot">◉</span></span></div>
+            <div class="w-row l2"><i class="rail" style="--c:#3ec6d1"></i>comments shelf<span class="st"><span class="up">▲</span></span></div>
+            <div class="w-row grp l1"><span class="tw">▼</span><i class="rail" style="--c:#3ec6d1"></i>Site</div>
+            <div class="w-row l2"><i class="rail" style="--c:#3ec6d1"></i>docs<span class="st"><span class="up">▲</span><span class="bot">◉</span><span class="pin">▼</span></span></div>
+            <div class="w-row l2"><i class="rail" style="--c:#3ec6d1"></i>install page<span class="st"><span class="ok">✓</span></span></div>
+            <div class="w-row l1 here"><span class="tw"></span>info kiosk<span class="st"><span class="up">▲</span></span></div>
+            <div class="w-row grp"><span class="tw">▼</span><i class="g" style="--c:#7c83f0"></i>Jev</div>
+            <div class="w-row l1"><span class="tw"></span>lead scoring<span class="st"><span class="up">▲</span></span></div>
+            <div class="w-row grp"><span class="tw">▶</span><i class="g" style="--c:#8bd450"></i>Webdev</div>
+            <div class="w-row grp"><span class="tw">▶</span><i class="rail" style="--c:#8a8f98"></i>Marketing</div>
+            <div class="w-unfiled">UNFILED</div>
+            <div class="w-vit">
+              <div><span class="ic">✳</span><span class="bars"><i style="--v:85%"></i><i style="--v:62%"></i></span><span>85%</span></div>
+              <div><span class="ic">⊛</span><span class="bars"><i style="--v:58%"></i><i style="--v:18%;--k:var(--w-red)"></i></span><span>58%</span></div>
+              <div><span class="ic">FI</span><span class="bars"><i style="--v:0%"></i><i style="--v:0%"></i></span><span>—</span></div>
             </div>
           </div>
           <div class="w-pane focus">
-            <div class="w-head"><span class="who">• CLAUDE</span><span>docs site</span><span class="sp"></span><span class="w-seg"><span>TERM</span><span class="on">BENCH</span></span><span>live</span></div>
-            <div class="w-bench">
-              <div>
-                <div class="w-status"><span>◌ Idle</span><span style="opacity:.55">43s</span><span style="flex:1"></span><span class="pill">OPUS 5.5</span><span class="pill">HIGH</span></div>
-                <div class="w-card you"><div class="k">you</div><p>Rebuild info as a short kiosk that points at the docs.</p></div>
-                <div class="w-card resp"><div class="k">response</div><div class="t">The info kiosk, rebuilt</div><div class="tabs"><b>Plain brief</b><span>Technical brief</span><span>Brief</span></div><p>Six stops, one screen each, and every one of them hands the reader to a docs page.</p></div>
+            <div class="w-head"><span class="w-tile"><span class="w-mark"><i></i><i></i><i></i></span></span><span class="who">• CLAUDE · docs site</span><span class="sp"></span><span class="w-seg"><span class="on">TERM</span><span>BENCH</span></span><span class="w-ib">🎨</span><span class="w-ib">📊</span><span class="live">live</span><span class="x">✕</span></div>
+            <div class="w-tx">
+              <div><span class="tool">●</span> Bash(node scripts/verify-site.mjs)</div>
+              <div class="dim">  ⎿  259 passed, 0 failed</div>
+              <div><span class="tool">●</span> Update(assets/td-glass.js)</div>
+              <div class="dim">  ⎿  Updated with 12 additions and 3 removals</div>
+              <div> </div>
+              <div>The tube bends the page itself now, and the text</div>
+              <div>stays sharp. A click lands on what is drawn under</div>
+              <div>the pointer, even at the rim.</div>
+              <div> </div>
+              <div>  Links</div>
+              <div>  Target: <span class="lk">https://docs.terminal-delight.brownfamilysports.com/workbench</span></div>
+              <div class="dim">  What it is: the live docs, tube on</div>
+              <div>  Target: <span class="fl">file:///home/you/Work/td/docs/plans/docs-site/00-status.md</span></div>
+              <div class="dim">  What it is: the plan, round four</div>
+              <div>  Target: <span class="lk">https://github.com/you/terminal-delight/pull/771</span></div>
+              <div class="dim">  What it is: the branch, waiting on a merge</div>
+              <div> </div>
+              <div class="dim">✳ Waiting for 1 background agent to finish</div>
+              <div class="rule"></div>
+              <div>&gt; ship it <span class="cur"></span></div>
+              <div class="rule"></div>
+              <div class="warn">  ⏵⏵ auto mode on · 1 shell</div>
+              <div class="w-note">Ship the docs</div>
+              <div class="w-doc">
+                <div class="dh"><span>≡ workbench.md</span><span class="sp"></span><span class="a">⇲ split</span><span class="a">↗ desktop</span><span class="a">✕ esc</span></div>
+                <div class="db">
+                  <h5>Workbench</h5>
+                  <p>Every agent pane has a second face. The terminal face is the agent at work; the workbench face is what it made for you, laid out as cards.</p>
+                  <ul><li>overview — its replies</li><li>decisions — what it is waiting on</li><li>artifacts — pages, tables, diagrams</li></ul>
+                </div>
               </div>
-              <div class="w-rail"><div class="rt"><span class="on">overview</span><span>artifacts</span><span>decisions</span><span>comments</span></div><div class="now"><b>STANDS NOW</b>The info kiosk, rebuilt</div></div>
-            </div>
-            <div class="w-compose">type to the agent<small>TYPE ANYWHERE · ENTER SENDS · PASTE TEXT, FILES OR AN IMAGE</small></div>
-          </div>
-          <div class="w-col">
-            <div class="w-pane">
-              <div class="w-head"><span class="who">• SHELL</span><span>~/Work/td-docs</span></div>
-              <div class="w-term"><span class="p">$</span> cargo test palette
-<span class="d">   Compiling terminal-delight</span>
-test user_theme_shadows_stock <span class="ok">... ok</span>
-test ansi_table_matches     <span class="ok">... ok</span>
-<span class="p">$</span> <span class="cur"></span></div>
-            </div>
-            <div class="w-pane">
-              <div class="w-head"><span class="who">• CODEX</span><span>lead scoring</span></div>
-              <div class="w-term"><span class="d">› Working · 2m 14s</span>
-Reading integrations/
-lead_scoring/rubric.py</div>
             </div>
           </div>
+          <div class="w-pane dim">
+            <div class="w-head"><span class="w-tile"><span class="w-mark"><i></i><i></i><i></i></span></span><span class="who">• CLAUDE · left bar</span><span class="sp"></span><span class="w-seg"><span>TERM</span><span class="on">BENCH</span></span><span class="w-ib">🎨</span><span class="live">live</span><span class="x">✕</span></div>
+            <div class="w-bench">
+              <div class="main">
+                <div class="w-strip"><span style="opacity:.5">◎</span><span class="st">Working</span><span class="ago">1m</span><span class="note">at the console</span><span class="sp"></span><span class="b">PAUSE TURN</span></div>
+                <div class="w-resp">
+                  <div class="x">✕</div>
+                  <div class="hd"><span class="chip">artifact</span><span class="t">Left bar, revised</span></div>
+                  <div class="prov">declared in the agent's own reply</div>
+                  <div class="prov">read from this agent's own record</div>
+                  <div class="path">~/Work/td/reports/left-bar.html</div>
+                  <div class="acts"><span class="open">open</span><span>comment</span></div>
+                </div>
+                <div class="w-compose">type to the agent<small>TYPE ANYWHERE · ENTER SENDS · PASTE TEXT, FILES OR AN IMAGE</small></div>
+              </div>
+              <div class="w-rail">
+                <div class="tabs"><span>overview</span><span class="on">artifacts</span><span>decisions</span><span>comments</span></div>
+                <div class="w-stand now"><span class="k">STANDS NOW · HTML</span>Left bar, revised<small>declared in the agent's own…</small></div>
+                <div class="w-stand"><span class="kind">table</span>Theme audit<small>6 rows · 4 columns</small></div>
+                <div class="w-stand"><span class="kind">unclassified</span>Group header notes<small>a changeset needs hunks…</small></div>
+              </div>
+            </div>
+          </div>
+          <div class="w-mini"><span class="n">1</span><span>●</span></div>
         </div>
-        <div class="w-foot"><span>2 tabs · 3 panes</span><span>◧ split</span><span>⊟ split</span></div>
+        <div class="w-foot"><span>3 tabs · 5 panes</span><span class="w-ib">🎨</span><span class="w-ib">📊</span><span class="w-ib">🪦</span><span class="w-ib">🔔</span><span class="w-ib">🧩</span><span class="bat">▭ 85%</span><span class="lay">◧</span></div>
       </div>
 
       <div class="wear" role="group" aria-label="Paint the window with a built-in theme">
@@ -382,9 +526,77 @@ lead_scoring/rubric.py</div>
     </section>
 
     <!-- 02 ------------------------------------------------------------ -->
+    <section class="stop" id="bench">
+      <div class="stop-head">
+        <div><div class="n">02</div><h2>Bench</h2></div>
+        <div>
+          <p><b>Not a terminal person?</b> Flip any agent pane to its <b>BENCH</b> face and the agent's work is laid out as cards: what it said, what it wants you to decide, the files it made, and your own notes on them. You can follow an agent and steer it from here without reading its terminal.</p>
+          <a class="more" href="https://docs.terminal-delight.brownfamilysports.com/workbench">See the workbench →</a>
+        </div>
+      </div>
+      <div class="flip">
+        <input type="radio" name="face" id="face-term" aria-label="Terminal face">
+        <input type="radio" name="face" id="face-bench" aria-label="Workbench face" checked>
+        <div class="win" data-wear-follow>
+          <div class="w-head"><span class="w-tile"><span class="w-mark"><i></i><i></i><i></i></span></span><span class="who">• CLAUDE · left bar</span><span class="sp"></span><span class="w-seg"><label for="face-term">TERM</label><label for="face-bench">BENCH</label></span><span class="w-ib">🎨</span><span class="w-ib">📊</span><span class="live">live</span><span class="x">✕</span></div>
+          <div class="face term"><div class="w-tx">
+            <div><span class="tool">●</span> Read(app/src/leftbar.rs)</div>
+            <div class="dim">  ⎿  Read 1,284 lines</div>
+            <div><span class="tool">●</span> Update(app/src/leftbar.rs)</div>
+            <div class="dim">  ⎿  Updated with 42 additions and 9 removals</div>
+            <div> </div>
+            <div>Two ways to lay out the group header. The first keeps the</div>
+            <div>task count on the right; the second moves it under the name,</div>
+            <div>which frees eleven columns at the narrowest width.</div>
+            <div> </div>
+            <div class="warn">☐ Group header layout</div>
+            <div>  Where should the task count sit?</div>
+            <div>  1. Count on the right</div>
+            <div>  2. Count under the name <span class="dim">(recommended)</span></div>
+            <div> </div>
+            <div class="rule"></div>
+            <div>&gt; <span class="cur"></span></div>
+            <div class="rule"></div>
+            <div class="warn">  ⏵⏵ auto mode on · 1 shell</div>
+          </div></div>
+          <div class="face bench"><div class="w-bench">
+            <div class="main">
+              <div class="w-strip"><span class="st wait">Waiting on you</span><span class="ago">12s</span><span class="sp"></span><span class="b">OPUS 5.5 ▾</span><span class="b">HIGH ▾</span><span class="b">END SESSION</span></div>
+              <div class="w-woken"><div class="k">Woken · a message from docs-site</div><p>another agent session sent this one a message</p></div>
+              <div class="w-resp ask">
+                <div class="hd"><span class="chip">decision</span><span class="t">Group header layout</span></div>
+                <p>Where should the task count sit? The second frees eleven columns at the narrowest width.</p>
+                <div class="opts"><span>1 · count on the right</span><span class="rec">2 · count under the name</span></div>
+              </div>
+              <div class="w-resp">
+                <div class="hd"><span class="chip">response</span><span class="t">Two layouts, one question</span></div>
+                <div class="prov">arrived through this agent's own hooks · whole</div>
+                <p>Both layouts compile and pass. The header is the only thing left undecided, so the agent stopped and asked instead of guessing.</p>
+              </div>
+              <div class="w-compose">type to the agent<small>TYPE ANYWHERE · ENTER SENDS · PASTE TEXT, FILES OR AN IMAGE</small></div>
+            </div>
+            <div class="w-rail">
+              <div class="tabs"><span>overview</span><span class="art">artifacts</span><span class="on">decisions</span><span>comments</span></div>
+              <div class="w-stand now"><span class="k">WAITING ON YOU</span>Group header layout<small>Where should the task count…</small></div>
+              <div class="w-stand"><span class="kind">response</span>The tab strip is keyboard-first<small>alt+1 … alt+4 land on a shelf</small></div>
+              <div class="w-stand"><span class="kind">table</span>Header widths<small>9 rows · 3 columns</small></div>
+            </div>
+          </div></div>
+        </div>
+      </div>
+      <ul class="shelves">
+        <li><b>Overview</b><span>The agent's replies, each under the message that asked for it.</span></li>
+        <li><b>Decisions</b><span>Questions it is waiting on. A digit answers one.</span></li>
+        <li><b>Artifacts</b><span>Pages, diagrams and tables it produced, one click from open.</span></li>
+        <li><b>Comments</b><span>Your notes. They never reach the agent.</span></li>
+      </ul>
+      <p class="cap left">Click TERM and BENCH: it is the same switch the pane header carries, and <kbd>alt</kbd>+<kbd>k</kbd> flips it in the app.</p>
+    </section>
+
+    <!-- 03 ------------------------------------------------------------ -->
     <section class="stop" id="wall">
       <div class="stop-head">
-        <div><div class="n">02</div><h2>Wall</h2></div>
+        <div><div class="n">03</div><h2>Wall</h2></div>
         <div>
           <p>Every agent pane on one read-only board: its project, what it is doing, what it has spent, and three bars read from <b>its own transcript</b>. Terminal Delight finds all of this out without typing a character into an agent's shell.</p>
           <a class="more" href="https://docs.terminal-delight.brownfamilysports.com/">The agent wall →</a>
@@ -414,49 +626,6 @@ lead_scoring/rubric.py</div>
         </article>
       </div>
       <p class="cap left">Staged cards. The layout, the bar names and the states are the app's. The agents are made up.</p>
-    </section>
-
-    <!-- 03 ------------------------------------------------------------ -->
-    <section class="stop" id="bench">
-      <div class="stop-head">
-        <div><div class="n">03</div><h2>Bench</h2></div>
-        <div>
-          <p>An agent pane has two faces. <b>TERM</b> is the terminal. <b>BENCH</b> lays the agent's work out as cards: what it said, what it wants you to decide, the files it made, and your own notes on them.</p>
-          <a class="more" href="https://docs.terminal-delight.brownfamilysports.com/workbench">The workbench →</a>
-        </div>
-      </div>
-      <div class="bench-row">
-        <div class="flip">
-          <input type="radio" name="face" id="face-term" aria-label="Terminal face">
-          <input type="radio" name="face" id="face-bench" aria-label="Workbench face" checked>
-          <div class="win" data-wear-follow>
-            <div class="w-head"><span class="who">• CLAUDE</span><span>left bar</span><span class="sp"></span><span class="w-seg"><label for="face-term">TERM</label><label for="face-bench">BENCH</label></span></div>
-            <div class="face term"><div class="w-term"><span class="d">● Read app/src/leftbar.rs</span>
-<span class="d">● Edit app/src/leftbar.rs</span>
-Two ways to lay out the group header.
-A keeps the count on the right; B moves
-it under the name.
-
-Which one?  (A / B)
-<span class="p">&gt;</span> <span class="cur"></span></div></div>
-            <div class="face bench"><div class="w-bench" style="grid-template-columns:minmax(0,1fr)">
-              <div>
-                <div class="w-status"><span>◉ Waiting on you</span></div>
-                <div class="w-card ask"><div class="k">decision</div><div class="t">Group header layout</div><p>Where the task count sits.</p><div class="opts"><span>1 · count on the right</span><span class="rec">2 · count under the name</span></div></div>
-                <div class="w-card resp"><div class="k">response</div><div class="t">Two layouts, one question</div><p>Both compile. Press 1 or 2.</p></div>
-              </div>
-            </div>
-            <div class="w-compose">type to the agent<small>TYPE ANYWHERE · ENTER SENDS</small></div></div>
-          </div>
-        </div>
-        <ul>
-          <li><b>Overview</b><span>The agent's replies, each under the message that asked for it.</span></li>
-          <li><b>Decisions</b><span>Questions it is waiting on. A digit answers one.</span></li>
-          <li><b>Artifacts</b><span>Pages, diagrams and tables it produced.</span></li>
-          <li><b>Comments</b><span>Your notes. They never reach the agent.</span></li>
-        </ul>
-      </div>
-      <p class="cap left">Click TERM and BENCH. In the app the same switch sits in the pane header, and <kbd>alt</kbd>+<kbd>k</kbd> flips it.</p>
     </section>
 
     <!-- 04 ------------------------------------------------------------ -->
