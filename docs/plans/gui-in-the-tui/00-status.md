@@ -1,7 +1,7 @@
 # Status: GUI in the TUI — documents open in the pane
 
 **Difficulty: 7/10** — it writes notes into Parker's brief files, changes four click gestures he uses every day, and the HTML engine is a fork he called "a REALLY HARD question"; a wrong call there stays expensive → **four gates**.
-**Turned out to be:** _filled in at the end_
+**Turned out to be: 6/10.** The plan held: no slice contradicted the design badly enough to reopen a gate, and every deviation was a paragraph in a pull request, not a replan. The two risks the 7 was scored on were real and were retired by measurement rather than by argument: the GPU texture release (a hundred-cycle soak per backend, with a control that leaks) and writing into Parker's briefs (15 shared fixtures, byte-for-byte, and 94 briefs with no anchor moved). What the score missed was the cost of the edges, not the core: a cold-start timeout only CI could see, and a data-loss path (unsaved notes on ✕) that slipped past the slice that built notes and was caught by its own follow-up issue. Gates 2–4 came back as bare approvals, so four gates bought one gate's worth of change; a 5–6 score with one combined plan page would have got the same result.
 
 - Gate 1 — Product: **APPROVED 2026-09-24** — through Parker's notes on the research brief and his chat message the same day. `01-product.md` records those decisions; its success metric and announcement are mine and were not in his notes — strike them if wrong.
 - Gate 2 — Architecture: **APPROVED 2026-09-24** — Parker: "LGTM --- LFG!" on `02-architecture.md` as drafted, before the snapshot spike reported. If the spike contradicts the notes-layer design (anchor ids that differ from a browser's, or an unsafe write), Gate 2 goes back to in progress.
@@ -15,10 +15,15 @@
 - [x] Slice 4 — the split: Ctrl+Alt+click beside, focus kept, dedupe, four-pane fallback, promotion, alt+k, keys swallowed — merged in PR #729; `ctl doc beside`; installed as td-ffba91b-doc-split.
 - [x] Slice 5 — the layout remembers: saved document panes, missing files, replica repair — merged in PR #730.
 - [x] Slice 6 — HTML read-only: engine trait, pipe client, snapshot engine, tiles, cache, links and modals, missing-Chromium fallback — merged in PR #735; installed as td-240a89d-doc-html. Real-Chromium tests skip on CI until the workflow gains the AppArmor line (#737, needs the `workflow` token scope from Parker). Follow-ups #733, #734.
-- [ ] Slice 7 (building with slice 8, worktree `~/Work/td-slice7-notes`) — notes read: badges, buttons, note box, concur stamps, copy map, shared fixtures (landed in agent-skills PR #29, 0eb9e20)
-- [ ] Slice 8 — notes write: add, delete, concur, save in place with verify, backup and read-back, refusals, on-disk changes
+- [x] Slice 7 — notes read: badges, buttons, note box, concur stamps, copy map, shared fixtures — merged in PR #740; the island and map match the skill in all 15 fixture cases.
+- [x] Slice 8 — notes write: add, delete, concur, save in place with verify, backup and read-back, refusals, on-disk changes — merged in PR #741; installed as td-f3c3dc8-doc-notes. Measured: a note (and a stamp where supported) written into copies of 94 briefs from both report folders moved no anchor in any of them. Every deliberate close now keeps unsaved notes once (PR #744, #742).
 - [x] Slice 9 — size answers: live 14 t (#718), replica filter, serverless 14 t, device pixels, 16 t scanner — merged in PR #720 (cf04ea1), closes #718; `device_cell` lives in `ptyscan.rs`. Follow-up found on the way: colour queries (OSC 10/11/12, OSC 4) go unanswered, #719.
-- [ ] Slice 10 — guards: fixture drift watch, format version, licences, status closed
+- [x] Slice 10 — guards: `scripts/sync-brief-fixtures` (sync, and `--check` against a commit), the weekly `brief-fixtures-drift-watch` workflow, the format-version refusal (the `future-format` case), licences (comrak and the lifted markdown-delight module, from slice 3), and this file closed.
+
+## Open follow-ups (2026-09-24, when the tenth slice landed)
+Each is a falsifiable issue; the picker-upper tries to disprove it first.
+- Terminal Delight: #724 and #743 (a strip or note button can stay lit after the pointer leaves the pane, the same hover gap twice); #725 (a long Markdown document may be rebuilt every frame, a hunch, untimed); #726 (a picture changed on disk keeps its old pixels); #733 (with no Chromium, the sentence saying why reaches only the log); #734 (a link into a brief's fragment from another document opens it at the top); #727 (a stale licence grant); #732 (one flaky host test, hunch-level); #719 (colour queries go unanswered, found by the size-answers slice).
+- agent-skills: #26 (a note deleted from the file by another writer stays in a browser that held it, the price of the no-revision rule); #27 (the concur stamp's offset lies on one diagonal); #28 (saving a brief with no notes island keeps the notes only in the comment); #30 (the reference writer and a torn notes island).
 
 ## Notes for a fresh session
 - The build log for Parker is `reports/2026-09-24-floating-square.html` (assembler `reports/_assemble_floating_square.py`, chart drawn from `evidence/`). Update it as slices land rather than starting a new page per slice.
