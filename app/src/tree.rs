@@ -179,7 +179,10 @@ pub struct InitiativeRef {
 /// the whole session — and every repair in the workspace layer is about getting
 /// a pin off a branch that stopped existing. Those repairs land here, because a
 /// scope that cannot be empty is the safe place to land. The deliberate "show
-/// me the whole session" is still `All`, one press on the chip.
+/// me the whole session" is still `All` — one press on the UNFILED divider,
+/// since the chip went — and it is now the only pin the shut strip obeys: the
+/// strip carries your group's tabs under `Branch` and under a project or group
+/// pin alike, so those two only light their tree row.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum Scope {
     /// Wherever you are: the branch holding the active task, re-asked every

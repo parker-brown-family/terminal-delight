@@ -1202,6 +1202,28 @@ fn strip_chips(places: &[tree::Place], active: usize) -> Vec<StripChip> {
     }
 }
 
+/// The scope to hold once a task in `place` is activated under `scope`: the
+/// pin widened until it shows that task, except that it never widens INTO the
+/// whole session.
+///
+/// The shut strip carries your group's tabs under every scope but `All` (see
+/// `render_strip_head`), so a widening from one pin to another only changes
+/// which tree row is lit — and a widening into `All` is the one move here that
+/// changes the strip, to every tab in the session with no head over them.
+/// [`tree::Scope::widened_for`] makes exactly that move for a task with no
+/// project, so landing on a loose tab or a top-level group's tab while a
+/// project row happened to be lit put the whole session across the top, with
+/// no chip left to say `ALL` and take it back. The whole session has to be
+/// chosen — the UNFILED divider is the press that asks for it — so here the
+/// pin lapses to the resting scope instead.
+fn scope_after_activation(scope: tree::Scope, place: &tree::Place) -> tree::Scope {
+    match scope.widened_for(place) {
+        None => scope,
+        Some(tree::Scope::All) => tree::Scope::default(),
+        Some(wider) => wider,
+    }
+}
+
 /// Which branch of the tree the rail is reading for.
 ///
 /// The project the active tab is filed under when it has one; else the
@@ -4021,9 +4043,10 @@ struct Workspace {
     /// How many times the ticker has turned. Keys the new frame's fade-in, so
     /// every turn animates, including one back to a frame shown before.
     eng_turns: u64,
-    /// The pointer is over the ticker. It holds still while you read it —
-    /// a sentence that moves out from under the eye is the one thing a
-    /// carousel must never do.
+    /// The ticker's last hover event said the pointer is on it. It holds still
+    /// while you read it — a sentence that moves out from under the eye is the
+    /// one thing a carousel must never do. An event, not a fact: see
+    /// `tick_eng_frame` for the two exits that never send one.
     eng_hover: bool,
     /// The afterglow: what changed between consecutive readings of each
     /// project, with when it was noticed. Kept for [`ENG_AFTERGLOW`] and then
@@ -5876,13 +5899,17 @@ impl Workspace {
         // [`ticker_may_turn`] says so: a fixed six-second beat could not hold
         // still under the pointer, and it would snap a frame somebody had just
         // picked with a pip a moment later. A look that turns nothing asks for
-        // no repaint, so a silent rail still costs nothing.
-        cx.spawn(async move |this, cx| loop {
+        // no repaint, so a silent rail still costs nothing. It runs in the
+        // window because whether the pointer is still IN the window is part of
+        // the answer — see `tick_eng_frame`.
+        cx.spawn_in(window, async move |this, cx| loop {
             cx.background_executor()
                 .timer(Duration::from_millis(500))
                 .await;
             if this
-                .update(cx, |ws: &mut Workspace, cx| ws.tick_eng_frame(cx))
+                .update_in(cx, |ws: &mut Workspace, window, cx| {
+                    ws.tick_eng_frame(window, cx)
+                })
                 .is_err()
             {
                 break;
@@ -11909,10 +11936,7 @@ impl Workspace {
     /// activation path anyway, because a pin is one click away on any branch
     /// row in the tree.
     fn ensure_scope_shows(&mut self, i: usize) {
-        let place = self.place_of(i);
-        if let Some(wider) = self.scope.widened_for(&place) {
-            self.scope = wider;
-        }
+        self.scope = scope_after_activation(self.scope, &self.place_of(i));
     }
 
     /// Commit an in-flight left-bar rename (project or initiative).
@@ -12316,9 +12340,24 @@ impl Workspace {
     /// Advance the ticker when its clock says a frame has had its time.
     /// Silent when there is nothing to rotate, while the pointer is on it,
     /// and for a whole frame after any turn — see [`ticker_may_turn`].
-    fn tick_eng_frame(&mut self, cx: &mut Context<Self>) {
+    ///
+    /// `eng_hover` is only what the ticker's last hover event said, and gpui
+    /// sends one on a pointer MOVE and on nothing else. Two ways of leaving
+    /// send none. Shutting the tree under a resting pointer stops drawing the
+    /// ticker, and its element's hover state goes with it, so nothing will
+    /// ever un-say it: forgotten here. The pointer leaving the window arrives
+    /// on Wayland as `MouseExited` alone, which no hover listener hears, and
+    /// left alone it froze the carousel for as
+    /// long as you worked in another window, which is when a glance at it is
+    /// most likely. That one is only set aside rather than forgotten, because
+    /// a pointer that comes back in over the ticker sends no fresh "entered".
+    fn tick_eng_frame(&mut self, window: &Window, cx: &mut Context<Self>) {
+        if !self.left_bar {
+            self.eng_hover = false;
+        }
+        let read = self.eng_hover && window.is_window_hovered();
         let n = self.eng_frames().len();
-        if !ticker_may_turn(n, self.eng_hover, self.eng_frame_at.elapsed()) {
+        if !ticker_may_turn(n, read, self.eng_frame_at.elapsed()) {
             return;
         }
         self.turn_eng_frame((self.eng_frame + 1) % n, cx);
@@ -18460,9 +18499,12 @@ impl Workspace {
             .rounded(sk.radius())
             .cursor_pointer()
             .when(here, |d| d.bg(color.alpha(STANDING_WASH)))
-            // the scoped branch is lit: the strip beside it is showing exactly
-            // this, and the tree says which branch that is without a legend.
-            // Later than the wash, so a pin still reads as the louder fact.
+            // the pinned branch is lit. It no longer narrows the shut strip,
+            // which carries your group's tabs whatever is pinned (see
+            // `render_strip_head`): what a pin still does is move you into its
+            // branch when clicked and hold this light until clicked again —
+            // what it should mean now waits on the actions-row pass. Later
+            // than the wash, so a pin still reads as the louder fact.
             .when(scoped, |d| {
                 d.bg(color.alpha(0.20)).border_l_2().border_color(th.accent)
             })
@@ -18604,7 +18646,9 @@ impl Workspace {
                         None => {
                             // UNFILED is a heading, not a branch — there is no
                             // scope that means "the loose ones", so the press
-                            // asks for the whole session the way the chip does.
+                            // asks for the whole session — the one press that
+                            // still does, now the scope chip has gone, and the
+                            // only way in (see `scope_after_activation`).
                             // A real toggle since `toggled` started backing out
                             // to the resting scope: before that it answered
                             // `All` whatever it was given, so this row could
@@ -20413,19 +20457,19 @@ impl Workspace {
         }
     }
 
-    /// The closed spine: a narrow strip at the right edge carrying the count and
-    /// one pip per kind present.
-    ///
-    /// It is a flex sibling of the screen, so it costs the terminals its own
-    /// width and nothing more. The queue it opens draws *over* the panes instead
-    /// of pushing them, which is the property the plan's geometry test checks.
     /// The column beside the screen on the right: the attention pill at its
     /// head and the split-right button at its foot.
+    ///
+    /// It is a flex sibling of the screen, so it costs the terminals its own
+    /// width and nothing more. The queue the pill opens draws *over* the panes
+    /// instead of pushing them, which is the property the plan's geometry test
+    /// checks.
     ///
     /// The foot is new, and it is why the column is drawn even with the pill
     /// switched off (`TD_SPINE=0`): the split that sets panes side by side
     /// stands on the window's RIGHT edge, the vertical axis, across the corner
-    /// from its partner on the bottom edge — see `bezel_bottom`.
+    /// from its partner on the bottom edge — see `bezel_bottom`. So `TD_SPINE=0`
+    /// no longer gives the terminals the column's width back.
     fn render_spine(&self, cx: &mut Context<Self>) -> gpui::Div {
         let s = theme::outer_choice(cx).grade.scale;
         let column = div()
@@ -21376,9 +21420,10 @@ impl Workspace {
             // anything anymore because the tabs are not being displayed like
             // before"*, and *"we clear out the text in the tree actions row"*.
             // Where you are standing is on the tree's own rows now (see
-            // `branch_row`); pinning the strip to a branch is still a click on
-            // that branch's row, and the strip still obeys it when the tree is
-            // shut. This row's glyphs and their arrangement are the next pass.
+            // `branch_row`), and the shut strip carries your group's tabs
+            // whatever a branch row is pinned to — only the whole session
+            // widens it (see `render_strip_head`). This row's glyphs and their
+            // arrangement are the next pass.
             .child(div().flex_1().min_w_0())
             .child(
                 // fold or unfold the whole tree. One button rather than two,
@@ -32299,8 +32344,22 @@ mod tests {
         );
         let tick = body("    fn tick_eng_frame(");
         assert!(
-            tick.contains("ticker_may_turn(n, self.eng_hover, self.eng_frame_at.elapsed())"),
+            tick.contains("ticker_may_turn(n, read, self.eng_frame_at.elapsed())"),
             "the clock asks the carousel's contract before turning"
+        );
+        // …and "read" is the hover event AND a pointer still in the window. A
+        // hover listener hears only moves, so a pointer that left the window
+        // over the ticker left `eng_hover` true and the carousel frozen for as
+        // long as it stayed out.
+        assert!(
+            tick.contains("let read = self.eng_hover && window.is_window_hovered();"),
+            "a pointer outside the window is reading nothing"
+        );
+        // A ticker the shut tree stopped drawing cannot be under the pointer,
+        // and no event will ever say it left.
+        assert!(
+            tick.contains("if !self.left_bar {") && tick.contains("self.eng_hover = false;"),
+            "the hold is forgotten when the ticker is not drawn"
         );
     }
 
@@ -32391,6 +32450,66 @@ mod tests {
         for id in ["bar-fold-all", "bar-new-project", "bar-hide"] {
             assert!(bar.contains(id), "the actions row lost {id}");
         }
+    }
+
+    /// Landing on a tab with no project while a branch row is pinned lets the
+    /// pin lapse; it never drops the strip into the whole session.
+    ///
+    /// `widened_for` answers `All` for a task with no project, and `All` is the
+    /// one scope the shut strip still obeys — every tab in the session and no
+    /// head. With the `ALL` chip gone, nothing would have said so or taken it
+    /// back. Pinning the TERMINAL DELIGHT row and then opening a task in a
+    /// top-level group like BFS was the whole recipe.
+    #[test]
+    fn landing_on_a_tab_with_no_project_under_a_pin_never_widens_to_the_whole_session() {
+        use tree::{Place, Scope};
+        let loose = Place::default();
+        let top_level_group = Place {
+            project: None,
+            initiative: Some(40),
+        };
+        for pin in [Scope::Project(12), Scope::Initiative(11)] {
+            for place in [loose, top_level_group] {
+                let after = scope_after_activation(pin, &place);
+                assert_ne!(after, Scope::All, "{pin:?} landing on {place:?}");
+                assert_eq!(after, Scope::default(), "the pin lapses to rest");
+            }
+        }
+        // Everything else is what `widened_for` already said.
+        let elsewhere = Place {
+            project: Some(13),
+            initiative: Some(2),
+        };
+        assert_eq!(
+            scope_after_activation(Scope::Initiative(11), &elsewhere),
+            Scope::Project(13),
+            "a pin still widens to the project it landed in"
+        );
+        assert_eq!(
+            scope_after_activation(Scope::Project(13), &elsewhere),
+            Scope::Project(13),
+            "a pin that shows the task holds"
+        );
+        assert_eq!(
+            scope_after_activation(Scope::All, &loose),
+            Scope::All,
+            "the whole session, once chosen, holds"
+        );
+        assert_eq!(
+            scope_after_activation(Scope::Branch, &loose),
+            Scope::Branch,
+            "the resting scope follows and never widens"
+        );
+        // And it is what every activation path runs.
+        let code = shipped_code();
+        let at = code
+            .find("    fn ensure_scope_shows(")
+            .expect("ensure_scope_shows");
+        let end = code[at..].find("\n    }\n").expect("end of fn");
+        assert!(
+            code[at..at + end].contains("scope_after_activation(self.scope,"),
+            "activation must ask scope_after_activation, not widened_for directly"
+        );
     }
 
     /// With the tree shut, the strip reads project › groups › your group's
