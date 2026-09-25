@@ -103,6 +103,8 @@ pub(crate) enum Req {
     DocBeside(PathBuf, mpsc::Sender<String>),
     /// Close a floating square. See [`Cmd::DocClose`].
     DocClose(mpsc::Sender<String>),
+    /// Scroll a floating document. See [`Cmd::DocScroll`].
+    DocScroll(f32, mpsc::Sender<String>),
 }
 
 /// Wait for the window to say what a bench verb actually did. The ticker
@@ -366,6 +368,9 @@ enum Cmd {
     /// Close the floating square, on the focused pane or the first one that
     /// has a square open.
     DocClose,
+    /// Scroll the floating document by this many logical pixels, down when
+    /// positive — the wheel over it, for a caller with no pointer.
+    DocScroll(f32),
 }
 
 /// Which face `ctl bench` asks for.
@@ -436,6 +441,7 @@ const USAGE: &str = "ping | whoami | paint on|off|toggle|status | \
      skin <name>|theme|status | \
      bench on|off|toggle|choose <n>|submit|say <text>|type <text> | \
      doc here <absolute path> | doc beside <absolute path> | doc close | \
+     doc scroll <pixels> | \
      mcp status|on|off | mcp writes on|off | mcp expose agents|all | \
      mcp rpc <json> | mcp from <session> <pane|-> rpc <json> | \
      adopt {\"cwd\":\"/…\",\"run\":\"…\"} | \
@@ -527,6 +533,12 @@ fn parse_line(s: &str) -> Result<Cmd, String> {
         // capability reachable only by a mouse cannot be gated by anything.
         ["bench", "submit"] => Ok(Cmd::BenchSubmit),
         ["doc", "close"] => Ok(Cmd::DocClose),
+        ["doc", "scroll", px] => px
+            .parse::<f32>()
+            .ok()
+            .filter(|p| p.is_finite())
+            .map(Cmd::DocScroll)
+            .ok_or_else(|| format!("doc scroll: {px:?} is not a number of pixels")),
         ["skin", "status"] => Ok(Cmd::SkinStatus),
         // Any other single word is a skin id — `theme` and `custom` included,
         // which is why they are not special-cased here. The window is what knows
@@ -854,6 +866,14 @@ fn handle_conn(
                 "err ui gone".into()
             }
         }
+        Ok(Cmd::DocScroll(px)) => {
+            let (rtx, rrx) = mpsc::channel();
+            if tx.send(Req::DocScroll(px, rtx)).is_ok() {
+                bench_outcome(rrx)
+            } else {
+                "err ui gone".into()
+            }
+        }
         Ok(Cmd::Bench(face)) => {
             if tx.send(Req::Bench(face)).is_ok() {
                 "ok".into()
@@ -972,6 +992,9 @@ pub fn start(cx: &mut Context<Workspace>) {
                     Req::DocBeside(path, reply) => ws.doc_beside(&path, reply, cx),
                     Req::DocClose(reply) => {
                         let _ = reply.send(ws.doc_close(cx));
+                    }
+                    Req::DocScroll(px, reply) => {
+                        let _ = reply.send(ws.doc_scroll(px, cx));
                     }
                     // The same escalation the robot panel performs, and the same
                     // persistence: a grant made from the CLI shows in the panel
@@ -1152,6 +1175,8 @@ fn parse_cli(args: &[String]) -> Result<(String, Scope), String> {
             // person debugging instance identity most wants to type.
             "-" => words.push("-"),
             w if !w.starts_with('-') => words.push(w),
+            // A negative number is a word too: `doc scroll -2400` scrolls up.
+            w if w.parse::<f64>().is_ok() => words.push(w),
             other => return Err(format!("unknown flag {other:?}")),
         }
     }
@@ -2025,6 +2050,17 @@ mod tests {
         assert!(USAGE.contains("doc beside <absolute path>"));
     }
 
+    /// A floating document scrolls without a pointer, which is how a soak
+    /// walks a brief top to bottom and makes it evict and bring back tiles.
+    #[test]
+    fn a_floating_document_scrolls_without_a_pointer() {
+        assert!(matches!(parse_line("doc scroll 2400"), Ok(Cmd::DocScroll(p)) if p == 2400.0));
+        assert!(matches!(parse_line("doc scroll -120.5"), Ok(Cmd::DocScroll(p)) if p == -120.5));
+        assert!(parse_line("doc scroll down").is_err());
+        assert!(parse_line("doc scroll NaN").is_err());
+        assert!(USAGE.contains("doc scroll"));
+    }
+
     #[test]
     fn a_pane_addressed_op_list_means_the_same_thing_twice() {
         // The defect this addressing exists to remove: an INDEX is read against
@@ -2315,6 +2351,18 @@ mod tests {
         assert!(parse_cli(&s(&["paint", "maybe"])).is_err());
         assert!(parse_cli(&s(&["paint", "on", "--pid", "nope"])).is_err());
         assert!(parse_cli(&s(&["paint", "on", "--wat"])).is_err());
+    }
+
+    /// `doc scroll -2400` scrolls up. Read as a flag, the minus sign made the
+    /// soak's walk back to the top a string of refusals nobody saw, and every
+    /// cycle closed the brief scrolled to its end.
+    #[test]
+    fn a_negative_number_on_the_command_line_is_a_word_not_a_flag() {
+        let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        let (line, scope) = parse_cli(&s(&["doc", "scroll", "-2400", "--pid", "42"])).unwrap();
+        assert_eq!(line, "doc scroll -2400");
+        assert_eq!(scope, Scope::Pid(42));
+        assert!(parse_cli(&s(&["doc", "scroll", "-x"])).is_err());
     }
 
     #[test]

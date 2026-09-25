@@ -1,12 +1,15 @@
 //! A document drawn inside a pane: the view a floating square holds.
 //!
-//! # What is here, and what is not yet
+//! # What is here
 //!
-//! Images and Markdown are drawn. HTML is recognised by the click (see
-//! [`crate::docopen`]) and opens a square that says, in a sentence, that it is
-//! not drawn here yet and how to open it instead. That sentence is the whole
-//! of its backend until it gets a real one, so a click never opens an empty
-//! square and never guesses.
+//! Images, Markdown and HTML are drawn. HTML is drawn by a page engine
+//! ([`engine`]) — today a snapshot taken by headless Chromium ([`snapshot`])
+//! — as tiles the view scrolls itself ([`page`]). The router asks
+//! [`html_ready`] before it places an HTML document, so a machine without
+//! Chromium hands the file to the desktop with a sentence instead of opening
+//! a square that can never fill. A browser that exists but will not start is
+//! found only once the view is up; the view then says why in its body and
+//! emits [`CannotShow`], and the pane hands the file over.
 //!
 //! # No mouse handlers, on purpose
 //!
@@ -54,22 +57,29 @@
 //! the view stays at the top, or, when that block is gone, the same fraction of
 //! the page.
 
+pub mod cache;
+pub mod cdp;
+pub mod engine;
 pub mod image;
 pub mod markdown;
+pub mod page;
+pub mod pref;
+pub mod snapshot;
 
 use std::cell::Cell;
 use std::path::{Component, Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use gpui::{
-    canvas, div, prelude::*, px, App, Context, EventEmitter, ImgResourceLoader, Modifiers, Pixels,
-    Point, RenderImage, Resource, ScrollDelta, SharedString, Size, Task, Window,
+    canvas, div, prelude::*, px, App, Context, EventEmitter, Global, ImgResourceLoader, Keystroke,
+    Modifiers, Pixels, Point, RenderImage, Resource, ScrollDelta, Size, Task, Window,
 };
 
 use crate::docopen::{DocKind, DocScroll, DocSeat, DocTarget};
 use crate::theme::Theme;
+use engine::{PageEngine, Unavailable};
 
 pub use image::{ImageZoom, ZoomStep};
 
@@ -96,6 +106,10 @@ pub struct DocumentView {
     /// measured them. `None` until it has painted once: an unmeasured view is
     /// not a zero-sized one, and nothing that needs the size runs without it.
     frame: Rc<Cell<Option<Frame>>>,
+    /// The view's flat top-left in window pixels as the last paint placed it.
+    /// Unlike `painted_at` it survives the next render, which is when a page
+    /// needs it: tiles are snapped to the device grid from where the view is.
+    placed: Rc<Cell<Option<Point<Pixels>>>>,
     /// The view's flat top-left in window pixels, recorded by the LAST thing
     /// the view paints and cleared at the top of every render. `Some` means
     /// everything above it, every link's text included, was laid out this
@@ -121,9 +135,8 @@ type Frame = (Size<Pixels>, f32);
 enum Backend {
     Image(image::ImageDoc),
     Markdown(markdown::MarkdownDoc),
-    /// A document this build recognises but does not draw, and the sentence
-    /// that says so.
-    Unshown(SharedString),
+    /// Boxed: a page carries its tiles, dialog and tasks, ten times an image.
+    Page(Box<page::PageDoc>),
 }
 
 /// A press on a link that leaves this document. The pane decides where it
@@ -140,14 +153,84 @@ pub struct FollowLink {
 
 impl EventEmitter<FollowLink> for DocumentView {}
 
-/// What a Markdown or HTML square says until those backends exist. Names the
-/// gesture that does work today, so the square is a pointer rather than a wall.
-fn not_yet(kind: DocKind) -> &'static str {
-    match kind {
-        DocKind::Html => {
-            "HTML is not drawn in the pane yet — ctrl+click the path to open it with the desktop."
+/// The view cannot show this document after all: the pane hands the file to
+/// the desktop. The view keeps saying why.
+pub struct CannotShow {
+    pub reason: String,
+}
+impl EventEmitter<CannotShow> for DocumentView {}
+
+// ── the page engine, one per TD process ───────────────────────────────────
+
+/// An engine, or the reason there is none.
+type EngineAnswer = Result<Arc<dyn PageEngine>, Unavailable>;
+
+/// An engine, once made, is kept; an unavailable answer is asked again after
+/// [`ASK_AGAIN`], so installing Chromium does not need a TD restart.
+struct Engines {
+    slot: Option<(EngineAnswer, Instant)>,
+}
+impl Global for Engines {}
+
+const ASK_AGAIN: Duration = Duration::from_secs(30);
+
+/// `~/.config/terminal-delight/documents.toml`.
+pub fn prefs_path() -> PathBuf {
+    crate::instance::config_dir().join("documents.toml")
+}
+
+fn make_engine() -> EngineAnswer {
+    let prefs = pref::load(&prefs_path()).map_err(Unavailable::Prefs)?;
+    match prefs.html.engine_choice() {
+        pref::EngineChoice::Off => Err(Unavailable::Off),
+        pref::EngineChoice::Unknown(name) => Err(Unavailable::UnknownEngine(name)),
+        pref::EngineChoice::Snapshot => {
+            let path = std::env::var_os("PATH");
+            let binary = snapshot::SnapshotEngine::locate(&prefs.html, path.as_deref())?;
+            // TD_PAGE_IDLE_SECS shortens the idle shutdown for a soak run that
+            // wants to watch the browser go; unset, it is five minutes.
+            let idle = std::env::var("TD_PAGE_IDLE_SECS")
+                .ok()
+                .and_then(|s| s.trim().parse().ok())
+                .map(Duration::from_secs);
+            Ok(Arc::new(match idle {
+                Some(idle) => snapshot::SnapshotEngine::with_idle(
+                    prefs.html,
+                    binary,
+                    idle,
+                    snapshot::runtime_dir(),
+                ),
+                None => snapshot::SnapshotEngine::new(prefs.html, binary),
+            }))
         }
-        DocKind::Markdown | DocKind::Image => "",
+    }
+}
+
+/// The page engine, made on first use from `documents.toml`.
+pub fn engine(cx: &mut App) -> EngineAnswer {
+    if let Some((answer, at)) = cx.try_global::<Engines>().and_then(|e| e.slot.as_ref()) {
+        if answer.is_ok() || at.elapsed() < ASK_AGAIN {
+            return answer.clone();
+        }
+    }
+    let answer = make_engine();
+    cx.set_global(Engines {
+        slot: Some((answer.clone(), Instant::now())),
+    });
+    answer
+}
+
+/// For the router, before it places an HTML document: is there an engine to
+/// draw it? A cached PATH lookup; no browser starts.
+pub fn html_ready(cx: &mut App) -> Result<(), Unavailable> {
+    engine(cx).map(|_| ())
+}
+
+/// TD is quitting: close the browser now and remove its profile, rather
+/// than leaving it to the kernel's SIGKILL and the next launch's sweep.
+pub fn shutdown(cx: &mut App) {
+    if let Some((Ok(engine), _)) = cx.try_global::<Engines>().and_then(|e| e.slot.as_ref()) {
+        engine.shutdown();
     }
 }
 
@@ -319,7 +402,8 @@ fn paints_alike(a: &Theme, b: &Theme) -> bool {
 fn scroll_of(backend: &Backend) -> Option<DocScroll> {
     match backend {
         Backend::Markdown(md) => md.scroll(),
-        Backend::Image(_) | Backend::Unshown(_) => None,
+        Backend::Page(page) => page.scroll(),
+        Backend::Image(_) => None,
     }
 }
 
@@ -345,7 +429,7 @@ impl DocumentView {
         let backend = match target.kind {
             DocKind::Image => Backend::Image(image::ImageDoc::load(&target.path, cx)),
             DocKind::Markdown => Backend::Markdown(markdown::MarkdownDoc::new()),
-            kind => Backend::Unshown(not_yet(kind).into()),
+            DocKind::Html => Backend::Page(Box::new(page::PageDoc::new(&target.path, engine(cx)))),
         };
         cx.on_release(|view, cx| view.give_back(cx)).detach();
         let watch = matches!(backend, Backend::Markdown(_));
@@ -355,6 +439,7 @@ impl DocumentView {
             theme: None,
             seat: DocSeat::Float,
             frame: Rc::new(Cell::new(None)),
+            placed: Rc::new(Cell::new(None)),
             painted_at: Rc::new(Cell::new(None)),
             links: markdown::LinkSink::default(),
             seen: None,
@@ -400,9 +485,13 @@ impl DocumentView {
     /// laid out: the file is still being read when a restore asks. A picture
     /// has no scroll to go back to.
     pub fn restore_scroll(&mut self, at: DocScroll, cx: &mut Context<Self>) {
-        if let Backend::Markdown(md) = &mut self.backend {
-            md.restore_fraction(at.top);
-            cx.notify();
+        match &mut self.backend {
+            Backend::Markdown(md) => {
+                md.restore_fraction(at.top);
+                cx.notify();
+            }
+            Backend::Page(page) => page.restore_scroll(at.top, cx),
+            Backend::Image(_) => {}
         }
     }
 
@@ -451,7 +540,14 @@ impl DocumentView {
         match &mut self.backend {
             Backend::Image(img) => img.press(at),
             Backend::Markdown(_) => self.press_link(at, cx),
-            Backend::Unshown(_) => false,
+            Backend::Page(page) => match page.press(at, cx) {
+                page::Pressed::Follow(link) => {
+                    cx.emit(link);
+                    true
+                }
+                page::Pressed::Took => true,
+                page::Pressed::Nothing => false,
+            },
         }
     }
 
@@ -529,11 +625,42 @@ impl DocumentView {
                 img.pan_by(dx, dy, view, sf)
             }
             Backend::Markdown(md) => md.wheel(delta, line, Some(f32::from(view.height))),
-            Backend::Unshown(_) => false,
+            Backend::Page(page) => {
+                // The page notifies for itself: a turn also moves tiles on
+                // and off the GPU.
+                page.wheel(delta, cx);
+                false
+            }
         };
         if moved {
             cx.notify();
         }
+    }
+
+    /// A key the pane's layer ladder handed to the view. Escape answers true
+    /// while one of a brief's own dialogs is open, and closes it; otherwise
+    /// false, so the pane's Escape closes the square.
+    pub fn key(&mut self, ks: &Keystroke, cx: &mut Context<Self>) -> bool {
+        match &mut self.backend {
+            Backend::Page(page) if ks.key == "escape" => page.escape(cx),
+            _ => false,
+        }
+    }
+
+    /// The last paint measured a new size or scale.
+    fn measured(&mut self, cx: &mut Context<Self>) {
+        if let (Backend::Page(page), Some((size, scale))) = (&mut self.backend, self.frame.get()) {
+            let origin = self.placed.get().unwrap_or_default();
+            page.measured(
+                page::Measured {
+                    origin,
+                    size,
+                    scale,
+                },
+                cx,
+            );
+        }
+        cx.notify();
     }
 
     /// One press of a zoom control. Answers whether anything changed.
@@ -543,7 +670,7 @@ impl DocumentView {
         };
         let changed = match &mut self.backend {
             Backend::Image(img) => img.zoom(step, view, sf),
-            Backend::Markdown(_) | Backend::Unshown(_) => false,
+            Backend::Markdown(_) | Backend::Page(_) => false,
         };
         if changed {
             cx.notify();
@@ -556,7 +683,7 @@ impl DocumentView {
     pub fn zoom_now(&self) -> Option<ImageZoom> {
         match &self.backend {
             Backend::Image(img) => Some(img.zoom_now()),
-            Backend::Markdown(_) | Backend::Unshown(_) => None,
+            Backend::Markdown(_) | Backend::Page(_) => None,
         }
     }
 
@@ -720,7 +847,12 @@ impl DocumentView {
                     eprintln!("[doc] released {}", self.target.path.display());
                 }
             }
-            Backend::Unshown(_) => {}
+            Backend::Page(page) => {
+                let n = page.release(cx);
+                if std::env::var_os("TD_DOCDEBUG").is_some() {
+                    eprintln!("[doc] released {} textures={n}", self.target.path.display());
+                }
+            }
         }
         self.reading = Task::ready(());
         self._watch = Task::ready(());
@@ -744,26 +876,25 @@ impl Render for DocumentView {
                 &self.links,
                 window,
             ),
-            Backend::Unshown(why) => div()
-                .p(px(14.))
-                .text_color(th.text.alpha(0.75))
-                .child(why.clone())
-                .into_any_element(),
+            Backend::Page(page) => page.element(&th, self.placed.get()),
         };
         // Measured, not listened to: a canvas records the box this view was
         // given and the scale it paints at, and asks for one more frame when
         // either changed, so a zoom placed against a stale size corrects
-        // itself at once.
+        // itself at once. A page hears of the change too: its size is the
+        // width the brief is laid out at.
         let store = self.frame.clone();
+        let placed = self.placed.clone();
         let weak = cx.entity().downgrade();
         let measure = canvas(
             move |bounds, window, cx| {
+                placed.set(Some(bounds.origin));
                 let now = Some((bounds.size, window.scale_factor()));
                 if store.get() != now {
                     store.set(now);
                     let weak = weak.clone();
                     cx.defer(move |cx| {
-                        let _ = weak.update(cx, |_, cx| cx.notify());
+                        let _ = weak.update(cx, |view, cx| view.measured(cx));
                     });
                 }
             },
@@ -815,6 +946,18 @@ mod tests {
                 "docview/markdown.rs",
                 strip(include_str!("docview/markdown.rs")),
             ),
+            ("docview/page.rs", strip(include_str!("docview/page.rs"))),
+            (
+                "docview/engine.rs",
+                strip(include_str!("docview/engine.rs")),
+            ),
+            (
+                "docview/snapshot.rs",
+                strip(include_str!("docview/snapshot.rs")),
+            ),
+            ("docview/cdp.rs", strip(include_str!("docview/cdp.rs"))),
+            ("docview/cache.rs", strip(include_str!("docview/cache.rs"))),
+            ("docview/pref.rs", strip(include_str!("docview/pref.rs"))),
         ]
     }
 
@@ -861,10 +1004,62 @@ mod tests {
         );
     }
 
+    /// A page's tiles are all dropped from the atlas when its view goes, and
+    /// an eviction while scrolling drops through the deferred path, never
+    /// directly from inside a window's own event.
     #[test]
-    fn an_html_square_says_what_opens_it_instead() {
-        let s = not_yet(DocKind::Html);
-        assert!(s.contains("ctrl+click"), "{s}");
+    fn a_page_gives_every_texture_back() {
+        let (_, src) = &view_sources()[0];
+        let release = src.split("fn give_back(").nth(1).expect("give_back");
+        let release = release.split("\n    }\n").next().unwrap_or(release);
+        assert!(
+            release.contains("page.release(cx)"),
+            "a page's tiles are given back when its view goes"
+        );
+        let (_, src) = view_sources()
+            .into_iter()
+            .find(|(name, _)| *name == "docview/page.rs")
+            .expect("page.rs is scanned");
+        let release = src
+            .split("pub fn release(&mut self, cx: &mut App)")
+            .nth(1)
+            .expect("PageDoc::release");
+        let release = release.split("\n    }\n").next().unwrap_or(release);
+        for slot in [
+            "self.current.take()",
+            "self.old.take()",
+            "self.dialog.take()",
+            "drop_image(",
+        ] {
+            assert!(release.contains(slot), "release must give back {slot}");
+        }
+        let plan = src.split("fn plan(&mut self").nth(1).expect("plan");
+        let plan = plan.split("\n    }\n").next().unwrap_or(plan);
+        assert!(
+            plan.contains("give_back("),
+            "eviction hands textures to give_back"
+        );
+        assert!(
+            !plan.contains("drop_image("),
+            "never a direct drop mid-event"
+        );
+        let give = src.split("pub fn give_back(").nth(1).expect("give_back");
+        let give = give.split("\n}\n").next().unwrap_or(give);
+        assert!(give.contains("cx.defer(") && give.contains("drop_image("));
+    }
+
+    #[test]
+    fn a_missing_engine_is_asked_about_again_later_and_a_found_one_is_kept() {
+        // The rule, as code reads it: kept when found, re-asked after 30 s
+        // when not, so installing Chromium needs no restart.
+        let src = include_str!("docview.rs");
+        let f = src
+            .split("pub fn engine(cx: &mut App)")
+            .nth(1)
+            .expect("engine");
+        let f = f.split("\n}\n").next().unwrap_or(f);
+        assert!(f.contains("answer.is_ok() || at.elapsed() < ASK_AGAIN"));
+        assert_eq!(ASK_AGAIN, Duration::from_secs(30));
     }
 
     /// A Markdown document that holds pictures gives every one of them back:
@@ -880,7 +1075,7 @@ mod tests {
             .split("Backend::Markdown(md) =>")
             .nth(1)
             .expect("release has a Markdown arm");
-        let md_arm = md_arm.split("Backend::Unshown").next().unwrap_or(md_arm);
+        let md_arm = md_arm.split("Backend::Page").next().unwrap_or(md_arm);
         assert!(md_arm.contains("drop_image("), "{md_arm}");
 
         let read = src

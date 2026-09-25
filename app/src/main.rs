@@ -7684,11 +7684,31 @@ impl Workspace {
             eprintln!("terminal-delight: doc here: {why}");
             return format!("err {why}");
         };
-        self.bench_apply(
+        let mut refused = None;
+        let said = self.bench_apply(
             cx,
             |v| v.bench.face() == workbench::Face::Terminal,
             "no pane is showing its terminal face",
-            |view, cx| view.open_float(target, None, cx),
+            |view, cx| refused = view.open_float(target, None, cx).err(),
+        );
+        // An HTML file with no engine to draw it went to the desktop instead,
+        // and the caller hears the same sentence the log does.
+        match refused {
+            Some(why) => format!("desktop {why}"),
+            None => said,
+        }
+    }
+
+    /// Scroll the floating document by `dy` logical pixels, down when
+    /// positive — the wheel, for a caller with no pointer. It is how the soak
+    /// walks a brief top to bottom and back, which is the path that evicts
+    /// tiles and brings them back.
+    pub(crate) fn doc_scroll(&mut self, dy: f32, cx: &mut Context<Self>) -> String {
+        self.bench_apply(
+            cx,
+            |v| v.has_float(),
+            "no pane has a floating document open",
+            |view, cx| view.scroll_float(dy, cx),
         )
     }
 
@@ -9498,8 +9518,10 @@ impl Workspace {
                     // A square asking to become a split stays the square it
                     // is; anything else gets a square, so the document is on
                     // screen either way.
+                    // (An HTML file with no engine never gets this far: the
+                    // pane refused it before asking for a split.)
                     if ev.by != Asker::Float || !v.has_float() {
-                        v.open_float(ev.target.clone(), ev.row, cx);
+                        let _ = v.open_float(ev.target.clone(), ev.row, cx);
                     }
                     v.note_float(FloatNote::FourPanes, cx);
                 });
@@ -37409,6 +37431,15 @@ fn main() {
         // of the reopen racing the closing process's PTY teardown linger.
         cx.on_app_quit(|_cx| {
             instance::release();
+            async move {}
+        })
+        .detach();
+        // The page engine's browser goes with TD: closed, reaped and its
+        // profile removed here, on an orderly quit. A TD that dies instead
+        // takes the browser with it by the kernel's parent-death signal, and
+        // the next TD sweeps the profile it left.
+        cx.on_app_quit(|cx| {
+            docview::shutdown(cx);
             async move {}
         })
         .detach();

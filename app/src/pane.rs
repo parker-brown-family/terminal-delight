@@ -299,6 +299,9 @@ pub(crate) struct FloatingDoc {
     _links: gpui::Subscription,
     /// Why the square is up when a split was asked for, said in its strip.
     note: Option<crate::docopen::FloatNote>,
+    /// The document's engine gave up (a browser that will not start): the
+    /// file goes to the desktop. Dropped with the square.
+    _gave_up: gpui::Subscription,
 }
 
 impl FloatingDoc {
@@ -306,6 +309,7 @@ impl FloatingDoc {
         view: gpui::Entity<crate::docview::DocumentView>,
         rect: crate::docopen::FloatRect,
         links: gpui::Subscription,
+        gave_up: gpui::Subscription,
     ) -> Self {
         Self {
             view,
@@ -315,6 +319,7 @@ impl FloatingDoc {
             hover: None,
             _links: links,
             note: None,
+            _gave_up: gave_up,
         }
     }
 }
@@ -334,6 +339,10 @@ pub(crate) struct DocFace {
     /// square's view is subscribed exactly once: its square's subscription
     /// went with the square.
     _links: gpui::Subscription,
+    /// The document's engine gave up: the file goes to the desktop, as a
+    /// square's does. `None` for a pane that came back after a restart,
+    /// which says why in its own body and opens nothing by itself.
+    _gave_up: Option<gpui::Subscription>,
 }
 
 /// A flat rectangle in window pixels, `(x, y, w, h)`: where something was
@@ -4706,12 +4715,19 @@ impl TerminalView {
     /// clicked on, or at the top of the screen when there is no row (the
     /// control socket has none). A square already open is replaced, and the
     /// one it replaces gives its texture back as it is dropped.
+    ///
+    /// An HTML document with no engine to draw it is handed to the desktop
+    /// instead, and the answer is the sentence saying why
+    /// ([`Self::html_refused`]).
     pub(crate) fn open_float(
         &mut self,
         target: crate::docopen::DocTarget,
         row: Option<usize>,
         cx: &mut Context<Self>,
-    ) {
+    ) -> Result<(), String> {
+        if let Some(why) = Self::html_refused(&target, cx) {
+            return Err(why);
+        }
         let (w, h) = self.screen_size().unwrap_or((640.0, 480.0));
         let (k1, k2) = self.warp_k;
         let (_, pad_y) = grid_pad(w, h, k1, k2);
@@ -4725,6 +4741,7 @@ impl TerminalView {
         let rect = crate::docopen::float_home(w, h, top, bottom);
         self.float = Some(Self::float_doc(target, None, rect, cx));
         cx.notify();
+        Ok(())
     }
 
     /// The floating square, drawn with the hyperglow every surface that floats
@@ -4880,7 +4897,42 @@ impl TerminalView {
         let links = cx.subscribe(&view, |pane, _, link: &crate::docview::FollowLink, cx| {
             pane.follow_doc_link(link, crate::docopen::DocSeat::Float, cx)
         });
-        FloatingDoc::new(view, rect, links)
+        let gave_up = Self::hand_over_on_give_up(&view, cx);
+        FloatingDoc::new(view, rect, links, gave_up)
+    }
+
+    /// The view is up but its engine cannot draw after all (a browser that
+    /// will not start): the view keeps saying why, and the file goes to the
+    /// desktop at once rather than waiting for somebody to ask for it there.
+    fn hand_over_on_give_up(
+        view: &gpui::Entity<crate::docview::DocumentView>,
+        cx: &mut Context<Self>,
+    ) -> gpui::Subscription {
+        cx.subscribe(view, |_, view, why: &crate::docview::CannotShow, cx| {
+            let path = view.read(cx).target().path.clone();
+            open_with_system(&path.to_string_lossy());
+            eprintln!(
+                "terminal-delight: {}: {} Opened with the desktop.",
+                path.display(),
+                why.reason
+            );
+        })
+    }
+
+    /// An HTML document with no engine to draw it goes to the desktop instead
+    /// of into a square, and this says why: the sentence, which also goes to
+    /// TD's log. `None` for anything that can be drawn. Asked before a square
+    /// is placed, so a machine without Chromium never opens one that could
+    /// not fill; nothing on screen carries the sentence yet, because no
+    /// square exists to carry it.
+    fn html_refused(target: &crate::docopen::DocTarget, cx: &mut Context<Self>) -> Option<String> {
+        if target.kind != crate::docopen::DocKind::Html {
+            return None;
+        }
+        let why = crate::docview::html_ready(cx).err()?.sentence();
+        open_with_system(&target.path.to_string_lossy());
+        eprintln!("terminal-delight: {}: {why}", target.path.display());
+        Some(why)
     }
 
     /// A link pressed inside a document, routed. `seat` is where the document
@@ -4909,6 +4961,12 @@ impl TerminalView {
                 let Some(target) = doc else {
                     return;
                 };
+                // A brief linking to another brief, on a machine that cannot
+                // draw one: the linked file goes to the desktop, and the
+                // document that linked to it stays.
+                if Self::html_refused(&target, cx).is_some() {
+                    return;
+                }
                 // The old view is dropped here, and gives its textures back
                 // as it goes, like any other close.
                 match seat {
@@ -4942,6 +5000,15 @@ impl TerminalView {
     /// Whether a floating square is open on this pane.
     pub(crate) fn has_float(&self) -> bool {
         self.float.is_some()
+    }
+
+    /// Scroll the floating document by `dy` logical pixels, down when
+    /// positive, as a wheel over it would.
+    pub(crate) fn scroll_float(&mut self, dy: f32, cx: &mut Context<Self>) {
+        if let Some(view) = self.float.as_ref().map(|f| f.view.clone()) {
+            let delta = gpui::ScrollDelta::Pixels(gpui::point(px(0.), px(-dy)));
+            view.update(cx, |doc, cx| doc.wheel(delta, cx));
+        }
     }
 
     /// Close the floating square. Answers whether one was open.
@@ -5009,6 +5076,14 @@ impl TerminalView {
         reply: Option<std::sync::mpsc::Sender<String>>,
         cx: &mut Context<Self>,
     ) {
+        // The split asks the same question the square does, before any pane
+        // is made: an HTML file with no engine goes to the desktop instead.
+        if let Some(why) = Self::html_refused(&target, cx) {
+            if let Some(reply) = reply {
+                let _ = reply.send(format!("desktop {why}"));
+            }
+            return;
+        }
         cx.emit(OpenDoc {
             target,
             carry: None,
@@ -5053,10 +5128,12 @@ impl TerminalView {
         let links = cx.subscribe(&view, |pane, _, link: &crate::docview::FollowLink, cx| {
             pane.follow_doc_link(link, crate::docopen::DocSeat::Face, cx)
         });
+        let gave_up = Self::hand_over_on_give_up(&view, cx);
         self.doc = Some(DocFace {
             view,
             target,
             _links: links,
+            _gave_up: Some(gave_up),
         });
         self.doc_holding = false;
         self.bench.set_face(crate::workbench::Face::Document);
@@ -5102,6 +5179,11 @@ impl TerminalView {
             return;
         };
         self.show_document(crate::docopen::DocTarget { path, kind }, None, cx);
+        // Nobody clicked: a brief that cannot be drawn after a restart says
+        // why in its pane, and no browser window opens by itself.
+        if let Some(doc) = self.doc.as_mut() {
+            doc._gave_up = None;
+        }
         if let (Some(top), Some(doc)) = (scroll, self.doc.as_ref()) {
             let at = crate::docopen::DocScroll { top };
             doc.view.update(cx, |v, cx| v.restore_scroll(at, cx));
@@ -5188,6 +5270,10 @@ impl TerminalView {
         let Some(view) = self.doc_on_face().map(|d| d.view.clone()) else {
             return Handled::Consumed;
         };
+        // The document first: Escape puts away a brief's own dialog.
+        if view.update(cx, |v, cx| v.key(ks, cx)) {
+            return Handled::Consumed;
+        }
         let m = &ks.modifiers;
         let Some(key) = crate::docopen::doc_face_key(&ks.key, m.alt, m.control, m.platform) else {
             return Handled::Consumed;
@@ -6113,8 +6199,17 @@ impl TerminalView {
             crate::keylayer::Layer::Rename => self.rename_key(&k, ks, cx),
             // Escape over a floating document closes it, and nothing else about
             // the key is the square's: `keylayer` routes every other key past it.
+            // The document is asked first: a brief's own dialog, open inside
+            // the square, is what Escape puts away before the square itself.
             crate::keylayer::Layer::Float => {
-                self.close_float(cx);
+                let took = self
+                    .float
+                    .as_ref()
+                    .map(|f| f.view.clone())
+                    .is_some_and(|view| view.update(cx, |doc, cx| doc.key(ks, cx)));
+                if !took {
+                    self.close_float(cx);
+                }
                 Handled::Consumed
             }
             // The Document face: its own keys move the document, and every
@@ -7483,7 +7578,9 @@ impl TerminalView {
                             self.promote_float(cx);
                         } else {
                             let (row, _, _) = self.viewport_cell(ev.position);
-                            self.open_float(target, Some(row), cx);
+                            // Refused only for HTML with no engine, which has
+                            // already gone to the desktop and said why.
+                            let _ = self.open_float(target, Some(row), cx);
                         }
                     }
                     Some(Took::Stop)
@@ -8761,7 +8858,7 @@ impl Render for TerminalView {
                                 MouseButton::Left,
                                 cx.listener(move |v, _, _, cx| {
                                     if let Some(doc) = doc.clone() {
-                                        v.open_float(doc, Some(row_at), cx);
+                                        let _ = v.open_float(doc, Some(row_at), cx);
                                     }
                                     v.ctx_menu = None;
                                     cx.stop_propagation();
@@ -13786,6 +13883,70 @@ mod tests {
             .split_whitespace()
             .collect::<Vec<_>>()
             .join(" ")
+    }
+
+    /// Every road into a square or a Document face asks whether an HTML file
+    /// can be drawn before anything is made: a machine with no Chromium hands
+    /// the file to the desktop with a sentence, never an empty square or an
+    /// empty pane. And both seats hand the file over when a browser that
+    /// exists will not start, and let a brief's own dialog have Escape first.
+    #[test]
+    fn an_html_file_nothing_can_draw_goes_to_the_desktop_before_a_square_or_pane_is_made() {
+        let code = live_code();
+        let open = method_body(&code, "pub(crate) fn open_float(");
+        let asked = open.find("Self::html_refused(").expect("open_float asks");
+        let made = open
+            .find("Self::float_doc(")
+            .expect("open_float makes a square");
+        assert!(asked < made, "asked before the square is made");
+        let beside = method_body(&code, "pub(crate) fn request_beside(");
+        let asked = beside
+            .find("Self::html_refused(")
+            .expect("request_beside asks");
+        let made = beside
+            .find("cx.emit(OpenDoc")
+            .expect("request_beside asks for a pane");
+        assert!(asked < made, "asked before a pane is asked for");
+        let follow = method_body(&code, "fn follow_doc_link(");
+        let asked = follow
+            .find("Self::html_refused(")
+            .expect("a followed link asks");
+        let made = follow
+            .find("Self::float_doc(")
+            .expect("a link replaces the square");
+        assert!(asked < made);
+        let refused = method_body(&code, "fn html_refused(");
+        assert!(refused.contains("crate::docview::html_ready(cx)"));
+        assert!(
+            refused.contains("open_with_system("),
+            "the file still opens"
+        );
+        for seat in ["fn float_of(", "pub(crate) fn show_document("] {
+            let body = method_body(&code, seat);
+            assert!(
+                body.contains("Self::hand_over_on_give_up("),
+                "{seat} hands the file over when its engine gives up"
+            );
+        }
+        // A pane restored after a restart was not clicked: it opens nothing.
+        let restore = method_body(&code, "pub(crate) fn restore_document(");
+        let shown = restore.find("self.show_document(").expect("restore shows");
+        let quiet = restore
+            .find("doc._gave_up = None")
+            .expect("and hands nothing over");
+        assert!(shown < quiet);
+        let give_up = method_body(&code, "fn hand_over_on_give_up(");
+        assert!(
+            give_up.contains("crate::docview::CannotShow") && give_up.contains("open_with_system(")
+        );
+        let doc_key = method_body(&code, "fn doc_key(");
+        let first = doc_key
+            .find("v.key(ks, cx)")
+            .expect("the face asks the view");
+        let face = doc_key
+            .find("doc_face_key(")
+            .expect("then the face's own keys");
+        assert!(first < face);
     }
 
     /// One method's body out of [`production_source`], up to the next method.
