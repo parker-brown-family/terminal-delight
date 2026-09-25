@@ -1152,6 +1152,21 @@ fn point_on_float(
 /// strip, or the body. A pointer inside the square that finds no zone — the
 /// one frame between opening it and its first paint — is still the square's,
 /// and lands on its body, so a press there never starts a selection behind it.
+/// The faces a floating document square is drawn over, hit-tested on, and
+/// closed from with Escape: the terminal and the bench. Not the document face,
+/// which is already a document filling the pane.
+///
+/// It was the terminal alone, and the bench was the one place an agent's
+/// artifacts are listed — so a click on one handed the file to the desktop and
+/// emptied the bench behind it. Parker, 2026-09-25: *"clicking on it wipes the
+/// screen (which it shouldn't)"*.
+fn float_shows_on(face: crate::workbench::Face) -> bool {
+    matches!(
+        face,
+        crate::workbench::Face::Terminal | crate::workbench::Face::Workbench
+    )
+}
+
 fn float_hit_through_glass(
     screen: (f32, f32, f32, f32),
     k: (f32, f32),
@@ -5007,7 +5022,7 @@ impl TerminalView {
     ) -> Option<gpui::AnyElement> {
         use crate::docopen::FloatHit;
         let float = self.float.as_ref()?;
-        if face != crate::workbench::Face::Terminal {
+        if !float_shows_on(face) {
             return None;
         }
         let s = crate::lang::current().strings();
@@ -5778,7 +5793,7 @@ impl TerminalView {
         pos: gpui::Point<Pixels>,
     ) -> Option<(crate::docopen::FloatZone, (f32, f32))> {
         let float = self.float.as_ref()?;
-        if self.bench.face() != crate::workbench::Face::Terminal {
+        if !float_shows_on(self.bench.face()) {
             return None;
         }
         let hit = float_hit_through_glass(
@@ -6893,7 +6908,7 @@ impl TerminalView {
             rename: self.renaming.is_some(),
             note: self.note.is_some(),
             bench: self.bench.face() == crate::workbench::Face::Workbench,
-            float: self.float.is_some() && self.bench.face() == crate::workbench::Face::Terminal,
+            float: self.float.is_some() && float_shows_on(self.bench.face()),
             document: self.bench.face() == crate::workbench::Face::Document,
             float_caret: self
                 .float
@@ -8081,6 +8096,35 @@ impl TerminalView {
         // latched while this pane already held idle focus froze the ✅ badge —
         // the edge never came). ack_bell is a no-op when nothing is latched.
         self.ack_bell(cx);
+        // THE DOCUMENT FACE, through the same inverse. The whole screen is the
+        // document, so every press on it is the document's — a selection in
+        // the hidden grid, or the copy/paste tray offering the hidden shell's
+        // links, would be acting on something nobody can see. First of all,
+        // because nothing else is drawn on that face: no square, no bench.
+        if self.doc_face_press(ev, window, cx) {
+            Self::trace_press_taken("the document face", ev);
+            cx.stop_propagation();
+            cx.notify();
+            return;
+        }
+        // THE FLOATING SQUARE lies over the grid, over the note and over the
+        // bench, so a press on it is its own and never the surface's behind
+        // it: a click on a picture must not start a selection nobody can see,
+        // and on the bench it must not press the card the square covers. Asked
+        // FIRST for that reason — the bench branch below takes every press on
+        // its face. Found through the warp's inverse for the bench's reason,
+        // against zones its strip and body recorded as they painted. A right
+        // press is the square's too: the copy/paste tray would otherwise offer
+        // the link HIDDEN under it.
+        if let Some((zone, flat)) = self.float_hit(ev.position) {
+            Self::trace_press_taken("the floating square", ev);
+            if ev.button == MouseButton::Left {
+                self.float_press(zone, flat, ev, window, cx);
+            }
+            cx.stop_propagation();
+            cx.notify();
+            return;
+        }
         // THE BENCH, through the warp's inverse.
         //
         // The bench is bent by the same barrel post-pass as the grid, and gpui
@@ -8103,6 +8147,22 @@ impl TerminalView {
                 cx.stop_propagation();
                 return;
             }
+            // Alt or Ctrl on an artifact: the terminal's click table, so Alt
+            // means the floating square and Ctrl+Alt a pane beside, here as on
+            // the grid. Shift is left to the bench, where it extends a
+            // selection. See `bench_doc_click`.
+            if (ev.modifiers.alt || ev.modifiers.control)
+                && self.bench_doc_click(
+                    click_mods(ev.modifiers),
+                    landed.as_ref().map(|(hit, _)| hit),
+                    cx,
+                )
+            {
+                Self::trace_press_taken("a document on the bench", ev);
+                cx.stop_propagation();
+                cx.notify();
+                return;
+            }
             // Every press on the bench goes through here now, including one
             // that landed on nothing: "on the bench but on nothing" is where
             // a selection starts, and it used to fall through and begin a
@@ -8113,31 +8173,6 @@ impl TerminalView {
                 cx.stop_propagation();
                 return;
             }
-        }
-        // THE DOCUMENT FACE, through the same inverse. The whole screen is the
-        // document, so every press on it is the document's — a selection in
-        // the hidden grid, or the copy/paste tray offering the hidden shell's
-        // links, would be acting on something nobody can see.
-        if self.doc_face_press(ev, window, cx) {
-            Self::trace_press_taken("the document face", ev);
-            cx.stop_propagation();
-            cx.notify();
-            return;
-        }
-        // THE FLOATING SQUARE lies over the grid and over the note, so a press
-        // on it is its own and never the grid's behind it: a click on a picture
-        // must not start a selection nobody can see. Found through the warp's
-        // inverse for the bench's reason, against zones its strip and body
-        // recorded as they painted. A right press is the square's too: the
-        // copy/paste tray would otherwise offer the link HIDDEN under it.
-        if let Some((zone, flat)) = self.float_hit(ev.position) {
-            Self::trace_press_taken("the floating square", ev);
-            if ev.button == MouseButton::Left {
-                self.float_press(zone, flat, ev, window, cx);
-            }
-            cx.stop_propagation();
-            cx.notify();
-            return;
         }
         // The note is a physical object lying on the glass, so a click lands on
         // it before anything underneath: the bottom-left corner tears it off,
@@ -10800,7 +10835,7 @@ impl Render for TerminalView {
             });
         }
         let float_el = self.float_el(&th, face_now, cx);
-        let float_cursor = (face_now == crate::workbench::Face::Terminal)
+        let float_cursor = float_shows_on(face_now)
             .then(|| self.float_resize_cursor())
             .flatten();
         // Inside the same padding the grid keeps off the bent edges, so the
@@ -15103,6 +15138,80 @@ mod tests {
     }
 
     /// One method's body out of [`production_source`], up to the next method.
+    /// The bench opens documents in TD, the way the grid does. Parker,
+    /// 2026-09-25: a click on an artifact in the bench's column *"wipes the
+    /// screen (which it shouldn't)"*, and Alt/Ctrl+Alt+click had to reach the
+    /// bench *"like it is in the terminal side"*.
+    ///
+    /// Four facts, each of which the old code broke:
+    /// - the square is drawn, hit and closed on the bench face as well;
+    /// - a press over the square is asked before the bench takes every press
+    ///   on its face, or a square over the bench could never be clicked;
+    /// - a rail click on an artifact goes through `open_float`, never the
+    ///   desktop-then-`close_card` road that blanked the bench;
+    /// - a modified press on the bench is decided by the grid's own table.
+    #[test]
+    fn the_bench_opens_documents_in_td_and_keeps_its_card() {
+        use crate::workbench::Face;
+        assert!(float_shows_on(Face::Terminal));
+        assert!(
+            float_shows_on(Face::Workbench),
+            "the square floats over the bench"
+        );
+        assert!(
+            !float_shows_on(Face::Document),
+            "a document face is a document already"
+        );
+
+        let code = live_code();
+        let down = method_body(&code, "fn on_mouse_down(");
+        let square = down
+            .find("self.float_hit(ev.position)")
+            .expect("the square is asked");
+        let bench = down
+            .find("self.bench_press_at(")
+            .expect("the bench is asked");
+        assert!(square < bench, "the square over the bench is asked first");
+        let modified = down
+            .find("self.bench_doc_click(")
+            .expect("modified bench press");
+        assert!(
+            modified < bench,
+            "a modified press is decided before a plain one"
+        );
+        for gate in ["fn float_hit(", "fn float_el("] {
+            let body = method_body(&code, gate);
+            assert!(
+                body.contains("float_shows_on("),
+                "{gate} gates on the shared rule"
+            );
+        }
+
+        let bench_src: String = include_str!("pane/bench.rs")
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let open = method_body(&bench_src, "pub fn bench_open(");
+        assert!(
+            !open.contains("close_card"),
+            "a click must not empty the bench: {open}"
+        );
+        assert!(open.contains("self.bench_open_href("), "{open}");
+        let href = method_body(&bench_src, "fn bench_open_href(");
+        assert!(href.contains("self.open_float(target, None, cx)"), "{href}");
+        let click = method_body(&bench_src, "pub(super) fn bench_doc_click(");
+        assert!(click.contains("crate::docopen::click_intent("), "{click}");
+        assert!(
+            click.contains("self.request_beside("),
+            "Ctrl+Alt opens beside: {click}"
+        );
+        assert!(
+            bench_src.contains("Dispatch::Open(href) => self.bench_open_href(&href, cx)"),
+            "the card's own open button takes the same road"
+        );
+    }
+
     fn method_body(code: &str, signature: &str) -> String {
         let at = code
             .find(signature)
