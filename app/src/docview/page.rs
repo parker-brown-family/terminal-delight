@@ -1360,7 +1360,13 @@ impl PageDoc {
         }
         // Nothing open over the page: Escape would close the document, and
         // with it every edit not yet saved.
-        if floating && self.notes.as_mut().is_some_and(NotesLayer::guard_close) {
+        floating && self.guard_close(cx)
+    }
+
+    /// Keep the document open once if closing it would lose edits not yet
+    /// saved, and say so. See [`NotesLayer::guard_close`].
+    pub fn guard_close(&mut self, cx: &mut Context<DocumentView>) -> bool {
+        if self.notes.as_mut().is_some_and(NotesLayer::guard_close) {
             cx.notify();
             return true;
         }
