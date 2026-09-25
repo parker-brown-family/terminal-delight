@@ -453,10 +453,11 @@ impl PageDoc {
     }
 
     /// Put words in the notes bar: what came of a ↪, which is answered
-    /// outside the view.
+    /// outside the view. It goes on the send's own line, beside the save
+    /// the press started rather than over it.
     pub fn notes_said(&mut self, said: Said) {
         if let Some(layer) = self.notes.as_mut() {
-            layer.say(said);
+            layer.say_sent(said);
         }
     }
 
@@ -1472,8 +1473,16 @@ impl PageDoc {
                     self.save(cx);
                     return Pressed::Took;
                 }
-                LayerPress::Send { map, unsaved } => {
-                    return Pressed::Send(super::SendNotes { map, unsaved });
+                LayerPress::Send(sending) => {
+                    // The save starts first, so its "saving…" is on the bar
+                    // before the send's answer comes back beside it.
+                    if sending.saves {
+                        self.save(cx);
+                    }
+                    return Pressed::Send(super::SendNotes {
+                        map: sending.map,
+                        unsaved: sending.unsaved,
+                    });
                 }
                 LayerPress::Pass => {}
             }

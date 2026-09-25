@@ -135,8 +135,10 @@ These look like the concern and are not. Recorded so the next reader does not re
   reachable only from the press: `send_notes` has one caller, the handler of the event the notes
   bar raises, and no socket or MCP verb reaches it. And it goes nowhere the person cannot see: the
   target must be an agent showing its terminal face, and the bar says where the notes landed. The
-  person reads them in the prompt and presses Enter. Unsaved notes are sent as shown, and the bar
-  says how many; ↪ never saves first, because saving is its own decision. Where the button is
+  person reads them in the prompt and presses Enter. Unsaved notes are sent as shown and saved into
+  the file by the same press (a write to the file, not to a terminal; the button reads "save &
+  send" while there is something to save); where the file cannot take a save, the bar says how
+  many went that the file does not hold. Where the button is
   drawn is checked live, without pressing it, by `scripts/doc-send-check.sh`: absent over a shell,
   present over an agent and on a split opened beside one, and a stand-in agent's stdin empty after.
 - **The MCP server.** `set_pane_config` stores numbers for appearance. There is no verb that writes

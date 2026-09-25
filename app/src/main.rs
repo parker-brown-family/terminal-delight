@@ -10022,6 +10022,8 @@ impl Workspace {
                     } else {
                         format!("{who}'s prompt")
                     };
+                    // A send saves as it goes; this counts only what a
+                    // brief that cannot be saved into kept out of the file.
                     let unsaved = match ev.unsaved {
                         0 => String::new(),
                         1 => " · it includes 1 edit not saved into the file".to_string(),
