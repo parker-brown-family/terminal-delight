@@ -1099,6 +1099,11 @@ const ENG_AFTERGLOW: Duration = Duration::from_secs(15 * 60);
 /// well under a pinned scope's `0.20`: a standing fact, read in passing.
 const STANDING_WASH: f32 = 0.08;
 
+/// The wash on the chip of the group you are in, at the head of the shut
+/// strip. Twice the tree's: a chip is a few characters wide, and the wash is
+/// half of what tells it from its siblings.
+const STRIP_CHIP_WASH: f32 = STANDING_WASH * 2.;
+
 /// The column beside the screen on the right — the attention pill at its head,
 /// the split-right button at its foot — as its width plus its left margin, in
 /// points at scale 1. The bottom bezel stops this far (and the screen's own
@@ -1123,24 +1128,77 @@ fn ticker_may_turn(frames: usize, hovered: bool, since_turn: Duration) -> bool {
     frames > 1 && !hovered && since_turn >= ENG_TURN
 }
 
-/// Which project and which group the tab strip is showing, for the trail in
-/// front of it — read off the SCOPE, so the trail and the tabs after it are
-/// always about the same set.
+/// One chip at the head of the shut strip: a branch you can go to, and
+/// whether you are in it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum StripChip {
+    /// The project, standing for its own tabs — the ones filed under no group.
+    /// `go` is the first of those, and `None` when it has none: a project
+    /// whose every tab is in a group is a heading with nowhere of its own.
+    Project {
+        id: u32,
+        lit: bool,
+        go: Option<usize>,
+    },
+    /// One of the project's groups, or a top-level group on its own. `go` is
+    /// its first tab.
+    Group { id: u32, lit: bool, go: usize },
+}
+
+/// The head of the shut strip: the active tab's project, then that project's
+/// groups — every one holding a tab, in the order the tree lists them — with
+/// the branch you are in lit. The tabs that follow the head are that branch's,
+/// so the row reads project › groups › the tabs beside yours.
 ///
-/// The resting scope follows the active task, so it names that task's project
-/// and group. A pinned group names its own project, looked up, since the pin
-/// carries only the group. A pinned project spans its groups, so it names no
-/// group; and the whole session has no one place to name.
-fn strip_trail_ids(
-    scope: tree::Scope,
-    active: tree::Place,
-    project_of_group: impl Fn(u32) -> Option<u32>,
-) -> (Option<u32>, Option<u32>) {
-    match scope {
-        tree::Scope::Branch => (active.project, active.initiative),
-        tree::Scope::Initiative(g) => (project_of_group(g), Some(g)),
-        tree::Scope::Project(p) => (Some(p), None),
-        tree::Scope::All => (None, None),
+/// A tab in a top-level group gets that group alone, since it has no project
+/// to list siblings under; a tab filed nowhere gets no head at all, because an
+/// unorganised session is not labelled "unfiled".
+///
+/// `places` is [`Workspace::places`], which reads a grouped tab's project FROM
+/// ITS GROUP — so every tab in a group under a project answers that project.
+fn strip_chips(places: &[tree::Place], active: usize) -> Vec<StripChip> {
+    let Some(here) = places.get(active).copied() else {
+        return Vec::new();
+    };
+    let first = |want: tree::Place| places.iter().position(|p| *p == want);
+    match (here.project, here.initiative) {
+        (Some(p), g) => {
+            let mut chips = vec![StripChip::Project {
+                id: p,
+                lit: g.is_none(),
+                go: first(tree::Place {
+                    project: Some(p),
+                    initiative: None,
+                }),
+            }];
+            // First-tab order, which is the order the tree lists groups in.
+            for (i, place) in places.iter().enumerate() {
+                let Some(gid) = place.initiative.filter(|_| place.project == Some(p)) else {
+                    continue;
+                };
+                let seen = chips
+                    .iter()
+                    .any(|c| matches!(c, StripChip::Group { id, .. } if *id == gid));
+                if !seen {
+                    chips.push(StripChip::Group {
+                        id: gid,
+                        lit: g == Some(gid),
+                        go: i,
+                    });
+                }
+            }
+            chips
+        }
+        (None, Some(g)) => first(here)
+            .map(|i| {
+                vec![StripChip::Group {
+                    id: g,
+                    lit: true,
+                    go: i,
+                }]
+            })
+            .unwrap_or_default(),
+        (None, None) => Vec::new(),
     }
 }
 
@@ -21705,42 +21763,35 @@ impl Workspace {
             .child(close_x)
     }
 
-    /// The trail in front of the tab strip while the tree is shut —
-    /// `PROJECT › GROUP ›`, then the tabs: the tree's own vernacular, laid on
-    /// its side.
+    /// The head of the tab strip while the tree is shut: the project, `›`, its
+    /// groups, `›`, and then the tabs of the group you are in — the tree's own
+    /// vernacular, laid on its side.
     ///
     /// With the tree open, the tree says where you are: the task wears its
     /// ring and the project and group above it a faint wash. Shut, the strip
     /// was a row of tab names with nothing to say whose they were. Parker, on
-    /// exactly that row: *"we should see project > group > tab vernacular"*.
-    /// So the strip starts with the branch it is showing, named the way the
-    /// tree names it — the project's dot and its name in capitals, the group's
-    /// rail and its name.
+    /// exactly that row: *"we should see project > group > tab vernacular"*;
+    /// and then, on a first cut whose project step widened the strip to every
+    /// tab in the project: *"the PROJECT > GROUPS (should have similar NON TAB
+    /// appearance and project) > showing sibling tabs is proper"*.
     ///
-    /// Read from the SCOPE the strip is filtered by rather than from the
-    /// active tab alone, so the words and the tabs after them are always about
-    /// the same set — see [`strip_trail_ids`]. And each step does what its
-    /// tree row does when clicked: pins the strip to that branch, or, pressed
-    /// again, lets it go.
-    fn strip_trail(&self, scale: f32, cx: &mut Context<Self>) -> Option<gpui::Div> {
-        let th = theme::theme(cx);
-        let sk = skin::skin(cx, scale);
-        let (project, group) = strip_trail_ids(self.scope, self.place_of(self.active), |g| {
-            self.groups
-                .iter()
-                .find(|x| x.id == g)
-                .and_then(|x| x.project)
-        });
-        let project = project.and_then(|p| self.project_at(p).map(|q| (p, q.label(), q.color)));
-        let group = group.and_then(|g| {
-            self.groups
-                .iter()
-                .find(|x| x.id == g)
-                .map(|x| (g, x.label(), x.color))
-        });
-        if project.is_none() && group.is_none() {
+    /// So the groups are chips, drawn like the project and nothing like a tab
+    /// — the tree's mark and name, no bezel — and the group you are in is lit.
+    /// A press on another group goes to it; a press on the project goes to its
+    /// own ungrouped tabs, when it has any. Nothing here widens the strip into
+    /// a flat list of every tab in the project: the tabs are always your
+    /// group's. What decides the chips is [`strip_chips`].
+    fn render_strip_head(&self, scale: f32, cx: &mut Context<Self>) -> Option<gpui::Div> {
+        // The whole session has no one place to head it.
+        if self.scope == tree::Scope::All {
             return None;
         }
+        let chips = strip_chips(&self.places(), self.active);
+        if chips.is_empty() {
+            return None;
+        }
+        let th = theme::theme(cx);
+        let sk = skin::skin(cx, scale);
         let sep = || {
             div()
                 .flex_none()
@@ -21748,77 +21799,110 @@ impl Workspace {
                 .text_color(th.text.alpha(0.35))
                 .child("\u{203a}")
         };
-        let mut trail = div()
+        let mut head = div()
             .flex_none()
             .flex()
             .flex_row()
             .items_center()
             .gap(px(4. * scale));
-        if let Some((pid, name, color)) = project {
-            // a project's mark is a filled dot, as in the tree
-            let dot = div()
-                .w(px(7. * scale))
-                .h(px(7. * scale))
-                .rounded(sk.radius_pill())
-                .bg(color);
-            trail = trail
-                .child(self.trail_step(
-                    tree::Scope::Project(pid),
-                    name.to_uppercase(),
-                    true,
-                    dot,
-                    scale,
-                    cx,
-                ))
-                .child(sep());
+        let has_groups = chips.iter().any(|c| matches!(c, StripChip::Group { .. }));
+        for chip in chips {
+            match chip {
+                StripChip::Project { id, lit, go } => {
+                    let Some(p) = self.project_at(id) else {
+                        continue;
+                    };
+                    // a project's mark is a filled dot, as in the tree
+                    let dot = div()
+                        .w(px(7. * scale))
+                        .h(px(7. * scale))
+                        .rounded(sk.radius_pill())
+                        .bg(p.color);
+                    let name = p.label().to_uppercase();
+                    let el = self.strip_chip(
+                        format!("strip-project-{id}"),
+                        name,
+                        true,
+                        p.color,
+                        dot,
+                        lit,
+                        go,
+                        scale,
+                        cx,
+                    );
+                    head = head.child(el);
+                    // the project is joined to its groups by a `›`; the
+                    // groups themselves sit side by side, as siblings do
+                    if has_groups {
+                        head = head.child(sep());
+                    }
+                }
+                StripChip::Group { id, lit, go } => {
+                    let Some(g) = self.groups.iter().find(|g| g.id == id) else {
+                        continue;
+                    };
+                    // a group's mark is its colour rail stood on end, as in
+                    // the tree
+                    let rail = div()
+                        .w(px(3. * scale))
+                        .h(px(11. * scale))
+                        .rounded(sk.radius())
+                        .bg(g.color);
+                    let el = self.strip_chip(
+                        format!("strip-group-{id}"),
+                        g.label(),
+                        false,
+                        g.color,
+                        rail,
+                        lit,
+                        Some(go),
+                        scale,
+                        cx,
+                    );
+                    head = head.child(el);
+                }
+            }
         }
-        if let Some((gid, name, color)) = group {
-            // a group's mark is its colour rail stood on end, as in the tree
-            let rail = div()
-                .w(px(3. * scale))
-                .h(px(11. * scale))
-                .rounded(sk.radius())
-                .bg(color);
-            trail = trail
-                .child(self.trail_step(tree::Scope::Initiative(gid), name, false, rail, scale, cx))
-                .child(sep());
-        }
-        Some(trail)
+        // and the head is joined to the tabs after it by one more
+        Some(head.child(sep()))
     }
 
-    /// One step of the strip's trail: the branch's mark, its name, and its tree
-    /// row's click. Lit while the strip is PINNED to it — the fact the tree
-    /// lights that row for — so a pin is never a press that changed nothing
-    /// you can see.
-    fn trail_step(
+    /// One chip of the strip's head — a branch's mark and its name, never a
+    /// tab's bezel. The chip you are in wears a wash of its own colour and
+    /// the brighter ink, and takes no press, since it is where you already
+    /// are; any other chip with somewhere to go is a door to that branch.
+    #[allow(clippy::too_many_arguments)]
+    fn strip_chip(
         &self,
-        to: tree::Scope,
+        id: String,
         name: String,
         project: bool,
+        color: Hsla,
         mark: gpui::Div,
+        lit: bool,
+        go: Option<usize>,
         scale: f32,
         cx: &mut Context<Self>,
     ) -> gpui::Stateful<gpui::Div> {
-        let th = theme::theme(cx);
         let sk = skin::skin(cx, scale);
-        let lit = self.scope == to;
-        let id = match to {
-            tree::Scope::Project(p) => format!("trail-project-{p}"),
-            tree::Scope::Initiative(g) => format!("trail-group-{g}"),
-            tree::Scope::Branch | tree::Scope::All => "trail".to_string(),
+        // A project is the heading you are always under, so its name stays
+        // bright; a group is bright only while you are in it.
+        let ink = if lit || project {
+            sk.ink.ink_lit
+        } else {
+            sk.ink.ink_dim
         };
-        div()
+        let mut chip = div()
             .id(SharedString::from(id))
             .flex_none()
             .flex()
             .flex_row()
             .items_center()
             .gap(px(5. * scale))
-            .px(px(4. * scale))
+            .px(px(5. * scale))
             .py(px(1. * scale))
             .rounded(sk.radius())
-            .cursor_pointer()
-            .hover(|st| st.bg(hsla(0., 0., 1., 0.08)))
+            .when(lit, |d| d.bg(color.alpha(STRIP_CHIP_WASH)))
             .child(mark.flex_none())
             .child(
                 div()
@@ -21828,19 +21912,24 @@ impl Workspace {
                     .truncate()
                     .text_size(px(CHROME_NAME_PT * scale))
                     .when(project, |d| d.font_weight(gpui::FontWeight::EXTRA_BOLD))
-                    .text_color(if lit { th.accent } else { th.text.alpha(0.85) })
+                    .text_color(ink)
                     .child(name),
-            )
-            // Propagation stops here or the press also arms the mother bar's
-            // move handle underneath it.
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
-                    cx.stop_propagation();
-                    let next = ws.scope.toggled(to);
-                    ws.set_scope(next, window, cx);
-                }),
-            )
+            );
+        if let Some(to) = go.filter(|_| !lit) {
+            chip = chip
+                .cursor_pointer()
+                .hover(move |st| st.bg(color.alpha(STRIP_CHIP_WASH * 0.75)))
+                // Propagation stops here or the press also arms the mother
+                // bar's move handle underneath it.
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
+                        cx.stop_propagation();
+                        ws.activate_tab(to, window, cx);
+                    }),
+                );
+        }
+        chip
     }
 
     /// The persistent badge in the mother bar's corner: the isolation health of
@@ -23899,11 +23988,11 @@ impl Render for Workspace {
                         }),
                     ),
             );
-            // Then where these tabs live, in the tree's own words — see
-            // `strip_trail`. With the tree shut it is the only place left
-            // that says so.
-            if let Some(trail) = self.strip_trail(scale, cx) {
-                tab_strip = tab_strip.child(trail);
+            // Then where these tabs live, in the tree's own words: the project,
+            // its groups, and yours lit — see `render_strip_head`. With the
+            // tree shut it is the only place left that says so.
+            if let Some(head) = self.render_strip_head(scale, cx) {
+                tab_strip = tab_strip.child(head);
             }
         }
         // while a tab is being dragged, an accent bar marks the slot it'd land in
@@ -23940,12 +24029,22 @@ impl Render for Workspace {
         // not even sibling groups — this is BROKEN"*.
         //
         // Both readings are the same requirement: the strip and the label have
-        // to describe each other. So the filter stays [`tree::Scope::shows`],
-        // the chip stays the one control, and the unpinned scope it starts on
-        // is the active tab's branch — named on the chip, followed when you
-        // move, and one press from the whole session when you want it.
+        // to describe each other.
+        //
+        // The chip has gone, and the label is the strip's own head now — the
+        // project, its groups as chips, yours lit (`render_strip_head`) — so
+        // the strip carries YOUR GROUP'S tabs and nothing wider, whatever a
+        // branch row in the tree was last pinned to. A pinned project used to
+        // put every tab in the project here, and Parker, shown exactly that:
+        // *"PROJECT > GROUPS ... > showing sibling tabs is proper"*. The one
+        // pin still honoured is the whole session, the deliberate "show me
+        // everything", which draws no head because it has no one place.
         let places = self.places();
-        let family = tree::shown(&places, self.scope, self.active);
+        let strip_scope = match self.scope {
+            tree::Scope::All => tree::Scope::All,
+            _ => tree::Scope::Branch,
+        };
+        let family = tree::shown(&places, strip_scope, self.active);
         // the caret marks a gap between visible tabs, not a tab index — see
         // [`tree::caret_gap`], which is where the non-contiguous case is argued
         let caret_at = drop_slot.map(|s| tree::caret_gap(&family, s));
@@ -32294,51 +32393,89 @@ mod tests {
         }
     }
 
-    /// With the tree shut, the strip says whose tabs it is showing, in the
-    /// tree's words: `PROJECT › GROUP ›` and then the tabs.
+    /// With the tree shut, the strip reads project › groups › your group's
+    /// tabs, and the groups are chips, not tabs.
     ///
     /// Parker, on the shut strip reading `▶ Research ×` with nothing before it:
-    /// *"we should see project > group > tab vernacular"*. The trail is read off
-    /// the scope the strip is filtered by, so it can never name a place the
-    /// tabs after it are not from.
+    /// *"we should see project > group > tab vernacular"*; then, on a first cut
+    /// whose project step flattened the strip into every tab in the project:
+    /// *"the PROJECT > GROUPS (should have similar NON TAB appearance and
+    /// project) > showing sibling tabs is proper"*.
     #[test]
-    fn the_shut_strip_names_its_project_and_group_ahead_of_its_tabs() {
-        let grouped = tree::Place {
-            project: Some(12),
-            initiative: Some(13),
+    fn the_shut_strip_reads_project_then_groups_then_your_groups_tabs() {
+        let at = |project: Option<u32>, initiative: Option<u32>| tree::Place {
+            project,
+            initiative,
         };
-        let group_under = |g: u32| (g == 40).then_some(9);
-        // Resting: wherever the active task is.
+        // A project (12) with a loose tab, two groups (11, 13), and a
+        // top-level group (40) and an unfiled tab elsewhere in the session.
+        let places = [
+            at(Some(12), Some(11)), // 0
+            at(Some(12), None),     // 1 — the project's own
+            at(Some(12), Some(13)), // 2
+            at(None, Some(40)),     // 3
+            at(Some(12), Some(13)), // 4
+            at(None, None),         // 5
+        ];
+        // Standing in group 13: the project, then its groups in the tree's
+        // order, 13 lit; the project can take you to its own tab.
         assert_eq!(
-            strip_trail_ids(tree::Scope::Branch, grouped, group_under),
-            (Some(12), Some(13))
+            strip_chips(&places, 4),
+            vec![
+                StripChip::Project {
+                    id: 12,
+                    lit: false,
+                    go: Some(1)
+                },
+                StripChip::Group {
+                    id: 11,
+                    lit: false,
+                    go: 0
+                },
+                StripChip::Group {
+                    id: 13,
+                    lit: true,
+                    go: 2
+                },
+            ]
         );
-        let loose_in_project = tree::Place {
-            project: Some(12),
-            initiative: None,
-        };
+        // Standing in the project's own tabs: the project is lit, no group is.
+        let loose = strip_chips(&places, 1);
         assert_eq!(
-            strip_trail_ids(tree::Scope::Branch, loose_in_project, group_under),
-            (Some(12), None),
-            "a loose task's strip is its project's loose bucket"
+            loose[0],
+            StripChip::Project {
+                id: 12,
+                lit: true,
+                go: Some(1)
+            }
         );
-        // A pinned group names its OWN project, whatever the active task says.
+        assert!(loose[1..]
+            .iter()
+            .all(|c| matches!(c, StripChip::Group { lit: false, .. })));
+        // Another project's groups never appear, and a top-level group heads
+        // its own strip alone.
         assert_eq!(
-            strip_trail_ids(tree::Scope::Initiative(40), grouped, group_under),
-            (Some(9), Some(40))
+            strip_chips(&places, 3),
+            vec![StripChip::Group {
+                id: 40,
+                lit: true,
+                go: 3
+            }]
         );
-        // A pinned project spans its groups, so it names none of them.
+        // Filed nowhere: no head at all.
+        assert!(strip_chips(&places, 5).is_empty());
+        // A project whose every tab is in a group has nowhere of its own.
+        let all_grouped = [at(Some(7), Some(1)), at(Some(7), Some(2))];
         assert_eq!(
-            strip_trail_ids(tree::Scope::Project(12), grouped, group_under),
-            (Some(12), None)
-        );
-        // The whole session has no one place, and says so by saying nothing.
-        assert_eq!(
-            strip_trail_ids(tree::Scope::All, grouped, group_under),
-            (None, None)
+            strip_chips(&all_grouped, 1)[0],
+            StripChip::Project {
+                id: 7,
+                lit: false,
+                go: None
+            }
         );
 
-        // And the shut strip really carries it, before its first tab.
+        // And the strip really is built that way.
         let code = shipped_code();
         let strip = {
             let at = code.find("let mut tab_strip = div()").expect("the strip");
@@ -32348,28 +32485,41 @@ mod tests {
         let shut = strip
             .find("if !self.left_bar {")
             .expect("the shut-tree branch");
-        let trail = strip
-            .find("self.strip_trail(scale, cx)")
-            .expect("the trail");
+        let head = strip
+            .find("self.render_strip_head(scale, cx)")
+            .expect("the head");
         assert!(
-            shut < trail,
-            "the trail is drawn in the shut-tree strip, where no tree says where \
+            shut < head,
+            "the head is drawn in the shut-tree strip, where no tree says where \
              the tabs live"
         );
-        let step = {
-            let at = code.find("    fn trail_step(").expect("trail_step");
+        // Your group's tabs, whatever a branch row was last pinned to — only
+        // the whole session widens it.
+        assert!(
+            strip.contains("_ => tree::Scope::Branch,")
+                && strip.contains("tree::shown(&places, strip_scope, self.active)"),
+            "the strip carries your group's tabs, never a pinned project's"
+        );
+        // Chips, not tabs: no bezel, and a press goes to the branch rather than
+        // re-scoping the strip.
+        let chip = {
+            let at = code.find("    fn strip_chip(").expect("strip_chip");
             let end = code[at..].find("\n    }\n").expect("end of fn");
             code[at..at + end].to_string()
         };
         assert!(
-            step.contains("cx.stop_propagation();")
-                && step.contains("let next = ws.scope.toggled(to);"),
-            "a step does what its tree row does, and does not also arm the \
-             mother bar's move handle"
+            !chip.contains("bezel") && !chip.contains("sk.tab("),
+            "a chip must not wear a tab's or a button's frame"
+        );
+        assert!(
+            chip.contains("cx.stop_propagation();")
+                && chip.contains("ws.activate_tab(to, window, cx);")
+                && !chip.contains("set_scope"),
+            "a chip goes to its branch, and never flattens the strip"
         );
         assert!(
             code.contains(".child(\"\\u{203a}\")"),
-            "the steps are joined by ›, the breadcrumb's own separator"
+            "the levels are joined by ›, the breadcrumb's own separator"
         );
     }
 
