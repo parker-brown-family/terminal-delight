@@ -112,6 +112,13 @@ impl Pane {
         cx.update(|cx| {
             let mut outer = crate::theme::house_outer();
             outer.grade.warp = 0.0;
+            // The house sizes, but no colour grading: the house brightness and
+            // contrast take every near-black background to exactly black, and
+            // a test asking which colour a pane draws needs two it can tell
+            // apart.
+            outer.grade.brightness = 0.5;
+            outer.grade.contrast = 0.5;
+            outer.grade.colour = 0.5;
             crate::theme::init_embedded(cx, outer);
             crate::skin::init_embedded(cx);
         });
@@ -279,6 +286,8 @@ impl Pane {
             let mut own = crate::theme::house_outer();
             own.id = "deco".into();
             own.seed = None;
+            // deco's own colours, not the house palette laid over them
+            own.palette = None;
             v.appearance.theme = Some(crate::theme::ThemeGroup::of(&own));
             v.appearance.inherit_theme = false;
             cx.notify();

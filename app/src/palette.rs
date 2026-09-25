@@ -151,11 +151,35 @@ pub fn chips(cx: &App) -> Vec<Chip> {
         .collect()
 }
 
-/// Scan the desktop for palettes and publish them. Called once at startup,
-/// beside `theme::init`; a desktop with no Omarchy simply publishes none.
+/// The id of the Terminal Delight palette — Omarchy's name for it, and the
+/// one a fresh install's outer wears ([`crate::theme::house_outer`]).
+pub const TERMINAL_DELIGHT: &str = "terminal-delight";
+
+/// Palettes TD carries itself, `(id, Omarchy colors.toml)`.
+///
+/// The default look has to exist on a machine with no Omarchy, so the Terminal
+/// Delight palette ships inside the binary. These sit BENEATH every desktop
+/// root: an installed Omarchy theme of the same name shadows the shipped copy,
+/// exactly as a user theme shadows a stock one, so a desktop that has retuned
+/// the brand palette is the one TD wears.
+const SHIPPED: &[(&str, &str)] = &[(
+    TERMINAL_DELIGHT,
+    include_str!("../palettes/terminal-delight.toml"),
+)];
+
+fn shipped() -> Vec<Palette> {
+    SHIPPED
+        .iter()
+        .filter_map(|(id, src)| from_source(id, src))
+        .collect()
+}
+
+/// Scan the desktop for palettes and publish them, over the ones TD ships.
+/// Called once at startup, beside `theme::init`; a desktop with no Omarchy
+/// publishes the shipped palettes alone.
 pub fn init(cx: &mut App) {
     cx.set_global(Library {
-        items: load(&roots()),
+        items: load_over(shipped(), &roots()),
     });
 }
 
@@ -181,12 +205,24 @@ fn roots() -> Vec<PathBuf> {
     out
 }
 
-/// Read every `<root>/*/colors.toml` into a palette, later roots shadowing
-/// earlier ones by id. A theme whose file is missing, unreadable or malformed is
-/// SKIPPED rather than fatal — one bad third-party theme must not cost the user
-/// the other twenty-two.
+/// The roots alone, with nothing shipped beneath them.
+#[cfg(test)]
 fn load(roots: &[PathBuf]) -> Vec<Palette> {
-    let mut items: Vec<Palette> = Vec::new();
+    load_over(Vec::new(), roots)
+}
+
+/// Publish only the palettes TD ships — a test's stand-in for [`init`], which
+/// would read whatever Omarchy themes the machine running the tests has.
+#[cfg(test)]
+pub(crate) fn init_shipped(cx: &mut App) {
+    cx.set_global(Library { items: shipped() });
+}
+
+/// Read every `<root>/*/colors.toml` into a palette over `items`, later roots
+/// shadowing earlier ones — and `items` — by id. A theme whose file is missing,
+/// unreadable or malformed is SKIPPED rather than fatal — one bad third-party
+/// theme must not cost the user the other twenty-two.
+fn load_over(mut items: Vec<Palette>, roots: &[PathBuf]) -> Vec<Palette> {
     for root in roots {
         let Ok(entries) = std::fs::read_dir(root) else {
             continue;
@@ -577,6 +613,45 @@ bright_magenta = "#bb9af7"
             items[0].bg,
             crate::theme::parse_hex("#222222").unwrap(),
             "the LAST root wins — user themes shadow stock ones"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_terminal_delight_palette_ships_and_an_installed_one_shadows_it() {
+        // No desktop at all: the fresh-install default still has its colours.
+        let bare = load_over(shipped(), &[]);
+        let td = bare
+            .iter()
+            .find(|p| p.id == TERMINAL_DELIGHT)
+            .expect("the shipped copy loads with no Omarchy installed");
+        assert_eq!(
+            td.bg,
+            crate::theme::parse_hex("#030708").unwrap(),
+            "Void, from the brand palette"
+        );
+        assert_eq!(
+            td.chips[0],
+            crate::theme::parse_hex("#67F454").unwrap(),
+            "Signal Green is the accent"
+        );
+
+        // An Omarchy theme of the same name, retuned on this desktop, wins.
+        let dir = std::env::temp_dir().join(format!("td-pal-td-{}", std::process::id()));
+        let t = dir.join(TERMINAL_DELIGHT);
+        std::fs::create_dir_all(&t).expect("mkdir");
+        std::fs::write(
+            t.join("colors.toml"),
+            "background = \"#101010\"\nforeground = \"#eeeeee\"\n",
+        )
+        .expect("write");
+        let over = load_over(shipped(), std::slice::from_ref(&dir));
+        let mine: Vec<_> = over.iter().filter(|p| p.id == TERMINAL_DELIGHT).collect();
+        assert_eq!(mine.len(), 1, "shadowed, not duplicated");
+        assert_eq!(
+            mine[0].bg,
+            crate::theme::parse_hex("#101010").unwrap(),
+            "the desktop's copy beats the shipped one"
         );
         let _ = std::fs::remove_dir_all(&dir);
     }

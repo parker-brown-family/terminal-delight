@@ -485,6 +485,18 @@ pub struct Grade {
     pub crawl_angle: f32,
     /// Crawl depth = text-height ratio bottom:top (`0.05..=15`, neutral 2.5).
     pub crawl_depth: f32,
+    /// The CRT master switch. Off ⇒ a flat, clean screen: no warp, roll bar,
+    /// scanlines, vignette, bloom, flicker, jiggle, glare or bezel, and no
+    /// power-on flash — see [`flatten_tube`]. The dials are not touched, so
+    /// switching it back on restores exactly the tube they describe.
+    ///
+    /// An ABSENT key reads as on. Every grade written before this switch
+    /// existed was running the CRT, so a missing `crt` is a fact about that
+    /// file ("this person had the tube"), not an unanswered question. Only an
+    /// explicit `crt = false` is off, which is what a fresh install writes
+    /// ([`house_outer`]) and what the GAUGES toggle writes.
+    #[serde(default = "yes", skip_serializing_if = "is_true")]
+    pub crt: bool,
 }
 
 /// One addressable channel of a [`Grade`] — every dial a pane can own, the two
@@ -508,6 +520,7 @@ pub enum GradeChannel {
     CrawlDepth,
     Crawl,
     Tracking,
+    Crt,
 }
 
 impl GradeChannel {
@@ -515,7 +528,7 @@ impl GradeChannel {
     /// pin list reads the same way every time. Safe to insert into: a pin list
     /// travels as channel NAMES, never as the bitmask, so the discriminants are
     /// an in-memory detail and a new dial can sit beside its sibling.
-    pub const ALL: [GradeChannel; 14] = [
+    pub const ALL: [GradeChannel; 15] = [
         Self::Brightness,
         Self::Contrast,
         Self::Colour,
@@ -530,6 +543,7 @@ impl GradeChannel {
         Self::CrawlDepth,
         Self::Crawl,
         Self::Tracking,
+        Self::Crt,
     ];
 
     /// The wire name. STABLE — it is written into state files, so renaming one
@@ -550,6 +564,7 @@ impl GradeChannel {
             Self::CrawlDepth => "crawl_depth",
             Self::Crawl => "crawl",
             Self::Tracking => "tracking",
+            Self::Crt => "crt",
         }
     }
 
@@ -590,6 +605,7 @@ impl GradeChannel {
             Self::CrawlAngle => close(a.crawl_angle, b.crawl_angle),
             Self::CrawlDepth => close(a.crawl_depth, b.crawl_depth),
             Self::Crawl => a.crawl == b.crawl,
+            Self::Crt => a.crt == b.crt,
             Self::Tracking => match (a.tracking, b.tracking) {
                 (None, None) => true,
                 (Some(x), Some(y)) => x.iter().zip(y.iter()).all(|(p, q)| close(*p, *q)),
@@ -615,6 +631,7 @@ impl GradeChannel {
             Self::CrawlDepth => dst.crawl_depth = src.crawl_depth,
             Self::Crawl => dst.crawl = src.crawl,
             Self::Tracking => dst.tracking = src.tracking,
+            Self::Crt => dst.crt = src.crt,
         }
     }
 }
@@ -692,6 +709,17 @@ impl GradePins {
 
     pub fn iter(self) -> impl Iterator<Item = GradeChannel> {
         GradeChannel::ALL.into_iter().filter(move |c| self.has(*c))
+    }
+
+    /// The main gauges' channels — what [`Grade::reset_gauges`] clears, and so
+    /// what a pane's RESET pins. Read off [`Grade::CHANNELS`] rather than listed
+    /// again, so moving a slider into or out of the open list moves it here too.
+    pub fn main_gauges() -> Self {
+        let mut out = Self::NONE;
+        for (k, _) in Grade::CHANNELS {
+            out.insert(k.into());
+        }
+        out
     }
 
     /// A single-channel set — what one slider drag or one patched MCP field pins.
@@ -775,6 +803,9 @@ impl Default for Grade {
             crawl: false,       // crawl mode off until toggled
             crawl_angle: CRAWL_ANGLE_DEFAULT,
             crawl_depth: CRAWL_DEPTH_DEFAULT,
+            // What a grade with no `crt` key has always meant. The fresh
+            // install's flat screen is [`house_outer`]'s to say, not this.
+            crt: true,
         }
     }
 }
@@ -782,7 +813,12 @@ impl Default for Grade {
 impl Grade {
     /// Picker order: (channel, label) for the OSD slider rows. Terminal text
     /// size leads — it's the control people reach for most.
-    pub const CHANNELS: [(GradeKey, &'static str); 10] = [
+    ///
+    /// These are the MAIN gauges, the ones the tray shows open. Warp and the
+    /// roll bar live in the collapsed CRT section and the crawl knobs in their
+    /// own, so this list is also exactly what `reset` clears — see
+    /// [`Grade::reset_gauges`].
+    pub const CHANNELS: [(GradeKey, &'static str); 9] = [
         (GradeKey::TextSize, "text size"),
         (GradeKey::BenchSize, "bench size"),
         (GradeKey::Brightness, "brightness"),
@@ -792,8 +828,29 @@ impl Grade {
         (GradeKey::Background, "background"),
         (GradeKey::Gamma, "gamma"),
         (GradeKey::Scale, "menu bar"),
-        (GradeKey::Warp, "warp"),
     ];
+
+    /// This grade with its MAIN gauges ([`Self::CHANNELS`]) back at neutral and
+    /// everything else kept: the CRT switch, warp and roll, and the crawl.
+    ///
+    /// Those sit in their own collapsed sections, and they hold the tube somebody
+    /// tuned for the day they switch it on. A reset pressed to undo a brightness
+    /// drag has no business flattening that as well.
+    pub fn reset_gauges(self) -> Self {
+        let n = Self::neutral();
+        Self {
+            brightness: n.brightness,
+            contrast: n.contrast,
+            colour: n.colour,
+            text: n.text,
+            background: n.background,
+            gamma: n.gamma,
+            scale: n.scale,
+            text_size: n.text_size,
+            bench_size: n.bench_size,
+            ..self
+        }
+    }
 
     /// The identity grade: every channel at its no-op (`0.5`, scale `1.0`), i.e.
     /// no monitor grading at all. This is what `reset` returns to — distinct
@@ -818,6 +875,10 @@ impl Grade {
             crawl: false,   // reset = crawl off
             crawl_angle: CRAWL_ANGLE_DEFAULT,
             crawl_depth: CRAWL_DEPTH_DEFAULT,
+            // Not a grade: the tube is on, as every grade before the switch
+            // was. With warp at 0 that is still the theme's own scanlines,
+            // exactly what this identity resolved to before `crt` existed.
+            crt: true,
         }
     }
 
@@ -888,6 +949,7 @@ impl Grade {
             && self.crawl == d.crawl
             && (self.crawl_angle - d.crawl_angle).abs() < EPS
             && (self.crawl_depth - d.crawl_depth).abs() < EPS
+            && self.crt == d.crt
     }
 
     /// The multiplier the WORKBENCH face's type ramp is drawn at.
@@ -1012,46 +1074,50 @@ impl Default for ThemeChoice {
     }
 }
 
-/// The shipped **OUTER** (mother cabinet) look — Parker's "wooden TV set": the
-/// warm amber colour set layered over the green `custom` base, which seeds the
-/// dark screen into warm brown and paints amber/cream chrome. Used for a fresh
-/// install's outer scope (see `main::build`). Real ANSI + code highlighting on;
-/// a gentle darken/de-contrast grade and a slightly larger UI. The terminal
-/// screens inside stay green — see [`house_terminal`] / [`PaneTheme::house`].
+/// The shipped **OUTER** look — what a fresh install opens on, and what every
+/// pane wears until somebody dresses one (a fresh pane follows outer, see
+/// [`PaneTheme::house`]).
+///
+/// A flat, clean screen in the Terminal Delight palette. It is the look
+/// Parker's own window runs, taken on 2026-09-25, with two changes: the CRT is
+/// switched off, and contrast is raised to make up for the bloom a flat screen
+/// no longer has. Used for a fresh install's outer scope (see `main::build`).
+///
+/// **The CRT dials are his, kept for the day someone switches the tube on.**
+/// Warp and the roll bar are stored exactly as his window has them, so opening
+/// the GAUGES tray's CRT section and pressing the switch gives exactly the
+/// screen this was taken from, with no slider moved. The base `custom` theme
+/// file is seeded from `hacker` on first run, which is where the scanlines,
+/// glare and bloom come from when it is on.
 pub fn house_outer() -> ThemeChoice {
     ThemeChoice {
         id: "custom".into(),
-        // A warm amber seed tints the dark green base into warm brown chrome with
-        // an amber accent and tan text — the "wooden TV" cabinet. (Seed, not the
-        // mono Amber colour set, so the accent stays amber rather than greying.)
-        seed: Some("#e0913a".into()),
-        color: ColorMode::Default, // "ansi"
+        seed: None,
+        color: ColorMode::OnTheme, // "theme" program colour
         syntax: true,
-        syntax_scheme: SyntaxScheme::Code,
+        syntax_scheme: SyntaxScheme::Agentic,
         grade: Grade {
-            brightness: 0.38, // −12
-            // Neutral. This shipped at 0.21 (−29) as part of the "gentle
-            // de-contrast", but a fresh window is the one screen a new pane has
-            // nothing to compare itself against, and it opened visibly flat —
-            // the dial read −29 with nobody having touched it. Darkening still
-            // happens, via brightness above; crushing the range as well was one
-            // grade too many. The DISPLAY tray now reads +0 on a fresh install.
-            contrast: 0.5, // 0
-            colour: 0.5,
+            brightness: 0.26,         // −24
+            contrast: HOUSE_CONTRAST, // raised: see the constant
+            colour: 1.0,              // +50
             text: 0.5,
             background: 0.5,
             gamma: 0.5,
-            scale: HOUSE_SCALE,         // 80%
-            text_size: HOUSE_TEXT_SIZE, // 75%
+            scale: HOUSE_SCALE,         // 85%
+            text_size: HOUSE_TEXT_SIZE, // 74%
             bench_size: None,           // unset: the bench opens at the grid's size
-            warp: WARP_DEFAULT,         // the house near-fishbowl bend
-            tracking: None,             // defer to the theme's authored roll bar
+            // Off on a fresh install; the two dials below are what it turns on.
+            crt: false,
+            warp: WARP_MAX,
+            tracking: Some(HOUSE_ROLL),
             crawl: false,
             crawl_angle: CRAWL_ANGLE_DEFAULT,
             crawl_depth: CRAWL_DEPTH_DEFAULT,
         },
         dynamic: Dynamic::Plain,
-        palette: None, // the shipped cabinet is our own look, not a borrowed one
+        // The Terminal Delight palette, which TD ships its own copy of, so it is
+        // here on a machine with no Omarchy (see `palette::SHIPPED`).
+        palette: Some(crate::palette::TERMINAL_DELIGHT.into()),
         text: None,
         complement: None,
         human: None,
@@ -2232,6 +2298,7 @@ pub fn resolve(cx: &App, choice: &ThemeChoice) -> Arc<Theme> {
     // shared base Arc is returned untouched. Warp/tracking are excluded from
     // `is_neutral` (they're not paint grades), so guard them explicitly here:
     // a curved or rolling pane must take the full path so `th.warp`/tracking get set.
+    // So must a pane with the CRT off: the base still carries its scanlines.
     if identity_colour
         && !choice.invert
         && mode.is_default()
@@ -2240,6 +2307,7 @@ pub fn resolve(cx: &App, choice: &ThemeChoice) -> Arc<Theme> {
         && choice.grade.warp.abs() < 1e-3
         && choice.grade.tracking.is_none()
         && !choice.grade.crawl
+        && choice.grade.crt
     {
         return base;
     }
@@ -2302,6 +2370,12 @@ pub fn resolve(cx: &App, choice: &ThemeChoice) -> Arc<Theme> {
         .grade
         .crawl_depth
         .clamp(CRAWL_DEPTH_MIN, CRAWL_DEPTH_MAX);
+    // The CRT switch, after warp and tracking have been written so it has the
+    // last word on them. The grade keeps its dials; only this resolved copy
+    // goes flat.
+    if !choice.grade.crt {
+        flatten_tube(&mut th);
+    }
     // Layer 4 — the INVERT dimension: the LAST colour op, photo-negating the whole
     // resolved palette. Applied after every other recolour so it flips whatever
     // the theme + set + overrides produced. Grade (a paint-time display axis) then
@@ -2310,6 +2384,30 @@ pub fn resolve(cx: &App, choice: &ThemeChoice) -> Arc<Theme> {
         invert_theme_colours(&mut th);
     }
     Arc::new(th)
+}
+
+/// Switch a resolved theme's tube off: a flat, clean screen.
+///
+/// Zeroes every effect that makes the pane look like a picture tube rather
+/// than a screen — the barrel warp, the rolling band, scanlines, vignette,
+/// bloom, flicker, the vertical-hold jiggle, the glass glare and the bezel.
+/// The pane's power-on flash goes with the warp: it only fires on a bent tube
+/// (`pane.rs`, `ignites`).
+///
+/// **Glow is deliberately kept.** It is the accent halo on the header, the
+/// cursor and the bench cards, and the chrome skins lean on it too; it belongs
+/// to the chrome, not the tube. Crawl is kept as well, since it is its own
+/// switch.
+pub fn flatten_tube(th: &mut Theme) {
+    th.warp = 0.0;
+    th.tracking = 0.0;
+    th.scanline_opacity = 0.0;
+    th.vignette = 0.0;
+    th.bloom = 0.0;
+    th.flicker = 0.0;
+    th.jiggle = 0.0;
+    th.screen_glare = 0.0;
+    th.bezel = 0.0;
 }
 
 /// Photo-negative of a colour: invert each RGB channel (`1 − x`), alpha kept. A
@@ -2360,14 +2458,24 @@ pub fn select_outer(cx: &mut App, choice: ThemeChoice) {
 /// `0` = dead flat; the slider runs to [`WARP_MAX`] for a full fishbowl.
 pub const WARP_DEFAULT: f32 = 1.43;
 
-/// The size a fresh terminal pane opens at — the two SIZE channels of
-/// [`house_terminal`]'s grade. `scale` is the menu-bar/chrome multiplier
+/// The size a fresh window opens at — the two SIZE channels of
+/// [`house_outer`]'s grade. `scale` is the menu-bar/chrome multiplier
 /// (`0.7..1.6`) and `text_size` the grid-font multiplier (`0.6..2.0`); both read
-/// on the OSD gauge as `stored × 100`, so these show 80% and 75%. Deliberately
+/// on the OSD gauge as `stored × 100`, so these show 85% and 74%. Deliberately
 /// below the `1.0` identity: a fresh pane should already be the dense look
 /// rather than something to hand-shrink after every split.
-pub const HOUSE_SCALE: f32 = 0.80;
-pub const HOUSE_TEXT_SIZE: f32 = 0.75;
+pub const HOUSE_SCALE: f32 = 0.85;
+pub const HOUSE_TEXT_SIZE: f32 = 0.7365;
+/// A fresh window's contrast: +25 on the dial.
+///
+/// Parker's window runs +10, with bloom lifting the text. A flat screen has no
+/// bloom, and he asked for contrast "turned up a fair bit" on the default. +25
+/// is an estimate made on 2026-09-25, to be settled by eye against +10 and +40
+/// on a photographed flat window.
+pub const HOUSE_CONTRAST: f32 = 0.75;
+/// The roll bar a fresh window keeps for when the CRT is switched on:
+/// `[intensity, speed, size]`, Parker's dials on 2026-09-25.
+pub const HOUSE_ROLL: [f32; 3] = [0.52, 0.815, 0.207];
 pub const WARP_MAX: f32 = 1.5;
 
 /// The barrel coefficients `(k1, k2)` the renderer + hit-testing use for a given
@@ -3501,6 +3609,8 @@ mod tests {
             crawl_depth: 9.0,
             crawl: true,
             tracking: Some([0.3, 0.4, 0.5]),
+            // neutral() keeps the tube on, so the walk needs it off here.
+            crt: false,
         };
         for c in GradeChannel::ALL {
             assert_eq!(
@@ -3924,51 +4034,153 @@ mod tests {
     /// reads on the dial rather than the stored float — the bug was that a
     /// window nobody had touched showed "−29".
     #[test]
-    fn a_fresh_window_opens_with_the_contrast_dial_at_zero() {
+    fn a_fresh_install_opens_flat_in_the_terminal_delight_palette() {
         // the tray's own arithmetic (see the grade row in main::render)
         let dial = |v: f32, neutral: f32| ((v - neutral) * 100.0).round() as i32;
         let (_, _, neutral) = GradeKey::Contrast.range();
-        let g = house_outer().grade;
+        let c = house_outer();
         assert_eq!(
-            dial(g.contrast, neutral),
-            0,
-            "a fresh cabinet must not ship pre-de-contrasted"
+            c.palette.as_deref(),
+            Some(crate::palette::TERMINAL_DELIGHT),
+            "the 📺 palette"
         );
-        // brightness is still deliberately down — the screen is dim, and that is
-        // the dial doing the darkening now that contrast is out of it
         assert!(
-            dial(g.brightness, neutral) < 0,
-            "the house look is still a dim screen"
+            c.dynamic.is_plain() && c.seed.is_none(),
+            "nothing layered on it"
         );
+        assert_eq!(c.id, "custom", "design: custom");
+        assert_eq!(c.color, ColorMode::OnTheme, "program colour: theme");
+        assert!(
+            c.syntax && c.syntax_scheme == SyntaxScheme::Agentic,
+            "syntax: agentic"
+        );
+        let g = c.grade;
+        assert!(!g.crt, "the CRT is off");
+        assert!(!g.crawl, "and so is the crawl");
+        assert_eq!(dial(g.contrast, neutral), 25, "contrast turned up");
+        assert_eq!(
+            dial(g.brightness, neutral),
+            -24,
+            "a dim screen, as on the machine it was taken from"
+        );
+        assert_eq!(dial(g.colour, neutral), 50);
+        // …and the tube it would switch on is that machine's, not the old dial.
+        assert_eq!(g.warp, WARP_MAX, "warp +150");
+        assert_eq!(g.tracking, Some(HOUSE_ROLL), "the roll bar");
+
+        // A grade that differs from Grade::default is written out, and the
+        // `crt = false` has to be in it: a missing key reads as ON.
+        assert!(!g.is_default(), "the fresh grade persists");
+        let wire = toml::to_string(&g).unwrap();
+        assert!(
+            wire.contains("crt = false"),
+            "the off switch is written down:\n{wire}"
+        );
+        let back: Grade = toml::from_str(&wire).unwrap();
+        assert!(!back.crt, "and reloads off");
+    }
+
+    /// This machine's `[theme.grade]`, verbatim from its session file on
+    /// 2026-09-25 — written by a build with no CRT switch.
+    const A_GRADE_FROM_BEFORE_THE_SWITCH: &str = r#"
+background = 0.5
+brightness = 0.2588020861148834
+colour = 1.0
+contrast = 0.59940105676651
+crawl_angle = 12.0
+crawl_depth = 2.5
+gamma = 0.5
+scale = 0.8500000238418579
+text = 0.5
+text_size = 0.7365000247955322
+tracking = [0.5203396081924438, 0.8148148059844971, 0.2068965584039688]
+warp = 1.5
+"#;
+
+    #[test]
+    fn a_saved_grade_without_a_crt_key_keeps_the_tube_on() {
+        let g: Grade = toml::from_str(A_GRADE_FROM_BEFORE_THE_SWITCH).unwrap();
+        assert!(
+            g.crt,
+            "every file written before the switch was running the CRT"
+        );
+        assert_eq!(g.warp, 1.5);
+        assert!(g.tracking.is_some_and(|t| (t[0] - 0.5203).abs() < 1e-3));
+        // Writing it back must not invent a key the file never had.
+        let wire = toml::to_string(&g).unwrap();
+        assert!(
+            !wire.contains("crt"),
+            "an on switch stays unwritten:\n{wire}"
+        );
+        // A scope with no grade table at all is Grade::default — also on.
+        assert!(Grade::default().crt && Grade::neutral().crt);
+    }
+
+    #[gpui::test]
+    fn crt_off_resolves_a_flat_screen_and_on_restores_the_tube(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| {
+            crate::palette::init_shipped(cx);
+            init_embedded(cx, house_outer());
+            let off = house_outer();
+            let flat = resolve(cx, &off);
+            for (what, v) in [
+                ("warp", flat.warp),
+                ("roll", flat.tracking),
+                ("scanlines", flat.scanline_opacity),
+                ("vignette", flat.vignette),
+                ("bloom", flat.bloom),
+                ("flicker", flat.flicker),
+                ("jiggle", flat.jiggle),
+                ("glare", flat.screen_glare),
+                ("bezel", flat.bezel),
+            ] {
+                assert_eq!(v, 0.0, "{what} is off on a flat screen");
+            }
+            assert!(flat.glow > 0.0, "glow is the chrome's, and stays");
+            assert_eq!(
+                flat.accent,
+                hex("#67F454").unwrap(),
+                "wearing the Terminal Delight palette"
+            );
+
+            // One switch, no slider moved: the tube it was taken from.
+            let mut on = off.clone();
+            on.grade.crt = true;
+            let tube = resolve(cx, &on);
+            let hacker = parse(DEFAULT_THEME_TOML).unwrap();
+            assert_eq!(tube.warp, WARP_MAX);
+            assert!((tube.tracking - HOUSE_ROLL[0]).abs() < 1e-6, "the roll bar");
+            assert_eq!(tube.scanline_opacity, hacker.scanline_opacity);
+            assert_eq!(tube.screen_glare, hacker.screen_glare);
+            assert_eq!(tube.bloom, hacker.bloom);
+            assert!(tube.scanline_opacity > 0.0 && tube.screen_glare > 0.0);
+        });
     }
 
     #[test]
-    fn house_outer_resolves_to_a_warm_amber_cabinet() {
-        // The shipped outer is the green base seeded amber — the resolved chrome
-        // must be WARM (amber accent, dark warm bg), never grey or green.
-        let base = parse(DEFAULT_THEME_TOML).expect("embedded theme parses");
-        let c = house_outer();
-        assert_eq!(c.color, ColorMode::Default, "ansi");
-        assert!(c.syntax, "code highlighting on");
-        assert!(
-            c.dynamic.is_plain(),
-            "warmth is from the seed, not a colour set"
+    fn reset_clears_the_main_gauges_and_leaves_the_tube_and_the_crawl() {
+        let mut g = house_outer().grade;
+        g.crawl = true;
+        g.crawl_angle = 40.0;
+        let r = g.reset_gauges();
+        let n = Grade::neutral();
+        for (k, _) in Grade::CHANNELS {
+            assert_eq!(r.get(k), n.get(k), "{k:?} is back at neutral");
+        }
+        assert_eq!(r.bench_size, None, "the bench follows the grid again");
+        assert_eq!(
+            (r.crt, r.warp, r.tracking, r.crawl, r.crawl_angle),
+            (g.crt, g.warp, g.tracking, g.crawl, g.crawl_angle),
+            "the collapsed sections keep what they hold"
         );
-        let warm = |h: f32| (15.0..=55.0).contains(&(h * 360.0)); // orange/amber band
-        let seed = hex(c.seed.as_deref().expect("outer carries an amber seed")).unwrap();
-        assert!(warm(seed.h), "seed is amber, got {}°", seed.h * 360.0);
-        let th = apply_seed(&base, seed);
-        assert!(warm(th.accent.h), "accent warms to amber (was green)");
-        assert!(th.accent.s > 0.3, "accent stays saturated, not grey");
-        assert!(
-            warm(th.bg.h) && th.bg.l < 0.22,
-            "cabinet bg is warm and dark"
-        );
-        // the warm outer grade differs from the green house default, so it persists
-        assert!(
-            !c.grade.is_default(),
-            "outer grade is the warm cabinet grade"
-        );
+        // The pins a pane's reset takes are the same list, and nothing else.
+        let pins = GradePins::main_gauges();
+        for c in GradeChannel::ALL {
+            let main = Grade::CHANNELS
+                .iter()
+                .any(|(k, _)| GradeChannel::from(*k) == c);
+            assert_eq!(pins.has(c), main, "{} pinned by reset", c.name());
+        }
     }
 
     #[test]
@@ -4012,12 +4224,13 @@ mod tests {
         );
         assert_eq!(
             eff.grade.scale, HOUSE_SCALE,
-            "so the menu bar opens at the cabinet's 80%"
+            "so the menu bar opens at the cabinet's 85%"
         );
         assert_eq!(
             eff.grade.text_size, HOUSE_TEXT_SIZE,
-            "and the grid font at 75%"
+            "and the grid font at 74%"
         );
+        assert!(!eff.grade.crt, "and flat, like the cabinet");
     }
 
     #[test]

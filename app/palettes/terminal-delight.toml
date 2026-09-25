@@ -1,0 +1,40 @@
+# Terminal Delight — the brand palette, shipped inside TD.
+#
+# A verbatim copy of colors.toml from
+# parker-brown-family/omarchy-terminal-delight-theme (commit 6ac1c2a), so the
+# default look exists on a machine with no Omarchy. An installed Omarchy theme
+# named terminal-delight shadows this copy; see palette::SHIPPED.
+
+# Terminal Delight — brand palette.
+# Hexes sampled from the master logo (docs/brand/BRAND.md), not eyeballed.
+mode = "dark"
+
+accent    = "#67F454"   # Signal Green — the core brand colour
+selection = "#14262C"   # Surface raised
+muted     = "#282E32"   # Panel line
+
+background        = "#030708"   # Void
+dark_background   = "#02050A"
+darker_background = "#010304"
+lighter_background = "#0C1823"  # Surface
+
+foreground        = "#B5BEAC"   # Phosphor Grey
+dark_foreground   = "#5A6061"   # Neutral 600
+light_foreground  = "#999DA0"   # Neutral 400
+bright_foreground = "#DFE2E3"   # Neutral 100
+
+red     = "#D6483C"
+yellow  = "#C89944"   # Amber (muted)
+orange  = "#D08A3A"
+green   = "#44B064"   # Green (muted) — UI "live"
+cyan    = "#45A4AE"   # Teal (muted)
+blue    = "#45A4AE"
+magenta = "#916D86"   # Violet (muted)
+brown   = "#4F5028"   # Glass tint — amber
+
+bright_red     = "#F4614F"
+bright_yellow  = "#E5AA0D"   # Amber
+bright_green   = "#67F454"   # Signal Green
+bright_cyan    = "#29E3ED"   # Cyan
+bright_blue    = "#29E3ED"
+bright_magenta = "#815BAD"   # Violet

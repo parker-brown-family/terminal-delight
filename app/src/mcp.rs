@@ -205,6 +205,9 @@ pub struct GradeReport {
     pub crawl: bool,
     pub crawl_angle: f32,
     pub crawl_depth: f32,
+    /// The CRT master switch (a bool). Off = a flat screen: `warp` and the
+    /// roll bar keep their stored values but draw nothing until it is on.
+    pub crt: bool,
 }
 
 /// The **POST** shape: a *partial* grade. Every field is optional and an absent
@@ -230,6 +233,7 @@ pub struct ConfigPatch {
     pub crawl: Option<bool>,
     pub crawl_angle: Option<f32>,
     pub crawl_depth: Option<f32>,
+    pub crt: Option<bool>,
     /// Attach (or clear) the pane's card LOGO: an absolute path to an image file
     /// (png/jpg/jpeg/svg/webp). An empty string clears it. Lets an agent brand the
     /// terminal it's working in — shown as the card portrait on the agent wall.
@@ -1014,7 +1018,8 @@ fn initialize_result(params: &Value) -> Value {
              appear, vanish, and call tools, so you can react without polling. \
              `get_pane_config` / `set_pane_config` read and change a pane's (or \
              the window-level `outer`) appearance — brightness, contrast, colour, \
-             warp, text size, crawl — in uniform 0..100 percents; writes need the \
+             warp, text size, crawl, the CRT switch — in uniform 0..100 percents \
+             and two booleans; writes need the \
              server's opt-in writes toggle. The config API is dumb: it stores the \
              absolute number you give it, so compute relative changes (\"20% \
              lower\") yourself from a get_pane_config read. `document_notes` \
@@ -1057,7 +1062,9 @@ fn tool_defs() -> Value {
                  window-level `outer` scope. Every channel is reported as a \
                  0..100 percent (brightness, contrast, colour, text, background, \
                  gamma, menu_bar, text_size, bench_size, warp, crawl_angle, crawl_depth) plus \
-                 a `crawl` boolean. Omit `targets` to report every exposed pane \
+                 a `crawl` boolean and a `crt` boolean (off = a flat screen; \
+                 warp and the roll bar keep their values but draw nothing). \
+                 Omit `targets` to report every exposed pane \
                  plus `outer`. Read-only. To change a value, GET it, compute the \
                  new absolute number yourself, then POST it with set_pane_config.",
             "inputSchema": {
@@ -1104,7 +1111,7 @@ fn tool_defs() -> Value {
                                 },
                                 "config": {
                                     "type": "object",
-                                    "description": "partial grade — any of brightness/contrast/colour/text/background/gamma/menu_bar/text_size/bench_size/warp/crawl_angle/crawl_depth (0..100) and crawl (bool) — AND `logo`: an absolute path to an image file (png/jpg/jpeg/svg/webp) to ATTACH as this pane's card logo (the agent wall portrait); an empty string clears it. Pane targets only."
+                                    "description": "partial grade — any of brightness/contrast/colour/text/background/gamma/menu_bar/text_size/bench_size/warp/crawl_angle/crawl_depth (0..100) and crawl/crt (bool) — AND `logo`: an absolute path to an image file (png/jpg/jpeg/svg/webp) to ATTACH as this pane's card logo (the agent wall portrait); an empty string clears it. Pane targets only."
                                 }
                             },
                             "required": ["target", "config"],
@@ -1704,7 +1711,7 @@ fn summarise_config(c: &Value) -> String {
     let g = &c["grade"];
     let pct = |k: &str| g.get(k).and_then(Value::as_f64).unwrap_or(0.0).round() as i64;
     format!(
-        "{label}: brightness {} · contrast {} · text {} · text-size {} · bench-size {} · warp {}{}",
+        "{label}: brightness {} · contrast {} · text {} · text-size {} · bench-size {} · warp {}{}{}",
         pct("brightness"),
         pct("contrast"),
         pct("text"),
@@ -1713,6 +1720,13 @@ fn summarise_config(c: &Value) -> String {
         pct("warp"),
         if g.get("crawl").and_then(Value::as_bool).unwrap_or(false) {
             " · crawl on"
+        } else {
+            ""
+        },
+        // Only an explicit `false` is worth a word: a report with no `crt`
+        // key came from a build before the switch, where the tube was on.
+        if g.get("crt").and_then(Value::as_bool) == Some(false) {
+            " · crt off"
         } else {
             ""
         },
