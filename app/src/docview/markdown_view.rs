@@ -109,6 +109,28 @@ impl Backend for MarkdownDoc {
         MarkdownDoc::wheel(self, delta, line, Some(f32::from(view.height)))
     }
 
+    /// The text grows and the column re-flows at the new size; the block the
+    /// reader was on stays at the top.
+    fn zoom(
+        &mut self,
+        step: image::ZoomStep,
+        _view: Size<Pixels>,
+        _sf: f32,
+        cx: &mut Context<DocumentView>,
+    ) -> bool {
+        let next = super::step_reading_zoom(self.zoom, step);
+        if (next - self.zoom).abs() < 1e-3 {
+            return false;
+        }
+        self.set_zoom(next);
+        cx.notify();
+        true
+    }
+
+    fn zoom_now(&self) -> Option<image::ImageZoom> {
+        Some(image::ImageZoom::Scale(self.zoom))
+    }
+
     fn scroll(&self) -> Option<DocScroll> {
         MarkdownDoc::scroll(self)
     }

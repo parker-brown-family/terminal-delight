@@ -157,14 +157,22 @@ pub trait Backend {
         false
     }
 
-    /// One press of a zoom control. Answers whether anything changed. Only a
-    /// picture zooms.
-    fn zoom(&mut self, _step: ZoomStep, _view: Size<Pixels>, _sf: f32) -> bool {
+    /// One press of a zoom control, or one notch of ctrl+wheel. Answers
+    /// whether anything changed. A picture steps its own ladder; a page and a
+    /// Markdown document step [`super::READING_ZOOM`]. A kind of document
+    /// that cannot zoom says so here, and the strip draws no controls for it.
+    fn zoom(
+        &mut self,
+        _step: ZoomStep,
+        _view: Size<Pixels>,
+        _sf: f32,
+        _cx: &mut Context<DocumentView>,
+    ) -> bool {
         false
     }
 
     /// The zoom to show on the strip. `None` draws no zoom controls at all,
-    /// which is right for anything but a picture.
+    /// which is right for a document that cannot zoom.
     fn zoom_now(&self) -> Option<ImageZoom> {
         None
     }

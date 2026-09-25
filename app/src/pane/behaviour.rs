@@ -477,29 +477,71 @@ fn pane_with_history_and_a_document(cx: &mut TestAppContext, tag: &str) -> (Pane
 
 /// The wheel over the square moves the document in it, and never the
 /// scrollback behind it; off the square it moves the scrollback, and never
-/// the document. Ctrl+wheel is the pane's text dial, over the square too. And
-/// the FOCUS reader, which scrolls the pane with the pointer over its own
-/// modal, never reaches a square hidden underneath.
+/// the document. Ctrl+wheel over the square zooms the document and leaves the
+/// pane's text dial alone; off the square it is the text dial again. And the
+/// FOCUS reader, which scrolls the pane with the pointer over its own modal,
+/// never reaches a square hidden underneath.
+///
+/// Parker, 2026-09-25: *"When I am hovering over a floating doc to read the
+/// ctl+mouse wheel should resize THE DOC! not the pane underneath!"*
 #[gpui::test]
 fn the_wheel_over_the_square_moves_its_document_and_nothing_else(cx: &mut TestAppContext) {
     let (mut pane, _dir) = pane_with_history_and_a_document(cx, "wheel-square");
     let view = pane.float_view().expect("a square");
     let body = Pane::middle(pane.float_zone(FloatHit::Body).expect("its body"));
 
-    // Ctrl first, while the document is at its top: a turn that reached the
-    // document would move it off the top, where a re-layout cannot move it.
+    // Ctrl first, while the document is at its top: a turn that scrolled the
+    // document would move it off the top, and a zoom must keep it there.
     let size = |pane: &mut Pane| {
         pane.view
             .read_with(pane.cx, |v, cx| v.resolved_theme(cx).font_size)
     };
+    let zoom = |pane: &mut Pane, view: &gpui::Entity<crate::docview::DocumentView>| {
+        view.read_with(pane.cx, |v, _| v.zoom_now())
+    };
     let was = size(&mut pane);
-    pane.wheel(body, -1.0, held(false, true, false, false));
+    assert_eq!(
+        zoom(&mut pane, &view),
+        Some(crate::docview::ImageZoom::Scale(1.0)),
+        "a Markdown document opens at 100%"
+    );
+    pane.wheel(body, 1.0, held(false, true, false, false));
+    pane.redraw();
+    assert_eq!(
+        zoom(&mut pane, &view),
+        Some(crate::docview::ImageZoom::Scale(1.1)),
+        "ctrl+wheel up over the square zooms the document in a step"
+    );
+    assert_eq!(
+        size(&mut pane),
+        was,
+        "and the text dial of the pane under it does not move"
+    );
+    assert_eq!(
+        pane.scroll_of(&view),
+        Some(0.0),
+        "the document stays at its top"
+    );
+    pane.wheel(body, -2.0, held(false, true, false, false));
+    assert_eq!(
+        zoom(&mut pane, &view),
+        Some(crate::docview::ImageZoom::Scale(0.9)),
+        "two notches down step out twice"
+    );
+
+    let grid = pane.point_at("ready");
+    pane.wheel(grid, -1.0, held(false, true, false, false));
     assert_ne!(
         size(&mut pane),
         was,
-        "ctrl+wheel over the square turns the text dial"
+        "off the square, ctrl+wheel is the pane's text dial"
     );
-    assert_eq!(pane.scroll_of(&view), Some(0.0), "and leaves the document");
+    assert_eq!(
+        zoom(&mut pane, &view),
+        Some(crate::docview::ImageZoom::Scale(0.9)),
+        "and the document's zoom stays"
+    );
+    pane.redraw();
 
     pane.wheel(body, -3.0, Default::default());
     let read_to = pane.scroll_of(&view).expect("laid out");
@@ -530,6 +572,104 @@ fn the_wheel_over_the_square_moves_its_document_and_nothing_else(cx: &mut TestAp
         pane.scroll_of(&view),
         Some(read_to),
         "not the square under it"
+    );
+}
+
+/// A square floating over the workbench takes the wheel over it, both ways:
+/// ctrl zooms the document and a plain turn scrolls it. The bench paints a
+/// capture-phase hook that runs before the pane root and halts every turn on
+/// the bench, so the square has to be asked from inside that hook — until it
+/// was, ctrl+wheel over the square sized the bench and a plain turn scrolled
+/// whatever of the bench lay under it.
+#[gpui::test]
+fn the_wheel_over_a_square_on_the_bench_is_the_documents(cx: &mut TestAppContext) {
+    let (mut pane, _dir) = pane_with_history_and_a_document(cx, "wheel-bench");
+    pane.view
+        .update(pane.cx, |v, cx| v.set_face(Face::Workbench, cx));
+    pane.redraw();
+    assert_eq!(pane.face(), Face::Workbench);
+    let view = pane
+        .float_view()
+        .expect("the square stays up over the bench");
+    let body = Pane::middle(pane.float_zone(FloatHit::Body).expect("its body"));
+    let looks = pane.read(|v| v.appearance.clone());
+
+    pane.wheel(body, 1.0, held(false, true, false, false));
+    pane.redraw();
+    assert_eq!(
+        view.read_with(pane.cx, |v, _| v.zoom_now()),
+        Some(crate::docview::ImageZoom::Scale(1.1)),
+        "ctrl+wheel over the square zooms the document"
+    );
+    assert!(
+        pane.read(|v| v.appearance == looks),
+        "and sizes nothing of the pane's own, the bench's dial included"
+    );
+
+    pane.wheel(body, -3.0, Default::default());
+    pane.redraw();
+    assert!(
+        pane.scroll_of(&view).expect("laid out") > 0.0,
+        "a plain turn over the square scrolls the document"
+    );
+}
+
+/// Ctrl+wheel over a brief zooms it as a browser does. The notches are
+/// counted as they come and the page waits for them to stop; then it is laid
+/// out again in a column narrower by the zoom, at the window's scale times the
+/// zoom, and the strip carries the zoom's controls. The pane's own sizes never
+/// move.
+#[gpui::test]
+fn ctrl_wheel_over_a_brief_lays_it_out_again_at_the_zoom(cx: &mut TestAppContext) {
+    let (mut pane, _dir, brief, _png) = pane_showing_a_brief(cx, "brief-zoom");
+    let at = pane.point_at(&brief);
+    pane.click(at, Pane::alt());
+    pane.redraw();
+    let view = pane.float_view().expect("the brief opens in a square");
+    let laid = |pane: &mut Pane| view.update(pane.cx, |v, _| v.page_laid_out());
+    let before = laid(&mut pane).expect("the brief is laid out");
+    let looks = pane.read(|v| v.appearance.clone());
+    let body = Pane::middle(pane.float_zone(FloatHit::Body).expect("its body"));
+
+    pane.wheel(body, 1.0, held(false, true, false, false));
+    pane.wheel(body, 1.0, held(false, true, false, false));
+    pane.redraw();
+    assert_eq!(
+        view.read_with(pane.cx, |v, _| v.zoom_now()),
+        Some(crate::docview::ImageZoom::Scale(1.25)),
+        "two notches up, two steps in"
+    );
+    assert!(
+        pane.float_zone(FloatHit::ZoomFit).is_some(),
+        "and the strip shows the zoom"
+    );
+    assert_eq!(
+        laid(&mut pane),
+        Some(before),
+        "nothing is laid out while the notches may still be coming"
+    );
+
+    pane.cx
+        .executor()
+        .advance_clock(std::time::Duration::from_millis(300));
+    pane.redraw();
+    let after = laid(&mut pane).expect("still laid out");
+    assert!(
+        (after.scale - before.scale * 1.25).abs() < 1e-4,
+        "drawn at the window's scale times the zoom: {} from {}",
+        after.scale,
+        before.scale
+    );
+    let narrower = before.css_width as f32 / 1.25;
+    assert!(
+        (after.css_width as f32 - narrower).abs() <= 1.0,
+        "laid out in a column narrower by the zoom: {} from {}",
+        after.css_width,
+        before.css_width
+    );
+    assert!(
+        pane.read(|v| v.appearance == looks),
+        "and nothing of the pane's own was sized"
     );
 }
 
@@ -834,7 +974,8 @@ fn a_press_or_a_drop_on_the_document_face_never_reaches_the_grid(cx: &mut TestAp
 }
 
 /// The wheel anywhere on the Document face moves the document and never the
-/// hidden scrollback; Ctrl+wheel is still the text dial there.
+/// hidden scrollback; Ctrl+wheel zooms the document there, as it does over
+/// the square, and leaves the pane's text dial alone.
 #[gpui::test]
 fn the_wheel_on_the_document_face_moves_the_document(cx: &mut TestAppContext) {
     let (mut pane, _dir, _md) = pane_on_its_document_face(cx, "face-wheel");
@@ -849,8 +990,18 @@ fn the_wheel_on_the_document_face_moves_the_document(cx: &mut TestAppContext) {
     };
     let was = size(&mut pane);
     pane.wheel(corner, -1.0, held(false, true, false, false));
-    assert_ne!(size(&mut pane), was, "ctrl+wheel turns the text dial");
-    assert_eq!(pane.scroll_of(&view), Some(0.0), "and leaves the document");
+    pane.redraw();
+    assert_eq!(
+        view.read_with(pane.cx, |v, _| v.zoom_now()),
+        Some(crate::docview::ImageZoom::Scale(0.9)),
+        "ctrl+wheel down zooms the document out a step"
+    );
+    assert_eq!(size(&mut pane), was, "and leaves the text dial");
+    assert_eq!(
+        pane.scroll_of(&view),
+        Some(0.0),
+        "and the document at its top"
+    );
 
     pane.wheel(corner, -3.0, Default::default());
     assert!(

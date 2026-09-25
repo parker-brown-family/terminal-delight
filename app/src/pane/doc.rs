@@ -203,10 +203,10 @@ impl TerminalView {
     /// would belong to neither.
     ///
     /// A strip across the top carries the file's name and its controls — zoom
-    /// for a picture, "↗ desktop" and "✕ esc" for everything — and moves the
-    /// square when dragged. No element here carries a gpui handler: each
-    /// control records its flat rectangle as it paints ([`float_zone`]), and
-    /// the pane's own press un-bends the pointer and looks it up.
+    /// for anything that zooms, "↗ desktop" and "✕ esc" for everything — and
+    /// moves the square when dragged. No element here carries a gpui handler:
+    /// each control records its flat rectangle as it paints ([`float_zone`]),
+    /// and the pane's own press un-bends the pointer and looks it up.
     pub(super) fn float_el(
         &self,
         th: &Theme,
@@ -1238,9 +1238,25 @@ impl TerminalView {
         self.float.is_some() || self.doc_on_face().is_some()
     }
 
+    /// The document a pointer is over, un-bent through the tube: the floating
+    /// square anywhere on it, its strip and edges included, or the Document
+    /// face's content. Not the face's header, which is chrome on every face
+    /// and keeps the chrome dial.
+    pub(super) fn doc_under(
+        &self,
+        pos: gpui::Point<Pixels>,
+    ) -> Option<gpui::Entity<crate::docview::DocumentView>> {
+        if let Some(face) = self.doc_on_face() {
+            return (self.size_dial_under(pos) == Some(crate::theme::GradeKey::TextSize))
+                .then(|| face.view.clone());
+        }
+        self.float_hit(pos)?;
+        self.float.as_ref().map(|f| f.view.clone())
+    }
+
     /// A wheel turn on the Document face moves the document, and one over the
-    /// floating square pans the document in it. Ctrl held is the pane's text
-    /// dial here as everywhere, so the chord is asked first. Answers whether
+    /// floating square pans the document in it. Ctrl held zooms the document
+    /// instead, which the chord decides, so it is asked first. Answers whether
     /// the turn was taken.
     pub(super) fn doc_wheel(&mut self, ev: &ScrollWheelEvent, cx: &mut Context<Self>) -> bool {
         if self.size_by_wheel(ev, cx) {

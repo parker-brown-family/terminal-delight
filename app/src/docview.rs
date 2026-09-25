@@ -115,6 +115,53 @@ pub use image::{ImageZoom, ZoomStep};
 /// theme hot-reload's pattern, at the pace the program design set.
 pub const WATCH_EVERY: Duration = Duration::from_millis(500);
 
+/// The zoom a page and a Markdown document step along, as a browser's does:
+/// from half size to three times, closest together near 100%. A picture keeps
+/// its own ladder ([`image::ZOOM_STEPS`]), because its unit is an image pixel
+/// and this one's is the size the document was written at.
+///
+/// Three times is the top because a page is laid out afresh at every step, at
+/// the window's scale times the zoom, and the device rows Chromium has to
+/// capture grow with it.
+pub const READING_ZOOM: [f32; 13] = [
+    0.5, 0.67, 0.75, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0,
+];
+
+/// Pure. One press of a zoom control on a document that is read as text. Past
+/// either end it stays where it is. Fit and actual size are both 100%: text
+/// has no size that fits, and its actual size is the one it was written at.
+pub fn step_reading_zoom(now: f32, step: ZoomStep) -> f32 {
+    const SAME: f32 = 1e-3;
+    match step {
+        ZoomStep::In => READING_ZOOM
+            .iter()
+            .copied()
+            .find(|z| *z > now + SAME)
+            .unwrap_or(now),
+        ZoomStep::Out => READING_ZOOM
+            .iter()
+            .rev()
+            .copied()
+            .find(|z| *z < now - SAME)
+            .unwrap_or(now),
+        ZoomStep::FitOrActual | ZoomStep::Fit | ZoomStep::Actual => 1.0,
+    }
+}
+
+/// Pure. Ctrl+wheel notches counted toward zoom steps: what stays counted,
+/// and the whole steps now due, positive zooming in. A turn the other way
+/// starts the count again.
+pub fn count_zoom_notches(counted: f32, notches: f32) -> (f32, i32) {
+    let from = if notches * counted < 0.0 {
+        0.0
+    } else {
+        counted
+    };
+    let total = from + notches;
+    let steps = total.trunc();
+    (total - steps, steps as i32)
+}
+
 /// A document on screen.
 pub struct DocumentView {
     target: DocTarget,
@@ -149,6 +196,9 @@ pub struct DocumentView {
     /// watcher tells that save from anyone else's, so a save never reloads
     /// the page under the person making it.
     own_write: Option<FileStamp>,
+    /// Ctrl+wheel notches not yet worth a zoom step: a touchpad reports a
+    /// notch in many small pieces, and each step re-lays a page out.
+    zoom_notches: f32,
     _watch: Task<()>,
 }
 
@@ -481,6 +531,7 @@ impl DocumentView {
             links: markdown::LinkSink::default(),
             seen,
             own_write: None,
+            zoom_notches: 0.0,
             _watch: Task::ready(()),
         };
         if watch {
@@ -598,8 +649,8 @@ impl DocumentView {
     }
 
     /// A wheel turn over the document: it pans a picture larger than the
-    /// view, and scrolls a Markdown document. Ctrl+wheel never arrives here;
-    /// that is the pane's text dial.
+    /// view, and scrolls a Markdown document or a page. Ctrl+wheel never
+    /// arrives here; it is [`Self::zoom_by_wheel`].
     pub fn wheel(&mut self, delta: ScrollDelta, cx: &mut Context<Self>) {
         let Some((view, sf)) = self.frame.get() else {
             return;
@@ -697,15 +748,46 @@ impl DocumentView {
         let Some((view, sf)) = self.frame.get() else {
             return false;
         };
-        let changed = self.backend.zoom(step, view, sf);
+        let changed = self.backend.zoom(step, view, sf, cx);
         if changed {
             cx.notify();
         }
         changed
     }
 
-    /// The zoom a picture is at, for the strip's label. `None` for a document
-    /// with no zoom to show, so the strip draws no zoom controls for it.
+    /// Ctrl+wheel over the document: a zoom step a notch, up zooming in, as
+    /// a browser does. Answers whether anything changed.
+    ///
+    /// Notches are counted rather than turned into steps one event at a time,
+    /// because a touchpad sends a notch as many small pieces. A turn the other
+    /// way drops whatever was counted, so reversing is felt at once.
+    pub fn zoom_by_wheel(&mut self, notches: f32, cx: &mut Context<Self>) -> bool {
+        let (counted, steps) = count_zoom_notches(self.zoom_notches, notches);
+        self.zoom_notches = counted;
+        let step = if steps > 0 {
+            ZoomStep::In
+        } else {
+            ZoomStep::Out
+        };
+        // No ladder is longer than this, so a larger turn would step past
+        // its end and change nothing more.
+        let most = READING_ZOOM.len().max(image::ZOOM_STEPS.len());
+        let mut changed = false;
+        for _ in 0..(steps.unsigned_abs() as usize).min(most) {
+            changed |= self.zoom(step, cx);
+        }
+        changed
+    }
+
+    /// The geometry the page on screen was laid out at, for a test: `None`
+    /// for anything but a page, and for a page not yet laid out.
+    #[cfg(test)]
+    pub(crate) fn page_laid_out(&mut self) -> Option<engine::Geometry> {
+        self.backend.downcast_mut::<page::PageDoc>()?.laid_out()
+    }
+
+    /// The zoom the document is at, for the strip's label. `None` for a
+    /// document with no zoom to show, so the strip draws no zoom controls.
     pub fn zoom_now(&self) -> Option<ImageZoom> {
         self.backend.zoom_now()
     }
@@ -817,6 +899,50 @@ impl Render for DocumentView {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A page or a Markdown document steps the browser's ladder, stops at
+    /// either end, and goes back to 100% on the strip's label or the face's
+    /// `0` and `1`. A zoom between two steps goes to the next one, not past it.
+    #[test]
+    fn a_reading_zoom_steps_its_ladder_and_stops_at_the_ends() {
+        use ZoomStep::*;
+        assert_eq!(step_reading_zoom(1.0, In), 1.1);
+        assert_eq!(step_reading_zoom(1.0, Out), 0.9);
+        assert_eq!(step_reading_zoom(3.0, In), 3.0, "the top");
+        assert_eq!(step_reading_zoom(0.5, Out), 0.5, "the bottom");
+        assert_eq!(step_reading_zoom(1.05, In), 1.1);
+        assert_eq!(step_reading_zoom(1.05, Out), 1.0);
+        for back in [FitOrActual, Fit, Actual] {
+            assert_eq!(step_reading_zoom(2.5, back), 1.0, "{back:?}");
+        }
+    }
+
+    /// A touchpad sends one notch as several small pieces, and each zoom step
+    /// lays a page out again, so the pieces are counted until they make a
+    /// step. Turning back starts the count again rather than paying off what
+    /// was counted the other way first.
+    #[test]
+    fn wheel_notches_are_counted_into_whole_zoom_steps() {
+        let mut counted = 0.0;
+        let mut steps = Vec::new();
+        for _ in 0..5 {
+            let (c, s) = count_zoom_notches(counted, 0.25);
+            counted = c;
+            steps.push(s);
+        }
+        assert_eq!(steps, vec![0, 0, 0, 1, 0], "four quarters make one step in");
+        assert!((counted - 0.25).abs() < 1e-6, "and the fifth stays counted");
+        assert_eq!(
+            count_zoom_notches(counted, -1.0),
+            (0.0, -1),
+            "a notch back is felt at once"
+        );
+        assert_eq!(
+            count_zoom_notches(0.0, 3.0),
+            (0.0, 3),
+            "a wheel's lines are notches"
+        );
+    }
 
     /// This module and everything under it, with each file's tests cut off and
     /// its comments dropped, so a sentence that mentions a handler does not

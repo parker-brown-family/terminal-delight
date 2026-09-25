@@ -30,6 +30,16 @@
 //! snapped to the device grid first, so on a flat pane two bands meet without
 //! a blurred seam. [`place`] maps a page rect into the view the same way, for
 //! the links and dialog buttons a press can land on.
+//!
+//! # Zoom
+//!
+//! A zoom is laid out the way a browser zooms: the page is given the view's
+//! width over the zoom, in CSS px, and drawn at the window's scale times the
+//! zoom. So zooming in re-flows the brief into a narrower column of larger
+//! text, and a band's device pixels still land on the screen's one for one —
+//! its width in device pixels is the view's, whatever the zoom. Until the
+//! re-layout lands, the render already up is drawn scaled by the zoom
+//! ([`px_per_css`]), soft for a moment, so a turn of the wheel shows at once.
 
 use std::any::Any;
 use std::collections::{BTreeMap, BTreeSet};
@@ -225,6 +235,22 @@ pub fn snap_offset(origin: f32, scale: f32) -> f32 {
     ((o * s).round() / s - o) as f32
 }
 
+/// Pure. Logical px per CSS px, for a render laid out `laid_css_width` wide at
+/// `laid_zoom`, drawn in a view `view_w` wide that is now at `zoom`.
+///
+/// A render laid out for this view's width at this zoom is drawn at exactly
+/// the zoom, so its device pixels are the screen's. Any other is one still up
+/// while its replacement is drawn — asked for before a resize, or before a
+/// zoom — and is stretched to the width it now has to fill, then scaled by
+/// however far the zoom has moved since.
+pub fn px_per_css(view_w: f32, zoom: f32, laid_css_width: u32, laid_zoom: f32) -> f32 {
+    let wanted = (view_w / zoom.max(0.01)).round().max(1.0) as u32;
+    if laid_css_width == wanted && (laid_zoom - zoom).abs() < 1e-3 {
+        return zoom;
+    }
+    view_w / laid_css_width.max(1) as f32 * zoom / laid_zoom.max(0.01)
+}
+
 /// Pure. A band's top in the view, in logical px, before the snap: its device
 /// row less the scroll, over the layout's scale, times the stretch.
 pub fn tile_top(top_dev: u32, scroll_dev: u32, layout_scale: f32, stretch: f32) -> f32 {
@@ -318,6 +344,9 @@ impl TileSet {
 struct Rendered {
     layout: PageLayout,
     tiles: TileSet,
+    /// The zoom this render was laid out at, which may no longer be the
+    /// view's: see [`px_per_css`].
+    zoom: f32,
 }
 
 enum Status {
@@ -364,8 +393,12 @@ pub struct PageDoc {
     engine: Result<Arc<dyn PageEngine>, Unavailable>,
     status: Status,
     view: Option<Measured>,
-    /// What the current render was asked for, or is being.
-    asked: Option<Geometry>,
+    /// The reader's zoom: 1 lays the page out at the view's own width. See
+    /// "Zoom" in the module notes.
+    zoom: f32,
+    /// What the current render was asked for, or is being, and the zoom
+    /// that geometry was worked out at.
+    asked: Option<(Geometry, f32)>,
     current: Option<Rendered>,
     /// The render being replaced: drawn until the new one covers the view.
     old: Option<Rendered>,
@@ -420,6 +453,7 @@ impl PageDoc {
             engine,
             status: Status::Waiting,
             view: None,
+            zoom: 1.0,
             asked: None,
             current: None,
             old: None,
@@ -460,11 +494,14 @@ impl PageDoc {
         }
     }
 
-    fn geometry_for(m: Measured) -> Geometry {
+    /// The page's geometry in a view measured `m`, at `zoom`: the view's size
+    /// over the zoom in CSS px, at the window's scale times the zoom.
+    fn geometry_for(m: Measured, zoom: f32) -> Geometry {
+        let zoom = zoom.max(0.01);
         Geometry {
-            css_width: f32::from(m.size.width).round().max(1.0) as u32,
-            viewport_css_height: f32::from(m.size.height).round().max(1.0) as u32,
-            scale: m.scale,
+            css_width: (f32::from(m.size.width) / zoom).round().max(1.0) as u32,
+            viewport_css_height: (f32::from(m.size.height) / zoom).round().max(1.0) as u32,
+            scale: m.scale * zoom,
         }
     }
 
@@ -476,17 +513,28 @@ impl PageDoc {
             return;
         }
         self.view = Some(m);
-        let g = Self::geometry_for(m);
+        self.lay_out(cx);
+        self.plan(cx);
+    }
+
+    /// Ask for the page at the view's size and zoom, if that is not what was
+    /// last asked for. The first ask starts at once; any later one waits
+    /// [`SETTLE`], so a drag of the square's edge or a run of wheel notches is
+    /// laid out once, at the size and zoom it ends on.
+    fn lay_out(&mut self, cx: &mut Context<DocumentView>) {
+        let Some(m) = self.view else { return };
+        let zoom = self.zoom;
+        let g = Self::geometry_for(m, zoom);
         match self.asked {
-            None => self.start(g, cx),
-            Some(asked) if asked != g => {
+            None => self.start(g, zoom, cx),
+            Some((asked, _)) if asked != g => {
                 self.settle = Some(cx.spawn(async move |this, cx| {
                     cx.background_executor().timer(SETTLE).await;
                     this.update(cx, |view, cx| {
                         let Some(page) = page_of(view) else { return };
-                        let now = page.view.map(Self::geometry_for);
-                        if now == Some(g) && page.asked != Some(g) {
-                            page.start(g, cx);
+                        let now = page.view.map(|m| Self::geometry_for(m, page.zoom));
+                        if now == Some(g) && page.asked.map(|(a, _)| a) != Some(g) {
+                            page.start(g, zoom, cx);
                         }
                     })
                     .ok();
@@ -494,7 +542,29 @@ impl PageDoc {
             }
             Some(_) => {}
         }
+    }
+
+    /// The geometry the render on screen was laid out at, for a test to see a
+    /// zoom reach the engine. `None` before the first render lands.
+    #[cfg(test)]
+    pub(crate) fn laid_out(&self) -> Option<Geometry> {
+        self.current.as_ref().map(|r| r.layout.geometry)
+    }
+
+    /// One press of a zoom control, or a notch of ctrl+wheel: the reader's
+    /// zoom steps, the render already up is drawn at it at once, and the page
+    /// is laid out again at it once the notches stop.
+    fn zoom_to(&mut self, step: super::ZoomStep, cx: &mut Context<DocumentView>) -> bool {
+        let next = super::step_reading_zoom(self.zoom, step);
+        if (next - self.zoom).abs() < 1e-3 {
+            return false;
+        }
+        self.zoom = next;
+        self.clamp_scroll();
+        self.lay_out(cx);
         self.plan(cx);
+        cx.notify();
+        true
     }
 
     fn fail(&mut self, why: String, desktop: bool, cx: &mut Context<DocumentView>) {
@@ -521,8 +591,8 @@ impl PageDoc {
         )
     }
 
-    fn start(&mut self, g: Geometry, cx: &mut Context<DocumentView>) {
-        self.asked = Some(g);
+    fn start(&mut self, g: Geometry, zoom: f32, cx: &mut Context<DocumentView>) {
+        self.asked = Some((g, zoom));
         // Handed to the desktop already: this view only says why from now on.
         if self.handed_over {
             return;
@@ -589,7 +659,7 @@ impl PageDoc {
                 }
                 this.update(cx, |view, cx| {
                     if let Some(p) = page_of(view) {
-                        p.adopt(layout, key, None, read, cx);
+                        p.adopt(layout, key, None, read, zoom, cx);
                         for (band, png) in pngs {
                             p.landed(band, png, cx);
                         }
@@ -668,7 +738,7 @@ impl PageDoc {
                 );
             }
             let adopted = this
-                .update(cx, |view, cx| page_of(view).map(|p| p.adopt(layout, key, page.map(|id| (id, generation)), read, cx)))
+                .update(cx, |view, cx| page_of(view).map(|p| p.adopt(layout, key, page.map(|id| (id, generation)), read, zoom, cx)))
                 .ok()
                 .flatten();
             if adopted.is_none() {
@@ -759,6 +829,7 @@ impl PageDoc {
         key: CacheKey,
         live: Option<(PageId, u64)>,
         read: NotesRead,
+        zoom: f32,
         cx: &mut Context<DocumentView>,
     ) {
         // The notes the new render's bytes hold, read as its own page reads
@@ -792,6 +863,7 @@ impl PageDoc {
         let incoming = Rendered {
             tiles: TileSet::new(&layout),
             layout,
+            zoom,
         };
         if let Some(mut outgoing) = self.current.replace(incoming) {
             let visible = self.visible_tops(&outgoing);
@@ -989,16 +1061,17 @@ impl PageDoc {
         !visible.is_empty() && visible.iter().all(|t| r.tiles.gpu.contains_key(t))
     }
 
-    /// Logical px per CSS px for a render: 1 when it was laid out at this
-    /// view's width, else the stretch until the re-render lands.
+    /// Logical px per CSS px for a render: the zoom when it was laid out at
+    /// this view's width and zoom, else the stretch until the re-render lands.
+    /// See [`px_per_css`].
     fn stretch(&self, r: &Rendered) -> f32 {
         let Some(m) = self.view else { return 1.0 };
-        let w = f32::from(m.size.width);
-        if r.layout.geometry.css_width == w.round().max(1.0) as u32 {
-            1.0
-        } else {
-            w / r.layout.geometry.css_width.max(1) as f32
-        }
+        px_per_css(
+            f32::from(m.size.width),
+            self.zoom,
+            r.layout.geometry.css_width,
+            r.zoom,
+        )
     }
 
     fn max_scroll_css(&self) -> f32 {
@@ -1275,8 +1348,8 @@ impl PageDoc {
             cx.background_spawn(async move { cache::forget(&root, key) })
                 .detach();
         }
-        if let Some(g) = self.asked {
-            self.start(g, cx);
+        if let Some((g, zoom)) = self.asked {
+            self.start(g, zoom, cx);
         }
     }
 
@@ -1290,7 +1363,7 @@ impl PageDoc {
         if self.saving.is_some() {
             return;
         }
-        let (Some(r), Some(g)) = (self.current.as_ref(), self.asked) else {
+        let (Some(r), Some((g, zoom))) = (self.current.as_ref(), self.asked) else {
             return;
         };
         let (rendered, tagged) = (r.layout.rendered, r.layout.capability.tagged);
@@ -1310,7 +1383,7 @@ impl PageDoc {
                             l.rebase(read, tagged, &path);
                         }
                     }
-                    Ok(_) => p.start(g, cx),
+                    Ok(_) => p.start(g, zoom, cx),
                     Err(_) => {
                         if let Some(l) = p.notes.as_mut() {
                             l.set_gone(true);
@@ -2092,6 +2165,22 @@ impl Backend for PageDoc {
         false
     }
 
+    fn zoom(
+        &mut self,
+        step: super::ZoomStep,
+        _view: Size<Pixels>,
+        _sf: f32,
+        cx: &mut Context<DocumentView>,
+    ) -> bool {
+        self.zoom_to(step, cx)
+    }
+
+    /// No controls once the file has gone to the desktop: this view only
+    /// says why now, and there is no page to zoom.
+    fn zoom_now(&self) -> Option<super::ImageZoom> {
+        (!self.handed_over).then_some(super::ImageZoom::Scale(self.zoom))
+    }
+
     fn hover(&mut self, at: Option<Point<Pixels>>, cx: &mut Context<DocumentView>) {
         PageDoc::hover(self, at, cx);
     }
@@ -2327,6 +2416,39 @@ mod tests {
         // Scrolled past, it is not there to press.
         let above = RectCss { y: 100.0, ..button };
         assert!(place(above, &map).is_none());
+    }
+
+    /// Zoomed, the page is laid out in a narrower CSS column at a higher
+    /// scale, as a browser zooms: text grows and re-flows, and a band is
+    /// still the view's width in device pixels, so the render for the zoom
+    /// is drawn at exactly the zoom and nothing is resampled. The render
+    /// still up from before a zoom is drawn scaled by it at once, and one
+    /// from before a resize is stretched to fill, as before there was a zoom.
+    #[test]
+    fn a_zoom_lays_the_page_out_narrower_at_a_higher_scale() {
+        let m = Measured {
+            origin: None,
+            size: size(px(800.), px(600.)),
+            scale: 1.6,
+        };
+        let at_1 = PageDoc::geometry_for(m, 1.0);
+        let at_2 = PageDoc::geometry_for(m, 2.0);
+        assert_eq!((at_1.css_width, at_1.viewport_css_height), (800, 600));
+        assert_eq!((at_2.css_width, at_2.viewport_css_height), (400, 300));
+        assert!((at_2.scale - 3.2).abs() < 1e-6, "{}", at_2.scale);
+        let dev = |g: Geometry| g.css_width as f32 * g.scale;
+        assert!((dev(at_1) - dev(at_2)).abs() < 1.0, "the same device width");
+
+        assert_eq!(px_per_css(800.0, 2.0, at_2.css_width, 2.0), 2.0);
+        assert!(
+            (px_per_css(800.0, 2.0, at_1.css_width, 1.0) - 2.0).abs() < 1e-6,
+            "the render from before the zoom, drawn at it until its successor lands"
+        );
+        assert_eq!(px_per_css(800.0, 1.0, 800, 1.0), 1.0);
+        assert!(
+            (px_per_css(900.0, 1.0, 800, 1.0) - 900.0 / 800.0).abs() < 1e-6,
+            "the render from before a resize, stretched to fill"
+        );
     }
 
     #[test]

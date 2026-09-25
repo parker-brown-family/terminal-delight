@@ -584,6 +584,14 @@ impl TerminalView {
             cx.stop_propagation();
             return;
         }
+        // A square floating over the bench is drawn above it, and a turn over
+        // the square is the document's: this hook runs first and halts, so
+        // the pane root's `doc_wheel` would never hear it, and the bench
+        // behind would scroll instead.
+        if self.doc_wheel(ev, cx) {
+            cx.stop_propagation();
+            return;
+        }
         let Some((hit, _)) = self.bench_flat(ev.position) else {
             return;
         };
