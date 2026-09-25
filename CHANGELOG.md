@@ -62,6 +62,12 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ### Fixed
 
+- **Output reaches the terminal core faster.** The guards the core swap put in
+  front of rio-vt's parser read every byte one at a time and took about a third
+  of its throughput: coloured text ran at 88 MiB/s through them, against 138
+  for the core alone. They now search with memchr and read a character whole.
+  The same text runs at 114 MiB/s, and pictures at 498 MiB/s where they ran at
+  311. `what_the_guards_cost` in `app/src/vt/rio.rs` measures it. (#843)
 - **Standing on the comments board no longer swallows a keystroke meant for the
   agent.** For one build, typing while the board was on screen opened a note
   under the first character — the reasoning being that the bench already works

@@ -102,6 +102,37 @@ follow-up issue).
 Reading a full 10,030-line history through the boundary (release, best of
 five): hash 29.6 ms rio-vt, 26.5 ms alacritty; snapshot 25.7 ms, 23.4 ms.
 
+### Guard throughput
+
+Measured after the merge, on 2026-09-25 (#843). The review put three guards in
+front of rio-vt's parser (`vt/kitty.rs`, `vt/text.rs`, `vt/compat.rs`), and
+each reads every byte of output before the core does. Nobody had timed them.
+`what_the_guards_cost` in `vt/rio.rs` does: 8 MiB of each kind of output in
+4 KiB reads at 120 by 40, the median of seven rounds, with the core alone timed
+first and last in every round.
+
+As merged, the guards read a byte at a time and took about a third of the
+core's rate. Coloured text ran at 138 MiB/s through the core alone and at 88
+through `advance`, slower than the bake-off had measured the bare crate (97).
+Searching with memchr, reading printable ASCII eight bytes at a time and
+decoding a character whole gave half of it back:
+
+| Output, 8 MiB | Core alone, MiB/s | `advance` as merged | `advance` now |
+|---|---|---|---|
+| The bake-off's own `text-8mb.bin` | 135–140 | 87 (−35%) | 115 (−18%) |
+| Coloured text, the bake-off's mix | 138–143 | 88 (−36%) | 114 (−18%) |
+| ASCII only | 216–267 | 148 (−40%) | 188 (−13%) |
+| Mostly not ASCII: CJK, box drawing, marks | 112–117 | 65 (−45%) | 72 (−35%) |
+| Full-screen redraws in synchronized updates | 129–139 | 77 (−40%) | 107 (−23%) |
+| Pictures, base64 in 4 KiB pieces | 613–663 | 311 (−53%) | 498 (−19%) |
+
+The core alone moved by up to 8% between its two timings in one round, so a
+smaller difference is noise. The bake-off's harness, run the same day, reads
+`text-8mb.bin` at 103–109 MiB/s with rio-vt's defaults; TD's core is faster
+alone because grapheme clustering is off. What is left is the text guard
+reading every character and every control sequence. Each upstream fix in issue
+836 lets TD delete part of it.
+
 ## Outcomes & retrospective
 
 **Post-hoc difficulty: 8/10**, against 9 predicted. The architecture held without

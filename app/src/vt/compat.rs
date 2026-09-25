@@ -23,6 +23,10 @@ const ESC: u8 = 0x1b;
 /// The run a host from before the swap writes, `#` standing for `h` or `l`.
 const RUN: &[u8; 24] = b"\x1b[?1000#\x1b[?1002#\x1b[?1003#";
 
+/// How the run begins: far rarer than the `ESC [` every colour change begins
+/// with, so a chunk is searched for this rather than stopped at every `ESC`.
+const START: &[u8] = b"\x1b[?1000";
+
 /// The protocols' codes, in the run's order: clicks, drags, all motion.
 const CODES: [&str; 3] = ["1000", "1002", "1003"];
 
@@ -42,10 +46,22 @@ impl MouseRun {
         let (mut pass, mut i) = (0, 0);
         while i < bytes.len() {
             if self.matched == 0 {
-                // Only an ESC can begin the run.
-                match bytes[i..].iter().position(|&b| b == ESC) {
+                // Searched for whole, since every colour change begins with
+                // the same `ESC [`.
+                match memchr::memmem::find(&bytes[i..], START) {
                     Some(at) => i += at,
-                    None => break,
+                    None => {
+                        // The chunk may end partway into the run's start: an
+                        // `ESC` late enough, and nothing after it that is not
+                        // the start.
+                        let tail = &bytes[bytes.len().saturating_sub(START.len() - 1).max(i)..];
+                        if let Some(at) = memchr::memrchr(ESC, tail) {
+                            if START.starts_with(&tail[at..]) {
+                                self.matched = tail.len() - at;
+                            }
+                        }
+                        break;
+                    }
                 }
             }
             let byte = bytes[i];
@@ -146,6 +162,14 @@ mod tests {
             want.push(b'b');
             for cut in 0..=stream.len() {
                 assert_eq!(through(&stream, &[cut]).0, want, "{kept:?}, cut at {cut}");
+                // Twice, so the start of the run can arrive across three reads.
+                for then in cut..=stream.len() {
+                    assert_eq!(
+                        through(&stream, &[cut, then]).0,
+                        want,
+                        "{kept:?}, {cut}, {then}"
+                    );
+                }
             }
         }
     }

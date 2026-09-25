@@ -110,13 +110,9 @@ impl TextGuard {
             match self.state {
                 State::Ground => {
                     // Printable ASCII is characters, and nearly everything.
-                    let run = bytes[i..]
-                        .iter()
-                        .position(|&b| !(0x20..0x7f).contains(&b))
-                        .unwrap_or(bytes.len() - i);
-                    if run > 0 {
+                    if (0x20..0x7f).contains(&byte) {
                         self.character();
-                        i += run;
+                        i += printable_run(&bytes[i..]);
                         continue;
                     }
                     start = i;
@@ -126,9 +122,30 @@ impl TextGuard {
                         // A bell moves nothing; every other control can.
                         BEL | 0x7f => {}
                         0x00..=0x1f => self.attached = false,
-                        0xc2..=0xdf => self.utf8(byte & 0x1f, 1),
-                        0xe0..=0xef => self.utf8(byte & 0x0f, 2),
-                        0xf0..=0xf4 => self.utf8(byte & 0x07, 3),
+                        0xc2..=0xf4 => {
+                            let more = match byte {
+                                0xc2..=0xdf => 1,
+                                0xe0..=0xef => 2,
+                                _ => 3,
+                            };
+                            let first = byte & (0x7f >> (more + 1));
+                            match bytes.get(i..i + more) {
+                                // Whole and well formed, as nearly every
+                                // character is: read at once, rather than a
+                                // byte at a time as `Utf8` reads the rest.
+                                Some(rest) if rest.iter().all(|b| (0x80..0xc0).contains(b)) => {
+                                    self.codepoint = rest.iter().fold(u32::from(first), |cp, b| {
+                                        (cp << 6) | u32::from(b & 0x3f)
+                                    });
+                                    i += more;
+                                    if !self.goes_to_the_core() {
+                                        emit(core, &bytes[pass..start]);
+                                        pass = i;
+                                    }
+                                }
+                                _ => self.utf8(first, more as u8),
+                            }
+                        }
                         // Not a character's first byte: the core prints a
                         // replacement character for it.
                         _ => self.character(),
@@ -149,19 +166,9 @@ impl TextGuard {
                         continue;
                     }
                     self.state = State::Ground;
-                    match codepoint_width(self.codepoint) {
-                        Some(0) => {
-                            if self.attached && self.marks < MOST_MARKS {
-                                self.marks += 1;
-                                self.last_was_mark = true;
-                            } else {
-                                // A mark with nothing of its own to sit on.
-                                emit(core, &bytes[pass..start]);
-                                pass = i;
-                            }
-                        }
-                        Some(_) => self.character(),
-                        None => {}
+                    if !self.goes_to_the_core() {
+                        emit(core, &bytes[pass..start]);
+                        pass = i;
                     }
                 }
                 State::Escape => {
@@ -191,6 +198,17 @@ impl TextGuard {
                     }
                 }
                 State::Csi => {
+                    // Parameters and intermediates go by unread; only the
+                    // final byte, or what breaks the sequence off, is looked at.
+                    let Some(at) = bytes[i..]
+                        .iter()
+                        .position(|&b| matches!(b, 0x40..=0x7e | ESC | CAN | SUB))
+                    else {
+                        i = bytes.len();
+                        continue;
+                    };
+                    i += at;
+                    let byte = bytes[i];
                     i += 1;
                     match byte {
                         0x40..=0x7e => {
@@ -224,10 +242,7 @@ impl TextGuard {
                 }
                 State::Str => {
                     // Nothing in a string is changed; only its end matters.
-                    match bytes[i..]
-                        .iter()
-                        .position(|&b| matches!(b, ESC | BEL | CAN | SUB))
-                    {
+                    match super::kitty::string_end(&bytes[i..]) {
                         Some(at) => {
                             i += at;
                             if bytes[i] == ESC {
@@ -270,6 +285,24 @@ impl TextGuard {
         self.marks = 0;
         self.attached = true;
         self.last_was_mark = false;
+    }
+
+    /// Counts the character just read, `self.codepoint`, and says whether the
+    /// core gets it: not a mark with nothing of its own to sit on, nor one past
+    /// the limit.
+    fn goes_to_the_core(&mut self) -> bool {
+        match codepoint_width(self.codepoint) {
+            Some(0) => {
+                if !self.attached || self.marks >= MOST_MARKS {
+                    return false;
+                }
+                self.marks += 1;
+                self.last_was_mark = true;
+            }
+            Some(_) => self.character(),
+            None => {}
+        }
+        true
     }
 
     fn utf8(&mut self, first: u8, more: u8) {
@@ -339,9 +372,77 @@ fn emit(core: &mut dyn FnMut(&[u8]), bytes: &[u8]) {
     }
 }
 
+/// How many bytes at the start of `bytes` are printable ASCII, `0x20` to `0x7e`.
+///
+/// Read eight at a time, because nearly all of a terminal's output is printable
+/// ASCII; a byte at a time, the guards' searches cost the core a third of its
+/// throughput (`what_the_guards_cost` in `vt/rio.rs`). A byte below `0x20`
+/// borrows when `0x20` is taken from it, and one above `0x7e` has its top bit
+/// set once one is added. Neither disturbs the bytes before it, so the lowest
+/// byte flagged is the first that is not printable.
+fn printable_run(bytes: &[u8]) -> usize {
+    const ONES: u64 = u64::from_ne_bytes([1; 8]);
+    const TOPS: u64 = ONES << 7;
+    let (words, rest) = bytes.as_chunks::<8>();
+    for (at, word) in words.iter().enumerate() {
+        let x = u64::from_le_bytes(*word);
+        let below = x.wrapping_sub(ONES * 0x20) & !x & TOPS;
+        let above = (x.wrapping_add(ONES) | x) & TOPS;
+        let flagged = below | above;
+        if flagged != 0 {
+            return at * 8 + flagged.trailing_zeros() as usize / 8;
+        }
+    }
+    words.len() * 8
+        + rest
+            .iter()
+            .position(|&b| !(0x20..0x7f).contains(&b))
+            .unwrap_or(rest.len())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_run_of_printable_ascii_ends_where_a_byte_at_a_time_says() {
+        // Every byte value, at every place in a word and in the tail after the
+        // last whole word, among neighbours at both edges of printable.
+        let slow = |bytes: &[u8]| {
+            bytes
+                .iter()
+                .position(|&b| !(0x20..0x7f).contains(&b))
+                .unwrap_or(bytes.len())
+        };
+        for fill in [b'a', 0x20, 0x7e] {
+            for len in 0..=24 {
+                let mut bytes = vec![fill; len];
+                for at in 0..len {
+                    for byte in 0..=255u8 {
+                        bytes[at] = byte;
+                        assert_eq!(
+                            printable_run(&bytes),
+                            slow(&bytes),
+                            "{byte:#04x} at {at} of {len} in {fill:#04x}"
+                        );
+                        if (0x20..0x7f).contains(&byte) {
+                            continue;
+                        }
+                        // A later byte that borrows or carries in its turn
+                        // cannot move where the run ends.
+                        for later in at + 1..len {
+                            for after in [0x00, 0x1f, 0x7f, 0x80, 0xff] {
+                                bytes[later] = after;
+                                assert_eq!(printable_run(&bytes), at, "{after:#04x} at {later}");
+                            }
+                            bytes[later] = fill;
+                        }
+                    }
+                    bytes[at] = fill;
+                }
+            }
+        }
+    }
 
     /// Feed `stream` split at `cuts`; what the core was handed, piece by piece.
     fn pieces(stream: &[u8], cuts: &[usize]) -> Vec<Vec<u8>> {
@@ -406,6 +507,31 @@ mod tests {
     fn grapheme_clustering_is_never_turned_on() {
         assert_eq!(guarded(b"a\x1b[?2027hb"), b"ab".to_vec());
         assert_eq!(guarded(b"\x1b[?2027;1004h"), b"\x1b[?1004h".to_vec());
+    }
+
+    #[test]
+    fn a_sequence_or_string_cut_off_gives_way_to_what_follows() {
+        // An `ESC` starts a sequence over; a cancel ends one, or a string, and
+        // what follows is text again. Each is read that way at every cut.
+        for (stream, want) in [
+            ("\x1b[3\x1b[?2027h".to_string(), "\x1b[3".to_string()),
+            (
+                format!("\x1b[?20\x18e{}", marks(MOST_MARKS + 8)),
+                format!("\x1b[?20\x18e{}", marks(MOST_MARKS)),
+            ),
+            (
+                format!("\x1b]0;t\x1ae{}", marks(MOST_MARKS + 8)),
+                format!("\x1b]0;t\x1ae{}", marks(MOST_MARKS)),
+            ),
+        ] {
+            for cut in 0..=stream.len() {
+                assert_eq!(
+                    pieces(stream.as_bytes(), &[cut]).concat(),
+                    want.as_bytes().to_vec(),
+                    "{stream:?}, cut at {cut}"
+                );
+            }
+        }
     }
 
     #[test]

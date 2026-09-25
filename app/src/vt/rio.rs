@@ -963,4 +963,346 @@ mod tests {
         let (replies, _) = replies_to(b"\x1b_Gi=31,s=1,v=1,a=T,t=d,f=24;/wAA\x1b\\");
         assert_eq!(replies, vec!["\x1b_Gi=31;OK\x1b\\".to_string()]);
     }
+
+    /// One way of handing a read to the core, timed by
+    /// [`what_the_guards_cost`].
+    type Feed = fn(&mut super::Core, &[u8]);
+
+    /// What the three guards in front of rio-vt's parser cost, in throughput.
+    ///
+    /// rio-vt was chosen at 97 MB/s — MiB, strictly — on the research bake-off's
+    /// stream of coloured text (`bake/text_stream.py` on `research/terminal-core`:
+    /// 8 MiB in 4 KiB reads at 120 by 40, median of five). The review then put
+    /// `vt/kitty.rs`, `vt/text.rs` and `vt/compat.rs` in front of the parser,
+    /// and each of them reads every byte before the core does. This feeds five
+    /// kinds of output through the core alone, through each guard with the
+    /// core behind it, through `advance` as it runs, and through the guards
+    /// with no core at all, and prints the rates as a Markdown table. The core
+    /// alone runs first and again last in every round, so the gap between
+    /// those two columns is the noise any other difference has to clear.
+    ///
+    /// ```text
+    /// cargo test --release --bin terminal-delight what_the_guards_cost -- --ignored --nocapture
+    /// ```
+    ///
+    /// Release, always: a debug build measures the debug build. Set
+    /// `TD_BOUNDARY_STREAM` to a recorded stream, such as the bake-off's own
+    /// `text-8mb.bin`, to time that as well.
+    #[test]
+    #[ignore = "throughput instrument — run in release, see its comment"]
+    fn what_the_guards_cost() {
+        use crate::vt::Backend;
+        use std::time::{Duration, Instant};
+
+        const MIB: usize = 1 << 20;
+        const ROUNDS: usize = 7;
+        const WAYS: [(&str, Feed); 7] = [
+            ("core", |core, bytes| {
+                core.parser.advance(&mut core.term, bytes)
+            }),
+            ("+ kitty", |core, bytes| {
+                let super::Core {
+                    term,
+                    parser,
+                    guard,
+                    ..
+                } = core;
+                guard.feed(bytes, &mut |bytes| parser.advance(term, bytes));
+            }),
+            ("+ text", |core, bytes| {
+                let super::Core {
+                    term, parser, text, ..
+                } = core;
+                text.feed(bytes, &mut |bytes| parser.advance(term, bytes));
+            }),
+            ("+ mouse", |core, bytes| {
+                let super::Core {
+                    term,
+                    parser,
+                    mouse,
+                    ..
+                } = core;
+                mouse.feed(bytes, &mut |bytes| parser.advance(term, bytes));
+            }),
+            ("advance", |core, bytes| core.advance(bytes)),
+            ("guards, no core", |core, bytes| {
+                let super::Core {
+                    guard, text, mouse, ..
+                } = core;
+                guard.feed(bytes, &mut |bytes| {
+                    text.feed(bytes, &mut |bytes| {
+                        mouse.feed(bytes, &mut |bytes| {
+                            std::hint::black_box(bytes);
+                        })
+                    })
+                });
+            }),
+            ("core again", |core, bytes| {
+                core.parser.advance(&mut core.term, bytes)
+            }),
+        ];
+
+        let mut streams = vec![
+            ("text", text_stream(8 * MIB)),
+            ("ascii", ascii_stream(8 * MIB)),
+            ("unicode", unicode_stream(8 * MIB)),
+            ("redraw", redraw_stream(8 * MIB)),
+            ("pictures", picture_stream(8 * MIB)),
+        ];
+        if let Ok(path) = std::env::var("TD_BOUNDARY_STREAM") {
+            streams.push((
+                "recorded",
+                std::fs::read(&path).expect("TD_BOUNDARY_STREAM"),
+            ));
+        }
+
+        let mut table = format!(
+            "| stream | MiB | {} |\n|---|---|{}\n",
+            WAYS.map(|(name, _)| name).join(" | "),
+            "---|".repeat(WAYS.len())
+        );
+        for (name, bytes) in &streams {
+            let mut taken = vec![Vec::<Duration>::new(); WAYS.len()];
+            // Round-robin, so a machine that speeds up or slows down partway
+            // through slows every way alike.
+            for _ in 0..ROUNDS {
+                for (way, (_, feed)) in WAYS.iter().enumerate() {
+                    let mut core = super::Core::new(
+                        TermSize::new(120, 40, 10, 22),
+                        Arc::new(Heard::default()),
+                        10_000,
+                    );
+                    let started = Instant::now();
+                    for read in bytes.chunks(4096) {
+                        feed(&mut core, read);
+                    }
+                    taken[way].push(started.elapsed());
+                }
+            }
+            let median = |way: usize| {
+                let mut runs = taken[way].clone();
+                runs.sort();
+                runs[ROUNDS / 2]
+            };
+            let size = bytes.len() as f64 / MIB as f64;
+            let core = median(0);
+            let rate = |took: Duration| size / took.as_secs_f64();
+            let cells: Vec<String> = (0..WAYS.len())
+                .map(|way| {
+                    let took = median(way);
+                    match WAYS[way].0 {
+                        "core" => format!("{:.1}", rate(took)),
+                        "guards, no core" => format!(
+                            "{:.1} ms, {:.1}% of the core's",
+                            took.as_secs_f64() * 1e3,
+                            took.as_secs_f64() / core.as_secs_f64() * 100.0
+                        ),
+                        _ => format!(
+                            "{:.1} ({:+.1}%)",
+                            rate(took),
+                            (rate(took) / rate(core) - 1.0) * 100.0
+                        ),
+                    }
+                })
+                .collect();
+            table += &format!("| {name} | {size:.1} | {} |\n", cells.join(" | "));
+        }
+        println!("MiB/s, median of {ROUNDS}; in brackets, against the core alone\n\n{table}");
+    }
+
+    const WORDS: [&str; 30] = [
+        "cargo",
+        "build",
+        "release",
+        "warning",
+        "unused",
+        "variable",
+        "test",
+        "passed",
+        "failed",
+        "thread",
+        "main",
+        "panicked",
+        "compiling",
+        "finished",
+        "target",
+        "debug",
+        "info",
+        "error",
+        "src",
+        "lib",
+        "rs",
+        "mod",
+        "fn",
+        "impl",
+        "struct",
+        "enum",
+        "match",
+        "let",
+        "self",
+        "use",
+    ];
+
+    /// The bake-off's text, from `bake/text_stream.py` with a different dice:
+    /// lines of 60 to 118 columns, a colour or attribute change every few
+    /// words, now and then a wide CJK character, an accented letter or an
+    /// emoji, and every 400 lines a progress bar redrawn over itself.
+    fn text_stream(size: usize) -> Vec<u8> {
+        const SGR: [&str; 9] = [
+            "\x1b[31m",
+            "\x1b[32m",
+            "\x1b[33m",
+            "\x1b[34m",
+            "\x1b[1m",
+            "\x1b[3m",
+            "\x1b[38;5;208m",
+            "\x1b[38;2;120;200;255m",
+            "\x1b[0m",
+        ];
+        let cjk: Vec<char> = "日本語の文字列漢字表示確認".chars().collect();
+        let mut dice = crate::demo::Rng::new(20_260_925);
+        let (mut out, mut lines) = (String::with_capacity(size + 4096), 0);
+        while out.len() < size {
+            lines += 1;
+            let (width, mut cols) = (dice.range(60, 118) as usize, 0);
+            while cols < width {
+                let roll = dice.range(0, 999);
+                if roll < 120 {
+                    out += dice.pick(&SGR);
+                    continue;
+                }
+                if roll < 150 {
+                    let (c, n) = (dice.pick(&cjk), dice.range(1, 3) as usize);
+                    out.extend(std::iter::repeat_n(c, n));
+                    cols += 2 * n;
+                } else if roll < 170 {
+                    out += dice.pick(&["é", "ä", "ñ", "ô"]);
+                    cols += 1;
+                } else if roll < 180 {
+                    out += dice.pick(&["\u{1f680}", "✅", "❌", "\u{1f4e6}"]);
+                    cols += 2;
+                } else {
+                    let word = dice.pick(&WORDS);
+                    out += word;
+                    cols += word.len();
+                }
+                out.push(' ');
+                cols += 1;
+            }
+            out += "\x1b[0m\r\n";
+            if lines % 400 == 0 {
+                for done in (0..=100).step_by(20) {
+                    let bar = "#".repeat(done / 5);
+                    out += &format!("\r\x1b[32m[{bar:<20}] {done:3}%\x1b[0m");
+                }
+                out += "\r\n";
+            }
+        }
+        out.into_bytes()
+    }
+
+    /// A source file going past: printable ASCII and line ends and nothing
+    /// else. The core is fastest here, so a guard shows most.
+    fn ascii_stream(size: usize) -> Vec<u8> {
+        let mut dice = crate::demo::Rng::new(1);
+        let mut out = String::with_capacity(size + 256);
+        while out.len() < size {
+            let width = dice.range(0, 100) as usize;
+            let mut line = "    ".repeat(dice.range(0, 3) as usize);
+            while line.len() < width {
+                line += dice.pick(&WORDS);
+                line.push(' ');
+            }
+            out += &line;
+            out += "\r\n";
+        }
+        out.into_bytes()
+    }
+
+    /// Text that is mostly not ASCII: CJK, box drawing, accents written as a
+    /// letter and its combining marks, and emoji. The text guard decodes every
+    /// character of it, so this is its worst ordinary case.
+    fn unicode_stream(size: usize) -> Vec<u8> {
+        const TOKENS: [&str; 8] = [
+            "日本語の文字列",
+            "漢字表示確認",
+            "────────",
+            "│",
+            "e\u{301}",
+            "o\u{302}\u{323}",
+            "a\u{308}",
+            "\u{1f680}",
+        ];
+        let mut dice = crate::demo::Rng::new(2);
+        let mut out = String::with_capacity(size + 256);
+        while out.len() < size {
+            for _ in 0..dice.range(8, 20) {
+                out += dice.pick(&TOKENS);
+                out.push(' ');
+            }
+            out += "\r\n";
+        }
+        out.into_bytes()
+    }
+
+    /// A full-screen program's frames, drawn the way ratatui draws them: each
+    /// inside a synchronized update, most rows rewritten after a cursor move,
+    /// in colour, between box-drawing edges.
+    fn redraw_stream(size: usize) -> Vec<u8> {
+        let mut dice = crate::demo::Rng::new(3);
+        let mut out = String::with_capacity(size + 16_384);
+        while out.len() < size {
+            out += "\x1b[?2026h\x1b[?25l";
+            for row in 1..=40 {
+                if dice.range(0, 9) < 4 {
+                    // Unchanged since the last frame, so not drawn.
+                    continue;
+                }
+                out += &format!("\x1b[{row};1H\x1b[38;5;240m│\x1b[0m ");
+                let mut cols = 2;
+                loop {
+                    let word = dice.pick(&WORDS);
+                    if cols + word.len() + 1 > 118 {
+                        break;
+                    }
+                    if dice.range(0, 4) == 0 {
+                        out += &format!("\x1b[38;5;{}m", dice.range(0, 255));
+                    }
+                    out += word;
+                    out.push(' ');
+                    cols += word.len() + 1;
+                }
+                out += "\x1b[0m\x1b[K\x1b[38;5;240m│\x1b[0m";
+            }
+            let (row, col) = (dice.range(1, 40), dice.range(1, 120));
+            out += &format!("\x1b[{row};{col}H\x1b[?25h\x1b[?2026l");
+        }
+        out.into_bytes()
+    }
+
+    /// Pictures the way `kitten icat` and mpv send them when they cannot share
+    /// memory: 256 by 256 RGBA, in base64, in 4,096-byte pieces.
+    fn picture_stream(size: usize) -> Vec<u8> {
+        use base64::Engine;
+        let mut dice = crate::demo::Rng::new(4);
+        let pixels: Vec<u8> = (0..256 * 256 * 4).map(|_| dice.next() as u8).collect();
+        let payload = base64::engine::general_purpose::STANDARD.encode(pixels);
+        let pieces: Vec<&[u8]> = payload.as_bytes().chunks(4096).collect();
+        let mut out = Vec::with_capacity(size + payload.len() * 2);
+        while out.len() < size {
+            for (at, piece) in pieces.iter().enumerate() {
+                let more = u8::from(at + 1 < pieces.len());
+                if at == 0 {
+                    out.extend_from_slice(
+                        format!("\x1b_Ga=T,f=32,s=256,v=256,q=2,m={more};").as_bytes(),
+                    );
+                } else {
+                    out.extend_from_slice(format!("\x1b_Gm={more};").as_bytes());
+                }
+                out.extend_from_slice(piece);
+                out.extend_from_slice(b"\x1b\\");
+            }
+        }
+        out
+    }
 }

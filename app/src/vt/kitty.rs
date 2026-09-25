@@ -98,6 +98,17 @@ fn ends_a_string(byte: u8) -> bool {
     matches!(byte, ESC | BEL | CAN | SUB)
 }
 
+/// Where in `bytes` the first byte that [ends a string](ends_a_string) is.
+///
+/// A picture's payload is megabytes of base64 with nothing in it that ends a
+/// string, so it is searched for with `memchr` rather than a byte at a time:
+/// a byte at a time, the guards' searches cost the core more than half its
+/// throughput on pictures (`what_the_guards_cost` in `vt/rio.rs`).
+pub(super) fn string_end(bytes: &[u8]) -> Option<usize> {
+    let first = memchr::memchr3(ESC, BEL, CAN, bytes);
+    memchr::memchr(SUB, &bytes[..first.unwrap_or(bytes.len())]).or(first)
+}
+
 impl Guard {
     /// Hand `bytes` to `core`, less what the guard stops, in as few calls as
     /// it can: a chunk with no picture command in it is handed over whole.
@@ -107,12 +118,20 @@ impl Guard {
         let mut i = 0;
         while i < bytes.len() {
             match self.state {
-                State::Ground => match bytes[i..].iter().position(|&b| b == ESC) {
+                // Every colour change starts with an `ESC`, and almost none
+                // starts an APC, so the search is for both bytes together.
+                State::Ground => match memchr::memmem::find(&bytes[i..], b"\x1b_") {
                     Some(at) => {
                         i += at + 1;
                         self.state = State::Escape;
                     }
-                    None => i = bytes.len(),
+                    None => {
+                        // An `ESC` that ends the chunk may begin one.
+                        if bytes.last() == Some(&ESC) {
+                            self.state = State::Escape;
+                        }
+                        i = bytes.len();
+                    }
                 },
                 State::Escape => match bytes[i] {
                     b'_' => {
@@ -175,10 +194,7 @@ impl Guard {
                     }
                 }
                 State::Shared => {
-                    let end = bytes[i..]
-                        .iter()
-                        .position(|&b| ends_a_string(b))
-                        .map_or(bytes.len(), |at| i + at);
+                    let end = string_end(&bytes[i..]).map_or(bytes.len(), |at| i + at);
                     self.held.extend_from_slice(&bytes[i..end]);
                     i = end;
                     pass = i;
@@ -211,10 +227,7 @@ impl Guard {
                     }
                 }
                 State::Payload => {
-                    let end = bytes[i..]
-                        .iter()
-                        .position(|&b| ends_a_string(b))
-                        .map_or(bytes.len(), |at| i + at);
+                    let end = string_end(&bytes[i..]).map_or(bytes.len(), |at| i + at);
                     let room = MAX_APC - self.taken;
                     if end - i > room {
                         // Over the limit. The core gets what fits and a cancel,
@@ -256,7 +269,7 @@ impl Guard {
                         self.hand_over(path);
                     }
                 }
-                State::Swallowing => match bytes[i..].iter().position(|&b| ends_a_string(b)) {
+                State::Swallowing => match string_end(&bytes[i..]) {
                     Some(at) => {
                         let end = bytes[i + at];
                         // A bell or a cancel ended nothing the core still has
@@ -449,11 +462,46 @@ mod tests {
     }
 
     #[test]
+    fn a_string_ends_where_a_byte_at_a_time_says() {
+        // Past two of memchr's 32-byte blocks, each ending byte at every place,
+        // with a second one after it and a lookalike byte before it.
+        let slow = |bytes: &[u8]| bytes.iter().position(|&b| ends_a_string(b));
+        for len in 0..=72 {
+            let mut bytes = vec![b'A'; len];
+            assert_eq!(string_end(&bytes), None);
+            for at in 0..len {
+                for end in [ESC, BEL, CAN, SUB] {
+                    bytes[at] = end;
+                    assert_eq!(
+                        string_end(&bytes),
+                        slow(&bytes),
+                        "{end:#04x} at {at} of {len}"
+                    );
+                    for later in [ESC, BEL, CAN, SUB] {
+                        for after in at + 1..len {
+                            bytes[after] = later;
+                            assert_eq!(string_end(&bytes), Some(at));
+                            bytes[after] = 0x19;
+                        }
+                    }
+                    bytes[at] = 0x1c;
+                }
+            }
+        }
+    }
+
+    #[test]
     fn a_picture_carrying_its_pixels_reaches_the_core_unchanged() {
-        let mut stream = b"before ".to_vec();
+        let mut stream = b"before \x1b".to_vec();
         stream.extend(command("a=T,f=100,t=d,m=1", b"first half"));
         stream.extend(command("m=0", b"second half"));
         stream.extend_from_slice(b"\x1b_Xnot a picture\x07 after");
+        // A command after a doubled escape, and one after the escape of a
+        // colour: the search for the opening pair must not miss either.
+        stream.extend_from_slice(b" \x1b\x1b");
+        stream.extend(command("a=T,f=100,t=d", b"third"));
+        stream.extend_from_slice(b"\x1b[31m");
+        stream.extend(command("a=T,f=100,t=d", b"fourth"));
         for cut in 0..stream.len() {
             assert_eq!(guarded(&stream, &[cut]).0, stream, "cut at {cut}");
         }
@@ -461,15 +509,20 @@ mod tests {
 
     #[test]
     fn an_application_command_with_no_end_stops_growing_at_the_limit() {
+        // A picture command, and an APC that is not one: rio-vt buffers both.
+        for opening in [&b"\x1b_Ga=T,f=100;"[..], b"\x1b_X"] {
+            let mut stream = opening.to_vec();
+            stream.resize(stream.len() + 3 * MAX_APC, b'A');
+            let (out, _) = guarded(&stream, &[MAX_APC / 3, MAX_APC, 2 * MAX_APC + 7]);
+            assert!(
+                out.len() <= MAX_APC + 32,
+                "the core was handed {} bytes of one command",
+                out.len()
+            );
+            assert_eq!(out.last(), Some(&CAN), "and told that it is over");
+        }
         let mut stream = b"\x1b_Ga=T,f=100;".to_vec();
         stream.resize(stream.len() + 3 * MAX_APC, b'A');
-        let (out, _) = guarded(&stream, &[MAX_APC / 3, MAX_APC, 2 * MAX_APC + 7]);
-        assert!(
-            out.len() <= MAX_APC + 32,
-            "the core was handed {} bytes of one command",
-            out.len()
-        );
-        assert_eq!(out.last(), Some(&CAN), "and told that it is over");
 
         // Its real end, and what follows, reach the core as they always did.
         let mut guard = Guard::default();
