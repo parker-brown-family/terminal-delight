@@ -820,8 +820,7 @@ def build():
 <h1>Core Swap</h1>
 <p class="lede">Terminal Delight gets its screen from alacritty's emulator, a Rust library called alacritty_terminal that turns a
 program's output into rows of cells. When a program sends a picture instead of text, the library drops it, and the rows after it close
-up as if nothing had been sent. Replacing the emulator would reach the session host, every window and the snapshot passed between
-them, so before touching anything we recorded six
+up as if nothing had been sent. Replacing the emulator reaches most of TD, so before touching anything we recorded six
 picture programs and fed the same bytes to four emulators, had six agents research twelve ways forward, had Jev check every quoted fact,
 and let code rank the roads. <b>Two roads come out close, {E(short(a))} and {E(short(b))}, and one weight decides between them.</b> TD's core is
 unchanged.</p>
@@ -873,7 +872,8 @@ out of the arithmetic, and it puts {E(short(a))} ahead of {E(short(b))} by {SCOR
 
 <h2 class="sec">What a swap costs TD</h2>
 <p>Whichever road leads, TD pays for it in the code that reads alacritty today. The host, the window and the snapshot passed between
-them all use its types, and neither rio-vt nor libghostty-vt can put its pictures into a snapshot yet.</p>
+them all use its types. Of the two leaders, only wezterm-term already serializes its pictures with its lines, behind a feature flag;
+rio-vt's snapshot leaves them out.</p>
 {figs['files']}
 
 <h2 class="sec">Four questions before any code</h2>
@@ -881,12 +881,12 @@ them all use its types, and neither rio-vt nor libghostty-vt can put its picture
   <div class="ask" id="q-worth"><h3>Are pictures worth a core swap?</h3>
   <p>With pictures weighted zero, staying on alacritty ranks {['first', 'second', 'third', 'fourth'][stay_rank - 1]}. TD's foundation review set this swap aside until image support became a committed feature.</p>
   <p class="rec"><b>Recommended:</b> decide this first. Every question below assumes yes.</p></div>
-  <div class="ask" id="q-leader"><h3>Three maintainers, or placeholders and a published crate?</h3>
-  <p>The matrix leans wezterm-term, first in {pct(TOP1['wezterm-term'])} of random weightings, mostly on its three maintainers. It would need a fork on day one for placeholders, and TD would maintain that fork.</p>
-  <p class="rec"><b>Recommended:</b> rio-vt, if the test below passes. The maintainer advantage stops at the fork, a judgement the matrix does not encode (inferred).</p></div>
   <div class="ask" id="q-replica"><h3>Can a picture cross from TD's host to its windows?</h3>
-  <p>TD's host parses and each window replays a snapshot. rio-vt's own snapshot covers the visible screen without pictures, and libghostty-vt's leaves pictures out.</p>
+  <p>wezterm-term's lines serialize with their pictures, which is how WezTerm's own server and client share a screen. rio-vt's snapshot leaves pictures out, so TD would build that part.</p>
   <p class="rec"><b>Recommended:</b> a spike before choosing, with each of the two as the host's core, a window replaying it, and the pictures compared.</p></div>
+  <div class="ask" id="q-leader"><h3>wezterm-term or rio-vt?</h3>
+  <p>The matrix leans wezterm-term, first in {pct(TOP1['wezterm-term'])} of random weightings, on three maintainers and a cargo-only build. It ignores placeholders, so TD would carry a fork from the first day; rio-vt keeps them and ships as a crate.</p>
+  <p class="rec"><b>Recommended:</b> wezterm-term if the spike carries its pictures to a window, rio-vt if it doesn't. The spike tests the job TD's snapshot exists for, which no column in the matrix measures.</p></div>
   <div class="ask" id="q-weights"><h3>Are the weights right?</h3>
   <p>They are a first guess, and changing one re-ranks every road without asking Jev again.</p>
   <p class="rec"><b>Recommended:</b> leave a note on the matrix with yours.</p></div>
