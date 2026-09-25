@@ -604,7 +604,7 @@ ul.srcs a { color: #8fbdf2; margin-right: 8px; word-break: break-all; }
 
 <div class="wrap">
 <header class="hero">
-<p class="kicker">Terminal Delight &middot; research, nothing built &middot; 2026-09-25</p>
+<p class="kicker">Terminal Delight &middot; research, nothing built &middot; 2026-09-25 &middot; parked for a riff</p>
 <h1>Core Swap</h1>
 <p class="lede">Terminal Delight gets its screen from alacritty's emulator, a Rust library called alacritty_terminal that turns a
 program's output into rows of cells. When a program sends a picture instead of text, the library drops it, and the rows after it close
@@ -869,7 +869,7 @@ a doubt about one leak into the other. The rio-vt experiment tested exactly that
 
 <!-- Notes and concurs are baked in here by "save into file". Leave them empty and leave them in,
      with their data-format: it names the format notes.js writes, and other writers check it. -->
-<script type="application/json" id="report-notes" data-format="1">{}</script>
+<script type="application/json" id="report-notes" data-format="1" data-rev="2026-09-25T08:04">{"ask-are-pictures-worth-a": [{"text": "Parked, 2026-09-25. We will not move forward just yet; this needs a riff first. None of the four questions on this page is answered. (Parker, in chat)", "title": "Are pictures worth a core swap?", "ts": "2026-09-25 08:04"}], "ask-wezterm-term-or-rio": [{"text": "Parker, in chat: if we could use Ghostty I would be a happy camper. Good vibes, and I feel the popularity pull. That said, wezterm-term and rio-vt are dark horses, and if they are TINY that would be very vibey too. Not 100% sold on Ghostty. Not answered.", "title": "wezterm-term or rio-vt?", "ts": "2026-09-25 08:04"}], "fig-12-every-road-every": [{"text": "Parker, in chat: we really want FIT into TD's PURPOSE AND PHILOSOPHY. No column here measures that yet. For the riff (a prompt, not a proposal): TD's README states its goal as '2-5-20 terminals in one window · native-snappy · web-app polished · modify-at-will themes · open source' and its stack as 'Rust end-to-end'. Which of those should a core be judged against, and how?", "title": "12 · Every road, every dimension", "ts": "2026-09-25 08:04"}, {"text": "Parker's 'maybe they are TINY' is not a column either. For the riff: tiny measured as what? Dependency tree, lines of code, build time, binary growth, or how much of the crate TD would actually call. Nothing measured yet.", "title": "12 · Every road, every dimension", "ts": "2026-09-25 08:04"}], "fig-13-the-rule-and": [{"text": "Parker asked whether libghostty-vt is actually Ghostty. From the research: yes. It is Ghostty's own terminal core (parser, screen, scrollback, reflow, Kitty picture storage, key and mouse encoders), maintained inside ghostty-org/ghostty with Mitchell Hashimoto leading; building it clones Ghostty's source at a pinned commit and compiles it with Zig. Ghostty's renderer, fonts and app do not come with it, and the Rust bindings over it are third-party (Uzaaft/libghostty-rs). On the popularity pull, crates.io downloads: libghostty-vt bindings 131,640, rio-vt 70,499, wezterm-term unpublished (a fork has 11,430). (Assembling agent)", "title": "13 · The rule and the matrix", "ts": "2026-09-25 08:04"}]}</script>
 <script type="application/json" id="report-concurs" data-format="1">{}</script>
 
 <script>

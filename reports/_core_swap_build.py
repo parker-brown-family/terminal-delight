@@ -816,7 +816,7 @@ def build():
     body = f"""
 <div class="wrap">
 <header class="hero">
-<p class="kicker">Terminal Delight &middot; research, nothing built &middot; 2026-09-25</p>
+<p class="kicker">Terminal Delight &middot; research, nothing built &middot; 2026-09-25 &middot; parked for a riff</p>
 <h1>Core Swap</h1>
 <p class="lede">Terminal Delight gets its screen from alacritty's emulator, a Rust library called alacritty_terminal that turns a
 program's output into rows of cells. When a program sends a picture instead of text, the library drops it, and the rows after it close
@@ -974,6 +974,18 @@ def assemble(body, dialogs):
     markup = markup.replace("<!-- then paste the contents of assets/notes.js inline, inside a <script> tag -->", "<script>\n" + notes_js + "\n</script>")
     if OUT.name not in markup or notes_js[:40] not in markup:
         sys.exit("the notes markup block changed shape; update this builder")
+    # Notes Parker gave in chat live in _core_swap_notes.json so a rebuild never drops them.
+    # They go into the island notes.js reads, with a revision so a browser that already
+    # holds notes for this file still takes them in.
+    notes_path = HERE / "_core_swap_notes.json"
+    if notes_path.exists():
+        notes = json.loads(notes_path.read_text())
+        latest = max((n["ts"] for v in notes.values() for n in v), default="")
+        island = json.dumps(notes, ensure_ascii=False).replace("<", "\\u003c")
+        empty = '<script type="application/json" id="report-notes" data-format="1">{}</script>'
+        if empty not in markup:
+            sys.exit("the notes island changed shape; update this builder")
+        markup = markup.replace(empty, f'<script type="application/json" id="report-notes" data-format="1" data-rev="{latest.replace(" ", "T")}">{island}</script>')
     dlg_js = """<script>
 (function () {
   document.querySelectorAll('[data-dlg]').forEach(function (b) {
