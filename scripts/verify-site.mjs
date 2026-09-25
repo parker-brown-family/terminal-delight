@@ -334,9 +334,10 @@ for (const path of ['/info', DOCS + '/', DOCS + '/workbench', DOCS + '/install']
   ok('docs: Esc closes it', await page.evaluate(() => !document.getElementById('td-keys').classList.contains('on')));
   /* the scroll choreography, from the wellness-with-kate build by way of the Omarchy kiosk */
   const s0 = await page.evaluate(() => parseFloat(document.querySelector('.backdrop').style.getPropertyValue('--s')) || 1);
+  /* where the wall sits before the scroll, measured before it */
+  const b0 = await page.evaluate(() => document.querySelector('.backdrop').getBoundingClientRect().top);
   await page.evaluate(() => { const t = document.getElementById('tube'); t.style.scrollBehavior = 'auto'; t.scrollTop = (t.scrollHeight - t.clientHeight) * 0.5; });
   await page.waitForTimeout(400);
-  const b0 = await page.evaluate(() => document.querySelector('.backdrop').getBoundingClientRect().top);
   const ch = await page.evaluate(() => ({ s: parseFloat(document.querySelector('.backdrop').style.getPropertyValue('--s')), out: document.querySelectorAll('#tube .choreo.out').length,
     top: document.querySelector('.backdrop').getBoundingClientRect().top, bottom: document.querySelector('.backdrop').getBoundingClientRect().bottom, vh: innerHeight,
     cut: [...document.querySelectorAll('#tube .choreo:not(.out)')].filter(e => getComputedStyle(e).filter !== 'none' || getComputedStyle(e).opacity !== '1').length }));
