@@ -318,6 +318,44 @@ pub enum ClickIntent {
 ///
 /// Read top to bottom; the first row that matches decides:
 ///
+/// A loopback URL that serves `target`'s own file, answered with `target`.
+///
+/// An artifact card lists the same brief twice: TARGET, the file, and SERVED,
+/// a `http://127.0.0.1:<port>/<name>` copy an agent served for a browser. An
+/// Alt+click on the SERVED row means the document, and the page engine stays
+/// off the network, so the file is what opens. `None` for any URL that is not
+/// loopback, or that serves a different file name — that one goes to the
+/// desktop like any other web link.
+pub fn loopback_target(link: &str, target: &str) -> Option<String> {
+    let rest = link
+        .strip_prefix("http://")
+        .or_else(|| link.strip_prefix("https://"))?;
+    let (host, path) = rest.split_once('/')?;
+    let host = host.rsplit_once(':').map_or(host, |(h, port)| {
+        if port.chars().all(|c| c.is_ascii_digit()) {
+            h
+        } else {
+            host
+        }
+    });
+    if !matches!(host, "127.0.0.1" | "localhost" | "[::1]") {
+        return None;
+    }
+    let served = path
+        .split(['?', '#'])
+        .next()
+        .unwrap_or("")
+        .rsplit('/')
+        .next()
+        .unwrap_or("");
+    let file = target
+        .trim_end_matches('/')
+        .rsplit('/')
+        .next()
+        .unwrap_or("");
+    (!served.is_empty() && served == file).then(|| target.to_string())
+}
+
 /// | held          | under the pointer          | does            |
 /// |---------------|----------------------------|-----------------|
 /// | ctrl+alt      | a document                 | OpenBeside      |
@@ -720,6 +758,39 @@ pub fn send_label(agents_in_tab: usize, name: &str) -> String {
 mod tests {
     use super::*;
     use std::path::Path;
+
+    /// Parker's own card, 2026-09-25: TARGET and SERVED name one brief.
+    #[test]
+    fn a_served_loopback_copy_means_the_cards_own_file() {
+        let target = "file:///home/parker/Work/terminal-delight/reports/2026-09-19-live-question-escape-vectors.html";
+        let served = "http://127.0.0.1:8611/2026-09-19-live-question-escape-vectors.html";
+        assert_eq!(loopback_target(served, target).as_deref(), Some(target));
+        assert_eq!(
+            loopback_target(
+                "http://localhost:8611/2026-09-19-live-question-escape-vectors.html?x=1#top",
+                target
+            )
+            .as_deref(),
+            Some(target),
+            "a query or fragment does not change the file"
+        );
+        // Not loopback: a web link, and it goes to the desktop.
+        assert_eq!(
+            loopback_target(
+                "https://example.com/2026-09-19-live-question-escape-vectors.html",
+                target
+            ),
+            None
+        );
+        // Loopback, but a different file: not this card's document.
+        assert_eq!(
+            loopback_target("http://127.0.0.1:8611/other.html", target),
+            None
+        );
+        // A bare host with no file names nothing.
+        assert_eq!(loopback_target("http://127.0.0.1:8611/", target), None);
+        assert_eq!(loopback_target(target, target), None, "a file is not a URL");
+    }
 
     const PNG: &[u8] = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR";
     const JPEG: &[u8] = b"\xff\xd8\xff\xe0\0\x10JFIF\0";

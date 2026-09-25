@@ -2150,33 +2150,112 @@ impl TerminalView {
         }
     }
 
-    /// Alt or Ctrl pressed on an artifact on the bench: its row in the rail,
-    /// or anywhere on its open card. `true` when the press was taken.
+    /// The link written in the bench's text under a flat point, read the way
+    /// the grid reads a row — [`super::link_at`] on the run's own characters,
+    /// a path resolved against this pane's directory and required to exist —
+    /// with the run's flat rectangle, for the Alt chip to outline.
+    ///
+    /// The point has to be INSIDE the run. [`Self::bench_caret_at`] also
+    /// answers for a point merely near one, which is right for a selection
+    /// and wrong here: an Alt+click in the margin beside a path is not a click
+    /// on the path.
+    fn bench_link_under(&self, flat: gpui::Point<gpui::Pixels>) -> Option<(String, Rect4)> {
+        let caret = self.bench_caret_at(flat)?;
+        let atoms = self.wb_atoms.borrow();
+        let a = atoms.0.get(caret.atom)?;
+        let (fx, fy) = (f32::from(flat.x), f32::from(flat.y));
+        if !(fx >= a.x && fx < a.x + a.w && fy >= a.y && fy < a.y + a.h) {
+            return None;
+        }
+        let link = match super::run_link(&a.text, caret.byte)? {
+            super::Link::Url(u) => u,
+            super::Link::Path(p) => {
+                let cwd = self.runtime().cwd;
+                super::resolve_path(&p, cwd.as_deref())
+                    .filter(|x| std::path::Path::new(x).exists())?
+            }
+        };
+        Some((link, (a.x, a.y, a.w, a.h)))
+    }
+
+    /// What an Alt or Ctrl press on the bench means, and the flat rectangle
+    /// it came from when there is one to outline. First match wins:
+    ///
+    /// 1. a link written in the text under the pointer — a response's Links
+    ///    table, a path in a finding, an artifact's TARGET or SERVED row. A
+    ///    loopback SERVED copy of the open card's own file is that file
+    ///    ([`crate::docopen::loopback_target`]), so the engine stays offline;
+    /// 2. an artifact's row in the rail;
+    /// 3. anywhere else on an open artifact card, which answers for its one
+    ///    document. No rectangle: the whole card is not a thing to outline.
+    fn bench_press_link(
+        &self,
+        at: gpui::Point<gpui::Pixels>,
+        landed: Option<&crate::workbench::Hit>,
+    ) -> Option<(String, Option<Rect4>)> {
+        use crate::workbench::Hit;
+        let (_, flat) = self.bench_flat(at)?;
+        let (fx, fy) = (f32::from(flat.x), f32::from(flat.y));
+        let card = self
+            .bench
+            .showing()
+            .and_then(|s| self.bench_artifact_href(&s.id));
+        let row = match landed {
+            Some(Hit::OpenRow(id)) => self.bench_artifact_href(id).map(|href| {
+                let rect = self
+                    .wb_zones
+                    .borrow()
+                    .iter()
+                    .find(|z| {
+                        z.hit == Hit::OpenRow(id.clone())
+                            && fx >= z.x
+                            && fx < z.x + z.w
+                            && fy >= z.y
+                            && fy < z.y + z.h
+                    })
+                    .map(|z| (z.x, z.y, z.w, z.h));
+                (href, rect)
+            }),
+            _ => None,
+        };
+        bench_press_pick(
+            self.bench_link_under(flat),
+            card.as_deref(),
+            row,
+            matches!(landed, Some(Hit::Nothing) | None),
+        )
+    }
+
+    /// The chip a held bare Alt shows over the bench: "open here" on a
+    /// document TD can draw, outlined where it is written. The grid's chip on
+    /// the bench's face, and like the grid's it offers nothing for a Ctrl+Alt
+    /// that will not open here, nor for a web link Alt does not open.
+    pub(super) fn bench_alt_hint(&self, at: gpui::Point<gpui::Pixels>) -> Option<Rect4> {
+        let landed = self.bench_hit_at(at);
+        let (link, rect) = self.bench_press_link(at, landed.as_ref().map(|(h, _)| h))?;
+        self.document_of(&link)?;
+        rect
+    }
+
+    /// Alt or Ctrl pressed on the bench, over a link or an artifact. `true`
+    /// when the press was taken.
     ///
     /// Decided by the grid's own table, [`crate::docopen::click_intent`], so
     /// a modifier means the same thing on both faces: Alt opens the floating
     /// square, Ctrl+Alt a pane beside, Ctrl alone the desktop. Parker: *"we
     /// need to extend the ALT+click and ctrl+alt+click behaviour to the MAIN
-    /// workbench space like it is in the terminal side"*.
-    ///
-    /// The whole card answers for its document rather than one row of it:
-    /// every link row on an artifact card — TARGET and the loopback SERVED
-    /// copy — names the same file, and the card's `href` is that file, so the
-    /// page engine never goes to the network for it.
+    /// workbench space like it is in the terminal side"*, and then, of the
+    /// links written inside other cards, *"go hard on those"*. What the press
+    /// is ON is [`Self::bench_press_link`].
     pub(super) fn bench_doc_click(
         &mut self,
+        at: gpui::Point<gpui::Pixels>,
         mods: crate::docopen::Mods,
         landed: Option<&crate::workbench::Hit>,
         cx: &mut Context<Self>,
     ) -> bool {
         use crate::docopen::ClickIntent;
-        use crate::workbench::Hit;
-        let id = match landed {
-            Some(Hit::OpenRow(id)) => Some(id.clone()),
-            Some(Hit::Nothing) | None => self.bench.showing().map(|s| s.id.clone()),
-            _ => None,
-        };
-        let Some(href) = id.as_ref().and_then(|id| self.bench_artifact_href(id)) else {
+        let Some((href, _)) = self.bench_press_link(at, landed) else {
             return false;
         };
         let doc = self.document_of(&href);
@@ -4497,4 +4576,82 @@ fn clear_drop(weak: &gpui::WeakEntity<TerminalView>, cx: &mut gpui::App) {
             cx.notify();
         }
     });
+}
+
+/// A flat rectangle: x, y, width, height.
+type Rect4 = (f32, f32, f32, f32);
+
+/// Which thing a modified press on the bench means, first match wins — the
+/// decision [`TerminalView::bench_press_link`] feeds, pure so its order can be
+/// tested by what it DOES rather than by where its lines sit.
+///
+/// 1. `text`: a link written in the text under the pointer. A loopback copy
+///    of the open card's own file is that file.
+/// 2. `row`: an artifact's row in the rail.
+/// 3. `card`, only when the press landed on nothing pressable: anywhere else
+///    on an open artifact card answers for its one document.
+///
+/// A press on a control that is not a row (a verb chip, a tab) means none of
+/// them, so a modified click there does what the control does.
+fn bench_press_pick(
+    text: Option<(String, Rect4)>,
+    card: Option<&str>,
+    row: Option<(String, Option<Rect4>)>,
+    on_nothing: bool,
+) -> Option<(String, Option<Rect4>)> {
+    if let Some((link, rect)) = text {
+        let link = card
+            .and_then(|t| crate::docopen::loopback_target(&link, t))
+            .unwrap_or(link);
+        return Some((link, Some(rect)));
+    }
+    if row.is_some() {
+        return row;
+    }
+    if on_nothing {
+        return card.map(|href| (href.to_string(), None));
+    }
+    None
+}
+
+#[cfg(test)]
+mod press_pick_tests {
+    use super::bench_press_pick;
+
+    const CARD: &str = "file:///home/parker/Work/r/brief.html";
+    const R: (f32, f32, f32, f32) = (1.0, 2.0, 3.0, 4.0);
+
+    #[test]
+    fn a_link_in_the_text_beats_the_row_and_the_card() {
+        let text = Some(("file:///home/parker/Work/r/other.md".to_string(), R));
+        let row = Some(("file:///rail.html".to_string(), None));
+        assert_eq!(
+            bench_press_pick(text, Some(CARD), row, false),
+            Some(("file:///home/parker/Work/r/other.md".to_string(), Some(R)))
+        );
+    }
+
+    #[test]
+    fn a_served_copy_of_the_cards_file_opens_the_file() {
+        let served = Some(("http://127.0.0.1:8611/brief.html".to_string(), R));
+        assert_eq!(
+            bench_press_pick(served, Some(CARD), None, true),
+            Some((CARD.to_string(), Some(R)))
+        );
+    }
+
+    #[test]
+    fn with_no_link_a_row_then_the_card_and_never_a_control() {
+        let row = Some(("file:///rail.html".to_string(), Some(R)));
+        assert_eq!(bench_press_pick(None, Some(CARD), row.clone(), false), row);
+        assert_eq!(
+            bench_press_pick(None, Some(CARD), None, true),
+            Some((CARD.to_string(), None))
+        );
+        assert_eq!(
+            bench_press_pick(None, Some(CARD), None, false),
+            None,
+            "a modified press on a verb chip is the chip's"
+        );
+    }
 }
