@@ -1,0 +1,32 @@
+[
+ {
+  "nid": "finding-the-island-is-the",
+  "title": "The island is the record",
+  "concurrable": false,
+  "stamp": null
+ },
+ {
+  "nid": "verdict-reference-writer",
+  "title": "Reference writer",
+  "concurrable": false,
+  "stamp": null
+ },
+ {
+  "nid": "callout-a-callout-that-takes",
+  "title": "A callout that takes a note.",
+  "concurrable": false,
+  "stamp": null
+ },
+ {
+  "nid": "ask-stamp-a-revision-on",
+  "title": "Stamp a revision on the island?",
+  "concurrable": false,
+  "stamp": null
+ },
+ {
+  "nid": "ask-keep-the-plain-text",
+  "title": "Keep the plain-text mirror?",
+  "concurrable": false,
+  "stamp": null
+ }
+]

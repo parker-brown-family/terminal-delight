@@ -1,0 +1,29 @@
+{
+ "release": "current",
+ "pins": "No </body> and no </html>, which HTML allows, and a notes island with no text at all, which reads as {}. The mirror goes at the end of the file.",
+ "notes_file": "brief.html",
+ "concur_support": "supported",
+ "format": "1",
+ "rev_before": null,
+ "notes_text": "",
+ "refuse": null,
+ "shown_before": {
+  "note_count": "0",
+  "concur_count": "0",
+  "notes": {},
+  "concurs": []
+ },
+ "shown_after": {
+  "note_count": "1",
+  "concur_count": "0",
+  "notes": {
+   "finding-the-island-is-the": "1"
+  },
+  "concurs": []
+ },
+ "writes": [
+  "notes-island",
+  "concurs-island",
+  "mirror-appended"
+ ]
+}

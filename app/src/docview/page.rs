@@ -44,9 +44,11 @@ use gpui::{
 
 use super::cache::{self, CacheKey};
 use super::engine::{
-    bands, layout_hash, Band, DialogRender, EngineError, Geometry, Link, Opener, PageEngine,
-    PageId, PageLayout, PageRequest, RectCss, Unavailable, TILE_DEV,
+    bands, layout_hash, Anchor, Band, DialogRender, EngineError, Geometry, Link, Opener,
+    PageEngine, PageId, PageLayout, PageRequest, RectCss, Unavailable, TILE_DEV,
 };
+use super::notes::{self, NotesRead};
+use super::notes_ui::{self, LayerPress, Mark, MarkHit, NotesLayer};
 use super::snapshot::EXTRACT_VERSION;
 use super::{resolve_link, Backend, DocumentView, FollowLink, LinkTarget};
 use crate::docopen::DocScroll;
@@ -375,6 +377,12 @@ pub struct PageDoc {
     pending_top: Option<f32>,
     /// The bands the last frame drew, for `TD_DOCDEBUG`.
     last_frame: Vec<u32>,
+    /// The brief's notes, read from the bytes the current render was made
+    /// from. `None` until a render is adopted.
+    notes: Option<NotesLayer>,
+    /// Where the pointer is over the view, flat and view-local; `None` when
+    /// it is elsewhere. Note buttons show under it, as a browser shows them.
+    pointer: Option<Point<Pixels>>,
 }
 
 fn debug() -> bool {
@@ -409,6 +417,8 @@ impl PageDoc {
             handed_over: false,
             pending_top: None,
             last_frame: Vec::new(),
+            notes: None,
+            pointer: None,
         }
     }
 
@@ -501,13 +511,16 @@ impl PageDoc {
             let wanted = wanted;
             let root = cache::root();
             let name = engine.name();
-            // Read, hash and look the render up, off the foreground.
+            // Read, hash and look the render up, off the foreground. The
+            // notes are read from these same bytes, so what the layer shows
+            // belongs to the render it is drawn over.
             let found = cx
                 .background_spawn({
                     let (path, root) = (path.clone(), root.clone());
                     async move {
                         let bytes = std::fs::read(&path).map_err(|e| format!("Could not read {}: {e}", path.display()))?;
                         let hash = layout_hash(&bytes);
+                        let read = notes::read(&bytes);
                         let key = cache::key(&path, hash, g, name, EXTRACT_VERSION);
                         let cached = cache::lookup(&root, key).and_then(|c| {
                             let mut pngs = Vec::with_capacity(c.tiles.len());
@@ -516,11 +529,11 @@ impl PageDoc {
                             }
                             Some((c.layout, pngs))
                         });
-                        Ok::<_, String>((hash, key, cached))
+                        Ok::<_, String>((hash, read, key, cached))
                     }
                 })
                 .await;
-            let (mut hash, key, cached) = match found {
+            let (mut hash, mut read, key, cached) = match found {
                 Ok(f) => f,
                 Err(why) => {
                     this.update(cx, |view, cx| {
@@ -538,7 +551,7 @@ impl PageDoc {
                 }
                 this.update(cx, |view, cx| {
                     if let Some(p) = page_of(view) {
-                        p.adopt(layout, key, None, cx);
+                        p.adopt(layout, key, None, read, cx);
                         for (band, png) in pngs {
                             p.landed(band, png, cx);
                         }
@@ -567,8 +580,11 @@ impl PageDoc {
                     }
                     Err(EngineError::FileChanged) if attempt == 0 => {
                         let p = path.clone();
-                        match cx.background_spawn(async move { std::fs::read(&p) }).await {
-                            Ok(bytes) => hash = layout_hash(&bytes),
+                        let reread = cx.background_spawn(async move {
+                            std::fs::read(&p).map(|bytes| (layout_hash(&bytes), notes::read(&bytes)))
+                        });
+                        match reread.await {
+                            Ok((h, r)) => (hash, read) = (h, r),
                             Err(e) => {
                                 layout = Some(Err(EngineError::Page(e.to_string())));
                                 break;
@@ -614,7 +630,7 @@ impl PageDoc {
                 );
             }
             let adopted = this
-                .update(cx, |view, cx| page_of(view).map(|p| p.adopt(layout, key, page.map(|id| (id, generation)), cx)))
+                .update(cx, |view, cx| page_of(view).map(|p| p.adopt(layout, key, page.map(|id| (id, generation)), read, cx)))
                 .ok()
                 .flatten();
             if adopted.is_none() {
@@ -704,8 +720,25 @@ impl PageDoc {
         layout: PageLayout,
         key: CacheKey,
         live: Option<(PageId, u64)>,
+        read: NotesRead,
         cx: &mut Context<DocumentView>,
     ) {
+        // The notes the new render's bytes hold, read as its own page reads
+        // them. A note box open on an anchor the new render still has stays
+        // open: a resize re-lays the page out and moves nothing it says.
+        let mut layer = NotesLayer::new(
+            read,
+            layout.notes_file.clone(),
+            layout.capability.concur,
+            layout.capability.tagged,
+            &self.path,
+        );
+        if let Some(b) = self.notes.as_ref().and_then(|l| l.note_box()) {
+            if layout.anchors.iter().any(|a| a.nid == b.nid) {
+                layer.open(b.nid.clone(), b.title.clone());
+            }
+        }
+        self.notes = Some(layer);
         // Keep the reader's place: the same fraction of the page, or the one a
         // saved layout asked for before there was a page to scroll.
         if let Some(top) = self.pending_top.take() {
@@ -967,8 +1000,89 @@ impl PageDoc {
         })
     }
 
-    /// Escape closes one of the brief's own dialogs, and nothing else here.
+    /// The marks the notes layer draws on the page itself: none while one of
+    /// the brief's own dialogs covers it.
+    fn page_marks(&self) -> Vec<Mark> {
+        let (Some(layer), Some(r)) = (self.notes.as_ref(), self.current.as_ref()) else {
+            return Vec::new();
+        };
+        match (self.dialog.is_some(), self.map_for(r)) {
+            (false, Some(map)) => layer.marks(&r.layout.anchors, &map, self.pointer),
+            _ => Vec::new(),
+        }
+    }
+
+    /// The open dialog's anchors, relative to its picture, and the mapping
+    /// its picture is drawn through.
+    fn dialog_anchors(&self) -> Option<(&[Anchor], PageToView)> {
+        let (frame, per_css) = self.dialog_frame()?;
+        let render = self.dialog.as_ref()?.render.as_ref()?;
+        Some((
+            &render.anchors,
+            PageToView {
+                origin: frame.origin,
+                px_per_css: per_css,
+                scroll: px(0.),
+                clip: frame,
+            },
+        ))
+    }
+
+    /// The marks on the open dialog's own anchors, drawn over its picture.
+    fn dialog_marks(&self) -> Vec<Mark> {
+        let (Some(layer), Some((anchors, map))) = (self.notes.as_ref(), self.dialog_anchors())
+        else {
+            return Vec::new();
+        };
+        layer.marks(anchors, &map, self.pointer)
+    }
+
+    /// Which anchors the pointer lights, on the dialog when one is open.
+    fn lit(&self) -> Vec<String> {
+        if self.dialog.is_some() {
+            return self
+                .dialog_anchors()
+                .map(|(a, map)| NotesLayer::lit(a, &map, self.pointer))
+                .unwrap_or_default();
+        }
+        match self
+            .current
+            .as_ref()
+            .and_then(|r| Some((r, self.map_for(r)?)))
+        {
+            Some((r, map)) => NotesLayer::lit(&r.layout.anchors, &map, self.pointer),
+            None => Vec::new(),
+        }
+    }
+
+    /// The pointer moved over the view, or left it. Repaints only when that
+    /// changes which note buttons show.
+    pub fn hover(&mut self, at: Option<Point<Pixels>>, cx: &mut Context<DocumentView>) {
+        if self.pointer == at {
+            return;
+        }
+        let before = self.lit();
+        self.pointer = at;
+        if self.lit() != before {
+            cx.notify();
+        }
+    }
+
+    /// The notes, for the control socket: what the bar says and the map.
+    /// `None` until the page has been laid out.
+    pub fn notes_report(&self) -> Option<serde_json::Value> {
+        let layer = self.notes.as_ref()?;
+        let r = self.current.as_ref()?;
+        Some(layer.report(&r.layout.anchors))
+    }
+
+    /// Escape puts away the note box first, then one of the brief's own
+    /// dialogs, and nothing else here.
     pub fn escape(&mut self, cx: &mut Context<DocumentView>) -> bool {
+        if self.notes.as_mut().is_some_and(NotesLayer::escape) {
+            cx.notify();
+            return true;
+        }
         match self.dialog.take() {
             Some(d) => {
                 give_back(d.image.into_iter().collect(), cx);
@@ -979,8 +1093,44 @@ impl PageDoc {
         }
     }
 
-    /// A press, flat and relative to the view's top-left.
-    pub fn press(&mut self, at: Point<Pixels>, cx: &mut Context<DocumentView>) -> Pressed {
+    /// A press, flat and relative to the view's top-left. `origin` is where
+    /// the view was last painted, in window pixels: the notes bar and the
+    /// note box were laid out by gpui and recorded there.
+    ///
+    /// In the order they are drawn, top first: the note box, which takes
+    /// every press while it is open; the bar; a note button or concur space;
+    /// then the brief's own dialog, buttons and links.
+    pub fn press(
+        &mut self,
+        at: Point<Pixels>,
+        origin: Option<Point<Pixels>>,
+        cx: &mut Context<DocumentView>,
+    ) -> Pressed {
+        if let (Some(layer), Some(origin), Some(r)) =
+            (self.notes.as_mut(), origin, self.current.as_ref())
+        {
+            if layer.press(origin + at, &r.layout.anchors, cx) == LayerPress::Took {
+                cx.notify();
+                return Pressed::Took;
+            }
+        }
+        let marks = match self.dialog.is_some() {
+            true => self.dialog_marks(),
+            false => self.page_marks(),
+        };
+        match notes_ui::hit(&marks, at) {
+            Some(MarkHit::Open { nid, title }) => {
+                if let Some(layer) = self.notes.as_mut() {
+                    layer.open(nid, title);
+                }
+                cx.notify();
+                return Pressed::Took;
+            }
+            // A stamp is taken and put back from the notes-write slice on;
+            // here the page is only read.
+            Some(MarkHit::Concur(_)) => return Pressed::Took,
+            None => {}
+        }
         if self.dialog.is_some() {
             return self.press_dialog(at, cx);
         }
@@ -1350,6 +1500,12 @@ impl PageDoc {
                 }
             }
         }
+        // Forget where the bar and the note box were; the canvases below
+        // record where they land this frame.
+        if let Some(layer) = &self.notes {
+            layer.clear_zones();
+            layers.extend(layer.draw_marks(&self.page_marks(), th));
+        }
         match &self.status {
             Status::Failed(why) => layers.push(note(why.clone())),
             Status::Waiting | Status::Drawing if layers.is_empty() => {
@@ -1381,6 +1537,15 @@ impl PageDoc {
                 ),
                 _ => layers.push(note("opening…".into())),
             }
+            if let Some(layer) = &self.notes {
+                layers.extend(layer.draw_marks(&self.dialog_marks(), th));
+            }
+        }
+        // TD's own chrome over the page: the bar, then the note box above
+        // everything, as a browser's dialog sits above its notebar.
+        if let (Some(layer), Some(r)) = (&self.notes, &self.current) {
+            layers.push(layer.draw_bar(&r.layout.anchors, th));
+            layers.extend(layer.draw_box(m.size, th));
         }
         div()
             .absolute()

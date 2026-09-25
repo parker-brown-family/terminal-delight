@@ -1,0 +1,34 @@
+{
+ "release": "current",
+ "pins": "The island holds a note whose anchor is gone (counted in the map header, never listed), keys out of document order (kept), and a field another writer added (kept). A note is added and one deleted.",
+ "notes_file": "brief.html",
+ "concur_support": "supported",
+ "format": "1",
+ "rev_before": "2026-09-23T10:03:00.000Z",
+ "notes_text": "{\n \"fig-01-two-writers-one\": [\n  {\n   \"text\": \"Figure note one.\",\n   \"title\": \"01 · Two writers, one file\",\n   \"ts\": \"2026-09-23 10:00\",\n   \"author\": \"terminal-delight\"\n  },\n  {\n   \"text\": \"Figure note two.\",\n   \"title\": \"01 · Two writers, one file\",\n   \"ts\": \"2026-09-23 10:01\"\n  }\n ],\n \"finding-a-passage-since-cut\": [\n  {\n   \"text\": \"This passage was cut from the brief.\",\n   \"title\": \"A passage since cut\",\n   \"ts\": \"2026-09-22 08:00\"\n  }\n ],\n \"finding-the-island-is-the\": [\n  {\n   \"text\": \"An older finding note.\",\n   \"title\": \"The island is the record\",\n   \"ts\": \"2026-09-23 10:02\"\n  }\n ]\n}",
+ "refuse": null,
+ "shown_before": {
+  "note_count": "3",
+  "concur_count": "0",
+  "notes": {
+   "finding-the-island-is-the": "1",
+   "fig-01-two-writers-one": "2"
+  },
+  "concurs": []
+ },
+ "shown_after": {
+  "note_count": "3",
+  "concur_count": "0",
+  "notes": {
+   "finding-the-island-is-the": "1",
+   "fig-01-two-writers-one": "1",
+   "callout-a-callout-that-takes": "1"
+  },
+  "concurs": []
+ },
+ "writes": [
+  "notes-island",
+  "concurs-island",
+  "mirror-replaced"
+ ]
+}

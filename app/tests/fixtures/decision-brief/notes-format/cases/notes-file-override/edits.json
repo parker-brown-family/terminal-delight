@@ -1,0 +1,17 @@
+{
+ "rev": "2026-09-24T20:05:00.000Z",
+ "edits": [
+  {
+   "op": "add",
+   "nid": "verdict-reference-writer",
+   "title": "Reference writer",
+   "text": "The header should name the original.",
+   "ts": "2026-09-24 20:00"
+  },
+  {
+   "op": "concur",
+   "nid": "ask-keep-the-plain-text",
+   "ts": "2026-09-24 20:01"
+  }
+ ]
+}

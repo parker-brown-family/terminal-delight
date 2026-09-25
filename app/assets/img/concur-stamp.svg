@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" aria-label="concur stamp">
+  <!-- The decision-brief skill's CONCUR stamp (notes.js stampSvg), as one
+       monochrome drawing: gpui paints an SVG as a mask tinted by its text
+       colour, so the ink colour is set where it is drawn. The skill's
+       turbulence filter, which makes the ink miss in patches, is left out. -->
+  <rect x="9" y="33" width="102" height="54" rx="7" fill="none" stroke="#000" stroke-width="5"/>
+  <rect x="16" y="40" width="88" height="40" rx="3" fill="none" stroke="#000" stroke-width="1.6"/>
+  <path d="M22 61 L28 67 L39 52" fill="none" stroke="#000" stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="70" y="69" text-anchor="middle" textLength="58" lengthAdjust="spacingAndGlyphs" fill="#000" font-family="Anton, Oswald, Impact, 'Arial Black', 'DejaVu Sans Condensed', sans-serif" font-weight="800" font-size="21">CONCUR</text>
+</svg>

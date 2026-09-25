@@ -1,0 +1,11 @@
+NOTES — brief.html
+2 notes on 2 elements · 1 concur.
+Each [anchor] is an element id in that file — search it to find the passage.
+
+[verdict-reference-writer] Reference writer
+  · In the first island.
+
+[callout-a-callout-that-takes] A callout that takes a note.
+  · Written into the first island.
+
+[ask-stamp-a-revision-on] Stamp a revision on the island?  ✓ concur

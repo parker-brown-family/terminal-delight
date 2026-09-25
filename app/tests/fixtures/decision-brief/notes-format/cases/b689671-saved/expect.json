@@ -1,0 +1,32 @@
+{
+ "release": "b689671",
+ "pins": "A brief from b689671, with no concurs, that has been through its own \"save into file\" once: the DOM re-serialised, a data-nid on every anchor, notes in the island and one mirror. The write keeps it in that release's format and never adds a concurs island.",
+ "notes_file": "brief.html",
+ "concur_support": "unsupported",
+ "format": null,
+ "rev_before": null,
+ "notes_text": "{\n \"finding-the-island-is-the\": [\n  {\n   \"text\": \"First note, written in the browser.\",\n   \"title\": \"The island is the record\",\n   \"ts\": \"2026-09-20 09:00\"\n  },\n  {\n   \"text\": \"Second note on the same finding.\",\n   \"title\": \"The island is the record\",\n   \"ts\": \"2026-09-20 09:01\"\n  }\n ],\n \"verdict-reference-writer\": [\n  {\n   \"text\": \"A note on the card.\",\n   \"title\": \"Reference writer\",\n   \"ts\": \"2026-09-20 09:02\"\n  }\n ]\n}",
+ "refuse": null,
+ "shown_before": {
+  "note_count": "3",
+  "concur_count": null,
+  "notes": {
+   "finding-the-island-is-the": "2",
+   "verdict-reference-writer": "1"
+  },
+  "concurs": []
+ },
+ "shown_after": {
+  "note_count": "3",
+  "concur_count": null,
+  "notes": {
+   "finding-the-island-is-the": "1",
+   "verdict-reference-writer": "2"
+  },
+  "concurs": []
+ },
+ "writes": [
+  "notes-island",
+  "mirror-replaced"
+ ]
+}

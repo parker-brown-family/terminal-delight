@@ -5533,6 +5533,45 @@ impl TerminalView {
         }
     }
 
+    /// Tell a document where the pointer is over it, un-bent through the
+    /// tube and made relative to the view, or that it is not over it. The
+    /// view repaints only when that changes what it draws.
+    fn doc_hover(&mut self, pos: gpui::Point<Pixels>, cx: &mut Context<Self>) {
+        if let Some(view) = self.float.as_ref().map(|f| f.view.clone()) {
+            let at = self
+                .float_hit(pos)
+                .filter(|(z, _)| z.hit == crate::docopen::FloatHit::Body)
+                .map(|(z, flat)| gpui::point(px(flat.0 - z.x), px(flat.1 - z.y)));
+            view.update(cx, |v, cx| v.hover(at, cx));
+        }
+        if let Some(view) = self.doc_on_face().map(|d| d.view.clone()) {
+            let at = self.doc_face_local(pos);
+            view.update(cx, |v, cx| v.hover(at, cx));
+        }
+    }
+
+    /// What the document on this pane — the floating square's, else the
+    /// Document face's — shows of a brief's notes, as one line of JSON for
+    /// the control socket. An error sentence when there is none to ask.
+    pub(crate) fn doc_notes(&self, cx: &App) -> Result<String, String> {
+        let view = self
+            .float
+            .as_ref()
+            .map(|f| f.view.clone())
+            .or_else(|| self.doc_on_face().map(|d| d.view.clone()))
+            .ok_or("no document is open on this pane")?;
+        let report = view
+            .read(cx)
+            .notes_report()
+            .ok_or("the document is not a laid-out HTML page yet")?;
+        Ok(report.to_string())
+    }
+
+    /// Whether a document is open on this pane, floating or on its face.
+    pub(crate) fn has_document(&self) -> bool {
+        self.float.is_some() || self.doc_on_face().is_some()
+    }
+
     /// A wheel turn on the Document face moves the document, and one over the
     /// floating square pans the document in it. Ctrl held is the pane's text
     /// dial here as everywhere, so the chord is asked first. Answers whether
@@ -7659,6 +7698,9 @@ impl TerminalView {
         }
         // The square's controls light under the pointer. Notifies on a change.
         self.float_hover(ev.position, cx);
+        // A brief's note buttons show under the pointer, as a browser shows
+        // them: the document is told where the pointer is, un-bent.
+        self.doc_hover(ev.position, cx);
         // The peel corner curls under the pointer. No-op with no note stuck here,
         // and it only notifies on a change, so ordinary mousing costs nothing.
         self.sticky_hover(ev.position, cx);

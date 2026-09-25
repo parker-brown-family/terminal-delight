@@ -1,0 +1,17 @@
+{
+ "rev": "2026-09-24T20:05:00.000Z",
+ "edits": [
+  {
+   "op": "add",
+   "nid": "callout-a-callout-that-takes",
+   "title": "A callout that takes a note.",
+   "text": "New note beside an orphan.",
+   "ts": "2026-09-24 20:00"
+  },
+  {
+   "op": "delete",
+   "nid": "fig-01-two-writers-one",
+   "text": "Figure note two."
+  }
+ ]
+}
