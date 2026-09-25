@@ -38,6 +38,12 @@ weights, sealed before the final runs. See
 - [x] Baseline on untouched main: 1,870 unit tests pass (6 ignored), integration suites 9 + 2 + 4 + 8 + 73 (1 ignored) + 9 pass — the bar
 - [x] Inventory of every alacritty_terminal dependency: `evidence/alacritty-inventory.md` (about 200 items, about 415 production call-site lines)
 - [x] rio-vt embedding map: `evidence/rio-vt-map.md`, with the claims that shape a decision re-checked against the crate source (vte 0.15 exposes `sync_timeout`/`stop_sync`, so both cores can run under TD's own loop; the PTY and pump need no crate beyond rio-vt)
+- [x] Slice 1, TD's boundary and loop on alacritty: 1,875 unit tests and all six integration suites green, behaviour unchanged; `socketpty.rs` deleted; the boundary and frozen-numbering guards each fail when mutated
+- [x] Slice 2, rio-vt as the core: 1,873 of 1,874 on the first run; the one failure (mouse protocols as one setting) fixed in the encoder; rio-vt's self-introduction replaced with TD's (`evidence/core-differences.md`)
+- [x] Slice 3, pictures: drawn over the grid, forgotten when a tab is hidden; tests through rio-vt and through a real pane
+- [x] Slice 4, real windows: hidden windows on their own sessions, photographed with the screens asleep; a probe's answers; a tab switch forgetting a picture; this build's window on a host from Parker's build. Found here and not by the suite: temporary-file and shared-memory pictures vanished in hosted panes, fixed by `picturewire.rs`, whose test fails without it
+- [x] Slice 5, the words: README, glossary, licences, contributing, PR template, feature pages, protocol, security note, changelog, a Pictures page on the docs site; Part 5 of the Core Swap series filled with results (parker-dev, unpublished)
+- [x] Latency: the echo bench, two alternating rounds on the branch and its base plus one with nineteen flooding panes (numbers below)
 
 ## Surprises & discoveries
 
@@ -72,7 +78,44 @@ Each is argued, with what it was chosen over, in `02-architecture.md`.
 6. rio-vt runs with grapheme clustering off, matching alacritty's widths.
 7. Pictures are attentional: dropped when their pane is hidden, never in a snapshot.
 
+## Measurements
+
+Echo bench, 1,000 samples a run, p50 / p99 in microseconds, base (`62613cf`,
+alacritty) against this branch (rio-vt), nothing else running:
+
+| Pane, load | base round 1 | base round 2 | branch round 1 | branch round 2 |
+|---|---|---|---|---|
+| window-owned, quiet | 30 / 43 | 30 / 43 | 24 / 39 | 25 / 42 |
+| hosted, quiet | 67 / 126 | 67 / 103 | 56 / 83 | 54 / 112 |
+| window-owned, 8 busy | 30 / 43 | 29 / 40 | 25 / 37 | 24 / 36 |
+| hosted, 8 busy | 68 / 137 | 70 / 116 | 53 / 81 | 55 / 105 |
+| window-owned, 8 saturating | 32 / 177 | 34 / 815 | 27 / 471 | 30 / 1,724 |
+| hosted, 8 saturating | 116 / 3,477 | 132 / 4,557 | 106 / 3,222 | 105 / 3,067 |
+
+With nineteen flooding panes (twenty in all), one round: window-owned 30 / 47
+against 25 / 39, hosted 68 / 136 against 53 / 81; saturating window-owned
+42 / 2,099 against 39 / 3,037, hosted 326 / 12,631 against 213 / 8,541. Both
+builds pass the gate. The window-owned tail under a saturating flood is higher on
+the branch in all three saturating runs; the cause is not established (a
+follow-up issue).
+
+Reading a full 10,030-line history through the boundary (release, best of
+five): hash 29.6 ms rio-vt, 26.5 ms alacritty; snapshot 25.7 ms, 23.4 ms.
+
 ## Outcomes & retrospective
 
-(At the end: the honest post-hoc difficulty, what the score predicted, and
-what it missed.)
+**Post-hoc difficulty: 8/10**, against 9 predicted. The architecture held without
+a change of shape: every slice landed on the design in the gates, and the boundary
+made each difference between the cores a local fix in one adapter. What kept it
+near the top of the scale was the class of problem the score predicted — things
+that look right and are wrong — and each of them was caught by a second reader:
+the old suite run on the new core (the mouse protocols), reading rio-vt's source
+for questions the suite never asked (how it introduces itself), and a real window
+on a real session host (a picture the host deleted before the window could read
+it). The last one no test would have found, because every test fed the replica
+the same bytes directly; only the two-process arrangement a person actually runs
+exposed it.
+
+What the score missed: none of the gates was approved by Parker, because he was
+away. Every gate says so and records its alternatives, so the first review is of
+the whole design at once.
