@@ -15,18 +15,25 @@
 //! snapshot of the grid and then the live byte stream. Between those two there
 //! is a seam, and a byte that falls in it is either lost or drawn twice.
 //!
-//! The fence closes it. Alacritty's reader holds a *lease* on the terminal for
-//! its whole cycle — taken before it reads, released after everything it read
-//! has been parsed — so a lease taken here cannot overlap one. Holding it, the
-//! snapshot is taken and the client's stream is installed together, and every
-//! byte falls on exactly one side: read before, and therefore already in the
-//! snapshot; or read after, and therefore sent live.
+//! The fence closes it, and the fence is the terminal's own lock. TD's read loop
+//! (`vt::pump`) copies each chunk to the attached client and parses it in one
+//! step under that lock, so a snapshot taken holding it cannot land inside a
+//! chunk. Holding it, the snapshot is taken and the client's stream is
+//! installed together, and every byte falls on exactly one side: read before,
+//! and therefore already in the snapshot; or read after, and therefore sent
+//! live.
 //!
-//! One detail the plan for this got wrong, and the compiler would not have
-//! caught: the lease and the data lock are two different mutexes, and
-//! `FairMutex::lock` takes *both*. Holding a lease and then calling `lock`
-//! deadlocks against yourself. The unfair lock is the one to pair with a
-//! lease, which is exactly what alacritty's own reader does.
+//! One kind of byte sits between those sides unless something moves it: output
+//! inside a synchronized update (DEC 2026), which the core's parser holds back
+//! until the program closes the update. It has been copied to nobody yet and
+//! drawn nowhere yet. So the fence flushes any open update into the grid before
+//! it encodes — which the parser can only be asked to do because it lives
+//! inside the lock too. alacritty's loop kept its parser outside, and a
+//! snapshot taken mid-update there silently left those bytes out.
+//!
+//! Until 2026-09-25 this fence was alacritty's `FairMutex` lease paired with its
+//! unfair lock, correct only because alacritty's reader held the lease across a
+//! whole read. Owning the loop made it one ordinary lock.
 
 use std::collections::HashMap;
 use std::fs::File;
@@ -38,12 +45,7 @@ use std::sync::mpsc::{sync_channel, Sender, SyncSender};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
-use alacritty_terminal::event::{Event as TermEvent, EventListener, OnResize, WindowSize};
-use alacritty_terminal::event_loop::{EventLoop, Msg, Notifier};
-use alacritty_terminal::sync::FairMutex;
-use alacritty_terminal::term::{Config, Term, TermMode};
-use alacritty_terminal::tty::{self, ChildEvent, EventedPty, EventedReadWrite, Pty};
-use polling::{Event, PollMode, Poller};
+use crate::vt::{self, Event as TermEvent, Listener, Msg, Notifier, TermMode, WindowSize};
 
 use crate::gridwire;
 use crate::hostproto::{
@@ -52,7 +54,6 @@ use crate::hostproto::{
     LAYOUT_SCHEMA, PROTO_VERSION,
 };
 use crate::session::PaneRuntime;
-use crate::term::GridSize;
 
 /// How many chunks may queue for a client before it is considered gone.
 ///
@@ -128,11 +129,10 @@ impl Sink {
 
 /// A pane's output, on its way to the emulator, copied to whoever is watching.
 ///
-/// The copy happens *inside* the read, on the reader thread, while the lease
-/// is held — which is what makes the attach fence work. Tee somewhere else and
-/// the ordering guarantee evaporates.
-struct TeeReader {
-    master: File,
+/// The copy happens on the read loop's thread, under the terminal's lock, just
+/// before the chunk is parsed — which is what makes the attach fence work. Tee
+/// somewhere else and the ordering guarantee evaporates.
+struct HostTap {
     sink: Arc<Mutex<Option<Sink>>>,
     /// Set whenever this pane produces anything, and cleared by whoever asks.
     ///
@@ -142,50 +142,23 @@ struct TeeReader {
     /// anything was said since the last look is all a twelve-hour idle needs to
     /// know.
     spoke: Arc<AtomicBool>,
-    /// Watches the output for `CSI 16 t`, the cell-size question vte drops
-    /// without a word. See [`crate::ptyscan`].
-    cell_query: crate::ptyscan::CellSizeQuery,
-    /// Where a heard question goes: the channel the emulator's own events
-    /// travel on, so the thread that answers `14 t` answers `16 t` too, from
-    /// the same live geometry.
-    questions: Sender<TermEvent>,
 }
 
-impl Read for TeeReader {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        let read = self.master.read(buf)?;
-        if read > 0 {
-            self.spoke.store(true, Ordering::Relaxed);
-            let mut held = self.sink.lock().expect("sink lock");
-            if let Some(sink) = held.as_ref() {
-                if !sink.send(&buf[..read]) {
-                    // Gone or hopelessly behind: drop it here rather than
-                    // letting the queue grow. The client re-attaches.
-                    *held = None;
-                }
-            }
-            drop(held);
-            // Heard before the parser has seen this chunk, so this reply can
-            // overtake the answer to a question earlier in the same read. The
-            // usual probe asks for sizes first and device attributes last,
-            // which this keeps in order; see `ptyscan` for the rest.
-            for _ in 0..self.cell_query.feed(&buf[..read]) {
-                let _ = self
-                    .questions
-                    .send(TermEvent::TextAreaSizeRequest(Arc::new(cell_size_reply)));
+impl vt::pump::Tap for HostTap {
+    fn tap(&mut self, bytes: &[u8]) {
+        self.spoke.store(true, Ordering::Relaxed);
+        let mut held = self.sink.lock().expect("sink lock");
+        if let Some(sink) = held.as_ref() {
+            if !sink.send(bytes) {
+                // Gone or hopelessly behind: drop it here rather than letting
+                // the queue grow. The client re-attaches.
+                *held = None;
             }
         }
-        Ok(read)
     }
 }
 
-/// The answer to `CSI 16 t`: one cell, height then width, in the pixels the
-/// pseudoterminal was told.
-fn cell_size_reply(size: WindowSize) -> String {
-    format!("\x1b[6;{};{}t", size.cell_height, size.cell_width)
-}
-
-/// A pane's geometry in the shape alacritty and the kernel take it.
+/// A pane's geometry in the shape the core and the kernel take it.
 fn window_size(geom: PaneGeom) -> WindowSize {
     WindowSize {
         num_lines: geom.rows,
@@ -195,93 +168,21 @@ fn window_size(geom: PaneGeom) -> WindowSize {
     }
 }
 
-/// A real pseudoterminal whose output is also copied to an attached client.
-///
-/// Registration, resizing and child-exit stay with the real one — the host has
-/// an actual kernel object and an actual child, and neither is simulated here.
-/// Only reading is wrapped.
-struct TeePty {
-    inner: Pty,
-    reader: TeeReader,
-}
-
-impl TeePty {
-    fn new(
-        inner: Pty,
-        sink: Arc<Mutex<Option<Sink>>>,
-        spoke: Arc<AtomicBool>,
-        questions: Sender<TermEvent>,
-    ) -> io::Result<Self> {
-        // A second descriptor onto the same open file: readiness is reported
-        // on the one the poller holds, reads happen on this one, and because
-        // they share a description the two always agree.
-        let master = inner.file().try_clone()?;
-        Ok(Self {
-            inner,
-            reader: TeeReader {
-                master,
-                sink,
-                spoke,
-                cell_query: crate::ptyscan::CellSizeQuery::default(),
-                questions,
-            },
-        })
-    }
-}
-
-impl EventedReadWrite for TeePty {
-    type Reader = TeeReader;
-    type Writer = <Pty as EventedReadWrite>::Writer;
-
-    unsafe fn register(
-        &mut self,
-        poll: &Arc<Poller>,
-        interest: Event,
-        mode: PollMode,
-    ) -> io::Result<()> {
-        unsafe { self.inner.register(poll, interest, mode) }
-    }
-
-    fn reregister(
-        &mut self,
-        poll: &Arc<Poller>,
-        interest: Event,
-        mode: PollMode,
-    ) -> io::Result<()> {
-        self.inner.reregister(poll, interest, mode)
-    }
-
-    fn deregister(&mut self, poll: &Arc<Poller>) -> io::Result<()> {
-        self.inner.deregister(poll)
-    }
-
-    fn reader(&mut self) -> &mut Self::Reader {
-        &mut self.reader
-    }
-
-    fn writer(&mut self) -> &mut Self::Writer {
-        self.inner.writer()
-    }
-}
-
-impl EventedPty for TeePty {
-    fn next_child_event(&mut self) -> Option<ChildEvent> {
-        self.inner.next_child_event()
-    }
-}
-
-impl OnResize for TeePty {
-    fn on_resize(&mut self, window_size: WindowSize) {
-        self.inner.on_resize(window_size);
-    }
+/// The size a pane's core is told: its grid, and one cell's pixels.
+fn term_size(geom: PaneGeom) -> vt::TermSize {
+    vt::TermSize::new(
+        geom.cols as usize,
+        geom.rows as usize,
+        geom.cell_width,
+        geom.cell_height,
+    )
 }
 
 /// Ships terminal events off the reader thread. The host answers some of them
 /// (a program asking what the terminal is gets an answer) and records others.
-#[derive(Clone)]
 struct HostProxy(Sender<TermEvent>);
 
-impl EventListener for HostProxy {
+impl Listener for HostProxy {
     fn send_event(&self, event: TermEvent) {
         let _ = self.0.send(event);
     }
@@ -289,7 +190,7 @@ impl EventListener for HostProxy {
 
 /// One live terminal.
 struct HostPane {
-    term: Arc<FairMutex<Term<HostProxy>>>,
+    term: vt::Shared,
     /// Where keystrokes go.
     input: Notifier,
     sink: Arc<Mutex<Option<Sink>>>,
@@ -673,12 +574,7 @@ impl Host {
             )));
         }
         let pane = PaneId(self.next_pane.fetch_add(1, Ordering::SeqCst));
-        let size = GridSize {
-            cols: geom.cols as usize,
-            rows: geom.rows as usize,
-        };
-
-        let mut options = tty::Options {
+        let mut options = vt::pty::Options {
             working_directory: cwd
                 .as_ref()
                 .map(std::path::PathBuf::from)
@@ -703,30 +599,26 @@ impl Host {
             crate::hostproto::session_tag(&self.key),
         );
         if let Some(program) = &self.shell {
-            options.shell = Some(tty::Shell::new(program.clone(), vec![]));
+            options.shell = Some((program.clone(), vec![]));
         }
 
-        let pty = tty::new(&options, window_size(geom), 0)?;
+        let pty = vt::pty::spawn(&options, window_size(geom))?;
         let shell_pid = pty.child().id();
-        // Taken before the pseudoterminal is handed to the event loop, and the
+        // Taken before the pseudoterminal is handed to the read loop, and the
         // reason the foreground watcher can live here at all.
         let master = pty.file().try_clone()?;
         let sink: Arc<Mutex<Option<Sink>>> = Arc::new(Mutex::new(None));
-        // Before the tee, which carries a sender of its own: it hears the one
-        // size question the parser cannot.
         let (events, incoming) = std::sync::mpsc::channel();
-        let tee = TeePty::new(pty, sink.clone(), self.spoke.clone(), events.clone())?;
+        let tap = HostTap {
+            sink: sink.clone(),
+            spoke: self.spoke.clone(),
+        };
 
-        let proxy = HostProxy(events);
-        let term = Arc::new(FairMutex::new(Term::new(
-            Config::default(),
-            &size,
-            proxy.clone(),
-        )));
-        let event_loop = EventLoop::new(term.clone(), proxy, tee, false, false)?;
-        let input = Notifier(event_loop.channel());
-        let answers = Notifier(event_loop.channel());
-        event_loop.spawn();
+        let proxy: Arc<dyn Listener> = Arc::new(HostProxy(events));
+        let term = vt::shared(vt::Term::new(term_size(geom), proxy.clone()));
+        let (input, _thread) =
+            vt::pump::spawn(term.clone(), proxy, Box::new(pty), Some(Box::new(tap)))?;
+        let answers = input.clone();
 
         let ended = Arc::new(AtomicBool::new(false));
         let exit_flag = ended.clone();
@@ -742,15 +634,15 @@ impl Host {
                     // waiting; answered twice and it reads the second reply as
                     // input the user typed.
                     TermEvent::PtyWrite(text) => {
-                        let _ = answers.0.send(Msg::Input(text.into_bytes().into()));
+                        answers.notify(text.into_bytes());
                     }
-                    // `CSI 14 t` from the parser and `CSI 16 t` from the tee,
-                    // both answered from the size the pane is at the moment
-                    // of asking — `resize` writes the same geometry this reads.
+                    // `CSI 14 t`, answered from the size the pane is at the
+                    // moment of asking — `resize` writes the same geometry
+                    // this reads. (`CSI 16 t` arrives as a `PtyWrite`: the
+                    // core answers it from the cell size it was last told.)
                     TermEvent::TextAreaSizeRequest(format) => {
                         let now = *live_geom.lock().expect("geom lock");
-                        let reply = format(window_size(now));
-                        let _ = answers.0.send(Msg::Input(reply.into_bytes().into()));
+                        answers.notify(format(window_size(now)).into_bytes());
                     }
                     // The program in this terminal is gone, so the stream
                     // watching it is over. Nothing else tells a window: the
@@ -803,9 +695,8 @@ impl Host {
         // `session::safe_resume_id` — and a client that wanted to type this
         // itself could always open a byte stream and do so.
         if let Some(recipe) = resume {
-            let _ = host_pane
+            host_pane
                 .input
-                .0
                 .send(Msg::Input(format!("{recipe}\n").into_bytes().into()));
         }
         let info = host_pane.info(pane);
@@ -842,7 +733,7 @@ impl Host {
     pub fn write_to(&self, pane: PaneId, bytes: Vec<u8>) -> bool {
         let panes = self.panes.lock().expect("panes");
         match panes.get(&pane) {
-            Some(p) => p.input.0.send(Msg::Input(bytes.into())).is_ok(),
+            Some(p) => p.input.send(Msg::Input(bytes.into())),
             None => false,
         }
     }
@@ -853,11 +744,8 @@ impl Host {
             return Outcome::Err(format!("no pane {pane}"));
         };
         *p.geom.lock().expect("geom lock") = geom;
-        let _ = p.input.0.send(Msg::Resize(window_size(geom)));
-        p.term.lock().resize(GridSize {
-            cols: geom.cols as usize,
-            rows: geom.rows as usize,
-        });
+        p.input.resize(window_size(geom));
+        p.term.lock().resize(term_size(geom));
         Outcome::Ok(())
     }
 
@@ -873,15 +761,14 @@ impl Host {
             return Outcome::Err(format!("no pane {pane}"));
         };
 
-        // The fence. `lease` blocks a new read cycle from starting and waits
-        // out any in flight — and because the reader parses everything it read
-        // before releasing, the grid below is complete as of that moment.
-        let _lease = p.term.lease();
-        // Unfair on purpose: the fair `lock` would try to take the lease we
-        // are already holding, against ourselves, forever.
-        let term = p.term.lock_unfair();
+        // The fence. The read loop copies and parses each chunk under this
+        // lock, so holding it waits out any chunk in flight and the grid below
+        // is complete as of that moment — once an open synchronized update has
+        // been drawn into it (see the module note).
+        let mut term = p.term.lock();
+        term.flush_sync();
 
-        let snapshot = gridwire::encode_snapshot(&*term);
+        let snapshot = gridwire::encode_snapshot(&term);
         let serial = self.next_serial.fetch_add(1, Ordering::SeqCst);
         let sink = Sink::new(stream, serial);
         // The snapshot is queued before the stream is installed, so it cannot
@@ -892,7 +779,6 @@ impl Host {
         *p.sink.lock().expect("sink lock") = Some(sink);
 
         drop(term);
-        drop(_lease);
         // The same rule, through the other door: a client can attach to a pane
         // whose child went while nobody was watching, and a stream that never
         // closes would leave it drawing a dead terminal for as long as the
@@ -930,24 +816,23 @@ impl Host {
     /// What this pane's authoritative grid hashes to, and how far down the
     /// attached client's stream that reading was taken.
     ///
-    /// Under the same fence as the handover, and for the same reason. Alacritty's
-    /// reader holds a lease across read-and-parse, so a lease taken here cannot
-    /// overlap one: the hash and the byte count therefore describe the same
-    /// moment. Taken outside it they would describe two, and the gap between
+    /// Under the same fence as the handover, and for the same reason. The read
+    /// loop copies, counts and parses each chunk under the terminal's lock, so
+    /// the hash and the byte count read under it describe the same moment. Taken outside it they would describe two, and the gap between
     /// them is precisely the quantity the guard measures — a guard fed a hash
     /// and an offset from different instants would report divergence for
     /// nothing, which is worse than no guard, because a loud repair costs a
     /// full snapshot every time it fires.
     ///
-    /// The unfair lock again: the fair one takes the lease we are already
-    /// holding, against ourselves, forever.
+    /// No synchronized update is flushed here, unlike the handover: the window
+    /// has read the same bytes and holds the same update open, so the two
+    /// grids agree as they stand, and flushing one side would make them differ.
     pub fn grid_check(&self, pane: PaneId) -> Outcome<GridCheck> {
         let panes = self.panes.lock().expect("panes");
         let Some(p) = panes.get(&pane) else {
             return Outcome::Err(format!("no pane {pane}"));
         };
-        let _lease = p.term.lease();
-        let term = p.term.lock_unfair();
+        let term = p.term.lock();
         let held = p.sink.lock().expect("sink lock");
         let Some(sink) = held.as_ref() else {
             // Nobody is reading this pane, so there is no stream and no offset
@@ -958,7 +843,7 @@ impl Host {
         Outcome::Ok(GridCheck {
             pane,
             stream_offset: sink.enqueued(),
-            hash: gridwire::grid_hash(&*term),
+            hash: gridwire::grid_hash(&term),
         })
     }
 
@@ -976,7 +861,7 @@ impl Host {
         // Signal the group, not the process: the shell is a session leader and
         // what a person means by closing a pane is everything running in it.
         let signalled = unsafe { libc::kill(-(shell_pid as i32), libc::SIGHUP) } == 0;
-        let _ = p.input.0.send(Msg::Shutdown);
+        p.input.shutdown();
         Outcome::Ok(ClosedPane {
             shell_pid,
             signalled,
@@ -1321,13 +1206,13 @@ impl Host {
     /// stream — that is how the watcher noticed at all — so it is on its
     /// primary screen by now and the paint lands on the right grid.
     fn heal_after_the_alternate_screen(&self, pane: &HostPane) {
-        let _lease = pane.term.lease();
-        let term = pane.term.lock_unfair();
+        let mut term = pane.term.lock();
+        term.flush_sync();
         let mut held = pane.sink.lock().expect("sink lock");
         let Some(sink) = held.as_ref() else {
             return;
         };
-        if !sink.send(&gridwire::encode_snapshot(&*term)) {
+        if !sink.send(&gridwire::encode_snapshot(&term)) {
             *held = None;
         }
     }
@@ -1370,15 +1255,13 @@ impl Host {
     /// know what a terminal is showing without drawing it.
     #[cfg(test)]
     fn row_text(&self, pane: PaneId, row: i32) -> Option<String> {
-        use alacritty_terminal::grid::Dimensions;
-        use alacritty_terminal::index::{Column, Line};
         let panes = self.panes.lock().expect("panes");
         let p = panes.get(&pane)?;
         let term = p.term.lock();
-        let grid = term.grid();
         Some(
-            (0..grid.columns())
-                .map(|c| grid[Line(row)][Column(c)].c)
+            term.row(vt::Line(row))
+                .iter()
+                .map(|cell| cell.c)
                 .collect::<String>()
                 .trim_end()
                 .to_string(),
@@ -2304,7 +2187,6 @@ mod owning {
 
     /// Every row the pane is showing, top to bottom.
     fn screen_rows(host: &Host, pane: PaneId) -> Vec<String> {
-        use alacritty_terminal::grid::Dimensions;
         let lines = host.panes.lock().expect("panes")[&pane]
             .term
             .lock()
@@ -2356,9 +2238,9 @@ mod owning {
         answers_on_screen(&host, pane, b"\x1b[14t\n", "[4;240;500t");
     }
 
-    /// `CSI 16 t` asks for one cell in pixels. vte 0.15 has no arm for it,
-    /// so the host's tee watches the bytes for it and the same thread that
-    /// answers `14 t` answers it, from the same live geometry.
+    /// `CSI 16 t` asks for one cell in pixels. The core answers it from the
+    /// cell size it was last told, and `resize` tells it — so the answer is
+    /// the pane's cell now, not the one it was born with.
     #[test]
     fn a_cell_size_question_is_answered_by_the_host() {
         let (host, pane) = host_with_cat_pane();
@@ -4682,7 +4564,7 @@ resume = "claude"
             let panes = host.panes.lock().expect("panes");
             let held = Instant::now();
             let pane = panes.get(&quiet).expect("the quiet pane");
-            let _ = pane.input.0.send(Msg::Input(b"x".to_vec().into()));
+            pane.input.send(Msg::Input(b"x".to_vec().into()));
             drop(panes);
             waited.push(held.duration_since(before).as_micros() as u64);
             sent.push(held.elapsed().as_micros() as u64);

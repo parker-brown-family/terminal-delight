@@ -33,11 +33,7 @@
 //! is a pane that redraws, not one that lies. None of this loses anything
 //! host-side: the authoritative terminal keeps all of it.
 
-use alacritty_terminal::grid::{Dimensions, Grid};
-use alacritty_terminal::index::{Column, Line};
-use alacritty_terminal::term::cell::{Cell, Flags};
-use alacritty_terminal::term::{Term, TermMode};
-use alacritty_terminal::vte::ansi::{Color, NamedColor};
+use crate::vt::{Cell, Color, Column, Flags, Line, NamedColor, Point, Term, TermMode};
 
 /// Attributes SGR can express, in the form a cell holds them.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -203,10 +199,9 @@ fn underline_color_params(color: Color) -> String {
 ///
 /// Reads only. See the module docs for what a snapshot carries and what it
 /// deliberately does not.
-pub fn encode_snapshot<T>(term: &Term<T>) -> Vec<u8> {
-    let grid = term.grid();
-    let cols = grid.columns();
-    let mode = *term.mode();
+pub fn encode_snapshot(term: &Term) -> Vec<u8> {
+    let cols = term.columns();
+    let mode = term.mode();
     let mut out = String::new();
 
     // Land in a known state before painting: an alt screen is entered first so
@@ -222,15 +217,20 @@ pub fn encode_snapshot<T>(term: &Term<T>) -> Vec<u8> {
 
     let mut style = Style::default();
     let mut first_row = true;
-    for line in grid.topmost_line().0..=grid.bottommost_line().0 {
-        let row = &grid[Line(line)];
+    // Whether the row painted last was soft-wrapped — carried forward rather
+    // than read again, because a row is materialised to be read.
+    let mut above_wrapped = false;
+    let bottom = term.bottommost_line().0;
+    term.for_each_row(term.topmost_line(), term.bottommost_line(), |line, row| {
+        let line = line.0;
         // A row whose last cell carries WRAPLINE is soft-wrapped: the row below
         // it is a continuation, so it gets no newline and must be painted to
         // its full width, because it is the wrap itself that joins them.
-        let wrapped = cols > 0 && row[Column(cols - 1)].flags.contains(Flags::WRAPLINE);
+        let wrapped = cols > 0 && row[cols - 1].flags.contains(Flags::WRAPLINE);
         // Whether the row ABOVE is soft-wrapped into this one. Load-bearing
         // twice: it withholds the newline, and it forces a character below.
-        let continues = wrapped_before(grid, line, cols);
+        let continues = above_wrapped;
+        above_wrapped = wrapped;
         if !first_row && !continues {
             out.push_str("\r\n");
         }
@@ -243,7 +243,7 @@ pub fn encode_snapshot<T>(term: &Term<T>) -> Vec<u8> {
             // there, and a shorter line is a smaller snapshot.
             let trimmed = (0..cols)
                 .rev()
-                .find(|&c| !is_blank(&row[Column(c)]))
+                .find(|&c| !is_blank(&row[c]))
                 .map_or(0, |c| c + 1);
             // ...except on a continuation row, where the trim would delete the
             // wrap itself.
@@ -276,7 +276,7 @@ pub fn encode_snapshot<T>(term: &Term<T>) -> Vec<u8> {
 
         let mut col = 0;
         while col < last {
-            let cell = &row[Column(col)];
+            let cell = &row[col];
             // The gap left at a line end where a wide character did not fit is
             // written by the emulator as a consequence of that character, so
             // painting the character reproduces it — but only while the
@@ -287,8 +287,9 @@ pub fn encode_snapshot<T>(term: &Term<T>) -> Vec<u8> {
             //
             // So the condition is the character, not the flag.
             if cell.flags.contains(Flags::LEADING_WIDE_CHAR_SPACER)
-                && line < grid.bottommost_line().0
-                && grid[Line(line + 1)][Column(0)]
+                && line < bottom
+                && term
+                    .cell(Point::new(Line(line + 1), Column(0)))
                     .flags
                     .contains(Flags::WIDE_CHAR)
             {
@@ -352,11 +353,11 @@ pub fn encode_snapshot<T>(term: &Term<T>) -> Vec<u8> {
             }
             out.push_str("\x1b[K");
         }
-    }
+    });
 
     // The cursor is placed after the paint, never during it: painting moves it.
     out.push_str("\x1b[0m");
-    let cursor = grid.cursor.point;
+    let cursor = term.cursor().point;
     out.push_str(&format!(
         "\x1b[{};{}H",
         cursor.line.0 + 1,
@@ -375,16 +376,6 @@ pub fn encode_snapshot<T>(term: &Term<T>) -> Vec<u8> {
     }
 
     out.into_bytes()
-}
-
-/// Whether the row *above* `line` is soft-wrapped into it.
-fn wrapped_before(grid: &Grid<Cell>, line: i32, cols: usize) -> bool {
-    if cols == 0 || line <= grid.topmost_line().0 {
-        return false;
-    }
-    grid[Line(line - 1)][Column(cols - 1)]
-        .flags
-        .contains(Flags::WRAPLINE)
 }
 
 /// A cell that costs nothing to leave unwritten: a blank in default colours.
@@ -435,7 +426,7 @@ const DERIVED_FLAGS: Flags = Flags::WIDE_CHAR_SPACER.union(Flags::LEADING_WIDE_C
 /// a selection and still be a faithful copy — and a hash that moved when a
 /// reader scrolled would report divergence for looking.
 #[allow(dead_code)]
-pub fn grid_hash<T>(term: &Term<T>) -> u64 {
+pub fn grid_hash(term: &Term) -> u64 {
     const OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
     const PRIME: u64 = 0x0000_0100_0000_01b3;
     let mut h = OFFSET;
@@ -446,12 +437,9 @@ pub fn grid_hash<T>(term: &Term<T>) -> u64 {
         }
     };
 
-    let grid = term.grid();
-    let cols = grid.columns();
-    for line in grid.topmost_line().0..=grid.bottommost_line().0 {
-        let row = &grid[Line(line)];
-        for col in 0..cols {
-            let cell = &row[Column(col)];
+    let cols = term.columns();
+    term.for_each_row(term.topmost_line(), term.bottommost_line(), |_, row| {
+        for cell in &row[..cols] {
             eat(&(cell.c as u32).to_le_bytes());
             eat(&(cell.flags & !DERIVED_FLAGS).bits().to_le_bytes());
             eat(&hash_color(cell.fg).to_le_bytes());
@@ -468,8 +456,8 @@ pub fn grid_hash<T>(term: &Term<T>) -> u64 {
             eat(b"|");
         }
         eat(b"\n");
-    }
-    let cursor = grid.cursor.point;
+    });
+    let cursor = term.cursor().point;
     eat(&cursor.line.0.to_le_bytes());
     eat(&cursor.column.0.to_le_bytes());
     let modes = RESTORED_MODES
@@ -545,14 +533,14 @@ pub enum Unsettled {
 /// terminal and no rendering path can accidentally start depending on being
 /// attached.
 pub struct ReplicaGuard {
-    term: std::sync::Arc<alacritty_terminal::sync::FairMutex<Term<crate::term::EventProxy>>>,
+    term: crate::vt::Shared,
     generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
     consumed: std::sync::Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl ReplicaGuard {
     pub fn new(
-        term: std::sync::Arc<alacritty_terminal::sync::FairMutex<Term<crate::term::EventProxy>>>,
+        term: crate::vt::Shared,
         generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
         consumed: std::sync::Arc<std::sync::atomic::AtomicU64>,
     ) -> Self {
@@ -571,18 +559,15 @@ impl ReplicaGuard {
     /// Answer a probe.
     ///
     /// The fence is the same one the host takes and for the same reason: the
-    /// reader thread holds alacritty's *lease* for a whole read-and-parse cycle
-    /// (`event_loop.rs:117`), so a lease taken here cannot land inside one, and
-    /// the grid read under it contains exactly the bytes counted so far. The
-    /// unfair lock is the one to pair with a lease — the fair `lock` would try
-    /// to take the lease this thread is already holding.
+    /// read loop counts and parses each chunk under the terminal's lock, in one
+    /// step (`vt::pump`), so the grid read under that lock contains exactly the
+    /// bytes counted so far — never some of a chunk.
     pub fn check(&self, probe: &GridCheck) -> GuardVerdict {
         use std::sync::atomic::Ordering;
         // Read the counters under the fence, not before it: sampling first and
         // hashing after would compare a grid to a byte count taken at a
         // different moment, which is the very confusion this exists to avoid.
-        let _lease = self.term.lease();
-        let term = self.term.lock_unfair();
+        let term = self.term.lock();
         let consumed = self.consumed.load(Ordering::Relaxed);
         let before = self.generation.load(Ordering::Relaxed);
         if consumed != probe.stream_offset {
@@ -593,7 +578,7 @@ impl ReplicaGuard {
                 Unsettled::Ahead { consumed, expected }
             });
         }
-        let replica = grid_hash(&*term);
+        let replica = grid_hash(&term);
         // A generation that moved while we held the fence would mean an event
         // landed mid-read; the grid we hashed is then not the grid the probe
         // describes. Say nothing rather than something wrong.
@@ -634,50 +619,46 @@ impl ReplicaGuard {
 mod roundtrip {
     use std::sync::{Arc, Mutex};
 
-    use alacritty_terminal::event::{Event as TermEvent, EventListener};
-    use alacritty_terminal::grid::{Dimensions, Scroll};
-    use alacritty_terminal::index::{Column, Line};
-    use alacritty_terminal::term::cell::Cell;
-    use alacritty_terminal::term::{Config, Term, TermMode};
-    use alacritty_terminal::vte::ansi::Processor;
+    use crate::vt::{
+        Cell, Column, Event as TermEvent, Line, Listener, Point, Scroll, Term, TermMode,
+    };
 
     use super::{encode_snapshot, grid_hash};
     use crate::term::GridSize;
 
     #[derive(Clone, Default)]
     struct Silent(Arc<Mutex<Vec<TermEvent>>>);
-    impl EventListener for Silent {
+    impl Listener for Silent {
         fn send_event(&self, event: TermEvent) {
             self.0.lock().unwrap().push(event);
         }
     }
 
     /// A terminal that has been told `bytes`, exactly as the PTY reader would.
-    fn term_fed(cols: usize, rows: usize, bytes: &[u8]) -> Term<Silent> {
-        let size = GridSize { cols, rows };
-        let mut term = Term::new(Config::default(), &size, Silent::default());
+    fn term_fed(cols: usize, rows: usize, bytes: &[u8]) -> Term {
+        let size = GridSize { cols, rows }.with_cell(8, 16);
+        let mut term = Term::new(size, Arc::new(Silent::default()));
         feed(&mut term, bytes);
         term
     }
 
-    /// Feed bytes into an emulator exactly as the real reader thread does.
-    fn feed(term: &mut Term<Silent>, bytes: &[u8]) {
-        let mut parser: Processor = Processor::new();
-        parser.advance(term, bytes);
+    /// Feed bytes into a core exactly as the real read loop does.
+    fn feed(term: &mut Term, bytes: &[u8]) {
+        term.advance(bytes);
     }
 
     /// Encode `source`, replay it into a fresh terminal of the same size, and
     /// return that terminal. The two are then compared by [`assert_same`].
-    fn replay(source: &Term<Silent>) -> Term<Silent> {
-        let (cols, rows) = (source.grid().columns(), source.grid().screen_lines());
+    fn replay(source: &Term) -> Term {
+        let (cols, rows) = (source.columns(), source.screen_lines());
         term_fed(cols, rows, &encode_snapshot(source))
     }
 
     /// Every difference the two terminals could have, named. Compares the
     /// semantic projection of each cell rather than the struct, because a cell
     /// with no extras and a cell with empty extras are the same cell.
-    fn assert_same(a: &Term<Silent>, b: &Term<Silent>, what: &str) {
-        let (ga, gb) = (a.grid(), b.grid());
+    fn assert_same(a: &Term, b: &Term, what: &str) {
+        let (ga, gb) = (a, b);
         assert_eq!(
             ga.history_size(),
             gb.history_size(),
@@ -687,8 +668,11 @@ mod roundtrip {
         assert_eq!(ga.screen_lines(), gb.screen_lines(), "{what}: height");
         for line in ga.topmost_line().0..=ga.bottommost_line().0 {
             for col in 0..ga.columns() {
-                let (ca, cb) = (&ga[Line(line)][Column(col)], &gb[Line(line)][Column(col)]);
-                let render = |c: &alacritty_terminal::term::cell::Cell| {
+                let (ca, cb) = (
+                    &ga.cell(Point::new(Line(line), Column(col))),
+                    &gb.cell(Point::new(Line(line), Column(col))),
+                );
+                let render = |c: &Cell| {
                     (
                         c.c,
                         c.flags,
@@ -705,7 +689,7 @@ mod roundtrip {
                 );
             }
         }
-        assert_eq!(ga.cursor.point, gb.cursor.point, "{what}: cursor");
+        assert_eq!(ga.cursor().point, gb.cursor().point, "{what}: cursor");
         assert_eq!(
             a.mode().contains(TermMode::SHOW_CURSOR),
             b.mode().contains(TermMode::SHOW_CURSOR),
@@ -723,10 +707,7 @@ mod roundtrip {
             bytes.push_str(&format!("line {i:04}\r\n"));
         }
         let source = term_fed(20, 5, bytes.as_bytes());
-        assert!(
-            source.grid().history_size() > 250,
-            "test needs real history"
-        );
+        assert!(source.history_size() > 250, "test needs real history");
         assert_same(&source, &replay(&source), "plain scrollback");
     }
 
@@ -798,8 +779,8 @@ mod roundtrip {
     ///
     /// Masks the same flags `grid_hash` masks, so the answer is the one the
     /// guard would give rather than a stricter one.
-    fn guard_difference<T>(a: &Term<T>, b: &Term<T>) -> Option<String> {
-        let (ga, gb) = (a.grid(), b.grid());
+    fn guard_difference(a: &Term, b: &Term) -> Option<String> {
+        let (ga, gb) = (a, b);
         if ga.history_size() != gb.history_size() {
             return Some(format!(
                 "scrollback depth: source {} vs client {}",
@@ -809,7 +790,10 @@ mod roundtrip {
         }
         for line in ga.topmost_line().0..=ga.bottommost_line().0 {
             for col in 0..ga.columns() {
-                let (ca, cb) = (&ga[Line(line)][Column(col)], &gb[Line(line)][Column(col)]);
+                let (ca, cb) = (
+                    &ga.cell(Point::new(Line(line), Column(col))),
+                    &gb.cell(Point::new(Line(line), Column(col))),
+                );
                 let seen = |c: &Cell| {
                     (
                         c.c,
@@ -829,10 +813,11 @@ mod roundtrip {
                 }
             }
         }
-        if ga.cursor.point != gb.cursor.point {
+        if ga.cursor().point != gb.cursor().point {
             return Some(format!(
                 "cursor: source {:?} vs client {:?}",
-                ga.cursor.point, gb.cursor.point
+                ga.cursor().point,
+                gb.cursor().point
             ));
         }
         None
@@ -861,14 +846,14 @@ mod roundtrip {
     /// generator, so the sweep keeps its coverage of erases and wide characters
     /// everywhere else. Minimal reproduction is pinned in
     /// `a_wide_char_whose_spacer_was_erased_cannot_be_reprinted`.
-    fn torn_wide_char<T>(term: &Term<T>) -> bool {
-        use alacritty_terminal::term::cell::Flags;
-        let grid = term.grid();
+    fn torn_wide_char(term: &Term) -> bool {
+        use crate::vt::Flags;
+        let grid = term;
         let cols = grid.columns();
         if cols == 0 {
             return false;
         }
-        let flags = |line: i32, col: usize| grid[Line(line)][Column(col)].flags;
+        let flags = |line: i32, col: usize| grid.cell(Point::new(Line(line), Column(col))).flags;
         for line in grid.topmost_line().0..=grid.bottommost_line().0 {
             for col in 0..cols {
                 let f = flags(line, col);
@@ -1020,7 +1005,7 @@ mod roundtrip {
     /// hash function that host was actually running. Comparing it to today's
     /// would be comparing two different functions and calling the difference a
     /// bug.
-    fn grid_hash_including_spacers<T>(term: &Term<T>) -> u64 {
+    fn grid_hash_including_spacers(term: &Term) -> u64 {
         const OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
         const PRIME: u64 = 0x0000_0100_0000_01b3;
         let mut h = OFFSET;
@@ -1030,10 +1015,10 @@ mod roundtrip {
                 h = h.wrapping_mul(PRIME);
             }
         };
-        let grid = term.grid();
+        let grid = term;
         let cols = grid.columns();
         for line in grid.topmost_line().0..=grid.bottommost_line().0 {
-            let row = &grid[Line(line)];
+            let row = grid.row(Line(line));
             for col in 0..cols {
                 let cell = &row[Column(col)];
                 eat(&(cell.c as u32).to_le_bytes());
@@ -1052,7 +1037,7 @@ mod roundtrip {
             }
             eat(b"\n");
         }
-        let cursor = grid.cursor.point;
+        let cursor = grid.cursor().point;
         eat(&cursor.line.0.to_le_bytes());
         eat(&cursor.column.0.to_le_bytes());
         let modes = super::RESTORED_MODES
@@ -1076,14 +1061,14 @@ mod roundtrip {
         let client = term_fed(20, 5, &snap);
         for (name, t) in [("source", &source), ("client", &client)] {
             println!("--- {name} ---");
-            let g = t.grid();
+            let g = t;
             for line in g.topmost_line().0..=g.bottommost_line().0 {
-                let row = &g[Line(line)];
+                let row = g.row(Line(line));
                 let text: String = (0..g.columns()).map(|c| row[Column(c)].c).collect();
                 let flags: String = (0..g.columns())
                     .map(|c| {
                         let f = row[Column(c)].flags;
-                        use alacritty_terminal::term::cell::Flags as F;
+                        use crate::vt::Flags as F;
                         if f.contains(F::WIDE_CHAR) {
                             'W'
                         } else if f.contains(F::WIDE_CHAR_SPACER) {
@@ -1187,9 +1172,10 @@ mod roundtrip {
         // most wrapped prose.
         let source = term_fed(20, 5, b"abcdefghijklmnopqrst ");
         assert!(
-            source.grid()[Line(0)][Column(19)]
+            source
+                .cell(Point::new(Line(0), Column(19)))
                 .flags
-                .contains(alacritty_terminal::term::cell::Flags::WRAPLINE),
+                .contains(crate::vt::Flags::WRAPLINE),
             "the test's premise is that the source row is wrapped"
         );
         assert_same(&source, &replay(&source), "wrap into a blank continuation");
@@ -1226,7 +1212,7 @@ mod roundtrip {
         }
         bytes.push_str("abcdefghijklmnopqrst continues past the margin");
         let source = term_fed(20, 5, bytes.as_bytes());
-        assert!(source.grid().history_size() > 30, "test needs real history");
+        assert!(source.history_size() > 30, "test needs real history");
         assert_same(&source, &replay(&source), "wrap across the history edge");
     }
 
@@ -1269,9 +1255,10 @@ mod roundtrip {
         // the text run off the edge again, which means never trimming a wrapped
         // row's trailing blanks.
         let source = term_fed(10, 4, "abcdefghijklmnopqrs\r\nshort\r\n".as_bytes());
-        let wrapped = source.grid()[Line(0)][Column(9)]
+        let wrapped = source
+            .cell(Point::new(Line(0), Column(9)))
             .flags
-            .contains(alacritty_terminal::term::cell::Flags::WRAPLINE);
+            .contains(crate::vt::Flags::WRAPLINE);
         assert!(wrapped, "test needs a genuinely wrapped row");
         assert_same(&source, &replay(&source), "soft wrap");
     }
@@ -1285,12 +1272,9 @@ mod roundtrip {
         // Found by breaking the encoder on purpose and watching the suite stay
         // green.
         let source = term_fed(10, 4, "abc       tail\r\n".as_bytes());
-        let last = &source.grid()[Line(0)][Column(9)];
+        let last = &source.cell(Point::new(Line(0), Column(9)));
         assert!(
-            last.c == ' '
-                && last
-                    .flags
-                    .contains(alacritty_terminal::term::cell::Flags::WRAPLINE),
+            last.c == ' ' && last.flags.contains(crate::vt::Flags::WRAPLINE),
             "test needs a wrapped row ending in a written space"
         );
         assert_same(&source, &replay(&source), "wrapped row with a blank tail");
@@ -1369,7 +1353,7 @@ mod roundtrip {
         feed(&mut client, b"\x1b[?1049l");
         feed(&mut source, b"\x1b[?1049l");
         assert!(
-            source.grid().history_size() > client.grid().history_size(),
+            source.history_size() > client.history_size(),
             "the test's premise is that the host knows more here"
         );
 
@@ -1396,7 +1380,7 @@ mod roundtrip {
         assert_eq!(before, grid_hash(&source), "encoding changed the terminal");
         // and the thing it was protecting: the alt screen is still there
         assert!(source.mode().contains(TermMode::ALT_SCREEN));
-        assert_eq!(source.grid()[Line(0)][Column(0)].c, 'a');
+        assert_eq!(source.cell(Point::new(Line(0), Column(0))).c, 'a');
     }
 
     #[test]
@@ -1413,8 +1397,8 @@ mod roundtrip {
         );
         let client = replay(&source);
         assert_eq!(
-            source.grid().cursor.point,
-            client.grid().cursor.point,
+            source.cursor().point,
+            client.cursor().point,
             "cursor position"
         );
         for bit in [

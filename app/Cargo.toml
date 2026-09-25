@@ -16,17 +16,27 @@ publish = false
 zed_rev = "abbe85a3321bf6cb7f5b241e623d9c2e16c29187"
 
 [dependencies]
+# The terminal emulator core, reached only through src/vt/.
 alacritty_terminal = "0.26"
+# The flags and modes in src/vt/types.rs, in the bitflags generation both
+# cores use.
+bitflags = "2"
 # CommonMark + GFM for Markdown drawn in the pane (docview/markdown.rs, lifted
 # from markdown-delight at the same version so the copy compiles unchanged).
 # Without its defaults: they bring clap, syntect and the onig C library for
 # comrak's own CLI and highlighter, and the renderer uses none of them.
 comrak = { version = "0.52", default-features = false }
 futures = "0.3"
-# The same poller alacritty_terminal registers its PTY with. Named directly
-# because `EventedReadWrite` is spelled in these types and the crate does not
-# re-export them; cargo unifies it with alacritty's own copy.
+# What TD's read loop (src/vt/pump.rs) waits on: a terminal's descriptor, its
+# child's pidfd, and the wake a keystroke sends.
 polling = "3.8"
+# The lock every terminal is shared under: the renderer, the read loop and the
+# session host's fence. `unlock_fair` is what hands it to a waiting renderer
+# after each chunk the loop parses.
+parking_lot = "0.12"
+# Opening a pseudoterminal and setting IUTF8 on it (src/vt/pty.rs), the crate
+# alacritty's own tty module uses.
+rustix-openpty = "0.2"
 gpui = { path = "../../zed-upstream/crates/gpui" }
 gpui_platform = { path = "../../zed-upstream/crates/gpui_platform", features = ["x11", "wayland"] }
 libc = "0.2.186"

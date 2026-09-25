@@ -5655,13 +5655,16 @@ name = "terminal-delight"
 version = "0.3.0"
 dependencies = [
  "alacritty_terminal",
+ "bitflags 2.13.0",
  "comrak",
  "futures",
  "gpui",
  "gpui_platform",
  "gpui_wgpu",
  "libc",
+ "parking_lot",
  "polling",
+ "rustix-openpty",
  "serde",
  "serde_json",
  "toml 0.8.23",

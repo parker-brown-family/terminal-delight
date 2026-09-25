@@ -73,7 +73,6 @@ mod screenread;
 mod session;
 mod skin;
 mod slot;
-mod socketpty;
 mod sticky;
 mod surface;
 mod surfacefeed;
@@ -86,6 +85,7 @@ mod toolprop;
 mod tree;
 mod usage;
 mod vitals;
+mod vt;
 mod warp;
 mod workbench;
 
@@ -5218,7 +5218,7 @@ fn make_pane_attached(
     let pane_id = info.pane;
     let streams = term::AttachStreams {
         bytes: stream,
-        announce_resize: Box::new(move |size: alacritty_terminal::event::WindowSize| {
+        announce_resize: Box::new(move |size: vt::WindowSize| {
             link.announce_resize(
                 pane_id,
                 hostproto::PaneGeom {
@@ -5232,7 +5232,11 @@ fn make_pane_attached(
     };
     // The pid is the host's, and only an attribute: this window did not start
     // that process and will never signal it.
-    let (session, guard) = term::attach_in(grid, streams, Some(info.shell_pid))?;
+    let (session, guard) = term::attach_in(
+        grid.with_cell(geom.cell_width, geom.cell_height),
+        streams,
+        Some(info.shell_pid),
+    )?;
     // The host's cell as well as its grid: a pane that believed the cell were
     // anything else would re-announce the size on its first frame and wake
     // every agent in the window with a resize that changed nothing.
@@ -36928,6 +36932,7 @@ mod tests {
         let (text, code) = flag_reply(Some("--version")).expect("--version is answered");
         assert_eq!(code, 0);
         assert!(text.starts_with("terminal-delight "), "{text}");
+        assert!(text.contains(vt::CORE_NAME), "{text}");
         assert_eq!(flag_reply(Some("-V")).map(|r| r.1), Some(0));
         let (help, code) = flag_reply(Some("--help")).expect("--help is answered");
         assert_eq!(code, 0);
@@ -39060,7 +39065,17 @@ Environment:
 fn flag_reply(first: Option<&str>) -> Option<(String, i32)> {
     match first {
         Some("--version" | "-V") => {
-            Some((format!("terminal-delight {}", env!("CARGO_PKG_VERSION")), 0))
+            // The core is named because a window can outlive the build it was
+            // started from, and which emulator a running process has is the
+            // first question when a pane draws something wrong.
+            Some((
+                format!(
+                    "terminal-delight {} (terminal core: {})",
+                    env!("CARGO_PKG_VERSION"),
+                    vt::CORE_NAME
+                ),
+                0,
+            ))
         }
         Some("--help" | "-h") => Some((USAGE.to_string(), 0)),
         Some(flag) if flag.starts_with('-') => Some((
@@ -39398,14 +39413,14 @@ fn main() {
     };
 
     // Give every shell we spawn a real terminal type. gpui launches us from the
-    // desktop/WM with TERM unset, and alacritty_terminal's `tty::new` does NOT
-    // set one — so without this, child shells inherit an empty TERM, readline
+    // desktop/WM with TERM unset, and spawning a pseudoterminal does NOT set
+    // one — so without this, child shells inherit an empty TERM, readline
     // can't look up the `clear_screen` capability, and Ctrl+L silently no-ops
     // (the prompt never pops to the top). `setup_env` picks the `alacritty`
     // terminfo if installed, else the universally-present `xterm-256color`, and
     // advertises 24-bit colour (COLORTERM=truecolor). Must run before any PTY is
     // spawned; it mutates the process env, so keep it ahead of the gpui app/threads.
-    alacritty_terminal::tty::setup_env();
+    vt::pty::setup_env();
 
     // Decide boot mode before the window opens. An EXPLICITLY-scratch launch —
     // forced scratch (TD_SCRATCH, the Ctrl+Alt+T quick window), a seeded tear-off
