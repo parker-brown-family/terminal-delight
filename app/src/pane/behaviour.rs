@@ -1277,3 +1277,52 @@ fn the_square_paints_in_the_panes_own_theme(cx: &mut TestAppContext) {
     assert_ne!(own.bg, window.bg, "the pane wears its own");
     assert_eq!(theme.bg, own.bg, "and the square paints in it");
 }
+
+/// A Markdown file takes notes under the pointer, as a brief does: the bar
+/// is on screen from the start, at 0 notes, so the file says it takes them;
+/// over a block, its 💬 shows in the margin on the column's right; and a
+/// press there opens the note box on that block. Opening it writes nothing.
+///
+/// Parker, on the first build, which hid the bar until a note existed: *"not
+/// seeing it in this MD"*.
+#[gpui::test]
+fn a_markdown_block_opens_its_note_box_from_the_button_under_the_pointer(cx: &mut TestAppContext) {
+    use crate::docview::markdown::{NOTE_GUTTER, PAD};
+    use crate::docview::notes_ui::BUTTON_CSS;
+    let dir = Scratch::new("md-note-button");
+    let md = dir.join("plan.md");
+    std::fs::write(
+        &md,
+        "A first paragraph that takes a note.\n\nA second one.\n",
+    )
+    .expect("the document");
+    let md = md.to_str().expect("a UTF-8 temp path").to_string();
+    let mut pane = Pane::running(cx, &format!("printf '%s\\n' 'doc {md}' 'ready'; exec cat"));
+    pane.wait_for("ready");
+    let at = pane.point_at(&md);
+    pane.click(at, Pane::alt());
+    pane.redraw();
+    let report = pane.doc_notes().expect("the Markdown file shows its notes");
+    assert_eq!(report["kept"], "store", "{report}");
+    assert_eq!(report["open"], serde_json::Value::Null);
+    assert_eq!(
+        report["bar"], true,
+        "the bar is drawn with nothing written: {report}"
+    );
+
+    let (x, y, w, _) = pane.float_zone(FloatHit::Body).expect("the square's body");
+    pane.hover(point(px(x + 60.), px(y + PAD + 6.)));
+    pane.redraw();
+    let button = point(
+        px(x + w - PAD - NOTE_GUTTER / 2.0),
+        px(y + PAD + BUTTON_CSS / 2.0),
+    );
+    pane.click(button, Default::default());
+    pane.redraw();
+    let report = pane.doc_notes().expect("notes");
+    assert_eq!(
+        report["open"], "p-a-first-paragraph-that",
+        "the box opens on the block under the pointer: {report}"
+    );
+    assert_eq!(report["notes"], 0, "and nothing was written");
+}
