@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Install · Terminal Delight docs</title>
+<link rel="icon" href="../../favicon.svg">
+<link rel="stylesheet" href="../../assets/fonts/fonts.css">
+<link rel="stylesheet" href="redesign.css">
+<script src="../../assets/kiosk-theme.js"></script>
+<script>TD_KIOSK.paint(TD_KIOSK.resolve().palette);try{document.documentElement.dataset.paper=localStorage.getItem('td-docs-paper')||'off';document.documentElement.dataset.crt=localStorage.getItem('td-docs-crt')||'off'}catch(e){}</script>
+</head>
+<body data-page="/install">
+<header id="top" class="top"></header>
+<div class="shell">
+<nav class="side" id="side" aria-label="Contents"></nav>
+<main class="page">
+
+  <h1 class="t"><span class="n">01.1</span>Install</h1>
+  <div class="regs" role="tablist" aria-label="Version of this page">
+    <button data-reg="brief">Brief<kbd>1</kbd></button><button data-reg="technical">Technical<kbd>2</kbd></button>
+  </div>
+
+  <!-- ============================================================ Brief -->
+  <section data-reg-panel="brief" id="brief" class="faces">
+    <div class="facehead"><span>TERM</span><span>BENCH</span></div>
+
+    <div class="pair">
+      <div class="term">
+        <p class="lede">Terminal Delight ships as one file, <code>terminal-delight-x86_64.AppImage</code>, for 64-bit Linux on X11 or Wayland. Download it, make it executable, and run it.</p>
+      </div>
+      <div class="bench">
+        <div class="glass cmd"><span class="h">Three commands</span>
+          <div class="code"><div class="ln">curl -LO https://github.com/parker-brown-family/terminal-delight/releases/latest/download/terminal-delight-x86_64.AppImage</div><div class="ln">chmod +x terminal-delight-x86_64.AppImage</div><div class="ln">./terminal-delight-x86_64.AppImage</div></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="pair">
+      <div class="term"><p>The rest of these docs call it <code>terminal-delight</code>. To get that command, move the file into a folder on your PATH under that name.</p></div>
+      <div class="bench"><div class="code"><div class="ln">mv terminal-delight-x86_64.AppImage ~/.local/bin/terminal-delight</div></div></div>
+    </div>
+
+    <div class="pair">
+      <div class="term"><p>Nothing is installed system-wide. It runs from wherever you put it, uses your system's graphics driver like any other native app, and keeps its settings in <code>~/.config/terminal-delight/</code>.</p></div>
+      <div class="bench"><dl class="facts"><span class="cap">Where it lives</span><dt>settings</dt><dd>~/.config/terminal-delight/</dd><dt>work</dt><dd>~/.local/state/terminal-delight/</dd><dt>the app</dt><dd>wherever you put the file</dd></dl></div>
+    </div>
+
+    <div class="pair">
+      <div class="term"><p>Then open <a href="https://docs.terminal-delight.brownfamilysports.com/first-launch">First launch</a>. <a href="#technical">Technical</a> has what the AppImage needs from your system, building from source, why there is no <code>cargo install</code>, where everything is kept, and how to remove it.</p></div>
+      <div class="bench"></div>
+    </div>
+  </section>
+
+  <!-- ======================================================== Technical -->
+  <section data-reg-panel="technical" id="technical" class="faces">
+    <div class="facehead"><span>TERM</span><span>BENCH</span></div>
+
+    <div class="pair">
+      <div class="term"><p class="lede">Terminal Delight is built on gpui, the UI framework from the Zed editor, and it needs a gpui that crates.io does not have. That one fact decides how it is distributed: a prebuilt AppImage for running it, and a build against a pinned Zed checkout for changing it.</p></div>
+      <div class="bench"></div>
+    </div>
+
+    <div class="pair">
+      <div class="term">
+        <h2 class="sec" id="technical-what-the-appimage-needs"><span class="n">01.1.1</span>What it needs<a class="hash" href="#technical-what-the-appimage-needs">#</a></h2>
+        <p>A 64-bit x86 machine, X11 or Wayland, and a working graphics driver, taken from your system. The renderer is wgpu, which targets NVIDIA, AMD and Intel, and the app reports the GPU and driver it found when it starts.</p>
+        <p>Wider testing on AMD, Intel, Wayland and fractional scaling is open work for 1.0, and so is a Flatpak.</p>
+      </div>
+      <div class="bench">
+        <table class="q"><tr><td>Architecture</td><td>x86_64, the only asset</td></tr><tr><td>Display</td><td>X11 or Wayland</td></tr><tr><td>Graphics</td><td>a working Vulkan or OpenGL driver</td></tr><tr><td>Fonts</td><td>nothing to install</td></tr><tr><td>Sound</td><td>optional: <code>ffplay</code> or <code>pw-play</code> for the finish ping</td></tr></table>
+      </div>
+    </div>
+
+    <div class="pair">
+      <div class="term">
+        <h2 class="sec" id="technical-the-file"><span class="n">01.1.2</span>The file<a class="hash" href="#technical-the-file">#</a></h2>
+        <p>The address in the Brief always redirects to the newest release, so it keeps working after the next one ships. To update, download it again over the old file.</p>
+        <p>The AppImage passes every argument through to the program, so <code>ctl</code>, <code>mcp</code>, <code>surface</code> and the other subcommands work through it.</p>
+      </div>
+      <div class="bench"><dl class="facts"><span class="cap">Latest release</span><dt>version</dt><dd>v0.3.0</dd><dt>published</dt><dd>2026-09-18</dd><dt>asset</dt><dd>terminal-delight-x86_64.AppImage</dd><dt>size</dt><dd>31.6 MB</dd><dt>licence</dt><dd>MIT, no GPL crates linked</dd></dl></div>
+    </div>
+
+    <div class="pair">
+      <div class="term">
+        <h2 class="sec" id="technical-building-from-source"><span class="n">01.1.3</span>Building from source<a class="hash" href="#technical-building-from-source">#</a></h2>
+        <p><code>setup-deps.sh</code> installs Vulkan and the build libraries on Ubuntu. <code>prepare-gpui.sh</code> sets up a sibling <code>zed-upstream/</code> at Zed commit <code>abbe85a</code> and applies six patches from <code>docs/patches/</code>, starting with the per-pane barrel warp. CI builds the same way.</p>
+        <p>For a release binary, run <code>cargo build --release</code> in <code>app/</code>; it lands in <code>app/target/release/terminal-delight</code>.</p>
+      </div>
+      <div class="bench"><div class="code"><div class="ln">bash scripts/setup-deps.sh</div><div class="ln">bash scripts/prepare-gpui.sh</div><div class="ln">cd app &amp;&amp; cargo run</div></div></div>
+    </div>
+
+    <div class="pair">
+      <div class="term">
+        <h2 class="sec" id="technical-why-there-is-no-cargo-install"><span class="n">01.1.4</span>Why there is no cargo install<a class="hash" href="#technical-why-there-is-no-cargo-install">#</a></h2>
+        <p>The crate is not on crates.io, and it cannot be published as it stands. <code>app/Cargo.toml</code> sets <code>publish = false</code>, and gpui is a path dependency on the pinned Zed checkout. The gpui on crates.io ships an older renderer, blade, with known problems on NVIDIA under X11.</p>
+      </div>
+      <div class="bench"></div>
+    </div>
+
+    <div class="pair full">
+      <div class="term">
+        <h2 class="sec" id="technical-where-things-are-kept"><span class="n">01.1.5</span>Where things are kept<a class="hash" href="#technical-where-things-are-kept">#</a></h2>
+        <table class="q">
+          <tr><td>~/.config/terminal-delight/theme.toml</td><td>Your own theme, picked up while the app runs.</td></tr>
+          <tr><td>~/.config/terminal-delight/skin.toml</td><td>A skin for the chrome. <code>$TD_SKIN</code> does the same.</td></tr>
+          <tr><td>~/.config/terminal-delight/launch.toml</td><td>What a new agent opens with.</td></tr>
+          <tr><td>~/.config/terminal-delight/notifications.toml</td><td>What a finished agent may do to the rest of the desktop.</td></tr>
+          <tr><td>~/.config/terminal-delight/sessions/</td><td>One file per session: its layout, each pane's directory, and each agent's resume command.</td></tr>
+          <tr><td>~/.config/terminal-delight/plugins/</td><td>Plugins, one folder each with a <code>plugin.json</code>.</td></tr>
+          <tr><td>~/.local/state/terminal-delight/</td><td>The workbench's surfaces and conversations.</td></tr>
+        </table>
+        <p style="margin-top:10px"><code>$XDG_CONFIG_HOME</code> and <code>$XDG_STATE_HOME</code> replace <code>~/.config</code> and <code>~/.local/state</code> when they are set. <a href="https://docs.terminal-delight.brownfamilysports.com/config-files">Config files</a> lists every file.</p>
+      </div>
+    </div>
+
+    <div class="pair">
+      <div class="term">
+        <h2 class="sec" id="technical-agent-hooks"><span class="n">01.1.6</span>Agent hooks<a class="hash" href="#technical-agent-hooks">#</a></h2>
+        <p>For an agent's replies to reach the <a href="https://docs.terminal-delight.brownfamilysports.com/workbench">workbench</a> on their own, Claude Code needs Terminal Delight's hooks. The installer lives in the source tree, not in the AppImage. It adds <code>td-agent-hooks</code> to <code>~/.claude/settings.json</code> on five events, keeps a backup of the file, and changes nothing if run twice.</p>
+      </div>
+      <div class="bench"><div class="code"><div class="ln">scripts/install-agent-hooks.sh</div></div></div>
+    </div>
+
+    <div class="pair">
+      <div class="term">
+        <h2 class="sec" id="technical-removing-it"><span class="n">01.1.7</span>Removing it<a class="hash" href="#technical-removing-it">#</a></h2>
+        <p>Delete the AppImage, or <code>~/.local/bin/terminal-delight</code> if you moved it there. Deleting the two folders removes your settings, sessions and saved work. If you installed the hooks, uninstall them from the source tree.</p>
+      </div>
+      <div class="bench">
+        <div class="code" style="margin-bottom:16px"><div class="ln">rm -f ~/.local/bin/terminal-delight</div><div class="ln">rm -rf ~/.config/terminal-delight ~/.local/state/terminal-delight</div></div>
+        <div class="code"><div class="ln">scripts/install-agent-hooks.sh --uninstall</div></div>
+      </div>
+    </div>
+
+    <div class="pair">
+      <div class="term">
+        <h2 class="sec" id="technical-what-would-prove-this-wrong"><span class="n">01.1.8</span>What would prove this wrong<a class="hash" href="#technical-what-would-prove-this-wrong">#</a></h2>
+        <p>The three commands should give you a working Terminal Delight on a 64-bit Linux desktop with a working graphics driver. If they don't, that is a bug: <a href="https://github.com/parker-brown-family/terminal-delight/issues/new">open an issue</a> with your distribution, your GPU, and the lines the app prints when it starts.</p>
+      </div>
+      <div class="bench"></div>
+    </div>
+  </section>
+
+  <nav id="pager" aria-label="Previous and next"></nav>
+  <footer class="foot">
+    <span>Updated 2026-09-25 · true of main at d7cf383 · release v0.3.0</span>
+    <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/docsite/pages/install.html">Edit this page</a>
+    <span>Terminal Delight · MIT</span>
+    <span>Prototype: pages outside Introduction and Install open on the live docs</span>
+  </footer>
+</main>
+</div>
+<script src="redesign.js"></script>
+</body>
+</html>
