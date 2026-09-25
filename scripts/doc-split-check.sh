@@ -48,6 +48,7 @@
 set -uo pipefail
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
+. "$ROOT/scripts/lib/hidden-window.sh"
 TD="$ROOT/app/target/release/terminal-delight"
 OUT="/tmp/doc-split-check-$(date +%H%M%S)"
 while [ $# -gt 0 ]; do
@@ -80,50 +81,15 @@ for name, rgb in [("a", (220, 40, 40)), ("b", (40, 200, 60)), ("d", (230, 200, 3
 open(f"{sys.argv[1]}/c.md", "w").write("# Beside the prompt\n\nA page read in a pane of its own.\n")
 EOF
 
-WIN=""
-cleanup() {
-  local pids
-  pids="$WIN $(pgrep -f "serve --session $SESSION" 2>/dev/null)"
-  for p in $pids; do kill "$p" 2>/dev/null; done
-  for _ in $(seq 1 50); do
-    alive=0
-    for p in $pids; do kill -0 "$p" 2>/dev/null && alive=1; done
-    [ "$alive" -eq 0 ] && break
-    sleep 0.1
-  done
-  rm -f "$HOME/.config/terminal-delight/sessions/$SESSION".*
-  # Every save rotates the previous layout into a backup directory named for
-  # the session; this one's are this run's alone.
-  rm -rf "$HOME/.config/terminal-delight/sessions/backups/$SESSION"
-}
-trap cleanup EXIT
+# The window, its host and this session's files go when the script exits
+# (scripts/lib/hidden-window.sh).
+trap hidden_cleanup EXIT
 
 launch() { # launch <log> [extra environment, as NAME=value words]
-  local said
-  said=$(hyprctl dispatch "hl.dsp.exec_cmd(\"sh -c 'TD_SESSION=$SESSION TD_DOCDEBUG=1 ${2:-} exec $TD > $1 2>&1'\", { workspace = \"$WS silent\", render_unfocused = true, no_initial_focus = true })" 2>&1)
-  case "$said" in ok|"") ;; *) echo "hyprctl refused the launch: $said"; exit 1 ;; esac
-  WIN=""
-  for _ in $(seq 1 60); do
-    WIN=$(hyprctl clients -j 2>/dev/null | jq -r --arg t "terminal-delight — $SESSION" \
-      '.[] | select(.title==$t) | .pid' | head -1)
-    [ -n "$WIN" ] && break
-    sleep 0.5
-  done
-  [ -n "$WIN" ] || { echo "no window appeared — see $1"; exit 1; }
-  local landed
-  landed=$(hyprctl clients -j | jq -r --argjson p "$WIN" '.[] | select(.pid==$p) | .workspace.name' | head -1)
-  if [ "$landed" != "$WS" ]; then
-    echo "the window landed on '$landed', not $WS — killed, nothing ran"
-    kill "$WIN" 2>/dev/null
-    WIN=""
-    exit 4
-  fi
-  echo "   window $WIN, hidden on $landed"
-  for _ in $(seq 1 40); do [ "$(ctl ping)" = "pong" ] && break; sleep 0.5; done
+  hidden_launch "$SESSION" "$WS" "$1" "sh -c 'TD_SESSION=$SESSION TD_DOCDEBUG=1 ${2:-} exec $TD > $1 2>&1'"
+  echo "   window $WIN, hidden on $WS"
 }
 
-# The client prefixes each reply with the answering window's pid and a tab.
-ctl() { "$TD" ctl --pid "$WIN" "$@" 2>&1 | head -1 | sed 's/^[0-9]*\t//'; }
 said() { grep -c "\[doc\] $1 $OUT/$2" "$LOG" 2>/dev/null || true; } # said <verb> <file>
 drew() { said drew "$1 "; }
 wait_drew() { # wait_drew <file> <n>
@@ -207,9 +173,7 @@ cp "$LAYOUT" "$OUT/layout-before.toml" 2>/dev/null
 layout | sed 's/^/        /'
 
 echo "== the restart: window closed, host kept, c.md deleted"
-kill "$WIN" 2>/dev/null
-for _ in $(seq 1 50); do kill -0 "$WIN" 2>/dev/null || break; sleep 0.1; done
-WIN=""
+hidden_close
 rm -f "$OUT/c.md"
 LOG="$OUT/window-2.log"
 launch "$LOG" "TD_GUARD_FORCE_MISMATCH=1"
