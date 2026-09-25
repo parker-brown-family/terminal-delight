@@ -3,12 +3,22 @@
   "title": "Introduction",
   "description": "How Terminal Delight works: a native terminal for Linux and Omarchy that wears your Omarchy themes and reads your coding agents' own transcripts. Every page comes in up to three registers: Brief, Story and Technical.",
   "updated": "2026-09-25",
-  "trueOf": "feat/core-swap-rio",
+  "trueOf": "main at 1e2eb6c",
   "summary": "What it is, and how these pages work"
 }
 </script>
 
 <p class="lede">Terminal Delight is a terminal made for Linux, and for Omarchy in particular: a native app, written in Rust on gpui and rio-vt, the terminal core from the Rio terminal, drawn by your GPU. It is a real terminal first, with tiling panes, tabs, session restore, pictures that programs draw, and a CRT look you can dial up or down. When a pane is running a coding agent, it reads that agent's own transcript and shows you what the agent is doing, what it has spent, and whether it is waiting on you.</p>
+
+<figure class="reel" data-reel data-reel-themes="tokyo-night ethereal everforest gruvbox last-voyage miasma osaka-jade retro-82" aria-label="A screen recording of Terminal Delight playing a thirty-second tour of itself in one of its panes">
+  <div class="reel-screen">
+    <video data-reel-video class="on" muted playsinline loop preload="none" poster="/assets/reel/tokyo-night.jpg" aria-hidden="true"></video>
+    <video data-reel-video muted playsinline loop preload="none" aria-hidden="true"></video>
+    <canvas class="reel-live" data-glass-live width="1280" height="720" aria-hidden="true"></canvas>
+    <button type="button" class="reel-toggle" data-reel-toggle aria-pressed="false">Pause</button>
+  </div>
+  <figcaption>Terminal Delight playing a recording of itself in one of its panes, through the same Kitty graphics protocol any program uses to draw a picture. Inside, three agents work while the tour opens the attention queue, flips a pane to its workbench and back, and brings up the agent wall. The agents and their work are mock data. Change this page's theme and the recording changes with it, at the same second of the tour.</figcaption>
+</figure>
 
 <hr class="hard">
 
@@ -26,11 +36,24 @@
 </div>
 
 <h2>On Omarchy</h2>
-<p>Every Omarchy theme installed on your machine is already in Terminal Delight. Press <kbd>Super</kbd>+<kbd>Alt</kbd>+<kbd>P</kbd> and a paint overlay rises over the window with all of them on it. One letter paints the outer shell, or just the terminal you're in, so each pane can wear a different theme from its neighbours.</p>
+<p>Every <a href="https://omarchy.org">Omarchy</a> theme installed on your machine is already in Terminal Delight. Press <kbd>Super</kbd>+<kbd>Alt</kbd>+<kbd>P</kbd> and a paint overlay rises over the window with all of them on it. One letter paints the outer shell, or just the terminal you're in, so each pane can wear a different theme from its neighbours.</p>
 <div class="omarchy-row">
   <a class="glass card" href="https://terminal-delight.brownfamilysports.com/omarchy#paint"><span class="h">Omarchy · Super + Alt + P</span><b>Paint the shell and every terminal in your own themes →</b></a>
   <p class="aside">The chord comes with <a href="https://github.com/parker-brown-family/omarchy-td-palette">Terminal Paint</a>, the 🎨 in the Omarchy bar. Without it, <code>terminal-delight ctl paint on</code> raises the same overlay. <a href="/themes#technical-paint">Themes</a> has every key.</p>
 </div>
+
+<h2 id="underneath">Underneath</h2>
+<p>Terminal Delight used to read every program through alacritty_terminal, the part of the <a href="https://alacritty.org">Alacritty</a> terminal that turns a program's output into a grid of characters. It kept that grid well, and it threw away every picture a program drew, so an image viewer, a plot or a video player showed nothing in a pane. We recorded six programs that draw pictures and replayed them into four candidate cores to see which ones kept them.</p>
+<p>Terminal Delight now runs on rio-vt, the terminal core from <a href="https://rioterm.com">Rio</a>. It beat libghostty-vt, the core from Ghostty, 0.82 to 0.72, on weights written down before the final measurements. The swap put the core behind one module, <code>app/src/vt/</code>, that nothing else in the app may name, and Terminal Delight took over the loop that reads a program's output. Pictures now arrive over the Kitty graphics protocol, which is how the recording above plays, and keystroke echo is faster: the median went from 30 to 24 microseconds in a pane the window runs itself, and from 67 to 56 in a pane the session host keeps.</p>
+<p>How the choice was made is written up on Parker Brown's site, in five parts:</p>
+<ol class="series">
+  <li><a href="https://parker.brownfamilysports.com/writing/program-pixels">Program Pixels</a> — which cores kept the pictures that six recorded programs drew</li>
+  <li><a href="https://parker.brownfamilysports.com/writing/claim-check">Claim Check</a> — checking 315 quoted facts from the research before relying on any of them</li>
+  <li><a href="https://parker.brownfamilysports.com/writing/sealed-weights">Sealed Weights</a> — weights written down before measuring, and what twenty panes did to the ranking</li>
+  <li><a href="https://parker.brownfamilysports.com/writing/agent-fluency">Agent Fluency</a> — six fresh agents given the same task on the last two cores</li>
+  <li><a href="https://parker.brownfamilysports.com/writing/read-loop">Read Loop</a> — building the swap, and what it measured</li>
+</ol>
+<p>The plan, the evidence and every measurement are in the repository, under <a href="https://github.com/parker-brown-family/terminal-delight/tree/main/docs/plans/core-swap-rio">docs/plans/core-swap-rio</a>.</p>
 
 <h2>Reading these pages</h2>
 <p>Every page has a Brief and a Technical version, and a few have a Story as well. Pick the one that fits the time you have: the tabs under a page's title switch between them, and so do <kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd>.</p>

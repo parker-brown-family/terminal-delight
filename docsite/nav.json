@@ -189,18 +189,18 @@
     },
     {
       "title": "lean-ctx",
-      "href": "/plugins#technical-the-built-in-two",
-      "note": "token savings"
+      "href": "https://leanctx.com",
+      "note": "context runtime ↗"
     },
     {
       "title": "Omarchy",
-      "href": "https://terminal-delight.brownfamilysports.com/omarchy",
-      "note": "the desktop half ↗"
+      "href": "https://omarchy.org",
+      "note": "the desktop ↗"
     },
     {
-      "title": "Terminal core",
-      "href": "/install#technical-building-from-source",
-      "note": "rio-vt · gpui"
+      "title": "Rio",
+      "href": "https://rioterm.com",
+      "note": "the terminal core ↗"
     },
     {
       "title": "Version",

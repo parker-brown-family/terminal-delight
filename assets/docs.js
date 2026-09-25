@@ -322,3 +322,148 @@
   setTheme(current, false);
   window.__tdDocs = { setTheme: function (name) { var p = K.byName(name); if (p) setTheme(p, true); }, current: function () { return current.name; } };
 })();
+
+/* ------------------------------------------------------------------- the reel
+   The Introduction's first demo: Terminal Delight playing a recording of
+   itself, filmed once per theme on one timeline, so second 12 of every take is
+   the same moment of the same tour. When the page's theme changes, the take
+   for the new theme is loaded under the playing one, sought to where the
+   playing one is, started, and faded in over it.
+
+   With the tube on, the page is drawn from a snapshot, and a snapshot cannot
+   carry a playing video. So each new frame is also painted into the figure's
+   canvas[data-glass-live], an island td-glass.js copies into the bent page
+   whenever __tdFrame moves.
+
+   Autoplay is muted and stops off screen. With reduced motion asked for, the
+   reel waits on its first frame until someone presses Play. */
+(function () {
+  'use strict';
+  var fig = document.querySelector('[data-reel]');
+  if (!fig) return;
+  var root = document.documentElement;
+  var DIR = '/assets/reel/';
+  var NAMES = (fig.getAttribute('data-reel-themes') || '').split(/\s+/).filter(Boolean);
+  var vids = fig.querySelectorAll('video[data-reel-video]');
+  var live = fig.querySelector('canvas[data-glass-live]');
+  var btn = fig.querySelector('[data-reel-toggle]');
+  if (vids.length < 2 || !NAMES.length) return;
+  var shown = vids[0], spare = vids[1];
+  var paused = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var onScreen = true, token = 0, fading = null;
+
+  function take(name) { return NAMES.indexOf(name) >= 0 ? name : NAMES[0]; }
+  function load(v, name) {
+    v.setAttribute('data-name', name);
+    v.poster = DIR + name + '.jpg';
+    v.src = DIR + name + '.mp4';
+  }
+  function run() {
+    if (!paused && onScreen) { var p = shown.play(); if (p) p.catch(function () {}); }
+    else shown.pause();
+  }
+  function label() {
+    btn.textContent = paused ? 'Play' : 'Pause';
+    btn.setAttribute('aria-pressed', String(paused));
+    btn.setAttribute('aria-label', paused ? 'Play the demo' : 'Pause the demo');
+  }
+
+  /* The swap. A seek plus a first frame takes a moment, so the incoming take
+     is sought a little ahead of the playing one; once it plays, the gap is
+     measured and, if it is more than about three frames, closed with one more
+     seek before the fade. */
+  function switchTo(name) {
+    name = take(name);
+    if (shown.getAttribute('data-name') === name) return;
+    var mine = ++token, lead = paused ? 0 : 0.15, asked = 0;
+    var incoming = spare;
+    function stale() { return mine !== token; }
+    function seek() {
+      if (stale()) return;
+      asked = performance.now();
+      var d = incoming.duration || 30;
+      incoming.currentTime = ((shown.currentTime || 0) + lead) % d;
+    }
+    function fade() {
+      if (stale()) return;
+      var outgoing = shown;
+      incoming.classList.add('on'); outgoing.classList.remove('on');
+      shown = incoming; spare = outgoing;
+      fading = { from: outgoing, at: performance.now() };
+      var was = outgoing.getAttribute('data-name');
+      setTimeout(function () {
+        // only the take that faded out, and only if no later switch has taken it over
+        if (outgoing !== shown && outgoing.getAttribute('data-name') === was) outgoing.pause();
+        if (fading && fading.from === outgoing) fading = null;
+      }, 420);
+    }
+    function started() {
+      if (stale()) return;
+      var gap = incoming.currentTime - shown.currentTime;
+      if (Math.abs(gap) > 0.1 && !paused) {
+        lead = (performance.now() - asked) / 1000;
+        incoming.addEventListener('seeked', fade, { once: true });
+        seek();
+      } else fade();
+    }
+    incoming.addEventListener('loadedmetadata', seek, { once: true });
+    incoming.addEventListener('seeked', function () {
+      if (stale()) return;
+      if (paused) { fade(); return; }
+      var p = incoming.play();
+      if (p) p.then(started).catch(function () {}); else started();
+    }, { once: true });
+    incoming.preload = 'auto';
+    load(incoming, name);
+  }
+
+  /* The tube's island: repaint only when the playing take has moved on. */
+  var ctx = live && live.getContext('2d'), lastT = -1, lastLabel = '';
+  function paint() {
+    requestAnimationFrame(paint);
+    if (!ctx || live.offsetParent === null) return;
+    if (shown.readyState < 2) return;
+    if (!fading && shown.currentTime === lastT && btn.textContent === lastLabel) return;
+    lastT = shown.currentTime; lastLabel = btn.textContent;
+    ctx.globalAlpha = 1;
+    if (fading && fading.from.readyState >= 2) ctx.drawImage(fading.from, 0, 0, live.width, live.height);
+    ctx.globalAlpha = fading ? Math.min(1, (performance.now() - fading.at) / 350) : 1;
+    ctx.drawImage(shown, 0, 0, live.width, live.height);
+    ctx.globalAlpha = 1;
+    button();
+    live.__tdFrame = (live.__tdFrame || 0) + 1;
+  }
+  /* The island covers the button in the bent page, so it carries a copy of it,
+     drawn from the button's own place and colours. */
+  function button() {
+    var c = live.getBoundingClientRect(), b = btn.getBoundingClientRect(), cs = getComputedStyle(btn);
+    if (!c.width) return;
+    var k = live.width / c.width, x = (b.left - c.left) * k, y = (b.top - c.top) * k, w = b.width * k, h = b.height * k, r = h / 2;
+    ctx.save();
+    ctx.globalAlpha = parseFloat(cs.opacity) || 1;
+    ctx.beginPath();
+    ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
+    ctx.fillStyle = cs.backgroundColor; ctx.fill();
+    ctx.lineWidth = k; ctx.strokeStyle = cs.borderTopColor; ctx.stroke();
+    ctx.fillStyle = cs.color; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.font = cs.fontWeight + ' ' + (parseFloat(cs.fontSize) * k) + 'px ' + cs.fontFamily;
+    ctx.fillText(btn.textContent, x + w / 2, y + h / 2 + k * 0.5);
+    ctx.restore();
+  }
+
+  btn.addEventListener('click', function () { paused = !paused; label(); run(); });
+  if ('IntersectionObserver' in window) {
+    new IntersectionObserver(function (es) { onScreen = es[es.length - 1].isIntersecting; run(); }).observe(fig);
+  }
+  new MutationObserver(function () { switchTo(root.dataset.palette); })
+    .observe(root, { attributes: true, attributeFilter: ['data-palette'] });
+
+  /* the markup carries only a poster, so nobody downloads a take for a theme they are not wearing */
+  shown.preload = 'auto';
+  load(shown, take(root.dataset.palette));
+  label();
+  run();
+  requestAnimationFrame(paint);
+  window.__tdReel = { shown: function () { return shown; }, names: NAMES };
+})();
