@@ -1,0 +1,46 @@
+{
+  "crate": "libghostty-vt 0.2.1",
+  "icat": {
+    "cursor": {
+      "column": 0,
+      "row": 19
+    },
+    "placements": [
+      {
+        "column": 0,
+        "height_cells": 19,
+        "image_id": 2147483647,
+        "image_px": [
+          640,
+          400
+        ],
+        "placement_id": 0,
+        "row": 0,
+        "virtual": false,
+        "width_cells": 64
+      }
+    ],
+    "replies": [
+      "\u001b_Gi=1;OK\u001b\\",
+      "\u001b_Gi=2;EINVAL: unsupported medium\u001b\\",
+      "\u001b_Gi=3;EINVAL: unsupported medium\u001b\\",
+      "\u001b[?62;22c"
+    ],
+    "visible_lines": []
+  },
+  "terminal": {
+    "cell_px": [
+      10,
+      22
+    ],
+    "cols": 120,
+    "max_scrollback": 10000,
+    "rows": 40
+  },
+  "text": {
+    "non_empty_visible_lines": 39,
+    "scrollback_rows": 580,
+    "total_rows": 620,
+    "viewport_rows": 40
+  }
+}

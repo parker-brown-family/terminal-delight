@@ -1,0 +1,39 @@
+{
+  "crate": "rio-vt 0.5.28",
+  "icat": {
+    "cursor": {
+      "column": 0,
+      "row": 19
+    },
+    "other_events": [
+      "MouseCursorDirty",
+      "MouseCursorDirty",
+      "MouseCursorDirty",
+      "UpdateGraphics(0)"
+    ],
+    "placements": [
+      {
+        "absolute_row": 0,
+        "column": 0,
+        "height_cells": 19,
+        "image_id": 2147483648,
+        "placement_id": 2147483648,
+        "row": 0,
+        "width_cells": 64
+      }
+    ],
+    "replies": [
+      "\u001b_Gi=1;OK\u001b\\",
+      "\u001b_Gi=2;ENOENT: file not found\u001b\\",
+      "\u001b_Gi=3;ENOENT: file not found\u001b\\",
+      "\u001b[?62;4;6;22;52c"
+    ],
+    "virtual_placements": [],
+    "visible_lines": []
+  },
+  "text": {
+    "history_rows": 10000,
+    "total_rows": 10040,
+    "visible_rows": 40
+  }
+}

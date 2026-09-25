@@ -1,0 +1,10 @@
+[package]
+name = "probe"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+# `graphics` is required for PNG (f=100) decoding; without it rio-vt drops
+# PNG transmissions silently. `pty` (default) is not needed headless.
+rio-vt = { version = "=0.5.28", default-features = false, features = ["graphics"] }
+serde_json = { version = "1", features = ["preserve_order"] }

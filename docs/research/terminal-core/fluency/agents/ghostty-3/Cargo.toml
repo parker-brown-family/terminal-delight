@@ -1,0 +1,9 @@
+[package]
+name = "probe"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+libghostty-vt = "=0.2.1"
+png = "0.18"
+serde_json = "1.0.151"

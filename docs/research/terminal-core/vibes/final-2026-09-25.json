@@ -1,0 +1,48 @@
+{
+ "fluency": {
+  "rio-vt": {
+   "checks_passed": 1.0,
+   "mean_tokens": 162682,
+   "score": 1.0
+  },
+  "libghostty-vt": {
+   "checks_passed": 0.75,
+   "mean_tokens": 222249,
+   "score": 0.741
+  }
+ },
+ "dims": {
+  "rio-vt": {
+   "performance": 0.629,
+   "agent_fluency": 1.0,
+   "published_unpatched": 1.0,
+   "pictures": 0.929,
+   "maintainers": 0.3,
+   "other_picture_protocols": 1.0,
+   "build_toolchain": 0.7,
+   "persistence_of_pictures": null,
+   "fit": 0.685,
+   "td_work": 0.5,
+   "trajectory": 0.6
+  },
+  "libghostty-vt": {
+   "performance": 0.755,
+   "agent_fluency": 0.741,
+   "published_unpatched": 0.75,
+   "pictures": 1.0,
+   "maintainers": 0.3,
+   "other_picture_protocols": 0.0,
+   "build_toolchain": 0.4,
+   "persistence_of_pictures": null,
+   "fit": 0.81,
+   "td_work": 0.5,
+   "trajectory": 0.3
+  }
+ },
+ "scores_under_sealed_weights": {
+  "rio-vt": 0.824,
+  "libghostty-vt": 0.723
+ },
+ "performance_weight_to_flip": 17.7,
+ "note": "weights from vibes/weights-2026-09-25.json; persistence of pictures weighs 0; the earlier fit, rewrite and API weights are not included"
+}
