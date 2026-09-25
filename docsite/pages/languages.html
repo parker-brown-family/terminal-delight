@@ -1,0 +1,43 @@
+<script type="application/json" data-page>
+{
+  "title": "Languages",
+  "description": "Terminal Delight's menus, buttons and labels come in nine languages. Press F1 and pick one; the choice is saved with the session.",
+  "updated": "2026-09-25",
+  "trueOf": "main at d7cf383",
+  "summary": "Nine languages, one table each"
+}
+</script>
+
+<section data-register="brief">
+<p class="lede">Every menu, button and label in Terminal Delight comes in nine languages: English, Español, Deutsch, Français, Русский, 中文, 日本語, 한국어 and हिन्दी.</p>
+<p>Press <kbd>F1</kbd>, click <code>🌐 English ▾</code>, and type to filter: the language's own name, its English name or its code all work. The window changes at once, and the choice is saved with the session.</p>
+<p>Key names like <kbd>Ctrl</kbd>+<kbd>T</kbd>, symbols, and names like FOCUS, MCP, claude and codex stay as they are in every language, and so does anything your programs print.</p>
+<p class="invite">Technical has the codes and how a language is added.</p>
+</section>
+
+<section data-register="technical" data-headline="Codes and strings">
+<table>
+  <thead><tr><th>Code</th><th>Shown as</th><th>English</th></tr></thead>
+  <tbody>
+    <tr><td><code>en</code></td><td>English</td><td>English</td></tr>
+    <tr><td><code>es</code></td><td>Español</td><td>Spanish</td></tr>
+    <tr><td><code>de</code></td><td>Deutsch</td><td>German</td></tr>
+    <tr><td><code>fr</code></td><td>Français</td><td>French</td></tr>
+    <tr><td><code>ru</code></td><td>Русский</td><td>Russian</td></tr>
+    <tr><td><code>zh</code></td><td>中文</td><td>Chinese</td></tr>
+    <tr><td><code>ja</code></td><td>日本語</td><td>Japanese</td></tr>
+    <tr><td><code>ko</code></td><td>한국어</td><td>Korean</td></tr>
+    <tr><td><code>hi</code></td><td>हिन्दी</td><td>Hindi</td></tr>
+  </tbody>
+</table>
+<p>The choice is the <code>lang</code> field of the session file, <code>~/.config/terminal-delight/sessions/&lt;name&gt;.toml</code>, written in lowercase: <code>lang = "zh"</code>. With no field, the language is English. Because it belongs to the session, two windows on two sessions can show two languages. Use one of the nine codes exactly when editing the file by hand.</p>
+
+<h3>How it's built</h3>
+<p>Every piece of text is a field of one table, <code>Strings</code>, with 215 fields and one complete copy per language. English is the source. A language that leaves a field out doesn't compile, so a half-translated build can't ship. Adding a language means adding it to the list and writing its table; the compiler names every field still missing.</p>
+<p>Pane labels follow the same rule: <code>SHELL</code> and <code>REMOTE</code> are translated, while <code>CLAUDE</code>, <code>CODEX</code> and program names are not. The labels the MCP server reports stay in English whatever the window shows, so a script reads the same words in any language.</p>
+<p>The translations were written in-house. Each one wants a pass by a native speaker before it's advertised as supported.</p>
+</section>
+
+<ol data-sources>
+  <li id="s1">The table, the nine languages and their tests: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/lang.rs">lang.rs</a>; the picker: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/main.rs">main.rs</a>.</li>
+</ol>

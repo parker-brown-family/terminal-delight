@@ -7,10 +7,50 @@ agent and are his to overturn.
 
 **Site:** https://docs.terminal-delight.brownfamilysports.com — static, served by
 Caddy on piper-prod from `/var/www/td-docs`, DNS through Cloudflare. Publish with
-`docsite/deploy.sh`; a git push does not deploy. Once this branch merges, the
-same pages are also served from the kiosk domain at `/docsite/`.
-**Renders from:** hand-written HTML in `docsite/`, on the shared vanilla shell in
-`assets/td-shell.{css,js}`. No framework, no markdown pipeline yet.
+`docsite/deploy.sh`; a git push does not deploy.
+**Renders from:** `docsite/build.mjs`, no dependencies. `nav.json` is the page
+list, `layout.html` the only copy of the shell, `pages/<slug>.html` one content
+file per page, and `assets/td-docs.css` the only place page components are
+styled. A page goes live the moment its content file exists; until then the
+spine shows it as "soon".
+
+## Writing a page
+
+```html
+<script type="application/json" data-page>
+{ "title": "Keys", "description": "…the search snippet, carrying the answer…",
+  "updated": "2026-09-25", "trueOf": "main at d7cf383",
+  "summary": "a few words for the page map" }
+</script>
+
+<section data-register="brief">
+<p class="lede">…</p>
+<p class="invite">Story … Technical …</p>
+</section>
+<section data-register="story" data-headline="The doorway"> … </section>
+<section data-register="technical" data-headline="Keys"> … </section>
+
+<ol data-sources>
+  <li id="s1">…</li>
+</ol>
+```
+
+- Registers come in the order Brief, Story, Technical, and only Brief is
+  required. The Brief has no headline, because the title is its headline. A
+  page with one register gets no tab bar.
+- Every h2 and h3 gets an id (`technical-keys`) and a `#` link, and search
+  indexes the page heading by heading. Link across pages as `/slug#id`.
+- Cite with `<sup><a href="#s1">1</a></sup>`. The build fails on a citation
+  with no source.
+- Commands a reader will paste go in `<pre class="cmd"><code>…</code></pre>`,
+  which gets its own Copy button. Key tables take `class="keys"`.
+- Never style in a content file. If a page needs a component, it goes in
+  `assets/td-docs.css`, where every page can use it.
+- The build refuses: a broken internal link or anchor, a /docsite/ path, an
+  unfilled token, and the phrases in Parker's writing ledger (the banned
+  vocabulary, the split negation, a labelled declarative opener, a heading
+  ending in a full stop, a label written as a question). It warns when a
+  Brief falls outside 60–260 words or has no closing invitation.
 
 ## Audience
 
@@ -51,8 +91,9 @@ same pages are also served from the kiosk domain at `/docsite/`.
   read cold must say which build it describes.
 - Figures are hand-built inline SVG on the shell's tokens, so they repaint in
   glass and paper. Captions make a claim.
-- CTA: `Download` in the top bar is a utility and stays. No conversion ask
-  anywhere else.
+- CTA: `Install` in the top bar opens the Install page. Parker: *"it is poor
+  form to trap someone without their reading first"*, so nothing on the site
+  downloads before its page has been read. No conversion ask anywhere else.
 
 ## Liability gate
 

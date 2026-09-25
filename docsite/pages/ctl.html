@@ -1,0 +1,86 @@
+<script type="application/json" data-page>
+{
+  "title": "ctl",
+  "description": "terminal-delight ctl sends one-line commands to a running window over its control socket: name and group tabs, flip faces, open documents, switch the MCP server, choose a skin. It never writes to a terminal.",
+  "updated": "2026-09-25",
+  "trueOf": "main at d7cf383",
+  "summary": "Script a running window"
+}
+</script>
+
+<section data-register="brief">
+<p class="lede">Every Terminal Delight window listens on its own control socket, and the same binary is the client. <code>terminal-delight ctl</code> lets a script, a keybinding, a status bar or an agent's own shell change a running window without touching any terminal in it.</p>
+<pre class="cmd"><code>terminal-delight ctl tab name "deploy"
+terminal-delight ctl mcp on
+terminal-delight ctl doc beside /home/you/notes/plan.md</code></pre>
+<p>It names and groups tabs, turns panes to their workbench, opens documents, switches the <a href="/mcp">MCP server</a>, picks a skin, and hands a new terminal to a window. Each command gets one line back, <code>ok</code> or <code>err</code> with the reason. By default it talks to the windows on your active Hyprland workspace, or the window you're running in for tab commands; <code>--all</code> or <code>--pid</code> choose others.</p>
+<p class="invite">Technical lists every command and its reply.</p>
+</section>
+
+<section data-register="technical" data-headline="The control socket">
+<p>Each window, scratch windows included, listens at <code>$XDG_RUNTIME_DIR/terminal-delight/ctl-&lt;pid&gt;.sock</code>, in a directory kept at <code>0700</code>. The client sends one line and reads one line back, then the connection closes. Effects are queued to the window, so <code>ok</code> means the command was accepted. The CLI checks your command against the window's grammar before sending, so a typo fails at once with the usage line.<sup><a href="#s1">1</a></sup></p>
+
+<h3>Which windows</h3>
+<table>
+  <thead><tr><th>Flag</th><th>Targets</th></tr></thead>
+  <tbody>
+    <tr><td>none</td><td>Every window on the active Hyprland workspace. For <code>tabs</code>: the window you're running in.</td></tr>
+    <tr><td><code>--workspace active|&lt;name-or-id&gt;</code></td><td>The windows on that workspace.</td></tr>
+    <tr><td><code>--all</code></td><td>Every window with a socket.</td></tr>
+    <tr><td><code>--pid &lt;N&gt;</code></td><td>One window.</td></tr>
+  </tbody>
+</table>
+<p><code>tab …</code> always means your own tab and refuses a scope flag. <code>adopt</code> and <code>tabs</code> go to the first target only; everything else goes to every target. Each reply prints as <code>&lt;pid&gt;&#9;&lt;reply&gt;</code>. A window with no socket prints <code>err no control socket (older build — reopen this terminal)</code>.</p>
+<p>Exit codes: <code>0</code> when at least one window answered with something other than <code>err</code>; <code>2</code> when nothing matched or every reply was <code>err</code>; <code>1</code> for a usage error.</p>
+
+<h3>Commands</h3>
+<table>
+  <thead><tr><th>After <code>terminal-delight ctl</code></th><th>Reply</th><th>Does</th></tr></thead>
+  <tbody>
+    <tr><td><code>ping</code></td><td><code>pong</code></td><td>Is it there.</td></tr>
+    <tr><td><code>whoami</code></td><td><code>ok &lt;session&gt; &lt;window-pid&gt;</code></td><td>Which session a window holds.</td></tr>
+    <tr><td><code>paint on|off|toggle</code></td><td><code>ok</code></td><td>The palette overlay over every pane.</td></tr>
+    <tr><td><code>paint status</code></td><td><code>on</code> or <code>off</code></td><td></td></tr>
+    <tr><td><code>skin &lt;name&gt;</code>, <code>skin theme</code></td><td><code>ok &lt;name&gt;</code></td><td>Pick a <a href="/skins">skin</a>, or follow the theme's.</td></tr>
+    <tr><td><code>skin status</code></td><td><code>active=&lt;id&gt; known=&lt;ids&gt;</code></td><td></td></tr>
+    <tr><td><code>bench on|off|toggle</code></td><td><code>ok</code></td><td>Every pane to its workbench, or its terminal.</td></tr>
+    <tr><td><code>bench choose &lt;n&gt;</code></td><td>e.g. <code>ok pane 3</code></td><td>Answer the question waiting on the bench with option <code>n</code> (1 to 20).</td></tr>
+    <tr><td><code>bench submit</code></td><td></td><td>Send the open round of answers.</td></tr>
+    <tr><td><code>bench say &lt;text&gt;</code></td><td></td><td>Type a line to the focused pane's agent through the bench, and send it.</td></tr>
+    <tr><td><code>bench type &lt;text&gt;</code></td><td></td><td>The same without sending.</td></tr>
+    <tr><td><code>doc here &lt;path&gt;</code></td><td></td><td>Float a document over the focused pane. The path must be absolute.</td></tr>
+    <tr><td><code>doc beside &lt;path&gt;</code></td><td></td><td>Open it in a pane beside the focused one.</td></tr>
+    <tr><td><code>doc close</code>, <code>doc scroll &lt;pixels&gt;</code></td><td></td><td>Close the floating document; scroll a document pane.</td></tr>
+    <tr><td><code>mcp status</code></td><td><code>enabled=on writes=off expose=agents events=on</code></td><td></td></tr>
+    <tr><td><code>mcp on|off</code>, <code>mcp writes on|off</code>, <code>mcp expose agents|all</code></td><td><code>ok</code></td><td>The MCP switches, saved with the session.</td></tr>
+    <tr><td><code>mcp rpc &lt;json&gt;</code></td><td>the JSON-RPC answer</td><td>One MCP call. <code>mcp-none</code> for a notification.</td></tr>
+    <tr><td><code>adopt --cwd &lt;dir&gt; [--run &lt;cmd&gt;]</code></td><td><code>ok</code></td><td>Open a new pane in a directory, running a command. Used by <code>SUPER+ALT+T</code> on Omarchy.</td></tr>
+    <tr><td><code>tab name [&lt;text&gt;]</code></td><td><code>ok 1</code></td><td>Name your own tab; no text clears it.</td></tr>
+    <tr><td><code>tab group &lt;name&gt;</code>, <code>tab ungroup</code></td><td><code>ok 1</code></td><td>Put your own tab in a group, or take it out.</td></tr>
+    <tr><td><code>tabs &lt;json&gt;</code></td><td><code>ok &lt;n&gt;</code></td><td>Several tab operations at once; see below.</td></tr>
+  </tbody>
+</table>
+
+<h3>Tab operations</h3>
+<p><code>tabs</code> takes a JSON array, or <code>{"ops": […]}</code>. Each operation has an <code>op</code>:</p>
+<table>
+  <thead><tr><th><code>op</code></th><th>Fields</th></tr></thead>
+  <tbody>
+    <tr><td><code>name</code></td><td><code>name</code>, a string or <code>null</code></td></tr>
+    <tr><td><code>group</code></td><td><code>group</code>, and optionally <code>color</code> and <code>text_color</code> for a new group</td></tr>
+    <tr><td><code>ungroup</code></td><td>none</td></tr>
+    <tr><td><code>color</code></td><td><code>color</code> and/or <code>text_color</code>; <code>null</code> clears</td></tr>
+    <tr><td><code>group_color</code></td><td><code>group</code>, <code>color</code>, <code>text_color</code></td></tr>
+    <tr><td><code>collapse</code></td><td><code>group</code>, <code>collapsed</code></td></tr>
+  </tbody>
+</table>
+<p>A tab operation names its tab with exactly one of <code>tab</code> (its index, which changes when tabs move) or <code>pane</code> (a shell pid in it, which doesn't). Colours are <code>#rrggbb</code>. An error says which operation failed: <code>tabs: op 2: …</code>.</p>
+<pre><code>terminal-delight ctl tabs '[{"op":"name","pane":4121,"name":"api"},{"op":"group","pane":4121,"group":"backend","color":"#3ec6d1"}]'</code></pre>
+
+<h3>What would prove this wrong</h3>
+<p>No <code>ctl</code> command writes bytes into a terminal's input except <code>bench say</code> and <code>bench type</code>, which go to the agent through the bench on purpose. Any other command that does is a bug.</p>
+</section>
+
+<ol data-sources>
+  <li id="s1">The grammar, the client and the replies: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/ctl.rs">ctl.rs</a>.</li>
+</ol>

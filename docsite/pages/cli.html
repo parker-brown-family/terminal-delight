@@ -1,0 +1,52 @@
+<script type="application/json" data-page>
+{
+  "title": "Command line",
+  "description": "Every word terminal-delight takes on the command line: open a window, script one with ctl, relay MCP, run the session host, put work on a workbench, and the debugging verbs. An unknown word is refused, never opened as a window.",
+  "updated": "2026-09-25",
+  "trueOf": "main at d7cf383",
+  "summary": "Every verb the binary takes"
+}
+</script>
+
+<section data-register="brief">
+<p class="lede"><code>terminal-delight</code> with nothing after it opens a window and restores your session. Give it a directory and the first terminal starts there. Everything else is a verb that does one job and exits without opening a window.</p>
+<p>The ones you're likely to type are <code>ctl</code>, to script a running window, and <code>mcp</code>, the relay you register with an agent. <code>surface</code> puts work on your pane's workbench from a script, and <code>probe</code> and <code>bindings</code> say what Terminal Delight would resume and which conversation each agent is in. A word it doesn't know is refused with the usage text, rather than opening a window.</p>
+<p class="invite">Technical lists every verb, its arguments and its exit codes.</p>
+</section>
+
+<section data-register="technical" data-headline="Verbs">
+<table>
+  <thead><tr><th>Command</th><th>Does</th><th>Exit</th></tr></thead>
+  <tbody>
+    <tr><td><code>terminal-delight</code></td><td>Open a window and restore this workspace's session.</td><td></td></tr>
+    <tr><td><code>terminal-delight &lt;dir&gt;</code></td><td>Open a window whose first terminal starts in <code>&lt;dir&gt;</code>. Ignored when there is a layout to restore.</td><td></td></tr>
+    <tr><td><code>ctl …</code></td><td>Script a running window. See <a href="/ctl">ctl</a>.</td><td>0, 1, 2</td></tr>
+    <tr><td><code>mcp [--pid &lt;N&gt;]</code></td><td>The stdio MCP relay into a running window. See <a href="/mcp">MCP server</a>.</td><td>0 at end of input; 1 no window; 2 window lost</td></tr>
+    <tr><td><code>surface [file]</code></td><td>Put a work object on the calling pane's <a href="/workbench">workbench</a>, from a file or stdin. <code>--catalogue</code> prints what this build can draw; <code>--derive &lt;transcript.jsonl&gt;</code> prints what it would draw from a transcript.</td><td>0 accepted; 2 nothing usable; 3 not inside a pane</td></tr>
+    <tr><td><code>serve --session &lt;name&gt;</code></td><td>Run the <a href="/sessions">session host</a> for a session. Windows start this themselves.</td><td>2 usage</td></tr>
+    <tr><td><code>probe &lt;pid&gt;</code></td><td>For a shell pid: its foreground process, directory and resume command, as JSON.</td><td>0; 1 bad pid; 2 failed</td></tr>
+    <tr><td><code>bindings</code></td><td>Which conversation each running Claude or Codex process is in, and on what evidence, as JSON.</td><td>0; 2 if <code>/proc</code> can't be read</td></tr>
+    <tr><td><code>bindings &lt;id&gt;</code></td><td>Whether a conversation id is a whole conversation or part of one.</td><td>0</td></tr>
+    <tr><td><code>conversation &lt;root&gt; [--json]</code></td><td>Read a conversation's bench back without a window: its surfaces, turns and answers.</td><td>0; 2 usage</td></tr>
+    <tr><td><code>skin</code></td><td>Resolve a skin against a theme and print every token as JSON. See <a href="/skins">Skins</a>.</td><td>0; 1 parse error; 2 usage</td></tr>
+    <tr><td><code>agent-usage [update|list|where] [--only &lt;id&gt;]</code></td><td>Run the usage collectors for Claude, Codex and Fireworks and write one record per subscription. See <a href="/usage">Usage and vitals</a>.</td><td>1 only if every collector failed</td></tr>
+    <tr><td><code>agent-vitals &lt;transcript.jsonl&gt;…</code></td><td>The three attention bars for transcripts, as JSON. <code>--parts</code>, <code>--keys</code>.</td><td>2 with no arguments</td></tr>
+    <tr><td><code>--version</code>, <code>-V</code></td><td><code>terminal-delight 0.3.0</code></td><td>0</td></tr>
+    <tr><td><code>--help</code>, <code>-h</code></td><td>The usage text.</td><td>0</td></tr>
+  </tbody>
+</table>
+<p>An unknown word prints <code>terminal-delight: unknown command `&lt;word&gt;`</code> and the usage text, and exits 2. An unknown option does the same with <code>unrecognised option</code>. Commands that print can be piped into <code>head</code> without an error.</p>
+
+<h3>probe</h3>
+<p>Keys: <code>shell_pid</code>, <code>fg_pid</code>, <code>kind</code>, <code>comm</code>, <code>cwd</code>, <code>cmdline</code>, <code>resume</code>. <code>resume</code> is the command Terminal Delight would type to bring the agent back, such as <code>claude --resume &lt;id&gt;</code>.</p>
+
+<h3>bindings</h3>
+<p><code>{"panes": […]}</code>, one row per agent: <code>shell_pid</code>, <code>agent_pid</code>, <code>mode</code>, <code>cwd</code>, <code>session</code>, <code>bond</code>, <code>certain</code>, and the conversation's lineage. <code>bond</code> is how the binding was found: <code>declared</code> (the agent said so), <code>birth</code> (a transcript started with it), <code>sole</code> (the only conversation in its directory) or <code>guess</code>.</p>
+
+<h3>Environment the usage text names</h3>
+<p><code>TD_SCRATCH=1</code> opens a throwaway window; <code>TD_SEED_CWD=&lt;dir&gt;</code> and <code>TD_SEED_RESUME=&lt;cmd&gt;</code> seed its first pane. The rest are in <a href="/environment">Environment flags</a>.</p>
+</section>
+
+<ol data-sources>
+  <li id="s1">The verb table, usage text and exits: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/main.rs">main.rs</a> (<code>main</code> and its <code>VERBS</code> roster).</li>
+</ol>

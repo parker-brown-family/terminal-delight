@@ -1,0 +1,73 @@
+<script type="application/json" data-page>
+{
+  "title": "Environment flags",
+  "description": "Every TD_ variable Terminal Delight reads: the ones you set to change how it starts, the ones it sets inside each pane, and the debugging and capture switches.",
+  "updated": "2026-09-25",
+  "trueOf": "main at d7cf383",
+  "summary": "Every TD_ variable it reads"
+}
+</script>
+
+<section data-register="brief">
+<p class="lede">A handful of <code>TD_</code> variables change how Terminal Delight starts. The ones you might actually set: <code>TD_SCRATCH=1</code> for a throwaway window that doesn't touch your session, <code>TD_SPINE=0</code> to hide the attention rail, <code>TD_NO_SESSIOND=1</code> to run without the session host, and <code>TD_THEME</code> or <code>TD_SKIN</code> to load a theme or skin from somewhere else.</p>
+<p>Three more are set <em>for</em> you, inside every pane: <code>TD_SESSION</code>, <code>TD_PANE_ID</code> and <code>TD_TAG</code>. They are how a script or an agent in a pane knows where it is. Everything else is for debugging, or for staging screenshots with made-up data.</p>
+<p class="invite">Technical lists every variable and its default.</p>
+</section>
+
+<section data-register="technical" data-headline="Variables">
+<h3>At launch</h3>
+<table>
+  <thead><tr><th>Variable</th><th>Does</th><th>Default</th></tr></thead>
+  <tbody>
+    <tr><td><code>TD_SCRATCH</code></td><td>A throwaway window that never claims a session.</td><td>off; set means on</td></tr>
+    <tr><td><code>TD_SEED_CWD</code></td><td>Start the first pane in this directory. Implies <code>TD_SCRATCH</code>.</td><td></td></tr>
+    <tr><td><code>TD_SEED_RESUME</code></td><td>Type this line into the first pane, usually a <code>claude --resume …</code>. Implies <code>TD_SCRATCH</code>.</td><td></td></tr>
+    <tr><td><code>TD_NO_SESSIOND</code></td><td>Run without the <a href="/sessions">session host</a>: the window owns its terminals, and they close with it.</td><td>host on; <code>1</code>, <code>on</code>, <code>true</code> or <code>yes</code> turns it off</td></tr>
+    <tr><td><code>TD_SESSION</code></td><td>Open this session, ahead of any other rule.</td><td>chosen from the workspace</td></tr>
+    <tr><td><code>TD_SPINE</code></td><td>The attention rail. <code>0</code>, <code>false</code> or <code>off</code> hides it.</td><td>on</td></tr>
+    <tr><td><code>TD_ANCHOR_TOP</code></td><td>Keep the prompt at the top of the pane instead of the bottom.</td><td>off; <code>1</code> or <code>true</code> turns it on</td></tr>
+    <tr><td><code>TD_THEME</code></td><td>The <a href="/themes">theme</a> file.</td><td><code>~/.config/terminal-delight/theme.toml</code></td></tr>
+    <tr><td><code>TD_SKIN</code></td><td>The <a href="/skins">skin</a> file.</td><td><code>~/.config/terminal-delight/skin.toml</code></td></tr>
+    <tr><td><code>TD_PALETTE</code></td><td>An extra colour file laid over the theme.</td><td>none</td></tr>
+    <tr><td><code>TD_OMARCHY_THEMES</code></td><td>Where to find Omarchy themes, <code>:</code>-separated.</td><td>Omarchy's own folders</td></tr>
+    <tr><td><code>TD_HOST_SHELL</code></td><td>The shell the session host starts in each pane.</td><td>your shell</td></tr>
+    <tr><td><code>TD_PAGE_IDLE_SECS</code></td><td>Seconds before the headless browser that draws HTML documents shuts down when idle.</td><td>300</td></tr>
+    <tr><td><code>TD_NOGLASS</code></td><td>No barrel warp.</td><td>off; set means on</td></tr>
+    <tr><td><code>TD_NOCANVAS</code></td><td>No CRT canvas effects.</td><td>off; set means on</td></tr>
+    <tr><td><code>TD_MCP</code></td><td>Also serve MCP on the window's own stdin and stdout. This starts the transport; whether panes are visible is still the <a href="/mcp">MCP switch</a>.</td><td>off; set means on</td></tr>
+    <tr><td><code>TD_MCP_WRITE</code></td><td>Writes on for that transport. Read only when <code>TD_MCP</code> is set.</td><td>off</td></tr>
+  </tbody>
+</table>
+
+<h3>Set inside every pane</h3>
+<table>
+  <thead><tr><th>Variable</th><th>Holds</th></tr></thead>
+  <tbody>
+    <tr><td><code>TD_SESSION</code></td><td>The session this pane belongs to. <code>terminal-delight mcp</code> and <code>terminal-delight surface</code> use it to find their window.</td></tr>
+    <tr><td><code>TD_PANE_ID</code></td><td>This pane's number. It outlives the shell, and it's the <code>pane &lt;n&gt;</code> in <code>list_panes</code>.</td></tr>
+    <tr><td><code>TD_TAG</code></td><td>Eight random characters. Lines the <a href="/workbench">workbench</a> types into this pane arrive as <code>[workbench:&lt;tag&gt;]</code>.</td></tr>
+  </tbody>
+</table>
+<p>These come from the session host, so a window started with <code>TD_NO_SESSIOND</code> doesn't set them.</p>
+
+<h3>Debugging</h3>
+<p>Each prints a trace to stderr: <code>TD_KEYDEBUG</code> (keys), <code>TD_HITDEBUG</code> (clicks), <code>TD_SELDEBUG</code> (selection), <code>TD_BENCHDEBUG</code> (the composer's length, never its text), <code>TD_DOCDEBUG</code> (documents), <code>TD_ANCHORDEBUG</code>, <code>TD_RAIL_DEBUG</code>, <code>TD_LATENCY</code> (keypress to echo). <code>TD_VERB_PREVIEW=1</code> shows the typed-verb preview under bench cards.</p>
+
+<h3>Staging and capture</h3>
+<p>These fill a window with made-up agents, usage and notes, so a screenshot shows no real work: <code>TD_DEMO</code>, <code>TD_DEMO_STATE</code> (restore a saved state file; implies scratch), <code>TD_DEMO_SEED</code>, <code>TD_DEMO_LOGOS</code>, <code>TD_DEMO_LOGO_DIR</code>, <code>TD_WALL_DEMO</code>, <code>TD_WALL_THEME</code>, <code>TD_FOCUS_DEMO</code>, <code>TD_CONFIRM_DEMO</code>, <code>TD_TRAY_DEMO</code>, <code>TD_OSD_DEMO</code>, <code>TD_SAVINGS_DEMO</code>, <code>TD_USAGE_DEMO</code>, <code>TD_GRAVEYARD_DEMO</code>, <code>TD_GAMBA_DEMO</code>, <code>TD_SPINE_DEMO</code>, <code>TD_WORKBENCH_DEMO</code>, <code>TD_BAY_DEMO</code> (how far the bay door is open, 0 to 1), <code>TD_IGNITION_FREEZE</code> (hold the power-on effect at a point), <code>TD_RAIL_TABLE</code>. <code>TD_USAGE_LIVE</code> opens the usage face on your real records, and is never for capture.</p>
+
+<h3>Read by scripts, not the binary</h3>
+<table>
+  <thead><tr><th>Variable</th><th>Read by</th><th>Default</th></tr></thead>
+  <tbody>
+    <tr><td><code>TD_ASK_WAIT_S</code></td><td>the agent hooks: how long a question waits for your answer</td><td>540 seconds</td></tr>
+    <tr><td><code>TD_INBOUND_CAP</code></td><td>the agent hooks: when the inbound journal rotates</td><td>2 MiB</td></tr>
+    <tr><td><code>TD_SAVINGS_USD_PER_M</code></td><td>the lean-ctx plugin: dollars per million tokens saved</td><td>5.0</td></tr>
+  </tbody>
+</table>
+<p>Terminal Delight also reads <code>XDG_CONFIG_HOME</code>, <code>XDG_STATE_HOME</code>, <code>XDG_CACHE_HOME</code>, <code>XDG_RUNTIME_DIR</code>, <code>HOME</code>, <code>PATH</code>, <code>WAYLAND_DISPLAY</code>, <code>HYPRLAND_INSTANCE_SIGNATURE</code> and <code>OMARCHY_PATH</code>. There is no <code>TD_SOUNDS</code>: the finish bell's sound is built in.</p>
+</section>
+
+<ol data-sources>
+  <li id="s1">Launch reads: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/main.rs">main.rs</a>; pane identity: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/hostproto.rs">hostproto.rs</a>; theme and skin paths: theme.rs, skin.rs; the hooks: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/scripts/td-agent-hooks">scripts/td-agent-hooks</a>.</li>
+</ol>

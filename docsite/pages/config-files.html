@@ -1,0 +1,65 @@
+<script type="application/json" data-page>
+{
+  "title": "Config files",
+  "description": "Every file Terminal Delight reads or writes: settings in ~/.config/terminal-delight, workbench and usage records in ~/.local/state/terminal-delight, and sockets in the runtime directory. Which ones reload while it runs.",
+  "updated": "2026-09-25",
+  "trueOf": "main at d7cf383",
+  "summary": "Every file, and what reloads live"
+}
+</script>
+
+<section data-register="brief">
+<p class="lede">Terminal Delight keeps its settings in <code>~/.config/terminal-delight/</code>, its records in <code>~/.local/state/terminal-delight/</code>, and its sockets in your runtime directory. <code>$XDG_CONFIG_HOME</code>, <code>$XDG_STATE_HOME</code> and <code>$XDG_RUNTIME_DIR</code> move them.</p>
+<p>The files you're likely to edit by hand are <code>theme.toml</code> and <code>skin.toml</code>, and both are picked up the moment you save. Everything else is written by the app when you change something in it: the session layouts, launch defaults, notification settings, favourites, and which logo goes with which directory.</p>
+<p class="invite">Technical lists every file, what writes it and what reads it.</p>
+</section>
+
+<section data-register="technical" data-headline="Files">
+<h3>~/.config/terminal-delight/</h3>
+<table>
+  <thead><tr><th>File</th><th>Holds</th><th>Written by</th><th>Reloads live</th></tr></thead>
+  <tbody>
+    <tr><td><code>sessions/&lt;name&gt;.toml</code></td><td>A session: tabs, layout, directories, resume commands, notes, the left bar, MCP policy, language. See <a href="/sessions">Sessions</a>.</td><td>the session host</td><td></td></tr>
+    <tr><td><code>sessions/backups/&lt;name&gt;/</code></td><td>The last ten versions of that file.</td><td>the session host</td><td></td></tr>
+    <tr><td><code>theme.toml</code></td><td>Your own theme, <code>custom</code>. See <a href="/themes">Themes</a>.</td><td>you</td><td>yes, within a third of a second</td></tr>
+    <tr><td><code>skin.toml</code></td><td>Your own chrome skin. See <a href="/skins">Skins</a>.</td><td>you</td><td>yes</td></tr>
+    <tr><td><code>launch.toml</code></td><td>What a new agent opens with. See <a href="/launching">Launching an agent</a>.</td><td>the launcher</td><td>read at start</td></tr>
+    <tr><td><code>notifications.toml</code></td><td>What a finished agent may do to the desktop. See <a href="/attention">Attention</a>.</td><td>the <code>🔔</code> panel</td><td>yes, every two seconds</td></tr>
+    <tr><td><code>dir-logos.toml</code></td><td>Directory to logo image; the nearest parent directory wins.</td><td>the logo picker</td><td>yes, every two seconds</td></tr>
+    <tr><td><code>favourites.toml</code></td><td>Starred palettes and colour sets, in shelf order.</td><td>the paint overlay</td><td>when the overlay opens</td></tr>
+    <tr><td><code>documents.toml</code></td><td>Which engine draws HTML documents.</td><td>you</td><td></td></tr>
+    <tr><td><code>tool-props.toml</code></td><td>Your additions to the table of which logo a tool shows.</td><td>you</td><td></td></tr>
+    <tr><td><code>plugins/&lt;name&gt;/plugin.json</code></td><td>A plugin. See <a href="/plugins">Plugins</a>.</td><td>you</td><td>each time the panel opens</td></tr>
+    <tr><td><code>marks/&lt;id&gt;.svg</code></td><td>Your own logo for a subscription's usage row.</td><td>you</td><td></td></tr>
+    <tr><td><code>state.toml</code></td><td>The single session file older builds wrote. Moved into <code>sessions/</code> on upgrade.</td><td>older builds</td><td></td></tr>
+  </tbody>
+</table>
+<p><code>TD_THEME</code> and <code>TD_SKIN</code> point the theme and skin at other files.</p>
+
+<h3>~/.local/state/terminal-delight/</h3>
+<table>
+  <thead><tr><th>Path</th><th>Holds</th></tr></thead>
+  <tbody>
+    <tr><td><code>surfaces/&lt;session&gt;/&lt;pane&gt;/</code></td><td>The <a href="/workbench">workbench</a>'s surfaces, up to 512 per pane, and the agent channel's files: <code>actions.jsonl</code>, <code>inbound.jsonl</code>, <code>outbound.jsonl</code>, <code>answers/</code>, <code>bench.json</code>.</td></tr>
+    <tr><td><code>conversations/</code></td><td>The bench's record, kept by conversation, so it outlives windows.</td></tr>
+    <tr><td><code>agents/usage/&lt;id&gt;.json</code></td><td>One usage record per subscription. See <a href="/usage">Usage and vitals</a>.</td></tr>
+    <tr><td><code>agent-ledger/</code></td><td>Which conversation each agent process is in, written by the recovery hook. This one is always under <code>~/.local/state</code>, whatever <code>$XDG_STATE_HOME</code> says.</td></tr>
+    <tr><td><code>brief-backups/</code></td><td>Copies taken when notes on a document are saved.</td></tr>
+  </tbody>
+</table>
+
+<h3>Elsewhere</h3>
+<table>
+  <thead><tr><th>Path</th><th>Holds</th></tr></thead>
+  <tbody>
+    <tr><td><code>$XDG_RUNTIME_DIR/terminal-delight/</code></td><td><code>ctl-&lt;pid&gt;.sock</code> per window; <code>session-&lt;name&gt;.sock</code>, <code>.log</code>, <code>.tag</code> and <code>.window</code> per session host.</td></tr>
+    <tr><td><code>$XDG_CACHE_HOME/terminal-delight/pages/</code></td><td>Rendered HTML documents.</td></tr>
+    <tr><td><code>~/.local/share/context-delight/</code></td><td>Harvested sessions, as <code>.cdx</code>.</td></tr>
+  </tbody>
+</table>
+<p>Files that hold your working directories and resume commands are owner-only (<code>0600</code>) in owner-only directories (<code>0700</code>). To clear what Terminal Delight remembers, delete <code>sessions/</code>. The finish bell has no file: its sound is built in.</p>
+</section>
+
+<ol data-sources>
+  <li id="s1">The config root: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/instance.rs">instance.rs</a>; each file's reader is named in the <a href="https://github.com/parker-brown-family/terminal-delight/tree/main/app/src">source</a> beside it: theme.rs, skin.rs, launchpref.rs, notifpref.rs, dirlogo.rs, fav.rs, surfacefeed.rs, benchstore.rs, usage.rs.</li>
+</ol>

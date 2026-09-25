@@ -63,6 +63,9 @@
 .td-group span.is-soon { display: flex; align-items: center; gap: 10px; padding: 6px 12px; margin: 1px 0; font-size: 14.5px; line-height: 1.35; color: var(--ink-3); }
 .td-group span.is-soon::after { content: "soon"; margin-left: auto; font: 500 10px/1 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); border: 1px solid var(--line); border-radius: 4px; padding: 2px 4px; }
 
+/* a link to a page still being written reads as text */
+.td-doc .soon-link { color: var(--ink); border-bottom: 1px dotted var(--ink-3); cursor: help; }
+
 /* a key table: the chord in its own column, never wrapped */
 .keys td:first-child { white-space: nowrap; }
 .keys td:first-child kbd + kbd { margin-left: 2px; }
