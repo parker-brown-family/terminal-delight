@@ -163,11 +163,22 @@
 
   /* -------------------------------------------------------- registers */
 
+  /* A hash names a register (#technical), or anything inside one
+     (#technical-keys): open the register that holds it, then go there. */
   var REGS = { brief: 'r-brief', story: 'r-story', technical: 'r-technical' };
   function openFromHash() {
-    var id = REGS[(location.hash || '').slice(1)];
-    var r = id && document.getElementById(id);
-    if (r) { r.checked = true; if (tube) tube.scrollTop = 0; }
+    var h = decodeURIComponent((location.hash || '').slice(1));
+    if (!h) return;
+    if (REGS[h]) {
+      var r = document.getElementById(REGS[h]);
+      if (r) { r.checked = true; if (tube) tube.scrollTop = 0; }
+      return;
+    }
+    var el = document.getElementById(h);
+    if (!el) return;
+    var panel = el.closest('.reg-panel'), radio = panel && REGS[panel.id] && document.getElementById(REGS[panel.id]);
+    if (radio) radio.checked = true;
+    requestAnimationFrame(function () { el.scrollIntoView({ block: 'start' }); });
   }
   openFromHash();
   addEventListener('hashchange', openFromHash);
@@ -259,37 +270,88 @@
   }
 
   /* ---------------------------------------------------------- search
-     A prototype palette over the spine's page titles. Full-text search is a
-     build step (Pagefind over the generated pages) and does not exist yet;
-     the palette says so rather than pretending. */
+     Full text, from the search.json the docs build writes: one entry per
+     heading of every register of every page. A query matches when every word
+     in it appears in the entry's page title, heading or text; titles and
+     headings count for more than body text. With the index missing (a page
+     opened from disk, a failed fetch) the palette searches the spine's page
+     titles instead, and says so. */
 
-  var pal = null;
+  var pal = null, index = null, indexTried = false;
+  function loadIndex(then) {
+    if (index || indexTried) { then(); return; }
+    indexTried = true;
+    fetch('/search.json').then(function (r) { if (!r.ok) throw 0; return r.json(); })
+      .then(function (d) { index = d; then(); }, function () { then(); });
+  }
+  function titlesOnly() {
+    return Array.prototype.map.call(document.querySelectorAll('.td-spine a'), function (a) {
+      var g = a.closest('.td-group');
+      return { u: a.getAttribute('href'), t: a.textContent.trim(), g: g ? g.querySelector('h6').textContent : '', r: '', s: '', a: '', x: '' };
+    });
+  }
+  function score(e, words, phrase) {
+    var t = e.t.toLowerCase(), s = (e.s || '').toLowerCase(), x = (e.x || '').toLowerCase(), n = 0;
+    for (var i = 0; i < words.length; i++) {
+      var w = words[i], hit = false;
+      if (t.indexOf(w) >= 0) { n += 10; hit = true; }
+      if (s.indexOf(w) >= 0) { n += 6; hit = true; }
+      if (x.indexOf(w) >= 0) { n += 1; hit = true; }
+      if (!hit) return 0;
+    }
+    if (phrase && (t + ' ' + s + ' ' + x).indexOf(phrase) >= 0) n += 4;
+    return n;
+  }
+  function snippet(x, words) {
+    if (!x) return '';
+    var lx = x.toLowerCase(), at = -1;
+    for (var i = 0; i < words.length && at < 0; i++) at = lx.indexOf(words[i]);
+    var start = Math.max(0, at - 40), piece = (start ? '…' : '') + x.slice(start, start + 160);
+    var safe = piece.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+    words.forEach(function (w) {
+      if (w.length < 2) return;
+      safe = safe.replace(new RegExp('(' + w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')', 'ig'), '<mark>$1</mark>');
+    });
+    return safe;
+  }
   function openPalette() {
     if (!document.querySelector('.td-search')) return;
     if (!pal) {
       pal = document.createElement('div');
       pal.className = 'td-pal';
       pal.innerHTML = '<div class="td-pal-box" role="dialog" aria-label="Search the docs">' +
-        '<input type="search" placeholder="Search page titles" aria-label="Search page titles">' +
-        '<ul role="listbox"></ul><p class="td-pal-foot">Titles only for now. Full-text search arrives with the build.</p></div>';
+        '<input type="search" placeholder="Search the docs" aria-label="Search the docs">' +
+        '<ul role="listbox"></ul><p class="td-pal-foot"></p></div>';
       document.body.appendChild(pal);
-      var input = pal.querySelector('input'), list = pal.querySelector('ul');
-      var items = Array.prototype.map.call(document.querySelectorAll('.td-spine a'), function (a) {
-        var g = a.closest('.td-group'); return { a: a, t: a.textContent.replace(/soon$/, '').trim(), g: g ? g.querySelector('h6').textContent : '' };
-      });
+      var input = pal.querySelector('input'), list = pal.querySelector('ul'), foot = pal.querySelector('.td-pal-foot');
       var render = function () {
-        var q = input.value.trim().toLowerCase();
+        var raw = input.value.trim().toLowerCase(), words = raw.split(/\s+/).filter(Boolean);
+        var all = index || titlesOnly();
+        foot.textContent = index ? 'Every page, full text. ↑ ↓ to move, Enter to open.' : 'Page titles only: the search index did not load.';
+        var hits;
+        if (!words.length) hits = all.filter(function (e) { return !e.s; }).slice(0, 12).map(function (e) { return { e: e, n: 1 }; });
+        else hits = all.map(function (e) { return { e: e, n: score(e, words, raw) }; }).filter(function (h) { return h.n > 0; })
+          .sort(function (a, b) { return b.n - a.n; }).slice(0, 12);
         list.innerHTML = '';
-        items.filter(function (it) { return !q || (it.t + ' ' + it.g).toLowerCase().indexOf(q) >= 0; }).slice(0, 9).forEach(function (it, i) {
-          var li = document.createElement('li');
+        hits.forEach(function (h, i) {
+          var e = h.e, li = document.createElement('li');
           li.setAttribute('role', 'option'); if (i === 0) li.setAttribute('aria-selected', 'true');
-          li.innerHTML = '<span></span><small></small>';
-          li.firstChild.textContent = it.t; li.lastChild.textContent = it.g;
-          li.addEventListener('click', function () { it.a.click(); closePalette(); });
+          li.innerHTML = '<span></span><small></small>' + (words.length && e.x ? '<span class="snip"></span>' : '');
+          li.firstChild.textContent = e.t + (e.s ? ' › ' + e.s : '');
+          li.children[1].textContent = e.r ? e.g + ' · ' + e.r : e.g;
+          if (li.children[2]) li.children[2].innerHTML = snippet(e.x, words);
+          li.addEventListener('click', function () {
+            var dest = e.u + (e.a ? '#' + e.a : '');
+            closePalette();
+            if (dest.split('#')[0] === location.pathname && e.a) { location.hash = e.a; openFromHash(); }
+            else location.href = dest;
+          });
           list.appendChild(li);
         });
+        if (!hits.length) list.innerHTML = '<li aria-disabled="true"><span>Nothing matches every word.</span></li>';
       };
       input.addEventListener('input', render);
+      loadIndex(render);
       input.addEventListener('keydown', function (e) {
         var cur = list.querySelector('[aria-selected="true"]');
         if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
@@ -299,7 +361,6 @@
         } else if (e.key === 'Enter' && cur) { cur.click(); }
       });
       pal.addEventListener('click', function (e) { if (e.target === pal) closePalette(); });
-      render();
     }
     pal.classList.add('open');
     pal.querySelector('input').focus();

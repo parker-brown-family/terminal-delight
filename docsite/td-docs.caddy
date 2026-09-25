@@ -32,4 +32,10 @@ docs.terminal-delight.brownfamilysports.com {
 
 	try_files {path} {path}.html {path}/index.html
 	file_server
+
+	# a missing page gets the docs' own 404, which carries the page map
+	handle_errors 404 {
+		rewrite * /404.html
+		file_server
+	}
 }

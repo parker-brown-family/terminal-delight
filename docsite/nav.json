@@ -1,0 +1,53 @@
+{
+  "site": "https://docs.terminal-delight.brownfamilysports.com",
+  "kiosk": "https://terminal-delight.brownfamilysports.com",
+  "repo": "https://github.com/parker-brown-family/terminal-delight",
+  "groups": [
+    { "title": "Get started", "pages": [
+      { "slug": "index", "title": "Introduction" },
+      { "slug": "install", "title": "Install" },
+      { "slug": "first-launch", "title": "First launch" },
+      { "slug": "keys", "title": "Keys" }
+    ]},
+    { "title": "Agents", "pages": [
+      { "slug": "agent-wall", "title": "Agent wall" },
+      { "slug": "launching", "title": "Launching an agent" },
+      { "slug": "attention", "title": "Attention" },
+      { "slug": "graveyard", "title": "Graveyard" },
+      { "slug": "usage", "title": "Usage and vitals" }
+    ]},
+    { "title": "The bench", "pages": [
+      { "slug": "workbench", "title": "Workbench" },
+      { "slug": "surface-protocol", "title": "Surface protocol" },
+      { "slug": "comments", "title": "Comments" }
+    ]},
+    { "title": "Workspace", "pages": [
+      { "slug": "left-bar", "title": "Left bar and tasks" },
+      { "slug": "panes-and-tabs", "title": "Panes and tabs" },
+      { "slug": "sticky-notes", "title": "Sticky notes" },
+      { "slug": "sessions", "title": "Sessions and restarts" }
+    ]},
+    { "title": "The look", "pages": [
+      { "slug": "themes", "title": "Themes" },
+      { "slug": "skins", "title": "Skins" },
+      { "slug": "crt", "title": "CRT" },
+      { "slug": "focus-reader", "title": "Focus reader" },
+      { "slug": "text-crawl", "title": "Text crawl" }
+    ]},
+    { "title": "MCP and scripting", "pages": [
+      { "slug": "mcp", "title": "MCP server" },
+      { "slug": "agent-to-agent", "title": "Agent to agent" },
+      { "slug": "ctl", "title": "ctl" },
+      { "slug": "plugins", "title": "Plugins" }
+    ]},
+    { "title": "Desktop", "pages": [
+      { "href": "https://terminal-delight.brownfamilysports.com/omarchy", "title": "Omarchy ↗" }
+    ]},
+    { "title": "Reference", "pages": [
+      { "slug": "config-files", "title": "Config files" },
+      { "slug": "environment", "title": "Environment flags" },
+      { "slug": "cli", "title": "Command line" },
+      { "slug": "languages", "title": "Languages" }
+    ]}
+  ]
+}

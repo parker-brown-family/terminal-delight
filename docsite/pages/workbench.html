@@ -1,0 +1,187 @@
+<script type="application/json" data-page>
+{
+  "title": "Workbench",
+  "description": "Every agent pane in Terminal Delight has a second face: the workbench, where the agent's replies, the decisions it is waiting on, and the files it made sit as cards, apart from its tool calls.",
+  "updated": "2026-09-24",
+  "trueOf": "main at 81ec545",
+  "summary": "The agent's work as cards"
+}
+</script>
+
+<section data-register="brief">
+<p class="lede">Every agent pane in Terminal Delight has a second face. The terminal face is the agent at work: tool calls, file reads, diffs, logs. The workbench face is what the agent made for you, laid out as cards.</p>
+<p>Its replies sit on the <b>overview</b>, each under the message that asked for it. Questions it is waiting on sit under <b>decisions</b>, and a digit answers one. Pages, tables and diagrams it produced go to <b>artifacts</b>. Your own notes go to <b>comments</b>, and those never reach the agent.</p>
+<p>Flip between the faces with the <code>TERM</code> ⇄ <code>BENCH</code> switch in the pane header, or <kbd>alt</kbd>+<kbd>k</kbd>. The terminal keeps running underneath. You can talk to the agent from the bench as well: start typing anywhere and a composer opens, and nothing is sent until you press <kbd>enter</kbd>.</p>
+<p>An agent puts richer work on the bench, such as a decision with options or a table, by presenting a small JSON document over MCP, as a file, or through the <code>terminal-delight surface</code> command.</p>
+<p class="invite">Story explains why an agent needs a second face at all. Technical has the protocol, the keys and the limits.</p>
+</section>
+
+<section data-register="story" data-headline="The doorway">
+<p>You've hired a carpenter to build a bookcase, and you're working in the next room. Every so often you get up and stand in the workshop doorway to see how it's going.</p>
+<p>From the doorway you see everything. The saw is running, there are offcuts on the floor, a jig is clamped to the table, and a board has pencil marks on it that will be cut in half in a minute. All of it is real work, and almost none of it is for you. If you want to know whether the carpenter needs an answer from you, you have to stand there until you catch them looking up.</p>
+<p>A coding agent's terminal is that doorway. Most of what scrolls past is the agent talking to its tools: files read, commands run, diffs applied. The part written for you, a reply or a question, is a few lines at the bottom, and the next tool call pushes it out of sight. On real transcripts, the prose meant for a person comes to between one and three percent of the text.</p>
+<p>A tidy workshop solves this with a bench by the door. When a piece is finished, it goes on the bench. When the carpenter needs a decision, the question goes on the bench with the two options chalked beside it. When there's a drawing, the drawing goes there too. You can walk up, see what's waiting, answer, and go back to your room without learning anything about jigs.</p>
+<p>That's the workbench. Each agent pane in Terminal Delight has two faces, and a switch in the pane header flips between them. <b>TERM</b> is the doorway: the running terminal. <b>BENCH</b> is the bench by the door. The terminal keeps working while you look at the bench. You've only stopped watching it.</p>
+<p>The bench is split the way a tidy one would be. Replies go on the <b>overview</b>, each beneath the message that asked for it, so you read the question and the answer together. Questions the agent is waiting on go under <b>decisions</b>, and you answer with a digit. Anything it drew or wrote up goes under <b>artifacts</b>. There is also a notepad that belongs to you: <b>comments</b> are notes you keep about the work, and the agent never sees them.</p>
+<p>You can still talk to the carpenter from the bench. Start typing and a <b>composer</b> opens. Nothing leaves it until you press enter, so you can write the whole sentence, fix it, and then send it.</p>
+<p>Some things reach the bench on their own: the agent's replies can arrive straight from its hooks. Anything richer, the agent writes down in a shape Terminal Delight can read, which is a small JSON document it presents over MCP, drops into a folder, or pipes through a command. One of those documents is called a <b>surface</b>, and the rules they follow are the <b>surface protocol</b>.</p>
+<p class="invite">Technical has the protocol itself, every key, and where the limits are.</p>
+</section>
+
+<section data-register="technical" data-headline="Surfaces">
+<p>A coding agent's transcript has two audiences. Tool calls and their results are written for the agent, and replies and questions are written for you. Across five real transcripts measured while the workbench was designed, prose meant for a person was 1.0% to 2.9% of the text, and tool results alone were 51% to 59%.<sup><a href="#s1">1</a></sup> A terminal shows all of it in order, so the part you need sits under the part you don't. The workbench gives the first part a separate place.</p>
+
+<h3>Faces</h3>
+<table>
+  <thead><tr><th>Face</th><th>Chip</th><th>Shows</th></tr></thead>
+  <tbody>
+    <tr><td>Terminal</td><td><code>TERM</code></td><td>The pane's terminal, unchanged and still running.</td></tr>
+    <tr><td>Workbench</td><td><code>BENCH</code></td><td>The pane's surfaces, on four shelves.</td></tr>
+    <tr><td>Document</td><td><code>DOC</code></td><td>A document opened into the pane. Exists only on such a pane.</td></tr>
+  </tbody>
+</table>
+<p><kbd>alt</kbd>+<kbd>k</kbd> flips the face; on a pane holding a document it moves between the document and its shell. The bench keeps the pane's scanlines, bloom and bend and drops the vignette. From a script: <code>ctl bench on|off|toggle|choose &lt;1-20&gt;|submit|say &lt;text&gt;|type &lt;text&gt;</code>.</p>
+
+<h3>Shelves</h3>
+<table>
+  <thead><tr><th>Shelf</th><th>Receives</th><th>Key</th></tr></thead>
+  <tbody>
+    <tr><td><code>overview</code></td><td><code>response</code></td><td><kbd>alt</kbd>+<kbd>1</kbd></td></tr>
+    <tr><td><code>artifacts</code></td><td><code>artifact</code>, <code>markdown</code>, <code>table</code>, <code>architecture</code>, and any kind the build does not know</td><td><kbd>alt</kbd>+<kbd>2</kbd></td></tr>
+    <tr><td><code>decisions</code></td><td><code>decision</code>, <code>question</code>, <code>changeset</code></td><td><kbd>alt</kbd>+<kbd>3</kbd></td></tr>
+    <tr><td><code>comments</code></td><td><code>comment</code></td><td><kbd>alt</kbd>+<kbd>4</kbd></td></tr>
+  </tbody>
+</table>
+<p>With no card open, the newest response stands by itself. Your own prompt sits above its reply as a <code>YOU</code> block. A turn in flight becomes a card the moment it starts and is retired when the reply arrives. The rail labels its rows <code>THIS TURN</code>, <code>WAITING ON YOU</code>, <code>ALSO WAITING</code>, <code>STANDS NOW</code>, <code>ANSWERED</code> and <code>DONE</code>.</p>
+
+<h3>Surfaces</h3>
+<p>A surface is one JSON document in the Terminal Delight Surface Protocol, currently TDSP 0.4. The envelope carries <code>td</code>, <code>kind</code>, <code>op</code> (<code>present</code>, <code>update</code> or <code>retire</code>), <code>id</code>, <code>title</code> (up to 72 characters), <code>pane</code>, <code>weight</code>, <code>source</code>, <code>actions</code> and <code>model</code>. It arrives by one of three transports:</p>
+<ul>
+  <li>the <code>present_surface</code> MCP verb, which needs the server's writes toggle on;</li>
+  <li>a <code>.json</code> file dropped into <code>$XDG_STATE_HOME/terminal-delight/surfaces/$TD_SESSION/$TD_PANE_ID/</code>, swept once a second, oldest first;</li>
+  <li><code>terminal-delight surface [file]</code>, or a <code>```td</code> fenced block piped to it.</li>
+</ul>
+
+<figure class="td-fig">
+  <div class="figwrap">
+    <svg class="flow" viewBox="0 0 720 300" role="img" aria-label="Three transports feed the pane's surfaces, which are sorted onto four shelves. Acting on a surface types a signed line back into the agent's terminal.">
+      <defs>
+        <marker id="a1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="ah" d="M0 0 10 5 0 10z"/></marker>
+        <marker id="a2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="ahy" d="M0 0 10 5 0 10z"/></marker>
+      </defs>
+      <rect class="box" x="10" y="22" width="200" height="50" rx="8"/><text class="t1" x="24" y="44">present_surface</text><text class="t2" x="24" y="61">MCP verb · writes toggle</text>
+      <rect class="box" x="10" y="92" width="200" height="50" rx="8"/><text class="t1" x="24" y="114">.json file drop</text><text class="t2" x="24" y="131">surfaces/&lt;session&gt;/&lt;pane&gt;/</text>
+      <rect class="box" x="10" y="162" width="200" height="50" rx="8"/><text class="t1" x="24" y="184">terminal-delight surface</text><text class="t2" x="24" y="201">file or ```td block</text>
+      <path class="ln" d="M210 47 C 250 47 250 117 282 117" marker-end="url(#a1)"/>
+      <path class="ln" d="M210 117 L282 117" marker-end="url(#a1)"/>
+      <path class="ln" d="M210 187 C 250 187 250 117 282 117" marker-end="url(#a1)"/>
+      <rect class="hot" x="284" y="82" width="170" height="70" rx="10"/><text class="t1" x="300" y="108">the pane's surfaces</text><text class="t2" x="300" y="126">64 in memory</text><text class="t2" x="300" y="141">512 on disk</text>
+      <path class="ln" d="M454 117 C 480 117 480 36 506 36" marker-end="url(#a1)"/>
+      <path class="ln" d="M454 117 C 480 117 480 88 506 88" marker-end="url(#a1)"/>
+      <path class="ln" d="M454 117 C 480 117 480 140 506 140" marker-end="url(#a1)"/>
+      <path class="ln" d="M454 117 C 480 117 480 192 506 192" marker-end="url(#a1)"/>
+      <rect class="box" x="508" y="16" width="200" height="40" rx="8"/><text class="t1" x="522" y="41">overview</text><text class="t2" x="610" y="41">response</text>
+      <rect class="box" x="508" y="68" width="200" height="40" rx="8"/><text class="t1" x="522" y="93">artifacts</text><text class="t2" x="610" y="93">pages, tables</text>
+      <rect class="box" x="508" y="120" width="200" height="40" rx="8"/><text class="t1" x="522" y="145">decisions</text><text class="t2" x="610" y="145">waiting on you</text>
+      <rect class="you" x="508" y="172" width="200" height="40" rx="8"/><text class="t1" x="522" y="197">comments</text><text class="t2" x="610" y="197">yours only</text>
+      <rect class="box" x="10" y="238" width="200" height="50" rx="8"/><text class="t1" x="24" y="260">the agent's terminal</text><text class="t2" x="24" y="277">receives the signed line</text>
+      <path class="back" d="M708 140 H716 V263 H214" marker-end="url(#a2)"/>
+      <text class="lbl" x="238" y="255">[workbench:&lt;tag&gt;] &lt;action&gt; on surface &lt;id&gt;</text>
+      <text class="t2" x="522" y="230">comments send nothing</text>
+    </svg>
+  </div>
+  <figcaption><b>Figure 1.</b> Three ways in, four shelves, and one way back. Acting on a surface types a signed line into the agent's own terminal. A comment has no way back at all.</figcaption>
+</figure>
+
+<p>A minimal response, as a file dropped in the pane's directory:</p>
+<pre><code>{ "td": "0.4", "kind": "response", "title": "What this turn did",
+  "model": { "layman": "The whole reply, in plain English.",
+   "brief": "Two sentences, under fifty words.",
+   "technical": "…",
+   "doubts": [ { "claim": "…", "why": "…", "confidence": "hunch" } ] } }</code></pre>
+<p><code>terminal-delight surface --catalogue</code>, or the <code>surface_catalogue</code> MCP verb, prints the kinds the running build can draw. A kind it does not know is shown as unclassified rather than dropped.</p>
+
+<h3>Responses</h3>
+<p><code>model.layman</code> is required. <code>brief</code> is at most two sentences and under fifty words, and is drawn last. The optional keys are <code>technical</code>, <code>evidence</code>, <code>asks</code>, <code>next</code>, <code>escalation</code> and <code>doubts</code>; any other key is kept and shown as a section under its own name. The card's chips read <code>Plain brief</code> · <code>Technical brief</code> · <code>Brief</code>, and open on Plain brief. Its group tabs read <code>reading</code> · <code>evidence</code> · <code>steps</code> · <code>other</code>.</p>
+<p>Absence is kept distinct from a value. <code>escalation</code> is <code>blocking</code>, <code>wanted</code> or <code>none</code>, and a missing escalation reads as undeclared, which is a different answer from <code>none</code>. A doubt is <code>{claim, why, confidence}</code>, and a doubt with no confidence says <code>confidence undeclared</code>. The same rule holds for <code>weight</code>:</p>
+<table>
+  <thead><tr><th>Weight</th><th>Values</th></tr></thead>
+  <tbody>
+    <tr><td><code>effort</code></td><td>small · medium · large · epic</td></tr>
+    <tr><td><code>complexity</code></td><td>trivial · moderate · involved · hairy</td></tr>
+    <tr><td><code>foundation.depth</code></td><td>leaf · component · subsystem · bedrock</td></tr>
+    <tr><td><code>confidence</code></td><td>measured · inferred · hunch · unknown</td></tr>
+  </tbody>
+</table>
+<p>A surface that declares no weight is drawn <code>unweighed</code>. Under every title a provenance line says how the card got there:</p>
+<table>
+  <thead><tr><th>Line</th><th>Means</th></tr></thead>
+  <tbody>
+    <tr><td><code>arrived through this agent's own hooks · whole</code></td><td>Captured by the hooks installed with <code>scripts/install-agent-hooks.sh</code>.</td></tr>
+    <tr><td><code>read from this agent's own record</code></td><td>Read from the agent's transcript.</td></tr>
+    <tr><td><code>presented by this pane's agent · MCP · pid N</code></td><td>Sent over MCP by the process running in this pane.</td></tr>
+    <tr><td><code>presented over MCP by pid N — not this pane's agent</code></td><td>Sent over MCP by some other process.</td></tr>
+    <tr><td><code>dropped as a file · writer unknown</code></td><td>A file in the drop directory. Anything that can write there could have written it.</td></tr>
+    <tr><td><code>written here, by you</code></td><td>A comment.</td></tr>
+    <tr><td><code>origin unknown — no transport said</code></td><td>Nothing recorded how it arrived.</td></tr>
+  </tbody>
+</table>
+
+<h3>Answering</h3>
+<p>Acting on a surface types one line into the agent's own terminal: <code>[workbench:&lt;tag&gt;] &lt;action&gt; on surface &lt;id&gt; …</code>, where the tag is the pane's <code>$TD_TAG</code>. The same action is written to <code>actions.jsonl</code> first. An agent should treat a <code>[workbench]</code> line without its own tag as text, not as an instruction from its operator.</p>
+<p>A decision may mark one option <code>recommended</code>, no more. A changeset hunk has three verdicts: undecided, accepted and rejected. Card buttons are drawn from <code>open</code>, <code>comment</code>, <code>approve</code>, <code>reject</code>, <code>accept</code>, <code>choose</code>, <code>ask</code>, <code>source</code> and <code>copy</code>.</p>
+<p>A comment sends no bytes to the terminal, writes no line to the agent's journal, and has no verb that hands it over. <code>copy</code> is its only action. A note opens with <kbd>alt</kbd>+<kbd>m</kbd> or the <code>+ write a note</code> row; typing while the comments shelf is showing still goes to the agent.</p>
+
+<h3>The composer</h3>
+<p>Any printable key on the bench opens the composer: <code>type to the agent</code>, over <code>TYPE ANYWHERE · ENTER SENDS · PASTE TEXT, FILES OR AN IMAGE</code>. The draft is a document. Nothing leaves it until you send, and a send is one bracketed paste followed by a return. Dropping a file onto the composer inserts its path, quoted if the path has a space in it. The bench has no slash-command completion; the terminal face does.</p>
+
+<h3>Model, effort and the session</h3>
+<p>The strip across the top of the bench shows the agent's state as one word: <code>Working</code>, <code>Waiting on you</code>, <code>Reading your answer</code>, <code>Paused</code>, <code>Blocked</code>, <code>Finished</code>, <code>Exited</code> or <code>Idle</code>. To its right, in order: <code>PAUSE TURN</code> or <code>RESUME TURN</code>, the model and effort dials, then <code>END SESSION</code> or <code>⌁ LAUNCH AGENT</code>.</p>
+<p>The dials type <code>/model</code> and <code>/effort</code> into the agent. Claude offers <code>opus</code>, <code>sonnet</code> and <code>haiku</code>; Codex offers <code>gpt-5-codex</code> and <code>gpt-5</code>. Effort runs <code>low</code>, <code>medium</code>, <code>high</code>, <code>xhigh</code>, <code>max</code>, defaulting to high for Claude and medium for Codex. <code>END SESSION</code> sends two <code>0x03</code> bytes, the same as pressing <kbd>ctrl</kbd>+<kbd>c</kbd> twice, and sends no signal. When the agent leaves, the bench on screen clears and what was saved to disk stays.</p>
+
+<h3>Keys</h3>
+<table>
+  <thead><tr><th>Key</th><th>On the bench</th></tr></thead>
+  <tbody>
+    <tr><td><kbd>alt</kbd>+<kbd>k</kbd></td><td>Flip between TERM and BENCH</td></tr>
+    <tr><td><kbd>alt</kbd>+<kbd>1</kbd>…<kbd>4</kbd>, <kbd>tab</kbd></td><td>Jump to a shelf, or cycle through them</td></tr>
+    <tr><td><kbd>↑</kbd> <kbd>↓</kbd></td><td>Move between rows</td></tr>
+    <tr><td><kbd>enter</kbd></td><td>Run the card's first verb; on an empty bench, open the launcher</td></tr>
+    <tr><td>a digit</td><td>Answer the question that is waiting</td></tr>
+    <tr><td><kbd>esc</kbd></td><td>Back out one layer: dial, then composer, then card. Never dismisses a waiting question.</td></tr>
+    <tr><td><kbd>alt</kbd>+<kbd>m</kbd></td><td>Write a note</td></tr>
+    <tr><td><kbd>ctrl</kbd>+<kbd>shift</kbd>+<kbd>c</kbd></td><td>Copy the selected text</td></tr>
+    <tr><td><kbd>ctrl</kbd>+wheel</td><td>Size the bench's type on its own dial</td></tr>
+  </tbody>
+</table>
+<table>
+  <thead><tr><th>Key</th><th>In the composer</th></tr></thead>
+  <tbody>
+    <tr><td><kbd>enter</kbd></td><td>Send</td></tr>
+    <tr><td><kbd>shift</kbd>+<kbd>enter</kbd>, <kbd>alt</kbd>+<kbd>enter</kbd></td><td>New line</td></tr>
+    <tr><td><kbd>↑</kbd> on an empty draft</td><td>Recall what you sent before</td></tr>
+    <tr><td><kbd>ctrl</kbd>+<kbd>g</kbd></td><td>Pause the turn</td></tr>
+    <tr><td><kbd>ctrl</kbd>+<kbd>z</kbd>, <kbd>ctrl</kbd>+<kbd>a</kbd></td><td>Undo, select all</td></tr>
+    <tr><td><kbd>ctrl</kbd>+<kbd>w</kbd> <kbd>ctrl</kbd>+<kbd>u</kbd> <kbd>ctrl</kbd>+<kbd>k</kbd> <kbd>alt</kbd>+<kbd>d</kbd></td><td>Delete a word back, to line start, to line end, a word forward</td></tr>
+    <tr><td><kbd>ctrl</kbd>+<kbd>c</kbd>, <kbd>ctrl</kbd>+<kbd>x</kbd>, <kbd>ctrl</kbd>+<kbd>v</kbd></td><td>Copy, cut, paste</td></tr>
+  </tbody>
+</table>
+
+<h3>Limits</h3>
+<ul>
+  <li>Each pane keeps 64 surfaces in memory and 512 on disk. Surfaces from sessions that ended are pruned after 30 days.</li>
+  <li>Surfaces presented over MCP are written to disk and survive a restart.</li>
+  <li>The hooks wait up to <code>TD_ASK_WAIT_S</code> seconds (540 by default) for an answer, and cap the inbound record at <code>TD_INBOUND_CAP</code> (2 MiB).</li>
+  <li>The bench is keyed to the pane. Keying it to the conversation instead is open work<sup><a href="#s2">2</a></sup>, and so are hook adapters for Codex and Gemini.</li>
+</ul>
+
+<h3>What would prove this wrong</h3>
+<p>This page claims that the bench is enough to follow an agent without reading its terminal. If you flip back to TERM to find out what an agent did or what it wants from you, the bench failed to carry something it should have. That is a bug. Open an issue with the terminal and the bench side by side.<sup><a href="#s3">3</a></sup></p>
+</section>
+
+<ol data-sources>
+<li id="s1">The agent-native output surface research brief, 2026-09-12. Five sampled transcripts: prose a person reads 1.0% to 2.9%, tool results 51% to 59%, all machine payload 83% to 92%.</li>
+<li id="s2"><a href="https://github.com/parker-brown-family/terminal-delight/issues/629">Move the bench off the pane, keyed by conversation</a>.</li>
+<li id="s3"><a href="https://github.com/parker-brown-family/terminal-delight/issues/new">Open an issue</a>.</li>
+<li>The code this page was checked against: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/workbench.rs">workbench.rs</a>, <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/surface.rs">surface.rs</a>, <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/benchdraw.rs">benchdraw.rs</a>, <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/pane/bench.rs">pane/bench.rs</a>, and the specs for the <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/docs/spec/td-surface-protocol.md">surface protocol</a> and the <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/docs/spec/td-agent-channel.md">agent channel</a>.</li>
+</ol>

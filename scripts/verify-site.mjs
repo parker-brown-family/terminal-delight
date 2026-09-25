@@ -4,7 +4,10 @@
    against a running server. The kiosk family has its own verifier
    (verify-kiosks.mjs); this one covers what td-shell adds.
 
-     node scripts/verify-site.mjs http://127.0.0.1:8838 [shots-dir]
+     node scripts/verify-site.mjs <kiosk-base> <docs-base> [shots-dir]
+
+   Serve the repository root for the kiosk and docsite/dist for the docs, each
+   from a server that resolves /name to /name.html as Pages and Caddy do.
 
    The server must resolve /info to /info.html, as GitHub Pages does;
    `python3 -m http.server` does not, so use any server that does.
@@ -26,7 +29,9 @@ const pw = PW_CANDIDATES.find(existsSync);
 if (!pw) { console.error('No playwright install found. Looked in:\n  ' + PW_CANDIDATES.join('\n  ')); process.exit(2); }
 const { chromium } = createRequire(import.meta.url)(pw);
 const BASE = (process.argv[2] || 'http://127.0.0.1:8838').replace(/\/$/, '');
-const OUT = process.argv[3] || './site-shots';
+/* the docs are built by docsite/build.mjs and served from their own root */
+const DOCS = (process.argv[3] || 'http://127.0.0.1:8839').replace(/\/$/, '');
+const OUT = process.argv[4] || './site-shots';
 mkdirSync(OUT, { recursive: true });
 
 let pass = 0, fail = 0; const bad = [];
@@ -45,9 +50,9 @@ async function open(path, { w = 1440, h = 900, prefs = null } = {}) {
   page.on('response', r => { if (r.status() >= 400) errors.push(r.status() + ' ' + r.url()); });
   /* the fonts are self-hosted and the policy is 'self': nothing leaves */
   const offsite = [];
-  page.on('request', r => { const u = r.url(); if (!u.startsWith(BASE) && !/^(data|blob):/.test(u)) offsite.push(u); });
+  page.on('request', r => { const u = r.url(); if (!u.startsWith(BASE) && !u.startsWith(DOCS) && !/^(data|blob):/.test(u)) offsite.push(u); });
   if (prefs) await page.addInitScript(p => localStorage.setItem('td-shell', JSON.stringify(p)), prefs);
-  await page.goto(BASE + path, { waitUntil: 'load' });
+  await page.goto((/^https?:/.test(path) ? '' : BASE) + path, { waitUntil: 'load' });
   await page.waitForTimeout(700);
   return { ctx, page, errors, offsite };
 }
@@ -83,7 +88,7 @@ const overflow = page => page.evaluate(() => {
   return { doc: document.documentElement.scrollWidth - innerWidth, tube: t ? t.scrollWidth - t.clientWidth : 0 };
 });
 
-for (const [path, name] of [['/info', 'info'], ['/docsite/', 'docs-index'], ['/docsite/workbench.html', 'workbench'], ['/docsite/install', 'install']]) {
+for (const [path, name] of [['/info', 'info'], [DOCS + '/', 'docs-index'], [DOCS + '/workbench', 'workbench'], [DOCS + '/install', 'install']]) {
   for (const w of [1440, 968, 390]) {
     for (const prefs of [{ theme: 'glass', crt: 'on' }, { theme: 'paper', crt: 'off' }, { theme: 'paper', crt: 'on' }]) {
       const { ctx, page, errors, offsite } = await open(path, { w, h: w === 390 ? 844 : 900, prefs });
@@ -233,7 +238,7 @@ for (const [path, name] of [['/info', 'info'], ['/docsite/', 'docs-index'], ['/d
 
 // registers: deep link, radios, copy scoped to one register
 {
-  const { ctx, page } = await open('/docsite/workbench.html#story', { prefs: { theme: 'glass', crt: 'off' } });
+  const { ctx, page } = await open(DOCS + '/workbench#story', { prefs: { theme: 'glass', crt: 'off' } });
   const vis = () => page.evaluate(() => [...document.querySelectorAll('.reg-panel')].filter(p => p.offsetParent !== null).map(p => p.id));
   ok('deep link opens Story', JSON.stringify(await vis()) === '["story"]', JSON.stringify(await vis()));
   ok('every register is in the source', await page.evaluate(() => ['brief', 'story', 'technical'].every(id => document.getElementById(id))));
@@ -252,10 +257,23 @@ for (const [path, name] of [['/info', 'info'], ['/docsite/', 'docs-index'], ['/d
   ok('ctrl+k opens the search palette', await page.evaluate(() => !!document.querySelector('.td-pal.open')));
   await page.keyboard.type('bench');
   ok('palette finds Workbench', await page.evaluate(() => [...document.querySelectorAll('.td-pal li')].some(li => /Workbench/.test(li.textContent))));
+  /* Full text: a phrase that appears only in a table row of the Install
+     page's Technical register is found, and opening it lands in that
+     register at that heading. */
+  await page.fill('.td-pal input', 'bracketed paste');
+  await page.waitForTimeout(150);
+  const hit = await page.evaluate(() => { const li = document.querySelector('.td-pal li'); return li ? li.textContent : ''; });
+  ok('search finds body text, not only titles', /Workbench/.test(hit) && /bracketed paste/i.test(hit), hit.slice(0, 120));
+  await page.fill('.td-pal input', 'cargo install');
+  await page.waitForTimeout(150);
+  await Promise.all([page.waitForURL(/\/install#/, { timeout: 5000 }).catch(() => null), page.keyboard.press('Enter')]);
+  await page.waitForTimeout(500);
+  const landed = await page.evaluate(() => ({ url: location.pathname + location.hash, tech: document.getElementById('r-technical') && document.getElementById('r-technical').checked }));
+  ok('a search hit opens its page in the right register', /^\/install#technical/.test(landed.url) && landed.tech, JSON.stringify(landed));
   await ctx.close();
 }
 // one top bar everywhere: the same four sections, and Install where Download was
-for (const path of ['/info', '/docsite/', '/docsite/workbench.html', '/docsite/install']) {
+for (const path of ['/info', DOCS + '/', DOCS + '/workbench', DOCS + '/install']) {
   const { ctx, page } = await open(path, { prefs: { theme: 'glass', crt: 'off' } });
   const bar = await page.evaluate(() => ({
     sections: [...document.querySelectorAll('.td-sections a')].map(a => a.textContent.trim()),
@@ -272,7 +290,7 @@ for (const path of ['/info', '/docsite/', '/docsite/workbench.html', '/docsite/i
 
 // the install page: two registers, deep link to technical, command copy is commands only
 {
-  const { ctx, page } = await open('/docsite/install#technical', { prefs: { theme: 'glass', crt: 'off' } });
+  const { ctx, page } = await open(DOCS + '/install#technical', { prefs: { theme: 'glass', crt: 'off' } });
   const vis = () => page.evaluate(() => [...document.querySelectorAll('.reg-panel')].filter(p => p.offsetParent !== null).map(p => p.id));
   ok('install: deep link opens Technical', JSON.stringify(await vis()) === '["technical"]', JSON.stringify(await vis()));
   ok('install: two register tabs', await page.evaluate(() => document.querySelectorAll('.reg-tabs label').length === 2));
@@ -291,7 +309,7 @@ for (const path of ['/info', '/docsite/', '/docsite/workbench.html', '/docsite/i
 {
   const ctx = await browser.newContext({ viewport: { width: 1200, height: 900 }, javaScriptEnabled: false });
   const page = await ctx.newPage();
-  await page.goto(BASE + '/docsite/workbench.html', { waitUntil: 'load' });
+  await page.goto(DOCS + '/workbench', { waitUntil: 'load' });
   const v = await page.evaluate(() => 0);
   const shown = await page.$$eval('.reg-panel', ps => ps.filter(p => p.offsetParent !== null).map(p => p.id));
   ok('no JS: lands on Brief', JSON.stringify(shown) === '["brief"]', JSON.stringify(shown));
@@ -303,7 +321,7 @@ for (const path of ['/info', '/docsite/', '/docsite/workbench.html', '/docsite/i
 
 // photographs of specific states
 {
-  const { ctx, page } = await open('/docsite/workbench.html#story', { prefs: { theme: 'glass', crt: 'off' } });
+  const { ctx, page } = await open(DOCS + '/workbench#story', { prefs: { theme: 'glass', crt: 'off' } });
   await page.screenshot({ path: `${OUT}/workbench-story.png` });
   await page.click('label[for="r-technical"]');
   await page.evaluate(() => document.querySelector('.td-fig').scrollIntoView({ block: 'center' }));
