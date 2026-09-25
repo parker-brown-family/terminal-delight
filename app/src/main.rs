@@ -1239,26 +1239,28 @@ fn strip_chips(places: &[tree::Place], active: usize) -> Vec<StripChip> {
     }
 }
 
-/// The scope to hold once a task in `place` is activated under `scope`: the
-/// pin widened until it shows that task, except that it never widens INTO the
-/// whole session.
+/// Where a click on `branch` in the tree lands: the index of the tab to make
+/// active, or `None` when there is nothing to do.
 ///
-/// The shut strip carries your group's tabs under every scope but `All` (see
-/// `render_strip_head`), so a widening from one pin to another only changes
-/// which tree row is lit — and a widening into `All` is the one move here that
-/// changes the strip, to every tab in the session with no head over them.
-/// [`tree::Scope::widened_for`] makes exactly that move for a task with no
-/// project, so landing on a loose tab or a top-level group's tab while a
-/// project row happened to be lit put the whole session across the top, with
-/// no chip left to say `ALL` and take it back. The whole session has to be
-/// chosen — the UNFILED divider is the press that asks for it — so here the
-/// pin lapses to the resting scope instead.
-fn scope_after_activation(scope: tree::Scope, place: &tree::Place) -> tree::Scope {
-    match scope.widened_for(place) {
-        None => scope,
-        Some(tree::Scope::All) => tree::Scope::default(),
-        Some(wider) => wider,
+/// Nothing to do when the active tab is already in that branch — a click on the
+/// place you are standing moves you nowhere — or when the branch holds no tab.
+/// Otherwise the branch's first tab, in tab order, which is where the strip's
+/// chips send you too. A project counts every tab filed under it, grouped or
+/// loose, because a project row stands for the whole project. The UNFILED
+/// divider stands for the tabs filed nowhere.
+///
+/// `places` is [`Workspace::places`], which reads a grouped tab's project FROM
+/// ITS GROUP.
+fn branch_landing(places: &[tree::Place], active: usize, branch: BarBranch) -> Option<usize> {
+    let within = |p: &tree::Place| match branch {
+        BarBranch::Project(id) => p.project == Some(id),
+        BarBranch::Initiative(id) => p.initiative == Some(id),
+        BarBranch::Unfiled => p.project.is_none() && p.initiative.is_none(),
+    };
+    if places.get(active).is_some_and(within) {
+        return None;
     }
+    places.iter().position(within)
 }
 
 /// Which branch of the tree the rail is reading for.
@@ -2846,8 +2848,9 @@ impl From<SavedLevel> for attention::Priority {
     }
 }
 
-/// The persisted form of [`tree::Scope`]. Its own type so the state file is
-/// never coupled to the tree module's derives.
+/// The persisted form of the strip's old scope — a narrowing that no longer
+/// exists at runtime, since the strip became the active tab's own branch and
+/// branch pins were retired (#757).
 ///
 /// PARSED, NEVER WRITTEN, AND NEVER RESTORED, since the strip started opening
 /// on the branch it is standing in. A narrowing is a gesture that lasts as long
@@ -4221,8 +4224,6 @@ struct Workspace {
     /// width so the drag tracks the cursor exactly however far it travels
     /// outside the bar.
     bar_resize: Option<(f32, f32)>,
-    /// Which branch the MOTHER BAR is narrowed to. The tree never narrows.
-    scope: tree::Scope,
     /// Where the left bar's KEYBOARD cursor is (Ctrl+Alt+arrows), if it has
     /// been put anywhere this session.
     ///
@@ -5629,12 +5630,6 @@ impl Workspace {
             // default reading rather than the off one.
             slot_remaining: saved.slot_remaining.unwrap_or(SLOT_REMAINING_DEFAULT),
             bar_resize: None,
-            // A WINDOW OPENS ON THE BRANCH ITS ACTIVE TAB IS IN. The scope is
-            // not restored, and since 2026-09-18 it is not written either — see
-            // `SavedScope`, which is now a field the file may carry and this
-            // window ignores. `default` is the branch scope, the one that no
-            // state file, no delete and no rename can strand.
-            scope: tree::Scope::default(),
             bar_cursor: None,
             bar_scroll: ScrollHandle::new(),
             bar_rename: None,
@@ -6348,23 +6343,11 @@ impl Workspace {
         // the window is an activation like any other, so reveal it here rather
         // than leaving the first frame disagreeing with the file.
         self.reveal_active_branch();
-        // ...and the SCOPE is part of that activation, for the same reason.
-        //
-        // The saved field has claimed since it was written that it is "restored,
-        // then checked against the active tab", and nothing checked it: the
-        // check lives in `ensure_scope_shows`, which runs on every activation
-        // except the one that opens the window. It cost nothing while the strip
-        // ignored the scope; the moment the strip started obeying it, a window
-        // saved on a narrow branch reopened with its own active tab off the bar
-        // and, if that branch had since been emptied, with no tabs on the bar at
-        // all. That is what a restart looked like this afternoon.
-        //
-        // Nothing is restored into the scope any more, and the scope a window
-        // opens on follows the active tab, so this call finds nothing to
-        // correct. Kept because it is the promise the field's doc made, and
-        // because a pin is one click away on any branch row the moment the
-        // tree is open.
-        self.ensure_scope_shows(self.active);
+        // There is no scope to settle here any more: the strip is the active
+        // tab's own branch (`tree::family`), re-asked every frame, so a window
+        // opens on the branch it is standing in with nothing to restore or
+        // correct. Branch pins, the last thing that could leave it elsewhere,
+        // were retired in #757.
         self.focus_active(window, cx);
         // Write the layout down now, while what it says is true.
         //
@@ -10527,19 +10510,6 @@ impl Workspace {
         // Here, deliberately: this is where shells end.
         self.end_held(evicted, cx);
 
-        // A delete can strand a PINNED scope on a branch that no longer exists,
-        // and a strip scoped to nothing draws nothing. Back out to the unpinned
-        // scope, which is whatever branch the surviving active tab lands in —
-        // deleting one branch is no reason to put every other one on the strip.
-        let gone = match branch {
-            BarBranch::Project(id) => self.scope == tree::Scope::Project(id),
-            BarBranch::Initiative(id) => self.scope == tree::Scope::Initiative(id),
-            BarBranch::Unfiled => false,
-        };
-        if gone {
-            self.scope = tree::Scope::default();
-        }
-
         self.prune_groups();
         self.prune_projects();
         self.active = tree::active_after_removal(self.active, &doomed, self.tabs.len());
@@ -11938,9 +11908,8 @@ impl Workspace {
     /// overruled, for ever, with nothing on screen to say so.
     ///
     /// Moved here it keeps the promise that matters (activate a task and you
-    /// can see it) and lets a deliberate fold stand, which is the same shape as
-    /// `ensure_scope_shows` beside it in `activate_tab`: the window corrects
-    /// itself when you MOVE, never while you are looking at it.
+    /// can see it) and lets a deliberate fold stand: the window corrects itself
+    /// when you MOVE, never while you are looking at it.
     ///
     /// Called from the paths where a DIFFERENT tab becomes active — activation,
     /// a new tab, a click into a pane, and restore. Deliberately not from the
@@ -12141,34 +12110,22 @@ impl Workspace {
         cx.notify();
     }
 
-    /// Narrow the mother bar to a branch, or back out to everything.
+    /// A click on a branch row: go there.
     ///
-    /// Scoping away from the task you are in would leave the strip showing a
-    /// set that does not contain the active tab, so the scope only takes if it
-    /// still shows it — otherwise the active task moves to the branch you just
-    /// asked to look at. Choosing the second is deliberate: you asked to work
-    /// on that branch.
-    fn set_scope(&mut self, to: tree::Scope, window: &mut Window, cx: &mut Context<Self>) {
-        self.scope = to;
-        let places = self.places();
-        let home = places.get(self.active).copied().unwrap_or_default();
-        let active_shown = places
-            .get(self.active)
-            .map(|p| self.scope.shows(p, &home))
-            .unwrap_or(true);
-        if !active_shown {
-            if let Some(first) = places.iter().position(|p| self.scope.shows(p, &home)) {
-                self.activate_tab(first, window, cx);
-            } else {
-                // An empty branch cannot be worked in. Back out to the scope
-                // that cannot be empty — the one holding whatever tab you are
-                // on — rather than strand the strip with nothing on it, and
-                // rather than dump the whole session onto it as an apology.
-                self.scope = tree::Scope::default();
-            }
+    /// The same act as a press on one of the shut strip's chips — the branch's
+    /// first tab becomes the active one, and a click on the branch you are
+    /// already in changes nothing. It used to PIN the strip's scope to the
+    /// branch and light the row until clicked again; the shut strip stopped
+    /// obeying pins (it always carries your own group's tabs), so the light was
+    /// left claiming a narrowing nothing drew. Parker, on the choice between
+    /// giving pins a new meaning and retiring them: *"Concur — go ahead"* (#757).
+    /// Where you are is the tree's faint wash to say, and nothing else.
+    fn go_to_branch(&mut self, branch: BarBranch, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(i) = branch_landing(&self.places(), self.active, branch) {
+            self.activate_tab(i, window, cx);
+            self.save(cx);
+            cx.notify();
         }
-        self.save(cx);
-        cx.notify();
     }
 
     /// Where a new member of `place`'s branch lands: after the last tab already
@@ -12188,18 +12145,6 @@ impl Workspace {
 
     fn places(&self) -> Vec<tree::Place> {
         (0..self.tabs.len()).map(|i| self.place_of(i)).collect()
-    }
-
-    /// Widen the scope if it would hide task `i` — called on every activation,
-    /// wherever it came from (a click, ctrl+pgup, a ctl script, a notification
-    /// jump). The strip always contains the tab you are in.
-    ///
-    /// A no-op under the default scope, which follows the active tab instead of
-    /// being corrected after it: only a PIN can be left behind. Kept on every
-    /// activation path anyway, because a pin is one click away on any branch
-    /// row in the tree.
-    fn ensure_scope_shows(&mut self, i: usize) {
-        self.scope = scope_after_activation(self.scope, &self.place_of(i));
     }
 
     /// Commit an in-flight left-bar rename (project or initiative).
@@ -15672,11 +15617,9 @@ impl Workspace {
         if i < self.tabs.len() {
             self.active = i;
             // However this activation arrived — a tree click, ctrl+pgup, a ctl
-            // script, a jump from a notification — the strip must contain the
-            // tab it lands on. A narrowed mother bar that does not show the
-            // active tab is a window lying about where you are.
-            self.ensure_scope_shows(i);
-            // ...and the tree must be open down to it, for the same reason.
+            // script, a jump from a notification — the strip follows on its
+            // own: it is the active tab's branch, re-asked every frame. The tree
+            // must be open down to it, so a window never hides where you are.
             self.reveal_active_branch();
             // The keyboard cursor goes back to meaning "wherever you are": the
             // next Ctrl+Alt+↑/↓ re-enters the tree one row off THIS task
@@ -16969,25 +16912,24 @@ impl Workspace {
             if drag.engaged {
                 if let Some(drop) = drag.over {
                     if self.apply_bar_drop(drag.what, drop, cx) {
-                        // Filing a task out of the branch the strip is scoped to
-                        // would otherwise leave the active tab off the strip.
-                        self.ensure_scope_shows(self.active);
                         self.save(cx);
                     }
                 }
                 cx.notify();
                 return;
             }
-            // it never travelled: the press was a click on a branch row, and a
-            // click on a branch scopes the strip to it
+            // It never travelled: the press was a click on a branch row, and a
+            // click on a branch GOES there — see `go_to_branch`. It used to pin
+            // the strip's scope and light the row, and once the shut strip
+            // stopped obeying pins (it always carries your own group's tabs),
+            // the light claimed a narrowing nothing drew (#757).
             let to = match drag.what {
-                BarDragged::Initiative(gid) => Some(tree::Scope::Initiative(gid)),
-                BarDragged::Project(pid) => Some(tree::Scope::Project(pid)),
+                BarDragged::Initiative(gid) => Some(BarBranch::Initiative(gid)),
+                BarDragged::Project(pid) => Some(BarBranch::Project(pid)),
                 BarDragged::Task(_) => None,
             };
-            if let Some(to) = to {
-                let next = self.scope.toggled(to);
-                self.set_scope(next, window, cx);
+            if let Some(branch) = to {
+                self.go_to_branch(branch, window, cx);
                 return;
             }
         }
@@ -18688,11 +18630,6 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let sk = skin::skin(cx, s);
-        let scoped = match branch {
-            BarBranch::Project(id) => self.scope == tree::Scope::Project(id),
-            BarBranch::Initiative(id) => self.scope == tree::Scope::Initiative(id),
-            BarBranch::Unfiled => false,
-        };
         let key = match branch {
             BarBranch::Project(id) => 40_000 + id as usize,
             BarBranch::Initiative(id) => 50_000 + id as usize,
@@ -18762,26 +18699,22 @@ impl Workspace {
             .rounded(sk.radius())
             .cursor_pointer()
             .when(here, |d| d.bg(color.alpha(STANDING_WASH)))
-            // the pinned branch is lit. It no longer narrows the shut strip,
-            // which carries your group's tabs whatever is pinned (see
-            // `render_strip_head`): what a pin still does is move you into its
-            // branch when clicked and hold this light until clicked again —
-            // what it should mean now waits on the actions-row pass. Later
-            // than the wash, so a pin still reads as the louder fact.
-            .when(scoped, |d| {
-                d.bg(color.alpha(0.20)).border_l_2().border_color(th.accent)
-            })
+            // No pinned light any more. A branch row used to be lit while the
+            // strip was pinned to it, and once the shut strip stopped obeying
+            // pins the light claimed a narrowing nothing drew; a click now GOES
+            // to the branch instead (`go_to_branch`, #757), so the wash above
+            // is the one mark of where you are.
             .when(drop_hi, |d| d.bg(th.accent.alpha(0.28)));
-        // The keyboard ring goes on LAST of the three backgrounds — a row that
-        // is scoped, being dropped onto and under the cursor all at once still
-        // shows where the keyboard is, which is the only one of the three a
-        // person cannot otherwise locate.
+        // The keyboard ring goes on LAST of the backgrounds — a row that is
+        // washed, being dropped onto and under the cursor all at once still
+        // shows where the keyboard is, which is the only one a person cannot
+        // otherwise locate.
         self.bar_cursor_ring(row_id_kind, th, d)
             .hover(move |st| st.bg(color.alpha(0.12)))
             .children(caret)
             // The fold: its own target, wide enough to hit without aiming, so
-            // folding never scopes and scoping never folds. The triangle is
-            // drawn, not typed — see [`Self::triangle`].
+            // folding never navigates and navigating never folds. The triangle
+            // is drawn, not typed — see [`Self::triangle`].
             .child(
                 div()
                     .id(SharedString::from(format!("bar-fold-{key}")))
@@ -18825,19 +18758,9 @@ impl Workspace {
                     .text_size(px(CHROME_NAME_PT * s))
                     .when(is_project, |d| {
                         d.font_weight(gpui::FontWeight::EXTRA_BOLD)
-                            .text_color(if scoped {
-                                th.accent
-                            } else {
-                                th.text.alpha(0.9)
-                            })
+                            .text_color(th.text.alpha(0.9))
                     })
-                    .when(!is_project, |d| {
-                        d.text_color(if scoped {
-                            th.accent
-                        } else {
-                            th.text.alpha(0.82)
-                        })
-                    })
+                    .when(!is_project, |d| d.text_color(th.text.alpha(0.82)))
                     .child(label.clone()),
             )
             .children(self.branch_level_mark(branch, s))
@@ -18906,19 +18829,12 @@ impl Workspace {
                                 over_bay: false,
                             });
                         }
-                        None => {
-                            // UNFILED is a heading, not a branch — there is no
-                            // scope that means "the loose ones", so the press
-                            // asks for the whole session — the one press that
-                            // still does, now the scope chip has gone, and the
-                            // only way in (see `scope_after_activation`).
-                            // A real toggle since `toggled` started backing out
-                            // to the resting scope: before that it answered
-                            // `All` whatever it was given, so this row could
-                            // widen the strip and never bring it back.
-                            let next = ws.scope.toggled(tree::Scope::All);
-                            ws.set_scope(next, window, cx);
-                        }
+                        // UNFILED: nothing to drag, so the press goes straight
+                        // to the loose tabs, as any other branch press does
+                        // on release. It used to ask for the whole session on
+                        // the strip, and the whole session is no longer a
+                        // thing the strip can show (#757).
+                        None => ws.go_to_branch(branch, window, cx),
                     }
                 }),
             )
@@ -22168,10 +22084,6 @@ impl Workspace {
     /// a flat list of every tab in the project: the tabs are always your
     /// group's. What decides the chips is [`strip_chips`].
     fn render_strip_head(&self, scale: f32, cx: &mut Context<Self>) -> Option<gpui::Div> {
-        // The whole session has no one place to head it.
-        if self.scope == tree::Scope::All {
-            return None;
-        }
         let chips = strip_chips(&self.places(), self.active);
         if chips.is_empty() {
             return None;
@@ -24451,18 +24363,14 @@ impl Render for Workspace {
         //
         // The chip has gone, and the label is the strip's own head now — the
         // project, its groups as chips, yours lit (`render_strip_head`) — so
-        // the strip carries YOUR GROUP'S tabs and nothing wider, whatever a
-        // branch row in the tree was last pinned to. A pinned project used to
-        // put every tab in the project here, and Parker, shown exactly that:
-        // *"PROJECT > GROUPS ... > showing sibling tabs is proper"*. The one
-        // pin still honoured is the whole session, the deliberate "show me
-        // everything", which draws no head because it has no one place.
+        // the strip carries YOUR GROUP'S tabs and nothing wider. A pinned
+        // project used to put every tab in the project here, and Parker, shown
+        // exactly that: *"PROJECT > GROUPS ... > showing sibling tabs is
+        // proper"*. There is no pin left to put anything else here: a click on
+        // a branch row goes there instead (#757), so the strip is always
+        // `tree::family` of the active tab.
         let places = self.places();
-        let strip_scope = match self.scope {
-            tree::Scope::All => tree::Scope::All,
-            _ => tree::Scope::Branch,
-        };
-        let family = tree::shown(&places, strip_scope, self.active);
+        let family = tree::family(&places, self.active);
         // the caret marks a gap between visible tabs, not a tab index — see
         // [`tree::caret_gap`], which is where the non-contiguous case is argued
         let caret_at = drop_slot.map(|s| tree::caret_gap(&family, s));
@@ -29164,7 +29072,6 @@ impl Render for Workspace {
                                         Some(BarDragged::Task(t)) => ws.file_task(t, into),
                                         Some(BarDragged::Project(_)) | None => {}
                                     }
-                                    ws.ensure_scope_shows(ws.active);
                                     ws.save(cx);
                                     cx.notify();
                                 }),
@@ -30395,49 +30302,28 @@ mod tests {
             .join("\n")
     }
 
-    /// A window opens unpinned — on the branch its active tab is in — and never
-    /// on a bar that hides the tab it just activated.
+    /// A window has no scope to open on: the strip is always the active tab's
+    /// own branch, and nothing in a state file can say otherwise.
     ///
-    /// Both halves are about the same afternoon. The strip began obeying the
-    /// scope chip, and a restored scope — a value the file's own doc claimed
-    /// was "checked against the active tab" by code that did not exist — put a
-    /// window's active tab off its own bar. The narrowing is now a gesture that
-    /// lasts as long as the window, and the restore performs the check.
-    ///
-    /// The opening scope itself moved once more the same evening: `All` opened
-    /// every window with the whole session across the top, which is the strip
-    /// scoping exists to prevent. `Default` is the branch scope, so this asserts
-    /// the code takes the default rather than naming a variant — and a future
-    /// change of default is then a change to one line in `tree.rs`, with that
-    /// module's own test standing over it.
+    /// A restored scope once put a window's active tab off its own bar, and an
+    /// opening scope of `All` put the whole session across the top. Both were
+    /// states a window could be left in. With branch pins retired (#757) there
+    /// is no such state: the `SavedScope` a file may still carry is parsed and
+    /// dropped, never read back and never written.
     #[test]
-    fn a_window_opens_unpinned_and_the_strip_holds_the_tab_it_opens() {
+    fn a_window_has_no_scope_and_the_strip_is_the_active_tab_s_branch() {
         let src = shipped_code();
-
-        let at = src
-            .find("self.active = saved.active.min(")
-            .expect("the restore path");
-        let region = &src[at..(at + 700).min(src.len())];
         assert!(
-            region.contains("self.ensure_scope_shows(self.active)"),
-            "restore corrects a scope that would hide the tab it opens on"
-        );
-
-        assert!(
-            src.contains("scope: tree::Scope::default(),"),
-            "a restored window starts on the scope nothing can strand"
+            !src.contains("scope: tree::Scope"),
+            "the workspace holds no scope any more"
         );
         assert!(
-            !src.contains("scope: tree::Scope::All,"),
-            "and never opens pinned to the whole session"
+            src.contains("let family = tree::family(&places, self.active);"),
+            "the strip is the active tab's own branch, asked every frame"
         );
         assert!(
-            !src.contains("saved.scope.map(tree::Scope::from)"),
-            "and does not take the scope back out of the file"
-        );
-        assert!(
-            !src.contains("scope: Some(self.scope.into())"),
-            "…which means it must not be written there either"
+            !src.contains("saved.scope.map(") && !src.contains("scope: Some("),
+            "a saved scope is neither read back nor written"
         );
     }
 
@@ -32800,8 +32686,9 @@ mod tests {
         ] {
             assert!(!b.holds(loose), "a loose task stands in no branch: {b:?}");
         }
-        // Drawn from the same place the rest of the tree reads, faint, and
-        // under a pinned scope's highlight rather than over it.
+        // Drawn from the same place the rest of the tree reads, faint, and the
+        // only mark of where you are: the pinned light it used to sit under is
+        // gone with the pins (#757).
         let code = shipped_code();
         let row = {
             let at = code.find("    fn branch_row(").expect("branch_row");
@@ -32809,15 +32696,72 @@ mod tests {
             code[at..at + end].to_string()
         };
         assert!(
-            row.contains("branch.holds(self.place_of(self.active))"),
+            row.contains("branch.holds(self.place_of(self.active))") && row.contains(".when(here,"),
             "the wash is decided by where the active task actually is"
         );
-        let wash = row.find(".when(here,").expect("the wash");
-        let pin = row.find(".when(scoped,").expect("the pin's highlight");
-        assert!(wash < pin, "a pinned scope still reads as the louder fact");
+        assert!(
+            !row.contains("scoped") && !row.contains("border_l_2()"),
+            "no row wears a pinned light any more"
+        );
         assert!(
             STANDING_WASH < 0.12,
             "fainter than the hover, or it stops being a faint indicator"
+        );
+    }
+
+    /// A click on a branch row goes there — the strip's chips' act — and pins
+    /// nothing.
+    ///
+    /// A row click used to pin the strip's scope and light the row. Once the
+    /// shut strip stopped obeying pins, the light claimed a narrowing nothing
+    /// drew. Parker, on retiring pins rather than inventing a meaning for
+    /// them: *"Concur - go ahead"* (#757).
+    #[test]
+    fn a_branch_row_click_goes_there_and_pins_nothing() {
+        let at = |project: Option<u32>, initiative: Option<u32>| tree::Place {
+            project,
+            initiative,
+        };
+        let places = [
+            at(Some(12), Some(11)), // 0
+            at(Some(12), None),     // 1
+            at(Some(12), Some(13)), // 2
+            at(Some(7), None),      // 3
+            at(None, None),         // 4
+        ];
+        // Somewhere else: the branch's first tab, in tab order.
+        assert_eq!(
+            branch_landing(&places, 3, BarBranch::Initiative(13)),
+            Some(2)
+        );
+        assert_eq!(branch_landing(&places, 3, BarBranch::Project(12)), Some(0));
+        assert_eq!(branch_landing(&places, 0, BarBranch::Project(7)), Some(3));
+        assert_eq!(branch_landing(&places, 0, BarBranch::Unfiled), Some(4));
+        // Already there: nothing to do — a click on where you stand moves
+        // nothing, grouped or loose, project or group.
+        assert_eq!(branch_landing(&places, 2, BarBranch::Initiative(13)), None);
+        assert_eq!(branch_landing(&places, 1, BarBranch::Project(12)), None);
+        assert_eq!(branch_landing(&places, 2, BarBranch::Project(12)), None);
+        assert_eq!(branch_landing(&places, 4, BarBranch::Unfiled), None);
+        // A branch with no tab has nowhere to go.
+        assert_eq!(branch_landing(&places, 0, BarBranch::Initiative(99)), None);
+
+        // And the click paths really go, rather than pin.
+        let code = shipped_code();
+        let up = body_of(&code, "fn on_mouse_up");
+        assert!(
+            up.contains("self.go_to_branch(branch, window, cx);"),
+            "a branch row released without a drag goes to its branch"
+        );
+        assert!(
+            !code.contains("fn set_scope(") && !code.contains(".toggled("),
+            "nothing sets or toggles a pin any more"
+        );
+        let go = body_of(&code, "fn go_to_branch");
+        assert!(
+            go.contains("branch_landing(&self.places(), self.active, branch)")
+                && go.contains("self.activate_tab(i, window, cx);"),
+            "going to a branch is activating its landing tab, nothing more"
         );
     }
 
@@ -32867,66 +32811,6 @@ mod tests {
         for id in ["bar-fold-all", "bar-new-project", "bar-hide"] {
             assert!(bar.contains(id), "the actions row lost {id}");
         }
-    }
-
-    /// Landing on a tab with no project while a branch row is pinned lets the
-    /// pin lapse; it never drops the strip into the whole session.
-    ///
-    /// `widened_for` answers `All` for a task with no project, and `All` is the
-    /// one scope the shut strip still obeys — every tab in the session and no
-    /// head. With the `ALL` chip gone, nothing would have said so or taken it
-    /// back. Pinning the TERMINAL DELIGHT row and then opening a task in a
-    /// top-level group like BFS was the whole recipe.
-    #[test]
-    fn landing_on_a_tab_with_no_project_under_a_pin_never_widens_to_the_whole_session() {
-        use tree::{Place, Scope};
-        let loose = Place::default();
-        let top_level_group = Place {
-            project: None,
-            initiative: Some(40),
-        };
-        for pin in [Scope::Project(12), Scope::Initiative(11)] {
-            for place in [loose, top_level_group] {
-                let after = scope_after_activation(pin, &place);
-                assert_ne!(after, Scope::All, "{pin:?} landing on {place:?}");
-                assert_eq!(after, Scope::default(), "the pin lapses to rest");
-            }
-        }
-        // Everything else is what `widened_for` already said.
-        let elsewhere = Place {
-            project: Some(13),
-            initiative: Some(2),
-        };
-        assert_eq!(
-            scope_after_activation(Scope::Initiative(11), &elsewhere),
-            Scope::Project(13),
-            "a pin still widens to the project it landed in"
-        );
-        assert_eq!(
-            scope_after_activation(Scope::Project(13), &elsewhere),
-            Scope::Project(13),
-            "a pin that shows the task holds"
-        );
-        assert_eq!(
-            scope_after_activation(Scope::All, &loose),
-            Scope::All,
-            "the whole session, once chosen, holds"
-        );
-        assert_eq!(
-            scope_after_activation(Scope::Branch, &loose),
-            Scope::Branch,
-            "the resting scope follows and never widens"
-        );
-        // And it is what every activation path runs.
-        let code = shipped_code();
-        let at = code
-            .find("    fn ensure_scope_shows(")
-            .expect("ensure_scope_shows");
-        let end = code[at..].find("\n    }\n").expect("end of fn");
-        assert!(
-            code[at..at + end].contains("scope_after_activation(self.scope,"),
-            "activation must ask scope_after_activation, not widened_for directly"
-        );
     }
 
     /// With the tree shut, the strip reads project › groups › your group's
@@ -33029,11 +32913,9 @@ mod tests {
             "the head is drawn in the shut-tree strip, where no tree says where \
              the tabs live"
         );
-        // Your group's tabs, whatever a branch row was last pinned to — only
-        // the whole session widens it.
+        // Your group's tabs, always: there is no pin left to widen them.
         assert!(
-            strip.contains("_ => tree::Scope::Branch,")
-                && strip.contains("tree::shown(&places, strip_scope, self.active)"),
+            strip.contains("tree::family(&places, self.active)"),
             "the strip carries your group's tabs, never a pinned project's"
         );
         // Chips, not tabs: no bezel, and a press goes to the branch rather than
