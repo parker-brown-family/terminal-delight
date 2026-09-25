@@ -111,4 +111,29 @@ and `encode.sh` for the web files. In outline:
 - [x] References, homepage copy, player, build step
 - [x] Film kit, sixteen takes filmed, two re-filmed on a quieter machine
 - [x] Aligned, encoded, the player verified in a browser
-- [ ] Merge and deploy, after the core swap lands
+- [x] Merged (`96c7d12`) and deployed after the core swap landed; the series
+  published on parker.brownfamilysports.com (parkerbrown-dev main `c91ed2a`).
+  The reel's browser check passes 9 of 9 against the live site.
+
+## Retrospective
+
+**Post-hoc difficulty: 7 / 10, as scored.** The coupling cost what the score
+predicted: every public step waited on another session's review and merge of the
+swap, and the review changed facts the series had already stated, which cost two
+rounds of corrections to Part 5.
+
+What went wrong that was not code:
+
+- Two outer takes were filmed while an encode test ran on the same machine, and
+  their dropped frames doubled; both were re-filmed.
+- A probe window stayed up on the hidden workspace, mock agents running, for
+  about ninety minutes, and one early take sent a real desktop notification
+  before the rig stubbed `notify-send`.
+- The public copy went out before the house slop pass. Run afterwards, it caught
+  a comparison with no scale on this homepage and an undefined term in Part 5.
+- The first plan for publishing the series was a deploy from a clean checkout,
+  which would have reverted the live Offerings page, built from uncommitted work
+  (parkerbrown-dev issue 24). Comparing the build with the live site, page by
+  page, caught it before anything shipped.
+- The reel was filmed on the build before the swap's review. Nothing it shows
+  changed in review; a re-film from main is about twenty minutes with the kit.
