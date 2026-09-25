@@ -783,13 +783,18 @@ impl DocumentView {
         }
     }
 
-    /// Show a heading as soon as the document has been laid out: a link that
-    /// named one in another file opens that file there.
+    /// Show what a fragment names as soon as the document has been laid out:
+    /// a link that named a heading in another file, or an element of a
+    /// brief, opens that file there.
     pub fn show_fragment(&mut self, fragment: String, cx: &mut Context<Self>) {
         let view_h = self.view_h();
-        if let Backend::Markdown(md) = &mut self.backend {
-            md.go_to_fragment(fragment, view_h);
-            cx.notify();
+        match &mut self.backend {
+            Backend::Markdown(md) => {
+                md.go_to_fragment(fragment, view_h);
+                cx.notify();
+            }
+            Backend::Page(page) => page.show_fragment(fragment, cx),
+            Backend::Image(_) => {}
         }
     }
 
@@ -1168,6 +1173,21 @@ mod tests {
             disk.contains("fs::rename(") && disk.contains("create_new(true)"),
             "the commit writes a new file and renames it into place"
         );
+    }
+
+    /// A link from another document hands its fragment to whichever kind of
+    /// document can land on one. A brief was once left out, and a link into
+    /// its middle opened it at the top (issue 734).
+    #[test]
+    fn a_fragment_reaches_every_document_that_can_land_on_one() {
+        let (_, src) = &view_sources()[0];
+        let show = src
+            .split("pub fn show_fragment(")
+            .nth(1)
+            .expect("DocumentView::show_fragment");
+        let show = show.split("\n    }\n").next().unwrap_or(show);
+        assert!(show.contains("md.go_to_fragment("), "{show}");
+        assert!(show.contains("page.show_fragment("), "{show}");
     }
 
     /// However a square ends, dropping its view gives the texture back: the

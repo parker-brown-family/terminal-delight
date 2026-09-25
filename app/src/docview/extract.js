@@ -77,6 +77,29 @@
     return location.href.split('#')[0];
   }
 
+  /* The element a fragment names, found the way a browser finds it: the
+     first element with that id, else the first <a> with that name. */
+  function named(id) {
+    var t = document.getElementById(id);
+    if (t) return t;
+    var byName = document.getElementsByName(id);
+    for (var i = 0; i < byName.length; i++) {
+      if (byName[i].tagName === 'A') return byName[i];
+    }
+    return null;
+  }
+
+  /* Where the element a fragment names starts, or null when it names
+     nothing that is laid out. A fragment of "top" naming nothing is the top
+     of the page, as it is in a browser. */
+  function topOf(id, dy) {
+    var t = named(id);
+    if (!t) return id.toLowerCase() === 'top' ? 0 : null;
+    var r = t.getBoundingClientRect();
+    if (!r.width && !r.height) return null;
+    return r.y + dy;
+  }
+
   /* Where a same-page fragment's target starts, or null when it names nothing. */
   function fragmentTop(a, dy) {
     var url = a.href;
@@ -85,11 +108,23 @@
     var id = url.slice(hash + 1);
     try { id = decodeURIComponent(id); } catch (e) { /* keep it as written */ }
     if (!id) return 0;
-    var t = document.getElementById(id) || document.getElementsByName(id)[0];
-    if (!t) return null;
-    var r = t.getBoundingClientRect();
-    if (!r.width && !r.height) return null;
-    return r.y + dy;
+    return topOf(id, dy);
+  }
+
+  /* Every name a fragment arriving from another document can use, each id
+     and each <a name>, once, with where the element it picks starts: the
+     same lookup a link on the page itself gets. */
+  function targetsIn(dy) {
+    var seen = Object.create(null);
+    var out = [];
+    Array.prototype.forEach.call(document.querySelectorAll('[id], a[name]'), function (el) {
+      [el.id, el.tagName === 'A' ? el.getAttribute('name') : ''].forEach(function (id) {
+        if (!id || seen[id]) return;
+        seen[id] = true;
+        out.push({ id: id, top: topOf(id, dy) });
+      });
+    });
+    return out;
   }
 
   function linksIn(root, dx, dy) {
@@ -171,6 +206,7 @@
         },
         anchors: anchorsIn(document, dx, dy),
         links: linksIn(document, dx, dy).filter(function (l) { return !l.dialog; }),
+        targets: targetsIn(dy),
         openers: openers.filter(function (o) { return !o.inside; }),
         dialogs: dialogs,
         diagnostics: diagnostics

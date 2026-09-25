@@ -50,7 +50,7 @@ use serde_json::{json, Value};
 use super::cdp::{self, Cdp, CdpError, SessionId};
 use super::engine::{
     layout_hash, png_size, Anchor, Band, DialogRender, EngineError, Geometry, Link,
-    NotesCapability, Opener, PageEngine, PageId, PageLayout, PageRequest, RectCss, Tile,
+    NotesCapability, Opener, PageEngine, PageId, PageLayout, PageRequest, RectCss, Target, Tile,
     Unavailable,
 };
 use super::pref;
@@ -60,7 +60,9 @@ pub const EXTRACT_JS: &str = include_str!("extract.js");
 /// 2: the rule an anchor with notes carries is left out of the picture.
 /// 3: each anchor says whether the page shows a note and a stamp on it.
 /// 4: concurs are supported only where a script makes concur zones.
-pub const EXTRACT_VERSION: u32 = 4;
+/// 5: every id and `<a name>` says where it starts, for a fragment that
+///    arrives from another document.
+pub const EXTRACT_VERSION: u32 = 5;
 /// With no call for this long, the browser is closed.
 pub const IDLE_SHUTDOWN: Duration = Duration::from_secs(300);
 /// The names looked for on PATH, in order.
@@ -181,6 +183,7 @@ struct Extracted {
     capability: NotesCapability,
     anchors: Vec<Anchor>,
     links: Vec<Link>,
+    targets: Vec<Target>,
     openers: Vec<Opener>,
     dialogs: Vec<String>,
     diagnostics: Vec<String>,
@@ -903,6 +906,7 @@ impl PageEngine for SnapshotEngine {
                 capability: got.capability,
                 anchors: got.anchors,
                 links: got.links,
+                targets: Some(got.targets),
                 openers: got.openers,
                 dialogs: got.dialogs,
                 diagnostics: got.diagnostics,

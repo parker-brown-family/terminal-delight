@@ -295,6 +295,7 @@ mod tests {
             },
             anchors: vec![],
             links: vec![],
+            targets: None,
             openers: vec![],
             dialogs: vec!["d-one".into()],
             diagnostics: vec![],
