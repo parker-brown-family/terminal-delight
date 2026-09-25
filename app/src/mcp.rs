@@ -2068,7 +2068,7 @@ mod tests {
             read_secs_ago: 3,
             took_ms: 900,
             main: Some("main".into()),
-            badge: vec!["2 WT".into(), "1 SHARED".into()],
+            badge: vec!["2 WORKTREES".into(), "1 SHARED".into()],
             sentence: Some("2 lines of work, one shared".into()),
             repos: vec![],
             checkouts: vec![CheckoutReport {
@@ -2119,7 +2119,7 @@ mod tests {
         let out = engineering_state(&s);
         let text = out["content"][0]["text"].as_str().unwrap();
         assert!(
-            text.starts_with("TERMINAL DELIGHT (active)  [2 WT \u{00b7} 1 SHARED]"),
+            text.starts_with("TERMINAL DELIGHT (active)  [2 WORKTREES \u{00b7} 1 SHARED]"),
             "the active project leads: {text}"
         );
         assert!(text.contains(
