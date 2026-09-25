@@ -45,9 +45,13 @@ fn ends_a_command(byte: u8) -> bool {
     matches!(byte, ESC | BEL | CAN | SUB)
 }
 
-/// The largest picture read, rio-vt's own cap (`MAX_SIZE` in its Kitty
-/// graphics reader).
-const MAX_PICTURE: u64 = 400 * 1024 * 1024;
+/// The largest picture rewritten for the window. rio-vt reads up to 400 MB
+/// itself, but the host holds a rewritten picture whole, and several times over
+/// — the bytes, their base64, the command carrying it — and a slow window's
+/// queue counts chunks, not bytes, so it can hold several such commands. 64 MiB
+/// is a very large picture, and bounds that. A larger one is sent as it came,
+/// for the window's core to fail to read, as it did before this rewrite.
+const MAX_PICTURE: u64 = 64 * 1024 * 1024;
 
 /// A command's control data is a handful of `key=value` pairs; one longer
 /// than this is not something to hold back waiting for.
