@@ -52,6 +52,13 @@ fn point_on_float(
     crate::docopen::clamp_float(rect, w, h).contains(fx - x, fy - y)
 }
 
+/// Which part of a floating square a pointer is on, as the bent glass shows
+/// it, and the flat point it un-bent to.
+///
+/// The zones the square recorded as it painted decide: a strip button, the
+/// strip, or the body. A pointer inside the square that finds no zone — the
+/// one frame between opening it and its first paint — is still the square's,
+/// and lands on its body, so a press there never starts a selection behind it.
 fn float_hit_through_glass(
     screen: (f32, f32, f32, f32),
     k: (f32, f32),

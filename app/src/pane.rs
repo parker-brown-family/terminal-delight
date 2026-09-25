@@ -1146,13 +1146,6 @@ fn maybe_mode_theme(base: &Theme, mode: &PaneMode, inherit: bool, tint: bool) ->
     }
 }
 
-/// Which part of a floating square a pointer is on, as the bent glass shows
-/// it, and the flat point it un-bent to.
-///
-/// The zones the square recorded as it painted decide: a strip button, the
-/// strip, or the body. A pointer inside the square that finds no zone — the
-/// one frame between opening it and its first paint — is still the square's,
-/// and lands on its body, so a press there never starts a selection behind it.
 /// The faces a floating document square is drawn over, hit-tested on, and
 /// closed from with Escape: the terminal and the bench. Not the document face,
 /// which is already a document filling the pane.
