@@ -192,6 +192,9 @@ pub struct Up {
     pub bench: bool,
     /// A document is floating over the terminal face.
     pub float: bool,
+    /// The floating document has a note being written in it: a caret, which
+    /// takes every key the chords above it leave, like a sticky note's.
+    pub float_caret: bool,
     /// The pane is showing its DOCUMENT face.
     pub document: bool,
 }
@@ -217,7 +220,9 @@ const LADDER: [Rung; 13] = [
     (Layer::PaneChord, pane_chord),
     (Layer::Sticky, |_, u| u.sticky),
     (Layer::Rename, |_, u| u.rename),
-    (Layer::Float, |k, u| u.float && k.key == "escape"),
+    (Layer::Float, |k, u| {
+        u.float && (u.float_caret || k.key == "escape")
+    }),
     (Layer::Document, |_, u| u.document),
     (Layer::Bench, |_, u| u.bench),
 ];
@@ -487,7 +492,7 @@ mod tests {
             named("left"),
             named("enter"),
         ];
-        for bits in 0u16..1024 {
+        for bits in 0u16..2048 {
             let up = Up {
                 paint: bits & 1 != 0,
                 ctx_menu: bits & 2 != 0,
@@ -499,6 +504,7 @@ mod tests {
                 bench: bits & 128 != 0,
                 float: bits & 256 != 0,
                 document: bits & 512 != 0,
+                float_caret: bits & 1024 != 0,
             };
             for k in &keys {
                 let want = LADDER
@@ -583,6 +589,33 @@ mod tests {
         assert_eq!(route(&ch("a"), &floating()), Layer::Terminal);
         assert_eq!(route(&ctrl("c"), &floating()), Layer::Terminal);
         assert_eq!(route(&named("enter"), &floating()), Layer::Terminal);
+    }
+
+    /// A note being written in a brief floating over the terminal is a caret:
+    /// every letter, Enter and ctrl+c go to it and not to the shell under the
+    /// square, while the window's and the pane's chords still work.
+    #[test]
+    fn a_note_being_written_in_a_float_takes_every_key_but_the_chords() {
+        let mut up = floating();
+        up.float_caret = true;
+        for k in [
+            ch("a"),
+            named("enter"),
+            ctrl("c"),
+            named("backspace"),
+            named("escape"),
+        ] {
+            assert_eq!(route(&k, &up), Layer::Float, "{k:?}");
+        }
+        assert_eq!(route(&alt("w"), &up), Layer::Window);
+        assert_eq!(route(&ctrl("w"), &up), Layer::PaneChord);
+        assert_eq!(route(&alt("k"), &up), Layer::Face);
+        // With no float the caret claims nothing: it is the float's.
+        let stray = Up {
+            float_caret: true,
+            ..Up::default()
+        };
+        assert_eq!(route(&ch("a"), &stray), Layer::Terminal);
     }
 
     /// A caret somewhere else on the pane keeps its own Escape: a note being
@@ -1029,6 +1062,7 @@ mod tests {
             bench: true,
             float: true,
             document: true,
+            float_caret: true,
         };
         assert_eq!(route(&named("f1"), &everything), Layer::Help);
     }

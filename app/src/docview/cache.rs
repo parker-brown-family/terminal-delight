@@ -205,6 +205,15 @@ fn size_of(dir: &Path) -> u64 {
         .sum()
 }
 
+/// Take one render out of the cache: its layout no longer describes the
+/// file it is keyed by. Absent afterwards, never partial.
+pub fn forget(root: &Path, key: CacheKey) -> io::Result<()> {
+    match std::fs::remove_dir_all(key.dir(root)) {
+        Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e),
+        _ => Ok(()),
+    }
+}
+
 /// Remove renders, least recently used first, until the rest fit in `cap`
 /// bytes; and any `.partial` left by a write that never finished, once it is
 /// an hour old. Answers how many bytes went.

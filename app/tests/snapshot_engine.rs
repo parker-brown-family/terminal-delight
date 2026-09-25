@@ -919,3 +919,331 @@ fn a_file_that_changed_since_it_was_read_is_not_rendered_as_if_it_had_not() {
     rig.open(&brief, NARROW).expect("read fresh, it renders");
     rig.done();
 }
+
+// ── notes, written ───────────────────────────────────────────────────────────
+
+/// A case's edits, as TD's writer takes them.
+fn case_edits(case: &Path) -> Vec<notes::NoteEdit> {
+    let v: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(case.join("edits.json")).unwrap()).unwrap();
+    let s = |e: &serde_json::Value, k: &str| e[k].as_str().map(str::to_string);
+    v["edits"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| {
+            let nid = s(e, "nid").unwrap();
+            match e["op"].as_str().unwrap() {
+                "add" => notes::NoteEdit::Add {
+                    nid,
+                    title: s(e, "title").unwrap(),
+                    text: s(e, "text").unwrap(),
+                    ts: s(e, "ts").unwrap(),
+                },
+                "delete" => notes::NoteEdit::Delete {
+                    nid,
+                    text: s(e, "text").unwrap(),
+                    ts: s(e, "ts"),
+                },
+                "concur" => notes::NoteEdit::Concur {
+                    nid,
+                    ts: s(e, "ts").unwrap(),
+                },
+                _ => notes::NoteEdit::Unconcur { nid },
+            }
+        })
+        .collect()
+}
+
+/// The anchors whose place differs between two layouts of one page by more
+/// than half a CSS pixel, or that one of them lacks.
+fn moved(before: &PageLayout, after: &PageLayout) -> Vec<String> {
+    let close =
+        |a: Option<docview::engine::RectCss>, b: Option<docview::engine::RectCss>| match (a, b) {
+            (None, None) => true,
+            (Some(a), Some(b)) => {
+                (a.x - b.x).abs() <= 0.5
+                    && (a.y - b.y).abs() <= 0.5
+                    && (a.w - b.w).abs() <= 0.5
+                    && (a.h - b.h).abs() <= 0.5
+            }
+            _ => false,
+        };
+    let mut out: Vec<String> = before
+        .anchors
+        .iter()
+        .filter(|a| {
+            !after.anchors.iter().any(|b| {
+                b.nid == a.nid
+                    && close(a.rect, b.rect)
+                    && close(a.button, b.button)
+                    && close(a.concur_zone, b.concur_zone)
+            })
+        })
+        .map(|a| a.nid.clone())
+        .collect();
+    out.extend(
+        after
+            .anchors
+            .iter()
+            .filter(|b| !before.anchors.iter().any(|a| a.nid == b.nid))
+            .map(|b| b.nid.clone()),
+    );
+    if (before.height_css - after.height_css).abs() > 0.5 {
+        out.push(format!(
+            "(height {} -> {})",
+            before.height_css, after.height_css
+        ));
+    }
+    out
+}
+
+/// TD writes each case's edits into a copy of its brief with the whole
+/// commit — backup, temporary file, rename, bytes read back — then the
+/// engine opens the written file fresh, and the brief's own notes.js shows a
+/// note on exactly the anchors written and a stamp on exactly the decisions
+/// concurred. And not one anchor moved: the page lays out the same with the
+/// notes as without them.
+#[test]
+fn a_saved_note_is_read_back_as_written_and_moves_no_anchor() {
+    let Some(mut rig) = Rig::new("write-back", Html::default(), Duration::from_secs(300)) else {
+        return;
+    };
+    let mut checked = 0;
+    for (name, case) in shared_cases() {
+        let expect = case_expect(&case);
+        if expect["refuse"].is_string() {
+            continue;
+        }
+        let dir = scratch(&format!("write-{name}"));
+        let brief = dir.join("brief.html");
+        std::fs::copy(case.join("brief.html"), &brief).unwrap();
+        let before = rig.open(&brief, NARROW).unwrap();
+        if let Some(p) = before.page {
+            rig.engine.close(p);
+        }
+        let bytes = std::fs::read(&brief).unwrap();
+        let pairs: Vec<(&str, &str)> = before
+            .anchors
+            .iter()
+            .map(|a| (a.nid.as_str(), a.title.as_str()))
+            .collect();
+        let rev = notes::iso_millis(std::time::SystemTime::now());
+        let plan = notes::plan_write(
+            &bytes,
+            &case_edits(&case),
+            &notes::WriteArgs {
+                anchors: &pairs,
+                label: before.notes_file.as_deref().unwrap(),
+                concurs: before.capability.concur == ConcurSupport::Supported,
+                rev: &rev,
+                path: &brief,
+            },
+        )
+        .unwrap_or_else(|r| panic!("{name}: {}", r.sentence()));
+        notes::verify(&bytes, &plan).unwrap();
+        let backups = notes::Backups {
+            dir: dir.join("state/brief-backups/x"),
+            keep: notes::KEEP_BACKUPS,
+        };
+        let written = notes::commit(&brief, &bytes, &plan, &backups).unwrap();
+        assert_eq!(std::fs::read(&written.backup).unwrap(), bytes);
+        let back = rig.engine.read_back(&brief, NARROW).unwrap();
+        rig.record();
+        notes::confirm(&plan, &back.anchors)
+            .unwrap_or_else(|why| panic!("{name}: the written file shows otherwise: {why}"));
+        assert_eq!(
+            moved(&before, &back),
+            Vec::<String>::new(),
+            "{name}: a saved note moved an anchor"
+        );
+        assert_eq!(
+            back.rendered, before.rendered,
+            "{name}: the layout's hash kept"
+        );
+        checked += 1;
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+    assert_eq!(checked, 11);
+    rig.done();
+}
+
+/// Least-confident decision 2, measured on Parker's own briefs: a COPY of
+/// every brief in the report archive gets a note on its first anchor (and a
+/// stamp on its first decision, where it takes one), written by TD's whole
+/// commit; the copy is read back through the engine, and every anchor is
+/// compared with the render of the copy before the note. The originals are
+/// only ever read.
+///
+/// Ignored in the ordinary run: it reads folders only this machine has.
+/// `TD_ARCHIVE` names them, colon-separated; unset, the two report folders.
+///
+///   cargo test --test snapshot_engine -- --ignored --nocapture archive
+#[test]
+#[ignore]
+fn a_saved_note_moves_no_anchor_across_the_report_archive() {
+    let Some(mut rig) = Rig::new("archive", Html::default(), Duration::from_secs(600)) else {
+        return;
+    };
+    let home = std::env::var("HOME").unwrap();
+    let dirs = std::env::var("TD_ARCHIVE")
+        .unwrap_or_else(|_| format!("{home}/Work/terminal-delight/reports:{home}/Work/reports"));
+    let mut briefs: Vec<PathBuf> = dirs
+        .split(':')
+        .filter_map(|d| std::fs::read_dir(d).ok())
+        .flat_map(|r| r.flatten().map(|e| e.path()))
+        .filter(|p| p.extension().is_some_and(|e| e == "html"))
+        .collect();
+    briefs.sort();
+    let (mut measured, mut moved_in, mut skipped, mut unshown) =
+        (0, Vec::new(), Vec::new(), Vec::new());
+    let wide = Geometry {
+        css_width: 968,
+        viewport_css_height: 1400,
+        scale: 1.6,
+    };
+    for (i, original) in briefs.iter().enumerate() {
+        let before_bytes = std::fs::read(original).unwrap();
+        let dir = scratch(&format!("archive-{i}"));
+        // The same name, so NOTES_FILE and the storage key are the brief's own.
+        let copy = dir.join(original.file_name().unwrap());
+        std::fs::write(&copy, &before_bytes).unwrap();
+        let before = match rig.open(&copy, wide) {
+            Ok(l) => l,
+            Err(e) => {
+                skipped.push(format!("{}: {e}", original.display()));
+                let _ = std::fs::remove_dir_all(&dir);
+                continue;
+            }
+        };
+        if let Some(p) = before.page {
+            rig.engine.close(p);
+        }
+        let first = before.anchors.first();
+        let decision = before.anchors.iter().find(|a| a.concur_zone.is_some());
+        let Some(first) = first else {
+            skipped.push(format!("{}: no anchors", original.display()));
+            let _ = std::fs::remove_dir_all(&dir);
+            continue;
+        };
+        let mut edits = vec![notes::NoteEdit::Add {
+            nid: first.nid.clone(),
+            title: first.title.clone(),
+            text: "A note written by the anchor measurement.".into(),
+            ts: notes::utc_minute(std::time::SystemTime::now()),
+        }];
+        let supported = before.capability.concur == ConcurSupport::Supported;
+        if let (true, Some(d)) = (supported, decision) {
+            edits.push(notes::NoteEdit::Concur {
+                nid: d.nid.clone(),
+                ts: notes::utc_minute(std::time::SystemTime::now()),
+            });
+        }
+        let pairs: Vec<(&str, &str)> = before
+            .anchors
+            .iter()
+            .map(|a| (a.nid.as_str(), a.title.as_str()))
+            .collect();
+        let rev = notes::iso_millis(std::time::SystemTime::now());
+        let label = before.notes_file.clone().unwrap_or_default();
+        let plan = match notes::plan_write(
+            &before_bytes,
+            &edits,
+            &notes::WriteArgs {
+                anchors: &pairs,
+                label: &label,
+                concurs: supported,
+                rev: &rev,
+                path: &copy,
+            },
+        ) {
+            Ok(p) => p,
+            Err(r) => {
+                skipped.push(format!("{}: refused, {}", original.display(), r.kind()));
+                let _ = std::fs::remove_dir_all(&dir);
+                continue;
+            }
+        };
+        let backups = notes::Backups {
+            dir: dir.join("backups"),
+            keep: notes::KEEP_BACKUPS,
+        };
+        notes::commit(&copy, &before_bytes, &plan, &backups).unwrap();
+        let back = rig.engine.read_back(&copy, wide).unwrap();
+        rig.record();
+        let m = moved(&before, &back);
+        let shown = notes::confirm(&plan, &back.anchors);
+        println!(
+            "{} anchors={} moved={} read-back={}",
+            original.display(),
+            before.anchors.len(),
+            m.len(),
+            if shown.is_ok() {
+                "ok".to_string()
+            } else {
+                format!("{shown:?}")
+            }
+        );
+        if !m.is_empty() {
+            moved_in.push(format!("{}: {m:?}", original.display()));
+        }
+        if let Err(why) = shown {
+            unshown.push(format!("{}: {why}", original.display()));
+        }
+        measured += 1;
+        // Never the original: its bytes are what they were.
+        assert_eq!(std::fs::read(original).unwrap(), before_bytes);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+    println!(
+        "MEASURED {measured} briefs; {} with an anchor moved; {} read back otherwise; {} not written ({} files)",
+        moved_in.len(),
+        unshown.len(),
+        skipped.len(),
+        briefs.len()
+    );
+    for u in &unshown {
+        println!("UNSHOWN {u}");
+    }
+    for m in &moved_in {
+        println!("MOVED {m}");
+    }
+    for s in &skipped {
+        println!("SKIPPED {s}");
+    }
+    rig.done();
+    assert!(
+        moved_in.is_empty(),
+        "a saved note moved anchors in {} briefs",
+        moved_in.len()
+    );
+    assert!(
+        unshown.is_empty(),
+        "{} written briefs do not show what was written",
+        unshown.len()
+    );
+}
+
+/// Concur zones a brief draws in its own markup are not concur support:
+/// only a notes script that makes zones reads a concurs island, so only
+/// that script's brief is offered a stamp.
+#[test]
+fn a_concur_zone_in_the_markup_is_not_concur_support() {
+    let Some(mut rig) = Rig::new("markup-zones", Html::default(), Duration::from_secs(300)) else {
+        return;
+    };
+    let dir = scratch("markup-zones");
+    let page = dir.join("stickers.html");
+    std::fs::write(
+        &page,
+        "<!DOCTYPE html><html><body>\
+         <div class=\"notable\" data-nid=\"ask-x\" data-ntitle=\"X\">X<button class=\"concur-zone\">?</button></div>\
+         <script>/* reader notes */ function tag() {}</script></body></html>",
+    )
+    .unwrap();
+    let layout = rig.open(&page, NARROW).unwrap();
+    assert_eq!(layout.capability.tagged, 1);
+    assert_eq!(layout.capability.concur, ConcurSupport::NotSupported);
+    let _ = std::fs::remove_dir_all(&dir);
+    rig.done();
+}

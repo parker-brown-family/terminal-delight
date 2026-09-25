@@ -58,7 +58,9 @@ use super::pref;
 pub const EXTRACT_JS: &str = include_str!("extract.js");
 /// Part of the cache key: a render made by an older probe is not reused.
 /// 2: the rule an anchor with notes carries is left out of the picture.
-pub const EXTRACT_VERSION: u32 = 2;
+/// 3: each anchor says whether the page shows a note and a stamp on it.
+/// 4: concurs are supported only where a script makes concur zones.
+pub const EXTRACT_VERSION: u32 = 4;
 /// With no call for this long, the browser is closed.
 pub const IDLE_SHUTDOWN: Duration = Duration::from_secs(300);
 /// The names looked for on PATH, in order.

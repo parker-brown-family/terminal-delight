@@ -64,7 +64,11 @@
         dialog: dialogOf(el),
         rect: box(el, dx, dy),
         button: box(el.querySelector(':scope > .note-btn'), dx, dy),
-        concur_zone: box(el.querySelector(':scope > .concur-zone'), dx, dy)
+        concur_zone: box(el.querySelector(':scope > .concur-zone'), dx, dy),
+        /* What the page's own notes.js shows on it: a save reads the written
+           file back and checks these against what it wrote. */
+        has_note: el.classList.contains('has-note'),
+        has_concur: el.classList.contains('has-concur')
       };
     });
   }
@@ -112,8 +116,13 @@
     });
   }
 
+  /* Whether the brief's own notes.js takes concurs: only a script that makes
+     concur zones says so. A .concur-zone in the markup does not — one
+     brief in the archive, a sticker study from before the concur release,
+     draws its own, and its notes.js never reads a concurs island, so a
+     stamp written there would never show (the read-back after a save found
+     it). */
   function concurSupport(tagged) {
-    if (document.querySelector('.concur-zone')) return 'Supported';
     var scripts = document.querySelectorAll('script:not([src])');
     for (var i = 0; i < scripts.length; i++) {
       if (scripts[i].textContent.indexOf('function concurZones') >= 0) return 'Supported';

@@ -20,6 +20,21 @@
 #
 # Afterwards every copy's sha256 and modification time must be what they were.
 #
+# Then it writes, into fresh copies only:
+#
+#   - write: every case's edits.json made through the note box's own commands
+#     (`ctl doc note add|delete`, `ctl doc concur`), saved with `ctl doc save`,
+#     and the written copy held to the skill's expected.html byte for byte —
+#     once the times TD stamps (each note's minute, the island's revision) are
+#     set aside, since TD writes now and the fixtures a fixed moment. The map
+#     afterwards is expected-map.txt, the save's read-back says ✓, and the
+#     backup ring holds the copy's bytes from before. The four cases the skill
+#     refuses are refused, in words, and their copies are not touched.
+#   - on disk: a brief changed under an open window. Its notes alone changed:
+#     they are shown, and the page is not drawn again. Its body changed: the
+#     page is drawn again and a note waiting to be saved survives it and saves.
+#     The file removed: saving is off, and says why.
+#
 #   scripts/doc-notes-check.sh [--bin PATH] [--out DIR]
 #
 # THE WINDOW IS HIDDEN: launched onto a special workspace with
@@ -202,5 +217,141 @@ done
 [ "$moved" -eq 0 ] && echo "   not one of $checked files changed: same sha256, same modification time"
 [ -s "$OUT/opened.log" ] && { echo "FAIL something went to the desktop:"; cat "$OUT/opened.log"; fail=1; }
 
-[ "$fail" -eq 0 ] && echo "ALL PASS ($checked briefs)" || echo "SOMETHING FAILED — logs in $OUT"
+# ── write ────────────────────────────────────────────────────────────────────
+echo "== write: each case's edits made through the note box's commands, saved, and held to expected.html"
+# TD stamps the time it writes; the fixtures a fixed moment. Set both aside.
+norm() { sed -E -e 's/data-rev="[^"]*"/data-rev="R"/g' -e 's/"[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}"/"T"/g' "$1"; }
+wait_saved() {
+  local j
+  for _ in $(seq 1 300); do
+    j=$(notes_now) || { echo "$j"; return 1; }
+    if [ "$(jq -r .saving <<< "$j")" = false ] && ! jq -r '.said // ""' <<< "$j" | grep -q -- '…'; then
+      echo "$j"; return 0
+    fi
+    sleep 0.1
+  done
+  echo "timed out waiting for the save"; return 1
+}
+written=0
+for case_dir in "$FIX"/cases/*/; do
+  name=$(basename "$case_dir")
+  dir="$OUT/writes/$name"
+  mkdir -p "$dir"
+  cp "$case_dir/brief.html" "$dir/brief.html"
+  sum_before=$(sha256sum < "$dir/brief.html")
+  refuse=$(jq -r '.refuse // empty' "$case_dir/expect.json")
+  r=$(ctl doc here "$dir/brief.html")
+  case "$r" in ok*) ;; *) echo "FAIL write $name: doc here said: $r"; fail=1; continue ;; esac
+  if ! json=$(notes_now); then echo "FAIL write $name: $json"; fail=1; ctl doc close > /dev/null; continue; fi
+  problems=""
+  while read -r e; do
+    op=$(jq -r .op <<< "$e"); nid=$(jq -r .nid <<< "$e"); text=$(jq -c '.text // empty' <<< "$e")
+    case "$op" in
+      add) r=$(ctl doc note add "$nid" "$text") ;;
+      delete) r=$(ctl doc note delete "$nid" "$text") ;;
+      concur|unconcur) r=$(ctl doc concur "$nid") ;;
+    esac
+    if [ -n "$refuse" ]; then
+      case "$r" in err\ *.) ;; *) problems="$problems $op was not refused in words: $r" ;; esac
+    else
+      case "$r" in ok*) ;; *) problems="$problems $op said: $r" ;; esac
+    fi
+  done < <(jq -c '.edits[]' "$case_dir/edits.json")
+  r=$(ctl doc save)
+  if [ -n "$refuse" ]; then
+    case "$r" in err\ *) ;; *) problems="$problems save was not refused: $r" ;; esac
+    [ "$(sha256sum < "$dir/brief.html")" = "$sum_before" ] || problems="$problems the refused copy changed"
+    said="refused: ${r#err }"
+  else
+    case "$r" in ok*) ;; *) problems="$problems doc save said: $r" ;; esac
+    if json=$(wait_saved); then
+      said=$(jq -r '.said // ""' <<< "$json")
+      [ "$said" = "saved into brief.html ✓" ] || problems="$problems said '$said'"
+      [ "$(jq -r .unsaved <<< "$json")" = 0 ] || problems="$problems $(jq -r .unsaved <<< "$json") still unsaved"
+      jq -j .map <<< "$json" > "$dir/map.txt"
+      cmp -s "$dir/map.txt" "$case_dir/expected-map.txt" || problems="$problems map differs"
+      norm "$dir/brief.html" > "$dir/written.norm"
+      norm "$case_dir/expected.html" > "$dir/expected.norm"
+      cmp -s "$dir/written.norm" "$dir/expected.norm" || problems="$problems bytes differ from expected.html (diff $dir/written.norm $dir/expected.norm)"
+      backed=0
+      for b in "$OUT"/state/terminal-delight/brief-backups/*/*; do
+        [ "$(sha256sum < "$b")" = "$sum_before" ] && backed=1
+      done
+      [ "$backed" = 1 ] || problems="$problems no backup holds the bytes from before"
+      written=$((written + 1))
+    else
+      problems="$problems $json"
+    fi
+  fi
+  ctl doc close > /dev/null
+  if [ -n "$problems" ]; then echo "FAIL write $name:$problems"; fail=1; else echo "   ok $name: $said"; fi
+done
+echo "   $written briefs written, each byte-identical to the skill's expected.html but for the times"
+
+# ── on disk ──────────────────────────────────────────────────────────────────
+echo "== on disk: a brief changed under an open window"
+dir="$OUT/ondisk"; mkdir -p "$dir"
+case_dir="$FIX/cases/current-pristine"
+cp "$case_dir/brief.html" "$dir/brief.html"
+laid() { grep -c "\[doc\] page laid out $dir/brief.html" "$LOG" 2>/dev/null || true; }
+ctl doc here "$dir/brief.html" > /dev/null
+notes_now > /dev/null
+drawn=$(laid)
+# Another writer changes only the notes: the skill's written copy.
+cp "$case_dir/expected.html" "$dir/brief.html"
+ok=0
+for _ in $(seq 1 50); do
+  j=$(notes_now); [ "$(jq -r .notes <<< "$j")" = 2 ] && [ "$(jq -r .concurs <<< "$j")" = 2 ] && { ok=1; break; }
+  sleep 0.1
+done
+if [ "$ok" = 1 ] && [ "$(laid)" = "$drawn" ]; then
+  echo "   ok notes changed on disk: 2 notes and 2 concurs shown, the page not drawn again"
+else
+  echo "FAIL on disk: notes-only change: $(jq -c '{notes,concurs}' <<< "$j"), drawn $drawn -> $(laid)"; fail=1
+fi
+# A note waits; then the body changes: the page is drawn again, the note survives.
+ctl doc note add finding-the-island-is-the "Written before the body changed." > /dev/null
+python3 - "$dir/brief.html" <<'PY'
+import sys
+p = sys.argv[1]
+b = open(p, 'rb').read()
+i = b.index(b'<body')
+j = b.index(b'>', i) + 1
+open(p, 'wb').write(b[:j] + b'<p>A paragraph an agent added.</p>' + b[j:])
+PY
+ok=0
+for _ in $(seq 1 100); do
+  [ "$(laid)" -gt "$drawn" ] && { ok=1; break; }
+  sleep 0.1
+done
+j=$(notes_now)
+if [ "$ok" = 1 ] && [ "$(jq -r .unsaved <<< "$j")" = 1 ]; then
+  echo "   ok the body changed: drawn again, and the note waiting to be saved is still waiting"
+else
+  echo "FAIL on disk: body change: drawn $drawn -> $(laid), unsaved $(jq -r .unsaved <<< "$j")"; fail=1
+fi
+ctl doc save > /dev/null
+j=$(wait_saved)
+if [ "$(jq -r .said <<< "$j")" = "saved into brief.html ✓" ] && grep -q "Written before the body changed." "$dir/brief.html" && grep -q "A paragraph an agent added." "$dir/brief.html"; then
+  echo "   ok saved over the other writer's change, keeping it"
+else
+  echo "FAIL on disk: save after the change said $(jq -r .said <<< "$j")"; fail=1
+fi
+# The file goes: saving is off, and says so.
+mv "$dir/brief.html" "$dir/away.html"
+ok=0
+for _ in $(seq 1 30); do
+  j=$(notes_now); [ "$(jq -r .gone <<< "$j")" = true ] && { ok=1; break; }
+  sleep 0.1
+done
+r=$(ctl doc note add finding-the-island-is-the "Into a file that is gone.")
+if [ "$ok" = 1 ] && case "$r" in "err The file is no longer on disk"*) true ;; *) false ;; esac; then
+  echo "   ok the file removed: saving is off — \"${r#err }\""
+else
+  echo "FAIL on disk: gone=$(jq -r .gone <<< "$j"), add said: $r"; fail=1
+fi
+mv "$dir/away.html" "$dir/brief.html"
+ctl doc close > /dev/null
+
+[ "$fail" -eq 0 ] && echo "ALL PASS ($checked briefs read, $written written)" || echo "SOMETHING FAILED — logs in $OUT"
 exit "$fail"
