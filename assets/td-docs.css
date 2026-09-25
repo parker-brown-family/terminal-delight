@@ -118,3 +118,11 @@
 .sk-console .tab { text-transform: uppercase; padding: 6px 10px; background: #071a10; }
 .sk-console .tab.on { box-shadow: inset 0 -3px 0 #22c55e; }
 .sk-console .chip { text-transform: uppercase; padding: 1px 7px; }
+
+/* The text-crawl page's figure (docsite/tools/crawl-figure.mjs). */
+.crawl .frame { fill: #050806; stroke: var(--line-2); }
+.crawl .plane { fill: color-mix(in srgb, var(--acc) 7%, #06100a); }
+.crawl .row { fill: var(--acc); opacity: .85; }
+.crawl text { font-family: var(--mono); }
+.crawl .t1 { fill: var(--ink); font-size: 13px; font-weight: 600; }
+.crawl .t2 { fill: var(--ink-3); font-size: 11px; }

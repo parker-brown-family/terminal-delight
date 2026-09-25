@@ -1,0 +1,49 @@
+<script type="application/json" data-page>
+{
+  "title": "Focus reader",
+  "description": "Alt+R opens the focus reader: the focused pane's text, scrollback included, drawn large in a panel over a frosted backdrop. Typing still goes to the pane, so you can keep directing an agent while you read it.",
+  "updated": "2026-09-25",
+  "trueOf": "main at d7cf383",
+  "summary": "Read one pane big, and keep typing to it"
+}
+</script>
+
+<section data-register="brief">
+<p class="lede">When a pane is too small to read, press <kbd>Alt</kbd>+<kbd>R</kbd>. Its text opens in a panel across most of the window, sized to fill the width, and everything behind it frosts over.</p>
+<p>It's the pane's whole history, scrollback included, with long lines wrapped instead of running off the side. New output appears at the bottom as it arrives. Your typing still goes to the pane underneath, so you can read an agent's answer at a comfortable size and reply to it without closing anything.</p>
+<p><kbd>Esc</kbd>, or a click on the frosted area, closes it. On a pane showing its <a href="/workbench">workbench</a>, <kbd>Alt</kbd>+<kbd>R</kbd> shows the terminal behind it.</p>
+<p class="invite">Technical has the keys, the size slider and the backdrop.</p>
+</section>
+
+<section data-register="technical" data-headline="The reader">
+<p>The panel is 80% of the window each way, at least 320 by 240, with the header <code>👓  FOCUS · &lt;pane title&gt;</code>, an <code>Inherit theme</code> switch, an <code>A──A</code> size slider and <code>esc to close</code>. Opening it on another pane replaces the one open.</p>
+
+<h3>Keys and mouse</h3>
+<table class="keys">
+  <tbody>
+    <tr><td><kbd>Esc</kbd></td><td>close</td></tr>
+    <tr><td><kbd>PgUp</kbd> <kbd>PgDn</kbd></td><td>about nine-tenths of a screen</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>Home</kbd> / <kbd>Ctrl</kbd>+<kbd>End</kbd></td><td>oldest / newest; the newest end follows new output again</td></tr>
+    <tr><td>anything else</td><td>goes to the pane</td></tr>
+    <tr><td>wheel</td><td>scrolls the reader, then the pane's own scrollback at either end</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+wheel</td><td>the pane's own text size</td></tr>
+    <tr><td>drag</td><td>selects; letting go copies</td></tr>
+    <tr><td>click outside</td><td>close</td></tr>
+  </tbody>
+</table>
+<p>It opens at the newest line and follows output. Scrolling up stops the following; coming back to the bottom starts it again.</p>
+
+<h3>Size</h3>
+<p>The text is fitted to the panel's width. The <code>A──A</code> slider scales that from 0.35× to 1.6×, and goes back to 1× each time the reader opens. A short read sits in the middle of the panel.</p>
+
+<h3>Inherit theme</h3>
+<p>Off by default. On, the reading area is warped and glared like its pane, at the pane's <a href="/crt">warp</a>; the header stays flat. The choice is kept with the session. A pane in <a href="/text-crawl">text crawl</a> keeps its crawl font and centring in the reader but isn't tilted, wrapped or selectable.</p>
+
+<h3>The backdrop</h3>
+<p>Everything outside the panel is dimmed and blurred by the same renderer pass as the warp: 32 samples spread in a golden-angle spiral, a sharp rounded edge around the panel, and a faint cool tint, easing in over about 220 ms. While the reader is open, no pane is warped.</p>
+<p>Taking <kbd>Alt</kbd>+<kbd>R</kbd> means the shell's own Alt+R, readline's revert-line, doesn't reach it.</p>
+</section>
+
+<ol data-sources>
+  <li id="s1">The reader: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/main.rs">main.rs</a>; its keys: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/keylayer.rs">keylayer.rs</a>; the blur: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/docs/patches/0002-focus-blur.patch">0002-focus-blur.patch</a>.</li>
+</ol>
