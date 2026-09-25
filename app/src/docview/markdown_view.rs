@@ -8,37 +8,236 @@
 //! tasks that come back to it through a weak handle, and the link text its
 //! last render laid out. It sat in `docview.rs` until the view's backends went
 //! behind one trait ([`super::backend`]), and moved here as it was.
+//!
+//! # Notes
+//!
+//! A Markdown document takes notes as a brief does, through the same layer
+//! ([`NotesLayer`]): a 💬 on each block under the pointer, the same note box,
+//! the same bar with ⎘ copy map and ↪. The blocks are its anchors, placed
+//! where the last paint put them; the 💬 sits in a gutter on the column's
+//! right. What differs is where the notes go — TD's own store, as each is
+//! written, never the file (`md_notes.rs`) — so the bar has no 💾 and shows
+//! only once there is something on it.
 
 use std::any::Any;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
+use std::time::SystemTime;
 
 use gpui::{
-    px, AnyElement, App, Context, ImgResourceLoader, Pixels, Point, RenderImage, Resource,
-    ScrollDelta, Size, Task, Window,
+    div, point, prelude::*, px, AnyElement, App, Bounds, Context, ImgResourceLoader, Keystroke,
+    Pixels, Point, RenderImage, Resource, ScrollDelta, Size, Task, Window,
 };
 
 use super::backend::{Backend, Drawn};
-use super::markdown::{self, MarkdownDoc};
-use super::{image, resolve_link, DocumentView, FileStamp, FollowLink, LinkTarget};
+use super::engine::{Anchor, RectCss};
+use super::markdown::{self, MarkdownDoc, NOTE_GUTTER, PAD};
+use super::md_notes;
+use super::notes_ui::{self, LayerPress, MarkHit, NotesLayer, Said, BUTTON_CSS};
+use super::page::PageToView;
+use super::{
+    image, resolve_link, DocumentView, FileStamp, FollowLink, LinkTarget, NotesCommand, SendNotes,
+};
 use crate::docopen::DocScroll;
 use crate::theme::Theme;
+
+/// How far into the column's left padding a block's rule sits.
+const RULE_OUT: f32 = 9.;
+
+impl MarkdownDoc {
+    /// The blocks that take notes, and the items of lists, as the notes layer
+    /// takes anchors: each where the last paint put it, relative to the column's top-left at
+    /// scroll 0, so it moves with the scroll. Its box reaches into the left
+    /// padding, where its rule is drawn, and across the gutter, where its 💬
+    /// is. A block not painted yet has no place and draws no mark.
+    fn note_anchors(&self) -> Vec<Anchor> {
+        let painted = self.painted.get() == Some(self.generation);
+        let col = self.column.get().filter(|_| painted);
+        let (blocks, items) = (self.tops.blocks.borrow(), self.tops.items.borrow());
+        self.anchors
+            .iter()
+            .map(|a| {
+                // A list item's own box; any other block's.
+                let at = match a.item {
+                    Some(j) => items.get(a.block).and_then(|v| v.get(j)).copied().flatten(),
+                    None => blocks.get(a.block).copied().flatten(),
+                };
+                let placed = col.zip(at);
+                let (rect, button) = match placed {
+                    Some((col, b)) => {
+                        let x = f32::from(b.origin.x - col.origin.x) - RULE_OUT;
+                        let y = f32::from(b.origin.y - col.origin.y);
+                        let right = f32::from(col.size.width) - PAD - NOTE_GUTTER;
+                        (
+                            Some(RectCss {
+                                x,
+                                y,
+                                w: right + NOTE_GUTTER - x,
+                                h: f32::from(b.size.height),
+                            }),
+                            Some(RectCss {
+                                x: right + (NOTE_GUTTER - BUTTON_CSS) / 2.0,
+                                y,
+                                w: BUTTON_CSS,
+                                h: BUTTON_CSS,
+                            }),
+                        )
+                    }
+                    None => (None, None),
+                };
+                Anchor {
+                    nid: a.nid.clone(),
+                    title: a.title.clone(),
+                    tag: "md".into(),
+                    dialog: None,
+                    rect,
+                    button,
+                    concur_zone: None,
+                    has_note: None,
+                    has_concur: None,
+                    line: a.line,
+                }
+            })
+            .collect()
+    }
+
+    /// The column to the view: one logical pixel each, scrolled by hand.
+    fn note_map(&self, view: Size<Pixels>) -> PageToView {
+        PageToView {
+            origin: point(px(0.), px(0.)),
+            px_per_css: 1.0,
+            scroll: px(self.top),
+            clip: Bounds {
+                origin: point(px(0.), px(0.)),
+                size: view,
+            },
+        }
+    }
+
+    /// The nids whose 💬 the pointer shows.
+    fn lit(&self) -> Vec<String> {
+        match self.view {
+            Some(view) => NotesLayer::lit(&self.note_anchors(), &self.note_map(view), self.pointer),
+            None => Vec::new(),
+        }
+    }
+
+    /// Keep what was written: the edits waiting go to TD's store off the
+    /// main thread, applied to what the store holds then. One keep at a
+    /// time; edits made while it runs go in the next, started when it lands.
+    /// A keep that failed is not retried until the next edit, so a store that
+    /// cannot be written is said once rather than hammered.
+    fn keep(&mut self, cx: &mut Context<DocumentView>) {
+        let Some(layer) = self.notes.as_mut() else {
+            return;
+        };
+        let Some(doc) = layer.store_doc().map(Path::to_path_buf) else {
+            return;
+        };
+        if !layer.wants_keeping() {
+            return;
+        }
+        let edits = layer.begin_save();
+        let made = edits.len();
+        let known: Vec<String> = self.anchors.iter().map(|a| a.nid.clone()).collect();
+        let write = cx.background_spawn(async move {
+            let known: Vec<&str> = known.iter().map(String::as_str).collect();
+            md_notes::keep(&md_notes::store_for(&doc), &doc, &edits, &known)
+        });
+        self.keeping = cx.spawn(async move |this, cx| {
+            let done = write.await;
+            this.update(cx, |view, cx| {
+                let Some(md) = view.backend.downcast_mut::<MarkdownDoc>() else {
+                    return;
+                };
+                let landed = done.is_ok();
+                if let Some(l) = md.notes.as_mut() {
+                    match done {
+                        Ok(notes) => l.kept(made, notes),
+                        Err(why) => l.refused(why),
+                    }
+                }
+                if landed {
+                    md.keep(cx);
+                }
+                cx.notify();
+            })
+            .ok();
+        });
+    }
+
+    /// A press on the notes: the note box and the bar first, as they are
+    /// drawn over everything, then a block's 💬. `None` when the notes did
+    /// not take it, so a link under it can.
+    fn press_notes(
+        &mut self,
+        at: Point<Pixels>,
+        view: &Drawn,
+        cx: &mut Context<DocumentView>,
+    ) -> Option<bool> {
+        let origin = view.placed?;
+        let (size, _) = view.frame?;
+        let anchors = self.note_anchors();
+        let map = self.note_map(size);
+        let (beside, pointer) = (self.beside.is_some(), self.pointer);
+        let layer = self.notes.as_mut()?;
+        let pressed = layer.press(origin + at, &anchors, SystemTime::now(), beside, cx);
+        let opened = match pressed {
+            LayerPress::Pass => match notes_ui::hit(&layer.marks(&anchors, &map, pointer), at) {
+                Some(MarkHit::Open { nid, title }) => {
+                    layer.open(nid, title);
+                    true
+                }
+                _ => false,
+            },
+            _ => false,
+        };
+        match pressed {
+            LayerPress::Pass if !opened => return None,
+            LayerPress::Send(sending) => cx.emit(SendNotes {
+                map: sending.map,
+                unsaved: sending.unsaved,
+            }),
+            _ => {}
+        }
+        self.keep(cx);
+        cx.notify();
+        Some(true)
+    }
+}
 
 // The view's calls, handed to the document's own methods in `markdown.rs`.
 // Where a method there has the trait method's name, it is named with its type
 // (`MarkdownDoc::wheel(self, …)`): Rust finds an inherent method before a
 // trait's, so that is the document's own and not this one calling itself.
 impl Backend for MarkdownDoc {
+    /// The column, and over it the notes: each block's rule and 💬, the bar
+    /// once there is something on it, and the note box above everything.
     fn element(&mut self, view: &Drawn, window: &mut Window, th: &Theme) -> AnyElement {
-        MarkdownDoc::element(
-            self,
-            view.path,
-            th,
-            view.frame.map(|(size, _)| size),
-            view.links,
-            window,
-        )
+        let size = view.frame.map(|(size, _)| size);
+        self.view = size;
+        let column =
+            MarkdownDoc::element(self, view.path, th, size, view.links, NOTE_GUTTER, window);
+        let (Some(layer), Some(size)) = (self.notes.as_ref(), size) else {
+            return column;
+        };
+        // Forget where the bar and the note box were; the canvases below
+        // record where they land this frame.
+        layer.clear_zones();
+        let anchors = self.note_anchors();
+        let marks = layer.marks(&anchors, &self.note_map(size), self.pointer);
+        let mut layers = vec![column];
+        layers.extend(layer.draw_marks(&marks, th));
+        if layer.shows_bar(&anchors) {
+            layers.push(layer.draw_bar(&anchors, th, self.beside.as_deref()));
+        }
+        layers.extend(layer.draw_box(size, th));
+        div()
+            .absolute()
+            .inset_0()
+            .children(layers)
+            .into_any_element()
     }
 
     /// Every picture the document holds, and every decode and read still
@@ -54,16 +253,23 @@ impl Backend for MarkdownDoc {
             eprintln!("[doc] released {}", path.display());
         }
         self.reading = Task::ready(());
+        // A note being kept is let finish: it is the person's words, and it
+        // holds nothing on the GPU.
+        std::mem::replace(&mut self.keeping, Task::ready(())).detach();
     }
 
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }
 
-    /// A press on the document, looked up among its links: a heading in this
+    /// A press on the document: the notes first (see
+    /// [`MarkdownDoc::press_notes`]), then its links: a heading in this
     /// document is scrolled to here, and anything else is emitted as
     /// [`FollowLink`] for the pane to route.
     fn press(&mut self, at: Point<Pixels>, view: &Drawn, cx: &mut Context<DocumentView>) -> bool {
+        if let Some(took) = self.press_notes(at, view, cx) {
+            return took;
+        }
         let (Some(origin), Some((size, _))) = (view.painted_at, view.frame) else {
             return false;
         };
@@ -165,6 +371,128 @@ impl Backend for MarkdownDoc {
     fn file_changed(&mut self, path: &Path, _came_back: bool, cx: &mut Context<DocumentView>) {
         read_markdown(self, path, cx);
     }
+
+    // ── notes ───────────────────────────────────────────────────────────────
+
+    /// The 💬 on the block under the pointer shows; repaints only when that
+    /// changes which one.
+    fn hover(&mut self, at: Option<Point<Pixels>>, cx: &mut Context<DocumentView>) {
+        if self.pointer == at {
+            return;
+        }
+        let before = self.lit();
+        self.pointer = at;
+        if self.lit() != before {
+            cx.notify();
+        }
+    }
+
+    /// The note box takes every key while it is open, and Escape puts it
+    /// away before it closes the square. A note added by Ctrl+Enter is kept
+    /// at once. With nothing open, Escape in a floating square that would
+    /// lose a note not yet kept says so once.
+    fn key(&mut self, ks: &Keystroke, floating: bool, cx: &mut Context<DocumentView>) -> bool {
+        let Some(layer) = self.notes.as_mut() else {
+            return false;
+        };
+        if layer.key(ks, SystemTime::now()) {
+            self.keep(cx);
+            cx.notify();
+            return true;
+        }
+        if ks.key != "escape" {
+            return false;
+        }
+        floating && self.guard_close(cx)
+    }
+
+    fn has_caret(&self) -> bool {
+        self.notes.as_ref().is_some_and(NotesLayer::has_caret)
+    }
+
+    fn set_beside(&mut self, beside: Option<String>) -> bool {
+        if self.beside == beside {
+            return false;
+        }
+        self.beside = beside;
+        self.notes.is_some()
+    }
+
+    /// What came of a ↪, on its own line of the bar.
+    fn notes_said(&mut self, said: Said, cx: &mut Context<DocumentView>) {
+        if let Some(layer) = self.notes.as_mut() {
+            layer.say_sent(said);
+        }
+        cx.notify();
+    }
+
+    /// What the bar shows and the map, as a brief's report has them, with
+    /// who ↪ would send to. `None` until the file and its notes have been
+    /// read.
+    fn notes_report(&self) -> Option<serde_json::Value> {
+        let layer = self.notes.as_ref()?;
+        let anchors = self.note_anchors();
+        let mut report = layer.report(&anchors);
+        report["send_to"] = serde_json::json!(layer
+            .send_button(&anchors, self.beside.as_deref())
+            .map(|(label, _)| label));
+        Some(report)
+    }
+
+    /// The note box's gestures from the control socket. There is no save to
+    /// ask for, because every note is kept as it is written; asking for one
+    /// keeps whatever is still waiting. A Markdown block takes no stamp.
+    fn notes_command(
+        &mut self,
+        cmd: NotesCommand,
+        cx: &mut Context<DocumentView>,
+    ) -> Result<serde_json::Value, String> {
+        let not_read = "the Markdown document has not been read yet";
+        let layer = self.notes.as_mut().ok_or(not_read)?;
+        match cmd {
+            NotesCommand::Save => {}
+            NotesCommand::Add { nid, text } => {
+                layer.can_edit()?;
+                let a = self
+                    .anchors
+                    .iter()
+                    .find(|a| a.nid == nid)
+                    .ok_or(format!("There is no block [{nid}] in this document."))?;
+                let text = text.trim().to_string();
+                if text.is_empty() {
+                    return Err("A note needs some words.".into());
+                }
+                layer.add_note(
+                    nid,
+                    a.title.clone(),
+                    text,
+                    super::notes::utc_minute(SystemTime::now()),
+                );
+            }
+            NotesCommand::Delete { nid, text } => {
+                layer.can_edit()?;
+                layer.delete_note(nid, text, None);
+            }
+            NotesCommand::Concur { nid } => {
+                return Err(format!(
+                    "[{nid}] is a Markdown block, which takes no CONCUR stamp."
+                ));
+            }
+        }
+        self.keep(cx);
+        cx.notify();
+        Backend::notes_report(self).ok_or_else(|| not_read.into())
+    }
+
+    /// Once, when closing would lose a note not yet kept: one whose keep
+    /// failed, or is still running.
+    fn guard_close(&mut self, cx: &mut Context<DocumentView>) -> bool {
+        if self.notes.as_mut().is_some_and(NotesLayer::guard_close) {
+            cx.notify();
+            return true;
+        }
+        false
+    }
 }
 
 /// A picture a Markdown document embeds, as decoded, or the sentence its box
@@ -184,7 +512,8 @@ fn embedded<E: std::fmt::Display>(
     Ok(image)
 }
 
-/// Read and parse the Markdown file off the main thread.
+/// Read and parse the Markdown file off the main thread, and the notes TD
+/// keeps for it with it.
 fn read_markdown(md: &mut MarkdownDoc, path: &Path, cx: &mut Context<DocumentView>) {
     let path = path.to_path_buf();
     let read = cx.background_executor().spawn(async move {
@@ -195,11 +524,12 @@ fn read_markdown(md: &mut MarkdownDoc, path: &Path, cx: &mut Context<DocumentVie
         let parsed = std::fs::read(&path)
             .map(|bytes| markdown::parse(&String::from_utf8_lossy(&bytes), path.parent()))
             .map_err(|e| format!("Could not read {}: {e}", path.display()));
-        (stamp, parsed)
+        let kept = md_notes::read(&md_notes::store_for(&path));
+        (stamp, parsed, kept)
     });
     md.reading = cx.spawn(async move |this, cx| {
-        let (stamp, parsed) = read.await;
-        this.update(cx, |view, cx| markdown_read(view, stamp, parsed, cx))
+        let (stamp, parsed, kept) = read.await;
+        this.update(cx, |view, cx| markdown_read(view, stamp, parsed, kept, cx))
             .ok();
     });
 }
@@ -208,14 +538,21 @@ fn markdown_read(
     view: &mut DocumentView,
     stamp: Option<FileStamp>,
     parsed: Result<markdown::MdDoc, String>,
+    kept: Result<super::notes::NoteMap, String>,
     cx: &mut Context<DocumentView>,
 ) {
     view.seen = stamp;
+    let path = view.target.path.clone();
     let Some(md) = view.backend.downcast_mut::<MarkdownDoc>() else {
         return;
     };
+    match md.notes.as_mut() {
+        Some(layer) => layer.rekept(kept),
+        None => md.notes = Some(NotesLayer::for_markdown(&path, kept)),
+    }
     match parsed {
         Ok(doc) => {
+            md.anchors = md_notes::anchors(&doc);
             for image in md.replace(Rc::new(doc)) {
                 cx.drop_image(image, None);
             }

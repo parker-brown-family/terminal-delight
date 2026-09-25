@@ -612,6 +612,7 @@ impl PageEngine for FakeBriefEngine {
                 concur_zone: None,
                 has_note: Some(false),
                 has_concur: Some(false),
+                line: None,
             })
             .collect();
         Ok(PageLayout {

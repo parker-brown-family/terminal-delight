@@ -87,6 +87,7 @@ pub mod engine;
 pub mod image;
 pub mod markdown;
 pub mod markdown_view;
+pub mod md_notes;
 pub mod notes;
 pub mod notes_ui;
 pub mod page;
@@ -990,6 +991,10 @@ mod tests {
             ("docview/pref.rs", strip(include_str!("docview/pref.rs"))),
             ("docview/notes.rs", strip(include_str!("docview/notes.rs"))),
             (
+                "docview/md_notes.rs",
+                strip(include_str!("docview/md_notes.rs")),
+            ),
+            (
                 "docview/notes_ui.rs",
                 strip(include_str!("docview/notes_ui.rs")),
             ),
@@ -1109,6 +1114,37 @@ mod tests {
         assert!(
             disk.contains("fs::rename(") && disk.contains("create_new(true)"),
             "the commit writes a new file and renames it into place"
+        );
+    }
+
+    /// A Markdown document's notes go to TD's store and nowhere else. The
+    /// backend that shows the file writes nothing (above), and the only
+    /// writing in `md_notes.rs` is its `write`, into the store, a new file
+    /// renamed into place. That it never touches the document is held by
+    /// `keeping_a_note_writes_the_store_and_never_the_document`.
+    #[test]
+    fn only_the_store_writes_a_markdown_documents_notes() {
+        let src = source_of("docview/md_notes.rs");
+        let (before, rest) = src.split_once("pub fn write(").expect("the store's write");
+        let (write, after) = rest.split_once("\n}\n").expect("its end");
+        for w in [
+            "fs::write",
+            "File::create",
+            "OpenOptions",
+            "fs::rename",
+            "fs::copy",
+            "remove_file",
+            "create_dir",
+            "set_permissions",
+        ] {
+            assert!(
+                !before.contains(w) && !after.contains(w),
+                "md_notes.rs holds {w} outside its write"
+            );
+        }
+        assert!(
+            write.contains("create_new(true)") && write.contains("fs::rename("),
+            "the store's write makes a new file and renames it into place"
         );
     }
 

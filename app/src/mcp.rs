@@ -1242,13 +1242,15 @@ fn tool_defs() -> Value {
             "name": "document_notes",
             "description":
                 "The notes a person left on the document open BESIDE YOU — a \
-                 brief floating over your own pane, else a document pane in your \
-                 tab that you opened, else a document pane in your tab. Answers \
-                 the notes map (anchor, heading, the notes under it), which is \
-                 the text the brief's \"copy map\" gives, so you read 80 words \
-                 of notes instead of re-reading the whole page. Notes added and \
-                 not yet saved into the file are included, and the answer counts \
-                 them. Takes no arguments: it answers for the pane you call it \
+                 brief or a Markdown file floating over your own pane, else a \
+                 document pane in your tab that you opened, else a document pane \
+                 in your tab. Answers the notes map (anchor, heading, the notes \
+                 under it), which is the text the bar's \"copy map\" gives, so \
+                 you read 80 words of notes instead of re-reading the whole page. \
+                 A brief's map names element ids; a Markdown file's names the \
+                 line each block starts on, as [L42]. Notes added and not yet \
+                 saved into the file are included, and the answer counts them. \
+                 Takes no arguments: it answers for the pane you call it \
                  from and never reaches a document in another tab. Read-only; it \
                  writes nothing, anywhere.",
             "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false }
@@ -2152,8 +2154,13 @@ fn document_notes(args: &Value, snap: &Snapshot) -> Value {
                 ));
             }
             if let Some(u) = r["unsaved"].as_u64().filter(|u| *u > 0) {
+                // A Markdown file's notes are kept by TD, never in the file.
+                let into = match r["kept"].as_str() {
+                    Some("store") => "not kept yet",
+                    _ => "not saved into the file yet",
+                };
                 counts.push_str(&format!(
-                    " · {u} {} not saved into the file yet, included below",
+                    " · {u} {} {into}, included below",
                     if u == 1 { "edit" } else { "edits" }
                 ));
             }
@@ -3411,10 +3418,10 @@ mod tests {
         );
         // A document with no notes layer says why, and every count is null.
         let mut md = doc(0, 100, DocPlace::Float, None, "/r/notes.md");
-        md.notes = Err("a Markdown document takes no notes".into());
+        md.notes = Err("the Markdown document is not read yet".into());
         let out = notes_of(&window_with(vec![md]));
         assert!(out["structuredContent"]["notes"].is_null());
-        assert!(text_of(&out).contains("a Markdown document takes no notes"));
+        assert!(text_of(&out).contains("the Markdown document is not read yet"));
     }
 
     /// It writes nothing: through a connection that CAN write, the apply
@@ -3682,6 +3689,7 @@ mod tests {
                     concur_zone: a["concurrable"].as_bool().unwrap().then_some(rect),
                     has_note: None,
                     has_concur: None,
+                    line: None,
                 })
                 .collect();
             let layer = NotesLayer::new(
