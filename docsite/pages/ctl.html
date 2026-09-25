@@ -32,6 +32,7 @@ terminal-delight ctl doc beside /home/you/notes/plan.md</code></pre>
 </table>
 <p><code>tab …</code> always means your own tab and refuses a scope flag. <code>adopt</code> and <code>tabs</code> go to the first target only; everything else goes to every target. Each reply prints as <code>&lt;pid&gt;&#9;&lt;reply&gt;</code>. A window with no socket prints <code>err no control socket (older build — reopen this terminal)</code>.</p>
 <p>Exit codes: <code>0</code> when at least one window answered with something other than <code>err</code>; <code>2</code> when nothing matched or every reply was <code>err</code>; <code>1</code> for a usage error.</p>
+<p>The client waits 800 ms for a reply. If a window takes longer, the client prints <code>err unreachable … — swept stale socket</code> and deletes that window's socket, although the window is alive. Until the window restarts, neither <code>ctl</code> nor <code>terminal-delight mcp</code> can reach it. The <code>bench</code> and <code>doc</code> commands and <code>mcp rpc</code> can take longer than that on a busy window. It's tracked in <a href="https://github.com/parker-brown-family/terminal-delight/issues/796">issue 796</a>.</p>
 
 <h3>Commands</h3>
 <table>
