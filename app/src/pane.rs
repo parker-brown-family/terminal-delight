@@ -1128,6 +1128,17 @@ const DEEP_ASK_ROWS: i32 = 2000;
 /// pane (`k1=k2=0`) collapses term 2 and keeps just the breathing border.
 /// Used by the renderer, [`Self::sync_size`] (grid fit) and
 /// [`Self::viewport_cell`] (hit-test) so all three agree on where the grid sits.
+/// A length as gpui lays it out: rounded to whole device pixels, ties toward
+/// zero, the rule gpui applies to every authored size before layout
+/// (`round_to_device_pixel` in gpui's util.rs). Returned in logical pixels.
+fn laid_out_length(logical: f32, scale: f32) -> f32 {
+    if scale <= 0.0 {
+        return logical;
+    }
+    let device = logical * scale;
+    (device.abs() - 0.5).ceil().copysign(device) / scale
+}
+
 fn grid_pad(w: f32, h: f32, k1: f32, k2: f32) -> (f32, f32) {
     let over = 0.5 * (0.25 * k1 + 0.0625 * k2) * 1.15;
     (
@@ -4318,7 +4329,15 @@ impl TerminalView {
     /// size is fixed (the global scrubber now sizes the menu bar, not the grid),
     /// so this always measures at the theme's native cell/font metrics.
     fn sync_size(&mut self, th: &Theme, window: &mut Window) {
-        self.cell_h = th.cell_h;
+        // The row pitch gpui actually draws, not the theme's number. Every row
+        // is a div of this height, and gpui rounds an authored height to whole
+        // device pixels before layout; at a fractional cell and a scale like
+        // 1.6 each row lands a fraction of a pixel lower than `row × cell_h`
+        // says. Everything that turns a row into a position — the click's
+        // hit-test, the Alt chip's box, where a floating document opens, the
+        // grid fit — reads `cell_h`, so it has to be the laid-out value, or
+        // they drift up from the text by half a row by the bottom of a tall pane.
+        self.cell_h = laid_out_length(th.cell_h, window.scale_factor());
         let font = grid_font(th, FontWeight::NORMAL);
         if let Ok(w) = window.text_system().advance(
             window.text_system().resolve_font(&font),
@@ -13348,6 +13367,59 @@ mod tests {
     }
 
     // ── the floating document ───────────────────────────────────────────────
+
+    /// Parker, at scale 1.6: the Alt chip's box sat on the line at the top of
+    /// the pane and a little higher every row down, half a row off by the
+    /// bottom. gpui draws each row at its height rounded to whole device
+    /// pixels, and the box, the hit-test and the square's placement multiplied
+    /// by the unrounded height. With the laid-out height, row N is where gpui
+    /// puts it, all the way down.
+    #[test]
+    fn a_row_is_found_where_gpui_draws_it_at_any_scale() {
+        // 20 × 0.7365 is Parker's pane text size on the 1.6 laptop panel.
+        for &(cell, scale) in &[
+            (20.0_f32 * 0.7365, 1.6_f32),
+            (17.3, 1.6),
+            (18.0, 1.6),
+            (19.5, 1.25),
+            (20.0, 1.0),
+            (16.7, 2.0),
+        ] {
+            let drawn = (cell * scale - 0.5).ceil() / scale;
+            let pitch = laid_out_length(cell, scale);
+            for row in [0usize, 1, 10, 40, 60] {
+                let at = row as f32 * drawn;
+                assert!(
+                    (row as f32 * pitch - at).abs() < 1e-3,
+                    "cell {cell} at {scale}: row {row} is drawn at {at}, found at {}",
+                    row as f32 * pitch
+                );
+            }
+        }
+        // The bug, in Parker's numbers: 14.73 at 1.6 is 23.57 device pixels,
+        // drawn as 24, so by row 40 the unrounded arithmetic is 17.3 device
+        // pixels (0.7 of a row) above the text, which is what he photographed.
+        let (cell, scale) = (20.0_f32 * 0.7365, 1.6_f32);
+        let drift = 40.0 * (laid_out_length(cell, scale) - cell) * scale;
+        assert!(
+            (drift - 17.28).abs() < 0.05,
+            "the drift this fixes, in device pixels: {drift}"
+        );
+        // Ties go toward zero, as gpui's own rounding does.
+        assert_eq!(laid_out_length(1.25, 2.0), 1.0);
+        assert_eq!(laid_out_length(1.3, 2.0), 1.5);
+    }
+
+    #[test]
+    fn the_pane_takes_the_laid_out_row_height_not_the_themes() {
+        let code = live_code();
+        let sync = code.split("fn sync_size(").nth(1).expect("sync_size");
+        let sync = sync.split("\n    fn ").next().unwrap_or(sync);
+        assert!(
+            sync.contains("self.cell_h = laid_out_length(th.cell_h, window.scale_factor())"),
+            "cell_h must be the height gpui draws a row at"
+        );
+    }
 
     /// Notes typed into a square and not yet saved used to vanish when it was
     /// closed by anything but Escape: the ✕, `ctl doc close`, a link or an
