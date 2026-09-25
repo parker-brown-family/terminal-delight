@@ -460,6 +460,24 @@ canvas.td-tube[hidden] { display: none; }
 .td-sheet dd { margin: 0; line-height: 1.5; color: var(--ink); }
 .td-sheet .kf { margin: 16px 0 0; padding-top: 10px; border-top: 1px solid var(--line); font: 12px/1.55 var(--mono); color: var(--dim); }
 .td-sheet .kf a { color: var(--ink); }
+/* the big gel button at the foot of the sheet, as F1 has one */
+.td-sheet .td-demo-btn { display: flex; align-items: center; gap: 10px; width: 100%; margin: 18px 0 6px; padding: 12px 16px; border-radius: 12px; cursor: pointer; text-align: left;
+  font: 600 15px/1.2 var(--sans); color: var(--fgb);
+  -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur);
+  background: linear-gradient(#ffffff26, #ffffff06), color-mix(in srgb, var(--acc) 20%, transparent);
+  border: 1px solid color-mix(in srgb, var(--acc) 75%, transparent); box-shadow: var(--glass-shadow); transition: transform .12s, background .12s; }
+.td-sheet .td-demo-btn:hover { transform: translateY(-1px); background: linear-gradient(#ffffff30, #ffffff0a), color-mix(in srgb, var(--acc) 32%, transparent); }
+.td-sheet .td-demo-sub { margin: 0 0 4px 2px; font: 12px/1.5 var(--mono); color: var(--dim); }
+/* the example window it opens */
+.td-demo { top: 50%; left: 50%; transform: translate(-50%, -50%); width: min(1100px, 96vw); max-height: 94vh; overflow: auto; padding: 18px 20px 20px; z-index: 57;
+  background: linear-gradient(var(--glass-tint), var(--glass-tint-2)), color-mix(in srgb, var(--bg2) 90%, transparent);
+  border-color: color-mix(in srgb, var(--acc) 70%, transparent); }
+.td-demo .sh { display: flex; align-items: baseline; gap: 16px; margin-bottom: 14px; }
+.td-demo h3 { margin: 0; font: 600 16px/1.3 var(--mono); color: var(--mag); letter-spacing: .04em; }
+.td-demo .sh .k { margin-left: auto; font: 11.5px/1 var(--mono); color: var(--dim); }
+.td-demo .sh .k b { color: var(--fgb); font-weight: 600; }
+.td-demo .shot { margin: 0 auto; }
+@media (max-width: 900px) { .td-demo .sh .k { display: none; } }
 .td-keys a { color: var(--ink); }
 
 /* ------------------------------------------------------------------ narrow */

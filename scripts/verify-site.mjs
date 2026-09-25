@@ -340,7 +340,15 @@ for (const path of ['/info', DOCS + '/', DOCS + '/workbench', DOCS + '/install']
   ok('docs: the sheet carries the app\'s sections and rows', ['TABS & PANES', 'EDITING & CLIPBOARD', 'LINKS', 'SCROLLBACK', 'LOOK & FEEL', 'WINDOW'].every(t => sheet.sections.includes(t)) && sheet.rows >= 40, JSON.stringify(sheet.sections) + ' ' + sheet.rows);
   ok('docs: the sheet says what the code does where the app\'s row is stale', !sheet.rowText.includes('▲ / ▼') && sheet.rowText.includes('🎨 (bottom-right)'), JSON.stringify(sheet.rowText.slice(0, 8)));
   ok('docs: without a script, Keymapping still goes to the keys page', sheet.href === '/keys');
+  /* the sheet's big button opens the example window: the kiosk's drawing, in the reader's theme */
+  await page.click('#td-sheet .td-demo-btn');
+  const demoUp = await page.waitForFunction(() => document.querySelector('#td-demo .win[data-pane-warp]'), null, { timeout: 8000 }).then(() => true, () => false);
+  const demo = await page.evaluate(() => { const w = document.querySelector('#td-demo .win'); return w && { open: document.getElementById('td-demo').classList.contains('on'),
+    acc: getComputedStyle(w).getPropertyValue('--w-acc').trim(), pal: document.documentElement.dataset.palette, panes: w.querySelectorAll('[data-warp]').length }; });
+  ok('docs: the sheet\'s big button opens the example window', demoUp && demo && demo.open && demo.panes >= 2, JSON.stringify(demo));
+  ok('docs: the example window wears the reader\'s theme', demo && demo.acc === '#7aa2f7' && demo.pal === 'tokyo-night', JSON.stringify(demo));
   await page.keyboard.press('Escape');
+  ok('docs: Esc puts the example window away', await page.evaluate(() => !document.getElementById('td-demo').classList.contains('on')));
   await page.keyboard.press('k');
   ok('docs: k opens the sheet', await page.evaluate(() => document.getElementById('td-sheet').classList.contains('on')));
   await page.keyboard.press('Escape');
