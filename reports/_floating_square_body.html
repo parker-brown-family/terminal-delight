@@ -5,7 +5,7 @@
 <h1>Floating Square</h1>
 
 <p class="lede">This morning you approved ten slices for opening documents inside Terminal Delight&rsquo;s panes,
-and the first one is built. Alt+click the path of a picture in any pane and the picture opens in a square
+and by this evening seven of them are merged and installed on your launcher. It started with the first one. Alt+click the path of a picture in any pane and the picture opens in a square
 beside the line that printed it; Escape puts it away. Before anything else was stacked on top of it, one
 question needed a number rather than a belief. A square you open and close all day holds a decoded picture
 and a texture on the graphics card, so does closing it give that memory back?</p>
@@ -43,11 +43,13 @@ wrote <span class="lnk">/home/parker/Pictures/td/pane-3.png</span>
 <table class="wide">
   <thead><tr><th>You do</th><th>Today</th></tr></thead>
   <tbody>
-    <tr><td>Alt+click a PNG, JPEG, WebP, GIF, BMP or SVG path</td><td>the picture opens in the square</td></tr>
-    <tr><td>Escape</td><td>the square closes; every other key goes to the shell</td></tr>
-    <tr><td>Alt+click a Markdown or HTML path</td><td>a square that says it is not drawn here yet, and that ctrl+click opens it with the desktop</td></tr>
+    <tr><td>Alt+click a picture, Markdown or HTML path</td><td>it opens in the square: pictures fitted, Markdown in your palette, briefs drawn by headless Chromium</td></tr>
+    <tr><td>Ctrl+Alt+click the same path</td><td>it opens in a pane beside the one you clicked, and focus stays where you were</td></tr>
+    <tr><td>The square&rsquo;s strip</td><td>drag it, &minus; fit + to zoom, &#8599; to the desktop, &#10005; or Escape to close; a second Alt+click makes it a split</td></tr>
+    <tr><td>alt+k in a document pane</td><td>flips between the document and its shell</td></tr>
+    <tr><td>Shift+click a path</td><td>shows it in the file manager; ctrl+click still opens it with the desktop</td></tr>
+    <tr><td>Restart the window</td><td>a pane showing a document comes back with your place kept</td></tr>
     <tr><td>Alt+click a command line</td><td>copies the line, as before</td></tr>
-    <tr><td>Ctrl+Alt+click a document</td><td>what it did before, until the split arrives in slice 4</td></tr>
   </tbody>
 </table>
 </div>
@@ -92,35 +94,46 @@ line whatever the code did, so the same run was pointed at a build with the rele
 way it should. The window&rsquo;s ordinary memory rose 15 MiB across the hundred cycles, under a quarter of
 one decoded picture. That is recorded as measured, not as zero.</p>
 
+<p>Each later slice ran the same test on what it added. A Markdown file holding a 4096-pixel picture grew
+2 MiB over a hundred cycles. The tallest brief in the archive, drawn by Chromium as fifteen tiles, was opened,
+scrolled top to bottom and back, and closed a hundred times, and grew 2 MiB against an 8 MiB tile, with never
+more than four tiles on the card at once.</p>
+
 <!-- ============================================================ 4 -->
 <h2 class="sec">Where the ten slices stand</h2>
 
-<p>The rest of the plan is already moving. Three slices touch different files, so three agents are building
-them side by side, and each lands as its own pull request once its checks pass.</p>
+<p>Slices that touched different files were built side by side, each landing as its own pull request once its
+checks passed, and the build went onto your launcher three times: after the square&rsquo;s controls, after the
+split, and after HTML. The notes are what is left, and they are the careful part, because they write into your
+briefs.</p>
 
 <figure>
   <span class="lbl">03 &middot; The ten slices, at the time of writing</span>
   <div class="scroller">
-    <div class="board" role="img" aria-label="Ten slices in two rows. Slice 9, size answers, is merged. Slice 1, the floating square, is in review. Slices 2, 3 and 6 are being built. Slices 4, 5, 7, 8 and 10 wait for the slices they depend on.">
-      <div class="s review"><b>1 &middot; Alt+click a picture</b>the square, Escape, textures given back<em>in review</em></div>
-      <div class="s building"><b>2 &middot; The square, whole</b>drag, its buttons, zoom, the chip, the menu<em>being built</em></div>
-      <div class="s building"><b>3 &middot; Markdown</b>drawn in your palette, links followed<em>being built</em></div>
-      <div class="s"><b>4 &middot; The split</b>Ctrl+Alt+click opens it beside you<em>waits for 2</em></div>
-      <div class="s"><b>5 &middot; Remembered</b>document panes survive a restart<em>waits for 4</em></div>
-      <div class="s building"><b>6 &middot; HTML, read-only</b>your briefs drawn by headless Chromium<em>being built</em></div>
-      <div class="s"><b>7 &middot; Notes, read</b>badges, buttons, concur stamps<em>waits for 6</em></div>
-      <div class="s"><b>8 &middot; Notes, write</b>saved into the brief itself<em>waits for 7</em></div>
-      <div class="s merged"><b>9 &middot; Size answers</b>programs told the pane&rsquo;s real size<em>merged</em></div>
+    <div class="board" role="img" aria-label="Ten slices in two rows. Slices 1 to 6 and 9 are merged and installed. Slice 7, notes read, is being built, and slice 8, notes write, follows it with the same agent. Slice 10, the guards, is last.">
+      <div class="s merged"><b>1 &middot; Alt+click a picture</b>the square, Escape, textures given back<em>installed</em></div>
+      <div class="s merged"><b>2 &middot; The square, whole</b>drag, its buttons, zoom, the chip, the menu<em>installed</em></div>
+      <div class="s merged"><b>3 &middot; Markdown</b>drawn in your palette, links followed<em>installed</em></div>
+      <div class="s merged"><b>4 &middot; The split</b>Ctrl+Alt+click opens it beside you<em>installed</em></div>
+      <div class="s merged"><b>5 &middot; Remembered</b>document panes survive a restart<em>installed</em></div>
+      <div class="s merged"><b>6 &middot; HTML, read-only</b>your briefs drawn by headless Chromium<em>installed</em></div>
+      <div class="s building"><b>7 &middot; Notes, read</b>badges, buttons, concur stamps<em>being built</em></div>
+      <div class="s"><b>8 &middot; Notes, write</b>saved into the brief itself<em>next, same agent</em></div>
+      <div class="s merged"><b>9 &middot; Size answers</b>programs told the pane&rsquo;s real size<em>installed</em></div>
       <div class="s"><b>10 &middot; Guards</b>format watch, licences<em>last</em></div>
     </div>
   </div>
-  <div class="legend2"><span><i class="m"></i>merged</span><span><i class="r"></i>in review</span><span><i class="b"></i>being built now</span><span><i></i>waiting</span></div>
-  <figcaption>From the plan&rsquo;s slice list and the pull requests open when this page was written. <b>Pictures get
-  their full controls in slice 2 and Markdown is drawn from slice 3; your briefs arrive in slice 6 and saved
-  notes in slice 8.</b> The split and the notes wait on the slices they stand on.</figcaption>
+  <div class="legend2"><span><i class="m"></i>merged and installed</span><span><i class="b"></i>being built now</span><span><i></i>waiting</span></div>
+  <figcaption>From the plan&rsquo;s slice list and the merged pull requests. <b>Everything but the notes is on your
+  launcher</b>; the notes wait on the shared test cases the brief skill now carries, which merged this
+  afternoon along with fixes to the brief&rsquo;s own save.</figcaption>
 </figure>
 
-<p>The size answers are already on main. A program that asks a pane how big it is in pixels now hears the size
+<p>To try it, press Ctrl+Alt+T for a fresh window, which starts from the launcher, and run
+<code>scripts/doc-demo.sh</code> in it: it prints the gestures and a handful of pictures, Markdown files and
+briefs to click. Your main window keeps its old build until you restart it.</p>
+
+<p>The size answers are on main too. A program that asks a pane how big it is in pixels now hears the size
 the pane is now, where it used to hear the size the pane was when it started, and that closes the stale-size
 issue you had open. The agent that built it found one more gap on the way: colour queries go unanswered in
 every pane. That is filed as its own issue rather than fixed on the side.</p>
@@ -130,12 +143,14 @@ every pane. That is filed as its own issue rather than fixed on the side.</p>
 
 <div class="grill">
   <div class="ask">
-    <h3>1 &middot; Install the build on your launcher when slice 2 merges?</h3>
-    <p>The plan puts the first install after slice 2, when the square can be dragged, zoomed and closed with its
-    own button. Installing points the launcher at the new build and nothing more: the windows you have open keep
-    running what they run until you restart one.</p>
-    <p class="rec"><b>Recommendation:</b> yes. I will install it with the repository&rsquo;s own landing script
-    and tell you which restart picks it up.</p>
+    <h3>1 &middot; Let CI run the tests that drive a real Chromium?</h3>
+    <p>Nine of the HTML slice&rsquo;s tests start a real browser. They run on this laptop and skip on GitHub,
+    whose runner blocks the browser&rsquo;s sandbox, so a change that breaks the engine against a real browser
+    passes CI. The fix is one line in the workflow file, and pushing a workflow file needs a scope this
+    machine&rsquo;s token for your account does not have.</p>
+    <p class="rec"><b>Recommendation:</b> grant it once with
+    <code>gh auth switch -u parker-brown-family &amp;&amp; gh auth refresh -h github.com -s workflow</code>,
+    and I will push the line and watch the nine run.</p>
   </div>
 </div>
 
