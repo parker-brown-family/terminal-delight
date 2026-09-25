@@ -249,6 +249,7 @@ fn snapshot_of(ws: &mut Workspace, cx: &mut Context<Workspace>) -> mcp::Snapshot
         // serves every transport and knows nothing about who asked.
         caller: None,
         engineering: ws.eng_reports(),
+        documents: ws.mcp_documents(cx),
     }
 }
 
@@ -494,6 +495,7 @@ mod tests {
             }),
             caller: None,
             engineering: vec![],
+            documents: vec![],
         }
     }
 

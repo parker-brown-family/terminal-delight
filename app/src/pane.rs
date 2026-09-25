@@ -2196,6 +2196,9 @@ pub struct Presentation {
     doc: Option<(DocCarry, bool)>,
     /// The floating square, where it was and what its strip was saying.
     float: Option<FloatCarry>,
+    /// Who the document pane was opened beside: a repaired document pane is
+    /// still beside the same agent.
+    doc_opened_by: Option<u64>,
 }
 
 /// A document view on its way from a pane being replaced to its replacement.
@@ -2440,6 +2443,11 @@ pub struct TerminalView {
     /// The document this pane was opened to show, on its Document face. See
     /// [`DocFace`].
     doc: Option<DocFace>,
+    /// The host id of the pane this one was split off to show a document
+    /// beside, when this window made the split. `None` for every other pane,
+    /// and for a document pane restored from a saved layout, which does not
+    /// remember: "not recorded" rather than "nobody".
+    doc_opened_by: Option<u64>,
     /// Where the Document face's view was laid out, flat, in window pixels:
     /// `(x, y, w, h)`, recorded as it paints. `None` until it has painted.
     doc_rect: std::rc::Rc<std::cell::Cell<Option<FlatRect>>>,
@@ -3403,6 +3411,7 @@ impl TerminalView {
                 rect: f.rect,
                 note: f.note,
             }),
+            doc_opened_by: self.doc_opened_by,
         }
     }
 
@@ -3441,6 +3450,7 @@ impl TerminalView {
             float.note = f.note;
             self.float = Some(float);
         }
+        self.doc_opened_by = from.doc_opened_by;
     }
 
     /// Whether this pane has reported an ending that has not been explained yet.
@@ -4067,6 +4077,7 @@ impl TerminalView {
             float_zones: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
             doc_memo: std::cell::RefCell::new(None),
             doc: None,
+            doc_opened_by: None,
             doc_rect: std::rc::Rc::new(std::cell::Cell::new(None)),
             doc_holding: false,
             was_focused: false,
@@ -5903,6 +5914,53 @@ impl TerminalView {
             .notes_report()
             .ok_or("the document is not a laid-out HTML page yet")?;
         Ok(report.to_string())
+    }
+
+    /// Every document open on this pane, for the MCP snapshot: the floating
+    /// square's, and the Document face's while that face is the one showing —
+    /// the same two [`Self::doc_notes`] reads, and the same report, so the map
+    /// `document_notes` hands an agent is the one `ctl doc notes` prints. An
+    /// `Err` says why a document has no report.
+    pub(crate) fn documents_open(
+        &self,
+        cx: &App,
+    ) -> Vec<(
+        crate::mcp::DocPlace,
+        String,
+        Result<serde_json::Value, String>,
+    )> {
+        use crate::mcp::DocPlace;
+        let float = self.float.as_ref().map(|f| (DocPlace::Float, &f.view));
+        let face = self.doc_on_face().map(|d| (DocPlace::Split, &d.view));
+        [float, face]
+            .into_iter()
+            .flatten()
+            .map(|(place, view)| {
+                let v = view.read(cx);
+                let target = v.target();
+                let report = v.notes_report().ok_or_else(|| {
+                    match target.kind {
+                        crate::docopen::DocKind::Html => "the page is not laid out yet",
+                        crate::docopen::DocKind::Markdown => "a Markdown document takes no notes",
+                        crate::docopen::DocKind::Image => "an image takes no notes",
+                    }
+                    .to_string()
+                });
+                (place, target.path.to_string_lossy().into_owned(), report)
+            })
+            .collect()
+    }
+
+    /// Who this document pane was opened beside, by host id. See
+    /// [`Self::doc_opened_by`]'s field.
+    pub(crate) fn doc_opened_by(&self) -> Option<u64> {
+        self.doc_opened_by
+    }
+
+    /// Record who this document pane was opened beside. The workspace calls
+    /// it once, as it makes the split.
+    pub(crate) fn set_doc_opened_by(&mut self, opener: Option<u64>) {
+        self.doc_opened_by = opener;
     }
 
     /// A notes command for the document on this pane — the floating

@@ -6,7 +6,7 @@
 - Plan (product, architecture, slices in one): **APPROVED 2026-09-25**. Parker: "Grea t- you go ahead and FIX EVERYHITNG!", in reply to "Approve Brief Beside, or what should change?". Nothing changed, so the three recommendations stand: ↪ pastes without Enter, agents open their own brief beside themselves in their own tab only, and the slices run in the order written. `01-plan.md`; page `reports/2026-09-24-brief-beside.html`.
 
 ## Slices
-- [ ] Slice 1: `document_notes`, a read-only MCP verb that answers the notes map of the document beside the caller
+- [x] Slice 1: `document_notes`, a read-only MCP verb that answers the notes map of the document beside the caller
 - [ ] Slice 2: ↪ send to agent, which pastes the notes map into the agent's prompt without pressing Enter (row #9 of the terminal-input manifest)
 - [ ] Slice 3: `open_document`, an MCP verb for an agent to open its own deliverable beside itself, plus "open beside" on the rail's deliverable row
 
