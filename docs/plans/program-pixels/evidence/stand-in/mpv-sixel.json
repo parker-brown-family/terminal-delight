@@ -1,0 +1,22 @@
+{
+ "identity": "td-kitty",
+ "cmd": [
+  "mpv",
+  "--really-quiet",
+  "--no-audio",
+  "--vo=sixel",
+  "av://lavfi:testsrc=duration=3:size=640x360:rate=30"
+ ],
+ "bytes_out": 5042178,
+ "secs": 3.33,
+ "placeholder_cells_U10EEEE": 0,
+ "apc_payload_bytes": 0,
+ "apc_a_T_count": 0,
+ "apc_keys": {},
+ "seq_counts": {
+  "DCS q": 58,
+  "DCS sixel?": 58
+ },
+ "events": [],
+ "text": ""
+}
