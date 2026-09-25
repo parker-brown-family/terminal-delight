@@ -48,6 +48,22 @@ async function open(path, { w = 1440, h = 900, prefs = null } = {}) {
   await page.waitForTimeout(700);
   return { ctx, page, errors };
 }
+/* The page's filter, and the glass canvas: whether it shows, the alpha of its
+   top-left pixel (outside the bent screen, so black) and of its centre
+   (inside, so clear or a faint scanline). Runs in the page. */
+function glassState() {
+  const t = document.getElementById('tube');
+  const cv = document.querySelector('#td-fx canvas.glass');
+  const fx = document.getElementById('td-fx');
+  const shown = !!cv && !cv.hidden && getComputedStyle(fx).display !== 'none' && cv.width > 0;
+  let corner = null, centre = null;
+  if (shown) {
+    const c = cv.getContext('2d');
+    corner = c.getImageData(1, 1, 1, 1).data[3];
+    centre = c.getImageData(cv.width >> 1, (cv.height >> 1) + 2, 1, 1).data[3];
+  }
+  return { filter: getComputedStyle(t).filter, shown, corner, centre };
+}
 const overflow = page => page.evaluate(() => {
   const t = document.getElementById('tube');
   return { doc: document.documentElement.scrollWidth - innerWidth, tube: t ? t.scrollWidth - t.clientWidth : 0 };
@@ -60,28 +76,31 @@ for (const [path, name] of [['/info', 'info'], ['/docsite/', 'docs-index'], ['/d
       ok(`${name}@${w} ${prefs.theme}/${prefs.crt}: clean console`, errors.length === 0, errors.join(' | '));
       const o = await overflow(page);
       ok(`${name}@${w} ${prefs.theme}/${prefs.crt}: no horizontal overflow`, o.doc <= 0 && o.tube <= 1, JSON.stringify(o));
-      const warp = await page.evaluate(() => document.getElementById('tube').classList.contains('warp'));
-      const expectWarp = prefs.theme === 'glass' && prefs.crt === 'on' && w >= 968;
-      ok(`${name}@${w} ${prefs.theme}/${prefs.crt}: warp ${expectWarp ? 'on' : 'off'}`, warp === expectWarp);
+      const g = await page.evaluate(glassState);
+      const expectGlass = prefs.theme === 'glass' && prefs.crt === 'on';
+      /* The rule curved-glass-web wrote down and this site broke once: warp
+         the glass, never the text. Nothing may put a filter on the page. */
+      ok(`${name}@${w} ${prefs.theme}/${prefs.crt}: the page itself is never filtered`, g.filter === 'none', g.filter);
+      ok(`${name}@${w} ${prefs.theme}/${prefs.crt}: curved glass ${expectGlass ? 'drawn' : 'absent'}`,
+        expectGlass ? (g.shown && g.corner === 255 && g.centre < 80) : !g.shown, JSON.stringify(g));
       await page.screenshot({ path: `${OUT}/${name}-${w}-${prefs.theme}-${prefs.crt}.png` });
       await ctx.close();
     }
   }
 }
 
-// toggles flip state, persist, and the barrel suspends on scroll
+// toggles flip state and persist; the glass follows them
 {
   const { ctx, page } = await open('/info', { prefs: { theme: 'glass', crt: 'off' } });
   await page.click('.td-actions [data-td-toggle="crt"]');
-  ok('crt toggle turns warp on', await page.evaluate(() => document.documentElement.dataset.crt === 'on' && document.getElementById('tube').classList.contains('warp')));
+  const on = await page.evaluate(glassState);
+  ok('crt toggle draws the curved glass', on.shown && on.corner === 255, JSON.stringify(on));
   ok('crt toggle persists', await page.evaluate(() => JSON.parse(localStorage.getItem('td-shell')).crt === 'on'));
-  await page.evaluate(() => { const t = document.getElementById('tube'); t.scrollTop = 900; t.dispatchEvent(new Event('scroll')); });
-  ok('warp suspends while scrolling', await page.evaluate(() => document.getElementById('tube').classList.contains('scrolling')));
-  await page.waitForTimeout(1500);
-  ok('warp returns after scrolling stops', await page.evaluate(() => !document.getElementById('tube').classList.contains('scrolling')));
+  await page.evaluate(() => { const t = document.getElementById('tube'); t.style.scrollBehavior = 'auto'; t.scrollTop = 900; });
+  ok('scrolling leaves the page unfiltered', (await page.evaluate(glassState)).filter === 'none');
   await page.click('.td-actions [data-td-toggle="theme"]');
   ok('theme toggle to paper', await page.evaluate(() => document.documentElement.dataset.theme === 'paper'));
-  ok('paper drops the warp', await page.evaluate(() => !document.getElementById('tube').classList.contains('warp')));
+  ok('paper hides the glass', !(await page.evaluate(glassState)).shown);
   ok('paper paints hero window quiet-command', await page.evaluate(() => document.getElementById('win').dataset.wear === 'quiet-command'));
   await page.click('.wear button[data-wear="gamba"]');
   ok('theme chip paints both windows', await page.evaluate(() => [...document.querySelectorAll('#win,[data-wear-follow]')].every(e => e.dataset.wear === 'gamba')));

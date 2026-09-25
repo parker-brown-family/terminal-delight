@@ -84,6 +84,27 @@ box, the same pattern as parker.brownfamilysports.com, not Cloudflare Pages.
   served from the docs domain — not built, Parker's call.
 - **Warp half as strong again:** `CURVE` 0.26 → 0.39.
 
+## Round three (2026-09-25): warp the glass, never the text
+
+At the stronger curve the feDisplacementMap warp *"demolished"* the text.
+Chrome evaluates that filter nearest-pixel at screen resolution, so glyphs,
+rules and card borders break wherever the displacement crosses a whole pixel.
+Laying the content out at 2× and scaling it back was tested and does not help;
+the filter is still computed at screen size.
+
+The answer was already written down in
+`~/BROWN-FAMILY-SPORTS/Software/curved-glass-web/docs/LESSONS.md`: *"Warp the
+GLASS, never the live text."* The page is now flat under the tube, and the
+glass is bent through the same barrel at the same 0.39 curve: bowed scanlines,
+a cushion-shaped screen edge, a rim shadow and the top-left glare the hacker
+theme calls `screen_glare`, drawn once per size into one canvas. Nothing is
+resampled and scrolling costs nothing. `verify-site.mjs` asserts the page
+never carries a filter.
+
+The true warp of live text needs the HTML-in-Canvas API (`texElementImage2D`).
+It is in Chrome 152 and Chromium 151 on this box, but only behind
+`--enable-blink-features=CanvasDrawElement`, so visitors do not have it.
+
 ## Open — Parker's call
 
 - info's `/docsite/` links switch to the subdomain when this branch merges.

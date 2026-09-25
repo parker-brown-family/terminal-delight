@@ -9,12 +9,14 @@
               phosphor #86efac on #03100a, accent #22c55e.
      paper  — the light mode. A terminal that prints instead of glowing.
 
-     CRT on — glass: scanlines, vignette, a tracking band every 16 s (the app's
-              own tracking_period), and a barrel warp on the content pane.
+     CRT on — glass: a curved tube over the content pane — scanlines bowed
+              through the barrel, a cushion-shaped screen edge, a shadow in
+              the rim, bloom, and a tracking band every 16 s (the app's own
+              tracking_period). The text under it is never resampled.
               paper: green-bar tractor-feed paper, sprocket holes and all.
 
    The layout copies the app's rule that chrome is flat and the pane is glass:
-   the top bar and the spine never bend, and the warp lives on #tube alone.
+   the top bar and the spine never bend, and the glass lives over #tube alone.
    ========================================================================== */
 
 :root {
@@ -195,8 +197,9 @@ a { color: inherit; }
   scroll-behavior: smooth;
   scrollbar-width: thin; scrollbar-color: var(--line-2) transparent;
 }
-:root[data-crt="on"][data-theme="glass"] #tube.warp { filter: url(#td-barrel); }
-:root[data-crt="on"] #tube.scrolling { filter: none; }
+/* No filter ever lands on #tube: bending the page resamples its text, and
+   Chrome does that nearest-pixel. The curve is drawn on the glass instead —
+   see glass() in td-shell.js. */
 
 /* the glass: an overlay over the tube only, so the chrome stays flat */
 #td-fx {
@@ -205,6 +208,14 @@ a { color: inherit; }
 }
 :root[data-crt="on"][data-theme="glass"] #td-fx { display: block; }
 #td-fx .scan { position: absolute; inset: 0; background: repeating-linear-gradient(0deg, rgba(0, 0, 0, .22) 0 1px, transparent 1px 4px); }
+/* The bent glass: bowed scanlines, the cushion edge and the rim shadow, drawn
+   by td-shell.js. It replaces the flat scanlines once it exists, and sits on
+   top so the corners outside the tube are black under everything else. */
+#td-fx canvas.glass { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 2; }
+#td-fx canvas.glass[hidden] { display: none; }
+#td-fx.curved .scan { display: none; }
+/* The top-left reflection the app's hacker theme calls screen_glare. */
+#td-fx::after { content: ""; position: absolute; inset: 0; z-index: 1; background: radial-gradient(55% 42% at 20% 10%, rgba(190, 255, 210, .07), transparent 70%); }
 #td-fx .vig { position: absolute; inset: 0; background: radial-gradient(125% 110% at 50% 50%, transparent 58%, rgba(0, 0, 0, .55)); }
 #td-fx .bloom { position: absolute; inset: 0; box-shadow: inset 0 0 140px rgba(10, 70, 30, .45), inset 0 0 24px rgba(54, 255, 134, .08); }
 #td-fx .band {

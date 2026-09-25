@@ -44,90 +44,92 @@
       save('crt', root.dataset.crt);
     }
     syncControls();
-    warp();
+    glass();
   });
 
-  /* ------------------------------------------------------------ barrel
-     The warp-lab's approach 09: an SVG feDisplacementMap over a fixed tube,
-     content scrolling inside it, and the filter dropped while the reader is
-     actually scrolling so the scroll stays native-speed. The curve comes back
-     180 ms after the last scroll event. */
+  /* ------------------------------------------------------------- glass
+     Warp the glass, never the text.
+
+     The first version bent the page itself with an SVG feDisplacementMap,
+     and at the curve Parker wanted it demolished the text: Chrome samples
+     that filter nearest-pixel at screen resolution, so every glyph, rule and
+     card border breaks wherever the displacement crosses a whole pixel.
+     Laying the page out at twice the size and scaling it back does not help
+     — the filter is still computed at screen size (tested 2026-09-25).
+     curved-glass-web had already written the rule down: "Warp the GLASS,
+     never the live text... the eye reads CRT mostly from scanlines +
+     vignette + shadow mask" (docs/LESSONS.md).
+
+     So the page under the tube stays flat, and the glass on top of it is
+     bent through the same barrel: scanlines that bow along the curve, a
+     cushion-shaped screen edge with rounded corners, and a shadow inside the
+     rim. It is drawn once per size into one canvas, costs nothing to scroll,
+     and resamples no text. */
 
   /* 0.26 was the first cut; Parker asked for half as much again. */
   var CURVE = 0.39;
-  var built = '';
+  var SCAN_PERIOD = 4;       // CSS px between scanlines, as the flat overlay had
+  var RIM = 22;              // CSS px of shadow inside the curved edge
+  var drawn = '';
 
-  function ensureFilter() {
-    if (document.getElementById('td-barrel')) return;
-    var ns = 'http://www.w3.org/2000/svg';
-    var svg = document.createElementNS(ns, 'svg');
-    svg.setAttribute('width', '0'); svg.setAttribute('height', '0');
-    svg.setAttribute('aria-hidden', 'true');
-    svg.style.position = 'absolute';
-    /* The region is the pane's own box, and the map is pinned to its origin.
-       feImage defaults its subregion to the filter region, so a padded region
-       (the warp lab used -8%) slides the map up and left by the padding, and
-       every pixel it no longer covers is displaced by the full half-scale —
-       which draws a second, offset copy of the page along the right and
-       bottom edges. A barrel only ever samples inward, so no margin is
-       needed. */
-    svg.innerHTML =
-      '<filter id="td-barrel" x="0" y="0" width="100%" height="100%" color-interpolation-filters="sRGB">' +
-      '<feImage id="td-barrel-map" x="0" y="0" result="map" preserveAspectRatio="none"/>' +
-      '<feDisplacementMap id="td-barrel-disp" in="SourceGraphic" in2="map" xChannelSelector="R" yChannelSelector="G" scale="0"/>' +
-      '</filter>';
-    document.body.appendChild(svg);
+  function glassCanvas() {
+    var fx = document.getElementById('td-fx');
+    if (!fx) return null;
+    var cv = fx.querySelector('canvas.glass');
+    if (!cv) {
+      cv = document.createElement('canvas');
+      cv.className = 'glass';
+      cv.setAttribute('aria-hidden', 'true');
+      fx.insertBefore(cv, fx.firstChild);
+      fx.classList.add('curved');
+    }
+    return cv;
   }
 
-  function buildMap(W, H) {
-    /* built at half size and stretched: the displacement field is smooth, so
-       the saving is free and the toggle stays instant on a 4K window */
-    var w = Math.max(2, Math.round(W / 2)), h = Math.max(2, Math.round(H / 2));
+  function drawGlass(cv, W, H) {
+    var dpr = Math.min(window.devicePixelRatio || 1, 2);
+    var w = Math.max(2, Math.round(W * dpr)), h = Math.max(2, Math.round(H * dpr));
+    cv.width = w; cv.height = h;
+    var c = cv.getContext('2d'), img = c.createImageData(w, h), d = img.data;
     var k1 = CURVE * 0.6, k2 = CURVE * 0.25;
-    var cv = document.createElement('canvas'); cv.width = w; cv.height = h;
-    var c = cv.getContext('2d'), img = c.createImageData(w, h);
-    var cx = w / 2, cy = h / 2, ox = new Float32Array(w * h), oy = new Float32Array(w * h), mo = 1e-3;
-    for (var y = 0; y < h; y++) for (var x = 0; x < w; x++) {
-      var dx = (x - cx) / cx * 0.5, dy = (y - cy) / cy * 0.5, r2 = dx * dx + dy * dy, f = 1 + k1 * r2 + k2 * r2 * r2, i = y * w + x;
-      ox[i] = dx * (f - 1) * W; oy[i] = dy * (f - 1) * H;
-      if (Math.abs(ox[i]) > mo) mo = Math.abs(ox[i]);
-      if (Math.abs(oy[i]) > mo) mo = Math.abs(oy[i]);
-    }
-    for (var j = 0; j < w * h; j++) {
-      img.data[j * 4] = 128 + ox[j] / mo * 127; img.data[j * 4 + 1] = 128 + oy[j] / mo * 127;
-      img.data[j * 4 + 2] = 128; img.data[j * 4 + 3] = 255;
+    var period = SCAN_PERIOD * dpr, rim = RIM * dpr;
+    for (var y = 0; y < h; y++) {
+      var ny = y / h - 0.5;
+      for (var x = 0; x < w; x++) {
+        var nx = x / w - 0.5, r2 = nx * nx + ny * ny, f = 1 + k1 * r2 + k2 * r2 * r2;
+        /* where this screen pixel would sample from under the barrel */
+        var sx = (0.5 + nx * f) * w, sy = (0.5 + ny * f) * h;
+        /* distance, in device px, to the edge of the bent screen */
+        var edge = Math.min(sx, w - sx, sy, h - sy);
+        var a;
+        if (edge <= 0) a = Math.min(1, 0.5 - edge);                 // outside the glass: black
+        else {
+          var line = sy % period;                                  // a scanline, bowed with the curve
+          a = line < dpr ? 0.2 : 0;
+          if (edge < rim) { var t = 1 - edge / rim; a = Math.max(a, 0.55 * t * t); } // shadow in the rim
+          if (edge < 1) a = Math.max(a, 1 - edge);                 // antialias the edge
+        }
+        var i = (y * w + x) * 4;
+        d[i] = 0; d[i + 1] = 0; d[i + 2] = 0; d[i + 3] = a * 255;
+      }
     }
     c.putImageData(img, 0, 0);
-    var url = cv.toDataURL();
-    var map = document.getElementById('td-barrel-map');
-    map.setAttribute('href', url);
-    map.setAttributeNS('http://www.w3.org/1999/xlink', 'href', url);
-    map.setAttribute('width', W); map.setAttribute('height', H);
-    document.getElementById('td-barrel-disp').setAttribute('scale', (mo * 2).toFixed(2));
   }
 
-  function warp() {
+  function glass() {
     if (!tube) return;
-    var want = root.dataset.crt === 'on' && root.dataset.theme !== 'paper' && tube.clientWidth >= 600;
-    if (!want) { tube.classList.remove('warp'); return; }
-    ensureFilter();
-    var key = tube.clientWidth + 'x' + tube.clientHeight;
-    if (key !== built) { buildMap(tube.clientWidth, tube.clientHeight); built = key; }
-    tube.classList.add('warp');
+    var on = root.dataset.crt === 'on' && root.dataset.theme !== 'paper';
+    var cv = glassCanvas();
+    if (!cv) return;
+    if (!on) { cv.hidden = true; return; }
+    cv.hidden = false;
+    var key = tube.clientWidth + 'x' + tube.clientHeight + '@' + (window.devicePixelRatio || 1);
+    if (key !== drawn) { drawGlass(cv, tube.clientWidth, tube.clientHeight); drawn = key; }
   }
 
   if (tube) {
-    var tid = 0;
-    var suspend = function () {
-      if (!tube.classList.contains('warp')) return;
-      tube.classList.add('scrolling');
-      clearTimeout(tid);
-      tid = setTimeout(function () { tube.classList.remove('scrolling'); }, 180);
-    };
-    tube.addEventListener('scroll', suspend, { passive: true });
-    tube.addEventListener('wheel', suspend, { passive: true });
     var rt = 0;
-    addEventListener('resize', function () { clearTimeout(rt); rt = setTimeout(warp, 160); });
+    addEventListener('resize', function () { clearTimeout(rt); rt = setTimeout(glass, 160); });
   }
 
   /* ----------------------------------------------------- spine drawer */
@@ -310,6 +312,6 @@
   });
 
   syncControls();
-  warp();
-  window.__tdShell = { warp: warp, copyRegister: copyRegister };
+  glass();
+  window.__tdShell = { glass: glass, copyRegister: copyRegister };
 })();
