@@ -1019,6 +1019,9 @@ pub struct MarkdownDoc {
     pub images: Images,
     /// Decodes in flight, by path. Dropping one cancels it.
     pub decoding: HashMap<PathBuf, gpui::Task<()>>,
+    /// The file being read and parsed off the main thread, when it is; a
+    /// newer read replaces it. See `markdown_view.rs`.
+    pub reading: gpui::Task<()>,
     /// Whether every image had been drawn, for `TD_DOCDEBUG`'s one line.
     pub drew_all: bool,
 }
@@ -1069,6 +1072,7 @@ impl MarkdownDoc {
             pending: None,
             images: Images::new(),
             decoding: HashMap::new(),
+            reading: gpui::Task::ready(()),
             drew_all: false,
         }
     }
