@@ -1,0 +1,12 @@
+{
+  "written": "2026-09-25, before any of the six agents reported",
+  "test": "Six fresh agents, three per core, given the identical task (prompt.md) with only the crate name and its one-line description changed. Workspaces under ~/.cache/td-core-research/fluency/<core>-<n>, blind to this repository.",
+  "checks": {
+    "step1_terminal": "a 120x40 terminal with 10x22-pixel cells exists and the program runs",
+    "step2_3_picture": "exactly one placement of the icat picture: 64 columns wide, 19 rows tall, at row 0, column 0 (bake/results for rio-vt 0.5.28 and libghostty-vt 0.2.1, identical)",
+    "step3_cursor": "cursor at row 19, column 0 after the picture (both cores in the bake-off)",
+    "step3_replies": "the replies include the Kitty graphics answer for image 1 (an APC starting _Gi=1 and carrying OK) and a device-attributes answer",
+    "step4_history": "rows held after text.bin (18,311 lines): 10,040 visible plus history for a 10,000-line scrollback, accepted within 2% (9,839 to 10,241). libghostty-vt's max_scrollback behaves as bytes, so an agent that passes 10,000 there keeps about 489 rows and fails this check"
+  },
+  "measured_from_the_agent": ["each check above, re-run by the assembling agent from the agent's own program, not taken from its report", "tool uses, tokens and wall time from the agent run", "surprises listed in notes.md, counted and read"]
+}
