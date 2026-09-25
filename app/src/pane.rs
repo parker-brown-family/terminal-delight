@@ -1181,12 +1181,21 @@ const DEEP_ASK_ROWS: i32 = 2000;
 /// A length as gpui lays it out: rounded to whole device pixels, ties toward
 /// zero, the rule gpui applies to every authored size before layout
 /// (`round_to_device_pixel` in gpui's util.rs). Returned in logical pixels.
-fn laid_out_length(logical: f32, scale: f32) -> f32 {
+pub(crate) fn laid_out_length(logical: f32, scale: f32) -> f32 {
     if scale <= 0.0 {
         return logical;
     }
     let device = logical * scale;
     (device.abs() - 0.5).ceil().copysign(device) / scale
+}
+
+/// The grid's padding as gpui lays it out: [`grid_pad`], rounded to whole
+/// device pixels the way gpui rounds every authored padding before layout.
+/// Anything that turns a row into a position adds this, not the raw padding,
+/// or it lands up to half a device pixel off the drawn grid.
+fn grid_pad_drawn(w: f32, h: f32, k1: f32, k2: f32, scale: f32) -> (f32, f32) {
+    let (x, y) = grid_pad(w, h, k1, k2);
+    (laid_out_length(x, scale), laid_out_length(y, scale))
 }
 
 fn grid_pad(w: f32, h: f32, k1: f32, k2: f32) -> (f32, f32) {
@@ -2241,6 +2250,10 @@ pub struct TerminalView {
     grid: term::GridSize,
     cell_w: f32,
     cell_h: f32,
+    /// The window's scale factor, as `sync_size` last saw it. The hit-test has
+    /// no window to ask, and it has to snap the grid's padding the way gpui
+    /// does for the rows to land where they are drawn.
+    scale: f32,
     scroll_accum: f32,
     selecting: bool,
     /// Drag-select auto-scroll: signed lines/tick (>0 = up into history), 0 idle.
@@ -3978,6 +3991,7 @@ impl TerminalView {
             grid,
             cell_w: 8.4,
             cell_h: 20.,
+            scale: 1.0,
             scroll_accum: 0.,
             selecting: false,
             autoscroll: 0.,
@@ -4442,7 +4456,8 @@ impl TerminalView {
         // hit-test, the Alt chip's box, where a floating document opens, the
         // grid fit — reads `cell_h`, so it has to be the laid-out value, or
         // they drift up from the text by half a row by the bottom of a tall pane.
-        self.cell_h = laid_out_length(th.cell_h, window.scale_factor());
+        self.scale = window.scale_factor();
+        self.cell_h = laid_out_length(th.cell_h, self.scale);
         let font = grid_font(th, FontWeight::NORMAL);
         if let Ok(w) = window.text_system().advance(
             window.text_system().resolve_font(&font),
@@ -4468,7 +4483,7 @@ impl TerminalView {
                 )
             }
         };
-        let (pad_x, pad_y) = grid_pad(tube_w, tube_h, k1, k2);
+        let (pad_x, pad_y) = grid_pad_drawn(tube_w, tube_h, k1, k2, self.scale);
         let (avail_w, avail_h) = (tube_w - pad_x * 2., tube_h - pad_y * 2.);
         let cols = ((avail_w / self.cell_w).floor() as usize).max(10);
         let rows = ((avail_h / self.cell_h).floor() as usize).max(3);
@@ -4543,7 +4558,7 @@ impl TerminalView {
         );
         // Same frame the renderer laid the grid into, so a click maps to the
         // cell shown under it (the grid starts at pad_x/pad_y inside the tube).
-        let (pad_x, pad_y) = grid_pad(bw, bh, k1, k2);
+        let (pad_x, pad_y) = grid_pad_drawn(bw, bh, k1, k2, self.scale);
         let fx = (lx * bw - pad_x) / self.cell_w;
         let y = ((ly * bh - pad_y) / self.cell_h).max(0.) as usize;
         let col = (fx.max(0.) as usize).min(self.grid.cols.saturating_sub(1));
@@ -4854,7 +4869,7 @@ impl TerminalView {
         }
         let (w, h) = self.screen_size().unwrap_or((640.0, 480.0));
         let (k1, k2) = self.warp_k;
-        let (_, pad_y) = grid_pad(w, h, k1, k2);
+        let (_, pad_y) = grid_pad_drawn(w, h, k1, k2, self.scale);
         let (top, bottom) = match row {
             Some(r) => (
                 pad_y + r as f32 * self.cell_h,
@@ -10332,7 +10347,7 @@ impl Render for TerminalView {
                 .map(|b| (f32::from(b.size.width), f32::from(b.size.height)))
                 .unwrap_or((0.0, 0.0));
             let (k1, k2) = theme::warp_coeffs(th.warp);
-            grid_pad(w, h, k1, k2)
+            grid_pad_drawn(w, h, k1, k2, window.scale_factor())
         };
         // The Alt-held copy affordance: a border around the logical line under the
         // pointer with a ⎘ chip at its right edge. Painted INSIDE the tube, so it
@@ -13779,14 +13794,74 @@ mod tests {
         assert_eq!(laid_out_length(1.3, 2.0), 1.5);
     }
 
+    /// `laid_out_length` copies gpui's rounding, because gpui keeps its own
+    /// crate-private. If gpui ever rounds differently, rows drift from the
+    /// arithmetic again with nothing failing, so this reads gpui's source and
+    /// holds the copy to it.
+    #[test]
+    fn the_row_rounding_is_still_the_rule_gpui_lays_out_with() {
+        let util = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../zed-upstream/crates/gpui/src/util.rs");
+        let src = std::fs::read_to_string(&util).unwrap_or_else(|e| {
+            panic!(
+                "gpui's util.rs at {} is where the rule lives: {e}",
+                util.display()
+            )
+        });
+        let squash = |t: &str| t.split_whitespace().collect::<String>();
+        let gpui = squash(&src);
+        assert!(
+            gpui.contains(&squash(
+                "fn round_half_toward_zero(value: f32) -> f32 { (value.abs() - 0.5).ceil().copysign(value) }"
+            )),
+            "gpui's round_half_toward_zero changed: update laid_out_length to match"
+        );
+        assert!(
+            gpui.contains(&squash(
+                "fn round_to_device_pixel(logical: f32, scale_factor: f32) -> f32 { round_half_toward_zero(logical * scale_factor) }"
+            )),
+            "gpui's round_to_device_pixel changed: update laid_out_length to match"
+        );
+    }
+
+    /// The grid's padding is rounded by gpui like every other authored length,
+    /// so every place that turns a row into a position adds the drawn padding.
+    /// Only `grid_pad_drawn` may call the raw `grid_pad`.
+    #[test]
+    fn the_grid_is_positioned_by_its_drawn_padding() {
+        let code = live_code();
+        let drawn_at = code.find("fn grid_pad_drawn(").expect("grid_pad_drawn");
+        let drawn_end = drawn_at + code[drawn_at..].find("\n}\n").expect("its end");
+        let outside = format!("{}{}", &code[..drawn_at], &code[drawn_end..]);
+        let raw_calls =
+            outside.matches("grid_pad(").count() - outside.matches("fn grid_pad(").count();
+        assert_eq!(raw_calls, 0, "raw grid_pad called outside grid_pad_drawn");
+        assert_eq!(laid_out_length(17.3, 1.6), 17.5);
+        let (x, y) = grid_pad_drawn(1000.0, 800.0, 0.2, 0.05, 1.6);
+        assert_eq!(
+            ((x * 1.6).fract(), (y * 1.6).fract()),
+            (0.0, 0.0),
+            "whole device pixels"
+        );
+        let main = include_str!("main.rs");
+        assert!(
+            main.contains("crate::pane::laid_out_length(snap.cell_h * ms, window.scale_factor())"),
+            "the FOCUS mirror counts rows at the height it draws them"
+        );
+    }
+
     #[test]
     fn the_pane_takes_the_laid_out_row_height_not_the_themes() {
         let code = live_code();
         let sync = code.split("fn sync_size(").nth(1).expect("sync_size");
         let sync = sync.split("\n    fn ").next().unwrap_or(sync);
         assert!(
-            sync.contains("self.cell_h = laid_out_length(th.cell_h, window.scale_factor())"),
+            sync.contains("self.cell_h = laid_out_length(th.cell_h, self.scale)"),
             "cell_h must be the height gpui draws a row at"
+        );
+        assert!(
+            sync.contains("self.scale = window.scale_factor()"),
+            "the scale the hit-test snaps with is the window's"
         );
     }
 
