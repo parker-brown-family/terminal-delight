@@ -232,9 +232,10 @@ pub trait Backend {
     /// The file went missing. The last render stays up either way.
     fn file_gone(&mut self, _cx: &mut Context<DocumentView>) {}
 
-    // ── a brief's notes ─────────────────────────────────────────────────────
+    // ── notes ───────────────────────────────────────────────────────────────
     //
-    // Only a brief carries notes, so only the page overrides these.
+    // A brief and a Markdown file carry notes, so the page and the Markdown
+    // backend override these; a picture takes none.
 
     /// Who the notes bar's ↪ sends to. Answers whether that changed what is
     /// drawn, so the view repaints only then.
@@ -244,6 +245,13 @@ pub trait Backend {
 
     /// What came of a ↪, said in the notes bar.
     fn notes_said(&mut self, _said: Said, _cx: &mut Context<DocumentView>) {}
+
+    /// Alt is held, or let go: a document that takes notes outlines
+    /// everything that takes one while the pointer is over it. Answers
+    /// whether that changed what is drawn.
+    fn reveal(&mut self, _on: bool) -> bool {
+        false
+    }
 
     /// What the notes layer shows, for the control socket. `None` for
     /// anything but a brief, and for a brief not yet laid out.
