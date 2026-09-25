@@ -111,7 +111,66 @@ fn run(bytes: &[u8]) -> serde_json::Value {
     })
 }
 
+// ---------------------------------------------------------------- performance: twenty panes of text
+
+/// VmRSS and VmHWM from /proc/self/status, in kB. None when the kernel does not say.
+fn rss() -> (Option<u64>, Option<u64>) {
+    let s = std::fs::read_to_string("/proc/self/status").ok();
+    let get = |k: &str| {
+        s.as_deref()?.lines().find(|l| l.starts_with(k))?.split_whitespace().nth(1)?.parse().ok()
+    };
+    (get("VmRSS:"), get("VmHWM:"))
+}
+
+fn make() -> Terminal {
+    let size = TerminalSize { rows: ROWS, cols: COLS, pixel_width: COLS * CW, pixel_height: ROWS * CH, dpi: 96 };
+    Terminal::new(size, Arc::new(Config), "wezbake", "0", Box::new(Replies::default()))
+}
+
+/// Memory first, in a process that has done nothing else, then speed; the same
+/// procedure as corebake's --perf. Each wezterm-term Terminal also starts a writer
+/// thread for its replies, and that is part of what a pane costs.
+fn perf_main(args: &[String]) {
+    let text = std::fs::read(&args[0]).expect("text stream");
+    let pic = std::fs::read(&args[1]).expect("picture recording");
+    let panes: usize = args[2].parse().expect("panes");
+    let before = rss();
+    let mut terms: Vec<_> = (0..panes).map(|_| make()).collect();
+    let empty = rss();
+    for t in terms.iter_mut() {
+        for c in text.chunks(4096) { t.advance_bytes(c); }
+        for c in pic.chunks(4096) { t.advance_bytes(c); }
+    }
+    let full = rss();
+    let kept = terms[0].screen().scrollback_rows();
+    drop(terms);
+    let mut runs = Vec::new();
+    for _ in 0..5 {
+        let mut t = make();
+        let t0 = std::time::Instant::now();
+        for c in text.chunks(4096) { t.advance_bytes(c); }
+        runs.push((t0.elapsed().as_secs_f64() * 1e4).round() / 10.0);
+    }
+    let mut sorted = runs.clone();
+    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let per_pane = |a: Option<u64>, b: Option<u64>| a.zip(b).map(|(a, b)| a.saturating_sub(b) / panes as u64);
+    let v = serde_json::json!({
+        "core": "wezterm-term git b09b56c29c", "panes": panes, "text_bytes": text.len(), "picture_bytes": pic.len(),
+        "rss_kb": {"start": before.0, "after_create": empty.0, "after_fill": full.0, "high_water": full.1},
+        "kb_per_pane_empty": per_pane(empty.0, before.0),
+        "kb_per_pane_full": per_pane(full.0, before.0),
+        "rows_kept": kept,
+        "text_ms_runs": runs, "text_ms_median": sorted[2],
+        "text_mb_per_s": (text.len() as f64 / 1048576.0) / (sorted[2] / 1000.0),
+    });
+    println!("{}", serde_json::to_string_pretty(&v).unwrap());
+}
+
 fn main() {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().map(|a| a == "--perf").unwrap_or(false) {
+        return perf_main(&args[1..]);
+    }
     let mut out = serde_json::Map::new();
     for path in std::env::args().skip(1) {
         let mut bytes = std::fs::read(&path).expect("read capture");

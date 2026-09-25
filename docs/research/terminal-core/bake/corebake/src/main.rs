@@ -155,7 +155,99 @@ mod alac {
     }
 }
 
+// ---------------------------------------------------------------- performance: twenty panes of text
+
+/// VmRSS and VmHWM from /proc/self/status, in kB. None when the kernel does not say.
+fn rss() -> (Option<u64>, Option<u64>) {
+    let s = std::fs::read_to_string("/proc/self/status").ok();
+    let get = |k: &str| {
+        s.as_deref()?.lines().find(|l| l.starts_with(k))?.split_whitespace().nth(1)?.parse().ok()
+    };
+    (get("VmRSS:"), get("VmHWM:"))
+}
+
+/// Memory first, in a process that has done nothing else: `panes` terminals, each fed the
+/// whole text stream and then one picture, all kept alive. Then speed: the text stream into
+/// a fresh terminal, five times.
+fn perf<T>(core: &str, make: impl Fn() -> T, feed: impl Fn(&mut T, &[u8]), rows_kept: impl Fn(&T) -> usize,
+           text: &[u8], pic: &[u8], panes: usize) -> serde_json::Value {
+    let before = rss();
+    let mut terms: Vec<T> = (0..panes).map(|_| make()).collect();
+    let empty = rss();
+    for t in terms.iter_mut() {
+        for c in text.chunks(4096) { feed(t, c); }
+        for c in pic.chunks(4096) { feed(t, c); }
+    }
+    let full = rss();
+    let kept = rows_kept(&terms[0]);
+    drop(terms);
+    let mut runs = Vec::new();
+    for _ in 0..5 {
+        let mut t = make();
+        let t0 = std::time::Instant::now();
+        for c in text.chunks(4096) { feed(&mut t, c); }
+        runs.push((t0.elapsed().as_secs_f64() * 1e4).round() / 10.0);
+    }
+    let mut sorted = runs.clone();
+    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let per_pane = |a: Option<u64>, b: Option<u64>| a.zip(b).map(|(a, b)| (a.saturating_sub(b)) / panes as u64);
+    serde_json::json!({
+        "core": core, "panes": panes, "text_bytes": text.len(), "picture_bytes": pic.len(),
+        "rss_kb": {"start": before.0, "after_create": empty.0, "after_fill": full.0, "high_water": full.1},
+        "kb_per_pane_empty": per_pane(empty.0, before.0),
+        "kb_per_pane_full": per_pane(full.0, before.0),
+        "rows_kept": kept,
+        "text_ms_runs": runs, "text_ms_median": sorted[2],
+        "text_mb_per_s": (text.len() as f64 / 1048576.0) / (sorted[2] / 1000.0),
+    })
+}
+
+fn perf_main(args: &[String]) {
+    let core = args[0].as_str();
+    let text = std::fs::read(&args[1]).expect("text stream");
+    let pic = std::fs::read(&args[2]).expect("picture recording");
+    let panes: usize = args[3].parse().expect("panes");
+    let v = match core {
+        "rio" => {
+            use rio_vt::ansi::CursorShape;
+            use rio_vt::crosswords::{Crosswords, CrosswordsSize};
+            use rio_vt::event::WindowId;
+            use rio_vt::performer::handler::Processor;
+            perf("rio-vt 0.5.28",
+                 || {
+                     let size = CrosswordsSize::new_with_dimensions(COLS, ROWS, COLS as u32 * CW, ROWS as u32 * CH, CW, CH);
+                     (Crosswords::new(size, CursorShape::Block, rio::Sink::default(), WindowId::from(0), 0, 10_000), Processor::default())
+                 },
+                 |t: &mut (Crosswords<rio::Sink>, Processor), c| t.1.advance(&mut t.0, c),
+                 |t| t.0.history_size() + ROWS,
+                 &text, &pic, panes)
+        }
+        "alacritty" => {
+            use alacritty_terminal::grid::Dimensions;
+            use alacritty_terminal::term::{Config, Term};
+            use alacritty_terminal::vte::ansi::Processor;
+            struct Size;
+            impl Dimensions for Size {
+                fn total_lines(&self) -> usize { ROWS }
+                fn screen_lines(&self) -> usize { ROWS }
+                fn columns(&self) -> usize { COLS }
+            }
+            perf("alacritty_terminal 0.26",
+                 || (Term::new(Config::default(), &Size, alac::Sink::default()), Processor::<alacritty_terminal::vte::ansi::StdSyncHandler>::new()),
+                 |t: &mut (Term<alac::Sink>, Processor), c| t.1.advance(&mut t.0, c),
+                 |t| t.0.grid().history_size() + ROWS,
+                 &text, &pic, panes)
+        }
+        other => panic!("unknown core {other}"),
+    };
+    println!("{}", serde_json::to_string_pretty(&v).unwrap());
+}
+
 fn main() {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().map(|a| a == "--perf").unwrap_or(false) {
+        return perf_main(&args[1..]);
+    }
     let mut out = serde_json::Map::new();
     for path in std::env::args().skip(1) {
         let mut bytes = std::fs::read(&path).expect("read capture");
