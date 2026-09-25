@@ -95,3 +95,26 @@
 .barrel text { font-family: var(--mono); }
 .barrel .t1 { fill: var(--ink); font-size: 13px; font-weight: 600; }
 .barrel .t2 { fill: var(--ink-3); font-size: 11px; }
+
+/* The skins page's figure: one tab strip per built-in skin, drawn by hand from
+   each skin's shape and metric tokens (app/skins/*.toml) over the hacker
+   palette. A reconstruction, and its caption says so. */
+.skinfig { display: grid; gap: 10px; }
+.skinfig .row { display: grid; grid-template-columns: 116px 1fr; align-items: center; gap: 12px; }
+.skinfig .who { font: 600 12px/1.2 var(--mono); color: var(--ink); }
+.skinfig .who span { display: block; font-weight: 400; color: var(--ink-3); font-size: 11px; margin-top: 2px; }
+.skinfig .strip { display: flex; gap: 4px; align-items: center; padding: 8px 10px; background: #03100a; border-radius: 8px; font: 12px/1 var(--mono); color: #86efac; }
+.skinfig .tab { padding: 4px 6px; color: rgba(134, 239, 172, .7); }
+.skinfig .tab.on { color: #86efac; }
+.skinfig .chip { margin-left: auto; padding: 1px 5px; color: #03100a; background: #22c55e; }
+.sk-default .tab { border: 1px solid rgba(34, 197, 94, .35); border-radius: 4px; background: linear-gradient(#0c2718, #071a10); }
+.sk-default .tab.on { border-color: #22c55e; box-shadow: 0 0 5.25px rgba(34, 197, 94, .55); }
+.sk-default .chip { border-radius: 4px; }
+.sk-deco .strip { border-radius: 0; }
+.sk-deco .tab { border: 3px double rgba(34, 197, 94, .5); background: #071a10; letter-spacing: .14em; padding: 4px 8px; }
+.sk-deco .tab.on { border-color: #22c55e; box-shadow: 0 0 6px rgba(34, 197, 94, .6); }
+.sk-deco .chip { letter-spacing: .14em; padding: 1px 7px; }
+.sk-console .strip { border-radius: 0; gap: 6px; }
+.sk-console .tab { text-transform: uppercase; padding: 6px 10px; background: #071a10; }
+.sk-console .tab.on { box-shadow: inset 0 -3px 0 #22c55e; }
+.sk-console .chip { text-transform: uppercase; padding: 1px 7px; }

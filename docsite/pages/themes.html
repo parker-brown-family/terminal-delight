@@ -1,0 +1,91 @@
+<script type="application/json" data-page>
+{
+  "title": "Themes",
+  "description": "A Terminal Delight theme is a TOML file that sets colours, CRT texture and font. Six are built in, and your own theme.toml reloads as you save it. The window has a theme, each pane follows it or wears its own, and colour sets, a colour wheel and Omarchy palettes layer on top.",
+  "updated": "2026-09-25",
+  "trueOf": "main at d7cf383",
+  "summary": "Colours, texture and font, per window or per pane"
+}
+</script>
+
+<section data-register="brief">
+<p class="lede">A theme is a small TOML file with three parts: the colours, the <a href="/crt">CRT texture</a>, and the font. Six come built in, from the phosphor-green <code>hacker</code> to the calm, light <code>quiet-command</code>. The seventh is yours: <code>~/.config/terminal-delight/theme.toml</code>, which the running window picks up within a third of a second of each save.</p>
+<p>The window wears a theme, and every pane follows it until you give that pane its own. Open a pane's DESIGN tray with <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>D</kbd> to pick one, and switch <b>follow outer</b> back on to return it to the window's.</p>
+<p>On top of any theme you can lay a colour set such as <code>ember</code> or <code>glacier</code>, drag a seed colour around a wheel, borrow the colours of an installed Omarchy theme, or invert the lot. The texture stays the theme's through all of it.</p>
+<p class="invite">Technical has the file format, the built-ins and the order the layers apply in.</p>
+</section>
+
+<section data-register="technical" data-headline="The theme file">
+<h3>Built in</h3>
+<table>
+  <thead><tr><th>Theme</th><th>Icon</th><th>Look</th></tr></thead>
+  <tbody>
+    <tr><td><code>quiet-command</code></td><td><code>☀</code></td><td>Light, blue accent, every effect off.</td></tr>
+    <tr><td><code>field-command</code></td><td><code>▾▾</code></td><td>Olive on slate, faint scanlines, a slow band every 40 seconds.</td></tr>
+    <tr><td><code>tactical-overdrive</code></td><td><code>★</code></td><td>Cyan command deck with a raised bezel.</td></tr>
+    <tr><td><code>gamba</code></td><td><code>$$</code></td><td>A 1970s slot-machine cabinet in amber and orange, heavy glow and bezel.</td></tr>
+    <tr><td><code>deco</code></td><td><code>◈</code></td><td>Brass, ivory and jade on near-black, almost no effects, and it asks for the <code>deco</code> <a href="/skins">skin</a>.</td></tr>
+    <tr><td><code>hacker</code></td><td><code>&gt;_</code></td><td>Phosphor green, every effect on: scanlines, glow, bloom, a band every 16 seconds, flicker, jiggle, glare.</td></tr>
+    <tr><td><code>custom</code></td><td>yours</td><td>Your <code>theme.toml</code>. On first run it's written as a copy of <code>hacker</code>.</td></tr>
+  </tbody>
+</table>
+<p>A fresh window wears <code>custom</code> tinted with a warm amber seed, <code>#e0913a</code>. To start your own from a built-in, copy its file from <code>app/themes/</code> in the repository over your <code>theme.toml</code>.</p>
+
+<h3>Reloading</h3>
+<p>The file is checked every 300 ms. A change reloads it; a file that no longer parses prints <code>theme reload error (keeping current): …</code> and the current theme stays. <code>TD_THEME</code> points at a different file, and then nothing is written on first run. Hovering <code>custom</code> in the tray shows the file's path and <b>▸ Open in editor</b>.</p>
+
+<h3>Keys</h3>
+<pre><code>name = "mine"
+icon = "▲"
+skin = "deco"            # optional: the chrome skin this theme asks for
+
+[colors]
+bg      = "#03100a"
+surface = "#071a10"
+text    = "#86efac"
+accent  = "#22c55e"
+faint   = "#14401f"
+cursor  = "#4ade80"      # optional, defaults to accent
+human   = "#f0abfc"      # optional: the colour of your own input to an agent
+ansi = ["#000000", "#ef4444", "#22c55e", "#eab308", "#3b82f6", "#a855f7", "#06b6d4", "#d1d5db",
+        "#4b5563", "#f87171", "#4ade80", "#facc15", "#60a5fa", "#c084fc", "#22d3ee", "#ffffff"]
+
+[effects]
+scanline_opacity = 0.22  # the CRT page lists every key
+
+[font]
+family = "JetBrains Mono"  # optional, defaults to the desktop's monospace
+size = 14                  # 8–32
+cell_height = 20           # 10–48</code></pre>
+<p>Colours are six-digit hex, with or without <code>#</code>. <code>bg</code>, <code>surface</code>, <code>text</code>, <code>accent</code>, <code>faint</code> and all sixteen <code>ansi</code> entries are required. Left out, <code>human</code> is the accent's opposite hue, kept light. <code>[effects]</code> is described on the <a href="/crt#technical-effects">CRT page</a>.</p>
+
+<h3>The DESIGN tray</h3>
+<p><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>D</kbd> on a pane, or <code>🎨</code> in the window's footer for the window. It holds the theme row, the <code>SKIN</code> row (window only), <code>PROGRAM COLOUR</code>, <code>SYNTAX</code>, an <code>INVERT</code> switch, and the colour wheel.</p>
+<dl class="defs">
+  <dt>program colour</dt><dd><code>mono</code> draws programs' colours as shades of the theme's phosphor. <code>ansi</code> shows their real colours, and is what a fresh window starts on. <code>theme</code> keeps their hues but turns them around the theme's seed.</dd>
+  <dt>syntax</dt><dd>Colours text the program left uncoloured, by what it looks like: <code>code</code>, <code>agentic</code>, <code>logs</code> or <code>mark</code>down, or <code>off</code>.</dd>
+  <dt>wheel</dt><dd>Drag <code>◉</code> for the seed colour, <code>T</code> for text, <code>C</code> for its complement, and <code>👤</code> for the colour of your own input.</dd>
+  <dt>invert</dt><dd>A photographic negative of every colour, including the sixteen ANSI ones. Effects stay as they are.</dd>
+</dl>
+<p>On the window's tray, <code>⤓ pass theme down (n)</code> puts every pane back on the window's theme, where <code>n</code> is how many would change. <code>AGENT THEME</code> decides whether agent panes that follow the window paint themselves amber or follow it too.</p>
+
+<h3>Colour sets</h3>
+<p>A colour set changes the palette and leaves the texture alone: <code>army</code> 🪖, <code>badger</code> 🦡, <code>cherry</code> 🍒, <code>ember</code> 🔥, <code>glacier</code> ❄, <code>nuclear</code> ☢, <code>pineapple</code> 🍍, <code>retro</code> 🌆, <code>tide</code> 🌊, <code>violet</code> 🦇, <code>wood</code> 🪵. They're the same eleven variants the Omarchy Terminal Delight theme ships. Sets from older builds still load but aren't offered.</p>
+
+<h3>Paint</h3>
+<p><code>terminal-delight ctl paint on</code>, or the Omarchy bar's 🎨, raises a paint overlay over every pane. The first letter of a set paints it; the arrows walk the shelves; <kbd>z</kbd> and <kbd>Shift</kbd>+<kbd>Z</kbd> turn to the next shelf; <kbd>f</kbd> jumps to <code>FAVOURITES</code> and <kbd>Shift</kbd>+<kbd>F</kbd> stars what's aimed at; <kbd>d</kbd> hands the pane back to the window; <kbd>Esc</kbd> folds it away. The shelves are <code>FAVOURITES</code>, <code>COLOUR SETS</code> and <code>DESKTOP PALETTES</code>. Stars are kept in <code>favourites.toml</code>.</p>
+
+<h3>Omarchy</h3>
+<ul>
+  <li><b>Desktop palettes.</b> Every installed Omarchy theme's <code>colors.toml</code> is offered on the <code>DESKTOP PALETTES</code> shelf, converted the way Omarchy converts it for terminals. Painting one replaces the colours and keeps the texture. They're found once, at start, under <code>/usr/share/omarchy/themes</code>, <code>$OMARCHY_PATH/themes</code>, <code>~/.local/share/omarchy/themes</code> and <code>~/.config/omarchy/themes</code>; <code>TD_OMARCHY_THEMES</code> replaces that list.</li>
+  <li><b><code>TD_PALETTE</code>.</b> A second file holding only <code>[colors]</code>, laid over <code>custom</code>. It lets an outside theme switcher rewrite the colours without resetting your effects. Named but missing is fine; present but broken keeps the current theme.</li>
+  <li><b>Font.</b> A theme with no <code>family</code> uses the desktop's <code>monospace</code>, which Omarchy sets.</li>
+</ul>
+
+<h3>Order of layers</h3>
+<p>Desktop palette, then the theme's seed, then the colour set, then the wheel's text, complement and input colours, then invert, last. A pane that follows the window re-reads it on every frame; turning <b>follow outer</b> off and on again keeps whatever the pane had of its own.</p>
+</section>
+
+<ol data-sources>
+  <li id="s1">The registry, the file format, layering and reload: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/theme.rs">theme.rs</a>; the built-in files: <a href="https://github.com/parker-brown-family/terminal-delight/tree/main/app/themes">app/themes/</a>; Omarchy palettes: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/palette.rs">palette.rs</a>; the paint keys: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/pane.rs">pane.rs</a>.</li>
+</ol>
