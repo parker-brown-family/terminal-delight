@@ -37,7 +37,7 @@
    and by anything else that bends part of the page (assets/td-panes.js). */
 (function () {
   'use strict';
-  var root = document.documentElement, cssPromise = null;
+  var root = document.documentElement, linkPromise = null;
 
   function toDataUrl(url) {
     return fetch(url).then(function (r) { return r.arrayBuffer(); }).then(function (buf) {
@@ -47,27 +47,35 @@
     });
   }
 
-  /* Every stylesheet on the page, once, with the selectors that address the
-     document root pointed at the snapshot's wrapper instead, :hover turned
-     into a class the snapshot can set, and the woff2 files inlined. */
+  /* Every stylesheet on the page, with the selectors that address the document
+     root pointed at the snapshot's wrapper instead, :hover turned into a class
+     the snapshot can set, and the woff2 files inlined. The linked sheets and
+     their fonts are fetched once; the page's own <style> elements are read
+     again on every snapshot, because a page may rewrite one (the docs paint a
+     chosen theme's colours into a <style>), and a snapshot taken with the old
+     colours would bend the wrong page. */
+  var WOFF2 = /url\(\s*['"]?([^'")]+\.woff2)['"]?\s*\)/g;
   function css() {
-    if (cssPromise) return cssPromise;
-    var links = Array.prototype.filter.call(document.querySelectorAll('link[rel="stylesheet"]'), function (l) { return l.href.indexOf(location.origin) === 0; });
-    cssPromise = Promise.all(links.map(function (l) { return fetch(l.href).then(function (r) { return r.text(); }); })).then(function (parts) {
-      document.querySelectorAll('style').forEach(function (s) { parts.push(s.textContent); });
-      var text = parts.join('\n');
-      var fonts = {}; text.replace(/url\(\s*['"]?([^'")]+\.woff2)['"]?\s*\)/g, function (_, u) { fonts[u] = true; return _; });
-      return Promise.all(Object.keys(fonts).map(function (u) { return toDataUrl(new URL(u, location.href).href).then(function (d) { fonts[u] = d; }); })).then(function () {
-        text = text.replace(/url\(\s*['"]?([^'")]+\.woff2)['"]?\s*\)/g, function (_, u) { return 'url(' + fonts[u] + ')'; });
-        text = text.replace(/:root/g, '.snap-root')
-                   .replace(/(^|[\s,}>(])(html|body)(?=[\s,{.:\[>)])/g, '$1.snap-root')
-                   .replace(/:hover/g, '.snap-hover');
-        /* the tube is laid out as a plain block of its full height here */
-        text += '\n.snap-root #tube{position:static!important;overflow:visible!important;height:auto!important;filter:none!important;scroll-behavior:auto!important}';
-        return text.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+    if (!linkPromise) {
+      var links = Array.prototype.filter.call(document.querySelectorAll('link[rel="stylesheet"]'), function (l) { return l.href.indexOf(location.origin) === 0; });
+      linkPromise = Promise.all(links.map(function (l) { return fetch(l.href).then(function (r) { return r.text(); }); })).then(function (parts) {
+        var text = parts.join('\n'), fonts = {};
+        text.replace(WOFF2, function (_, u) { fonts[u] = true; return _; });
+        return Promise.all(Object.keys(fonts).map(function (u) { return toDataUrl(new URL(u, location.href).href).then(function (d) { fonts[u] = d; }); })).then(function () {
+          return { text: text, fonts: fonts };
+        });
       });
+    }
+    return linkPromise.then(function (base) {
+      var styles = Array.prototype.map.call(document.querySelectorAll('style'), function (s) { return s.textContent; }).join('\n');
+      var text = (base.text + '\n' + styles).replace(WOFF2, function (m, u) { return base.fonts[u] ? 'url(' + base.fonts[u] + ')' : m; });
+      text = text.replace(/:root/g, '.snap-root')
+                 .replace(/(^|[\s,}>(])(html|body)(?=[\s,{.:\[>)])/g, '$1.snap-root')
+                 .replace(/:hover/g, '.snap-hover');
+      /* the tube is laid out as a plain block of its full height here */
+      text += '\n.snap-root #tube{position:static!important;overflow:visible!important;height:auto!important;filter:none!important;scroll-behavior:auto!important}';
+      return text.replace(/&/g, '&amp;').replace(/</g, '&lt;');
     });
-    return cssPromise;
   }
 
   /* One element, at its own laid-out size, as an image. Its outer margin is
@@ -410,7 +418,8 @@
   new MutationObserver(function () { if (gl && wanted()) schedule(60); })
     .observe(tube, { subtree: true, childList: true, characterData: true, attributes: true });
   tube.addEventListener('change', function () { if (live) schedule(20); });
-  new MutationObserver(update).observe(root, { attributes: true, attributeFilter: ['data-crt', 'data-theme'] });
+  /* data-palette: the docs' Omarchy theme picker, whose colours the snapshot must carry */
+  new MutationObserver(update).observe(root, { attributes: true, attributeFilter: ['data-crt', 'data-theme', 'data-palette'] });
   var rt = 0;
   addEventListener('resize', function () { clearTimeout(rt); rt = setTimeout(update, 150); });
   if (document.fonts) document.fonts.addEventListener('loadingdone', function () { if (live) schedule(30); });

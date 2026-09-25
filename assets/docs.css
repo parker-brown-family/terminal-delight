@@ -1,0 +1,453 @@
+/* ==========================================================================
+   The docs shell (docs.terminal-delight.brownfamilysports.com). Replaces
+   td-shell.css on the docs pages only; the info kiosk keeps td-shell.css.
+   Built from Parker's redesign prototype (docsite/redesign/, 2026-09-25).
+
+   Colour comes from the kiosk family's Omarchy palettes (kiosk-theme.js),
+   painted by docs.js into <style id="td-palette"> as the palette's roles
+   (--bg, --bg2, --bg0, --fg, --fg2, --fgb, --acc, --mut, --sel, --red, --grn,
+   --yel, --blu, --mag, --cyn). A <style>, not inline, so the tube's snapshot
+   carries the chosen theme. The shell's own tokens (--bg-2, --ink, --phos …)
+   are derived from those roles below, so every component in td-docs.css and
+   every page's figures repaint with the theme without being rewritten.
+
+   Layout is the tube's: the header and spine are fixed and flat, #tube is the
+   scroller, and td-glass.js bends #tube alone. Every theme's own wallpaper sits
+   behind the page; every surface that is not a terminal is glass.
+   ========================================================================== */
+
+:root {
+  /* Last Voyage, the family's default, so nothing flashes before docs.js */
+  --bg: #14100C; --bg2: #201913; --bg0: #0B0907; --fg: #E2C79A; --fg2: #A07A50; --fgb: #F3D69B;
+  --acc: #DD6D16; --mut: #6C4727; --sel: #54351E; --red: #E2542A; --grn: #93663B; --yel: #D8A55E;
+  --blu: #A1561C; --mag: #B7935E; --cyn: #F58E28;
+
+  --mono: "JetBrains Mono", "Monaspace Argon", "Cascadia Code", ui-monospace, "SF Mono", Menlo, monospace;
+  --sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --top-h: 100px;
+  --spine-w: 250px;
+  --read: 820px;
+
+  /* Muted text. Some palettes' own muted role (everforest #4f585e, miasma
+     #555555) sits almost on their background, and over a wallpaper it
+     vanishes, so muted ink is pulled toward the foreground. */
+  --dim: color-mix(in srgb, var(--fg) 60%, var(--fg2));
+
+  /* the shell's tokens, from the palette's roles */
+  --bg-2: var(--bg2);
+  --bg-3: color-mix(in srgb, var(--bg2) 82%, var(--fg) 8%);
+  --line: color-mix(in srgb, var(--dim) 28%, transparent);
+  --line-2: color-mix(in srgb, var(--dim) 48%, transparent);
+  --ink: var(--fg);
+  --ink-2: color-mix(in srgb, var(--fg) 82%, var(--dim));
+  --ink-3: var(--dim);
+  --phos: var(--fgb);
+  --acc-2: color-mix(in srgb, var(--acc) 70%, var(--fgb));
+  --acc-ink: var(--bg0);
+  --amber: var(--yel);
+  --you: var(--blu);
+  --glow: color-mix(in srgb, var(--acc) 30%, transparent);
+
+  /* the Omarchy kiosk's glass, verbatim: a hard top highlight, a dark bottom
+     lip and a wide inner bloom read as a thick pane, not a tinted rectangle */
+  --glass-tint: #ffffff1a; --glass-tint-2: #ffffff05; --glass-edge: #ffffff33;
+  --glass-shadow: 0 12px 34px #00000047, inset 0 1px 0 #ffffff80, inset 0 -1px 0 #00000038, inset 0 0 30px #ffffff0d;
+  --glass-blur: blur(16px) saturate(1.5);
+  --scrim: .8;
+  color-scheme: dark;
+}
+/* Paper keeps the theme's accents and swaps its grounds and inks. */
+:root[data-theme="paper"] {
+  --bg: #f4efe4; --bg2: #ebe4d5; --bg0: #fbf8f1; --fg: #3a3124; --fg2: #8a7960; --fgb: #1b150d; --mut: #bcae96; --sel: #e0d5c0;
+  --glass-tint: #ffffffb0; --glass-tint-2: #ffffff5c; --glass-edge: #00000018;
+  --glass-shadow: 0 12px 30px #0000001f, inset 0 1px 0 #ffffffcc, inset 0 -1px 0 #00000012, inset 0 0 30px #ffffff40;
+  --scrim: .9;
+  color-scheme: light;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+html { background: var(--bg); }
+body { background: transparent; color: var(--ink); font: 16px/1.65 var(--sans); -webkit-font-smoothing: antialiased; overflow: hidden; }
+a { color: inherit; }
+::selection { background: color-mix(in srgb, var(--acc) 35%, transparent); }
+:focus-visible { outline: 2px solid var(--acc-2); outline-offset: 2px; border-radius: 4px; }
+button { font: inherit; color: inherit; }
+
+/* ---------------------------------------------------- the wallpaper behind */
+.backdrop { position: fixed; inset: 0; z-index: 0; overflow: hidden; pointer-events: none; }
+.backdrop .layer { position: absolute; inset: -12px; background: center / cover no-repeat; filter: blur(2.5px) saturate(1.08); opacity: 0; transition: opacity .7s ease; }
+.backdrop .layer.on { opacity: 1; }
+/* the scrim is the theme's own ground, so a gruvbox page gets a gruvbox-tinted wall */
+.backdrop::after { content: ""; position: absolute; inset: 0; background: var(--bg); opacity: var(--scrim); transition: opacity .3s, background .3s; }
+:root[data-wall="off"] .backdrop { display: none; }
+
+/* one recipe for every glass surface that is not a terminal */
+.td-top, .td-spine, .td-icon, .td-themebtn, .td-search, .td-btn, .td-pal-box, .td-pop, .td-chip, .td-wallbtn,
+.td-doc .box, .td-doc .facts, .reg-tabs, .td-pager a, .td-doc .td-note, .td-copy {
+  -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur);
+  background: linear-gradient(var(--glass-tint), var(--glass-tint-2)), color-mix(in srgb, var(--bg2) 55%, transparent);
+  border: 1px solid var(--glass-edge); box-shadow: var(--glass-shadow);
+}
+
+/* ---------------------------------------------------------------- header */
+.td-top { position: fixed; inset: 0 0 auto 0; height: var(--top-h); z-index: 30; border-width: 0 0 1px; border-radius: 0;
+  box-shadow: 0 10px 30px #00000033, inset 0 -1px 0 #00000030; }
+.td-top .r1 { display: grid; grid-template-columns: 1fr minmax(240px, 460px) 1fr; align-items: center; gap: 16px; height: 58px; padding: 0 18px; }
+.td-top .left { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.td-brand { display: inline-flex; align-items: center; gap: 10px; text-decoration: none; color: var(--fgb); font: 600 16px/1 var(--mono); white-space: nowrap; }
+.td-brand svg { width: 28px; height: 28px; flex: none; border-radius: 6px; }
+.td-brand .cur { display: inline-block; width: .55em; height: 1.05em; margin-left: 2px; vertical-align: -3px; background: var(--acc); animation: td-blink 1.06s steps(1) infinite; }
+@keyframes td-blink { 50% { opacity: 0; } }
+.td-search { justify-self: center; width: 100%; display: flex; align-items: center; gap: 10px; height: 38px; padding: 0 10px 0 14px;
+  border-radius: 999px; font: 14px/1 var(--sans); color: var(--dim); cursor: text; text-align: left; }
+.td-search:hover { border-color: color-mix(in srgb, var(--acc) 65%, transparent); }
+.td-search svg { width: 16px; height: 16px; flex: none; }
+.td-search span { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.td-search kbd { font: 11px/1 var(--mono); color: var(--dim); border: 1px solid var(--line-2); border-radius: 5px; padding: 3px 5px; background: none; }
+.td-actions { justify-self: end; display: flex; align-items: center; gap: 8px; }
+.td-icon { width: 38px; height: 38px; display: grid; place-items: center; padding: 0; border-radius: 999px; color: var(--ink); cursor: pointer; text-decoration: none; }
+.td-icon svg { width: 19px; height: 19px; }
+.td-icon:hover, .td-themebtn:hover { color: var(--fgb); border-color: color-mix(in srgb, var(--acc) 65%, transparent); transform: translateY(-1px); }
+.td-icon[aria-pressed="true"] { color: var(--acc); border-color: color-mix(in srgb, var(--acc) 70%, transparent); }
+.td-theme .sun { display: none; }
+:root[data-theme="paper"] .td-theme .sun { display: block; }
+:root[data-theme="paper"] .td-theme .moon { display: none; }
+.td-themebtn { height: 38px; display: flex; align-items: center; gap: 7px; padding: 0 12px 0 10px; border-radius: 999px; font: 12px/1 var(--mono); color: var(--ink); cursor: pointer; }
+.td-themebtn svg { width: 19px; height: 19px; }
+.td-themebtn .nm { white-space: nowrap; }
+.td-themebtn .caret { color: var(--dim); }
+/* the glyph names the theme; the word only comes back when there is room for it */
+@media (max-width: 1360px) { .td-themebtn .nm { display: none; } }
+.td-btn { height: 38px; display: inline-flex; align-items: center; padding: 0 18px; border-radius: 999px; font: 700 14px/1 var(--mono); color: var(--fgb); text-decoration: none; white-space: nowrap; }
+.td-btn.primary { background: linear-gradient(#ffffff38, #ffffff0d), color-mix(in srgb, var(--acc) 55%, transparent); border-color: color-mix(in srgb, var(--acc) 55%, #ffffff 45%); }
+:root[data-theme="paper"] .td-btn.primary { background: linear-gradient(#ffffff70, #ffffff20), color-mix(in srgb, var(--acc) 35%, transparent); }
+.td-btn:hover { transform: translateY(-1px); }
+.td-menu { display: none !important; }
+
+.td-sections { display: flex; align-items: stretch; gap: 24px; height: 42px; padding: 0 18px 0 22px; }
+.td-tab { position: relative; display: flex; align-items: center; gap: 8px; white-space: nowrap; font: 500 14px/1 var(--sans); color: var(--dim); text-decoration: none; border-bottom: 2px solid transparent; }
+.td-tab svg { width: 15px; height: 15px; }
+.td-tab:hover, .td-tab:focus-within { color: var(--fgb); }
+.td-tab[aria-current="page"] { color: var(--fgb); border-bottom-color: var(--acc); }
+.td-tab .menu { display: none; position: absolute; top: calc(100% + 1px); left: -12px; z-index: 40; min-width: 310px; padding: 6px; border-radius: 12px;
+  -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur);
+  background: linear-gradient(var(--glass-tint), var(--glass-tint-2)), color-mix(in srgb, var(--bg2) 97%, transparent);
+  border: 1px solid var(--glass-edge); box-shadow: var(--glass-shadow); }
+/* the header's own blur is the backdrop this menu would sample, so it cannot
+   blur the page beneath it and has to be nearly opaque instead */
+.td-tab:hover .menu, .td-tab:focus-within .menu { display: block; }
+.td-tab .menu a { display: flex; justify-content: space-between; gap: 16px; padding: 7px 10px; border-radius: 7px; color: var(--ink); text-decoration: none; font-size: 14px; }
+.td-tab .menu a:hover, .td-tab .menu a[aria-current="page"] { background: color-mix(in srgb, var(--acc) 18%, transparent); color: var(--fgb); }
+.td-tab .menu small { color: var(--dim); font: 11.5px/1.4 var(--mono); }
+
+/* ------------------------------------------------------------------ spine */
+.td-spine { position: fixed; top: var(--top-h); left: 0; bottom: 0; width: var(--spine-w); z-index: 20; overflow-y: auto; overscroll-behavior: contain;
+  padding: 20px 14px 40px; border-width: 0 1px 0 0; border-radius: 0; box-shadow: inset -1px 0 0 #00000030;
+  font: 13.5px/1.5 var(--mono); scrollbar-width: thin; scrollbar-color: var(--line-2) transparent; }
+.td-group + .td-group { margin-top: 22px; }
+.td-group h6 { margin: 0 0 6px 12px; font: 600 10.5px/1.4 var(--mono); letter-spacing: .15em; text-transform: uppercase; color: var(--dim); }
+.td-group ul { list-style: none; margin: 0; padding: 0; }
+.td-group a { display: block; margin: 1px 0; padding: 4px 10px; border: 1px solid transparent; border-left: 2px solid transparent; border-radius: 3px;
+  color: var(--ink); text-decoration: none; }
+.td-group a:hover { background: color-mix(in srgb, var(--sel) 75%, transparent); color: var(--fgb); }
+.td-group a .n { color: var(--dim); margin-right: 6px; }
+/* weak: the chapter you are in. strong: the page you are on. */
+.td-group a.weak { background: color-mix(in srgb, var(--acc) 13%, transparent); border-left-color: color-mix(in srgb, var(--acc) 60%, transparent); color: var(--fgb); }
+.td-group a[aria-current="page"] { background: color-mix(in srgb, var(--mag) 15%, transparent); border-color: color-mix(in srgb, var(--mag) 70%, transparent); border-left-color: var(--mag); color: var(--fgb); }
+.td-group a.weak .n, .td-group a[aria-current="page"] .n { color: inherit; }
+.td-group span.is-soon { padding: 4px 10px; font-size: 13.5px; color: var(--dim); }
+.td-group span.is-soon .n { margin-right: 6px; }
+
+/* ------------------------------------------------------------------- tube */
+#tube { position: fixed; top: var(--top-h); left: var(--spine-w); right: 0; bottom: 0; z-index: 1;
+  overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; scroll-behavior: smooth;
+  scrollbar-width: thin; scrollbar-color: var(--line-2) transparent; }
+/* With the tube on, the pane is a screen: it takes the theme's own ground,
+   because the tube is drawn from a snapshot of #tube and a snapshot cannot
+   carry the wallpaper behind it or blur it. The wall stays in the room, behind
+   the flat chrome. */
+:root[data-crt="on"][data-theme="glass"] #tube { background: var(--bg); }
+/* Glass inside the screen goes flat: there is no wall behind it to blur, and
+   a backdrop blur drawn into the snapshot smears a dark rectangle across
+   whatever sits near it. The rule reaches the snapshot too, because the
+   snapshot's wrapper carries data-crt and data-theme and :root is rewritten
+   to it. */
+:root[data-crt="on"][data-theme="glass"] #tube * { -webkit-backdrop-filter: none !important; backdrop-filter: none !important; }
+canvas.td-tube { position: fixed; z-index: 12; pointer-events: none; display: block; }
+canvas.td-tube[hidden] { display: none; }
+:root[data-tube="gl"][data-crt][data-theme] #td-fx { display: none; }
+:root[data-tube="gl"] #tube { user-select: none; -webkit-user-select: none; }
+:root[data-tube="gl"] #tube, :root[data-tube="gl"] #tube * { cursor: default; }
+:root[data-tube="gl"].tube-pointer #tube, :root[data-tube="gl"].tube-pointer #tube * { cursor: pointer; }
+/* the flat glass that stands in where the tube cannot run */
+#td-fx { position: fixed; top: var(--top-h); left: var(--spine-w); right: 0; bottom: 0; z-index: 10; pointer-events: none; display: none; }
+:root[data-crt="on"][data-theme="glass"] #td-fx { display: block; }
+#td-fx .scan { position: absolute; inset: 0; background: repeating-linear-gradient(0deg, rgba(0, 0, 0, .22) 0 1px, transparent 1px 4px); }
+#td-fx canvas.glass { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 2; }
+#td-fx canvas.glass[hidden] { display: none; }
+#td-fx.curved .scan { display: none; }
+#td-fx::after { content: ""; position: absolute; inset: 0; z-index: 1; background: radial-gradient(55% 42% at 20% 10%, rgba(255, 255, 255, .06), transparent 70%); }
+#td-fx .vig { position: absolute; inset: 0; background: radial-gradient(125% 110% at 50% 50%, transparent 58%, rgba(0, 0, 0, .55)); }
+#td-fx .bloom { position: absolute; inset: 0; box-shadow: inset 0 0 140px color-mix(in srgb, var(--acc) 22%, transparent); }
+#td-fx .band { position: absolute; left: 0; right: 0; height: 90px; top: -120px;
+  background: linear-gradient(180deg, transparent, color-mix(in srgb, var(--fgb) 5%, transparent) 45%, color-mix(in srgb, var(--fgb) 8%, transparent) 50%, color-mix(in srgb, var(--fgb) 5%, transparent) 55%, transparent);
+  animation: td-track 16s linear infinite; }
+@keyframes td-track { 0% { top: -120px; } 44% { top: 100%; } 100% { top: 100%; } }
+/* paper + CRT: green-bar tractor-feed paper, sprocket holes and all */
+:root[data-crt="on"][data-theme="paper"] #tube {
+  background:
+    radial-gradient(circle at 13px 50%, color-mix(in srgb, var(--ink) 16%, transparent) 0 4.5px, transparent 5.5px) left top / 26px 32px repeat-y,
+    radial-gradient(circle at 13px 50%, color-mix(in srgb, var(--ink) 16%, transparent) 0 4.5px, transparent 5.5px) right top / 26px 32px repeat-y,
+    linear-gradient(90deg, transparent 25px, color-mix(in srgb, var(--line-2) 70%, transparent) 25px 26px, transparent 26px calc(100% - 26px), color-mix(in srgb, var(--line-2) 70%, transparent) calc(100% - 26px) calc(100% - 25px), transparent calc(100% - 25px)),
+    repeating-linear-gradient(180deg, color-mix(in srgb, var(--acc) 12%, #f7f8f1) 0 48px, transparent 48px 96px) 0 0 / 100% 96px,
+    #f7f8f1;
+  background-attachment: local, local, local, local, local;
+}
+
+/* ---------------------------------------------------------------- article */
+.td-doc { max-width: calc(var(--read) + 96px); margin: 0 auto; padding: 40px 48px 120px; counter-reset: sec; }
+.td-doc > h1 { display: flex; align-items: baseline; gap: 20px; margin: 0 0 22px; font: 700 clamp(34px, 4.2vw, 48px)/1.06 var(--sans); letter-spacing: -.015em; color: var(--fgb); }
+.td-doc > h1[data-n]::before { content: attr(data-n); font: 700 .86em/1 var(--mono); color: var(--dim); letter-spacing: 0; }
+.td-doc h2 { margin: 2.2em 0 .6em; font: 700 22px/1.25 var(--mono); letter-spacing: -.01em; color: var(--fgb); }
+.td-doc h3 { margin: 1.8em 0 .45em; font: 700 17px/1.3 var(--mono); color: var(--fgb); }
+/* Numbered sections, the terminal feel of the field manual: a page's h3s
+   under its number (01.1.1, 01.1.2 …), and a plain page's h2s the same way.
+   The number is a pseudo-element, so search and copy never see it. */
+.td-doc.numbered .reg-panel { counter-reset: sec; }
+.td-doc.numbered .reg-panel h3::before, .td-doc.numbered .plain > h2::before {
+  counter-increment: sec; content: var(--pn) "." counter(sec); margin-right: 12px; color: var(--dim); font-weight: 600; }
+.td-doc p, .td-doc li { color: var(--ink); }
+.td-doc p { margin: 0 0 1.05em; max-width: 72ch; }
+.td-doc ul, .td-doc ol { padding-left: 1.3em; margin: 0 0 1.1em; }
+.td-doc li { margin: .3em 0; }
+.td-doc a { color: var(--ink); text-decoration: underline; text-decoration-color: var(--acc); text-underline-offset: 3px; text-decoration-thickness: 1.5px; }
+.td-doc a:hover { color: var(--acc-2); }
+.td-doc code, .td-kiosk code { font: 500 .86em/1 var(--mono); padding: .18em .42em; border-radius: 5px; background: color-mix(in srgb, var(--sel) 55%, transparent); color: var(--fgb); overflow-wrap: anywhere; }
+.td-doc kbd { font: 600 .8em/1 var(--mono); padding: .22em .45em; border-radius: 5px; color: var(--ink); background: color-mix(in srgb, var(--bg2) 80%, transparent); border: 1px solid var(--line-2); border-bottom-width: 2px; }
+.td-doc .lede { font-size: 18.5px; line-height: 1.6; color: var(--ink); max-width: 66ch; }
+.td-doc hr.hard { border: 0; border-top: 2px solid var(--fg); opacity: .75; margin: 26px 0 22px; }
+
+/* Code that is not a command: a quiet panel, no prompt, no terminal glow. */
+.td-doc pre { margin: 0 0 1.3em; padding: 14px 16px; overflow-x: auto; font: 13.5px/1.6 var(--mono); color: var(--ink);
+  background: color-mix(in srgb, var(--bg2) 70%, transparent); border: 1px solid var(--line); border-radius: 10px; }
+.td-doc pre code { padding: 0; border: 0; background: none; font-size: inherit; line-height: inherit; color: inherit; overflow-wrap: normal; }
+/* A command: the only thing on these pages that looks like a terminal, because
+   it is one. Opaque on purpose — a screen you can see the wall through is not a
+   screen — with a prompt per line and one copy that pastes as one line. */
+.td-doc pre.cmd { position: relative; padding: 14px 16px; overflow: visible; background: color-mix(in srgb, var(--bg0) 94%, transparent); color: var(--fgb);
+  border-color: var(--line-2); box-shadow: inset 0 1px 0 #ffffff10, 0 8px 22px -12px #00000080; }
+.td-doc pre.cmd code { white-space: normal; }
+.td-doc pre.cmd .ln { display: block; padding-left: 2ch; text-indent: -2ch; white-space: pre-wrap; overflow-wrap: anywhere; }
+.td-doc pre.cmd .ln::before { content: "$ "; color: var(--grn); user-select: none; }
+.td-doc pre.cmd .cm { display: block; white-space: pre-wrap; color: var(--dim); }
+:root[data-theme="paper"] .td-doc pre.cmd { background: #17130d; color: #f1e6cf; border-color: #17130d; }
+:root[data-theme="paper"] .td-doc pre.cmd .td-copy { background: var(--bg0); color: var(--fgb); }
+.td-doc pre.cmd .td-copy { position: absolute; top: -12px; right: 12px; height: auto; padding: 2px 10px; border-radius: 999px; font: 11.5px/1.5 var(--mono); }
+.td-doc pre.cmd.throb { animation: td-throb .9s ease-out; }
+@keyframes td-throb {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--grn) 90%, transparent); border-color: var(--grn); filter: brightness(1.35); }
+  35% { box-shadow: 0 0 0 10px color-mix(in srgb, var(--grn) 30%, transparent); border-color: var(--grn); filter: brightness(1.1); }
+  100% { box-shadow: 0 0 0 18px transparent; filter: none; }
+}
+.td-doc pre.cmd.throb .td-copy { color: var(--grn); border-color: var(--grn); }
+
+.td-doc table { width: 100%; border-collapse: collapse; margin: 0 0 1.4em; font-size: 14.5px; display: block; overflow-x: auto; }
+.td-doc th, .td-doc td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.td-doc th { font: 600 11.5px/1.3 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--dim); }
+.td-doc td:first-child { color: var(--fgb); }
+
+/* ------------------------------------------------------------- registers */
+.reg { position: relative; margin-top: 6px; }
+/* The copy sits on the tab row, and the tab already says which version is
+   showing, so the panel's own label is only drawn when there are no tabs. */
+.reg-body .reg-head { position: absolute; top: 3px; right: 0; margin: 0; }
+.reg-body .reg-kicker { display: none; }
+.reg > input { position: absolute; opacity: 0; width: 1px; height: 1px; pointer-events: none; }
+/* a glass pill with a lit segment, and no numbers on it */
+.reg-tabs { display: inline-flex; gap: 3px; padding: 3px; margin: 0 0 22px; border-radius: 999px; }
+.reg-tabs label { padding: 5px 16px; border: 1px solid transparent; border-radius: 999px; cursor: pointer; font: 13px/1.4 var(--mono); color: var(--dim); }
+.reg-tabs label:hover { color: var(--fgb); }
+.reg-panel { display: none; }
+#r-brief:checked ~ .reg-body #brief,
+#r-story:checked ~ .reg-body #story,
+#r-technical:checked ~ .reg-body #technical { display: block; }
+#r-brief:checked ~ .reg-tabs label[for="r-brief"],
+#r-story:checked ~ .reg-tabs label[for="r-story"],
+#r-technical:checked ~ .reg-tabs label[for="r-technical"] { color: var(--fgb); border-color: color-mix(in srgb, var(--acc) 75%, transparent);
+  background: linear-gradient(#ffffff30, #ffffff08), color-mix(in srgb, var(--acc) 38%, transparent); box-shadow: inset 0 1px 0 #ffffff60; }
+#r-brief:focus-visible ~ .reg-tabs label[for="r-brief"],
+#r-story:focus-visible ~ .reg-tabs label[for="r-story"],
+#r-technical:focus-visible ~ .reg-tabs label[for="r-technical"] { outline: 2px solid var(--acc-2); outline-offset: 1px; }
+.reg-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 14px; }
+.reg-kicker { font: 600 10.5px/1 var(--mono); letter-spacing: .16em; text-transform: uppercase; color: var(--dim); }
+.reg-head .td-copy { margin-left: auto; }
+.reg-panel > h2:first-of-type { margin-top: 0; }
+.td-copy { display: inline-flex; align-items: center; gap: 7px; height: 30px; padding: 0 12px; border-radius: 999px; font: 500 12.5px/1 var(--sans); color: var(--ink-2); cursor: pointer; }
+.td-copy:hover { color: var(--fgb); border-color: color-mix(in srgb, var(--acc) 70%, transparent); }
+.td-copy svg { width: 14px; height: 14px; }
+.td-copy.done { color: var(--grn); border-color: var(--grn); }
+
+/* ------------------------------------------------ glass: primary reading
+   High contrast and properly glassy: milky, lit from above, the wallpaper
+   blurred through it, a sheen across the top and a streak across the face.
+   Only the elements a page means to be read first get it. */
+.td-doc .glass { position: relative; isolation: isolate; color: var(--bg0); border-radius: 14px; overflow: hidden; text-decoration: none;
+  -webkit-backdrop-filter: blur(20px) saturate(1.7); backdrop-filter: blur(20px) saturate(1.7);
+  background: linear-gradient(180deg, #ffffffa8 0%, #ffffff30 38%, #ffffff00 60%), color-mix(in srgb, var(--fgb) 84%, transparent);
+  border: 1px solid #ffffffb0;
+  box-shadow: 0 14px 34px -10px #00000080, inset 0 1px 0 #ffffffe6, inset 0 -2px 0 #0000002e, inset 0 0 26px #ffffff40, inset 0 -18px 30px -18px #00000030; }
+.td-doc .glass::before { content: ""; position: absolute; z-index: -1; left: 1px; right: 1px; top: 1px; height: 50%; border-radius: 13px 13px 0 0;
+  background: linear-gradient(180deg, #ffffffb0 0%, #ffffff40 45%, #ffffff00 100%); pointer-events: none; }
+.td-doc .glass::after { content: ""; position: absolute; z-index: -1; inset: 0; pointer-events: none; background: linear-gradient(115deg, transparent 38%, #ffffff38 46%, transparent 54%); }
+:root[data-theme="paper"] .td-doc .glass { background: linear-gradient(180deg, #ffffff1c 0%, #ffffff08 40%, #ffffff00 60%), color-mix(in srgb, var(--fgb) 90%, transparent); border-color: #ffffff30; }
+:root[data-theme="paper"] .td-doc .glass::before { background: linear-gradient(180deg, #ffffff26, #ffffff00); }
+:root[data-theme="paper"] .td-doc .glass::after { background: linear-gradient(115deg, transparent 38%, #ffffff14 46%, transparent 54%); }
+.td-doc .glass .h { position: relative; display: block; font: 700 11.5px/1.3 var(--mono); letter-spacing: .13em; text-transform: uppercase; color: color-mix(in srgb, var(--bg0) 80%, var(--fgb)); }
+:root[data-theme="paper"] .td-doc .glass .h, :root[data-theme="paper"] .td-doc .start small { color: color-mix(in srgb, var(--bg0) 84%, var(--fgb)); }
+.td-doc .glass b, .td-doc .glass strong { color: var(--bg0); }
+.td-doc .glass a { color: var(--bg0); text-decoration-color: color-mix(in srgb, var(--bg0) 45%, transparent); }
+.td-doc .glass code { background: color-mix(in srgb, var(--bg0) 12%, transparent); color: var(--bg0); }
+.td-doc .glass pre.cmd { margin: 10px 0 0; }
+/* a terminal inside a card keeps the terminal's ink, not the card's */
+.td-doc .glass pre.cmd code { color: inherit; background: none; }
+.td-doc .glass kbd { background: color-mix(in srgb, var(--bg0) 85%, transparent); color: var(--fgb); border-color: transparent; }
+.td-doc a.glass { transition: transform .14s ease, box-shadow .14s ease; }
+.td-doc a.glass:hover { color: var(--bg0); transform: translateY(-3px);
+  box-shadow: 0 0 0 2px var(--acc), 0 20px 40px -12px #00000090, inset 0 1px 0 #ffffffe6, inset 0 -2px 0 #0000002e, inset 0 0 26px #ffffff40; }
+.td-doc .cmdglass { padding: 14px 16px 16px; margin: 0 0 1.3em; }
+
+/* the room: the Introduction's first screen */
+.td-doc .room { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 14px; margin: 0 0 8px; }
+.td-doc .cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.td-doc .card { display: flex; flex-direction: column; gap: 6px; min-height: 112px; padding: 15px 16px; }
+.td-doc .card b { font: 600 15px/1.35 var(--sans); }
+.td-doc .start { padding: 16px 18px; display: flex; flex-direction: column; gap: 8px; }
+.td-doc .start .path { position: relative; font: 700 15px/1.5 var(--mono); }
+.td-doc .start small { position: relative; font: 12px/1.4 var(--mono); color: color-mix(in srgb, var(--bg0) 80%, var(--fgb)); }
+.td-doc .three { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 16px 0 12px; }
+.td-doc .box { border-radius: 12px; padding: 14px 16px; font-size: 15px; }
+.td-doc .box .h { display: block; font: 700 11px/1.3 var(--mono); letter-spacing: .15em; text-transform: uppercase; margin-bottom: 6px; }
+.h.brief { color: var(--yel); } .h.story { color: var(--mag); } .h.technical { color: var(--blu); }
+
+/* quiet reading: the chapter table, and any table that stops imitating the app */
+.td-doc table.q { display: table; font-size: 15px; }
+.td-doc .q td { padding: 9px 14px 9px 0; border-top: 1px solid var(--line); border-bottom: 0; }
+.td-doc .q tr:last-child td { border-bottom: 1px solid var(--line); }
+.td-doc .q td:first-child { font: 13.5px/1.6 var(--mono); white-space: nowrap; }
+.td-doc .q .dot { color: var(--dim); padding: 0 2px; }
+.td-doc .q td a { white-space: nowrap; }
+
+/* two faces: every paragraph shares a row with its evidence, so related things
+   start at the same height. No border between the faces; the gutter separates them. */
+.td-doc .facehead, .td-doc .pair { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); column-gap: 40px; }
+.td-doc .facehead span { font: 600 10.5px/1 var(--mono); letter-spacing: .16em; color: var(--dim); padding: 0 0 10px; }
+.td-doc .pair > .term, .td-doc .pair > .bench { padding: 14px 0 18px; min-width: 0; }
+.td-doc .pair > .term > :first-child, .td-doc .pair > .bench > :first-child { margin-top: 0; }
+.td-doc .pair > .term p { margin: 0 0 10px; }
+.td-doc .pair > * > :last-child { margin-bottom: 0; }
+.td-doc .pair h3 { margin: 6px 0 10px; }
+.td-doc .pair.full { grid-template-columns: 1fr; }
+.td-doc .facts { display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; font-size: 14px; border-radius: 12px; padding: 12px 14px; margin: 0; }
+.td-doc .facts dt { font: 12px/1.7 var(--mono); color: var(--dim); }
+.td-doc .facts dd { margin: 0; color: var(--fgb); font: 13px/1.7 var(--mono); overflow-wrap: anywhere; }
+.td-doc .facts .cap { grid-column: 1 / -1; font: 700 10.5px/1.4 var(--mono); letter-spacing: .15em; text-transform: uppercase; color: var(--yel); margin-bottom: 2px; }
+
+/* ------------------------------------------------------- pager and footer
+   centred in its column, 7% in from either side, so there is room for any title */
+.td-pager { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 56px; }
+.td-pager a { display: block; margin: 0 7%; padding: 15px 18px; border-radius: 14px; color: var(--fgb); text-align: center; text-decoration: none;
+  font: 600 16px/1.35 var(--mono); transition: border-color .12s, transform .12s; }
+.td-pager a:hover { color: var(--fgb); transform: translateY(-2px); border-color: color-mix(in srgb, var(--acc) 75%, transparent);
+  background: linear-gradient(var(--glass-tint), var(--glass-tint-2)), color-mix(in srgb, var(--acc) 22%, transparent); }
+.td-pager small { display: block; font: 600 10.5px/1 var(--mono); letter-spacing: .16em; text-transform: uppercase; color: var(--dim); margin-bottom: 6px; }
+.td-pager .n { color: var(--dim); margin-right: 8px; }
+.td-pager .next { grid-column: 2; }
+.td-foot { margin-top: 40px; padding-top: 14px; border-top: 1px solid var(--line); display: flex; flex-wrap: wrap; gap: 6px 20px; font: 12.5px/1.6 var(--mono); color: var(--dim); }
+.td-foot a { color: var(--dim); text-decoration: none; }
+.td-foot a:hover { color: var(--acc-2); }
+
+/* ---------------------------------------------------------- the overlays */
+.td-pal { position: fixed; inset: 0; z-index: 60; display: none; background: #00000066; }
+.td-pal.open { display: block; }
+.td-pal-box { width: min(640px, calc(100vw - 32px)); margin: 11vh auto 0; border-radius: 16px; overflow: hidden;
+  background: linear-gradient(var(--glass-tint), var(--glass-tint-2)), color-mix(in srgb, var(--bg2) 80%, transparent); }
+.td-pal input { width: calc(100% - 20px); height: 44px; margin: 10px; padding: 0 16px; border: 1px solid color-mix(in srgb, var(--acc) 70%, transparent);
+  border-radius: 999px; outline: none; font: 16px/1 var(--sans); color: var(--fgb); background: color-mix(in srgb, var(--bg0) 85%, transparent); }
+.td-pal ul { list-style: none; margin: 0; padding: 0 10px 8px; max-height: 55vh; overflow: auto; }
+.td-pal li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px; padding: 8px 12px; border-radius: 10px; cursor: pointer; color: var(--ink-2); }
+.td-pal li small { margin-left: auto; font: 500 10.5px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--dim); }
+.td-pal li[aria-selected="true"], .td-pal li:hover { background: color-mix(in srgb, var(--acc) 18%, transparent); color: var(--fgb); }
+.td-pal li .snip { flex-basis: 100%; font-size: 12.5px; line-height: 1.45; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.td-pal li .snip mark { background: none; color: var(--acc-2); font-weight: 600; }
+.td-pal-foot { margin: 0; padding: 10px 18px; border-top: 1px solid var(--line); font: 12px/1.4 var(--mono); color: var(--dim); }
+
+.td-scrim { position: fixed; inset: 0; z-index: 55; background: #00000059; display: none; }
+.td-scrim.on { display: block; }
+.td-pop { position: fixed; z-index: 56; display: none; border-radius: 16px;
+  background: linear-gradient(var(--glass-tint), var(--glass-tint-2)), color-mix(in srgb, var(--bg2) 76%, transparent); }
+.td-pop.on { display: block; }
+/* the theme tray, after the Omarchy kiosk's rail: a glass column of glass pills */
+.td-tray { top: 64px; right: 16px; width: 250px; padding: 12px; }
+.td-tray .th { display: flex; align-items: center; gap: 8px; padding: 2px 4px 10px; font: 600 13px/1 var(--mono); color: var(--acc); }
+.td-tray .th .k { margin-left: auto; font: 10.5px/1 var(--mono); color: var(--dim); }
+.td-wallbtn { width: 100%; display: flex; align-items: center; justify-content: center; gap: 8px; margin: 0 0 10px; padding: 7px 10px; border-radius: 999px; font: 12px/1 var(--mono); color: var(--dim); cursor: pointer; }
+.td-wallbtn .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--dim); }
+.td-wallbtn[aria-pressed="true"] { color: var(--fgb); }
+.td-wallbtn[aria-pressed="true"] .dot { background: var(--grn); box-shadow: 0 0 8px var(--grn); }
+.td-traylist { display: grid; gap: 6px; }
+.td-chip { width: 100%; display: flex; align-items: center; gap: 9px; padding: 6px 12px 6px 7px; border-radius: 999px; font: 12.5px/1 var(--mono); color: var(--ink); text-align: left; cursor: pointer; transition: transform .1s, border-color .1s; }
+.td-chip .pie { width: 17px; height: 17px; flex: none; border-radius: 50%; border: 1px solid rgba(128, 128, 128, .45); }
+.td-chip svg { width: 19px; height: 19px; margin-left: auto; color: var(--dim); }
+.td-chip:hover, .td-chip.hl { transform: translateX(-2px); border-color: color-mix(in srgb, var(--acc) 65%, transparent); color: var(--fgb); }
+.td-chip[aria-checked="true"] { color: var(--fgb); border-color: color-mix(in srgb, var(--acc) 75%, transparent);
+  background: linear-gradient(var(--glass-tint), var(--glass-tint-2)), color-mix(in srgb, var(--acc) 26%, transparent); }
+.td-chip[aria-checked="true"] svg { color: var(--fgb); }
+.td-tray .tf { padding: 10px 4px 0; font: 10.5px/1.5 var(--mono); color: var(--dim); }
+.td-keys { top: 50%; left: 50%; transform: translate(-50%, -50%); width: min(880px, 94vw); max-height: 88vh; overflow: auto; padding: 24px 28px 20px;
+  border-color: color-mix(in srgb, var(--acc) 70%, transparent); }
+.td-keys h3 { margin: 0 0 16px; font: 600 17px/1.3 var(--mono); color: var(--mag); letter-spacing: .04em; }
+.td-keys .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 40px; }
+.td-keys h4 { margin: 6px 0; font: 600 12px/1.3 var(--mono); letter-spacing: .14em; color: var(--mag); text-transform: uppercase; }
+.td-keys dl { display: grid; grid-template-columns: 150px 1fr; gap: 6px 14px; margin: 0 0 12px; font-size: 14px; }
+.td-keys dt { font: 13px/1.5 var(--mono); color: var(--acc); }
+.td-keys dd { margin: 0; color: var(--ink); }
+.td-keys .kf { margin-top: 10px; font: 12px/1.5 var(--mono); color: var(--dim); }
+.td-keys a { color: var(--ink); }
+
+/* ------------------------------------------------------------------ narrow */
+@media (max-width: 1080px) { .td-sections { gap: 18px; } }
+@media (max-width: 900px) {
+  :root { --spine-w: 0px; }
+  .td-menu { display: grid !important; }
+  .td-top .r1 { grid-template-columns: auto 1fr auto; }
+  .td-brand .word { display: none; }
+  .td-spine { width: min(86vw, 290px); transform: translateX(-102%); transition: transform .22s ease;
+    background: linear-gradient(var(--glass-tint), var(--glass-tint-2)), color-mix(in srgb, var(--bg) 90%, transparent); }
+  :root.spine-open .td-spine { transform: none; }
+  .td-sections { overflow-x: auto; }
+  .td-doc { padding: 28px 20px 100px; }
+  .td-doc .room, .td-doc .cards, .td-doc .three { grid-template-columns: 1fr; }
+  .td-doc .facehead { display: none; }
+  .td-doc .pair { grid-template-columns: 1fr; }
+  .td-doc .pair > .term { padding: 12px 0 8px; }
+  .td-doc .pair > .bench { padding: 0 0 16px; }
+  .td-pager { grid-template-columns: 1fr; } .td-pager .next { grid-column: 1; } .td-pager a { margin: 0; }
+  .td-doc .q td:first-child { white-space: normal; overflow-wrap: anywhere; }
+  .td-doc .q td a { white-space: normal; }
+  .td-keys .cols { grid-template-columns: 1fr; }
+}
+@media (max-width: 560px) {
+  .td-top .r1 { padding: 0 10px; gap: 10px; }
+  .td-search span, .td-search kbd { display: none; }
+  .td-search { width: 38px; padding: 0; justify-content: center; justify-self: end; }
+  .td-btn.hide-sm, .td-actions .gh { display: none; }
+  .td-actions { gap: 6px; }
+  .td-icon { width: 34px; height: 34px; } .td-themebtn { height: 34px; }
+  .reg-body .reg-head { position: static; margin: -10px 0 14px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  #td-fx .band { display: none; }
+  .td-brand .cur { animation: none; }
+  #tube { scroll-behavior: auto; }
+}
