@@ -15,45 +15,54 @@
   <meta property="og:type" content="{{OG_TYPE}}" />
   <meta property="og:url" content="{{CANONICAL}}" />
 
-  <script>(function(){var s={};try{s=JSON.parse(localStorage.getItem('td-shell'))||{}}catch(e){}var r=document.documentElement;r.dataset.theme=s.theme||(matchMedia('(prefers-color-scheme: light)').matches?'paper':'glass');r.dataset.crt=s.crt||r.dataset.crtDefault||'off';})();</script>
-
   <link rel="stylesheet" href="/assets/fonts/fonts.css" />
-  <link rel="stylesheet" href="/assets/td-shell.css" />
-  <link rel="stylesheet" href="/assets/td-docs.css" />{{PAGE_STYLE}}
+  <link rel="stylesheet" href="/assets/td-docs.css" />
+  <link rel="stylesheet" href="/assets/docs.css" />{{PAGE_STYLE}}
+  <script src="/assets/kiosk-theme.js"></script>
+  <!-- before first paint: glass or paper, the tube, the wallpaper, and the theme's colours -->
+  <script>(function(){var s={};try{s=JSON.parse(localStorage.getItem('td-shell'))||{}}catch(e){}var r=document.documentElement;r.dataset.theme=s.theme||(matchMedia('(prefers-color-scheme: light)').matches?'paper':'glass');r.dataset.crt=s.crt||r.dataset.crtDefault||'off';r.dataset.wall=s.wall||'on';var K=window.TD_KIOSK;if(!K)return;var p=K.resolve().palette,el=document.createElement('style');el.id='td-palette';el.textContent=':root{'+K.VARS.map(function(k){return'--'+k+':'+p[k]}).join(';')+'}';document.head.appendChild(el);r.dataset.palette=p.name;})();</script>
 </head>
 <body>
 
 <header class="td-top">
-  <button class="td-icon td-menu" data-td-menu aria-label="Open the docs menu">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
-  </button>
-  <a class="td-brand" href="/" aria-label="Terminal Delight docs">
-    <svg viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="13" fill="#1a1e24"/><path d="M9 12Q32 8.5 55 12Q59 32 55 52Q32 55.5 9 52Q5 32 9 12Z" fill="#05080a"/><clipPath id="bm"><path d="M9 12Q32 8.5 55 12Q59 32 55 52Q32 55.5 9 52Q5 32 9 12Z"/></clipPath><g clip-path="url(#bm)"><rect x="5" y="6" width="24" height="52" fill="#39ff7a" opacity=".92"/><rect x="34" y="6" width="25" height="24" fill="#ffb84d" opacity=".92"/><rect x="34" y="34" width="25" height="24" fill="#57d6ff" opacity=".92"/></g><path d="M31.5 6Q33 32 31.5 58" stroke="#1a1e24" stroke-width="5" fill="none"/><path d="M31 32Q45 33 60 31.5" stroke="#1a1e24" stroke-width="4.5" fill="none"/></svg>
-    <span class="word">terminal delight<span class="cur"></span></span>
-  </a>
-  <nav class="td-sections" aria-label="Sections">
-    <a href="{{KIOSK}}/info">Overview</a>
-    <a href="/" aria-current="page">Docs</a>
-    <a href="{{KIOSK}}/omarchy">Omarchy</a>
-    <a href="{{KIOSK}}/global">Global</a>
-  </nav>
-  <button class="td-search" type="button" aria-label="Search the docs">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
-    <span>Search docs</span><kbd>Ctrl K</kbd>
-  </button>
-  <div class="td-actions">
-    <a class="td-icon gh" href="{{REPO}}" aria-label="Source on GitHub" title="Source on GitHub">
-      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 .5a11.5 11.5 0 0 0-3.64 22.41c.58.1.79-.25.79-.56v-2c-3.2.7-3.88-1.37-3.88-1.37-.52-1.33-1.28-1.69-1.28-1.69-1.04-.71.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.76 2.7 1.25 3.36.96.1-.75.4-1.25.73-1.54-2.55-.29-5.24-1.28-5.24-5.69 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.17 1.18a11 11 0 0 1 5.77 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.84 1.19 3.1 0 4.42-2.7 5.39-5.26 5.68.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .5Z"/></svg>
-    </a>
-    <button class="td-icon" data-td-toggle="crt" aria-pressed="false" aria-label="CRT texture">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M4 5.5Q12 4 20 5.5Q21.4 12 20 18.5Q12 20 4 18.5Q2.6 12 4 5.5Z"/><path d="M6.5 9.5h11M6.5 12h11M6.5 14.5h7" stroke-width="1.3" opacity=".75"/></svg>
+  <div class="r1">
+    <div class="left">
+      <button class="td-icon td-menu" data-td-menu aria-label="Open the docs menu">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+      </button>
+      <a class="td-brand" href="/" aria-label="Terminal Delight docs">
+        <svg viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="13" fill="#1a1e24"/><path d="M9 12Q32 8.5 55 12Q59 32 55 52Q32 55.5 9 52Q5 32 9 12Z" fill="#05080a"/><clipPath id="bm"><path d="M9 12Q32 8.5 55 12Q59 32 55 52Q32 55.5 9 52Q5 32 9 12Z"/></clipPath><g clip-path="url(#bm)"><rect x="5" y="6" width="24" height="52" fill="#39ff7a" opacity=".92"/><rect x="34" y="6" width="25" height="24" fill="#ffb84d" opacity=".92"/><rect x="34" y="34" width="25" height="24" fill="#57d6ff" opacity=".92"/></g><path d="M31.5 6Q33 32 31.5 58" stroke="#1a1e24" stroke-width="5" fill="none"/><path d="M31 32Q45 33 60 31.5" stroke="#1a1e24" stroke-width="4.5" fill="none"/></svg>
+        <span class="word">terminal delight<span class="cur"></span></span>
+      </a>
+    </div>
+    <button class="td-search" type="button" aria-label="Search the docs">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+      <span>Search docs</span><kbd>Ctrl K</kbd>
     </button>
-    <button class="td-icon td-theme" data-td-toggle="theme" aria-label="Switch between glass and paper">
-      <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 3v2M12 19v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M3 12h2M19 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4"/><circle cx="12" cy="12" r="4"/></svg>
-      <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5Z"/></svg>
-    </button>
-    <a class="td-btn primary hide-sm" href="/install"{{INSTALL_CURRENT}}>Install</a>
+    <div class="td-actions">
+      <button class="td-themebtn" type="button" aria-haspopup="true" aria-expanded="false" aria-label="Theme" title="Theme (t)"><span class="gl"></span><span class="nm"></span><span class="caret">▾</span></button>
+      <button class="td-icon" data-td-toggle="crt" aria-pressed="false" aria-label="CRT glass">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"><rect x="2.5" y="3" width="19" height="15" rx="2.5"/><path d="M5.5 6.2Q12 5.2 18.5 6.2Q19.3 10.5 18.5 14.8Q12 15.8 5.5 14.8Q4.7 10.5 5.5 6.2Z"/><path d="M9 21h6M10.5 18v3M13.5 18v3"/><circle cx="18.6" cy="16.4" r=".45" fill="currentColor"/></svg>
+      </button>
+      <button class="td-icon td-keysbtn" type="button" aria-haspopup="dialog" aria-label="Keys for these pages" title="Keys for these pages (?)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"><rect x="2" y="6" width="20" height="12" rx="2.5"/><path d="M6 10h.01M9.5 10h.01M13 10h.01M16.5 10h.01M6.5 14h.01M17.5 14h.01M9.5 14h5"/></svg>
+      </button>
+      <button class="td-icon td-theme" data-td-toggle="theme" aria-label="Switch between glass and paper">
+        <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 3v2M12 19v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M3 12h2M19 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4"/><circle cx="12" cy="12" r="4"/></svg>
+        <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5Z"/></svg>
+      </button>
+      <a class="td-icon gh" href="{{REPO}}" aria-label="Source on GitHub" title="Source on GitHub">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 .5a11.5 11.5 0 0 0-3.64 22.41c.58.1.79-.25.79-.56v-2c-3.2.7-3.88-1.37-3.88-1.37-.52-1.33-1.28-1.69-1.28-1.69-1.04-.71.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.76 2.7 1.25 3.36.96.1-.75.4-1.25.73-1.54-2.55-.29-5.24-1.28-5.24-5.69 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.17 1.18a11 11 0 0 1 5.77 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.84 1.19 3.1 0 4.42-2.7 5.39-5.26 5.68.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .5Z"/></svg>
+      </a>
+      <a class="td-btn primary hide-sm" href="/install"{{INSTALL_CURRENT}}>Install</a>
+    </div>
   </div>
+  <nav class="td-sections" aria-label="Sections">
+    <a class="td-tab" href="/"{{TAB_DOCS}}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v15H6.5A2.5 2.5 0 0 0 4 20.5z"/><path d="M4 20.5A2.5 2.5 0 0 0 6.5 23H20v-5"/></svg>Documentation</a>
+    <span class="td-tab" tabindex="0"{{TAB_REF}}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="m8 7-5 5 5 5M16 7l5 5-5 5"/></svg>Reference ▾<span class="menu">{{REF_MENU}}</span></span>
+    <a class="td-tab" href="/languages"{{TAB_LANG}}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3.2 3 14.8 0 18M12 3c-3 3.2-3 14.8 0 18"/></svg>Languages</a>
+    <a class="td-tab" href="/keys"{{TAB_KEYS}}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/></svg>Keymapping</a>
+  </nav>
 </header>
 
 <nav class="td-spine" aria-label="Documentation">
@@ -61,18 +70,17 @@
 </nav>
 
 <main id="tube" tabindex="-1">
-  <article class="td-doc">
-    <p class="td-kicker">{{KICKER}}</p>
-    <h1>{{H1}}</h1>
-    <p class="meta-row">{{META_ROW}}</p>
+  <article{{DOC_ATTRS}}>
+    <h1{{H1_ATTRS}}>{{H1}}</h1>
 {{BODY}}
 {{SOURCES}}
     <nav class="td-pager" aria-label="Next and previous">{{PAGER}}</nav>
-    <footer class="td-foot"><span>Terminal Delight · MIT</span><a href="{{EDIT_URL}}">Edit this page</a><a href="{{KIOSK}}/info">Overview</a><a href="{{REPO}}/blob/main/CHANGELOG.md">Changelog</a></footer>
+    <footer class="td-foot"><span>{{META_ROW}}</span><a href="{{EDIT_URL}}">Edit this page</a><a href="{{REPO}}/blob/main/CHANGELOG.md">Changelog</a><span>Terminal Delight · MIT</span></footer>
   </article>
 </main>
 <div id="td-fx" aria-hidden="true"><div class="scan"></div><div class="vig"></div><div class="bloom"></div><div class="band"></div></div>
 <script src="/assets/td-shell.js"></script>
+<script src="/assets/docs.js"></script>
 <script src="/assets/td-glass.js"></script>
 </body>
 </html>

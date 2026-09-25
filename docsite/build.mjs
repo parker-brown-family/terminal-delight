@@ -7,14 +7,19 @@
 
    Everything a page shares is written once:
 
-     nav.json        the page list, in reading order, by group. It drives the
-                     spine, the pager, the page map on the introduction and the
-                     "soon" markers. A page is live when pages/<slug>.html exists.
-     layout.html     the shell: head, top bar, spine, article frame, footer.
+     nav.json        the page list, in reading order, by chapter. It numbers
+                     every page, and drives the spine, the pager, the chapter
+                     table on the introduction and the 404, the Reference menu
+                     and the "soon" markers. A page is live when
+                     pages/<slug>.html exists.
+     layout.html     the shell: head, header, spine, article frame, footer.
      pages/*.html    one content file per page: a JSON header, then either
                      plain HTML or up to three register sections (brief, story,
                      technical), then an optional <ol data-sources>.
-     assets/         the shared shell, the docs components, the tube, the fonts.
+     assets/         docs.css and docs.js (the look, the themes, the keys),
+                     td-shell.js (registers, copy, search), td-glass.js (the
+                     tube), td-docs.css (figures), the Omarchy palettes and
+                     wallpapers, the fonts.
 
    The build also writes search.json (full-text, by heading), sitemap.xml and
    404.html, and it refuses to write a site with a broken internal link, a
@@ -41,11 +46,21 @@ const warn = (where, what) => warnings.push(`${where}: ${what}`);
 
 /* ------------------------------------------------------------ the page list */
 
+/* Chapters are numbered in reading order, and a page by its place in its
+   chapter: Install is 01.1, the first page of a chapter is 0N.0. The numbers
+   are the field manual's, for finding your way, and are drawn by CSS, so
+   search, copy and the page title never carry them. */
+const pad = (n) => String(n).padStart(2, '0');
 const order = [];
+const chapters = [];
 for (const g of nav.groups) {
-  for (const p of g.pages) {
-    if (p.slug) order.push({ ...p, group: g.title, live: files.has(p.slug) });
-  }
+  const ch = { n: pad(chapters.length + 1), title: g.title, short: g.short || g.title, pages: [] };
+  g.pages.forEach((p, k) => {
+    if (!p.slug) return;
+    const page = { ...p, group: g.title, chapter: ch, num: `${ch.n}.${k}`, live: files.has(p.slug) };
+    order.push(page); ch.pages.push(page);
+  });
+  if (ch.pages.length) chapters.push(ch);
 }
 for (const f of files) if (!order.some((p) => p.slug === f)) fail(`pages/${f}.html`, 'is not listed in nav.json');
 const live = order.filter((p) => p.live);
@@ -97,41 +112,58 @@ function lint(where, html) {
 
 /* -------------------------------------------------------------- the pieces */
 
+/* The spine: every chapter, then the pages of the one you are in. The chapter
+   is lit weakly and the page strongly, so where you are reads at two scales. */
 function spine(current) {
-  return nav.groups.map((g) => {
-    const items = g.pages.map((p) => {
-      if (p.href) return `    <li><a href="${esc(p.href)}">${esc(p.title)}</a></li>`;
-      const page = order.find((o) => o.slug === p.slug);
-      if (!page.live) return `    <li><span class="is-soon">${esc(p.title)}</span></li>`;
-      return `    <li><a href="${url(p.slug)}"${p.slug === current ? ' aria-current="page"' : ''}>${esc(p.title)}</a></li>`;
-    }).join('\n');
-    return `  <div class="td-group"><h6>${esc(g.title)}</h6><ul>\n${items}\n  </ul></div>`;
+  const here = order.find((o) => o.slug === current);
+  const first = (ch) => ch.pages.find((p) => p.live) || ch.pages[0];
+  const chs = chapters.map((ch) => {
+    const lit = here && here.chapter === ch;
+    return `    <li><a href="${url(first(ch).slug)}"${lit ? ' class="weak"' : ''}><span class="n">${ch.n} /</span>${esc(ch.short)}</a></li>`;
   }).join('\n');
+  let out = `  <div class="td-group"><h6>Contents</h6><ul>\n${chs}\n  </ul></div>`;
+  if (here) {
+    const items = here.chapter.pages.map((p) => {
+      if (!p.live) return `    <li><span class="is-soon"><span class="n">${p.num}</span>${esc(p.title)}</span></li>`;
+      return `    <li><a href="${url(p.slug)}"${p.slug === current ? ' aria-current="page"' : ''}><span class="n">${p.num}</span>${esc(p.title)}</a></li>`;
+    }).join('\n');
+    out += `\n  <div class="td-group"><h6>In ${here.chapter.n} · ${esc(here.chapter.title)}</h6><ul>\n${items}\n  </ul></div>`;
+  }
+  return out;
 }
 
-function map(metaBySlug) {
-  return '<div class="map">' + nav.groups.map((g) => {
-    const items = g.pages.map((p) => {
-      if (p.href) return `<li><a href="${esc(p.href)}">${esc(p.title)}</a></li>`;
-      const page = order.find((o) => o.slug === p.slug);
-      if (!page.live) return `<li class="soon">${esc(p.title)}</li>`;
-      const sum = metaBySlug[p.slug] && metaBySlug[p.slug].summary;
-      return `<li><a href="${url(p.slug)}">${esc(p.title)}</a>${sum ? `<small>${esc(sum)}</small>` : ''}</li>`;
-    }).join('');
-    return `<section><h3>${esc(g.title)}</h3><ul>${items}</ul></section>`;
-  }).join('') + '</div>';
+/* Every chapter on one quiet table, generated from nav.json, for the
+   introduction and the 404. */
+function chapterTable() {
+  return '<table class="q">' + chapters.map((ch) => {
+    const items = ch.pages.map((p) => (p.live ? `<a href="${url(p.slug)}">${esc(p.title)}</a>` : `<span class="soon-link">${esc(p.title)}</span>`))
+      .join('<span class="dot"> · </span>');
+    return `<tr><td>${ch.n} ${esc(ch.short)}</td><td>${items}</td></tr>`;
+  }).join('') + '</table>';
 }
 
 function pager(slug) {
   const i = live.findIndex((p) => p.slug === slug);
   const prev = i > 0 ? live[i - 1] : null, next = i >= 0 && i < live.length - 1 ? live[i + 1] : null;
-  return (prev ? `<a href="${url(prev.slug)}"><small>Previous</small><span>← ${esc(prev.title)}</span></a>` : '<span></span>')
-    + (next ? `<a href="${url(next.slug)}"><small>Next</small><span>${esc(next.title)} →</span></a>` : '');
+  return (prev ? `<a class="prev" href="${url(prev.slug)}"><small>Previous</small>← <span class="n">${prev.num}</span>${esc(prev.title)}</a>` : '')
+    + (next ? `<a class="next" href="${url(next.slug)}"><small>Next</small><span class="n">${next.num}</span>${esc(next.title)} →</a>` : '');
 }
+
+/* A command block gets a prompt per line, and its comments stay visible but
+   are never copied (td-shell.js drops them when it joins the lines). */
+function commands(html) {
+  return html.replace(/<pre class="cmd"><code>([\s\S]*?)<\/code><\/pre>/g, (m, body) => {
+    const lines = body.replace(/\n+$/, '').split('\n').map((l) => (l.trim().startsWith('#') ? `<span class="cm">${l}</span>` : `<span class="ln">${l}</span>`));
+    return `<pre class="cmd"><code>${lines.join('\n')}</code></pre>`;
+  });
+}
+
+/* The Reference tab's menu, from nav.json, so its links are checked like any other. */
+const refMenu = (nav.reference || []).map((r) => `<a href="${esc(r.href)}">${esc(r.title)}<small>${esc(r.note)}</small></a>`).join('');
 
 function registers(regs) {
   const panel = (r, single) => {
-    const head = `<div class="reg-head"><span class="reg-kicker">${LABEL[r.name]}</span><button class="td-copy" data-copy>${COPY_SVG} Copy</button></div>`;
+    const head = `<div class="reg-head"><span class="reg-kicker">${LABEL[r.name]}</span><button class="td-copy" data-copy>${COPY_SVG} Copy this version</button></div>`;
     const h2 = r.headline ? `<h2>${r.headline}</h2>` : '';
     return `<section class="reg-panel${single ? ' single' : ''}" id="${r.name}" role="tabpanel" data-register="${LABEL[r.name]}">\n${head}\n${h2}\n${r.body}\n</section>`;
   };
@@ -206,9 +238,11 @@ function renderPage(p, doc) {
   } else {
     body = anchor(doc.plain, '', used);
     lint(where, body);
-    if (/data-docs-map/.test(body)) body = body.replace(/<div data-docs-map><\/div>/, map(metaBySlug));
+    body = body.replace(/<div data-docs-chapters><\/div>/, chapterTable());
     search.push({ u: url(p.slug), t: doc.meta.title || p.title, g: p.group, r: '', s: '', a: '', x: text(body).slice(0, 2400) });
+    body = `<div class="plain">\n${body}\n</div>`;
   }
+  body = commands(body);
   /* A link to a page that is listed but not written yet is drawn as text,
      and becomes a link by itself the day that page exists. */
   const soonUrls = new Set(order.filter((o) => !o.live).map((o) => url(o.slug)));
@@ -221,6 +255,14 @@ function renderPage(p, doc) {
   const sources = doc.sources ? `<h2 class="src-head" id="sources">Sources</h2>\n<ol class="src">\n${unlinkSoon(doc.sources)}\n</ol>` : '';
   if (doc.sources) lint(`${where} (sources)`, doc.sources);
   const title = doc.meta.title || p.title;
+  const numbered = !!p.num;
+  const tab = (name) => {
+    const on = name === 'keys' ? p.slug === 'keys'
+      : name === 'languages' ? p.slug === 'languages'
+      : name === 'reference' ? p.group === 'Reference' && p.slug !== 'languages'
+      : !['keys', 'languages'].includes(p.slug) && p.group !== 'Reference';
+    return on ? ' aria-current="page"' : '';
+  };
   const fill = {
     TITLE_TAG: p.slug === 'index' ? 'Terminal Delight docs' : `${title} · Terminal Delight docs`,
     DESCRIPTION: esc(doc.meta.description || ''),
@@ -229,13 +271,16 @@ function renderPage(p, doc) {
     OG_TYPE: p.slug === 'index' ? 'website' : 'article',
     PAGE_STYLE: doc.style ? `\n  <style>${doc.style}</style>` : '',
     SPINE: spine(p.slug),
-    KICKER: esc(p.group),
+    DOC_ATTRS: numbered ? ` class="td-doc numbered" style="--pn:'${p.num}'"` : ' class="td-doc"',
+    H1_ATTRS: numbered ? ` data-n="${p.num.endsWith('.0') ? p.num.slice(0, -2) : p.num}"` : '',
     H1: esc(title),
     META_ROW: esc(`Updated ${doc.meta.updated} · true of ${doc.meta.trueOf}`),
+    TAB_DOCS: tab('docs'), TAB_REF: tab('reference'), TAB_LANG: tab('languages'), TAB_KEYS: tab('keys'),
+    REF_MENU: refMenu,
     BODY: body,
     SOURCES: sources,
     PAGER: pager(p.slug),
-    EDIT_URL: `${nav.repo}/blob/main/docsite/pages/${p.slug}.html`,
+    EDIT_URL: p.slug === "404" ? `${nav.repo}/blob/main/docsite/build.mjs` : `${nav.repo}/blob/main/docsite/pages/${p.slug}.html`,
     INSTALL_CURRENT: p.slug === 'install' ? ' aria-current="page"' : '',
     KIOSK: nav.kiosk,
     REPO: nav.repo,
@@ -258,12 +303,14 @@ for (const p of live) {
 pagesOut['404'] = renderPage({ slug: '404', title: 'Not here', group: 'Docs' }, {
   meta: { title: 'Not here', description: 'That page is not in the Terminal Delight docs.', updated: new Date().toISOString().slice(0, 10), trueOf: 'the docs as built' },
   style: '', sources: '', regs: [],
-  plain: '<p class="lede">That address is not a page in these docs. It may be one that is still being written; everything that exists is listed here.</p>\n<div data-docs-map></div>',
+  plain: '<p class="lede">That address is not a page in these docs. It may be one that is still being written; everything that exists is listed here.</p>\n<div data-docs-chapters></div>',
 }).replace('<link rel="canonical" href="' + nav.site + '/404" />', '');
 
 /* ------------------------------------------------------------- the checks */
 
-const assets = new Set(['/assets/td-shell.css', '/assets/td-shell.js', '/assets/td-glass.js', '/assets/td-docs.css', '/assets/fonts/fonts.css', '/favicon.ico', '/favicon.svg', '/search.json', '/sitemap.xml']);
+const SHIPPED = ['td-shell.js', 'td-glass.js', 'td-docs.css', 'docs.css', 'docs.js', 'kiosk-theme.js'];
+const WALLS = (await readdir(join(ROOT, 'assets', 'omarchy', 'bg'))).filter((f) => f.endsWith('.webp'));
+const assets = new Set([...SHIPPED.map((f) => '/assets/' + f), '/assets/fonts/fonts.css', '/favicon.ico', '/favicon.svg', '/search.json', '/sitemap.xml']);
 const liveUrls = new Set(live.map((p) => url(p.slug)));
 for (const [slug, html] of Object.entries(pagesOut)) {
   const where = `pages/${slug}.html`;
@@ -283,6 +330,10 @@ for (const [slug, html] of Object.entries(pagesOut)) {
   for (const m of html.matchAll(/<sup><a href="#(s\d+)">/g)) if (!ids.has(m[1])) fail(where, `citation ${m[1]} has no source`);
 }
 
+for (const [, name] of (await readFile(join(ROOT, 'assets', 'kiosk-theme.js'), 'utf8')).matchAll(/"name":"([a-z0-9-]+)"/g)) {
+  if (!WALLS.includes(name + '.webp')) fail('assets/omarchy/bg', `no wallpaper for the ${name} theme`);
+}
+
 if (warnings.length) console.warn('warnings:\n  ' + warnings.join('\n  '));
 if (problems.length) {
   console.error('build refused:\n  ' + problems.join('\n  '));
@@ -295,7 +346,10 @@ for (const [slug, html] of Object.entries(pagesOut)) await writeFile(join(OUT, s
 await writeFile(join(OUT, 'search.json'), JSON.stringify(search));
 await writeFile(join(OUT, 'sitemap.xml'), '<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
   + live.map((p) => `  <url><loc>${nav.site}${url(p.slug)}</loc><lastmod>${parsed[p.slug].meta.updated}</lastmod></url>`).join('\n') + '\n</urlset>\n');
-for (const f of ['td-shell.css', 'td-shell.js', 'td-glass.js', 'td-docs.css']) await copyFile(join(ROOT, 'assets', f), join(OUT, 'assets', f));
+for (const f of SHIPPED) await copyFile(join(ROOT, 'assets', f), join(OUT, 'assets', f));
+/* every theme wears its own Omarchy wallpaper; docs.js asks for them by palette name */
+await mkdir(join(OUT, 'assets', 'omarchy', 'bg'), { recursive: true });
+for (const f of WALLS) await copyFile(join(ROOT, 'assets', 'omarchy', 'bg', f), join(OUT, 'assets', 'omarchy', 'bg', f));
 for (const f of await readdir(join(ROOT, 'assets', 'fonts'))) await copyFile(join(ROOT, 'assets', 'fonts', f), join(OUT, 'assets', 'fonts', f));
 for (const f of ['favicon.ico', 'favicon.svg']) await copyFile(join(ROOT, f), join(OUT, f));
 

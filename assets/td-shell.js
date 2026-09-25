@@ -238,22 +238,31 @@
     window.__tdLastCopy = text;
   }
 
-  /* A command block carries its own copy button, which takes the commands
-     and nothing else — no prompt, no comment header, no surrounding prose. */
+  /* A command block carries one copy button, which takes the commands and
+     nothing else — no prompt, no comment header, no surrounding prose — as ONE
+     line, the commands joined with && so a single paste runs them in order and
+     stops at the first failure. Copying is said once, by the whole block
+     throbbing, rather than by a second label beside the button. */
   document.querySelectorAll('pre.cmd').forEach(function (pre) {
     var b = document.createElement('button');
     b.className = 'td-copy'; b.type = 'button'; b.setAttribute('data-copy-code', '');
-    b.setAttribute('aria-label', 'Copy these commands');
-    b.appendChild(document.createTextNode('Copy'));
+    b.setAttribute('aria-label', 'Copy these commands as one line');
+    b.appendChild(document.createTextNode('⎘ copy'));
     pre.appendChild(b);
   });
   document.addEventListener('click', function (e) {
     var b = e.target.closest('[data-copy-code]');
     if (!b) return;
-    var code = b.closest('pre').querySelector('code');
-    var text = (code || b.closest('pre')).textContent.trim();
+    var pre = b.closest('pre'), code = pre.querySelector('code');
+    /* comment lines are dropped: joined into one line, a # would silence every command after it */
+    var text = (code || pre).textContent.split('\n').map(function (l) { return l.trim(); })
+      .filter(function (l) { return l && l.charAt(0) !== '#'; }).join(' && ');
     window.__tdLastCopy = text;
-    var done = function () { b.classList.add('done'); b.lastChild.nodeValue = 'Copied'; setTimeout(function () { b.classList.remove('done'); b.lastChild.nodeValue = 'Copy'; }, 1400); };
+    var done = function () {
+      pre.classList.remove('throb'); void pre.offsetWidth; pre.classList.add('throb');
+      b.classList.add('done'); b.lastChild.nodeValue = '✓ copied';
+      setTimeout(function () { pre.classList.remove('throb'); b.classList.remove('done'); b.lastChild.nodeValue = '⎘ copy'; }, 1400);
+    };
     if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done, done); else done();
   });
 
