@@ -1859,6 +1859,18 @@ impl EditBuffer {
         i
     }
 
+    /// Put text at the caret, over any selection, and leave the caret after
+    /// it: how a note gets its newlines, since [`Self::apply`] leaves Enter
+    /// to its caller.
+    pub(crate) fn insert(&mut self, s: &str) {
+        self.delete_sel();
+        for c in s.chars() {
+            self.chars.insert(self.cursor, c);
+            self.cursor += 1;
+        }
+        self.anchor = self.cursor;
+    }
+
     /// Apply one keystroke. Enter/Escape are handled by the caller before this is
     /// reached. `max` caps the inserted length.
     pub(crate) fn apply(
@@ -7725,6 +7737,28 @@ impl Workspace {
             |v| v.has_document(),
             "no pane has a document open",
             |view, cx| got = Some(view.doc_notes(cx)),
+        );
+        match got {
+            Some(Ok(json)) => format!("{said} {json}"),
+            Some(Err(why)) => format!("err {why}"),
+            None => said,
+        }
+    }
+
+    /// Add a note, delete one, stamp a decision or save, in an open brief —
+    /// the note box and the bar, from the control socket. Answers like
+    /// [`Self::doc_notes`], or with the sentence that refused it.
+    pub(crate) fn doc_note(
+        &mut self,
+        cmd: crate::docview::NotesCommand,
+        cx: &mut Context<Self>,
+    ) -> String {
+        let mut got = None;
+        let said = self.bench_apply(
+            cx,
+            |v| v.has_document(),
+            "no pane has a document open",
+            |view, cx| got = Some(view.doc_note(cmd, cx)),
         );
         match got {
             Some(Ok(json)) => format!("{said} {json}"),

@@ -17,9 +17,12 @@
 //! itself ([`notes_ui`]), from the islands in the file's own bytes
 //! ([`notes`]): note buttons where the brief's hidden ones keep their box,
 //! CONCUR stamps at the angle the brief's notes.js gives them, a note box
-//! listing what the file holds, and a bar that counts them and copies the
-//! map. The page's own notes chrome is hidden in the picture. This build
-//! reads notes and writes nothing.
+//! listing what the file holds and taking new ones, and a bar that counts
+//! them, copies the map and saves. The page's own notes chrome is hidden in
+//! the picture. A save writes only the notes regions of the file, through
+//! [`notes::commit`] — backed up, renamed into place, read back — and a file
+//! changed on disk while it is open is re-read: its notes alone, or the whole
+//! page when anything else changed.
 //!
 //! # No mouse handlers, on purpose
 //!
@@ -132,9 +135,9 @@ pub struct DocumentView {
     /// The file as last read. `None` before the first read, and while it is
     /// missing.
     seen: Option<FileStamp>,
-    /// The file as this view last wrote it. Nothing writes yet (notes come in
-    /// a later slice); the watcher already tells its own save from anyone
-    /// else's so that a save never reloads under the person making it.
+    /// The file as this view last wrote it: a brief's notes, saved. The
+    /// watcher tells that save from anyone else's, so a save never reloads
+    /// the page under the person making it.
     own_write: Option<FileStamp>,
     reading: Task<()>,
     _watch: Task<()>,
@@ -164,6 +167,25 @@ pub struct FollowLink {
 }
 
 impl EventEmitter<FollowLink> for DocumentView {}
+
+/// A brief's notes, driven by the control socket: the note box's and the
+/// bar's gestures, for a caller with no pointer.
+#[derive(Clone, Debug, PartialEq)]
+pub enum NotesCommand {
+    Add {
+        nid: String,
+        text: String,
+    },
+    Delete {
+        nid: String,
+        text: String,
+    },
+    /// Put a stamp down on a decision, or peel it off.
+    Concur {
+        nid: String,
+    },
+    Save,
+}
 
 /// The view cannot show this document after all: the pane hands the file to
 /// the desktop. The view keeps saying why.
@@ -444,7 +466,13 @@ impl DocumentView {
             DocKind::Html => Backend::Page(Box::new(page::PageDoc::new(&target.path, engine(cx)))),
         };
         cx.on_release(|view, cx| view.give_back(cx)).detach();
-        let watch = matches!(backend, Backend::Markdown(_));
+        // Markdown is re-read on a change; a brief is too, and a save of its
+        // notes is told apart from anyone else's by `own_write`.
+        let watch = matches!(backend, Backend::Markdown(_) | Backend::Page(_));
+        let seen = match backend {
+            Backend::Page(_) => FileStamp::of(&target.path),
+            _ => None,
+        };
         let mut view = Self {
             target,
             backend,
@@ -454,13 +482,15 @@ impl DocumentView {
             placed: Rc::new(Cell::new(None)),
             painted_at: Rc::new(Cell::new(None)),
             links: markdown::LinkSink::default(),
-            seen: None,
+            seen,
             own_write: None,
             reading: Task::ready(()),
             _watch: Task::ready(()),
         };
         if watch {
-            view.read_markdown(cx);
+            if matches!(view.backend, Backend::Markdown(_)) {
+                view.read_markdown(cx);
+            }
             view._watch = view.watch(cx);
         }
         view
@@ -674,9 +704,33 @@ impl DocumentView {
     /// it; otherwise false, so the pane's Escape closes the square.
     pub fn key(&mut self, ks: &Keystroke, cx: &mut Context<Self>) -> bool {
         match &mut self.backend {
-            Backend::Page(page) if ks.key == "escape" => page.escape(cx),
+            Backend::Page(page) => page.key(ks, self.seat == DocSeat::Float, cx),
             _ => false,
         }
+    }
+
+    /// Whether a note is being written in a brief's note box: while it is,
+    /// the pane hands the view every key that is not a chord.
+    pub fn has_caret(&self) -> bool {
+        match &self.backend {
+            Backend::Page(page) => page.has_caret(),
+            _ => false,
+        }
+    }
+
+    /// A brief's notes, driven from the control socket. Answers with what
+    /// the layer shows afterwards, or the sentence that refused it.
+    pub fn notes_command(
+        &mut self,
+        cmd: NotesCommand,
+        cx: &mut Context<Self>,
+    ) -> Result<serde_json::Value, String> {
+        let Backend::Page(page) = &mut self.backend else {
+            return Err("the document is not an HTML page".into());
+        };
+        page.notes_command(cmd, cx)?;
+        page.notes_report()
+            .ok_or_else(|| "the document is not a laid-out HTML page yet".into())
     }
 
     /// The last paint measured a new size or scale.
@@ -850,15 +904,31 @@ impl DocumentView {
     }
 
     fn watched(&mut self, now: Option<FileStamp>, cx: &mut Context<Self>) {
-        match watch_says(self.seen, self.own_write, now) {
+        let says = watch_says(self.seen, self.own_write, now);
+        let was_gone = self.seen.is_none();
+        match says {
             WatchSays::Unchanged => {}
             WatchSays::OwnWrite => self.seen = now,
-            WatchSays::Gone => self.seen = None,
+            WatchSays::Gone => {
+                self.seen = None;
+                if let Backend::Page(page) = &mut self.backend {
+                    page.gone(true, cx);
+                }
+            }
             WatchSays::Changed => {
                 // Seen now, so the next tick does not start a second read
                 // while this one is still running.
                 self.seen = now;
-                self.read_markdown(cx);
+                match &mut self.backend {
+                    Backend::Markdown(_) => self.read_markdown(cx),
+                    Backend::Page(page) => {
+                        if was_gone {
+                            page.gone(false, cx);
+                        }
+                        page.changed_on_disk(cx);
+                    }
+                    Backend::Image(_) => {}
+                }
             }
         }
     }
@@ -959,10 +1029,12 @@ mod tests {
 
     /// This module and everything under it, with each file's tests cut off and
     /// its comments dropped, so a sentence that mentions a handler does not
-    /// count as one.
+    /// count as one. Cut at the test MODULE, not at the first `#[cfg(test)]`:
+    /// a test-only helper halfway down a file would otherwise hide the rest
+    /// of the file from every scan below.
     fn view_sources() -> Vec<(&'static str, String)> {
         let strip = |src: &str| -> String {
-            let live = src.split("#[cfg(test)]").next().unwrap_or(src);
+            let live = src.split("#[cfg(test)]\nmod tests").next().unwrap_or(src);
             live.lines()
                 .filter(|l| {
                     let t = l.trim_start();
@@ -1028,39 +1100,64 @@ mod tests {
         }
     }
 
-    /// This build reads a brief's notes and writes nothing: no file is
-    /// opened for writing, renamed, copied or removed anywhere in the notes
-    /// layer or the page view that holds it. The page cache writes, in its
-    /// own directory, from `cache.rs`; the brief itself is never touched.
+    /// Only one function in the document view writes a brief: the notes
+    /// writer's commit, which backs the file up, writes a temporary file
+    /// beside it and renames it into place. Nothing else — not the notes
+    /// layer, not the page, not the view — opens a file for writing, renames,
+    /// copies or removes one. The page cache writes, in its own directory,
+    /// from `cache.rs`, and the engine its browser's throwaway profile, from
+    /// `snapshot.rs`; the brief is never among what either writes.
     #[test]
-    fn reading_a_briefs_notes_writes_nothing() {
-        let scanned: Vec<(&str, String)> = view_sources()
-            .into_iter()
-            .filter(|(name, _)| {
-                matches!(
-                    *name,
-                    "docview.rs" | "docview/notes.rs" | "docview/notes_ui.rs" | "docview/page.rs"
-                )
-            })
-            .collect();
-        assert_eq!(scanned.len(), 4);
-        for (name, src) in scanned {
-            for write in [
-                "fs::write",
-                "File::create",
-                "OpenOptions",
-                "fs::rename",
-                "fs::copy",
-                "remove_file",
-                "set_permissions",
-                "set_len",
-            ] {
+    fn only_the_commit_writes_a_brief() {
+        let writes = [
+            "fs::write",
+            "File::create",
+            "OpenOptions",
+            "fs::rename",
+            "fs::copy",
+            "remove_file",
+            "set_permissions",
+            "set_len",
+            "DirBuilder",
+        ];
+        let sources = view_sources();
+        let find = |name: &str| {
+            sources
+                .iter()
+                .find(|(n, _)| *n == name)
+                .map(|(_, s)| s.clone())
+                .unwrap_or_else(|| panic!("{name} is scanned"))
+        };
+        // snapshot.rs makes and removes the browser's own profile, in the
+        // runtime directory; that is its only writing, and no brief.
+        for name in [
+            "docview.rs",
+            "docview/notes_ui.rs",
+            "docview/page.rs",
+            "docview/engine.rs",
+        ] {
+            let src = find(name);
+            for w in writes {
                 assert!(
-                    !src.contains(write),
-                    "{name} holds {write}: reading a brief's notes must never write"
+                    !src.contains(w),
+                    "{name} holds {w}: only the notes writer's commit writes a brief"
                 );
             }
         }
+        let notes = find("docview/notes.rs");
+        let (before, disk) = notes
+            .split_once("pub fn commit(")
+            .expect("the commit is in notes.rs");
+        for w in writes {
+            assert!(
+                !before.contains(w),
+                "notes.rs writes before its commit: {w}"
+            );
+        }
+        assert!(
+            disk.contains("fs::rename(") && disk.contains("create_new(true)"),
+            "the commit writes a new file and renames it into place"
+        );
     }
 
     /// However a square ends, dropping its view gives the texture back: the

@@ -5567,6 +5567,24 @@ impl TerminalView {
         Ok(report.to_string())
     }
 
+    /// A notes command for the document on this pane — the floating
+    /// square's, else the Document face's — answered with one line of JSON.
+    pub(crate) fn doc_note(
+        &mut self,
+        cmd: crate::docview::NotesCommand,
+        cx: &mut Context<Self>,
+    ) -> Result<String, String> {
+        let view = self
+            .float
+            .as_ref()
+            .map(|f| f.view.clone())
+            .or_else(|| self.doc_on_face().map(|d| d.view.clone()))
+            .ok_or("no document is open on this pane")?;
+        let report = view.update(cx, |v, cx| v.notes_command(cmd, cx))?;
+        cx.notify();
+        Ok(report.to_string())
+    }
+
     /// Whether a document is open on this pane, floating or on its face.
     pub(crate) fn has_document(&self) -> bool {
         self.float.is_some() || self.doc_on_face().is_some()
@@ -6237,9 +6255,10 @@ impl TerminalView {
             }
             crate::keylayer::Layer::Rename => self.rename_key(&k, ks, cx),
             // Escape over a floating document closes it, and nothing else about
-            // the key is the square's: `keylayer` routes every other key past it.
-            // The document is asked first: a brief's own dialog, open inside
-            // the square, is what Escape puts away before the square itself.
+            // the key is the square's — unless a note is being written in it,
+            // when `keylayer` routes every key here for the note box to take.
+            // The document is asked first: the note box, then a brief's own
+            // dialog, is what Escape puts away before the square itself.
             crate::keylayer::Layer::Float => {
                 let took = self
                     .float
@@ -6303,6 +6322,10 @@ impl TerminalView {
             bench: self.bench.face() == crate::workbench::Face::Workbench,
             float: self.float.is_some() && self.bench.face() == crate::workbench::Face::Terminal,
             document: self.bench.face() == crate::workbench::Face::Document,
+            float_caret: self
+                .float
+                .as_ref()
+                .is_some_and(|f| f.view.read(cx).has_caret()),
         }
     }
 

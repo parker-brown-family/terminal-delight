@@ -107,6 +107,8 @@ pub(crate) enum Req {
     DocScroll(f32, mpsc::Sender<String>),
     /// Read what an open brief shows of its notes. See [`Cmd::DocNotes`].
     DocNotes(mpsc::Sender<String>),
+    /// Add, delete, concur or save in an open brief. See [`Cmd::DocNote`].
+    DocNote(crate::docview::NotesCommand, mpsc::Sender<String>),
 }
 
 /// Wait for the window to say what a bench verb actually did. The ticker
@@ -378,6 +380,12 @@ enum Cmd {
     /// answer. For a caller with no eyes, which is how the notes layer is
     /// checked against the skill's fixtures in a real window.
     DocNotes,
+    /// A brief's note box and bar, for a caller with no pointer: add a note
+    /// to an anchor, delete one by its words, put a stamp down or peel it
+    /// off, or save into the file. Answers like `doc notes`, or with the
+    /// sentence that refused it. The round trip a save makes — the file
+    /// written, backed up and read back — is proved by driving this.
+    DocNote(crate::docview::NotesCommand),
 }
 
 /// Which face `ctl bench` asks for.
@@ -448,7 +456,8 @@ const USAGE: &str = "ping | whoami | paint on|off|toggle|status | \
      skin <name>|theme|status | \
      bench on|off|toggle|choose <n>|submit|say <text>|type <text> | \
      doc here <absolute path> | doc beside <absolute path> | doc close | \
-     doc scroll <pixels> | doc notes | \
+     doc scroll <pixels> | doc notes | doc note add <nid> <text> | \
+     doc note delete <nid> <text> | doc concur <nid> | doc save | \
      mcp status|on|off | mcp writes on|off | mcp expose agents|all | \
      mcp rpc <json> | mcp from <session> <pane|-> rpc <json> | \
      adopt {\"cwd\":\"/…\",\"run\":\"…\"} | \
@@ -476,6 +485,32 @@ fn parse_line(s: &str) -> Result<Cmd, String> {
             return Err("bench say: nothing to say".into());
         }
         return Ok(Cmd::BenchSay(line.to_string()));
+    }
+    // A note carries a sentence after its anchor: the anchor is one word,
+    // and the rest is the note, verbatim — or, when it opens with a double
+    // quote, a JSON string, which is how a note with a newline in it travels
+    // on a socket that reads lines.
+    for (verb, add) in [("doc note add ", true), ("doc note delete ", false)] {
+        if let Some(rest) = s.strip_prefix(verb) {
+            let rest = rest.trim_end_matches(['\r', '\n']);
+            let (nid, text) = rest.split_once(' ').unwrap_or((rest, ""));
+            if nid.is_empty() || text.trim().is_empty() {
+                return Err(format!("{}: expected <nid> <text>", verb.trim_end()));
+            }
+            let text = if text.starts_with('"') {
+                serde_json::from_str::<String>(text).map_err(|e| {
+                    format!("{}: the note is not a JSON string: {e}", verb.trim_end())
+                })?
+            } else {
+                text.to_string()
+            };
+            let nid = nid.to_string();
+            return Ok(Cmd::DocNote(if add {
+                crate::docview::NotesCommand::Add { nid, text }
+            } else {
+                crate::docview::NotesCommand::Delete { nid, text }
+            }));
+        }
     }
     // `doc here` and `doc beside` carry a path, and paths hold spaces: take
     // it verbatim.
@@ -541,6 +576,10 @@ fn parse_line(s: &str) -> Result<Cmd, String> {
         ["bench", "submit"] => Ok(Cmd::BenchSubmit),
         ["doc", "close"] => Ok(Cmd::DocClose),
         ["doc", "notes"] => Ok(Cmd::DocNotes),
+        ["doc", "concur", nid] => Ok(Cmd::DocNote(crate::docview::NotesCommand::Concur {
+            nid: (*nid).to_string(),
+        })),
+        ["doc", "save"] => Ok(Cmd::DocNote(crate::docview::NotesCommand::Save)),
         ["doc", "scroll", px] => px
             .parse::<f32>()
             .ok()
@@ -890,6 +929,14 @@ fn handle_conn(
                 "err ui gone".into()
             }
         }
+        Ok(Cmd::DocNote(cmd)) => {
+            let (rtx, rrx) = mpsc::channel();
+            if tx.send(Req::DocNote(cmd, rtx)).is_ok() {
+                bench_outcome(rrx)
+            } else {
+                "err ui gone".into()
+            }
+        }
         Ok(Cmd::Bench(face)) => {
             if tx.send(Req::Bench(face)).is_ok() {
                 "ok".into()
@@ -1014,6 +1061,9 @@ pub fn start(cx: &mut Context<Workspace>) {
                     }
                     Req::DocNotes(reply) => {
                         let _ = reply.send(ws.doc_notes(cx));
+                    }
+                    Req::DocNote(cmd, reply) => {
+                        let _ = reply.send(ws.doc_note(cmd, cx));
                     }
                     // The same escalation the robot panel performs, and the same
                     // persistence: a grant made from the CLI shows in the panel
@@ -2052,6 +2102,39 @@ mod tests {
         assert!(matches!(parse_line("doc close"), Ok(Cmd::DocClose)));
         assert!(matches!(parse_line("doc notes"), Ok(Cmd::DocNotes)));
         assert!(USAGE.contains("doc notes"));
+        use crate::docview::NotesCommand;
+        assert!(matches!(
+            parse_line("doc note add fig-01-x two  words, kept"),
+            Ok(Cmd::DocNote(NotesCommand::Add { ref nid, ref text }))
+                if nid == "fig-01-x" && text == "two  words, kept"
+        ));
+        assert!(matches!(
+            parse_line("doc note delete fig-01-x the words"),
+            Ok(Cmd::DocNote(NotesCommand::Delete { ref nid, ref text }))
+                if nid == "fig-01-x" && text == "the words"
+        ));
+        assert!(
+            parse_line("doc note add fig-01-x").is_err(),
+            "a note needs words"
+        );
+        let quoted = format!(
+            "doc note add a {}",
+            serde_json::to_string("two\nlines").unwrap()
+        );
+        assert!(matches!(
+            parse_line(&quoted),
+            Ok(Cmd::DocNote(NotesCommand::Add { ref text, .. })) if text == "two\nlines"
+        ));
+        assert!(parse_line("doc note add a \"unclosed").is_err());
+        assert!(matches!(
+            parse_line("doc concur ask-1"),
+            Ok(Cmd::DocNote(NotesCommand::Concur { ref nid })) if nid == "ask-1"
+        ));
+        assert!(matches!(
+            parse_line("doc save"),
+            Ok(Cmd::DocNote(NotesCommand::Save))
+        ));
+        assert!(USAGE.contains("doc save") && USAGE.contains("doc concur"));
         assert!(parse_line("doc close all").is_err());
         assert!(USAGE.contains("doc here") && USAGE.contains("doc close"));
     }

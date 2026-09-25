@@ -18,7 +18,7 @@
 //!
 //! No `crate::` paths, so the engine tests can compile this file on its own.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Deserializer, Serialize};
 
@@ -37,6 +37,22 @@ pub trait PageEngine: Send + Sync {
     fn close(&self, page: PageId);
     /// Stop whatever the engine runs, now: TD is quitting.
     fn shutdown(&self) {}
+    /// Load the file as it is on disk now, in a page of its own, and report
+    /// what the brief's own script shows: which anchors carry notes and
+    /// stamps, and where every anchor is. The page is closed before this
+    /// returns. What a save checks itself against.
+    fn read_back(&self, path: &Path, geometry: Geometry) -> Result<PageLayout, EngineError> {
+        let bytes = std::fs::read(path).map_err(|e| EngineError::Page(e.to_string()))?;
+        let layout = self.open(&PageRequest {
+            path: path.to_path_buf(),
+            geometry,
+            expect: layout_hash(&bytes),
+        })?;
+        if let Some(page) = layout.page {
+            self.close(page);
+        }
+        Ok(layout)
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
@@ -187,6 +203,13 @@ pub struct Anchor {
     /// Only where this brief's notes.js made a concur zone.
     #[serde(default, deserialize_with = "rect_or_none")]
     pub concur_zone: Option<RectCss>,
+    /// Whether the brief's own notes.js marked it as having notes, as the
+    /// page shows it. `None` from a probe too old to ask: unknown, not no.
+    #[serde(default)]
+    pub has_note: Option<bool>,
+    /// Whether the brief's own notes.js drew a stamp on it.
+    #[serde(default)]
+    pub has_concur: Option<bool>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -365,11 +388,21 @@ pub fn fnv64(bytes: &[u8]) -> u64 {
     h
 }
 
-/// Which bytes a render was made from. This slice hashes the whole file; the
-/// notes slices mask the notes regions out of it, so a saved note keeps the
-/// render.
+/// Which bytes a render was made from, with the notes left out: every byte
+/// but the notes island's open tag and text, the concurs island and the last
+/// `READER NOTES` mirror ([`super::notes::notes_regions`]). A save changes
+/// only those, so a saved note keeps its render, its cache entry and its
+/// anchors; any other byte changing is a new render. Least-confident
+/// decision 2 rests on it, and the notes-write slice measured it.
 pub fn layout_hash(bytes: &[u8]) -> LayoutHash {
-    LayoutHash(fnv64(bytes))
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for piece in super::notes::outside_notes(bytes) {
+        for &b in piece {
+            h ^= u64::from(b);
+            h = h.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+    }
+    LayoutHash(h)
 }
 
 #[cfg(test)]

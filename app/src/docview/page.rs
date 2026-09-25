@@ -35,7 +35,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use gpui::{
     div, hsla, img, point, prelude::*, px, size, App, Bounds, Context, ImageSource, ObjectFit,
@@ -43,12 +43,13 @@ use gpui::{
 };
 
 use super::cache::{self, CacheKey};
+use super::engine::ConcurSupport;
 use super::engine::{
     bands, layout_hash, Anchor, Band, DialogRender, EngineError, Geometry, Link, Opener,
     PageEngine, PageId, PageLayout, PageRequest, RectCss, Unavailable, TILE_DEV,
 };
 use super::notes::{self, NotesRead};
-use super::notes_ui::{self, LayerPress, Mark, MarkHit, NotesLayer};
+use super::notes_ui::{self, LayerPress, Mark, MarkHit, NotesLayer, Said};
 use super::snapshot::EXTRACT_VERSION;
 use super::{resolve_link, Backend, DocumentView, FollowLink, LinkTarget};
 use crate::docopen::DocScroll;
@@ -383,6 +384,10 @@ pub struct PageDoc {
     /// Where the pointer is over the view, flat and view-local; `None` when
     /// it is elsewhere. Note buttons show under it, as a browser shows them.
     pointer: Option<Point<Pixels>>,
+    /// A save into the file, running: the write, then the read-back.
+    saving: Option<Task<()>>,
+    /// The file read again after it changed on disk.
+    rereading: Option<Task<()>>,
 }
 
 fn debug() -> bool {
@@ -419,6 +424,8 @@ impl PageDoc {
             last_frame: Vec::new(),
             notes: None,
             pointer: None,
+            saving: None,
+            rereading: None,
         }
     }
 
@@ -726,6 +733,11 @@ impl PageDoc {
         // The notes the new render's bytes hold, read as its own page reads
         // them. A note box open on an anchor the new render still has stays
         // open: a resize re-lays the page out and moves nothing it says.
+        //
+        // What was being written comes along too: the edits waiting to be
+        // saved are deltas, so they apply to the new bytes as they did to
+        // the old, and one on a passage the new render lacks is refused at
+        // save with its words still in the note box.
         let mut layer = NotesLayer::new(
             read,
             layout.notes_file.clone(),
@@ -733,10 +745,8 @@ impl PageDoc {
             layout.capability.tagged,
             &self.path,
         );
-        if let Some(b) = self.notes.as_ref().and_then(|l| l.note_box()) {
-            if layout.anchors.iter().any(|a| a.nid == b.nid) {
-                layer.open(b.nid.clone(), b.title.clone());
-            }
+        if let Some(old) = self.notes.take() {
+            layer.carry_from(old);
         }
         self.notes = Some(layer);
         // Keep the reader's place: the same fraction of the page, or the one a
@@ -1076,6 +1086,287 @@ impl PageDoc {
         Some(layer.report(&r.layout.anchors))
     }
 
+    /// Save the waiting edits into the file.
+    ///
+    /// Off the main thread, in the order the program design fixed: read the
+    /// file fresh; refuse if its layout changed since the page was drawn;
+    /// apply the edits to the islands it holds now, never to a map kept in
+    /// memory; check in memory that only the notes regions moved; commit —
+    /// the backup ring, a temporary file, a rename, the bytes on disk read
+    /// back and compared; then open the written file in a fresh page and
+    /// check that a browser shows a note and a stamp exactly where they were
+    /// written. Every refusal is said in the bar, and the edits wait.
+    pub fn save(&mut self, cx: &mut Context<DocumentView>) {
+        let (Some(layer), Some(r)) = (self.notes.as_mut(), self.current.as_ref()) else {
+            return;
+        };
+        if let Err(why) = layer.can_save() {
+            layer.say(Said::Refused(why));
+            cx.notify();
+            return;
+        }
+        let engine = match &self.engine {
+            Ok(e) => e.clone(),
+            Err(u) => {
+                layer.say(Said::Refused(u.reason()));
+                cx.notify();
+                return;
+            }
+        };
+        let edits = layer.begin_save();
+        let label = layer.label().to_string();
+        let concurs = r.layout.capability.concur == ConcurSupport::Supported;
+        let anchors: Vec<(String, String)> = r
+            .layout
+            .anchors
+            .iter()
+            .map(|a| (a.nid.clone(), a.title.clone()))
+            .collect();
+        let drawn: Vec<(String, Option<RectCss>)> = r
+            .layout
+            .anchors
+            .iter()
+            .map(|a| (a.nid.clone(), a.rect))
+            .collect();
+        let (rendered, geometry) = (r.layout.rendered, r.layout.geometry);
+        let path = self.path.clone();
+        let file = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let made = edits.len();
+        cx.notify();
+        self.saving = Some(cx.spawn(async move |this, cx| {
+            let write = cx
+                .background_spawn({
+                    let path = path.clone();
+                    async move { write_notes(&path, &edits, &anchors, &label, concurs, rendered) }
+                })
+                .await;
+            let (plan, written) = match write {
+                Ok(w) => w,
+                Err(why) => {
+                    this.update(cx, |view, cx| {
+                        if let Some(p) = page_of(view) {
+                            if let Some(l) = p.notes.as_mut() {
+                                l.refused(why);
+                            }
+                            if let Some(t) = p.saving.take() {
+                                t.detach();
+                            }
+                        }
+                        cx.notify();
+                    })
+                    .ok();
+                    return;
+                }
+            };
+            this.update(cx, |view, cx| {
+                // The watcher will see this write; it is the view's own.
+                view.own_write = Some(super::FileStamp {
+                    mtime: written.mtime,
+                    len: written.len,
+                });
+                if let Some(l) = page_of(view).and_then(|p| p.notes.as_mut()) {
+                    l.saved(made, plan.notes.clone(), plan.concurs.clone(), &file);
+                }
+                cx.notify();
+            })
+            .ok();
+            let back = cx
+                .background_spawn({
+                    let path = path.clone();
+                    async move { engine.read_back(&path, geometry) }
+                })
+                .await;
+            this.update(cx, |view, cx| {
+                let Some(p) = page_of(view) else { return };
+                let backup = written.backup.display();
+                let verdict = match &back {
+                    Ok(layout) => notes::confirm(&plan, &layout.anchors).map_err(|why| {
+                        format!("saved into {file}, but the file reopened fresh does not show it ({why}); the file from before is at {backup}")
+                    }),
+                    Err(e) => Err(format!(
+                        "saved into {file}, but it could not be reopened to check ({e}); the file from before is at {backup}"
+                    )),
+                };
+                if let Some(l) = p.notes.as_mut() {
+                    match verdict {
+                        Ok(()) => l.confirmed(&file),
+                        Err(why) => l.unconfirmed(why),
+                    }
+                }
+                // Least-confident decision 2, checked on every save: a note
+                // is data, not layout, so the written file lays out as the
+                // one on screen. If it ever does not, the render on screen
+                // and in the cache is stale, and both are made again.
+                if let Ok(layout) = &back {
+                    let moved = moved_anchors(&drawn, &layout.anchors);
+                    if !moved.is_empty() {
+                        if debug() {
+                            eprintln!("[doc] a saved note moved anchors: {moved:?}");
+                        }
+                        p.redraw_from_scratch(cx);
+                    }
+                }
+                if let Some(t) = p.saving.take() {
+                    t.detach();
+                }
+                cx.notify();
+            })
+            .ok();
+        }));
+    }
+
+    /// Forget this render in the cache and draw the page again.
+    fn redraw_from_scratch(&mut self, cx: &mut Context<DocumentView>) {
+        if let Some(key) = self.key {
+            let root = cache::root();
+            cx.background_spawn(async move { cache::forget(&root, key) })
+                .detach();
+        }
+        if let Some(g) = self.asked {
+            self.start(g, cx);
+        }
+    }
+
+    /// The file changed on disk, and not by this view. Only its notes
+    /// changed — an agent edited the island — and the page shows the file's
+    /// notes with the edits waiting here on top, and nothing is drawn again;
+    /// anything else changed, and the page is drawn again, the old picture
+    /// up until the new one covers it, the waiting edits carried over.
+    pub fn changed_on_disk(&mut self, cx: &mut Context<DocumentView>) {
+        // A save running sees any other writer itself, and refuses.
+        if self.saving.is_some() {
+            return;
+        }
+        let (Some(r), Some(g)) = (self.current.as_ref(), self.asked) else {
+            return;
+        };
+        let (rendered, tagged) = (r.layout.rendered, r.layout.capability.tagged);
+        let path = self.path.clone();
+        self.rereading = Some(cx.spawn(async move |this, cx| {
+            let got = cx
+                .background_spawn(async move {
+                    std::fs::read(&path).map(|b| (layout_hash(&b), notes::read(&b)))
+                })
+                .await;
+            this.update(cx, |view, cx| {
+                let Some(p) = page_of(view) else { return };
+                match got {
+                    Ok((hash, read)) if hash == rendered => {
+                        let path = p.path.clone();
+                        if let Some(l) = p.notes.as_mut() {
+                            l.rebase(read, tagged, &path);
+                        }
+                    }
+                    Ok(_) => p.start(g, cx),
+                    Err(_) => {
+                        if let Some(l) = p.notes.as_mut() {
+                            l.set_gone(true);
+                        }
+                    }
+                }
+                if let Some(t) = p.rereading.take() {
+                    t.detach();
+                }
+                cx.notify();
+            })
+            .ok();
+        }));
+    }
+
+    /// The file went missing, or came back.
+    pub fn gone(&mut self, gone: bool, cx: &mut Context<DocumentView>) {
+        if let Some(l) = self.notes.as_mut() {
+            l.set_gone(gone);
+        }
+        cx.notify();
+    }
+
+    /// A notes command from the control socket: the note box's and the
+    /// bar's gestures, for a caller with no pointer.
+    pub fn notes_command(
+        &mut self,
+        cmd: super::NotesCommand,
+        cx: &mut Context<DocumentView>,
+    ) -> Result<(), String> {
+        use super::NotesCommand;
+        let (Some(layer), Some(r)) = (self.notes.as_mut(), self.current.as_ref()) else {
+            return Err("the document is not a laid-out HTML page yet".into());
+        };
+        let anchor = |nid: &str| r.layout.anchors.iter().find(|a| a.nid == nid);
+        let now = SystemTime::now();
+        match cmd {
+            NotesCommand::Save => {
+                layer.can_save()?;
+                self.save(cx);
+                return Ok(());
+            }
+            NotesCommand::Add { nid, text } => {
+                layer.can_edit()?;
+                let a = anchor(&nid).ok_or(format!("There is no anchor [{nid}] on this page."))?;
+                let text = text.trim().to_string();
+                if text.is_empty() {
+                    return Err("A note needs some words.".into());
+                }
+                layer.add_note(nid, a.title.clone(), text, notes::utc_minute(now));
+            }
+            NotesCommand::Delete { nid, text } => {
+                layer.can_edit()?;
+                layer.delete_note(nid, text, None);
+            }
+            NotesCommand::Concur { nid } => {
+                let takes = anchor(&nid).is_some_and(|a| a.concur_zone.is_some());
+                if !takes {
+                    return Err(format!(
+                        "[{nid}] is not a decision that takes a CONCUR stamp."
+                    ));
+                }
+                layer.toggle_concur(&nid, now)?;
+            }
+        }
+        cx.notify();
+        Ok(())
+    }
+
+    /// Whether the note box holds a draft being written: while it does,
+    /// every key is the view's.
+    pub fn has_caret(&self) -> bool {
+        self.notes.as_ref().is_some_and(NotesLayer::has_caret)
+    }
+
+    /// A key the view was handed. The note box takes every key while it is
+    /// open; otherwise Escape puts away one of the brief's own dialogs, and,
+    /// in a floating square that the next Escape would close, keeps it open
+    /// once to say that edits are unsaved.
+    pub fn key(
+        &mut self,
+        ks: &gpui::Keystroke,
+        floating: bool,
+        cx: &mut Context<DocumentView>,
+    ) -> bool {
+        if let Some(layer) = self.notes.as_mut() {
+            if layer.key(ks, SystemTime::now()) {
+                cx.notify();
+                return true;
+            }
+        }
+        if ks.key != "escape" {
+            return false;
+        }
+        if self.escape(cx) {
+            return true;
+        }
+        // Nothing open over the page: Escape would close the document, and
+        // with it every edit not yet saved.
+        if floating && self.notes.as_mut().is_some_and(NotesLayer::guard_close) {
+            cx.notify();
+            return true;
+        }
+        false
+    }
+
     /// Escape puts away the note box first, then one of the brief's own
     /// dialogs, and nothing else here.
     pub fn escape(&mut self, cx: &mut Context<DocumentView>) -> bool {
@@ -1109,9 +1400,16 @@ impl PageDoc {
         if let (Some(layer), Some(origin), Some(r)) =
             (self.notes.as_mut(), origin, self.current.as_ref())
         {
-            if layer.press(origin + at, &r.layout.anchors, cx) == LayerPress::Took {
-                cx.notify();
-                return Pressed::Took;
+            match layer.press(origin + at, &r.layout.anchors, SystemTime::now(), cx) {
+                LayerPress::Took => {
+                    cx.notify();
+                    return Pressed::Took;
+                }
+                LayerPress::Save => {
+                    self.save(cx);
+                    return Pressed::Took;
+                }
+                LayerPress::Pass => {}
             }
         }
         let marks = match self.dialog.is_some() {
@@ -1126,9 +1424,16 @@ impl PageDoc {
                 cx.notify();
                 return Pressed::Took;
             }
-            // A stamp is taken and put back from the notes-write slice on;
-            // here the page is only read.
-            Some(MarkHit::Concur(_)) => return Pressed::Took,
+            // A stamp put down, or peeled off; saved with the notes.
+            Some(MarkHit::Concur(nid)) => {
+                if let Some(layer) = self.notes.as_mut() {
+                    if let Err(why) = layer.toggle_concur(&nid, SystemTime::now()) {
+                        layer.say(Said::Refused(why));
+                    }
+                }
+                cx.notify();
+                return Pressed::Took;
+            }
             None => {}
         }
         if self.dialog.is_some() {
@@ -1553,6 +1858,84 @@ impl PageDoc {
             .children(layers)
             .into_any_element()
     }
+}
+
+/// A save, off the main thread: read fresh, check the layout, plan, verify,
+/// commit. The error is the sentence the bar says; nothing was written.
+fn write_notes(
+    path: &Path,
+    edits: &[notes::NoteEdit],
+    anchors: &[(String, String)],
+    label: &str,
+    concurs: bool,
+    rendered: super::engine::LayoutHash,
+) -> Result<(notes::WritePlan, notes::Written), String> {
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let bytes = std::fs::read(path).map_err(|e| {
+        format!("Could not read {name} to save into it ({e}); nothing was written.")
+    })?;
+    if layout_hash(&bytes) != rendered {
+        return Err(format!(
+            "{name} changed on disk since it was drawn, so nothing was written; it is being drawn again, and your notes wait here to save once it is."
+        ));
+    }
+    let pairs: Vec<(&str, &str)> = anchors
+        .iter()
+        .map(|(n, t)| (n.as_str(), t.as_str()))
+        .collect();
+    let rev = notes::iso_millis(SystemTime::now());
+    let plan = notes::plan_write(
+        &bytes,
+        edits,
+        &notes::WriteArgs {
+            anchors: &pairs,
+            label,
+            concurs,
+            rev: &rev,
+            path,
+        },
+    )
+    .map_err(|r| r.sentence())?;
+    notes::verify(&bytes, &plan).map_err(|why| {
+        format!("TD's check of its own write failed ({why}), so nothing was written.")
+    })?;
+    let written =
+        notes::commit(path, &bytes, &plan, &notes::backups_for(path)).map_err(|e| e.sentence())?;
+    Ok((plan, written))
+}
+
+/// Pure. The anchors whose place differs between two layouts of one page,
+/// by more than half a CSS pixel, or that one has and the other lacks.
+pub fn moved_anchors(drawn: &[(String, Option<RectCss>)], now: &[Anchor]) -> Vec<String> {
+    let mut out = Vec::new();
+    for (nid, rect) in drawn {
+        let there = now.iter().find(|a| a.nid == *nid).map(|a| a.rect);
+        let same = match (rect, there) {
+            (_, None) => false,
+            (None, Some(None)) => true,
+            (Some(a), Some(Some(b))) => {
+                (a.x - b.x).abs() <= 0.5
+                    && (a.y - b.y).abs() <= 0.5
+                    && (a.w - b.w).abs() <= 0.5
+                    && (a.h - b.h).abs() <= 0.5
+            }
+            _ => false,
+        };
+        if !same {
+            out.push(nid.clone());
+        }
+    }
+    if now.len() != drawn.len() {
+        out.extend(
+            now.iter()
+                .filter(|a| !drawn.iter().any(|(n, _)| *n == a.nid))
+                .map(|a| a.nid.clone()),
+        );
+    }
+    out
 }
 
 #[cfg(test)]
