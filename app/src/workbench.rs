@@ -2976,7 +2976,11 @@ pub fn turn_opening(effect: &crate::channel::Effect) -> (Option<String>, Option<
 /// further is coming* is a fact about the present rather than a prediction.
 pub fn live_says(state: AgentState) -> (&'static str, &'static str) {
     match state {
-        AgentState::Working => ("IN FLIGHT", "the reply lands here when the turn ends"),
+        // Silent on purpose. The card sits there for the whole turn, and a
+        // sentence repeated under every turn stops being information. Parker:
+        // *"that reply lands here when turn ends is actually persistent and
+        // really gross... PLEASE JUST --- kill it"*.
+        AgentState::Working => ("IN FLIGHT", ""),
         AgentState::Reading => ("IN FLIGHT", "it is reading what the bench just typed"),
         AgentState::Paused => ("PAUSED", "you stopped this turn; it has not started again"),
         AgentState::Asking => ("WAITING ON YOU", "it asked something before it could go on"),
@@ -5114,11 +5118,14 @@ mod tests {
             AgentState::Idle,
             AgentState::Paused,
             AgentState::Reading,
-            AgentState::Working,
         ] {
             let (l, s) = live_says(state);
             assert!(!l.is_empty() && !s.is_empty(), "{state:?} says nothing");
         }
+        // A running turn is the one that says nothing below its label: the
+        // agent's own words are on the card, and a standing sentence under
+        // every turn was noise.
+        assert_eq!(live_says(AgentState::Working), ("IN FLIGHT", ""));
     }
 
     #[test]

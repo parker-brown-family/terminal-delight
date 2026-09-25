@@ -100,8 +100,12 @@ fn role_of(tint: Tint) -> Role {
     match tint {
         // Documents, drawings, tables: structure.
         Tint::Ident => Role::Ansi(12),
-        // A person is the blocker.
-        Tint::Waiting => Role::Ansi(9),
+        // A person is the blocker — in the theme's own accent, not its red.
+        // ANSI 9 put a hyper-saturated red on every question on every theme,
+        // an alarm for what is usually a two-option choice. Parker, 2026-09-25:
+        // *"just the questions have too much red ACROSS themes"*, and he picked
+        // the accent over a muted red or magenta.
+        Tint::Waiting => Role::Accent,
         // Proposed, and yours to argue with.
         Tint::Pending => Role::Ansi(11),
         // Settled, accepted, done.
@@ -1615,9 +1619,14 @@ pub fn round_progress(
                         .py(px(sk.tpx(2.)))
                         .text_size(px(sk.pt(Step::Body)))
                         .font_family(th.font_family.clone())
+                        // An answered tab reads as answered even while you stand
+                        // on it: the underline and the size say "here", the ink
+                        // says "done", matching its answered siblings. Parker:
+                        // *"highlighted question stays large … but the colour of
+                        // the text … will match the other checked question"*.
                         .text_color(match (here, step.done) {
-                            (true, _) => facet.ink,
-                            (false, true) => settled.alpha(0.85),
+                            (_, true) => settled.alpha(0.85),
+                            (true, false) => facet.ink,
                             (false, false) => crate::emphasis::meta(th),
                         })
                         .when(here, |x| x.border_b_1().border_color(facet.tint.alpha(0.8)))
@@ -1648,7 +1657,14 @@ pub fn round_progress(
                 // one element here that acts instead of navigating, and a row of four
                 // identical words where the fourth ends the interaction is a trap.
                 .when_some(submit.filter(|_| zones.is_some()), |d, hit| {
-                    let tint = ink(crate::workbench::Tint::Waiting, th);
+                    // GREEN once every question has an answer: the round is
+                    // ready, and the one press left is the settled one. Parker:
+                    // *"SUBMIT TURNS GREEN when all questions are answered"*.
+                    let tint = if total > 0 && done == total {
+                        settled
+                    } else {
+                        ink(crate::workbench::Tint::Waiting, th)
+                    };
                     d.child(
                         div()
                             .px(px(sk.tpx(3.)))
@@ -3748,8 +3764,11 @@ pub fn live_card(
                 .font_family(th.font_family.clone())
                 .text_color(th.accent.alpha(0.9))
                 .child(sel(d)),
+            // The usual reason is simply the first seconds of a turn, before
+            // the agent has reached for anything — so it says that, kindly,
+            // rather than reporting on the screen.
             None => micro(
-                "the screen carried no account of what it is doing",
+                "thinking — no tool call yet",
                 Step::Note,
                 sk.ink.ink_faint,
                 sk,
@@ -3777,7 +3796,9 @@ pub fn live_card(
                     )
                 }))
         }))
-        .child(micro(sentence, Step::Note, sk.ink.ink_faint, sk, th))
+        .when(!sentence.is_empty(), |d| {
+            d.child(micro(sentence, Step::Note, sk.ink.ink_faint, sk, th))
+        })
 }
 
 /// The agent, talking. The main area's ordinary state.

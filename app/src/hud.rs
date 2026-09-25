@@ -235,7 +235,12 @@ pub fn parse_status_line(rows: &[String]) -> AgentStatus {
 
     let working = rows_say_working(rows);
 
-    // The richest status row: prefer one carrying a "(… tokens …)" group.
+    // The richest status row: prefer one carrying a "(… tokens …)" group, then
+    // the live spinner line itself, and only then the footer. The spinner
+    // carries no token count for the first seconds of a turn
+    // (`✢ Effecting… (30s · thinking more with max effort)`), and falling
+    // straight to the footer put its mode indicator on the bench as the
+    // agent's word: a first turn headlined **auto mode on**.
     let status_row = rows
         .iter()
         .zip(&lower)
@@ -243,16 +248,20 @@ pub fn parse_status_line(rows: &[String]) -> AgentStatus {
             l.contains("tokens")
                 && (l.contains('\u{00b7}') || l.contains("thinking") || l.contains("interrupt"))
         })
+        .or_else(|| rows.iter().zip(&lower).find(|(r, _)| is_live_spinner(r)))
+        .map(|(r, _)| (r.as_str(), true))
         .or_else(|| {
             rows.iter()
                 .zip(&lower)
                 .find(|(_, l)| l.contains("esc to interrupt"))
-        })
-        .map(|(r, _)| r.as_str());
+                .map(|(r, _)| (r.as_str(), false))
+        });
 
     let mut st = AgentStatus::default();
 
-    if let Some(rowtext) = status_row {
+    // `spoken`: the row is the agent's own status line, so the words before
+    // its `(` are its gerund. The footer's are a mode name and never are.
+    if let Some((rowtext, spoken)) = status_row {
         if let Some(open) = rowtext.find('(') {
             // gerund = the words before the '(' minus the spinner glyph + ellipsis
             let head = rowtext[..open].trim();
@@ -260,7 +269,7 @@ pub fn parse_status_line(rows: &[String]) -> AgentStatus {
                 .trim_start_matches(|c: char| !c.is_alphanumeric())
                 .trim_end_matches(['\u{2026}', '.', ' '])
                 .trim();
-            if !g.is_empty() && g.chars().count() <= 24 {
+            if spoken && !g.is_empty() && g.chars().count() <= 24 {
                 st.gerund = Some(g.to_string());
             }
             let inner = rowtext[open + 1..].split(')').next().unwrap_or("");
@@ -575,6 +584,27 @@ mod tests {
             "  \u{23f5}\u{23f5} auto mode on (shift+tab to cycle) \u{00b7} esc to interrupt \u{00b7} \u{2190} 2 agents",
         ]);
         assert_eq!(parse_status_line(&r).state, AgentState::Working);
+    }
+
+    /// The first seconds of a turn: the spinner has no token count yet, so the
+    /// footer used to win the status-row search and its mode name became the
+    /// bench's headline. Screen as Parker photographed it, 2026-09-25.
+    #[test]
+    fn a_first_turn_is_headlined_by_the_spinner_never_the_footer() {
+        let r = rows(&[
+            "\u{2722} Effecting\u{2026} (30s \u{00b7} thinking more with max effort)",
+            "\u{276f} ",
+            "  \u{23f5}\u{23f5} auto mode on (shift+tab to cycle) \u{00b7} esc to interrupt \u{00b7} \u{2190} 2 agents",
+        ]);
+        let st = parse_status_line(&r);
+        assert_eq!(st.gerund.as_deref(), Some("Effecting"));
+        assert_eq!(st.elapsed.as_deref(), Some("30s"));
+        // With only the footer on screen there is no gerund at all — and
+        // certainly not the mode's name.
+        let footer_only = rows(&[
+            "  \u{23f5}\u{23f5} auto mode on (shift+tab to cycle) \u{00b7} esc to interrupt",
+        ]);
+        assert_eq!(parse_status_line(&footer_only).gerund, None);
     }
 
     /// A NARROW pane that is genuinely at rest must not be dragged into Working

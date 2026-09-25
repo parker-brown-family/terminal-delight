@@ -21263,7 +21263,18 @@ impl Workspace {
             // Un-aimed it teaches the one gesture that aims it, and nothing
             // else: a legend of keys that would currently land on a PANE is
             // worse than no legend at all.
-            "↑ aims here · a click paints".to_string()
+            "↑ or a click opens it".to_string()
+        };
+        // FOLDED while a pane is aimed: the header and the legend only, one
+        // short card under the mother bar. Open, its thirty-odd tiles hung down
+        // over the panes' own paint cards and cut their top rows off — two
+        // grids fighting for one spot. Parker, 2026-09-25: *"outter overlaps
+        // the inner in a yuky way"*. Only the aimed surface shows a grid now;
+        // the panes dim under the heavy scrim while this one is open.
+        let (pills, grid) = if aimed {
+            (pills, Some(grid))
+        } else {
+            (None, None)
         };
         let card = div()
             .occlude()
@@ -21289,7 +21300,7 @@ impl Workspace {
             }))
             .child(head)
             .children(pills)
-            .child(grid)
+            .children(grid)
             .child(
                 div()
                     .text_size(px(9. * scale))
