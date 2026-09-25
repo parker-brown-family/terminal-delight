@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'self' 'unsafe-inline'; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'none'" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; script-src 'self' 'unsafe-inline'; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'none'" />
   <title>terminal delight</title>
   <meta name="description" content="A GPU-native Linux terminal in Rust that reads your coding agents' own transcripts and shows you which one needs you. MIT, one AppImage for X11 and Wayland." />
   <link rel="canonical" href="https://terminal-delight.brownfamilysports.com/info" />
@@ -19,9 +19,7 @@
   <!-- mode before first paint: the reader's last pick, else their OS -->
   <script>(function(){var s={};try{s=JSON.parse(localStorage.getItem('td-shell'))||{}}catch(e){}var r=document.documentElement;r.dataset.theme=s.theme||(matchMedia('(prefers-color-scheme: light)').matches?'paper':'glass');r.dataset.crt=s.crt||r.dataset.crtDefault||'off';})();</script>
 
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/assets/fonts/fonts.css" />
   <link rel="stylesheet" href="/assets/td-shell.css" />
 
   <style>
@@ -202,7 +200,10 @@
     .kiosk .art { position: absolute; right: -10px; bottom: -14px; width: 190px; height: 130px; pointer-events: none; }
     .kiosk.omarchy .art { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; transform: rotate(-8deg); opacity: .85; }
     .kiosk.omarchy .art i { border-radius: 5px; }
-    .kiosk.global .art { font: 800 34px/1 var(--mono); color: var(--ink-3); text-align: right; letter-spacing: -.02em; opacity: .45; right: 18px; bottom: 16px; }
+    /* The Global card's title cycles through the names the app speaks. It is
+       a canvas so it keeps moving under the curved tube too: td-glass.js
+       copies [data-glass-live] canvases into the bent picture as they draw. */
+    .kiosk.global .art.babel { position: static; display: block; margin: 16px 0 0 auto; width: min(280px, 100%); height: 74px; color: var(--ink-3); }
 
     /* --------------------------------------------------- install */
     .install { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr); gap: 16px; }
@@ -497,7 +498,7 @@ Which one?  (A / B)
         <a class="kiosk global" href="/global">
           <small>Global</small><b>Nine languages</b>
           <span>The whole interface, compiler-checked in nine languages, broadcast from a 1950s television.</span>
-          <div class="art" aria-hidden="true">TERMINAL<br>DELIGHT</div>
+          <canvas class="art babel" data-glass-live aria-hidden="true"></canvas>
         </a>
       </div>
     </section>
@@ -541,6 +542,7 @@ cd app &amp;&amp; cargo run</pre>
 <div id="td-fx" aria-hidden="true"><div class="scan"></div><div class="vig"></div><div class="bloom"></div><div class="band"></div></div>
 
 <script src="/assets/td-shell.js"></script>
+<script src="/assets/td-glass.js"></script>
 <script>
   /* The theme chips. The pick is remembered with the rest of the shell's
      prefs; with none, glass wears hacker and paper wears quiet-command, the
@@ -562,6 +564,120 @@ cd app &amp;&amp; cargo run</pre>
     });
     new MutationObserver(paint).observe(root, { attributes: true, attributeFilter: ['data-theme'] });
     paint();
+  })();
+
+  /* The Global card's title: the app's own name in the nine languages it
+     speaks, the same strings the Global kiosk broadcasts (global.html's
+     LANGS). A new one every 1.5 s, arriving through a short burst of
+     tracking-bar squiggle — sliced, sheared, split into red and cyan — and
+     then sitting still. It draws only while it is on screen, and with
+     reduced motion it changes every 3 s with no squiggle. */
+  (function () {
+    var cv = document.querySelector('canvas.babel');
+    if (!cv) return;
+    var NAMES = ['TERMINAL DELIGHT', 'DELEITE TERMINAL', 'TERMINALE WONNE', 'DÉLICE TERMINAL',
+      'ТЕРМИНАЛЬНОЕ БЛАЖЕНСТВО', '终端之悦', '端末の悦び', '터미널의 기쁨', 'टर्मिनल आनंद'];
+    var REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
+    var EVERY = REDUCED ? 3000 : 1500, GLITCH = REDUCED ? 0 : 440, D = 2;
+    var tube = document.getElementById('tube');
+    var W = 2, H = 2, idx = 0, prev = null, swapAt = -1e9, nextAt = 0, shown = true, dirty = true;
+    var cur = document.createElement('canvas'), old = document.createElement('canvas');
+    var tintA = document.createElement('canvas'), tintB = document.createElement('canvas');
+
+    function size() {
+      var r = cv.getBoundingClientRect();
+      var w = Math.max(2, Math.round(r.width * D)), h = Math.max(2, Math.round(r.height * D));
+      if (w === W && h === H) return;
+      W = w; H = h;
+      [cv, cur, old, tintA, tintB].forEach(function (c) { c.width = W; c.height = H; });
+      dirty = true;
+    }
+    function ink() { return getComputedStyle(cv).color; }
+    function set(c, text) {
+      var g = c.getContext('2d');
+      g.clearRect(0, 0, W, H);
+      var lines = /\s/.test(text) ? text.split(/\s+/) : [text];
+      var px = H / (lines.length * 1.05);
+      var face = function (p) { return '800 ' + p + 'px "JetBrains Mono", ui-monospace, "Noto Sans CJK SC", "Noto Sans Devanagari", sans-serif'; };
+      g.font = face(px);
+      var widest = Math.max.apply(null, lines.map(function (l) { return g.measureText(l).width; }));
+      if (widest > W) { px *= W / widest; g.font = face(px); }
+      g.textAlign = 'right';
+      g.textBaseline = 'alphabetic';
+      g.fillStyle = ink();
+      var y = H - px * 0.2 - (lines.length - 1) * px;
+      lines.forEach(function (l, k) { g.fillText(l, W, y + k * px); });
+    }
+    function tint(dst, src, colour) {
+      var g = dst.getContext('2d');
+      g.clearRect(0, 0, W, H);
+      g.globalCompositeOperation = 'source-over';
+      g.drawImage(src, 0, 0);
+      g.globalCompositeOperation = 'source-in';
+      g.fillStyle = colour;
+      g.fillRect(0, 0, W, H);
+      g.globalCompositeOperation = 'source-over';
+    }
+
+    function paint(now) {
+      var g = cv.getContext('2d');
+      g.clearRect(0, 0, W, H);
+      var t = now - swapAt;
+      if (t >= GLITCH) {                               // still: the name, dim, as the card shows it
+        g.globalAlpha = 0.6;
+        g.drawImage(cur, 0, 0);
+        g.globalAlpha = 1;
+      } else {
+        var p = t / GLITCH, env = Math.sin(p * Math.PI);
+        var src = p < 0.5 && prev ? old : cur;
+        tint(tintA, src, '#ff4d8a');
+        tint(tintB, src, '#4dd8ff');
+        var slices = 16, sh = Math.ceil(H / slices), split = 3 * D * env;
+        for (var k = 0; k < slices; k++) {
+          var y = k * sh;
+          var dx = Math.sin(k * 1.9 + now * 0.035) * 12 * D * env + (Math.random() - 0.5) * 5 * D * env;
+          g.globalCompositeOperation = 'lighter';
+          g.globalAlpha = 0.5 * env;
+          g.drawImage(tintA, 0, y, W, sh, dx - split, y, W, sh);
+          g.drawImage(tintB, 0, y, W, sh, dx + split, y, W, sh);
+          g.globalCompositeOperation = 'source-over';
+          g.globalAlpha = 0.75;
+          g.drawImage(src, 0, y, W, sh, dx, y, W, sh);
+        }
+        /* the bar itself, rolling down through the name */
+        var by = (p * 1.3 - 0.15) * H;
+        g.globalAlpha = 0.35 * env;
+        g.fillStyle = ink();
+        g.fillRect(0, by, W, 2.5 * D);
+        g.globalAlpha = 1;
+      }
+      cv.__tdFrame = (cv.__tdFrame || 0) + 1;
+    }
+
+    function frame(now) {
+      requestAnimationFrame(frame);
+      if (!shown) return;
+      size();
+      if (now >= nextAt) {
+        var o = old; old = cur; cur = o;             // what was showing becomes the way out
+        prev = NAMES[idx];
+        idx = (idx + 1) % NAMES.length;
+        set(cur, NAMES[idx]);
+        swapAt = now; nextAt = now + EVERY;
+        dirty = true;
+      }
+      if (dirty || now - swapAt < GLITCH) { paint(now); dirty = now - swapAt < GLITCH; }
+    }
+
+    if ('IntersectionObserver' in window) {
+      new IntersectionObserver(function (es) { shown = es[0].isIntersecting; dirty = true; }, { root: tube }).observe(cv);
+    }
+    new MutationObserver(function () { set(cur, NAMES[idx]); if (prev) set(old, prev); dirty = true; })
+      .observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+    size();
+    set(cur, NAMES[idx]);
+    nextAt = performance.now() + EVERY;
+    requestAnimationFrame(frame);
   })();
 </script>
 </body>

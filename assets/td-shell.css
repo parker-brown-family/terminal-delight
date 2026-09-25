@@ -198,8 +198,20 @@ a { color: inherit; }
   scrollbar-width: thin; scrollbar-color: var(--line-2) transparent;
 }
 /* No filter ever lands on #tube: bending the page resamples its text, and
-   Chrome does that nearest-pixel. The curve is drawn on the glass instead —
-   see glass() in td-shell.js. */
+   Chrome does that nearest-pixel. The real curve is td-glass.js, which bends
+   a snapshot of the page in WebGL2; where it cannot run, td-shell.js's flat
+   glass overlay stands in. */
+
+/* The curved tube is live: the shader draws the scanlines, rim, band and
+   glare itself, so the overlay steps aside. The page underneath still
+   scrolls and takes every click, but what it would show on selection or
+   hover is not what is drawn, so those are handed to the glass. */
+canvas.td-tube { position: fixed; z-index: 12; pointer-events: none; display: block; }
+canvas.td-tube[hidden] { display: none; }
+:root[data-tube="gl"][data-crt][data-theme] #td-fx { display: none; }   /* outranks the rule that shows it */
+:root[data-tube="gl"] #tube { user-select: none; -webkit-user-select: none; }
+:root[data-tube="gl"] #tube, :root[data-tube="gl"] #tube * { cursor: default; }
+:root[data-tube="gl"].tube-pointer #tube, :root[data-tube="gl"].tube-pointer #tube * { cursor: pointer; }
 
 /* the glass: an overlay over the tube only, so the chrome stays flat */
 #td-fx {

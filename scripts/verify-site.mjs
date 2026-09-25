@@ -43,10 +43,19 @@ async function open(path, { w = 1440, h = 900, prefs = null } = {}) {
   page.on('pageerror', e => errors.push(String(e)));
   page.on('requestfailed', r => { if (!/fonts\.g/.test(r.url())) errors.push('failed ' + r.url()); });
   page.on('response', r => { if (r.status() >= 400) errors.push(r.status() + ' ' + r.url()); });
+  /* the fonts are self-hosted and the policy is 'self': nothing leaves */
+  const offsite = [];
+  page.on('request', r => { const u = r.url(); if (!u.startsWith(BASE) && !/^(data|blob):/.test(u)) offsite.push(u); });
   if (prefs) await page.addInitScript(p => localStorage.setItem('td-shell', JSON.stringify(p)), prefs);
   await page.goto(BASE + path, { waitUntil: 'load' });
   await page.waitForTimeout(700);
-  return { ctx, page, errors };
+  return { ctx, page, errors, offsite };
+}
+/* The curved tube (td-glass.js) snapshots the page asynchronously; wait for
+   it to go live before asserting on it. */
+async function tubeLive(page) {
+  try { await page.waitForFunction(() => document.documentElement.dataset.tube === 'gl', null, { timeout: 20000 }); return true; }
+  catch { return false; }
 }
 /* The page's filter, and the glass canvas: whether it shows, the alpha of its
    top-left pixel (outside the bent screen, so black) and of its centre
@@ -62,7 +71,12 @@ function glassState() {
     corner = c.getImageData(1, 1, 1, 1).data[3];
     centre = c.getImageData(cv.width >> 1, (cv.height >> 1) + 2, 1, 1).data[3];
   }
-  return { filter: getComputedStyle(t).filter, shown, corner, centre };
+  const gl = document.querySelector('canvas.td-tube');
+  return {
+    filter: getComputedStyle(t).filter, shown, corner, centre,
+    tube: document.documentElement.dataset.tube || null,
+    curved: !!gl && !gl.hidden && getComputedStyle(gl).display !== 'none',
+  };
 }
 const overflow = page => page.evaluate(() => {
   const t = document.getElementById('tube');
@@ -72,17 +86,24 @@ const overflow = page => page.evaluate(() => {
 for (const [path, name] of [['/info', 'info'], ['/docsite/', 'docs-index'], ['/docsite/workbench.html', 'workbench'], ['/docsite/install', 'install']]) {
   for (const w of [1440, 968, 390]) {
     for (const prefs of [{ theme: 'glass', crt: 'on' }, { theme: 'paper', crt: 'off' }, { theme: 'paper', crt: 'on' }]) {
-      const { ctx, page, errors } = await open(path, { w, h: w === 390 ? 844 : 900, prefs });
-      ok(`${name}@${w} ${prefs.theme}/${prefs.crt}: clean console`, errors.length === 0, errors.join(' | '));
+      const { ctx, page, errors, offsite } = await open(path, { w, h: w === 390 ? 844 : 900, prefs });
+      const tag = `${name}@${w} ${prefs.theme}/${prefs.crt}`;
+      const tubeOn = prefs.theme === 'glass' && prefs.crt === 'on';
+      /* The true curve runs on a pane 600px wide or more (the spine takes
+         268 of the window); a narrower pane, and paper, get the flat glass. */
+      const expectCurve = tubeOn && w >= 968;
+      if (expectCurve) await tubeLive(page);
+      ok(`${tag}: clean console`, errors.length === 0, errors.join(' | '));
+      ok(`${tag}: nothing requested off-site`, offsite.length === 0, offsite.join(' '));
       const o = await overflow(page);
-      ok(`${name}@${w} ${prefs.theme}/${prefs.crt}: no horizontal overflow`, o.doc <= 0 && o.tube <= 1, JSON.stringify(o));
+      ok(`${tag}: no horizontal overflow`, o.doc <= 0 && o.tube <= 1, JSON.stringify(o));
       const g = await page.evaluate(glassState);
-      const expectGlass = prefs.theme === 'glass' && prefs.crt === 'on';
       /* The rule curved-glass-web wrote down and this site broke once: warp
          the glass, never the text. Nothing may put a filter on the page. */
-      ok(`${name}@${w} ${prefs.theme}/${prefs.crt}: the page itself is never filtered`, g.filter === 'none', g.filter);
-      ok(`${name}@${w} ${prefs.theme}/${prefs.crt}: curved glass ${expectGlass ? 'drawn' : 'absent'}`,
-        expectGlass ? (g.shown && g.corner === 255 && g.centre < 80) : !g.shown, JSON.stringify(g));
+      ok(`${tag}: the page itself is never filtered`, g.filter === 'none', g.filter);
+      ok(`${tag}: true curve ${expectCurve ? 'live' : 'off'}`, expectCurve ? (g.tube === 'gl' && g.curved && !g.shown) : (g.tube === null && !g.curved), JSON.stringify(g));
+      if (!expectCurve) ok(`${tag}: flat glass ${tubeOn ? 'drawn' : 'absent'}`,
+        tubeOn ? (g.shown && g.corner === 255 && g.centre < 80) : !g.shown, JSON.stringify(g));
       await page.screenshot({ path: `${OUT}/${name}-${w}-${prefs.theme}-${prefs.crt}.png` });
       await ctx.close();
     }
@@ -93,14 +114,14 @@ for (const [path, name] of [['/info', 'info'], ['/docsite/', 'docs-index'], ['/d
 {
   const { ctx, page } = await open('/info', { prefs: { theme: 'glass', crt: 'off' } });
   await page.click('.td-actions [data-td-toggle="crt"]');
-  const on = await page.evaluate(glassState);
-  ok('crt toggle draws the curved glass', on.shown && on.corner === 255, JSON.stringify(on));
+  ok('crt toggle brings the true curve up', await tubeLive(page));
   ok('crt toggle persists', await page.evaluate(() => JSON.parse(localStorage.getItem('td-shell')).crt === 'on'));
   await page.evaluate(() => { const t = document.getElementById('tube'); t.style.scrollBehavior = 'auto'; t.scrollTop = 900; });
   ok('scrolling leaves the page unfiltered', (await page.evaluate(glassState)).filter === 'none');
   await page.click('.td-actions [data-td-toggle="theme"]');
   ok('theme toggle to paper', await page.evaluate(() => document.documentElement.dataset.theme === 'paper'));
-  ok('paper hides the glass', !(await page.evaluate(glassState)).shown);
+  const paperState = await page.evaluate(glassState);
+  ok('paper takes the curve and the glass down', !paperState.shown && !paperState.curved && paperState.tube === null, JSON.stringify(paperState));
   ok('paper paints hero window quiet-command', await page.evaluate(() => document.getElementById('win').dataset.wear === 'quiet-command'));
   await page.click('.wear button[data-wear="gamba"]');
   ok('theme chip paints both windows', await page.evaluate(() => [...document.querySelectorAll('#win,[data-wear-follow]')].every(e => e.dataset.wear === 'gamba')));
@@ -111,6 +132,69 @@ for (const [path, name] of [['/info', 'info'], ['/docsite/', 'docs-index'], ['/d
   // spine scrollspy
   await page.waitForTimeout(500);
   ok('spine marks the bench stop', await page.evaluate(() => !!document.querySelector('.td-spine a.is-here[href="#bench"]')));
+  await ctx.close();
+}
+
+// the true curve: clicks and hover land on what is drawn, and the live island moves
+{
+  const { ctx, page } = await open('/info', { prefs: { theme: 'glass', crt: 'on' } });
+  ok('engine: live on info', await tubeLive(page));
+  /* Where on the glass is an element drawn? Invert the barrel: find the
+     screen point s whose sample point warp(s) is the element's centre. */
+  const onGlass = sel => page.evaluate(sel => {
+    const K1 = 0.39 * 0.6, K2 = 0.39 * 0.25;
+    const cv = document.querySelector('canvas.td-tube').getBoundingClientRect();
+    const el = document.querySelector(sel).getBoundingClientRect();
+    const cu = (el.left + el.width / 2 - cv.left) / cv.width - 0.5, cvn = (el.top + el.height / 2 - cv.top) / cv.height - 0.5;
+    let u = cu, v = cvn;
+    for (let i = 0; i < 40; i++) { const r2 = u * u + v * v, f = 1 + K1 * r2 + K2 * r2 * r2; u = cu / f; v = cvn / f; }
+    const x = cv.left + (u + 0.5) * cv.width, y = cv.top + (v + 0.5) * cv.height;
+    return { x, y, shift: Math.hypot(x - (el.left + el.width / 2), y - (el.top + el.height / 2)) };
+  }, sel);
+  await page.evaluate(() => { const t = document.getElementById('tube'); t.style.scrollBehavior = 'auto'; t.scrollTop = document.getElementById('bench').offsetTop + 60; });
+  await page.waitForTimeout(400);
+  const term = await onGlass('label[for="face-term"]');
+  ok('engine: the TERM label is drawn somewhere else than it sits', term.shift > 4, `shift ${term.shift.toFixed(1)}px`);
+  await page.mouse.click(term.x, term.y);
+  ok('engine: clicking TERM where it is drawn flips the face', await page.evaluate(() => document.getElementById('face-term').checked));
+  /* The case the redirect exists for: near the rim the barrel moves an
+     element so far that the page under the pointer is something else. Put
+     the theme chips at the bottom of the tube and click one where it is
+     drawn. */
+  await page.evaluate(() => {
+    const t = document.getElementById('tube'), b = document.querySelector('.wear').getBoundingClientRect();
+    const tr = t.getBoundingClientRect();
+    t.scrollTop += b.top - (tr.top + t.clientHeight * 0.9);
+  });
+  await page.waitForTimeout(400);
+  const chip = await onGlass('button[data-wear="field-command"]');
+  const naive = await page.evaluate(p => { const e = document.elementFromPoint(p.x, p.y); return e ? (e.closest('button[data-wear]') || {}).dataset?.wear || e.tagName : null; }, chip);
+  await page.mouse.click(chip.x, chip.y);
+  await page.waitForTimeout(150);
+  ok('engine: a chip clicked where it is drawn paints the window', await page.evaluate(() => document.getElementById('win').dataset.wear === 'field-command'), `naive target ${naive}`);
+  await page.evaluate(() => { const t = document.getElementById('tube'); t.scrollTop = document.getElementById('bench').offsetTop + 60; });
+  await page.waitForTimeout(300);
+  const more = await onGlass('#bench .more');
+  await page.mouse.move(more.x, more.y);
+  await page.waitForTimeout(250);
+  ok('engine: hovering a link where it is drawn marks it clickable', await page.evaluate(() => document.documentElement.classList.contains('tube-pointer')));
+  await page.evaluate(() => { const t = document.getElementById('tube'); t.scrollTop = document.getElementById('kiosks').offsetTop - 20; });
+  const f0 = await page.evaluate(() => document.querySelector('canvas.babel').__tdFrame || 0);
+  await page.waitForTimeout(2200);
+  const isl = await page.evaluate(() => { const c = document.querySelector('canvas.babel'); return { frame: c.__tdFrame || 0, uploaded: c.__tdUploaded || '' }; });
+  ok('engine: the Global title keeps drawing', isl.frame > f0, `${f0} -> ${isl.frame}`);
+  ok('engine: its frames reach the curved picture', /:\d+$/.test(isl.uploaded) && +isl.uploaded.split(':')[1] > f0, isl.uploaded);
+  await page.screenshot({ path: `${OUT}/engine-kiosks.png` });
+  /* The case only the redirect can pass: a 10px channel dot in the footer,
+     down in the bottom-right corner where the barrel moves things furthest.
+     Under the pointer is something else; drawn there is the dot. */
+  await page.evaluate(() => { const t = document.getElementById('tube'); t.scrollTop = t.scrollHeight; });
+  await page.waitForTimeout(400);
+  const dot = await onGlass('.foot .ch a[href="/tv"]');
+  const under = await page.evaluate(p => { const e = document.elementFromPoint(p.x, p.y); return e && e.getAttribute('href') || (e && e.tagName); }, dot);
+  ok('engine: in the corner the pointer is over something else', under !== '/tv', `under the pointer: ${under}, shift ${dot.shift.toFixed(1)}px`);
+  await Promise.all([page.waitForURL(/\/tv$/, { timeout: 5000 }).catch(() => null), page.mouse.click(dot.x, dot.y)]);
+  ok('engine: clicking the dot where it is drawn opens its channel', /\/tv$/.test(page.url()), page.url());
   await ctx.close();
 }
 

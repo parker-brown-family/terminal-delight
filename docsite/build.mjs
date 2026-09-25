@@ -11,8 +11,9 @@
    build is the move to the docs subdomain, and it does exactly three things:
 
      1. /docsite/…  becomes  /…            (the docs are the root there)
-     2. the shell and the favicon are copied in, because /assets/ and
-        /favicon.* do not exist on the subdomain
+     2. the shell, the curved-tube engine, the self-hosted fonts and the
+        favicon are copied in, because /assets/ and /favicon.* do not exist
+        on the subdomain
      3. links to the kiosks (/info, /omarchy, /global, /tv, /gamba,
         /start-crawl) become absolute links to the kiosk domain
 
@@ -31,7 +32,9 @@ const KIOSK_PATHS = ['info', 'omarchy', 'global', 'tv', 'gamba', 'start-crawl', 
 await rm(OUT, { recursive: true, force: true });
 await mkdir(join(OUT, 'assets'), { recursive: true });
 
-for (const f of ['td-shell.css', 'td-shell.js']) await copyFile(join(ROOT, 'assets', f), join(OUT, 'assets', f));
+for (const f of ['td-shell.css', 'td-shell.js', 'td-glass.js']) await copyFile(join(ROOT, 'assets', f), join(OUT, 'assets', f));
+await mkdir(join(OUT, 'assets', 'fonts'), { recursive: true });
+for (const f of await readdir(join(ROOT, 'assets', 'fonts'))) await copyFile(join(ROOT, 'assets', 'fonts', f), join(OUT, 'assets', 'fonts', f));
 for (const f of ['favicon.ico', 'favicon.svg']) await copyFile(join(ROOT, f), join(OUT, f));
 
 const kioskLink = new RegExp(`href="/(${KIOSK_PATHS.join('|')})(\\.html)?(#[^"]*)?"`, 'g');

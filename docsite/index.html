@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'self' 'unsafe-inline'; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'none'" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; script-src 'self' 'unsafe-inline'; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'none'" />
   <title>Terminal Delight docs</title>
   <meta name="description" content="How Terminal Delight works: a GPU-native Linux terminal that reads your coding agents' own transcripts. Every page comes in three registers: Brief, Story and Technical." />
   <meta name="td:updated" content="2026-09-24 · true of main at 81ec545" />
@@ -15,9 +15,7 @@
 
   <script>(function(){var s={};try{s=JSON.parse(localStorage.getItem('td-shell'))||{}}catch(e){}var r=document.documentElement;r.dataset.theme=s.theme||(matchMedia('(prefers-color-scheme: light)').matches?'paper':'glass');r.dataset.crt=s.crt||r.dataset.crtDefault||'off';})();</script>
 
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/assets/fonts/fonts.css" />
   <link rel="stylesheet" href="/assets/td-shell.css" />
   <style>
     .meta-row { margin-top: 14px; font: 12.5px/1.5 var(--mono); color: var(--ink-3); }
@@ -171,5 +169,6 @@
 </main>
 <div id="td-fx" aria-hidden="true"><div class="scan"></div><div class="vig"></div><div class="bloom"></div><div class="band"></div></div>
 <script src="/assets/td-shell.js"></script>
+<script src="/assets/td-glass.js"></script>
 </body>
 </html>
