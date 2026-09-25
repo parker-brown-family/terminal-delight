@@ -118,6 +118,7 @@
   var CLICKABLE = 'a[href], button, label, summary, [data-td-toggle], [role="button"]';
 
   var cv = null, gl = null, tex = null, U = {}, MAX = 0, scene = null;
+  var wallTex = null, wallVer = -1, hasWall = false;
   var total = 1, texScale = 1, gen = 0, busy = false, again = false, live = false, failed = false, raf = 0, timer = 0;
   var islandBuf = null;
   var hover = null, forwarding = false;
@@ -133,8 +134,10 @@
     '#version 300 es',
     'precision highp float;',
     'uniform sampler2D tex;',
+    'uniform sampler2D wall;',
+    'uniform vec4 wallMap;',
     'uniform vec2 res;',
-    'uniform float k1, k2, scroll, vp, total, time, motion;',
+    'uniform float k1, k2, scroll, vp, total, time, motion, hasWall;',
     'out vec4 o;',
     /* the canonical barrel: a screen point samples from further out */
     'vec2 warp(vec2 uv){ vec2 c = uv - 0.5; float r2 = dot(c, c); return 0.5 + c * (1.0 + k1 * r2 + k2 * r2 * r2); }',
@@ -144,7 +147,10 @@
     '  vec2 e = min(uv, 1.0 - uv);',
     '  float edge = smoothstep(0.0, 0.004, min(e.x, e.y));',
     '  if (edge <= 0.0) { o = vec4(0.0, 0.0, 0.0, 1.0); return; }',
-    '  vec3 col = texture(tex, vec2(uv.x, (uv.y * vp + scroll) / total)).rgb;',
+    '  vec4 pg = texture(tex, vec2(uv.x, (uv.y * vp + scroll) / total));',
+    /* the wall behind the page, when the page supplies one: it does not
+       scroll, and it bends through the same barrel as everything on it */
+    '  vec3 col = hasWall > 0.5 ? mix(texture(wall, uv * wallMap.xy + wallMap.zw).rgb, pg.rgb, pg.a) : pg.rgb;',
     /* scanlines every 4 CSS px of the bent coordinate, so they bow too */
     '  float s = fract(uv.y * vp / 4.0);',
     '  col *= 1.0 - 0.2 * smoothstep(0.3, 0.0, abs(s - 0.125));',
@@ -183,13 +189,21 @@
     if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog) || 'link');
     gl.useProgram(prog);
     gl.bindVertexArray(gl.createVertexArray());
-    ['res', 'k1', 'k2', 'scroll', 'vp', 'total', 'time', 'motion'].forEach(function (n) { U[n] = gl.getUniformLocation(prog, n); });
-    tex = gl.createTexture();
-    gl.bindTexture(gl.TEXTURE_2D, tex);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    ['res', 'k1', 'k2', 'scroll', 'vp', 'total', 'time', 'motion', 'hasWall', 'wallMap', 'tex', 'wall'].forEach(function (n) { U[n] = gl.getUniformLocation(prog, n); });
+    function texture() {
+      var t = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, t);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      return t;
+    }
+    /* the wall sits on unit 1; unit 0 is left active, because the snapshot and
+       the islands bind the page's texture without naming a unit */
+    gl.activeTexture(gl.TEXTURE1); wallTex = texture();
+    gl.activeTexture(gl.TEXTURE0); tex = texture();
+    gl.uniform1i(U.tex, 0); gl.uniform1i(U.wall, 1);
     MAX = gl.getParameter(gl.MAX_TEXTURE_SIZE);
     return true;
   }
@@ -216,7 +230,33 @@
     gl.uniform1f(U.total, total);
     gl.uniform1f(U.time, now / 1000);
     gl.uniform1f(U.motion, REDUCED ? 0 : 1);
+    wall();
     gl.drawArrays(gl.TRIANGLES, 0, 3);
+  }
+
+  /* The wall. A snapshot cannot carry what sits behind the page, so a page
+     that has a wallpaper hands it over as window.TD_GLASS_WALL: a canvas of
+     the wall exactly as it draws it (blurred, under its scrim), a version it
+     bumps when that canvas changes, and map(rect), which says where the pane
+     sits on the wall this frame, as [scale x, scale y, offset x, offset y] in
+     the canvas's own 0–1 units, so a wall that grows and pans as the page
+     scrolls grows and pans under the glass too. With no wall supplied (the
+     info kiosk), the page's own pixels are all there is, as before. */
+  function wall() {
+    var W = window.TD_GLASS_WALL;
+    if (!W || !W.canvas || !W.canvas.width) { gl.uniform1f(U.hasWall, 0); hasWall = false; return; }
+    if (W.version !== wallVer) {
+      gl.activeTexture(gl.TEXTURE1);
+      gl.bindTexture(gl.TEXTURE_2D, wallTex);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, W.canvas);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, tex);
+      wallVer = W.version;
+    }
+    var m = W.map(tube.getBoundingClientRect(), tube);
+    gl.uniform4f(U.wallMap, m[0], m[1], m[2], m[3]);
+    gl.uniform1f(U.hasWall, 1);
+    hasWall = true;
   }
   function loop(now) {
     if (!live) return;                 // a detached loop must end when the tube goes
@@ -314,7 +354,7 @@
       gen++;                           // every island is copied again over the fresh snapshot
       busy = false;
       if (wanted()) goLive();
-      window.__tdGlass = { live: live, width: W, height: H, scale: scale, max: MAX };
+      window.__tdGlass = { live: live, width: W, height: H, scale: scale, max: MAX, get wall() { return hasWall; } };
       if (again) { again = false; snapshot(); }
     }).catch(function (e) {
       busy = false;

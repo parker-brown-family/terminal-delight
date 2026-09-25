@@ -75,7 +75,35 @@ a { color: inherit; }
 button { font: inherit; color: inherit; }
 
 /* ---------------------------------------------------- the wallpaper behind */
-.backdrop { position: fixed; inset: 0; z-index: 0; overflow: hidden; pointer-events: none; }
+/* The camera moves down the wall as you go down the page, the way Kate's
+   landing page pans down to the trail: docs.js writes --s (the growth) and
+   --pan (how far the wall has risen, in vh) from the pane's scroll. It grows
+   from its top edge, so every bit it grows opens room below for the pan to
+   travel into, and it is oversized so no edge ever shows: at the foot of a
+   page the box's bottom is still below the screen's. */
+.backdrop { position: fixed; inset: -6vh -3vw; z-index: 0; overflow: hidden; pointer-events: none;
+  transform: translate3d(0, calc(var(--pan, 0) * -1vh), 0) scale(var(--s, 1)); transform-origin: 50% 0; will-change: transform; }
+
+/* each block rolls into focus through the band docs.js measures, and the title
+   drifts up and away as you leave it; with motion reduced, none of this runs */
+@media (prefers-reduced-motion: no-preference) {
+  :root.choreo-on .choreo {
+    transform: scale(calc(.992 + .008 * var(--f, 1)));
+    transform-origin: center top;
+  }
+  /* Only a block that is out of focus is dimmed and blurred. Any filter, even
+     blur(0), and any opacity under 1 cut the glass inside a block off from
+     the wall it blurs, so a block in focus must carry neither. */
+  :root.choreo-on .choreo.out {
+    opacity: calc(.34 + .66 * var(--f, 1));
+    filter: blur(calc((1 - var(--f, 1)) * 2.4px));
+  }
+  :root.choreo-on .td-doc > h1 {
+    transform: translateY(calc(var(--p, 0) * -40px));
+    opacity: calc(1 - .85 * var(--p, 0));
+    filter: blur(calc(var(--p, 0) * 3px));
+  }
+}
 .backdrop .layer { position: absolute; inset: -12px; background: center / cover no-repeat; filter: blur(2.5px) saturate(1.08); opacity: 0; transition: opacity .7s ease; }
 .backdrop .layer.on { opacity: 1; }
 /* the scrim is the theme's own ground, so a gruvbox page gets a gruvbox-tinted wall */
@@ -109,7 +137,7 @@ button { font: inherit; color: inherit; }
 .td-icon { width: 38px; height: 38px; display: grid; place-items: center; padding: 0; border-radius: 999px; color: var(--ink); cursor: pointer; text-decoration: none; }
 .td-icon svg { width: 19px; height: 19px; }
 .td-icon:hover, .td-themebtn:hover { color: var(--fgb); border-color: color-mix(in srgb, var(--acc) 65%, transparent); transform: translateY(-1px); }
-.td-icon[aria-pressed="true"] { color: var(--acc); border-color: color-mix(in srgb, var(--acc) 70%, transparent); }
+.td-icon[aria-expanded="true"], .td-icon[aria-pressed="true"] { color: var(--acc); border-color: color-mix(in srgb, var(--acc) 70%, transparent); }
 .td-theme .sun { display: none; }
 :root[data-theme="paper"] .td-theme .sun { display: block; }
 :root[data-theme="paper"] .td-theme .moon { display: none; }
@@ -163,11 +191,10 @@ button { font: inherit; color: inherit; }
 #tube { position: fixed; top: var(--top-h); left: var(--spine-w); right: 0; bottom: 0; z-index: 1;
   overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; scroll-behavior: smooth;
   scrollbar-width: thin; scrollbar-color: var(--line-2) transparent; }
-/* With the tube on, the pane is a screen: it takes the theme's own ground,
-   because the tube is drawn from a snapshot of #tube and a snapshot cannot
-   carry the wallpaper behind it or blur it. The wall stays in the room, behind
-   the flat chrome. */
-:root[data-crt="on"][data-theme="glass"] #tube { background: var(--bg); }
+/* With the tube on, the pane stays transparent: the tube is drawn from a
+   snapshot of #tube, which cannot carry the wall behind it, so docs.js hands
+   td-glass.js the wall as its own texture (window.TD_GLASS_WALL) and the
+   shader lays the page over it, both bent through the same barrel. */
 /* Glass inside the screen goes flat: there is no wall behind it to blur, and
    a backdrop blur drawn into the snapshot smears a dark rectangle across
    whatever sits near it. The rule reaches the snapshot too, because the
@@ -330,6 +357,11 @@ canvas.td-tube[hidden] { display: none; }
 .td-doc .box .h { display: block; font: 700 11px/1.3 var(--mono); letter-spacing: .15em; text-transform: uppercase; margin-bottom: 6px; }
 .h.brief { color: var(--yel); } .h.story { color: var(--mag); } .h.technical { color: var(--blu); }
 
+/* the Omarchy row on the Introduction: one glass card to the kiosk, and the small print beside it */
+.td-doc .omarchy-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 22px; align-items: center; margin: 8px 0 10px; }
+.td-doc .omarchy-row .card { min-height: 96px; }
+.td-doc .aside { margin: 0; font-size: 14.5px; line-height: 1.55; color: var(--ink-2); }
+
 /* quiet reading: the chapter table, and any table that stops imitating the app */
 .td-doc table.q { display: table; font-size: 15px; }
 .td-doc .q td { padding: 9px 14px 9px 0; border-top: 1px solid var(--line); border-bottom: 0; }
@@ -427,7 +459,7 @@ canvas.td-tube[hidden] { display: none; }
   :root.spine-open .td-spine { transform: none; }
   .td-sections { overflow-x: auto; }
   .td-doc { padding: 28px 20px 100px; }
-  .td-doc .room, .td-doc .cards, .td-doc .three { grid-template-columns: 1fr; }
+  .td-doc .room, .td-doc .cards, .td-doc .three, .td-doc .omarchy-row { grid-template-columns: 1fr; }
   .td-doc .facehead { display: none; }
   .td-doc .pair { grid-template-columns: 1fr; }
   .td-doc .pair > .term { padding: 12px 0 8px; }
@@ -441,7 +473,8 @@ canvas.td-tube[hidden] { display: none; }
   .td-top .r1 { padding: 0 10px; gap: 10px; }
   .td-search span, .td-search kbd { display: none; }
   .td-search { width: 38px; padding: 0; justify-content: center; justify-self: end; }
-  .td-btn.hide-sm, .td-actions .gh { display: none; }
+  /* no keyboard to press on a phone, and no room: the keys glyph goes with GitHub */
+  .td-btn.hide-sm, .td-actions .gh, .td-actions .td-keysbtn { display: none; }
   .td-actions { gap: 6px; }
   .td-icon { width: 34px; height: 34px; } .td-themebtn { height: 34px; }
   .reg-body .reg-head { position: static; margin: -10px 0 14px; }

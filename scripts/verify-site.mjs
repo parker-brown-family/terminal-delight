@@ -278,7 +278,7 @@ for (const path of ['/info', DOCS + '/', DOCS + '/workbench', DOCS + '/install']
   const { ctx, page } = await open(path, { prefs: { theme: 'glass', crt: 'off' } });
   const bar = await page.evaluate(() => ({
     sections: [...document.querySelectorAll('.td-sections > a, .td-sections > span')].map(a => a.firstChild && a.childNodes.length ? [...a.childNodes].filter(n => n.nodeType === 3).map(n => n.textContent).join('').trim() : a.textContent.trim()),
-    tools: [...document.querySelectorAll('.td-actions > *')].map(e => e.matches('.td-themebtn') ? 'theme' : e.matches('[data-td-toggle="crt"]') ? 'crt' : e.matches('[data-td-toggle="theme"]') ? 'light-dark' : e.matches('.gh') ? 'github' : e.matches('.td-btn.primary') ? 'install' : e.className),
+    tools: [...document.querySelectorAll('.td-actions > *')].map(e => e.matches('.td-themebtn') ? 'theme' : e.matches('[data-td-toggle="crt"]') ? 'crt' : e.matches('.td-keysbtn') ? 'keys' : e.matches('[data-td-toggle="theme"]') ? 'light-dark' : e.matches('.gh') ? 'github' : e.matches('.td-btn.primary') ? 'install' : e.className),
     button: (document.querySelector('.td-actions .td-btn.primary') || {}).textContent,
     href: (document.querySelector('.td-actions .td-btn.primary') || {}).href || '',
     download: [...document.querySelectorAll('.td-top a, .td-top button')].some(el => /download/i.test(el.textContent)),
@@ -288,7 +288,7 @@ for (const path of ['/info', DOCS + '/', DOCS + '/workbench', DOCS + '/install']
   else {
     ok(`${path}: tabs read Documentation · Reference · Languages · Keymapping`, bar.sections.join('|') === 'Documentation|Reference ▾|Languages|Keymapping', bar.sections.join('|'));
     ok(`${path}: no kiosk among the tabs`, bar.kioskTabs.length === 0, bar.kioskTabs.join(' '));
-    ok(`${path}: tools run theme · CRT · light/dark · GitHub · Install`, bar.tools.join('|') === 'theme|crt|light-dark|github|install', bar.tools.join('|'));
+    ok(`${path}: tools run theme · CRT · keys · light/dark · GitHub · Install`, bar.tools.join('|') === 'theme|crt|keys|light-dark|github|install', bar.tools.join('|'));
   }
   ok(`${path}: the bar's button is Install`, (bar.button || '').trim() === 'Install', bar.button);
   ok(`${path}: Install opens the install page`, /\/install$/.test(bar.href), bar.href);
@@ -328,7 +328,23 @@ for (const path of ['/info', DOCS + '/', DOCS + '/workbench', DOCS + '/install']
   await page.keyboard.press('?');
   ok('docs: ? lists the keys', await page.evaluate(() => document.getElementById('td-keys').classList.contains('on')));
   await page.keyboard.press('Escape');
+  await page.click('.td-actions .td-keysbtn');
+  ok('docs: the keyboard glyph opens the same list', await page.evaluate(() => document.getElementById('td-keys').classList.contains('on') && document.querySelector('.td-keysbtn').getAttribute('aria-expanded') === 'true'));
+  await page.keyboard.press('Escape');
   ok('docs: Esc closes it', await page.evaluate(() => !document.getElementById('td-keys').classList.contains('on')));
+  /* the scroll choreography, from the wellness-with-kate build by way of the Omarchy kiosk */
+  const s0 = await page.evaluate(() => parseFloat(document.querySelector('.backdrop').style.getPropertyValue('--s')) || 1);
+  await page.evaluate(() => { const t = document.getElementById('tube'); t.style.scrollBehavior = 'auto'; t.scrollTop = (t.scrollHeight - t.clientHeight) * 0.5; });
+  await page.waitForTimeout(400);
+  const b0 = await page.evaluate(() => document.querySelector('.backdrop').getBoundingClientRect().top);
+  const ch = await page.evaluate(() => ({ s: parseFloat(document.querySelector('.backdrop').style.getPropertyValue('--s')), out: document.querySelectorAll('#tube .choreo.out').length,
+    top: document.querySelector('.backdrop').getBoundingClientRect().top, bottom: document.querySelector('.backdrop').getBoundingClientRect().bottom, vh: innerHeight,
+    cut: [...document.querySelectorAll('#tube .choreo:not(.out)')].filter(e => getComputedStyle(e).filter !== 'none' || getComputedStyle(e).opacity !== '1').length }));
+  ok('docs: the wall grows as you scroll down', ch.s > s0 + 0.05, JSON.stringify({ s0, ...ch }));
+  ok('docs: and the view pans down it, with no edge showing', ch.top < b0 - 20 && ch.bottom > ch.vh, JSON.stringify({ b0, ...ch }));
+  ok('docs: blocks leaving the pane roll out of focus', ch.out > 0, JSON.stringify(ch));
+  ok('docs: a block in focus carries no filter or fade that would cut its glass off from the wall', ch.cut === 0, JSON.stringify(ch));
+  await page.evaluate(() => { document.getElementById('tube').scrollTop = 0; });
   await page.keyboard.press('2');
   ok('docs: 2 opens the second version', await page.evaluate(() => document.getElementById('r-technical').checked && location.hash === '#technical'));
   await page.keyboard.press('m');
@@ -346,12 +362,17 @@ for (const path of ['/info', DOCS + '/', DOCS + '/workbench', DOCS + '/install']
   ok('docs: the tube goes live', await tubeLive(page));
   const box = await page.evaluate(() => {
     const cv = document.querySelector('canvas.td-tube').getBoundingClientRect(), top = document.querySelector('.td-top').getBoundingClientRect(), sp = document.querySelector('.td-spine').getBoundingClientRect();
-    return { cvLeft: cv.left, cvTop: cv.top, headerBottom: top.bottom, spineRight: sp.right, tubeBg: getComputedStyle(document.getElementById('tube')).backgroundColor,
+    return { cvLeft: cv.left, cvTop: cv.top, headerBottom: top.bottom, spineRight: sp.right,
       blur: [...document.querySelectorAll('#tube *')].filter(e => getComputedStyle(e).backdropFilter !== 'none').length };
   });
   ok('docs: the curve leaves the header and the spine flat', box.cvTop >= box.headerBottom - 1 && box.cvLeft >= box.spineRight - 1, JSON.stringify(box));
-  ok('docs: the screen is opaque, so the curve has no black holes', !/rgba\(.*, 0\)|transparent/.test(box.tubeBg), box.tubeBg);
+  /* the wallpaper stays on under the tube: docs.js hands it over as a texture and the shader lays the page on it */
+  await page.waitForTimeout(800);
+  ok('docs: the wall is drawn under the tube', await page.evaluate(() => !!(window.__tdGlass && window.__tdGlass.wall) && window.TD_GLASS_WALL.canvas.width > 0));
   ok('docs: nothing inside the screen blurs a backdrop the snapshot cannot draw', box.blur === 0, String(box.blur));
+  await page.evaluate(() => { const t = document.getElementById('tube'); t.style.scrollBehavior = 'auto'; t.scrollTop = 600; });
+  await page.waitForTimeout(400);
+  ok('docs: under the tube the blocks stand still, so scrolling asks for no snapshot', await page.evaluate(() => document.querySelectorAll('#tube .choreo').length === 0));
   const gen0 = await page.evaluate(() => document.getElementById('td-palette').textContent);
   await page.evaluate(() => window.__tdDocs.setTheme('everforest'));
   await page.waitForTimeout(1500);
