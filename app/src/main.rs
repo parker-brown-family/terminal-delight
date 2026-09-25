@@ -1111,6 +1111,19 @@ const STRIP_CHIP_WASH: f32 = STANDING_WASH * 2.;
 /// corner under the column rather than running beneath it.
 const RIGHT_COLUMN_W: f32 = 30.;
 
+/// Where a panel raised from the bottom-right controls opens: rising from just
+/// above the bottom bezel, its right edge on the inset the controls stop at.
+///
+/// One anchor for every panel those controls raise — the scale, the `…` menu,
+/// the theme tray and the display tray. Each used to carry its own copy of the
+/// numbers, and two were still hanging from the top of the window a day after
+/// their buttons moved to the bottom: a menu that opens at the far end of the
+/// window from the thing that raised it reads as a different control firing.
+fn over_the_footer<E: Styled>(el: E, scale: f32) -> E {
+    el.bottom(px((pane::HICON + 10.) * scale))
+        .right(px(RIGHT_COLUMN_W * scale + 12.))
+}
+
 /// How long one ticker frame stays up. Six seconds — long enough to read a
 /// sentence, short enough that a person who glanced up and missed one sees
 /// the next before looking away. Counted from the last turn, so a frame chosen
@@ -23775,6 +23788,14 @@ impl Render for Workspace {
             self.theme_menu = Some(MenuScope::Outer);
             cx.notify();
         }
+        // demo/capture hook (TD_OSD_DEMO): open the OUTER display tray, the
+        // other tray raised from the bottom-right glyph row, so a change to
+        // where that row's panels open can be photographed in both of them
+        // without a pointer, which this machine cannot inject.
+        if std::env::var("TD_OSD_DEMO").is_ok() && self.osd_menu.is_none() {
+            self.osd_menu = Some(MenuScope::Outer);
+            cx.notify();
+        }
         // demo/capture hook (TD_SAVINGS_DEMO): open the </> LeanCTX savings overlay
         // with FICTIONAL data (never the real ~/.lean-ctx ledger), so the surface
         // can be screenshotted for the lean-ctx issue without leaking real agent
@@ -25239,9 +25260,10 @@ impl Render for Workspace {
                 ));
             }
             // A sub-tab icon click anchors the tray at the click (right edge at
-            // the cursor, opening down-left like the global menu); clamp it fully
-            // on-screen. The global/outer menu (menu_at == None) keeps its fixed
-            // top-right anchor under the titlebar control.
+            // the cursor, opening down-left); clamp it fully on-screen. The
+            // outer menu (menu_at == None) is raised from the 🎨 glyph at the
+            // bottom right, so it rises from above that row — see
+            // `over_the_footer`.
             // Width and open-height are computed at module scope from the column
             // widths the render above uses, so a test can hold them against the
             // real inventory. The tray no longer matches the DISPLAY (⛭) tray's
@@ -25257,7 +25279,9 @@ impl Render for Workspace {
                     let vh = f32::from(window.viewport_size().height);
                     (f32::from(at.y) + 6.).clamp(8., (vh - panel_h_est - 8.).max(8.))
                 }
-                None => 36.,
+                // Rising from the footer, the highest its top may reach is the
+                // top of the band it hangs over, so that is what caps it.
+                None => self.tray_band().0,
             };
             panel = match self.menu_at {
                 Some(at) => {
@@ -25265,7 +25289,7 @@ impl Render for Workspace {
                     let right = (vw - f32::from(at.x)).clamp(8., (vw - PANEL_W - 8.).max(8.));
                     panel.right(px(right)).top(px(tray_top))
                 }
-                None => panel.top(px(tray_top)).right(px(150.)),
+                None => over_the_footer(panel, scale),
             };
             panel = panel
                 .p_3()
@@ -25365,7 +25389,9 @@ impl Render for Workspace {
                     let vh = f32::from(window.viewport_size().height);
                     (f32::from(at.y) + 6.).clamp(8., (vh - PANEL_H_EST - 8.).max(8.))
                 }
-                None => 36.,
+                // raised from the display glyph at the bottom right: capped by
+                // the band's top, as the theme tray is
+                None => self.tray_band().0,
             };
             panel = match self.osd_at {
                 Some(at) => {
@@ -25373,7 +25399,7 @@ impl Render for Workspace {
                     let right = (vw - f32::from(at.x)).clamp(8., (vw - PANEL_W - 8.).max(8.));
                     panel.right(px(right)).top(px(tray_top))
                 }
-                None => panel.top(px(tray_top)).right(px(110.)),
+                None => over_the_footer(panel, scale),
             };
             panel = panel
                 // Nine slider rows on a short window is taller than the render
@@ -27985,15 +28011,10 @@ impl Render for Workspace {
                         }),
                     )
             };
-            let panel = div()
-                .id("scale-panel")
-                .absolute()
-                // Over its own button, which is at the bottom right now — a
-                // menu that opens at the far corner from the thing that raised
-                // it reads as a different control firing. It grows UPWARD, so
-                // the cap is measured from the band's top, like the `…` menu's.
-                .bottom(px((pane::HICON + 10.) * scale))
-                .right(px(RIGHT_COLUMN_W * scale + 12.))
+            // Over its own button, which is at the bottom right — see
+            // `over_the_footer`. It grows UPWARD, so the cap is measured from
+            // the band's top, like the other panels raised from that row.
+            let panel = over_the_footer(div().id("scale-panel").absolute(), scale)
                 .w(px(240.))
                 .max_h(px(self.tray_max_h(self.tray_band().0)))
                 .overflow_x_hidden()
@@ -28088,14 +28109,9 @@ impl Render for Workspace {
                     .child(div().w(px(18.)).flex_none().child(glyph.to_string()))
                     .child(div().flex_1().min_w(px(0.)).child(label.to_string()))
             };
-            let panel = div()
-                .id("more-panel")
-                .absolute()
-                // Over its own button, which is at the bottom right now. A menu
-                // that opens at the opposite corner from the thing that raised
-                // it reads as a different control firing.
-                .bottom(px((pane::HICON + 10.) * scale))
-                .right(px(RIGHT_COLUMN_W * scale + 12.))
+            // Over its own button, which is at the bottom right — see
+            // `over_the_footer`.
+            let panel = over_the_footer(div().id("more-panel").absolute(), scale)
                 .w(px(230.))
                 // It grows UPWARD from the footer, so its own top edge is what
                 // the cap has to be measured from: the band's top, since a menu
@@ -32878,7 +32894,7 @@ mod tests {
             "the … menu must still list the agent wall, for a closed left bar"
         );
         assert!(
-            more.contains(".bottom(px(") && more.contains(".right(px("),
+            more.contains("over_the_footer(div().id(\"more-panel\")"),
             "and the … panel opens over its own button, which is bottom-right \
              now — a menu that opens at the far corner reads as a different \
              control firing"
@@ -32889,11 +32905,71 @@ mod tests {
             &src[at..at + end]
         };
         assert!(
-            scale.contains(".bottom(px(")
-                && scale.contains(".right(px(")
+            scale.contains("over_the_footer(div().id(\"scale-panel\")")
                 && !scale.contains(".top(px("),
             "the scale's panel opens over its button at the bottom right, not \
              where the button used to be"
+        );
+    }
+
+    /// Every panel the bottom-right controls raise opens over them.
+    ///
+    /// The scale and the `…` menu moved with their buttons; the theme and
+    /// display trays kept hanging from under the top bar, at the far end of
+    /// the window from the glyphs that raise them. Now all four take their
+    /// anchor from `over_the_footer`, and the two trays measure their height
+    /// cap from the top of the band they rise into.
+    #[test]
+    fn every_panel_the_bottom_right_controls_raise_opens_over_them() {
+        let code = shipped_code();
+        let region = |sig: &str| -> String {
+            let at = code.find(sig).unwrap_or_else(|| panic!("{sig} not found"));
+            let end = code[at..].find("\n        let ").expect("end of region");
+            code[at..at + end].to_string()
+        };
+        // The one anchor: up from the footer, in from the right-hand column.
+        let anchor = body_of(&code, "fn over_the_footer");
+        assert!(
+            anchor.contains(".bottom(px((pane::HICON + 10.) * scale))")
+                && anchor.contains(".right(px(RIGHT_COLUMN_W * scale + 12.))"),
+            "the footer anchor must rise from above the bottom bezel and stop \
+             at the right-hand column"
+        );
+        // Both trays use it when they are raised from the glyph row, and cap
+        // their height from the band's top rather than from a fixed 36.
+        for (what, sig, id) in [
+            ("theme", "let menu_overlay =", "theme-panel"),
+            ("display", "let osd_overlay =", "osd-panel"),
+        ] {
+            let tray = region(sig);
+            assert!(
+                tray.contains(&format!("\"{id}\"")),
+                "the {what} tray region no longer holds its panel"
+            );
+            assert!(
+                tray.contains("None => over_the_footer(panel, scale),"),
+                "the {what} tray, raised from the glyph row, must open over it"
+            );
+            assert!(
+                tray.contains("None => self.tray_band().0,"),
+                "the {what} tray rises, so its cap is measured from the band's top"
+            );
+            assert!(
+                !tray.contains("None => panel.top(px(tray_top))"),
+                "the {what} tray still hangs from under the top bar"
+            );
+        }
+        // Four panels, one anchor — no fifth copy of the numbers anywhere.
+        assert_eq!(
+            code.matches("over_the_footer(").count(),
+            4,
+            "the scale, the … menu and the two trays are the panels the \
+             bottom-right controls raise"
+        );
+        assert_eq!(
+            code.matches("(pane::HICON + 10.) * scale").count(),
+            1,
+            "the footer offset is spelled once, in over_the_footer"
         );
     }
 
