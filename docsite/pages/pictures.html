@@ -1,0 +1,96 @@
+<script type="application/json" data-page>
+{
+  "title": "Pictures",
+  "description": "Programs that draw pictures with the Kitty graphics protocol, such as kitten icat or chafa, show them in a Terminal Delight pane. A picture stays while its pane is on screen and is forgotten when its tab is hidden.",
+  "updated": "2026-09-25",
+  "trueOf": "feat/core-swap-rio at 2823b8c",
+  "summary": "Pictures programs draw, and when they go"
+}
+</script>
+
+<section data-register="brief">
+<p class="lede">Programs that draw pictures in a terminal show them in a Terminal Delight pane. Run <code>kitten icat photo.png</code>, <code>chafa</code>, or an agent that renders a chart with the Kitty graphics protocol, and the picture lands in the cells the program asked for, scrolls with the text around it, and bends with the glass like everything else in the tube.</p>
+<p>Pictures stay while you are looking at their pane. When you switch to another tab, the pane forgets them, and coming back shows the text alone. They are not saved with the session and do not come back when a window reattaches.</p>
+<p>Nothing to switch on. Sixel and iTerm2 pictures are not drawn yet.</p>
+<p class="invite">The Technical version lists what is supported, what a program is told when it asks, and how a picture reaches a window attached to a session host.</p>
+</section>
+
+<section data-register="technical" data-headline="Pictures">
+
+<h2 id="technical-what-draws">What draws</h2>
+<p>The terminal core, <a href="https://crates.io/crates/rio-vt">rio-vt</a>, receives and stores Kitty graphics; the pane draws what the core holds over the grid.<sup><a href="#s1">1</a></sup></p>
+<table>
+  <thead><tr><th>Part of the protocol</th><th>In a pane</th></tr></thead>
+  <tbody>
+    <tr><td>Formats: PNG (<code>f=100</code>), RGB (<code>f=24</code>), RGBA (<code>f=32</code>)</td><td>Drawn</td></tr>
+    <tr><td>Sending: inline data (<code>t=d</code>), a file (<code>t=f</code>), a temporary file (<code>t=t</code>), shared memory (<code>t=s</code>)</td><td>All four</td></tr>
+    <tr><td>Placement in cells (<code>c=</code>, <code>r=</code>), cropping (<code>x= y= w= h=</code>), offsets within a cell (<code>X=</code>, <code>Y=</code>)</td><td>Drawn</td></tr>
+    <tr><td>Stacking (<code>z=</code>)</td><td>Negative draws under the text, zero and above over it</td></tr>
+    <tr><td>Deleting (<code>a=d</code>)</td><td>Honoured</td></tr>
+    <tr><td>Unicode placeholders (<code>U=1</code>, U+10EEEE cells)</td><td>Not drawn yet: the cells show as text</td></tr>
+    <tr><td>Sixel, iTerm2 inline images</td><td>Not drawn yet</td></tr>
+  </tbody>
+</table>
+<p>A picture is not drawn while the rows are read upside down (the anchor-to-top read) or in <a href="/text-crawl">text crawl</a>, where it has no single cell to sit in. It is still held, and it returns with the plain read.</p>
+
+<h2 id="technical-attentional">When a picture goes</h2>
+<figure class="td-fig">
+  <div class="figwrap">
+<svg class="flow" viewBox="0 0 700 150" role="img" aria-label="A picture's life in a pane: a program sends it, the core keeps it, the pane draws it, and when the pane's tab is hidden the pane drops its texture and the core forgets the image.">
+  <rect class="box" x="10" y="40" width="140" height="60" rx="8"/>
+  <text class="t1" x="24" y="66">program sends</text>
+  <text class="t2" x="24" y="86">kitten icat, chafa</text>
+  <path class="ln" d="M150 70 L186 70"/>
+  <path class="ah" d="M186 65 L196 70 L186 75 Z"/>
+  <rect class="box" x="196" y="40" width="140" height="60" rx="8"/>
+  <text class="t1" x="210" y="66">core keeps it</text>
+  <text class="t2" x="210" y="86">placed in cells</text>
+  <path class="ln" d="M336 70 L372 70"/>
+  <path class="ah" d="M372 65 L382 70 L372 75 Z"/>
+  <rect class="hot" x="382" y="40" width="140" height="60" rx="8"/>
+  <text class="t1" x="396" y="66">pane draws it</text>
+  <text class="t2" x="396" y="86">while on screen</text>
+  <path class="back" d="M522 70 L560 70"/>
+  <path class="ahy" d="M560 65 L570 70 L560 75 Z"/>
+  <rect class="you" x="570" y="40" width="120" height="60" rx="8"/>
+  <text class="t1" x="584" y="66">tab hidden</text>
+  <text class="t2" x="584" y="86">both forgotten</text>
+  <text class="lbl" x="396" y="126">switching tabs is the only thing that takes a picture away</text>
+</svg>
+  </div>
+  <figcaption><b>Figure 1.</b> A picture lasts as long as your attention on its pane. When the pane's tab is hidden, the pane drops the texture and the core deletes the image, so the pixels are gone from memory as well as from the screen. A program that wants the picture back draws it again.</figcaption>
+</figure>
+<p>No snapshot carries a picture, so a window that attaches to a pane shows its text and none of the pictures drawn before it arrived. <code>TD_PICTUREDEBUG=1</code> makes a window print one line to its log each time a hidden pane lets pictures go, for checking this by script.</p>
+
+<h2 id="technical-answers">What a program is told</h2>
+<p>Picture programs ask the terminal what it is before they draw. Terminal Delight answers as itself.<sup><a href="#s2">2</a></sup></p>
+<table>
+  <thead><tr><th>Question</th><th>Answer</th></tr></thead>
+  <tbody>
+    <tr><td>Kitty graphics query (<code>a=q</code>)</td><td><code>OK</code>, from the core</td></tr>
+    <tr><td>Primary device attributes (<code>CSI c</code>)</td><td><code>?62;22c</code>: a VT220 with ANSI colour, and no claim to sixel or clipboard access</td></tr>
+    <tr><td>XTVERSION (<code>CSI &gt; 0 q</code>)</td><td><code>terminal-delight 0.3.0</code></td></tr>
+    <tr><td>Cell size in pixels (<code>CSI 16 t</code>)</td><td>The cell the pane told the pseudoterminal, in device pixels</td></tr>
+    <tr><td>Kitty keyboard protocol (<code>CSI ? u</code>)</td><td>No answer: keys are sent in the legacy encodings</td></tr>
+  </tbody>
+</table>
+<p><code>kitten icat</code> decides from the first two answers together. Before the core swap it waited ten seconds in every pane and then gave up, because the old device-attributes answer was too short for its detector.<sup><a href="#s3">3</a></sup></p>
+
+<h2 id="technical-hosted">Panes on a session host</h2>
+<p>A pane on a <a href="/sessions">session host</a> is parsed twice: by the host, which answers the program, and by your window, which draws. A picture sent as a temporary file or as shared memory is deleted by the first terminal that reads it, and the host reads first, so for those two methods the host rewrites the picture into its copy of the stream as inline data before its own core deletes the original. Inline data and plain files reach the window as the program sent them.<sup><a href="#s4">4</a></sup></p>
+<p>A window attached to a session host started before the core swap still draws pictures sent as inline data or a file, because the bytes pass through the old host to the window's own core. That host answers the questions in the table above the old way, so <code>kitten icat</code> still waits there until the host is replaced.</p>
+
+<h2 id="technical-try">Try it</h2>
+<pre class="cmd"><code>printf '\033_Ga=T,f=24,s=2,v=1,c=8,r=2;/wAAAP8A\033\\\n'</code></pre>
+<p>Two pixels, red and green, stretched over eight cells by two. The line after it starts below the picture.</p>
+
+<h2 id="technical-wrong">What would prove this page wrong</h2>
+<p>A picture that stays on screen after its tab has been hidden and shown again; a picture drawn over the wrong cells after the pane scrolls; a temporary-file picture that shows in a window-owned pane and not in a hosted one; or <code>kitten icat</code> pausing before it draws in a pane whose host was started from this build.</p>
+</section>
+
+<ol data-sources>
+  <li id="s1">The core boundary and the picture verbs: <code>app/src/vt/mod.rs</code> and <code>app/src/vt/rio.rs</code>; drawing: <code>picture_elements</code> in <code>app/src/pane.rs</code>; forgetting: <code>Workspace::forget_pictures_out_of_sight</code> in <code>app/src/main.rs</code>.</li>
+  <li id="s2">The answers and their tests: <code>app/src/vt/rio.rs</code>, <code>as_terminal_delight</code> and the tests beside it.</li>
+  <li id="s3">The ten-second wait, measured at 10,076 ms and 10,044 ms in a hidden window: issue 750; the detector's length check is in kitty's <code>kittens/icat/detect.go</code>.</li>
+  <li id="s4">The rewrite: <code>app/src/picturewire.rs</code>; the test that fails without it: <code>a_picture_sent_as_a_temporary_file_reaches_the_attached_window</code> in <code>app/src/host.rs</code>.</li>
+</ol>

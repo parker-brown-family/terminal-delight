@@ -25,6 +25,7 @@
       { "slug": "left-bar", "title": "Left bar and tasks" },
       { "slug": "panes-and-tabs", "title": "Panes and tabs" },
       { "slug": "sticky-notes", "title": "Sticky notes" },
+      { "slug": "pictures", "title": "Pictures" },
       { "slug": "sessions", "title": "Sessions and restarts" }
     ]},
     { "title": "The look", "pages": [

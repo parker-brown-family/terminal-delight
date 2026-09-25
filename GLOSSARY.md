@@ -10,7 +10,7 @@ is the sign it has become vernacular.
 
 **session host / host** — The gpui-free process (`terminal-delight serve
 --session <key>`) that owns the real terminals: PTY masters, child process
-trees, the authoritative alacritty `Term`s, and scrollback. One per session,
+trees, the authoritative terminal cores, and scrollback. One per session,
 reachable over a per-session unix socket. It survives the window; that is the
 feature. It ends only on the `shutdown` verb or after ~12 idle hours with no
 client attached and no pane output — checkpointing first (decided 2026-09-09,
@@ -41,12 +41,25 @@ the review's second High finding.
 
 **attach / the attach fence** — Attaching is asking the host for a pane:
 snapshot first, then the live byte stream. The fence is how the host hands
-both over without losing or doubling a byte: it takes the terminal's
-`FairMutex` **lease**, then the data lock via `lock_unfair()` — the same order
-as alacritty's own reader, and the reason a plain `lock()` deadlocks. Holding
-the lease blocks a new PTY read cycle, so every byte lands in either the
-snapshot or the stream, never both, never neither. Re-verify on any alacritty
-upgrade.
+both over without losing or doubling a byte, and it is the terminal's own
+lock: TD's read loop copies each chunk to the attached client and parses it in
+one step under that lock, so a snapshot taken holding it lands between chunks,
+and every byte is in either the snapshot or the stream, never both, never
+neither. The fence also flushes an open synchronized update into the grid
+before encoding. Until the core swap (2026-09-25) it was alacritty's
+`FairMutex` lease paired with `lock_unfair()`.
+
+**core / vt boundary** — The terminal emulator core turns a program's bytes
+into a grid of cells. TD's is **rio-vt**, the core of the Rio terminal;
+`alacritty_terminal` is a fallback built with `--features core-alacritty`.
+Everything TD reads about a terminal goes through `app/src/vt/`, in TD's own
+types with alacritty 0.26's numbering frozen (the divergence hash is built
+from those numbers). Decided in `docs/plans/core-swap-rio/02-architecture.md`.
+
+**pictures (attentional)** — Images a program draws with the Kitty graphics
+protocol. They appear in the pane while it is looked at; when its tab is
+hidden the pane drops the textures and the core forgets the images, and no
+snapshot carries them. Parker's word for it was attentional.
 
 **snapshot / gridwire** — `app/src/gridwire.rs`: reads a `Term` read-only and
 emits the VT bytes that repaint a cold client, including the alternate-screen

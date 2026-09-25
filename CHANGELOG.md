@@ -7,7 +7,37 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Changed
+
+- **The terminal emulator core is rio-vt, the core inside the Rio terminal.**
+  alacritty_terminal did the emulation from the start; it is still built with
+  `--features core-alacritty`, as a fallback and as the oracle the whole suite
+  is checked against, until it has been out of daily use long enough to delete.
+  Measured on the research branch before choosing: an 8 MB text stream parses in
+  82 ms against 140 ms, and a pane holding 10,000 lines of history costs 11.0 MB
+  against 28.5 MB. The swap also made the read loop, the pseudoterminal and the
+  lock TD's own (`app/src/vt/`), which turned the session host's attach fence
+  into one plain lock and deleted the socket-as-pseudoterminal workaround a
+  replica needed. A window still attaches to a session host built before the
+  swap: the host protocol stays at version 1 and the divergence hash is over
+  alacritty's frozen numbering. The decision, the plan and every difference
+  found between the cores are in `docs/plans/core-swap-rio/`. (#XXX)
+- **Terminal Delight says what it is when a program asks.** Device attributes
+  are `?62;22c`, long enough for `kitten icat`'s detector, which used to wait
+  ten seconds in every pane and then give up (#750); XTVERSION is
+  `terminal-delight 0.3.0`; the cell size (`CSI 16 t`) is answered in every
+  pane, where before only a pane on a session host answered it. The kitty
+  keyboard query goes unanswered, because TD sends legacy key encodings.
+  `--version` names the core. (#XXX)
+
 ### Added
+
+- **Pictures a program draws appear in the pane.** Anything speaking the Kitty
+  graphics protocol — `kitten icat`, chafa, an agent's chart — draws in the
+  cells it asked for, scrolls with its text, and bends with the glass. They are
+  attentional: when a pane's tab is hidden it forgets its pictures, so coming
+  back shows the text alone, and no snapshot carries them. Sixel and iTerm2
+  pictures are not drawn yet. (#XXX)
 
 - **A response carries a `brief` — the bare minimum, in two sentences under
   fifty words.** The tl;dr and the ELI5 came back as ONE register, which is
