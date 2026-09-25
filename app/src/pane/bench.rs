@@ -1567,6 +1567,14 @@ impl TerminalView {
     ) {
         use crate::surface::{Op, Post};
         let now = crate::surfacefeed::now_ms();
+        // The picker as it is NOW, not as the last sweep saw it — see
+        // `channel::State::read_picker`. Only while the pane is waiting on
+        // you: keys aimed at a stale picker in the scrollback would land in
+        // the prompt instead.
+        if self.needs_input {
+            let rows = self.live_rows();
+            self.wb_channel.read_picker(id, &rows);
+        }
         let press = self.wb_channel.press(id, nav, now);
         self.bench_route_press(id, press, cx);
         // Whatever the road, the cards say what was pressed.
@@ -2189,6 +2197,10 @@ impl TerminalView {
             return;
         };
         let now = crate::surfacefeed::now_ms();
+        if self.needs_input {
+            let rows = self.live_rows();
+            self.wb_channel.read_picker(&id, &rows);
+        }
         let press = self.wb_channel.submit(&id, now);
         self.bench_route_press(&id, press, cx);
         // EVERY CARD OF THE ROUND IS RE-PRESENTED, not just the open one: the
