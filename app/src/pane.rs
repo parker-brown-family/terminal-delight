@@ -6041,8 +6041,9 @@ impl TerminalView {
     }
 
     /// The pane's own wheel: over the floating square it pans the document,
-    /// anywhere else it scrolls. Ctrl+wheel is the text dial everywhere, the
-    /// square included, so it is decided first.
+    /// anywhere else it scrolls. Ctrl+wheel sizes whatever is under the
+    /// pointer — the document over a document, the pane's region anywhere
+    /// else — so it is decided first.
     ///
     /// The square is asked HERE and not in [`Self::scroll_by_wheel`], which
     /// the FOCUS modal also calls with pointers over the modal: a square
@@ -6116,9 +6117,28 @@ impl TerminalView {
     /// Sizing nothing is still taking the turn. A pane with no measured rect
     /// yet resolves no dial, and letting that fall through would size whatever
     /// happened to be behind it.
+    ///
+    /// A document under the pointer is what is under it, so it is asked
+    /// first, and takes the turn as its own zoom. It used to be the pane's
+    /// text dial there too, and the text behind the square grew while the
+    /// brief in it stayed the size it was. Parker, 2026-09-25: *"When I am
+    /// hovering over a floating doc to read the ctl+mouse wheel should resize
+    /// THE DOC! not the pane underneath!"* Asking here rather than in one
+    /// handler is what reaches the square over the workbench as well, whose
+    /// capture hook ([`Self::bench_wheel`]) runs before the pane root's.
+    ///
+    /// The position is trusted to be over this pane. The FOCUS reader is the
+    /// one caller whose pointer is over something else, and it never hands
+    /// over a chord: it names the grid's dial itself.
     pub fn size_by_wheel(&mut self, ev: &ScrollWheelEvent, cx: &mut Context<Self>) -> bool {
         if !ev.modifiers.control {
             return false;
+        }
+        if let Some(view) = self.doc_under(ev.position) {
+            let notches = theme::wheel_notches(ev.delta);
+            view.update(cx, |v, cx| v.zoom_by_wheel(notches, cx));
+            cx.notify();
+            return true;
         }
         if let Some(key) = self.size_dial_under(ev.position) {
             self.nudge_size(key, theme::wheel_notches(ev.delta), cx);
@@ -10397,9 +10417,9 @@ mod tests {
 
         // Five named handlers and one closure. A sixth is not forbidden — it
         // is unreviewed, and the chord is what it has to be reviewed against.
-        // `doc_wheel` is the floating square's: ctrl+wheel over it is still
-        // the pane's text dial, and it asks the chord itself rather than
-        // trusting that `on_wheel` always asked first.
+        // `doc_wheel` is the floating square's: ctrl+wheel over it zooms the
+        // document, which the chord decides, and it asks the chord itself
+        // rather than trusting that its caller always asked first.
         let named: Vec<&str> = names
             .iter()
             .copied()

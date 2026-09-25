@@ -1024,6 +1024,9 @@ pub struct MarkdownDoc {
     pub reading: gpui::Task<()>,
     /// Whether every image had been drawn, for `TD_DOCDEBUG`'s one line.
     pub drew_all: bool,
+    /// The reader's zoom on top of the pane's text size: 1 is the size the
+    /// pane's text dial gives it. See [`super::READING_ZOOM`].
+    pub zoom: f32,
 }
 
 /// A place in the document to go to once it has been laid out.
@@ -1074,7 +1077,36 @@ impl MarkdownDoc {
             decoding: HashMap::new(),
             reading: gpui::Task::ready(()),
             drew_all: false,
+            zoom: 1.0,
         }
+    }
+
+    /// Draw at `zoom` from the next paint, keeping the reader's place: the
+    /// block at the top of the view stays at the top, as far into it as it
+    /// was, scaled with it. Before the first layout there is no place to
+    /// keep, and whatever place was already waiting is left to wait.
+    pub fn set_zoom(&mut self, zoom: f32) {
+        let ratio = zoom / self.zoom.max(0.01);
+        let fraction = self.scroll().map(|s| s.top);
+        let keep = match self.block_at_top() {
+            Some((index, offset)) => Some(Pending::Block {
+                index,
+                offset: offset * ratio,
+                fraction,
+            }),
+            None => fraction.map(|f| Pending::Block {
+                index: usize::MAX,
+                offset: 0.0,
+                fraction: Some(f),
+            }),
+        };
+        if keep.is_some() {
+            self.pending = keep;
+        }
+        self.zoom = zoom;
+        // A new layout, as a new parse is: nothing the last paint measured
+        // may place it.
+        self.generation += 1;
     }
 
     /// The column's height, once the current parse has been painted.
@@ -1250,7 +1282,7 @@ impl MarkdownDoc {
         if self.pending.is_some() {
             window.request_animation_frame();
         }
-        let mut style = MdStyle::document(th, 1.0);
+        let mut style = MdStyle::document(th, self.zoom);
         style.scale = window.scale_factor();
         style.image_cap = view.map(|v| (f32::from(v.width) - 2.0 * PAD).max(1.0));
         let wanted = image_paths(&doc);
@@ -1335,6 +1367,34 @@ mod tests {
         md.restore_fraction(1.7);
         md.settle(Some(100.0));
         assert!((md.top - 900.0).abs() < 1e-3, "{}", md.top);
+    }
+
+    /// A zoom keeps the reader's place: the block at the top of the view
+    /// stays at the top, as far into it as it was, scaled with the text. And
+    /// nothing the paint at the old size measured may place the new one.
+    #[test]
+    fn a_zoom_keeps_the_block_the_reader_was_on_at_the_top() {
+        let mut md = MarkdownDoc::new();
+        // Painted at 100%: three blocks 400 px apart, the reader 50 px into
+        // the second.
+        md.painted.set(Some(md.generation));
+        md.column.set(Some((0.0, 1200.0)));
+        *md.tops.borrow_mut() = vec![Some(0.0), Some(400.0), Some(800.0)];
+        md.top = 450.0;
+
+        md.set_zoom(2.0);
+        md.settle(Some(300.0));
+        assert_eq!(md.top, 450.0, "not placed by the old size's paint");
+        // The first paint at 200%: every block twice as far down.
+        md.painted.set(Some(md.generation));
+        md.column.set(Some((0.0, 2400.0)));
+        *md.tops.borrow_mut() = vec![Some(0.0), Some(800.0), Some(1600.0)];
+        md.settle(Some(300.0));
+        assert!(
+            (md.top - 900.0).abs() < 1e-3,
+            "the second block, 100 px into it: {}",
+            md.top
+        );
     }
 
     #[test]

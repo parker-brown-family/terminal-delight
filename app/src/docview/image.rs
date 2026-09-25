@@ -524,7 +524,13 @@ impl Backend for ImageDoc {
         self.pan_by(dx, dy, view, sf)
     }
 
-    fn zoom(&mut self, step: ZoomStep, view: Size<Pixels>, sf: f32) -> bool {
+    fn zoom(
+        &mut self,
+        step: ZoomStep,
+        view: Size<Pixels>,
+        sf: f32,
+        _cx: &mut Context<DocumentView>,
+    ) -> bool {
         ImageDoc::zoom(self, step, view, sf)
     }
 
