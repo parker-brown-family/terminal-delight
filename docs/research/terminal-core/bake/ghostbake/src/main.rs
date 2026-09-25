@@ -117,8 +117,13 @@ fn rss() -> (Option<u64>, Option<u64>) {
 }
 
 /// The same terminal run() builds, without the reply callback.
+///
+/// max_scrollback is documented as lines, but on 2026-09-25 a value of 10,000 kept 489 rows
+/// against 10,040 for the other three cores, so it behaves like Ghostty's byte limit.
+/// GHOSTBAKE_SCROLLBACK sets it, so the perf runs can match the others' 10,040 rows kept.
 fn make() -> Terminal<'static, 'static> {
-    let mut term = Terminal::new(Options { cols: COLS, rows: ROWS, max_scrollback: 10_000 }).expect("terminal");
+    let sb: usize = std::env::var("GHOSTBAKE_SCROLLBACK").ok().and_then(|v| v.parse().ok()).unwrap_or(10_000);
+    let mut term = Terminal::new(Options { cols: COLS, rows: ROWS, max_scrollback: sb }).expect("terminal");
     term.resize(COLS, ROWS, CW, CH).expect("resize");
     let _ = term.set_kitty_image_from_file_allowed(true);
     let _ = term.set_kitty_image_from_temp_file_allowed(true);

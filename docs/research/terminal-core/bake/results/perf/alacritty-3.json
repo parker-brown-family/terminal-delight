@@ -1,0 +1,24 @@
+{
+  "core": "alacritty_terminal 0.26",
+  "kb_per_pane_empty": 236,
+  "kb_per_pane_full": 29165,
+  "panes": 20,
+  "picture_bytes": 472,
+  "rows_kept": 10040,
+  "rss_kb": {
+    "after_create": 17932,
+    "after_fill": 596508,
+    "high_water": 596508,
+    "start": 13204
+  },
+  "text_bytes": 8388620,
+  "text_mb_per_s": 57.10215163520198,
+  "text_ms_median": 140.1,
+  "text_ms_runs": [
+    134.3,
+    136.8,
+    145.3,
+    140.1,
+    143.5
+  ]
+}

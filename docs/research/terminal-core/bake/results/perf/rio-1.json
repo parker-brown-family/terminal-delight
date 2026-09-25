@@ -1,0 +1,24 @@
+{
+  "core": "rio-vt 0.5.28",
+  "kb_per_pane_empty": 123,
+  "kb_per_pane_full": 11243,
+  "panes": 20,
+  "picture_bytes": 472,
+  "rows_kept": 10040,
+  "rss_kb": {
+    "after_create": 15720,
+    "after_fill": 238108,
+    "high_water": 238108,
+    "start": 13248
+  },
+  "text_bytes": 8388620,
+  "text_mb_per_s": 96.96983568596117,
+  "text_ms_median": 82.5,
+  "text_ms_runs": [
+    78.2,
+    87.9,
+    85.9,
+    82.5,
+    75.7
+  ]
+}

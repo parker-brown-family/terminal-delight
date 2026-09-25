@@ -1,0 +1,124 @@
+{
+ "measured": {
+  "alacritty-own-loop": {
+   "text_ms": 140.1,
+   "kb_per_pane_full": 29170
+  },
+  "rio-vt": {
+   "text_ms": 82.5,
+   "kb_per_pane_full": 11243
+  },
+  "libghostty-vt": {
+   "text_ms": 59.2,
+   "kb_per_pane_full": 11928
+  },
+  "wezterm-term": {
+   "text_ms": 472.1,
+   "kb_per_pane_full": 6084
+  }
+ },
+ "dims": {
+  "alacritty-own-loop": {
+   "performance": 0.31556288336089827,
+   "agent_fluency": null,
+   "published_unpatched": 1.0,
+   "pictures": 0.0,
+   "maintainers": 0.6,
+   "other_picture_protocols": 0.0,
+   "build_toolchain": 1.0,
+   "persistence_of_pictures": null,
+   "fit": 0.6379310344827587,
+   "td_work": 0.5,
+   "trajectory": 0.6
+  },
+  "rio-vt": {
+   "performance": 0.6293562324301452,
+   "agent_fluency": null,
+   "published_unpatched": 1.0,
+   "pictures": 0.9285714285714286,
+   "maintainers": 0.3,
+   "other_picture_protocols": 1.0,
+   "build_toolchain": 0.7,
+   "persistence_of_pictures": null,
+   "fit": 0.6851851851851852,
+   "td_work": 0.5,
+   "trajectory": 0.6
+  },
+  "libghostty-vt": {
+   "performance": 0.7550301810865191,
+   "agent_fluency": null,
+   "published_unpatched": 0.75,
+   "pictures": 1.0,
+   "maintainers": 0.3,
+   "other_picture_protocols": 0.0,
+   "build_toolchain": 0.4,
+   "persistence_of_pictures": null,
+   "fit": 0.8103448275862069,
+   "td_work": 0.5,
+   "trajectory": 0.3
+  },
+  "wezterm-term": {
+   "performance": 0.5626985808091506,
+   "agent_fluency": null,
+   "published_unpatched": 0.25,
+   "pictures": 0.8571428571428571,
+   "maintainers": 1.0,
+   "other_picture_protocols": 1.0,
+   "build_toolchain": 0.9,
+   "persistence_of_pictures": null,
+   "fit": 0.71875,
+   "td_work": 0.25,
+   "trajectory": 0.6
+  }
+ },
+ "published_why": {
+  "alacritty-own-loop": "crates.io, used as-is; TD would write the Kitty handling around it, not inside it",
+  "rio-vt": "crates.io, used as-is with its graphics feature",
+  "libghostty-vt": "crates.io bindings 0.2.1 used as-is; the build clones Ghostty's source at a pinned commit and needs Zig",
+  "wezterm-term": "never published: a git dependency on the wezterm tree, plus a patch to add placeholder pictures"
+ },
+ "vibes_only": [
+  [
+   "rio-vt",
+   0.764,
+   0.746
+  ],
+  [
+   "libghostty-vt",
+   0.717,
+   0.746
+  ],
+  [
+   "wezterm-term",
+   0.596,
+   0.746
+  ],
+  [
+   "alacritty-own-loop",
+   0.462,
+   0.746
+  ]
+ ],
+ "vibes_plus_earlier": [
+  [
+   "rio-vt",
+   0.7,
+   0.828
+  ],
+  [
+   "libghostty-vt",
+   0.66,
+   0.828
+  ],
+  [
+   "wezterm-term",
+   0.571,
+   0.828
+  ],
+  [
+   "alacritty-own-loop",
+   0.509,
+   0.828
+  ]
+ ]
+}

@@ -1,0 +1,94 @@
+{
+ "alacritty": {
+  "core": "alacritty_terminal 0.26",
+  "text_ms_median": 140.1,
+  "text_ms_by_round": [
+   130.9,
+   142.8,
+   140.1
+  ],
+  "text_mb_per_s": 57.10215163520198,
+  "kb_per_pane_empty": 239,
+  "kb_per_pane_full": 29170,
+  "kb_per_pane_full_by_round": [
+   29170,
+   29175,
+   29165
+  ],
+  "rows_kept": [
+   10040,
+   10040,
+   10040
+  ],
+  "high_water_mb": 582.546875
+ },
+ "rio": {
+  "core": "rio-vt 0.5.28",
+  "text_ms_median": 82.5,
+  "text_ms_by_round": [
+   82.5,
+   86.6,
+   79.7
+  ],
+  "text_mb_per_s": 96.96983568596117,
+  "kb_per_pane_empty": 123,
+  "kb_per_pane_full": 11243,
+  "kb_per_pane_full_by_round": [
+   11243,
+   11244,
+   11243
+  ],
+  "rows_kept": [
+   10040,
+   10040,
+   10040
+  ],
+  "high_water_mb": 232.50390625
+ },
+ "ghostty": {
+  "core": "libghostty-vt 0.2.1 (ghostty a887df42, Zig 0.15.2)",
+  "text_ms_median": 59.2,
+  "text_ms_by_round": [
+   58.5,
+   59.3,
+   59.2
+  ],
+  "text_mb_per_s": 135.13532844749656,
+  "kb_per_pane_empty": 77,
+  "kb_per_pane_full": 11928,
+  "kb_per_pane_full_by_round": [
+   11928,
+   11929,
+   11925
+  ],
+  "rows_kept": [
+   10164,
+   10164,
+   10164
+  ],
+  "high_water_mb": 245.37109375
+ },
+ "wezterm": {
+  "core": "wezterm-term git b09b56c29c",
+  "text_ms_median": 472.1,
+  "text_ms_by_round": [
+   472.1,
+   452.1,
+   549.2
+  ],
+  "text_mb_per_s": 16.945586621672945,
+  "kb_per_pane_empty": 96,
+  "kb_per_pane_full": 6084,
+  "kb_per_pane_full_by_round": [
+   6078,
+   6088,
+   6084
+  ],
+  "rows_kept": [
+   10040,
+   10040,
+   10040
+  ],
+  "high_water_mb": 130.27734375
+ }
+}
