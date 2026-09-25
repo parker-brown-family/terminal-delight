@@ -1,0 +1,36 @@
+{
+  "run": "2026-09-25, six fresh agents, prompt.md, checked by verify.sh and check.py against ground-truth.json (sealed first, commit 08ab94a). Every re-run reproduced the agent's own output byte for byte.",
+  "checker_fix": "check.py first counted rio-1's stored-image record (640x400 px, no row) as a second placement and failed its picture check; fixed to require a row and column, after which rio-1 passes. The fix changed no other verdict.",
+  "agents": {
+    "rio-1":     {"core": "rio-vt 0.5.28", "checks": {"picture": true, "cursor": true, "replies": true, "history": true}, "rows_held": 10040, "tokens": 173191, "tool_uses": 58, "minutes": 11.2, "cold_build_s": 62},
+    "rio-2":     {"core": "rio-vt 0.5.28", "checks": {"picture": true, "cursor": true, "replies": true, "history": true}, "rows_held": 10040, "tokens": 142300, "tool_uses": 51, "minutes": 10.8, "cold_build_s": 103},
+    "rio-3":     {"core": "rio-vt 0.5.28", "checks": {"picture": true, "cursor": true, "replies": true, "history": true}, "rows_held": 10040, "tokens": 172556, "tool_uses": 44, "minutes": 11.4, "cold_build_s": 80},
+    "ghostty-1": {"core": "libghostty-vt 0.2.1", "checks": {"picture": true, "cursor": true, "replies": true, "history": false}, "rows_held": 10295, "rows_held_note": "620 with max_scrollback 10,000 as documented; 10,295 after bisecting a byte budget of 10,838,016", "tokens": 226378, "tool_uses": 64, "minutes": 11.7, "cold_build_s": 212},
+    "ghostty-2": {"core": "libghostty-vt 0.2.1", "checks": {"picture": true, "cursor": true, "replies": true, "history": false}, "rows_held": 620, "tokens": 216202, "tool_uses": 74, "minutes": 12.2, "cold_build_s": 223},
+    "ghostty-3": {"core": "libghostty-vt 0.2.1", "checks": {"picture": true, "cursor": true, "replies": true, "history": false}, "rows_held": 620, "tokens": 224167, "tool_uses": 80, "minutes": 11.6, "cold_build_s": 178}
+  },
+  "found_by_all_three": {
+    "rio-vt": [
+      "the graphics feature is missing from the README; without it PNG pictures are dropped silently while the support query still answers OK",
+      "the README says the default feature set is empty; Cargo.toml defaults to pty",
+      "the README's EventListener snippet does not compile (it implements an event() method the trait does not have)",
+      "no documented way to read placements back: a public HashMap field whose rows are absolute and must be converted",
+      "the README quick-start's CrosswordsSize::new leaves the cell size at 0, which silently drops every picture (read in source; not hit)",
+      "no helper for the text of one visible row; combining marks need bounds_to_string",
+      "auto-assigned picture ids start at 2147483648"
+    ],
+    "libghostty-vt": [
+      "max_scrollback is documented as lines in the Rust docs and the C header but is a byte budget; 10,000 keeps 620 rows and no setting takes a line count (blocks step four)",
+      "the crate's own PNG decoder cannot be constructed, its doc example does not compile, and its decode path looks broken; each agent wrote its own (25 to 40 lines)",
+      "building needs Zig and a network git clone of Ghostty, which the main crate's docs do not say",
+      "Zig's cache escapes to ~/.cache/zig unless an undocumented variable is set",
+      "no cell pixel size at creation; it is set through resize(), whose doc calls unchanged dimensions a no-op",
+      "file-path pictures are off by default and undocumented in the Rust docs; with q=2 they drop silently",
+      "auto-assigned picture ids start at 2147483647"
+    ]
+  },
+  "means": {
+    "rio-vt":        {"checks_passed": "12 of 12", "tokens": 162682, "tool_uses": 51.0, "minutes": 11.1, "cold_build_s": 82},
+    "libghostty-vt": {"checks_passed": "9 of 12",  "tokens": 222249, "tool_uses": 72.7, "minutes": 11.8, "cold_build_s": 204}
+  }
+}

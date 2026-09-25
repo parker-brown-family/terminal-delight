@@ -1,0 +1,470 @@
+{
+  "updates": [
+    {
+      "id": "alacritty-own-loop",
+      "fields": {
+        "what_it_is": {
+          "value": "Keep alacritty_terminal 0.26 (the terminal-model crate of the Alacritty project, maintained by Christian Duerr and Kirill Chibisov) for parsing and the grid, but stop using its EventLoop: a TD-owned read loop feeds vte's ansi::Processor, pauses at the end of each Kitty APC sequence, and TD code carries out the graphics command with &mut Term in hand. Nothing of the Kitty half exists yet.",
+          "provenance": { "source": "https://github.com/alacritty/alacritty/blob/94e7c8874e526b1e67b349d9ba30ddf81669119e/alacritty_terminal/src/event_loop.rs#L43-L46", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"Handles all the PTY I/O and runs the PTY parser which updates terminal\" — [measured] the doc comment on EventLoop, the piece this option replaces (486 lines, Apache-2.0). Maintainers from the MAINTAINERS section of extra/man/alacritty-escapes.7.scd:275-278 (\"Christian Duerr\", \"Kirill Chibisov\"). Tag v0.17.0 = alacritty_terminal 0.26.0; line numbers checked against the crates.io source."
+        },
+        "license": {
+          "value": "Apache-2.0 — permissive; an MIT product may link it (keep the licence text and NOTICE in TD's third-party licences)",
+          "provenance": { "source": "measured 2026-09-25: curl -s https://crates.io/api/v1/crates/alacritty_terminal | jq -r '.versions[] | \"\\(.num) \\(.created_at) \\(.license) yanked=\\(.yanked) rust=\\(.rust_version)\"'", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"0.26.0 2026-04-06T19:22:47.024755Z Apache-2.0 yanked=false rust=1.85.0\" — [measured] every published version carries Apache-2.0; `gh api repos/alacritty/alacritty --jq .license.spdx_id` also answered \"Apache-2.0\"."
+        },
+        "language": {
+          "value": "Rust (edition 2024, rust-version 1.85.0)",
+          "provenance": { "source": "measured 2026-09-25: gh api repos/alacritty/alacritty --jq .language", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"Rust\" — [measured] edition and MSRV from the published Cargo.toml:13-14 (`edition = \"2024\"`, `rust-version = \"1.85.0\"`)."
+        },
+        "integration_path": {
+          "value": "crates.io crate, unforked — alacritty_terminal = \"0.26\" exactly as TD depends on it today; TD stops calling event_loop::EventLoop and drives vte::ansi::Processor::advance (re-exported as alacritty_terminal::vte) from its own loop.",
+          "provenance": { "source": "/home/parker/Work/td-terminal-core/app/Cargo.toml:19 (branch research/terminal-core @426f072)", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"alacritty_terminal = \\\"0.26\\\"\" — [measured] TD's current dependency line; nothing in this option changes it. `pub use vte;` in alacritty_terminal/src/lib.rs makes the Processor reachable without a second vte dependency."
+        },
+        "build_requirements": {
+          "value": "cargo only — stable Rust >= 1.85; no build script; dependencies are pure Rust (libc, rustix, rustix-openpty, polling, signal-hook, parking_lot, vte)",
+          "provenance": { "source": "crates.io alacritty_terminal-0.26.0 Cargo.toml:21 (registry copy ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/alacritty_terminal-0.26.0/Cargo.toml)", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"build = false\" — [measured] no build.rs in the published crate; the dependency list in the same file has no -sys crate or C source."
+        },
+        "latest_release": {
+          "value": "0.26.0, published 2026-04-06",
+          "provenance": { "source": "measured 2026-09-25: curl -s https://crates.io/api/v1/crates/alacritty_terminal | jq -r '.versions[] | \"\\(.num) \\(.created_at) \\(.license) yanked=\\(.yanked) rust=\\(.rust_version)\"'", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"0.26.0 2026-04-06T19:22:47.024755Z Apache-2.0 yanked=false rust=1.85.0\" — [measured] also max_version \"0.26.0\" in the crate record."
+        },
+        "first_release": {
+          "value": "0.10.0, published 2020-07-31 (first alacritty_terminal version on crates.io)",
+          "provenance": { "source": "measured 2026-09-25: curl -s https://crates.io/api/v1/crates/alacritty_terminal | jq -r '.versions[] | \"\\(.num) \\(.created_at) \\(.license) yanked=\\(.yanked) rust=\\(.rust_version)\"'", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"0.10.0 2020-07-31T23:36:59.805353Z Apache-2.0 yanked=false rust=null\" — [measured] oldest entry; the crate's created_at is the same instant."
+        },
+        "releases_last_12mo": {
+          "value": "3 versions between 2025-09-25 and 2026-09-25: 0.25.1 (2025-10-18), 0.26.0-rc1 (2026-03-21), 0.26.0 (2026-04-06) — 2 stable releases and 1 release candidate",
+          "provenance": { "source": "measured 2026-09-25: curl -s https://crates.io/api/v1/crates/alacritty_terminal | jq -r '.versions[] | \"\\(.num) \\(.created_at) \\(.license) yanked=\\(.yanked) rust=\\(.rust_version)\"'", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"0.26.0 2026-04-06T19:22:47.024755Z Apache-2.0 yanked=false rust=1.85.0\n0.26.0-rc1 2026-03-21T01:52:54.213145Z Apache-2.0 yanked=false rust=1.85.0\n0.25.1 2025-10-18T02:36:59.127889Z Apache-2.0 yanked=false rust=1.85.0\" — [measured] the next entry, 0.25.1-rc1, is dated 2025-08-29 and falls outside the window."
+        },
+        "api_stability": {
+          "value": "Pre-1.0 (0.x) with breaking changes in minor releases, marked in bold in the crate changelog: 0.26.0 changed ChildEvent::Exited and Event::ChildExit to carry ExitStatus; 0.25.0 replaced Options::hold with Options::drain_on_exit. No stability promise beyond that. TD also depends on two pub(crate) poll-token values copied by hand (socketpty.rs:40-50), which only this option removes.",
+          "provenance": { "source": "https://github.com/alacritty/alacritty/blob/94e7c8874e526b1e67b349d9ba30ddf81669119e/alacritty_terminal/CHANGELOG.md#L20", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"- **`ChildEvent::Exited` and `Event::ChildExit` now contain `ExitStatus` instead of `i32`**\" — [measured] the changelog's own convention (line 7): \"**Breaking changes are written in bold style.**\""
+        },
+        "maintainers": {
+          "value": "2 contributors with >= 10% of the 41 commits to alacritty/alacritty in the 12 months to 2026-09-25: chrisduerr 14 (34%), kchibisov 6 (15%); lead maintainer Christian Duerr (chrisduerr), co-maintainer Kirill Chibisov. Only 8 of the 41 touched alacritty_terminal/.",
+          "provenance": { "source": "measured 2026-09-25: gh api --paginate \"repos/alacritty/alacritty/commits?since=2025-09-25T00:00:00Z&until=2026-09-25T00:00:00Z&per_page=100\" --jq '.[] | \"\\(.sha[0:8]) \\(.commit.author.date) \\(.author.login // \"none\") \\(.commit.author.name)\"' > alacritty_commits_12mo.txt; wc -l alacritty_commits_12mo.txt; awk '{print $3}' alacritty_commits_12mo.txt | sort | uniq -c | sort -rn", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"41 alacritty_commits_12mo.txt\n     14 chrisduerr\n      6 kchibisov\n      2 dfoxfranke\" — [measured] the remaining 19 authors have 1 commit each. Path-scoped count (`commits?path=alacritty_terminal&since=2025-09-25`) gave 8 commits: dfoxfranke 2, chrisduerr 2, four others 1 each."
+        },
+        "adoption": {
+          "value": "1,674,111 all-time and 958,131 recent (90-day) downloads on crates.io; 65 reverse dependencies, including alacritty 0.17.0, iced_term, egui_term, gpui-terminal, luminol-term and termsnap. Zed embeds it through its own alacritty fork; TD itself embeds it.",
+          "provenance": { "source": "measured 2026-09-25: curl -s https://crates.io/api/v1/crates/alacritty_terminal | jq '.crate | {name, max_version, downloads, recent_downloads}'; curl -s 'https://crates.io/api/v1/crates/alacritty_terminal/reverse_dependencies?per_page=100' | jq '.meta'", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"\\\"downloads\\\": 1674111,\n  \\\"recent_downloads\\\": 958131,\" — [measured] reverse-dependency meta answered `\"total\": 65`. Zed: \"Zed uses Alacritty and does not modify it in any way, esp. related to graphics\" (https://github.com/zed-industries/zed/issues/20860#issuecomment-2485529925)."
+        },
+        "kitty_graphics": {
+          "value": "none today. vte 0.15 (under alacritty_terminal 0.26) sends ESC _ (APC), ESC ^ (PM) and ESC X (SOS) into State::SosPmApcString, whose bytes go to anywhere(), which reacts only to CAN, SUB and ESC; the Perform trait has no APC method, so every Kitty graphics command is discarded before alacritty sees it. Under this option TD would write the whole protocol itself in its read loop — not started.",
+          "provenance": { "source": "https://github.com/alacritty/vte/blob/3b3da71c34cc1256c7e20981cf03f8eb95e08ffc/src/lib.rs#L182", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"State::SosPmApcString => self.anywhere(performer, byte),\" — [measured] entry to the state at lib.rs:359 (0x58) and :377 (0x5E..=0x5F); anywhere() at :438-450 matches only 0x18 | 0x1A and 0x1B, `_ => ()`; trait Perform at :761 has print/execute/hook/put/unhook/osc_dispatch/csi_dispatch/esc_dispatch only. Same lines in the crates.io vte-0.15.0 source."
+        },
+        "kitty_tags": {
+          "value": "none",
+          "note": "[inferred] Nothing is implemented: vte drops APC (lib.rs:182). The plan this option stands for — TD-written, not built — is transmit-direct, format-png, format-raw, compression, place-virtual (client-printed U+10EEEE placeholders pass through alacritty's grid untouched), delete-by-id and query-reply first, then place-direct by converting a cursor placement into TD-internal placeholder cells. None of it exists, so no tag is claimed. unknown: none."
+        },
+        "sixel": {
+          "value": "no — vte delivers DCS to Perform::hook/put/unhook, but alacritty's ansi Processor only logs and drops it, and alacritty's escape list has no DCS q row (its only DCS row, `DCS = s`, is Rejected)",
+          "provenance": { "source": "https://github.com/alacritty/vte/blob/3b3da71c34cc1256c7e20981cf03f8eb95e08ffc/src/ansi.rs#L1311-L1326", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"[unhandled hook] params={:?}, ints: {:?}, ignore: {:?}, action: {:?}\" — [measured] the body of the Processor's hook(); put() and unhook() are the same debug-and-drop. DA1 answers `\\x1b[?6c` (term/mod.rs:1261), which does not advertise Sixel."
+        },
+        "iterm2_images": {
+          "value": "no — OSC 1337 has no arm in vte's osc_dispatch (handled: 0/2, 4, 8, 10-12, 50, 52, 104, 110-112) and falls to the unhandled debug path; alacritty's escape list has no OSC 1337 row",
+          "provenance": { "source": "https://github.com/alacritty/vte/blob/3b3da71c34cc1256c7e20981cf03f8eb95e08ffc/src/ansi.rs#L1341", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"debug!(\\\"[unhandled osc_dispatch]: [{}] at line {}\\\", &buf, line!());\" — [measured] `grep -n 1337 vte-0.15.0/src/ansi.rs` finds nothing."
+        },
+        "picture_anchoring": {
+          "value": "n/a today — a Cell carries c, fg, bg, flags and an optional CellExtra (zero-width chars, underline colour, hyperlink), with no picture field, and alacritty offers no tracked pin or scroll counter. Planned under this option: TD writes TD-internal Kitty placeholder cells (U+10EEEE plus diacritics) so a picture scrolls, enters scrollback, reflows and is snapshotted as text; the image-byte quota would be TD's own.",
+          "provenance": { "source": "https://github.com/alacritty/alacritty/blob/94e7c8874e526b1e67b349d9ba30ddf81669119e/alacritty_terminal/src/term/cell.rs#L134-L140", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"pub c: char,\n    pub fg: Color,\n    pub bg: Color,\n    pub flags: Flags,\n    pub extra: Option<Arc<CellExtra>>,\" — [measured] CellExtra at cell.rs:125-129 holds zerowidth, underline_color, hyperlink. The placeholder plan is [inferred]."
+        },
+        "vt_conformance": {
+          "value": "Stated coverage only: the alacritty-escapes(7) manpage (moved from docs/escape_support.md on 2026-02-25, commit e1779cbc) lists every ESC/CSI/OSC/DCS sequence as Implemented, Partial or Rejected. No vttest or esctest score is published; alacritty_terminal's test suite replays 45 recorded reference sessions, 6 of them vttest screens (vttest_cursor_movement_1, vttest_insert, vttest_origin_mode_1/2, vttest_scroll, vttest_tab_clear_set).",
+          "provenance": { "source": "https://github.com/alacritty/alacritty/blob/94e7c8874e526b1e67b349d9ba30ddf81669119e/extra/man/alacritty-escapes.7.scd#L5", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"This list includes all escape sequences Alacritty currently supports.\" — [measured] docs/escape_support.md no longer exists on master; `gh api 'repos/alacritty/alacritty/commits?path=docs/escape_support.md'` shows \"e1779cbc 2026-02-25 Move escape sequence docs to manpage\". vttest ref tests at alacritty_terminal/tests/ref.rs:64-69 (checkout 985394d)."
+        },
+        "vt_features": {
+          "value": "kitty-keyboard: yes (protocol state) — CSI ? u, = u, < u, > u Implemented and TermMode::KITTY_KEYBOARD_PROTOCOL; the key encoder lives in the alacritty app (alacritty/src/input/keyboard.rs), so an embedder encodes keys itself\nosc8-hyperlinks: yes — OSC 8 Implemented; stored per cell in CellExtra.hyperlink\nsync-output-2026: yes — mode 2026 in the CSI ? h list; vte buffers up to 2 MiB or 150 ms of an update (ansi.rs:36-39)\nosc52-clipboard: yes — OSC 52 \"Only clipboard and primary selection supported\", surfaced as Event::ClipboardStore / ClipboardLoad for the embedder to perform\ngrapheme-clusters: no — Term::input takes a width per char (unicode-width) and appends zero-width chars to the previous cell (term/mod.rs:1062-1083); issue #3975 \"Support For Emoji Modifiers\" open since 2020\nreflow-on-resize: yes — grid/resize.rs \"Grid resize and reflow.\"; primary screen only (term/mod.rs:677 `self.grid.resize(!is_alt, …)`)\nalt-screen: yes for 1049; 47/1047/1048 are unrecognised (TD test legacy_1047_alt_screen_is_unknown_in_this_version, term.rs:1296)\nbracketed-paste: yes — 2004 in the CSI ? h list; TermMode::BRACKETED_PASTE\nmouse-sgr: yes — 1006 in the CSI ? h list; TermMode::SGR_MOUSE",
+          "provenance": { "source": "https://github.com/alacritty/alacritty/blob/94e7c8874e526b1e67b349d9ba30ddf81669119e/extra/man/alacritty-escapes.7.scd#L125-L127", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \":[ Modes: *1*, *3*, *6*, *7*, *12*, *25*, *1000*, *1002*, *1004*, *1005*, *1006*, *1007*, *1042*, *1049*, *2004*, *2026*\" — [measured] the CSI ? h row carries alt-screen, bracketed-paste, mouse-sgr and sync; OSC 8 / OSC 52 rows at :227-229 and :242-244; kitty-keyboard from term/mod.rs:81; grapheme from https://github.com/alacritty/alacritty/issues/3975; reflow from grid/resize.rs:1."
+        },
+        "performance_evidence": {
+          "value": "No alacritty_terminal-only throughput figure is published; the project measures the whole terminal with vtebench. A vtebench run of alacritty master posted in vte PR #115 (2024-08-05, machine not named) gave dense_cells 15.47 ms average per 1 MiB sample. Memory: a unit test pins size_of::<Cell>() <= 24 bytes, with rare attributes moved into a shared CellExtra.",
+          "provenance": { "source": "https://github.com/alacritty/vte/pull/115#issuecomment-2268784525", "confidence": "medium", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"dense_cells (625 samples @ 1 MiB):\n    15.47ms avg (90% < 16ms) +-1.93ms\" — [measured] a contributor's run, hardware unstated, so medium. Cell size: `const EXPECTED_CELL_SIZE: usize = 24;` with `assert!(mem::size_of::<Cell>() <= EXPECTED_CELL_SIZE);` (term/cell.rs:303-306)."
+        },
+        "grid_api": {
+          "value": "Term::grid() -> &Grid<Cell> (grid_mut() for writes), indexed as grid[Line(i)][Column(j)] or walked with renderable_content().display_iter; a Cell has pub c: char, fg and bg: Color, flags: Flags (INVERSE, BOLD, ITALIC, UNDERLINE / DOUBLE_UNDERLINE / UNDERCURL / DOTTED / DASHED, WRAPLINE, WIDE_CHAR, WIDE_CHAR_SPACER, LEADING_WIDE_CHAR_SPACER, DIM, HIDDEN, STRIKEOUT) and extra: Option<Arc<CellExtra>> exposed through zerowidth(), underline_color() and the hyperlink; the cursor through RenderableContent.cursor or grid().cursor.point; modes through Term::mode() -> &TermMode.",
+          "provenance": { "source": "https://github.com/alacritty/alacritty/blob/94e7c8874e526b1e67b349d9ba30ddf81669119e/alacritty_terminal/src/term/cell.rs#L134-L140", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"pub c: char,\n    pub fg: Color,\n    pub bg: Color,\n    pub flags: Flags,\n    pub extra: Option<Arc<CellExtra>>,\" — [measured] grid() at term/mod.rs:645 (`pub fn grid(&self) -> &Grid<Cell> {`), grid_mut() :650, renderable_content() :637, RenderableContent :2393-2400, Flags at cell.rs:15-36. This is the API TD's pane.rs already reads."
+        },
+        "damage_tracking": {
+          "value": "yes — Term::damage() returns TermDamage::Full or TermDamage::Partial, an iterator of LineDamageBounds { line, left, right } for viewport rows changed since the last reset_damage(); selection and the vi cursor are excluded, and scrolling with a display offset reports Full",
+          "provenance": { "source": "https://github.com/alacritty/alacritty/blob/94e7c8874e526b1e67b349d9ba30ddf81669119e/alacritty_terminal/src/term/mod.rs#L176-L185", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"/// Terminal damage information collected since the last [`Term::reset_damage`] call.\" — [measured] damage() at :458, reset_damage() at :489, LineDamageBounds at :137-146."
+        },
+        "state_snapshot": {
+          "value": "partial — Grid<T> (cells, scrollback, cursor) derives Serialize/Deserialize under the default `serde` feature, but Term — modes, cursor style, colours, tab stops, keyboard-mode and title stacks — and the parser state have no serialize or replay API. TD already wrote its own: gridwire.rs re-encodes the grid as VT bytes and both sides compare grid_hash.",
+          "provenance": { "source": "https://github.com/alacritty/alacritty/blob/94e7c8874e526b1e67b349d9ba30ddf81669119e/alacritty_terminal/src/grid/mod.rs#L108-L110", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"#[cfg_attr(feature = \\\"serde\\\", derive(Serialize, Deserialize))]\npub struct Grid<T> {\" — [measured] `pub struct Term<T> {` at term/mod.rs:268 has no such derive. Under this option a snapshot must also re-send images still referenced by placeholder cells — [inferred]."
+        },
+        "threading_and_loop": {
+          "value": "By default the library owns the loop: EventLoop::spawn starts a \"PTY reader\" thread that owns the PTY, takes a lease plus an unfair lock on Arc<FairMutex<Term>> and calls Processor::advance on up to 1 MiB at a time. It includes a PTY layer (tty::Pty over rustix-openpty; ConPTY on Windows). Under this option the embedder owns the loop: Term is a plain struct with no internal locking, Processor::advance(&mut term, bytes) is public, and TD must flush a pending synchronized update (Processor::stop_sync / sync_bytes_count, both public) before acting on a graphics command.",
+          "provenance": { "source": "https://github.com/alacritty/alacritty/blob/94e7c8874e526b1e67b349d9ba30ddf81669119e/alacritty_terminal/src/event_loop.rs#L154", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"state.parser.advance(&mut **terminal, &buf[..unprocessed]);\" — [measured] thread name at event_loop.rs:206, lease at :117 and unfair lock at :140-142, READ_BUFFER_SIZE 0x10_0000 at :24; stop_sync / sync_bytes_count at vte ansi.rs:315,362."
+        },
+        "reply_channel": {
+          "value": "Replies are events, not writes: Term calls EventListener::send_event(Event::PtyWrite(String)) for DA, DSR and mode reports, and TextAreaSizeRequest / ColorRequest / ClipboardLoad carry formatter closures. Nothing in the library writes them to the PTY; the embedder does, which is how TD answers exactly once in the host (host.rs:744) while the window replica swallows PtyWrite and TextAreaSizeRequest (term.rs:95-101). Kitty a=q replies would be written by TD's own loop, since vte never sees the query.",
+          "provenance": { "source": "https://github.com/alacritty/alacritty/blob/94e7c8874e526b1e67b349d9ba30ddf81669119e/alacritty_terminal/src/event.rs#L39-L40", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"/// Write some text to the PTY.\n    PtyWrite(String),\" — [measured] DA1 path at term/mod.rs:1261-1262; EventListener::send_event at event.rs:103-104."
+        },
+        "td_migration": {
+          "value": "host.rs: replace EventLoop::new(…).spawn() (host.rs:726-729) with a TD reader per pane that splits the stream at Kitty APC terminators, advances the Processor for the bytes before each, then handles the command with &mut Term; re-prove the attach fence (host.rs:18-29), which today relies on alacritty's lease discipline; the TeeReader (host.rs:134-180) becomes a step inside TD's loop. socketpty.rs: shrinks to a socket read in TD's loop, and the two hand-copied pub(crate) poll tokens (:40-50) go away. term.rs: window-owned panes move from EventLoop/Notifier to the same loop; the PtyWrite bounce and the replica's reply filter stay. gridwire.rs: grid encoding and grid_hash unchanged; add re-sending referenced images on attach. pane.rs: the 51 grid reads stay; the renderer learns to draw U+10EEEE cells from an image store. main.rs, pane/bench.rs: no change (they only use WindowSize, tty::setup_env, TermMode). No fork.",
+          "note": "[inferred] from TD's files on research/terminal-core @426f072 and alacritty_terminal 0.26's public API (grid_mut, Handler for Term, Processor::advance/stop_sync all public). Effort L. host.rs already answers CSI 16 t from the tee (host.rs:747-749), so a scanner seat exists."
+        },
+        "biggest_risk": {
+          "value": "Owning the loop means re-proving, against code TD now owns, the one hard invariant of the host/window split — every byte lands on exactly one side of an attach snapshot — while a stream splitter that disagrees with vte about where a string ends (CAN/SUB, ESC inside OSC, buffered synchronized updates) corrupts panes without failing loudly.",
+          "note": "[inferred] the attach fence is documented as \"the only hard part\" in host.rs:12-29 and is written against alacritty's EventLoop."
+        },
+        "primary_sources": {
+          "value": "https://crates.io/api/v1/crates/alacritty_terminal https://crates.io/api/v1/crates/alacritty_terminal/reverse_dependencies https://api.github.com/repos/alacritty/alacritty/commits?since=2025-09-25T00:00:00Z https://github.com/alacritty/alacritty/blob/94e7c8874e526b1e67b349d9ba30ddf81669119e/extra/man/alacritty-escapes.7.scd https://github.com/alacritty/alacritty/blob/94e7c8874e526b1e67b349d9ba30ddf81669119e/alacritty_terminal/src/term/mod.rs https://github.com/alacritty/alacritty/blob/94e7c8874e526b1e67b349d9ba30ddf81669119e/alacritty_terminal/src/term/cell.rs https://github.com/alacritty/alacritty/blob/94e7c8874e526b1e67b349d9ba30ddf81669119e/alacritty_terminal/src/event.rs https://github.com/alacritty/alacritty/blob/94e7c8874e526b1e67b349d9ba30ddf81669119e/alacritty_terminal/src/event_loop.rs https://github.com/alacritty/alacritty/blob/94e7c8874e526b1e67b349d9ba30ddf81669119e/alacritty_terminal/src/grid/mod.rs https://github.com/alacritty/alacritty/blob/94e7c8874e526b1e67b349d9ba30ddf81669119e/alacritty_terminal/src/grid/resize.rs https://github.com/alacritty/alacritty/blob/94e7c8874e526b1e67b349d9ba30ddf81669119e/alacritty_terminal/CHANGELOG.md https://github.com/alacritty/vte/blob/3b3da71c34cc1256c7e20981cf03f8eb95e08ffc/src/lib.rs https://github.com/alacritty/vte/blob/3b3da71c34cc1256c7e20981cf03f8eb95e08ffc/src/ansi.rs https://github.com/alacritty/alacritty/issues/3975 https://github.com/alacritty/vte/pull/115#issuecomment-2268784525 https://github.com/zed-industries/zed/issues/20860 synthesis:file:///tmp/claude-1000/-home-parker-Work-terminal-delight/2aae45b7-7163-4590-8990-5cc58ef8f92f/scratchpad/graphics-protocols.md",
+          "provenance": { "source": "https://github.com/alacritty/alacritty/tree/v0.17.0", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"version = \\\"0.26.0\\\"\" — [measured] alacritty_terminal/Cargo.toml at tag v0.17.0 (94e7c887), confirming the tag's source is the 0.26.0 crate the permalinks cite; local reads were of ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/{alacritty_terminal-0.26.0,vte-0.15.0} and checkout 985394d, with line numbers re-checked against the tag."
+        }
+      },
+      "insights": []
+    },
+    {
+      "id": "alacritty-patched-vte",
+      "fields": {
+        "what_it_is": {
+          "value": "alacritty_terminal with its vte swapped (via [patch.crates-io]) for a vte fork that adds apc_start/apc_put/apc_end callbacks — the shape of vte PR #115 by boazy, closed unmerged on 2026-07-12 — plus a patched Term (or a TD Handler wrapper) that acts on them. The patches would be TD's to maintain on top of alacritty/vte, whose lead is Christian Duerr.",
+          "provenance": { "source": "measured 2026-09-25: gh api repos/alacritty/vte/issues/115 --jq '\"#\\(.number) \\(.state) created=\\(.created_at[0:10]) closed=\\(.closed_at[0:10] // \"-\") by=\\(.user.login) pr=\\(.pull_request != null) \\(.title)\"'", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"#115 closed created=2024-08-04 closed=2026-07-12 by=boazy pr=true Add support for custom parsing of APC, SOS and PM sequences.\" — [measured] `gh api repos/alacritty/vte/pulls/115 --jq .merged` → false. Closing comment by chrisduerr: \"Closing due to inactivity.\""
+        },
+        "license": {
+          "value": "Apache-2.0 OR MIT (vte and the PR #115 fork boazy/vte) together with Apache-2.0 (alacritty_terminal) — an MIT product may link both",
+          "provenance": { "source": "https://raw.githubusercontent.com/boazy/vte/37413f013a27db77598772825e0d3a3b030fc9ac/Cargo.toml", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"license = \\\"Apache-2.0 OR MIT\\\"\" — [measured] same field on every vte version on crates.io (`0.15.0 2025-02-02T16:23:10.564882Z Apache-2.0 OR MIT by=chrisduerr`); alacritty_terminal is Apache-2.0 (crates.io)."
+        },
+        "language": {
+          "value": "Rust",
+          "provenance": { "source": "measured 2026-09-25: gh api repos/alacritty/vte --jq .language", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"Rust\" — [measured] alacritty/alacritty answers the same."
+        },
+        "integration_path": {
+          "value": "fork + [patch]: [patch.crates-io] vte = { git = <a vte 0.15.0 fork with APC callbacks> }, which alacritty_terminal's `vte = \"0.15.0\"` requirement then resolves to — boazy/vte@37413f0 declares version 0.15.0 — and alacritty_terminal = { git = <TD fork> } whose Term implements the new callbacks. PR #115 changes one file (src/lib.rs) and adds the callbacks only to the low-level Perform trait; forwarding them through vte's ansi Processor to ansi::Handler, which alacritty_terminal uses, is further TD work.",
+          "provenance": { "source": "measured 2026-09-25: gh api repos/alacritty/vte/pulls/115 --jq '\"\\(.head.repo.full_name // \"deleted\"):\\(.head.ref) +\\(.additions) -\\(.deletions) files=\\(.changed_files) commits=\\(.commits)\"'", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"boazy/vte:parserless-apc-support +287 -5 files=1 commits=5\" — [measured] `gh api repos/alacritty/vte/pulls/115/files` lists only src/lib.rs; boazy/vte Cargo.toml at 37413f0 has `version = \"0.15.0\"`. The no-Term-fork alternative (a TD Handler wrapper) is [inferred]."
+        },
+        "build_requirements": {
+          "value": "cargo only — pure Rust, no build script; git access at build time for the forks unless vendored",
+          "provenance": { "source": "crates.io vte-0.15.0 Cargo.toml:21 (registry copy ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/vte-0.15.0/Cargo.toml)", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"build = false\" — [measured] alacritty_terminal-0.26.0/Cargo.toml:21 reads the same; the git-fetch requirement follows from [patch] with git sources — [inferred]."
+        },
+        "latest_release": {
+          "value": "No patched release exists. Base: vte 0.15.0 (2025-02-02) + alacritty_terminal 0.26.0 (2026-04-06). Patch: PR #115 head boazy/vte@37413f0 (2025-03-12), rebased onto vte's v0.15.0 commit 3b3da71c.",
+          "provenance": { "source": "measured 2026-09-25: gh api repos/alacritty/vte/pulls/115 --jq '.head.sha, .base.sha, .base.ref'", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"37413f013a27db77598772825e0d3a3b030fc9ac\n3b3da71c34cc1256c7e20981cf03f8eb95e08ffc\nmaster\" — [measured] 3b3da71c is tag v0.15.0 (`gh api repos/alacritty/vte/tags`); head commit dated 2025-03-12T04:35:45Z \"Add unit tests for SOS, PM and APC sequences\"."
+        },
+        "first_release": {
+          "value": "none — the APC-capable vte was never merged or released; it exists only as unmerged branches (boazy/vte parserless-apc-support, 2025-03-12; warpdotdev/vte copied-apc-support-0.15.0, 2025-03-21). The nearest published relatives are not drop-ins: copa (Rio's vte fork with APC callbacks, first published 2023-09-09) has no ansi module, and vte-graphics (first published 2024-06-03) has DCS but no APC.",
+          "provenance": { "source": "measured 2026-09-25: gh api repos/alacritty/vte/pulls/115 --jq '\"merged=\\(.merged) merged_at=\\(.merged_at)\"'", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"merged=false merged_at=null\" — [measured] copa: `0.12.0 2023-09-09 Apache-2.0 OR MIT by=raphamorim` (crates.io); copa-0.4.2/src has definitions.rs, lib.rs, params.rs, table.rs and no ansi.rs; vte-graphics `0.13.0 2024-06-03`."
+        },
+        "releases_last_12mo": {
+          "value": "0 — vte has published nothing since 0.15.0 (2025-02-02); the patch branches have no releases",
+          "provenance": { "source": "measured 2026-09-25: curl -s https://crates.io/api/v1/crates/vte | jq -r '.versions[] | \"\\(.num) \\(.created_at) \\(.license) by=\\(.published_by.login // \"?\")\"'", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"0.15.0 2025-02-02T16:23:10.564882Z Apache-2.0 OR MIT by=chrisduerr\" — [measured] the newest version; alacritty_terminal itself had 3 versions in the window (see alacritty-own-loop)."
+        },
+        "api_stability": {
+          "value": "vte is pre-1.0 and its maintainer has warned that a vte rewrite could invalidate the APC work; the patch itself only adds default-bodied methods to Perform, so it is additive for other Perform implementors",
+          "provenance": { "source": "https://github.com/alacritty/vte/pull/115#issuecomment-2365346007", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"I'm slightly concerned because the longer we wait, the higher the chance that a vte rewrite will make all your work worthless.\" — [measured] chrisduerr, 2024-09-21. Default bodies (`fn apc_put(&mut self, _byte: u8) {}`) from the PR diff (`gh api repos/alacritty/vte/pulls/115/files`)."
+        },
+        "maintainers": {
+          "value": "vte upstream: 3 commits in the 12 months to 2026-09-25 (weiznich 2, dsal3389 1) — each over 10% of a trivial total — and no release; lead maintainer Christian Duerr (chrisduerr), who published 0.13.1 through 0.15.0. The APC patch and the Term patch would be carried by TD alone.",
+          "provenance": { "source": "measured 2026-09-25: gh api --paginate \"repos/alacritty/vte/commits?since=2025-09-25T00:00:00Z&per_page=100\" --jq '.[] | \"\\(.sha[0:8]) \\(.commit.author.date) \\(.author.login // \"none\") \\(.commit.message|split(\"\\n\")[0])\"'", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"abeae765 2026-02-28T13:19:10Z dsal3389 Add rustdoc attribute to ansi module\n56c708f7 2025-10-01T06:58:23Z weiznich Exclude test data from being published to crates.io\nc94b6e30 2025-10-01T13:22:22Z weiznich Fix nightly feature usage\" — [measured] publishers from the crates.io versions list (by=chrisduerr for 0.13.1–0.15.0)."
+        },
+        "adoption": {
+          "value": "vte: 77,309,603 all-time downloads. The APC patch has one known carrier in the vte lineage — Warp's fork (warpdotdev/vte, branch copied-apc-support-0.15.0, a direct copy of PR #115) — and a sibling in Rio's copa parser (68,852 downloads). vte-graphics (6,775 downloads, 0 reverse dependencies) is DCS-only.",
+          "provenance": { "source": "https://github.com/alacritty/vte/pull/135", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"Direct copy of [this PR](https://github.com/alacritty/vte/pull/115)\" — [measured] PR #135's body, opened from warpdotdev/vte:copied-apc-support-0.15.0 and closed the same day; the branch still exists at d94bf79e (\"Copied APC support logic v0.15.0\", 2025-03-21). Download counts from the crates.io API for vte, copa and vte-graphics; vte-graphics reverse_dependencies meta `\"total\": 0`."
+        },
+        "kitty_graphics": {
+          "value": "none — unpatched vte 0.15 discards APC; the patch would only deliver APC bytes (apc_start, then apc_put per byte, then apc_end), and the protocol itself (parse, store, place, delete, answer a=q) would be TD-written inside the patched Term. Nothing of it exists.",
+          "provenance": { "source": "https://github.com/alacritty/vte/blob/3b3da71c34cc1256c7e20981cf03f8eb95e08ffc/src/lib.rs#L182", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"State::SosPmApcString => self.anywhere(performer, byte),\" — [measured] PR #115's diff adds `fn apc_start(&mut self) {}`, `fn apc_put(&mut self, _byte: u8) {}`, `fn apc_end(&mut self) {}` to Perform and nothing Kitty-specific."
+        },
+        "kitty_tags": {
+          "value": "none",
+          "note": "[inferred] Nothing is implemented; the vte patch is transport only. What this option would let TD build — in stream order with the real cursor — is the full set incl. place-direct and z-layers, but none of it is written. unknown: none."
+        },
+        "sixel": {
+          "value": "no — vte already hands DCS to Perform::hook/put/unhook, but alacritty's ansi Processor logs and drops it; a TD patch could forward DCS the way vte-graphics 0.15.0 does (dcs_hook/dcs_put/dcs_unhook on Handler, ansi.rs:734-750), but that is further work",
+          "provenance": { "source": "https://github.com/alacritty/vte/blob/3b3da71c34cc1256c7e20981cf03f8eb95e08ffc/src/ansi.rs#L1311-L1326", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"[unhandled hook] params={:?}, ints: {:?}, ignore: {:?}, action: {:?}\" — [measured] vte-graphics lines from https://github.com/ayosec/vte-graphics/blob/22c7c29c0303398baa71db8798473ee704f9717c/src/ansi.rs#L734-L750."
+        },
+        "iterm2_images": {
+          "value": "no — OSC 1337 falls to vte's unhandled-OSC debug path; the APC patch does not touch OSC",
+          "provenance": { "source": "https://github.com/alacritty/vte/blob/3b3da71c34cc1256c7e20981cf03f8eb95e08ffc/src/ansi.rs#L1341", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"debug!(\\\"[unhandled osc_dispatch]: [{}] at line {}\\\", &buf, line!());\" — [measured] no `1337` in vte-0.15.0/src/ansi.rs; PR #115's single-file diff is in src/lib.rs."
+        },
+        "picture_anchoring": {
+          "value": "n/a — nothing places pictures yet, and alacritty's Cell has no picture field. What this option makes possible, unlike the own-loop route, is an anchor inside the patched grid (a picture store keyed to an absolute row counter, which is how Rio did it after forking vte) rather than TD-internal placeholder cells; no quota exists until TD writes one.",
+          "provenance": { "source": "https://github.com/alacritty/alacritty/blob/94e7c8874e526b1e67b349d9ba30ddf81669119e/alacritty_terminal/src/term/cell.rs#L134-L140", "confidence": "medium", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"pub c: char,\n    pub fg: Color,\n    pub bg: Color,\n    pub flags: Flags,\n    pub extra: Option<Arc<CellExtra>>,\" — [measured] no picture field today; the Rio comparison is from the morning synthesis (rio-vt/src/ansi/graphics.rs:367-394), not re-verified here — [inferred]."
+        },
+        "vt_conformance": {
+          "value": "Same as alacritty_terminal 0.26: stated coverage in the alacritty-escapes(7) manpage, no vttest/esctest score, 6 vttest screens among 45 reference replays. The patch adds no conformance evidence; PR #115 carried unit tests for SOS, PM and APC.",
+          "provenance": { "source": "https://github.com/alacritty/alacritty/blob/94e7c8874e526b1e67b349d9ba30ddf81669119e/extra/man/alacritty-escapes.7.scd#L5", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"This list includes all escape sequences Alacritty currently supports.\" — [measured] PR #115 head commit message \"Add unit tests for SOS, PM and APC sequences\"."
+        },
+        "vt_features": {
+          "value": "kitty-keyboard: yes (protocol state; key encoding is the embedder's) — CSI ? u family Implemented\nosc8-hyperlinks: yes — OSC 8 Implemented\nsync-output-2026: yes — mode 2026 listed; APC arriving inside a synchronized update would be replayed in order with it\nosc52-clipboard: yes — clipboard and primary selection only\ngrapheme-clusters: no — per-char width (alacritty issue #3975 open)\nreflow-on-resize: yes — primary screen\nalt-screen: yes (1049 only)\nbracketed-paste: yes — 2004\nmouse-sgr: yes — 1006",
+          "provenance": { "source": "https://github.com/alacritty/alacritty/blob/94e7c8874e526b1e67b349d9ba30ddf81669119e/extra/man/alacritty-escapes.7.scd#L125-L127", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \":[ Modes: *1*, *3*, *6*, *7*, *12*, *25*, *1000*, *1002*, *1004*, *1005*, *1006*, *1007*, *1042*, *1049*, *2004*, *2026*\" — [measured] unchanged by the patch; per-feature citations as in alacritty-own-loop. The sync-replay remark is [inferred] from vte's sync buffer (ansi.rs:36-39)."
+        },
+        "performance_evidence": {
+          "value": "The alacritty maintainers benchmarked PR #115's parser change through a throwaway alacritty PR (#8507) and found no measurable difference; an earlier APC attempt (PR #110) posted vtebench within noise of master. No numbers name a machine.",
+          "provenance": { "source": "https://github.com/alacritty/vte/pull/115#issuecomment-2715300645", "confidence": "medium", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"The perf looks pretty much the same https://github.com/alacritty/alacritty/pull/8507\" — [measured] kchibisov, 2025-03-11; PR #110 table: \"*TL;DR About the same in both master and the patch*\" (https://github.com/alacritty/vte/pull/110#issuecomment-1986813343)."
+        },
+        "grid_api": {
+          "value": "Same as alacritty_terminal 0.26 — Term::grid() -> &Grid<Cell>, Cell { c, fg, bg, flags, extra } with zerowidth(), underline_color(), hyperlink; plus whatever picture accessor TD's Term patch adds",
+          "provenance": { "source": "https://github.com/alacritty/alacritty/blob/94e7c8874e526b1e67b349d9ba30ddf81669119e/alacritty_terminal/src/term/cell.rs#L134-L140", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"pub c: char,\n    pub fg: Color,\n    pub bg: Color,\n    pub flags: Flags,\n    pub extra: Option<Arc<CellExtra>>,\" — [measured] grid() at term/mod.rs:645."
+        },
+        "damage_tracking": {
+          "value": "yes — Term::damage() / reset_damage(), TermDamage::Full or Partial(LineDamageBounds) per viewport row; unchanged by the patch",
+          "provenance": { "source": "https://github.com/alacritty/alacritty/blob/94e7c8874e526b1e67b349d9ba30ddf81669119e/alacritty_terminal/src/term/mod.rs#L176-L185", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"/// Terminal damage information collected since the last [`Term::reset_damage`] call.\" — [measured] a picture change would need the Term patch to mark rows damaged — [inferred]."
+        },
+        "state_snapshot": {
+          "value": "partial — Grid<T> is serde-serialisable, Term state is not, and there is no replay API; TD's gridwire.rs does its own VT re-encode. A patched Term holding pictures must also expose them so the host can re-send each image to an attaching window.",
+          "provenance": { "source": "https://github.com/alacritty/alacritty/blob/94e7c8874e526b1e67b349d9ba30ddf81669119e/alacritty_terminal/src/grid/mod.rs#L108-L110", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"#[cfg_attr(feature = \\\"serde\\\", derive(Serialize, Deserialize))]\npub struct Grid<T> {\" — [measured] the picture re-send requirement is [inferred] from TD's snapshot design (gridwire.rs:1-34)."
+        },
+        "threading_and_loop": {
+          "value": "Library-owned, unchanged: alacritty's EventLoop keeps the PTY reader thread, the FairMutex lease and Processor::advance, so graphics commands would reach the patched Term in stream order, under the Term lock, with the cursor where the program left it. Includes the PTY layer.",
+          "provenance": { "source": "https://github.com/alacritty/alacritty/blob/94e7c8874e526b1e67b349d9ba30ddf81669119e/alacritty_terminal/src/event_loop.rs#L154", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"state.parser.advance(&mut **terminal, &buf[..unprocessed]);\" — [measured] the call the APC callbacks would run inside; the ordering benefit is [inferred]."
+        },
+        "reply_channel": {
+          "value": "Same event path as upstream: a Kitty a=q answer from the patched Term would go out as Event::PtyWrite, which TD's host already writes exactly once (host.rs:744) and the window replica already swallows (term.rs:95-101), so a=q needs no new channel",
+          "provenance": { "source": "https://github.com/alacritty/alacritty/blob/94e7c8874e526b1e67b349d9ba30ddf81669119e/alacritty_terminal/src/event.rs#L39-L40", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"/// Write some text to the PTY.\n    PtyWrite(String),\" — [measured] the a=q routing is [inferred]."
+        },
+        "td_migration": {
+          "value": "Cargo.toml: add [patch.crates-io] vte = TD's fork (PR #115's Perform callbacks plus forwarding through ansi::Processor to new ansi::Handler methods, which PR #115 does not do) and point alacritty_terminal at a TD fork whose Term holds an image store and implements those methods. host.rs, term.rs, socketpty.rs: unchanged — alacritty's EventLoop still drives parsing, so the attach fence and SocketPty survive. gridwire.rs: the snapshot must re-send images the host's Term holds (Kitty a=t ahead of the rows) and grid_hash must decide whether placements count. pane.rs: the 51 grid reads stay; the renderer reads placements from the patched Term and draws them. main.rs, pane/bench.rs: no change. Ongoing: rebase both forks on every alacritty_terminal release (2 stable in the last 12 months). A no-alacritty-fork variant — a TD Handler wrapper delegating all 71 ansi::Handler methods to Term — needs TD to call Processor::advance itself, which is the own-loop route's host.rs rewrite.",
+          "note": "[inferred] from PR #115's diff scope (src/lib.rs only), vte 0.15's Handler trait (ansi.rs:495-732, 71 methods, counted) and TD's files @426f072. Effort L plus rebase cost."
+        },
+        "biggest_risk": {
+          "value": "TD becomes the permanent maintainer of two forks — a vte whose APC PR upstream closed for inactivity and whose maintainer has floated a rewrite, and an alacritty_terminal whose Term must be re-patched on every release — unless TD finishes PR #115 upstream itself.",
+          "note": "[inferred] upstream was not hostile: the maintainer reviewed PR #115 as \"Honestly seems fine to me. Just some minor nits.\" (2025-03-12) before it lapsed; see bubble."
+        },
+        "primary_sources": {
+          "value": "https://github.com/alacritty/vte/issues/109 https://github.com/alacritty/vte/pull/110 https://github.com/alacritty/vte/pull/115 https://github.com/alacritty/vte/pull/133 https://github.com/alacritty/vte/pull/135 https://github.com/alacritty/alacritty/pull/8507 https://raw.githubusercontent.com/boazy/vte/37413f013a27db77598772825e0d3a3b030fc9ac/Cargo.toml https://github.com/warpdotdev/vte/tree/copied-apc-support-0.15.0 https://crates.io/api/v1/crates/vte https://crates.io/api/v1/crates/vte-graphics https://crates.io/api/v1/crates/copa https://crates.io/api/v1/crates/copa/0.4.2/download https://crates.io/api/v1/crates/vte-graphics/0.15.0/download https://api.github.com/repos/alacritty/vte/commits?since=2025-09-25T00:00:00Z https://github.com/alacritty/vte/blob/3b3da71c34cc1256c7e20981cf03f8eb95e08ffc/src/lib.rs https://github.com/alacritty/vte/blob/3b3da71c34cc1256c7e20981cf03f8eb95e08ffc/src/ansi.rs https://github.com/ayosec/vte-graphics/blob/22c7c29c0303398baa71db8798473ee704f9717c/src/ansi.rs https://github.com/alacritty/alacritty/blob/94e7c8874e526b1e67b349d9ba30ddf81669119e/alacritty_terminal/src/term/cell.rs https://github.com/alacritty/alacritty/blob/94e7c8874e526b1e67b349d9ba30ddf81669119e/alacritty_terminal/src/event_loop.rs https://github.com/alacritty/alacritty/blob/94e7c8874e526b1e67b349d9ba30ddf81669119e/extra/man/alacritty-escapes.7.scd synthesis:file:///tmp/claude-1000/-home-parker-Work-terminal-delight/2aae45b7-7163-4590-8990-5cc58ef8f92f/scratchpad/graphics-protocols.md",
+          "provenance": { "source": "https://github.com/alacritty/vte/pull/115", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"Add support for custom parsing of APC, SOS and PM sequences.\" — [measured] the PR title; every comment on #109, #110 and #115 and the PR #115 diff were read through the GitHub API."
+        }
+      },
+      "insights": []
+    },
+    {
+      "id": "alacritty-graphics-fork",
+      "fields": {
+        "what_it_is": {
+          "value": "ayosec's (Ayose C.) fork of Alacritty, branch `graphics`: the code of alacritty PR #4763 \"Support for graphics in the terminal\" (open since 2021-02-05, 85 commits, +2882/-100 over 33 files). It adds a graphics module and a Sixel decoder to alacritty_terminal, built on vte-graphics (ayosec's vte fork with DCS on Handler), and ships as alacritty releases tagged vX.Y.Z-graphics.",
+          "provenance": { "source": "https://github.com/alacritty/alacritty/pull/4763", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"This patch adds support for graphics in the terminal. Graphics can be sent as Sixel images.\" — [measured] the PR body; state/size from `gh api repos/alacritty/alacritty/pulls/4763` (\"4763 open draft=false created=2021-02-05T00:42:36Z … +2882 -100 files=33 commits=85 head=ayosec/alacritty:graphics@3d658d2e28\"); name from `gh api users/ayosec --jq .name`."
+        },
+        "license": {
+          "value": "Apache-2.0 (fork repo and its alacritty_terminal); vte-graphics is Apache-2.0 OR MIT — an MIT product may link both",
+          "provenance": { "source": "measured 2026-09-25: gh api repos/ayosec/alacritty --jq '{license: .license.spdx_id, pushed_at, created_at, fork, parent: .parent.full_name, default_branch}'", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"{\\\"created_at\\\":\\\"2020-04-24T15:45:34Z\\\",\\\"default_branch\\\":\\\"graphics\\\",\\\"fork\\\":true,\\\"license\\\":\\\"Apache-2.0\\\",\\\"parent\\\":\\\"alacritty/alacritty\\\",\\\"pushed_at\\\":\\\"2026-04-06T20:20:42Z\\\"}\" — [measured] vte-graphics crate: `license = \"Apache-2.0 OR MIT\"` (vte-graphics-0.15.0/Cargo.toml:41)."
+        },
+        "language": {
+          "value": "Rust",
+          "provenance": { "source": "measured 2026-09-25: gh api repos/ayosec/alacritty --jq .language", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"Rust\" — [measured] ayosec/vte-graphics answers the same."
+        },
+        "integration_path": {
+          "value": "git dependency — alacritty_terminal = { git = \"https://github.com/ayosec/alacritty\", tag = \"v0.17.0-graphics\" }. The fork's alacritty_terminal (version 0.26.0 plus the graphics module) is not published on crates.io; it pulls vte-graphics 0.15.0 from crates.io under the name vte, and re-exports it as alacritty_terminal::vte.",
+          "provenance": { "source": "https://raw.githubusercontent.com/ayosec/alacritty/v0.17.0-graphics/alacritty_terminal/Cargo.toml", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"vte = { version = \\\"0.15.0\\\", package = \\\"vte-graphics\\\", default-features = false, features = [\\\"std\\\", \\\"ansi\\\"] }\" — [measured] crates.io searches for \"alacritty_terminal\" and \"alacritty graphics\" list forks by others (blit-, yas-, crow-alacritty-terminal, cutty_terminal) but none from ayosec, whose crates.io account publishes only vte-graphics."
+        },
+        "build_requirements": {
+          "value": "cargo only — pure Rust; over upstream it adds only vte-graphics and smallvec; git access at build time for the fork",
+          "provenance": { "source": "https://raw.githubusercontent.com/ayosec/alacritty/v0.17.0-graphics/alacritty_terminal/Cargo.toml", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"smallvec = { version = \\\"1.13.1\\\", features = [\\\"serde\\\"] }\" — [measured] the one new dependency besides vte-graphics; the rest of the [dependencies] table matches upstream 0.26.0."
+        },
+        "latest_release": {
+          "value": "v0.17.0-graphics, 2026-04-06 (GitHub release; its alacritty_terminal is 0.26.0 + graphics on vte-graphics 0.15.0 of 2025-02-24)",
+          "provenance": { "source": "measured 2026-09-25: gh api --paginate \"repos/ayosec/alacritty/releases?per_page=100\" --jq '.[] | \"\\(.tag_name) \\(.published_at[0:10]) prerelease=\\(.prerelease) assets=\\(.assets|length) \\(.name)\"'", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"v0.17.0-graphics 2026-04-06 prerelease=false assets=15 Version 0.17.0\" — [measured] alacritty_terminal/Cargo.toml at the tag has `version = \"0.26.0\"`; vte-graphics `0.15.0 2025-02-24T22:58:34.166935Z` on crates.io."
+        },
+        "first_release": {
+          "value": "v0.14.0-graphics, 2024-10-24 (first GitHub release of the fork); vte-graphics first reached crates.io on 2024-06-03; the code dates from the PR of 2021-02-05",
+          "provenance": { "source": "measured 2026-09-25: gh api --paginate \"repos/ayosec/alacritty/releases?per_page=100\" --jq '.[] | \"\\(.tag_name) \\(.published_at[0:10]) prerelease=\\(.prerelease) assets=\\(.assets|length) \\(.name)\"'", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"v0.14.0-graphics 2024-10-24 prerelease=false assets=14 Version 0.14.0\" — [measured] 6 releases in total; the only older graphics tag, graphics-with-osc1337-v1 (2021-03-10), has no release."
+        },
+        "releases_last_12mo": {
+          "value": "3 GitHub releases: v0.16.0-graphics (2025-10-18), v0.16.1-graphics (2025-10-25), v0.17.0-graphics (2026-04-06); vte-graphics 0",
+          "provenance": { "source": "measured 2026-09-25: gh api --paginate \"repos/ayosec/alacritty/releases?per_page=100\" --jq '.[] | \"\\(.tag_name) \\(.published_at[0:10]) prerelease=\\(.prerelease) assets=\\(.assets|length) \\(.name)\"'", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"v0.17.0-graphics 2026-04-06 prerelease=false assets=15 Version 0.17.0\nv0.16.1-graphics 2025-10-25 prerelease=false assets=14 Version 0.16.1\nv0.16.0-graphics 2025-10-18 prerelease=false assets=14 Version 0.16.0\" — [measured] each follows the matching upstream alacritty release; vte-graphics' newest version is 2025-02-24."
+        },
+        "api_stability": {
+          "value": "No stated policy. The fork follows upstream release by release — v0.17.0-graphics is 87 commits ahead of alacritty v0.17.0 and 0 behind — and keeps the crate version at 0.26.0 while adding public API (a graphics module, Cell::graphics(), Flags::GRAPHICS, Dimensions::cell_width/cell_height with 0.0 defaults). Pre-1.0 like upstream.",
+          "provenance": { "source": "measured 2026-09-25: gh api \"repos/ayosec/alacritty/compare/alacritty:alacritty:v0.17.0...ayosec:alacritty:v0.17.0-graphics\" --jq '\"ahead=\\(.ahead_by) behind=\\(.behind_by) files=\\(.files|length)\"'", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"ahead=87 behind=0 files=33\" — [measured] alacritty_terminal files in that diff: graphics/mod.rs +666, graphics/sixel.rs +809, term/mod.rs +105 -1, term/cell.rs +34 -1, grid/mod.rs +12, grid/row.rs +6 -2."
+        },
+        "maintainers": {
+          "value": "ayosec alone carries the graphics layer. Of 27 commits on the graphics branch since 2025-09-25, 3 are ayosec's (2 merges of upstream, 1 fix); the rest are upstream commits merged in (chrisduerr 9, kchibisov 6, others 1 each). All 3 vte-graphics versions were published by ayosec. Upstream's lead, Christian Duerr, does not maintain the graphics code.",
+          "provenance": { "source": "measured 2026-09-25: gh api \"repos/ayosec/alacritty/commits?sha=graphics&since=2025-09-25T00:00:00Z&per_page=100\" --jq '.[] | \"\\(.sha[0:8]) \\(.commit.author.date[0:10]) \\(.commit.committer.date[0:10]) \\(.author.login // \"none\") \\(.commit.message|split(\"\\n\")[0])\"'", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"39d94d1f 2025-11-04 2025-11-04 ayosec Remove custom abs_diff function.\nf036a3a2 2025-11-04 2025-11-04 ayosec Merge remote-tracking branch 'vendor/master' into graphics\" — [measured] the third is 3d658d2e (2026-03-15, another upstream merge); `--jq length` → 27. By raw share ayosec is 11%, chrisduerr 33%, kchibisov 22%, but the latter two authored upstream commits, not graphics code."
+        },
+        "adoption": {
+          "value": "223 stars and 18 forks; release-asset downloads 546 (v0.17.0-graphics) and 301 (v0.16.1-graphics); two AUR packages, alacritty-graphics (6 votes) and alacritty-sixel-git (6 votes); vte-graphics has 6,775 downloads and 0 reverse dependencies on crates.io; PR #4763 carries 255 comments.",
+          "provenance": { "source": "measured 2026-09-25: curl -s \"https://aur.archlinux.org/rpc/v5/search/alacritty?by=name\" | jq -r '.results[] | \"\\(.Name) \\(.Version) votes=\\(.NumVotes) pop=\\(.Popularity) url=\\(.URL)\"'", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"alacritty-graphics 0.17.0-1 votes=6 pop=1.032722 url=https://github.com/ayosec/alacritty\" — [measured] also `alacritty-sixel-git 1:0.17.0.2561.g3d658d2e-1 votes=6`; stars/forks from `gh api repos/ayosec/alacritty`; downloads from the releases API; no crates.io dependents (vte-graphics reverse_dependencies `\"total\": 0`) and no embedding product found in this search."
+        },
+        "kitty_graphics": {
+          "value": "none — the fork has no Kitty or APC code, and vte-graphics keeps upstream vte's APC drop unchanged",
+          "provenance": { "source": "https://github.com/ayosec/vte-graphics/blob/22c7c29c0303398baa71db8798473ee704f9717c/src/lib.rs#L182", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"State::SosPmApcString => self.anywhere(performer, byte),\" — [measured] `grep -rn -i -E \"kitty|\\bapc\\b|1337|iterm\" alacritty_terminal/src` on the graphics branch (3d658d2) finds only unrelated lines; `grep -c -i apc` on vte-graphics' ansi.rs → 0."
+        },
+        "kitty_tags": {
+          "value": "none",
+          "note": "[inferred] from the grep above and vte-graphics' lib.rs:182. unknown: none."
+        },
+        "sixel": {
+          "value": "yes — DCS q is decoded by alacritty_terminal/src/graphics/sixel.rs (809 lines); modes 80 (Sixel display/scrolling), 1070 (private colour registers) and 8452 (cursor to the right of the image); XTSMGRAPHICS through Handler::graphics_attribute; DA1 becomes ?62;4;6;22c. Limits: 1024 colours and 4096×4096 pixels per image; pixel aspect-ratio parameters ignored (always 1:1).",
+          "provenance": { "source": "https://github.com/ayosec/alacritty/blob/12d0fada4482eafde0a45fa4489e03b4d96b7190/docs/features.md#L80-L83", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"Graphics can be added to the terminal using the Sixel protocol. Every graphic can\nhave up to 1024 colors, and it is limited to 4096x4096 pixels.\" — [measured] dcs_hook `('q', [])` at term/mod.rs:2344-2346, modes 1070/8452 at :1970-1977, DA1 at :1287; aspect ratio from the PR body (\"it always assume 1:1 when the image is built\")."
+        },
+        "iterm2_images": {
+          "value": "no — an iTerm2 OSC 1337 implementation existed in 2021 (commit \"Support for iTerm2 image protocol.\", kept only under tag graphics-with-osc1337-v1, now 767 commits behind the branch) and was dropped after the maintainer's objection; the current branch has no OSC 1337 code",
+          "provenance": { "source": "https://github.com/alacritty/alacritty/pull/4763#issuecomment-774136162", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"If Alacritty supports any graphics protocol, there should be one and it should be the simplest one available.\" — [measured] chrisduerr, 2021-02-05; `gh api repos/ayosec/alacritty/compare/graphics...graphics-with-osc1337-v1` → \"status=diverged ahead=19 behind=767\"."
+        },
+        "picture_anchoring": {
+          "value": "per-cell attribute: every covered cell gets Flags::GRAPHICS and CellExtra.graphics, a SmallVec of GraphicCell (Arc<TextureRef> + x/y pixel offset), at most 20 per cell — so pictures scroll, enter scrollback and are overwritten along with the text grid. Pixel data leaves the Term through graphics_take_queues() into the renderer's textures, and a texture is freed when its last cell reference drops. No byte quota found; each image is capped at 4096×4096.",
+          "provenance": { "source": "https://github.com/ayosec/alacritty/blob/12d0fada4482eafde0a45fa4489e03b4d96b7190/alacritty_terminal/src/graphics/mod.rs#L27-L28", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"/// Max. number of graphics stored in a single cell.\nconst MAX_GRAPHICS_PER_CELL: usize = 20;\" — [measured] Flags::GRAPHICS at term/cell.rs:34, `graphics: Option<GraphicsCell>` at :133, TextureRef Drop pushing TextureOperation::Remove at graphics/mod.rs:66-71, MAX_GRAPHIC_DIMENSIONS at :25. How reflow treats graphics cells is not established."
+        },
+        "vt_conformance": {
+          "value": "As upstream: stated coverage in the alacritty-escapes(7) manpage, which the fork has not updated for Sixel (its DCS table still lists only `DCS = s`, Rejected). The fork adds Sixel decoding tests against libsixel, ImageMagick and ppmtosixel images (alacritty_terminal/tests/sixel). No vttest/esctest results.",
+          "provenance": { "source": "https://github.com/ayosec/alacritty/blob/3d658d2e280d3456ead5d73be9067ec587ddcc45/extra/man/alacritty-escapes.7.scd#L5", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"This list includes all escape sequences Alacritty currently supports.\" — [measured] `grep -n -i -E \"sixel|DCS|graphic\"` on the fork's manpage finds only the DCS heading (:258) and `DCS = s` (:263); test files listed in the v0.17.0 compare."
+        },
+        "vt_features": {
+          "value": "Same as alacritty_terminal 0.26.0 (the release is 0 commits behind upstream v0.17.0):\nkitty-keyboard: yes (protocol state; embedder encodes keys)\nosc8-hyperlinks: yes\nsync-output-2026: yes\nosc52-clipboard: yes — clipboard and primary selection only\ngrapheme-clusters: no\nreflow-on-resize: yes — primary screen\nalt-screen: yes (1049 only)\nbracketed-paste: yes\nmouse-sgr: yes",
+          "provenance": { "source": "https://github.com/alacritty/alacritty/blob/94e7c8874e526b1e67b349d9ba30ddf81669119e/extra/man/alacritty-escapes.7.scd#L125-L127", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \":[ Modes: *1*, *3*, *6*, *7*, *12*, *25*, *1000*, *1002*, *1004*, *1005*, *1006*, *1007*, *1042*, *1049*, *2004*, *2026*\" — [measured] upstream list, inherited per `compare … → ahead=87 behind=0`; per-feature citations as in alacritty-own-loop."
+        },
+        "performance_evidence": {
+          "value": "No current figures. The upstream maintainer measured the 2021 patch with vtebench and reported a consistent slowdown (chart only, machine not named), and has declined an opt-in switch on performance grounds.",
+          "provenance": { "source": "https://github.com/alacritty/alacritty/pull/4763#issuecomment-774202448", "confidence": "medium", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"That works and shows a consistent performance decrease:\" — [measured] chrisduerr, 2021-02-05; on an opt-out setting: \"Opting out of performance is not something that aligns with Alacritty's goals.\" (issuecomment-2136102910, 2024-05-28). The cost of today's code is unmeasured."
+        },
+        "grid_api": {
+          "value": "Upstream's API (Term::grid() -> &Grid<Cell>, Cell { c, fg, bg, flags, extra }) plus Cell::graphics() -> Option<&GraphicsCell>, take_graphics()/set_graphics(), Flags::GRAPHICS, and Term::graphics_take_queues() -> Option<UpdateQueues> (pending pixels, removals, cleared subregions) for the renderer",
+          "provenance": { "source": "https://github.com/ayosec/alacritty/blob/12d0fada4482eafde0a45fa4489e03b4d96b7190/alacritty_terminal/src/term/cell.rs#L176", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"pub fn graphics(&self) -> Option<&GraphicsCell> {\" — [measured] set_graphics at cell.rs:194; graphics_take_queues at term/mod.rs:673; UpdateQueues at graphics/mod.rs:273-282."
+        },
+        "damage_tracking": {
+          "value": "yes — upstream's Term::damage() / reset_damage() with per-row LineDamageBounds, carried unchanged into the fork",
+          "provenance": { "source": "https://github.com/alacritty/alacritty/blob/94e7c8874e526b1e67b349d9ba30ddf81669119e/alacritty_terminal/src/term/mod.rs#L176-L185", "confidence": "medium", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"/// Terminal damage information collected since the last [`Term::reset_damage`] call.\" — [measured] upstream line; the fork's term/mod.rs diff is +105 -1 and the release is 0 behind upstream, so the damage code is inherited — whether graphics changes mark damage was not checked."
+        },
+        "state_snapshot": {
+          "value": "partial, and weaker for pictures than it looks: Grid<Cell> still derives serde, but a GraphicCell holds only a reference to a texture in the display; the pixels leave the Term through graphics_take_queues() (UpdateQueues.pending: Vec<GraphicData>). A snapshot of the Term therefore cannot re-create pictures, and there is no replay API.",
+          "provenance": { "source": "https://github.com/ayosec/alacritty/blob/12d0fada4482eafde0a45fa4489e03b4d96b7190/alacritty_terminal/src/graphics/mod.rs#L35", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"/// Reference to a texture stored in the display.\" — [measured] `pub pending: Vec<GraphicData>` with `/// Graphics read from the PTY.` at graphics/mod.rs:274-275; take_queues() at :337 empties it."
+        },
+        "threading_and_loop": {
+          "value": "Library-owned, as upstream: alacritty's EventLoop thread reads the PTY and runs Processor::advance under the FairMutex; Sixel bytes are decoded inside advance (dcs_put feeds the Sixel parser) and finished images are queued for whichever thread renders. Includes the PTY layer.",
+          "provenance": { "source": "https://github.com/ayosec/alacritty/blob/12d0fada4482eafde0a45fa4489e03b4d96b7190/alacritty_terminal/src/term/mod.rs#L2344-L2347", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"('q', []) => {\n                self.graphics.start_sixel_graphic(params);\" — [measured] dcs_put/dcs_unhook at :2357-2375 call parser.put and graphics::parse_sixel; event_loop.rs is unchanged from upstream in the compare."
+        },
+        "reply_channel": {
+          "value": "Upstream's event path: replies go out as Event::PtyWrite for the embedder to write; the fork adds a Sixel-advertising DA1 and XTSMGRAPHICS answers sent through the same event proxy",
+          "provenance": { "source": "https://github.com/ayosec/alacritty/blob/12d0fada4482eafde0a45fa4489e03b4d96b7190/alacritty_terminal/src/term/mod.rs#L1287", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"let text = String::from(\\\"\\\\x1b[?62;4;6;22c\\\");\" — [measured] graphics_attribute(&self.event_proxy, pi, pa) at term/mod.rs:2339-2341; TD's host would still be the only writer (host.rs:744)."
+        },
+        "td_migration": {
+          "value": "Cargo.toml: alacritty_terminal becomes a git dependency on ayosec/alacritty at v0.17.0-graphics; TD's imports still compile (0.26.0 plus additions, vte-graphics re-exported as alacritty_terminal::vte). term.rs: GridSize must implement the fork's Dimensions::cell_width/cell_height (default 0.0) or Sixel sizing breaks. host.rs: the host has no renderer, so it must drain graphics_take_queues() every cycle and keep the decoded pixels itself for attaching windows. gridwire.rs: per-cell texture references have no VT encoding — the snapshot must re-encode each live picture (e.g. as Sixel at its origin) or attaching windows lose every picture, and grid_hash must treat Flags::GRAPHICS the same on both sides. socketpty.rs: unchanged (the replica decodes the same DCS bytes). pane.rs: the renderer uploads pending pixels as gpui images, applies removals and cleared subregions, and draws per-cell slices; the 51 grid reads stay. main.rs, pane/bench.rs: none. DA1 starts advertising Sixel. Kitty stays absent.",
+          "note": "[inferred] from the fork's alacritty_terminal diff (v0.17.0...v0.17.0-graphics) and TD's files @426f072. Effort M for Sixel; Kitty would then be the own-loop or patched-vte work, now on top of a fork."
+        },
+        "biggest_risk": {
+          "value": "It buys only Sixel, from a single maintainer whose PR upstream calls unlikely ever to merge, and its texture-in-the-renderer model assumes a renderer next to the Term — which TD's session host does not have — so TD would still write a host-side picture store, snapshot re-encoding and Kitty support, now on top of a fork.",
+          "note": "[inferred] upstream position: \"I think I've made it pretty clear that this has little chance of ever getting upstreamed.\" (chrisduerr, https://github.com/alacritty/alacritty/pull/4763#issuecomment-3236877718, 2025-08-29) and \"This PR not being merged is all about image protocols being bad, not about maintainers not having time.\" (issuecomment-1685121031, 2023-08-19)."
+        },
+        "primary_sources": {
+          "value": "https://github.com/alacritty/alacritty/pull/4763 https://github.com/alacritty/alacritty/pull/4763#issuecomment-3236877718 https://github.com/alacritty/alacritty/pull/4763#issuecomment-1685121031 https://github.com/alacritty/alacritty/pull/4763#issuecomment-2136102910 https://github.com/alacritty/alacritty/pull/4763#issuecomment-774202448 https://github.com/alacritty/alacritty/pull/4763#issuecomment-774136162 https://api.github.com/repos/ayosec/alacritty/releases https://api.github.com/repos/ayosec/alacritty/compare/alacritty:alacritty:v0.17.0...ayosec:alacritty:v0.17.0-graphics https://raw.githubusercontent.com/ayosec/alacritty/v0.17.0-graphics/alacritty_terminal/Cargo.toml https://github.com/ayosec/alacritty/blob/12d0fada4482eafde0a45fa4489e03b4d96b7190/alacritty_terminal/src/graphics/mod.rs https://github.com/ayosec/alacritty/blob/12d0fada4482eafde0a45fa4489e03b4d96b7190/alacritty_terminal/src/term/cell.rs https://github.com/ayosec/alacritty/blob/12d0fada4482eafde0a45fa4489e03b4d96b7190/alacritty_terminal/src/term/mod.rs https://github.com/ayosec/alacritty/blob/12d0fada4482eafde0a45fa4489e03b4d96b7190/docs/features.md https://github.com/ayosec/alacritty/tree/graphics-with-osc1337-v1 https://github.com/ayosec/vte-graphics/blob/22c7c29c0303398baa71db8798473ee704f9717c/src/lib.rs https://github.com/ayosec/vte-graphics/blob/22c7c29c0303398baa71db8798473ee704f9717c/src/ansi.rs https://crates.io/api/v1/crates/vte-graphics https://aur.archlinux.org/rpc/v5/search/alacritty?by=name synthesis:file:///tmp/claude-1000/-home-parker-Work-terminal-delight/2aae45b7-7163-4590-8990-5cc58ef8f92f/scratchpad/graphics-protocols.md",
+          "provenance": { "source": "https://github.com/alacritty/alacritty/pull/4763", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"Support for graphics in the terminal\" — [measured] the PR title; the fork was read from a depth-50 clone of the graphics branch (3d658d2) and from raw files at tag v0.17.0-graphics (12d0fad), with line numbers matched."
+        }
+      },
+      "insights": []
+    }
+  ],
+  "bubbles": [
+    {
+      "kind": "serendipity",
+      "subjectId": "alacritty-patched-vte",
+      "note": "vte's APC PR was not refused; it lapsed. The maintainer's last review of PR #115 (2025-03-12) reads \"Honestly seems fine to me. Just some minor nits.\", a benchmark PR (alacritty #8507) found \"The perf looks pretty much the same\", and the PR was closed on 2026-07-12 only with \"Closing due to inactivity.\" Issue #109 is still open, where the maintainer wrote \"That shouldn't be difficult to add tbh, it mainly doesn't exist yet because I've had no use for it so far.\" Finishing #115 upstream would turn the vte half of this option from a permanent fork into an ordinary crates.io upgrade; the 'second rate escape sequence' remark is a design reservation from 2024-10-16, not a refusal.",
+      "why": "Changes the patched-vte option's cost from 'carry a fork forever' to 'land one PR', and it softens the morning write-up's reading that upstream will not supply this.",
+      "source": "https://github.com/alacritty/vte/pull/115"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "alacritty-patched-vte",
+      "note": "Warp carries a copy of PR #115 on vte 0.15.0: branch copied-apc-support-0.15.0 at warpdotdev/vte (d94bf79e, 2025-03-21), and a commenter (heysweet) wrote on #115 \"We'd really like to support Kitty Image protocol in the Warp terminal, and this PR would help us get there\" (2025-02-03). That is a second alacritty-lineage terminal taking this exact route.",
+      "why": "Prior art and a possible ally for landing the PR upstream.",
+      "source": "https://github.com/warpdotdev/vte/tree/copied-apc-support-0.15.0"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "alacritty-patched-vte",
+      "note": "copa (Rio's published vte fork, crates.io, Apache-2.0 OR MIT, 0.4.2 of 2026-05-03) already has apc_start/apc_put/apc_end on Perform with the same signatures as PR #115, but it ships no ansi module (src/ has definitions.rs, lib.rs, params.rs, table.rs), so it cannot stand in for vte under alacritty_terminal, which needs vte::ansi::{Processor, Handler}. crates.io also sorts a 2023 copa 0.12.0 as max_version above the current 0.4.x line.",
+      "why": "Answers 'is there a published APC-capable vte?': yes, but not a drop-in one.",
+      "source": "https://crates.io/crates/copa"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "alacritty-own-loop",
+      "note": "asyncritty (dfoxfranke, Apache-2.0, crates.io 0.1.0-alpha3, created 2026-09-05) replaces alacritty's EventLoop with Tokio: \"It runs processes on pseudoterminals (PTYs), handles asynchronous input and output, and parses terminal output into Alacritty's terminal model\". Its author also landed two alacritty_terminal commits in August 2026. It is a working example of an embedder owning the read loop around a stock alacritty_terminal.",
+      "why": "Prior art for the own-loop option's hardest part.",
+      "source": "https://github.com/dfoxfranke/asyncritty"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "alacritty-own-loop",
+      "note": "alacritty master (after 0.26.0) now caps zero-width characters at 9 per cell (commit ede2ac14, 2026-08-26, \"Fix unbounded zerowidth character limit\": `const MAX_ZEROWIDTH_CHARS: usize = 9;`, storage changed from Vec to ArrayVec). Kitty placeholder cells need at most 3 diacritics, so the placeholder plan survives, but the morning write-up's \"appends zero-width characters … without a cap\" will be stale at the next release.",
+      "why": "Placeholder cells are the anchor both Kitty routes rely on; the next alacritty_terminal release touches that storage.",
+      "source": "https://github.com/alacritty/alacritty/commit/ede2ac144da4dec4c075bfa803aacf3b3739bce6"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "alacritty-own-loop",
+      "note": "TD's host already answers CSI 16 t from the tee: the comment at host.rs:747-749 begins \"`CSI 14 t` from the parser and `CSI 16 t` from the tee,\" and says both are answered from the pane's current size; TeeReader::read (host.rs:154-180) replies before the parser sees the chunk. The morning write-up's \"CSI 16 t … never answered\" is stale on research/terminal-core @426f072, and a byte-scanner seat already exists in the host.",
+      "why": "Corrects an input fact other clusters may reuse.",
+      "source": "file:///home/parker/Work/td-terminal-core/app/src/host.rs"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "alacritty-graphics-fork",
+      "note": "Several alacritty_terminal forks are published on crates.io under new names because git dependencies cannot be published: crow-alacritty-terminal (\"published because git deps cannot ship via crates.io\"), blit-alacritty-terminal and yas-alacritty-terminal (emoji-width fixes), cutty_terminal. A fork route is fine for AppImage/AUR builds, but if TD ever publishes a crate that depends on a forked core, it would have to publish the fork too.",
+      "why": "Distribution constraint for both fork options (patched-vte and graphics-fork).",
+      "source": "https://crates.io/crates/crow-alacritty-terminal"
+    }
+  ],
+  "tokens": 0
+}

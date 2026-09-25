@@ -1,0 +1,538 @@
+[
+ {
+  "id": "rio-vt/copy-0",
+  "label": "rio-vt \u2014 Rio's embeddable core (crates.io)",
+  "group": "B \u00b7 Swap to a Rust core",
+  "kitty_tags": "transmit-direct, transmit-file, transmit-temp, transmit-shm, format-png, format-raw, compression, place-direct, place-virtual, delete-by-id, delete-by-position, query-reply, z-layers",
+  "evidence": {
+   "grid_api": {
+    "recorded": "Crosswords<U: EventListener>, descended from alacritty's Term: visible_rows() -> Vec<Row<Square>>, fill_visible_rows(&mut Vec<Row<Square>>), snapshot_visible(damage, rows, row_styles, extras) for incremental copies with resolved styles, and pub grid: Grid<Square> indexed by Line and Column with display_iter(). A Square is a packed u64: c() base char, wide() Normal / Wide / Spacer / LeadingSpacer, cell_flags() WRAPLINE / HYPERLINK / GRAPHEME, plus style and extras ids. grid.style_of(&square) -> Style { fg, bg, underline_color: Option<AnsiColor>, flags: StyleFlags } (bold, dim, italic, inverse, hidden, strikeout, five underline kinds, blink). Zero-width marks: grid.cell_text(pos) yields the base char then the marks (Square::c() alone drops them); hyperlinks: cell_hyperlink(line, col). Cursor: cursor() -> CursorState; modes: mode() -> Mode, keyboard_mode().",
+    "quoted": "pub struct Style {\n    pub fg: AnsiColor,\n    pub bg: AnsiColor,\n    pub underline_color: Option<AnsiColor>,\n    pub flags: StyleFlags,\n}",
+    "check": "unsupported"
+   },
+   "damage_tracking": {
+    "recorded": "yes \u2014 per viewport line since the last reset: damage() returns TermDamage::Full or Partial(iterator of damaged lines) and reset_damage() clears it; snapshot_visible also marks each copied row dirty; a coarse TerminalDamage { Noop, Full, Partial, CursorOnly } signal travels in events",
+    "quoted": "/// Terminal damage information collected since the last [`Term::reset_damage`] call.",
+    "check": "unsupported"
+   },
+   "state_snapshot": {
+    "recorded": "Partial. Crosswords::contents_formatted() / format(FormatOptions::vt()) re-emits the visible screen as VT bytes: reset, clear, home, SGR runs with colours in their original named / indexed / RGB form, then cursor position and cursor visibility. It writes only each cell's base character, so combining marks are dropped, and carries no scrollback, hyperlinks, other modes, alt-screen state or pictures. librio's Surface::serialize() adds scrollback and OSC 8 links, but librio is publish = false. Crosswords implements neither Clone nor serde.",
+    "quoted": "/// The visible screen as a VT/ANSI byte blob (vt100 `contents_formatted`\n    /// equivalent): clear + home, cells with SGR, then the cursor restored.\n    pub fn contents_formatted(&self) -> Vec<u8> {",
+    "check": "overclaims"
+   },
+   "threading_and_loop": {
+    "recorded": "The embedder chooses. Headless, the embedder owns the loop and calls Processor::advance(&mut term, bytes) on a Crosswords it holds, with no threads. With the default `pty` feature, performer::Machine spawns a 'PTY reader' thread that polls a teletypewriter PTY through corcovado and parses into an Arc<FairMutex<Crosswords<U>>> shared with the renderer (U: EventListener + Send + 'static). Crosswords has no internal locking. The PTY layer (teletypewriter) is included and can be dropped with default-features = false. Synchronized updates: an embedder loop should poll Processor::sync_timeout(); otherwise advance() flushes an expired update when the next bytes arrive.",
+    "quoted": "Create a grid, feed it bytes through the parser, and read cells back. No\nPTY, no renderer, no threads:",
+    "check": "human"
+   },
+   "reply_channel": {
+    "recorded": "An event callback. Replies (DA1/DA2, DSR/CPR, DECRQM, XTGETTCAP, Kitty acks and a=q answers) are sent as RioEvent::PtyWrite(route_id, String) through EventListener::send_event. Window-size reports arrive as TextAreaSizeRequest, OSC colour queries as ColorRequest and OSC 52 reads as ClipboardLoad, each carrying a formatter closure the embedder applies before writing. The embedder does the PTY write, so a TD replica can drop these events and let the host answer once \u2014 the same shape as alacritty's Event.",
+    "quoted": "/// Write some text to the PTY identified by `route_id`. Routing\n    /// by panel (rather than the focused context) is required so\n    /// CSI / OSC reply bytes land on the shell that asked for them\n    /// even if the user focuses a different split mid-flight.\n    PtyWrite(usize, String),",
+    "check": "unsupported"
+   },
+   "kitty_graphics": {
+    "recorded": "Broad, inside the crate. Transmission: t=d with chunking, t=f, t=t (path must contain tty-graphics-protocol; deleted after reading), t=s (shm_open on Unix, a file mapping on Windows). Formats: f=8, f=16, f=24, f=32 raw and f=100 PNG; PNG decodes only with the non-default `graphics` feature, otherwise EINVAL. o=z zlib with a decompressed-size cap. Placement: a=T and a=p at the cursor with x/y/w/h source rectangle, c/r cell span, X/Y sub-cell offset, C=1, z index. U=1 virtual placements are stored as metadata and ansi/kitty_virtual.rs supplies the placeholder decoders, but scanning cells for U+10EEEE and compositing is the embedder's renderer's job. Deletes: a/A, i/I, n/N, c/C, p/P, x/X, y/Y, z/Z, q/Q, r/R. a=q runs the real load path and answers OK or the error, honouring q=. Limits: 320 MiB image store per terminal with eviction of unreferenced images; 10000 px per axis and 400 MiB payload at parse; 4096x4096 display cap. Not implemented: animation (a=f, a=a, a=c answered EINVAL:unsupported action) and relative placements (P/Q/H/V parsed, never used).",
+    "quoted": "// A query must behave exactly like a transmission \u2014 decode\n            // the payload, read the file, or map and unlink the shared\n            // memory \u2014 and report whether that worked, without storing\n            // anything.",
+    "check": "unsupported"
+   },
+   "picture_anchoring": {
+    "recorded": "Absolute row counter in side tables, not per-cell: Kitty placements keep dest_row and Sixel/iTerm2 AtlasPlacements keep abs_row = lines_evicted + history + screen_row, so pictures scroll and survive scrollback eviction. On a column reflow a recorded ReflowRemap moves each placement to where its anchor row's content landed (Sixel/iTerm2 pieces on dropped rows are destroyed; Kitty ones stay). Text written over a Sixel/iTerm2 picture splits it into cropped children. Quota: total_limit 320 MiB per terminal, evicting images not in use.",
+    "quoted": "/// Anchor row in the stable absolute space\n    /// (`lines_evicted + history + screen_row` at insert).\n    pub abs_row: i64,",
+    "check": "overclaims"
+   },
+   "integration_path": {
+    "recorded": "crates.io crate: rio-vt = \"0.5\". The default `pty` feature brings Rio's PTY driver (drop it with default-features = false); the opt-in `graphics` feature is required to decode PNG (Kitty f=100) and iTerm2 images.",
+    "quoted": "- **Rust embedders** depend on `rio-vt` directly (this crate).",
+    "check": "supported"
+   }
+  },
+  "maturity": {
+   "api_stability": {
+    "recorded": "Pre-1.0 and versioned in lockstep with the Rio app (0.5.x), with no stated stability promise. Public types have changed inside the 0.5 series (0.5.8 moved Msg::Resize, RioEvent::TextAreaSizeRequest and OnResize from teletypewriter::WinsizeBuilder to rio_vt::event::WindowSize), and 26 versions shipped in eight weeks.",
+    "check": "human"
+   },
+   "latest_release": {
+    "recorded": "0.5.28, published to crates.io 2026-09-17",
+    "check": "human"
+   },
+   "releases_last_12mo": {
+    "recorded": "26 (22 stable 0.5.x, 4 alphas) \u2014 the crate's entire history, 2026-07-26 to 2026-09-17",
+    "check": "overclaims"
+   },
+   "maintainers": {
+    "recorded": "1 contributor above 10%: raphamorim (Raphael Amorim, author and lead) with 1053 of 1144 commits (92%) to the Rio repository in the 12 months to 2026-09-25; next is github-actions[bot] at 2.5%. The rio-vt/ path alone had 94 commits in that window, 92 by raphamorim.",
+    "check": "overclaims"
+   }
+  },
+  "measured": "Fed six recorded image programs through Processor::advance, rio-vt 0.5.28 stored their pictures and the harness read each placement (image id, row, column, columns, rows) from the public map graphics.kitty_placements, and virtual placements from graphics.kitty_virtual_placements; replies arrived as PtyWrite events."
+ },
+ {
+  "id": "rio-vt/copy-1",
+  "label": "rio-vt \u2014 Rio's embeddable core (crates.io)",
+  "group": "B \u00b7 Swap to a Rust core",
+  "kitty_tags": "transmit-direct, transmit-file, transmit-temp, transmit-shm, format-png, format-raw, compression, place-direct, place-virtual, delete-by-id, delete-by-position, query-reply, z-layers",
+  "evidence": {
+   "grid_api": {
+    "recorded": "Crosswords<U: EventListener>, descended from alacritty's Term: visible_rows() -> Vec<Row<Square>>, fill_visible_rows(&mut Vec<Row<Square>>), snapshot_visible(damage, rows, row_styles, extras) for incremental copies with resolved styles, and pub grid: Grid<Square> indexed by Line and Column with display_iter(). A Square is a packed u64: c() base char, wide() Normal / Wide / Spacer / LeadingSpacer, cell_flags() WRAPLINE / HYPERLINK / GRAPHEME, plus style and extras ids. grid.style_of(&square) -> Style { fg, bg, underline_color: Option<AnsiColor>, flags: StyleFlags } (bold, dim, italic, inverse, hidden, strikeout, five underline kinds, blink). Zero-width marks: grid.cell_text(pos) yields the base char then the marks (Square::c() alone drops them); hyperlinks: cell_hyperlink(line, col). Cursor: cursor() -> CursorState; modes: mode() -> Mode, keyboard_mode().",
+    "quoted": "pub struct Style {\n    pub fg: AnsiColor,\n    pub bg: AnsiColor,\n    pub underline_color: Option<AnsiColor>,\n    pub flags: StyleFlags,\n}",
+    "check": "unsupported"
+   },
+   "damage_tracking": {
+    "recorded": "yes \u2014 per viewport line since the last reset: damage() returns TermDamage::Full or Partial(iterator of damaged lines) and reset_damage() clears it; snapshot_visible also marks each copied row dirty; a coarse TerminalDamage { Noop, Full, Partial, CursorOnly } signal travels in events",
+    "quoted": "/// Terminal damage information collected since the last [`Term::reset_damage`] call.",
+    "check": "unsupported"
+   },
+   "state_snapshot": {
+    "recorded": "Partial. Crosswords::contents_formatted() / format(FormatOptions::vt()) re-emits the visible screen as VT bytes: reset, clear, home, SGR runs with colours in their original named / indexed / RGB form, then cursor position and cursor visibility. It writes only each cell's base character, so combining marks are dropped, and carries no scrollback, hyperlinks, other modes, alt-screen state or pictures. librio's Surface::serialize() adds scrollback and OSC 8 links, but librio is publish = false. Crosswords implements neither Clone nor serde.",
+    "quoted": "/// The visible screen as a VT/ANSI byte blob (vt100 `contents_formatted`\n    /// equivalent): clear + home, cells with SGR, then the cursor restored.\n    pub fn contents_formatted(&self) -> Vec<u8> {",
+    "check": "overclaims"
+   },
+   "threading_and_loop": {
+    "recorded": "The embedder chooses. Headless, the embedder owns the loop and calls Processor::advance(&mut term, bytes) on a Crosswords it holds, with no threads. With the default `pty` feature, performer::Machine spawns a 'PTY reader' thread that polls a teletypewriter PTY through corcovado and parses into an Arc<FairMutex<Crosswords<U>>> shared with the renderer (U: EventListener + Send + 'static). Crosswords has no internal locking. The PTY layer (teletypewriter) is included and can be dropped with default-features = false. Synchronized updates: an embedder loop should poll Processor::sync_timeout(); otherwise advance() flushes an expired update when the next bytes arrive.",
+    "quoted": "Create a grid, feed it bytes through the parser, and read cells back. No\nPTY, no renderer, no threads:",
+    "check": "human"
+   },
+   "reply_channel": {
+    "recorded": "An event callback. Replies (DA1/DA2, DSR/CPR, DECRQM, XTGETTCAP, Kitty acks and a=q answers) are sent as RioEvent::PtyWrite(route_id, String) through EventListener::send_event. Window-size reports arrive as TextAreaSizeRequest, OSC colour queries as ColorRequest and OSC 52 reads as ClipboardLoad, each carrying a formatter closure the embedder applies before writing. The embedder does the PTY write, so a TD replica can drop these events and let the host answer once \u2014 the same shape as alacritty's Event.",
+    "quoted": "/// Write some text to the PTY identified by `route_id`. Routing\n    /// by panel (rather than the focused context) is required so\n    /// CSI / OSC reply bytes land on the shell that asked for them\n    /// even if the user focuses a different split mid-flight.\n    PtyWrite(usize, String),",
+    "check": "unsupported"
+   },
+   "kitty_graphics": {
+    "recorded": "Broad, inside the crate. Transmission: t=d with chunking, t=f, t=t (path must contain tty-graphics-protocol; deleted after reading), t=s (shm_open on Unix, a file mapping on Windows). Formats: f=8, f=16, f=24, f=32 raw and f=100 PNG; PNG decodes only with the non-default `graphics` feature, otherwise EINVAL. o=z zlib with a decompressed-size cap. Placement: a=T and a=p at the cursor with x/y/w/h source rectangle, c/r cell span, X/Y sub-cell offset, C=1, z index. U=1 virtual placements are stored as metadata and ansi/kitty_virtual.rs supplies the placeholder decoders, but scanning cells for U+10EEEE and compositing is the embedder's renderer's job. Deletes: a/A, i/I, n/N, c/C, p/P, x/X, y/Y, z/Z, q/Q, r/R. a=q runs the real load path and answers OK or the error, honouring q=. Limits: 320 MiB image store per terminal with eviction of unreferenced images; 10000 px per axis and 400 MiB payload at parse; 4096x4096 display cap. Not implemented: animation (a=f, a=a, a=c answered EINVAL:unsupported action) and relative placements (P/Q/H/V parsed, never used).",
+    "quoted": "// A query must behave exactly like a transmission \u2014 decode\n            // the payload, read the file, or map and unlink the shared\n            // memory \u2014 and report whether that worked, without storing\n            // anything.",
+    "check": "unsupported"
+   },
+   "picture_anchoring": {
+    "recorded": "Absolute row counter in side tables, not per-cell: Kitty placements keep dest_row and Sixel/iTerm2 AtlasPlacements keep abs_row = lines_evicted + history + screen_row, so pictures scroll and survive scrollback eviction. On a column reflow a recorded ReflowRemap moves each placement to where its anchor row's content landed (Sixel/iTerm2 pieces on dropped rows are destroyed; Kitty ones stay). Text written over a Sixel/iTerm2 picture splits it into cropped children. Quota: total_limit 320 MiB per terminal, evicting images not in use.",
+    "quoted": "/// Anchor row in the stable absolute space\n    /// (`lines_evicted + history + screen_row` at insert).\n    pub abs_row: i64,",
+    "check": "overclaims"
+   },
+   "integration_path": {
+    "recorded": "crates.io crate: rio-vt = \"0.5\". The default `pty` feature brings Rio's PTY driver (drop it with default-features = false); the opt-in `graphics` feature is required to decode PNG (Kitty f=100) and iTerm2 images.",
+    "quoted": "- **Rust embedders** depend on `rio-vt` directly (this crate).",
+    "check": "supported"
+   }
+  },
+  "maturity": {
+   "api_stability": {
+    "recorded": "Pre-1.0 and versioned in lockstep with the Rio app (0.5.x), with no stated stability promise. Public types have changed inside the 0.5 series (0.5.8 moved Msg::Resize, RioEvent::TextAreaSizeRequest and OnResize from teletypewriter::WinsizeBuilder to rio_vt::event::WindowSize), and 26 versions shipped in eight weeks.",
+    "check": "human"
+   },
+   "latest_release": {
+    "recorded": "0.5.28, published to crates.io 2026-09-17",
+    "check": "human"
+   },
+   "releases_last_12mo": {
+    "recorded": "26 (22 stable 0.5.x, 4 alphas) \u2014 the crate's entire history, 2026-07-26 to 2026-09-17",
+    "check": "overclaims"
+   },
+   "maintainers": {
+    "recorded": "1 contributor above 10%: raphamorim (Raphael Amorim, author and lead) with 1053 of 1144 commits (92%) to the Rio repository in the 12 months to 2026-09-25; next is github-actions[bot] at 2.5%. The rio-vt/ path alone had 94 commits in that window, 92 by raphamorim.",
+    "check": "overclaims"
+   }
+  },
+  "measured": "Fed six recorded image programs through Processor::advance, rio-vt 0.5.28 stored their pictures and the harness read each placement (image id, row, column, columns, rows) from the public map graphics.kitty_placements, and virtual placements from graphics.kitty_virtual_placements; replies arrived as PtyWrite events."
+ },
+ {
+  "id": "rio-vt/copy-2",
+  "label": "rio-vt \u2014 Rio's embeddable core (crates.io)",
+  "group": "B \u00b7 Swap to a Rust core",
+  "kitty_tags": "transmit-direct, transmit-file, transmit-temp, transmit-shm, format-png, format-raw, compression, place-direct, place-virtual, delete-by-id, delete-by-position, query-reply, z-layers",
+  "evidence": {
+   "grid_api": {
+    "recorded": "Crosswords<U: EventListener>, descended from alacritty's Term: visible_rows() -> Vec<Row<Square>>, fill_visible_rows(&mut Vec<Row<Square>>), snapshot_visible(damage, rows, row_styles, extras) for incremental copies with resolved styles, and pub grid: Grid<Square> indexed by Line and Column with display_iter(). A Square is a packed u64: c() base char, wide() Normal / Wide / Spacer / LeadingSpacer, cell_flags() WRAPLINE / HYPERLINK / GRAPHEME, plus style and extras ids. grid.style_of(&square) -> Style { fg, bg, underline_color: Option<AnsiColor>, flags: StyleFlags } (bold, dim, italic, inverse, hidden, strikeout, five underline kinds, blink). Zero-width marks: grid.cell_text(pos) yields the base char then the marks (Square::c() alone drops them); hyperlinks: cell_hyperlink(line, col). Cursor: cursor() -> CursorState; modes: mode() -> Mode, keyboard_mode().",
+    "quoted": "pub struct Style {\n    pub fg: AnsiColor,\n    pub bg: AnsiColor,\n    pub underline_color: Option<AnsiColor>,\n    pub flags: StyleFlags,\n}",
+    "check": "unsupported"
+   },
+   "damage_tracking": {
+    "recorded": "yes \u2014 per viewport line since the last reset: damage() returns TermDamage::Full or Partial(iterator of damaged lines) and reset_damage() clears it; snapshot_visible also marks each copied row dirty; a coarse TerminalDamage { Noop, Full, Partial, CursorOnly } signal travels in events",
+    "quoted": "/// Terminal damage information collected since the last [`Term::reset_damage`] call.",
+    "check": "unsupported"
+   },
+   "state_snapshot": {
+    "recorded": "Partial. Crosswords::contents_formatted() / format(FormatOptions::vt()) re-emits the visible screen as VT bytes: reset, clear, home, SGR runs with colours in their original named / indexed / RGB form, then cursor position and cursor visibility. It writes only each cell's base character, so combining marks are dropped, and carries no scrollback, hyperlinks, other modes, alt-screen state or pictures. librio's Surface::serialize() adds scrollback and OSC 8 links, but librio is publish = false. Crosswords implements neither Clone nor serde.",
+    "quoted": "/// The visible screen as a VT/ANSI byte blob (vt100 `contents_formatted`\n    /// equivalent): clear + home, cells with SGR, then the cursor restored.\n    pub fn contents_formatted(&self) -> Vec<u8> {",
+    "check": "overclaims"
+   },
+   "threading_and_loop": {
+    "recorded": "The embedder chooses. Headless, the embedder owns the loop and calls Processor::advance(&mut term, bytes) on a Crosswords it holds, with no threads. With the default `pty` feature, performer::Machine spawns a 'PTY reader' thread that polls a teletypewriter PTY through corcovado and parses into an Arc<FairMutex<Crosswords<U>>> shared with the renderer (U: EventListener + Send + 'static). Crosswords has no internal locking. The PTY layer (teletypewriter) is included and can be dropped with default-features = false. Synchronized updates: an embedder loop should poll Processor::sync_timeout(); otherwise advance() flushes an expired update when the next bytes arrive.",
+    "quoted": "Create a grid, feed it bytes through the parser, and read cells back. No\nPTY, no renderer, no threads:",
+    "check": "human"
+   },
+   "reply_channel": {
+    "recorded": "An event callback. Replies (DA1/DA2, DSR/CPR, DECRQM, XTGETTCAP, Kitty acks and a=q answers) are sent as RioEvent::PtyWrite(route_id, String) through EventListener::send_event. Window-size reports arrive as TextAreaSizeRequest, OSC colour queries as ColorRequest and OSC 52 reads as ClipboardLoad, each carrying a formatter closure the embedder applies before writing. The embedder does the PTY write, so a TD replica can drop these events and let the host answer once \u2014 the same shape as alacritty's Event.",
+    "quoted": "/// Write some text to the PTY identified by `route_id`. Routing\n    /// by panel (rather than the focused context) is required so\n    /// CSI / OSC reply bytes land on the shell that asked for them\n    /// even if the user focuses a different split mid-flight.\n    PtyWrite(usize, String),",
+    "check": "unsupported"
+   },
+   "kitty_graphics": {
+    "recorded": "Broad, inside the crate. Transmission: t=d with chunking, t=f, t=t (path must contain tty-graphics-protocol; deleted after reading), t=s (shm_open on Unix, a file mapping on Windows). Formats: f=8, f=16, f=24, f=32 raw and f=100 PNG; PNG decodes only with the non-default `graphics` feature, otherwise EINVAL. o=z zlib with a decompressed-size cap. Placement: a=T and a=p at the cursor with x/y/w/h source rectangle, c/r cell span, X/Y sub-cell offset, C=1, z index. U=1 virtual placements are stored as metadata and ansi/kitty_virtual.rs supplies the placeholder decoders, but scanning cells for U+10EEEE and compositing is the embedder's renderer's job. Deletes: a/A, i/I, n/N, c/C, p/P, x/X, y/Y, z/Z, q/Q, r/R. a=q runs the real load path and answers OK or the error, honouring q=. Limits: 320 MiB image store per terminal with eviction of unreferenced images; 10000 px per axis and 400 MiB payload at parse; 4096x4096 display cap. Not implemented: animation (a=f, a=a, a=c answered EINVAL:unsupported action) and relative placements (P/Q/H/V parsed, never used).",
+    "quoted": "// A query must behave exactly like a transmission \u2014 decode\n            // the payload, read the file, or map and unlink the shared\n            // memory \u2014 and report whether that worked, without storing\n            // anything.",
+    "check": "unsupported"
+   },
+   "picture_anchoring": {
+    "recorded": "Absolute row counter in side tables, not per-cell: Kitty placements keep dest_row and Sixel/iTerm2 AtlasPlacements keep abs_row = lines_evicted + history + screen_row, so pictures scroll and survive scrollback eviction. On a column reflow a recorded ReflowRemap moves each placement to where its anchor row's content landed (Sixel/iTerm2 pieces on dropped rows are destroyed; Kitty ones stay). Text written over a Sixel/iTerm2 picture splits it into cropped children. Quota: total_limit 320 MiB per terminal, evicting images not in use.",
+    "quoted": "/// Anchor row in the stable absolute space\n    /// (`lines_evicted + history + screen_row` at insert).\n    pub abs_row: i64,",
+    "check": "overclaims"
+   },
+   "integration_path": {
+    "recorded": "crates.io crate: rio-vt = \"0.5\". The default `pty` feature brings Rio's PTY driver (drop it with default-features = false); the opt-in `graphics` feature is required to decode PNG (Kitty f=100) and iTerm2 images.",
+    "quoted": "- **Rust embedders** depend on `rio-vt` directly (this crate).",
+    "check": "supported"
+   }
+  },
+  "maturity": {
+   "api_stability": {
+    "recorded": "Pre-1.0 and versioned in lockstep with the Rio app (0.5.x), with no stated stability promise. Public types have changed inside the 0.5 series (0.5.8 moved Msg::Resize, RioEvent::TextAreaSizeRequest and OnResize from teletypewriter::WinsizeBuilder to rio_vt::event::WindowSize), and 26 versions shipped in eight weeks.",
+    "check": "human"
+   },
+   "latest_release": {
+    "recorded": "0.5.28, published to crates.io 2026-09-17",
+    "check": "human"
+   },
+   "releases_last_12mo": {
+    "recorded": "26 (22 stable 0.5.x, 4 alphas) \u2014 the crate's entire history, 2026-07-26 to 2026-09-17",
+    "check": "overclaims"
+   },
+   "maintainers": {
+    "recorded": "1 contributor above 10%: raphamorim (Raphael Amorim, author and lead) with 1053 of 1144 commits (92%) to the Rio repository in the 12 months to 2026-09-25; next is github-actions[bot] at 2.5%. The rio-vt/ path alone had 94 commits in that window, 92 by raphamorim.",
+    "check": "overclaims"
+   }
+  },
+  "measured": "Fed six recorded image programs through Processor::advance, rio-vt 0.5.28 stored their pictures and the harness read each placement (image id, row, column, columns, rows) from the public map graphics.kitty_placements, and virtual placements from graphics.kitty_virtual_placements; replies arrived as PtyWrite events."
+ },
+ {
+  "id": "rio-vt/copy-3",
+  "label": "rio-vt \u2014 Rio's embeddable core (crates.io)",
+  "group": "B \u00b7 Swap to a Rust core",
+  "kitty_tags": "transmit-direct, transmit-file, transmit-temp, transmit-shm, format-png, format-raw, compression, place-direct, place-virtual, delete-by-id, delete-by-position, query-reply, z-layers",
+  "evidence": {
+   "grid_api": {
+    "recorded": "Crosswords<U: EventListener>, descended from alacritty's Term: visible_rows() -> Vec<Row<Square>>, fill_visible_rows(&mut Vec<Row<Square>>), snapshot_visible(damage, rows, row_styles, extras) for incremental copies with resolved styles, and pub grid: Grid<Square> indexed by Line and Column with display_iter(). A Square is a packed u64: c() base char, wide() Normal / Wide / Spacer / LeadingSpacer, cell_flags() WRAPLINE / HYPERLINK / GRAPHEME, plus style and extras ids. grid.style_of(&square) -> Style { fg, bg, underline_color: Option<AnsiColor>, flags: StyleFlags } (bold, dim, italic, inverse, hidden, strikeout, five underline kinds, blink). Zero-width marks: grid.cell_text(pos) yields the base char then the marks (Square::c() alone drops them); hyperlinks: cell_hyperlink(line, col). Cursor: cursor() -> CursorState; modes: mode() -> Mode, keyboard_mode().",
+    "quoted": "pub struct Style {\n    pub fg: AnsiColor,\n    pub bg: AnsiColor,\n    pub underline_color: Option<AnsiColor>,\n    pub flags: StyleFlags,\n}",
+    "check": "unsupported"
+   },
+   "damage_tracking": {
+    "recorded": "yes \u2014 per viewport line since the last reset: damage() returns TermDamage::Full or Partial(iterator of damaged lines) and reset_damage() clears it; snapshot_visible also marks each copied row dirty; a coarse TerminalDamage { Noop, Full, Partial, CursorOnly } signal travels in events",
+    "quoted": "/// Terminal damage information collected since the last [`Term::reset_damage`] call.",
+    "check": "unsupported"
+   },
+   "state_snapshot": {
+    "recorded": "Partial. Crosswords::contents_formatted() / format(FormatOptions::vt()) re-emits the visible screen as VT bytes: reset, clear, home, SGR runs with colours in their original named / indexed / RGB form, then cursor position and cursor visibility. It writes only each cell's base character, so combining marks are dropped, and carries no scrollback, hyperlinks, other modes, alt-screen state or pictures. librio's Surface::serialize() adds scrollback and OSC 8 links, but librio is publish = false. Crosswords implements neither Clone nor serde.",
+    "quoted": "/// The visible screen as a VT/ANSI byte blob (vt100 `contents_formatted`\n    /// equivalent): clear + home, cells with SGR, then the cursor restored.\n    pub fn contents_formatted(&self) -> Vec<u8> {",
+    "check": "overclaims"
+   },
+   "threading_and_loop": {
+    "recorded": "The embedder chooses. Headless, the embedder owns the loop and calls Processor::advance(&mut term, bytes) on a Crosswords it holds, with no threads. With the default `pty` feature, performer::Machine spawns a 'PTY reader' thread that polls a teletypewriter PTY through corcovado and parses into an Arc<FairMutex<Crosswords<U>>> shared with the renderer (U: EventListener + Send + 'static). Crosswords has no internal locking. The PTY layer (teletypewriter) is included and can be dropped with default-features = false. Synchronized updates: an embedder loop should poll Processor::sync_timeout(); otherwise advance() flushes an expired update when the next bytes arrive.",
+    "quoted": "Create a grid, feed it bytes through the parser, and read cells back. No\nPTY, no renderer, no threads:",
+    "check": "human"
+   },
+   "reply_channel": {
+    "recorded": "An event callback. Replies (DA1/DA2, DSR/CPR, DECRQM, XTGETTCAP, Kitty acks and a=q answers) are sent as RioEvent::PtyWrite(route_id, String) through EventListener::send_event. Window-size reports arrive as TextAreaSizeRequest, OSC colour queries as ColorRequest and OSC 52 reads as ClipboardLoad, each carrying a formatter closure the embedder applies before writing. The embedder does the PTY write, so a TD replica can drop these events and let the host answer once \u2014 the same shape as alacritty's Event.",
+    "quoted": "/// Write some text to the PTY identified by `route_id`. Routing\n    /// by panel (rather than the focused context) is required so\n    /// CSI / OSC reply bytes land on the shell that asked for them\n    /// even if the user focuses a different split mid-flight.\n    PtyWrite(usize, String),",
+    "check": "unsupported"
+   },
+   "kitty_graphics": {
+    "recorded": "Broad, inside the crate. Transmission: t=d with chunking, t=f, t=t (path must contain tty-graphics-protocol; deleted after reading), t=s (shm_open on Unix, a file mapping on Windows). Formats: f=8, f=16, f=24, f=32 raw and f=100 PNG; PNG decodes only with the non-default `graphics` feature, otherwise EINVAL. o=z zlib with a decompressed-size cap. Placement: a=T and a=p at the cursor with x/y/w/h source rectangle, c/r cell span, X/Y sub-cell offset, C=1, z index. U=1 virtual placements are stored as metadata and ansi/kitty_virtual.rs supplies the placeholder decoders, but scanning cells for U+10EEEE and compositing is the embedder's renderer's job. Deletes: a/A, i/I, n/N, c/C, p/P, x/X, y/Y, z/Z, q/Q, r/R. a=q runs the real load path and answers OK or the error, honouring q=. Limits: 320 MiB image store per terminal with eviction of unreferenced images; 10000 px per axis and 400 MiB payload at parse; 4096x4096 display cap. Not implemented: animation (a=f, a=a, a=c answered EINVAL:unsupported action) and relative placements (P/Q/H/V parsed, never used).",
+    "quoted": "// A query must behave exactly like a transmission \u2014 decode\n            // the payload, read the file, or map and unlink the shared\n            // memory \u2014 and report whether that worked, without storing\n            // anything.",
+    "check": "unsupported"
+   },
+   "picture_anchoring": {
+    "recorded": "Absolute row counter in side tables, not per-cell: Kitty placements keep dest_row and Sixel/iTerm2 AtlasPlacements keep abs_row = lines_evicted + history + screen_row, so pictures scroll and survive scrollback eviction. On a column reflow a recorded ReflowRemap moves each placement to where its anchor row's content landed (Sixel/iTerm2 pieces on dropped rows are destroyed; Kitty ones stay). Text written over a Sixel/iTerm2 picture splits it into cropped children. Quota: total_limit 320 MiB per terminal, evicting images not in use.",
+    "quoted": "/// Anchor row in the stable absolute space\n    /// (`lines_evicted + history + screen_row` at insert).\n    pub abs_row: i64,",
+    "check": "overclaims"
+   },
+   "integration_path": {
+    "recorded": "crates.io crate: rio-vt = \"0.5\". The default `pty` feature brings Rio's PTY driver (drop it with default-features = false); the opt-in `graphics` feature is required to decode PNG (Kitty f=100) and iTerm2 images.",
+    "quoted": "- **Rust embedders** depend on `rio-vt` directly (this crate).",
+    "check": "supported"
+   }
+  },
+  "maturity": {
+   "api_stability": {
+    "recorded": "Pre-1.0 and versioned in lockstep with the Rio app (0.5.x), with no stated stability promise. Public types have changed inside the 0.5 series (0.5.8 moved Msg::Resize, RioEvent::TextAreaSizeRequest and OnResize from teletypewriter::WinsizeBuilder to rio_vt::event::WindowSize), and 26 versions shipped in eight weeks.",
+    "check": "human"
+   },
+   "latest_release": {
+    "recorded": "0.5.28, published to crates.io 2026-09-17",
+    "check": "human"
+   },
+   "releases_last_12mo": {
+    "recorded": "26 (22 stable 0.5.x, 4 alphas) \u2014 the crate's entire history, 2026-07-26 to 2026-09-17",
+    "check": "overclaims"
+   },
+   "maintainers": {
+    "recorded": "1 contributor above 10%: raphamorim (Raphael Amorim, author and lead) with 1053 of 1144 commits (92%) to the Rio repository in the 12 months to 2026-09-25; next is github-actions[bot] at 2.5%. The rio-vt/ path alone had 94 commits in that window, 92 by raphamorim.",
+    "check": "overclaims"
+   }
+  },
+  "measured": "Fed six recorded image programs through Processor::advance, rio-vt 0.5.28 stored their pictures and the harness read each placement (image id, row, column, columns, rows) from the public map graphics.kitty_placements, and virtual placements from graphics.kitty_virtual_placements; replies arrived as PtyWrite events."
+ },
+ {
+  "id": "rio-vt/copy-4",
+  "label": "rio-vt \u2014 Rio's embeddable core (crates.io)",
+  "group": "B \u00b7 Swap to a Rust core",
+  "kitty_tags": "transmit-direct, transmit-file, transmit-temp, transmit-shm, format-png, format-raw, compression, place-direct, place-virtual, delete-by-id, delete-by-position, query-reply, z-layers",
+  "evidence": {
+   "grid_api": {
+    "recorded": "Crosswords<U: EventListener>, descended from alacritty's Term: visible_rows() -> Vec<Row<Square>>, fill_visible_rows(&mut Vec<Row<Square>>), snapshot_visible(damage, rows, row_styles, extras) for incremental copies with resolved styles, and pub grid: Grid<Square> indexed by Line and Column with display_iter(). A Square is a packed u64: c() base char, wide() Normal / Wide / Spacer / LeadingSpacer, cell_flags() WRAPLINE / HYPERLINK / GRAPHEME, plus style and extras ids. grid.style_of(&square) -> Style { fg, bg, underline_color: Option<AnsiColor>, flags: StyleFlags } (bold, dim, italic, inverse, hidden, strikeout, five underline kinds, blink). Zero-width marks: grid.cell_text(pos) yields the base char then the marks (Square::c() alone drops them); hyperlinks: cell_hyperlink(line, col). Cursor: cursor() -> CursorState; modes: mode() -> Mode, keyboard_mode().",
+    "quoted": "pub struct Style {\n    pub fg: AnsiColor,\n    pub bg: AnsiColor,\n    pub underline_color: Option<AnsiColor>,\n    pub flags: StyleFlags,\n}",
+    "check": "unsupported"
+   },
+   "damage_tracking": {
+    "recorded": "yes \u2014 per viewport line since the last reset: damage() returns TermDamage::Full or Partial(iterator of damaged lines) and reset_damage() clears it; snapshot_visible also marks each copied row dirty; a coarse TerminalDamage { Noop, Full, Partial, CursorOnly } signal travels in events",
+    "quoted": "/// Terminal damage information collected since the last [`Term::reset_damage`] call.",
+    "check": "unsupported"
+   },
+   "state_snapshot": {
+    "recorded": "Partial. Crosswords::contents_formatted() / format(FormatOptions::vt()) re-emits the visible screen as VT bytes: reset, clear, home, SGR runs with colours in their original named / indexed / RGB form, then cursor position and cursor visibility. It writes only each cell's base character, so combining marks are dropped, and carries no scrollback, hyperlinks, other modes, alt-screen state or pictures. librio's Surface::serialize() adds scrollback and OSC 8 links, but librio is publish = false. Crosswords implements neither Clone nor serde.",
+    "quoted": "/// The visible screen as a VT/ANSI byte blob (vt100 `contents_formatted`\n    /// equivalent): clear + home, cells with SGR, then the cursor restored.\n    pub fn contents_formatted(&self) -> Vec<u8> {",
+    "check": "overclaims"
+   },
+   "threading_and_loop": {
+    "recorded": "The embedder chooses. Headless, the embedder owns the loop and calls Processor::advance(&mut term, bytes) on a Crosswords it holds, with no threads. With the default `pty` feature, performer::Machine spawns a 'PTY reader' thread that polls a teletypewriter PTY through corcovado and parses into an Arc<FairMutex<Crosswords<U>>> shared with the renderer (U: EventListener + Send + 'static). Crosswords has no internal locking. The PTY layer (teletypewriter) is included and can be dropped with default-features = false. Synchronized updates: an embedder loop should poll Processor::sync_timeout(); otherwise advance() flushes an expired update when the next bytes arrive.",
+    "quoted": "Create a grid, feed it bytes through the parser, and read cells back. No\nPTY, no renderer, no threads:",
+    "check": "human"
+   },
+   "reply_channel": {
+    "recorded": "An event callback. Replies (DA1/DA2, DSR/CPR, DECRQM, XTGETTCAP, Kitty acks and a=q answers) are sent as RioEvent::PtyWrite(route_id, String) through EventListener::send_event. Window-size reports arrive as TextAreaSizeRequest, OSC colour queries as ColorRequest and OSC 52 reads as ClipboardLoad, each carrying a formatter closure the embedder applies before writing. The embedder does the PTY write, so a TD replica can drop these events and let the host answer once \u2014 the same shape as alacritty's Event.",
+    "quoted": "/// Write some text to the PTY identified by `route_id`. Routing\n    /// by panel (rather than the focused context) is required so\n    /// CSI / OSC reply bytes land on the shell that asked for them\n    /// even if the user focuses a different split mid-flight.\n    PtyWrite(usize, String),",
+    "check": "unsupported"
+   },
+   "kitty_graphics": {
+    "recorded": "Broad, inside the crate. Transmission: t=d with chunking, t=f, t=t (path must contain tty-graphics-protocol; deleted after reading), t=s (shm_open on Unix, a file mapping on Windows). Formats: f=8, f=16, f=24, f=32 raw and f=100 PNG; PNG decodes only with the non-default `graphics` feature, otherwise EINVAL. o=z zlib with a decompressed-size cap. Placement: a=T and a=p at the cursor with x/y/w/h source rectangle, c/r cell span, X/Y sub-cell offset, C=1, z index. U=1 virtual placements are stored as metadata and ansi/kitty_virtual.rs supplies the placeholder decoders, but scanning cells for U+10EEEE and compositing is the embedder's renderer's job. Deletes: a/A, i/I, n/N, c/C, p/P, x/X, y/Y, z/Z, q/Q, r/R. a=q runs the real load path and answers OK or the error, honouring q=. Limits: 320 MiB image store per terminal with eviction of unreferenced images; 10000 px per axis and 400 MiB payload at parse; 4096x4096 display cap. Not implemented: animation (a=f, a=a, a=c answered EINVAL:unsupported action) and relative placements (P/Q/H/V parsed, never used).",
+    "quoted": "// A query must behave exactly like a transmission \u2014 decode\n            // the payload, read the file, or map and unlink the shared\n            // memory \u2014 and report whether that worked, without storing\n            // anything.",
+    "check": "unsupported"
+   },
+   "picture_anchoring": {
+    "recorded": "Absolute row counter in side tables, not per-cell: Kitty placements keep dest_row and Sixel/iTerm2 AtlasPlacements keep abs_row = lines_evicted + history + screen_row, so pictures scroll and survive scrollback eviction. On a column reflow a recorded ReflowRemap moves each placement to where its anchor row's content landed (Sixel/iTerm2 pieces on dropped rows are destroyed; Kitty ones stay). Text written over a Sixel/iTerm2 picture splits it into cropped children. Quota: total_limit 320 MiB per terminal, evicting images not in use.",
+    "quoted": "/// Anchor row in the stable absolute space\n    /// (`lines_evicted + history + screen_row` at insert).\n    pub abs_row: i64,",
+    "check": "overclaims"
+   },
+   "integration_path": {
+    "recorded": "crates.io crate: rio-vt = \"0.5\". The default `pty` feature brings Rio's PTY driver (drop it with default-features = false); the opt-in `graphics` feature is required to decode PNG (Kitty f=100) and iTerm2 images.",
+    "quoted": "- **Rust embedders** depend on `rio-vt` directly (this crate).",
+    "check": "supported"
+   }
+  },
+  "maturity": {
+   "api_stability": {
+    "recorded": "Pre-1.0 and versioned in lockstep with the Rio app (0.5.x), with no stated stability promise. Public types have changed inside the 0.5 series (0.5.8 moved Msg::Resize, RioEvent::TextAreaSizeRequest and OnResize from teletypewriter::WinsizeBuilder to rio_vt::event::WindowSize), and 26 versions shipped in eight weeks.",
+    "check": "human"
+   },
+   "latest_release": {
+    "recorded": "0.5.28, published to crates.io 2026-09-17",
+    "check": "human"
+   },
+   "releases_last_12mo": {
+    "recorded": "26 (22 stable 0.5.x, 4 alphas) \u2014 the crate's entire history, 2026-07-26 to 2026-09-17",
+    "check": "overclaims"
+   },
+   "maintainers": {
+    "recorded": "1 contributor above 10%: raphamorim (Raphael Amorim, author and lead) with 1053 of 1144 commits (92%) to the Rio repository in the 12 months to 2026-09-25; next is github-actions[bot] at 2.5%. The rio-vt/ path alone had 94 commits in that window, 92 by raphamorim.",
+    "check": "overclaims"
+   }
+  },
+  "measured": "Fed six recorded image programs through Processor::advance, rio-vt 0.5.28 stored their pictures and the harness read each placement (image id, row, column, columns, rows) from the public map graphics.kitty_placements, and virtual placements from graphics.kitty_virtual_placements; replies arrived as PtyWrite events."
+ },
+ {
+  "id": "rio-vt/copy-5",
+  "label": "rio-vt \u2014 Rio's embeddable core (crates.io)",
+  "group": "B \u00b7 Swap to a Rust core",
+  "kitty_tags": "transmit-direct, transmit-file, transmit-temp, transmit-shm, format-png, format-raw, compression, place-direct, place-virtual, delete-by-id, delete-by-position, query-reply, z-layers",
+  "evidence": {
+   "grid_api": {
+    "recorded": "Crosswords<U: EventListener>, descended from alacritty's Term: visible_rows() -> Vec<Row<Square>>, fill_visible_rows(&mut Vec<Row<Square>>), snapshot_visible(damage, rows, row_styles, extras) for incremental copies with resolved styles, and pub grid: Grid<Square> indexed by Line and Column with display_iter(). A Square is a packed u64: c() base char, wide() Normal / Wide / Spacer / LeadingSpacer, cell_flags() WRAPLINE / HYPERLINK / GRAPHEME, plus style and extras ids. grid.style_of(&square) -> Style { fg, bg, underline_color: Option<AnsiColor>, flags: StyleFlags } (bold, dim, italic, inverse, hidden, strikeout, five underline kinds, blink). Zero-width marks: grid.cell_text(pos) yields the base char then the marks (Square::c() alone drops them); hyperlinks: cell_hyperlink(line, col). Cursor: cursor() -> CursorState; modes: mode() -> Mode, keyboard_mode().",
+    "quoted": "pub struct Style {\n    pub fg: AnsiColor,\n    pub bg: AnsiColor,\n    pub underline_color: Option<AnsiColor>,\n    pub flags: StyleFlags,\n}",
+    "check": "unsupported"
+   },
+   "damage_tracking": {
+    "recorded": "yes \u2014 per viewport line since the last reset: damage() returns TermDamage::Full or Partial(iterator of damaged lines) and reset_damage() clears it; snapshot_visible also marks each copied row dirty; a coarse TerminalDamage { Noop, Full, Partial, CursorOnly } signal travels in events",
+    "quoted": "/// Terminal damage information collected since the last [`Term::reset_damage`] call.",
+    "check": "unsupported"
+   },
+   "state_snapshot": {
+    "recorded": "Partial. Crosswords::contents_formatted() / format(FormatOptions::vt()) re-emits the visible screen as VT bytes: reset, clear, home, SGR runs with colours in their original named / indexed / RGB form, then cursor position and cursor visibility. It writes only each cell's base character, so combining marks are dropped, and carries no scrollback, hyperlinks, other modes, alt-screen state or pictures. librio's Surface::serialize() adds scrollback and OSC 8 links, but librio is publish = false. Crosswords implements neither Clone nor serde.",
+    "quoted": "/// The visible screen as a VT/ANSI byte blob (vt100 `contents_formatted`\n    /// equivalent): clear + home, cells with SGR, then the cursor restored.\n    pub fn contents_formatted(&self) -> Vec<u8> {",
+    "check": "overclaims"
+   },
+   "threading_and_loop": {
+    "recorded": "The embedder chooses. Headless, the embedder owns the loop and calls Processor::advance(&mut term, bytes) on a Crosswords it holds, with no threads. With the default `pty` feature, performer::Machine spawns a 'PTY reader' thread that polls a teletypewriter PTY through corcovado and parses into an Arc<FairMutex<Crosswords<U>>> shared with the renderer (U: EventListener + Send + 'static). Crosswords has no internal locking. The PTY layer (teletypewriter) is included and can be dropped with default-features = false. Synchronized updates: an embedder loop should poll Processor::sync_timeout(); otherwise advance() flushes an expired update when the next bytes arrive.",
+    "quoted": "Create a grid, feed it bytes through the parser, and read cells back. No\nPTY, no renderer, no threads:",
+    "check": "human"
+   },
+   "reply_channel": {
+    "recorded": "An event callback. Replies (DA1/DA2, DSR/CPR, DECRQM, XTGETTCAP, Kitty acks and a=q answers) are sent as RioEvent::PtyWrite(route_id, String) through EventListener::send_event. Window-size reports arrive as TextAreaSizeRequest, OSC colour queries as ColorRequest and OSC 52 reads as ClipboardLoad, each carrying a formatter closure the embedder applies before writing. The embedder does the PTY write, so a TD replica can drop these events and let the host answer once \u2014 the same shape as alacritty's Event.",
+    "quoted": "/// Write some text to the PTY identified by `route_id`. Routing\n    /// by panel (rather than the focused context) is required so\n    /// CSI / OSC reply bytes land on the shell that asked for them\n    /// even if the user focuses a different split mid-flight.\n    PtyWrite(usize, String),",
+    "check": "unsupported"
+   },
+   "kitty_graphics": {
+    "recorded": "Broad, inside the crate. Transmission: t=d with chunking, t=f, t=t (path must contain tty-graphics-protocol; deleted after reading), t=s (shm_open on Unix, a file mapping on Windows). Formats: f=8, f=16, f=24, f=32 raw and f=100 PNG; PNG decodes only with the non-default `graphics` feature, otherwise EINVAL. o=z zlib with a decompressed-size cap. Placement: a=T and a=p at the cursor with x/y/w/h source rectangle, c/r cell span, X/Y sub-cell offset, C=1, z index. U=1 virtual placements are stored as metadata and ansi/kitty_virtual.rs supplies the placeholder decoders, but scanning cells for U+10EEEE and compositing is the embedder's renderer's job. Deletes: a/A, i/I, n/N, c/C, p/P, x/X, y/Y, z/Z, q/Q, r/R. a=q runs the real load path and answers OK or the error, honouring q=. Limits: 320 MiB image store per terminal with eviction of unreferenced images; 10000 px per axis and 400 MiB payload at parse; 4096x4096 display cap. Not implemented: animation (a=f, a=a, a=c answered EINVAL:unsupported action) and relative placements (P/Q/H/V parsed, never used).",
+    "quoted": "// A query must behave exactly like a transmission \u2014 decode\n            // the payload, read the file, or map and unlink the shared\n            // memory \u2014 and report whether that worked, without storing\n            // anything.",
+    "check": "unsupported"
+   },
+   "picture_anchoring": {
+    "recorded": "Absolute row counter in side tables, not per-cell: Kitty placements keep dest_row and Sixel/iTerm2 AtlasPlacements keep abs_row = lines_evicted + history + screen_row, so pictures scroll and survive scrollback eviction. On a column reflow a recorded ReflowRemap moves each placement to where its anchor row's content landed (Sixel/iTerm2 pieces on dropped rows are destroyed; Kitty ones stay). Text written over a Sixel/iTerm2 picture splits it into cropped children. Quota: total_limit 320 MiB per terminal, evicting images not in use.",
+    "quoted": "/// Anchor row in the stable absolute space\n    /// (`lines_evicted + history + screen_row` at insert).\n    pub abs_row: i64,",
+    "check": "overclaims"
+   },
+   "integration_path": {
+    "recorded": "crates.io crate: rio-vt = \"0.5\". The default `pty` feature brings Rio's PTY driver (drop it with default-features = false); the opt-in `graphics` feature is required to decode PNG (Kitty f=100) and iTerm2 images.",
+    "quoted": "- **Rust embedders** depend on `rio-vt` directly (this crate).",
+    "check": "supported"
+   }
+  },
+  "maturity": {
+   "api_stability": {
+    "recorded": "Pre-1.0 and versioned in lockstep with the Rio app (0.5.x), with no stated stability promise. Public types have changed inside the 0.5 series (0.5.8 moved Msg::Resize, RioEvent::TextAreaSizeRequest and OnResize from teletypewriter::WinsizeBuilder to rio_vt::event::WindowSize), and 26 versions shipped in eight weeks.",
+    "check": "human"
+   },
+   "latest_release": {
+    "recorded": "0.5.28, published to crates.io 2026-09-17",
+    "check": "human"
+   },
+   "releases_last_12mo": {
+    "recorded": "26 (22 stable 0.5.x, 4 alphas) \u2014 the crate's entire history, 2026-07-26 to 2026-09-17",
+    "check": "overclaims"
+   },
+   "maintainers": {
+    "recorded": "1 contributor above 10%: raphamorim (Raphael Amorim, author and lead) with 1053 of 1144 commits (92%) to the Rio repository in the 12 months to 2026-09-25; next is github-actions[bot] at 2.5%. The rio-vt/ path alone had 94 commits in that window, 92 by raphamorim.",
+    "check": "overclaims"
+   }
+  },
+  "measured": "Fed six recorded image programs through Processor::advance, rio-vt 0.5.28 stored their pictures and the harness read each placement (image id, row, column, columns, rows) from the public map graphics.kitty_placements, and virtual placements from graphics.kitty_virtual_placements; replies arrived as PtyWrite events."
+ },
+ {
+  "id": "rio-vt/copy-6",
+  "label": "rio-vt \u2014 Rio's embeddable core (crates.io)",
+  "group": "B \u00b7 Swap to a Rust core",
+  "kitty_tags": "transmit-direct, transmit-file, transmit-temp, transmit-shm, format-png, format-raw, compression, place-direct, place-virtual, delete-by-id, delete-by-position, query-reply, z-layers",
+  "evidence": {
+   "grid_api": {
+    "recorded": "Crosswords<U: EventListener>, descended from alacritty's Term: visible_rows() -> Vec<Row<Square>>, fill_visible_rows(&mut Vec<Row<Square>>), snapshot_visible(damage, rows, row_styles, extras) for incremental copies with resolved styles, and pub grid: Grid<Square> indexed by Line and Column with display_iter(). A Square is a packed u64: c() base char, wide() Normal / Wide / Spacer / LeadingSpacer, cell_flags() WRAPLINE / HYPERLINK / GRAPHEME, plus style and extras ids. grid.style_of(&square) -> Style { fg, bg, underline_color: Option<AnsiColor>, flags: StyleFlags } (bold, dim, italic, inverse, hidden, strikeout, five underline kinds, blink). Zero-width marks: grid.cell_text(pos) yields the base char then the marks (Square::c() alone drops them); hyperlinks: cell_hyperlink(line, col). Cursor: cursor() -> CursorState; modes: mode() -> Mode, keyboard_mode().",
+    "quoted": "pub struct Style {\n    pub fg: AnsiColor,\n    pub bg: AnsiColor,\n    pub underline_color: Option<AnsiColor>,\n    pub flags: StyleFlags,\n}",
+    "check": "unsupported"
+   },
+   "damage_tracking": {
+    "recorded": "yes \u2014 per viewport line since the last reset: damage() returns TermDamage::Full or Partial(iterator of damaged lines) and reset_damage() clears it; snapshot_visible also marks each copied row dirty; a coarse TerminalDamage { Noop, Full, Partial, CursorOnly } signal travels in events",
+    "quoted": "/// Terminal damage information collected since the last [`Term::reset_damage`] call.",
+    "check": "unsupported"
+   },
+   "state_snapshot": {
+    "recorded": "Partial. Crosswords::contents_formatted() / format(FormatOptions::vt()) re-emits the visible screen as VT bytes: reset, clear, home, SGR runs with colours in their original named / indexed / RGB form, then cursor position and cursor visibility. It writes only each cell's base character, so combining marks are dropped, and carries no scrollback, hyperlinks, other modes, alt-screen state or pictures. librio's Surface::serialize() adds scrollback and OSC 8 links, but librio is publish = false. Crosswords implements neither Clone nor serde.",
+    "quoted": "/// The visible screen as a VT/ANSI byte blob (vt100 `contents_formatted`\n    /// equivalent): clear + home, cells with SGR, then the cursor restored.\n    pub fn contents_formatted(&self) -> Vec<u8> {",
+    "check": "overclaims"
+   },
+   "threading_and_loop": {
+    "recorded": "The embedder chooses. Headless, the embedder owns the loop and calls Processor::advance(&mut term, bytes) on a Crosswords it holds, with no threads. With the default `pty` feature, performer::Machine spawns a 'PTY reader' thread that polls a teletypewriter PTY through corcovado and parses into an Arc<FairMutex<Crosswords<U>>> shared with the renderer (U: EventListener + Send + 'static). Crosswords has no internal locking. The PTY layer (teletypewriter) is included and can be dropped with default-features = false. Synchronized updates: an embedder loop should poll Processor::sync_timeout(); otherwise advance() flushes an expired update when the next bytes arrive.",
+    "quoted": "Create a grid, feed it bytes through the parser, and read cells back. No\nPTY, no renderer, no threads:",
+    "check": "human"
+   },
+   "reply_channel": {
+    "recorded": "An event callback. Replies (DA1/DA2, DSR/CPR, DECRQM, XTGETTCAP, Kitty acks and a=q answers) are sent as RioEvent::PtyWrite(route_id, String) through EventListener::send_event. Window-size reports arrive as TextAreaSizeRequest, OSC colour queries as ColorRequest and OSC 52 reads as ClipboardLoad, each carrying a formatter closure the embedder applies before writing. The embedder does the PTY write, so a TD replica can drop these events and let the host answer once \u2014 the same shape as alacritty's Event.",
+    "quoted": "/// Write some text to the PTY identified by `route_id`. Routing\n    /// by panel (rather than the focused context) is required so\n    /// CSI / OSC reply bytes land on the shell that asked for them\n    /// even if the user focuses a different split mid-flight.\n    PtyWrite(usize, String),",
+    "check": "unsupported"
+   },
+   "kitty_graphics": {
+    "recorded": "Broad, inside the crate. Transmission: t=d with chunking, t=f, t=t (path must contain tty-graphics-protocol; deleted after reading), t=s (shm_open on Unix, a file mapping on Windows). Formats: f=8, f=16, f=24, f=32 raw and f=100 PNG; PNG decodes only with the non-default `graphics` feature, otherwise EINVAL. o=z zlib with a decompressed-size cap. Placement: a=T and a=p at the cursor with x/y/w/h source rectangle, c/r cell span, X/Y sub-cell offset, C=1, z index. U=1 virtual placements are stored as metadata and ansi/kitty_virtual.rs supplies the placeholder decoders, but scanning cells for U+10EEEE and compositing is the embedder's renderer's job. Deletes: a/A, i/I, n/N, c/C, p/P, x/X, y/Y, z/Z, q/Q, r/R. a=q runs the real load path and answers OK or the error, honouring q=. Limits: 320 MiB image store per terminal with eviction of unreferenced images; 10000 px per axis and 400 MiB payload at parse; 4096x4096 display cap. Not implemented: animation (a=f, a=a, a=c answered EINVAL:unsupported action) and relative placements (P/Q/H/V parsed, never used).",
+    "quoted": "// A query must behave exactly like a transmission \u2014 decode\n            // the payload, read the file, or map and unlink the shared\n            // memory \u2014 and report whether that worked, without storing\n            // anything.",
+    "check": "unsupported"
+   },
+   "picture_anchoring": {
+    "recorded": "Absolute row counter in side tables, not per-cell: Kitty placements keep dest_row and Sixel/iTerm2 AtlasPlacements keep abs_row = lines_evicted + history + screen_row, so pictures scroll and survive scrollback eviction. On a column reflow a recorded ReflowRemap moves each placement to where its anchor row's content landed (Sixel/iTerm2 pieces on dropped rows are destroyed; Kitty ones stay). Text written over a Sixel/iTerm2 picture splits it into cropped children. Quota: total_limit 320 MiB per terminal, evicting images not in use.",
+    "quoted": "/// Anchor row in the stable absolute space\n    /// (`lines_evicted + history + screen_row` at insert).\n    pub abs_row: i64,",
+    "check": "overclaims"
+   },
+   "integration_path": {
+    "recorded": "crates.io crate: rio-vt = \"0.5\". The default `pty` feature brings Rio's PTY driver (drop it with default-features = false); the opt-in `graphics` feature is required to decode PNG (Kitty f=100) and iTerm2 images.",
+    "quoted": "- **Rust embedders** depend on `rio-vt` directly (this crate).",
+    "check": "supported"
+   }
+  },
+  "maturity": {
+   "api_stability": {
+    "recorded": "Pre-1.0 and versioned in lockstep with the Rio app (0.5.x), with no stated stability promise. Public types have changed inside the 0.5 series (0.5.8 moved Msg::Resize, RioEvent::TextAreaSizeRequest and OnResize from teletypewriter::WinsizeBuilder to rio_vt::event::WindowSize), and 26 versions shipped in eight weeks.",
+    "check": "human"
+   },
+   "latest_release": {
+    "recorded": "0.5.28, published to crates.io 2026-09-17",
+    "check": "human"
+   },
+   "releases_last_12mo": {
+    "recorded": "26 (22 stable 0.5.x, 4 alphas) \u2014 the crate's entire history, 2026-07-26 to 2026-09-17",
+    "check": "overclaims"
+   },
+   "maintainers": {
+    "recorded": "1 contributor above 10%: raphamorim (Raphael Amorim, author and lead) with 1053 of 1144 commits (92%) to the Rio repository in the 12 months to 2026-09-25; next is github-actions[bot] at 2.5%. The rio-vt/ path alone had 94 commits in that window, 92 by raphamorim.",
+    "check": "overclaims"
+   }
+  },
+  "measured": "Fed six recorded image programs through Processor::advance, rio-vt 0.5.28 stored their pictures and the harness read each placement (image id, row, column, columns, rows) from the public map graphics.kitty_placements, and virtual placements from graphics.kitty_virtual_placements; replies arrived as PtyWrite events."
+ },
+ {
+  "id": "rio-vt/copy-7",
+  "label": "rio-vt \u2014 Rio's embeddable core (crates.io)",
+  "group": "B \u00b7 Swap to a Rust core",
+  "kitty_tags": "transmit-direct, transmit-file, transmit-temp, transmit-shm, format-png, format-raw, compression, place-direct, place-virtual, delete-by-id, delete-by-position, query-reply, z-layers",
+  "evidence": {
+   "grid_api": {
+    "recorded": "Crosswords<U: EventListener>, descended from alacritty's Term: visible_rows() -> Vec<Row<Square>>, fill_visible_rows(&mut Vec<Row<Square>>), snapshot_visible(damage, rows, row_styles, extras) for incremental copies with resolved styles, and pub grid: Grid<Square> indexed by Line and Column with display_iter(). A Square is a packed u64: c() base char, wide() Normal / Wide / Spacer / LeadingSpacer, cell_flags() WRAPLINE / HYPERLINK / GRAPHEME, plus style and extras ids. grid.style_of(&square) -> Style { fg, bg, underline_color: Option<AnsiColor>, flags: StyleFlags } (bold, dim, italic, inverse, hidden, strikeout, five underline kinds, blink). Zero-width marks: grid.cell_text(pos) yields the base char then the marks (Square::c() alone drops them); hyperlinks: cell_hyperlink(line, col). Cursor: cursor() -> CursorState; modes: mode() -> Mode, keyboard_mode().",
+    "quoted": "pub struct Style {\n    pub fg: AnsiColor,\n    pub bg: AnsiColor,\n    pub underline_color: Option<AnsiColor>,\n    pub flags: StyleFlags,\n}",
+    "check": "unsupported"
+   },
+   "damage_tracking": {
+    "recorded": "yes \u2014 per viewport line since the last reset: damage() returns TermDamage::Full or Partial(iterator of damaged lines) and reset_damage() clears it; snapshot_visible also marks each copied row dirty; a coarse TerminalDamage { Noop, Full, Partial, CursorOnly } signal travels in events",
+    "quoted": "/// Terminal damage information collected since the last [`Term::reset_damage`] call.",
+    "check": "unsupported"
+   },
+   "state_snapshot": {
+    "recorded": "Partial. Crosswords::contents_formatted() / format(FormatOptions::vt()) re-emits the visible screen as VT bytes: reset, clear, home, SGR runs with colours in their original named / indexed / RGB form, then cursor position and cursor visibility. It writes only each cell's base character, so combining marks are dropped, and carries no scrollback, hyperlinks, other modes, alt-screen state or pictures. librio's Surface::serialize() adds scrollback and OSC 8 links, but librio is publish = false. Crosswords implements neither Clone nor serde.",
+    "quoted": "/// The visible screen as a VT/ANSI byte blob (vt100 `contents_formatted`\n    /// equivalent): clear + home, cells with SGR, then the cursor restored.\n    pub fn contents_formatted(&self) -> Vec<u8> {",
+    "check": "overclaims"
+   },
+   "threading_and_loop": {
+    "recorded": "The embedder chooses. Headless, the embedder owns the loop and calls Processor::advance(&mut term, bytes) on a Crosswords it holds, with no threads. With the default `pty` feature, performer::Machine spawns a 'PTY reader' thread that polls a teletypewriter PTY through corcovado and parses into an Arc<FairMutex<Crosswords<U>>> shared with the renderer (U: EventListener + Send + 'static). Crosswords has no internal locking. The PTY layer (teletypewriter) is included and can be dropped with default-features = false. Synchronized updates: an embedder loop should poll Processor::sync_timeout(); otherwise advance() flushes an expired update when the next bytes arrive.",
+    "quoted": "Create a grid, feed it bytes through the parser, and read cells back. No\nPTY, no renderer, no threads:",
+    "check": "human"
+   },
+   "reply_channel": {
+    "recorded": "An event callback. Replies (DA1/DA2, DSR/CPR, DECRQM, XTGETTCAP, Kitty acks and a=q answers) are sent as RioEvent::PtyWrite(route_id, String) through EventListener::send_event. Window-size reports arrive as TextAreaSizeRequest, OSC colour queries as ColorRequest and OSC 52 reads as ClipboardLoad, each carrying a formatter closure the embedder applies before writing. The embedder does the PTY write, so a TD replica can drop these events and let the host answer once \u2014 the same shape as alacritty's Event.",
+    "quoted": "/// Write some text to the PTY identified by `route_id`. Routing\n    /// by panel (rather than the focused context) is required so\n    /// CSI / OSC reply bytes land on the shell that asked for them\n    /// even if the user focuses a different split mid-flight.\n    PtyWrite(usize, String),",
+    "check": "unsupported"
+   },
+   "kitty_graphics": {
+    "recorded": "Broad, inside the crate. Transmission: t=d with chunking, t=f, t=t (path must contain tty-graphics-protocol; deleted after reading), t=s (shm_open on Unix, a file mapping on Windows). Formats: f=8, f=16, f=24, f=32 raw and f=100 PNG; PNG decodes only with the non-default `graphics` feature, otherwise EINVAL. o=z zlib with a decompressed-size cap. Placement: a=T and a=p at the cursor with x/y/w/h source rectangle, c/r cell span, X/Y sub-cell offset, C=1, z index. U=1 virtual placements are stored as metadata and ansi/kitty_virtual.rs supplies the placeholder decoders, but scanning cells for U+10EEEE and compositing is the embedder's renderer's job. Deletes: a/A, i/I, n/N, c/C, p/P, x/X, y/Y, z/Z, q/Q, r/R. a=q runs the real load path and answers OK or the error, honouring q=. Limits: 320 MiB image store per terminal with eviction of unreferenced images; 10000 px per axis and 400 MiB payload at parse; 4096x4096 display cap. Not implemented: animation (a=f, a=a, a=c answered EINVAL:unsupported action) and relative placements (P/Q/H/V parsed, never used).",
+    "quoted": "// A query must behave exactly like a transmission \u2014 decode\n            // the payload, read the file, or map and unlink the shared\n            // memory \u2014 and report whether that worked, without storing\n            // anything.",
+    "check": "unsupported"
+   },
+   "picture_anchoring": {
+    "recorded": "Absolute row counter in side tables, not per-cell: Kitty placements keep dest_row and Sixel/iTerm2 AtlasPlacements keep abs_row = lines_evicted + history + screen_row, so pictures scroll and survive scrollback eviction. On a column reflow a recorded ReflowRemap moves each placement to where its anchor row's content landed (Sixel/iTerm2 pieces on dropped rows are destroyed; Kitty ones stay). Text written over a Sixel/iTerm2 picture splits it into cropped children. Quota: total_limit 320 MiB per terminal, evicting images not in use.",
+    "quoted": "/// Anchor row in the stable absolute space\n    /// (`lines_evicted + history + screen_row` at insert).\n    pub abs_row: i64,",
+    "check": "overclaims"
+   },
+   "integration_path": {
+    "recorded": "crates.io crate: rio-vt = \"0.5\". The default `pty` feature brings Rio's PTY driver (drop it with default-features = false); the opt-in `graphics` feature is required to decode PNG (Kitty f=100) and iTerm2 images.",
+    "quoted": "- **Rust embedders** depend on `rio-vt` directly (this crate).",
+    "check": "supported"
+   }
+  },
+  "maturity": {
+   "api_stability": {
+    "recorded": "Pre-1.0 and versioned in lockstep with the Rio app (0.5.x), with no stated stability promise. Public types have changed inside the 0.5 series (0.5.8 moved Msg::Resize, RioEvent::TextAreaSizeRequest and OnResize from teletypewriter::WinsizeBuilder to rio_vt::event::WindowSize), and 26 versions shipped in eight weeks.",
+    "check": "human"
+   },
+   "latest_release": {
+    "recorded": "0.5.28, published to crates.io 2026-09-17",
+    "check": "human"
+   },
+   "releases_last_12mo": {
+    "recorded": "26 (22 stable 0.5.x, 4 alphas) \u2014 the crate's entire history, 2026-07-26 to 2026-09-17",
+    "check": "overclaims"
+   },
+   "maintainers": {
+    "recorded": "1 contributor above 10%: raphamorim (Raphael Amorim, author and lead) with 1053 of 1144 commits (92%) to the Rio repository in the 12 months to 2026-09-25; next is github-actions[bot] at 2.5%. The rio-vt/ path alone had 94 commits in that window, 92 by raphamorim.",
+    "check": "overclaims"
+   }
+  },
+  "measured": "Fed six recorded image programs through Processor::advance, rio-vt 0.5.28 stored their pictures and the harness read each placement (image id, row, column, columns, rows) from the public map graphics.kitty_placements, and virtual placements from graphics.kitty_virtual_placements; replies arrived as PtyWrite events."
+ }
+]

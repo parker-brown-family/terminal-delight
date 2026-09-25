@@ -1,0 +1,23 @@
+{
+  "run": "2026-09-25, the same checks for both cores",
+  "rio-vt 0.5.28": {
+    "code": "one crate, 34,955 lines of Rust, 19 unsafe, 0 TODO or FIXME (static-facts.json)",
+    "tests": "566 test functions; its suite run here on TD's feature set: 553 passed, 0 failed",
+    "lint": "clippy on Rust 1.98: 5 warnings, all auto-fixable style",
+    "ci": "fmt check, clippy on all targets, cargo test on Linux, macOS and Windows (test.yml)",
+    "fuzzing": "none found in the repository",
+    "docs": "2,904 doc-comment lines; the README has drifted from the code (three mismatches every agent found)",
+    "build": "cargo only plus one C++11 file through the cc crate; cold build 62 to 103 s in the agents' runs",
+    "how_it_is_built": "no AGENTS.md or AI policy; Copilot review switched on; one person carries 92% of commits; recent messages pin contracts in tests ('document RIO_COLOR_NONE contract, pin it in test')"
+  },
+  "libghostty-vt 0.2.1": {
+    "code": "two layers: Ghostty's Zig terminal core (105,163 lines, 40 TODO or FIXME) and third-party Rust bindings (8,544 lines, 367 unsafe as a C wrapper)",
+    "tests": "2,382 Zig test blocks in the core and 11 tests in the bindings; Ghostty's own test-lib-vt could not be run here: Debug fails to link (Zig 0.15.2 linker, R_X86_64_PC64 in bundled C++), ReleaseSafe fails a compile-time assert in quirks.zig; its CI runs inside Nix, which this machine does not have",
+    "lint": "not run on the bindings (a fresh clippy build clones and compiles Ghostty again)",
+    "ci": "Ghostty: libghostty-vt built for seven targets including freestanding and WASM, a fuzzing job, test-lib-vt, a pkg-config check and Valgrind. Bindings: nix build, flake check, an iOS cross-check and Miri",
+    "fuzzing": "yes: test/fuzz-libghostty with a corpus",
+    "docs": "the C header is heavily documented (6,873 doc lines of 9,047); the Rust docs carry the byte-for-lines error, a broken decoder example and copy-paste slips every agent found",
+    "build": "Zig 0.15.2 plus a git clone of Ghostty at build time; cold build 178 to 223 s; about 900 MB of target and Zig cache",
+    "how_it_is_built": "AGENTS.md, CLAUDE.md and an AI policy: 'Ghostty is written with plenty of AI assistance'; outside contributors must disclose AI use and fully understand their code, and poor AI work is publicly denounced; maintainers exempt"
+  }
+}

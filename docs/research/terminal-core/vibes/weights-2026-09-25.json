@@ -1,0 +1,32 @@
+{
+  "written": "2026-09-25, from Parker's four answers in chat, committed before the performance runs of the same day produced any number",
+  "caveat": "Parker had already seen the first ranking (wezterm-term 0.72, rio-vt 0.69, libghostty-vt 0.62) in the brief, so these weights are sealed against the new measurements only, not against the ranking",
+  "answers_verbatim": {
+    "ghostty_engine_or_rust_end_to_end": "Ugh - tough choice but really split... rust end to end... so if it is FAST and NATIVE and SNAPPY and WORKS and PERFORMS... why rust end to end... nah -- rust simply points to a bunch of stuff, but if an agent can build on something that isn't rust and we know it will ABSOLUTELY SING on the perfomrance side... yeah Rust e2e falls away almost entirely...",
+    "small_and_ownable_or_does_more": "I will never read the core tbh... Agentic! Handling more isn't necessarily better though.. It MIGHT be better.. OPEN SOURCE IS KEY!!!! licensing etc... ummmm...  yeah - a bit to unpack here, but PERFORMANCE, OPEN SOURCE, AGNET CAN FLUENTLY WORK ON IT are the keys ehre",
+    "more_maintainers_or_published_unpatched": "Published, unpatched",
+    "speed_and_memory_or_pictures_just_work": "100% speed and memory -- so ... pictures open SHOULD NOT PERSIST if someone jumps to another tab , the clicked picture goes away... these docs and pics are ATTENTIONAL! not persistent <3  opinions going to opinion."
+  },
+  "translation": {
+    "note": "The assembling agent's reading of the answers. Parker corrects it; nothing below is his number until he says so.",
+    "gates": {
+      "open_source": "a gate, not a weight: a core that TD cannot ship under its MIT licence is out. Every remaining candidate passes except kitty's core (GPL-3.0)."
+    },
+    "weights": {
+      "performance": {"weight": 5, "why": "'100% speed and memory', 'ABSOLUTELY SING on the performance side'. Measured as text throughput and memory with twenty panes open."},
+      "agent_fluency": {"weight": 4, "why": "'AGENT CAN FLUENTLY WORK ON IT' named as a key. Not measured yet; unknown, not zero."},
+      "published_unpatched": {"weight": 3, "why": "chose 'Published, unpatched' over more maintainers"},
+      "pictures": {"weight": 2, "why": "below speed and memory; 'handling more isn't necessarily better... it MIGHT be better'"},
+      "maintainers": {"weight": 1, "why": "lost to 'Published, unpatched'"},
+      "other_picture_protocols": {"weight": 0.5, "why": "'handling more isn't necessarily better'"},
+      "build_toolchain": {"weight": 0.25, "why": "'Rust e2e falls away almost entirely' when performance sings"},
+      "persistence_of_pictures": {"weight": 0, "why": "'pictures ... SHOULD NOT PERSIST if someone jumps to another tab ... ATTENTIONAL! not persistent'. Pictures need to reach the window that is looking, not survive snapshots, scrollback or reconnects."}
+    },
+    "not_said": {
+      "ghostty_name_and_popularity": "undecided: the pull was named earlier ('happy camper', 'popularity pull') but no answer weighed it against the others",
+      "tiny": "undecided: 'I will never read the core' suggests size matters only through memory and agent fluency, not on its own",
+      "fit_to_td_interfaces_and_rewrite_size": "not revisited; the earlier weights (3 and 2.5) stand until Parker says otherwise",
+      "api_stability": "not revisited; earlier weight 2 stands"
+    }
+  }
+}

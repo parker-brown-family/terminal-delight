@@ -1,0 +1,43 @@
+{
+ "rio-vt 0.5.28 (crate TD would link)": {
+  "source_files": 44,
+  "source_lines": 34955,
+  "test_fns_in_src": 566,
+  "test_files": 0,
+  "test_fns_in_tests": 0,
+  "examples": 6,
+  "benches": 1,
+  "unsafe_blocks_or_fns": 19,
+  "unwrap_or_expect_calls": 364,
+  "doc_comment_lines": 2904,
+  "todo_fixme": 0
+ },
+ "libghostty-vt 0.2.1 (third-party Rust bindings)": {
+  "source_files": 21,
+  "source_lines": 8544,
+  "test_fns_in_src": 11,
+  "test_files": 0,
+  "test_fns_in_tests": 0,
+  "examples": 0,
+  "benches": 0,
+  "unsafe_blocks_or_fns": 367,
+  "unwrap_or_expect_calls": 71,
+  "doc_comment_lines": 2460,
+  "todo_fixme": 1
+ },
+ "ghostty src/terminal (the Zig core under the bindings)": {
+  "source_files": 126,
+  "source_lines": 105163,
+  "zig_test_blocks": 2382,
+  "doc_comment_lines": 6117,
+  "todo_fixme": 40,
+  "c_api_header_lines": 9047,
+  "c_api_doc_comment_lines": 6873,
+  "test_dir_entries": [
+   "README.md",
+   "fuzz-libghostty",
+   "ucs-detect.sh",
+   "windows"
+  ]
+ }
+}

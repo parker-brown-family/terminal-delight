@@ -1,0 +1,48 @@
+{
+  "crate": "libghostty-vt 0.2.1",
+  "icat": {
+    "cursor": {
+      "col": 0,
+      "row": 19
+    },
+    "placements": [
+      {
+        "col": 0,
+        "height_cells": 19,
+        "image_id": 2147483647,
+        "image_px": [
+          640,
+          400
+        ],
+        "placement_id": 0,
+        "row": 0,
+        "screen_col": 0,
+        "screen_row": 0,
+        "virtual": false,
+        "width_cells": 64
+      }
+    ],
+    "replies": {
+      "escaped": "\\x1b_Gi=1;OK\\x1b\\\\\\x1b_Gi=2;EINVAL: unsupported medium\\x1b\\\\\\x1b_Gi=3;EINVAL: unsupported medium\\x1b\\\\\\x1b[?62;22c",
+      "len": 90
+    },
+    "visible_lines": []
+  },
+  "text": {
+    "bytes_fed": 2097161,
+    "max_scrollback_as_documented": {
+      "last_visible_line": {
+        "row": 38,
+        "text": "ä cargo debug target build passed src struct struct thread release"
+      },
+      "max_scrollback": 10000,
+      "scrollback_rows": 580,
+      "total_rows": 620
+    },
+    "max_scrollback_calibrated_to_10000_lines": {
+      "max_scrollback_bytes": 10838016,
+      "scrollback_rows": 10255,
+      "total_rows": 10295
+    }
+  }
+}

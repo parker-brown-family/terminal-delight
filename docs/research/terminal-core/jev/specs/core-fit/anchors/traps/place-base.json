@@ -1,0 +1,20 @@
+{
+  "call": "assess",
+  "item": {
+    "id": "trap/i",
+    "label": "Core I (a fixture)",
+    "kitty_tags": "unknown",
+    "evidence": {
+      "kitty_graphics": {
+        "recorded": "Placements are stored in a public map keyed by (image_id, placement_id) with dest_row, dest_col, columns and rows; decoded pixels are kept per image."
+      }
+    }
+  },
+  "expect": {
+    "placements_readable": [
+      "provides",
+      "provides_with_work"
+    ]
+  },
+  "written": "2026-09-25, before any call"
+}

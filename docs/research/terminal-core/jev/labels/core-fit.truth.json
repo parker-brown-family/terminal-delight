@@ -1,0 +1,68 @@
+{
+  "labeller": "the assembling agent (Claude), not Parker",
+  "written": "2026-09-25, from TD's own use of alacritty_terminal and from the two bake-off harnesses written against rio-vt 0.5.28 and libghostty-vt 0.2.1; not from the research summaries Jev read",
+  "rule": "pass = provides or provides_with_work; fail = does_not; a label marked 'unsure' is left out of the score",
+  "labels": {
+    "alacritty-own-loop": {
+      "cell_contents": ["pass", "Cell { c, fg, bg, flags } — pane.rs styled_lines reads them"],
+      "zero_width": ["pass", "Cell::zerowidth() — gridwire.rs re-emits the marks in every snapshot"],
+      "underline_colour": ["pass", "Cell::underline_color() — gridwire.rs emits SGR 58"],
+      "wide_chars": ["pass", "Flags::WIDE_CHAR and WIDE_CHAR_SPACER — styled_lines skips spacers"],
+      "scrollback_read": ["pass", "grid[Line(-n)] reads history — TD's FOCUS reader walks it"],
+      "damage": ["pass", "Term::damage() returns TermDamage"],
+      "snapshot": ["fail", "no serializer for the whole state; TD wrote gridwire.rs to re-encode the grid itself"],
+      "feed_loop": ["pass", "vte::ansi::Processor::advance(&mut term, bytes) — corebake calls it directly"],
+      "replies_out": ["pass", "Event::PtyWrite through the EventListener — host.rs bounces it"],
+      "threading": ["pass", "Term is Send; TD shares it behind FairMutex between the reader thread and the UI"],
+      "placements_readable": ["fail", "no picture state at all — the bake-off measured 0 of 6"],
+      "placeholders": ["fail", "placeholder cells survive as text but nothing resolves them"],
+      "media_policy": ["fail", "no picture protocol, so nothing to refuse"]
+    },
+    "rio-vt": {
+      "cell_contents": ["pass", "Square::c() and grid.style_of() — corebake reads c()"],
+      "zero_width": ["pass", "grid.cell_text(pos) yields the base char and its marks"],
+      "underline_colour": ["pass", "Style { underline_color }"],
+      "wide_chars": ["pass", "Square::wide() Normal / Wide / Spacer / LeadingSpacer"],
+      "scrollback_read": ["unsure", "the grid is alacritty-derived and indexed by Line, so history is very likely readable, but the harness only read visible_rows()"],
+      "damage": ["pass", "snapshot_visible(damage, …) and damage tracking in Crosswords"],
+      "snapshot": ["fail", "no whole-state serializer; its screen dump is visible-only and drops marks (research part B1)"],
+      "feed_loop": ["pass", "Processor::advance(&mut term, bytes) — corebake calls it"],
+      "replies_out": ["pass", "RioEvent::PtyWrite — corebake collects them"],
+      "threading": ["unsure", "not established in this session"],
+      "placements_readable": ["pass", "pub graphics.kitty_placements with image id, dest_row, dest_col, columns, rows — corebake reads it"],
+      "placeholders": ["pass", "graphics.kitty_virtual_placements plus ansi/kitty_virtual.rs decoders; the U+10EEEE scan is the embedder's (with work)"],
+      "media_policy": ["unsure", "not established in this session"]
+    },
+    "libghostty-vt": {
+      "cell_contents": ["pass", "RenderState rows and cells with resolved colours and style"],
+      "zero_width": ["pass", "grapheme clusters per cell"],
+      "underline_colour": ["pass", "style carries the underline colour"],
+      "wide_chars": ["pass", "cells carry their wide state"],
+      "scrollback_read": ["pass", "grid_ref(Point) over history coordinates, scrollback_rows()"],
+      "damage": ["pass", "RenderState dirty rows"],
+      "snapshot": ["pass", "Formatter re-emits VT with modes, scrolling region, tab stops and cursor (pictures excluded)"],
+      "feed_loop": ["pass", "Terminal::vt_write(bytes) — ghostbake calls it"],
+      "replies_out": ["pass", "on_pty_write callback — ghostbake collects replies"],
+      "threading": ["fail", "handle types are !Send + !Sync by design"],
+      "placements_readable": ["pass", "PlacementIterator: image id, viewport_pos, grid_size, image pixels — ghostbake reads it"],
+      "placeholders": ["pass", "virtual placements are flagged; positions come from the embedder's own scan (with work)"],
+      "media_policy": ["pass", "set_kitty_image_from_file/temp_file/shared_mem_allowed"]
+    },
+    "wezterm-term": {
+      "_added": ["note", "added 2026-09-25 after bake/wezbake ran against git b09b56c; cells the harness did not touch are unsure"],
+      "cell_contents": ["pass", "Line::visible_cells() yields CellRef with str() and attrs() — wezbake reads both"],
+      "zero_width": ["pass", "CellRef::str() returns the whole grapheme (wezterm-surface cellref.rs)"],
+      "underline_colour": ["unsure", "not read by the harness"],
+      "wide_chars": ["pass", "CellRef::width(); visible_cells() skips the cell a wide character covers"],
+      "scrollback_read": ["pass", "Screen::lines_in_phys_range(0..scrollback_rows()) — wezbake reads history this way"],
+      "damage": ["unsure", "not read by the harness"],
+      "snapshot": ["unsure", "not read by the harness"],
+      "feed_loop": ["pass", "Terminal::advance_bytes(bytes) — wezbake calls it"],
+      "replies_out": ["pass", "replies are written to the Box<dyn Write + Send> given to Terminal::new — wezbake captured Kitty OK and DA1 there"],
+      "threading": ["unsure", "not established by the harness"],
+      "placements_readable": ["pass", "CellAttributes::images() gives ImageCell with image id, placement id and Arc<ImageData>; the placement rectangle is rebuilt by scanning cells (with work)"],
+      "placeholders": ["fail", "measured: U=1 ignored, picture drawn at the cursor, placeholder characters left as text, in both placeholder recordings"],
+      "media_policy": ["unsure", "not read by the harness"]
+    }
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "call": "assess",
+  "item": {
+    "id": "trap/b",
+    "label": "Core B (a fixture)",
+    "kitty_tags": "unknown",
+    "evidence": {
+      "grid_api": {
+        "recorded": "Cells expose only their character through `cell.ch()`; colours and attributes are resolved inside the bundled renderer and are not part of the public API."
+      }
+    }
+  },
+  "expect": {
+    "cell_contents": [
+      "does_not"
+    ]
+  },
+  "written": "2026-09-25, before any call"
+}

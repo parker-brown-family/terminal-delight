@@ -1,0 +1,19 @@
+{
+  "call": "assess",
+  "item": {
+    "id": "trap/g",
+    "label": "Core G (a fixture)",
+    "kitty_tags": "unknown",
+    "evidence": {
+      "threading_and_loop": {
+        "recorded": "`Processor::advance(&mut term, bytes)` parses bytes the embedder supplies; the PTY layer is an optional feature."
+      }
+    }
+  },
+  "expect": {
+    "feed_loop": [
+      "provides"
+    ]
+  },
+  "written": "2026-09-25, before any call"
+}

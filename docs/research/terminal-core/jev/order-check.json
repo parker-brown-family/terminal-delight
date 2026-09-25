@@ -1,0 +1,17 @@
+{
+ "answers": 182,
+ "changed": 8,
+ "share": 0.04395604395604396,
+ "flips": [
+  "alacritty-own-loop.replies_out: provides_with_work \u2192 provides",
+  "rio-vt.wide_chars: provides_with_work \u2192 provides",
+  "libghostty-vt.media_policy: provides_with_work \u2192 provides",
+  "contour-vtbackend.replies_out: None \u2192 does_not",
+  "contour-vtbackend.threading: provides_with_work \u2192 None",
+  "contour-vtbackend.placeholders: provides \u2192 provides_with_work",
+  "kitty-core.threading: None \u2192 does_not",
+  "zmx.feed_loop: None \u2192 does_not"
+ ],
+ "falsifier": "more than 10% changed would mean the batch anchors on order",
+ "falsified": false
+}

@@ -1,0 +1,25 @@
+{
+  "call": "check",
+  "item": {
+    "id": "trap/other-base",
+    "subject": "rio-vt \u2014 Rio's embeddable core",
+    "field": "kitty_graphics",
+    "field_means": "kitty_graphics: which parts of the Kitty graphics protocol it implements",
+    "value": "implements the Kitty graphics protocol, including Unicode placeholders",
+    "quote": "rio-vt implements the Kitty graphics protocol, including virtual placements rendered through Unicode placeholders.",
+    "source": "fixture",
+    "measured_by_command": false,
+    "labelled_inferred": false
+  },
+  "expect": {
+    "support": [
+      "states"
+    ],
+    "other_subject": [
+      "same",
+      "unclear"
+    ]
+  },
+  "written": "2026-09-25, before any call",
+  "pair": "other-than"
+}

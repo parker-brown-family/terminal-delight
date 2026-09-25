@@ -1,0 +1,176 @@
+{
+ "runs": {
+  "claim-check": {
+   "requests": 315,
+   "items": 315,
+   "questions": 630,
+   "input_tokens": 274175,
+   "output_tokens": 23485,
+   "cost_usd": 0.011515,
+   "p50_ms": 146.4,
+   "model": [
+    "typesafe/jev-1.13-20260917"
+   ],
+   "spec_version": [
+    3
+   ]
+  },
+  "claim-check-v1": {
+   "requests": 315,
+   "items": 315,
+   "questions": 630,
+   "input_tokens": 275570,
+   "output_tokens": 21074,
+   "cost_usd": 0.011574,
+   "p50_ms": 148.5,
+   "model": [
+    "typesafe/jev-1.13-20260917"
+   ],
+   "spec_version": [
+    1
+   ]
+  },
+  "claim-check-v2": {
+   "requests": 315,
+   "items": 315,
+   "questions": 630,
+   "input_tokens": 246078,
+   "output_tokens": 20940,
+   "cost_usd": 0.010335,
+   "p50_ms": 147.7,
+   "model": [
+    "typesafe/jev-1.13-20260917"
+   ],
+   "spec_version": [
+    2
+   ]
+  },
+  "core-fit-r1": {
+   "requests": 28,
+   "items": 14,
+   "questions": 196,
+   "input_tokens": 103681,
+   "output_tokens": 11537,
+   "cost_usd": 0.004355,
+   "p50_ms": 188.4,
+   "model": [
+    "typesafe/jev-1.13-20260917"
+   ],
+   "spec_version": [
+    2
+   ]
+  },
+  "core-fit-r2": {
+   "requests": 28,
+   "items": 14,
+   "questions": 196,
+   "input_tokens": 103681,
+   "output_tokens": 11540,
+   "cost_usd": 0.004355,
+   "p50_ms": 168.6,
+   "model": [
+    "typesafe/jev-1.13-20260917"
+   ],
+   "spec_version": [
+    2
+   ]
+  },
+  "core-fit-r3": {
+   "requests": 28,
+   "items": 14,
+   "questions": 196,
+   "input_tokens": 103681,
+   "output_tokens": 11549,
+   "cost_usd": 0.004355,
+   "p50_ms": 173.1,
+   "model": [
+    "typesafe/jev-1.13-20260917"
+   ],
+   "spec_version": [
+    2
+   ]
+  },
+  "core-fit-reversed": {
+   "requests": 28,
+   "items": 14,
+   "questions": 196,
+   "input_tokens": 102833,
+   "output_tokens": 11527,
+   "cost_usd": 0.004319,
+   "p50_ms": 178.8,
+   "model": [
+    "typesafe/jev-1.13-20260917"
+   ],
+   "spec_version": [
+    1
+   ]
+  },
+  "core-fit-rio-ablation": {
+   "requests": 8,
+   "items": 4,
+   "questions": 56,
+   "input_tokens": 30822,
+   "output_tokens": 3305,
+   "cost_usd": 0.001295,
+   "p50_ms": 293.5,
+   "model": [
+    "typesafe/jev-1.13-20260917"
+   ],
+   "spec_version": [
+    2
+   ]
+  },
+  "core-fit-rio-repeat": {
+   "requests": 16,
+   "items": 8,
+   "questions": 112,
+   "input_tokens": 61728,
+   "output_tokens": 6597,
+   "cost_usd": 0.002593,
+   "p50_ms": 175.1,
+   "model": [
+    "typesafe/jev-1.13-20260917"
+   ],
+   "spec_version": [
+    2
+   ]
+  },
+  "core-fit-v1": {
+   "requests": 28,
+   "items": 14,
+   "questions": 196,
+   "input_tokens": 102833,
+   "output_tokens": 11534,
+   "cost_usd": 0.004319,
+   "p50_ms": 181.4,
+   "model": [
+    "typesafe/jev-1.13-20260917"
+   ],
+   "spec_version": [
+    1
+   ]
+  },
+  "core-fit-v2-before-wezbake": {
+   "requests": 28,
+   "items": 14,
+   "questions": 196,
+   "input_tokens": 103531,
+   "output_tokens": 11539,
+   "cost_usd": 0.004348,
+   "p50_ms": 203.1,
+   "model": [
+    "typesafe/jev-1.13-20260917"
+   ],
+   "spec_version": [
+    2
+   ]
+  }
+ },
+ "total": {
+  "requests": 1137,
+  "questions": 3234,
+  "input_tokens": 1508613,
+  "output_tokens": 144627,
+  "cost_usd": 0.063363
+ }
+}

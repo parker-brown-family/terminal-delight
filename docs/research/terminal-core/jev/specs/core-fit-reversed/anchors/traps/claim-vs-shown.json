@@ -1,0 +1,25 @@
+{
+  "call": "assess",
+  "item": {
+    "id": "trap/m",
+    "label": "Core M (a fixture)",
+    "kitty_tags": "unknown",
+    "evidence": {
+      "integration_path": {
+        "recorded": "Described by its authors as a drop-in replacement for alacritty_terminal with full image support."
+      }
+    }
+  },
+  "expect": {
+    "placements_readable": [
+      "evidence_silent",
+      "provides_with_work"
+    ],
+    "feed_loop": [
+      "evidence_silent",
+      "provides_with_work",
+      "provides"
+    ]
+  },
+  "written": "2026-09-25, before any call"
+}

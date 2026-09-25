@@ -1,0 +1,24 @@
+{
+  "core": "libghostty-vt 0.2.1 (ghostty a887df42, Zig 0.15.2)",
+  "kb_per_pane_empty": 74,
+  "kb_per_pane_full": 11925,
+  "panes": 20,
+  "picture_bytes": 472,
+  "rows_kept": 10164,
+  "rss_kb": {
+    "after_create": 12492,
+    "after_fill": 249516,
+    "high_water": 251260,
+    "start": 11000
+  },
+  "text_bytes": 8388620,
+  "text_mb_per_s": 135.13532844749656,
+  "text_ms_median": 59.2,
+  "text_ms_runs": [
+    59.2,
+    58.8,
+    59.2,
+    59.7,
+    59.5
+  ]
+}

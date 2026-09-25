@@ -1,0 +1,21 @@
+{
+  "call": "check",
+  "item": {
+    "id": "trap/aswell-base",
+    "subject": "libghostty-vt \u2014 Ghostty's core as a library",
+    "field": "build_requirements",
+    "field_means": "build_requirements: toolchains beyond stable cargo",
+    "value": "a Zig toolchain",
+    "quote": "Fetches and builds libghostty-vt.a from ghostty sources via Zig by default. Set GHOSTTY_SOURCE_DIR to use a local checkout, GHOSTTY_ZIG_SYSTEM_DIR for pre-fetched Zig packages, and LIBGHOSTTY_VT_SYS_OPTIMIZE to control optimisation.",
+    "source": "fixture",
+    "measured_by_command": false,
+    "labelled_inferred": false
+  },
+  "expect": {
+    "support": [
+      "states"
+    ]
+  },
+  "written": "2026-09-25, before any call",
+  "pair": "as-well-as"
+}

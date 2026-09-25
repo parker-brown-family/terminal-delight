@@ -1,0 +1,19 @@
+{
+  "call": "assess",
+  "item": {
+    "id": "trap/h",
+    "label": "Core H (a fixture)",
+    "kitty_tags": "unknown",
+    "evidence": {
+      "threading_and_loop": {
+        "recorded": "The library opens the pseudoterminal, spawns its own reader thread and parses internally; there is no function for handing it bytes."
+      }
+    }
+  },
+  "expect": {
+    "feed_loop": [
+      "does_not"
+    ]
+  },
+  "written": "2026-09-25, before any call"
+}

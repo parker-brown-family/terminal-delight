@@ -1,0 +1,35 @@
+{
+  "ask-are-pictures-worth-a": [
+    {
+      "text": "Parked, 2026-09-25. We will not move forward just yet; this needs a riff first. None of the four questions on this page is answered. (Parker, in chat)",
+      "title": "Are pictures worth a core swap?",
+      "ts": "2026-09-25 08:04"
+    }
+  ],
+  "ask-wezterm-term-or-rio": [
+    {
+      "text": "Parker, in chat: if we could use Ghostty I would be a happy camper. Good vibes, and I feel the popularity pull. That said, wezterm-term and rio-vt are dark horses, and if they are TINY that would be very vibey too. Not 100% sold on Ghostty. Not answered.",
+      "title": "wezterm-term or rio-vt?",
+      "ts": "2026-09-25 08:04"
+    }
+  ],
+  "fig-12-every-road-every": [
+    {
+      "text": "Parker, in chat: we really want FIT into TD's PURPOSE AND PHILOSOPHY. No column here measures that yet. For the riff (a prompt, not a proposal): TD's README states its goal as '2-5-20 terminals in one window · native-snappy · web-app polished · modify-at-will themes · open source' and its stack as 'Rust end-to-end'. Which of those should a core be judged against, and how?",
+      "title": "12 · Every road, every dimension",
+      "ts": "2026-09-25 08:04"
+    },
+    {
+      "text": "Parker's 'maybe they are TINY' is not a column either. For the riff: tiny measured as what? Dependency tree, lines of code, build time, binary growth, or how much of the crate TD would actually call. Nothing measured yet.",
+      "title": "12 · Every road, every dimension",
+      "ts": "2026-09-25 08:04"
+    }
+  ],
+  "fig-13-the-rule-and": [
+    {
+      "text": "Parker asked whether libghostty-vt is actually Ghostty. From the research: yes. It is Ghostty's own terminal core (parser, screen, scrollback, reflow, Kitty picture storage, key and mouse encoders), maintained inside ghostty-org/ghostty with Mitchell Hashimoto leading; building it clones Ghostty's source at a pinned commit and compiles it with Zig. Ghostty's renderer, fonts and app do not come with it, and the Rust bindings over it are third-party (Uzaaft/libghostty-rs). On the popularity pull, crates.io downloads: libghostty-vt bindings 131,640, rio-vt 70,499, wezterm-term unpublished (a fork has 11,430). (Assembling agent)",
+      "title": "13 · The rule and the matrix",
+      "ts": "2026-09-25 08:04"
+    }
+  ]
+}

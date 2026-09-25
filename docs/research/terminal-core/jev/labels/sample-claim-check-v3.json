@@ -1,0 +1,322 @@
+[
+ {
+  "n": 0,
+  "item": "libghostty-vt/maintainers",
+  "field": "who carries the work: contributors with a large share of recent commits, and the lead",
+  "headline": "ghostty: 1 contributor with >=10% of the 5,707 default-branch commits since 2025-09-25",
+  "quote": "{\"total\":5707,\"top\":[{\"login\":\"mitchellh\",\"c\":2914},{\"login\":\"github-actions[bot]\",\"c\":306},{\"login\":\"jcollie\",\"c\":288}]}",
+  "jev": "implies"
+ },
+ {
+  "n": 1,
+  "item": "td-own-core/damage_tracking",
+  "field": "whether it reports which rows changed since the last read",
+  "headline": "TD would build it",
+  "quote": "pub fn changed_chunks_in_viewport(",
+  "jev": "implies"
+ },
+ {
+  "n": 2,
+  "item": "alacritty-own-loop/picture_anchoring",
+  "field": "how a placed picture is tied to the grid so it scrolls, and its storage quota",
+  "headline": "n/a today",
+  "quote": "pub c: char,\n    pub fg: Color,\n    pub bg: Color,\n    pub flags: Flags,\n    pub extra: Option<Arc<CellExtra>>,",
+  "jev": "silent"
+ },
+ {
+  "n": 3,
+  "item": "libghostty-vt/releases_last_12mo",
+  "field": "how many releases it had in the 12 months before 2026-09-25",
+  "headline": "4 crate releases of libghostty-vt (0.1.0 and 0.1.1 on 2026-03-28, 0.2.0 on 2026-06-16, 0.2.1 on 2026-07-18)",
+  "quote": "\"versions\":[{\"num\":\"0.2.1\",\"created_at\":\"2026-07-18T18:04:40.309871Z\"},{\"num\":\"0.2.0\",\"created_at\":\"2026-06-16T16:26:04.361465Z\"},{\"num\":\"0.1.1\",\"created_at\":\"2026-03-28T19:46:12.627570Z\"},{\"num\":\"0.1.0\",\"created_at\":\"2026-03-28T19:13:41.066653Z\"}]",
+  "jev": "implies"
+ },
+ {
+  "n": 4,
+  "item": "libvterm/reply_channel",
+  "field": "how its answers to programs' queries reach the embedding program",
+  "headline": "An output callback",
+  "quote": "void vterm_output_set_callback(VTerm *vt, VTermOutputCallback *func, void *user);",
+  "jev": "implies"
+ },
+ {
+  "n": 5,
+  "item": "contour-vtbackend/license",
+  "field": "the licence it is published under",
+  "headline": "Apache-2.0",
+  "quote": "3032\t152\tApache-2.0",
+  "jev": "states"
+ },
+ {
+  "n": 6,
+  "item": "alacritty-graphics-fork/reply_channel",
+  "field": "how its answers to programs' queries reach the embedding program",
+  "headline": "Upstream's event path",
+  "quote": "let text = String::from(\"\\\\x1b[?62;4;6;22c\");",
+  "jev": "silent"
+ },
+ {
+  "n": 7,
+  "item": "rio-vt/license",
+  "field": "the licence it is published under",
+  "headline": "MIT",
+  "quote": "0.5.28\t2026-09-17T20:55:27.005329Z\tMIT\t469\tfalse",
+  "jev": "states"
+ },
+ {
+  "n": 8,
+  "item": "alacritty-own-loop/state_snapshot",
+  "field": "whether the whole terminal state can be serialised or replayed for a client that attaches later",
+  "headline": "partial",
+  "quote": "#[cfg_attr(feature = \"serde\", derive(Serialize, Deserialize))]\npub struct Grid<T> {",
+  "jev": "silent"
+ },
+ {
+  "n": 9,
+  "item": "wezterm-term/iterm2_images",
+  "field": "whether it supports iTerm2 inline images (OSC 1337)",
+  "headline": "yes",
+  "quote": "ITermProprietary::File(image) => self.set_image(*image),",
+  "jev": "implies"
+ },
+ {
+  "n": 10,
+  "item": "libghostty-vt/vt_conformance",
+  "field": "published evidence of how conformant its terminal emulation is",
+  "headline": "Stated coverage plus an xterm audit",
+  "quote": "Ghostty implements all of the regularly used control sequences and can run every mainstream terminal program without issue. For legacy sequences, we've done a comprehensive xterm audit comparing Ghostty's behavior to xterm and building a set of conformance test cases.",
+  "jev": "states"
+ },
+ {
+  "n": 11,
+  "item": "zellij-grid/vt_conformance",
+  "field": "published evidence of how conformant its terminal emulation is",
+  "headline": "28 vttest screen snapshots (menus 1, 2, 3 and 8",
+  "quote": "let fixture_name = \"vttest1-0\";\\n    let content = read_fixture(fixture_name);\\n    vte_parser.advance(&mut grid, &content);\\n    assert_snapshot!(format!(\"{:?}\", grid));",
+  "jev": "states_part"
+ },
+ {
+  "n": 12,
+  "item": "td-own-core/reply_channel",
+  "field": "how its answers to programs' queries reach the embedding program",
+  "headline": "TD writes every reply itself, and its existing split carries over unchanged",
+  "quote": "/// Identify the terminal (should write back to the pty stream).\\n    fn identify_terminal(&mut self, _intermediate: Option<char>) {}",
+  "jev": "states_part"
+ },
+ {
+  "n": 13,
+  "item": "alacritty-own-loop/maintainers",
+  "field": "who carries the work: contributors with a large share of recent commits, and the lead",
+  "headline": "2 contributors with >= 10% of the 41 commits to alacritty/alacritty in the 12 months to 2026-09-25",
+  "quote": "41 alacritty_commits_12mo.txt\n     14 chrisduerr\n      6 kchibisov\n      2 dfoxfranke",
+  "jev": "implies"
+ },
+ {
+  "n": 14,
+  "item": "libghostty-vt/latest_release",
+  "field": "its newest release, with version and date",
+  "headline": "libghostty-vt 0.2.1 and libghostty-vt-sys 0.2.1, 2026-07-18 on crates.io, pinning ghostty commit a887df42 (2026-07-11)",
+  "quote": "\"max\":\"0.2.1\",\"versions\":[{\"num\":\"0.2.1\",\"created_at\":\"2026-07-18T18:04:40.309871Z\"}",
+  "jev": "states_part"
+ },
+ {
+  "n": 15,
+  "item": "alacritty-own-loop/performance_evidence",
+  "field": "published or measured parsing speed and memory use",
+  "headline": "No alacritty_terminal-only throughput figure is published",
+  "quote": "dense_cells (625 samples @ 1 MiB):\n    15.47ms avg (90% < 16ms) +-1.93ms",
+  "jev": "contradicts"
+ },
+ {
+  "n": 16,
+  "item": "contour-vtbackend/language",
+  "field": "the language it is implemented in",
+  "headline": "C++23 (a few QML/Objective-C++ files elsewhere in Contour",
+  "quote": "set(CMAKE_CXX_STANDARD 23)",
+  "jev": "states_part"
+ },
+ {
+  "n": 17,
+  "item": "rio-vt/threading_and_loop",
+  "field": "who owns the read and parse loop, whether it is thread-safe, and whether it includes a PTY layer",
+  "headline": "The embedder chooses",
+  "quote": "Create a grid, feed it bytes through the parser, and read cells back. No\nPTY, no renderer, no threads:",
+  "jev": "contradicts"
+ },
+ {
+  "n": 18,
+  "item": "contour-vtbackend/sixel",
+  "field": "whether it decodes Sixel images",
+  "headline": "yes",
+  "quote": "✅ Sixel inline images",
+  "jev": "states"
+ },
+ {
+  "n": 19,
+  "item": "ghostty-shadow/releases_last_12mo",
+  "field": "how many releases it had in the 12 months before 2026-09-25",
+  "headline": "7 in total",
+  "quote": "0.2.1 2026-07-18 MIT OR Apache-2.0 1.90 False 90817 / 0.2.0 2026-06-16 MIT OR Apache-2.0 1.90 False 30929 / 0.1.1 2026-03-28 MIT OR Apache-2.0 1.93 False 9858 / 0.1.0 2026-03-28 MIT OR Apache-2.0 1.93 False 36",
+  "jev": "contradicts"
+ },
+ {
+  "n": 20,
+  "item": "zellij-grid/latest_release",
+  "field": "its newest release, with version and date",
+  "headline": "v0.45.1, 2026-08-28 (GitHub release",
+  "quote": "v0.45.1 2026-08-28T09:21:44Z prerelease=false",
+  "jev": "states_part"
+ },
+ {
+  "n": 21,
+  "item": "kitty-core/reply_channel",
+  "field": "how its answers to programs' queries reach the embedding program",
+  "headline": "Internal only",
+  "quote": "if (response != NULL) write_escape_code_to_child(self, ESC_APC, response);",
+  "jev": "contradicts"
+ },
+ {
+  "n": 22,
+  "item": "vt100-rust/first_release",
+  "field": "the date of its first published release",
+  "headline": "0.1.0, published 2016-04-28",
+  "quote": "0.1.0 2016-04-28T07:46:30.746445Z",
+  "jev": "states"
+ },
+ {
+  "n": 23,
+  "item": "alacritty-patched-vte/language",
+  "field": "the language it is implemented in",
+  "headline": "Rust",
+  "quote": "Rust",
+  "jev": "states"
+ },
+ {
+  "n": 24,
+  "item": "wezterm-term/integration_path",
+  "field": "how Terminal Delight would consume it (crate, C bindings, fork, or not a library)",
+  "headline": "git dependency only (or fork + [patch])",
+  "quote": "crate `wezterm-term` does not exist",
+  "jev": "contradicts"
+ },
+ {
+  "n": 25,
+  "item": "libghostty-vt/build_requirements",
+  "field": "the toolchains and system libraries it needs beyond stable cargo",
+  "headline": "Zig 0.16.x on PATH for ghostty tip and libghostty-rs master",
+  "quote": "Requires [Zig](https://ziglang.org/) 0.16.x on PATH. By default, the ghostty source is fetched automatically at build time from the pinned commit in `build.rs`.",
+  "jev": "states"
+ },
+ {
+  "n": 26,
+  "item": "contour-vtbackend/iterm2_images",
+  "field": "whether it supports iTerm2 inline images (OSC 1337)",
+  "headline": "partial",
+  "quote": "Adds the iTerm2 OSC 1337 extensions: the capabilities report and inline images",
+  "jev": "contradicts"
+ },
+ {
+  "n": 27,
+  "item": "rio-vt/sixel",
+  "field": "whether it decodes Sixel images",
+  "headline": "yes",
+  "quote": "//! This module implements a parser for the Sixel protocol, and it is based on the\n//! chapter [SIXEL GRAPHICS EXTENSION] of the DEC reference manual.",
+  "jev": "states"
+ },
+ {
+  "n": 28,
+  "item": "zmx/damage_tracking",
+  "field": "whether it reports which rows changed since the last read",
+  "headline": "no",
+  "quote": "const broadcast_data = util.rewritePromptRedraw(gpa, buf[0..n]) orelse buf[0..n];\n                    defer if (broadcast_data.ptr != buf[0..n].ptr) gpa.free(broadcast_data);\n                    for (daemon.clients.items) |client| {\n                        ipc.appendMessage(gpa, &client.write_buf, .Output, broadcast_data) catch |err| {",
+  "jev": "silent"
+ },
+ {
+  "n": 29,
+  "item": "kitty-core/what_it_is",
+  "field": "what the core or option is and who maintains it",
+  "headline": "kitty's own emulator core",
+  "quote": "= kitty - the fast, feature-rich, cross-platform, GPU based terminal",
+  "jev": "silent"
+ },
+ {
+  "n": 30,
+  "item": "kitty-core/integration_path",
+  "field": "how Terminal Delight would consume it (crate, C bindings, fork, or not a library)",
+  "headline": "not a library (reference only)",
+  "quote": "PyInit_fast_data_types(void) {",
+  "jev": "silent"
+ },
+ {
+  "n": 31,
+  "item": "zellij-grid/iterm2_images",
+  "field": "whether it supports iTerm2 inline images (OSC 1337)",
+  "headline": "no",
+  "quote": "_ => {\\n                if self.debug {\\n                    log::warn!(\"Unhandled osc: {:?}\", params);\\n                }\\n            },",
+  "jev": "implies"
+ },
+ {
+  "n": 32,
+  "item": "ghostty-shadow/vt_features",
+  "field": "which modern terminal features it supports (keyboard protocol, hyperlinks, synchronized output, clipboard, graphemes, reflow, alternate screen, bracketed paste, SGR mouse)",
+  "headline": "All nine answers are alacritty's, the text half",
+  "quote": "Modes: *1*, *3*, *6*, *7*, *12*, *25*, *1000*, *1002*, *1004*, *1005*, *1006*, *1007*, *1042*, *1049*, *2004*, *2026*",
+  "jev": "silent"
+ },
+ {
+  "n": 33,
+  "item": "alacritty-graphics-fork/integration_path",
+  "field": "how Terminal Delight would consume it (crate, C bindings, fork, or not a library)",
+  "headline": "git dependency",
+  "quote": "vte = { version = \"0.15.0\", package = \"vte-graphics\", default-features = false, features = [\"std\", \"ansi\"] }",
+  "jev": "contradicts"
+ },
+ {
+  "n": 34,
+  "item": "alacritty-graphics-fork/grid_api",
+  "field": "how an embedding program reads the screen: the types and methods for rows and cells, and what a cell carries",
+  "headline": "Upstream's API (Term::grid() -> &Grid<Cell>, Cell { c, fg, bg, flags, extra }) plus Cell::graphics() -> Option<&GraphicsCell>, take_graphics()/set_graphics(), Flags::GRAPHICS, and Term::graphics_take_queues() -> Option<UpdateQueues> (pendin",
+  "quote": "pub fn graphics(&self) -> Option<&GraphicsCell> {",
+  "jev": "states_part"
+ },
+ {
+  "n": 35,
+  "item": "kitty-core/maintainers",
+  "field": "who carries the work: contributors with a large share of recent commits, and the lead",
+  "headline": "1 contributor with >=10% of commits since 2025-09-25",
+  "quote": "{\"total\":3004,\"top\":[{\"login\":\"kovidgoyal\",\"c\":2375},{\"login\":null,\"c\":217},{\"login\":\"dependabot[bot]\",\"c\":63}]}",
+  "jev": "states_part"
+ },
+ {
+  "n": 36,
+  "item": "vt100-rust/reply_channel",
+  "field": "how its answers to programs' queries reach the embedding program",
+  "headline": "None built in",
+  "quote": "self.callbacks.unhandled_csi( &mut self.screen, None, None, &params.iter().collect::<Vec<_>>(), c, );",
+  "jev": "implies"
+ },
+ {
+  "n": 37,
+  "item": "alacritty-own-loop/reply_channel",
+  "field": "how its answers to programs' queries reach the embedding program",
+  "headline": "Replies are events, not writes",
+  "quote": "/// Write some text to the PTY.\n    PtyWrite(String),",
+  "jev": "contradicts"
+ },
+ {
+  "n": 38,
+  "item": "alacritty-patched-vte/integration_path",
+  "field": "how Terminal Delight would consume it (crate, C bindings, fork, or not a library)",
+  "headline": "fork + [patch]",
+  "quote": "boazy/vte:parserless-apc-support +287 -5 files=1 commits=5",
+  "jev": "states_part"
+ },
+ {
+  "n": 39,
+  "item": "alacritty-patched-vte/vt_conformance",
+  "field": "published evidence of how conformant its terminal emulation is",
+  "headline": "Same as alacritty_terminal 0.26",
+  "quote": "This list includes all escape sequences Alacritty currently supports.",
+  "jev": "silent"
+ }
+]

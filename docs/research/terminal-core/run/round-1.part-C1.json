@@ -1,0 +1,331 @@
+{
+  "updates": [
+    {
+      "id": "libghostty-vt",
+      "fields": {
+        "what_it_is": {
+          "value": "Ghostty's terminal core (VT parser plus terminal state: screen, scrollback, reflow, Kitty graphics storage, key/mouse/paste encoders) extracted as the C library libghostty-vt, maintained inside ghostty-org/ghostty (lead: Mitchell Hashimoto). Rust reaches it only through third-party bindings, the crates libghostty-vt (safe wrapper) and libghostty-vt-sys (raw FFI) from Uzaaft/libghostty-rs (Uzair Aftab, Leah Amelia Chen).",
+          "provenance": { "source": "https://libghostty.tip.ghostty.org/", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"libghostty-vt is a C library which implements a modern terminal emulator, extracted from the Ghostty terminal emulator.\" — [measured] docs home page (mirrors include/ghostty/vt.h:17-18 at ghostty 982fe90d). Bindings authorship from libghostty-rs LICENSE line 3 \"Copyright (c) 2026 Uzair Aftab, Leah Amelia Chen\"; lead maintainer from the contributor measurement under maintainers."
+        },
+        "license": {
+          "value": "MIT (ghostty-org/ghostty, which contains libghostty-vt); the Rust bindings are MIT OR Apache-2.0. An MIT product may link both.",
+          "provenance": { "source": "measured 2026-09-25: gh api repos/ghostty-org/ghostty --jq .license.spdx_id", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"MIT\" — [measured] the API's spdx_id for ghostty. Bindings: `curl -s https://crates.io/api/v1/crates/libghostty-vt-sys | jq -c '{downloads:.crate.downloads, license:.versions[0].license, max:.crate.max_version}'` returned \"license\":\"MIT OR Apache-2.0\", and `gh api repos/Uzaaft/libghostty-rs --jq .license.spdx_id` returned MIT. libghostty-vt vendors simdutf and Highway (C++, src/build/GhosttyLibVt.zig:568-569); their licences were not checked this session."
+        },
+        "language": {
+          "value": "Zig (core and the C ABI implementation), exposed as a C header API (include/ghostty/vt.h and include/ghostty/vt/*.h); vendored C++ dependencies (simdutf, Highway) compiled by Zig's toolchain; Rust bindings (bindgen-generated -sys crate plus a safe wrapper).",
+          "provenance": { "source": "measured 2026-09-25: gh api repos/ghostty-org/ghostty/languages | jq -c '.'", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"\\\"Zig\\\":12567283,\\\"Swift\\\":1440545,\\\"C\\\":1084755,\\\"C++\\\":734852\" — [measured] whole-repo byte counts; Swift is the macOS app, not the library. C++ deps named at https://github.com/ghostty-org/ghostty/blob/982fe90d941e4b4aab4905ffcbcfdea60bd83343/src/build/GhosttyLibVt.zig#L496-L497 (\"Vendored C++ dependencies are built in no-libcxx mode so consumers don't need libc++.\")."
+        },
+        "integration_path": {
+          "value": "C ABI through Rust bindings: crate libghostty-vt (safe wrapper) over libghostty-vt-sys (raw FFI, checked-in bindgen output), from crates.io 0.2.1 or as a git dependency on Uzaaft/libghostty-rs master (master is needed for the snapshot API). The bindings are third-party; ghostty-org publishes no Rust crate.",
+          "provenance": { "source": "https://github.com/Uzaaft/libghostty-rs/blob/5988a0b78b4aa804d1c12e66bbfe662bd97d81c0/README.md#L7-L8", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"- `crates/libghostty-vt-sys` — raw FFI bindings generated from `ghostty/vt.h`\" — [measured] README line 7; line 8 names `crates/libghostty-vt` as the safe wrappers. `gh api repos/ghostty-org/libghostty-rs` returned 404 and ghostty's README (line 165) points to Uzaaft's awesome-libghostty, so Uzaaft/libghostty-rs is the canonical Rust binding in practice. Mitchell maintains Go bindings (mitchellh/go-libghostty), not Rust ones."
+        },
+        "build_requirements": {
+          "value": "Zig 0.16.x on PATH for ghostty tip and libghostty-rs master; Zig 0.15.x for the published crate 0.2.1 (its pinned ghostty a887df42 declares minimum_zig_version 0.15.2, and ghostty's requireZig demands an exact major.minor match). Network and git at build time: build.rs git-clones ghostty at a pinned commit unless GHOSTTY_SOURCE_DIR is set, and zig fetches its package dependencies unless GHOSTTY_ZIG_SYSTEM_DIR is set. Rust 1.90+ (edition 2024). Vendored C++ deps are compiled by Zig with no system C++ compiler or libc++. Static libghostty-vt.a by default (link-dynamic feature optional).",
+          "provenance": { "source": "https://github.com/Uzaaft/libghostty-rs/blob/5988a0b78b4aa804d1c12e66bbfe662bd97d81c0/README.md#L54-L62", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"Requires [Zig](https://ziglang.org/) 0.16.x on PATH. By default, the ghostty source is fetched automatically at build time from the pinned commit in `build.rs`.\" — [measured] README lines 54-56 (line breaks collapsed). Zig 0.15.2 for crate 0.2.1: `gh api \"repos/ghostty-org/ghostty/contents/build.zig.zon?ref=a887df42c56f6de86c0fe6da9c4eeca37931e083\" --jq .content | base64 -d` shows `.minimum_zig_version = \"0.15.2\",`; tip build.zig.zon:6 says \"0.16.0\"; exact-minor check at src/build/zig.zig:9-11. rust-version = \"1.90\", edition = \"2024\" from the workspace Cargo.toml."
+        },
+        "latest_release": {
+          "value": "libghostty-vt 0.2.1 and libghostty-vt-sys 0.2.1, 2026-07-18 on crates.io, pinning ghostty commit a887df42 (2026-07-11). libghostty itself has no tagged release: ghostty's tags are application versions (newest v1.3.1, 2026-03-13) plus the moving 'tip'.",
+          "provenance": { "source": "measured 2026-09-25: curl -s https://crates.io/api/v1/crates/libghostty-vt | jq -c '{downloads:.crate.downloads, recent:.crate.recent_downloads, max:.crate.max_version, versions:[.versions[]|{num, created_at}]}'", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"\\\"max\\\":\\\"0.2.1\\\",\\\"versions\\\":[{\\\"num\\\":\\\"0.2.1\\\",\\\"created_at\\\":\\\"2026-07-18T18:04:40.309871Z\\\"}\" — [measured] crates.io. Pin from libghostty-vt-sys-0.2.1/build.rs:7 `const GHOSTTY_COMMIT: &str = \"a887df42c56f6de86c0fe6da9c4eeca37931e083\";`, dated by `gh api repos/ghostty-org/ghostty/commits/a887df42…` (2026-07-11T21:47:37Z). ghostty README.md:168: \"We haven't tagged libghostty with a version yet\"."
+        },
+        "first_release": {
+          "value": "2026-03-28: libghostty-vt 0.1.0 on crates.io, the first published embeddable form reachable from Rust. The Zig module was merged around the 2025-09-22 announcement; no tagged C library release has ever existed.",
+          "provenance": { "source": "measured 2026-09-25: curl -s https://crates.io/api/v1/crates/libghostty-vt | jq -c '{downloads:.crate.downloads, recent:.crate.recent_downloads, max:.crate.max_version, versions:[.versions[]|{num, created_at}]}'", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"{\\\"num\\\":\\\"0.1.0\\\",\\\"created_at\\\":\\\"2026-03-28T19:13:41.066653Z\\\"}\" — [measured] crates.io. The Zig-module date is from https://mitchellh.com/writing/libghostty-is-coming: \"I just merged the pull request exposing libghostty-vt as a Zig module.\" (post dated September 22, 2025)."
+        },
+        "releases_last_12mo": {
+          "value": "4 crate releases of libghostty-vt (0.1.0 and 0.1.1 on 2026-03-28, 0.2.0 on 2026-06-16, 0.2.1 on 2026-07-18); 0 tagged libghostty releases.",
+          "provenance": { "source": "measured 2026-09-25: curl -s https://crates.io/api/v1/crates/libghostty-vt | jq -c '{downloads:.crate.downloads, recent:.crate.recent_downloads, max:.crate.max_version, versions:[.versions[]|{num, created_at}]}'", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"\\\"versions\\\":[{\\\"num\\\":\\\"0.2.1\\\",\\\"created_at\\\":\\\"2026-07-18T18:04:40.309871Z\\\"},{\\\"num\\\":\\\"0.2.0\\\",\\\"created_at\\\":\\\"2026-06-16T16:26:04.361465Z\\\"},{\\\"num\\\":\\\"0.1.1\\\",\\\"created_at\\\":\\\"2026-03-28T19:46:12.627570Z\\\"},{\\\"num\\\":\\\"0.1.0\\\",\\\"created_at\\\":\\\"2026-03-28T19:13:41.066653Z\\\"}]\" — [measured] all four fall inside 2025-09-25..2026-09-25. Upstream tags: `gh api repos/ghostty-org/ghostty/tags --jq '[.[].name]'` returned [\"v1.3.1\",\"v1.3.0\",…,\"v1.0.0\",\"tip\"], none for libghostty."
+        },
+        "api_stability": {
+          "value": "Unstable by the project's own words: pre-1.0, untagged, breaking changes expected. The snapshot format v1 carries no binary-compatibility guarantee. The bindings' checked-in FFI tracks one pinned ghostty commit and promises no compatibility with other C API revisions; between crate 0.2.1 and bindings master the Zig requirement moved 0.15 -> 0.16 and the snapshot module was added.",
+          "provenance": { "source": "https://libghostty.tip.ghostty.org/", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"This library is currently in development and the API is not yet stable. Breaking changes are expected in future versions. Use with caution in production code.\" — [measured] docs home; include/ghostty/vt.h:10-11 adds \"It is not yet stable and is definitely going to change.\"; snapshot group page: \"Snapshot format version 1 is a work in progress and does not yet carry a binary-compatibility guarantee.\"; libghostty-rs README: \"libghostty-vt is pre-1.0, so the checked-in bindings are expected to move with the pinned Ghostty source\"."
+        },
+        "maintainers": {
+          "value": "ghostty: 1 contributor with >=10% of the 5,707 default-branch commits since 2025-09-25 — mitchellh (Mitchell Hashimoto, lead) with 2,914 (51%); next are github-actions[bot] 306 (5.4%) and jcollie 288 (5.0%). Rust bindings libghostty-rs: 2 contributors >=10% of 205 commits — Uzaaft 118 (57.6%) and pluiedev 75 (36.6%).",
+          "provenance": { "source": "measured 2026-09-25: gh api repos/ghostty-org/ghostty/stats/contributors | jq -c --argjson s 1758783600 '[.[] | {login: .author.login, c: ([.weeks[] | select(.w >= $s) | .c] | add)}] | (map(.c)|add) as $tot | {total:$tot, top: (sort_by(-.c) | .[0:3])}'", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"{\\\"total\\\":5707,\\\"top\\\":[{\\\"login\\\":\\\"mitchellh\\\",\\\"c\\\":2914},{\\\"login\\\":\\\"github-actions[bot]\\\",\\\"c\\\":306},{\\\"login\\\":\\\"jcollie\\\",\\\"c\\\":288}]}\" — [measured] 1758783600 = 2025-09-25; weekly buckets, so a few days at the window edge are approximate. Same command on Uzaaft/libghostty-rs: {\"total\":205,\"top\":[{\"login\":\"Uzaaft\",\"c\":118},{\"login\":\"pluiedev\",\"c\":75},{\"login\":\"phall1\",\"c\":4}]}. The whole ghostty repo is measured, not only src/terminal."
+        },
+        "adoption": {
+          "value": "crates.io: libghostty-vt 131,640 downloads (123,207 in the last 90 days), libghostty-vt-sys 43,259; 12 reverse dependencies (ratatui-ghostty, phux-protocol, egui_tty, scosh, phantom-daemon, terminal-control, betamax-core, betamax, tui-test-rs, quickgui, agentmux, don). Named embedders: zmx (session persistence; restores state on reattach using the Zig module's formatter), wterm's @wterm/ghostty (WASM core under a DOM renderer), Ghostling (ghostty-org's reference C app), go-libghostty; cmux embeds libghostty for rendering (the app-level library, per its README). awesome-libghostty lists dozens more.",
+          "provenance": { "source": "measured 2026-09-25: curl -s https://crates.io/api/v1/crates/libghostty-vt | jq -c '{downloads:.crate.downloads, recent:.crate.recent_downloads, max:.crate.max_version, versions:[.versions[]|{num, created_at}]}'", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"{\\\"downloads\\\":131640,\\\"recent\\\":123207,\\\"max\\\":\\\"0.2.1\\\",\" — [measured] crates.io. Reverse deps: `curl -s \"https://crates.io/api/v1/crates/libghostty-vt/reverse_dependencies?per_page=50\" | jq -c '{total:.meta.total, crates:[.versions[].crate]}'` → total 12. zmx README: \"We use `libghostty-vt` to restore the previous state of the terminal when a client re-attaches to a session.\" wterm @wterm/ghostty README: \"powered by [libghostty](https://ghostty.org) built from source\". cmux README: \"It uses libghostty for terminal rendering\". The download count exceeding the -sys crate's is unexplained."
+        },
+        "kitty_graphics": {
+          "value": "Full core implementation behind the C API (build feature kitty_graphics, on by default). Actions q, t, T, p, d, f, a, c. Media: direct, file, temporary file, shared memory (file/temp/shm are opt-in per terminal; temp is restricted to a directory the embedder names). Formats: RGB (24), RGBA (32), PNG (100) — PNG only if the embedder installs a decode callback, otherwise rejected. zlib compression (o=z), inflated before storage. Placements: direct (anchored to tracked page-list pins), virtual (U=1) and relative (P/Q parent chains). Deletes a, i, n, c, f, p, q, r, x, y, z with upper-case freeing variants. Query and transmit replies go out through the WRITE_PTY callback. z-index with BELOW_BG / BELOW_TEXT / ABOVE_TEXT iterator filters. Animation frames (a=f, a=a, a=c) composed eagerly into RGBA; the current frame is exposed, but timed playback is driven by the Ghostty app renderer (ImageStorage.animationTick) and has no C API entry point, so an embedder sees client-driven frame changes only. Storage quota per screen (0 disables) and a 65 MiB APC buffer cap. Read side: GhosttyKittyGraphics handle, placement iterator with layer filter, image lookup returning decoded pixels plus generation stamps, and render_info geometry. Unicode placeholders: the API reports is_virtual and a per-row KITTY_VIRTUAL_PLACEHOLDER flag, but position/rect calls return NO_VALUE for virtual placements, so the embedder must decode U+10EEEE cells (diacritics, fg-colour image id) itself.",
+          "provenance": { "source": "https://github.com/ghostty-org/ghostty/blob/982fe90d941e4b4aab4905ffcbcfdea60bd83343/include/ghostty/vt/kitty_graphics.h#L39-L60", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"Before images can be stored, Kitty graphics must be enabled on the terminal by setting a non-zero storage limit with GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_STORAGE_LIMIT, and a PNG decoder callback must be installed via ghostty_sys_set() with GHOSTTY_SYS_OPT_DECODE_PNG.\" — [measured] text from the docs group page https://libghostty.tip.ghostty.org/group__kitty__graphics.html (header lines 39-43). Rest at ghostty 982fe90d: actions src/terminal/kitty/graphics_command.zig:388-397; media :529-534; formats :518-527; compression :536-539; deletes :1022-1081; relative placements graphics_storage.zig:1789-1796; reply path src/terminal/stream_terminal.zig:1902-1918; layers kitty_graphics.h:277-283; animation src/terminal/kitty/graphics_animation.zig:1-13, tick at graphics_storage.zig:1047-1057 whose only non-test caller is src/renderer/generic.zig:1440 (grep of src/terminal/c/ and include/ finds no tick API); virtual NO_VALUE kitty_graphics.h:700-701; row flag screen.h:304-309; media options terminal.h:1363-1392; APC cap src/terminal/apc.zig:405."
+        },
+        "kitty_tags": {
+          "value": "transmit-direct, transmit-file, transmit-temp, transmit-shm, format-png, format-raw, compression, place-direct, place-virtual, delete-by-id, delete-by-position, query-reply, z-layers, animation",
+          "note": "[inferred] from the core sources listed under kitty_graphics. Caveats that the binary tags hide: place-virtual is stored and flagged by the core but its drawing (U+10EEEE decoding) is the embedder's job; animation frames and client-driven control work through the C API, but timed playback has no C API driver at 982fe90d; format-png needs an embedder PNG decoder; transmit-file/temp/shm are off until the embedder enables them. unknown: none."
+        },
+        "sixel": {
+          "value": "no — the DCS handler knows only XTGETTCAP, DECRQSS and tmux and ignores unknown hooks; only a DA feature constant for Sixel exists; the maintainer has ruled it out.",
+          "provenance": { "source": "https://github.com/ghostty-org/ghostty/discussions/2496", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"My stance for now is that Ghostty will not support sixels.\" — [measured] the discussion's accepted answer (read with gh api graphql). Code: src/terminal/dcs.zig:207-218 (Command union: xtgettcap, decrqss, tmux) and :36-38 (\"unknown DCS hook\" → ignore); include/ghostty/vt/device.h:40 `#define GHOSTTY_DA_FEATURE_SIXEL 4` is only the DA constant."
+        },
+        "iterm2_images": {
+          "value": "no — OSC 1337 is parsed, but File, FilePart, FileEnd and MultipartFile are logged as unimplemented and dropped.",
+          "provenance": { "source": "https://github.com/ghostty-org/ghostty/blob/982fe90d941e4b4aab4905ffcbcfdea60bd83343/src/terminal/osc/parsers/iterm2.zig#L168-L194", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"log.debug(\\\"unimplemented OSC 1337: {t}\\\", .{key});\" — [measured] line 192, reached by the .File, .FileEnd, .FilePart and .MultipartFile keys listed at lines 168-172."
+        },
+        "picture_anchoring": {
+          "value": "Tracked pin: each direct placement's location is a *PageList.Pin tracked by the page list, so scrolling, scrollback pruning and resize/reflow move it with the text. Virtual placements anchor through placeholder cells in the grid; relative placements resolve through the parent chain at render time. Quota: storage limit per screen (320 MB default inside the Zig storage struct; C API terminals must set a non-zero limit, 0 disables and deletes everything), plus a 65 MiB APC buffer cap for Kitty payloads.",
+          "provenance": { "source": "https://libghostty.tip.ghostty.org/group__kitty__graphics.html", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"Converts the placement's internal pin to viewport-relative column and row coordinates. The returned coordinates represent the top-left corner of the placement in the viewport's grid coordinate space.\" — [measured] ghostty_kitty_graphics_placement_viewport_pos docs. Pin type at src/terminal/kitty/graphics_storage.zig:1782-1796 (\"Exactly placed on a screen pin.\" / `pin: *PageList.Pin`) and trackPin :2117-2121; 320 MB at :134 `total_limit: usize = 320 * 1000 * 1000, // 320MB`; limit semantics terminal.h:1350-1361."
+        },
+        "vt_conformance": {
+          "value": "Stated coverage plus an xterm audit: the README claims all regularly used sequences and a comprehensive xterm audit with conformance test cases; ghostty.org publishes a per-sequence VT reference. No vttest or esctest results were found published.",
+          "provenance": { "source": "https://github.com/ghostty-org/ghostty/blob/982fe90d941e4b4aab4905ffcbcfdea60bd83343/README.md#L76-L80", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"Ghostty implements all of the regularly used control sequences and can run every mainstream terminal program without issue. For legacy sequences, we've done a comprehensive xterm audit comparing Ghostty's behavior to xterm and building a set of conformance test cases.\" — [measured] README (markdown link text flattened). The audit is https://github.com/ghostty-org/ghostty/issues/632 (not opened this session); reference at https://ghostty.org/docs/vt/reference."
+        },
+        "vt_features": {
+          "value": "kitty-keyboard: yes — GHOSTTY_TERMINAL_DATA_KITTY_KEYBOARD_FLAGS (terminal.h:1771-1775) and a Kitty-protocol key encoder (key.h)\nosc8-hyperlinks: yes — ghostty_grid_ref_hyperlink_uri (grid_ref.h:168-187), GHOSTTY_CELL_DATA_HAS_HYPERLINK (screen.h:192-196)\nsync-output-2026: yes — GHOSTTY_MODE_SYNC_OUTPUT (modes.h:92) plus the RENDER_HOLD callback (terminal.h:1006-1124)\nosc52-clipboard: yes — CLIPBOARD_WRITE / CLIPBOARD_READ callbacks for OSC 52 and OSC 5522 (terminal.h:98-99)\ngrapheme-clusters: yes — GHOSTTY_MODE_GRAPHEME_CLUSTER 2027 (modes.h:93); render cells expose GRAPHEMES_LEN / GRAPHEMES_BUF / GRAPHEMES_UTF8 (render.h:758-811)\nreflow-on-resize: yes — primary screen reflows when wraparound is on; alternate screen does not (terminal.h:2166-2168)\nalt-screen: yes — modes 47 / 1047 / 1049 (modes.h:71,88,90) and GHOSTTY_TERMINAL_DATA_ACTIVE_SCREEN\nbracketed-paste: yes — GHOSTTY_MODE_BRACKETED_PASTE 2004 (modes.h:91) and the paste encoder (paste.h)\nmouse-sgr: yes — GHOSTTY_MODE_SGR_MOUSE 1006 (modes.h:80) and the mouse encoder (mouse.h)",
+          "provenance": { "source": "https://github.com/ghostty-org/ghostty/blob/982fe90d941e4b4aab4905ffcbcfdea60bd83343/include/ghostty/vt/modes.h#L80-L93", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"#define GHOSTTY_MODE_SYNC_OUTPUT      (ghostty_mode_new(2026, false)) /**< Synchronized output */\" — [measured] modes.h:92; every other line cites its header location at ghostty 982fe90d. Reflow wording from the docs: \"The primary screen will reflow content if wraparound mode is enabled; the alternate screen does not reflow.\""
+        },
+        "performance_evidence": {
+          "value": "Qualitative only. Mitchell's vtebench run of Ghostling (single-threaded, blocking render and blocking IO) reported speed comparable to the fastest dedicated terminals; the numbers are in chart images and the machine is not named. No per-cell memory figure is published, but the source packs a cell into 8 bytes (packed struct(u64)), with styles and graphemes in per-page side tables.",
+          "provenance": { "source": "https://hachyderm.io/@mitchellh/116267947446799823", "confidence": "medium", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"libghostty is FAST! Here's a look at vtebench with Ghostling. Reminder: Ghostling is single threaded + blocking render + blocking IO. The point is, you get comparable speed to the fastest dedicated terminals in an embeddable lib!\" — [measured] post of 2026-03-21, read through the Mastodon API; the same post says \"I haven't fully profiled the libghostty C API yet.\" Cell size: src/terminal/page.zig:2143 `pub const Cell = packed struct(u64) {`. No throughput figure through the Rust FFI exists."
+        },
+        "grid_api": {
+          "value": "RenderState: ghostty_render_state_new, then ghostty_render_state_update (or begin_update / end_update to hold the terminal lock only for the first phase); a row iterator yields ROW_DATA_DIRTY, ROW_DATA_RAW (wrap, wrap-continuation, grapheme, styled, hyperlink, semantic-prompt, kitty-placeholder flags), ROW_DATA_CELLS and a bulk CELLS_RAW view; each cell yields RAW GhosttyCell (codepoint, content tag, wide = NARROW / WIDE / SPACER_TAIL / SPACER_HEAD, has_hyperlink, protected), STYLE GhosttyStyle {fg_color, bg_color, underline_color, bold, italic, faint, blink, inverse, invisible, strikethrough, overline, underline style}, GRAPHEMES_LEN / BUF / UTF8 (base plus extra codepoints), resolved FG_COLOR / BG_COLOR, SELECTED. Cursor: GhosttyRenderStateCursor {viewport_x, viewport_y, wide_tail, visible, blinking, password_input, visual_style}. Modes: ghostty_terminal_get(GHOSTTY_TERMINAL_DATA_MODE). Random access (not for render loops): ghostty_terminal_grid_ref plus ghostty_grid_ref_hyperlink_uri. Rust: RenderState / RowIterator / CellIterator with cell.graphemes(), style(), fg_color(), bg_color().",
+          "provenance": { "source": "https://libghostty.tip.ghostty.org/group__style.html", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"A style describes the visual attributes of a terminal cell, including foreground, background, and underline colors, as well as flags for bold, italic, underline, and other text decorations.\" — [measured] style group docs; struct fields at include/ghostty/vt/style.h:94-108; cells render.h:748-813; wide enum screen.h:102-115 (\"Spacer after wide character. Do not render.\"); cursor struct render.h:336-363; row flags screen.h:260-316; grid_ref docs: \"This function isn't meant to be used as the core of render loop.\" Rust names from libghostty-vt 0.2.1 src/render.rs:748-840."
+        },
+        "damage_tracking": {
+          "value": "yes — the render state keeps a global dirty state (FALSE / PARTIAL / FULL) and a per-row dirty flag; the embedder clears both with ghostty_render_state_clean after drawing a frame. Kitty graphics add storage and per-image generation stamps.",
+          "provenance": { "source": "https://libghostty.tip.ghostty.org/group__render.html", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"The render state API keeps track of dirty state at two independent layers: a global dirty state that indicates whether the entire frame is clean, partially dirty, or fully dirty, and a per-row dirty state that allows tracking which rows in a partially dirty frame have changed.\" — [measured] render.h:60-63; generation stamps kitty_graphics.h:87-107."
+        },
+        "state_snapshot": {
+          "value": "Yes, two routes. (1) Binary snapshot: ghostty_snapshot_encode / _encode_buf / _encode_alloc and ghostty_snapshot_decoder_new / _ready / _next / _decode — 'GHOSTSNP' v1, CRC32C-framed records, a READY marker after the active screens and the unfinished VT-parser continuation, then history pages newest-first so a client can render before scrollback arrives. Format v1 is WIP with no compatibility guarantee; the C API landed 2026-08-03, so it is absent from crate 0.2.1 and present on libghostty-rs master. (2) VT formatter: ghostty_formatter_terminal_new with GHOSTTY_FORMATTER_FORMAT_VT re-encodes the screen as VT bytes with optional extras (cursor, SGR, OSC 8, protection, kitty keyboard, charsets, palette, modes, scrolling region, tabstops, pwd) — the route zmx takes through the Zig API. Neither route carries Kitty image or placement state.",
+          "provenance": { "source": "https://libghostty.tip.ghostty.org/group__snapshot.html", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"A snapshot is an ordered, CRC-protected record stream. Its READY marker follows enough state to render and resume the terminal, including any unfinished VT parser input. Older scrollback pages follow READY and the FINISH marker terminates the complete snapshot.\" — [measured] snapshot.h:27-30. Image exclusion: src/terminal/snapshot/grid.zig:1234-1235 \"Kitty image and placement state is not part of this snapshot version\". Formatter extras formatter.h:41-93. API date: `gh api \"repos/ghostty-org/ghostty/commits?path=include/ghostty/vt/snapshot.h&per_page=100\"` oldest = 2026-08-03 \"libghostty-vt: add C API for snapshotting functions\"; crate 0.2.1 has no src/snapshot.rs, master does."
+        },
+        "threading_and_loop": {
+          "value": "The embedder owns the read loop: libghostty-vt has no PTY layer, no event loop, no timer and no background thread; bytes go in through ghostty_terminal_vt_write, and every effect callback runs synchronously on the calling thread (no re-entrant vt_write). The C API has no internal locking; the render docs expect a lock held across render-state update. The Rust bindings make every type !Send and !Sync, so a terminal lives on one thread and talks through channels.",
+          "provenance": { "source": "https://docs.rs/libghostty-vt/0.2.1/libghostty_vt/", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"In particular, all libghostty-vt types are !Send, meaning they cannot be transferred across threads, since the C API is allowed to use thread-local state; they are also !Sync, meaning they cannot be shared across threads, since data races may occur as the C API is not guarded with mutexes or other synchronization mechanisms.\" — [measured] docs.rs Thread safety section (line breaks collapsed). No timer/thread: terminal docs \"libghostty-vt does not create a timer or background thread.\"; callbacks: \"All callbacks are invoked synchronously during VT writes.\"; lock guidance render.h:29-34."
+        },
+        "reply_channel": {
+          "value": "A per-terminal WRITE_PTY callback receives every reply byte string (DSR, DECRQM, mode 2048 size reports, Kitty graphics a=q and transmit responses). DA1/DA2/DA3, XTWINOPS size, XTVERSION, ENQ and colour-scheme queries are answered by embedder callbacks that return data for the terminal to encode. With no WRITE_PTY installed, reply-producing sequences are silently dropped — so a window replica that installs none, next to a host that installs one, gives exactly-once replies by construction.",
+          "provenance": { "source": "https://libghostty.tip.ghostty.org/group__terminal.html", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"Feeds raw bytes through the terminal's VT stream parser, updating terminal state accordingly. By default, sequences that require output (queries, device status reports) are silently ignored. Use ghostty_terminal_set() with GHOSTTY_TERMINAL_OPT_WRITE_PTY to install a callback that receives response data.\" — [measured] ghostty_terminal_vt_write docs (terminal.h:2222-2226). Kitty replies: src/terminal/stream_terminal.zig:1910-1918 (`if (self.effects.write_pty == null) break :resp;`). That DA/size answers leave through WRITE_PTY is [inferred] from the effects table row \"VT query and mode reports written back to the PTY\"."
+        },
+        "td_migration": {
+          "value": "Large rewrite. host.rs: replace alacritty's EventLoop / Notifier / FairMutex / tty (PTY spawn, read loop, OnResize) with a TD-owned PTY and read thread that calls vt_write and takes replies from on_pty_write; libghostty has no PTY layer, and the !Send Rust types force one emulation thread per pane or a TD-owned unsafe Send wrapper over the -sys crate. socketpty.rs: its EventedPty / EventedReadWrite shim for alacritty's loop goes away; the window replica becomes a Terminal fed socket bytes with no WRITE_PTY installed. term.rs: Term / Config / EventProxy / Processor wiring and the PtyWrite, TextAreaSizeRequest and clipboard event mapping become ghostty effect callbacks. gridwire.rs: encode_snapshot (TD's own VT re-encoder) can give way to the VT formatter or the binary snapshot, and grid_hash is rewritten over RenderState rows and cells; neither snapshot route carries Kitty images, so image state needs its own host-to-window path. pane.rs: its 51 grid reads move from alacritty Grid indexing to RenderState row and cell iteration across FFI (per-cell calls or the CELLS_RAW bulk view), flags are remapped (WIDE / SPACER_TAIL / SPACER_HEAD, GhosttyStyle), and a new image layer plus U+10EEEE placeholder decoding is added. main.rs: WindowSize-based resize announcements become ghostty_terminal_resize(cols, rows, cell_w_px, cell_h_px). pane/bench.rs: fixtures rebuilt on the new types. Build: Zig 0.16 plus a pinned, prefetched ghostty source in CI, AppImage and AUR.",
+          "note": "[inferred] from TD's imports at /home/parker/Work/td-terminal-core/app/src (host.rs:41-45 EventLoop/Notifier/FairMutex/tty; socketpty.rs:36-37 EventedPty; gridwire.rs:36-40 and fns encode_snapshot:206, grid_hash:438; term.rs:16-23) set against the libghostty-vt API read above."
+        },
+        "biggest_risk": {
+          "value": "TD would depend on an untagged, self-declared unstable C API through third-party bindings that pin a single upstream commit and have already changed the Zig toolchain they need (0.15 to 0.16) between the published crate and master, so every upgrade becomes an FFI and toolchain migration on someone else's schedule.",
+          "note": "[inferred] from api_stability, build_requirements and latest_release."
+        },
+        "primary_sources": {
+          "value": "https://mitchellh.com/writing/libghostty-is-coming https://libghostty.tip.ghostty.org/ https://libghostty.tip.ghostty.org/group__kitty__graphics.html https://libghostty.tip.ghostty.org/group__snapshot.html https://libghostty.tip.ghostty.org/group__render.html https://libghostty.tip.ghostty.org/group__terminal.html https://libghostty.tip.ghostty.org/group__formatter.html https://libghostty.tip.ghostty.org/group__style.html https://libghostty.tip.ghostty.org/group__screen.html https://github.com/ghostty-org/ghostty/tree/982fe90d941e4b4aab4905ffcbcfdea60bd83343/include/ghostty/vt https://github.com/ghostty-org/ghostty/tree/982fe90d941e4b4aab4905ffcbcfdea60bd83343/src/terminal/kitty https://github.com/ghostty-org/ghostty/tree/982fe90d941e4b4aab4905ffcbcfdea60bd83343/src/terminal/snapshot https://github.com/ghostty-org/ghostty/blob/982fe90d941e4b4aab4905ffcbcfdea60bd83343/README.md https://github.com/ghostty-org/ghostty/discussions/2496 https://github.com/Uzaaft/libghostty-rs/tree/5988a0b78b4aa804d1c12e66bbfe662bd97d81c0 https://crates.io/api/v1/crates/libghostty-vt https://crates.io/api/v1/crates/libghostty-vt-sys https://crates.io/api/v1/crates/libghostty-vt/0.2.1/download https://docs.rs/libghostty-vt/0.2.1/libghostty_vt/ https://hachyderm.io/@mitchellh/116267947446799823 https://ghostty.org/docs/vt https://github.com/neurosnap/zmx https://github.com/vercel-labs/wterm/tree/main/packages/@wterm/ghostty https://github.com/manaflow-ai/cmux synthesis:https://github.com/Uzaaft/awesome-libghostty",
+          "provenance": { "source": "https://libghostty.tip.ghostty.org/", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"libghostty-vt - Virtual Terminal Emulator Library\" — [measured] every URL above was fetched or cloned this session (ghostty shallow clone at 982fe90d, libghostty-rs at 5988a0b7, zmx at 878a8b0); awesome-libghostty is a curated list, so it is marked synthesis."
+        }
+      },
+      "insights": [
+        "Neither of libghostty's two state-transfer routes (binary snapshot, VT formatter) carries Kitty images or placements, so TD's host-to-window replica would still need its own image channel whichever core it picks.",
+        "Replies are dropped unless WRITE_PTY is installed, which fits TD's 'host writes replies exactly once' rule without extra code on the window side.",
+        "Unicode-placeholder drawing is embedder work in libghostty-vt: the API flags placeholder rows and virtual placements but gives them no position."
+      ]
+    },
+    {
+      "id": "kitty-core",
+      "fields": {
+        "what_it_is": {
+          "value": "kitty's own emulator core: the C half of the kitty terminal (VT parser, Screen / LineBuf / HistoryBuf, GraphicsManager in kitty/graphics.c), compiled as the CPython extension kitty/fast_data_types and driven by kitty's Python and Go application. Written and maintained by Kovid Goyal. kitty authored the Kitty graphics protocol, and graphics.c is its reference implementation.",
+          "provenance": { "source": "https://github.com/kovidgoyal/kitty/blob/42d3cb2148acc182946901091dbbb0431a5a3344/README.asciidoc#L1", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"= kitty - the fast, feature-rich, cross-platform, GPU based terminal\" — [measured] README line 1 of the local checkout /home/parker/Projects/td-competitor-research/kitty @42d3cb21; extension build at setup.py:1216 (`kitty_env(args), 'kitty/fast_data_types', args.compilation_database, sources, headers,`); maintainer from the contributor measurement."
+        },
+        "license": {
+          "value": "GPL-3.0 — an MIT product may not link it or copy from it.",
+          "provenance": { "source": "measured 2026-09-25: gh api repos/kovidgoyal/kitty --jq .license.spdx_id", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"GPL-3.0\" — [measured] the API's spdx_id; LICENSE:1-2 at 42d3cb21 reads \"GNU GENERAL PUBLIC LICENSE\" / \"Version 3, 29 June 2007\"."
+        },
+        "language": {
+          "value": "C (core: parser, screen, graphics), Python (application and the extension's bindings), Go (kittens), Objective-C (macOS glue).",
+          "provenance": { "source": "measured 2026-09-25: gh api repos/kovidgoyal/kitty/languages", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"{\\\"Python\\\":3438000,\\\"C\\\":2558232,\\\"Go\\\":2117513,\\\"Objective-C\\\":444797\" — [measured] byte counts; the core files are kitty/*.c (graphics.c 2,505 lines, screen.c, vt-parser.c)."
+        },
+        "integration_path": {
+          "value": "not a library (reference only) — the core is a CPython extension module with no C API meant for embedders, and GPL-3.0 besides.",
+          "provenance": { "source": "https://github.com/kovidgoyal/kitty/blob/42d3cb2148acc182946901091dbbb0431a5a3344/kitty/data-types.c#L797-L798", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"PyInit_fast_data_types(void) {\" — [measured] the core's only entry point is a Python module initialiser; kitty/data-types.h:13-14 includes <Python.h>, and Screen (screen.h:114), GraphicsManager (graphics.h:138) and Line (line.h:97) all begin with PyObject_HEAD. No library, crate or pkg-config artifact was found in the repo or releases."
+        },
+        "build_requirements": {
+          "value": "Not applicable to TD, which cannot link it. Building kitty itself needs gcc or clang, simde, Go, pkg-config and Python, plus run-time libraries harfbuzz, zlib, libpng, lcms2, xxhash, openssl, pixman, cairo, freetype, fontconfig (libcanberra, libsystemd, ImageMagick optional).",
+          "provenance": { "source": "https://github.com/kovidgoyal/kitty/blob/42d3cb2148acc182946901091dbbb0431a5a3344/docs/build.rst#L83-L106", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"* ``go`` >= _build_go_version (see :file:`go.mod` for go packages used during building)\" — [measured] build.rst:105; the other build-time items at :103-106 and run-time items at :85-98."
+        },
+        "latest_release": {
+          "value": "kitty v0.49.1, 2026-09-24 — an application release; there is no library artifact TD could depend on.",
+          "provenance": { "source": "measured 2026-09-25: gh api \"repos/kovidgoyal/kitty/releases?per_page=30\" --jq '.[] | .tag_name + \" \" + .published_at'", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"v0.49.1 2026-09-24T05:12:57Z\" — [measured] first line of the output."
+        },
+        "first_release": {
+          "value": "n/a — no embeddable form of kitty's core has ever been released.",
+          "flagged": true,
+          "note": "Searched the GitHub releases (application builds only), README.asciidoc, setup.py (builds the CPython extension kitty/fast_data_types) and docs/build.rst; found no library, crate or pkg-config artifact. The application's own first release date was not measured because it is not the embeddable form the field asks for."
+        },
+        "releases_last_12mo": {
+          "value": "17 application releases (v0.43.0 on 2025-09-28 through v0.49.1 on 2026-09-24); 0 library releases.",
+          "provenance": { "source": "measured 2026-09-25: gh api \"repos/kovidgoyal/kitty/releases?per_page=40\" --jq '[.[] | select(.published_at >= \"2025-09-25\" and .tag_name != \"nightly\") | .tag_name] | length, .'", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"17\" — [measured] followed by [\"v0.49.1\",\"v0.49.0\",\"v0.48.2\",\"v0.48.1\",\"v0.48.0\",\"v0.47.4\",\"v0.47.3\",\"v0.47.2\",\"v0.47.1\",\"v0.47.0\",\"v0.46.2\",\"v0.46.1\",\"v0.46.0\",\"v0.45.0\",\"v0.44.0\",\"v0.43.1\",\"v0.43.0\"]."
+        },
+        "api_stability": {
+          "value": "No public embedding API exists to be stable: the C core's types are CPython objects internal to kitty/fast_data_types. kitty's stable contracts are its escape-code protocols, not its code.",
+          "provenance": { "source": "https://github.com/kovidgoyal/kitty/blob/42d3cb2148acc182946901091dbbb0431a5a3344/kitty/data-types.h#L13-L14", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"#include <Python.h>\" — [measured] data-types.h:14, included by every core header; the \"no public API\" part is [inferred] from finding no exported C API or embedding docs."
+        },
+        "maintainers": {
+          "value": "1 contributor with >=10% of commits since 2025-09-25: kovidgoyal (Kovid Goyal, lead) with 2,375 of 3,004 (79%); next is an unlinked-author bucket with 217 (7.2%) and dependabot 63 (2.1%).",
+          "provenance": { "source": "measured 2026-09-25: gh api repos/kovidgoyal/kitty/stats/contributors | jq -c --argjson s 1758783600 '[.[] | {login: .author.login, c: ([.weeks[] | select(.w >= $s) | .c] | add)}] | (map(.c)|add) as $tot | {total:$tot, top: (sort_by(-.c) | .[0:3])}'", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"{\\\"total\\\":3004,\\\"top\\\":[{\\\"login\\\":\\\"kovidgoyal\\\",\\\"c\\\":2375},{\\\"login\\\":null,\\\"c\\\":217},{\\\"login\\\":\\\"dependabot[bot]\\\",\\\"c\\\":63}]}\" — [measured] weekly buckets from 1758783600 (2025-09-25)."
+        },
+        "adoption": {
+          "value": "35,069 GitHub stars; no product embeds the core (GPL, bound to Python). What spread is its graphics protocol: kitty's docs list client applications that use it.",
+          "provenance": { "source": "measured 2026-09-25: gh api repos/kovidgoyal/kitty --jq '{license:.license.spdx_id, lang:.language, stars:.stargazers_count, created:.created_at}'", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"\\\"license\\\":\\\"GPL-3.0\\\",\\\"stars\\\":35069\" — [measured]; protocol adopters list begins at docs/graphics-protocol.rst:28 \"Some applications that use the kitty graphics protocol:\". \"No embedder\" is [inferred] from integration_path."
+        },
+        "kitty_graphics": {
+          "value": "Reference implementation (kitty wrote the protocol), kitty/graphics.c. grman_handle_command dispatches t / T / q / p / d / f / a / c (graphics.c:2219-2306). Media: direct, file, temporary file and POSIX shared memory (:558-577). Formats RGB 24, RGBA 32, PNG 100 (:549); zlib o=z (:612-613). Placements: direct with cursor movement (handle_put_command, :1128), virtual placements for Unicode placeholders (:1140-1141) drawn from U+10EEEE cells (data-types.h:132, screen.c:1183), relative placements through parent chains (:1183-1203). Deletes a, i, r, p, q, x, y, z, c, n, f with upper-case freeing variants (:2137-2175). Query replies (:2233-2241), which need an image id and are written back as APC (screen.c:1605-1606). z-index layers below background / below text / above text (:1271-1273). Animation: frame load, control and compose (:1574, :1750, :2288-2298). Quota: DEFAULT_STORAGE_LIMIT 320 MiB per screen with eviction (:27, :80, :281-297); max image side 10,000 px (:26).",
+          "provenance": { "source": "https://github.com/kovidgoyal/kitty/blob/42d3cb2148acc182946901091dbbb0431a5a3344/kitty/graphics.c#L572-L574", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"case 'f': // file\n        case 't': // temporary file\n        case 's': // POSIX shared memory\" — [measured] graphics.c:572-574 in the local checkout @42d3cb21; direct medium at :558 `case 'd':  // direct`; formats :549 `enum FORMATS { RGB=24, RGBA=32, PNG=100 };`; every other feature cites its line in the value."
+        },
+        "kitty_tags": {
+          "value": "transmit-direct, transmit-file, transmit-temp, transmit-shm, format-png, format-raw, compression, place-direct, place-virtual, delete-by-id, delete-by-position, query-reply, z-layers, animation",
+          "note": "[inferred] from the graphics.c lines cited under kitty_graphics; kitty authored the protocol, so it implements the whole vocabulary. unknown: none."
+        },
+        "sixel": {
+          "value": "no — there is no Sixel code or documentation anywhere in kitty's sources, kittens or docs.",
+          "provenance": { "source": "measured 2026-09-25: grep -rl -i \"sixel\" kitty/ docs/ kittens/ | wc -l (in /home/parker/Projects/td-competitor-research/kitty @42d3cb21)", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"0\" — [measured] zero files mention sixel."
+        },
+        "iterm2_images": {
+          "value": "no — OSC 1337 is routed to window.py, which acts only on SetUserVar.",
+          "provenance": { "source": "https://github.com/kovidgoyal/kitty/blob/42d3cb2148acc182946901091dbbb0431a5a3344/kitty/window.py#L1263-L1268", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"if key == 'SetUserVar':\" — [measured] window.py:1266, the only key osc_1337 handles; vt-parser.c:541 dispatches 1337 to desktop_notify, which calls osc_1337 (window.py:1272-1273)."
+        },
+        "picture_anchoring": {
+          "value": "Integer row counter per placement: each ImageRef keeps start_row / start_column, shifted by the scroll amount on every scroll and dropped once it passes the limit. On resize only a same-width vertical shrink is adjusted; placements are not reflowed when the column count changes. Virtual placements anchor through U+10EEEE placeholder cells, which move and reflow with the text. Quota 320 MiB per screen.",
+          "provenance": { "source": "https://github.com/kovidgoyal/kitty/blob/42d3cb2148acc182946901091dbbb0431a5a3344/kitty/graphics.c#L1958-L1963", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"ref->start_row += d->amt;\" — [measured] scroll_filter_func, graphics.c:1961; resize handling grman_resize :2190-2202 (only `columns == old_columns` case adjusts start_row); quota :27 `#define DEFAULT_STORAGE_LIMIT 320u * (1024u * 1024u)`."
+        },
+        "vt_conformance": {
+          "value": "No published vttest or esctest results; some unit tests are ported from vttest.",
+          "provenance": { "source": "https://github.com/kovidgoyal/kitty/blob/42d3cb2148acc182946901091dbbb0431a5a3344/kitty_tests/screen.py#L510-L513", "confidence": "medium", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"# Taken from vttest/main.c\" — [measured] kitty_tests/screen.py:511 and :613; a grep of docs/*.rst and README.asciidoc for vttest, esctest and conformance found nothing else."
+        },
+        "vt_features": {
+          "value": "kitty-keyboard: yes — kitty authored it; screen_push_key_encoding_flags (screen.c:1817)\nosc8-hyperlinks: yes — dispatch_hyperlink for OSC 8 (vt-parser.c:535-536)\nsync-output-2026: yes — PENDING_UPDATE mode 2026 (modes.h:86)\nosc52-clipboard: yes — clipboard_control for OSC 52 and 5522 (vt-parser.c:566, screen.c:3150)\ngrapheme-clusters: yes — grapheme segmentation during text draw (screen.c:754-757)\nreflow-on-resize: yes — rewrap() on resize (screen.c:243)\nalt-screen: yes — ALTERNATE_SCREEN 1049 (modes.h:77)\nbracketed-paste: yes — BRACKETED_PASTE 2004 (modes.h:81)\nmouse-sgr: yes — MOUSE_SGR_MODE 1006 (modes.h:67)",
+          "provenance": { "source": "https://github.com/kovidgoyal/kitty/blob/42d3cb2148acc182946901091dbbb0431a5a3344/kitty/modes.h#L86", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"#define PENDING_UPDATE (2026 << 5)\" — [measured] modes.h:86; every other line cites its file and line in the local checkout @42d3cb21."
+        },
+        "performance_evidence": {
+          "value": "kitty's own `kitten __benchmark__`, parser-focused (rendering suppressed by default), on an AMD Ryzen 7 PRO 5850U under Linux/X11: kitty 0.33 at ASCII 121.8, Unicode 105.0, CSI 59.8, Images 251.6 MB/s (average 134.55) against alacritty 0.13.1 at an average of 54.05. The figures date from kitty 0.33, not the current release. Memory per cell from source: CPUCell 12 bytes + GPUCell 20 bytes = 32 bytes.",
+          "provenance": { "source": "https://github.com/kovidgoyal/kitty/blob/42d3cb2148acc182946901091dbbb0431a5a3344/docs/performance.rst#L69-L84", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"The numbers are megabytes per second of data that the terminal processes. Measurements were taken under Linux/X11 with an ``AMD Ryzen 7 PRO 5850U``.\" — [measured] performance.rst:69-71 (line breaks collapsed); table rows :77-79; cell sizes kitty/line.h:42 and :82 static_asserts (sizeof(GPUCell) == 20, sizeof(CPUCell) == 12)."
+        },
+        "grid_api": {
+          "value": "No embedder API. Internally a Screen holds LineBufs (main, alt) and a HistoryBuf; each Line pairs GPUCell {fg, bg, decoration_fg (underline colour), sprite_idx, CellAttrs: decoration, bold, italic, reverse, strike, dim, blink, mark, width} with CPUCell {ch_or_idx (a codepoint, or an index into a text cache for multi-codepoint graphemes), hyperlink_id, next_char_was_wrapped, multicell / scale / width fields}; LineAttrs carries has_dirty_text and has_image_placeholders. Python reaches all of it through fast_data_types.",
+          "provenance": { "source": "https://github.com/kovidgoyal/kitty/blob/42d3cb2148acc182946901091dbbb0431a5a3344/kitty/line.h#L37-L41", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"color_type fg, bg, decoration_fg;\" — [measured] GPUCell, line.h:38; CellAttrs :14-21; CPUCell :50-81; LineAttrs :84-92."
+        },
+        "damage_tracking": {
+          "value": "Internally yes, not exposed to embedders: a per-line LineAttrs.has_dirty_text bit and a Screen-level is_dirty flag.",
+          "provenance": { "source": "https://github.com/kovidgoyal/kitty/blob/42d3cb2148acc182946901091dbbb0431a5a3344/kitty/line.h#L84-L92", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"uint8_t has_dirty_text : 1;\" — [measured] line.h:86; Screen is_dirty is passed to grman_handle_command at screen.c:1605."
+        },
+        "state_snapshot": {
+          "value": "No serialize/restore API. The nearest is remote control `kitty @ get-text --extent all --ansi --add-cursor`, which exports text with SGR codes and the cursor — not modes, and not images (no such option) — so it is not a restorable snapshot.",
+          "provenance": { "source": "https://github.com/kovidgoyal/kitty/blob/42d3cb2148acc182946901091dbbb0431a5a3344/kitty/rc/get_text.py#L46-L54", "confidence": "medium", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"By default, only plain text is returned. With this flag, the text will include the ANSI formatting escape codes for colors, bold, italic, etc.\" — [measured] get_text.py:48-49 (line break collapsed); --add-cursor at :52-54. \"No serialize API\" is [inferred] from not finding one."
+        },
+        "threading_and_loop": {
+          "value": "kitty owns the loop: ChildMonitor starts an I/O thread (io_loop) that reads each child PTY and parses into its Screen under children_lock; kitty spawns the children itself (child.c), so it includes a PTY layer. Nothing is embeddable.",
+          "provenance": { "source": "https://github.com/kovidgoyal/kitty/blob/42d3cb2148acc182946901091dbbb0431a5a3344/kitty/child-monitor.c#L292", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"ret = pthread_create(&self->io_thread, NULL, io_loop, self);\" — [measured] child-monitor.c:292; lock children_lock :86 and screen_mutex :73-76."
+        },
+        "reply_channel": {
+          "value": "Internal only: write_escape_code_to_child queues reply bytes onto the window's child PTY through schedule_write_to_child; Kitty graphics responses go out as APC from screen_handle_graphics_command.",
+          "provenance": { "source": "https://github.com/kovidgoyal/kitty/blob/42d3cb2148acc182946901091dbbb0431a5a3344/kitty/screen.c#L1603-L1606", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"if (response != NULL) write_escape_code_to_child(self, ESC_APC, response);\" — [measured] screen.c:1606; write_escape_code_to_child → schedule_write_to_child at :1455-1463."
+        },
+        "td_migration": {
+          "value": "None — this core cannot be adopted: GPL-3.0 bars linking or copying into MIT TD, and it is a CPython extension. None of TD's seven alacritty-importing files (host.rs, term.rs, socketpty.rs, gridwire.rs, pane.rs, main.rs, pane/bench.rs) change because of it. Its role is a behavioural oracle: whichever core TD picks, TD's Kitty responses, placements and deletes should be compared against real kitty.",
+          "note": "[inferred] from license and integration_path."
+        },
+        "biggest_risk": {
+          "value": "Working from kitty/graphics.c as the reference while writing TD's own graphics code invites line-by-line transliteration, which would put GPL-3.0-derived code into an MIT product.",
+          "note": "[inferred] — MIT-licensed references (Ghostty's graphics_*.zig, WezTerm, Rio) cover the same behaviour and can be read and adapted instead."
+        },
+        "primary_sources": {
+          "value": "https://github.com/kovidgoyal/kitty/blob/42d3cb2148acc182946901091dbbb0431a5a3344/kitty/graphics.c https://github.com/kovidgoyal/kitty/blob/42d3cb2148acc182946901091dbbb0431a5a3344/kitty/screen.c https://github.com/kovidgoyal/kitty/blob/42d3cb2148acc182946901091dbbb0431a5a3344/kitty/vt-parser.c https://github.com/kovidgoyal/kitty/blob/42d3cb2148acc182946901091dbbb0431a5a3344/kitty/modes.h https://github.com/kovidgoyal/kitty/blob/42d3cb2148acc182946901091dbbb0431a5a3344/kitty/line.h https://github.com/kovidgoyal/kitty/blob/42d3cb2148acc182946901091dbbb0431a5a3344/kitty/child-monitor.c https://github.com/kovidgoyal/kitty/blob/42d3cb2148acc182946901091dbbb0431a5a3344/kitty/window.py https://github.com/kovidgoyal/kitty/blob/42d3cb2148acc182946901091dbbb0431a5a3344/kitty/rc/get_text.py https://github.com/kovidgoyal/kitty/blob/42d3cb2148acc182946901091dbbb0431a5a3344/docs/performance.rst https://github.com/kovidgoyal/kitty/blob/42d3cb2148acc182946901091dbbb0431a5a3344/docs/build.rst https://github.com/kovidgoyal/kitty/blob/42d3cb2148acc182946901091dbbb0431a5a3344/docs/graphics-protocol.rst https://github.com/kovidgoyal/kitty/blob/42d3cb2148acc182946901091dbbb0431a5a3344/LICENSE https://api.github.com/repos/kovidgoyal/kitty https://api.github.com/repos/kovidgoyal/kitty/releases",
+          "provenance": { "source": "https://github.com/kovidgoyal/kitty/blob/42d3cb2148acc182946901091dbbb0431a5a3344/kitty/graphics.c", "confidence": "high", "retrievedAt": "2026-09-25" },
+          "note": "quote: \"#define DEFAULT_STORAGE_LIMIT 320u * (1024u * 1024u)\" — [measured] graphics.c:27; all files above were read in the local checkout /home/parker/Projects/td-competitor-research/kitty @42d3cb21 (2026-06-19); the two api.github.com URLs were queried with gh api."
+        }
+      },
+      "insights": [
+        "kitty is licence-blocked and not a library; its value to TD is as the protocol oracle to test against, never as code to read-and-port."
+      ]
+    }
+  ],
+  "bubbles": [
+    {
+      "kind": "serendipity",
+      "subjectId": "libghostty-vt",
+      "note": "libghostty's binary snapshot deliberately omits Kitty images and placements (it keeps only the U+10EEEE placeholder cells), and the VT formatter has no image extra either. A host/window split built on libghostty-vt still has to ship image bytes and placements to the window on its own channel.",
+      "why": "TD's replica model hashes and compares both sides' grids; pictures would be the one piece of state no libghostty route transfers.",
+      "source": "https://github.com/ghostty-org/ghostty/blob/982fe90d941e4b4aab4905ffcbcfdea60bd83343/src/terminal/snapshot/grid.zig#L1234-L1235"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "libghostty-vt",
+      "note": "The published crate 0.2.1 predates the snapshot C API (added upstream 2026-08-03) and needs Zig 0.15.x; libghostty-rs master (2026-09-01, pinned to ghostty 22d13172 of 2026-08-06) has snapshot.rs and needs Zig 0.16.x. Choosing crates.io or git decides both the feature set and the toolchain.",
+      "why": "It changes build_requirements and state_snapshot depending on which one TD pins.",
+      "source": "https://github.com/Uzaaft/libghostty-rs/blob/5988a0b78b4aa804d1c12e66bbfe662bd97d81c0/crates/libghostty-vt-sys/build.rs#L7"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "libghostty-vt",
+      "note": "Timed Kitty animation playback in Ghostty is driven by the app renderer calling ImageStorage.animationTick (src/renderer/generic.zig:1440); the C API has no tick entry point, so a libghostty-vt embedder only sees frames change when the client sends a=a c=N.",
+      "why": "The kitty_tags 'animation' tag for libghostty-vt overstates what an embedder gets without an upstream API addition.",
+      "source": "https://github.com/ghostty-org/ghostty/blob/982fe90d941e4b4aab4905ffcbcfdea60bd83343/src/renderer/generic.zig#L1440"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "libghostty-vt",
+      "note": "wterm's production libghostty-vt renderer shipped direct Kitty placements but left out Sixel, iTerm2/OSC 1337, animation, virtual Unicode placements and file/shared-memory/URL media — a real embedder's view of what the C API leaves to the host.",
+      "why": "Independent evidence that placeholder drawing and animation are embedder work, not something libghostty-vt hands over ready-made.",
+      "source": "https://github.com/vercel-labs/wterm/tree/main/packages/@wterm/ghostty"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "zmx",
+      "note": "zmx restores clients with the Zig formatter in VT mode (not the binary snapshot): scrollback first with no extras, then clear-screen, then the active area with modes, scrolling region, keyboard and screen extras; it writes OSC 7 and the title (OSC 2) itself because the formatter adds a stray NUL to pwd and has no title extra (src/util.zig:795-877).",
+      "why": "Prior art for TD's gridwire encode_snapshot, including two formatter gaps TD would hit too.",
+      "source": "https://github.com/neurosnap/zmx/blob/878a8b0/src/util.zig"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "libghostty-vt",
+      "note": "libghostty-vt reports unsupported APC sequences to an UNKNOWN_SEQUENCE callback (content capture needs a non-zero GHOSTTY_TERMINAL_OPT_UNKNOWN_MAX_BYTES), and it also implements Ghostty's own Glyph Protocol APC (GHOSTTY_TERMINAL_OPT_GLYPH_PROTOCOL).",
+      "why": "The unknown-APC hook is the kind of seam the alacritty-patched-vte and ghostty-shadow options want; a hybrid could route non-Kitty APCs through it.",
+      "source": "https://github.com/ghostty-org/ghostty/blob/982fe90d941e4b4aab4905ffcbcfdea60bd83343/include/ghostty/vt/terminal.h#L344-L424"
+    }
+  ],
+  "tokens": 0
+}

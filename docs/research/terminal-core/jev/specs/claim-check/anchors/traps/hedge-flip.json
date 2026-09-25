@@ -1,0 +1,21 @@
+{
+  "call": "check",
+  "item": {
+    "id": "trap/hedge-flip",
+    "subject": "libghostty-vt \u2014 Ghostty's core as a library",
+    "field": "api_stability",
+    "field_means": "api_stability: the project's own words about API stability",
+    "value": "stable, semver-guaranteed API suitable for production",
+    "quote": "This library is currently in development and the API is not yet stable. Breaking changes are expected in future versions. Use with caution in production code.",
+    "source": "fixture",
+    "measured_by_command": false,
+    "labelled_inferred": false
+  },
+  "expect": {
+    "support": [
+      "contradicts"
+    ]
+  },
+  "written": "2026-09-25, before any call",
+  "pair": "hedge"
+}

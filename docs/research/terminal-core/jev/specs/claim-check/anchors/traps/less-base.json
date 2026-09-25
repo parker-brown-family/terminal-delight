@@ -1,0 +1,21 @@
+{
+  "call": "check",
+  "item": {
+    "id": "trap/less-base",
+    "subject": "rio-vt \u2014 Rio's embeddable core",
+    "field": "sixel",
+    "field_means": "sixel: whether the core decodes Sixel images",
+    "value": "yes",
+    "quote": "rio-vt carries sixel, kitty and iTerm2 image protocols.",
+    "source": "fixture",
+    "measured_by_command": false,
+    "labelled_inferred": false
+  },
+  "expect": {
+    "support": [
+      "states"
+    ]
+  },
+  "written": "2026-09-25, before any call",
+  "pair": "less"
+}

@@ -1,0 +1,21 @@
+{
+  "call": "check",
+  "item": {
+    "id": "trap/unrelated-base",
+    "subject": "Core Z (a fixture)",
+    "field": "sixel",
+    "field_means": "sixel: whether the core decodes Sixel images",
+    "value": "no",
+    "quote": "fn print(&mut self, c: char) { self.grid.put(self.cursor, c); }",
+    "source": "fixture",
+    "measured_by_command": false,
+    "labelled_inferred": false
+  },
+  "expect": {
+    "support": [
+      "silent"
+    ]
+  },
+  "written": "2026-09-25, before any call",
+  "pair": "unrelated"
+}

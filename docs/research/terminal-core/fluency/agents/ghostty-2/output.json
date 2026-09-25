@@ -1,0 +1,65 @@
+{
+  "crate": "libghostty-vt 0.2.1",
+  "icat": {
+    "cursor": {
+      "column": 0,
+      "row": 19
+    },
+    "input_bytes": 472,
+    "kitty_image_storage_limit_bytes": 10000000,
+    "placements": [
+      {
+        "column": 0,
+        "height_cells": 19,
+        "image_id": 2147483647,
+        "image_px": [
+          640,
+          400
+        ],
+        "placement_id": 0,
+        "row": 0,
+        "screen_column": 0,
+        "screen_row": 0,
+        "virtual": false,
+        "width_cells": 64,
+        "z": 0
+      }
+    ],
+    "replies": [
+      {
+        "escaped": "\\x1b_Gi=1;OK\\x1b\\\\",
+        "text": "\u001b_Gi=1;OK\u001b\\"
+      },
+      {
+        "escaped": "\\x1b_Gi=2;EINVAL: invalid data\\x1b\\\\",
+        "text": "\u001b_Gi=2;EINVAL: invalid data\u001b\\"
+      },
+      {
+        "escaped": "\\x1b_Gi=3;EINVAL: invalid data\\x1b\\\\",
+        "text": "\u001b_Gi=3;EINVAL: invalid data\u001b\\"
+      },
+      {
+        "escaped": "\\x1b[?62;22c",
+        "text": "\u001b[?62;22c"
+      }
+    ],
+    "visible_lines": []
+  },
+  "terminal": {
+    "cell_px": [
+      10,
+      22
+    ],
+    "cols": 120,
+    "max_scrollback": 10000,
+    "rows": 40
+  },
+  "text": {
+    "input_bytes": 2097161,
+    "input_newlines": 18356,
+    "max_scrollback_requested": 10000,
+    "scrollback_rows": 580,
+    "total_rows": 620,
+    "viewport_rows": 40
+  }
+}

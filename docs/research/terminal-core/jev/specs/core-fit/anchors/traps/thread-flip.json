@@ -1,0 +1,19 @@
+{
+  "call": "assess",
+  "item": {
+    "id": "trap/f",
+    "label": "Core F (a fixture)",
+    "kitty_tags": "unknown",
+    "evidence": {
+      "threading_and_loop": {
+        "recorded": "Handle types are !Send + !Sync by design. Callers must drive all operations from a single thread."
+      }
+    }
+  },
+  "expect": {
+    "threading": [
+      "does_not"
+    ]
+  },
+  "written": "2026-09-25, before any call"
+}

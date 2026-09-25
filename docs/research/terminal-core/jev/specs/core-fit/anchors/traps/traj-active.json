@@ -1,0 +1,26 @@
+{
+  "call": "maturity",
+  "item": {
+    "id": "trap/p",
+    "label": "Core P (a fixture)",
+    "kitty_tags": "unknown",
+    "evidence": {},
+    "maturity": {
+      "api_stability": {
+        "recorded": "Pre-1.0 (0.26); breaking changes are listed in bold in each minor release's changelog."
+      },
+      "releases_last_12mo": {
+        "recorded": "3"
+      },
+      "maintainers": {
+        "recorded": "2 contributors with over 10% of commits"
+      }
+    }
+  },
+  "expect": {
+    "api_trajectory": [
+      "active_pre_1_0"
+    ]
+  },
+  "written": "2026-09-25, before any call"
+}

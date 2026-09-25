@@ -1,0 +1,24 @@
+{
+  "core": "wezterm-term git b09b56c29c",
+  "kb_per_pane_empty": 99,
+  "kb_per_pane_full": 6084,
+  "panes": 20,
+  "picture_bytes": 472,
+  "rows_kept": 10040,
+  "rss_kb": {
+    "after_create": 13720,
+    "after_fill": 133432,
+    "high_water": 133432,
+    "start": 11736
+  },
+  "text_bytes": 8388620,
+  "text_mb_per_s": 14.566663226678434,
+  "text_ms_median": 549.2,
+  "text_ms_runs": [
+    458.8,
+    485.5,
+    549.2,
+    591.7,
+    659.0
+  ]
+}

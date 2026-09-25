@@ -1,0 +1,19 @@
+{
+  "call": "assess",
+  "item": {
+    "id": "trap/k",
+    "label": "Core K (a fixture)",
+    "kitty_tags": "unknown",
+    "evidence": {
+      "state_snapshot": {
+        "recorded": "A Formatter re-emits the screen as VT sequences, with options to include modes, the scrolling region, tab stops and the cursor."
+      }
+    }
+  },
+  "expect": {
+    "snapshot": [
+      "provides"
+    ]
+  },
+  "written": "2026-09-25, before any call"
+}

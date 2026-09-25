@@ -1,0 +1,805 @@
+{
+ "updates": [
+  {
+   "id": "ghostty-shadow",
+   "fields": {
+    "what_it_is": {
+     "value": "A hybrid option, not a released product: TD keeps alacritty_terminal 0.26 (the Alacritty project's Rust crate) as the only text grid and feeds the same PTY bytes to a second emulator, libghostty-vt (Ghostty's Zig VT core, maintained by the Ghostty project and reached through Uzaaft's `libghostty-vt` Rust bindings), used only for its Kitty image store and placement list; TD's renderer paints those placements over alacritty's cells.",
+     "provenance": {
+      "source": "https://github.com/ghostty-org/ghostty/blob/a887df42c56f6de86c0fe6da9c4eeca37931e083/include/ghostty/vt/kitty_graphics.h#L22-L29",
+      "confidence": "high",
+      "retrievedAt": "2026-09-25"
+     },
+     "note": "quote: \"API for inspecting images and placements stored via the [Kitty graphics protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/). The central object is @ref GhosttyKittyGraphics, an opaque handle to the image storage associated with a terminal's active screen. From it you can iterate over placements and look up individual images.\" — [measured] libghostty-vt's C header at the commit the crates.io bindings pin; this is the API the shadow would read. That no product runs this hybrid is under adoption. The option itself is TD's own construction, not a project."
+    },
+    "license": {
+     "value": "Apache-2.0 (alacritty_terminal) + MIT OR Apache-2.0 (the libghostty-vt and libghostty-vt-sys crates) + MIT (ghostty, the Zig source that is compiled and statically linked). All are permissive, so an MIT product may link every part if it keeps the notices.",
+     "provenance": {
+      "source": "measured 2026-09-25: curl -s https://crates.io/api/v1/crates/libghostty-vt (versions[].license); curl -s https://crates.io/api/v1/crates/alacritty_terminal; gh api repos/ghostty-org/ghostty --jq '{license:.license.spdx_id,stars:.stargazers_count}'",
+      "confidence": "high",
+      "retrievedAt": "2026-09-25"
+     },
+     "note": "quote: \"0.2.1 2026-07-18 MIT OR Apache-2.0 1.90 False 90817\" — [measured] the libghostty-vt crate row (version, date, license, msrv, yanked, downloads). The alacritty_terminal row reads \"0.26.0 2026-04-06 Apache-2.0 1.85.0 False 928682\", and the ghostty repo reports {\"license\":\"MIT\",\"stars\":61524}. None is copyleft."
+    },
+    "language": {
+     "value": "Rust (alacritty_terminal, vte and the libghostty-vt bindings) and Zig (libghostty-vt itself, called across its C ABI).",
+     "provenance": {
+      "source": "measured 2026-09-25: gh api repos/ghostty-org/ghostty/languages; gh api repos/alacritty/alacritty/languages; gh api repos/Uzaaft/libghostty-rs/languages (top entries by bytes)",
+      "confidence": "high",
+      "retrievedAt": "2026-09-25"
+     },
+     "note": "quote: \"Zig:12567283 Swift:1440545 C:1084755\" — [measured] ghostty's languages by bytes. alacritty reports \"Rust:1144388 Shell:32890\" and libghostty-rs reports \"Rust:775501 Nix:8464 Shell:178\"."
+    },
+    "integration_path": {
+     "value": "Two paths at once. alacritty_terminal stays a crates.io crate, as today. libghostty-vt is a C ABI reached through Rust bindings: the crates.io crates `libghostty-vt` 0.2.1 (safe API, including kitty::graphics) on top of `libghostty-vt-sys` 0.2.1. The -sys build script fetches ghostty's Zig source, compiles it, and statically links libghostty-vt.a; the `link-dynamic` feature switches to the shared library.",
+     "provenance": {
+      "source": "https://docs.rs/crate/libghostty-vt-sys/0.2.1/source/README.md",
+      "confidence": "high",
+      "retrievedAt": "2026-09-25"
+     },
+     "note": "quote: \"- Fetches and builds `libghostty-vt.a` from ghostty sources via Zig by default.\" — [measured] the -sys crate README, which goes on: \"Static linking is the baseline rather than a Cargo feature. Enable the additive `link-dynamic` feature to link the shared library instead.\" The safe crate's kitty::graphics module is in libghostty-vt 0.2.1 src/kitty/graphics.rs."
+    },
+    "build_requirements": {
+     "value": "Beyond cargo: (1) a Zig toolchain, 0.15.2 for crates.io libghostty-vt-sys 0.2.1 (it pins ghostty a887df4, whose build.zig.zon has minimum_zig_version 0.15.2) or 0.16.0 for libghostty-rs master (it pins ghostty 22d1317); (2) git and network access at build time, because build.rs clones ghostty unless GHOSTTY_SOURCE_DIR names a local checkout (GHOSTTY_ZIG_SYSTEM_DIR serves Zig packages offline for sandboxed AUR/Nix builds); (3) a PNG decoder that TD supplies, because libghostty decodes PNG only through an embedder callback. alacritty_terminal itself needs cargo only.",
+     "provenance": {
+      "source": "https://docs.rs/crate/libghostty-vt-sys/0.2.1/source/build.rs#L5-L7",
+      "confidence": "high",
+      "retrievedAt": "2026-09-25"
+     },
+     "note": "quote: \"/// Pinned ghostty commit. Update this to pull a newer version. const GHOSTTY_REPO: &str = \"https://github.com/ghostty-org/ghostty.git\"; const GHOSTTY_COMMIT: &str = \"a887df42c56f6de86c0fe6da9c4eeca37931e083\";\" — [measured] build.rs lines 5-7. The same file's fetch_ghostty runs `git clone --filter=blob:none --no-checkout` and then `git checkout`, and it then invokes `zig build`. At that commit, ghostty's build.zig.zon reads `.minimum_zig_version = \"0.15.2\"` (measured: gh api repos/ghostty-org/ghostty/contents/build.zig.zon?ref=a887df4). The PNG callback requirement is stated in kitty_graphics.h L39-43."
+    },
+    "latest_release": {
+     "value": "libghostty-vt 0.2.1 (crates.io, 2026-07-18; it pins ghostty a887df4 of 2026-07-11) + alacritty_terminal 0.26.0 (crates.io, 2026-04-06). The newest Ghostty application tag is v1.3.1.",
+     "provenance": {
+      "source": "measured 2026-09-25: curl -s https://crates.io/api/v1/crates/libghostty-vt; curl -s https://crates.io/api/v1/crates/alacritty_terminal; gh api repos/ghostty-org/ghostty/tags?per_page=15 --jq '.[].name'",
+      "confidence": "high",
+      "retrievedAt": "2026-09-25"
+     },
+     "note": "quote: \"0.2.1 2026-07-18 MIT OR Apache-2.0 1.90 False 90817\" — [measured] libghostty-vt's newest version. alacritty_terminal's newest is \"0.26.0 2026-04-06 Apache-2.0 1.85.0 False 928682\". The ghostty tags list starts \"v1.3.1 v1.3.0 v1.2.3\". The pinned commit's date comes from gh api repos/ghostty-org/ghostty/commits/a887df4 (2026-07-11T21:47:37Z)."
+    },
+    "first_release": {
+     "value": "2026-03-28: libghostty-vt 0.1.0 on crates.io, the first embeddable Rust form of the picture half. alacritty_terminal was first published on 2020-07-31.",
+     "provenance": {
+      "source": "measured 2026-09-25: curl -s https://crates.io/api/v1/crates/libghostty-vt (versions[].num, created_at)",
+      "confidence": "high",
+      "retrievedAt": "2026-09-25"
+     },
+     "note": "quote: \"0.1.0 2026-03-28 MIT OR Apache-2.0 1.93 False 36\" — [measured] the oldest libghostty-vt version. The crate record's created_at is 2026-03-28T19:13:41Z, and alacritty_terminal's crate created_at is 2020-07-31T23:36:59Z."
+    },
+    "releases_last_12mo": {
+     "value": "7 in total: libghostty-vt 4 (0.1.0 and 0.1.1 on 2026-03-28, 0.2.0 on 2026-06-16, 0.2.1 on 2026-07-18) and alacritty_terminal 3 (0.25.1 on 2025-10-18, 0.26.0-rc1 on 2026-03-21, 0.26.0 on 2026-04-06).",
+     "provenance": {
+      "source": "measured 2026-09-25: curl -s https://crates.io/api/v1/crates/libghostty-vt; curl -s https://crates.io/api/v1/crates/alacritty_terminal (versions[].num and created_at, counted from 2025-09-25)",
+      "confidence": "high",
+      "retrievedAt": "2026-09-25"
+     },
+     "note": "quote: \"0.2.1 2026-07-18 MIT OR Apache-2.0 1.90 False 90817 / 0.2.0 2026-06-16 MIT OR Apache-2.0 1.90 False 30929 / 0.1.1 2026-03-28 MIT OR Apache-2.0 1.93 False 9858 / 0.1.0 2026-03-28 MIT OR Apache-2.0 1.93 False 36\" — [measured] these are the four libghostty-vt rows. The alacritty_terminal rows inside the window are \"0.26.0 2026-04-06\", \"0.26.0-rc1 2026-03-21\" and \"0.25.1 2025-10-18\"; the next older one, \"0.25.1-rc1 2025-08-29\", falls outside it."
+    },
+    "api_stability": {
+     "value": "Unstable on the picture side and pre-1.0 on both. libghostty-vt's own docs say breaking changes are expected. Ghostty's README says the functionality is stable but the API signatures are in flux. The crate went 0.1 to 0.2, a semver break, within three months. libghostty's Kitty cursor-placement behaviour itself changed upstream on 2026-08-18 (commit afb61e1) to match kitty. alacritty_terminal is 0.x, and 0.25 to 0.26 is breaking by semver.",
+     "provenance": {
+      "source": "https://docs.rs/crate/libghostty-vt/0.2.1/source/src/lib.rs#L13-L15",
+      "confidence": "high",
+      "retrievedAt": "2026-09-25"
+     },
+     "note": "quote: \"This library is currently in development and the API is not yet stable. Breaking changes are expected in future versions. Use with caution in production code.\" — [measured] lib.rs lines 13-15 of the crate. Ghostty's README (https://github.com/ghostty-org/ghostty/blob/982fe90d941e4b4aab4905ffcbcfdea60bd83343/README.md#L158-L160) says: \"The functionality is extremely stable (since its been proven in Ghostty GUI for a long time), but the API signatures are still in flux.\""
+    },
+    "maintainers": {
+     "value": "Three upstreams, each carried by one or two people. ghostty: 1 contributor at >=10% of 5,707 commits since 2025-09-25, Mitchell Hashimoto (mitchellh), at 51.1%. libghostty-rs bindings: 2 of 232 commits, Uzaaft with 138 and pluiedev with 86. alacritty: 2 of 25 commits, chrisduerr with 14 and kchibisov with 7. Leads are mitchellh (ghostty), Uzaaft (bindings) and chrisduerr (alacritty).",
+     "provenance": {
+      "source": "measured 2026-09-25: gh api repos/ghostty-org/ghostty/stats/contributors (weeks summed from 2025-09-25); gh api 'repos/Uzaaft/libghostty-rs/commits?since=2025-09-25T00:00:00Z&per_page=100' --paginate --jq '.[] | (.author.login // .commit.author.name)' | sort | uniq -c; gh api repos/alacritty/alacritty/stats/contributors",
+      "confidence": "high",
+      "retrievedAt": "2026-09-25"
+     },
+     "note": "quote: \"total commits since 2025-09-25 : 5707 2914 mitchellh 51.1 % 306 github-actions[bot] 5.4 % 288 jcollie 5.0 %\" — [measured] ghostty output, which ends \">=10%: ['mitchellh']\". libghostty-rs: \"138 Uzaaft / 86 pluiedev / 4 phall1 / 2 domenkozar\" (total 232). alacritty: \"14 chrisduerr 56.0 % / 7 kchibisov 28.0 %\" of 25."
+    },
+    "adoption": {
+     "value": "No product was found that runs this hybrid: a GitHub code search for Cargo.toml files naming both crates returned nothing. Its parts are widely used. alacritty_terminal has 1,674,111 crates.io downloads. libghostty-vt has 131,640 downloads and 12 reverse dependencies (e.g. ratatui-ghostty, egui_tty, phantom-daemon, agentmux, betamax). Cargo.toml files naming libghostty-vt on GitHub include manaflow-ai/cmux, cachix/devenv, microsoft/tui-test and vercel/turborepo.",
+     "provenance": {
+      "source": "measured 2026-09-25: curl -s https://crates.io/api/v1/crates/libghostty-vt; curl -s 'https://crates.io/api/v1/crates/libghostty-vt/reverse_dependencies?per_page=100'; gh search code \"libghostty-vt alacritty_terminal\" --filename Cargo.toml; gh search code \"libghostty-vt\" --filename Cargo.toml --limit 30",
+      "confidence": "high",
+      "retrievedAt": "2026-09-25"
+     },
+     "note": "quote: \"{'name': 'libghostty-vt', 'max_version': '0.2.1', 'max_stable_version': '0.2.1', 'newest_version': '0.2.1', 'downloads': 131640, 'recent_downloads': 123207\" — [measured] crates.io crate record. The reverse_dependencies response ends '\"meta\":{\"total\":12}}'. alacritty_terminal's record reads 'downloads': 1674111. The combined code search printed no results."
+    },
+    "kitty_graphics": {
+     "value": "All of it comes from libghostty-vt; alacritty contributes nothing, because vte 0.15 swallows APC. At the crates.io 0.2.1 pin (ghostty a887df4) libghostty-vt covers: transmission t=d/f/t/s, where f, t and s are off by default in the library build and TD must enable each one; formats f=24/32/100, where PNG works only with a TD-supplied decoder callback; zlib compression (o=z); direct placements (a=T/a=p) held on tracked pins and virtual U=1 placements; deletes a/i/n/c/f/p/q/r/x/y/z; a=q query replies; and z-index layers exposed as BELOW_BG/BELOW_TEXT/ABOVE_TEXT. Animation (a=f/a/c) returns 'ERROR: unimplemented action' at this pin. Upstream added animation on 2026-08-21 and relative placements (P/Q) on 2026-08-20, both after the pin. Quota: 10 MB by default in the library build, set by the embedder.",
+     "provenance": {
+      "source": "https://github.com/ghostty-org/ghostty/blob/a887df42c56f6de86c0fe6da9c4eeca37931e083/src/terminal/kitty/graphics_command.zig#L437-L447",
+      "confidence": "high",
+      "retrievedAt": "2026-09-25"
+     },
+     "note": "quote: \"pub const Medium = lib.Enum(lib.target, &.{ \"direct\", // d \"file\", // f \"temporary_file\", // t \"shared_memory\", // s }); pub const Compression = lib.Enum(lib.target, &.{ \"none\", \"zlib_deflate\", // z });\" — [measured] the four media and zlib. At the same commit: graphics_exec.zig L45-74 dispatches .query/.display/.delete/.transmit and returns .{ .message = \"ERROR: unimplemented action\" } for the three animation actions; graphics_storage.zig L737-743 holds the placement Location (pin or virtual); graphics_command.zig L812-851 holds the Delete union; Terminal.zig L250-267 sets the defaults (\".lib => 10 * 1000 * 1000, // 10MB\", loading limits \".direct\"); kitty_graphics.h L267-281 defines the z-layers. APC is dropped in vte-0.15.0 src/lib.rs L377 (\"0x5E..=0x5F => self.state = State::SosPmApcString\"), whose state is handled by anywhere(), which ignores every byte except CAN/SUB/ESC."
+    },
+    "kitty_tags": {
+     "value": "transmit-direct, transmit-file, transmit-temp, transmit-shm, format-png, format-raw, compression, place-direct, place-virtual, delete-by-id, delete-by-position, query-reply, z-layers",
+     "note": "[inferred] These are libghostty-vt's tags at the crates.io 0.2.1 pin (ghostty a887df4). Animation is left out because that pin answers a=f/a=a/a=c with 'ERROR: unimplemented action'; upstream added it on 2026-08-21, after the pin. Being implemented does not make a feature usable in the hybrid. file, temp and shm each need TD to enable the medium, and PNG needs a TD decoder. place-direct is exactly where the two grids diverge (see biggest_risk). place-virtual yields only image data: viewport_pos returns None for virtual placements, so TD must find the U+10EEEE placeholder cells in alacritty's grid itself. unknown: none."
+    },
+    "sixel": {
+     "value": "no. Neither half decodes Sixel. libghostty-vt has no Sixel implementation (the only 'sixel' in its Zig source is a DA1 feature code), and alacritty_terminal lists no Sixel DCS.",
+     "provenance": {
+      "source": "measured 2026-09-25: grep -rn -i sixel src --include=*.zig (ghostty clone at 982fe90d94)",
+      "confidence": "high",
+      "retrievedAt": "2026-09-25"
+     },
+     "note": "quote: \"src/terminal/device_attributes.zig:53:        sixel = 4,\" — [measured] that is the command's only hit. Alacritty's escape list (https://github.com/alacritty/alacritty/blob/985394dd42ca1408868ccee8070c8c75cccd762f/extra/man/alacritty-escapes.7.scd#L258-L265) has a DCS section containing only \"_DCS = s_\" (Rejected)."
+    },
+    "iterm2_images": {
+     "value": "no. libghostty-vt parses OSC 1337 but logs the image keys (File, FilePart, MultipartFile) as unimplemented, and alacritty's escape list has no OSC 1337.",
+     "provenance": {
+      "source": "https://github.com/ghostty-org/ghostty/blob/982fe90d941e4b4aab4905ffcbcfdea60bd83343/src/terminal/osc/parsers/iterm2.zig#L168-L194",
+      "confidence": "high",
+      "retrievedAt": "2026-09-25"
+     },
+     "note": "quote: \"log.debug(\"unimplemented OSC 1337: {t}\", .{key});\" — [measured] the arm that logs this lists .File, .FileEnd, .FilePart and .MultipartFile (L168-172), which are the inline-image keys. The alacritty-escapes(7) OSC table runs 0, 1, 2, 4, 8, 10, 11, 12, 50, 52, 104, 110, 111, 112. Read at ghostty main, not at the 0.2.1 pin."
+    },
+    "picture_anchoring": {
+     "value": "Tracked pins in libghostty's own page list: a direct placement's location is `pin: *PageList.Pin`, which moves with scrolling and reflow in libghostty's grid, not alacritty's. U=1 virtual placements use placeholder cells instead. TD would map libghostty viewport rows onto alacritty viewport rows one to one, which holds only while the two grids stay in lockstep; scrollback caps also differ (alacritty counts lines, libghostty counts bytes). Quota: an embedder-set byte limit, 10 MB by default in the library build (the Ghostty app uses 320 MB); zero disables Kitty graphics.",
+     "provenance": {
+      "source": "https://github.com/ghostty-org/ghostty/blob/a887df42c56f6de86c0fe6da9c4eeca37931e083/src/terminal/kitty/graphics_storage.zig#L737-L743",
+      "confidence": "high",
+      "retrievedAt": "2026-09-25"
+     },
+     "note": "quote: \"pub const Location = union(enum) { /// Exactly placed on a screen pin. pin: *PageList.Pin, /// Virtual placement (U=1) for unicode placeholders. virtual: void, };\" — [measured] placement storage at the crates.io pin. Terminal.zig L250-257 at the same commit reads \".ghostty => 320 * 1000 * 1000, // 320MB\" and \".lib => 10 * 1000 * 1000, // 10MB\". kitty_graphics.h L39-43 says a non-zero storage limit enables the protocol. The one-to-one row mapping is my inference."
+    },
+    "vt_conformance": {
+     "value": "Text conformance is alacritty's. Alacritty publishes a status for each sequence (alacritty-escapes(7): IMPLEMENTED/PARTIAL/REJECTED). Its private modes are limited to 1, 3, 6, 7, 12, 25, 1000, 1002, 1004, 1005, 1006, 1007, 1042, 1049, 2004 and 2026. It has no 1047/1048 and no DECLRMM (69), and libghostty honours all of those, so each is a further point where the two grids can diverge.",
+     "provenance": {
+      "source": "https://github.com/alacritty/alacritty/blob/985394dd42ca1408868ccee8070c8c75cccd762f/extra/man/alacritty-escapes.7.scd#L125-L127",
+      "confidence": "high",
+      "retrievedAt": "2026-09-25"
+     },
+     "note": "quote: \"|  _CSI ? h_ :  Partial :[ Modes: *1*, *3*, *6*, *7*, *12*, *25*, *1000*, *1002*, *1004*, *1005*, *1006*, *1007*, *1042*, *1049*, *2004*, *2026*\" — [measured] alacritty master 985394d (2026-06-16), which is newer than the 0.26.0 crate. ghostty's mode table (https://github.com/ghostty-org/ghostty/blob/982fe90d941e4b4aab4905ffcbcfdea60bd83343/src/terminal/modes.zig#L359-L378) includes enable_left_and_right_margin 69, alt_screen 1047, save_cursor 1048 and grapheme_cluster 2027. TD's own test legacy_1047_alt_screen_is_unknown_in_this_version (app/src/term.rs) pins alacritty ignoring 1047."
+    },
+    "vt_features": {
+     "value": "All nine answers are alacritty's, the text half; libghostty's answers never reach the screen.\nkitty-keyboard: yes — alacritty-escapes(7) lists CSI u, CSI ? u, CSI = u and CSI > u as Implemented (L188-202), and alacritty_terminal has TermMode::KITTY_KEYBOARD_PROTOCOL\nosc8-hyperlinks: yes — OSC 8 Implemented (L227), and CellExtra carries a hyperlink\nsync-output-2026: yes — mode 2026 is in the CSI ? h list (L127), and vte 0.15 buffers it (SYNC_UPDATE_TIMEOUT 150 ms)\nosc52-clipboard: yes — OSC 52 Implemented, 'Only *clipboard* and *primary selection* supported' (L242-244)\ngrapheme-clusters: no — combining marks are stored per cell (CellExtra.zerowidth), but there is no mode 2027 clustering; libghostty supports 2027, so if TD enabled it in the shadow, wide sequences would be another divergence point\nreflow-on-resize: yes — grid/resize.rs grow_columns(reflow) and shrink_columns(reflow)\nalt-screen: yes — 1049 only; 1047 and 1048 are ignored (TD term.rs test legacy_1047_alt_screen_is_unknown_in_this_version)\nbracketed-paste: yes — mode 2004 (L127)\nmouse-sgr: yes — mode 1006 (L127)",
+     "provenance": {
+      "source": "https://github.com/alacritty/alacritty/blob/985394dd42ca1408868ccee8070c8c75cccd762f/extra/man/alacritty-escapes.7.scd#L125-L202",
+      "confidence": "high",
+      "retrievedAt": "2026-09-25"
+     },
+     "note": "quote: \"Modes: *1*, *3*, *6*, *7*, *12*, *25*, *1000*, *1002*, *1004*, *1005*, *1006*, *1007*, *1042*, *1049*, *2004*, *2026*\" — [measured] the mode line establishes 2026, 2004, 1006 and 1049. The CSI u rows (L188-202), OSC 8 (L227) and OSC 52 (L242-244) are in the same file. Cell and resize facts come from alacritty_terminal-0.26.0 src/term/cell.rs L125-129 and src/grid/resize.rs L101/L245, and the sync buffering from vte-0.15.0 src/ansi.rs L35-36."
+    },
+    "performance_evidence": {
+     "value": "No measurement of the hybrid exists. Ghostty's README says its parser and Alacritty's land within a few percent of each other on benchmarks, so running both roughly doubles per-byte parse work on the host, and on each window replica if it runs its own shadow. That doubling is inferred and should be measured with TD's pane/bench.rs. Memory: the shadow holds a second full grid and scrollback inside libghostty, plus decoded RGBA up to the storage limit (10 MB by default). No published per-cell figure was found for either half.",
+     "provenance": {
+      "source": "https://github.com/ghostty-org/ghostty/blob/982fe90d941e4b4aab4905ffcbcfdea60bd83343/README.md#L106-L108",
+      "confidence": "medium",
+      "retrievedAt": "2026-09-25"
+     },
+     "note": "quote: \"For example, Ghostty and Alacritty are usually within a few percentage points of each other on various benchmarks, but are both something like 100x faster than Terminal.app and iTerm.\" — [measured] Ghostty's own claim; it names no benchmark or machine. The doubling is my inference from running two parsers on the same bytes."
+    },
+    "grid_api": {
+     "value": "Text uses alacritty's API unchanged: Term::grid() -> &Grid<Cell>, Term::renderable_content(), Cell { c, fg, bg, flags, extra: Option<Arc<CellExtra>> } with CellExtra { zerowidth, underline_color, hyperlink }, flags including WIDE_CHAR and WIDE_CHAR_SPACER, and Term::mode(). Pictures use libghostty-vt's Rust kitty::graphics API: Terminal::kitty_graphics() -> Graphics; a PlacementIterator whose iteration yields image_id, z, pixel_size, grid_size, source_rect and viewport_pos -> Option<ViewportPos>; and Graphics::image(id) -> Image with width, height, format and data() -> &[u8]. viewport_pos is None for virtual placements.",
+     "provenance": {
+      "source": "https://docs.rs/crate/libghostty-vt/0.2.1/source/src/kitty/graphics.rs#L575-L580",
+      "confidence": "high",
+      "retrievedAt": "2026-09-25"
+     },
+     "note": "quote: \"image that has scrolled up by 2 rows returns row=-2, meaning its top 2 rows are above the visible area but its bottom 2 rows are still on screen. Embedders should use these coordinates directly when computing the destination rectangle for rendering; the embedder is responsible for clipping the portion of the image that falls outside the viewport.\" — [measured] the viewport_pos doc, L575-580, which continues: \"Returns `None` when the placement is completely outside the viewport ... or when the placement is a virtual (unicode placeholder) placement.\" The alacritty Cell is at alacritty_terminal-0.26.0 src/term/cell.rs L134-140: \"pub struct Cell { pub c: char, pub fg: Color, pub bg: Color, pub flags: Flags, pub extra: Option<Arc<CellExtra>>, }\"."
+    },
+    "damage_tracking": {
+     "value": "Yes for text; pictures get only change stamps. alacritty's Term::damage() returns TermDamage::Full or Partial (a line iterator) since the last reset_damage(). libghostty exposes a storage-wide generation stamp, bumped on any transmit, placement or delete, plus per-image stamps, but no per-row picture damage. Placement geometry moves with scrolling, so TD must recompute positions on every dirty frame.",
+     "provenance": {
+      "source": "https://github.com/ghostty-org/ghostty/blob/a887df42c56f6de86c0fe6da9c4eeca37931e083/include/ghostty/vt/kitty_graphics.h#L89-L98",
+      "confidence": "high",
+      "retrievedAt": "2026-09-25"
+     },
+     "note": "quote: \"@ref GHOSTTY_KITTY_GRAPHICS_DATA_GENERATION is a storage-wide stamp updated on any transmit, placement, or delete. If unchanged, the placement set and all image data are identical and both placement snapshots and per-image staleness checks can be skipped. Placement geometry can still change independently (scrolling moves placements)\" — [measured] the header at the crates.io pin; the Rust crate exposes it as Graphics::generation() (graphics.rs L337-355). alacritty: alacritty_terminal-0.26.0 src/term/mod.rs L176-184, \"Terminal damage information collected since the last [`Term::reset_damage`] call.\""
+    },
+    "state_snapshot": {
+     "value": "No, not for pictures. TD's gridwire::encode_snapshot re-encodes only alacritty's grid as VT bytes. libghostty-vt's own binary snapshot (C API added upstream on 2026-08-03, after crate 0.2.1's pin) says Kitty image and placement state is not part of it. So a re-attaching window would get text and no pictures unless TD ships image bytes and placements itself. The window's replica also cannot re-parse t=t or t=s transmissions, because the protocol makes the first terminal that reads them, the host's shadow, delete the file or unlink the shared memory.",
+     "provenance": {
+      "source": "https://github.com/ghostty-org/ghostty/blob/982fe90d941e4b4aab4905ffcbcfdea60bd83343/src/terminal/snapshot/grid.zig#L1234-L1235",
+      "confidence": "high",
+      "retrievedAt": "2026-09-25"
+     },
+     "note": "quote: \"// Kitty image and placement state is not part of this snapshot // version, but the placeholder is still a valid Unicode scalar.\" — [measured] libghostty's snapshot encoder on main. The deletion rule is in the kitty protocol doc (https://github.com/kovidgoyal/kitty/blob/42d3cb2148acc182946901091dbbb0431a5a3344/docs/graphics-protocol.rst#L332-L344): \"A temporary file, the terminal emulator will delete the file after reading the pixel data\" and, for shared memory, \"The terminal emulator must read the data from the memory object and then unlink and close it on POSIX\". gridwire.rs (TD) documents a text-only snapshot."
+    },
+    "threading_and_loop": {
+     "value": "The loop is split. alacritty's EventLoop owns the PTY reader thread and parser, and TD's host.rs TeeReader already copies every read on that thread while holding the lease. libghostty-vt owns no loop, thread or PTY: the embedder calls vt_write. Its Rust handles are !Send + !Sync, so the shadow Terminal must live on one thread. It can be created lazily on alacritty's reader thread (e.g. thread-local per pane) and fed inside TeeReader::read before alacritty parses the chunk. The alternative is a dedicated thread fed through a channel, which loses the ordering that both the attach fence and the a=q reply depend on.",
+     "provenance": {
+      "source": "https://docs.rs/crate/libghostty-vt/0.2.1/source/README.md",
+      "confidence": "high",
+      "retrievedAt": "2026-09-25"
+     },
+     "note": "quote: \"Handle types (`Terminal`, `RenderState`, `KeyEncoder`, etc.) are `!Send + !Sync` by design. Callers should drive all operations from a single thread.\" — [measured] the crate README. TD's host.rs (terminal-delight@426f072:app/src/host.rs:131-132) says \"The copy happens *inside* the read, on the reader thread, while the lease is held — which is what makes the attach fence work.\" Where the shadow should live is my inference."
+    },
+    "reply_channel": {
+     "value": "There are two reply channels, and TD must merge them by hand. alacritty emits Event::PtyWrite(String), which TD bounces to the PTY. libghostty-vt calls its write_pty callback (Rust: Terminal::on_pty_write) for every reply it generates, DA and DSR included. To keep 'exactly once', TD must drop every libghostty reply except Kitty APC responses (ESC _ G ...). Ordering matters as well. kitty's detection recipe is a=q followed by DA1, and a terminal that answers DA1 first is judged to lack pictures. So the shadow must parse each chunk, and write its a=q answer, before alacritty answers a DA1 in the same chunk; viu and kitten icat both send a=q and then CSI c in the captures.",
+     "provenance": {
+      "source": "https://github.com/kovidgoyal/kitty/blob/42d3cb2148acc182946901091dbbb0431a5a3344/docs/graphics-protocol.rst#L435-L440",
+      "confidence": "high",
+      "retrievedAt": "2026-09-25"
+     },
+     "note": "quote: \"To check if a terminal emulator supports the graphics protocol the best way is to send the above *query action* followed by a request for the `primary device attributes <https://vt100.net/docs/vt510-rm/DA1.html>`_. If you get back an answer for the device attributes without getting back an answer for the *query action* the terminal emulator does not support the graphics protocol.\" — [measured] the protocol doc. libghostty-vt 0.2.1 src/terminal.rs L1534-1536: \"Call the given function when the terminal needs to write data back to the pty (e.g. in response to a DECRQM query or device status report).\" alacritty_terminal-0.26.0 src/event.rs L39-40: \"/// Write some text to the PTY. PtyWrite(String),\". Capture: terminal-delight@45567b7:docs/plans/program-pixels/evidence/stand-in/viu-kitty.json events (a=q, reply, then q DA1)."
+    },
+    "td_migration": {
+     "value": "Text-side change: the smallest of any picture option. Seam work: the largest. The seven files, one by one. pane.rs: its 51 grid reads stay. It gains a picture pass that walks the shadow's placements, copied out as Send-able values (image id, generation, RGBA bytes, viewport row/col, grid size, z), and paints them in gpui above or below the text by z. For U=1 it also scans alacritty's cells for U+10EEEE placeholders. host.rs: TeeReader::read feeds a per-pane libghostty Terminal on the reader thread before alacritty parses (thread-local, because the handle is !Send). It enables the file, temp and shm media, installs a PNG decoder, and filters write_pty down to Kitty APC replies. To stop the divergence it must also rewrite the stream: find each direct placement without C=1, inject the equivalent cursor motion into alacritty's input at that byte offset, and forward the rewritten bytes to clients so the replica still hashes equal. That means TD frames Kitty APC itself anyway, which is the approach Zellij takes in front of the same vte 0.15. gridwire.rs: encode_snapshot and grid_hash cover text only. The attach protocol needs a picture message (image bytes plus placements), because the replica window cannot re-read temp or shm transmissions the host already consumed. ReplicaGuard either gains a picture check or treats pictures as host-authoritative. term.rs: the hostless EventLoop path needs the same tap. socketpty.rs: unchanged. main.rs: wiring and config (storage limit, media policy). pane/bench.rs: add a benchmark for the second parser. Build: Zig 0.15.2 or 0.16 plus git/network, or a vendored ghostty source, in the AppImage and AUR builds.",
+     "note": "[inferred] The file roles come from TD's own module docs (host.rs TeeReader, gridwire.rs encode_snapshot). The Zellij comparison comes from this round's zellij-grid gatherer."
+    },
+    "biggest_risk": {
+     "value": "A direct placement without C=1 is the default in chafa, viu, kitten icat and timg; only mpv sends C=1. On such a placement libghostty moves its cursor right by the image's columns and down by its rows (rows−1 since ghostty's 2026-08-18 fix, the full row count at the crates.io 0.2.1 pin), scrolling when it reaches the bottom. alacritty never sees the APC and leaves its cursor where it was. From the very next byte of text the two grids disagree, and every picture after that is painted at a libghostty row that no longer matches alacritty's cells.",
+     "note": "[inferred] Evidence. Kitty protocol doc, L542-549: \"After placing an image on the screen the cursor must be moved to the right by the number of cols in the image placement rectangle and down by the number of rows in the image placement rectangle.\" and \"The client can ask the terminal emulator to not move the cursor at all by specifying ``C=1`` in the command\". kitty graphics.c L1151-1153: \"if (g->cursor_movement != 1 && !g->unicode_placement) { c->x += ref->effective_num_cols; if (ref->effective_num_rows) c->y += ref->effective_num_rows - 1;\". screen.c L1610 scrolls: \"if (self->cursor->y > self->margin_bottom) screen_scroll(self, self->cursor->y - self->margin_bottom);\". libghostty at the 0.2.1 pin (graphics_exec.zig L263-280): \"for (0..size.rows) |_| terminal.index()\". On main (L382-431) it uses rows−1, after commit afb61e1 \"place cursor after tall images properly\", which says: \"This fixes an incompatibility between Ghostty and Kitty 0.47.1+.\" Programs. chafa sends \"a=T,f=32,s=640,v=418,c=64,r=19,m=1,q=2\" (capture chafa-kitty.json:80; source chafa-term-db.c L426). viu sends \"f=32,s=640,v=400,c=60,r=18,a=T,t=t\" (viu-kitty.json:60; viuer 0.11.0 printer/kitty.rs L284) and then prints \\n. kitten icat sends \"a=T,q=2,f=100,t=f,s=640,v=400\" (icat2-kitty.json:71) and sets C=1 only with --place (kittens/icat/transmit.go L70-72). timg sends \"Ga=T,i=%u,q=2,f=100,m=%d\" and then \"*pos++ = '\\n';  // Need one final cursor movement.\" (kitty-canvas.cc L199, L229; timg was not captured). mpv sends \"a=T,f=24,s=1200,v=675,C=1,q=2,m=1\" (mpv-kitty.json:35; vo_kitty.c L80-81). ratatui-image (rimg) uses U=1 virtual placements, which move no cursor in either engine. Other divergence points, lower frequency: 1047/1048 alt screen and DECLRMM (69), which libghostty honours and alacritty ignores; the two reflow implementations; different scrollback caps."
+    },
+    "primary_sources": {
+     "value": "https://github.com/kovidgoyal/kitty/blob/42d3cb2148acc182946901091dbbb0431a5a3344/docs/graphics-protocol.rst https://github.com/kovidgoyal/kitty/blob/42d3cb2148acc182946901091dbbb0431a5a3344/kitty/graphics.c https://github.com/kovidgoyal/kitty/blob/42d3cb2148acc182946901091dbbb0431a5a3344/kitty/screen.c https://github.com/kovidgoyal/kitty/blob/42d3cb2148acc182946901091dbbb0431a5a3344/kittens/icat/transmit.go https://github.com/ghostty-org/ghostty/blob/a887df42c56f6de86c0fe6da9c4eeca37931e083/src/terminal/kitty/graphics_exec.zig https://github.com/ghostty-org/ghostty/blob/a887df42c56f6de86c0fe6da9c4eeca37931e083/src/terminal/kitty/graphics_command.zig https://github.com/ghostty-org/ghostty/blob/a887df42c56f6de86c0fe6da9c4eeca37931e083/src/terminal/kitty/graphics_storage.zig https://github.com/ghostty-org/ghostty/blob/a887df42c56f6de86c0fe6da9c4eeca37931e083/src/terminal/Terminal.zig https://github.com/ghostty-org/ghostty/blob/a887df42c56f6de86c0fe6da9c4eeca37931e083/include/ghostty/vt/kitty_graphics.h https://github.com/ghostty-org/ghostty/blob/982fe90d941e4b4aab4905ffcbcfdea60bd83343/src/terminal/kitty/graphics_exec.zig https://github.com/ghostty-org/ghostty/blob/982fe90d941e4b4aab4905ffcbcfdea60bd83343/src/terminal/snapshot/grid.zig https://github.com/ghostty-org/ghostty/blob/982fe90d941e4b4aab4905ffcbcfdea60bd83343/src/terminal/osc/parsers/iterm2.zig https://github.com/ghostty-org/ghostty/blob/982fe90d941e4b4aab4905ffcbcfdea60bd83343/src/terminal/modes.zig https://github.com/ghostty-org/ghostty/blob/982fe90d941e4b4aab4905ffcbcfdea60bd83343/include/ghostty/vt/terminal.h https://github.com/ghostty-org/ghostty/blob/982fe90d941e4b4aab4905ffcbcfdea60bd83343/README.md https://github.com/ghostty-org/ghostty/commit/afb61e1b6292f56b863ad0fe61bcdbad47392a5e https://libghostty.tip.ghostty.org/ https://crates.io/crates/libghostty-vt https://docs.rs/crate/libghostty-vt/0.2.1/source/ https://docs.rs/crate/libghostty-vt-sys/0.2.1/source/ https://github.com/Uzaaft/libghostty-rs/blob/5988a0b78b4aa804d1c12e66bbfe662bd97d81c0/README.md https://crates.io/crates/alacritty_terminal https://docs.rs/crate/alacritty_terminal/0.26.0/source/ https://docs.rs/crate/vte/0.15.0/source/src/lib.rs https://github.com/alacritty/alacritty/blob/985394dd42ca1408868ccee8070c8c75cccd762f/extra/man/alacritty-escapes.7.scd https://github.com/hzeller/timg/blob/a40148448f2bb95c97cf8515bff4d857a8e481b6/src/kitty-canvas.cc https://github.com/hpjansson/chafa/blob/65a3526c399eabc4bb7397df47e7f0ecd66f6e8d/chafa/chafa-term-db.c https://docs.rs/crate/viuer/0.11.0/source/src/printer/kitty.rs https://github.com/mpv-player/mpv/blob/e5a74aaaae0f019e2b6a5c1b8bc4a94ce23f798b/video/out/vo_kitty.c https://github.com/parker-brown-family/terminal-delight/tree/45567b7903c0dc6f5dc75803979bbcc4568e4176/docs/plans/program-pixels/evidence/stand-in https://github.com/parker-brown-family/terminal-delight/blob/426f072/app/src/host.rs https://github.com/parker-brown-family/terminal-delight/blob/426f072/app/src/gridwire.rs",
+     "provenance": {
+      "source": "https://github.com/kovidgoyal/kitty/blob/42d3cb2148acc182946901091dbbb0431a5a3344/docs/graphics-protocol.rst#L1087-L1088",
+      "confidence": "high",
+      "retrievedAt": "2026-09-25"
+     },
+     "note": "quote: \"``C``    Positive integer      ``0``      Cursor movement policy. ``0`` is the default, to move the cursor to after the image.\" — [measured] this is the key-table row the divergence question rests on. Every URL listed was was opened this session through a local checkout, a clone, gh api or crates.io at the commit named. The TD links are the local research/terminal-core worktree, and 426f072 may exist only locally. No secondary write-ups were used."
+    }
+   },
+   "insights": [
+    "Divergence table, direct placement (a=T/a=p) without C=1. kitty: x += cols, y += rows-1, then scroll if past the bottom margin. libghostty main: the same, since afb61e1 (2026-08-18). libghostty at crates.io 0.2.1: index() rows times, then x = pin.x + cols. alacritty (vte 0.15): no movement, because the APC is swallowed. Programs without C=1: chafa, viu, kitten icat (default), timg (outside tmux). With C=1: mpv, and kitten icat --place. U=1 virtual placements (rimg/ratatui-image, icat --unicode-placeholder, timg in tmux) move no cursor anywhere, so they do not diverge.",
+    "The divergence also changes what a person sees, not only where pictures go. After `viu -w 60 pic.png` (r=18) viu prints a newline. In libghostty the prompt lands below the picture; in alacritty it lands on the row under the picture's top row. TD paints the picture from libghostty's pin over alacritty's text, so the picture covers the user's new prompt."
+   ]
+  },
+  {
+   "id": "zellij-grid",
+   "fields": {
+    "what_it_is": {
+     "value": "Zellij is a Rust terminal multiplexer ('a terminal workspace with batteries included') whose server process owns every pane's PTY and its own VT emulator grid (zellij-server/src/panes/grid.rs, driven by the vte 0.15 parser) and sends each attached client a rendered VT stream; maintained by the zellij-org project, steered by Aram Drevekenin (@imsnif). For TD it is a reference design for the host/window split, not a candidate core.",
+     "provenance": {
+      "source": "https://github.com/zellij-org/zellij/blob/2fce032ccebd2e980b9f86eed1c121674e9059fd/docs/ARCHITECTURE.md#L10-L14",
+      "confidence": "high",
+      "retrievedAt": "2026-09-25"
+     },
+     "note": "quote: \"The TerminalPane represents a pane on screen that connects to a single pty (pseudo terminal) and (presumably) has one shell or other program running inside it.\" — [measured] ARCHITECTURE.md places TerminalPane and grid.rs in zellij-server; the steering role is GOVERNANCE.md L9 (\"Aram Drevekenin (@imsnif) is in charge of steering the project\"); the tagline is the GitHub description from gh api repos/zellij-org/zellij."
+    },
+    "license": {
+     "value": "MIT — an MIT product may link it, and may copy its source files provided the copyright and licence notice travel with them.",
+     "provenance": {
+      "source": "measured 2026-09-25: gh api repos/zellij-org/zellij --jq '{license: .license.spdx_id, created: .created_at, stars: .stargazers_count, lang: .language, desc: .description}'",
+      "confidence": "high",
+      "retrievedAt": "2026-09-25"
+     },
+     "note": "quote: \"\\\"lang\\\":\\\"Rust\\\",\\\"license\\\":\\\"MIT\\\"\" — [measured] spdx_id from the GitHub API; crates.io also reports license MIT for zellij-server 0.45.1 and for sixel-image 0.2.1."
+    },
+    "language": {
+     "value": "Rust (plugins compiled to wasm32-wasip1 and run under wasmi)",
+     "provenance": {
+      "source": "measured 2026-09-25: gh api repos/zellij-org/zellij --jq '{license: .license.spdx_id, created: .created_at, stars: .stargazers_count, lang: .language, desc: .description}'",
+      "confidence": "high",
+      "retrievedAt": "2026-09-25"
+     },
+     "note": "quote: \"\\\"lang\\\":\\\"Rust\\\"\" — [measured] GitHub's primary language; the wasm plugin target is rust-toolchain.toml L7 and wasmi is zellij-server/Cargo.toml L74."
+    },
+    "integration_path": {
+     "value": "not a library (reference only). zellij-server is published on crates.io (0.45.1) and exposes `pub mod panes` with `Grid`, but Grid::new takes Zellij-internal Palette, LinkHandler, SixelImageStore, KittyImageStore and Style values behind Rc<RefCell<…>>; the only library entry point (unreleased) runs the whole application as a 'distribution'. The realistic reuse is copying MIT source files — the Kitty APC interceptor, command parser and image store — into TD.",
+     "provenance": {
+      "source": "https://github.com/zellij-org/zellij/blob/2fce032ccebd2e980b9f86eed1c121674e9059fd/src/lib.rs#L19-L32",
+      "confidence": "high",
+      "retrievedAt": "2026-09-25"
+     },
+     "note": "quote: \"/// A distribution bundles its own plugins, configuration and layouts into the executable.\" — [measured] this is what CHANGELOG [Unreleased] calls \"feat: distributions -> allow using Zellij as a library (https://github.com/zellij-org/zellij/pull/5630)\": `pub fn run(distribution: Distribution)` runs the app, it does not hand out a grid. Grid::new's parameter list is grid.rs L1169-L1184."
+    },
+    "build_requirements": {
+     "value": "Not applicable to TD (reference only; nothing would be built). Zellij itself needs Rust 1.95.0 pinned by rust-toolchain.toml with the wasm32-wasip1 and x86_64-unknown-linux-musl targets, protoc (the protobuf compiler) for its plugin .proto files, and is built through `cargo xtask`.",
+     "provenance": {
+      "source": "https://github.com/zellij-org/zellij/blob/2fce032ccebd2e980b9f86eed1c121674e9059fd/CONTRIBUTING.md#L28",
+      "confidence": "high",
+      "retrievedAt": "2026-09-25"
+     },
+     "note": "quote: \"To build zellij, you'll need [`protoc`](https://github.com/protocolbuffers/protobuf#protobuf-compiler-installation) installed. This is used to compile the .proto files into Rust assets.\" — [measured] the toolchain pin is rust-toolchain.toml L4 (channel = \"1.95.0\") and L7 (targets); `cargo xtask build` is CONTRIBUTING.md L37."
+    },
+    "latest_release": {
+     "value": "v0.45.1, 2026-08-28 (GitHub release; zellij-server 0.45.1 published to crates.io the same day). Kitty graphics first shipped in v0.45.0 (2026-08-20); main at 2fce032 (2026-09-25) is ahead with unreleased Kitty fixes.",
+     "provenance": {
+      "source": "measured 2026-09-25: gh api 'repos/zellij-org/zellij/releases?per_page=100' --paginate --jq '.[] | \"\\(.tag_name) \\(.published_at) prerelease=\\(.prerelease)\"'",
+      "confidence": "high",
+      "retrievedAt": "2026-09-25"
+     },
+     "note": "quote: \"v0.45.1 2026-08-28T09:21:44Z prerelease=false\" — [measured] first line of the release list; crates.io reports max_stable_version 0.45.1 created 2026-08-28T08:54:14Z for zellij-server."
+    },
+    "first_release": {
+     "value": "v0.1.0-alpha on 2021-01-21 (first GitHub release); zellij-server first published to crates.io 2021-05-27. Sixel arrived in v0.31.0 (2022-07-28); Kitty graphics in v0.45.0 (2026-08-20). There is no separately released embeddable form.",
+     "provenance": {
+      "source": "measured 2026-09-25: gh api 'repos/zellij-org/zellij/releases?per_page=100' --paginate --jq '.[] | \"\\(.tag_name) \\(.published_at) prerelease=\\(.prerelease)\"'",
+      "confidence": "high",
+      "retrievedAt": "2026-09-25"
+     },
+     "note": "quote: \"v0.1.0-alpha 2021-01-21T10:42:20Z prerelease=true\" — [measured] last line of the release list; the crate date is crates.io's created_at \"2021-05-27T12:10:32.745974Z\"; the Sixel and Kitty dates are the CHANGELOG entries under [0.31.0] and [0.45.0]."
+    },
+    "releases_last_12mo": {
+     "value": "6 (v0.44.0, v0.44.1, v0.44.2, v0.44.3, v0.45.0, v0.45.1 between 2025-09-25 and 2026-09-25)",
+     "provenance": {
+      "source": "measured 2026-09-25: gh api 'repos/zellij-org/zellij/releases?per_page=100' --paginate --jq '.[] | \"\\(.tag_name) \\(.published_at) prerelease=\\(.prerelease)\"'",
+      "confidence": "high",
+      "retrievedAt": "2026-09-25"
+     },
+     "note": "quote: \"v0.45.1 2026-08-28T09:21:44Z prerelease=false\\nv0.45.0 2026-08-20T09:05:55Z prerelease=false\\nv0.44.3 2026-05-13T07:49:54Z prerelease=false\\nv0.44.2 2026-05-05T06:43:14Z prerelease=false\\nv0.44.1 2026-04-07T13:07:45Z prerelease=false\\nv0.44.0 2026-03-23T08:03:41Z prerelease=false\\nv0.43.1 2025-08-08T12:55:00Z prerelease=false\" — [measured] the next release, v0.43.1, predates the window; crates.io zellij-server versions list the same six."
+    },
+    "api_stability": {
+     "value": "Pre-1.0 (0.45.1) and no stated API promise for zellij-server as a library — it is the application's own internals. Measured break: Grid::new gained a kitty_image_store parameter between v0.44.3 and v0.45.x; the CHANGELOG has labelled whole releases '(BREAKING CHANGE)'.",
+     "provenance": {
+      "source": "https://github.com/zellij-org/zellij/blob/2fce032ccebd2e980b9f86eed1c121674e9059fd/zellij-server/src/panes/grid.rs#L1169-L1184",
+      "confidence": "high",
+      "retrievedAt": "2026-09-25"
+     },
+     "note": "quote: \"sixel_image_store: Rc<RefCell<SixelImageStore>>,\\n        kitty_image_store: Rc<RefCell<KittyImageStore>>,\" — [measured] at v0.44.3 (gh api --allow-escape-sequences -H 'Accept: application/vnd.github.raw' 'repos/zellij-org/zellij/contents/zellij-server/src/panes/grid.rs?ref=v0.44.3', L907-L921) the list runs sixel_image_store then style, with no kitty_image_store; CHANGELOG L579-L580 carry \"(BREAKING CHANGE) performance\" entries."
+    },
+    "maintainers": {
+     "value": "1 contributor above 10% of the 298 commits since 2025-09-25: imsnif (Aram Drevekenin), 200 commits (67%); next is divens with 24 (8%). Lead maintainer: Aram Drevekenin.",
+     "provenance": {
+      "source": "measured 2026-09-25: gh api 'repos/zellij-org/zellij/commits?since=2025-09-25T00:00:00Z&per_page=100' --paginate --jq '.[].author.login' | sort | uniq -c | sort -rn",
+      "confidence": "high",
+      "retrievedAt": "2026-09-25"
+     },
+     "note": "quote: \"    200 imsnif\\n     24 divens\\n      7 tlinford\\n      7 har7an\" — [measured] the total 298 is the same query with --jq '.[].sha' | wc -l; the lead is GOVERNANCE.md L9: \"Aram Drevekenin (@imsnif) is in charge of steering the project\". The Kitty graphics PR #5428 was also authored by imsnif (gh api repos/zellij-org/zellij/pulls/5428)."
+    },
+    "adoption": {
+     "value": "zellij-server: 325,072 crates.io downloads (16,676 recent) and 2 reverse dependencies (tmux, zellij); 35,538 GitHub stars for the application. No product embeds its grid as a library; the Yazelix distribution upstreamed graphics fixes into it.",
+     "provenance": {
+      "source": "measured 2026-09-25: curl -s -A \"td-terminal-core-research\" \"https://crates.io/api/v1/crates/zellij-server\" | jq -c '{name: .crate.name, max: .crate.max_stable_version, downloads: .crate.downloads, recent: .crate.recent_downloads, created: .crate.created_at, license: .versions[0].license}'",
+      "confidence": "high",
+      "retrievedAt": "2026-09-25"
+     },
+     "note": "quote: \"{\\\"name\\\":\\\"zellij-server\\\",\\\"max\\\":\\\"0.45.1\\\",\\\"downloads\\\":325072,\\\"recent\\\":16676,\" — [measured] reverse deps from https://crates.io/api/v1/crates/zellij-server/reverse_dependencies ({\"total\":2,\"names\":[\"tmux\",\"zellij\"]}); stars from gh api repos/zellij-org/zellij; Yazelix from CHANGELOG L10 \"feat: upstream Yazelix graphics and stacked-pane fixes\"."
+    },
+    "kitty_graphics": {
+     "value": "Yes, since v0.45.0 (PR #5428 'Support the Kitty Image Protocol', merged 2026-07-31). Zellij terminates the protocol in the server and re-emits pictures to each client's host terminal. Because vte 0.15 drops APC, a byte-level KittyApcInterceptor runs ahead of vte in TerminalPane::handle_pty_bytes and captures ESC _ G … ESC \\ (1 MiB cap per escape). kitty_graphics/parser.rs: actions a=t, a=T, a=p, a=d, a=q; media t=d, t=f, t=t (temp files under /tmp, /dev/shm or named tty-graphics-protocol are deleted); t=s answered ENOTSUPPORTED; formats f=24, f=32, f=100 (PNG decoded to RGBA); o=z zlib; m=0/1 chunking; x/y/w/h source rect, c/r scaling, X/Y cell offsets, z index, C=1; U=1 virtual placements and a=f/a/c animation answered ENOTSUPPORTED. grid_state.rs delete handles d=a/A, i/I, n/N, c/C, p/P, q/Q, x/X, y/Y, z/Z, r/R. replies.rs writes OK or error replies honouring q=; a=q answers OK only when the client's host terminal supports graphics. store.rs keeps a 320 MiB LRU store. A direct placement without C=1 advances Zellij's cursor (grid.rs advance_cursor_after_kitty_placement). output/mod.rs re-transmits each image once per client (a=t, f=32) and places it with a=p … C=1, deleting stale host placements.",
+     "provenance": {
+      "source": "https://github.com/zellij-org/zellij/blob/2fce032ccebd2e980b9f86eed1c121674e9059fd/zellij-server/src/panes/kitty_graphics/parser.rs#L328-L340",
+      "confidence": "high",
+      "retrievedAt": "2026-09-25"
+     },
+     "note": "quote: \"command.action = match value[0] {\\n                    b't' => KittyAction::Transmit,\\n                    b'T' => KittyAction::TransmitAndDisplay,\\n                    b'p' => KittyAction::Display,\\n                    b'd' => KittyAction::Delete,\\n                    b'q' => KittyAction::Query,\" — [measured] read at main 2fce032; the same parser lines (animation/shm/placeholder refusals, f=100, o=z) and output/mod.rs's a=p … C=1 emission were re-checked at tag v0.45.1 through the GitHub raw contents API. Interceptor: interceptor.rs L1 (MAX_CAPTURE_LEN 1_048_576) and terminal_pane.rs L243-L284; cursor advance: grid.rs L3780-L3792 and L3929-L3931; host emission: output/mod.rs L611-L624."
+    },
+    "kitty_tags": {
+     "value": "transmit-direct, transmit-file, transmit-temp, format-png, format-raw, compression, place-direct, delete-by-id, delete-by-position, query-reply, z-layers",
+     "note": "[inferred] classified from parser.rs, grid_state.rs, replies.rs and output/mod.rs at 2fce032, re-checked at v0.45.1: t=s, U=1 and a=f/a/c return ENOTSUPPORTED, so transmit-shm, place-virtual and animation are absent. z-layers: the z index is stored per placement, matched by d=z and d=q, and forwarded as z= to the host terminal, which does the compositing — Zellij layers nothing itself. query-reply: a=q is answered, but ENOTSUPPORTED when the client's host lacks graphics. unknown: none"
+    },
+    "sixel": {
+     "value": "yes — DCS q is parsed by sixel-tokenizer 0.1.0 into sixel-image 0.2.1 (both zellij-org crates, MIT), only once the cell pixel size is known; DECSDM (sixel_scrolling) is honoured; since v0.45.0 images are re-emitted only to clients whose host terminal supports Sixel. Supported since v0.31.0.",
+     "provenance": {
+      "source": "https://github.com/zellij-org/zellij/blob/2fce032ccebd2e980b9f86eed1c121674e9059fd/zellij-server/src/panes/grid.rs#L4506-L4521",
+      "confidence": "high",
+      "retrievedAt": "2026-09-25"
+     },
+     "note": "quote: \"// we only process sixel images if we know the pixel size of each character cell,\\n            // otherwise we can't reliably display them\" — [measured] the crates are zellij-server/Cargo.toml L35-L36 (sixel-image = { version = \"0.2.1\" … }, sixel-tokenizer = { version = \"0.1.0\" … }); host gating is CHANGELOG L61 \"fix: only advertise Sixel support if the attached terminal also supports it\"; per-client gating is output/mod.rs L920-L949."
+    },
+    "iterm2_images": {
+     "value": "no — there is no OSC 1337 handler; unhandled OSCs fall through to a debug log arm.",
+     "provenance": {
+      "source": "https://github.com/zellij-org/zellij/blob/2fce032ccebd2e980b9f86eed1c121674e9059fd/zellij-server/src/panes/grid.rs#L4940-L4944",
+      "confidence": "high",
+      "retrievedAt": "2026-09-25"
+     },
+     "note": "quote: \"_ => {\\n                if self.debug {\\n                    log::warn!(\\\"Unhandled osc: {:?}\\\", params);\\n                }\\n            },\" — [measured] grep -rn \"1337\\|iterm\\|iTerm\" over zellij-server/src (excluding unit tests) returned nothing at 2fce032."
+    },
+    "picture_anchoring": {
+     "value": "Kitty: each placement carries a KittyVerticalAnchor {canonical_line, offset_px_from_line_start} — an index into logical (unwrapped) lines across scrollback, viewport and lines below — which is re-projected to pixels after reflow or a cell-size change and shifted on scroll; horizontal position is in pixels. Quota: 320 MiB (335,544,320 bytes) LRU over unreferenced images, 100 MiB per decoded image, 10,000 px max dimension. Sixel: an absolute pixel rect from the scrollback top, moved up one cell height per scrolled line and reaped once it leaves the top.",
+     "provenance": {
+      "source": "https://github.com/zellij-org/zellij/blob/2fce032ccebd2e980b9f86eed1c121674e9059fd/zellij-server/src/panes/kitty_graphics/grid_state.rs#L25-L29",
+      "confidence": "high",
+      "retrievedAt": "2026-09-25"
+     },
+     "note": "quote: \"pub struct KittyVerticalAnchor {\\n    pub canonical_line: usize,\\n    pub offset_px_from_line_start: isize,\\n}\" — [measured] the canonical-line computation is grid.rs L1433-L1465 (row.is_canonical over lines_above, viewport, lines_below); the quota is store.rs L9 (DEFAULT_KITTY_STORE_QUOTA_BYTES: usize = 335_544_320) with LRU eviction at L238-L251; the decode caps are parser.rs L13-L14; the Sixel shift is sixel.rs L214-L226 (offset_grid_top)."
+    },
+    "vt_conformance": {
+     "value": "28 vttest screen snapshots (menus 1, 2, 3 and 8: vttest1_0 … vttest8_5) asserted with insta in zellij-server/src/panes/unit/grid_tests.rs; no published conformance matrix or esctest run found.",
+     "provenance": {
+      "source": "https://github.com/zellij-org/zellij/blob/2fce032ccebd2e980b9f86eed1c121674e9059fd/zellij-server/src/panes/unit/grid_tests.rs#L33-L63",
+      "confidence": "high",
+      "retrievedAt": "2026-09-25"
+     },
+     "note": "quote: \"let fixture_name = \\\"vttest1-0\\\";\\n    let content = read_fixture(fixture_name);\\n    vte_parser.advance(&mut grid, &content);\\n    assert_snapshot!(format!(\\\"{:?}\\\", grid));\" — [measured] count from grep -n \"fn vttest\" grid_tests.rs = 28 (vttest1_0-1_5, 2_0-2_14, 3_0, 8_0-8_5)."
+    },
+    "vt_features": {
+     "value": "kitty-keyboard: partial — only the first progressive-enhancement flag (grid.rs L5385-L5424: CSI > u, CSI < u, CSI ? u, CSI = u)\nosc8-hyperlinks: yes (grid.rs L4649-L4655, OSC 8 → link_handler)\nsync-output-2026: yes (grid.rs L5144-L5146 ?2026h → lock_renders; DECRQM ?2026 answered state 2 at L5254-L5256)\nosc52-clipboard: yes (grid.rs L4779-L4800 OSC 52 sets the clipboard; a ? read is forwarded to the host terminal)\ngrapheme-clusters: no — zero-width codepoints are dropped (grid.rs L2463-L2471, issue #1538)\nreflow-on-resize: yes on the primary screen (grid.rs change_size L1650-L1672 reflows canonical lines; the alternate screen is not reflowed)\nalt-screen: yes (?1049 swaps alternate_screen_state, grid.rs L802 and L5150)\nbracketed-paste: yes (?2004 → bracketed_paste_mode, grid.rs L5147-L5149)\nmouse-sgr: yes (?1006 → MouseMode::Sgr, grid.rs L5223-L5224)",
+     "provenance": {
+      "source": "https://github.com/zellij-org/zellij/blob/2fce032ccebd2e980b9f86eed1c121674e9059fd/zellij-server/src/panes/grid.rs#L5385-L5398",
+      "confidence": "high",
+      "retrievedAt": "2026-09-25"
+     },
+     "note": "quote: \"// Zellij only supports the first \\\"progressive enhancement\\\" layer of the kitty keyboard\\n            // protocol\" — [measured] each other line cites the grid.rs lines read at 2fce032; the zero-width drop reads \"// Drop zero-width Unicode/UTF-8 codepoints, like for example Variation Selectors.\"; the alt-screen no-reflow reads \"// in alternate screen we do nothing but log the new size\"."
+    },
+    "performance_evidence": {
+     "value": "No published parse-throughput benchmark found (no criterion or [[bench]] in any Cargo.toml; CHANGELOG performance entries are qualitative). Memory per cell is pinned at compile time: TerminalCharacter is 16 bytes on x86_64, with its styles shared behind an Rc.",
+     "provenance": {
+      "source": "https://github.com/zellij-org/zellij/blob/2fce032ccebd2e980b9f86eed1c121674e9059fd/zellij-server/src/panes/terminal_character.rs#L921-L930",
+      "confidence": "high",
+      "retrievedAt": "2026-09-25"
+     },
+     "note": "quote: \"// This size has significant memory and CPU implications for long lines,\\n// be careful about allowing it to grow\\n#[cfg(target_arch = \\\"x86_64\\\")]\\nconst _: [(); 16] = [(); std::mem::size_of::<TerminalCharacter>()];\" — [measured] the throughput gap is measured by grep -rn \"criterion\\|\\[\\[bench\\]\\]\" over the workspace Cargo.toml files, which returned nothing; no machine or benchmark exists to name."
+    },
+    "grid_api": {
+     "value": "Internal Rust API with no stable embedder surface. Grid holds lines_above, viewport and lines_below as VecDeque<Row> (pub(crate)), a Cursor {x, y, pending_styles, charsets, shape}, and modes as pub fields (cursor_key_mode, bracketed_paste_mode, insert_mode, mouse_mode, mouse_tracking, sixel_scrolling …). Row {columns: VecDeque<TerminalCharacter>, is_canonical (false marks a soft-wrapped continuation), bg_color}. TerminalCharacter {character: char, styles: RcCharacterStyles, width: u8} — one char, no zero-width marks. CharacterStyles carries foreground, background, underline_color, strike, hidden, reverse, slow/fast blink, underline, bold, dim, italic, link_anchor. Readers call Grid::read_changes(x_offset, y_offset) -> (Vec<CharacterChunk>, Vec<SixelImageChunk>, Vec<KittyImageChunk>) and cursor_coordinates() -> Option<(usize, usize, bool)>.",
+     "provenance": {
+      "source": "https://github.com/zellij-org/zellij/blob/2fce032ccebd2e980b9f86eed1c121674e9059fd/zellij-server/src/panes/grid.rs#L797-L800",
+      "confidence": "high",
+      "retrievedAt": "2026-09-25"
+     },
+     "note": "quote: \"pub struct Grid {\\n    pub(crate) lines_above: VecDeque<Row>,\\n    pub(crate) viewport: VecDeque<Row>,\\n    pub(crate) lines_below: VecDeque<Row>,\" — [measured] TerminalCharacter is terminal_character.rs L921-L925, CharacterStyles L214-L229, Cursor L892-L898; Row is grid.rs L5751-L5757; read_changes grid.rs L1906-L1914; cursor_coordinates grid.rs L2123."
+    },
+    "damage_tracking": {
+     "value": "yes, at line granularity: OutputBuffer keeps changed_lines: HashSet<usize> plus should_update_all_lines; Grid::read_changes returns only the changed lines (as whole-line CharacterChunks) and clears the buffer; the first render and any forced render send every line.",
+     "provenance": {
+      "source": "https://github.com/zellij-org/zellij/blob/2fce032ccebd2e980b9f86eed1c121674e9059fd/zellij-server/src/output/mod.rs#L1760-L1775",
+      "confidence": "high",
+      "retrievedAt": "2026-09-25"
+     },
+     "note": "quote: \"pub struct OutputBuffer {\\n    pub changed_lines: HashSet<usize>, // line index\\n    pub should_update_all_lines: bool,\" — [measured] L1771 reads \"should_update_all_lines: true, // first time we should do a full render\"; L1838 notes \"right now we only buffer full lines\"; read_changes clears it at grid.rs L1945."
+    },
+    "state_snapshot": {
+     "value": "No emulator-state snapshot is sent to clients, because clients hold no terminal state: on attach Tab::add_client calls set_force_render, the next render sends every visible line of every pane, and Screen::add_client clears that client's HostKittyState so its pictures are re-transmitted. For disk resurrection Zellij serializes layout and commands every second and, when enabled, the viewport plus N scrollback lines as styled ANSI text via Grid::serialize — no cursor, modes or pictures.",
+     "provenance": {
+      "source": "https://github.com/zellij-org/zellij/blob/2fce032ccebd2e980b9f86eed1c121674e9059fd/zellij-server/src/tab/mod.rs#L2322-L2328",
+      "confidence": "high",
+      "retrievedAt": "2026-09-25"
+     },
+     "note": "quote: \"self.connected_clients.borrow_mut().insert(client_id);\\n            self.mode_info.borrow_mut().insert(\\n                client_id,\\n                mode_info.unwrap_or_else(|| self.default_mode_info.clone()),\\n            );\\n        }\\n        self.set_force_render();\" — [measured] set_force_render is tab/mod.rs L4879-L4888; the Kitty host-state reset is screen.rs L5618 (self.client_kitty_host_state.borrow_mut().remove(&client_id)); resurrection is https://zellij.dev/documentation/session-resurrection.html (\"By default, Zellij serializes the session layout (panes and tabs) and the command running in each pane\"); Grid::serialize is grid.rs L1953-L1981 and passes no image chunks (output/mod.rs L141 \"_sixel_chunks: Option<&Vec<SixelImageChunk>>, // TODO: fix this sometime\")."
+    },
+    "threading_and_loop": {
+     "value": "Zellij owns the whole loop. A 'pty' thread starts an async TerminalBytes reader per pane (64 KiB reads) that sends ScreenInstruction::PtyBytes to the single 'screen' thread; the screen thread owns every Grid (built on Rc<RefCell<…>>, so not Send) and runs vte there; writes to PTYs go through a 'pty_writer' thread; other threads are wasm (plugins), background_jobs, server_listener and server_router. It includes its own PTY layer (os_input_output).",
+     "provenance": {
+      "source": "https://github.com/zellij-org/zellij/blob/2fce032ccebd2e980b9f86eed1c121674e9059fd/zellij-server/src/terminal_bytes.rs#L37-L39",
+      "confidence": "high",
+      "retrievedAt": "2026-09-25"
+     },
+     "note": "quote: \"pub async fn listen(&mut self) -> Result<()> {\\n        // This function reads bytes from the pty and then sends them as\\n        // ScreenInstruction::PtyBytes to screen to be parsed there\" — [measured] thread names are lib.rs L986, L1031, L2196, L2220, L2259, L2306, L2323 (.name(\"pty\"), .name(\"screen\"), .name(\"pty_writer\") …); the 64 KiB buffer is terminal_bytes.rs L53; PTY writes use send_to_pty_writer(PtyWriteInstruction::Write(…)) at tab/mod.rs L4688; Rc<RefCell<…>> fields are grid.rs L810-L815."
+    },
+    "reply_channel": {
+     "value": "Grid pushes every reply (DA, DSR, DECRQM, kitty-keyboard ?u, Kitty graphics OK and errors) onto pending_messages_to_pty; after each handle_pty_bytes the Tab drains them and writes each to that pane's PTY once, on the server. Queries only a real terminal can answer (CSI 14t/16t pixel sizes, OSC 10/11/4 colours, an OSC 52 read) are forwarded to a client's host terminal, and the pane stops parsing until the reply or a 500 ms cache fallback lands, so the answer arrives in the right stream position.",
+     "provenance": {
+      "source": "https://github.com/zellij-org/zellij/blob/2fce032ccebd2e980b9f86eed1c121674e9059fd/zellij-server/src/tab/mod.rs#L4322-L4344",
+      "confidence": "high",
+      "retrievedAt": "2026-09-25"
+     },
+     "note": "quote: \"for message in messages_to_pty {\\n                self.write_to_pane_id_without_preprocessing(message, PaneId::Terminal(pid))\\n                    .with_context(err_context)?;\" — [measured] messages_to_pty is drained at L4323 (terminal_output.drain_messages_to_pty()); Kitty replies are pushed at grid.rs L3810-L3812; the forwarded-query doc is grid.rs L855-L860 and the pause is terminal_pane.rs L162-L167 (\"Cleared by Tab when the reply (or 500 ms cache-fallback) lands.\")."
+    },
+    "td_migration": {
+     "value": "Nothing to adopt wholesale — Zellij is not a library TD can link. What TD can take, and what it costs: (1) copy, with the MIT notice, kitty_graphics/interceptor.rs, parser.rs, store.rs and replies.rs (about 1,200 lines). The interceptor sits in front of vte 0.15, the same parser TD uses, but alacritty's EventLoop owns the read loop in host.rs, term.rs and socketpty.rs, so TD must feed bytes through the interceptor before Processor::advance — owning the read loop (as in alacritty-own-loop) rather than patching vte. (2) Rewrite grid_state.rs's anchoring (canonical_line over lines_above, viewport and lines_below) onto alacritty's Grid (WRAPLINE flags, display_offset) in term.rs, since alacritty keeps no canonical-line index. (3) gridwire.rs: Zellij answers an attach with a full re-render and a per-client HostKittyState reset that re-transmits each image once and re-places it with C=1; TD's encode_snapshot needs the same picture section so the window replica's store matches, and grid_hash must cover placements. (4) pane.rs paints from placements. main.rs and pane/bench.rs change only in wiring. Zellij's host/client model differs from TD's: its client holds no emulator (the server composites and sends a VT line diff per client), so it confirms the host owning truth and writing replies once, but offers nothing for TD's replica-and-hash design.",
+     "note": "[inferred] from Zellij's terminal_pane.rs, grid.rs, output/mod.rs and TD's host.rs/term.rs/gridwire.rs headers (TD at 426f072); the line count is wc -l of the four files (166 + 699 + 269 + 51)."
+    },
+    "biggest_risk": {
+     "value": "Reading Zellij as the model for TD's host/window split misleads, because its clients are dumb VT sinks with no replica, and the part worth copying — its Kitty code, merged on 2026-07-31 — is anchored to Zellij's own canonical-line grid, so a port onto alacritty's grid inherits eight-week-old edge cases with none of Zellij's tests carried over.",
+     "note": "[inferred] from the PR merge date (gh api repos/zellij-org/zellij/pulls/5428: merged_at 2026-07-31T17:19:49Z), unreleased Kitty fixes on main (CHANGELOG [Unreleased] L10 and L16), and the grid-coupled anchoring in grid.rs L1433-L1531."
+    },
+    "primary_sources": {
+     "value": "https://github.com/zellij-org/zellij/tree/2fce032ccebd2e980b9f86eed1c121674e9059fd https://github.com/zellij-org/zellij/blob/2fce032ccebd2e980b9f86eed1c121674e9059fd/zellij-server/src/panes/kitty_graphics/interceptor.rs https://github.com/zellij-org/zellij/blob/2fce032ccebd2e980b9f86eed1c121674e9059fd/zellij-server/src/panes/kitty_graphics/parser.rs https://github.com/zellij-org/zellij/blob/2fce032ccebd2e980b9f86eed1c121674e9059fd/zellij-server/src/panes/kitty_graphics/store.rs https://github.com/zellij-org/zellij/blob/2fce032ccebd2e980b9f86eed1c121674e9059fd/zellij-server/src/panes/kitty_graphics/replies.rs https://github.com/zellij-org/zellij/blob/2fce032ccebd2e980b9f86eed1c121674e9059fd/zellij-server/src/panes/kitty_graphics/grid_state.rs https://github.com/zellij-org/zellij/blob/2fce032ccebd2e980b9f86eed1c121674e9059fd/zellij-server/src/panes/kitty_graphics/mod.rs https://github.com/zellij-org/zellij/blob/2fce032ccebd2e980b9f86eed1c121674e9059fd/zellij-server/src/panes/grid.rs https://github.com/zellij-org/zellij/blob/2fce032ccebd2e980b9f86eed1c121674e9059fd/zellij-server/src/panes/terminal_pane.rs https://github.com/zellij-org/zellij/blob/2fce032ccebd2e980b9f86eed1c121674e9059fd/zellij-server/src/panes/terminal_character.rs https://github.com/zellij-org/zellij/blob/2fce032ccebd2e980b9f86eed1c121674e9059fd/zellij-server/src/panes/sixel.rs https://github.com/zellij-org/zellij/blob/2fce032ccebd2e980b9f86eed1c121674e9059fd/zellij-server/src/output/mod.rs https://github.com/zellij-org/zellij/blob/2fce032ccebd2e980b9f86eed1c121674e9059fd/zellij-server/src/tab/mod.rs https://github.com/zellij-org/zellij/blob/2fce032ccebd2e980b9f86eed1c121674e9059fd/zellij-server/src/screen.rs https://github.com/zellij-org/zellij/blob/2fce032ccebd2e980b9f86eed1c121674e9059fd/zellij-server/src/terminal_bytes.rs https://github.com/zellij-org/zellij/blob/2fce032ccebd2e980b9f86eed1c121674e9059fd/zellij-server/src/lib.rs https://github.com/zellij-org/zellij/blob/2fce032ccebd2e980b9f86eed1c121674e9059fd/zellij-server/src/panes/unit/grid_tests.rs https://github.com/zellij-org/zellij/blob/2fce032ccebd2e980b9f86eed1c121674e9059fd/zellij-client/src/lib.rs https://github.com/zellij-org/zellij/blob/2fce032ccebd2e980b9f86eed1c121674e9059fd/zellij-client/src/stdin_handler.rs https://github.com/zellij-org/zellij/blob/2fce032ccebd2e980b9f86eed1c121674e9059fd/zellij-utils/src/ipc.rs https://github.com/zellij-org/zellij/blob/2fce032ccebd2e980b9f86eed1c121674e9059fd/zellij-utils/src/input/options.rs https://github.com/zellij-org/zellij/blob/2fce032ccebd2e980b9f86eed1c121674e9059fd/src/lib.rs https://github.com/zellij-org/zellij/blob/2fce032ccebd2e980b9f86eed1c121674e9059fd/docs/ARCHITECTURE.md https://github.com/zellij-org/zellij/blob/2fce032ccebd2e980b9f86eed1c121674e9059fd/CHANGELOG.md https://github.com/zellij-org/zellij/blob/2fce032ccebd2e980b9f86eed1c121674e9059fd/GOVERNANCE.md https://github.com/zellij-org/zellij/blob/2fce032ccebd2e980b9f86eed1c121674e9059fd/CONTRIBUTING.md https://github.com/zellij-org/zellij/blob/2fce032ccebd2e980b9f86eed1c121674e9059fd/rust-toolchain.toml https://github.com/zellij-org/zellij/blob/v0.45.1/zellij-server/src/panes/kitty_graphics/parser.rs https://github.com/zellij-org/zellij/blob/v0.45.1/zellij-server/src/output/mod.rs https://github.com/zellij-org/zellij/blob/v0.45.1/zellij-server/src/panes/kitty_graphics/store.rs https://github.com/zellij-org/zellij/blob/v0.44.3/zellij-server/src/panes/grid.rs https://github.com/zellij-org/zellij/pull/5428 https://api.github.com/repos/zellij-org/zellij/releases https://api.github.com/repos/zellij-org/zellij/commits https://crates.io/api/v1/crates/zellij-server https://crates.io/api/v1/crates/zellij-server/reverse_dependencies https://crates.io/api/v1/crates/sixel-image https://zellij.dev/documentation/session-resurrection.html https://docs.rs/crate/vte/0.15.0/source/src/lib.rs",
+     "provenance": {
+      "source": "measured 2026-09-25: git -C /tmp/claude-1000/-home-parker-Work-terminal-delight/2aae45b7-7163-4590-8990-5cc58ef8f92f/scratchpad/clones/zellij log -1 --format='%H %h %ad' --date=short",
+      "confidence": "high",
+      "retrievedAt": "2026-09-25"
+     },
+     "note": "quote: \"2fce032ccebd2e980b9f86eed1c121674e9059fd 2fce032 2026-09-25\" — [measured] the shallow clone every permalink above was read from; the v0.45.1 and v0.44.3 files were read through gh api raw contents; vte 0.15.0 was read from the local cargo registry copy (lib.rs L182: \"State::SosPmApcString => self.anywhere(performer, byte),\"), which is the same crate source docs.rs serves."
+    }
+   },
+   "insights": []
+  },
+  {
+   "id": "zmx",
+   "fields": {
+    "what_it_is": {
+     "value": "zmx is a small command-line session persister for the terminal, written and maintained by Eric Bower (GitHub neurosnap; sponsored by pico.sh): each session gets its own daemon that owns the PTY, clients attach and detach over a unix socket, and the daemon keeps a libghostty-vt Terminal fed with the same PTY bytes so it can replay the screen and scrollback as VT bytes to a client that re-attaches. It deliberately has no windows, tabs or splits.",
+     "provenance": {
+      "source": "https://github.com/neurosnap/zmx/blob/878a8b0cef19448575b4f9fa1619e627b81ddb80/README.md#L589",
+      "confidence": "high",
+      "retrievedAt": "2026-09-25"
+     },
+     "note": "quote: \"We use `libghostty-vt` to restore the previous state of the terminal when a client re-attaches to a session.\" — [measured] README tagline (L7) is 'Session attach/detach for the terminal.'; L26 says it does NOT provide windows, tabs, or splits; LICENSE is 'Copyright (c) 2025 Eric Bower'. Repo read at commit 878a8b0 (2026-09-19)."
+    },
+    "license": {
+     "value": "MIT — an MIT product may copy or adapt its code with the notice kept; its libghostty-vt dependency is MIT too.",
+     "provenance": {
+      "source": "measured 2026-09-25: gh api repos/neurosnap/zmx --jq .license.spdx_id",
+      "confidence": "high",
+      "retrievedAt": "2026-09-25"
+     },
+     "note": "quote: \"MIT\" — [measured] The API's spdx_id; LICENSE file reads 'Copyright (c) 2025 Eric Bower'. zmx ships no library, so 'link' means borrowing code or design, which MIT permits."
+    },
+    "language": {
+     "value": "Zig (about 91% of bytes), with shell (bats) tests; it embeds libghostty-vt, which is also Zig.",
+     "provenance": {
+      "source": "measured 2026-09-25: gh api repos/neurosnap/zmx/languages",
+      "confidence": "high",
+      "retrievedAt": "2026-09-25"
+     },
+     "note": "quote: \"{\"Zig\":352425,\"Shell\":30914,\"Go Template\":2172,\"Nix\":1818,\"Dockerfile\":733}\" — [measured] Zig 352,425 of 388,062 bytes. The ghostty-vt module is imported as a Zig module (build.zig L44-47), not through the C ABI."
+    },
+    "integration_path": {
+     "value": "not a library (reference only) — zmx builds a single executable and exports no module or C API; TD could borrow its design (and, being MIT, its code), or run panes inside zmx sessions as a process substrate, but not link it.",
+     "provenance": {
+      "source": "https://github.com/neurosnap/zmx/blob/878a8b0cef19448575b4f9fa1619e627b81ddb80/build.zig#L52-L53",
+      "confidence": "high",
+      "retrievedAt": "2026-09-25"
+     },
+     "note": "quote: \"        const exe = b.addExecutable(.{\n            .name = \"zmx\",\" — [measured] build.zig declares only executables (run, check, release) and a test module; no addLibrary / addModule for consumers. TD's own analogue is host.rs + gridwire.rs."
+    },
+    "build_requirements": {
+     "value": "Zig 0.16.0 or newer (not cargo); network access at build time to fetch ghostty from GitHub at commit 8af6897c (a hash-pinned 1.3.2-dev tree, built with emit-lib-vt); links libc. Whatever C/C++ ghostty's lib-vt build compiles is built by Zig's own toolchain [inferred, not verified here].",
+     "provenance": {
+      "source": "https://github.com/neurosnap/zmx/blob/878a8b0cef19448575b4f9fa1619e627b81ddb80/build.zig.zon#L5-L8",
+      "confidence": "high",
+      "retrievedAt": "2026-09-25"
+     },
+     "note": "quote: \"    .minimum_zig_version = \"0.16.0\",\n    .dependencies = .{\n        .ghostty = .{\n            .url = \"git+https://github.com/ghostty-org/ghostty#8af6897c0afc63037a8a3efee4162a380e3a4572\",\" — [measured] Dependency hash is 'ghostty-1.3.2-dev-5UdBC4FtYAV-...' (L9); build.zig passes .emit-lib-vt = true and sets .link_libc = true (L30, L37). README L83: 'Requires zig `v0.16`'."
+    },
+    "latest_release": {
+     "value": "v0.8.1, published 2026-09-05",
+     "provenance": {
+      "source": "measured 2026-09-25: gh api 'repos/neurosnap/zmx/releases?per_page=100' --jq '.[] | [.tag_name, .published_at] | @tsv'",
+      "confidence": "high",
+      "retrievedAt": "2026-09-25"
+     },
+     "note": "quote: \"v0.8.1\t2026-09-05T17:07:47Z\" — [measured] Newest GitHub release; the pinned ghostty dependency is an unreleased dev commit (2026-08-30), not a ghostty release."
+    },
+    "first_release": {
+     "value": "v0.0.1, tagged 2025-11-28 (repository created 2025-10-10; the first GitHub Release object is v0.6.0, 2026-05-29)",
+     "provenance": {
+      "source": "measured 2026-09-25: for t in $(gh api 'repos/neurosnap/zmx/tags?per_page=100' --jq '.[] | .name'); do d=$(gh api repos/neurosnap/zmx/commits/$t --jq '.commit.committer.date'); echo \"$t $d\"; done",
+      "confidence": "high",
+      "retrievedAt": "2026-09-25"
+     },
+     "note": "quote: \"v0.0.1 2025-11-28T15:41:37Z\" — [measured] Oldest version tag's commit date. Repo created_at 2025-10-10T19:51:40Z (gh api repos/neurosnap/zmx). Releases API lists only v0.6.0..v0.8.1."
+    },
+    "releases_last_12mo": {
+     "value": "15 version tags (v0.0.1 through v0.8.1, all between 2025-11-28 and 2026-09-05), of which 5 have GitHub Release objects; two non-version tags ('rm', 'remove') excluded",
+     "provenance": {
+      "source": "measured 2026-09-25: gh api 'repos/neurosnap/zmx/tags?per_page=100' --jq '.[] | .name'  (dates per tag via gh api repos/neurosnap/zmx/commits/<tag> --jq '.commit.committer.date')",
+      "confidence": "high",
+      "retrievedAt": "2026-09-25"
+     },
+     "note": "quote: \"v0.8.1 v0.8.0 v0.7.1 v0.7.0 v0.6.0 v0.5.0 v0.4.2 v0.4.1 v0.4.0 v0.3.0 v0.2.0 v0.1.1 v0.1.0 v0.0.2 v0.0.1 rm remove\" — [measured] The whole project is younger than 12 months, so every version tag falls in the window."
+    },
+    "api_stability": {
+     "value": "Pre-1.0 application (0.8.1) with no library API to be stable; the README says it has not reached a stable state, an IPC change between versions kills running sessions, and the CHANGELOG marks *BREAKING* changes in 0.1.0, 0.5.0 and 0.7.0. It pins libghostty-vt to a dev commit, whose own snapshot format is declared work-in-progress.",
+     "provenance": {
+      "source": "https://github.com/neurosnap/zmx/blob/878a8b0cef19448575b4f9fa1619e627b81ddb80/README.md#L573",
+      "confidence": "high",
+      "retrievedAt": "2026-09-25"
+     },
+     "note": "quote: \"- When upgrading versions of `zmx` where we make changes to the underlying IPC communication, it will kill all your sessions because it cannot communicate through the daemon socket properly\" — [measured] README L554: 'The idea here is to help with initial development until we reach a stable state.' CHANGELOG lines 74-78, 115-117, 221 carry *BREAKING* markers."
+    },
+    "maintainers": {
+     "value": "1 contributor with >= 10% of commits in the 12 months to 2026-09-25: Eric Bower (neurosnap), 369 of 478 commits (77%); the next, chronologos, has 13 (2.7%). A single-maintainer project by its own contract ('programs that a single person can maintain').",
+     "provenance": {
+      "source": "measured 2026-09-25: gh api 'repos/neurosnap/zmx/commits?since=2025-09-25T00:00:00Z&per_page=100' --paginate --jq '.[] | (.author.login // .commit.author.name)' | sort | uniq -c | sort -rn",
+      "confidence": "high",
+      "retrievedAt": "2026-09-25"
+     },
+     "note": "quote: \"    369 neurosnap\n     13 chronologos\" — [measured] Total 478 commits from the same query piped to wc -l; 66 contributors overall (gh api repos/neurosnap/zmx/stats/contributors --jq length)."
+    },
+    "adoption": {
+     "value": "2,169 GitHub stars and 154 forks; packaged by Homebrew tap, mise, nixpkgs, Alpine (testing), Arch AUR (release and -git), openSUSE Tumbleweed and a Gentoo overlay; community tools built on it include emacs-term-sessions, pi-zmx, zmx-session-manager, the zmosh fork (encrypted UDP reconnect) and rootshell (an iOS/macOS terminal that lists zmx sessions). No crates.io presence (not Rust).",
+     "provenance": {
+      "source": "measured 2026-09-25: gh api repos/neurosnap/zmx --jq '{license: .license.spdx_id, lang: .language, stars: .stargazers_count, forks: .forks_count, created: .created_at, pushed: .pushed_at, desc: .description, homepage: .homepage, archived: .archived}'",
+      "confidence": "high",
+      "retrievedAt": "2026-09-25"
+     },
+     "note": "quote: \"{\"archived\":false,\"created\":\"2025-10-10T19:51:40Z\",\"desc\":\"Session attach/detach for the terminal\",\"forks\":154,\"homepage\":\"https://zmx.sh\",\"lang\":\"Zig\",\"license\":\"MIT\",\"pushed\":\"2026-09-19T23:40:20Z\",\"stars\":2169}\" — [measured] Packaging from the README install section (homebrew, mise, NixOS, packages) and the 'community tools' section (read at 878a8b0)."
+    },
+    "kitty_graphics": {
+     "value": "None restored, passthrough live. While a client is attached, every PTY read is broadcast raw to it, so Kitty APC reaches the client's own terminal and draws there if that terminal supports it (pixel sizes are forwarded in the winsize since 0.7.0). The server-side libghostty-vt Terminal parses the APC with the readonly stream (kitty_graphics on by default, 10 MB lib quota, direct medium only, PNG disabled without a decode_png hook, which zmx does not set), but zmx never renders or replays those images: the TerminalFormatter it uses for the re-attach snapshot emits no Kitty images, so pictures vanish on re-attach (issue #14, open since 2025-12-04). With no client attached, a=q queries go unanswered.",
+     "provenance": {
+      "source": "https://github.com/neurosnap/zmx/issues/14",
+      "confidence": "high",
+      "retrievedAt": "2026-09-25"
+     },
+     "note": "quote: \"`ghostty-vt.TerminalFormatter` does *not* currently support kitty protocol images: https://github.com/ghostty-org/ghostty/blob/08c9661683edc1e9e63d8e6abd469a68faaee575/src/terminal/formatter.zig#L457\n\nThis is what we use to print a snapshot of the terminal to `zmx` clients.\" — [measured] Maintainer comment 2025-12-05 on issue #14 ('Show kitty graphic images when re-hydrating a terminal session', still open). Confirmed at the pinned ghostty commit: formatter.zig has no image emission (grep for kitty/image finds only keyboard flags); Terminal.zig L304-307 default loading limit '.direct'; L302 'if no `sys.decode_png` hook is specified, png formats are disabled'; stream_terminal.zig L1846-1848 skips the Kitty response when write_pty is null. Raw broadcast: loop.zig L402-405. Pixel winsize: ipc.zig L46-50."
+    },
+    "kitty_tags": {
+     "value": "none",
+     "note": "[inferred] zmx itself implements none of the tags at the layer it owns: pictures pass through raw to the attached client's terminal (which implements whatever it implements) and are dropped from the re-attach snapshot. Its embedded libghostty-vt does store directly-transmitted raw images server-side, but zmx neither draws nor replays them — the core's own coverage belongs to the libghostty-vt subject. unknown: none."
+    },
+    "sixel": {
+     "value": "no — neither zmx nor its libghostty-vt has a Sixel decoder; Sixel DCS bytes reach an attached client raw (so the outer terminal may draw them live) but nothing is kept for re-attach, and zmx's own DA1 answer when no client is attached (ESC[?62;22c) does not advertise Sixel (4).",
+     "provenance": {
+      "source": "measured 2026-09-25: git -C /tmp/claude-1000/-home-parker-Work-terminal-delight/2aae45b7-7163-4590-8990-5cc58ef8f92f/scratchpad/clones/ghostty-c1 grep -n -i \"sixel\" 8af6897c0afc63037a8a3efee4162a380e3a4572 -- src/terminal",
+      "confidence": "high",
+      "retrievedAt": "2026-09-25"
+     },
+     "note": "quote: \"8af6897c0afc63037a8a3efee4162a380e3a4572:src/terminal/device_attributes.zig:53:        sixel = 4,\" — [measured] The only Sixel mention in ghostty's terminal package is the DA feature number. zmx's reply constant: https://github.com/neurosnap/zmx/blob/878a8b0cef19448575b4f9fa1619e627b81ddb80/src/util.zig#L261 'const DA1_RESPONSE = \"\\x1b[?62;22c\";'. zmx source has no 'sixel' string."
+    },
+    "iterm2_images": {
+     "value": "no in the snapshot (libghostty-vt parses OSC 1337 but lists File/FilePart/MultipartFile as unimplemented); live bytes pass through raw to the attached client's terminal.",
+     "provenance": {
+      "source": "https://github.com/ghostty-org/ghostty/blob/8af6897c0afc63037a8a3efee4162a380e3a4572/src/terminal/osc/parsers/iterm2.zig#L163-L193",
+      "confidence": "high",
+      "retrievedAt": "2026-09-25"
+     },
+     "note": "quote: \"log.debug(\"unimplemented OSC 1337: {t}\", .{key});\" — [measured] That branch covers .File, (L168), .FileEnd, .FilePart and .MultipartFile among others at the pinned ghostty commit. Passthrough is inferred from the raw broadcast in zmx loop.zig L402-405."
+    },
+    "picture_anchoring": {
+     "value": "n/a — zmx anchors no pictures. Live pictures are anchored by the client's own terminal and are lost on re-attach; the server-side libghostty-vt tracks Kitty placements with its own grid pins but zmx never replays them. Server-side storage quota is libghostty's embedded default of 10 MB per session terminal (zmx's initTerminal does not override it).",
+     "provenance": {
+      "source": "https://github.com/ghostty-org/ghostty/blob/8af6897c0afc63037a8a3efee4162a380e3a4572/src/terminal/Terminal.zig#L289-L297",
+      "confidence": "high",
+      "retrievedAt": "2026-09-25"
+     },
+     "note": "quote: \"        // libghostty we start with a much lower limit since this is an\n        // embedded library and we want to be more conservative with memory\n        // usage by default.\n        .lib => 10 * 1000 * 1000, // 10MB\" — [measured] zmx's initTerminal sets only cols, rows, max_scrollback_lines and max_scrollback_bytes (https://github.com/neurosnap/zmx/blob/878a8b0cef19448575b4f9fa1619e627b81ddb80/src/loop.zig#L217-L224)."
+    },
+    "vt_conformance": {
+     "value": "none published by zmx; restore fidelity is whatever libghostty-vt's formatter reproduces, and live fidelity is the attached client's own terminal (raw passthrough)",
+     "flagged": true,
+     "note": "Searched the zmx tree at 878a8b0 for vttest/esctest/bench (grep -rn -i 'vttest\\|esctest\\|bench' src test) — no hits; tests are unit tests plus bats CLI tests (test/reattach.bats etc.). No conformance matrix in README or docs site. Flagged because the value is an absence found by search, not a quotable passage."
+    },
+    "vt_features": {
+     "value": "kitty-keyboard: yes — passthrough live; re-attach re-emits the Kitty keyboard flags (screen extra kitty_keyboard via .screen = .all); README L577 known issue: psql echoes the re-sent sequence.\nosc8-hyperlinks: partial — passthrough live; the VT snapshot drops per-cell links because ghostty's formatter emits OSC 8 only for HTML (formatter.zig L1459-1461); only the cursor's open link is re-emitted.\nsync-output-2026: yes live (passthrough); deliberately NOT replayed on attach (util.zig L773-781).\nosc52-clipboard: yes live by passthrough to the outer terminal [inferred from the raw broadcast, loop.zig L402-405]; the server's readonly stream ignores it (Terminal.zig L370); not in the snapshot.\ngrapheme-clusters: yes — the server grid keeps graphemes and the formatter writes codepoint plus grapheme codepoints (formatter.zig L1521).\nreflow-on-resize: yes — the server terminal is resized to the attaching leader's size before serializing (loop.zig L967-975); ghostty reflows the primary screen only (Terminal.zig L4081).\nalt-screen: partial — passthrough live; the snapshot carries only the active screen (formatter.zig L301-302), so re-attaching inside vim restores vim but not the primary screen and history beneath it.\nbracketed-paste: yes — restored by the modes extra, which emits every mode that differs from default (formatter.zig L280-285).\nmouse-sgr: yes — same modes extra; zmx also resets mouse modes on the outer terminal at detach (CHANGELOG v0.2.0).",
+     "provenance": {
+      "source": "https://github.com/neurosnap/zmx/blob/878a8b0cef19448575b4f9fa1619e627b81ddb80/src/util.zig#L852-L860",
+      "confidence": "medium",
+      "retrievedAt": "2026-09-25"
+     },
+     "note": "quote: \"    vis_fmt.extra = .{\n        .palette = false,\n        .modes = true,\n        .scrolling_region = true,\n        .tabstops = false, // tabstop restoration moves cursor after CUP, corrupting position\n        .pwd = false, // emitted below without the sentinel the formatter includes\n        .keyboard = true,\n        .screen = .all,\n    };\" — [measured] zmx has two paths: live bytes are raw passthrough (the outer terminal's features apply) and the re-attach snapshot is the formatter's output with these extras. ghostty lines cite https://github.com/ghostty-org/ghostty/blob/8af6897c0afc63037a8a3efee4162a380e3a4572/src/terminal/formatter.zig and Terminal.zig at the pinned commit."
+    },
+    "performance_evidence": {
+     "value": "none published — the README asserts speed without a benchmark; the design cost is one extra libghostty-vt parse of every PTY read (read in 4096-byte chunks) in the daemon, plus a full-screen re-serialization only on re-attach.",
+     "provenance": {
+      "source": "https://github.com/neurosnap/zmx/blob/878a8b0cef19448575b4f9fa1619e627b81ddb80/README.md#L602",
+      "confidence": "medium",
+      "retrievedAt": "2026-09-25"
+     },
+     "note": "quote: \"It also has the added benefit of being very fast, the only thing sitting in-between you and your PTY is a unix socket.\" — [measured] Read size from loop.zig L334-338 ('Buffer is sized to N_TTY_BUF_SIZE (4096)'). No bench directory or benchmark in the tree."
+    },
+    "grid_api": {
+     "value": "zmx never iterates cells itself. It uses libghostty-vt's Zig API: ghostty_vt.Terminal.init(io, gpa, {cols, rows, max_scrollback_lines, max_scrollback_bytes}); term.vtStream() and vt_stream.nextSlice(bytes) to feed PTY output; term.resize(gpa, {cols, rows}); term.modes.get/set; term.screens.active.pages with getTopLeft(.screen/.active) and pin(.{.active = .{x, y}}) to bound scrollback and viewport; ghostty_vt.Selection.init(tl, br, false); ghostty_vt.formatter.TerminalFormatter.init(term, .vt) with .content and .extra; term.getTitle(), term.getPwd(), term.colors (dynamic fg/bg/cursor); term.screens.active.cursor for logging; ghostty_vt.Parser for input classification.",
+     "provenance": {
+      "source": "https://github.com/neurosnap/zmx/blob/878a8b0cef19448575b4f9fa1619e627b81ddb80/src/loop.zig#L237-L240",
+      "confidence": "high",
+      "retrievedAt": "2026-09-25"
+     },
+     "note": "quote: \"    var term = try initTerminal(gpa, io, init_size, daemon.cfg);\n    defer term.deinit(gpa);\n    var vt_stream = term.vtStream();\n    defer vt_stream.deinit();\" — [measured] Feed at loop.zig L353-354 ('vt_stream.nextSlice(buf[0..n]);'); formatter use at util.zig L809-817 and L830-849; Parser use at util.zig L689. The per-cell read API (render_state / grid_ref) belongs to the libghostty-vt subject; zmx does not touch it."
+    },
+    "damage_tracking": {
+     "value": "no — zmx neither reads nor reports damage: each PTY read is forwarded raw to every client and the whole screen is re-serialized only when a client re-attaches.",
+     "provenance": {
+      "source": "https://github.com/neurosnap/zmx/blob/878a8b0cef19448575b4f9fa1619e627b81ddb80/src/loop.zig#L402-L405",
+      "confidence": "high",
+      "retrievedAt": "2026-09-25"
+     },
+     "note": "quote: \"                    const broadcast_data = util.rewritePromptRedraw(gpa, buf[0..n]) orelse buf[0..n];\n                    defer if (broadcast_data.ptr != buf[0..n].ptr) gpa.free(broadcast_data);\n                    for (daemon.clients.items) |client| {\n                        ipc.appendMessage(gpa, &client.write_buf, .Output, broadcast_data) catch |err| {\" — [measured] The only rewrite of live bytes is OSC 133;A gaining redraw=0 (issue #111)."
+    },
+    "state_snapshot": {
+     "value": "yes — util.serializeTerminalState(alloc, term) re-encodes the server's libghostty-vt Terminal as VT bytes with ghostty's TerminalFormatter(.vt) and sends them as one Output message, on re-attach only (not first attach): phase 1 = scrollback as styled text with no extras, then CSI 2J / CSI H / SGR 0; phase 2 = the active screen with modes, scroll region, Kitty keyboard and modifyOtherKeys, cursor, charsets and protection; then OSC 7 cwd, OSC 2 title and OSC 10/11/12 dynamic colours. Not carried: palette, tabstops (deliberately), DECSET 2026 (deliberately stripped), per-cell OSC 8 links, the primary screen under an alt screen, and every picture. Against TD's gridwire::encode_snapshot: same strategy (re-emit the grid as VT bytes for a stock emulator), but zmx also carries scroll region, charsets, title, cwd and dynamic colours, which TD does not; both lose the primary grid beneath an alt screen; ghostty's formatter emits modes BEFORE content, where TD restores modes last on purpose; and zmx has no replica emulator on the client and no equivalent of TD's grid_hash check. libghostty-vt also has a binary snapshot API (ghostty_snapshot_*) that zmx does not use.",
+     "provenance": {
+      "source": "https://github.com/neurosnap/zmx/blob/878a8b0cef19448575b4f9fa1619e627b81ddb80/src/util.zig#L795-L797",
+      "confidence": "high",
+      "retrievedAt": "2026-09-25"
+     },
+     "note": "quote: \"    // Phase 1: Emit scrollback content (plain text with styles, no terminal extras).\n    // These lines scroll past the visible area into the terminal's scrollback buffer.\n    // Phase 2: Clear visible screen, then emit visible content with full extras.\" — [measured] Entry point util.zig L769; extras L852-860; title L869-877; sync-output strip L773-781; called from loop.zig L977-999 only when has_pty_output and has_had_client. Mode ordering: ghostty formatter.zig L408-411 'for now for simplicity we just emit them all before'. TD side from app/src/gridwire.rs module doc (read-only). Also serializeTerminal (util.zig L899) backs 'zmx history --vt|--html'."
+    },
+    "threading_and_loop": {
+     "value": "zmx owns the whole loop: one double-forked daemon process per session, holding the PTY it created with forkpty(); a single-threaded poll(2) loop over the server socket, the PTY master, a signal pipe and each client socket; every PTY read (up to 4096 bytes) is fed to the libghostty-vt stream and broadcast to clients in the same iteration, so there are no threads, no locks and no snapshot/stream seam to fence. Clients are also single-threaded poll(2) loops that pipe stdin to the socket and Output to stdout.",
+     "provenance": {
+      "source": "https://github.com/neurosnap/zmx/blob/878a8b0cef19448575b4f9fa1619e627b81ddb80/README.md#L582-L585",
+      "confidence": "high",
+      "retrievedAt": "2026-09-25"
+     },
+     "note": "quote: \"- The `daemon` and client processes communicate via a unix socket\n- Both `daemon` and `client` loops leverage `poll(2)`\n- Each session creates its own unix socket file\n- We restore terminal state and output using `libghostty-vt`\" — [measured] Daemon-per-session: loop.zig L565-572; daemonLoop poll: loop.zig L226-292; PTY: daemonize.zig L84 'spawnPty runs forkpty()'; client loop: loop.zig L16-18. Seam absence inferred from the single-threaded structure."
+    },
+    "reply_channel": {
+     "value": "Two regimes. With no terminal client attached, zmx itself scans PTY output for DA1/DA2 queries and queues fixed answers (ESC[?62;22c, ESC[>1;10;0c) into the PTY write buffer; nothing else is answered, because the server's libghostty-vt stream is readonly and ignores queries (Kitty a=q, DSR, XTVERSION go unanswered). With clients attached, queries reach every client's own terminal raw, and only the leader client's input — which carries its terminal's replies — is forwarded to the PTY; a non-leader's input is dropped unless it looks like typing (which makes it leader), so each reply is written once.",
+     "provenance": {
+      "source": "https://github.com/neurosnap/zmx/blob/878a8b0cef19448575b4f9fa1619e627b81ddb80/src/loop.zig#L358-L360",
+      "confidence": "high",
+      "retrievedAt": "2026-09-25"
+     },
+     "note": "quote: \"// When no real terminal client has attached yet, respond to\n                    // terminal queries (e.g. DA1/DA2) on behalf of the terminal.\n                    // This prevents fish from waiting 10s for unanswered queries.\" — [measured] Answers: util.zig L257-262 and L264-295. Readonly stream: ghostty Terminal.zig L370 'Sequences that query or otherwise require output will be ignored.' Leader rule: loop.zig L898-908 (handleInput) and isUserInput (util.zig L688-727), which returns true only for printable text, CR/LF/TAB/BS, CSI u/~ and modified arrows. Snapshot is only sent on re-attach 'to avoid interfering with shell initialization (DA1 queries, etc.)' (loop.zig L977-978)."
+    },
+    "td_migration": {
+     "value": "Nothing to adopt as code (zmx is an application); five design points TD's host/replica could borrow, mostly in host.rs and gridwire.rs: (1) resize the host grid to the attaching window's size BEFORE snapshotting, then resize the PTY and SIGWINCH the foreground process group even when the size is unchanged, so TUIs repaint after the snapshot (loop.zig L967-1016); (2) strip DECSET 2026 from the snapshot so a replica does not sit deferring renders; (3) replay title (OSC 2), cwd (OSC 7), dynamic colours and the scroll region, which gridwire.rs does not carry today; (4) answer DA only while no window is attached and otherwise let exactly one leader's replies through — TD already writes replies once from the host, so this is a check, not a change; (5) feed and broadcast on one thread so the snapshot/stream seam cannot exist — TD instead fences alacritty's reader thread with a lease in host.rs. Points NOT to copy: zmx's snapshot has the same alt-screen gap as gridwire, emits modes before content (TD's modes-last order is deliberately safer), drops OSC 8 links and all pictures, and has no equivalent of grid_hash / ReplicaGuard. If TD ever moves its host to libghostty-vt, zmx shows that the formatter can replace gridwire::encode_snapshot for text, and ghostty's binary snapshot (ghostty_snapshot_*) is the better candidate for a libghostty-vt replica; pane.rs, term.rs, socketpty.rs, main.rs and pane/bench.rs are untouched by anything zmx teaches.",
+     "note": "[inferred] from zmx loop.zig/util.zig at 878a8b0 compared with TD's app/src/host.rs and gridwire.rs module docs (read-only, td-terminal-core 426f072)."
+    },
+    "biggest_risk": {
+     "value": "Taking zmx as the model for TD's re-attach would carry text only: its snapshot drops every Kitty, Sixel and iTerm2 picture (the formatter has no image output and the issue asking for it has been open since December 2025), so a re-attached TD window would still need its own picture replay path.",
+     "note": "[inferred] from zmx issue #14 and the pinned ghostty formatter.zig; the binary ghostty snapshot also omits the image registry (snapshot.zig L1210-1213)."
+    },
+    "primary_sources": {
+     "value": "https://zmx.sh/ https://github.com/neurosnap/zmx https://github.com/neurosnap/zmx/blob/878a8b0cef19448575b4f9fa1619e627b81ddb80/README.md https://github.com/neurosnap/zmx/blob/878a8b0cef19448575b4f9fa1619e627b81ddb80/build.zig.zon https://github.com/neurosnap/zmx/blob/878a8b0cef19448575b4f9fa1619e627b81ddb80/build.zig https://github.com/neurosnap/zmx/blob/878a8b0cef19448575b4f9fa1619e627b81ddb80/src/loop.zig https://github.com/neurosnap/zmx/blob/878a8b0cef19448575b4f9fa1619e627b81ddb80/src/util.zig https://github.com/neurosnap/zmx/blob/878a8b0cef19448575b4f9fa1619e627b81ddb80/src/ipc.zig https://github.com/neurosnap/zmx/blob/878a8b0cef19448575b4f9fa1619e627b81ddb80/src/cfg.zig https://github.com/neurosnap/zmx/blob/878a8b0cef19448575b4f9fa1619e627b81ddb80/CHANGELOG.md https://github.com/neurosnap/zmx/issues/14 https://github.com/neurosnap/zmx/issues/192 https://github.com/ghostty-org/ghostty/blob/8af6897c0afc63037a8a3efee4162a380e3a4572/src/terminal/formatter.zig https://github.com/ghostty-org/ghostty/blob/8af6897c0afc63037a8a3efee4162a380e3a4572/src/terminal/Terminal.zig https://github.com/ghostty-org/ghostty/blob/8af6897c0afc63037a8a3efee4162a380e3a4572/src/terminal/stream_terminal.zig https://github.com/ghostty-org/ghostty/blob/8af6897c0afc63037a8a3efee4162a380e3a4572/src/terminal/build_options.zig https://github.com/ghostty-org/ghostty/blob/8af6897c0afc63037a8a3efee4162a380e3a4572/src/terminal/snapshot/main.zig https://github.com/ghostty-org/ghostty/blob/8af6897c0afc63037a8a3efee4162a380e3a4572/src/terminal/snapshot/snapshot.zig https://github.com/ghostty-org/ghostty/blob/8af6897c0afc63037a8a3efee4162a380e3a4572/src/terminal/osc/parsers/iterm2.zig https://api.github.com/repos/neurosnap/zmx",
+     "provenance": {
+      "source": "https://github.com/neurosnap/zmx",
+      "confidence": "high",
+      "retrievedAt": "2026-09-25"
+     },
+     "note": "quote: \"Session attach/detach for the terminal.\" — [measured] Every URL was read this session (repo shallow-cloned at 878a8b0; ghostty read at the zmx-pinned commit 8af6897 from a local shallow clone; zmx.sh via WebFetch; issues and API via gh). TD-side comparison from /home/parker/Work/td-terminal-core/app/src/gridwire.rs and host.rs (local, read-only)."
+    }
+   },
+   "insights": []
+  }
+ ],
+ "bubbles": [
+  {
+   "kind": "serendipity",
+   "subjectId": "ghostty-shadow",
+   "note": "Ghostty itself got the C=0 cursor rule wrong until 2026-08-18. The commit message for afb61e1 reads: \"This fixes an incompatibility between Ghostty and Kitty 0.47.1+ ... Kitty defines `C=0` as leaving the cursor after the image and implements the movement as rows minus one, plus one row when the image reaches the right edge\" and \"(Had to view Kitty source to verify what the spec meant)\". The crates.io libghostty-vt 0.2.1 still carries the old rule, moving the cursor a full `rows` down. Any TD code that reproduces the cursor motion must match kitty's source, not the prose spec.",
+   "why": "Any option in which TD tracks Kitty cursor motion itself (alacritty-own-loop, alacritty-patched-vte, ghostty-shadow) inherits this subtlety.",
+   "source": "https://github.com/ghostty-org/ghostty/commit/afb61e1b6292f56b863ad0fe61bcdbad47392a5e"
+  },
+  {
+   "kind": "serendipity",
+   "subjectId": "ghostty-shadow",
+   "note": "Host/replica hazard for every picture option. With t=t (temporary file), used by viu, the kitty doc says \"the terminal emulator will delete the file after reading the pixel data\". With t=s (shared memory), used by mpv --vo-kitty-use-shm, it says the terminal \"must read the data from the memory object and then unlink and close it on POSIX\". In TD's design the host and the window each parse the same bytes, so only the first reader gets the pixels. Pixels must therefore travel host-to-window over TD's own wire rather than be re-parsed from the byte stream.",
+   "why": "This affects gridwire/attach design for alacritty-own-loop, alacritty-patched-vte, libghostty-vt and ghostty-shadow alike.",
+   "source": "https://github.com/kovidgoyal/kitty/blob/42d3cb2148acc182946901091dbbb0431a5a3344/docs/graphics-protocol.rst#L332-L344"
+  },
+  {
+   "kind": "serendipity",
+   "subjectId": "libghostty-vt",
+   "note": "Embedded libghostty-vt ships with Kitty pictures mostly off. The storage limit defaults to 10 MB for the library build (320 MB for the Ghostty app), loading limits default to `.direct` (no file/temp/shm), and PNG works only after the embedder installs a decode callback: \"if no `sys.decode_png` hook is specified, png formats are disabled no matter what.\" So kitten icat (t=f, PNG) and viu (t=t) fail against a default libghostty until the embedder enables those media.",
+   "why": "The libghostty-vt subject's kitty_graphics should say 'implemented but off by default' for file/temp/shm/PNG.",
+   "source": "https://github.com/ghostty-org/ghostty/blob/a887df42c56f6de86c0fe6da9c4eeca37931e083/src/terminal/Terminal.zig#L248-L267"
+  },
+  {
+   "kind": "serendipity",
+   "subjectId": "libghostty-vt",
+   "note": "At the ghostty commit that crates.io libghostty-vt 0.2.1 pins (a887df4, 2026-07-11), the Kitty animation actions answer \"ERROR: unimplemented action\". Animation (d8b920e, 2026-08-21) and relative placements (cd5f9ee/33ca9e5, 2026-08-20) landed upstream later, and libghostty-rs master (pin 22d1317, 2026-08-06) also predates them. Kitty coverage therefore depends on which ghostty commit the bindings pin, not on ghostty main.",
+   "why": "It keeps the libghostty-vt subject's kitty_tags honest about animation.",
+   "source": "https://github.com/ghostty-org/ghostty/blob/a887df42c56f6de86c0fe6da9c4eeca37931e083/src/terminal/kitty/graphics_exec.zig#L71-L74"
+  },
+  {
+   "kind": "serendipity",
+   "subjectId": "zellij-grid",
+   "note": "Zellij already solved TD's first problem with the exact parser TD uses: vte 0.15 drops APC (lib.rs L182, SosPmApcString → anywhere), so Zellij puts a 166-line byte-level KittyApcInterceptor in front of it (Ground → Esc → EscUnderscore → Capturing on 'G'; forwards every other byte unchanged; 1 MiB cap per escape; CAN/SUB abort). It is MIT and self-contained, so TD could copy it rather than patch vte — relevant to alacritty-own-loop and alacritty-patched-vte, since it requires only that TD sees the bytes before Processor::advance.",
+   "why": "Removes the 'patch vte' step from the cheapest Kitty path, and it is proven in a shipped release (v0.45.0).",
+   "source": "https://github.com/zellij-org/zellij/blob/2fce032ccebd2e980b9f86eed1c121674e9059fd/zellij-server/src/panes/kitty_graphics/interceptor.rs#L67-L122"
+  },
+  {
+   "kind": "serendipity",
+   "subjectId": "zellij-grid",
+   "note": "Zellij's per-client picture replay is a worked answer to 'how does a re-attaching client get the pictures': a HostKittyState per client records which images were transmitted (host id per image/scaled variant) and which placements are live; each frame it deletes freed images (a=d,d=I), deletes stale placements (a=d,d=i,i,p), transmits missing images once (a=t,f=32, 4096-byte chunks, zlib when the host supports it) and re-places changed ones with a=p … C=1. On attach the state is cleared so everything is re-sent. TD's gridwire snapshot could carry pictures the same way.",
+   "why": "TD's host/window replica has no picture story yet; this is a tested design for one.",
+   "source": "https://github.com/zellij-org/zellij/blob/2fce032ccebd2e980b9f86eed1c121674e9059fd/zellij-server/src/output/mod.rs#L464-L626"
+  },
+  {
+   "kind": "serendipity",
+   "subjectId": "ghostty-shadow",
+   "note": "Zellij's own Kitty implementation also moves the cursor after a direct placement without C=1: advance_cursor_after_kitty_placement sets x += cols (wrapping to column 0 and one more line if that reaches the width) and adds rows-1 lines; C=1 skips it. And when Zellij re-emits to its host it always sends C=1, so the host's cursor never moves on its behalf — the discipline a shadow emulator would need.",
+   "why": "A second independent implementation (besides kitty's graphics.c) confirms the cursor-movement rule that makes an alacritty+libghostty shadow diverge.",
+   "source": "https://github.com/zellij-org/zellij/blob/2fce032ccebd2e980b9f86eed1c121674e9059fd/zellij-server/src/panes/grid.rs#L3780-L3792"
+  },
+  {
+   "kind": "serendipity",
+   "subjectId": "zellij-grid",
+   "note": "Zellij forwards queries it cannot answer (CSI 14t/16t pixel sizes, OSC 10/11/4 colours, OSC 52 reads) to a client's host terminal and pauses that pane's parsing until the reply, or a 500 ms cache fallback, lands, so the reply reaches the program at the same stream position the query occupied. It also probes the host with ESC_Ga=q (plain and o=z) followed by a Primary DA barrier at startup to learn Kitty and zlib support.",
+   "why": "TD's host has no display, so pixel-size and colour queries face the same 'only the window knows' problem; this is prior art for answering them exactly once from the host.",
+   "source": "https://github.com/zellij-org/zellij/blob/2fce032ccebd2e980b9f86eed1c121674e9059fd/zellij-server/src/panes/terminal_pane.rs#L162-L179"
+  },
+  {
+   "kind": "gap-note",
+   "subjectId": "zellij-grid",
+   "note": "performance_evidence has no throughput figure: Zellij publishes no parse benchmark (no criterion or [[bench]] in the workspace). Only per-cell memory (16-byte TerminalCharacter on x86_64) is sourced. Measuring throughput would mean building and running Zellij, which this round forbids.",
+   "source": "https://github.com/zellij-org/zellij/blob/2fce032ccebd2e980b9f86eed1c121674e9059fd/Cargo.toml"
+  },
+  {
+   "kind": "serendipity",
+   "subjectId": "libghostty-vt",
+   "note": "At ghostty 8af6897 (2026-08-30) libghostty-vt has a binary state-snapshot feature, on by default: \"Terminal state serialization: encode a full terminal (screen contents, scrollback, cursor, styles, modes, etc.) to a compact binary format and decode it back into a live terminal. Used for session persistence, window restoration, and moving terminal state between processes.\" (C API ghostty_snapshot_*). It sends active state, a READY marker, then history, and it round-trips both screens (TERMINAL record: primary plus optional alternate) — which would close TD's alt-screen gap for a libghostty-vt replica. Caveats: format v1 is 'the work-in-progress format that we intended to continue to break until we can promise binary compatibility', and the Kitty image/placement registry is 'intentionally omitted'.",
+   "why": "Directly answers state_snapshot for the libghostty-vt subject and changes the host/replica calculus: a libghostty-vt host could ship its grid to a libghostty-vt replica without re-encoding it as VT bytes.",
+   "source": "https://github.com/ghostty-org/ghostty/blob/8af6897c0afc63037a8a3efee4162a380e3a4572/src/terminal/build_options.zig#L60-L68"
+  },
+  {
+   "kind": "serendipity",
+   "subjectId": "libghostty-vt",
+   "note": "libghostty-vt's VT formatter (the thing zmx uses to restore) emits all modes BEFORE the screen content — \"for now for simplicity we just emit them all before\" (formatter.zig L408-411) — and emits OSC 8 hyperlinks only for HTML (L1459-1461); it also only formats the active screen (L301-302). TD's gridwire restores modes last precisely because insert/origin/wrap change where painted bytes land.",
+   "why": "If TD swapped to libghostty-vt and used its formatter in place of gridwire, these are regressions to test for (origin/insert mode panes, hyperlinks lost on re-attach).",
+   "source": "https://github.com/ghostty-org/ghostty/blob/8af6897c0afc63037a8a3efee4162a380e3a4572/src/terminal/formatter.zig#L408-L411"
+  },
+  {
+   "kind": "serendipity",
+   "subjectId": "libghostty-vt",
+   "note": "Embedded libghostty defaults: kitty_image_storage_limit is 10 MB for the lib artifact (320 MB for the Ghostty app), kitty_image_loading_limits default to '.direct' (no file/temp/shm), and PNG is disabled unless the embedder installs a sys.decode_png hook. A readonly vtStream() still parses and stores Kitty images, it just cannot reply.",
+   "why": "An embedder (TD, or the ghostty-shadow hybrid) must set these three knobs explicitly or icat/chafa PNG transfers and t=f/t=s transfers silently fail.",
+   "source": "https://github.com/ghostty-org/ghostty/blob/8af6897c0afc63037a8a3efee4162a380e3a4572/src/terminal/Terminal.zig#L289-L307"
+  },
+  {
+   "kind": "serendipity",
+   "subjectId": "zmx",
+   "note": "zmx avoids the snapshot/stream seam TD fences with a lease by doing everything on one thread, but a newly accepted client is appended to the broadcast list before its Init message is processed (loop.zig L306-325 vs handleInit L949+), so live bytes read in between may reach it before its snapshot. Hunch — not reproduced; phase 2 of the snapshot repaints the visible screen, which probably hides it.",
+   "why": "Prior-art check for TD's handover invariant ('every byte falls on exactly one side').",
+   "source": "https://github.com/neurosnap/zmx/blob/878a8b0cef19448575b4f9fa1619e627b81ddb80/src/loop.zig#L306-L325"
+  },
+  {
+   "kind": "serendipity",
+   "subjectId": "zmx",
+   "note": "Kitty pictures through zmx failed early on because the client's pixel size was not forwarded (issue #14's first report: 'Terminal does not support reporting screen sizes in pixels'); 0.7.0 added xpixel/ypixel to the Init/Resize winsize and sends both 4- and 8-byte encodings for old daemons (ipc.zig L135-138). broot's pixelated Kitty images were reported fixed by 0.7.0 (issue #192).",
+   "why": "TD's host must also propagate TIOCSWINSZ pixel sizes to the PTY, or picture programs refuse to run under the host even when the window can draw them.",
+   "source": "https://github.com/neurosnap/zmx/blob/878a8b0cef19448575b4f9fa1619e627b81ddb80/src/ipc.zig#L46-L50"
+  }
+ ],
+ "tokens": 0
+}

@@ -1,0 +1,62 @@
+=== raphamorim/rio
+-- default branch, pushed, stars, open issues
+main	2026-09-20T00:25:01Z	7544	317
+-- workflows
+pages-build-deployment	dynamic/pages/pages-build-deployment	active
+Release	.github/workflows/release.yml	active
+Test	.github/workflows/test.yml	active
+Nix Build	.github/workflows/nix-build.yml	active
+update-flake-lock	.github/workflows/update-flake.yml	active
+Copilot code review	dynamic/copilot-pull-request-reviewer/copilot-pull-request-reviewer	active
+librio	.github/workflows/librio.yml	active
+Copilot	dynamic/agents/copilot-pull-request-reviewer	active
+-- top-level entries
+.cargo .editorconfig .envrc .github .gitignore .goreleaser.yaml Cargo.lock Cargo.toml LICENSE Makefile README.md corcovado extra flake.lock flake.nix frontends librio-wasm librio libsugarloaf misc pkgRio.nix rio-backend rio-fonts rio-grapheme-width rio-graphics rio-grid rio-notifier rio-unicode rio-vt rio-window rust-toolchain.toml rustfmt.toml specs sugarloaf teletypewriter 
+-- agent and AI files at the root
+{"message":"Not Found","documentation_url":"https://docs.github.com/rest/repos/contents#get-repository-content","status":"404"}{"message":"Not Found","documentation_url":"https://docs.github.com/rest/repos/contents#get-repository-content","status":"404"}{"message":"Not Found","documentation_url":"https://docs.github.com/rest/repos/contents#get-repository-content","status":"404"}{"message":"Not Found","documentation_url":"https://docs.github.com/rest/repos/contents#get-repository-content","status":"404"}{"message":"Not Found","documentation_url":"https://docs.github.com/rest/repos/contents#get-repository-content","status":"404"}-- last 100 commits: trailers naming an AI tool
+
+=== ghostty-org/ghostty
+-- default branch, pushed, stars, open issues
+main	2026-09-25T16:10:46Z	61539	248
+-- workflows
+Test	.github/workflows/test.yml	active
+Release Tip	.github/workflows/release-tip.yml	active
+Flatpak	.github/workflows/flatpak.yml	active
+Clean Artifacts	.github/workflows/clean-artifacts.yml	active
+Nix	.github/workflows/nix.yml	active
+Dependabot Updates	dynamic/dependabot/dependabot-updates	active
+Update iTerm2 colorschemes	.github/workflows/update-colorschemes.yml	active
+Release Tag	.github/workflows/release-tag.yml	active
+Milestone Action	.github/workflows/milestone.yml	active
+Publish Tagged Release	.github/workflows/publish-tag.yml	active
+Test in FreeBSD	.github/workflows/freebsd.yml	active
+Snap	.github/workflows/snap.yml	active
+Copilot code review	dynamic/copilot-pull-request-reviewer/copilot-pull-request-reviewer	active
+Vouch - Check Issue	.github/workflows/vouch-check-issue.yml	active
+Vouch - Check PR	.github/workflows/vouch-check-pr.yml	active
+Vouch - Manage by Discussion	.github/workflows/vouch-manage-by-discussion.yml	active
+Vouch - Manage by Issue	.github/workflows/vouch-manage-by-issue.yml	active
+Vouch - Sync CODEOWNERS	.github/workflows/vouch-sync-codeowners.yml	active
+Copilot	dynamic/agents/copilot-pull-request-reviewer	active
+Freestanding	.github/workflows/freestanding.yml	active
+-- top-level entries
+.agents .clang-format .editorconfig .envrc .gitattributes .github .gitignore .gitmodules .mailmap .prettierignore .shellcheckrc .swiftlint.yml AGENTS.md AI_POLICY.md CMakeLists.txt CODEOWNERS CONTRIBUTING.md Doxyfile DoxygenLayout.xml HACKING.md LICENSE Makefile PACKAGING.md README.md build.zig build.zig.zon build.zig.zon.json build.zig.zon.nix build.zig.zon.txt default.nix dist example flake.lock flake.nix flatpak images include macos nix passthrough.glsl pkg po shell.nix snap src test typos.toml valgrind.supp vendor 
+-- agent and AI files at the root
+AGENTS.md
+{"message":"Not Found","documentation_url":"https://docs.github.com/rest/repos/contents#get-repository-content","status":"404"}AI_POLICY.md
+{"message":"Not Found","documentation_url":"https://docs.github.com/rest/repos/contents#get-repository-content","status":"404"}CONTRIBUTING.md
+-- last 100 commits: trailers naming an AI tool
+      3 Co-authored-by: Cursor 
+
+=== Uzaaft/libghostty-rs
+-- default branch, pushed, stars, open issues
+master	2026-09-25T16:25:36Z	389	17
+-- workflows
+CI	.github/workflows/ci.yml	active
+Windows CI	.github/workflows/windows-ci.yml	active
+-- top-level entries
+.envrc .github .gitignore AGENTS.md Cargo.lock Cargo.toml LICENSE README.md crates example flake.lock flake.nix 
+-- agent and AI files at the root
+AGENTS.md
+{"message":"Not Found","documentation_url":"https://docs.github.com/rest/repos/contents#get-repository-content","status":"404"}{"message":"Not Found","documentation_url":"https://docs.github.com/rest/repos/contents#get-repository-content","status":"404"}{"message":"Not Found","documentation_url":"https://docs.github.com/rest/repos/contents#get-repository-content","status":"404"}{"message":"Not Found","documentation_url":"https://docs.github.com/rest/repos/contents#get-repository-content","status":"404"}-- last 100 commits: trailers naming an AI tool
+

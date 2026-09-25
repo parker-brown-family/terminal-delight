@@ -1,0 +1,57 @@
+{
+  "crate": "rio-vt 0.5.28",
+  "terminal": {
+    "columns": 120,
+    "rows": 40,
+    "cell_px": [
+      10,
+      22
+    ],
+    "scrollback": 10000,
+    "chunk_bytes": 4096
+  },
+  "icat": {
+    "placements": [
+      {
+        "image_id": 2147483648,
+        "placement_id": 2147483648,
+        "row": 0,
+        "absolute_row": 0,
+        "column": 0,
+        "width_cells": 64,
+        "height_cells": 19,
+        "pixel_width": 640,
+        "pixel_height": 400,
+        "z_index": 0
+      }
+    ],
+    "virtual_placements": [],
+    "sixel_or_iterm2_placements": 0,
+    "stored_images": [
+      {
+        "image_id": 2147483648,
+        "width_px": 640,
+        "height_px": 400
+      }
+    ],
+    "cursor": {
+      "row": 19,
+      "column": 0
+    },
+    "replies": [
+      "\u001b_Gi=1;OK\u001b\\",
+      "\u001b_Gi=2;ENOENT: file not found\u001b\\",
+      "\u001b_Gi=3;ENOENT: file not found\u001b\\",
+      "\u001b[?62;4;6;22;52c"
+    ],
+    "reply_requests_needing_frontend": [],
+    "visible_lines": []
+  },
+  "text": {
+    "input_bytes": 2097161,
+    "input_newlines": 18356,
+    "rows_held_total": 10040,
+    "history_rows": 10000,
+    "visible_rows": 40
+  }
+}

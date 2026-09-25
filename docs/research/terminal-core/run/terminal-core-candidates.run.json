@@ -1,0 +1,2864 @@
+{
+  "done": false,
+  "stopReason": "no-progress",
+  "rounds": [
+    {
+      "round": 1,
+      "pendingBefore": 14,
+      "gapsTargeted": 378,
+      "fieldsFilled": 378,
+      "tokens": 0,
+      "meanScoreAfter": 0.991,
+      "completeAfter": 13
+    },
+    {
+      "round": 2,
+      "pendingBefore": 1,
+      "gapsTargeted": 3,
+      "fieldsFilled": 0,
+      "tokens": 0,
+      "meanScoreAfter": 0.991,
+      "completeAfter": 13
+    },
+    {
+      "round": 3,
+      "pendingBefore": 1,
+      "gapsTargeted": 3,
+      "fieldsFilled": 0,
+      "tokens": 0,
+      "meanScoreAfter": 0.991,
+      "completeAfter": 13
+    }
+  ],
+  "totalTokens": 0,
+  "score": {
+    "scores": [
+      {
+        "id": "alacritty-own-loop",
+        "label": "alacritty_terminal 0.26 + a TD-owned read loop; TD writes Kitty graphics itself",
+        "group": "A · Keep alacritty_terminal",
+        "fields": [
+          {
+            "key": "what_it_is",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "license",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "language",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "integration_path",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "build_requirements",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "latest_release",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "first_release",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "releases_last_12mo",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "api_stability",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "maintainers",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "adoption",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "kitty_graphics",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "kitty_tags",
+            "requirement": "required",
+            "status": "unverified",
+            "satisfied": true
+          },
+          {
+            "key": "sixel",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "iterm2_images",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "picture_anchoring",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "vt_conformance",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "vt_features",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "performance_evidence",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "grid_api",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "damage_tracking",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "state_snapshot",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "threading_and_loop",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "reply_channel",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "td_migration",
+            "requirement": "required",
+            "status": "unverified",
+            "satisfied": true
+          },
+          {
+            "key": "biggest_risk",
+            "requirement": "required",
+            "status": "unverified",
+            "satisfied": true
+          },
+          {
+            "key": "primary_sources",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          }
+        ],
+        "requiredTotal": 20,
+        "requiredMet": 20,
+        "preferredTotal": 7,
+        "preferredMet": 7,
+        "score": 1,
+        "complete": true,
+        "gaps": []
+      },
+      {
+        "id": "alacritty-patched-vte",
+        "label": "alacritty_terminal + patched vte (an APC callback) and a patched Term",
+        "group": "A · Keep alacritty_terminal",
+        "fields": [
+          {
+            "key": "what_it_is",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "license",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "language",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "integration_path",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "build_requirements",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "latest_release",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "first_release",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "releases_last_12mo",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "api_stability",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "maintainers",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "adoption",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "kitty_graphics",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "kitty_tags",
+            "requirement": "required",
+            "status": "unverified",
+            "satisfied": true
+          },
+          {
+            "key": "sixel",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "iterm2_images",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "picture_anchoring",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "vt_conformance",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "vt_features",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "performance_evidence",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "grid_api",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "damage_tracking",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "state_snapshot",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "threading_and_loop",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "reply_channel",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "td_migration",
+            "requirement": "required",
+            "status": "unverified",
+            "satisfied": true
+          },
+          {
+            "key": "biggest_risk",
+            "requirement": "required",
+            "status": "unverified",
+            "satisfied": true
+          },
+          {
+            "key": "primary_sources",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          }
+        ],
+        "requiredTotal": 20,
+        "requiredMet": 20,
+        "preferredTotal": 7,
+        "preferredMet": 7,
+        "score": 1,
+        "complete": true,
+        "gaps": []
+      },
+      {
+        "id": "alacritty-graphics-fork",
+        "label": "ayosec's alacritty graphics fork / vte-graphics (Sixel)",
+        "group": "A · Keep alacritty_terminal",
+        "fields": [
+          {
+            "key": "what_it_is",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "license",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "language",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "integration_path",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "build_requirements",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "latest_release",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "first_release",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "releases_last_12mo",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "api_stability",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "maintainers",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "adoption",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "kitty_graphics",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "kitty_tags",
+            "requirement": "required",
+            "status": "unverified",
+            "satisfied": true
+          },
+          {
+            "key": "sixel",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "iterm2_images",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "picture_anchoring",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "vt_conformance",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "vt_features",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "performance_evidence",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "grid_api",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "damage_tracking",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "state_snapshot",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "threading_and_loop",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "reply_channel",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "td_migration",
+            "requirement": "required",
+            "status": "unverified",
+            "satisfied": true
+          },
+          {
+            "key": "biggest_risk",
+            "requirement": "required",
+            "status": "unverified",
+            "satisfied": true
+          },
+          {
+            "key": "primary_sources",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          }
+        ],
+        "requiredTotal": 20,
+        "requiredMet": 20,
+        "preferredTotal": 7,
+        "preferredMet": 7,
+        "score": 1,
+        "complete": true,
+        "gaps": []
+      },
+      {
+        "id": "rio-vt",
+        "label": "rio-vt — Rio's embeddable core (crates.io)",
+        "group": "B · Swap to a Rust core",
+        "fields": [
+          {
+            "key": "what_it_is",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "license",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "language",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "integration_path",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "build_requirements",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "latest_release",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "first_release",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "releases_last_12mo",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "api_stability",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "maintainers",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "adoption",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "kitty_graphics",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "kitty_tags",
+            "requirement": "required",
+            "status": "unverified",
+            "satisfied": true
+          },
+          {
+            "key": "sixel",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "iterm2_images",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "picture_anchoring",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "vt_conformance",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "vt_features",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "performance_evidence",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "grid_api",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "damage_tracking",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "state_snapshot",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "threading_and_loop",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "reply_channel",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "td_migration",
+            "requirement": "required",
+            "status": "unverified",
+            "satisfied": true
+          },
+          {
+            "key": "biggest_risk",
+            "requirement": "required",
+            "status": "unverified",
+            "satisfied": true
+          },
+          {
+            "key": "primary_sources",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          }
+        ],
+        "requiredTotal": 20,
+        "requiredMet": 20,
+        "preferredTotal": 7,
+        "preferredMet": 7,
+        "score": 1,
+        "complete": true,
+        "gaps": []
+      },
+      {
+        "id": "wezterm-term",
+        "label": "wezterm-term / termwiz — WezTerm's core",
+        "group": "B · Swap to a Rust core",
+        "fields": [
+          {
+            "key": "what_it_is",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "license",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "language",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "integration_path",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "build_requirements",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "latest_release",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "first_release",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "releases_last_12mo",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "api_stability",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "maintainers",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "adoption",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "kitty_graphics",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "kitty_tags",
+            "requirement": "required",
+            "status": "unverified",
+            "satisfied": true
+          },
+          {
+            "key": "sixel",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "iterm2_images",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "picture_anchoring",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "vt_conformance",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "vt_features",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "performance_evidence",
+            "requirement": "preferred",
+            "status": "flagged",
+            "satisfied": true
+          },
+          {
+            "key": "grid_api",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "damage_tracking",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "state_snapshot",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "threading_and_loop",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "reply_channel",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "td_migration",
+            "requirement": "required",
+            "status": "unverified",
+            "satisfied": true
+          },
+          {
+            "key": "biggest_risk",
+            "requirement": "required",
+            "status": "unverified",
+            "satisfied": true
+          },
+          {
+            "key": "primary_sources",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          }
+        ],
+        "requiredTotal": 20,
+        "requiredMet": 20,
+        "preferredTotal": 7,
+        "preferredMet": 7,
+        "score": 1,
+        "complete": true,
+        "gaps": []
+      },
+      {
+        "id": "vt100-rust",
+        "label": "vt100 (doy) — the crate under tui-term",
+        "group": "B · Swap to a Rust core",
+        "fields": [
+          {
+            "key": "what_it_is",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "license",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "language",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "integration_path",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "build_requirements",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "latest_release",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "first_release",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "releases_last_12mo",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "api_stability",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "maintainers",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "adoption",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "kitty_graphics",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "kitty_tags",
+            "requirement": "required",
+            "status": "unverified",
+            "satisfied": true
+          },
+          {
+            "key": "sixel",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "iterm2_images",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "picture_anchoring",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "vt_conformance",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "vt_features",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "performance_evidence",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "grid_api",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "damage_tracking",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "state_snapshot",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "threading_and_loop",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "reply_channel",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "td_migration",
+            "requirement": "required",
+            "status": "unverified",
+            "satisfied": true
+          },
+          {
+            "key": "biggest_risk",
+            "requirement": "required",
+            "status": "unverified",
+            "satisfied": true
+          },
+          {
+            "key": "primary_sources",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          }
+        ],
+        "requiredTotal": 20,
+        "requiredMet": 20,
+        "preferredTotal": 7,
+        "preferredMet": 7,
+        "score": 1,
+        "complete": true,
+        "gaps": []
+      },
+      {
+        "id": "td-own-core",
+        "label": "TD writes its own emulator core on a parser (prior art: Warp, Zellij)",
+        "group": "B · Swap to a Rust core",
+        "fields": [
+          {
+            "key": "what_it_is",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "license",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "language",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "integration_path",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "build_requirements",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "latest_release",
+            "requirement": "required",
+            "status": "flagged",
+            "satisfied": false
+          },
+          {
+            "key": "first_release",
+            "requirement": "preferred",
+            "status": "flagged",
+            "satisfied": false
+          },
+          {
+            "key": "releases_last_12mo",
+            "requirement": "preferred",
+            "status": "flagged",
+            "satisfied": false
+          },
+          {
+            "key": "api_stability",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "maintainers",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "adoption",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "kitty_graphics",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "kitty_tags",
+            "requirement": "required",
+            "status": "unverified",
+            "satisfied": true
+          },
+          {
+            "key": "sixel",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "iterm2_images",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "picture_anchoring",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "vt_conformance",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "vt_features",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "performance_evidence",
+            "requirement": "preferred",
+            "status": "flagged",
+            "satisfied": true
+          },
+          {
+            "key": "grid_api",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "damage_tracking",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "state_snapshot",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "threading_and_loop",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "reply_channel",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "td_migration",
+            "requirement": "required",
+            "status": "unverified",
+            "satisfied": true
+          },
+          {
+            "key": "biggest_risk",
+            "requirement": "required",
+            "status": "unverified",
+            "satisfied": true
+          },
+          {
+            "key": "primary_sources",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          }
+        ],
+        "requiredTotal": 20,
+        "requiredMet": 19,
+        "preferredTotal": 7,
+        "preferredMet": 5,
+        "score": 0.905,
+        "complete": false,
+        "gaps": [
+          "latest_release",
+          "first_release",
+          "releases_last_12mo"
+        ]
+      },
+      {
+        "id": "libghostty-vt",
+        "label": "libghostty-vt — Ghostty's core as a library, via Rust bindings",
+        "group": "C · Swap to a core across a C boundary",
+        "fields": [
+          {
+            "key": "what_it_is",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "license",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "language",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "integration_path",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "build_requirements",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "latest_release",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "first_release",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "releases_last_12mo",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "api_stability",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "maintainers",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "adoption",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "kitty_graphics",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "kitty_tags",
+            "requirement": "required",
+            "status": "unverified",
+            "satisfied": true
+          },
+          {
+            "key": "sixel",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "iterm2_images",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "picture_anchoring",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "vt_conformance",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "vt_features",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "performance_evidence",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "grid_api",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "damage_tracking",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "state_snapshot",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "threading_and_loop",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "reply_channel",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "td_migration",
+            "requirement": "required",
+            "status": "unverified",
+            "satisfied": true
+          },
+          {
+            "key": "biggest_risk",
+            "requirement": "required",
+            "status": "unverified",
+            "satisfied": true
+          },
+          {
+            "key": "primary_sources",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          }
+        ],
+        "requiredTotal": 20,
+        "requiredMet": 20,
+        "preferredTotal": 7,
+        "preferredMet": 7,
+        "score": 1,
+        "complete": true,
+        "gaps": []
+      },
+      {
+        "id": "libvterm",
+        "label": "libvterm — Neovim's C terminal library",
+        "group": "C · Swap to a core across a C boundary",
+        "fields": [
+          {
+            "key": "what_it_is",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "license",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "language",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "integration_path",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "build_requirements",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "latest_release",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "first_release",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "releases_last_12mo",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "api_stability",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "maintainers",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "adoption",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "kitty_graphics",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "kitty_tags",
+            "requirement": "required",
+            "status": "unverified",
+            "satisfied": true
+          },
+          {
+            "key": "sixel",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "iterm2_images",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "picture_anchoring",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "vt_conformance",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "vt_features",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "performance_evidence",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "grid_api",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "damage_tracking",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "state_snapshot",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "threading_and_loop",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "reply_channel",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "td_migration",
+            "requirement": "required",
+            "status": "unverified",
+            "satisfied": true
+          },
+          {
+            "key": "biggest_risk",
+            "requirement": "required",
+            "status": "unverified",
+            "satisfied": true
+          },
+          {
+            "key": "primary_sources",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          }
+        ],
+        "requiredTotal": 20,
+        "requiredMet": 20,
+        "preferredTotal": 7,
+        "preferredMet": 7,
+        "score": 1,
+        "complete": true,
+        "gaps": []
+      },
+      {
+        "id": "contour-vtbackend",
+        "label": "Contour's vtbackend (C++)",
+        "group": "C · Swap to a core across a C boundary",
+        "fields": [
+          {
+            "key": "what_it_is",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "license",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "language",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "integration_path",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "build_requirements",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "latest_release",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "first_release",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "releases_last_12mo",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "api_stability",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "maintainers",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "adoption",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "kitty_graphics",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "kitty_tags",
+            "requirement": "required",
+            "status": "unverified",
+            "satisfied": true
+          },
+          {
+            "key": "sixel",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "iterm2_images",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "picture_anchoring",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "vt_conformance",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "vt_features",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "performance_evidence",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "grid_api",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "damage_tracking",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "state_snapshot",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "threading_and_loop",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "reply_channel",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "td_migration",
+            "requirement": "required",
+            "status": "unverified",
+            "satisfied": true
+          },
+          {
+            "key": "biggest_risk",
+            "requirement": "required",
+            "status": "unverified",
+            "satisfied": true
+          },
+          {
+            "key": "primary_sources",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          }
+        ],
+        "requiredTotal": 20,
+        "requiredMet": 20,
+        "preferredTotal": 7,
+        "preferredMet": 7,
+        "score": 1,
+        "complete": true,
+        "gaps": []
+      },
+      {
+        "id": "kitty-core",
+        "label": "kitty's own core (C, GPL-3.0) — licence check",
+        "group": "C · Swap to a core across a C boundary",
+        "fields": [
+          {
+            "key": "what_it_is",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "license",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "language",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "integration_path",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "build_requirements",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "latest_release",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "first_release",
+            "requirement": "preferred",
+            "status": "flagged",
+            "satisfied": false
+          },
+          {
+            "key": "releases_last_12mo",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "api_stability",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "maintainers",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "adoption",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "kitty_graphics",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "kitty_tags",
+            "requirement": "required",
+            "status": "unverified",
+            "satisfied": true
+          },
+          {
+            "key": "sixel",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "iterm2_images",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "picture_anchoring",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "vt_conformance",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "vt_features",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "performance_evidence",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "grid_api",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "damage_tracking",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "state_snapshot",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "threading_and_loop",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "reply_channel",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "td_migration",
+            "requirement": "required",
+            "status": "unverified",
+            "satisfied": true
+          },
+          {
+            "key": "biggest_risk",
+            "requirement": "required",
+            "status": "unverified",
+            "satisfied": true
+          },
+          {
+            "key": "primary_sources",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          }
+        ],
+        "requiredTotal": 20,
+        "requiredMet": 20,
+        "preferredTotal": 7,
+        "preferredMet": 6,
+        "score": 0.973,
+        "complete": true,
+        "gaps": [
+          "first_release"
+        ]
+      },
+      {
+        "id": "ghostty-shadow",
+        "label": "Hybrid: alacritty for text, libghostty-vt beside it for pictures only",
+        "group": "D · Hybrids and references",
+        "fields": [
+          {
+            "key": "what_it_is",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "license",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "language",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "integration_path",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "build_requirements",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "latest_release",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "first_release",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "releases_last_12mo",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "api_stability",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "maintainers",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "adoption",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "kitty_graphics",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "kitty_tags",
+            "requirement": "required",
+            "status": "unverified",
+            "satisfied": true
+          },
+          {
+            "key": "sixel",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "iterm2_images",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "picture_anchoring",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "vt_conformance",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "vt_features",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "performance_evidence",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "grid_api",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "damage_tracking",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "state_snapshot",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "threading_and_loop",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "reply_channel",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "td_migration",
+            "requirement": "required",
+            "status": "unverified",
+            "satisfied": true
+          },
+          {
+            "key": "biggest_risk",
+            "requirement": "required",
+            "status": "unverified",
+            "satisfied": true
+          },
+          {
+            "key": "primary_sources",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          }
+        ],
+        "requiredTotal": 20,
+        "requiredMet": 20,
+        "preferredTotal": 7,
+        "preferredMet": 7,
+        "score": 1,
+        "complete": true,
+        "gaps": []
+      },
+      {
+        "id": "zellij-grid",
+        "label": "Zellij — a Rust multiplexer whose server owns its own grid (host/client prior art)",
+        "group": "D · Hybrids and references",
+        "fields": [
+          {
+            "key": "what_it_is",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "license",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "language",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "integration_path",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "build_requirements",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "latest_release",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "first_release",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "releases_last_12mo",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "api_stability",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "maintainers",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "adoption",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "kitty_graphics",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "kitty_tags",
+            "requirement": "required",
+            "status": "unverified",
+            "satisfied": true
+          },
+          {
+            "key": "sixel",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "iterm2_images",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "picture_anchoring",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "vt_conformance",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "vt_features",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "performance_evidence",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "grid_api",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "damage_tracking",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "state_snapshot",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "threading_and_loop",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "reply_channel",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "td_migration",
+            "requirement": "required",
+            "status": "unverified",
+            "satisfied": true
+          },
+          {
+            "key": "biggest_risk",
+            "requirement": "required",
+            "status": "unverified",
+            "satisfied": true
+          },
+          {
+            "key": "primary_sources",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          }
+        ],
+        "requiredTotal": 20,
+        "requiredMet": 20,
+        "preferredTotal": 7,
+        "preferredMet": 7,
+        "score": 1,
+        "complete": true,
+        "gaps": []
+      },
+      {
+        "id": "zmx",
+        "label": "zmx — server-side snapshots with libghostty-vt (host/replica prior art)",
+        "group": "D · Hybrids and references",
+        "fields": [
+          {
+            "key": "what_it_is",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "license",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "language",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "integration_path",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "build_requirements",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "latest_release",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "first_release",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "releases_last_12mo",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "api_stability",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "maintainers",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "adoption",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "kitty_graphics",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "kitty_tags",
+            "requirement": "required",
+            "status": "unverified",
+            "satisfied": true
+          },
+          {
+            "key": "sixel",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "iterm2_images",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "picture_anchoring",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "vt_conformance",
+            "requirement": "preferred",
+            "status": "flagged",
+            "satisfied": true
+          },
+          {
+            "key": "vt_features",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "performance_evidence",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "grid_api",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "damage_tracking",
+            "requirement": "preferred",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "state_snapshot",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "threading_and_loop",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "reply_channel",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          },
+          {
+            "key": "td_migration",
+            "requirement": "required",
+            "status": "unverified",
+            "satisfied": true
+          },
+          {
+            "key": "biggest_risk",
+            "requirement": "required",
+            "status": "unverified",
+            "satisfied": true
+          },
+          {
+            "key": "primary_sources",
+            "requirement": "required",
+            "status": "verified",
+            "satisfied": true
+          }
+        ],
+        "requiredTotal": 20,
+        "requiredMet": 20,
+        "preferredTotal": 7,
+        "preferredMet": 7,
+        "score": 1,
+        "complete": true,
+        "gaps": []
+      }
+    ],
+    "completeCount": 13,
+    "total": 14,
+    "done": false,
+    "pending": [
+      {
+        "id": "td-own-core",
+        "gaps": [
+          "latest_release",
+          "first_release",
+          "releases_last_12mo"
+        ]
+      }
+    ],
+    "meanScore": 0.991
+  },
+  "bubbles": [
+    {
+      "kind": "serendipity",
+      "subjectId": "alacritty-patched-vte",
+      "note": "vte's APC PR was not refused; it lapsed. The maintainer's last review of PR #115 (2025-03-12) reads \"Honestly seems fine to me. Just some minor nits.\", a benchmark PR (alacritty #8507) found \"The perf looks pretty much the same\", and the PR was closed on 2026-07-12 only with \"Closing due to inactivity.\" Issue #109 is still open, where the maintainer wrote \"That shouldn't be difficult to add tbh, it mainly doesn't exist yet because I've had no use for it so far.\" Finishing #115 upstream would turn the vte half of this option from a permanent fork into an ordinary crates.io upgrade; the 'second rate escape sequence' remark is a design reservation from 2024-10-16, not a refusal.",
+      "why": "Changes the patched-vte option's cost from 'carry a fork forever' to 'land one PR', and it softens the morning write-up's reading that upstream will not supply this.",
+      "source": "https://github.com/alacritty/vte/pull/115"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "alacritty-patched-vte",
+      "note": "Warp carries a copy of PR #115 on vte 0.15.0: branch copied-apc-support-0.15.0 at warpdotdev/vte (d94bf79e, 2025-03-21), and a commenter (heysweet) wrote on #115 \"We'd really like to support Kitty Image protocol in the Warp terminal, and this PR would help us get there\" (2025-02-03). That is a second alacritty-lineage terminal taking this exact route.",
+      "why": "Prior art and a possible ally for landing the PR upstream.",
+      "source": "https://github.com/warpdotdev/vte/tree/copied-apc-support-0.15.0"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "alacritty-patched-vte",
+      "note": "copa (Rio's published vte fork, crates.io, Apache-2.0 OR MIT, 0.4.2 of 2026-05-03) already has apc_start/apc_put/apc_end on Perform with the same signatures as PR #115, but it ships no ansi module (src/ has definitions.rs, lib.rs, params.rs, table.rs), so it cannot stand in for vte under alacritty_terminal, which needs vte::ansi::{Processor, Handler}. crates.io also sorts a 2023 copa 0.12.0 as max_version above the current 0.4.x line.",
+      "why": "Answers 'is there a published APC-capable vte?': yes, but not a drop-in one.",
+      "source": "https://crates.io/crates/copa"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "alacritty-own-loop",
+      "note": "asyncritty (dfoxfranke, Apache-2.0, crates.io 0.1.0-alpha3, created 2026-09-05) replaces alacritty's EventLoop with Tokio: \"It runs processes on pseudoterminals (PTYs), handles asynchronous input and output, and parses terminal output into Alacritty's terminal model\". Its author also landed two alacritty_terminal commits in August 2026. It is a working example of an embedder owning the read loop around a stock alacritty_terminal.",
+      "why": "Prior art for the own-loop option's hardest part.",
+      "source": "https://github.com/dfoxfranke/asyncritty"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "alacritty-own-loop",
+      "note": "alacritty master (after 0.26.0) now caps zero-width characters at 9 per cell (commit ede2ac14, 2026-08-26, \"Fix unbounded zerowidth character limit\": `const MAX_ZEROWIDTH_CHARS: usize = 9;`, storage changed from Vec to ArrayVec). Kitty placeholder cells need at most 3 diacritics, so the placeholder plan survives, but the morning write-up's \"appends zero-width characters … without a cap\" will be stale at the next release.",
+      "why": "Placeholder cells are the anchor both Kitty routes rely on; the next alacritty_terminal release touches that storage.",
+      "source": "https://github.com/alacritty/alacritty/commit/ede2ac144da4dec4c075bfa803aacf3b3739bce6"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "alacritty-own-loop",
+      "note": "TD's host already answers CSI 16 t from the tee: the comment at host.rs:747-749 begins \"`CSI 14 t` from the parser and `CSI 16 t` from the tee,\" and says both are answered from the pane's current size; TeeReader::read (host.rs:154-180) replies before the parser sees the chunk. The morning write-up's \"CSI 16 t … never answered\" is stale on research/terminal-core @426f072, and a byte-scanner seat already exists in the host.",
+      "why": "Corrects an input fact other clusters may reuse.",
+      "source": "file:///home/parker/Work/td-terminal-core/app/src/host.rs"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "alacritty-graphics-fork",
+      "note": "Several alacritty_terminal forks are published on crates.io under new names because git dependencies cannot be published: crow-alacritty-terminal (\"published because git deps cannot ship via crates.io\"), blit-alacritty-terminal and yas-alacritty-terminal (emoji-width fixes), cutty_terminal. A fork route is fine for AppImage/AUR builds, but if TD ever publishes a crate that depends on a forked core, it would have to publish the fork too.",
+      "why": "Distribution constraint for both fork options (patched-vte and graphics-fork).",
+      "source": "https://crates.io/crates/crow-alacritty-terminal"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "rio-vt",
+      "note": "Published rio-vt 0.5.28 depends on parking_lot ^0.12.5 with features nightly and hardware-lock-elision. Cargo unifies features, so adopting rio-vt would switch lock elision on for every parking_lot user in TD's graph, gpui included. On Linux x86 the nightly feature only affects wasm atomics in parking_lot_core 0.9.12 (lib.rs:48), so stable Rust still builds, but lock behaviour changes process-wide.",
+      "why": "a dependency swap that silently alters gpui's locking is worth a check before any spike",
+      "source": "measured 2026-09-25: curl -s -A 'td-research' https://crates.io/api/v1/crates/rio-vt/0.5.28/dependencies | jq -r '.dependencies[] | select(.crate_id==\"parking_lot\")' (features=nightly,hardware-lock-elision); https://github.com/raphamorim/rio/blob/37624389e8dde79ba25a8147a5e809c01d16d1c9/Cargo.toml#L49-L52"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "rio-vt",
+      "note": "rio-vt's README has drifted from its code: it says EventListener::event() is required (no such method in event/mod.rs:428-436), its feature table omits the default `pty` feature and the `graphics` feature that PNG and iTerm2 decoding need. An embedder following the README gets Kitty PNG answered with EINVAL.",
+      "why": "a spike should enable `graphics` explicitly and read the source, not the README",
+      "source": "https://github.com/raphamorim/rio/blob/37624389e8dde79ba25a8147a5e809c01d16d1c9/rio-vt/README.md"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "rio-vt",
+      "note": "Crosswords::contents_formatted() writes only each cell's base character (formatter.rs:128-129), so a replica restored from it loses combining marks; librio's Surface::serialize() (librio/src/lib.rs:896-960, MIT, built only on rio-vt's public API) handles scrollback and OSC 8 and is a portable reference if TD adopts rio-vt, though TD's gridwire.rs already does more.",
+      "why": "TD's host/replica hash comparison would flag the mark loss immediately",
+      "source": "https://github.com/raphamorim/rio/blob/37624389e8dde79ba25a8147a5e809c01d16d1c9/rio-vt/src/crosswords/formatter.rs#L111-L135"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "wezterm-term",
+      "note": "The foundation review's 'maintainer absent' is out of date for commits: 147 of 182 commits since 2025-09-25 landed June to September 2026, Benoit de Chezelles (bew) is now the top committer, and a September 2026 commit (#8045) adds TerminalState accessors explicitly 'for downstream users'. It remains accurate for releases (none since 2024-02-03).",
+      "why": "the review's option F reasoning cites WezTerm as stalled; half of that premise has changed",
+      "source": "measured 2026-09-25: gh api --paginate 'repos/wezterm/wezterm/commits?since=2025-09-25T00:00:00Z&per_page=100' --jq '.[] | .commit.committer.date[:7]' | sort | uniq -c"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "wezterm-term",
+      "note": "WezTerm's own mux is prior art for TD's host/replica split, done differently: the server keeps the only emulator and clients receive serde SerializedLines plus dirty stable-row ranges keyed by sequence number (codec GetPaneRenderChangesResponse), with images shipped as SerializedImageCell, instead of re-encoded VT bytes and a hash check.",
+      "why": "a line-level wire protocol would carry pictures to the window, which TD's VT snapshot cannot",
+      "source": "https://github.com/wezterm/wezterm/blob/c4b1d89fd3cf4b44fdab03df6ac7df925a690060/codec/src/lib.rs#L914-L978"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "wezterm-term",
+      "note": "crates.io rejects requests without a User-Agent: the brief's example command 'curl -s https://crates.io/api/v1/crates/rio-vt' returned an empty body on 2026-09-25, while the same request with -A 'td-research' returned the JSON. Other gatherers using the bare command may record a crate as missing when it is not.",
+      "why": "a silent empty response reads like absence, and absence is not zero",
+      "source": "measured 2026-09-25: curl -s https://crates.io/api/v1/crates/rio-vt (0-byte body) vs curl -s -A 'td-research' https://crates.io/api/v1/crates/rio-vt"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "vt100-rust",
+      "note": "shpool, a session-persistence tool, uses a vt100 fork (shpool_vt100) for exactly TD's snapshot-on-attach design: README says it \"continually maintains an in-memory render of the terminal state via the [`shpool_vt100`](https://crates.io/crates/shpool_vt100) crate. On reattach, `shpool` will use this in-memory render to re-draw the screen\". Working host/replica prior art on a small core, and a sign vt100's upstream is slow enough that users fork (vt100-ctt, mprocs-vt100 too).",
+      "why": "Direct prior art for TD's host/window replica; worth reading for how it handles scrollback on reattach.",
+      "source": "https://github.com/shell-pool/shpool/blob/master/README.md"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "alacritty-own-loop",
+      "note": "Zellij 0.45 (2026-08) puts a 166-line byte-level KittyApcInterceptor in front of vte 0.15 — the same vte TD uses — to capture ESC _ G … ST before vte drops it (states Ground/Esc/EscUnderscore/Capturing/CapturingEsc, captures capped at 1,048,576 bytes). MIT, so TD can copy it with the notice. This is the TD-owned-read-loop design already shipped by someone else.",
+      "why": "Cuts the risk of option A1: the pre-parser TD would write exists, is MIT, and runs against vte 0.15.",
+      "source": "https://github.com/zellij-org/zellij/blob/2fce032ccebd2e980b9f86eed1c121674e9059fd/zellij-server/src/panes/kitty_graphics/interceptor.rs"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "alacritty-patched-vte",
+      "note": "Warp runs a vte fork (github.com/warpdotdev/vte, Apache-2.0, forked from alacritty/vte) whose only addition over vte 0.13.0 is one commit, 4b399c87 'Copied APC support logic (#1)' (2025-02-05), adding apc_start/apc_put/apc_end to Perform; Warp's ansi/mod.rs then treats a payload starting with 'G' as Kitty graphics. A licence-compatible, one-commit APC patch to port from 0.13 to 0.15.",
+      "why": "Evidence of the size of option A2's vte patch and a licence-clean source for it.",
+      "source": "https://github.com/warpdotdev/vte/commit/4b399c87b63ba88f45709edaa6383fc519f6c900"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "alacritty-own-loop",
+      "note": "Alacritty's maintainer declined image support on 2026-07-07 in the Sixel issue (#910, still open): \"Many of the usecases you've listed are things I **never** want to see in my terminal and the best way to avoid running into them is by not implementing support in Alacritty.\" Zellij's author cited this as what pushed him to ship Kitty graphics himself. On every cluster-A option, pictures stay TD's code for good.",
+      "why": "Rules out waiting for upstream alacritty_terminal to grow a picture model.",
+      "source": "https://github.com/alacritty/alacritty/issues/910#issuecomment-4905562551"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "zellij-grid",
+      "note": "Zellij added the Kitty graphics protocol in v0.45.0 (PR #5428, merged 2026-07-31, +9,169/−125 lines in 77 files); the author calls it \"a full protocol implementation*\" with \"*minus the heavier animations and unicode placeholders which might follow later\". It sits beside Sixel (since 2022) in zellij-server/src/panes/kitty_graphics/, and zellij-grid's kitty fields should reflect it.",
+      "why": "Changes zellij-grid's picture fields and is the freshest Rust implementation of Kitty graphics TD can read and legally copy.",
+      "source": "https://github.com/zellij-org/zellij/pull/5428"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "libghostty-vt",
+      "note": "Warp's CEO opened 'Explore libghostty-rs as the core grid implementation in warp' (#9250, 2026-04-28, open). Mitchell Hashimoto replied: \"Libghostty is in the realm of fast (highly competitive with Alacritty, within noise levels of difference). The real difference maker is going to be in the modern features that libghostty will bring for free to Warp such as Kitty images, keyboard, etc.\" A peer with its own alacritty-derived model is weighing the same swap TD is.",
+      "why": "Evidence for libghostty-vt's performance claim from its author, and a sign that owning a model has a cost Warp would like to shed.",
+      "source": "https://github.com/warpdotdev/warp/issues/9250"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "td-own-core",
+      "note": "Warp #9522 'Warp violates Alacritty's licenses' (2026-04-30): Alacritty's maintainer found alacritty and vte code copied without notices into Warp's AGPL tree; Warp added notices (16 files now carry them). If TD's own core copies from alacritty_terminal (Apache-2.0) or Zellij (MIT), keep per-file notices and extend THIRD-PARTY-LICENSES.md from the first commit. Warp's own model is AGPL-3.0-only and cannot be copied into MIT TD at all.",
+      "why": "A cheap rule to adopt before writing an own core, learned publicly by someone else.",
+      "source": "https://github.com/warpdotdev/warp/issues/9522"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "td-own-core",
+      "note": "Parser choice carries a trade-off nobody had written down: vte 0.15's `ansi` feature gives a ready Handler trait (hyperlinks, kitty keyboard modes, OSC 52, sync-output buffering in Processor, DA/DSR hooks) but drops APC; wezterm's vtparse (MIT, 0.7.0) delivers APC natively through `fn apc_dispatch(&mut self, data: Vec<u8>)` but decodes nothing above raw CSI/OSC/DCS. vte::ansi plus a Zellij-style APC pre-filter keeps both.",
+      "why": "Decides how much of an own core is TD's to write before the first line.",
+      "source": "https://github.com/wez/wezterm/blob/main/vtparse/src/lib.rs"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "libghostty-vt",
+      "note": "libghostty's binary snapshot deliberately omits Kitty images and placements (it keeps only the U+10EEEE placeholder cells), and the VT formatter has no image extra either. A host/window split built on libghostty-vt still has to ship image bytes and placements to the window on its own channel.",
+      "why": "TD's replica model hashes and compares both sides' grids; pictures would be the one piece of state no libghostty route transfers.",
+      "source": "https://github.com/ghostty-org/ghostty/blob/982fe90d941e4b4aab4905ffcbcfdea60bd83343/src/terminal/snapshot/grid.zig#L1234-L1235"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "libghostty-vt",
+      "note": "The published crate 0.2.1 predates the snapshot C API (added upstream 2026-08-03) and needs Zig 0.15.x; libghostty-rs master (2026-09-01, pinned to ghostty 22d13172 of 2026-08-06) has snapshot.rs and needs Zig 0.16.x. Choosing crates.io or git decides both the feature set and the toolchain.",
+      "why": "It changes build_requirements and state_snapshot depending on which one TD pins.",
+      "source": "https://github.com/Uzaaft/libghostty-rs/blob/5988a0b78b4aa804d1c12e66bbfe662bd97d81c0/crates/libghostty-vt-sys/build.rs#L7"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "libghostty-vt",
+      "note": "Timed Kitty animation playback in Ghostty is driven by the app renderer calling ImageStorage.animationTick (src/renderer/generic.zig:1440); the C API has no tick entry point, so a libghostty-vt embedder only sees frames change when the client sends a=a c=N.",
+      "why": "The kitty_tags 'animation' tag for libghostty-vt overstates what an embedder gets without an upstream API addition.",
+      "source": "https://github.com/ghostty-org/ghostty/blob/982fe90d941e4b4aab4905ffcbcfdea60bd83343/src/renderer/generic.zig#L1440"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "libghostty-vt",
+      "note": "wterm's production libghostty-vt renderer shipped direct Kitty placements but left out Sixel, iTerm2/OSC 1337, animation, virtual Unicode placements and file/shared-memory/URL media — a real embedder's view of what the C API leaves to the host.",
+      "why": "Independent evidence that placeholder drawing and animation are embedder work, not something libghostty-vt hands over ready-made.",
+      "source": "https://github.com/vercel-labs/wterm/tree/main/packages/@wterm/ghostty"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "zmx",
+      "note": "zmx restores clients with the Zig formatter in VT mode (not the binary snapshot): scrollback first with no extras, then clear-screen, then the active area with modes, scrolling region, keyboard and screen extras; it writes OSC 7 and the title (OSC 2) itself because the formatter adds a stray NUL to pwd and has no title extra (src/util.zig:795-877).",
+      "why": "Prior art for TD's gridwire encode_snapshot, including two formatter gaps TD would hit too.",
+      "source": "https://github.com/neurosnap/zmx/blob/878a8b0/src/util.zig"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "libghostty-vt",
+      "note": "libghostty-vt reports unsupported APC sequences to an UNKNOWN_SEQUENCE callback (content capture needs a non-zero GHOSTTY_TERMINAL_OPT_UNKNOWN_MAX_BYTES), and it also implements Ghostty's own Glyph Protocol APC (GHOSTTY_TERMINAL_OPT_GLYPH_PROTOCOL).",
+      "why": "The unknown-APC hook is the kind of seam the alacritty-patched-vte and ghostty-shadow options want; a hybrid could route non-Kitty APCs through it.",
+      "source": "https://github.com/ghostty-org/ghostty/blob/982fe90d941e4b4aab4905ffcbcfdea60bd83343/include/ghostty/vt/terminal.h#L344-L424"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "contour-vtbackend",
+      "note": "Contour 0.7.0 ships an experimental daemon (src/vthost) that is TD's host/replica architecture built on vtbackend: a Qt-free daemon owns {Pty, vtbackend::Terminal} per session, clients render per-line deltas addressed by stable row ids ('wezterm's model'), attach snapshots are paced and split across frames, images travel on their own wire (ImageWire; ImagePool answers FetchImage with ImageGone once an image is dropped), and only the host pump flushes replies (DA1, DSR, OSC colour queries). The doc also records the trap TD's VT-byte replay would hit: tmux capture-pane carries only text and SGR, so a client attaching after an image was drawn cannot recover it.",
+      "why": "Direct prior art for TD's re-attach snapshot and exactly-once replies once pictures exist, whichever core TD picks; it also belongs beside the zellij-grid and zmx references.",
+      "source": "https://github.com/contour-terminal/contour/blob/2ec3c63cfd268f1e466d992e2352fe328d833106/docs/internals/vthost.md"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "contour-vtbackend",
+      "note": "Contour refuses Kitty file, temp-file and shared-memory transmission on purpose ('Reading a path or a shared-memory object the application names would let it point the terminal at any file the user can read. Not implemented deliberately.') and answers a=q with the same validation a real transmit gets, so a probing program falls back instead of failing later. It also caps chunked payloads at 32 MiB and stored images at 128 MiB, both justified in comments as attack bounds.",
+      "why": "A ready-made security and detection stance for whichever option has TD writing Kitty graphics itself (alacritty-own-loop, alacritty-patched-vte, td-own-core).",
+      "source": "https://github.com/contour-terminal/contour/blob/2ec3c63cfd268f1e466d992e2352fe328d833106/src/vtbackend/screen/Screen.cpp#L5399-L5419"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "libvterm",
+      "note": "Neovim routes every APC (and DCS, and any OSC other than 8 and 52) to Lua as a TermRequest autocommand, carrying the sequence and the cursor position; news-0.11: 'The |terminal| emits a |TermRequest| autocommand event when the child process emits an APC control sequence.' Kitty graphics commands therefore reach Neovim plugins but nothing draws them.",
+      "why": "Shows the 'pass APC to the embedder' seam in production, which is the shape TD would need on any core that drops pictures.",
+      "source": "https://github.com/neovim/neovim/blob/378128aab90558d729117a2b0fc948e682f6ab01/runtime/doc/news-0.11.txt"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "libvterm",
+      "note": "A crates.io search for 'libvterm' also returns shpool-vterm 0.2.6 ('An in-memory terminal to support session restore in shpool.'; 9,798 downloads, 6,376 recent, updated 2026-09-23). Only its description was read; whether it wraps libvterm or is pure Rust is unknown.",
+      "why": "Possible session-restore prior art for TD's host/replica snapshot, relevant to the td-own-core and zellij-grid subjects; a hunch until its source is read.",
+      "source": "https://crates.io/api/v1/crates/shpool-vterm"
+    },
+    {
+      "kind": "gap-note",
+      "subjectId": "libvterm",
+      "note": "performance_evidence carries no measured throughput: no benchmark exists in the libvterm repository, and a web search (2026-09-25) found none. The per-cell memory figure is inferred from the ScreenCell struct, not measured with sizeof. Establishing throughput would mean running vtebench or a parse loop against a built libvterm, which this round's rules forbid.",
+      "source": "https://www.leonerd.org.uk/code/libvterm/"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "ghostty-shadow",
+      "note": "Ghostty itself got the C=0 cursor rule wrong until 2026-08-18. The commit message for afb61e1 reads: \"This fixes an incompatibility between Ghostty and Kitty 0.47.1+ ... Kitty defines `C=0` as leaving the cursor after the image and implements the movement as rows minus one, plus one row when the image reaches the right edge\" and \"(Had to view Kitty source to verify what the spec meant)\". The crates.io libghostty-vt 0.2.1 still carries the old rule, moving the cursor a full `rows` down. Any TD code that reproduces the cursor motion must match kitty's source, not the prose spec.",
+      "why": "Any option in which TD tracks Kitty cursor motion itself (alacritty-own-loop, alacritty-patched-vte, ghostty-shadow) inherits this subtlety.",
+      "source": "https://github.com/ghostty-org/ghostty/commit/afb61e1b6292f56b863ad0fe61bcdbad47392a5e"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "ghostty-shadow",
+      "note": "Host/replica hazard for every picture option. With t=t (temporary file), used by viu, the kitty doc says \"the terminal emulator will delete the file after reading the pixel data\". With t=s (shared memory), used by mpv --vo-kitty-use-shm, it says the terminal \"must read the data from the memory object and then unlink and close it on POSIX\". In TD's design the host and the window each parse the same bytes, so only the first reader gets the pixels. Pixels must therefore travel host-to-window over TD's own wire rather than be re-parsed from the byte stream.",
+      "why": "This affects gridwire/attach design for alacritty-own-loop, alacritty-patched-vte, libghostty-vt and ghostty-shadow alike.",
+      "source": "https://github.com/kovidgoyal/kitty/blob/42d3cb2148acc182946901091dbbb0431a5a3344/docs/graphics-protocol.rst#L332-L344"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "libghostty-vt",
+      "note": "Embedded libghostty-vt ships with Kitty pictures mostly off. The storage limit defaults to 10 MB for the library build (320 MB for the Ghostty app), loading limits default to `.direct` (no file/temp/shm), and PNG works only after the embedder installs a decode callback: \"if no `sys.decode_png` hook is specified, png formats are disabled no matter what.\" So kitten icat (t=f, PNG) and viu (t=t) fail against a default libghostty until the embedder enables those media.",
+      "why": "The libghostty-vt subject's kitty_graphics should say 'implemented but off by default' for file/temp/shm/PNG.",
+      "source": "https://github.com/ghostty-org/ghostty/blob/a887df42c56f6de86c0fe6da9c4eeca37931e083/src/terminal/Terminal.zig#L248-L267"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "libghostty-vt",
+      "note": "At the ghostty commit that crates.io libghostty-vt 0.2.1 pins (a887df4, 2026-07-11), the Kitty animation actions answer \"ERROR: unimplemented action\". Animation (d8b920e, 2026-08-21) and relative placements (cd5f9ee/33ca9e5, 2026-08-20) landed upstream later, and libghostty-rs master (pin 22d1317, 2026-08-06) also predates them. Kitty coverage therefore depends on which ghostty commit the bindings pin, not on ghostty main.",
+      "why": "It keeps the libghostty-vt subject's kitty_tags honest about animation.",
+      "source": "https://github.com/ghostty-org/ghostty/blob/a887df42c56f6de86c0fe6da9c4eeca37931e083/src/terminal/kitty/graphics_exec.zig#L71-L74"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "zellij-grid",
+      "note": "Zellij already solved TD's first problem with the exact parser TD uses: vte 0.15 drops APC (lib.rs L182, SosPmApcString → anywhere), so Zellij puts a 166-line byte-level KittyApcInterceptor in front of it (Ground → Esc → EscUnderscore → Capturing on 'G'; forwards every other byte unchanged; 1 MiB cap per escape; CAN/SUB abort). It is MIT and self-contained, so TD could copy it rather than patch vte — relevant to alacritty-own-loop and alacritty-patched-vte, since it requires only that TD sees the bytes before Processor::advance.",
+      "why": "Removes the 'patch vte' step from the cheapest Kitty path, and it is proven in a shipped release (v0.45.0).",
+      "source": "https://github.com/zellij-org/zellij/blob/2fce032ccebd2e980b9f86eed1c121674e9059fd/zellij-server/src/panes/kitty_graphics/interceptor.rs#L67-L122"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "zellij-grid",
+      "note": "Zellij's per-client picture replay is a worked answer to 'how does a re-attaching client get the pictures': a HostKittyState per client records which images were transmitted (host id per image/scaled variant) and which placements are live; each frame it deletes freed images (a=d,d=I), deletes stale placements (a=d,d=i,i,p), transmits missing images once (a=t,f=32, 4096-byte chunks, zlib when the host supports it) and re-places changed ones with a=p … C=1. On attach the state is cleared so everything is re-sent. TD's gridwire snapshot could carry pictures the same way.",
+      "why": "TD's host/window replica has no picture story yet; this is a tested design for one.",
+      "source": "https://github.com/zellij-org/zellij/blob/2fce032ccebd2e980b9f86eed1c121674e9059fd/zellij-server/src/output/mod.rs#L464-L626"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "ghostty-shadow",
+      "note": "Zellij's own Kitty implementation also moves the cursor after a direct placement without C=1: advance_cursor_after_kitty_placement sets x += cols (wrapping to column 0 and one more line if that reaches the width) and adds rows-1 lines; C=1 skips it. And when Zellij re-emits to its host it always sends C=1, so the host's cursor never moves on its behalf — the discipline a shadow emulator would need.",
+      "why": "A second independent implementation (besides kitty's graphics.c) confirms the cursor-movement rule that makes an alacritty+libghostty shadow diverge.",
+      "source": "https://github.com/zellij-org/zellij/blob/2fce032ccebd2e980b9f86eed1c121674e9059fd/zellij-server/src/panes/grid.rs#L3780-L3792"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "zellij-grid",
+      "note": "Zellij forwards queries it cannot answer (CSI 14t/16t pixel sizes, OSC 10/11/4 colours, OSC 52 reads) to a client's host terminal and pauses that pane's parsing until the reply, or a 500 ms cache fallback, lands, so the reply reaches the program at the same stream position the query occupied. It also probes the host with ESC_Ga=q (plain and o=z) followed by a Primary DA barrier at startup to learn Kitty and zlib support.",
+      "why": "TD's host has no display, so pixel-size and colour queries face the same 'only the window knows' problem; this is prior art for answering them exactly once from the host.",
+      "source": "https://github.com/zellij-org/zellij/blob/2fce032ccebd2e980b9f86eed1c121674e9059fd/zellij-server/src/panes/terminal_pane.rs#L162-L179"
+    },
+    {
+      "kind": "gap-note",
+      "subjectId": "zellij-grid",
+      "note": "performance_evidence has no throughput figure: Zellij publishes no parse benchmark (no criterion or [[bench]] in the workspace). Only per-cell memory (16-byte TerminalCharacter on x86_64) is sourced. Measuring throughput would mean building and running Zellij, which this round forbids.",
+      "source": "https://github.com/zellij-org/zellij/blob/2fce032ccebd2e980b9f86eed1c121674e9059fd/Cargo.toml"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "libghostty-vt",
+      "note": "At ghostty 8af6897 (2026-08-30) libghostty-vt has a binary state-snapshot feature, on by default: \"Terminal state serialization: encode a full terminal (screen contents, scrollback, cursor, styles, modes, etc.) to a compact binary format and decode it back into a live terminal. Used for session persistence, window restoration, and moving terminal state between processes.\" (C API ghostty_snapshot_*). It sends active state, a READY marker, then history, and it round-trips both screens (TERMINAL record: primary plus optional alternate) — which would close TD's alt-screen gap for a libghostty-vt replica. Caveats: format v1 is 'the work-in-progress format that we intended to continue to break until we can promise binary compatibility', and the Kitty image/placement registry is 'intentionally omitted'.",
+      "why": "Directly answers state_snapshot for the libghostty-vt subject and changes the host/replica calculus: a libghostty-vt host could ship its grid to a libghostty-vt replica without re-encoding it as VT bytes.",
+      "source": "https://github.com/ghostty-org/ghostty/blob/8af6897c0afc63037a8a3efee4162a380e3a4572/src/terminal/build_options.zig#L60-L68"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "libghostty-vt",
+      "note": "libghostty-vt's VT formatter (the thing zmx uses to restore) emits all modes BEFORE the screen content — \"for now for simplicity we just emit them all before\" (formatter.zig L408-411) — and emits OSC 8 hyperlinks only for HTML (L1459-1461); it also only formats the active screen (L301-302). TD's gridwire restores modes last precisely because insert/origin/wrap change where painted bytes land.",
+      "why": "If TD swapped to libghostty-vt and used its formatter in place of gridwire, these are regressions to test for (origin/insert mode panes, hyperlinks lost on re-attach).",
+      "source": "https://github.com/ghostty-org/ghostty/blob/8af6897c0afc63037a8a3efee4162a380e3a4572/src/terminal/formatter.zig#L408-L411"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "libghostty-vt",
+      "note": "Embedded libghostty defaults: kitty_image_storage_limit is 10 MB for the lib artifact (320 MB for the Ghostty app), kitty_image_loading_limits default to '.direct' (no file/temp/shm), and PNG is disabled unless the embedder installs a sys.decode_png hook. A readonly vtStream() still parses and stores Kitty images, it just cannot reply.",
+      "why": "An embedder (TD, or the ghostty-shadow hybrid) must set these three knobs explicitly or icat/chafa PNG transfers and t=f/t=s transfers silently fail.",
+      "source": "https://github.com/ghostty-org/ghostty/blob/8af6897c0afc63037a8a3efee4162a380e3a4572/src/terminal/Terminal.zig#L289-L307"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "zmx",
+      "note": "zmx avoids the snapshot/stream seam TD fences with a lease by doing everything on one thread, but a newly accepted client is appended to the broadcast list before its Init message is processed (loop.zig L306-325 vs handleInit L949+), so live bytes read in between may reach it before its snapshot. Hunch — not reproduced; phase 2 of the snapshot repaints the visible screen, which probably hides it.",
+      "why": "Prior-art check for TD's handover invariant ('every byte falls on exactly one side').",
+      "source": "https://github.com/neurosnap/zmx/blob/878a8b0cef19448575b4f9fa1619e627b81ddb80/src/loop.zig#L306-L325"
+    },
+    {
+      "kind": "serendipity",
+      "subjectId": "zmx",
+      "note": "Kitty pictures through zmx failed early on because the client's pixel size was not forwarded (issue #14's first report: 'Terminal does not support reporting screen sizes in pixels'); 0.7.0 added xpixel/ypixel to the Init/Resize winsize and sends both 4- and 8-byte encodings for old daemons (ipc.zig L135-138). broot's pixelated Kitty images were reported fixed by 0.7.0 (issue #192).",
+      "why": "TD's host must also propagate TIOCSWINSZ pixel sizes to the PTY, or picture programs refuse to run under the host even when the window can draw them.",
+      "source": "https://github.com/neurosnap/zmx/blob/878a8b0cef19448575b4f9fa1619e627b81ddb80/src/ipc.zig#L46-L50"
+    },
+    {
+      "kind": "gap-note",
+      "subjectId": "td-own-core",
+      "note": "latest_release, first_release and releases_last_12mo cannot be sourced: the option is a core TD has not written, so there is no release to cite. Round 1 recorded them as flagged 'not applicable'. They stay open by design; this is an unfillable gap, not an unfound one."
+    },
+    {
+      "kind": "gap-note",
+      "subjectId": "td-own-core",
+      "note": "latest_release, first_release and releases_last_12mo cannot be sourced: the option is a core TD has not written, so there is no release to cite. Round 1 recorded them as flagged 'not applicable'. They stay open by design; this is an unfillable gap, not an unfound one."
+    },
+    "Neither of libghostty's two state-transfer routes (binary snapshot, VT formatter) carries Kitty images or placements, so TD's host-to-window replica would still need its own image channel whichever core it picks.",
+    "Replies are dropped unless WRITE_PTY is installed, which fits TD's 'host writes replies exactly once' rule without extra code on the window side.",
+    "Unicode-placeholder drawing is embedder work in libghostty-vt: the API flags placeholder rows and virtual placements but gives them no position.",
+    "Canonical libvterm is a Bazaar branch (bazaar.leonerd.org.uk, lp:libvterm); the GitHub repo neovim/libvterm is archived and its README says Neovim no longer uses it.",
+    "The capable libvterm today is Neovim's in-tree fork (Kitty keyboard partial, OSC 8, mode 2026, grapheme clusters), but it depends on nvim internals and is not a library.",
+    "Contour's vtbackend has, since 0.7.0, the broadest picture support of the C-boundary candidates read here (Sixel, 7 of 14 Kitty tags, partial iTerm2, ReGIS, experimental Good Image Protocol), but no way for Rust to reach it short of a hand-written C shim.",
+    "Contour's daemon (src/vthost) already solves TD's host/replica problem on top of vtbackend, with per-line revision deltas instead of VT re-encoding.",
+    "kitty is licence-blocked and not a library; its value to TD is as the protocol oracle to test against, never as code to read-and-port.",
+    "Divergence table, direct placement (a=T/a=p) without C=1. kitty: x += cols, y += rows-1, then scroll if past the bottom margin. libghostty main: the same, since afb61e1 (2026-08-18). libghostty at crates.io 0.2.1: index() rows times, then x = pin.x + cols. alacritty (vte 0.15): no movement, because the APC is swallowed. Programs without C=1: chafa, viu, kitten icat (default), timg (outside tmux). With C=1: mpv, and kitten icat --place. U=1 virtual placements (rimg/ratatui-image, icat --unicode-placeholder, timg in tmux) move no cursor anywhere, so they do not diverge.",
+    "The divergence also changes what a person sees, not only where pictures go. After `viu -w 60 pic.png` (r=18) viu prints a newline. In libghostty the prompt lands below the picture; in alacritty it lands on the row under the picture's top row. TD paints the picture from libghostty's pin over alacritty's text, so the picture covers the user's new prompt."
+  ]
+}
