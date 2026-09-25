@@ -50,6 +50,13 @@ jobs:
       - name: Clippy
         run: cargo clippy --locked -- -D warnings
 
+      # The HTML engine's tests drive a real Chromium, and the runner's AppArmor
+      # forbids the unprivileged user namespaces its sandbox needs, so without
+      # this the browser dies at launch and those tests skip. TD never runs a
+      # browser without its sandbox; this lets the sandbox start (#737).
+      - name: Let Chromium start its sandbox
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
       - name: Test
         run: cargo test --locked
 
