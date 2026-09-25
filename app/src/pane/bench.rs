@@ -42,6 +42,114 @@ impl TerminalView {
     /// and never opens the card.
     pub(super) const DRAG_SLOP: f32 = 5.0;
 
+    /// `ctl bench click|hover`: a pointer event at a window point, through
+    /// this pane's own handlers, so a script can drive the bench's gestures
+    /// the way a hand does — hit test, deferral, release and all. Answers
+    /// what the pane holds afterwards: the floating square's file, and the
+    /// bench's Alt chip.
+    pub(crate) fn synthetic_pointer(
+        &mut self,
+        p: crate::ctl::PointerReq,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> String {
+        // `p` is FLAT, as `bench probe` prints zones. The pane un-bends every
+        // pointer through its tube, so the event has to arrive where the
+        // glass SHOWS that flat point: invert `unwarp` by walking the error
+        // back, which converges in a few steps for a barrel this mild.
+        let (mut wx, mut wy) = (p.x, p.y);
+        if let Some(b) = self.content_bounds.lock().ok().and_then(|b| *b) {
+            let rect = (
+                f32::from(b.origin.x),
+                f32::from(b.origin.y),
+                f32::from(b.size.width),
+                f32::from(b.size.height),
+            );
+            let (k1, k2) = self.warp_k;
+            for _ in 0..60 {
+                let (fx, fy) = crate::workbench::unwarp(rect, k1, k2, wx, wy);
+                wx += p.x - fx;
+                wy += p.y - fy;
+            }
+        }
+        let position = gpui::point(gpui::px(wx), gpui::px(wy));
+        let modifiers = gpui::Modifiers {
+            alt: p.alt,
+            control: p.control,
+            ..Default::default()
+        };
+        if p.click {
+            self.on_mouse_down(
+                &gpui::MouseDownEvent {
+                    button: gpui::MouseButton::Left,
+                    position,
+                    modifiers,
+                    click_count: 1,
+                    first_mouse: false,
+                },
+                window,
+                cx,
+            );
+            self.on_mouse_up(
+                &gpui::MouseUpEvent {
+                    button: gpui::MouseButton::Left,
+                    position,
+                    modifiers,
+                    click_count: 1,
+                },
+                window,
+                cx,
+            );
+        } else {
+            self.on_mouse_move(
+                &gpui::MouseMoveEvent {
+                    position,
+                    pressed_button: None,
+                    modifiers,
+                },
+                window,
+                cx,
+            );
+        }
+        let float = self
+            .float
+            .as_ref()
+            .map(|f| f.view.read(cx).target().path.display().to_string());
+        format!(
+            "ok float={} hint={:?} showing={:?}",
+            float.as_deref().unwrap_or("none"),
+            self.wb_alt_hint,
+            self.bench.showing().map(|s| s.id.0.clone()),
+        )
+    }
+
+    /// `ctl bench probe`: every zone the bench recorded, and every text run
+    /// that carries a link, each with its flat rectangle — where a scripted
+    /// click has to aim.
+    pub(crate) fn bench_probe(&self) -> String {
+        let mut out = Vec::new();
+        for z in self.wb_zones.borrow().iter() {
+            out.push(format!(
+                "zone {:.0} {:.0} {:.0} {:.0} {:?}",
+                z.x, z.y, z.w, z.h, z.hit
+            ));
+        }
+        for a in self.wb_atoms.borrow().0.iter() {
+            if a.text.contains("://") || a.text.contains("/home/") {
+                out.push(format!(
+                    "text {:.0} {:.0} {:.0} {:.0} {:?}",
+                    a.x,
+                    a.y,
+                    a.w,
+                    a.h,
+                    a.text.chars().take(100).collect::<String>()
+                ));
+            }
+        }
+        // One line: the socket answers a line.
+        out.join(" \u{2016} ")
+    }
+
     /// Turn a flat point into a caret — which run, and how far into it.
     ///
     /// `None` when there is nothing selectable under or near the point, which

@@ -3992,6 +3992,8 @@ struct Workspace {
     /// a window context: queued by the window-less ctl ticker, drained by
     /// render() via defer_in.
     pending_adopts: Vec<ctl::AdoptReq>,
+    /// Pointer events from `ctl bench click|hover`, parked for a Window.
+    pending_pointer: Vec<(ctl::PointerReq, std::sync::mpsc::Sender<String>)>,
     /// The 🧩 plugins panel overlay is open (MCP plugin host — see [`plugins`]).
     plugins_menu: bool,
     /// The 🔔 notifications panel overlay is open — what a finished agent is
@@ -5536,6 +5538,7 @@ impl Workspace {
             dead_menu: false,
             dead_filter: None,
             pending_adopts: Vec::new(),
+            pending_pointer: Vec::new(),
             plugins_menu: false,
             notif_menu: false,
             notif: notifpref::load(),
@@ -7681,6 +7684,51 @@ impl Workspace {
 
     /// Park a desktop adoption until a frame gives us a Window (the ctl ticker
     /// is window-less). render() drains the queue via defer_in.
+    /// `ctl bench probe`: what the picked bench pane has laid out — the
+    /// proof, from outside, of where a click would land.
+    pub(crate) fn bench_probe(&mut self, cx: &mut Context<Self>) -> String {
+        let mut out = String::new();
+        let said = self.act_on_picked_pane(
+            cx,
+            |v| v.bench.face() == workbench::Face::Workbench,
+            "no pane is showing its bench",
+            |view, _cx| out = view.bench_probe(),
+        );
+        if said.starts_with("err") {
+            said
+        } else {
+            format!("{said} \u{2016} {out}")
+        }
+    }
+
+    /// Park a pointer event for the next frame, which has a Window.
+    pub(crate) fn queue_pointer(
+        &mut self,
+        p: ctl::PointerReq,
+        reply: std::sync::mpsc::Sender<String>,
+        cx: &mut Context<Self>,
+    ) {
+        self.pending_pointer.push((p, reply));
+        cx.notify();
+    }
+
+    /// Run parked pointer events on the picked bench pane, through its own
+    /// handlers — the press a hand makes, with nothing short-circuited.
+    fn drain_pending_pointer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        for (p, reply) in std::mem::take(&mut self.pending_pointer) {
+            let (_, leaves, focused) = self.bench_targets();
+            let flags: Vec<bool> = leaves
+                .iter()
+                .map(|l| l.read(cx).bench.face() == workbench::Face::Workbench)
+                .collect();
+            let said = match workbench::bench_target(&flags, focused) {
+                Some(i) => leaves[i].update(cx, |v, cx| v.synthetic_pointer(p, window, cx)),
+                None => "err no pane is showing its bench".to_string(),
+            };
+            let _ = reply.send(said);
+        }
+    }
+
     pub(crate) fn queue_adopt(&mut self, a: ctl::AdoptReq, cx: &mut Context<Self>) {
         self.pending_adopts.push(a);
         cx.notify();
@@ -7927,8 +7975,15 @@ impl Workspace {
         let mut refused = None;
         let said = self.act_on_picked_pane(
             cx,
-            |v| v.bench.face() == workbench::Face::Terminal,
-            "no pane is showing its terminal face",
+            // The square floats over the bench as well as the terminal, so
+            // the verb that proves it reaches both faces.
+            |v| {
+                matches!(
+                    v.bench.face(),
+                    workbench::Face::Terminal | workbench::Face::Workbench
+                )
+            },
+            "no pane is showing its terminal or its bench",
             |view, cx| refused = view.open_float(target, None, cx).err(),
         );
         // An HTML file with no engine to draw it went to the desktop instead,
@@ -23896,6 +23951,11 @@ impl Render for Workspace {
             // Adoptions queued by the window-less ctl ticker land here, where a
             // Window exists; defer so the tab build never runs mid-render.
             cx.defer_in(window, |ws, window, cx| ws.drain_pending_adopts(window, cx));
+        }
+        if !self.pending_pointer.is_empty() {
+            cx.defer_in(window, |ws, window, cx| {
+                ws.drain_pending_pointer(window, cx)
+            });
         }
         // Publish the active UI language so panes can localise their own chrome.
         lang::set_current(self.lang);
