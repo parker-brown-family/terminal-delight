@@ -142,14 +142,24 @@ struct HostTap {
     /// anything was said since the last look is all a twelve-hour idle needs to
     /// know.
     spoke: Arc<AtomicBool>,
+    /// Rewrites a picture sent by reference — a temporary file, shared
+    /// memory — into one carrying its pixels, in the copy the window gets.
+    /// This tap runs before the host's own core parses the chunk, and that
+    /// core deletes what it reads, so here is the only place the window's copy
+    /// can still be made. See [`crate::picturewire`].
+    pictures: crate::picturewire::Inliner,
 }
 
 impl vt::pump::Tap for HostTap {
     fn tap(&mut self, bytes: &[u8]) {
         self.spoke.store(true, Ordering::Relaxed);
+        let bytes = self.pictures.feed(bytes);
+        if bytes.is_empty() {
+            return;
+        }
         let mut held = self.sink.lock().expect("sink lock");
         if let Some(sink) = held.as_ref() {
-            if !sink.send(bytes) {
+            if !sink.send(&bytes) {
                 // Gone or hopelessly behind: drop it here rather than letting
                 // the queue grow. The client re-attaches.
                 *held = None;
@@ -612,6 +622,7 @@ impl Host {
         let tap = HostTap {
             sink: sink.clone(),
             spoke: self.spoke.clone(),
+            pictures: Default::default(),
         };
 
         let proxy: Arc<dyn Listener> = Arc::new(HostProxy(events));
@@ -2342,6 +2353,62 @@ mod owning {
     /// A snapshot ends by restoring the modes, and line wrap is the last one
     /// written, so its final bytes are that mode change. Ordinary terminal
     /// output does not contain it.
+    /// A picture a program sends as a temporary file reaches an attached
+    /// window as a picture.
+    ///
+    /// The host's core reads a temporary file and deletes it, and it reads
+    /// first, so the window's core used to find nothing there and drew
+    /// nothing (seen in a hidden window, 2026-09-25). The window's side is
+    /// played here by a core fed the attached stream, as a replica is. `cat`
+    /// prints the command back, which is how it reaches the terminal as
+    /// output.
+    #[cfg(not(feature = "core-alacritty"))]
+    #[test]
+    fn a_picture_sent_as_a_temporary_file_reaches_the_attached_window() {
+        use base64::Engine;
+        let (host, pane) = host_with_cat_pane();
+        let (client, server) = UnixStream::pair().expect("socket pair");
+        assert!(host.attach(pane, server).is_ok());
+
+        let path = std::env::temp_dir().join(format!(
+            "tty-graphics-protocol-host-test-{}.rgb",
+            std::process::id()
+        ));
+        std::fs::write(&path, [0xff, 0x00, 0x00]).expect("one red pixel");
+        let reference =
+            base64::engine::general_purpose::STANDARD.encode(path.to_str().unwrap().as_bytes());
+        let command = format!("\x1b_Ga=T,q=2,f=24,s=1,v=1,t=t;{reference}\x1b\\\n");
+        host.write_to(pane, command.into_bytes());
+
+        let heard: Arc<dyn vt::Listener> = Arc::new(Silence);
+        let mut window = vt::Term::new(vt::TermSize::new(100, 28, 8, 16), heard);
+        let mut client = client;
+        client
+            .set_read_timeout(Some(Duration::from_millis(100)))
+            .unwrap();
+        let mut buf = [0u8; 8192];
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < deadline && window.pictures().is_empty() {
+            if let Ok(read) = client.read(&mut buf) {
+                window.advance(&buf[..read]);
+            }
+        }
+        assert_eq!(
+            window.pictures().len(),
+            1,
+            "the window's core never received the picture"
+        );
+        assert!(
+            within(Duration::from_secs(2), || !path.exists()),
+            "the host's core still deletes the file it read"
+        );
+    }
+
+    struct Silence;
+    impl vt::Listener for Silence {
+        fn send_event(&self, _event: TermEvent) {}
+    }
+
     fn split_snapshot(text: &str) -> (&str, &str) {
         const TAIL: &str = "\x1b[?7";
         match text.rfind(TAIL) {

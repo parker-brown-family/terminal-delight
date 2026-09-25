@@ -34,6 +34,9 @@ rio-vt = { version = "=0.5.28", default-features = false, features = ["graphics"
 # A picture's pixels as the frame gpui draws (src/pane.rs, `picture_texture`).
 # gpui already links it; named here to build the frame, with nothing added.
 image = { version = "0.25", default-features = false }
+# A picture sent by reference, rewritten inline for an attached window
+# (src/picturewire.rs). Already in the graph through rio-vt.
+base64 = "0.22"
 # The flags and modes in src/vt/types.rs, in the bitflags generation both
 # cores use.
 bitflags = "2"

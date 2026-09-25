@@ -66,6 +66,7 @@ mod paint;
 mod palette;
 mod pane;
 mod paneident;
+mod picturewire;
 mod plugins;
 mod ptyscan;
 mod recover;

@@ -4499,9 +4499,21 @@ impl TerminalView {
     /// Forget every picture this pane holds — the textures here and the images
     /// in the core. Called when its tab stops being shown.
     pub fn forget_pictures(&mut self, cx: &mut Context<Self>) {
-        self.session.term.lock().forget_pictures();
+        let held = {
+            let mut term = self.session.term.lock();
+            let held = term.pictures().len();
+            term.forget_pictures();
+            held
+        };
+        let textures = self.pictures.len();
         for (_, texture) in self.pictures.drain() {
             cx.drop_image(texture, None);
+        }
+        // What a hidden tab let go of, for a window being checked by script:
+        // there is no pointer to switch tabs with there, and no other way to
+        // see that a picture went.
+        if std::env::var_os("TD_PICTUREDEBUG").is_some() && (held > 0 || textures > 0) {
+            eprintln!("[pictures] hidden: forgot {held} picture(s), dropped {textures} texture(s)");
         }
     }
 
