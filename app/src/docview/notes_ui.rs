@@ -574,10 +574,11 @@ impl NotesLayer {
         });
     }
 
-    /// Escape with nothing open over the page, and edits not saved: the
-    /// first says so and keeps the document open, the second lets it close.
-    /// A habit of Escape is not a decision to throw notes away. Answers
-    /// whether it kept the document open.
+    /// A close asked for with edits not saved — Escape, the ✕, the control
+    /// socket, a link or a click that would put another document in its
+    /// place: the first says so and keeps the document open, the second lets
+    /// it go. A habit of closing is not a decision to throw notes away.
+    /// Answers whether it kept the document open.
     pub fn guard_close(&mut self) -> bool {
         if self.pending.is_empty() || self.close_warned {
             return false;
@@ -585,7 +586,7 @@ impl NotesLayer {
         self.close_warned = true;
         let n = self.pending.len();
         self.said = Some(Said::Refused(format!(
-            "{n} unsaved · save them into the file, or press Escape again to close without them"
+            "{n} unsaved · save them into the file, or close again to leave without them"
         )));
         true
     }

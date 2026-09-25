@@ -4738,6 +4738,11 @@ impl TerminalView {
             ),
             None => (0.0, 0.0),
         };
+        // A square already open with notes not yet saved stays, and says so;
+        // the click that asked for another document is answered by that line.
+        if self.float.is_some() && !self.request_close_float(cx) {
+            return Ok(());
+        }
         let rect = crate::docopen::float_home(w, h, top, bottom);
         self.float = Some(Self::float_doc(target, None, rect, cx));
         cx.notify();
@@ -4968,7 +4973,16 @@ impl TerminalView {
                     return;
                 }
                 // The old view is dropped here, and gives its textures back
-                // as it goes, like any other close.
+                // as it goes, like any other close. Not while it holds notes
+                // not yet saved: the first link says so and stays put.
+                let current = match seat {
+                    crate::docopen::DocSeat::Float => self.float.as_ref().map(|f| f.view.clone()),
+                    crate::docopen::DocSeat::Face => self.doc.as_ref().map(|d| d.view.clone()),
+                };
+                if current.is_some_and(|view| view.update(cx, |doc, cx| doc.guard_close(cx))) {
+                    cx.notify();
+                    return;
+                }
                 match seat {
                     crate::docopen::DocSeat::Float => {
                         let Some(rect) = self.float.as_ref().map(|f| f.rect) else {
@@ -5011,7 +5025,28 @@ impl TerminalView {
         }
     }
 
-    /// Close the floating square. Answers whether one was open.
+    /// Close the floating square the way a person means it. A square holding
+    /// notes not yet saved is kept once, saying so in its bar, and goes on the
+    /// next ask. Every deliberate close comes through here — the ✕, `ctl doc
+    /// close`, an Alt+click or a link that would put another document in its
+    /// place, a split of a file already split — as Escape already did. Only a
+    /// pane or tab closing drops it without asking. Answers whether it closed.
+    pub(crate) fn request_close_float(&mut self, cx: &mut Context<Self>) -> bool {
+        let kept = self
+            .float
+            .as_ref()
+            .map(|f| f.view.clone())
+            .is_some_and(|view| view.update(cx, |doc, cx| doc.guard_close(cx)));
+        if kept {
+            cx.notify();
+            return false;
+        }
+        self.close_float(cx)
+    }
+
+    /// Close the floating square, unsaved notes and all. Answers whether one
+    /// was open. Callers that a person drives go through
+    /// [`Self::request_close_float`] instead.
     pub(crate) fn close_float(&mut self, cx: &mut Context<Self>) -> bool {
         let was_open = self.float.take().is_some();
         if was_open {
@@ -5405,7 +5440,7 @@ impl TerminalView {
         let view = float.view.clone();
         match zone.hit {
             FloatHit::Close => {
-                self.close_float(cx);
+                self.request_close_float(cx);
             }
             FloatHit::Split => {
                 self.promote_float(cx);
@@ -6266,7 +6301,7 @@ impl TerminalView {
                     .map(|f| f.view.clone())
                     .is_some_and(|view| view.update(cx, |doc, cx| doc.key(ks, cx)));
                 if !took {
-                    self.close_float(cx);
+                    self.request_close_float(cx);
                 }
                 Handled::Consumed
             }
@@ -13313,6 +13348,41 @@ mod tests {
     }
 
     // ── the floating document ───────────────────────────────────────────────
+
+    /// Notes typed into a square and not yet saved used to vanish when it was
+    /// closed by anything but Escape: the ✕, `ctl doc close`, a link or an
+    /// Alt+click that replaced its document, or a split of a file already
+    /// split. Every one of those now asks the document first, so the rule is
+    /// that nothing but the guarded entry point closes a square outright.
+    #[test]
+    fn a_square_holding_unsaved_notes_is_not_closed_by_any_deliberate_close() {
+        let code = live_code();
+        let calls: Vec<&str> = code
+            .split("fn ")
+            .filter(|body| body.contains(".close_float(") || body.contains("self.close_float("))
+            .map(|body| body.split('(').next().unwrap_or(""))
+            .collect();
+        assert_eq!(
+            calls,
+            vec!["request_close_float"],
+            "only request_close_float may close a square outright; found calls in {calls:?}"
+        );
+        let request = code
+            .split("fn request_close_float(")
+            .nth(1)
+            .expect("request_close_float exists");
+        let request = request.split("\n    }\n").next().unwrap_or(request);
+        assert!(
+            request.contains("guard_close("),
+            "the guarded close must ask the document before it drops it"
+        );
+        let main = include_str!("main.rs");
+        let main = &main[..main.find("\n#[cfg(test)]").unwrap_or(main.len())];
+        assert!(
+            !main.contains(".close_float("),
+            "the workspace closes squares through request_close_float, never outright"
+        );
+    }
 
     /// The pane's own code, cut at the test module with comment lines dropped,
     /// so an assertion cannot pass on its own needle or on an explanation.

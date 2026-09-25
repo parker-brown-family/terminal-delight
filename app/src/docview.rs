@@ -702,6 +702,16 @@ impl DocumentView {
     /// A key the pane's layer ladder handed to the view. Escape answers true
     /// while a brief's note box or one of its own dialogs is open, and closes
     /// it; otherwise false, so the pane's Escape closes the square.
+    /// Asked before anything closes or replaces this document on purpose:
+    /// answers whether it kept itself open, once, because closing would lose
+    /// notes not yet saved into the file. Only a brief carries notes.
+    pub fn guard_close(&mut self, cx: &mut Context<Self>) -> bool {
+        match &mut self.backend {
+            Backend::Page(page) => page.guard_close(cx),
+            _ => false,
+        }
+    }
+
     pub fn key(&mut self, ks: &Keystroke, cx: &mut Context<Self>) -> bool {
         match &mut self.backend {
             Backend::Page(page) => page.key(ks, self.seat == DocSeat::Float, cx),

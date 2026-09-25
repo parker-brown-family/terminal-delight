@@ -7768,15 +7768,23 @@ impl Workspace {
     }
 
     /// Close a floating square: the focused pane's, else the first open one.
+    ///
+    /// Asks the way the ✕ does: a square holding notes not yet saved is kept
+    /// once, and the answer says so rather than `ok`, because a script told
+    /// `ok` would believe the square was gone.
     pub(crate) fn doc_close(&mut self, cx: &mut Context<Self>) -> String {
-        self.bench_apply(
+        let closed = std::cell::Cell::new(true);
+        let said = self.bench_apply(
             cx,
             |v| v.has_float(),
             "no pane has a floating document open",
-            |view, cx| {
-                view.close_float(cx);
-            },
-        )
+            |view, cx| closed.set(view.request_close_float(cx)),
+        );
+        if closed.get() || said.starts_with("err") {
+            said
+        } else {
+            "kept: the square holds notes not yet saved — save them, or doc close again to leave without them".into()
+        }
     }
 
     /// Every leaf, the active tab's first, plus which ones are on screen.
@@ -9535,7 +9543,7 @@ impl Workspace {
                 // is a duplicate of what is on screen: it goes.
                 if ev.carry.is_some() {
                     from.update(cx, |v, cx| {
-                        v.close_float(cx);
+                        v.request_close_float(cx);
                     });
                 }
                 // Brought forward: onto its document, if someone had turned
