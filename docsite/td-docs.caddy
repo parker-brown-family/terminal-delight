@@ -1,0 +1,35 @@
+# docs.terminal-delight.brownfamilysports.com — the Terminal Delight docs (static).
+#
+# Installed on piper-prod as /etc/caddy/conf.d/td-docs.caddy, which the main
+# Caddyfile already imports, so the main file stays untouched and this site is
+# removable by deleting one file. The canonical copy lives in the
+# parker-brown-family/terminal-delight repository at docsite/td-docs.caddy;
+# docsite/deploy.sh --caddy installs it.
+#
+# ALWAYS `caddy validate --config /etc/caddy/Caddyfile` before
+# `systemctl reload caddy` — a syntax error in any imported file takes down
+# every site on the box.
+#
+# TLS is Caddy's own Let's Encrypt certificate, the same as parker-job, which
+# is proxied through Cloudflare in the same zone. It works with the record
+# DNS-only or proxied.
+#
+# The web root is ours alone: /var/www/td-docs holds nothing but the output of
+# docsite/build.mjs, so the deploy's rsync --delete cannot prune anyone else.
+
+docs.terminal-delight.brownfamilysports.com {
+	root * /var/www/td-docs
+	encode zstd gzip
+
+	header {
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		# Deploys are frequent while the site is young: revalidate every time
+		# so neither a browser nor Cloudflare serves a page one deploy old.
+		Cache-Control "no-cache, must-revalidate"
+		-Server
+	}
+
+	try_files {path} {path}.html {path}/index.html
+	file_server
+}

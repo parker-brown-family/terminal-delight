@@ -3,8 +3,7 @@
    Builds docsite/ into docsite/dist/, a site rooted at / for
    docs.terminal-delight.brownfamilysports.com.
 
-     node docsite/build.mjs
-     npx wrangler pages deploy docsite/dist --project-name terminal-delight-docs
+     node docsite/build.mjs        (docsite/deploy.sh runs this, then ships it)
 
    The pages are written to work in place first: GitHub Pages serves this
    repository's root, so /docsite/workbench.html is live on the kiosk domain

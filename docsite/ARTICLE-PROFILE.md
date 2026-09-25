@@ -5,9 +5,10 @@ specific to this site. Drafted 2026-09-24 from Parker's direction in the session
 that started the site; the intake answers marked *(default)* were chosen by the
 agent and are his to overturn.
 
-**Site:** https://docs.terminal-delight.brownfamilysports.com (Cloudflare Pages,
-built by `docsite/build.mjs`). Until that is live the same pages are served from
-the kiosk domain at `/docsite/`.
+**Site:** https://docs.terminal-delight.brownfamilysports.com — static, served by
+Caddy on piper-prod from `/var/www/td-docs`, DNS through Cloudflare. Publish with
+`docsite/deploy.sh`; a git push does not deploy. Once this branch merges, the
+same pages are also served from the kiosk domain at `/docsite/`.
 **Renders from:** hand-written HTML in `docsite/`, on the shared vanilla shell in
 `assets/td-shell.{css,js}`. No framework, no markdown pipeline yet.
 

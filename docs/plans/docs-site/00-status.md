@@ -53,10 +53,27 @@ the working prototype rather than a document about one.
   Omarchy-palette family.
 - `node docsite/build.mjs` — output served from its own root, all assets 200.
 
+## Live
+
+**https://docs.terminal-delight.brownfamilysports.com**, since 2026-09-24. Parker
+added the DNS record (A → 165.245.234.21, piper-prod); the site is Caddy on that
+box, the same pattern as parker.brownfamilysports.com, not Cloudflare Pages.
+
+- `docsite/deploy.sh` builds, rsyncs to `/var/www/td-docs` (a web root nothing
+  else publishes into, so `--delete` is safe), and checks five URLs answer 200.
+- `docsite/deploy.sh --caddy` also installs `docsite/td-docs.caddy` as
+  `/etc/caddy/conf.d/td-docs.caddy`, runs `caddy validate` on the whole config,
+  and restores the previous file instead of reloading if validation fails.
+- TLS is Caddy's own Let's Encrypt certificate, obtained on first reload over
+  HTTP-01, as parker-job in the same zone has. It holds with the record
+  DNS-only or proxied.
+- The neighbouring sites answered 200 before and after the reload.
+
 ## Open — Parker's call
 
-- Cloudflare project name and DNS. The build assumes `terminal-delight-docs`.
-- Once the subdomain answers, info's `/docsite/` links switch to it.
+- info's `/docsite/` links switch to the subdomain when this branch merges.
+- The page footer's "Edit this page" points at `main`, where the file does not
+  exist until the merge.
 - The shared kiosk strip (`assets/kiosk-chrome.js`) still lists tv, gamba and
   crawl. Removing them changes the strip on the Omarchy page too, so it waits.
 - The agent-wall kiosk (`agents.html`) was not named in the scrap list.
