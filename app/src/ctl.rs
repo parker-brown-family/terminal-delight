@@ -69,6 +69,18 @@ pub(crate) struct Caller {
     pub pane: Option<u64>,
 }
 
+/// A synthetic pointer event on the bench, from `ctl bench click|hover`.
+/// Window coordinates, which are the bench's flat ones: its tube is
+/// registered flat while the bench face is up.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PointerReq {
+    pub click: bool,
+    pub x: f32,
+    pub y: f32,
+    pub alt: bool,
+    pub control: bool,
+}
+
 /// A queued control request, applied on the UI thread by the ticker.
 #[derive(Debug)]
 pub(crate) enum Req {
@@ -91,6 +103,13 @@ pub(crate) enum Req {
     /// Send the open round from the focused pane's bench. See
     /// [`Cmd::BenchSubmit`].
     BenchSubmit(mpsc::Sender<String>),
+    /// `bench probe`: the picked bench pane's zones, its link-bearing text
+    /// runs and its floating square, one per line.
+    BenchProbe(mpsc::Sender<String>),
+    /// `bench click|hover X Y [mods]`: a pointer event at a window point,
+    /// through the pane's own handlers. Needs a Window, so it is parked for
+    /// the next frame like an adoption.
+    BenchPointer(PointerReq, mpsc::Sender<String>),
     /// Say a line to the agent through the bench. See [`Cmd::BenchSay`].
     BenchSay(String, mpsc::Sender<String>),
     /// Put a line in the composer WITHOUT submitting it — what a person
@@ -348,6 +367,8 @@ enum Cmd {
     /// is not either. It sends whatever round the pane would send if somebody
     /// clicked, which is the only thing a test of that click can mean.
     BenchSubmit,
+    BenchProbe,
+    BenchPointer(PointerReq),
     /// Type a line into the agent through the bench, exactly as the composer
     /// does. The scripted half of talking to a pane.
     BenchSay(String),
@@ -574,6 +595,33 @@ fn parse_line(s: &str) -> Result<Cmd, String> {
         // its last answer, the SUBMIT tab is the whole of how one ends, and a
         // capability reachable only by a mouse cannot be gated by anything.
         ["bench", "submit"] => Ok(Cmd::BenchSubmit),
+        ["bench", "probe"] => Ok(Cmd::BenchProbe),
+        ["bench", verb @ ("click" | "hover"), x, y, rest @ ..] => {
+            let x: f32 = x
+                .parse()
+                .map_err(|_| format!("bench {verb}: {x:?} is not a number"))?;
+            let y: f32 = y
+                .parse()
+                .map_err(|_| format!("bench {verb}: {y:?} is not a number"))?;
+            let (alt, control) = match rest {
+                [] => (false, false),
+                ["alt"] => (true, false),
+                ["ctrl"] => (false, true),
+                ["ctrl-alt"] => (true, true),
+                other => {
+                    return Err(format!(
+                        "bench {verb}: modifiers are alt, ctrl or ctrl-alt, not {other:?}"
+                    ))
+                }
+            };
+            Ok(Cmd::BenchPointer(PointerReq {
+                click: *verb == "click",
+                x,
+                y,
+                alt,
+                control,
+            }))
+        }
         ["doc", "close"] => Ok(Cmd::DocClose),
         ["doc", "notes"] => Ok(Cmd::DocNotes),
         ["doc", "concur", nid] => Ok(Cmd::DocNote(crate::docview::NotesCommand::Concur {
@@ -889,6 +937,22 @@ fn handle_conn(
                 "err ui gone".into()
             }
         }
+        Ok(Cmd::BenchProbe) => {
+            let (rtx, rrx) = mpsc::channel();
+            if tx.send(Req::BenchProbe(rtx)).is_ok() {
+                bench_outcome(rrx)
+            } else {
+                "err ui gone".into()
+            }
+        }
+        Ok(Cmd::BenchPointer(p)) => {
+            let (rtx, rrx) = mpsc::channel();
+            if tx.send(Req::BenchPointer(p, rtx)).is_ok() {
+                bench_outcome(rrx)
+            } else {
+                "err ui gone".into()
+            }
+        }
         Ok(Cmd::DocHere(path)) => {
             let (rtx, rrx) = mpsc::channel();
             if tx.send(Req::DocHere(path, rtx)).is_ok() {
@@ -1040,6 +1104,11 @@ pub fn start(cx: &mut Context<Workspace>) {
                     Req::BenchSubmit(reply) => {
                         let _ = reply.send(ws.bench_submit(cx));
                     }
+                    Req::BenchProbe(reply) => {
+                        let _ = reply.send(ws.bench_probe(cx));
+                    }
+                    // A pointer event needs a Window; parked for render.
+                    Req::BenchPointer(p, reply) => ws.queue_pointer(p, reply, cx),
                     Req::BenchSay(line, reply) => {
                         let _ = reply.send(ws.bench_say(&line, cx));
                     }
@@ -2075,6 +2144,29 @@ mod tests {
     #[test]
     fn the_rounds_only_exit_can_be_pressed_without_a_pointer() {
         assert!(matches!(parse_line("bench submit"), Ok(Cmd::BenchSubmit)));
+        assert!(matches!(parse_line("bench probe"), Ok(Cmd::BenchProbe)));
+        assert!(matches!(
+            parse_line("bench click 10 20.5 ctrl-alt"),
+            Ok(Cmd::BenchPointer(PointerReq {
+                click: true,
+                alt: true,
+                control: true,
+                ..
+            }))
+        ));
+        assert!(matches!(
+            parse_line("bench hover 1 2"),
+            Ok(Cmd::BenchPointer(PointerReq {
+                click: false,
+                alt: false,
+                ..
+            }))
+        ));
+        assert!(parse_line("bench click 1").is_err(), "two coordinates");
+        assert!(
+            parse_line("bench click 1 2 shift").is_err(),
+            "alt, ctrl or ctrl-alt"
+        );
         assert!(
             USAGE.contains("submit"),
             "the verb exists and the usage string does not mention it: {USAGE}"
