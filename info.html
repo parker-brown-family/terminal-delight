@@ -1,618 +1,888 @@
 <!doctype html>
-<html lang="en" data-theme="hacker">
+<html lang="en" data-crt-default="off">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <!-- Defense in depth: no third-party frames/plugins can ever load on this page,
-       images are self-only, fonts limited to Google. Locks in the "no embeds" call. -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'self' 'unsafe-inline'; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'none'" />
-  <title>terminal-delight — GPU-native Linux terminal</title>
-<!-- kiosk family chrome -->
-<link rel="icon" href="/favicon.ico" sizes="any">
-<link rel="icon" href="/favicon.svg" type="image/svg+xml">
-<link rel="stylesheet" href="/assets/kiosk-chrome.css">
-<script src="/assets/kiosk-theme.js"></script>
-<script src="/assets/kiosk-chrome.js" data-kiosk="info" data-rail="on" data-paint="root" data-float="off"></script>
-  <meta name="description" content="A GPU-native Linux terminal in Rust (gpui + alacritty_terminal): hot-reloadable CRT-flavored themes, tiling multi-pane, per-pane monitor-OSD grading. MIT — download the AppImage or build from source." />
-
-  <!-- Open Graph / social cards -->
-  <meta property="og:title" content="terminal-delight" />
-  <meta property="og:description" content="GPU-native Linux terminal with hot-reloadable CRT-flavored themes and tiling multi-pane." />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; script-src 'self' 'unsafe-inline'; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'none'" />
+  <title>terminal delight</title>
+  <meta name="description" content="A GPU-native Linux terminal in Rust that reads your coding agents' own transcripts and shows you which one needs you. MIT, one AppImage for X11 and Wayland." />
+  <link rel="canonical" href="https://terminal-delight.brownfamilysports.com/info" />
+  <link rel="icon" href="/favicon.ico" sizes="any" />
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  <meta property="og:title" content="terminal delight" />
+  <meta property="og:description" content="A GPU-native Linux terminal that reads your coding agents' own transcripts and shows you which one needs you." />
   <meta property="og:type" content="website" />
-  <meta property="og:url" content="https://terminal-delight.brownfamilysports.com/info.html" />
-  <meta property="og:image" content="assets/crt-wall.png" />
+  <meta property="og:url" content="https://terminal-delight.brownfamilysports.com/info" />
+  <meta property="og:image" content="https://terminal-delight.brownfamilysports.com/assets/crt-wall.png" />
   <meta name="twitter:card" content="summary_large_image" />
 
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=JetBrains+Mono:wght@400;700;800&family=Inter:wght@400;600;800&display=swap" rel="stylesheet" />
+  <!-- mode before first paint: the reader's last pick, else their OS -->
+  <script>(function(){var s={};try{s=JSON.parse(localStorage.getItem('td-shell'))||{}}catch(e){}var r=document.documentElement;r.dataset.theme=s.theme||(matchMedia('(prefers-color-scheme: light)').matches?'paper':'glass');r.dataset.crt=s.crt||r.dataset.crtDefault||'off';})();</script>
+
+  <link rel="stylesheet" href="/assets/fonts/fonts.css" />
+  <link rel="stylesheet" href="/assets/td-shell.css" />
 
   <style>
-    /* Every colour below is the page's original green with an Omarchy role in
-       front of it. assets/kiosk-theme.js writes those roles onto :root as
-       inline custom properties, which outrank these declarations — so the page
-       wears whatever theme the reader last picked on any kiosk in the family,
-       and falls back to the phosphor it always had when scripting is off or
-       storage is blocked. The literals are the fallbacks, not dead code. */
-    :root {
-      --bg:       #07120c;
-      --bg-2:     var(--bg2, #0a1a10);
-      --surface:  var(--sel, #0e2418);
-      --line:     var(--mut, #14442b);
-      --text:     var(--fg,  #7dffa0);
-      --text-dim: var(--fg2, #4f9f6c);
-      --accent:   var(--acc, #36ff86);
-      --accent-d: color-mix(in srgb, var(--acc, #36ff86) 58%, var(--bg0, #04140a));
-      --warn:     var(--yel, #ffd166);
-      --danger:   var(--red, #ff6b6b);
-      --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
-      --sans: "Inter", system-ui, sans-serif;
-      --display: "Space Grotesk", "Inter", system-ui, sans-serif;
-      --maxw: 1080px;
+    /* ------------------------------------------------------------ kiosk */
+    .td-kiosk { max-width: 1120px; margin: 0 auto; padding: 0 48px; }
+    /* The divider is 2px, not a hairline: the barrel samples nearest-pixel,
+       and a 1px rule under it breaks into dashes. */
+    .stop { padding: 84px 0 88px; background: linear-gradient(var(--line), var(--line)) left bottom / 100% 2px no-repeat; }
+    .stop:last-of-type { background: none; }
+    .stop-head { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr); gap: 20px 56px; align-items: start; margin-bottom: 34px; }
+    .stop-head .n { font: 600 12px/1 var(--mono); letter-spacing: .16em; color: var(--ink-3); text-transform: uppercase; margin-bottom: 12px; }
+    .stop-head h2 { margin: 0; font: 800 clamp(30px, 3.6vw, 42px)/1.05 var(--mono); letter-spacing: -.02em; color: var(--phos); }
+    .stop-head p { margin: 0; font-size: 17.5px; line-height: 1.62; color: var(--ink-2); }
+    .stop-head p b { color: var(--ink); font-weight: 600; }
+    .more { display: inline-flex; gap: 8px; align-items: center; margin-top: 14px; font: 600 13px/1 var(--mono); color: var(--acc-2); text-decoration: none; }
+    .more:hover { text-decoration: underline; text-underline-offset: 4px; }
+
+    /* hero */
+    .hero { padding-top: 64px; text-align: center; }
+    .hero .kick { font: 600 12px/1 var(--mono); letter-spacing: .28em; color: var(--ink-3); text-transform: uppercase; }
+    .hero h1 { margin: 18px 0 0; font: 800 clamp(46px, 8.4vw, 104px)/.95 var(--mono); letter-spacing: -.045em; color: var(--phos); }
+    .hero h1 .cur { display: inline-block; width: .5em; height: .82em; margin-left: .06em; vertical-align: -.04em; background: var(--acc); animation: td-blink 1.06s steps(1) infinite; }
+    :root[data-theme="glass"] .hero h1 .cur { box-shadow: 0 0 24px var(--glow); }
+    .hero .lede { max-width: 640px; margin: 22px auto 0; font-size: clamp(18px, 2vw, 21px); line-height: 1.55; color: var(--ink); }
+    .hero .cta { display: flex; justify-content: center; flex-wrap: wrap; gap: 10px; margin-top: 30px; }
+    .hero .cta .td-btn { height: 42px; padding: 0 18px; font-size: 14px; }
+    @media (prefers-reduced-motion: reduce) { .hero h1 .cur { animation: none; } }
+
+    /* ----------------------------------------------- the drawn window
+       Every colour here is one of the app's own theme values, read from
+       app/themes/*.toml. Picking a chip swaps the whole set. */
+    .win {
+      --w-bg: #03100a; --w-surface: #071a10; --w-text: #86efac; --w-acc: #22c55e; --w-faint: #14401f; --w-cur: #4ade80; --w-you: #7aa5ff; --w-warn: #f5c542;
+      /* the chrome's status marks keep their meaning whatever the palette */
+      --w-red: #e5484d; --w-green: #3fb950; --w-blue: #4f8ff7;
+      margin: 46px auto 0; max-width: 1020px; text-align: left;
+      font: 11px/1.4 var(--sans); color: var(--w-text);
+      background: var(--w-bg); border: 1px solid color-mix(in srgb, var(--w-acc) 45%, var(--w-faint)); border-radius: 14px;
+      box-shadow: 0 40px 90px -40px rgba(0, 0, 0, .85), 0 0 0 1px rgba(0, 0, 0, .3);
+      overflow: hidden; transition: background .35s, color .35s, border-color .35s;
     }
-    * { box-sizing: border-box; }
-    html { scroll-behavior: smooth; }
-    body {
-      margin: 0;
-      background: radial-gradient(120% 80% at 50% -10%, var(--bg-2) 0%, var(--bg) 55%, var(--bg0, #050d08) 100%);
-      color: var(--text);
-      font-family: var(--sans);
-      line-height: 1.55;
-      -webkit-font-smoothing: antialiased;
+    :root[data-theme="glass"] .win { box-shadow: 0 40px 90px -40px rgba(0, 0, 0, .85), 0 0 60px -30px color-mix(in srgb, var(--w-acc) 60%, transparent); }
+    .win[data-wear="deco"] { --w-bg: #0a0e10; --w-surface: #141a1d; --w-text: #e8e4d8; --w-acc: #c2a34f; --w-faint: #2b3338; --w-cur: #c2a34f; --w-you: #7fd1b9; --w-warn: #d99a3c; }
+    .win[data-wear="field-command"] { --w-bg: #0e1214; --w-surface: #172024; --w-text: #e8f0f2; --w-acc: #8fa85f; --w-faint: #2b3a40; --w-cur: #a8bd76; --w-you: #7aa5ff; --w-warn: #e0b85a; }
+    .win[data-wear="gamba"] { --w-bg: #1c1206; --w-surface: #2a1c0a; --w-text: #ffe9b8; --w-acc: #ffc01e; --w-faint: #5a3a16; --w-cur: #ff7a1a; --w-you: #43c6c3; --w-warn: #ff7a1a; }
+    .win[data-wear="quiet-command"] { --w-bg: #f3f6f9; --w-surface: #ffffff; --w-text: #101828; --w-acc: #2f6fdd; --w-faint: #d9e1ea; --w-cur: #2f6fdd; --w-you: #2f6fdd; --w-warn: #b7791f; }
+    .win[data-wear="tactical-overdrive"] { --w-bg: #061015; --w-surface: #101f26; --w-text: #eefaff; --w-acc: #31d7ff; --w-faint: #1b3947; --w-cur: #7df2ff; --w-you: #ffb86b; --w-warn: #ffd166; }
+
+    /* Drawn from the app as it looks after the chrome rework (Parker's
+       captures of 2026-09-25): the worktree chip and activity strip across
+       the top, the grouped task tree with its status marks and vitals, the
+       pane with TERM/BENCH, the bench's strip, WOKEN card, response card and
+       composer, the STANDS NOW rail, and the counters along the foot. The
+       content is staged; the anatomy and the strings are the app's. */
+    .w-top { display: flex; align-items: center; gap: 10px; height: 36px; padding: 0 12px; border-bottom: 1px solid var(--w-faint); white-space: nowrap; }
+    .w-mark { width: 14px; height: 14px; flex: none; display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; gap: 1.5px; }
+    .w-mark i { border-radius: 1.5px; }
+    .w-mark i:nth-child(1) { grid-row: span 2; background: #39ff7a; } .w-mark i:nth-child(2) { background: #ffb84d; } .w-mark i:nth-child(3) { background: #57d6ff; }
+    .w-chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 7px; border: 1px solid var(--w-faint); border-radius: 5px; font: 600 9.5px/1 var(--mono); letter-spacing: .04em; }
+    .w-chip .red { color: var(--w-red); background: color-mix(in srgb, var(--w-red) 16%, transparent); padding: 2px 5px; border-radius: 3px; }
+    .w-spark { display: flex; align-items: flex-end; gap: 1.5px; height: 12px; }
+    .w-spark i { width: 2px; background: var(--w-warn); border-radius: 1px; }
+    .w-sep { width: 1px; height: 16px; background: var(--w-faint); }
+    .w-dots { display: flex; align-items: center; gap: 4px; }
+    .w-dots i { width: 5px; height: 5px; border-radius: 50%; background: color-mix(in srgb, var(--w-text) 25%, transparent); }
+    .w-dots i.r { background: var(--w-red); } .w-dots i.pill { width: 14px; border-radius: 3px; background: var(--w-warn); }
+    .w-count { margin-left: auto; display: inline-flex; gap: 7px; padding: 4px 8px; border: 1px solid var(--w-faint); border-radius: 5px; font: 600 9.5px/1 var(--mono); }
+    .w-count .a { color: var(--w-warn); } .w-count .ok { color: var(--w-green); } .w-count .q { opacity: .5; }
+
+    .w-body { display: grid; grid-template-columns: 196px minmax(0, 1fr) 14px; gap: 8px; padding: 8px 8px 0; height: 452px; }
+    .w-side { display: flex; flex-direction: column; min-width: 0; padding: 8px 6px; border: 1px solid var(--w-faint); border-radius: 8px; background: var(--w-surface); }
+    .w-side .ctl { display: flex; justify-content: flex-end; gap: 7px; align-items: center; margin: 0 4px 6px; font-size: 9px; opacity: .8; }
+    .w-side .ctl b { display: grid; place-items: center; width: 15px; height: 15px; border: 1px solid var(--w-warn); border-radius: 4px; font-weight: 400; }
+    .w-row { display: flex; align-items: center; gap: 6px; height: 19px; padding: 0 6px; border-radius: 4px; white-space: nowrap; font-size: 10.5px; color: color-mix(in srgb, var(--w-text) 88%, transparent); }
+    .w-row .tw { width: 8px; flex: none; font-size: 7px; opacity: .55; }
+    .w-row .g { width: 7px; height: 7px; flex: none; border-radius: 50%; background: var(--c); }
+    .w-row .rail { width: 2px; height: 12px; flex: none; background: var(--c); border-radius: 1px; }
+    .w-row.grp { font-weight: 600; font-size: 10px; letter-spacing: .05em; text-transform: uppercase; }
+    .w-row.grp.open { background: color-mix(in srgb, var(--w-text) 7%, transparent); }
+    .w-row.l1 { padding-left: 16px; } .w-row.l2 { padding-left: 26px; }
+    .w-row.l1.grp { letter-spacing: .04em; }
+    .w-row.here { box-shadow: inset 0 0 0 1px var(--w-blue); background: color-mix(in srgb, var(--w-blue) 12%, transparent); }
+    .w-row .st { margin-left: auto; display: flex; gap: 4px; align-items: center; font-size: 8.5px; }
+    .w-row .up { color: var(--w-green); } .w-row .bot { color: var(--w-blue); } .w-row .pin { color: var(--w-red); }
+    .w-row .ok { color: var(--w-bg); background: var(--w-green); border-radius: 2px; padding: 0 2px; font-size: 8px; }
+    .w-unfiled { margin: 6px 6px 0; font-size: 9px; letter-spacing: .08em; opacity: .35; display: flex; gap: 6px; align-items: center; }
+    .w-unfiled::after { content: ""; flex: 1; height: 1px; background: currentColor; }
+    .w-vit { margin-top: auto; display: grid; gap: 7px; padding: 0 2px; }
+    .w-vit > div { display: grid; grid-template-columns: 18px minmax(0, 1fr) 30px; gap: 7px; align-items: center; font-size: 10px; }
+    .w-vit .ic { width: 18px; height: 18px; display: grid; place-items: center; border: 1px solid var(--w-faint); border-radius: 4px; font: 700 9px/1 var(--mono); }
+    .w-vit .bars { display: grid; gap: 2px; }
+    .w-vit .bars i { height: 3px; border-radius: 2px; background: linear-gradient(90deg, var(--k, var(--w-green)) var(--v), color-mix(in srgb, var(--w-text) 12%, transparent) var(--v)); }
+
+    .w-pane { display: flex; flex-direction: column; min-width: 0; overflow: hidden; border: 1.5px solid var(--w-acc); border-radius: 9px; background: var(--w-bg); }
+    .w-head { display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 10px; border-bottom: 1px solid var(--w-faint); background: var(--w-surface); white-space: nowrap; overflow: hidden; }
+    .w-tile { width: 18px; height: 18px; flex: none; border-radius: 4px; border: 1px solid var(--w-faint); display: grid; place-items: center; background: var(--w-bg); }
+    .w-tile .w-mark { width: 10px; height: 10px; }
+    .w-head .who { color: var(--w-blue); font-size: 10.5px; }
+    .w-head .sp { flex: 1; }
+    .w-seg { display: inline-flex; border: 1px solid var(--w-faint); border-radius: 5px; overflow: hidden; font: 600 9px/1 var(--sans); letter-spacing: .03em; }
+    .w-seg span, .w-seg label { padding: 4px 7px; opacity: .55; }
+    .w-seg span.on { opacity: 1; background: color-mix(in srgb, var(--w-text) 16%, transparent); }
+    .w-ib { width: 22px; height: 16px; flex: none; display: grid; place-items: center; border: 1px solid var(--w-acc); border-radius: 4px; font-size: 9px; line-height: 1; }
+    .w-head .live, .w-head .x { color: var(--w-blue); font-size: 10px; }
+
+    .w-bench { flex: 1; display: grid; grid-template-columns: minmax(0, 1fr) 168px; gap: 10px; padding: 10px; min-height: 0; }
+    .w-bench > .main { display: flex; flex-direction: column; gap: 8px; min-width: 0; min-height: 0; }
+    .w-strip { display: flex; align-items: center; gap: 7px; padding: 5px 8px; border: 1px solid var(--w-faint); border-radius: 6px; background: color-mix(in srgb, var(--w-acc) 6%, transparent); white-space: nowrap; }
+    .w-strip .st { font-size: 15px; }
+    .w-strip .st.wait { color: var(--w-warn); }
+    .w-strip .ago { font-size: 8.5px; opacity: .55; }
+    .w-strip .sp { flex: 1; }
+    .w-strip .b { padding: 4px 7px; border: 1px solid var(--w-faint); border-radius: 4px; font: 600 8.5px/1 var(--sans); letter-spacing: .04em; }
+    .w-woken { padding: 6px 10px; border: 1px solid var(--w-warn); border-radius: 7px; }
+    .w-woken .k { font: italic 600 8.5px/1.3 var(--sans); letter-spacing: .07em; text-transform: uppercase; color: var(--w-warn); }
+    .w-woken p { margin: 2px 0 0; font-size: 10.5px; opacity: .85; }
+    .w-resp { padding: 8px 11px 10px; border: 1px solid var(--w-acc); border-radius: 7px; min-height: 0; overflow: hidden; }
+    .w-resp.ask { border-color: var(--w-warn); }
+    .w-resp .hd { display: flex; align-items: center; gap: 7px; }
+    .w-resp .chip { padding: 1px 5px; border: 1px solid var(--w-acc); border-radius: 3px; font-size: 8.5px; color: var(--w-warn); }
+    .w-resp.ask .chip { border-color: var(--w-warn); }
+    .w-resp .t { font-size: 14px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .w-resp .prov { margin-top: 3px; font-size: 8.5px; opacity: .4; }
+    .w-resp .wt { margin-top: 5px; font-size: 9px; opacity: .45; }
+    .w-resp p { margin: 7px 0 0; font-size: 10.5px; line-height: 1.5; opacity: .88; }
+    .w-resp .opts { display: flex; gap: 6px; margin-top: 8px; }
+    .w-resp .opts span { padding: 3px 8px; border: 1px solid var(--w-faint); border-radius: 4px; font-size: 9.5px; }
+    .w-resp .opts span.rec { border-color: var(--w-green); color: var(--w-green); }
+    .w-compose { margin-top: auto; padding: 8px 11px; border: 1px solid var(--w-blue); border-radius: 8px; font-size: 10px; opacity: .9; }
+    .w-compose small { display: block; margin-top: 3px; font-size: 7.5px; letter-spacing: .08em; color: var(--w-blue); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .w-rail { display: flex; flex-direction: column; gap: 7px; min-width: 0; padding: 7px; overflow: hidden; border: 1px solid var(--w-acc); border-radius: 8px; }
+    .w-rail .tabs { display: flex; flex-wrap: wrap; gap: 3px; font-size: 8.5px; }
+    .w-rail .tabs span { padding: 2px 5px; border: 1px solid var(--w-faint); border-radius: 4px; opacity: .75; }
+    .w-rail .tabs span.on { opacity: 1; color: var(--w-blue); border-color: var(--w-blue); background: color-mix(in srgb, var(--w-blue) 12%, transparent); }
+    .w-rail .tabs span.art { color: var(--w-warn); opacity: 1; }
+    .w-stand { padding: 6px 8px; border-left: 2px solid var(--w-warn); border-radius: 3px; font-size: 10px; line-height: 1.35; background: color-mix(in srgb, var(--w-text) 5%, transparent); }
+    .w-stand.now { background: color-mix(in srgb, var(--w-text) 11%, transparent); }
+    .w-stand .k { display: block; margin-bottom: 3px; text-align: center; font-size: 7.5px; letter-spacing: .1em; color: var(--w-warn); }
+    .w-stand small { display: block; margin-top: 3px; font-size: 8.5px; opacity: .4; }
+    .w-mini { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 6px 0; border: 1px solid var(--w-faint); border-radius: 6px; font: 600 8.5px/1 var(--mono); }
+    .w-mini .n { color: var(--w-green); }
+    .w-term { flex: 1; padding: 9px 11px; white-space: pre; overflow: hidden; font: 10.5px/1.5 var(--mono); }
+    .w-term .p { color: var(--w-acc); }
+    .w-term .d { opacity: .55; }
+    .w-term .cur { display: inline-block; width: .6em; height: 1.1em; vertical-align: -2px; background: var(--w-cur); animation: td-blink 1.06s steps(1) infinite; }
+    .w-foot { display: flex; align-items: center; justify-content: flex-end; gap: 6px; height: 36px; padding: 0 10px; font-size: 10px; white-space: nowrap; }
+    .w-foot .w-ib { width: 24px; height: 18px; font-size: 10px; }
+    .w-foot .bat { display: inline-flex; gap: 5px; align-items: center; padding: 2px 7px; border: 1px solid var(--w-faint); border-radius: 4px; font-size: 9.5px; }
+    .w-foot .lay { width: 18px; height: 18px; display: grid; place-items: center; border: 1px solid var(--w-faint); border-radius: 4px; font-size: 9px; }
+
+    /* The hero: one agent terminal in focus, two quieter panes, and the list
+       of what needs you. Each pane body carries data-warp, and
+       assets/td-panes.js bends every one of them on its own, the way the app
+       bends a pane; the chrome between them stays flat. */
+    .shot { position: relative; max-width: 1020px; margin: 46px auto 0; }
+    .shot > .win { margin: 0; max-width: none; }
+    .shot > canvas.pane-warp { position: absolute; left: 0; top: 0; pointer-events: none; border-radius: 14px; }
+    .w-say { min-width: 0; overflow: hidden; text-overflow: ellipsis; opacity: .8; }
+    .w-chip .dia { color: var(--w-warn); }
+    .w-body.calm { position: relative; grid-template-columns: 180px minmax(0, 1.25fr) minmax(0, 1fr) 14px; height: 540px; }
+    .w-col { display: grid; grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; min-width: 0; min-height: 0; }
+    .w-pane.focus { border-width: 2px; box-shadow: 0 0 0 1px color-mix(in srgb, var(--w-acc) 30%, transparent), 0 0 26px -10px color-mix(in srgb, var(--w-acc) 70%, transparent); }
+    .w-pane.dim { border-color: color-mix(in srgb, var(--w-text) 18%, transparent); }
+    .w-pane.dim > * { opacity: .42; }
+    .w-tx { position: relative; flex: 1; min-height: 0; overflow: hidden; padding: 14px 16px; font: 9.5px/1.62 var(--mono); }
+    .w-tx > div { white-space: pre; overflow: hidden; text-overflow: ellipsis; }
+    .w-tx > p { margin: 0 0 9px; white-space: normal; opacity: .86; }
+    .w-tx .h { margin: 4px 0 10px; font-weight: 700; opacity: .95; }
+    .w-tx .tg { color: var(--w-warn); } .w-tx .dim { opacity: .5; } .w-tx .lk { color: var(--w-blue); text-decoration: underline; }
+    .w-tx .fl { color: var(--w-green); } .w-tx .warn { color: var(--w-warn); }
+    .w-tx .rule { height: 0; margin: 6px 0; border-top: 1px solid color-mix(in srgb, var(--w-text) 25%, transparent); }
+    .w-tx .gap { height: 8px; }
+    .w-tx .cur { display: inline-block; width: .6em; height: 1.1em; vertical-align: -2px; background: var(--w-cur); }
+    .w-tx .right { text-align: right; }
+    .w-side .w-recover { margin: auto 2px 10px; padding: 14px 0; border: 1px solid var(--w-faint); border-radius: 6px; text-align: center; font-size: 8.5px; opacity: .6; }
+    .w-side .w-recover + .w-vit { margin-top: 0; }
+    .w-needs {
+      position: absolute; top: 2px; right: 24px; width: 318px; z-index: 2;
+      background: var(--w-bg); border: 2px solid var(--w-warn); border-radius: 9px;
+      box-shadow: 0 18px 40px -14px rgba(0, 0, 0, .9), 0 0 22px -12px var(--w-warn);
+      font: 9px/1.35 var(--sans);
     }
-    /* subtle scanline + vignette flavor, behind everything, non-interactive */
-    body::before {
-      content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 0;
-      background: repeating-linear-gradient(0deg, rgba(0,0,0,0.18) 0 1px, transparent 1px 3px);
-      mix-blend-mode: multiply; opacity: 0.5;
+    .w-needs .nh { display: flex; gap: 8px; padding: 8px 11px; font: 600 8.5px/1 var(--sans); letter-spacing: .04em; opacity: .85; white-space: nowrap; }
+    .w-needs .nh .sp { flex: 1; } .w-needs .nh span:not(.sp):not(:first-child) { opacity: .7; font-weight: 400; }
+    .w-needs .it { margin: 0 7px 7px; padding: 7px 9px; border-left: 3px solid var(--w-green); border-radius: 4px; background: color-mix(in srgb, var(--w-text) 6%, transparent); }
+    .w-needs .it.open { background: color-mix(in srgb, var(--w-text) 11%, transparent); }
+    .w-needs .row { display: flex; gap: 6px; align-items: center; white-space: nowrap; font-size: 8px; }
+    .w-needs .row .rv { color: var(--w-green); font-weight: 700; letter-spacing: .06em; }
+    .w-needs .row .up { color: var(--w-green); }
+    .w-needs .row .t { margin-left: auto; opacity: .6; }
+    .w-needs .what { margin-top: 3px; font-size: 10.5px; font-weight: 500; }
+    .w-needs .bell { margin-top: 1px; font-size: 7.5px; opacity: .55; }
+    .w-needs dl { display: grid; grid-template-columns: 76px 1fr; gap: 2px 8px; margin: 7px 0 0; padding-top: 6px; border-top: 1px solid color-mix(in srgb, var(--w-text) 15%, transparent); font-size: 8px; }
+    .w-needs dt { opacity: .6; } .w-needs dd { margin: 0; opacity: .5; } .w-needs dd.b { opacity: .9; }
+    .w-stand .kind { display: block; margin-bottom: 3px; text-align: center; font-size: 7.5px; letter-spacing: .06em; opacity: .55; }
+
+    .wear { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin: 18px auto 0; }
+    .wear button {
+      display: inline-flex; align-items: center; gap: 8px; height: 32px; padding: 0 12px; cursor: pointer;
+      font: 500 12.5px/1 var(--mono); color: var(--ink-2); background: var(--bg-2); border: 1px solid var(--line); border-radius: 999px;
     }
-    body::after {
-      content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 0;
-      background: radial-gradient(120% 100% at 50% 50%, transparent 60%, rgba(0,0,0,0.55) 100%);
+    .wear button i { width: 12px; height: 12px; border-radius: 50%; background: linear-gradient(135deg, var(--c1) 0 50%, var(--c2) 50%); box-shadow: 0 0 0 1px rgba(0,0,0,.25); }
+    .wear button:hover { color: var(--ink); border-color: var(--line-2); }
+    .wear button[aria-pressed="true"] { color: var(--ink); border-color: var(--acc); background: var(--bg-3); }
+    .cap { margin: 14px auto 0; max-width: 620px; text-align: center; font-size: 13.5px; color: var(--ink-3); }
+    .cap.left { text-align: left; margin-left: 0; }
+
+    /* ----------------------------------------------------- the wall */
+    .cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+    .agent { padding: 16px; border-radius: 12px; background: var(--bg-2); border: 1px solid var(--line); font: 12.5px/1.5 var(--mono); box-shadow: var(--shadow); }
+    .agent header { display: flex; align-items: center; gap: 8px; }
+    .agent header b { color: var(--ink); font-size: 14px; }
+    .agent header span { margin-left: auto; font-size: 10.5px; letter-spacing: .08em; padding: 2px 6px; border-radius: 4px; border: 1px solid var(--line-2); color: var(--ink-2); }
+    .agent .proj { color: var(--ink-3); font-size: 11.5px; }
+    .agent .doing { margin: 12px 0; color: var(--ink-2); min-height: 3em; }
+    .agent .state { display: inline-flex; align-items: center; gap: 7px; font-size: 11px; letter-spacing: .1em; text-transform: uppercase; }
+    .agent .state::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+    .agent.working { border-color: color-mix(in srgb, var(--acc) 45%, var(--line)); } .agent.working .state { color: var(--acc-2); }
+    .agent.blocked { border-color: color-mix(in srgb, var(--amber) 55%, var(--line)); } .agent.blocked .state { color: var(--amber); }
+    .agent.blocked .state::before { animation: w-hey .7s steps(1) infinite; }
+    .agent.done .state { color: var(--ink-2); }
+    .bars { display: grid; gap: 6px; margin-top: 14px; }
+    .bars div { display: grid; grid-template-columns: 92px 1fr 34px; gap: 8px; align-items: center; font-size: 10px; letter-spacing: .06em; color: var(--ink-3); }
+    .bars i { height: 5px; border-radius: 3px; background: linear-gradient(90deg, var(--acc) var(--v), var(--line) var(--v)); }
+    .bars i.hot { background: linear-gradient(90deg, var(--amber) var(--v), var(--line) var(--v)); }
+    .bars em { font-style: normal; text-align: right; color: var(--ink-2); }
+
+    /* ---------------------------------------------------- the bench */
+    .flip > input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+    .flip .win { margin: 0; max-width: none; border: 1.5px solid var(--w-acc); border-radius: 9px; }
+    .flip .w-seg label { cursor: pointer; }
+    #face-term:checked ~ .win .w-seg label[for="face-term"],
+    #face-bench:checked ~ .win .w-seg label[for="face-bench"] { opacity: 1; background: color-mix(in srgb, var(--w-acc) 22%, transparent); }
+    #face-term:focus-visible ~ .win .w-seg label[for="face-term"],
+    #face-bench:focus-visible ~ .win .w-seg label[for="face-bench"] { outline: 2px solid var(--w-acc); outline-offset: -2px; }
+    .flip .face { display: none; height: 400px; }
+    #face-term:checked ~ .win .face.term, #face-bench:checked ~ .win .face.bench { display: flex; flex-direction: column; }
+    .flip .face.bench .w-bench { grid-template-columns: minmax(0, 1fr) 190px; }
+    .shelves { margin: 22px 0 0; padding: 0; list-style: none; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 18px; }
+    .shelves li { display: grid; gap: 4px; font-size: 14.5px; line-height: 1.5; color: var(--ink-2); }
+    .shelves li b { font: 600 11.5px/1.4 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--ink); }
+
+    /* ---------------------------------------------------- the glass */
+    .glass-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+    .switch {
+      display: flex; align-items: center; gap: 18px; width: 100%; padding: 22px; cursor: pointer; text-align: left;
+      color: var(--ink); background: var(--bg-2); border: 1px solid var(--line); border-radius: 14px; font: inherit;
     }
-    .wrap { position: relative; z-index: 1; max-width: var(--maxw); margin: 0 auto; padding: 0 22px; }
-    a { color: var(--accent); text-decoration: none; }
-    a:hover { text-decoration: underline; }
-    code, kbd { font-family: var(--mono); background: var(--surface); border: 1px solid var(--line); border-radius: 5px; padding: 1px 6px; font-size: 0.85em; color: var(--text); }
-    h1, h2, h3 { font-family: var(--display); font-weight: 700; letter-spacing: -0.01em; line-height: 1.1; }
-    section { padding: 64px 0; border-top: 1px solid var(--line); }
-    .eyebrow { font-family: var(--mono); color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.18em; font-size: 12px; }
+    .switch:hover { border-color: var(--line-2); }
+    .switch svg { width: 44px; height: 44px; flex: none; color: var(--acc-2); }
+    .switch b { display: block; font: 700 17px/1.3 var(--mono); }
+    .switch span { display: block; margin-top: 4px; font-size: 14.5px; color: var(--ink-2); }
+    .switch .st { margin-left: auto; flex: none; font: 600 11px/1 var(--mono); letter-spacing: .14em; text-transform: uppercase; padding: 6px 9px; border-radius: 6px; border: 1px solid var(--line-2); color: var(--ink-2); }
+    :root[data-crt="on"] .switch.crt .st { color: var(--acc-2); border-color: var(--acc); }
+    .switch.crt .st::after { content: "off"; } :root[data-crt="on"] .switch.crt .st::after { content: "on"; }
+    .switch.mode .st::after { content: "glass"; } :root[data-theme="paper"] .switch.mode .st::after { content: "paper"; }
 
-    /* ---- nav ---- */
-    nav.top {
-      position: sticky; top: 0; z-index: 5;
-      backdrop-filter: blur(8px);
-      background: color-mix(in srgb, var(--bg) 78%, transparent);
-      border-bottom: 1px solid var(--line);
+    /* -------------------------------------------------- the kiosks */
+    .kiosks { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+    .kiosk { position: relative; display: block; min-height: 220px; padding: 24px; border-radius: 14px; overflow: hidden; text-decoration: none; border: 1px solid var(--line); background: var(--bg-2); }
+    .kiosk:hover { border-color: var(--acc); }
+    .kiosk small { font: 600 11px/1 var(--mono); letter-spacing: .16em; text-transform: uppercase; color: var(--ink-3); }
+    .kiosk b { display: block; margin: 12px 0 8px; font: 800 26px/1.1 var(--mono); letter-spacing: -.02em; color: var(--ink); }
+    .kiosk span { display: block; max-width: 34ch; font-size: 15px; color: var(--ink-2); position: relative; z-index: 1; }
+    .kiosk .art { position: absolute; right: -10px; bottom: -14px; width: 190px; height: 130px; pointer-events: none; }
+    .kiosk.omarchy .art { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; transform: rotate(-8deg); opacity: .85; }
+    .kiosk.omarchy .art i { border-radius: 5px; }
+    /* The Global card's title cycles through the names the app speaks. It is
+       a canvas so it keeps moving under the curved tube too: td-glass.js
+       copies [data-glass-live] canvases into the bent picture as they draw. */
+    .kiosk.global .art.babel { position: static; display: block; margin: 16px 0 0 auto; width: min(280px, 100%); height: 74px; color: var(--ink-3); }
+
+    /* --------------------------------------------------- install */
+    .install { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr); gap: 16px; }
+    .box { padding: 22px; border-radius: 14px; background: var(--bg-2); border: 1px solid var(--line); min-width: 0; }
+    .box h3 { margin: 0 0 8px; font: 700 16px/1.3 var(--mono); color: var(--ink); }
+    .box p { margin: 0 0 16px; color: var(--ink-2); font-size: 15px; }
+    .box pre { margin: 0 0 16px; padding: 14px 16px; overflow-x: auto; font: 13px/1.7 var(--mono); color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 9px; }
+    .box pre .c { color: var(--ink-3); }
+    .box .row { display: flex; flex-wrap: wrap; gap: 8px; }
+
+    .foot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 20px; padding: 26px 0 60px; font: 12.5px/1.6 var(--mono); color: var(--ink-3); }
+    .foot a { color: var(--ink-3); text-decoration: none; }
+    .foot a:hover { color: var(--acc-2); }
+    .foot .ch { margin-left: auto; display: flex; gap: 7px; }
+    .foot .ch a { width: 10px; height: 10px; border-radius: 50%; border: 1px solid var(--line-2); background: var(--bg-2); }
+    .foot .ch a:hover { background: var(--acc); border-color: var(--acc); box-shadow: 0 0 10px var(--glow); }
+
+    /* The drawn windows answer to their own width, not the viewport's: the
+       space they get depends on the spine beside the page as much as on the
+       window, so a viewport rule leaves them cramped at one width and sparse
+       at another. */
+    .win { container-type: inline-size; }
+    .w-strip { overflow: hidden; }
+    @container (max-width: 980px) {
+      .w-body.calm { grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); }
+      .w-body > .w-side, .w-body > .w-mini { display: none; }
+      .w-say { display: none; }
+      .flip .face.bench .w-bench { grid-template-columns: minmax(0, 1fr) 150px; }
     }
-    nav.top .wrap { display: flex; align-items: center; gap: 22px; height: 54px; }
-    .brand { font-family: var(--mono); font-weight: 800; color: var(--text); }
-    .brand .blink { animation: blink 1.1s steps(1) infinite; color: var(--accent); }
-    @keyframes blink { 50% { opacity: 0; } }
-    nav.top .links { margin-left: auto; display: flex; gap: 18px; font-size: 14px; }
-    nav.top .links a { color: var(--text-dim); }
-    nav.top .links a:hover { color: var(--accent); text-decoration: none; }
-    @media (max-width: 680px) { nav.top .links a.hide-sm { display: none; } }
-
-    /* ---- hero ---- */
-    .hero { padding: 70px 0 30px; border-top: none; text-align: center; }
-    .hero h1 { font-family: var(--mono); font-size: clamp(34px, 6vw, 58px); margin: 14px 0 6px; }
-    .hero h1 .u { color: var(--accent); }
-    .hero .tag { font-size: clamp(17px, 2.4vw, 22px); color: var(--text); max-width: 760px; margin: 8px auto 4px; }
-    .hero .sub { color: var(--text-dim); max-width: 680px; margin: 0 auto 26px; }
-    .cta { display: inline-flex; gap: 12px; flex-wrap: wrap; justify-content: center; }
-    .btn {
-      font-family: var(--mono); font-weight: 700; font-size: 14px;
-      padding: 11px 18px; border-radius: 9px; border: 1px solid var(--line);
-      background: var(--surface); color: var(--text); cursor: pointer; transition: 120ms;
+    @container (max-width: 720px) {
+      .w-body.calm { grid-template-columns: minmax(0, 1fr); height: 460px; }
+      .w-body.calm > .w-col, .w-needs { display: none; }
     }
-    .btn:hover { text-decoration: none; border-color: var(--accent); transform: translateY(-1px); }
-    .btn.primary { background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 28%, transparent), color-mix(in srgb, var(--accent) 8%, transparent)); border-color: var(--accent); color: var(--fgb, #eafff2); }
-
-    /* ---- demo frame ---- */
-    .screen {
-      margin: 34px auto 0; max-width: 940px; position: relative;
-      border: 1px solid var(--line); border-radius: 14px; overflow: hidden;
-      background: #000; box-shadow: 0 30px 80px -30px color-mix(in srgb, var(--accent) 25%, transparent), 0 0 0 1px rgba(0,0,0,0.4);
+    @container (max-width: 600px) {
+      .w-body.calm { height: 420px; padding: 8px; }
+      .w-bench, .flip .face.bench .w-bench { grid-template-columns: minmax(0, 1fr); }
+      .w-rail, .w-spark, .w-dots, .w-sep, .w-woken, .w-strip .b, .w-head .w-ib, .w-count .q { display: none; }
+      .w-foot .w-ib { display: none; }
     }
-    .screen .bar { display: flex; align-items: center; gap: 8px; padding: 9px 13px; background: var(--bg-2); border-bottom: 1px solid var(--line); font-family: var(--mono); font-size: 12px; color: var(--text-dim); }
-    .screen .bar .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 8px var(--accent); }
-    .screen img { display: block; width: 100%; }
-    .screen .playnote { position: absolute; left: 0; right: 0; bottom: 0; padding: 14px; background: linear-gradient(transparent, rgba(0,0,0,0.85)); font-family: var(--mono); font-size: 13px; color: var(--text); }
-    .screen .playnote b { color: var(--accent); }
-    .screen .mock { margin: 0; padding: 22px 20px 30px; font-family: var(--mono); font-size: clamp(12px, 1.6vw, 15px); line-height: 1.7; color: var(--text); text-align: left; white-space: pre-wrap; word-break: break-word; text-shadow: 0 0 6px color-mix(in srgb, var(--accent) 45%, transparent); }
-    .screen .mock .p { color: var(--accent); font-weight: 700; }
-    .screen .mock .d { color: #6fd0ff; }
-    .screen .mock .g { color: #9affc0; }
-    .screen .mock .cur { animation: blink 1.1s steps(1) infinite; }
-
-    /* ---- feature grid ---- */
-    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; margin-top: 30px; }
-    .card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 20px; }
-    .card h3 { margin: 0 0 6px; font-size: 17px; color: var(--fgb, #eafff2); }
-    .card .ic { font-family: var(--mono); color: var(--accent); font-size: 20px; }
-    .card p { margin: 6px 0 0; color: var(--text-dim); font-size: 14.5px; }
-
-    /* ---- gallery ---- */
-    .gallery { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; margin-top: 28px; }
-    .gallery figure { margin: 0; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: #000; cursor: zoom-in; transition: 120ms; }
-    .gallery figure:hover { border-color: var(--accent); transform: translateY(-2px); }
-    .gallery img { display: block; width: 100%; height: 100%; object-fit: cover; aspect-ratio: 16/10; }
-    .gallery figcaption { font-family: var(--mono); font-size: 12px; color: var(--text-dim); padding: 8px 11px; border-top: 1px solid var(--line); background: var(--bg-2); }
-
-    /* ---- lightbox ---- */
-    #lightbox { position: fixed; inset: 0; z-index: 50; display: none; background: rgba(2,8,5,0.93); backdrop-filter: blur(7px); }
-    #lightbox.open { display: flex; align-items: center; justify-content: center; }
-    #lightbox .lb-img { max-width: 92vw; max-height: 80vh; object-fit: contain; border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 30px 90px -20px color-mix(in srgb, var(--accent) 35%, transparent); background: #000; }
-    #lightbox .lb-cap { position: absolute; bottom: 20px; left: 0; right: 0; text-align: center; font-family: var(--mono); font-size: 13px; color: var(--text); padding: 0 16px; }
-    #lightbox .lb-cap .ct { color: var(--text-dim); margin-left: 12px; }
-    #lightbox .lb-btn { position: absolute; background: var(--surface); border: 1px solid var(--line); color: var(--text); font-family: var(--mono); cursor: pointer; display: flex; align-items: center; justify-content: center; transition: 120ms; user-select: none; }
-    #lightbox .lb-btn:hover { border-color: var(--accent); color: var(--accent); transform: translateY(-50%) scale(1.06); }
-    #lightbox .lb-prev, #lightbox .lb-next { top: 50%; transform: translateY(-50%); width: 48px; height: 48px; border-radius: 50%; font-size: 24px; }
-    #lightbox .lb-prev { left: 18px; } #lightbox .lb-next { right: 18px; }
-    #lightbox .lb-close { top: 16px; right: 18px; width: 40px; height: 40px; border-radius: 9px; font-size: 18px; transform: none; }
-    #lightbox .lb-close:hover { transform: scale(1.06); }
-    @media (max-width: 600px) { #lightbox .lb-prev, #lightbox .lb-next { width: 40px; height: 40px; } #lightbox .lb-prev{ left: 6px; } #lightbox .lb-next{ right: 6px; } }
-
-    /* ---- run callout ---- */
-    .runcard { border: 1px solid var(--line); border-radius: 14px; background: var(--bg-2); padding: 26px; display: grid; grid-template-columns: 1fr auto; gap: 22px; align-items: center; }
-    .runcard h3 { margin: 0 0 6px; color: var(--fgb, #eafff2); }
-    .runcard p { margin: 0; color: var(--text-dim); font-size: 14.5px; }
-    @media (max-width: 640px) { .runcard { grid-template-columns: 1fr; } }
-
-    /* ---- prose ---- */
-    .prose { max-width: 760px; }
-    .prose p { color: var(--text); }
-    .prose ul { color: var(--text-dim); }
-    pre { background: #04100a; border: 1px solid var(--line); border-radius: 10px; padding: 16px; overflow:auto; font-family: var(--mono); font-size: 13px; color: var(--text); }
-    pre .c { color: var(--text-dim); }
-
-    .two { display: grid; grid-template-columns: 1fr 1fr; gap: 26px; }
-    @media (max-width: 760px) { .two { grid-template-columns: 1fr; } }
-
-    /* ---- footer ---- */
-    footer { border-top: 1px solid var(--line); padding: 40px 0 60px; color: var(--text-dim); font-size: 14px; }
-    footer .cols { display: flex; flex-wrap: wrap; gap: 30px; justify-content: space-between; }
-    footer a { color: var(--text-dim); }
-    footer a:hover { color: var(--accent); }
-    .pill { font-family: var(--mono); font-size: 11px; border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px; color: var(--text-dim); }
-
-    /* ---- brand hero wordmark ---- */
-    .wordmark { font-family: var(--display); font-weight: 700; font-size: clamp(40px, 8vw, 76px); letter-spacing: -0.01em;
-      margin: 10px 0 2px; line-height: 1; background: linear-gradient(90deg, #67F454, #29E3ED);
-      -webkit-background-clip: text; background-clip: text; color: transparent; }
-    .agtag { font-family: var(--mono); letter-spacing: 0.35em; text-transform: uppercase; color: #9a6bd0; font-size: 13px; margin: 0 0 16px; }
-
-    /* ---- feature pillars (basic-first → unroll) ---- */
-    .pillars { margin-top: 26px; display: flex; flex-direction: column; gap: 10px; }
-    .pillar { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; transition: 120ms; }
-    .pillar:hover { border-color: var(--accent-d); }
-    .pillar > summary { list-style: none; cursor: pointer; display: flex; align-items: center; gap: 14px; padding: 15px 18px; flex-wrap: wrap; }
-    .pillar > summary::-webkit-details-marker { display: none; }
-    .pillar > summary::after { content: "＋"; margin-left: auto; color: var(--text-dim); font-family: var(--mono); }
-    .pillar[open] > summary::after { content: "－"; }
-    .pillar .pic { font-size: 19px; flex: none; width: 26px; text-align: center; }
-    .pillar .pt { font-family: var(--display); font-weight: 700; color: var(--fgb, #eafff2); font-size: 16.5px; }
-    .pillar .pone { color: var(--text-dim); font-size: 13.5px; flex: 1 1 240px; }
-    .pillar[open] > summary { border-bottom: 1px solid var(--line); }
-    .pillar .pbody { padding: 14px 18px 18px; color: var(--text-dim); font-size: 14.5px; line-height: 1.62; }
-    .pillar .pbody a { white-space: nowrap; }
-    .pillar.hero-pillar { border-color: var(--accent); box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 22%, transparent), 0 0 26px -10px var(--accent); }
-    @media (max-width: 560px) { .pillar .pone { flex-basis: 100%; } }
+    @media (max-width: 900px) {
+      .td-kiosk { padding: 0 22px; }
+      .stop { padding: 60px 0 64px; }
+      .stop-head, .install, .glass-row, .kiosks { grid-template-columns: minmax(0, 1fr); }
+      .cards { grid-template-columns: minmax(0, 1fr); }
+      .cards .agent:nth-child(n+3) { display: none; }
+      .shelves { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    @media (max-width: 640px) {
+      .shelves { grid-template-columns: minmax(0, 1fr); }
+      .switch { padding: 16px; gap: 12px; }
+      .switch svg { width: 34px; height: 34px; }
+    }
   </style>
 </head>
 <body>
-  <nav class="top">
-    <div class="wrap">
-      <span class="brand">▸ terminal-delight<span class="blink">_</span></span>
-      <span class="links">
-        <a href="#mcp" style="color:var(--accent)">agentic ★</a>
-        <a href="agents.html" class="hide-sm">live wall ↗</a>
-        <a href="omarchy.html" class="hide-sm">omarchy ↗</a>
-        <a href="#pillars" class="hide-sm">features</a>
-        <a href="#gallery" class="hide-sm">gallery</a>
-        <a href="#build">install</a>
-        <a href="https://leanctx.com/" class="hide-sm">LeanCTX ↗</a>
-        <a href="https://github.com/parker-brown-family/terminal-delight">GitHub ↗</a>
-      </span>
-    </div>
+
+<header class="td-top">
+  <button class="td-icon td-menu" data-td-menu aria-label="Open the page menu">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+  </button>
+  <a class="td-brand" href="/info" aria-label="terminal delight, overview">
+    <svg viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="13" fill="#1a1e24"/><path d="M9 12Q32 8.5 55 12Q59 32 55 52Q32 55.5 9 52Q5 32 9 12Z" fill="#05080a"/><clipPath id="bm"><path d="M9 12Q32 8.5 55 12Q59 32 55 52Q32 55.5 9 52Q5 32 9 12Z"/></clipPath><g clip-path="url(#bm)"><rect x="5" y="6" width="24" height="52" fill="#39ff7a" opacity=".92"/><rect x="34" y="6" width="25" height="24" fill="#ffb84d" opacity=".92"/><rect x="34" y="34" width="25" height="24" fill="#57d6ff" opacity=".92"/></g><path d="M31.5 6Q33 32 31.5 58" stroke="#1a1e24" stroke-width="5" fill="none"/><path d="M31 32Q45 33 60 31.5" stroke="#1a1e24" stroke-width="4.5" fill="none"/></svg>
+    <span class="word">terminal delight<span class="cur"></span></span>
+  </a>
+  <nav class="td-sections" aria-label="Sections">
+    <a href="/info" aria-current="page">Overview</a>
+    <a href="https://docs.terminal-delight.brownfamilysports.com/">Docs</a>
+    <a href="/omarchy">Omarchy</a>
+    <a href="/global">Global</a>
   </nav>
+  <div class="td-actions">
+    <a class="td-icon gh" href="https://github.com/parker-brown-family/terminal-delight" aria-label="Source on GitHub" title="Source on GitHub">
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 .5a11.5 11.5 0 0 0-3.64 22.41c.58.1.79-.25.79-.56v-2c-3.2.7-3.88-1.37-3.88-1.37-.52-1.33-1.28-1.69-1.28-1.69-1.04-.71.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.76 2.7 1.25 3.36.96.1-.75.4-1.25.73-1.54-2.55-.29-5.24-1.28-5.24-5.69 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.17 1.18a11 11 0 0 1 5.77 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.84 1.19 3.1 0 4.42-2.7 5.39-5.26 5.68.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .5Z"/></svg>
+    </a>
+    <button class="td-icon" data-td-toggle="crt" aria-pressed="false" aria-label="CRT texture">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M4 5.5Q12 4 20 5.5Q21.4 12 20 18.5Q12 20 4 18.5Q2.6 12 4 5.5Z"/><path d="M6.5 9.5h11M6.5 12h11M6.5 14.5h7" stroke-width="1.3" opacity=".75"/></svg>
+    </button>
+    <button class="td-icon td-theme" data-td-toggle="theme" aria-label="Switch between glass and paper">
+      <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 3v2M12 19v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M3 12h2M19 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4"/><circle cx="12" cy="12" r="4"/></svg>
+      <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5Z"/></svg>
+    </button>
+    <a class="td-btn primary hide-sm" href="https://docs.terminal-delight.brownfamilysports.com/install">Install</a>
+  </div>
+</header>
 
-  <header class="hero">
-    <div class="wrap">
-      <div class="eyebrow">GPU-native · Rust · Linux · on the v1 doorstep</div>
-      <h1 class="wordmark">terminal delight</h1>
-      <p class="agtag">Agentic&nbsp;Forward</p>
-      <p class="tag">The terminal you <b>watch your fleet of agents</b> through — a real, fast Linux terminal with a read-only agent-monitoring layer built in.</p>
-      <p class="sub">Run a wall of coding agents (Claude, Codex). terminal-delight reads each one's own transcript and shows you, at a glance, who's working, who's <span style="color:var(--warn)">blocked on you</span>, who <span style="color:var(--danger)">errored</span>, and what every agent is spending — <b>without ever writing to a shell.</b></p>
+<nav class="td-spine" aria-label="On this page">
+  <div class="td-group">
+    <h6>This page</h6>
+    <ul>
+      <li><a href="#terminal"><span class="n">01</span>Terminal</a></li>
+      <li><a href="#bench"><span class="n">02</span>Bench</a></li>
+      <li><a href="#wall"><span class="n">03</span>Wall</a></li>
+      <li><a href="#glass"><span class="n">04</span>Glass</a></li>
+      <li><a href="#kiosks"><span class="n">05</span>Kiosks</a></li>
+      <li><a href="#install"><span class="n">06</span>Install</a></li>
+    </ul>
+  </div>
+  <div class="td-group">
+    <h6>Docs</h6>
+    <ul>
+      <li><a href="https://docs.terminal-delight.brownfamilysports.com/">Introduction</a></li>
+      <li><a href="https://docs.terminal-delight.brownfamilysports.com/install">Install</a></li>
+      <li><a href="https://docs.terminal-delight.brownfamilysports.com/workbench">Workbench</a></li>
+      <li><a href="https://docs.terminal-delight.brownfamilysports.com/" class="is-soon">Agent wall</a></li>
+      <li><a href="https://docs.terminal-delight.brownfamilysports.com/" class="is-soon">Themes and the CRT</a></li>
+    </ul>
+  </div>
+  <div class="td-group">
+    <h6>Elsewhere</h6>
+    <ul>
+      <li><a href="/omarchy">Omarchy kiosk</a></li>
+      <li><a href="/global">Global kiosk</a></li>
+      <li><a href="https://github.com/parker-brown-family/terminal-delight/blob/main/CHANGELOG.md">Changelog</a></li>
+      <li><a href="https://github.com/parker-brown-family/terminal-delight">GitHub</a></li>
+    </ul>
+  </div>
+</nav>
+
+<main id="tube" tabindex="-1">
+  <div class="td-kiosk">
+
+    <!-- 01 ------------------------------------------------------------ -->
+    <section class="stop hero" id="terminal">
+      <div class="kick">GPU-native · Rust · Linux</div>
+      <h1>terminal delight<span class="cur" aria-hidden="true"></span></h1>
+      <p class="lede">A fast Linux terminal that reads your coding agents' own transcripts, so you can see which one needs you without opening its tab.</p>
       <div class="cta">
-        <a class="btn primary" href="agents.html">▟ See the live agent wall ↗</a>
-        <a class="btn" href="#mcp">★ How the monitoring works</a>
-        <a class="btn" href="https://github.com/parker-brown-family/terminal-delight/releases/latest">▾ Download (MIT AppImage)</a>
+        <a class="td-btn primary" href="https://docs.terminal-delight.brownfamilysports.com/install">Install the AppImage →</a>
+        <a class="td-btn" href="https://docs.terminal-delight.brownfamilysports.com/">Read the docs →</a>
       </div>
 
-      <!-- HERO: lead with the agentic hook. Real capture, staged demo data only. -->
-      <div class="screen" id="hero-demo">
-        <div class="bar"><span class="dot"></span> the agent wall — every agent's project · what it's holding · CTX WINDOW · FATIGUE · RELEVANCE · the call</div>
-        <a href="agents.html"><img src="assets/agents-wall.png" alt="the terminal-delight agent wall: a CRT scoreboard of agent cards grouped by project, each working card showing an animated robot holding the tool that agent is using with the verb lettered beneath it, live token spend, and three bars read from its own transcript — context window, fatigue and relevance — with working/blocked/error/done states colour-coded" /></a>
-        <div class="playnote">▶ The in-app wall, live on the web — <a href="agents.html" style="color:var(--accent)">open the kiosk ↗</a>. Read-only; staged demo data, never real prompts.</div>
-      </div>
-    </div>
-  </header>
-
-  <section id="pillars">
-    <div class="wrap">
-      <div class="eyebrow">What it is — start here, unroll for more</div>
-      <h2>The whole thing, simply.</h2>
-      <p class="prose" style="color:var(--text-dim);max-width:720px;margin-top:6px">The one big idea first, then everything else. Click any row to unroll it — each links to its full feature doc.</p>
-      <div class="pillars">
-
-        <details class="pillar hero-pillar" open>
-          <summary><span class="pic">⭐</span><span class="pt">Watch your whole agent fleet</span><span class="pone">a read-only MCP surface monitors every agent's transcript &amp; state</span></summary>
-          <div class="pbody">This is the headline. An orchestrator — or the in-app wall — sees who's running where, what each agent is doing <em>right now</em>, its token spend, and whether it's blocked on you. The data comes from each agent's own on-disk transcript, pushed live, and <b>nothing can ever write to a shell</b>. <a href="#mcp">The deep dive ↓</a> · <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/docs/features/01-agentic-mcp.md">full doc ↗</a></div>
-        </details>
-
-        <details class="pillar">
-          <summary><span class="pic">▟</span><span class="pt">The agent dashboard</span><span class="pone">a living scoreboard — grouped cards, live state, needs-you first</span></summary>
-          <div class="pbody">One themed card per agent, grouped by project: the live action, Δ/Σ token spend, a state you scan in a glance (working · blocked · error · done · idle), and three bars read from that agent's own transcript — <b>CTX WINDOW</b>, <b>FATIGUE</b>, <b>RELEVANCE</b> — with the call they add up to. The pair that earns the space is context against relevance: a window full of ballast and a window full of detail still in use look identical on a token counter, and they want opposite things — compact the first, hand the second off. And while an agent is working, the card's frame shows it working: the robot holds the tool it is actually holding, wearing that tool's face, with the verb lettered on the glass — <em>at the console</em>, never <code>Bash</code>. Stop, and the card goes back to showing where it is rather than what it's doing. Blocked and errored agents are surfaced first, so your attention goes where it's needed. <a href="agents.html">Open the live wall ↗</a> · <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/docs/features/02-agent-dashboard.md">full doc ↗</a></div>
-        </details>
-
-        <details class="pillar">
-          <summary><span class="pic">🪦</span><span class="pt">The agent graveyard</span><span class="pone">find dead sessions on disk and one-click resurrect them</span></summary>
-          <div class="pbody">Closed a terminal, rebooted, or a session crashed? The conversation isn't gone — the transcript is still on disk. The graveyard finds those, shows each one's task summary and age, and resurrects any of them into a fresh pane that resumes exactly where it left off. <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/docs/features/03-agent-graveyard.md">full doc ↗</a></div>
-        </details>
-
-        <details class="pillar">
-          <summary><span class="pic">&lt;/&gt;</span><span class="pt">Plugins &amp; LeanCTX</span><span class="pone">the wall is extensible — token-savings, context harvest, your own</span></summary>
-          <div class="pbody">terminal-delight is an MCP client too: plugins light up surfaces on the wall. The flagship is <b>LeanCTX</b> — it shows, live, how many tokens <a href="https://leanctx.com/">lean-ctx</a> saved by compressing each agent's context. Plus context-delight: harvest a session into a portable <code>.cdx</code> package. <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/docs/features/04-plugins.md">full doc ↗</a></div>
-        </details>
-
-        <details class="pillar">
-          <summary><span class="pic">◍</span><span class="pt">The look is the brand</span><span class="pone">true GPU barrel-warp CRT, the 👓 FOCUS reader, per-pane themes</span></summary>
-          <div class="pbody">A real fullscreen GPU post-process — barrel warp, scanlines, phosphor, glare, text-crawl — that adds ≤1 ms of frame time and <b>zero</b> input latency. The 👓 FOCUS reader mirrors a pane big over a GPU frosted blur. Hot-reloadable, per-pane themes. <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/docs/features/05-visuals-crt.md">visuals doc ↗</a> · <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/docs/features/06-themes.md">themes doc ↗</a></div>
-        </details>
-
-        <details class="pillar">
-          <summary><span class="pic">▤</span><span class="pt">A real, fast terminal first</span><span class="pone">PTY + full VT, tiling, session restore — Alacritty-class latency</span></summary>
-          <div class="pbody">Before any agent magic, it's a genuine terminal: real PTYs, full VT (vim/htop/tmux/git unmodified), tiling splits, tabs, find, selection, crash-safe session restore — at key→photon <b>p50 ≈ 121 µs</b>, in Alacritty's class. <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/docs/features/07-terminal-core.md">full doc ↗</a></div>
-        </details>
-
-        <details class="pillar">
-          <summary><span class="pic">🌐</span><span class="pt">Nine languages</span><span class="pone">the whole UI, compiler-checked, in 9 languages</span></summary>
-          <div class="pbody">Every piece of chrome is translated into English, Español, Deutsch, Français, Русский, 中文, 日本語, 한국어, हिन्दी — with completeness enforced by the compiler, so a release can never ship half-translated. <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/docs/features/08-i18n.md">full doc ↗</a></div>
-        </details>
-
-      </div>
-    </div>
-  </section>
-
-  <section id="features">
-    <div class="wrap">
-      <div class="eyebrow">Every feature, in detail</div>
-      <h2>The full surface — 85+ features</h2>
-      <p class="prose" style="color:var(--text-dim);max-width:740px;margin-top:6px">The pillars above are the tour. The complete, evidence-backed catalog — every feature with its source file and ship status — lives in <a href="https://github.com/parker-brown-family/terminal-delight/tree/main/docs/features"><code>docs/features/</code></a>. A quick index is below.</p>
-
-      <details style="margin-top:24px;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:16px 20px">
-        <summary style="cursor:pointer;font-family:var(--mono);font-weight:700;color:var(--accent);letter-spacing:.02em">✦ …and about a million more — click for the full feature list</summary>
-        <div style="margin-top:16px;display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:18px 30px;font-size:14px;line-height:1.55;color:var(--text-dim)">
-          <div>
-            <h4 style="margin:0 0 6px;color:#eafff2;font-size:14px">Panes &amp; tabs</h4>
-            <ul style="margin:0;padding-left:18px">
-              <li>True tiling-tree splits (divide only the focused pane)</li>
-              <li>Browser-style <b>tab groups</b> — colour band, handle chip, collapse pill</li>
-              <li>Drag a sub-tab to split / move / tear off into a new window</li>
-              <li>Drag mother-bar tabs to reorder · grid wrap when they overflow</li>
-              <li>Rich rename (caret, selection, word-nav) · always-confirm close</li>
-              <li>Pop-out scratch window · single-instance aware boot</li>
-            </ul>
+      <div class="shot">
+      <div class="win" id="win" data-pane-warp role="img" aria-label="A drawing of the Terminal Delight window. A left bar of task groups; one agent's terminal in focus, showing the reply it just finished; two quieter terminals beside it; and the list of three agents that need you. Each terminal's glass is curved on its own, the way the app draws it.">
+        <div class="w-top">
+          <span class="w-mark"><i></i><i></i><i></i></span>
+          <span class="w-chip">1 WORKTREE <span class="red">1 SHARED</span> <span class="dia">◆</span></span>
+          <span class="w-spark"><i style="height:45%"></i><i style="height:70%"></i><i style="height:30%"></i><i style="height:25%"></i><i style="height:20%"></i><i style="height:35%"></i><i style="height:25%"></i><i style="height:60%"></i><i style="height:85%"></i></span>
+          <span class="w-sep"></span>
+          <span class="w-dots"><i></i><i class="r"></i><i></i><i></i><i></i><i class="r"></i><i class="r"></i><i class="r"></i><i></i><i class="pill"></i><i></i></span>
+          <span class="w-say">1 line of work, one shared · nothing uncommitted · 2 pairs converging</span>
+          <span class="w-count"><span class="a">▶ 3</span><span class="q">│</span><span>0</span><span>✕ 0</span><span class="ok">✓ 3</span><span>○ 14</span><span class="q">? 0</span></span>
+        </div>
+        <div class="w-body calm">
+          <div class="w-side">
+            <div class="ctl"><span>▼</span><b>+</b><span>◀</span></div>
+            <div class="w-row grp"><span class="tw">▶</span><i class="g" style="--c:#e8834a"></i>Global</div>
+            <div class="w-row grp"><span class="tw">▶</span><i class="g" style="--c:#7c83f0"></i>Jev<span class="st"><span class="ok">✓</span></span></div>
+            <div class="w-row grp"><span class="tw">▶</span><i class="g" style="--c:#8bd450"></i>Webdev</div>
+            <div class="w-row grp open"><span class="tw">▼</span><i class="g" style="--c:#3ec6d1"></i>Terminal Delight</div>
+            <div class="w-row grp l1"><span class="tw">▶</span><i class="rail" style="--c:#3ec6d1"></i>Workbench<span class="st"><span class="ok">✓</span></span></div>
+            <div class="w-row grp l1"><span class="tw">▼</span><i class="rail" style="--c:#3ec6d1"></i>Site</div>
+            <div class="w-row l2"><i class="rail" style="--c:#3ec6d1"></i>docs<span class="st"><span class="up">▲</span><span class="ok">✓</span></span></div>
+            <div class="w-row l2 here"><i class="rail" style="--c:#3ec6d1"></i>info kiosk</div>
+            <div class="w-row l1"><span class="tw"></span>wrangle<span class="st"><span class="up">▲</span></span></div>
+            <div class="w-row grp"><span class="tw">▶</span><i class="g" style="--c:#e0b050"></i>Next run<span class="st"><span class="bot">◉</span></span></div>
+            <div class="w-row grp"><span class="tw">▶</span><i class="rail" style="--c:#8a8f98"></i>Marketing</div>
+            <div class="w-unfiled">UNFILED</div>
+            <div class="w-recover">1 recoverable</div>
+            <div class="w-vit">
+              <div><span class="ic">✳</span><span class="bars"><i style="--v:80%"></i><i style="--v:20%;--k:var(--w-warn)"></i></span><span>80%</span></div>
+              <div><span class="ic">⊛</span><span class="bars"><i style="--v:58%"></i><i style="--v:16%;--k:var(--w-red)"></i></span><span>58%</span></div>
+              <div><span class="ic">FI</span><span class="bars"><i style="--v:0%"></i><i style="--v:0%"></i></span><span>—</span></div>
+            </div>
           </div>
-          <div>
-            <h4 style="margin:0 0 6px;color:#eafff2;font-size:14px">Look &amp; theme</h4>
-            <ul style="margin:0;padding-left:18px">
-              <li>4 built-in themes + a live-editable <code>custom</code> TOML slot</li>
-              <li>Per-pane theme &amp; grade groups, each with a "follow outer" toggle</li>
-              <li>3-marker colour wheel (seed · text · complement) + lightness axis</li>
-              <li>Texture × colour-set model (field-command / tactical-overdrive …)</li>
-              <li>Monitor-OSD grade: brightness, contrast, colour, text, bg, gamma</li>
-              <li>ctrl+scroll sizes what is under the cursor — four dials: the cabinet over the outer chrome (also the bezel scrubber), a pane's header over its header, that pane's terminal text over the grid, its workbench type over the bench</li>
-            </ul>
+
+          <div class="w-pane focus">
+            <div class="w-head"><span class="w-tile"><span class="w-mark"><i></i><i></i><i></i></span></span><span class="who">• CLAUDE · shell</span><span class="sp"></span><span class="w-seg"><span class="on">TERM</span><span>BENCH</span></span><span class="w-ib">🎨</span><span class="w-ib">📊</span><span class="live">live</span><span class="x">✕</span></div>
+            <div class="w-tx" data-warp data-focus>
+              <div class="h">What changed</div>
+              <p>The tube bent the page itself at first, and at the curve you asked for, the text came apart. The fix was already written down in the curved-glass lessons: bend a picture of the page, never the page.</p>
+              <p>So the page is drawn into a texture at twice the resolution and bent in a shader. Text stays whole, a click lands on whatever is drawn under the pointer, and the docs went live with it.</p>
+              <div class="gap"></div>
+              <div>Links</div>
+              <div class="gap"></div>
+              <div><span class="tg">Target:</span> <span class="lk">https://docs.terminal-delight.brownfamilysports.com/workbench</span></div>
+              <div>What it is: The live docs, tube on</div>
+              <div class="rule"></div>
+              <div><span class="tg">Target:</span> <span class="fl">file:///home/you/Work/td/assets/td-glass.js</span></div>
+              <div>What it is: The engine, and the checks that prove it</div>
+              <div class="rule"></div>
+              <div><span class="tg">Target:</span> <span class="lk">https://github.com/parker-brown-family/terminal-delight</span></div>
+              <div>What it is: The branch, waiting on a merge</div>
+              <div class="gap"></div>
+              <div class="dim">✻ Cogitated for 8m 53s · done 2:18 AM</div>
+              <div class="gap"></div>
+              <div class="dim">※ recap: the page bends and the text survives. Next: merge the branch.</div>
+              <div class="dim right">new task? <span class="lk">/clear</span> to save 412.6k tokens</div>
+              <div class="rule"></div>
+              <div>❯ <span class="cur"></span></div>
+              <div class="rule"></div>
+              <div class="warn">  ⏵⏵ auto mode on (shift+tab to cycle) · ← 2 agents</div>
+            </div>
           </div>
-          <div>
-            <h4 style="margin:0 0 6px;color:#eafff2;font-size:14px">CRT &amp; effects</h4>
-            <ul style="margin:0;padding-left:18px">
-              <li>GPU barrel warp — a 0→1.5 dial, per-theme, per-pane</li>
-              <li>Scanlines · vignette · glow · phosphor · tracking band (roll/speed/size)</li>
-              <li>Frame jiggle · the whole thing composes in one CRT post-pass</li>
-              <li><b>Text-crawl mode</b> — perspective recede, angle + depth dials</li>
-              <li>🎰 GAMBA slot-machine theme while an agent "thinks"</li>
-            </ul>
+
+          <div class="w-col">
+            <div class="w-pane dim">
+              <div class="w-head"><span class="w-tile"><span class="w-mark"><i></i><i></i><i></i></span></span><span class="who">• CLAUDE · shell</span></div>
+              <div class="w-tx" data-warp>
+                <div class="rule"></div>
+                <div><span class="tg">Target:</span> <span class="lk">https://docs.terminal-delight.brownfamilysports.com/install</span></div>
+                <div>What it is: The install page, three commands</div>
+                <div class="gap"></div>
+                <div><span class="tg">Target:</span> <span class="fl">file:///home/you/FOLLOWUPS.md</span></div>
+                <div>What it is: The rollup, regenerated</div>
+                <div class="gap"></div>
+                <div class="dim">✻ Sautéed for 55s · done 2:16 AM</div>
+                <div class="dim">※ recap: Install replaced Download on every page.</div>
+                <div class="rule"></div>
+                <div>❯ <span class="cur"></span></div>
+                <div class="rule"></div>
+                <div class="warn">  ⏵⏵ auto mode on · ← 2 agents</div>
+              </div>
+            </div>
+            <div class="w-pane dim">
+              <div class="w-head"><span class="w-tile"><span class="w-mark"><i></i><i></i><i></i></span></span><span class="who">• CLAUDE · shell</span><span class="sp"></span><span class="w-seg"><span class="on">TERM</span><span>BENCH</span></span></div>
+              <div class="w-tx" data-warp>
+                <div class="rule"></div>
+                <div><span class="tg">Target:</span> <span class="fl">file:///home/you/Work/td/reports/left-bar.html</span></div>
+                <div>What it is: The review brief, ten figures</div>
+                <div class="gap"></div>
+                <div><span class="tg">Target:</span> <span class="lk">https://github.com/parker-brown-family/terminal-delight</span></div>
+                <div>What it is: Closed, not merged</div>
+                <div class="gap"></div>
+                <div class="dim">✻ Sautéed for 2m 0s · done 2:16 AM</div>
+                <div class="rule"></div>
+                <div>❯ open the report</div>
+                <div class="rule"></div>
+                <div class="warn">  ⏵⏵ auto mode on · ← 2 agents</div>
+              </div>
+            </div>
           </div>
-          <div>
-            <h4 style="margin:0 0 6px;color:#eafff2;font-size:14px">Agents</h4>
-            <ul style="margin:0;padding-left:18px">
-              <li>claude / codex detection · jump between your messages (Alt+↑/↓)</li>
-              <li>Your-turn input colour · agent-done bell with a per-pane sound</li>
-              <li>👓 <b>FOCUS</b> reader — mirror a pane big over a frosted blur</li>
-              <li>Crash/quit → session restore (resumes the exact conversation)</li>
-              <li>▣ <b>MCP read-only control surface</b> + live push notifications</li>
-            </ul>
-          </div>
-          <div>
-            <h4 style="margin:0 0 6px;color:#eafff2;font-size:14px">Terminal core</h4>
-            <ul style="margin:0;padding-left:18px">
-              <li>Real PTY + full VT (vim, top, tmux) · 16/256/truecolor</li>
-              <li>Scrollback · mouse selection · bracketed paste · live resize</li>
-              <li>Shift/Ctrl-click a URL or path · Super+Ctrl-click reveals it in the file manager · right-click Copy/Paste/Open/Reveal/Clear</li>
-              <li>Keyboard selection extend (shift+arrows / +ctrl for words)</li>
-            </ul>
-          </div>
-          <div>
-            <h4 style="margin:0 0 6px;color:#eafff2;font-size:14px">Window</h4>
-            <ul style="margin:0;padding-left:18px">
-              <li>Frameless client-side decorations — the cabinet <em>is</em> the chrome</li>
-              <li>Ctrl+Alt+T global hotkey → a quick scratch window</li>
-              <li>MIT one-file AppImage · X11 &amp; Wayland</li>
-            </ul>
+          <div class="w-mini"><span class="n">3</span><span>●</span></div>
+
+          <div class="w-needs" data-warp-flat>
+            <div class="nh"><span>NEEDS ME · 3</span><span class="sp"></span><span>↑↓ go</span><span>↵ pane</span><span>o open</span><span>p pin</span><span>esc</span></div>
+            <div class="it open">
+              <div class="row"><span class="rv">REVIEW</span><span>SITE:docs</span><span class="up">▲</span><span class="t">5m</span></div>
+              <div class="what">Finished, not yet seen</div>
+              <div class="bell">bell · 5m</div>
+              <dl><dt>deliverable</dt><dd>unavailable</dd><dt>changes</dt><dd>unavailable</dd><dt>checks</dt><dd>unavailable</dd><dt>read by</dt><dd class="b">bell</dd></dl>
+            </div>
+            <div class="it">
+              <div class="row"><span class="rv">REVIEW</span><span>WORKBENCH:model dials</span><span class="up">▲</span><span class="t">8s</span></div>
+              <div class="what">Finished, not yet seen</div>
+              <div class="bell">bell · 8s</div>
+            </div>
+            <div class="it">
+              <div class="row"><span>SITE:install page</span><span class="t">11s</span></div>
+              <div class="what">Finished, not yet seen</div>
+              <div class="bell">bell · 11s</div>
+            </div>
           </div>
         </div>
-      </details>
-    </div>
-  </section>
-
-  <section id="mcp">
-    <div class="wrap prose">
-      <div class="eyebrow">▲ the big one · the agent control surface</div>
-      <h2 style="letter-spacing:.02em">Your terminal, as mission control for a fleet of agents.</h2>
-      <p style="font-size:1.08em">Agentic coding means a <em>wall</em> of agents — claude here, codex there, three more in tabs — and the hard part isn't running them, it's <b>knowing what they're doing</b> without babysitting every pane. terminal-delight already knows, per pane, <b>who</b> is running (claude / codex / shell), <b>where</b> (cwd), and <b>which conversation</b>. So we turned that into a <b>read-only MCP server</b>: an orchestrating agent connects over stdio and watches the whole wall.</p>
-
-      <p><b>The use case.</b> An orchestrator launches terminal-delight as the wall, then over MCP it can <code>list_panes</code> (who's running where) and, with the feed on, <b>gets pushed a notification the instant any agent calls a tool, appears, or goes quiet</b> — so it can react: route the next task, ping you when a long build finishes, flag an agent that just ran something destructive, or restart one that wandered off. No polling. No scraping the screen — events come from each agent's own structured transcript.</p>
-
-      <div class="screen" style="margin-top:6px">
-        <div class="bar"><span class="dot"></span> an orchestrator watching the wall over MCP — read-only</div>
-<pre style="margin:0;padding:18px 20px;background:#07120c;color:var(--text);font-family:var(--mono);font-size:13px;line-height:1.5;overflow:auto"><span style="color:var(--text-dim)"># the orchestrator asks who's on the wall</span>
-→ list_panes
-  tab 0 · build    · CLAUDE · ~/proj      · claude --resume a1b2…
-  tab 1 · tests    · CODEX  · ~/proj/api  · codex resume 9f0e…
-  tab 2 · shell    · SHELL  · ~           <span style="color:var(--text-dim)">(excluded — agents-only)</span>
-
-<span style="color:var(--text-dim)"># …then the server PUSHES, the moment it happens:</span>
-<span style="color:var(--warn)">notifications/message</span> {
-  "data": { "event": "tool_call", "pane": "build",
-            "tool": "Bash", "summary": "cargo test --release" } }
-<span style="color:var(--warn)">notifications/message</span> {
-  "data": { "event": "agent_vanished", "pane": "tests" } }</pre>
-        <div class="playnote" style="position:static;background:var(--bg-2);border-top:1px solid var(--line)">Read-only by construction — <b>nothing here can write to a terminal.</b> Locked off by default; when on, agents-only (a plain shell is never exposed). stdio JSON-RPC, <b>never a network port.</b></div>
+        <div class="w-foot"><span>4 tabs · 9 panes</span><span class="w-ib">🎨</span><span class="w-ib">📊</span><span class="w-ib">🪦</span><span class="w-ib">🔔</span><span class="w-ib">🧩</span><span class="bat">▭ 85%</span><span class="lay">◧</span></div>
+      </div>
       </div>
 
-      <p style="margin-top:16px">It ships behind a <b>🤖 robot button</b> on the mother bar that opens an <b>MCP CONTROL — READ ONLY</b> panel: a master switch, an expose policy (agents-only / all), an events toggle, and a live list of every pane with a per-pane exposed dot. The danger in any agent-control surface is the <em>write</em> path (bytes into a shell = arbitrary code execution); that path simply does not exist here — the observe plane shipped first, alone.</p>
+      <div class="wear" role="group" aria-label="Paint the window with a built-in theme">
+        <button data-wear="hacker" style="--c1:#03100a;--c2:#22c55e"><i></i>&gt;_ hacker</button>
+        <button data-wear="deco" style="--c1:#0a0e10;--c2:#c2a34f"><i></i>◈ deco</button>
+        <button data-wear="field-command" style="--c1:#0e1214;--c2:#8fa85f"><i></i>▾▾ field-command</button>
+        <button data-wear="tactical-overdrive" style="--c1:#061015;--c2:#31d7ff"><i></i>★ tactical-overdrive</button>
+        <button data-wear="gamba" style="--c1:#1c1206;--c2:#ffc01e"><i></i>$$ gamba</button>
+        <button data-wear="quiet-command" style="--c1:#f3f6f9;--c2:#2f6fdd"><i></i>☀ quiet-command</button>
+      </div>
+      <p class="cap">Drawn in HTML from the colours in the app's six built-in theme files. Pick one and the window wears it, the way a pane does.</p>
+    </section>
 
-      <p style="margin-top:18px;font-size:1.06em">And it's <b>centred into a scoreboard</b> — the <b>agent wall</b>. Every pane becomes a row: its <b>tab group</b> (colour-banded by project), <b>model</b> &amp; <b>effort</b>, and a one-line read of <b>what that agent is doing right now</b> — with a live turn timer, accruing token spend, and a state you can scan in a glance: <span style="color:var(--accent)">working</span>, <span style="color:var(--warn)">blocked on you</span>, <span style="color:#ff5d52">errored</span>, or done. A rollup header totals the fleet's spend.</p>
-      <figure style="margin:14px 0 0">
-        <a href="agents.html"><img loading="lazy" src="assets/agents-wall.png" alt="the terminal-delight agent wall: a CRT scoreboard titled AGENT WALL with a rollup of working/blocked/error/done counts and total token spend, over colour-banded cards — each showing a tab group, a model-and-effort chip, a live one-line summary of what that agent is doing, and its context, fatigue and relevance bars with the call they add up to" style="width:100%;border-radius:12px;display:block"></a>
-        <figcaption style="font-size:.92em;color:var(--text-dim);margin-top:8px">The agent wall — tab group › tab · what it's doing <em>now</em> · live tokens · and the three bars, with the call. <a href="agents.html">Open the live kiosk ↗</a></figcaption>
-      </figure>
-      <div class="cta" style="justify-content:flex-start;margin-top:14px">
-        <a class="btn primary" href="agents.html">▟ Open the live agent wall ↗</a>
-        <a class="btn" href="https://github.com/parker-brown-family/terminal-delight/blob/main/docs/mcp.md">▣ The MCP guide ↗</a>
-        <a class="btn" href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/mcp.rs">Read the server ↗</a>
-      </div>
-    </div>
-  </section>
-
-  <section id="gallery">
-    <div class="wrap">
-      <div class="eyebrow">Gallery · click any shot to zoom</div>
-      <h2>Real captures — staged with demo content</h2>
-      <div class="gallery">
-        <figure><a href="agents.html"><img loading="lazy" src="assets/agents-wall.png" alt="the agent wall scoreboard: colour-banded cards showing each agent's tab group, what it is doing right now, live timers and token spend, and its context, fatigue and relevance bars"></a><figcaption>the <a href="agents.html">agent wall</a> — every agent's live task and vitals, on CRT glass</figcaption></figure>
-        <figure><img loading="lazy" src="assets/crt-wall.png" alt="a wall of barrel-warped CRT terminal panes, each a different colour"><figcaption>six curved CRTs — each its own colour &amp; size, colour-banded tab groups</figcaption></figure>
-        <figure><img loading="lazy" src="assets/showcase-themes.png" alt="three terminal panes in one window: a flat light 'paper' page with the background dimmed and dark ink, a normal flat dark terminal running git below it, and a tall green-phosphor pane gently curved like a CRT on the right"><figcaption>flat paper · plain dark terminal · one curved CRT — your call</figcaption></figure>
-        <figure><img loading="lazy" src="assets/terminal-clean.png" alt="a single full terminal pane"><figcaption>one clean pane, hacker theme</figcaption></figure>
-        <figure><img loading="lazy" src="assets/theme-hacker.png" alt="hacker theme at large text size"><figcaption>hacker — exaggerated text size</figcaption></figure>
-        <figure><img loading="lazy" src="assets/theme-tactical.png" alt="tactical-overdrive theme"><figcaption>tactical-overdrive — amber HUD</figcaption></figure>
-        <figure><img loading="lazy" src="assets/theme-quiet.png" alt="quiet-command light theme"><figcaption>quiet-command — light phosphor</figcaption></figure>
-        <figure><img loading="lazy" src="assets/text-crawl.png" alt="terminal-delight in text-crawl mode: centred yellow News-Gothic text receding into the distance inside a curved CRT"><figcaption>text-crawl mode — the opening crawl, on a real terminal</figcaption></figure>
-        <figure><img loading="lazy" src="assets/lang-picker.png" alt="terminal-delight's language dropdown open over the help modal: a fuzzy-search box above a list of nine languages, each showing its native name and English name — English, Español, Deutsch, Français, Русский, 中文, 日本語, 한국어, हिन्दी — Deutsch checkmarked, every script rendering with no tofu"><figcaption>nine languages — click 🌐, fuzzy-search, pick — the whole UI follows</figcaption></figure>
-      </div>
-    </div>
-  </section>
-
-  <section id="gamba">
-    <div class="wrap prose">
-      <div class="eyebrow">🎰 limited-time jackpot · the GAMBA theme</div>
-      <h2 style="letter-spacing:.04em">🎰 WIN BIG TODAY!!! 🎰</h2>
-      <p style="font-size:1.08em">They keep saying agentic coding is <em>basically gambling.</em> Fine. <b>So we cut out the middleman and turned your terminal into a SLOT MACHINE.</b> 🪙</p>
-      <p>Flip on the <b>GAMBA</b> theme and the second your AI agent starts "thinking," a 3×3 grid <b>SPINS</b> — reels clunking in left-to-right with that sweet last-reel tease — and it <b>RE-ROLLS EVERY 10 SECONDS</b>, all turn long. Line it up — a row, an X, a full blackout — and the whole terminal <b>ERUPTS</b>: coins spray everywhere, glitter bombs, a full 3-second <b>RUMBLE.</b> 💥</p>
-      <p>🔥 Payouts up to <b>1000✦</b> — redeemable for <b>ABSOLUTELY NOTHING!</b> No skill. No edge. No tokens back. Just you, the house, and that <code>esc to interrupt</code> dopamine. <b>PULL THE LEVER. FEED THE MACHINE. SHIP NOTHING.</b> The house always wins — and so does your cloud bill. <em>(Results not guaranteed. Zero is guaranteed.)</em></p>
-      <div class="screen">
-        <div class="bar"><span class="dot"></span> 🔴 LIVE — your agent is "thinking" · the reels never stop · the work never starts</div>
-        <video src="assets/terminal-delight-gamba-demo.webm" autoplay loop muted playsinline preload="metadata" style="width:100%;height:auto;display:block" aria-label="screen recording of the GAMBA theme: a terminal spinning a 3x3 slot machine that rerolls while an AI agent thinks, paying out in coins and glitter"></video>
-        <div class="playnote">🎰 Real, unedited capture — the machine rerolls every 10s while the agent cooks. Spoiler: the payout is zero.</div>
-      </div>
-      <div class="screen" style="margin-top:16px">
-        <div class="bar"><span class="dot"></span> GAMBA — four agents thinking · four jackpots · zero work done</div>
-        <img loading="lazy" src="assets/gamba-spin-to-win.jpg" alt="terminal-delight on the GAMBA theme: four tiled terminal panes, each spinning a 3×3 slot-machine board of AI-slop emoji, with gold coins spraying across every pane as the agents think" />
-        <div class="playnote">Four panes. Four rigged jackpots. Coins everywhere. Pure satire on AI vibe-coding.</div>
-      </div>
-      <div class="cta" style="justify-content:flex-start;margin-top:18px">
-        <a class="btn primary" href="gamba.html">🎰 PLAY NOW — the GAMBA cabinet</a>
-        <a class="btn" href="tv.html">📺 The 1950s TV cabinet</a>
-        <a class="btn" href="global.html">🌐 TERMINAL DELIGHT in 9 languages — the channel-surf cabinet</a>
-        <a class="btn" href="omarchy.html">🎨 The OMARCHY kiosk — wear the desktop, watch the agents</a>
-      </div>
-    </div>
-  </section>
-
-  <section id="crawl">
-    <div class="wrap prose">
-      <div class="eyebrow">▲ new in this build · the TEXT CRAWL mode</div>
-      <h2 style="letter-spacing:.03em">A long time ago, in a terminal far, far away…</h2>
-      <p style="font-size:1.08em">Flip <b>text crawl</b> on for any pane and every line of the terminal renders in the iconic News-Gothic crawl face and <b>recedes into the distance</b> — centred, tapering toward the top, exactly like the opening crawl you're picturing.</p>
-      <p>It isn't a video or an overlay. The crawl perspective is a <b>real GPU pre-map baked into the same CRT post-pass that already curves the glass</b>, so it composes for free with the barrel warp, screen jiggle, tracking band, glare and phosphor — and costs one extra <code>pow</code> per pixel, no second render. Two dials in the DISPLAY tray, per-pane like everything else: <b>angle</b> (2–30°, how hard the sides converge) and <b>depth</b> (0.05–15×, the bottom-to-top text-size ratio). Open the 👓 <b>FOCUS</b> reader on a crawling pane and it inherits the look too.</p>
-      <div class="screen" style="margin-top:4px">
-        <div class="bar"><span class="dot"></span> 🔴 real capture — the live crawl receding into the curved CRT</div>
-        <video src="assets/start-crawl.webm" autoplay loop muted playsinline preload="metadata" style="width:100%;height:auto;display:block" aria-label="screen recording of terminal-delight in text-crawl mode: centred News-Gothic terminal text receding into the distance inside a curved CRT screen, the opening-crawl perspective animating live as lines scroll up and shrink toward the horizon"></video>
-        <div class="playnote">▶ Unedited screen capture of the real app — every line is centred and perspective-warped on the GPU, composing live with the barrel warp, screen jiggle, glare and phosphor. No video overlay; it's the CRT post-pass doing the perspective.</div>
-      </div>
-      <div class="screen" style="margin-top:16px">
-        <div class="bar"><span class="dot"></span> text-crawl mode — centred crawl font, perspective recede, all inside the curved CRT</div>
-        <img loading="lazy" src="assets/text-crawl.png" alt="terminal-delight in text-crawl mode: centred yellow News-Gothic text receding into the distance inside a curved, glare-lit CRT screen, a staged opening crawl" />
-        <div class="playnote">Real capture, staged demo text. Every terminal line is centred and perspective-warped on the GPU — jiggle, tracking, glare and phosphor ride right along.</div>
-      </div>
-      <div class="screen" style="margin-top:16px">
-        <div class="bar"><span class="dot"></span> 👓 FOCUS on a crawling pane — it inherits the crawl font &amp; centring</div>
-        <img loading="lazy" src="assets/text-crawl-focus.png" alt="the FOCUS reading modal opened over a text-crawl pane: the mirrored terminal text shows in the centred crawl font, big and readable, over a frosted-glass blurred backdrop of the crawling screen behind it" />
-        <div class="playnote">Open the 👓 reader on a crawling pane and it inherits the attributes — same crawl font, same centring — flattened for readability over the frosted backdrop.</div>
-      </div>
-      <div class="cta" style="justify-content:flex-start;margin-top:18px">
-        <a class="btn primary" href="start-crawl.html">▲ START THE CRAWL — the kiosk</a>
-        <a class="btn" href="tv.html">📺 The 1950s TV cabinet</a>
-        <a class="btn" href="global.html">🌐 TERMINAL DELIGHT in 9 languages — the channel-surf cabinet</a>
-        <a class="btn" href="omarchy.html">🎨 The OMARCHY kiosk — wear the desktop, watch the agents</a>
-      </div>
-    </div>
-  </section>
-
-  <section id="run">
-    <div class="wrap">
-      <div class="eyebrow">Run it</div>
-      <h2>It's a real native terminal — run the real thing.</h2>
-      <div class="runcard">
+    <!-- 02 ------------------------------------------------------------ -->
+    <section class="stop" id="bench">
+      <div class="stop-head">
+        <div><div class="n">02</div><h2>Bench</h2></div>
         <div>
-          <h3>No web demo, on purpose.</h3>
-          <p>terminal-delight renders on the GPU through gpui/wgpu — it isn't a webpage and a browser shell wouldn't be the real engine. So instead of a fake terminal, grab the source and run the actual app on your Linux box. The gallery above is all real captures; a recorded clip of the live warp is coming to the hero.</p>
-        </div>
-        <div class="cta" style="justify-content:flex-end">
-          <a class="btn primary" href="#build">⌨ Build &amp; run</a>
-          <a class="btn" href="https://github.com/parker-brown-family/terminal-delight/releases/latest">v0.2.0 ↗</a>
+          <p><b>Not a terminal person?</b> Flip any agent pane to its <b>BENCH</b> face and the agent's work is laid out as cards: what it said, what it wants you to decide, the files it made, and your own notes on them. You can follow an agent and steer it from here without reading its terminal.</p>
+          <a class="more" href="https://docs.terminal-delight.brownfamilysports.com/workbench">See the workbench →</a>
         </div>
       </div>
-    </div>
-  </section>
-
-  <section id="vision">
-    <div class="wrap two">
-      <div class="prose">
-        <div class="eyebrow">Vision</div>
-        <h2>2 · 5 · 20 terminals, one window.</h2>
-        <p>The goal: 2-to-20 real terminals in a single window — native-snappy, web-app polished, themeable at will, open source. A terminal you keep open because it's <em>nice</em>, not just because you have to.</p>
-        <ul>
-          <li>Native speed, never a webview.</li>
-          <li>Aesthetics as data — share a theme as a TOML file.</li>
-          <li>Tiling that gets out of your way.</li>
-        </ul>
-        <p><a href="https://github.com/parker-brown-family/terminal-delight/blob/main/docs/PLAN.md">Read the build plan ↗</a></p>
+      <div class="flip">
+        <input type="radio" name="face" id="face-term" aria-label="Terminal face">
+        <input type="radio" name="face" id="face-bench" aria-label="Workbench face" checked>
+        <div class="win" data-wear-follow>
+          <div class="w-head"><span class="w-tile"><span class="w-mark"><i></i><i></i><i></i></span></span><span class="who">• CLAUDE · left bar</span><span class="sp"></span><span class="w-seg"><label for="face-term">TERM</label><label for="face-bench">BENCH</label></span><span class="w-ib">🎨</span><span class="w-ib">📊</span><span class="live">live</span><span class="x">✕</span></div>
+          <div class="face term"><div class="w-tx">
+            <div><span class="tool">●</span> Read(app/src/leftbar.rs)</div>
+            <div class="dim">  ⎿  Read 1,284 lines</div>
+            <div><span class="tool">●</span> Update(app/src/leftbar.rs)</div>
+            <div class="dim">  ⎿  Updated with 42 additions and 9 removals</div>
+            <div> </div>
+            <div>Two ways to lay out the group header. The first keeps the</div>
+            <div>task count on the right; the second moves it under the name,</div>
+            <div>which frees eleven columns at the narrowest width.</div>
+            <div> </div>
+            <div class="warn">☐ Group header layout</div>
+            <div>  Where should the task count sit?</div>
+            <div>  1. Count on the right</div>
+            <div>  2. Count under the name <span class="dim">(recommended)</span></div>
+            <div> </div>
+            <div class="rule"></div>
+            <div>&gt; <span class="cur"></span></div>
+            <div class="rule"></div>
+            <div class="warn">  ⏵⏵ auto mode on · 1 shell</div>
+          </div></div>
+          <div class="face bench"><div class="w-bench">
+            <div class="main">
+              <div class="w-strip"><span class="st wait">Waiting on you</span><span class="ago">12s</span><span class="sp"></span><span class="b">OPUS 5.5 ▾</span><span class="b">HIGH ▾</span><span class="b">END SESSION</span></div>
+              <div class="w-woken"><div class="k">Woken · a message from docs-site</div><p>another agent session sent this one a message</p></div>
+              <div class="w-resp ask">
+                <div class="hd"><span class="chip">decision</span><span class="t">Group header layout</span></div>
+                <p>Where should the task count sit? The second frees eleven columns at the narrowest width.</p>
+                <div class="opts"><span>1 · count on the right</span><span class="rec">2 · count under the name</span></div>
+              </div>
+              <div class="w-resp">
+                <div class="hd"><span class="chip">response</span><span class="t">Two layouts, one question</span></div>
+                <div class="prov">arrived through this agent's own hooks · whole</div>
+                <p>Both layouts compile and pass. The header is the only thing left undecided, so the agent stopped and asked instead of guessing.</p>
+              </div>
+              <div class="w-compose">type to the agent<small>TYPE ANYWHERE · ENTER SENDS · PASTE TEXT, FILES OR AN IMAGE</small></div>
+            </div>
+            <div class="w-rail">
+              <div class="tabs"><span>overview</span><span class="art">artifacts</span><span class="on">decisions</span><span>comments</span></div>
+              <div class="w-stand now"><span class="k">WAITING ON YOU</span>Group header layout<small>Where should the task count…</small></div>
+              <div class="w-stand"><span class="kind">response</span>The tab strip is keyboard-first<small>alt+1 … alt+4 land on a shelf</small></div>
+              <div class="w-stand"><span class="kind">table</span>Header widths<small>9 rows · 3 columns</small></div>
+            </div>
+          </div></div>
+        </div>
       </div>
-      <div class="prose">
-        <div class="eyebrow">Honesty</div>
-        <h2>MIT binary. Linux-only. On purpose.</h2>
-        <p>terminal-delight is <b>MIT</b> — and so is the <b>prebuilt AppImage</b>. The pinned Zed/gpui graph <em>would</em> have linked <b>GPL-3.0</b> crates into the binary, so we sever that edge at build time (<code>docs/patches/0002</code>); <code>cargo&nbsp;deny</code> passes with no GPL exceptions, so a redistributed binary carries no copyleft. Download it, or build from source — your choice.</p>
-        <p>It targets the freedesktop Linux desktop (X11 &amp; Wayland) via gpui's wgpu renderer. <b>Not</b> macOS or Windows.</p>
-        <p><a href="https://github.com/parker-brown-family/terminal-delight/blob/main/THIRD-PARTY-LICENSES.md">How the binary stays MIT, in detail ↗</a></p>
-      </div>
-    </div>
-  </section>
+      <ul class="shelves">
+        <li><b>Overview</b><span>The agent's replies, each under the message that asked for it.</span></li>
+        <li><b>Decisions</b><span>Questions it is waiting on. A digit answers one.</span></li>
+        <li><b>Artifacts</b><span>Pages, diagrams and tables it produced, one click from open.</span></li>
+        <li><b>Comments</b><span>Your notes. They never reach the agent.</span></li>
+      </ul>
+      <p class="cap left">Click TERM and BENCH: it is the same switch the pane header carries, and <kbd>alt</kbd>+<kbd>k</kbd> flips it in the app.</p>
+    </section>
 
-  <section id="build">
-    <div class="wrap prose">
-      <div class="eyebrow">Build &amp; run</div>
-      <h2>From source, in three commands</h2>
+    <!-- 03 ------------------------------------------------------------ -->
+    <section class="stop" id="wall">
+      <div class="stop-head">
+        <div><div class="n">03</div><h2>Wall</h2></div>
+        <div>
+          <p>Every agent pane on one read-only board: its project, what it is doing, what it has spent, and three bars read from <b>its own transcript</b>. Terminal Delight finds all of this out without typing a character into an agent's shell.</p>
+          <a class="more" href="https://docs.terminal-delight.brownfamilysports.com/">The agent wall →</a>
+        </div>
+      </div>
+      <div class="cards">
+        <article class="agent blocked">
+          <header><b>left bar</b><span>CLAUDE</span></header>
+          <div class="proj">terminal-delight/</div>
+          <div class="doing">Asking which of two layouts you want before it touches the tab strip.</div>
+          <div class="state">waiting on you</div>
+          <div class="bars"><div>CTX WINDOW<i style="--v:62%"></i><em>62%</em></div><div>FATIGUE<i style="--v:30%"></i><em>30%</em></div><div>RELEVANCE<i style="--v:71%"></i><em>71%</em></div></div>
+        </article>
+        <article class="agent working">
+          <header><b>lead scoring</b><span>CODEX</span></header>
+          <div class="proj">jev-integrations/</div>
+          <div class="doing">Reading the rubric before it rewrites the four batched questions.</div>
+          <div class="state">working</div>
+          <div class="bars"><div>CTX WINDOW<i class="hot" style="--v:88%"></i><em>88%</em></div><div>FATIGUE<i style="--v:41%"></i><em>41%</em></div><div>RELEVANCE<i style="--v:72%"></i><em>72%</em></div></div>
+        </article>
+        <article class="agent done">
+          <header><b>crt pass</b><span>CLAUDE</span></header>
+          <div class="proj">terminal-delight/</div>
+          <div class="doing">Finished. The barrel warp now follows the pane when it is resized.</div>
+          <div class="state">finished</div>
+          <div class="bars"><div>CTX WINDOW<i style="--v:44%"></i><em>44%</em></div><div>FATIGUE<i style="--v:18%"></i><em>18%</em></div><div>RELEVANCE<i style="--v:66%"></i><em>66%</em></div></div>
+        </article>
+      </div>
+      <p class="cap left">Staged cards. The layout, the bar names and the states are the app's. The agents are made up.</p>
+    </section>
+
+    <!-- 04 ------------------------------------------------------------ -->
+    <section class="stop" id="glass">
+      <div class="stop-head">
+        <div><div class="n">04</div><h2>Glass</h2></div>
+        <div>
+          <p>The CRT is a real shader pass: barrel warp, scanlines, bloom, and a tracking band that sweeps the screen every sixteen seconds. A theme file sets how much of it you get, and the running terminal picks up the change. This page wears a cheaper copy, and both switches below are live.</p>
+          <a class="more" href="https://docs.terminal-delight.brownfamilysports.com/">Themes and the CRT →</a>
+        </div>
+      </div>
+      <div class="glass-row">
+        <button class="switch crt" data-td-toggle="crt">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="M4 5.5Q12 4 20 5.5Q21.4 12 20 18.5Q12 20 4 18.5Q2.6 12 4 5.5Z"/><path d="M6.5 9.5h11M6.5 12h11M6.5 14.5h7" opacity=".75"/></svg>
+          <div><b>Tube</b><span>On glass, a curved screen. On paper, green-bar printout.</span></div><span class="st"></span>
+        </button>
+        <button class="switch mode" data-td-toggle="theme">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 1 0 16Z" fill="currentColor" stroke="none"/></svg>
+          <div><b>Glass or paper</b><span>Phosphor on black, or the same terminal printed.</span></div><span class="st"></span>
+        </button>
+      </div>
+    </section>
+
+    <!-- 05 ------------------------------------------------------------ -->
+    <section class="stop" id="kiosks">
+      <div class="stop-head">
+        <div><div class="n">05</div><h2>Kiosks</h2></div>
+        <div><p>Two features get a whole page each.</p></div>
+      </div>
+      <div class="kiosks">
+        <a class="kiosk omarchy" href="/omarchy">
+          <small>Omarchy</small><b>The desktop is agentic</b>
+          <span>Panes that wear the desktop's own colour schemes, and SUPER+ALT+T to pull any terminal into the wall.</span>
+          <div class="art" aria-hidden="true">
+            <i style="background:#DD6D16"></i><i style="background:#d4be98"></i><i style="background:#509475"></i><i style="background:#7aa2f7"></i>
+            <i style="background:#7d82d9"></i><i style="background:#7fbbb3"></i><i style="background:#78824b"></i><i style="background:#faa968"></i>
+          </div>
+        </a>
+        <a class="kiosk global" href="/global">
+          <small>Global</small><b>Nine languages</b>
+          <span>The whole interface, compiler-checked in nine languages, broadcast from a 1950s television.</span>
+          <canvas class="art babel" data-glass-live aria-hidden="true"></canvas>
+        </a>
+      </div>
+    </section>
+
+    <!-- 06 ------------------------------------------------------------ -->
+    <section class="stop" id="install">
+      <div class="stop-head">
+        <div><div class="n">06</div><h2>Install</h2></div>
+        <div><p>MIT, Linux only, on purpose. One AppImage runs on X11 and Wayland.</p></div>
+      </div>
+      <div class="install">
+        <div class="box">
+          <h3>AppImage</h3>
+          <p>One file, about 32 MB. Download it, mark it executable, run it. The guide covers what it needs from your system and where it keeps its settings.</p>
+          <div class="row">
+            <a class="td-btn primary" href="https://docs.terminal-delight.brownfamilysports.com/install">Install guide →</a>
+            <a class="td-btn" href="https://github.com/parker-brown-family/terminal-delight/blob/main/CHANGELOG.md">Changelog</a>
+          </div>
+        </div>
+        <div class="box">
+          <h3>From source</h3>
 <pre><span class="c"># deps (Ubuntu): Vulkan + build libs</span>
 bash scripts/setup-deps.sh
-<span class="c"># clone the pinned Zed checkout + apply the td-crt-pass renderer patch</span>
+<span class="c"># the pinned Zed checkout + the td-crt-pass renderer patch</span>
 bash scripts/prepare-gpui.sh
 <span class="c"># run it</span>
 cd app &amp;&amp; cargo run</pre>
-      <p>gpui is consumed from a pinned Zed checkout carrying the <code>td-crt-pass</code> renderer patch (the per-pane barrel warp) — set up as a sibling <code>zed-upstream/</code> directory, same as CI. Full instructions, the CI bar, and the clean-room rule are in <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/CONTRIBUTING.md">CONTRIBUTING.md ↗</a>.</p>
-      <div class="cta" style="justify-content:flex-start">
-        <a class="btn primary" href="https://github.com/parker-brown-family/terminal-delight/releases/latest">Release notes</a>
-        <a class="btn" href="https://github.com/parker-brown-family/terminal-delight">Source ↗</a>
+          <div class="row"><a class="td-btn" href="https://docs.terminal-delight.brownfamilysports.com/install#technical">Building from source →</a></div>
+        </div>
       </div>
-    </div>
-  </section>
+    </section>
 
-  <!-- Gallery lightbox -->
-  <div id="lightbox" role="dialog" aria-modal="true" aria-label="Screenshot viewer">
-    <button class="lb-btn lb-close" id="lb-close" aria-label="Close (Esc)">✕</button>
-    <button class="lb-btn lb-prev" id="lb-prev" aria-label="Previous (←)">‹</button>
-    <img class="lb-img" id="lb-img" alt="" />
-    <button class="lb-btn lb-next" id="lb-next" aria-label="Next (→)">›</button>
-    <div class="lb-cap"><span id="lb-cap-text"></span><span class="ct" id="lb-cap-count"></span></div>
+    <footer class="foot">
+      <span>terminal delight · MIT · built in Rust on gpui and alacritty_terminal</span>
+      <a href="https://github.com/parker-brown-family/terminal-delight">GitHub</a>
+      <a href="https://docs.terminal-delight.brownfamilysports.com/">Docs</a>
+      <span class="ch" aria-label="Other channels"><a href="/tv" title="Channel 2" aria-label="Channel 2"></a><a href="/gamba" title="Channel 7" aria-label="Channel 7"></a><a href="/start-crawl" title="Channel 9" aria-label="Channel 9"></a></span>
+    </footer>
   </div>
+</main>
+<div id="td-fx" aria-hidden="true"><div class="scan"></div><div class="vig"></div><div class="bloom"></div><div class="band"></div></div>
 
-  <footer>
-    <div class="wrap cols">
-      <div>
-        <div class="brand">▸ terminal-delight<span class="blink">_</span></div>
-        <div style="margin-top:8px">MIT source &amp; binary · Linux only</div>
-        <div style="margin-top:10px"><span class="pill">rust</span> <span class="pill">gpui</span> <span class="pill">crt</span> <span class="pill">v0.1.0</span></div>
-      </div>
-      <div>
-        <div><a href="https://github.com/parker-brown-family/terminal-delight">GitHub repository ↗</a></div>
-        <div><a href="https://github.com/parker-brown-family/terminal-delight/releases/latest">Releases</a></div>
-        <div><a href="https://github.com/parker-brown-family/terminal-delight/blob/main/CHANGELOG.md">Changelog</a></div>
-        <div><a href="https://github.com/parker-brown-family/terminal-delight/blob/main/CONTRIBUTING.md">Contributing</a></div>
-        <div><a href="https://github.com/parker-brown-family/terminal-delight/blob/main/SECURITY.md">Security</a></div>
-        <div><a href="omarchy.html">The Omarchy kiosk</a></div>
-        <div><a href="prototype.html">Web design prototype (WIP)</a></div>
-      </div>
-    </div>
-  </footer>
+<script src="/assets/td-shell.js"></script>
+<script src="/assets/td-glass.js"></script>
+<script src="/assets/td-panes.js"></script>
+<script>
+  /* The theme chips. The pick is remembered with the rest of the shell's
+     prefs; with none, glass wears hacker and paper wears quiet-command, the
+     app's one light theme. The bench drawing follows the hero. */
+  (function () {
+    var root = document.documentElement, KEY = 'td-shell';
+    var wins = Array.prototype.slice.call(document.querySelectorAll('#win, [data-wear-follow]'));
+    function picked() { try { return (JSON.parse(localStorage.getItem(KEY)) || {}).wear; } catch (e) { return null; } }
+    function paint() {
+      var w = picked() || (root.dataset.theme === 'paper' ? 'quiet-command' : 'hacker');
+      wins.forEach(function (el) { el.setAttribute('data-wear', w); });
+      document.querySelectorAll('.wear button').forEach(function (b) { b.setAttribute('aria-pressed', b.dataset.wear === w ? 'true' : 'false'); });
+    }
+    document.querySelector('.wear').addEventListener('click', function (e) {
+      var b = e.target.closest('button[data-wear]'); if (!b) return;
+      var p = {}; try { p = JSON.parse(localStorage.getItem(KEY)) || {}; } catch (e2) {}
+      p.wear = b.dataset.wear; try { localStorage.setItem(KEY, JSON.stringify(p)); } catch (e3) {}
+      paint();
+    });
+    new MutationObserver(paint).observe(root, { attributes: true, attributeFilter: ['data-theme'] });
+    paint();
+  })();
 
-  <script>
-    // Gallery lightbox: click a shot to zoom; ← / → cycle, Esc or backdrop closes.
-    (function () {
-      var figs = Array.prototype.slice.call(document.querySelectorAll('.gallery figure'));
-      if (!figs.length) return;
-      var lb = document.getElementById('lightbox');
-      var img = document.getElementById('lb-img');
-      var capT = document.getElementById('lb-cap-text');
-      var capC = document.getElementById('lb-cap-count');
-      var items = figs.map(function (f) {
-        var im = f.querySelector('img'), cap = f.querySelector('figcaption');
-        return { src: im.getAttribute('src'), cap: cap ? cap.textContent : '' };
-      });
-      var idx = 0;
-      function show(i) {
-        idx = (i + items.length) % items.length;        // wrap both ends
-        img.src = items[idx].src;
-        img.alt = items[idx].cap;
-        capT.textContent = items[idx].cap;
-        capC.textContent = (idx + 1) + ' / ' + items.length;
+  /* The Global card's title: the app's own name in the nine languages it
+     speaks, the same strings the Global kiosk broadcasts (global.html's
+     LANGS). A new one every 1.5 s, arriving through a short burst of
+     tracking-bar squiggle — sliced, sheared, split into red and cyan — and
+     then sitting still. It draws only while it is on screen, and with
+     reduced motion it changes every 3 s with no squiggle. */
+  (function () {
+    var cv = document.querySelector('canvas.babel');
+    if (!cv) return;
+    var NAMES = ['TERMINAL DELIGHT', 'DELEITE TERMINAL', 'TERMINALE WONNE', 'DÉLICE TERMINAL',
+      'ТЕРМИНАЛЬНОЕ БЛАЖЕНСТВО', '终端之悦', '端末の悦び', '터미널의 기쁨', 'टर्मिनल आनंद'];
+    var REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
+    var EVERY = REDUCED ? 3000 : 1500, GLITCH = REDUCED ? 0 : 440, D = 2;
+    var tube = document.getElementById('tube');
+    var W = 2, H = 2, idx = 0, prev = null, swapAt = -1e9, nextAt = 0, shown = true, dirty = true;
+    var cur = document.createElement('canvas'), old = document.createElement('canvas');
+    var tintA = document.createElement('canvas'), tintB = document.createElement('canvas');
+
+    function size() {
+      var r = cv.getBoundingClientRect();
+      var w = Math.max(2, Math.round(r.width * D)), h = Math.max(2, Math.round(r.height * D));
+      if (w === W && h === H) return;
+      W = w; H = h;
+      [cv, cur, old, tintA, tintB].forEach(function (c) { c.width = W; c.height = H; });
+      dirty = true;
+    }
+    function ink() { return getComputedStyle(cv).color; }
+    function set(c, text) {
+      var g = c.getContext('2d');
+      g.clearRect(0, 0, W, H);
+      var lines = /\s/.test(text) ? text.split(/\s+/) : [text];
+      var px = H / (lines.length * 1.05);
+      var face = function (p) { return '800 ' + p + 'px "JetBrains Mono", ui-monospace, "Noto Sans CJK SC", "Noto Sans Devanagari", sans-serif'; };
+      g.font = face(px);
+      var widest = Math.max.apply(null, lines.map(function (l) { return g.measureText(l).width; }));
+      if (widest > W) { px *= W / widest; g.font = face(px); }
+      g.textAlign = 'right';
+      g.textBaseline = 'alphabetic';
+      g.fillStyle = ink();
+      var y = H - px * 0.2 - (lines.length - 1) * px;
+      lines.forEach(function (l, k) { g.fillText(l, W, y + k * px); });
+    }
+    function tint(dst, src, colour) {
+      var g = dst.getContext('2d');
+      g.clearRect(0, 0, W, H);
+      g.globalCompositeOperation = 'source-over';
+      g.drawImage(src, 0, 0);
+      g.globalCompositeOperation = 'source-in';
+      g.fillStyle = colour;
+      g.fillRect(0, 0, W, H);
+      g.globalCompositeOperation = 'source-over';
+    }
+
+    function paint(now) {
+      var g = cv.getContext('2d');
+      g.clearRect(0, 0, W, H);
+      var t = now - swapAt;
+      if (t >= GLITCH) {                               // still: the name, dim, as the card shows it
+        g.globalAlpha = 0.6;
+        g.drawImage(cur, 0, 0);
+        g.globalAlpha = 1;
+      } else {
+        var p = t / GLITCH, env = Math.sin(p * Math.PI);
+        var src = p < 0.5 && prev ? old : cur;
+        tint(tintA, src, '#ff4d8a');
+        tint(tintB, src, '#4dd8ff');
+        var slices = 16, sh = Math.ceil(H / slices), split = 3 * D * env;
+        for (var k = 0; k < slices; k++) {
+          var y = k * sh;
+          var dx = Math.sin(k * 1.9 + now * 0.035) * 12 * D * env + (Math.random() - 0.5) * 5 * D * env;
+          g.globalCompositeOperation = 'lighter';
+          g.globalAlpha = 0.5 * env;
+          g.drawImage(tintA, 0, y, W, sh, dx - split, y, W, sh);
+          g.drawImage(tintB, 0, y, W, sh, dx + split, y, W, sh);
+          g.globalCompositeOperation = 'source-over';
+          g.globalAlpha = 0.75;
+          g.drawImage(src, 0, y, W, sh, dx, y, W, sh);
+        }
+        /* the bar itself, rolling down through the name */
+        var by = (p * 1.3 - 0.15) * H;
+        g.globalAlpha = 0.35 * env;
+        g.fillStyle = ink();
+        g.fillRect(0, by, W, 2.5 * D);
+        g.globalAlpha = 1;
       }
-      function open(i) { show(i); lb.classList.add('open'); document.body.style.overflow = 'hidden'; }
-      function close() { lb.classList.remove('open'); document.body.style.overflow = ''; img.src = ''; }
-      figs.forEach(function (f, i) { f.addEventListener('click', function () { open(i); }); });
-      document.getElementById('lb-next').addEventListener('click', function (e) { e.stopPropagation(); show(idx + 1); });
-      document.getElementById('lb-prev').addEventListener('click', function (e) { e.stopPropagation(); show(idx - 1); });
-      document.getElementById('lb-close').addEventListener('click', close);
-      lb.addEventListener('click', function (e) { if (e.target === lb) close(); }); // backdrop only
-      document.addEventListener('keydown', function (e) {
-        if (!lb.classList.contains('open')) return;
-        if (e.key === 'Escape') close();
-        else if (e.key === 'ArrowRight') show(idx + 1);
-        else if (e.key === 'ArrowLeft') show(idx - 1);
-      });
-    })();
-  </script>
+      cv.__tdFrame = (cv.__tdFrame || 0) + 1;
+    }
 
-  <!-- ===== To enable a LIVE recorded hero (when you have an asciinema cast) =====
-  1) Record the real app:  asciinema rec assets/demo.cast   (Ctrl-D to stop)
-  2) Add before </head>:
-       <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/asciinema-player@3.7.1/dist/bundle/asciinema-player.css" />
-  3) Replace the <img> inside #hero-demo with:
-       <div id="demo-cast"></div>
-  4) Add before </body>:
-       <script src="https://cdn.jsdelivr.net/npm/asciinema-player@3.7.1/dist/bundle/asciinema-player.min.js"></script>
-       <script>AsciinemaPlayer.create('assets/demo.cast', document.getElementById('demo-cast'), {autoPlay:true, loop:true, theme:'asciinema'});</script>
-     (Or simplest of all: drop an mp4 screen-capture in as a <video autoplay muted loop playsinline>.)
+    function frame(now) {
+      requestAnimationFrame(frame);
+      if (!shown) return;
+      size();
+      if (now >= nextAt) {
+        var o = old; old = cur; cur = o;             // what was showing becomes the way out
+        prev = NAMES[idx];
+        idx = (idx + 1) % NAMES.length;
+        set(cur, NAMES[idx]);
+        swapAt = now; nextAt = now + EVERY;
+        dirty = true;
+      }
+      if (dirty || now - swapAt < GLITCH) { paint(now); dirty = now - swapAt < GLITCH; }
+    }
 
-  HEADS UP: steps 2 and 4 are BLOCKED by this page's own Content-Security-Policy
-  as written — script-src and style-src are 'self' only, and cdn.jsdelivr.net is
-  on neither. Follow these instructions verbatim and the player silently does not
-  appear; the only sign is a CSP violation in the console. Vendor the two files
-  into assets/ (which keeps the no-third-party posture every kiosk now shares),
-  or take the mp4 option, which needs no policy change at all.
-  ============================================================================== -->
+    if ('IntersectionObserver' in window) {
+      new IntersectionObserver(function (es) { shown = es[0].isIntersecting; dirty = true; }, { root: tube }).observe(cv);
+    }
+    new MutationObserver(function () { set(cur, NAMES[idx]); if (prev) set(old, prev); dirty = true; })
+      .observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+    size();
+    set(cur, NAMES[idx]);
+    nextAt = performance.now() + EVERY;
+    requestAnimationFrame(frame);
+  })();
+</script>
 </body>
 </html>

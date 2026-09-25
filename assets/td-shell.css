@@ -1,0 +1,414 @@
+/* ==========================================================================
+   The vanilla Terminal Delight shell — shared by the docs site and the info
+   kiosk. The Omarchy kiosk does not use it and must not: that page wears the
+   desktop's palettes, and this one wears the terminal's own.
+
+   Two modes and one texture switch, mirroring the app:
+
+     glass  — the default `hacker` theme the app ships (app/themes/hacker.toml):
+              phosphor #86efac on #03100a, accent #22c55e.
+     paper  — the light mode. A terminal that prints instead of glowing.
+
+     CRT on — glass: a curved tube over the content pane — scanlines bowed
+              through the barrel, a cushion-shaped screen edge, a shadow in
+              the rim, bloom, and a tracking band every 16 s (the app's own
+              tracking_period). The text under it is never resampled.
+              paper: green-bar tractor-feed paper, sprocket holes and all.
+
+   The layout copies the app's rule that chrome is flat and the pane is glass:
+   the top bar and the spine never bend, and the glass lives over #tube alone.
+   ========================================================================== */
+
+:root {
+  --mono: "JetBrains Mono", "Monaspace Argon", "Cascadia Code", ui-monospace, "SF Mono", Menlo, monospace;
+  --sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+
+  --top-h: 56px;
+  --spine-w: 268px;
+  --read: 740px;
+
+  /* glass — the hacker palette */
+  --bg: #03100a;
+  --bg-2: #071a10;
+  --bg-3: #0b2416;
+  --line: #14401f;
+  --line-2: #1f5a30;
+  --ink: #d3f3dc;
+  --ink-2: #8fbf9c;
+  --ink-3: #5a8667;
+  --phos: #86efac;
+  --acc: #22c55e;
+  --acc-2: #4ade80;
+  --acc-ink: #03100a;
+  --amber: #f5c542;
+  --red: #ff6b6b;
+  --you: #7aa5ff;
+  --glow: rgba(34, 197, 94, .38);
+  --shadow: 0 1px 0 rgba(134, 239, 172, .04), 0 18px 40px -24px rgba(0, 0, 0, .9);
+  color-scheme: dark;
+}
+
+:root[data-theme="paper"] {
+  --bg: #f3f5ec;
+  --bg-2: #e9eddf;
+  --bg-3: #fbfcf7;
+  --line: #d3dac6;
+  --line-2: #b7c3a8;
+  --ink: #18261c;
+  --ink-2: #455849;
+  --ink-3: #718373;
+  --phos: #0e5f2e;
+  --acc: #15803d;
+  --acc-2: #16a34a;
+  --acc-ink: #f3f5ec;
+  --amber: #9a5b00;
+  --red: #b42318;
+  --you: #1d4ed8;
+  --glow: transparent;
+  --shadow: 0 1px 0 rgba(255, 255, 255, .8), 0 14px 30px -22px rgba(24, 38, 28, .35);
+  color-scheme: light;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font: 16px/1.65 var(--sans);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;              /* #tube is the scroller, like a pane */
+}
+a { color: inherit; }
+::selection { background: color-mix(in srgb, var(--acc) 35%, transparent); }
+:focus-visible { outline: 2px solid var(--acc-2); outline-offset: 2px; border-radius: 4px; }
+
+/* ---------------------------------------------------------------- top bar */
+
+.td-top {
+  position: fixed; inset: 0 0 auto 0; height: var(--top-h); z-index: 30;
+  display: flex; align-items: center; gap: 22px;
+  padding: 0 18px 0 20px;
+  background: color-mix(in srgb, var(--bg) 92%, transparent);
+  border-bottom: 1px solid var(--line);
+  backdrop-filter: blur(8px);
+}
+:root[data-theme="glass"] .td-top { box-shadow: 0 1px 0 rgba(34, 197, 94, .08), 0 8px 24px -18px rgba(34, 197, 94, .25); }
+
+.td-brand {
+  display: flex; align-items: center; gap: 10px; flex: none;
+  text-decoration: none; color: var(--phos);
+  font: 700 15px/1 var(--mono); letter-spacing: .01em;
+}
+.td-brand svg { width: 24px; height: 24px; flex: none; border-radius: 6px; }
+.td-brand .cur { display: inline-block; width: .6em; height: 1.05em; margin-left: 2px; vertical-align: -2px; background: var(--acc); animation: td-blink 1.06s steps(1) infinite; }
+:root[data-theme="glass"] .td-brand { text-shadow: 0 0 12px var(--glow); }
+@keyframes td-blink { 50% { opacity: 0; } }
+
+.td-sections { display: flex; gap: 4px; align-items: stretch; height: 100%; margin-left: 6px; }
+.td-sections a {
+  display: flex; align-items: center; padding: 0 12px;
+  font: 500 13px/1 var(--mono); color: var(--ink-2); text-decoration: none;
+  border-bottom: 2px solid transparent; margin-bottom: -1px;
+}
+.td-sections a:hover { color: var(--ink); }
+.td-sections a[aria-current="page"] { color: var(--ink); border-bottom-color: var(--acc); }
+
+.td-search {
+  display: flex; align-items: center; gap: 10px; flex: 0 1 320px; min-width: 0;
+  margin-left: auto; height: 34px; padding: 0 10px 0 12px;
+  font: 13px/1 var(--sans); color: var(--ink-3);
+  background: var(--bg-2); border: 1px solid var(--line); border-radius: 8px; cursor: text;
+}
+.td-search svg { width: 15px; height: 15px; flex: none; }
+.td-search span { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: left; }
+.td-search kbd { font: 11px/1 var(--mono); color: var(--ink-3); border: 1px solid var(--line-2); border-radius: 4px; padding: 3px 5px; }
+
+.td-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; flex: none; }
+.td-search + .td-actions { margin-left: 0; }
+.td-icon {
+  width: 34px; height: 34px; display: grid; place-items: center; padding: 0;
+  color: var(--ink-2); background: transparent; border: 1px solid var(--line); border-radius: 8px; cursor: pointer;
+  text-decoration: none;
+}
+.td-icon:hover { color: var(--ink); border-color: var(--line-2); background: var(--bg-2); }
+.td-icon svg { width: 18px; height: 18px; }
+.td-icon[aria-pressed="true"] { color: var(--acc-2); border-color: color-mix(in srgb, var(--acc) 55%, var(--line)); background: color-mix(in srgb, var(--acc) 10%, transparent); }
+:root[data-theme="glass"] .td-icon[aria-pressed="true"] svg { filter: drop-shadow(0 0 4px var(--glow)); }
+
+/* the theme glyph shows the mode you would switch TO */
+.td-theme .sun { display: none; }
+:root[data-theme="paper"] .td-theme .sun { display: block; }
+:root[data-theme="paper"] .td-theme .moon { display: none; }
+
+.td-btn {
+  display: inline-flex; align-items: center; gap: 8px; height: 34px; padding: 0 14px;
+  font: 600 13px/1 var(--mono); text-decoration: none; white-space: nowrap;
+  color: var(--ink); background: var(--bg-2); border: 1px solid var(--line-2); border-radius: 8px;
+}
+.td-btn:hover { border-color: var(--acc); }
+.td-btn.primary { color: var(--acc-ink); background: var(--acc); border-color: var(--acc); }
+.td-btn.primary:hover { background: var(--acc-2); }
+:root[data-theme="glass"] .td-btn.primary { box-shadow: 0 0 18px -4px var(--glow); }
+
+.td-menu { display: none; }
+
+/* ------------------------------------------------------------------ spine */
+
+.td-spine {
+  position: fixed; top: var(--top-h); left: 0; bottom: 0; width: var(--spine-w); z-index: 20;
+  overflow-y: auto; overscroll-behavior: contain;
+  padding: 22px 14px 40px 14px;
+  background: var(--bg);
+  border-right: 1px solid var(--line);
+  scrollbar-width: thin; scrollbar-color: var(--line-2) transparent;
+}
+.td-group + .td-group { margin-top: 22px; }
+.td-group h6 {
+  margin: 0 0 8px; padding: 0 12px;
+  font: 600 11px/1.4 var(--mono); letter-spacing: .16em; text-transform: uppercase; color: var(--ink-3);
+}
+.td-group ul { list-style: none; margin: 0; padding: 0; }
+.td-group a {
+  display: flex; align-items: center; gap: 10px;
+  padding: 6px 12px; margin: 1px 0; border-radius: 7px;
+  font-size: 14.5px; line-height: 1.35; color: var(--ink-2); text-decoration: none;
+}
+.td-group a:hover { color: var(--ink); background: var(--bg-2); }
+.td-group a[aria-current="page"], .td-group a.is-here {
+  color: var(--ink); background: var(--bg-3);
+  box-shadow: inset 2px 0 0 var(--acc);
+}
+:root[data-theme="glass"] .td-group a[aria-current="page"], :root[data-theme="glass"] .td-group a.is-here { color: var(--phos); }
+.td-group a .n { font: 500 11px/1 var(--mono); color: var(--ink-3); min-width: 1.6em; }
+.td-group a.is-soon { color: var(--ink-3); }
+.td-group a.is-soon::after {
+  content: "soon"; margin-left: auto;
+  font: 500 10px/1 var(--mono); letter-spacing: .08em; text-transform: uppercase;
+  color: var(--ink-3); border: 1px solid var(--line); border-radius: 4px; padding: 2px 4px;
+}
+.td-group ul ul { margin: 2px 0 4px 14px; padding-left: 8px; border-left: 1px solid var(--line); }
+
+/* ------------------------------------------------------------------- tube */
+
+#tube {
+  position: fixed; top: var(--top-h); left: var(--spine-w); right: 0; bottom: 0;
+  overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain;
+  background: var(--bg);
+  scroll-behavior: smooth;
+  scrollbar-width: thin; scrollbar-color: var(--line-2) transparent;
+}
+/* No filter ever lands on #tube: bending the page resamples its text, and
+   Chrome does that nearest-pixel. The real curve is td-glass.js, which bends
+   a snapshot of the page in WebGL2; where it cannot run, td-shell.js's flat
+   glass overlay stands in. */
+
+/* The curved tube is live: the shader draws the scanlines, rim, band and
+   glare itself, so the overlay steps aside. The page underneath still
+   scrolls and takes every click, but what it would show on selection or
+   hover is not what is drawn, so those are handed to the glass. */
+canvas.td-tube { position: fixed; z-index: 12; pointer-events: none; display: block; }
+canvas.td-tube[hidden] { display: none; }
+:root[data-tube="gl"][data-crt][data-theme] #td-fx { display: none; }   /* outranks the rule that shows it */
+:root[data-tube="gl"] #tube { user-select: none; -webkit-user-select: none; }
+:root[data-tube="gl"] #tube, :root[data-tube="gl"] #tube * { cursor: default; }
+:root[data-tube="gl"].tube-pointer #tube, :root[data-tube="gl"].tube-pointer #tube * { cursor: pointer; }
+
+/* the glass: an overlay over the tube only, so the chrome stays flat */
+#td-fx {
+  position: fixed; top: var(--top-h); left: var(--spine-w); right: 0; bottom: 0; z-index: 10;
+  pointer-events: none; display: none;
+}
+:root[data-crt="on"][data-theme="glass"] #td-fx { display: block; }
+#td-fx .scan { position: absolute; inset: 0; background: repeating-linear-gradient(0deg, rgba(0, 0, 0, .22) 0 1px, transparent 1px 4px); }
+/* The bent glass: bowed scanlines, the cushion edge and the rim shadow, drawn
+   by td-shell.js. It replaces the flat scanlines once it exists, and sits on
+   top so the corners outside the tube are black under everything else. */
+#td-fx canvas.glass { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 2; }
+#td-fx canvas.glass[hidden] { display: none; }
+#td-fx.curved .scan { display: none; }
+/* The top-left reflection the app's hacker theme calls screen_glare. */
+#td-fx::after { content: ""; position: absolute; inset: 0; z-index: 1; background: radial-gradient(55% 42% at 20% 10%, rgba(190, 255, 210, .07), transparent 70%); }
+#td-fx .vig { position: absolute; inset: 0; background: radial-gradient(125% 110% at 50% 50%, transparent 58%, rgba(0, 0, 0, .55)); }
+#td-fx .bloom { position: absolute; inset: 0; box-shadow: inset 0 0 140px rgba(10, 70, 30, .45), inset 0 0 24px rgba(54, 255, 134, .08); }
+#td-fx .band {
+  position: absolute; left: 0; right: 0; height: 90px; top: -120px;
+  background: linear-gradient(180deg, transparent, rgba(134, 239, 172, .05) 45%, rgba(134, 239, 172, .08) 50%, rgba(134, 239, 172, .05) 55%, transparent);
+  animation: td-track 16s linear infinite;
+}
+@keyframes td-track { 0% { top: -120px; } 44% { top: 100%; } 100% { top: 100%; } }
+:root[data-crt="on"][data-theme="glass"] #tube h1,
+:root[data-crt="on"][data-theme="glass"] #tube h2 { text-shadow: 0 0 14px var(--glow), 0 0 2px rgba(134, 239, 172, .4); }
+
+/* paper + CRT: green-bar tractor-feed paper. The bands scroll with the text
+   (background-attachment: local), the sprocket holes stay put in the margins. */
+:root[data-crt="on"][data-theme="paper"] #tube {
+  background:
+    radial-gradient(circle at 13px 50%, color-mix(in srgb, var(--ink) 16%, transparent) 0 4.5px, transparent 5.5px) left top / 26px 32px repeat-y,
+    radial-gradient(circle at 13px 50%, color-mix(in srgb, var(--ink) 16%, transparent) 0 4.5px, transparent 5.5px) right top / 26px 32px repeat-y,
+    linear-gradient(90deg, transparent 25px, color-mix(in srgb, var(--line-2) 70%, transparent) 25px 26px, transparent 26px calc(100% - 26px), color-mix(in srgb, var(--line-2) 70%, transparent) calc(100% - 26px) calc(100% - 25px), transparent calc(100% - 25px)),
+    repeating-linear-gradient(180deg, #dfecd6 0 48px, transparent 48px 96px) 0 0 / 100% 96px,
+    #f7f8f1;
+  background-attachment: local, local, local, local, local;
+}
+:root[data-crt="on"][data-theme="paper"] #tube .td-doc,
+:root[data-crt="on"][data-theme="paper"] #tube .td-kiosk { color: #1d2b21; text-shadow: 0 0 .5px rgba(24, 38, 28, .55); }
+
+/* ---------------------------------------------------------------- content */
+
+.td-doc { max-width: calc(var(--read) + 96px); margin: 0 auto; padding: 44px 48px 140px; }
+.td-kicker { font: 600 12px/1 var(--mono); letter-spacing: .16em; text-transform: uppercase; color: var(--ink-3); margin: 0 0 14px; }
+.td-doc h1 {
+  margin: 0; font: 800 clamp(34px, 4.6vw, 52px)/1.06 var(--mono); letter-spacing: -.02em; color: var(--phos);
+}
+.td-doc h2 { margin: 2.2em 0 .6em; font: 700 24px/1.25 var(--mono); letter-spacing: -.01em; color: var(--phos); }
+.td-doc h3 { margin: 1.8em 0 .4em; font: 700 17px/1.3 var(--mono); color: var(--ink); }
+.td-doc p, .td-doc li { color: var(--ink); }
+.td-doc p { margin: 0 0 1.05em; }
+.td-doc ul, .td-doc ol { padding-left: 1.3em; margin: 0 0 1.1em; }
+.td-doc li { margin: .3em 0; }
+.td-doc a { color: var(--ink); text-decoration: underline; text-decoration-color: var(--acc); text-underline-offset: 3px; text-decoration-thickness: 1.5px; }
+.td-doc a:hover { color: var(--acc-2); }
+.td-doc code, .td-kiosk code {
+  font: 500 .86em/1 var(--mono); padding: .18em .42em; border-radius: 5px;
+  background: var(--bg-2); border: 1px solid var(--line); color: var(--phos);
+}
+.td-doc pre {
+  margin: 0 0 1.3em; padding: 16px 18px; overflow-x: auto;
+  font: 13.5px/1.6 var(--mono); color: var(--ink);
+  background: var(--bg-2); border: 1px solid var(--line); border-radius: 10px;
+}
+.td-doc pre code { padding: 0; border: 0; background: none; font-size: inherit; color: inherit; }
+/* Commands wrap on screen so a long URL never runs under the Copy button;
+   the copy takes the text node, so what lands on the clipboard is still one
+   line per command. */
+.td-doc pre.cmd { position: relative; padding-right: 76px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.td-doc pre.cmd .td-copy { position: absolute; top: 10px; right: 10px; height: 26px; padding: 0 10px; background: var(--bg-2); }
+.td-doc kbd, .td-kiosk kbd {
+  font: 600 .8em/1 var(--mono); padding: .22em .45em; border-radius: 5px;
+  color: var(--ink); background: var(--bg-3); border: 1px solid var(--line-2); border-bottom-width: 2px;
+}
+.td-doc table { width: 100%; border-collapse: collapse; margin: 0 0 1.4em; font-size: 14.5px; display: block; overflow-x: auto; }
+.td-doc th, .td-doc td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.td-doc th { font: 600 12px/1.3 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); }
+
+.td-page-head { display: flex; align-items: flex-start; gap: 16px; }
+.td-page-head > div { flex: 1; min-width: 0; }
+.td-copy-page { flex: none; margin-top: 30px; }
+
+/* ------------------------------------------------------ register dossier
+   Brief · Story · Technical. Radios plus sibling selectors, per the article
+   system's mechanism: every register is in the DOM, the swap needs no script,
+   and a deep link (#brief / #story / #technical) opens its register. */
+
+.reg { margin-top: 30px; }
+.reg > input { position: absolute; opacity: 0; width: 1px; height: 1px; pointer-events: none; }
+.reg-tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--line); margin-bottom: 26px; }
+.reg-tabs label {
+  padding: 10px 16px; cursor: pointer; margin-bottom: -1px;
+  font: 600 14px/1 var(--sans); color: var(--ink-3);
+  border-bottom: 2px solid transparent;
+}
+.reg-tabs label:hover { color: var(--ink); }
+.reg-panel { display: none; }
+/* Matched by id, not position: a page may carry Brief and Technical with no
+   Story, and a positional rule would then show the wrong panel. */
+#r-brief:checked ~ .reg-body #brief,
+#r-story:checked ~ .reg-body #story,
+#r-technical:checked ~ .reg-body #technical { display: block; }
+#r-brief:checked ~ .reg-tabs label[for="r-brief"],
+#r-story:checked ~ .reg-tabs label[for="r-story"],
+#r-technical:checked ~ .reg-tabs label[for="r-technical"] { color: var(--ink); border-bottom-color: var(--acc); }
+#r-brief:focus-visible ~ .reg-tabs label[for="r-brief"],
+#r-story:focus-visible ~ .reg-tabs label[for="r-story"],
+#r-technical:focus-visible ~ .reg-tabs label[for="r-technical"] { outline: 2px solid var(--acc-2); outline-offset: -3px; }
+
+.reg-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 14px; }
+.reg-kicker { font: 600 11px/1 var(--mono); letter-spacing: .16em; text-transform: uppercase; color: var(--ink-3); }
+.reg-head .td-copy { margin-left: auto; }
+.reg-panel > h2:first-of-type { margin-top: 0; }
+.reg-panel .lede { font-size: 18.5px; line-height: 1.6; color: var(--ink); }
+
+.td-copy {
+  display: inline-flex; align-items: center; gap: 7px; height: 30px; padding: 0 11px;
+  font: 500 12.5px/1 var(--sans); color: var(--ink-2); cursor: pointer;
+  background: transparent; border: 1px solid var(--line-2); border-radius: 7px;
+}
+.td-copy:hover { color: var(--ink); border-color: var(--acc); }
+.td-copy svg { width: 14px; height: 14px; }
+.td-copy.done { color: var(--acc-2); border-color: var(--acc); }
+
+/* figures: hand-built from the same tokens, so they repaint with the mode */
+.td-fig { margin: 8px 0 26px; }
+.td-fig figcaption { margin-top: 10px; font-size: 14px; line-height: 1.5; color: var(--ink-2); }
+.td-fig figcaption b { color: var(--ink); font-weight: 600; }
+
+.td-note {
+  margin: 0 0 1.2em; padding: 12px 16px; border-radius: 9px;
+  background: color-mix(in srgb, var(--amber) 9%, transparent);
+  border: 1px solid color-mix(in srgb, var(--amber) 40%, var(--line));
+  font-size: 14.5px; color: var(--ink);
+}
+.td-note b { color: var(--amber); font: 700 11.5px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; margin-right: 6px; }
+
+.td-pager { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 56px; }
+.td-pager a {
+  display: block; padding: 14px 16px; border: 1px solid var(--line); border-radius: 10px; text-decoration: none;
+  background: var(--bg-2);
+}
+.td-pager a:hover { border-color: var(--acc); }
+.td-pager small { display: block; font: 500 11px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--ink-3); margin-bottom: 6px; }
+.td-pager span { font: 600 15px/1.3 var(--mono); color: var(--ink); }
+.td-pager a:last-child { text-align: right; }
+
+.td-foot { margin-top: 48px; padding-top: 18px; border-top: 1px solid var(--line); font: 12.5px/1.6 var(--mono); color: var(--ink-3); display: flex; flex-wrap: wrap; gap: 6px 18px; }
+.td-foot a { color: var(--ink-3); text-decoration: none; }
+.td-foot a:hover { color: var(--acc-2); }
+
+/* --------------------------------------------------------------- palette */
+
+.td-pal { position: fixed; inset: 0; z-index: 60; display: none; background: rgba(0, 0, 0, .45); backdrop-filter: blur(3px); }
+.td-pal.open { display: block; }
+.td-pal-box {
+  width: min(560px, calc(100vw - 32px)); margin: 12vh auto 0;
+  background: var(--bg-2); border: 1px solid var(--line-2); border-radius: 12px; box-shadow: 0 30px 80px -20px rgba(0, 0, 0, .7);
+  overflow: hidden;
+}
+.td-pal input {
+  width: 100%; height: 52px; padding: 0 18px; border: 0; border-bottom: 1px solid var(--line); outline: none;
+  font: 16px/1 var(--sans); color: var(--ink); background: transparent;
+}
+.td-pal ul { list-style: none; margin: 0; padding: 6px; max-height: 50vh; overflow: auto; }
+.td-pal li { display: flex; align-items: baseline; gap: 10px; padding: 9px 12px; border-radius: 8px; cursor: pointer; color: var(--ink-2); }
+.td-pal li small { margin-left: auto; font: 500 10.5px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--ink-3); }
+.td-pal li[aria-selected="true"], .td-pal li:hover { background: var(--bg-3); color: var(--ink); box-shadow: inset 2px 0 0 var(--acc); }
+.td-pal-foot { margin: 0; padding: 10px 18px; border-top: 1px solid var(--line); font: 12px/1.4 var(--mono); color: var(--ink-3); }
+
+/* ----------------------------------------------------------------- mobile */
+
+@media (max-width: 1080px) {
+  .td-sections { display: none; }
+}
+@media (max-width: 900px) {
+  :root { --spine-w: 0px; }
+  .td-menu { display: grid; }
+  .td-spine { width: min(86vw, 300px); transform: translateX(-102%); transition: transform .22s ease; box-shadow: 20px 0 40px -20px rgba(0, 0, 0, .6); }
+  :root.spine-open .td-spine { transform: none; }
+  .td-search { flex-basis: 44px; padding: 0; justify-content: center; }
+  .td-search span, .td-search kbd { display: none; }
+  .td-btn.hide-sm { display: none; }
+  .td-doc { padding: 30px 22px 120px; }
+  .td-page-head { flex-direction: column; gap: 0; }
+  .td-copy-page { margin-top: 16px; }
+}
+@media (max-width: 520px) {
+  .td-top { gap: 10px; padding: 0 10px 0 12px; }
+  .td-brand .word { display: none; }
+  .td-actions { gap: 6px; }
+  .td-actions .td-icon.gh { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #td-fx .band { display: none; }
+  .td-brand .cur { animation: none; }
+  #tube { scroll-behavior: auto; }
+}
