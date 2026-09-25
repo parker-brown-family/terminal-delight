@@ -567,12 +567,17 @@ table.wide.progs .ver { display: block; font-family: var(--mono); font-size: 10p
   .bar-row, .axis { grid-template-columns: 130px minmax(0,1fr) 70px; }
 }
 
+/* 07 · the three roads */
+table.wide.roads td { vertical-align: top; }
+table.wide.roads td:first-child { white-space: normal; min-width: 150px; color: var(--text-secondary); }
+table.wide.roads th:not(:first-child) { color: var(--text-primary); }
+
 </style>
 </head>
 <body>
 <div class="wrap">
 
-<p class="kicker">Terminal Delight &middot; research, nothing built &middot; 2026-09-24</p>
+<p class="kicker">Terminal Delight &middot; research, nothing built &middot; 2026-09-24, revised 2026-09-25</p>
 
 <h1>Program Pixels</h1>
 
@@ -586,8 +591,21 @@ texture back. The front half does not exist yet, and tonight&rsquo;s runs made i
 concrete: two of the three programs you named put their picture wherever the cursor happens to be,
 and nothing in TD that sees the picture knows where that is.
 This brief shows what each program actually does in a TD pane, why the cursor is the whole
-problem, and a way round it that keeps one picture system instead of two. It ends on five questions
-to settle before any code.</p>
+problem, and two ways through it: teach TD&rsquo;s own read loop to turn every picture into text, or
+swap TD&rsquo;s emulator core for one that already draws pictures, the move TD&rsquo;s foundation
+review set aside for exactly this moment. It ends on five questions to settle before any code.</p>
+
+<div class="callout">
+  <span class="lbl">revised &middot; 2026-09-25, after your links to wterm and asciinema</span>
+  <p>The first version of this brief weighed three ways for TD to hear a picture and recommended
+  owning the read loop. It missed a fourth that TD&rsquo;s own foundation review (2026-08-29) had
+  already written down: swap alacritty_terminal for an emulator core that handles pictures,
+  &ldquo;when image support becomes a committed TD feature&rdquo;. wterm is a working example of that
+  swap &mdash; Ghostty&rsquo;s emulator, embedded as a library, drawing Kitty pictures. A new section
+  weighs it, the second question now asks <b>loop or swap</b>, and the first build step is a
+  head-to-head test of the two cores rather than a spike of the loop. asciinema comes in at the
+  video question.</p>
+</div>
 
 <!-- ============================================================ 1 -->
 <h2 class="sec">The square already draws a picture</h2>
@@ -846,8 +864,9 @@ morning&rsquo;s cell-size fix put a small scanner there (figure 05).</p>
   owns can stop at the picture&rsquo;s last byte with everything before it already parsed.</figcaption>
 </figure>
 
-<p>This morning&rsquo;s research named three ways to get that moment. A scanner in the tee is the
-cheap one, and figure 05 is why it cannot place a picture. Patching the parser (the vte crate) and
+<p>This morning&rsquo;s research named three ways to get that moment, and TD&rsquo;s own records
+hold a fourth, which has a section of its own after the next. A scanner in the tee is the cheap
+one, and figure 05 is why it cannot place a picture. Patching the parser (the vte crate) and
 alacritty_terminal gives the moment by construction, at the price of carrying two forks against
 their releases. The third is for TD to run its own read loop in place of alacritty&rsquo;s,
 stopping at the end of each picture. Reading the code tonight added one fact that makes the third
@@ -881,9 +900,8 @@ three become ordinary cases. <span class="tag v">measured</span> for the flaws,
 gpui, applied by a script at a pinned revision, with a ledger of why each exists. This one is
 heavier because a parser callback alone does not reach the cells. alacritty_terminal would need a
 second patch to write them mid-parse, and both would be rebased against every release. Comments in
-three files also record a standing choice to keep the emulator stock. The build below spikes the
-loop first, on the host only, and lets the existing host and replica tests and tonight&rsquo;s
-throughput probe decide whether it holds.</p>
+three files also record a standing choice to keep the emulator stock. Figure 06 shows where the
+loop sits, and what it would carry once pictures arrive.</p>
 
 <figure>
   <span class="lbl">06 &middot; TD, built up in three steps</span>
@@ -928,7 +946,7 @@ throughput probe decide whether it holds.</p>
       </div>
       <div class="ext-row bottom"><div class="box b"><b>window-owned panes</b><span>the same TD loop, so they hear the cell-size question too</span></div></div>
     </div>
-    <p class="gutter">2 &middot; the loop. Nothing draws yet; the spike&rsquo;s job is to prove every pane still behaves.</p>
+    <p class="gutter">2 &middot; the loop. Nothing draws yet; its first job is to leave every pane behaving exactly as before.</p>
 
     <div class="scroller">
       <div class="ext-row"><div class="box d"><b>program in a pane</b><span>chafa, a ratatui app, mpv &mdash; writes text and, sometimes, a picture</span></div></div>
@@ -953,24 +971,93 @@ throughput probe decide whether it holds.</p>
   </div>
   <div class="legend"><span><i class="g"></i>exists today</span><span><i class="b"></i>this brief&rsquo;s proposal</span><span><i class="d"></i>outside TD</span></div>
   <figcaption>Drawn from the code (<code>host.rs</code>, <code>term.rs</code>, <code>socketpty.rs</code>,
-  <code>main.rs</code>); the blue boxes are mine. <b>The change touches the one piece every pane shares,
+  <code>main.rs</code>); the blue boxes are mine, drawn for the own-the-loop road. <b>The change touches the one piece every pane shares,
   the read loop, in all three places it runs</b>; everything drawn after it sits in the window beside
   the square.</figcaption>
 </figure>
 
+<!-- ============================================================ 6b -->
+<h2 class="sec">Or swap the emulator core</h2>
+
+<p class="bridge">Owning the loop and patching the parser both keep alacritty_terminal and make TD
+the author of Kitty&rsquo;s protocol. The other way to have the cursor at the right moment is to use
+an emulator core that already handles pictures, so the moment belongs to someone else&rsquo;s code.</p>
+
+<p>TD wrote this option down a month ago. The foundation review of 2026-08-29 scored an alternative
+to each of TD&rsquo;s dependencies, and for the emulator it listed swapping alacritty_terminal for
+rio-vt or libghostty-vt, with the verdict &ldquo;zero product win today&rdquo; and a trigger:
+&ldquo;when image support becomes a committed TD feature&rdquo;. Pictures that programs draw are that
+feature. <span class="tag v">measured</span></p>
+
+<p>Both candidates have moved since. rio-vt, the core extracted from the Rio terminal (itself
+descended from Alacritty), has had 26 releases on crates.io in two months, the latest on
+2026-09-17; it is MIT and carries Kitty, Sixel and iTerm2 pictures. libghostty-vt is
+Ghostty&rsquo;s emulator as a library, MIT or Apache, with Rust bindings at 0.2.1 whose own
+documentation says the API is not yet stable, and it builds from source with a Zig toolchain this
+machine does not have. wterm, the browser terminal you linked, is the working example: Vercel Labs
+compiled libghostty 1.3.1 to WebAssembly and draws Kitty pictures with it, pinned to their text
+through scrollback and resize. It stops short of the text route and caps pictures at 32&nbsp;MiB a
+screen. <span class="tag v">measured</span> from the projects&rsquo; own pages.</p>
+
+<figure>
+  <span class="lbl">07 &middot; Three roads to a picture at the cursor</span>
+  <div class="scroller">
+  <table class="wide roads">
+    <thead><tr><th></th><th>Own the loop</th><th>Swap to rio-vt</th><th>Swap to libghostty-vt</th></tr></thead>
+    <tbody>
+      <tr><td>who writes Kitty&rsquo;s protocol</td><td>TD</td><td>Rio</td><td>Ghostty</td></tr>
+      <tr><td>a picture at the cursor</td><td>TD turns it into text cells</td><td>the core anchors it to an absolute row</td><td>the core pins it to its place in the scrollback</td></tr>
+      <tr><td>text over or under a picture</td><td><span class="n">no</span></td><td><span class="u">unverified; Rio clips a picture where text lands</span></td><td><span class="y">yes, three layers</span></td></tr>
+      <tr><td>the text route (placeholders)</td><td><span class="y">yes, it is the design</span></td><td><span class="u">unverified in the crate</span></td><td><span class="u">unverified in the library</span></td></tr>
+      <tr><td>Sixel and iTerm2</td><td><span class="n">no</span></td><td><span class="y">yes</span></td><td><span class="n">no</span></td></tr>
+      <tr><td>what moves in TD</td><td>the read loop, in three places</td><td>the seven files that touch alacritty_terminal</td><td>the same seven, across a C boundary</td></tr>
+      <tr><td>maturity</td><td>alacritty_terminal 0.26, current, about two releases a year</td><td>two months old, 26 releases</td><td>0.2.1, &ldquo;not yet stable&rdquo;</td></tr>
+      <tr><td>build</td><td>unchanged</td><td>one more crate</td><td>a Zig toolchain</td></tr>
+      <tr><td>embedded in production by</td><td><span class="u">nobody yet; TD&rsquo;s own design</span></td><td>Rio</td><td>Ghostty, cmux, wterm</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <figcaption>Drawn from the foundation review, the morning&rsquo;s protocol write-up and each
+  project&rsquo;s own pages; grey cells are unverified. <b>Swapping the core buys a maintained
+  picture implementation, and with libghostty-vt pictures that can share cells with text, and pays
+  for it by moving every file that reads alacritty&rsquo;s grid.</b> Owning the loop moves less and makes TD the author
+  of the protocol.</figcaption>
+</figure>
+
+<p>What a swap costs can be counted. Seven of TD&rsquo;s files import alacritty_terminal: the read
+path (<code>host.rs</code>, <code>term.rs</code>, <code>socketpty.rs</code>), the attach snapshot and
+grid check (<code>gridwire.rs</code>, written against alacritty&rsquo;s cells and flags), and the
+renderer, where <code>pane.rs</code> reads the grid in 51 places. The foundation review called the
+emulator TD&rsquo;s contained seam, and by file count it is; by depth it reaches the snapshot, which
+is what lets a window re-attach to its host. <span class="tag v">measured</span></p>
+
+<p>The two roads also meet. On the GUI-in-the-TUI brief you asked that the part of the HTML engine
+most likely to be the wrong call sit behind an interface you can unplug, and wterm&rsquo;s cores are that pattern
+applied to the emulator: one terminal component, two interchangeable engines behind it. TD&rsquo;s own
+read loop is where such a seam would go, since the loop is what hands bytes to whichever core parses
+them, so owning the loop is the first step of a swap as well as the alternative to one.
+<span class="tag i">inferred</span></p>
+
+<p>Which road is cheaper is a question tonight&rsquo;s recordings can answer before anyone rewrites
+anything. The stand-in terminal already captured what icat, viu, chafa, ratatui-image and mpv send.
+Recorded again with the raw bytes kept, those streams can be fed to rio-vt and to libghostty-vt in a
+small program that reports what each stored and where it put it, and set beside the count above.
+That turns the second question below from a judgement into a measurement.
+<span class="tag h">hunch</span> that it takes about a day.</p>
+
 <!-- ============================================================ 7 -->
 <h2 class="sec">What pictures cost once they arrive</h2>
 
-<p class="bridge">Once TD has the cursor, the remaining costs are the ones every emulator with
-pictures pays, plus one that TD&rsquo;s split into a host and a window adds.</p>
+<p class="bridge">Whichever road gets TD the cursor, the remaining costs are the ones every emulator
+with pictures pays, plus one that TD&rsquo;s split into a host and a window adds.</p>
 
 <p>Video is where the bytes get large. mpv at a 1200&times;675 pane sends each frame as 3.24&nbsp;MB
 of text-encoded pixels, about 97&nbsp;MB a second at 30 frames. Tonight&rsquo;s probe fed a hidden
 TD window the same frames &mdash; which TD still throws away &mdash; and timed how fast the pane took
-them in (figure 07).</p>
+them in (figure 08).</p>
 
 <figure>
-  <span class="lbl">07 &middot; How fast a pane takes in bytes tonight</span>
+  <span class="lbl">08 &middot; How fast a pane takes in bytes tonight</span>
   <div class="scroller">
     <div class="bars">
       <div class="bar-row"><div class="bl">plain text, hosted pane<span>3 runs</span></div>
@@ -1013,7 +1100,8 @@ file, and for a temporary file deletes it, before the window could.
 
 <p>Kitty caps stored pictures at 320&nbsp;MB per screen and evicts the ones nobody can see first.
 Applied per pane in a window of twenty panes, that ceiling is 12.8&nbsp;GB, so TD needs one budget for
-the whole window. A cell whose picture has been evicted should draw as a hatch that says so, since an
+the whole window. wterm, living inside a browser tab, settled on a tenth of kitty&rsquo;s number:
+32&nbsp;MiB a screen. A cell whose picture has been evicted should draw as a hatch that says so, since an
 empty cell reads as a picture that happens to be blank.</p>
 
 <p>Two things come from the renderer. Pictures bend with the CRT glass for free, because they draw
@@ -1028,23 +1116,24 @@ rectangle. <span class="tag v">measured</span></p>
 <h2 class="sec">The first build</h2>
 
 <p class="bridge">Everything so far describes what has to exist. The order to build it in comes
-from asking which part could hurt the panes you already use, and the answer is the loop, because
+from asking which choice would cost the most to reverse, and the answer is the road: loop or core,
 every byte of every pane goes through it.</p>
 
-<p>So the loop is proven first, on its own, before anything draws. One small change comes even
-before that, because it ends icat&rsquo;s ten-second hang today and needs none of the rest: telling
-programs what TD is. After the loop, the first picture is ratatui-image&rsquo;s, since it needs the
-store and the painter but not the cursor, and then everything that places at the cursor.</p>
+<p>So the road is chosen first, by the head-to-head test, and nothing draws until it is. One small
+change comes even before that, because it ends icat&rsquo;s ten-second hang today and needs none of
+the rest: telling programs what TD is. After the road, the first picture is ratatui-image&rsquo;s,
+since it needs the store and the painter but not the cursor, and then everything that places at the
+cursor.</p>
 
 <figure>
-  <span class="lbl">08 &middot; The build, in order</span>
+  <span class="lbl">09 &middot; The build, in order</span>
   <div class="scroller">
     <div class="tracks">
       <div class="track"><span class="tn">now</span>
         <div class="step go"><b>0 &middot; say what TD is</b>a device-attributes reply icat recognises, a version reply, <code>TERM_PROGRAM</code><span class="sz">S &middot; icat stops hanging</span></div>
-        <div class="step gate"><b>1 &middot; the loop, host only</b>a spike; host and replica tests plus tonight&rsquo;s throughput probe decide<span class="sz">M &middot; the gate</span></div>
-        <div class="step"><b>2 &middot; the first picture</b>loop in all three places, store, queries, painter, re-attach, a hundred-picture soak<span class="sz">L &middot; ratatui-image draws</span></div>
-        <div class="step"><b>3 &middot; at the cursor</b>cursor pictures become cells; files and shared memory forwarded<span class="sz">M &middot; icat, viu, chafa -f kitty, timg</span></div>
+        <div class="step gate"><b>1 &middot; choose the road</b>rio-vt and libghostty-vt fed tonight&rsquo;s recorded programs; TD&rsquo;s alacritty surface counted<span class="sz">S&ndash;M &middot; the gate</span></div>
+        <div class="step"><b>2 &middot; the first picture</b>the road in all three places, store, queries, painter, re-attach, a hundred-picture soak<span class="sz">L &middot; ratatui-image draws</span></div>
+        <div class="step"><b>3 &middot; at the cursor</b>TD turns cursor pictures into cells, or the core places them; files and shared memory forwarded<span class="sz">M &middot; icat, viu, chafa -f kitty, timg</span></div>
         <div class="step"><b>4 &middot; be recognised</b>ask chafa to recognise TD by <code>TERM_PROGRAM</code>, and yazi by its version reply<span class="sz">S &middot; both pick Kitty without a flag</span></div>
       </div>
       <div class="track"><span class="tn">later</span>
@@ -1053,25 +1142,26 @@ store and the painter but not the cursor, and then everything that places at the
       </div>
     </div>
   </div>
-  <figcaption>Mine; the sizes are hunches. <b>Step 1 is the gate: if the host and replica tests do
-  not survive TD&rsquo;s own loop, stop and reopen the parser patch before anything draws.</b> Step 0
-  stands alone and could ship tomorrow.</figcaption>
+  <figcaption>Mine; the sizes are hunches. <b>Step 1 is the gate: it decides whether TD writes
+  Kitty&rsquo;s protocol or adopts a core that already speaks it, and nothing that draws is built until
+  it has.</b> Step 0 stands alone and could ship tomorrow.</figcaption>
 </figure>
 
 <figure>
-  <span class="lbl">09 &middot; In and out</span>
+  <span class="lbl">10 &middot; In and out</span>
   <div class="fence">
     <div class="fside fin"><h4>In the first build</h4><ul>
       <li>Kitty&rsquo;s protocol: send a picture, query, delete by id or by place</li>
-      <li>pictures as text, and pictures at the cursor turned into text</li>
+      <li>pictures as text, and pictures at the cursor, whichever road places them</li>
       <li>PNG and raw pixels, compressed or not; sent in the stream, as a file or through shared memory</li>
       <li>one quota for the window, evicted pictures drawn as a labelled hatch</li>
       <li>the identity answers: device attributes, version, <code>TERM_PROGRAM</code></li>
     </ul></div>
     <div class="fside fout"><h4>Not in it</h4><ul>
-      <li>Sixel and iTerm2&rsquo;s format &mdash; Kitty covers every program in figure 02</li>
+      <li>Sixel and iTerm2&rsquo;s format, unless the core that wins brings them &mdash; Kitty covers every program in figure 02</li>
       <li>animation, which Ghostty and Rio also ship without</li>
-      <li>pictures layered above or below text</li>
+      <li>pictures layered above or below text, unless the core that wins brings them</li>
+      <li>asciinema recordings as a kind of document &mdash; a separate, smaller track (question 5)</li>
       <li>tuning for video beyond not falling over</li>
       <li>pretending to be kitty or Ghostty in the environment</li>
     </ul></div>
@@ -1092,17 +1182,21 @@ recommendation; a concur is enough where you agree.</p>
     <p>ratatui-image uses the text route, so it needs the store, the painter and the query answer but
     not the cursor. chafa and timg need all of that and the cursor too. The first slice should cross
     every risky part once.</p>
-    <p class="rec"><b>Recommendation:</b> ratatui-image, built on TD&rsquo;s own loop rather than on the
-    tee scanner, so the cursor programs are one step away instead of a second design.</p>
+    <p class="rec"><b>Recommendation:</b> ratatui-image, built on whichever road question 2 picks
+    rather than on the tee scanner, so the cursor programs are one step away instead of a second
+    design.</p>
   </div>
   <div class="ask">
-    <h3>2 &middot; Own the read loop, or patch the parser?</h3>
-    <p>Owning it keeps vte and alacritty_terminal stock and fixes the cell-size answer&rsquo;s ordering
-    on the way. Patching them gives the cursor by construction and costs two forks rebased against every
-    release.</p>
-    <p class="rec"><b>Recommendation:</b> own the loop, spiked on the host first. If the existing host
-    and replica tests or the throughput probe do not hold, this question comes back before anything
-    draws.</p>
+    <h3>2 &middot; Own the read loop, or swap the emulator core?</h3>
+    <p>Owning the loop keeps alacritty_terminal, makes TD the author of Kitty&rsquo;s protocol and turns
+    pictures into text. Swapping to rio-vt or libghostty-vt gets a maintained implementation, and with
+    libghostty-vt pictures that can share cells with text, and moves the seven files that read
+    alacritty&rsquo;s grid onto a two-month-old crate or an unstable API. TD&rsquo;s foundation review
+    named the swap as the move for exactly this moment. Patching the parser stays the least attractive
+    of the three.</p>
+    <p class="rec"><b>Recommendation:</b> decide it by the head-to-head test, not by argument:
+    tonight&rsquo;s recorded programs fed to both cores, and TD&rsquo;s alacritty surface counted beside
+    the result. If neither core places all five programs correctly, own the loop.</p>
   </div>
   <div class="ask">
     <h3>3 &middot; Tell programs what TD is?</h3>
@@ -1122,12 +1216,17 @@ recommendation; a concur is enough where you agree.</p>
   </div>
   <div class="ask">
     <h3>5 &middot; Video now, or later?</h3>
-    <p>Your note on the morning brief put video from agents in the future. The pipe already carries it;
-    decoding thirty frames a second and forwarding shared memory from host to window are the new
-    parts.</p>
-    <p class="rec"><b>Recommendation:</b> later. But the store should replace a picture in place from
-    the first build, because mpv sends every frame without an id and never deletes one, and adding that
-    afterwards means reworking the store.</p>
+    <p>Your note on the morning brief put video from agents in the future. The pipe already carries
+    mpv-style video; decoding thirty frames a second and forwarding shared memory from host to window
+    are the new parts. A terminal agent has a cheaper kind of video, though: a recording of its
+    terminal. asciinema&rsquo;s format stores what a program printed and when, as text rather than
+    pixels. TD&rsquo;s host already sees every byte a pane prints, so it could write one, and TD could
+    replay one in the floating square with its own emulator &mdash; pictures included once TD draws
+    them, which asciinema&rsquo;s web player, going by its documentation, does not.</p>
+    <p class="rec"><b>Recommendation:</b> mpv-style video later, but the store replaces a picture in
+    place from the first build, because mpv sends every frame without an id and never deletes one.
+    asciinema recordings are a separate, smaller track &mdash; a new kind of document for the floating
+    square &mdash; and not part of this one.</p>
   </div>
 </div>
 
@@ -1140,7 +1239,7 @@ is the one to open if you open only one.</p>
 
 <div class="dlgrow">
   <button data-dlg="d-captures">What each program sent</button>
-  <button data-dlg="d-routes">Three ways to hear a picture</button>
+  <button data-dlg="d-routes">Four ways to hear a picture</button>
   <button data-dlg="d-invariants">Seven things the loop must keep</button>
   <button data-dlg="d-files">A program can name a file</button>
   <button data-dlg="d-provenance">What each picture is drawn from</button>
@@ -1201,7 +1300,7 @@ was built or changed.</p>
 </dialog>
 
 <dialog id="d-routes" class="sub">
-  <div class="dlg-head"><div><h3>Three ways to hear a picture</h3><p class="repo">and one that was rejected</p></div><button class="x" data-close>&times;</button></div>
+  <div class="dlg-head"><div><h3>Four ways to hear a picture</h3><p class="repo">and one that was rejected</p></div><button class="x" data-close>&times;</button></div>
   <div class="dlg-body">
     <h4>A scanner in the tee</h4>
     <p>Where the cell-size answer lives today. It can do everything that does not need the cursor: store a picture, answer a query, delete by id, and serve the text route. It draws ratatui-image and nothing else in figure 02. No fork.</p>
@@ -1209,6 +1308,10 @@ was built or changed.</p>
     <p>Replace alacritty_terminal&rsquo;s event loop (<code>event_loop.rs</code>, Apache-2.0, about 500 lines) with one that stops at the end of each picture, parses up to there, and acts with the terminal locked. Inside a synchronized update the parser holds text back; the loop flushes it first (<code>Processor::stop_sync</code> is public) so the picture lands after the text it follows. No fork; three call sites and seven invariants.</p>
     <h4>Patch vte and alacritty_terminal</h4>
     <p>Rio&rsquo;s road: a picture callback in the parser, and a terminal that writes the cells when it fires. vte&rsquo;s maintainer declined such a callback upstream (&ldquo;I&rsquo;m very hesitant to accept this sort of &lsquo;second rate escape sequence&rsquo;&rdquo;, alacritty/vte#115), and alacritty&rsquo;s own graphics pull request has been open since 2021. Two forks, rebased against every release.</p>
+    <h4>Swap the emulator core</h4>
+    <p>Replace alacritty_terminal with a core that implements pictures: <b>rio-vt</b> (crates.io 0.5.28, 2026-09-17, MIT; &ldquo;Embeddable terminal core extracted from Rio: VT state machine, grid, PTY driver, selection, search&rdquo;; 26 releases since 2026-07-26; Kitty, Sixel and iTerm2) or <b>libghostty-vt</b> (Rust bindings 0.2.1, 2026-07-18, MIT or Apache-2.0; &ldquo;the API is not yet stable&rdquo;; <code>libghostty-vt-sys</code> &ldquo;fetches and builds <code>libghostty-vt.a</code> from ghostty sources via Zig by default&rdquo;). TD&rsquo;s foundation review (<code>docs/2026-08-29-foundation-interrogation-zed-gpui-quickshell.md</code>, option F) sets the trigger: &ldquo;If <code>alacritty_terminal</code> stalls, or when image support becomes a committed TD feature&rdquo;.</p>
+    <p>wterm (Vercel Labs, Apache-2.0) is the evidence that libghostty embeds with pictures working: its <code>@wterm/ghostty</code> core compiles libghostty 1.3.1 to WebAssembly (about 580&nbsp;KB) with patches for the browser&rsquo;s allocator, and renders &ldquo;direct Kitty Graphics Protocol PNG, RGB, and RGBA data&rdquo; as &ldquo;bounded, transient canvas overlays for pinned placements&rdquo;. It leaves out Sixel, iTerm2, animation and &ldquo;virtual Unicode placements&rdquo;, and caps storage at 32&nbsp;MiB a screen with at most 4,096 images and 4,096 placements. Its default core is a 26&nbsp;KB Zig one that swallows Kitty sequences without drawing them &mdash; one component, two engines behind it.</p>
+    <p>TD&rsquo;s side of a swap, counted with <code>grep</code> at 81ec545: seven files import alacritty_terminal (<code>gridwire.rs</code> 19 references, <code>term.rs</code> 18, <code>socketpty.rs</code> 12, <code>host.rs</code> 8, <code>main.rs</code> 3, <code>pane.rs</code> 3, <code>pane/bench.rs</code> 1), and <code>pane.rs</code> reads the grid, its cells or their flags in 51 places.</p>
     <h4>Rejected: rewrite the stream in the tee</h4>
     <p>Swap a cursor picture for the bytes that would print its cells. The tee knows neither the column, so it cannot stop at the right margin, nor the program&rsquo;s current colours, so it cannot restore them afterwards; saving them with the terminal&rsquo;s save-cursor sequence would overwrite the one slot the program itself may be using.</p>
   </div>
@@ -1251,11 +1354,12 @@ was built or changed.</p>
       <li><b>06</b> &mdash; the host&rsquo;s loop <code>host.rs:709-729</code>; the window&rsquo;s copy <code>term.rs:298-319</code>; window-owned panes <code>term.rs:183-202</code>, <code>:244-274</code> and <code>main.rs:37363-37386</code>. The blue boxes are mine.</li>
     </ul>
     <h4>Drawn from tonight&rsquo;s measurements</h4>
-    <ul><li><b>02</b>, <b>07</b> and the capture modal. Raw output is in <code>docs/plans/program-pixels/evidence/</code>.</li></ul>
+    <ul><li><b>02</b>, <b>08</b> and the capture modal. Raw output is in <code>docs/plans/program-pixels/evidence/</code>.</li></ul>
     <h4>Drawn from someone else&rsquo;s design</h4>
-    <ul><li><b>03</b> &mdash; Kitty&rsquo;s graphics protocol document; the picture and the dashboard are invented.</li></ul>
+    <ul><li><b>03</b> &mdash; Kitty&rsquo;s graphics protocol document; the picture and the dashboard are invented.</li>
+    <li><b>07</b> &mdash; the foundation review&rsquo;s option F; the morning&rsquo;s protocol write-up (&sect;5.1 Ghostty, &sect;6.4 Rio) on the research branch; crates.io for rio-vt; docs.rs for libghostty-vt and libghostty-vt-sys; wterm.dev and its GitHub page, read 2026-09-25. The TD row is a <code>grep</code> at 81ec545.</li></ul>
     <h4>Mine</h4>
-    <ul><li><b>08</b>, <b>09</b>, the sizes, and the 320&nbsp;MB window budget.</li></ul>
+    <ul><li><b>09</b>, <b>10</b>, the sizes, and the 320&nbsp;MB window budget.</li></ul>
   </div>
 </dialog>
 
@@ -1276,6 +1380,7 @@ was built or changed.</p>
       <li>No picture was decoded, stored or drawn by TD. The cost of decoding and uploading frames is unknown.</li>
       <li>timg, yazi and presenterm were not run.</li>
       <li>Whether TD&rsquo;s own loop keeps every invariant is a claim about a spike that has not been built.</li>
+      <li>Neither rio-vt nor libghostty-vt was built or run here. Everything figure 07 says about them comes from their own pages, the foundation review and the morning&rsquo;s reading of Rio&rsquo;s and Ghostty&rsquo;s source, which is why the head-to-head test is step 1.</li>
     </ul>
   </div>
 </dialog>

@@ -228,3 +228,8 @@ table.wide.progs .ver { display: block; font-family: var(--mono); font-size: 10p
 @media (max-width: 760px) {
   .bar-row, .axis { grid-template-columns: 130px minmax(0,1fr) 70px; }
 }
+
+/* 07 · the three roads */
+table.wide.roads td { vertical-align: top; }
+table.wide.roads td:first-child { white-space: normal; min-width: 150px; color: var(--text-secondary); }
+table.wide.roads th:not(:first-child) { color: var(--text-primary); }

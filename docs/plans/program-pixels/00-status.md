@@ -1,12 +1,16 @@
 # Status: Program pixels — pictures that programs draw
 
-**Difficulty: 8/10** — the change that makes cursor-placed pictures possible replaces the read loop every pane's output goes through, in all three places it runs (session host, the window's copy, window-owned panes). A mistake there shows up as a pane that stalls, answers twice or drifts from its host, which no unit test of the picture code would see; and the memory cost of pictures multiplies across twenty panes → **four gates**, with a spike of the loop as the first thing built.
+**Difficulty: 8/10** — cursor-placed pictures need either TD's own read loop, replacing alacritty's in all three places it runs (session host, the window's copy, window-owned panes), or a swap of the emulator core itself. Either way the change sits under every byte of every pane; a mistake shows up as a pane that stalls, answers twice or drifts from its host, which no unit test of the picture code would see; and the memory cost of pictures multiplies across twenty panes → **four gates**, with the choice of road decided by measurement before anything draws.
 **Turned out to be:** not yet known.
 
-- Gate 1 — Product: **WAITING** on Parker's notes on `reports/2026-09-24-program-pixels.html`, the research brief, which ends on five questions (which program draws first, loop or parser patch, identity answers, a window-wide picture budget, video now or later). As with the documents-in-the-pane plan, his notes and concurs on that page are the approval channel; `01-product.md` gets written from them.
-- Gate 2 — Architecture: not started. Carries the loop design (the seven invariants in the brief's modal), the picture store and its quota, host-to-window forwarding of file and shared-memory pictures, and the file-path rules (`d-files` modal).
+- Gate 1 — Product: **WAITING** on Parker's notes on `reports/2026-09-24-program-pixels.html`, the research brief (revised 2026-09-25), which ends on five questions (which program draws first, **own the loop or swap the core**, identity answers, a window-wide picture budget, video now or later). As with the documents-in-the-pane plan, his notes and concurs on that page are the approval channel; `01-product.md` gets written from them.
+- Gate 2 — Architecture: not started. Carries the road the head-to-head test picks, the picture store and its quota, host-to-window forwarding of file and shared-memory pictures, and the file-path rules (`d-files` modal). If the road is the loop, the seven invariants in the `d-invariants` modal are its checklist.
 - Gate 3 — Program Design: not started.
-- Gate 4 — Slice plan: not started. The brief's figure 08 is the proposed order: identity answers → loop spike on the host (the gate) → ratatui-image draws → pictures at the cursor → upstream recognition; video later.
+- Gate 4 — Slice plan: not started. The brief's figure 09 is the proposed order: identity answers → **choose the road** (rio-vt and libghostty-vt fed the recorded programs, TD's alacritty surface counted; the gate) → ratatui-image draws → pictures at the cursor → upstream recognition; video later.
+
+## Revision, 2026-09-25
+
+The first version of the brief (commit 45567b7) weighed three routes — tee scanner, own the loop, patch vte + alacritty_terminal — and recommended owning the loop. It missed option F of TD's own foundation review, `docs/2026-08-29-foundation-interrogation-zed-gpui-quickshell.md`: swap the VT seam for rio-vt or libghostty-vt, "when image support becomes a committed TD feature". Parker's links to wterm (whose `@wterm/ghostty` core embeds libghostty 1.3.1 and draws Kitty pictures) and asciinema prompted the correction. The brief now carries a section and figure 07 on the swap, question 2 asks loop or swap, and step 1 is a head-to-head test instead of a loop spike. asciinema recordings are named as a separate, smaller track (a new floating-square document type), not part of this plan.
 
 ## What this plan starts from (2026-09-24)
 
