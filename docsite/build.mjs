@@ -430,8 +430,11 @@ for (const [slug, html] of Object.entries(pagesOut)) {
   for (const m of html.matchAll(/<sup><a href="#(s\d+)">/g)) if (!ids.has(m[1])) fail(where, `citation ${m[1]} has no source`);
 }
 
+/* the Introduction's reel is one recording per theme; docs.js swaps them with the theme */
+const REEL = (await readdir(join(ROOT, 'assets', 'reel')).catch(() => [])).filter((f) => /\.(mp4|jpg)$/.test(f));
 for (const [, name] of (await readFile(join(ROOT, 'assets', 'kiosk-theme.js'), 'utf8')).matchAll(/"name":"([a-z0-9-]+)"/g)) {
   if (!WALLS.includes(name + '.webp')) fail('assets/omarchy/bg', `no wallpaper for the ${name} theme`);
+  if (!REEL.includes(name + '.mp4') || !REEL.includes(name + '.jpg')) fail('assets/reel', `no reel take and poster for the ${name} theme`);
 }
 
 if (warnings.length) console.warn('warnings:\n  ' + warnings.join('\n  '));
@@ -455,6 +458,8 @@ if (demoWindow) {
 await mkdir(join(OUT, 'assets', 'omarchy', 'bg'), { recursive: true });
 for (const f of WALLS) await copyFile(join(ROOT, 'assets', 'omarchy', 'bg', f), join(OUT, 'assets', 'omarchy', 'bg', f));
 for (const f of await readdir(join(ROOT, 'assets', 'fonts'))) await copyFile(join(ROOT, 'assets', 'fonts', f), join(OUT, 'assets', 'fonts', f));
+await mkdir(join(OUT, 'assets', 'reel'), { recursive: true });
+for (const f of REEL) await copyFile(join(ROOT, 'assets', 'reel', f), join(OUT, 'assets', 'reel', f));
 for (const f of ['favicon.ico', 'favicon.svg']) await copyFile(join(ROOT, f), join(OUT, f));
 
 console.log(`built ${live.length} pages (${order.length - live.length} still to write) and ${search.length} search entries into ${OUT}`);
