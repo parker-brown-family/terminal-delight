@@ -1123,6 +1123,27 @@ fn ticker_may_turn(frames: usize, hovered: bool, since_turn: Duration) -> bool {
     frames > 1 && !hovered && since_turn >= ENG_TURN
 }
 
+/// Which project and which group the tab strip is showing, for the trail in
+/// front of it — read off the SCOPE, so the trail and the tabs after it are
+/// always about the same set.
+///
+/// The resting scope follows the active task, so it names that task's project
+/// and group. A pinned group names its own project, looked up, since the pin
+/// carries only the group. A pinned project spans its groups, so it names no
+/// group; and the whole session has no one place to name.
+fn strip_trail_ids(
+    scope: tree::Scope,
+    active: tree::Place,
+    project_of_group: impl Fn(u32) -> Option<u32>,
+) -> (Option<u32>, Option<u32>) {
+    match scope {
+        tree::Scope::Branch => (active.project, active.initiative),
+        tree::Scope::Initiative(g) => (project_of_group(g), Some(g)),
+        tree::Scope::Project(p) => (Some(p), None),
+        tree::Scope::All => (None, None),
+    }
+}
+
 /// Which branch of the tree the rail is reading for.
 ///
 /// The project the active tab is filed under when it has one; else the
@@ -21684,6 +21705,144 @@ impl Workspace {
             .child(close_x)
     }
 
+    /// The trail in front of the tab strip while the tree is shut —
+    /// `PROJECT › GROUP ›`, then the tabs: the tree's own vernacular, laid on
+    /// its side.
+    ///
+    /// With the tree open, the tree says where you are: the task wears its
+    /// ring and the project and group above it a faint wash. Shut, the strip
+    /// was a row of tab names with nothing to say whose they were. Parker, on
+    /// exactly that row: *"we should see project > group > tab vernacular"*.
+    /// So the strip starts with the branch it is showing, named the way the
+    /// tree names it — the project's dot and its name in capitals, the group's
+    /// rail and its name.
+    ///
+    /// Read from the SCOPE the strip is filtered by rather than from the
+    /// active tab alone, so the words and the tabs after them are always about
+    /// the same set — see [`strip_trail_ids`]. And each step does what its
+    /// tree row does when clicked: pins the strip to that branch, or, pressed
+    /// again, lets it go.
+    fn strip_trail(&self, scale: f32, cx: &mut Context<Self>) -> Option<gpui::Div> {
+        let th = theme::theme(cx);
+        let sk = skin::skin(cx, scale);
+        let (project, group) = strip_trail_ids(self.scope, self.place_of(self.active), |g| {
+            self.groups
+                .iter()
+                .find(|x| x.id == g)
+                .and_then(|x| x.project)
+        });
+        let project = project.and_then(|p| self.project_at(p).map(|q| (p, q.label(), q.color)));
+        let group = group.and_then(|g| {
+            self.groups
+                .iter()
+                .find(|x| x.id == g)
+                .map(|x| (g, x.label(), x.color))
+        });
+        if project.is_none() && group.is_none() {
+            return None;
+        }
+        let sep = || {
+            div()
+                .flex_none()
+                .text_size(px(CHROME_NAME_PT * scale))
+                .text_color(th.text.alpha(0.35))
+                .child("\u{203a}")
+        };
+        let mut trail = div()
+            .flex_none()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(4. * scale));
+        if let Some((pid, name, color)) = project {
+            // a project's mark is a filled dot, as in the tree
+            let dot = div()
+                .w(px(7. * scale))
+                .h(px(7. * scale))
+                .rounded(sk.radius_pill())
+                .bg(color);
+            trail = trail
+                .child(self.trail_step(
+                    tree::Scope::Project(pid),
+                    name.to_uppercase(),
+                    true,
+                    dot,
+                    scale,
+                    cx,
+                ))
+                .child(sep());
+        }
+        if let Some((gid, name, color)) = group {
+            // a group's mark is its colour rail stood on end, as in the tree
+            let rail = div()
+                .w(px(3. * scale))
+                .h(px(11. * scale))
+                .rounded(sk.radius())
+                .bg(color);
+            trail = trail
+                .child(self.trail_step(tree::Scope::Initiative(gid), name, false, rail, scale, cx))
+                .child(sep());
+        }
+        Some(trail)
+    }
+
+    /// One step of the strip's trail: the branch's mark, its name, and its tree
+    /// row's click. Lit while the strip is PINNED to it — the fact the tree
+    /// lights that row for — so a pin is never a press that changed nothing
+    /// you can see.
+    fn trail_step(
+        &self,
+        to: tree::Scope,
+        name: String,
+        project: bool,
+        mark: gpui::Div,
+        scale: f32,
+        cx: &mut Context<Self>,
+    ) -> gpui::Stateful<gpui::Div> {
+        let th = theme::theme(cx);
+        let sk = skin::skin(cx, scale);
+        let lit = self.scope == to;
+        let id = match to {
+            tree::Scope::Project(p) => format!("trail-project-{p}"),
+            tree::Scope::Initiative(g) => format!("trail-group-{g}"),
+            tree::Scope::Branch | tree::Scope::All => "trail".to_string(),
+        };
+        div()
+            .id(SharedString::from(id))
+            .flex_none()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(5. * scale))
+            .px(px(4. * scale))
+            .py(px(1. * scale))
+            .rounded(sk.radius())
+            .cursor_pointer()
+            .hover(|st| st.bg(hsla(0., 0., 1., 0.08)))
+            .child(mark.flex_none())
+            .child(
+                div()
+                    // truncates rather than wrapping: a wrapped name would make
+                    // the whole mother bar taller
+                    .max_w(px(180. * scale))
+                    .truncate()
+                    .text_size(px(CHROME_NAME_PT * scale))
+                    .when(project, |d| d.font_weight(gpui::FontWeight::EXTRA_BOLD))
+                    .text_color(if lit { th.accent } else { th.text.alpha(0.85) })
+                    .child(name),
+            )
+            // Propagation stops here or the press also arms the mother bar's
+            // move handle underneath it.
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
+                    cx.stop_propagation();
+                    let next = ws.scope.toggled(to);
+                    ws.set_scope(next, window, cx);
+                }),
+            )
+    }
+
     /// The persistent badge in the mother bar's corner: the isolation health of
     /// the project the window is standing in.
     ///
@@ -23740,6 +23899,12 @@ impl Render for Workspace {
                         }),
                     ),
             );
+            // Then where these tabs live, in the tree's own words — see
+            // `strip_trail`. With the tree shut it is the only place left
+            // that says so.
+            if let Some(trail) = self.strip_trail(scale, cx) {
+                tab_strip = tab_strip.child(trail);
+            }
         }
         // while a tab is being dragged, an accent bar marks the slot it'd land in
         let dragging_tab = self.tab_drag.as_ref().is_some_and(|d| d.engaged)
@@ -32127,6 +32292,85 @@ mod tests {
         for id in ["bar-fold-all", "bar-new-project", "bar-hide"] {
             assert!(bar.contains(id), "the actions row lost {id}");
         }
+    }
+
+    /// With the tree shut, the strip says whose tabs it is showing, in the
+    /// tree's words: `PROJECT › GROUP ›` and then the tabs.
+    ///
+    /// Parker, on the shut strip reading `▶ Research ×` with nothing before it:
+    /// *"we should see project > group > tab vernacular"*. The trail is read off
+    /// the scope the strip is filtered by, so it can never name a place the
+    /// tabs after it are not from.
+    #[test]
+    fn the_shut_strip_names_its_project_and_group_ahead_of_its_tabs() {
+        let grouped = tree::Place {
+            project: Some(12),
+            initiative: Some(13),
+        };
+        let group_under = |g: u32| (g == 40).then_some(9);
+        // Resting: wherever the active task is.
+        assert_eq!(
+            strip_trail_ids(tree::Scope::Branch, grouped, group_under),
+            (Some(12), Some(13))
+        );
+        let loose_in_project = tree::Place {
+            project: Some(12),
+            initiative: None,
+        };
+        assert_eq!(
+            strip_trail_ids(tree::Scope::Branch, loose_in_project, group_under),
+            (Some(12), None),
+            "a loose task's strip is its project's loose bucket"
+        );
+        // A pinned group names its OWN project, whatever the active task says.
+        assert_eq!(
+            strip_trail_ids(tree::Scope::Initiative(40), grouped, group_under),
+            (Some(9), Some(40))
+        );
+        // A pinned project spans its groups, so it names none of them.
+        assert_eq!(
+            strip_trail_ids(tree::Scope::Project(12), grouped, group_under),
+            (Some(12), None)
+        );
+        // The whole session has no one place, and says so by saying nothing.
+        assert_eq!(
+            strip_trail_ids(tree::Scope::All, grouped, group_under),
+            (None, None)
+        );
+
+        // And the shut strip really carries it, before its first tab.
+        let code = shipped_code();
+        let strip = {
+            let at = code.find("let mut tab_strip = div()").expect("the strip");
+            let end = code[at..].find("let caret_at =").expect("the tabs");
+            code[at..at + end].to_string()
+        };
+        let shut = strip
+            .find("if !self.left_bar {")
+            .expect("the shut-tree branch");
+        let trail = strip
+            .find("self.strip_trail(scale, cx)")
+            .expect("the trail");
+        assert!(
+            shut < trail,
+            "the trail is drawn in the shut-tree strip, where no tree says where \
+             the tabs live"
+        );
+        let step = {
+            let at = code.find("    fn trail_step(").expect("trail_step");
+            let end = code[at..].find("\n    }\n").expect("end of fn");
+            code[at..at + end].to_string()
+        };
+        assert!(
+            step.contains("cx.stop_propagation();")
+                && step.contains("let next = ws.scope.toggled(to);"),
+            "a step does what its tree row does, and does not also arm the \
+             mother bar's move handle"
+        );
+        assert!(
+            code.contains(".child(\"\\u{203a}\")"),
+            "the steps are joined by ›, the breadcrumb's own separator"
+        );
     }
 
     /// The two sizes Parker asked for, as ratios rather than loose numbers.
