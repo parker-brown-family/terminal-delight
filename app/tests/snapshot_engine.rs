@@ -30,6 +30,7 @@
 mod docview {
     pub mod cdp;
     pub mod engine;
+    pub mod notes;
     pub mod pref;
     pub mod snapshot;
 }
@@ -42,8 +43,10 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use docview::engine::{
-    bands, layout_hash, png_size, EngineError, Geometry, PageEngine, PageLayout, PageRequest,
+    bands, layout_hash, png_size, ConcurSupport, EngineError, Geometry, PageEngine, PageLayout,
+    PageRequest,
 };
+use docview::notes;
 use docview::pref::Html;
 use docview::snapshot::SnapshotEngine;
 
@@ -333,6 +336,216 @@ fn a_brief_renders_to_anchors_and_tiles_in_one_pass() {
             .err(),
         Some(EngineError::Stale)
     );
+    rig.engine.close(page);
+
+    // And every brief in the skill's shared fixtures, each laid out by its
+    // own notes.js: the ids and titles the skill's check recorded in a
+    // browser, a concur space exactly where the browser made one, the page's
+    // NOTES_FILE, and whether the brief takes concurs at all.
+    for (name, case) in shared_cases() {
+        let dir = scratch(&format!("anchors-{name}"));
+        let brief = dir.join("brief.html");
+        std::fs::copy(case.join("brief.html"), &brief).unwrap();
+        let layout = rig
+            .open(&brief, NARROW)
+            .unwrap_or_else(|e| panic!("{name}: {e}"));
+        let want = case_anchors(&case);
+        let got: Vec<(String, String, bool)> = layout
+            .anchors
+            .iter()
+            .map(|a| (a.nid.clone(), a.title.clone(), a.concur_zone.is_some()))
+            .collect();
+        let expected: Vec<(String, String, bool)> = want
+            .iter()
+            .map(|w| (w.nid.clone(), w.title.clone(), w.concurrable))
+            .collect();
+        assert_eq!(got, expected, "{name}: anchors, in document order");
+        let expect = case_expect(&case);
+        assert_eq!(
+            layout.notes_file.as_deref(),
+            expect["notes_file"].as_str(),
+            "{name}: NOTES_FILE"
+        );
+        let support = match expect["concur_support"].as_str() {
+            Some("supported") => ConcurSupport::Supported,
+            Some("unsupported") => ConcurSupport::NotSupported,
+            _ => ConcurSupport::Unknown,
+        };
+        assert_eq!(layout.capability.concur, support, "{name}: concurs");
+        if let Some(page) = layout.page {
+            rig.engine.close(page);
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+    rig.done();
+}
+
+// ── the notes, against the skill's shared fixtures ───────────────────────────
+
+fn shared_fixtures() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/decision-brief/notes-format")
+}
+
+/// Every case the skill's fixtures carry, sorted by name.
+fn shared_cases() -> Vec<(String, PathBuf)> {
+    let mut out: Vec<(String, PathBuf)> = std::fs::read_dir(shared_fixtures().join("cases"))
+        .expect("the vendored fixtures")
+        .flatten()
+        .map(|e| (e.file_name().to_string_lossy().into_owned(), e.path()))
+        .collect();
+    out.sort();
+    assert_eq!(out.len(), 15);
+    out
+}
+
+#[derive(serde::Deserialize)]
+struct CaseAnchor {
+    nid: String,
+    title: String,
+    concurrable: bool,
+}
+
+fn case_anchors(case: &Path) -> Vec<CaseAnchor> {
+    serde_json::from_slice(&std::fs::read(case.join("anchors.json")).unwrap()).unwrap()
+}
+
+fn case_expect(case: &Path) -> serde_json::Value {
+    serde_json::from_slice(&std::fs::read(case.join("expect.json")).unwrap()).unwrap()
+}
+
+/// A file as the disk has it: its bytes, its length and when it changed.
+fn stat(path: &Path) -> (Vec<u8>, u64, std::time::SystemTime) {
+    let meta = std::fs::metadata(path).unwrap();
+    (
+        std::fs::read(path).unwrap(),
+        meta.len(),
+        meta.modified().unwrap(),
+    )
+}
+
+/// Opening a brief, reading its notes and closing it again writes nothing:
+/// for every brief in the shared fixtures, and for every brief the skill
+/// writes, the file's bytes and its modification time afterwards are the
+/// ones it had before. The notes are read the way the view reads them —
+/// from the bytes the render was made from — and the map built from them
+/// with the page's own anchors and NOTES_FILE is, byte for byte, what the
+/// brief's own copy map gave in a browser.
+#[test]
+fn opening_reading_and_closing_a_brief_leaves_its_bytes_alone() {
+    let Some(mut rig) = Rig::new("read-only", Html::default(), Duration::from_secs(300)) else {
+        return;
+    };
+    let mut maps = 0;
+    for (name, case) in shared_cases() {
+        for file in ["brief.html", "expected.html"] {
+            let Ok(original) = std::fs::read(case.join(file)) else {
+                continue;
+            };
+            let dir = scratch(&format!("read-{name}-{file}"));
+            let brief = dir.join("brief.html");
+            std::fs::write(&brief, &original).unwrap();
+            // A second older than now, so a write in the same instant
+            // could not hide behind a coarse clock.
+            let old = std::time::SystemTime::now() - Duration::from_secs(60);
+            std::fs::File::options()
+                .write(true)
+                .open(&brief)
+                .unwrap()
+                .set_modified(old)
+                .unwrap();
+            let before = stat(&brief);
+
+            let bytes = std::fs::read(&brief).unwrap();
+            let read = notes::read(&bytes);
+            let layout = rig
+                .open(&brief, NARROW)
+                .unwrap_or_else(|e| panic!("{name} {file}: {e}"));
+            if file == "expected.html" {
+                let label = layout.notes_file.clone().expect("notes.js ran");
+                let pairs: Vec<(&str, &str)> = layout
+                    .anchors
+                    .iter()
+                    .map(|a| (a.nid.as_str(), a.title.as_str()))
+                    .collect();
+                let concurs = match layout.capability.concur {
+                    ConcurSupport::Supported => read.concurs.clone().unwrap(),
+                    _ => notes::ConcurMap::default(),
+                };
+                let notes = read.notes.clone().expect("an island").expect("readable");
+                let map = notes::build_map(&label, &notes, &concurs, &pairs);
+                let want = std::fs::read_to_string(case.join("expected-map.txt")).unwrap();
+                assert_eq!(map, want, "{name}: the map, through the engine");
+                maps += 1;
+            }
+            if let Some(page) = layout.page {
+                // A dialog opened and closed on the way, as a reader would.
+                for id in &layout.dialogs {
+                    let _ = rig.engine.dialog(page, layout.generation, id);
+                }
+                rig.engine.close(page);
+            }
+            let after = stat(&brief);
+            assert!(
+                before == after,
+                "{name} {file}: the file changed: {} bytes then {}, modified {:?} then {:?}",
+                before.1,
+                after.1,
+                before.2,
+                after.2
+            );
+            assert_eq!(after.0, original, "{name} {file}: not one byte moved");
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+    }
+    assert_eq!(maps, 11);
+    rig.done();
+}
+
+/// The picture of a brief is the same whatever notes it holds: the page's
+/// own notes chrome is hidden, and so is the rule it draws beside an anchor
+/// with notes, because TD draws its own from the file. So a saved note moves
+/// nothing in the picture and nothing in the layout, and a render stays true
+/// after a save. Measured on the skill's own pair: a brief with empty
+/// islands and the same brief after two notes and two concurs were written.
+#[test]
+fn a_briefs_notes_are_not_in_the_picture() {
+    let Some(mut rig) = Rig::new("notes-picture", Html::default(), Duration::from_secs(300)) else {
+        return;
+    };
+    let case = shared_fixtures().join("cases/current-pristine");
+    let mut shots = Vec::new();
+    for file in ["brief.html", "expected.html"] {
+        let dir = scratch(&format!("picture-{file}"));
+        let brief = dir.join("brief.html");
+        std::fs::copy(case.join(file), &brief).unwrap();
+        let layout = rig.open(&brief, NARROW).unwrap();
+        let page = layout.page.unwrap();
+        let tiles: Vec<Vec<u8>> = bands(layout.geometry.height_dev(layout.height_css))
+            .into_iter()
+            .map(|b| rig.engine.tile(page, layout.generation, b).unwrap().png)
+            .collect();
+        rig.engine.close(page);
+        shots.push((layout, tiles));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+    let ((empty, empty_tiles), (noted, noted_tiles)) = (&shots[0], &shots[1]);
+    assert_eq!(empty.height_css, noted.height_css);
+    let rects = |l: &PageLayout| {
+        l.anchors
+            .iter()
+            .map(|a| (a.nid.clone(), a.rect, a.button, a.concur_zone))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(rects(empty), rects(noted), "a saved note moved an anchor");
+    assert_eq!(empty_tiles.len(), noted_tiles.len());
+    for (i, (a, b)) in empty_tiles.iter().zip(noted_tiles).enumerate() {
+        assert!(
+            a == b,
+            "band {i} differs between the brief with no notes and the brief with two ({} vs {} bytes)",
+            a.len(),
+            b.len()
+        );
+    }
     rig.done();
 }
 

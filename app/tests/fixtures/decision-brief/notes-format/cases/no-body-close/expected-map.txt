@@ -1,0 +1,6 @@
+NOTES — brief.html
+1 notes on 1 elements.
+Each [anchor] is an element id in that file — search it to find the passage.
+
+[finding-the-island-is-the] The island is the record
+  · The mirror lands at the end of the file.

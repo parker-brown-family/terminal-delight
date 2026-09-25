@@ -105,6 +105,8 @@ pub(crate) enum Req {
     DocClose(mpsc::Sender<String>),
     /// Scroll a floating document. See [`Cmd::DocScroll`].
     DocScroll(f32, mpsc::Sender<String>),
+    /// Read what an open brief shows of its notes. See [`Cmd::DocNotes`].
+    DocNotes(mpsc::Sender<String>),
 }
 
 /// Wait for the window to say what a bench verb actually did. The ticker
@@ -371,6 +373,11 @@ enum Cmd {
     /// Scroll the floating document by this many logical pixels, down when
     /// positive — the wheel over it, for a caller with no pointer.
     DocScroll(f32),
+    /// What an open brief shows of its notes: the state, the bar's counts,
+    /// and the map copy map would give — one line of JSON after the pane's
+    /// answer. For a caller with no eyes, which is how the notes layer is
+    /// checked against the skill's fixtures in a real window.
+    DocNotes,
 }
 
 /// Which face `ctl bench` asks for.
@@ -441,7 +448,7 @@ const USAGE: &str = "ping | whoami | paint on|off|toggle|status | \
      skin <name>|theme|status | \
      bench on|off|toggle|choose <n>|submit|say <text>|type <text> | \
      doc here <absolute path> | doc beside <absolute path> | doc close | \
-     doc scroll <pixels> | \
+     doc scroll <pixels> | doc notes | \
      mcp status|on|off | mcp writes on|off | mcp expose agents|all | \
      mcp rpc <json> | mcp from <session> <pane|-> rpc <json> | \
      adopt {\"cwd\":\"/…\",\"run\":\"…\"} | \
@@ -533,6 +540,7 @@ fn parse_line(s: &str) -> Result<Cmd, String> {
         // capability reachable only by a mouse cannot be gated by anything.
         ["bench", "submit"] => Ok(Cmd::BenchSubmit),
         ["doc", "close"] => Ok(Cmd::DocClose),
+        ["doc", "notes"] => Ok(Cmd::DocNotes),
         ["doc", "scroll", px] => px
             .parse::<f32>()
             .ok()
@@ -874,6 +882,14 @@ fn handle_conn(
                 "err ui gone".into()
             }
         }
+        Ok(Cmd::DocNotes) => {
+            let (rtx, rrx) = mpsc::channel();
+            if tx.send(Req::DocNotes(rtx)).is_ok() {
+                bench_outcome(rrx)
+            } else {
+                "err ui gone".into()
+            }
+        }
         Ok(Cmd::Bench(face)) => {
             if tx.send(Req::Bench(face)).is_ok() {
                 "ok".into()
@@ -995,6 +1011,9 @@ pub fn start(cx: &mut Context<Workspace>) {
                     }
                     Req::DocScroll(px, reply) => {
                         let _ = reply.send(ws.doc_scroll(px, cx));
+                    }
+                    Req::DocNotes(reply) => {
+                        let _ = reply.send(ws.doc_notes(cx));
                     }
                     // The same escalation the robot panel performs, and the same
                     // persistence: a grant made from the CLI shows in the panel
@@ -2031,6 +2050,8 @@ mod tests {
         assert!(parse_line("doc here shot.png").is_err());
         assert!(parse_line("doc here ~/shot.png").is_err());
         assert!(matches!(parse_line("doc close"), Ok(Cmd::DocClose)));
+        assert!(matches!(parse_line("doc notes"), Ok(Cmd::DocNotes)));
+        assert!(USAGE.contains("doc notes"));
         assert!(parse_line("doc close all").is_err());
         assert!(USAGE.contains("doc here") && USAGE.contains("doc close"));
     }

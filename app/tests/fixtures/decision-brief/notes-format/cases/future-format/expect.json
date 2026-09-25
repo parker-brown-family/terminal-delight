@@ -1,0 +1,18 @@
+{
+ "release": "current",
+ "pins": "The notes island declares data-format=\"2\", a format newer than this writer knows. A write is refused, UnknownFormat, and the page falls back to read-only in TD.",
+ "notes_file": "brief.html",
+ "concur_support": "supported",
+ "format": "2",
+ "rev_before": null,
+ "notes_text": "{}",
+ "refuse": "UnknownFormat",
+ "shown_before": {
+  "note_count": "0",
+  "concur_count": "0",
+  "notes": {},
+  "concurs": []
+ },
+ "shown_after": null,
+ "writes": null
+}

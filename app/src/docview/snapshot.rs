@@ -57,7 +57,8 @@ use super::pref;
 
 pub const EXTRACT_JS: &str = include_str!("extract.js");
 /// Part of the cache key: a render made by an older probe is not reused.
-pub const EXTRACT_VERSION: u32 = 1;
+/// 2: the rule an anchor with notes carries is left out of the picture.
+pub const EXTRACT_VERSION: u32 = 2;
 /// With no call for this long, the browser is closed.
 pub const IDLE_SHUTDOWN: Duration = Duration::from_secs(300);
 /// The names looked for on PATH, in order.

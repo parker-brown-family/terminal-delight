@@ -1,0 +1,6 @@
+parker-brown-family/agent-skills 0eb9e20
+decision-brief/fixtures/notes-format/
+
+Copied byte for byte from that commit (git archive), every file but this one.
+TD's notes tests loop over every case under cases/. Do not edit anything here
+by hand: change the skill, then copy again and name the new commit above.

@@ -1,0 +1,33 @@
+{
+ "release": "current",
+ "pins": "The ordinary path on this release: empty islands that declare format 1, one note on a finding and one on a figure, two concurs. The first save stamps a revision on both islands and inserts the mirror before </body>.",
+ "notes_file": "brief.html",
+ "concur_support": "supported",
+ "format": "1",
+ "rev_before": null,
+ "notes_text": "{}",
+ "refuse": null,
+ "shown_before": {
+  "note_count": "0",
+  "concur_count": "0",
+  "notes": {},
+  "concurs": []
+ },
+ "shown_after": {
+  "note_count": "2",
+  "concur_count": "2",
+  "notes": {
+   "finding-the-island-is-the": "1",
+   "fig-01-two-writers-one": "1"
+  },
+  "concurs": [
+   "ask-stamp-a-revision-on",
+   "ask-keep-the-plain-text"
+  ]
+ },
+ "writes": [
+  "notes-island",
+  "concurs-island",
+  "mirror-inserted"
+ ]
+}

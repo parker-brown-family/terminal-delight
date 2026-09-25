@@ -1,0 +1,29 @@
+{
+ "rev": "2026-09-24T20:05:00.000Z",
+ "edits": [
+  {
+   "op": "add",
+   "nid": "finding-the-island-is-the",
+   "title": "The island is the record",
+   "text": "The revision goes on both islands.",
+   "ts": "2026-09-24 20:00"
+  },
+  {
+   "op": "add",
+   "nid": "fig-01-two-writers-one",
+   "title": "01 · Two writers, one file",
+   "text": "Draw the browser and TD side by side.",
+   "ts": "2026-09-24 20:01"
+  },
+  {
+   "op": "concur",
+   "nid": "ask-stamp-a-revision-on",
+   "ts": "2026-09-24 20:02"
+  },
+  {
+   "op": "concur",
+   "nid": "ask-keep-the-plain-text",
+   "ts": "2026-09-24 20:03"
+  }
+ ]
+}

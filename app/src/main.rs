@@ -7712,6 +7712,27 @@ impl Workspace {
         )
     }
 
+    /// What an open brief shows of its notes — the floating square's, else a
+    /// Document face's — as the pane's answer and one line of JSON: the
+    /// state (notes, or why it is read-only), the counts the bar shows, and
+    /// the exact map copy map would put on the clipboard. The ctl family's
+    /// reason again: the notes layer is drawn for eyes, and what it read has
+    /// to be checkable by a script against the skill's fixtures.
+    pub(crate) fn doc_notes(&mut self, cx: &mut Context<Self>) -> String {
+        let mut got = None;
+        let said = self.bench_apply(
+            cx,
+            |v| v.has_document(),
+            "no pane has a document open",
+            |view, cx| got = Some(view.doc_notes(cx)),
+        );
+        match got {
+            Some(Ok(json)) => format!("{said} {json}"),
+            Some(Err(why)) => format!("err {why}"),
+            None => said,
+        }
+    }
+
     /// Close a floating square: the focused pane's, else the first open one.
     pub(crate) fn doc_close(&mut self, cx: &mut Context<Self>) -> String {
         self.bench_apply(

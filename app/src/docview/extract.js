@@ -23,8 +23,15 @@
      notebar lands over body text in the first viewport, and the note-count
      badges go stale the moment TD adds a note. Hidden with visibility, which
      keeps every box where it was: the spike measured that this moved no anchor
-     in any of 119 files. */
-  var HIDE = '.notebar, .note-btn, .concur-zone { visibility: hidden !important; }';
+     in any of 119 files.
+     The rule notes.css draws down the left edge of an anchor with notes goes
+     too. A box-shadow takes no space, so nothing moves; and a picture that
+     carried it would be a picture of the notes as they were when it was taken,
+     wrong the moment a note is added or deleted, while TD draws its own rule
+     from the file (docview/notes_ui.rs). The picture shows the page; the notes
+     are drawn over it. */
+  var HIDE = '.notebar, .note-btn, .concur-zone { visibility: hidden !important; }\n' +
+    '.notable.has-note, tr.notable.has-note > td:first-child { box-shadow: none !important; }';
 
   function hideNotesUi() {
     if (document.getElementById('td-hide-notes-ui')) return;

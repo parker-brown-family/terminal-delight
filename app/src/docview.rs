@@ -11,6 +11,16 @@
 //! found only once the view is up; the view then says why in its body and
 //! emits [`CannotShow`], and the pane hands the file over.
 //!
+//! # A brief's notes
+//!
+//! Over an HTML page that is a decision brief, TD draws the brief's notes
+//! itself ([`notes_ui`]), from the islands in the file's own bytes
+//! ([`notes`]): note buttons where the brief's hidden ones keep their box,
+//! CONCUR stamps at the angle the brief's notes.js gives them, a note box
+//! listing what the file holds, and a bar that counts them and copies the
+//! map. The page's own notes chrome is hidden in the picture. This build
+//! reads notes and writes nothing.
+//!
 //! # No mouse handlers, on purpose
 //!
 //! Nothing in this module registers a gpui mouse, scroll or hover handler. The
@@ -62,6 +72,8 @@ pub mod cdp;
 pub mod engine;
 pub mod image;
 pub mod markdown;
+pub mod notes;
+pub mod notes_ui;
 pub mod page;
 pub mod pref;
 pub mod snapshot;
@@ -540,7 +552,7 @@ impl DocumentView {
         match &mut self.backend {
             Backend::Image(img) => img.press(at),
             Backend::Markdown(_) => self.press_link(at, cx),
-            Backend::Page(page) => match page.press(at, cx) {
+            Backend::Page(page) => match page.press(at, self.placed.get(), cx) {
                 page::Pressed::Follow(link) => {
                     cx.emit(link);
                     true
@@ -637,9 +649,29 @@ impl DocumentView {
         }
     }
 
+    /// The pointer moved over the document, or left it (`None`): flat and
+    /// view-local, un-bent by the pane like a press. Only a brief listens,
+    /// because its note buttons show under the pointer as a browser shows
+    /// them.
+    pub fn hover(&mut self, at: Option<Point<Pixels>>, cx: &mut Context<Self>) {
+        if let Backend::Page(page) = &mut self.backend {
+            page.hover(at, cx);
+        }
+    }
+
+    /// What a brief's notes layer shows, for the control socket: its state,
+    /// its counts, why it is read-only when it is, and the map it would copy.
+    /// `None` for anything but a brief, and for a brief not yet laid out.
+    pub fn notes_report(&self) -> Option<serde_json::Value> {
+        match &self.backend {
+            Backend::Page(page) => page.notes_report(),
+            _ => None,
+        }
+    }
+
     /// A key the pane's layer ladder handed to the view. Escape answers true
-    /// while one of a brief's own dialogs is open, and closes it; otherwise
-    /// false, so the pane's Escape closes the square.
+    /// while a brief's note box or one of its own dialogs is open, and closes
+    /// it; otherwise false, so the pane's Escape closes the square.
     pub fn key(&mut self, ks: &Keystroke, cx: &mut Context<Self>) -> bool {
         match &mut self.backend {
             Backend::Page(page) if ks.key == "escape" => page.escape(cx),
@@ -958,6 +990,11 @@ mod tests {
             ("docview/cdp.rs", strip(include_str!("docview/cdp.rs"))),
             ("docview/cache.rs", strip(include_str!("docview/cache.rs"))),
             ("docview/pref.rs", strip(include_str!("docview/pref.rs"))),
+            ("docview/notes.rs", strip(include_str!("docview/notes.rs"))),
+            (
+                "docview/notes_ui.rs",
+                strip(include_str!("docview/notes_ui.rs")),
+            ),
         ]
     }
 
@@ -986,6 +1023,41 @@ mod tests {
                 assert!(
                     !src.contains(listener),
                     "{name} registers {listener}: input reaches the document view through the pane"
+                );
+            }
+        }
+    }
+
+    /// This build reads a brief's notes and writes nothing: no file is
+    /// opened for writing, renamed, copied or removed anywhere in the notes
+    /// layer or the page view that holds it. The page cache writes, in its
+    /// own directory, from `cache.rs`; the brief itself is never touched.
+    #[test]
+    fn reading_a_briefs_notes_writes_nothing() {
+        let scanned: Vec<(&str, String)> = view_sources()
+            .into_iter()
+            .filter(|(name, _)| {
+                matches!(
+                    *name,
+                    "docview.rs" | "docview/notes.rs" | "docview/notes_ui.rs" | "docview/page.rs"
+                )
+            })
+            .collect();
+        assert_eq!(scanned.len(), 4);
+        for (name, src) in scanned {
+            for write in [
+                "fs::write",
+                "File::create",
+                "OpenOptions",
+                "fs::rename",
+                "fs::copy",
+                "remove_file",
+                "set_permissions",
+                "set_len",
+            ] {
+                assert!(
+                    !src.contains(write),
+                    "{name} holds {write}: reading a brief's notes must never write"
                 );
             }
         }

@@ -1,0 +1,32 @@
+{
+ "release": "250188f",
+ "pins": "A brief from 250188f, the concur release: both islands {}, no format declared. Written as that release writes it, with no data-format and no data-rev, but escaped and with one mirror.",
+ "notes_file": "brief.html",
+ "concur_support": "supported",
+ "format": null,
+ "rev_before": null,
+ "notes_text": "{}",
+ "refuse": null,
+ "shown_before": {
+  "note_count": "0",
+  "concur_count": "0",
+  "notes": {},
+  "concurs": []
+ },
+ "shown_after": {
+  "note_count": "1",
+  "concur_count": "2",
+  "notes": {
+   "finding-the-island-is-the": "1"
+  },
+  "concurs": [
+   "ask-stamp-a-revision-on",
+   "ask-keep-the-plain-text"
+  ]
+ },
+ "writes": [
+  "notes-island",
+  "concurs-island",
+  "mirror-inserted"
+ ]
+}

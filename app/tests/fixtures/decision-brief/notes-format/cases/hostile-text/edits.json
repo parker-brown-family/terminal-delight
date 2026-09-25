@@ -1,0 +1,40 @@
+{
+ "rev": "2026-09-24T20:05:00.000Z",
+ "edits": [
+  {
+   "op": "add",
+   "nid": "finding-the-island-is-the",
+   "title": "The island is the record",
+   "text": "ends a script </script><b>LEAKED-1</b> and </SCRIPT > too",
+   "ts": "2026-09-24 20:00"
+  },
+  {
+   "op": "add",
+   "nid": "finding-the-island-is-the",
+   "title": "The island is the record",
+   "text": "opens a comment <!-- then <!--<script> double-escapes, and <![CDATA[ x ]]>",
+   "ts": "2026-09-24 20:01"
+  },
+  {
+   "op": "add",
+   "nid": "finding-the-island-is-the",
+   "title": "The island is the record",
+   "text": "closes a comment --> LEAKED-2 and --!> LEAKED-3, keeps ---",
+   "ts": "2026-09-24 20:02"
+  },
+  {
+   "op": "add",
+   "nid": "fig-01-two-writers-one",
+   "title": "01 · Two writers, one file",
+   "text": "ünïcødé — “quoted” ✓ 🎯 日本語",
+   "ts": "2026-09-24 20:03"
+  },
+  {
+   "op": "add",
+   "nid": "fig-01-two-writers-one",
+   "title": "01 · Two writers, one file",
+   "text": "line one\nline two\n\nline four",
+   "ts": "2026-09-24 20:04"
+  }
+ ]
+}
