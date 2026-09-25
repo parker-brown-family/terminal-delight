@@ -485,9 +485,13 @@ impl DocumentView {
     /// laid out: the file is still being read when a restore asks. A picture
     /// has no scroll to go back to.
     pub fn restore_scroll(&mut self, at: DocScroll, cx: &mut Context<Self>) {
-        if let Backend::Markdown(md) = &mut self.backend {
-            md.restore_fraction(at.top);
-            cx.notify();
+        match &mut self.backend {
+            Backend::Markdown(md) => {
+                md.restore_fraction(at.top);
+                cx.notify();
+            }
+            Backend::Page(page) => page.restore_scroll(at.top, cx),
+            Backend::Image(_) => {}
         }
     }
 

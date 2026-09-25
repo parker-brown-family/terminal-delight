@@ -340,8 +340,9 @@ pub(crate) struct DocFace {
     /// went with the square.
     _links: gpui::Subscription,
     /// The document's engine gave up: the file goes to the desktop, as a
-    /// square's does.
-    _gave_up: gpui::Subscription,
+    /// square's does. `None` for a pane that came back after a restart,
+    /// which says why in its own body and opens nothing by itself.
+    _gave_up: Option<gpui::Subscription>,
 }
 
 /// A flat rectangle in window pixels, `(x, y, w, h)`: where something was
@@ -5132,7 +5133,7 @@ impl TerminalView {
             view,
             target,
             _links: links,
-            _gave_up: gave_up,
+            _gave_up: Some(gave_up),
         });
         self.doc_holding = false;
         self.bench.set_face(crate::workbench::Face::Document);
@@ -5178,6 +5179,11 @@ impl TerminalView {
             return;
         };
         self.show_document(crate::docopen::DocTarget { path, kind }, None, cx);
+        // Nobody clicked: a brief that cannot be drawn after a restart says
+        // why in its pane, and no browser window opens by itself.
+        if let Some(doc) = self.doc.as_mut() {
+            doc._gave_up = None;
+        }
         if let (Some(top), Some(doc)) = (scroll, self.doc.as_ref()) {
             let at = crate::docopen::DocScroll { top };
             doc.view.update(cx, |v, cx| v.restore_scroll(at, cx));
@@ -13922,6 +13928,13 @@ mod tests {
                 "{seat} hands the file over when its engine gives up"
             );
         }
+        // A pane restored after a restart was not clicked: it opens nothing.
+        let restore = method_body(&code, "pub(crate) fn restore_document(");
+        let shown = restore.find("self.show_document(").expect("restore shows");
+        let quiet = restore
+            .find("doc._gave_up = None")
+            .expect("and hands nothing over");
+        assert!(shown < quiet);
         let give_up = method_body(&code, "fn hand_over_on_give_up(");
         assert!(
             give_up.contains("crate::docview::CannotShow") && give_up.contains("open_with_system(")

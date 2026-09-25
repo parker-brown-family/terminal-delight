@@ -308,29 +308,33 @@ impl Unavailable {
     /// One sentence for the person who clicked, ending in what happened
     /// instead.
     pub fn sentence(&self) -> String {
-        let instead = "Opened with the desktop.";
+        format!("{} Opened with the desktop.", self.reason())
+    }
+
+    /// Why, and nothing about what happened instead: what a document pane
+    /// says when nobody asked for the file just now, as when a saved pane
+    /// comes back after a restart, and no desktop was asked to open it.
+    pub fn reason(&self) -> String {
         match self {
-            Unavailable::Off => format!(
-                "HTML is set to open with the desktop (engine = \"off\" in documents.toml). {instead}"
-            ),
-            Unavailable::UnknownEngine(name) => format!(
-                "documents.toml asks for an HTML engine called \"{name}\", and the only one TD has is \"snapshot\". {instead}"
-            ),
-            Unavailable::Prefs(why) => {
-                format!("documents.toml could not be read ({why}). {instead}")
+            Unavailable::Off => {
+                "HTML is set to open with the desktop (engine = \"off\" in documents.toml).".into()
             }
+            Unavailable::UnknownEngine(name) => format!(
+                "documents.toml asks for an HTML engine called \"{name}\", and the only one TD has is \"snapshot\"."
+            ),
+            Unavailable::Prefs(why) => format!("documents.toml could not be read ({why})."),
             Unavailable::NoBrowser {
                 searched,
                 configured: true,
             } => format!(
-                "No Chromium at {} (the chromium setting in documents.toml). {instead}",
+                "No Chromium at {} (the chromium setting in documents.toml).",
                 searched
                     .first()
                     .map(|p| p.display().to_string())
                     .unwrap_or_default()
             ),
             Unavailable::NoBrowser { searched, .. } => format!(
-                "No Chromium found (looked for {} on PATH). {instead}",
+                "No Chromium found (looked for {} on PATH).",
                 searched
                     .iter()
                     .map(|p| p.display().to_string())
@@ -481,6 +485,14 @@ mod tests {
         assert!(
             c.contains("/opt/chrome/chrome") && c.ends_with("Opened with the desktop."),
             "{c}"
+        );
+        // What a pane says when nothing was opened instead — a saved pane
+        // back after a restart — claims nothing about the desktop.
+        let off = Unavailable::Off;
+        assert!(!off.reason().contains("desktop."), "{}", off.reason());
+        assert_eq!(
+            off.sentence(),
+            format!("{} Opened with the desktop.", off.reason())
         );
     }
 }

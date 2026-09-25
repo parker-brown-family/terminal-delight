@@ -370,6 +370,9 @@ pub struct PageDoc {
     drew: bool,
     /// The file has gone to the desktop; this view only says why now.
     handed_over: bool,
+    /// A saved place to restore once the page is laid out: a fraction of
+    /// its height.
+    pending_top: Option<f32>,
     /// The bands the last frame drew, for `TD_DOCDEBUG`.
     last_frame: Vec<u32>,
 }
@@ -404,6 +407,7 @@ impl PageDoc {
             settle: None,
             drew: false,
             handed_over: false,
+            pending_top: None,
             last_frame: Vec::new(),
         }
     }
@@ -478,7 +482,9 @@ impl PageDoc {
         let engine = match &self.engine {
             Ok(e) => e.clone(),
             Err(u) => {
-                let why = u.sentence();
+                // The reason alone: whether the file then goes to the desktop
+                // is the pane's call, and it says so in its own words.
+                let why = u.reason();
                 self.fail(why, true, cx);
                 return;
             }
@@ -700,8 +706,11 @@ impl PageDoc {
         live: Option<(PageId, u64)>,
         cx: &mut Context<DocumentView>,
     ) {
-        // Keep the reader's place: the same fraction of the page.
-        if let Some(prev) = &self.current {
+        // Keep the reader's place: the same fraction of the page, or the one a
+        // saved layout asked for before there was a page to scroll.
+        if let Some(top) = self.pending_top.take() {
+            self.scroll_css = top * layout.height_css;
+        } else if let Some(prev) = &self.current {
             if prev.layout.height_css > 0.0 {
                 self.scroll_css *= layout.height_css / prev.layout.height_css;
             }
@@ -1012,6 +1021,16 @@ impl PageDoc {
                 target: url,
                 fragment: None,
             }),
+        }
+    }
+
+    /// Scroll to a fraction of the page's height: now, if it has been laid
+    /// out, else as soon as it is.
+    pub fn restore_scroll(&mut self, top: f32, cx: &mut Context<DocumentView>) {
+        let top = top.clamp(0.0, 1.0);
+        match self.current.as_ref().map(|r| r.layout.height_css) {
+            Some(height) => self.scroll_to(top * height, cx),
+            None => self.pending_top = Some(top),
         }
     }
 
