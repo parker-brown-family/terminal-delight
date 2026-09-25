@@ -376,6 +376,9 @@ pub struct PageDoc {
     /// A saved place to restore once the page is laid out: a fraction of
     /// its height.
     pending_top: Option<f32>,
+    /// A fragment a link from another document named, to land on once the
+    /// page is laid out.
+    pending_fragment: Option<String>,
     /// The bands the last frame drew, for `TD_DOCDEBUG`.
     last_frame: Vec<u32>,
     /// The brief's notes, read from the bytes the current render was made
@@ -421,6 +424,7 @@ impl PageDoc {
             drew: false,
             handed_over: false,
             pending_top: None,
+            pending_fragment: None,
             last_frame: Vec::new(),
             notes: None,
             pointer: None,
@@ -749,15 +753,7 @@ impl PageDoc {
             layer.carry_from(old);
         }
         self.notes = Some(layer);
-        // Keep the reader's place: the same fraction of the page, or the one a
-        // saved layout asked for before there was a page to scroll.
-        if let Some(top) = self.pending_top.take() {
-            self.scroll_css = top * layout.height_css;
-        } else if let Some(prev) = &self.current {
-            if prev.layout.height_css > 0.0 {
-                self.scroll_css *= layout.height_css / prev.layout.height_css;
-            }
-        }
+        self.land(&layout);
         let previous_live = self.live.take();
         if let (Some((old_page, _)), Ok(engine)) = (previous_live, &self.engine) {
             let engine = engine.clone();
@@ -788,6 +784,26 @@ impl PageDoc {
         }
         self.clamp_scroll();
         cx.notify();
+    }
+
+    /// Where the page is scrolled when `layout` becomes current. The reader's
+    /// place is kept as the same fraction of the page, or the one a saved
+    /// layout asked for before there was a page to scroll. A fragment a link
+    /// named before then wins over both: a link into the middle of a brief
+    /// lands where it points, and one naming nothing leaves the page where it
+    /// was. Apart from `adopt` so a test can reach it without a window.
+    fn land(&mut self, layout: &PageLayout) {
+        if let Some(top) = self.pending_top.take() {
+            self.scroll_css = top * layout.height_css;
+        } else if let Some(prev) = &self.current {
+            if prev.layout.height_css > 0.0 {
+                self.scroll_css *= layout.height_css / prev.layout.height_css;
+            }
+        }
+        let fragment = self.pending_fragment.take();
+        if let Some(top) = fragment.and_then(|f| layout.fragment_top_css(&f)) {
+            self.scroll_css = top;
+        }
     }
 
     /// The next band to capture for `generation`, nearest the view first.
@@ -1485,6 +1501,22 @@ impl PageDoc {
         }
     }
 
+    /// Scroll to where a fragment lands, one a link from another document
+    /// named: now, if the page has been laid out, else as soon as it is. A
+    /// fragment naming nothing leaves the page where it is, as a browser does.
+    pub fn show_fragment(&mut self, fragment: String, cx: &mut Context<DocumentView>) {
+        let Some(r) = self.current.as_ref() else {
+            self.pending_fragment = Some(fragment);
+            return;
+        };
+        if let Some(top) = r.layout.fragment_top_css(&fragment) {
+            if let Some(d) = self.dialog.take() {
+                give_back(d.image.into_iter().collect(), cx);
+            }
+            self.scroll_to(top, cx);
+        }
+    }
+
     /// Scroll to a fraction of the page's height: now, if it has been laid
     /// out, else as soon as it is.
     pub fn restore_scroll(&mut self, top: f32, cx: &mut Context<DocumentView>) {
@@ -1950,6 +1982,44 @@ mod tests {
 
     fn tops(n: u32) -> Vec<u32> {
         (0..n).map(|k| k * TILE_DEV).collect()
+    }
+
+    /// A link from another document names a fragment before the brief has
+    /// been laid out, so it is held until the layout arrives: the page lands
+    /// on the element, over a saved place, and a fragment naming nothing
+    /// leaves the page at its top. Issue 734: it used to open at the top
+    /// whatever the link said.
+    #[test]
+    fn a_fragment_named_before_the_layout_is_landed_on_when_it_arrives() {
+        use super::super::engine::Target;
+        let layout = PageLayout::bare(
+            5000.0,
+            Some(vec![Target {
+                id: "fig-02".into(),
+                top: Some(3120.5),
+            }]),
+        );
+        let fresh = || PageDoc::new(Path::new("/r/brief.html"), Err(Unavailable::Off));
+
+        let mut page = fresh();
+        page.pending_fragment = Some("fig-02".into());
+        page.pending_top = Some(0.25);
+        page.land(&layout);
+        assert_eq!(page.scroll_css, 3120.5);
+        assert_eq!(
+            page.pending_fragment, None,
+            "landed once, not on every layout"
+        );
+
+        let mut page = fresh();
+        page.pending_fragment = Some("nowhere".into());
+        page.land(&layout);
+        assert_eq!(page.scroll_css, 0.0);
+
+        let mut page = fresh();
+        page.pending_top = Some(0.25);
+        page.land(&layout);
+        assert_eq!(page.scroll_css, 1250.0, "no fragment: the saved place");
     }
 
     #[test]

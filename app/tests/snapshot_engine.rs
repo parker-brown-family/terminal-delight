@@ -307,6 +307,31 @@ fn a_brief_renders_to_anchors_and_tiles_in_one_pass() {
         sec2.rect.map(|r| r.y),
         "a fragment link knows where it lands"
     );
+    // A fragment arriving from another document lands in the same place a
+    // link on the page itself does, and finds an <a name> as a browser does.
+    assert_eq!(layout.fragment_top_css("sec-2"), jump.fragment_top_css);
+    let more = layout
+        .fragment_top_css("more")
+        .expect("an <a name> is a place a fragment can name");
+    assert!(more > 0.0 && Some(more) < jump.fragment_top_css, "{more}");
+    assert_eq!(
+        layout.fragment_top_css("d-evidence"),
+        None,
+        "a closed dialog is named, and is not a place"
+    );
+    assert_eq!(layout.fragment_top_css("report-notes"), None);
+    assert_eq!(layout.fragment_top_css("no-such-id"), None);
+    assert_eq!(layout.fragment_top_css("top"), Some(0.0));
+    let back = layout
+        .links
+        .iter()
+        .find(|l| l.href == "#top")
+        .expect("the link back to the top");
+    assert_eq!(
+        back.fragment_top_css,
+        Some(0.0),
+        "#top with nothing named top is the top of the page, as in a browser"
+    );
     assert!(layout
         .links
         .iter()

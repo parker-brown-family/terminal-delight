@@ -153,12 +153,80 @@ pub struct PageLayout {
     /// the tiles for the notes layer, which reads them; this slice draws none.
     pub anchors: Vec<Anchor>,
     pub links: Vec<Link>,
+    /// Every name a fragment arriving from another document can use: each
+    /// id on the page and each `<a name>`, once, in document order. `None`
+    /// from a probe too old to report them, which is unknown, not "names
+    /// nothing".
+    #[serde(default)]
+    pub targets: Option<Vec<Target>>,
     pub openers: Vec<Opener>,
     /// Every content `<dialog>` by id: all but notes.js's own `#d-note` and
     /// `#d-export`.
     pub dialogs: Vec<String>,
     /// Page errors, dead openers, dialogs that overflowed.
     pub diagnostics: Vec<String>,
+}
+
+impl PageLayout {
+    /// Where a fragment lands on this page, in page CSS px: on the element it
+    /// names, which the probe found the way a browser does (the first with
+    /// that id, else the first `<a>` with that name), or at the top for an
+    /// empty fragment or a `top` that names nothing. `None` leaves the page
+    /// where it is, as a browser does: the fragment names nothing, or an
+    /// element that is not laid out, or the probe did not say.
+    pub fn fragment_top_css(&self, fragment: &str) -> Option<f32> {
+        if fragment.is_empty() {
+            return Some(0.0);
+        }
+        let targets = self.targets.as_ref()?;
+        match targets.iter().find(|t| t.id == fragment) {
+            Some(t) => t.top,
+            None if fragment.eq_ignore_ascii_case("top") => Some(0.0),
+            None => None,
+        }
+    }
+}
+
+/// A page with nothing on it but its height and its targets, for the tests
+/// of what reads them.
+#[cfg(test)]
+impl PageLayout {
+    pub(crate) fn bare(height_css: f32, targets: Option<Vec<Target>>) -> Self {
+        PageLayout {
+            page: None,
+            generation: 1,
+            rendered: LayoutHash(1),
+            geometry: Geometry {
+                css_width: 600,
+                viewport_css_height: 800,
+                scale: 1.0,
+            },
+            height_css,
+            notes_file: None,
+            capability: NotesCapability {
+                notes_islands: 0,
+                concurs_island: false,
+                tagged: 0,
+                concur: ConcurSupport::Unknown,
+            },
+            anchors: vec![],
+            links: vec![],
+            targets,
+            openers: vec![],
+            dialogs: vec![],
+            diagnostics: vec![],
+        }
+    }
+}
+
+/// A name a fragment can use, and where the element it picks starts.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Target {
+    pub id: String,
+    /// Page CSS px. `None` when the element is not laid out: inside a
+    /// closed dialog, or `display: none`.
+    #[serde(default)]
+    pub top: Option<f32>,
 }
 
 /// A rectangle in CSS px: page coordinates, or relative to a dialog's box.
@@ -527,5 +595,43 @@ mod tests {
             off.sentence(),
             format!("{} Opened with the desktop.", off.reason())
         );
+    }
+
+    fn laid_out(targets: Option<Vec<Target>>) -> PageLayout {
+        PageLayout::bare(5000.0, targets)
+    }
+
+    /// A fragment from another document lands where a browser would put it,
+    /// and one naming nothing leaves the page alone rather than inventing a
+    /// place for it.
+    #[test]
+    fn a_fragment_lands_on_the_element_it_names() {
+        let target = |id: &str, top: Option<f32>| Target { id: id.into(), top };
+        let page = laid_out(Some(vec![
+            target("fig-02", Some(3120.5)),
+            // Inside a closed dialog: named, and not a place.
+            target("d-evidence", None),
+            target("Top", Some(900.0)),
+        ]));
+        assert_eq!(page.fragment_top_css("fig-02"), Some(3120.5));
+        assert_eq!(page.fragment_top_css("d-evidence"), None);
+        assert_eq!(page.fragment_top_css("nowhere"), None);
+        assert_eq!(page.fragment_top_css("fig-2"), None, "ids match exactly");
+        assert_eq!(page.fragment_top_css(""), Some(0.0));
+        // `top` is the page's top only when no element answers to it.
+        assert_eq!(page.fragment_top_css("Top"), Some(900.0));
+        assert_eq!(page.fragment_top_css("TOP"), Some(0.0));
+
+        let unasked = laid_out(None);
+        assert_eq!(
+            unasked.fragment_top_css("fig-02"),
+            None,
+            "a probe that did not report targets does not know"
+        );
+        assert_eq!(unasked.fragment_top_css("top"), None);
+        let mut written = serde_json::to_value(laid_out(None)).unwrap();
+        written.as_object_mut().unwrap().remove("targets");
+        let old: PageLayout = serde_json::from_value(written).unwrap();
+        assert_eq!(old.targets, None, "a layout from before targets is unknown");
     }
 }
