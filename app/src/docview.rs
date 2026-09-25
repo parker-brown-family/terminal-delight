@@ -653,6 +653,14 @@ impl DocumentView {
         self.backend.key(ks, self.seat == DocSeat::Float, cx)
     }
 
+    /// Which seat the view is in, and the palette it was last handed, for a
+    /// test driving a pane: both are the pane's decisions, and neither shows
+    /// in anything else a test can read.
+    #[cfg(test)]
+    pub(crate) fn seat_and_theme(&self) -> (DocSeat, Option<Arc<Theme>>) {
+        (self.seat, self.theme.clone())
+    }
+
     /// Whether a note is being written in a brief's note box: while it is,
     /// the pane hands the view every key that is not a chord.
     pub fn has_caret(&self) -> bool {

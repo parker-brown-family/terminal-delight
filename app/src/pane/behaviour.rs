@@ -9,8 +9,11 @@
 
 use gpui::{point, px, TestAppContext};
 
-use super::harness::{desktop_launches, FakeBriefEngine, Pane, Rect, Scratch, BRIEF_ANCHORS};
-use crate::docopen::FloatHit;
+use super::harness::{
+    desktop_launches, Asked, FakeBriefEngine, Pane, Rect, Scratch, BRIEF_ANCHORS,
+};
+use crate::docopen::{Asker, DocSeat, FloatHit};
+use crate::workbench::Face;
 
 /// A picture of the repository's own, and the words printed around it.
 const PICTURE: &str = "assets/img/logo-mark.png";
@@ -36,11 +39,20 @@ fn pane_showing_a_picture(cx: &mut TestAppContext, tag: &str) -> (Pane, Scratch,
     (pane, dir, png)
 }
 
-/// Alt+click on a picture's path opens it in a floating square beside the
-/// line, and Escape closes it. Nothing goes to the desktop.
+/// Alt+click on a picture's path opens it in a floating square just below
+/// the line, where there is room for it, and Escape closes it. Nothing goes to
+/// the desktop.
 #[gpui::test]
 fn alt_click_on_a_printed_picture_opens_a_square_and_escape_closes_it(cx: &mut TestAppContext) {
-    let (mut pane, _dir, png) = pane_showing_a_picture(cx, "alt-open");
+    let dir = Scratch::new("alt-open");
+    let png = dir.fixture(PICTURE, "shot.png");
+    let png = png.to_str().expect("a UTF-8 temp path").to_string();
+    // The path near the top of the screen, with room below it for the square.
+    let mut pane = Pane::running(
+        cx,
+        &format!("printf '%s\\n' 'saved {png}'; for i in $(seq 1 24); do echo; done; echo ready; exec cat"),
+    );
+    pane.wait_for("ready");
     assert_eq!(pane.float_path(), None);
 
     let at = pane.point_at(&png);
@@ -50,13 +62,12 @@ fn alt_click_on_a_printed_picture_opens_a_square_and_escape_closes_it(cx: &mut T
         Some(std::path::Path::new(&png)),
         "an Alt+click on the path opens that picture in a square"
     );
-    let (_, y, _, h) = pane.float_rect().expect("the square is drawn");
-    let (line_top, line_bottom) = pane.row_span(at);
+    let (_, y, _, _) = pane.float_rect().expect("the square is drawn");
+    let (_, line_bottom) = pane.row_span(at);
     assert!(
-        y >= line_bottom || y + h <= line_top,
-        "the square opens beside the line it was opened from, not over it: \
-         square {y}..{} against line {line_top}..{line_bottom}",
-        y + h
+        y >= line_bottom && y - line_bottom < 10.0,
+        "the square opens just below the line it was opened from: \
+         its top at {y}, the line's bottom at {line_bottom}"
     );
     assert_eq!(desktop_launches(), Vec::<String>::new());
 
@@ -235,4 +246,883 @@ fn a_square_with_unsaved_notes_is_kept_once_then_closes(cx: &mut TestAppContext)
         "asked again, the other document takes its place"
     );
     assert_eq!(desktop_launches(), Vec::<String>::new());
+}
+
+/// Whether `p` lies inside `r` and at least 20 pixels from each of its edges,
+/// clear of any grip a border has.
+fn well_inside(r: Rect, p: gpui::Point<gpui::Pixels>) -> bool {
+    let (x, y) = (f32::from(p.x), f32::from(p.y));
+    x > r.0 + 20.0 && x < r.0 + r.2 - 20.0 && y > r.1 + 20.0 && y < r.1 + r.3 - 20.0
+}
+
+/// Held modifiers, by name.
+fn held(alt: bool, control: bool, shift: bool, platform: bool) -> gpui::Modifiers {
+    gpui::Modifiers {
+        alt,
+        control,
+        shift,
+        platform,
+        ..Default::default()
+    }
+}
+
+/// What a click at `at` with `mods` held sent to the desktop.
+fn launched_by(
+    pane: &mut Pane,
+    at: gpui::Point<gpui::Pixels>,
+    mods: gpui::Modifiers,
+) -> Vec<String> {
+    let before = desktop_launches().len();
+    pane.click(at, mods);
+    desktop_launches()[before..].to_vec()
+}
+
+/// Every modified click on a path or link does what the click table
+/// (`docopen::click_intent`) says: Shift on a file reveals it, and so does
+/// Super+Ctrl; Ctrl on a file or a link hands it to the desktop, and so does
+/// Shift on a web link, which has nothing on disk to reveal; Alt on a line
+/// that is neither a document nor a command does nothing.
+#[gpui::test]
+fn every_modified_click_on_a_path_does_what_the_click_table_says(cx: &mut TestAppContext) {
+    let dir = Scratch::new("click-table");
+    let png = dir.fixture(PICTURE, "shot.png");
+    let png = png.to_str().expect("a UTF-8 temp path").to_string();
+    let url = "https://example.com/td-harness";
+    let mut pane = Pane::running(
+        cx,
+        &format!("printf '%s\\n' 'file {png}' 'link {url}' 'ready'; exec cat"),
+    );
+    pane.wait_for("ready");
+    let on_file = pane.point_at(&png);
+    let on_link = pane.point_at(url);
+    let reveals = |got: &[String]| {
+        got.len() == 1
+            && got[0].starts_with("sh -c dbus-send")
+            && got[0].contains("FileManager1.ShowItems")
+            && got[0].contains(&format!("file://{png}"))
+    };
+    let opens = |got: &[String], what: &str| {
+        got.len() == 1 && got[0].ends_with(&format!("xdg-open {what}"))
+    };
+
+    let got = launched_by(&mut pane, on_file, held(false, false, true, false));
+    assert!(reveals(&got), "shift+click on a file reveals it: {got:?}");
+    let got = launched_by(&mut pane, on_file, held(false, true, false, true));
+    assert!(
+        reveals(&got),
+        "super+ctrl+click on a file reveals it: {got:?}"
+    );
+    let got = launched_by(&mut pane, on_file, held(false, true, false, false));
+    assert!(opens(&got, &png), "ctrl+click on a file opens it: {got:?}");
+    let got = launched_by(&mut pane, on_link, held(false, true, false, false));
+    assert!(opens(&got, url), "ctrl+click on a link opens it: {got:?}");
+    let got = launched_by(&mut pane, on_link, held(false, false, true, false));
+    assert!(
+        opens(&got, url),
+        "shift+click on a web link opens it: {got:?}"
+    );
+    assert_eq!(pane.float_path(), None, "none of those opens a square");
+
+    let at = pane.point_at("ready");
+    let got = launched_by(&mut pane, at, Pane::alt());
+    assert_eq!(got, Vec::<String>::new(), "alt+click on plain words");
+    assert_eq!(pane.float_path(), None);
+    assert_eq!(pane.clipboard(), None);
+}
+
+/// The square lies over the grid and over the note, so a press on it is its
+/// own: an Alt+click there does not open the other picture printed under it,
+/// and a click there does not pick up the note underneath.
+#[gpui::test]
+fn a_press_on_the_square_is_the_squares_even_over_a_path_or_a_note(cx: &mut TestAppContext) {
+    let dir = Scratch::new("square-first");
+    let png = dir.fixture(PICTURE, "shot.png");
+    let png = png.to_str().expect("a UTF-8 temp path").to_string();
+    let under = dir.fixture(PICTURE, "under.png");
+    let under = under.to_str().expect("a UTF-8 temp path").to_string();
+    // The other picture, right-aligned on each of many rows so its name ends
+    // at the same column under the square, however long the temp path is.
+    let mut pane = Pane::running(
+        cx,
+        &format!(
+            "for i in $(seq 1 24); do printf 'row %02d %90s\\n' \"$i\" '{under}'; done; \
+             printf '%s\\n' 'open {png}' 'ready'; exec cat"
+        ),
+    );
+    pane.wait_for("ready");
+    let at = pane.point_at(&png);
+    pane.click(at, Pane::alt());
+    let body = pane.float_zone(FloatHit::Body).expect("the square's body");
+    // Aimed at the file's name, which ends the path: a click anywhere on a
+    // path is a click on the whole of it.
+    let beneath = pane
+        .points_at_all("under.png")
+        .into_iter()
+        .find(|p| well_inside(body, *p))
+        .expect("the other picture's path lies under the square somewhere");
+
+    let got = launched_by(&mut pane, beneath, Pane::alt());
+    assert_eq!(got, Vec::<String>::new());
+    assert_eq!(
+        pane.float_path().as_deref(),
+        Some(std::path::Path::new(&png)),
+        "an Alt+click on the square does not open what is printed under it"
+    );
+    let got = launched_by(&mut pane, beneath, held(false, true, false, false));
+    assert_eq!(got, Vec::<String>::new(), "nor does a Ctrl+click");
+
+    // The note, stuck to the pane; the square is moved over it.
+    pane.view.update(pane.cx, |v, cx| {
+        v.note_post(None, "a note under the square".into(), false, cx)
+    });
+    pane.redraw();
+    let note = pane
+        .read(|v| v.note_layout().map(|l| l.center))
+        .expect("the note is laid out");
+    let (x, y, w, h) = pane.float_rect().expect("the square");
+    let grab = gpui::point(px(x + 40.0), px(y + 11.0));
+    let (dx, dy) = (
+        f32::from(note.x) - (x + w / 2.0),
+        f32::from(note.y) - (y + h / 2.0),
+    );
+    pane.press(grab);
+    pane.drag_to(point(grab.x + px(dx), grab.y + px(dy)));
+    pane.release(point(grab.x + px(dx), grab.y + px(dy)));
+    let body = pane.float_zone(FloatHit::Body).expect("the square's body");
+    assert!(
+        well_inside(body, note),
+        "the square now covers the note's middle: {body:?} against {note:?}"
+    );
+    pane.click(note, Default::default());
+    assert!(
+        !pane.read(|v| v.sticky_composing()),
+        "a click on the square over the note does not pick the note up"
+    );
+}
+
+/// A square dragged and let go outside the pane is let go: gpui hands the pane
+/// no mouse-up there, and without one the square would stay stuck to the hand
+/// and move with the next drag, wherever it started.
+#[gpui::test]
+fn a_square_let_go_outside_the_pane_does_not_follow_the_next_drag(cx: &mut TestAppContext) {
+    let (mut pane, _dir, png) = pane_showing_a_picture(cx, "let-go-outside");
+    let at = pane.point_at(&png);
+    pane.click(at, Pane::alt());
+    let (x, y, _, _) = pane.float_rect().expect("a square");
+    let grab = point(px(x + 40.0), px(y + 11.0));
+    pane.press(grab);
+    pane.drag_to(point(grab.x - px(60.0), grab.y));
+    pane.release(point(px(-40.0), grab.y));
+    let dropped = pane.float_rect().expect("the square is still up");
+
+    // A drag in the grid, well away from the square.
+    let from = pane.point_at("ready");
+    pane.press(from);
+    pane.drag_to(point(from.x + px(100.0), from.y));
+    pane.release(point(from.x + px(100.0), from.y));
+    assert!(
+        same_rect(pane.float_rect().expect("the square"), dropped),
+        "the square stays where it was let go"
+    );
+    assert!(
+        pane.read(|v| v.has_selection()),
+        "the drag in the grid selects, as any drag there does"
+    );
+}
+
+/// Leaving the pane puts out what the pointer lit in it: the square's ✕ is lit
+/// while the pointer is on it, and goes out when the pointer moves off the
+/// pane, and when it leaves the window, which gpui reports with no move.
+#[gpui::test]
+fn leaving_the_pane_puts_out_the_control_the_pointer_lit(cx: &mut TestAppContext) {
+    let (mut pane, _dir, png) = pane_showing_a_picture(cx, "leave-lights");
+    let at = pane.point_at(&png);
+    pane.click(at, Pane::alt());
+    let close = Pane::middle(pane.float_zone(FloatHit::Close).expect("the ✕"));
+    let lit = |pane: &mut Pane| pane.read(|v| v.float.as_ref().and_then(|f| f.hover));
+
+    pane.hover(close);
+    assert_eq!(lit(&mut pane), Some(FloatHit::Close), "the ✕ lights");
+    pane.hover(point(px(-30.0), px(300.0)));
+    assert_eq!(lit(&mut pane), None, "a move off the pane puts it out");
+
+    pane.hover(close);
+    assert_eq!(lit(&mut pane), Some(FloatHit::Close));
+    pane.leave_window();
+    assert_eq!(lit(&mut pane), None, "leaving the window puts it out");
+}
+
+/// A pane that has printed two hundred lines of history, then a Markdown
+/// document's path, with the document open in a square.
+fn pane_with_history_and_a_document(cx: &mut TestAppContext, tag: &str) -> (Pane, Scratch) {
+    let dir = Scratch::new(tag);
+    let md = dir.fixture("../README.md", "readme.md");
+    let md = md.to_str().expect("a UTF-8 temp path").to_string();
+    let mut pane = Pane::running(
+        cx,
+        &format!("seq 1 200; printf '%s\\n' 'doc {md}' 'ready'; exec cat"),
+    );
+    pane.wait_for("ready");
+    let at = pane.point_at(&md);
+    pane.click(at, Pane::alt());
+    pane.redraw();
+    let view = pane.float_view().expect("the document opens in a square");
+    assert_eq!(
+        pane.scroll_of(&view),
+        Some(0.0),
+        "the document is laid out, at its top"
+    );
+    (pane, dir)
+}
+
+/// The wheel over the square moves the document in it, and never the
+/// scrollback behind it; off the square it moves the scrollback, and never
+/// the document. Ctrl+wheel is the pane's text dial, over the square too. And
+/// the FOCUS reader, which scrolls the pane with the pointer over its own
+/// modal, never reaches a square hidden underneath.
+#[gpui::test]
+fn the_wheel_over_the_square_moves_its_document_and_nothing_else(cx: &mut TestAppContext) {
+    let (mut pane, _dir) = pane_with_history_and_a_document(cx, "wheel-square");
+    let view = pane.float_view().expect("a square");
+    let body = Pane::middle(pane.float_zone(FloatHit::Body).expect("its body"));
+
+    // Ctrl first, while the document is at its top: a turn that reached the
+    // document would move it off the top, where a re-layout cannot move it.
+    let size = |pane: &mut Pane| {
+        pane.view
+            .read_with(pane.cx, |v, cx| v.resolved_theme(cx).font_size)
+    };
+    let was = size(&mut pane);
+    pane.wheel(body, -1.0, held(false, true, false, false));
+    assert_ne!(
+        size(&mut pane),
+        was,
+        "ctrl+wheel over the square turns the text dial"
+    );
+    assert_eq!(pane.scroll_of(&view), Some(0.0), "and leaves the document");
+
+    pane.wheel(body, -3.0, Default::default());
+    let read_to = pane.scroll_of(&view).expect("laid out");
+    assert!(read_to > 0.0, "the document scrolls down");
+    assert_eq!(pane.scrolled_back(), 0, "and the scrollback stays live");
+
+    let grid = pane.point_at("ready");
+    pane.wheel(grid, 3.0, Default::default());
+    let back = pane.scrolled_back();
+    assert!(back > 0, "off the square the wheel walks the history");
+    assert_eq!(
+        pane.scroll_of(&view),
+        Some(read_to),
+        "and the document stays"
+    );
+
+    let focus_turn = gpui::ScrollWheelEvent {
+        position: body,
+        delta: gpui::ScrollDelta::Lines(point(0.0, 3.0)),
+        modifiers: Default::default(),
+        touch_phase: gpui::TouchPhase::Moved,
+    };
+    pane.view
+        .update(pane.cx, |v, cx| v.scroll_by_wheel(&focus_turn, cx));
+    pane.redraw();
+    assert!(pane.scrolled_back() > back, "the reader walks the history");
+    assert_eq!(
+        pane.scroll_of(&view),
+        Some(read_to),
+        "not the square under it"
+    );
+}
+
+/// Ctrl+Alt+click on a document asks the workspace for a pane beside this one,
+/// with the row it was clicked on; a second Alt+click on the path the square
+/// already shows, and the square's own split button, ask for the square to be
+/// promoted, carrying its view so nothing is opened twice.
+#[gpui::test]
+fn the_split_gestures_ask_the_workspace(cx: &mut TestAppContext) {
+    let (mut pane, _dir, png) = pane_showing_a_picture(cx, "split");
+    let asked = pane.asks_beside();
+    let at = pane.point_at(&png);
+    let row = pane.painted_row(at);
+    let path = std::path::PathBuf::from(&png);
+
+    pane.click(at, held(true, true, false, false));
+    assert_eq!(
+        *asked.borrow(),
+        vec![Asked {
+            path: path.clone(),
+            by: Asker::Click,
+            carry: None,
+            row: Some(row),
+        }],
+        "ctrl+alt+click asks for a pane beside, from that row"
+    );
+    assert_eq!(pane.float_path(), None, "and opens no square itself");
+
+    pane.click(at, Pane::alt());
+    let square = pane.float_view().expect("a square").entity_id();
+    pane.click(at, Pane::alt());
+    let split = pane
+        .float_zone(FloatHit::Split)
+        .expect("the square's split button");
+    pane.click(Pane::middle(split), Default::default());
+    let promoted = Asked {
+        path: path.clone(),
+        by: Asker::Float,
+        carry: Some(square),
+        row: None,
+    };
+    assert_eq!(
+        asked.borrow()[1..].to_vec(),
+        vec![promoted.clone(), promoted],
+        "the second Alt+click and the split button both promote the square"
+    );
+    assert_eq!(
+        pane.float_path(),
+        Some(path),
+        "the square stays until the workspace answers"
+    );
+}
+
+/// A link pressed in a document is routed by the pane: a file TD can draw
+/// takes the document's place — the same square, in the same spot, or the
+/// same Document face — and a web link, or a file TD does not draw, goes to
+/// the desktop. Any other scheme goes nowhere.
+#[gpui::test]
+fn a_link_out_of_a_document_is_routed_by_the_pane(cx: &mut TestAppContext) {
+    let dir = Scratch::new("links");
+    let md = dir.fixture("../README.md", "readme.md");
+    let png = dir.fixture(PICTURE, "shot.png");
+    let txt = dir.fixture("Cargo.toml", "notes.txt");
+    let (md, png, txt) = (
+        md.to_str().expect("UTF-8").to_string(),
+        png.to_str().expect("UTF-8").to_string(),
+        txt.to_str().expect("UTF-8").to_string(),
+    );
+    let mut pane = Pane::running(cx, &format!("printf '%s\\n' 'doc {md}' 'ready'; exec cat"));
+    pane.wait_for("ready");
+    let at = pane.point_at(&md);
+    pane.click(at, Pane::alt());
+    let place = pane.float_rect().expect("the document's square");
+
+    let view = pane.float_view().expect("a square");
+    pane.follow(&view, &png);
+    assert_eq!(
+        pane.float_path().as_deref(),
+        Some(std::path::Path::new(&png))
+    );
+    assert!(
+        same_rect(pane.float_rect().expect("a square"), place),
+        "the linked picture takes the document's place, in the same spot"
+    );
+
+    let view = pane.float_view().expect("a square");
+    let before = desktop_launches().len();
+    pane.follow(&view, "https://example.com/linked");
+    pane.follow(&view, &txt);
+    pane.follow(&view, "ftp://example.com/refused");
+    let got = desktop_launches()[before..].to_vec();
+    assert_eq!(
+        got.len(),
+        2,
+        "the web link and the text file, and nothing else: {got:?}"
+    );
+    assert!(
+        got[0].ends_with("xdg-open https://example.com/linked"),
+        "{got:?}"
+    );
+    assert!(got[1].ends_with(&format!("xdg-open {txt}")), "{got:?}");
+    assert_eq!(
+        pane.float_path().as_deref(),
+        Some(std::path::Path::new(&png))
+    );
+
+    // The Document face routes its links the same way, onto itself.
+    pane.show_document(std::path::Path::new(&md));
+    let face = pane.face_view().expect("the Document face");
+    pane.follow(&face, &png);
+    assert_eq!(
+        pane.read(|v| v.document_path().map(|p| p.to_path_buf())),
+        Some(std::path::PathBuf::from(&png)),
+        "the face shows the linked picture"
+    );
+}
+
+/// An HTML file with nothing to draw it goes to the desktop before any square
+/// or pane is made, and the pane says why where it was clicked, in a chip only
+/// its own timer takes down. A link to one from a document leaves the document
+/// where it is. A square or face whose engine gives up after all hands its
+/// file over; a face restored after a restart, which nobody clicked, does not.
+#[gpui::test]
+fn an_html_file_nothing_can_draw_goes_to_the_desktop_and_says_why(cx: &mut TestAppContext) {
+    let dir = Scratch::new("no-engine");
+    let brief = dir.fixture("tests/fixtures/page/brief.html", "brief.html");
+    let md = dir.fixture("../README.md", "readme.md");
+    let (brief, md) = (
+        brief.to_str().expect("UTF-8").to_string(),
+        md.to_str().expect("UTF-8").to_string(),
+    );
+    let mut pane = Pane::running(
+        cx,
+        &format!("printf '%s\\n' 'brief {brief}' 'doc {md}' 'ready'; exec cat"),
+    );
+    pane.html_engine(Err(crate::docview::engine::Unavailable::Off));
+    pane.wait_for("ready");
+    let asked = pane.asks_beside();
+    let said = |pane: &mut Pane| pane.read(|v| v.said.as_ref().map(|s| (s.text.clone(), s.row)));
+
+    let at = pane.point_at(&brief);
+    let row = pane.painted_row(at);
+    let got = launched_by(&mut pane, at, Pane::alt());
+    assert!(
+        got.len() == 1 && got[0].ends_with(&format!("xdg-open {brief}")),
+        "the brief goes to the desktop: {got:?}"
+    );
+    assert_eq!(pane.float_path(), None, "and no square is made for it");
+    let (text, on) = said(&mut pane).expect("the pane says why");
+    assert!(text.contains("HTML engine off"), "{text}");
+    assert_eq!(on, Some(row), "on the row that was clicked");
+
+    // Four seconds on, a split is asked for, and refused the same way.
+    pane.cx
+        .executor()
+        .advance_clock(std::time::Duration::from_secs(4));
+    let at = pane.point_at(&brief);
+    let got = launched_by(&mut pane, at, held(true, true, false, false));
+    assert_eq!(got.len(), 1, "{got:?}");
+    assert_eq!(*asked.borrow(), Vec::<Asked>::new(), "no pane is asked for");
+    // The first saying's timer runs out and must not take the second down.
+    pane.cx
+        .executor()
+        .advance_clock(std::time::Duration::from_millis(4500));
+    assert!(
+        said(&mut pane).is_some(),
+        "the newer saying outlives the older timer"
+    );
+    pane.cx
+        .executor()
+        .advance_clock(std::time::Duration::from_secs(4));
+    assert_eq!(said(&mut pane), None, "and goes when its own runs out");
+
+    // A link to the brief from a document in a square.
+    let at = pane.point_at(&md);
+    pane.click(at, Pane::alt());
+    let view = pane.float_view().expect("the document's square");
+    let before = desktop_launches().len();
+    pane.follow(&view, &brief);
+    assert_eq!(desktop_launches()[before..].len(), 1);
+    assert_eq!(
+        pane.float_path().as_deref(),
+        Some(std::path::Path::new(&md)),
+        "the document stays"
+    );
+
+    // An engine that gives up after the view is up hands the file over, from
+    // either seat.
+    let give_up = |pane: &mut Pane, view: &gpui::Entity<crate::docview::DocumentView>| {
+        let before = desktop_launches().len();
+        view.update(pane.cx, |_, cx| {
+            cx.emit(crate::docview::CannotShow {
+                reason: "the browser would not start".into(),
+            })
+        });
+        pane.cx.run_until_parked();
+        desktop_launches()[before..].to_vec()
+    };
+    let got = give_up(&mut pane, &view);
+    assert!(
+        got.len() == 1 && got[0].ends_with(&format!("xdg-open {md}")),
+        "{got:?}"
+    );
+    pane.show_document(std::path::Path::new(&md));
+    let face = pane.face_view().expect("the Document face");
+    let got = give_up(&mut pane, &face);
+    assert!(
+        got.len() == 1 && got[0].ends_with(&format!("xdg-open {md}")),
+        "{got:?}"
+    );
+
+    // Restored after a restart: nobody clicked, so nothing opens by itself.
+    pane.view
+        .update(pane.cx, |v, cx| v.restore_document(&brief, None, cx));
+    pane.redraw();
+    let restored = pane.face_view().expect("the restored face");
+    assert_eq!(give_up(&mut pane, &restored), Vec::<String>::new());
+}
+
+// ── the Document face ───────────────────────────────────────────────────────
+
+/// A pane whose terminal has printed `ready`, is past its first moments, and
+/// shows a copy of the repository's README on its Document face.
+fn pane_on_its_document_face(cx: &mut TestAppContext, tag: &str) -> (Pane, Scratch, String) {
+    let dir = Scratch::new(tag);
+    let md = dir.fixture("../README.md", "readme.md");
+    let md = md.to_str().expect("UTF-8").to_string();
+    let mut pane = Pane::running(cx, "seq 1 200; echo ready; exec cat");
+    pane.wait_for("ready");
+    pane.settle();
+    pane.show_document(std::path::Path::new(&md));
+    assert_eq!(pane.face(), Face::Document);
+    (pane, dir, md)
+}
+
+/// Back on the terminal face, type a word and wait for the shell's echo of
+/// it: anything sent to the terminal before it would be on screen first.
+fn flip_to_the_terminal_and_type(pane: &mut Pane, word: &str) {
+    pane.keys("alt-k");
+    assert_eq!(pane.face(), Face::Terminal, "alt+k shows the shell again");
+    let keys = word.chars().map(String::from).collect::<Vec<_>>().join(" ");
+    pane.keys(&format!("{keys} enter"));
+    pane.wait_for(word);
+}
+
+/// A key on the Document face moves the document or stops there: nothing
+/// typed or pasted there reaches the shell hidden behind the page.
+#[gpui::test]
+fn the_document_face_swallows_typing_and_pasting(cx: &mut TestAppContext) {
+    let (mut pane, _dir, _md) = pane_on_its_document_face(cx, "face-typing");
+    pane.keys("x y z enter");
+    pane.cx
+        .write_to_clipboard(gpui::ClipboardItem::new_string("pasted-behind".into()));
+    pane.keys("ctrl-shift-v");
+    flip_to_the_terminal_and_type(&mut pane, "echoed");
+    let rows = pane.rows();
+    assert!(
+        !rows
+            .iter()
+            .any(|r| r.contains("xyz") || r.contains("pasted-behind")),
+        "nothing typed or pasted on the document reached the shell:\n{}",
+        rows.join("\n")
+    );
+}
+
+/// Every press on the Document face is the document's: a drag there selects
+/// nothing in the grid behind it, a right click opens no copy/paste tray over
+/// the hidden shell, and a file dropped there is not typed into it.
+#[gpui::test]
+fn a_press_or_a_drop_on_the_document_face_never_reaches_the_grid(cx: &mut TestAppContext) {
+    let dir = Scratch::new("face-press");
+    let png = dir.fixture(PICTURE, "shot.png");
+    let mut pane = Pane::running(cx, "echo ready; exec cat");
+    pane.wait_for("ready");
+    pane.settle();
+    pane.show_document(&png);
+    let (sx, sy, sw, sh) = pane.screen();
+    let mid = point(px(sx + sw / 2.0), px(sy + sh / 2.0));
+
+    pane.press(mid);
+    assert!(pane.read(|v| v.doc_holding), "the press is the picture's");
+    pane.drag_to(point(mid.x + px(80.0), mid.y + px(40.0)));
+    pane.release(point(mid.x + px(80.0), mid.y + px(40.0)));
+    assert!(!pane.read(|v| v.doc_holding), "and the release lets it go");
+    assert!(
+        !pane.read(|v| v.has_selection()),
+        "the grid selects nothing"
+    );
+
+    pane.right_click(mid);
+    assert!(
+        pane.read(|v| v.ctx_menu.is_none()),
+        "no tray over a hidden shell"
+    );
+
+    pane.drop_files(mid, vec![png.clone()]);
+    flip_to_the_terminal_and_type(&mut pane, "echoed");
+    assert!(
+        !pane.rows().iter().any(|r| r.contains("shot.png")),
+        "a file dropped on the document is not typed into the shell"
+    );
+}
+
+/// The wheel anywhere on the Document face moves the document and never the
+/// hidden scrollback; Ctrl+wheel is still the text dial there.
+#[gpui::test]
+fn the_wheel_on_the_document_face_moves_the_document(cx: &mut TestAppContext) {
+    let (mut pane, _dir, _md) = pane_on_its_document_face(cx, "face-wheel");
+    let view = pane.face_view().expect("the face's view");
+    assert_eq!(pane.scroll_of(&view), Some(0.0), "laid out, at its top");
+    let (sx, sy, _, sh) = pane.screen();
+    let corner = point(px(sx + 30.0), px(sy + sh - 30.0));
+
+    let size = |pane: &mut Pane| {
+        pane.view
+            .read_with(pane.cx, |v, cx| v.resolved_theme(cx).font_size)
+    };
+    let was = size(&mut pane);
+    pane.wheel(corner, -1.0, held(false, true, false, false));
+    assert_ne!(size(&mut pane), was, "ctrl+wheel turns the text dial");
+    assert_eq!(pane.scroll_of(&view), Some(0.0), "and leaves the document");
+
+    pane.wheel(corner, -3.0, Default::default());
+    assert!(
+        pane.scroll_of(&view).expect("laid out") > 0.0,
+        "the document moves"
+    );
+    assert_eq!(pane.scrolled_back(), 0, "the hidden scrollback does not");
+}
+
+/// The Document face comes only with a document: asked for without one, the
+/// pane stays on its terminal; `show_document` puts both up together; and a
+/// square's view carried onto the face is that same view, seated on the face,
+/// never the file opened a second time.
+#[gpui::test]
+fn the_document_face_comes_only_with_a_document(cx: &mut TestAppContext) {
+    let (mut pane, _dir, png) = pane_showing_a_picture(cx, "face-only");
+    pane.view
+        .update(pane.cx, |v, cx| v.set_face(Face::Document, cx));
+    assert_eq!(pane.face(), Face::Terminal, "no document, no Document face");
+
+    let at = pane.point_at(&png);
+    pane.click(at, Pane::alt());
+    let square = pane.float_view().expect("a square");
+    let target = crate::docopen::drawable_document(std::path::Path::new(&png)).expect("a picture");
+    pane.view.update(pane.cx, |v, cx| {
+        let carried = v.release_float(cx);
+        v.show_document(target, carried, cx)
+    });
+    pane.redraw();
+    assert_eq!(pane.face(), Face::Document);
+    let face = pane.face_view().expect("the face's view");
+    assert_eq!(
+        face.entity_id(),
+        square.entity_id(),
+        "the carried view, not a new one"
+    );
+    let (seat, _) = face.read_with(pane.cx, |v, _| v.seat_and_theme());
+    assert_eq!(seat, DocSeat::Face, "re-seated on the face");
+}
+
+/// A replica repair builds a new pane and hands it the old one's
+/// presentation: the document behind its terminal and the square over it
+/// cross as the same views — nothing opened again — the square in its place
+/// and with its note, and the new pane routes their links itself.
+#[gpui::test]
+fn a_repaired_replica_keeps_its_document_and_its_square(cx: &mut TestAppContext) {
+    let dir = Scratch::new("replica");
+    let md = dir.fixture("../README.md", "readme.md");
+    let png = dir.fixture(PICTURE, "shot.png");
+    let other = dir.fixture(PICTURE, "other.png");
+    let png = png.to_str().expect("UTF-8").to_string();
+    let mut old = Pane::running(
+        cx,
+        &format!("printf '%s\\n' 'shot {png}' 'ready'; exec cat"),
+    );
+    old.wait_for("ready");
+    old.show_document(&md);
+    old.keys("alt-k");
+    assert_eq!(old.face(), Face::Terminal);
+    let at = old.point_at(&png);
+    old.click(at, Pane::alt());
+    old.view.update(old.cx, |v, cx| {
+        v.note_float(crate::docopen::FloatNote::FourPanes, cx)
+    });
+    let (doc, square) = (
+        old.face_view().expect("a document"),
+        old.float_view().expect("a square"),
+    );
+    let rect = old.read(|v| v.float.as_ref().map(|f| f.rect));
+
+    let mut new = Pane::running(cx, "echo repaired; exec cat");
+    new.wait_for("repaired");
+    let carried = old.read(|v| v.presentation());
+    new.view
+        .update(new.cx, |v, cx| v.adopt_presentation(carried, cx));
+    new.redraw();
+    assert_eq!(
+        new.face_view().map(|v| v.entity_id()),
+        Some(doc.entity_id())
+    );
+    assert_eq!(
+        new.float_view().map(|v| v.entity_id()),
+        Some(square.entity_id())
+    );
+    assert_eq!(
+        new.face(),
+        Face::Terminal,
+        "the document was behind the terminal"
+    );
+    assert_eq!(new.read(|v| v.float.as_ref().map(|f| f.rect)), rect);
+    assert_eq!(
+        new.read(|v| v.float.as_ref().and_then(|f| f.note)),
+        Some(crate::docopen::FloatNote::FourPanes)
+    );
+    new.follow(&square, other.to_str().expect("UTF-8"));
+    assert_eq!(
+        new.float_path(),
+        Some(other),
+        "the new pane routes the square's links"
+    );
+}
+
+/// A saved document comes back by its name alone: a file that has gone keeps
+/// its pane and its face, and its place in the page, never measured, is
+/// carried as unknown rather than as the top. A name TD does not draw leaves
+/// the pane a terminal.
+#[gpui::test]
+fn a_missing_document_keeps_its_pane_on_restore(cx: &mut TestAppContext) {
+    let dir = Scratch::new("restore");
+    let gone = dir.join("gone.md");
+    let gone = gone.to_str().expect("UTF-8").to_string();
+    let mut pane = Pane::running(cx, "echo ready; exec cat");
+    pane.wait_for("ready");
+
+    pane.view
+        .update(pane.cx, |v, cx| v.restore_document(&gone, Some(0.4), cx));
+    pane.redraw();
+    assert_eq!(pane.face(), Face::Document, "the pane keeps its face");
+    assert_eq!(
+        pane.view.read_with(pane.cx, |v, cx| v.saved_document(cx)),
+        Some((gone.clone(), None)),
+        "an unmeasured place is saved as unknown, not as the top"
+    );
+
+    let mut other = Pane::running(cx, "echo ready; exec cat");
+    other.wait_for("ready");
+    let odd = dir.join("notes.xyz");
+    other.view.update(other.cx, |v, cx| {
+        v.restore_document(odd.to_str().expect("UTF-8"), None, cx)
+    });
+    assert_eq!(
+        other.face(),
+        Face::Terminal,
+        "a name TD does not draw stays a terminal"
+    );
+    assert!(!other.read(|v| v.has_document()));
+}
+
+// ── the terminal ────────────────────────────────────────────────────────────
+
+/// A file dropped on the terminal face goes to the shell as a paste of its
+/// path, as every other terminal on the machine does with one.
+#[gpui::test]
+fn a_file_dropped_on_the_terminal_is_pasted_into_it(cx: &mut TestAppContext) {
+    let dir = Scratch::new("drop");
+    let png = dir.fixture(PICTURE, "dropped.png");
+    let mut pane = Pane::running(cx, "echo ready; exec cat");
+    pane.wait_for("ready");
+    let at = pane.point_at("ready");
+    pane.drop_files(at, vec![png]);
+    pane.wait_for("dropped.png");
+}
+
+/// The first reply the terminal typed back that starts with `start`, from
+/// where the line discipline echoed it onto the screen.
+fn echoed_reply(pane: &mut Pane, start: &str) -> String {
+    pane.wait_for(start);
+    let row = pane
+        .rows()
+        .into_iter()
+        .find(|r| r.contains(start))
+        .expect("the reply");
+    row[row.find(start).expect("the reply")..].to_string()
+}
+
+/// A program asking a window-owned pane how big its text area is (`CSI 14 t`)
+/// is answered, from what the pseudoterminal was last told, and in device
+/// pixels: the cell at the window's scale, not a logical size cut to an
+/// integer.
+#[gpui::test]
+fn a_program_asking_the_text_area_size_is_told_it_in_device_pixels(cx: &mut TestAppContext) {
+    let mut pane = Pane::running(cx, "echo ready; read go; printf '\\033[14t'; exec cat");
+    pane.wait_for("ready");
+    // Let the first layout's size reach the pseudoterminal: the pane waits for
+    // it to stop changing, on both clocks.
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    pane.cx
+        .executor()
+        .advance_clock(std::time::Duration::from_millis(300));
+    pane.redraw();
+    let (rows, cols, told, cell) =
+        pane.read(|v| (v.grid.rows, v.grid.cols, v.cell_px, (v.cell_w, v.cell_h)));
+    let scale = pane.scale();
+    assert_eq!(
+        told,
+        (
+            (cell.0 * scale).round() as u16,
+            (cell.1 * scale).round() as u16
+        ),
+        "the pseudoterminal was told its cell in device pixels"
+    );
+    // And the kernel was told the same: what `TIOCGWINSZ` answers any program.
+    let kernel = pane.kernel_winsize_once(|ws| ws.ws_xpixel == cols as u16 * told.0);
+    assert_eq!(
+        (
+            kernel.ws_row,
+            kernel.ws_col,
+            kernel.ws_xpixel,
+            kernel.ws_ypixel
+        ),
+        (
+            rows as u16,
+            cols as u16,
+            cols as u16 * told.0,
+            rows as u16 * told.1
+        ),
+        "the pseudoterminal's own size, in device pixels"
+    );
+    pane.settle();
+    pane.keys("g o enter");
+    let reply = echoed_reply(&mut pane, "[4;");
+    let numbers: Vec<u32> = reply["[4;".len()..]
+        .split(['t', ';'])
+        .take(2)
+        .map(|n| n.parse().expect("a number"))
+        .collect();
+    assert_eq!(
+        numbers,
+        vec![rows as u32 * told.1 as u32, cols as u32 * told.0 as u32],
+        "height and width in device pixels: {reply}"
+    );
+}
+
+/// A program asking the pane its background colour (`OSC 11 ?`) is told the
+/// colour the pane draws, from the pane's own theme when it wears one, not
+/// the window's.
+#[gpui::test]
+fn a_program_asking_a_colour_is_told_the_one_the_pane_draws(cx: &mut TestAppContext) {
+    let mut pane = Pane::running(
+        cx,
+        "echo ready; read go; printf '\\033]11;?\\007'; exec cat",
+    );
+    pane.wait_for("ready");
+    pane.wear_own_theme();
+    let (drawn, windows) = pane.view.read_with(pane.cx, |v, cx| {
+        let own = v.resolved_theme(cx);
+        let window = crate::theme::theme(cx);
+        (
+            super::rgb8(super::graded(own.bg, &own.grade, super::Channel::Bg)),
+            super::rgb8(super::graded(window.bg, &window.grade, super::Channel::Bg)),
+        )
+    });
+    assert_ne!(
+        (drawn.r, drawn.g, drawn.b),
+        (windows.r, windows.g, windows.b),
+        "the pane's own background differs from the window's, so the answer can tell"
+    );
+    pane.settle();
+    pane.keys("g o enter");
+    let reply = echoed_reply(&mut pane, "11;rgb:");
+    let hex: Vec<u8> = reply["11;rgb:".len()..]
+        .split('/')
+        .take(3)
+        .map(|c| u8::from_str_radix(&c[..2], 16).expect("hex"))
+        .collect();
+    assert_eq!(hex, vec![drawn.r, drawn.g, drawn.b], "{reply}");
+}
+
+/// The document in a square paints in the pane's own theme, not the window's.
+#[gpui::test]
+fn the_square_paints_in_the_panes_own_theme(cx: &mut TestAppContext) {
+    let (mut pane, _dir, png) = pane_showing_a_picture(cx, "square-theme");
+    pane.wear_own_theme();
+    let at = pane.point_at(&png);
+    pane.click(at, Pane::alt());
+    pane.redraw();
+    let square = pane.float_view().expect("a square");
+    let (_, theme) = square.read_with(pane.cx, |v, _| v.seat_and_theme());
+    let theme = theme.expect("the pane handed the square a theme");
+    let (own, window) = pane.view.read_with(pane.cx, |v, cx| {
+        (v.resolved_theme(cx), crate::theme::theme(cx))
+    });
+    assert_ne!(own.bg, window.bg, "the pane wears its own");
+    assert_eq!(theme.bg, own.bg, "and the square paints in it");
 }

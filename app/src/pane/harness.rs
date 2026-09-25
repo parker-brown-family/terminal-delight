@@ -26,6 +26,10 @@
 //! launch down instead of starting it ([`desktop_launches`]), so a gesture that
 //! would open a browser or a file manager says so without doing it.
 //!
+//! **Forks are serialised.** Starting the pseudoterminal forks, and a child
+//! holds the parent's file locks until it execs; the spawn takes
+//! [`crate::testsync::forks_and_locks`] like every other test that forks.
+//!
 //! **Time is two clocks.** gpui's is the test dispatcher's and moves only when
 //! a test moves it; the pseudoterminal's is the machine's, because its reader
 //! is a real thread. [`Pane::wait_for`] is the one place the harness waits on
@@ -33,6 +37,7 @@
 
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -49,25 +54,34 @@ use crate::docview::engine::{
 };
 use crate::term;
 
-thread_local! {
-    /// What this test's panes would have started on the desktop. Per thread
-    /// because gpui runs a test's foreground and background work on the
-    /// test's own thread, and tests run beside each other.
-    static LAUNCHES: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
-}
-
-/// Called by `spawn_detached` in a test build, in place of the launch.
-pub(super) fn record_launch(program: &str, args: &[&str]) {
-    let line = std::iter::once(program)
-        .chain(args.iter().copied())
-        .collect::<Vec<_>>()
-        .join(" ");
-    LAUNCHES.with(|l| l.borrow_mut().push(line));
-}
-
-/// Every desktop launch a pane on this thread has asked for, in order.
+/// Every desktop launch a pane on this thread has asked for, in order: what
+/// `spawn_detached` wrote down instead of starting.
 pub(super) fn desktop_launches() -> Vec<String> {
-    LAUNCHES.with(|l| l.borrow().clone())
+    super::DESKTOP_LAUNCHES.with(|l| l.borrow().clone())
+}
+
+/// One harness test at a time. Each runs a shell and a `cat` on a
+/// pseudoterminal, and the host and instance tests beside them are timing
+/// tests over forks and sockets; twenty panes starting at once is load they
+/// were never written to share a machine with. Taken by the first pane a test
+/// opens and held by the test's thread until it ends, so a test may open a
+/// second pane without waiting on itself.
+static ONE_AT_A_TIME: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+thread_local! {
+    static HOLDING: RefCell<Option<std::sync::MutexGuard<'static, ()>>> =
+        const { RefCell::new(None) };
+}
+
+fn take_the_turn() {
+    HOLDING.with(|held| {
+        if held.borrow().is_none() {
+            let turn = ONE_AT_A_TIME
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            *held.borrow_mut() = Some(turn);
+        }
+    });
 }
 
 /// The window a harness pane fills, in logical pixels.
@@ -90,6 +104,7 @@ impl Pane {
     /// A pane whose terminal runs `/bin/sh -c script`, focused, in a window of
     /// its own, laid out once.
     pub(super) fn running(cx: &mut TestAppContext, script: &str) -> Pane {
+        take_the_turn();
         // The pseudoterminal's reader is a real thread, and its events wake
         // the pane's pump from there. gpui's test scheduler reads a wake from
         // another thread as nondeterminism unless it is told to expect one.
@@ -104,8 +119,11 @@ impl Pane {
             cols: 100,
             rows: 28,
         };
-        let session = term::spawn_program(grid, super::BORN_CELL_PX, "/bin/sh", &["-c", script])
-            .expect("a pseudoterminal running /bin/sh");
+        let session = {
+            let _fork = crate::testsync::forks_and_locks();
+            term::spawn_program(grid, super::BORN_CELL_PX, "/bin/sh", &["-c", script])
+                .expect("a pseudoterminal running /bin/sh")
+        };
         // The reader thread and the child outlive the pane unless told: a
         // window-owned terminal is ended by its child, and `cat` never ends.
         let reader = session.notifier.0.clone();
@@ -209,14 +227,81 @@ impl Pane {
         self.read(|v| {
             let (sx, sy, sw, sh) = v.tube_rect().expect("the screen has been laid out");
             let (pad_x, pad_y) = super::grid_pad_drawn(sw, sh, 0.0, 0.0, scale);
-            let painted = (0..v.grid.rows)
-                .find(|&p| v.paint_row_to_grid_row(p) == row)
-                .unwrap_or_else(|| panic!("grid row {row} is not painted"));
+            let painted =
+                painted_row_of(v, row).unwrap_or_else(|| panic!("grid row {row} is not painted"));
             point(
                 px(sx + pad_x + (middle as f32 + 0.5) * v.cell_w),
                 px(sy + pad_y + (painted as f32 + 0.5) * v.cell_h),
             )
         })
+    }
+
+    /// Every place `needle` is drawn, one per row it is on, top first.
+    pub(super) fn points_at_all(&mut self, needle: &str) -> Vec<Point<Pixels>> {
+        let hits: Vec<(usize, usize)> = self
+            .rows()
+            .iter()
+            .enumerate()
+            .filter_map(|(r, text)| Some((r, text[..text.find(needle)?].chars().count())))
+            .collect();
+        let middle = needle.chars().count() / 2;
+        let scale = self.scale();
+        self.read(|v| {
+            let (sx, sy, sw, sh) = v.tube_rect().expect("the screen has been laid out");
+            let (pad_x, pad_y) = super::grid_pad_drawn(sw, sh, 0.0, 0.0, scale);
+            hits.iter()
+                .filter_map(|&(row, col)| {
+                    let painted = painted_row_of(v, row)?;
+                    Some(point(
+                        px(sx + pad_x + ((col + middle) as f32 + 0.5) * v.cell_w),
+                        px(sy + pad_y + (painted as f32 + 0.5) * v.cell_h),
+                    ))
+                })
+                .collect()
+        })
+    }
+
+    /// The painted row `at` lies on, counted from the top of the grid.
+    pub(super) fn painted_row(&mut self, at: Point<Pixels>) -> usize {
+        let scale = self.scale();
+        self.read(|v| {
+            let (_, sy, sw, sh) = v.tube_rect().expect("the screen has been laid out");
+            let (_, pad_y) = super::grid_pad_drawn(sw, sh, 0.0, 0.0, scale);
+            ((f32::from(at.y) - sy - pad_y) / v.cell_h).floor() as usize
+        })
+    }
+
+    /// Dress the pane in a theme of its own — the builtin `deco`, plain —
+    /// whose background is not the window's, so what the pane draws can be
+    /// told apart from what the window would.
+    pub(super) fn wear_own_theme(&mut self) {
+        self.view.update(self.cx, |v, cx| {
+            let mut own = crate::theme::house_outer();
+            own.id = "deco".into();
+            own.seed = None;
+            v.appearance.theme = Some(crate::theme::ThemeGroup::of(&own));
+            v.appearance.inherit_theme = false;
+            cx.notify();
+        });
+        self.cx.run_until_parked();
+        let (own, window) = self.view.read_with(self.cx, |v, cx| {
+            (v.resolved_theme(cx).bg, crate::theme::theme(cx).bg)
+        });
+        assert_ne!(
+            own, window,
+            "the pane's own theme must not paint like the window's"
+        );
+    }
+
+    /// A link pressed in `view`, as the document itself reports one.
+    pub(super) fn follow(&mut self, view: &Entity<crate::docview::DocumentView>, target: &str) {
+        view.update(self.cx, |_, cx| {
+            cx.emit(crate::docview::FollowLink {
+                target: target.to_string(),
+                fragment: None,
+            })
+        });
+        self.redraw();
     }
 
     /// The top and bottom of the painted row `at` lies on, in window pixels.
@@ -255,6 +340,14 @@ impl Pane {
     pub(super) fn click(&mut self, at: Point<Pixels>, mods: Modifiers) {
         self.cx.simulate_mouse_down(at, MouseButton::Left, mods);
         self.cx.simulate_mouse_up(at, MouseButton::Left, mods);
+    }
+
+    /// A right click at `at`: down, then up.
+    pub(super) fn right_click(&mut self, at: Point<Pixels>) {
+        self.cx
+            .simulate_mouse_down(at, MouseButton::Right, Modifiers::default());
+        self.cx
+            .simulate_mouse_up(at, MouseButton::Right, Modifiers::default());
     }
 
     /// The left button goes down at `at`.
@@ -331,6 +424,150 @@ impl Pane {
         let line = self.view.read_with(self.cx, |v, cx| v.doc_notes(cx))?;
         serde_json::from_str(&line).map_err(|e| e.to_string())
     }
+
+    /// Wait until the terminal takes keys: a pane refuses them for its first
+    /// moments, while its child is still starting.
+    pub(super) fn settle(&mut self) {
+        let ready = self.read(|v| v.spawned) + Duration::from_millis(200);
+        if let Some(left) = ready.checked_duration_since(Instant::now()) {
+            std::thread::sleep(left);
+        }
+    }
+
+    /// A wheel turn at `at` with `mods` held: `lines` notches, positive
+    /// toward the top.
+    pub(super) fn wheel(&mut self, at: Point<Pixels>, lines: f32, mods: Modifiers) {
+        self.cx.simulate_event(gpui::ScrollWheelEvent {
+            position: at,
+            delta: gpui::ScrollDelta::Lines(point(0.0, lines)),
+            modifiers: mods,
+            touch_phase: gpui::TouchPhase::Moved,
+        });
+    }
+
+    /// The pointer moves to `at` with no button held.
+    pub(super) fn hover(&mut self, at: Point<Pixels>) {
+        self.cx.simulate_mouse_move(at, None, Modifiers::default());
+    }
+
+    /// The pointer leaves the window altogether: gpui's own event, with no
+    /// move and no new position.
+    pub(super) fn leave_window(&mut self) {
+        self.cx.simulate_event(gpui::MouseExitEvent {
+            position: point(px(-1.0), px(-1.0)),
+            pressed_button: None,
+            modifiers: Modifiers::default(),
+        });
+    }
+
+    /// `paths` dragged in from a file manager and dropped at `at`.
+    pub(super) fn drop_files(&mut self, at: Point<Pixels>, paths: Vec<PathBuf>) {
+        self.cx.simulate_event(gpui::FileDropEvent::Entered {
+            position: at,
+            paths: gpui::ExternalPaths(paths.into()),
+        });
+        self.cx
+            .simulate_event(gpui::FileDropEvent::Submit { position: at });
+    }
+
+    /// How far the terminal's view is scrolled back into its history, in rows.
+    pub(super) fn scrolled_back(&mut self) -> usize {
+        self.read(|v| v.session.term.lock().grid().display_offset())
+    }
+
+    /// The pseudoterminal's size as the kernel holds it, once `settled` says
+    /// it is what the test is waiting for: a resize reaches the kernel from
+    /// the terminal's own thread, a moment after the pane decides it.
+    pub(super) fn kernel_winsize_once(
+        &mut self,
+        settled: impl Fn(&libc::winsize) -> bool,
+    ) -> libc::winsize {
+        use std::os::fd::AsRawFd;
+        let fd = self.read(|v| {
+            v.session
+                .master
+                .as_ref()
+                .expect("a pane that owns its pseudoterminal")
+                .as_raw_fd()
+        });
+        let deadline = Instant::now() + PATIENCE;
+        loop {
+            // SAFETY: TIOCGWINSZ writes one `winsize` through the pointer, and
+            // `fd` is the pane's own master, open for as long as the pane is.
+            let mut ws: libc::winsize = unsafe { std::mem::zeroed() };
+            let ok = unsafe { libc::ioctl(fd, libc::TIOCGWINSZ, &mut ws) } == 0;
+            if ok && settled(&ws) || Instant::now() > deadline {
+                return ws;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    /// The floating square's document view.
+    pub(super) fn float_view(&mut self) -> Option<Entity<crate::docview::DocumentView>> {
+        self.read(|v| v.float.as_ref().map(|f| f.view.clone()))
+    }
+
+    /// The Document face's view, whether or not that face is showing.
+    pub(super) fn face_view(&mut self) -> Option<Entity<crate::docview::DocumentView>> {
+        self.read(|v| v.doc.as_ref().map(|d| d.view.clone()))
+    }
+
+    /// Where a document view is scrolled, as a fraction of its page. `None`
+    /// before it has been laid out.
+    pub(super) fn scroll_of(&mut self, view: &Entity<crate::docview::DocumentView>) -> Option<f32> {
+        view.read_with(self.cx, |v, _| v.scroll().map(|s| s.top))
+    }
+
+    /// The face the pane is showing.
+    pub(super) fn face(&mut self) -> crate::workbench::Face {
+        self.read(|v| v.bench.face())
+    }
+
+    /// Put `path` on the pane's Document face, as a Ctrl+Alt+click's split
+    /// does once the workspace has made the pane.
+    pub(super) fn show_document(&mut self, path: &Path) {
+        let target = crate::docopen::drawable_document(path)
+            .unwrap_or_else(|| panic!("{} is not a document TD draws", path.display()));
+        self.view
+            .update(self.cx, |v, cx| v.show_document(target, None, cx));
+        self.redraw();
+    }
+
+    /// Everything the pane asks the workspace to open beside it, from now on.
+    pub(super) fn asks_beside(&mut self) -> Rc<RefCell<Vec<Asked>>> {
+        let asked = Rc::new(RefCell::new(Vec::new()));
+        let log = asked.clone();
+        self.cx.update(|_, cx| {
+            cx.subscribe(&self.view, move |_, ev: &super::OpenDoc, _| {
+                log.borrow_mut().push(Asked {
+                    path: ev.target.path.clone(),
+                    by: ev.by,
+                    carry: ev.carry.as_ref().map(|v| v.entity_id()),
+                    row: ev.row,
+                });
+            })
+            .detach();
+        });
+        asked
+    }
+}
+
+/// The painted row showing grid row `row`, through the transform the last
+/// frame was painted with. The last such row: a bottom-anchored screen pads
+/// above its content, and the transform clamps every padding row onto the
+/// first grid row, which is drawn below them.
+fn painted_row_of(v: &TerminalView, row: usize) -> Option<usize> {
+    (0..v.grid.rows).rfind(|&p| v.paint_row_to_grid_row(p) == row)
+}
+
+/// One [`super::OpenDoc`] the pane emitted, in the parts a test compares.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct Asked {
+    pub(super) path: PathBuf,
+    pub(super) by: crate::docopen::Asker,
+    pub(super) carry: Option<gpui::EntityId>,
+    pub(super) row: Option<usize>,
 }
 
 /// A page engine that lays a brief out without a browser.
@@ -411,6 +648,10 @@ impl PageEngine for FakeBriefEngine {
 }
 
 /// A directory of its own for one test, removed when the test ends.
+///
+/// Not [`crate::testsync::Scratch`], whose name carries the thread's id in
+/// parentheses: these paths are printed on a pane and clicked, and a person's
+/// paths do not end a directory in `)`. Each test passes a tag of its own.
 pub(super) struct Scratch(PathBuf);
 
 impl Scratch {
@@ -419,6 +660,11 @@ impl Scratch {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("a scratch directory");
         Scratch(dir)
+    }
+
+    /// `name` in the directory, whether or not anything is there.
+    pub(super) fn join(&self, name: &str) -> PathBuf {
+        self.0.join(name)
     }
 
     /// A file from the repository, copied in under `name`: a short path to

@@ -899,28 +899,40 @@ fn resolve_path(p: &str, cwd: Option<&str>) -> Option<String> {
 ///
 /// A test build starts nothing: a pane driven by the harness that reached the
 /// desktop would open a file manager or a browser on the machine running
-/// `cargo test`. The launch is written down instead, so a test can say what
-/// would have gone to the desktop ([`harness::desktop_launches`]).
+/// `cargo test`. The launch is written down in [`DESKTOP_LAUNCHES`] instead,
+/// so a test can say what would have gone to the desktop. Decided with
+/// `cfg!` rather than a cfg attribute because the source scans in this file's
+/// tests cut it at the first such attribute they find.
 fn spawn_detached(program: &str, args: &[&str]) {
-    #[cfg(test)]
-    harness::record_launch(program, args);
-    #[cfg(not(test))]
-    {
-        use std::os::unix::process::CommandExt;
-        use std::process::{Command, Stdio};
-        let mut cmd = Command::new(program);
-        cmd.args(args)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
-        unsafe {
-            cmd.pre_exec(|| {
-                libc::setsid();
-                Ok(())
-            });
-        }
-        let _ = cmd.spawn();
+    if cfg!(test) {
+        let line = std::iter::once(program)
+            .chain(args.iter().copied())
+            .collect::<Vec<_>>()
+            .join(" ");
+        DESKTOP_LAUNCHES.with(|l| l.borrow_mut().push(line));
+        return;
     }
+    use std::os::unix::process::CommandExt;
+    use std::process::{Command, Stdio};
+    let mut cmd = Command::new(program);
+    cmd.args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    unsafe {
+        cmd.pre_exec(|| {
+            libc::setsid();
+            Ok(())
+        });
+    }
+    let _ = cmd.spawn();
+}
+
+thread_local! {
+    /// What [`spawn_detached`] would have started, in a test build; always
+    /// empty in one that ships. Per thread because gpui runs a test's work on
+    /// the test's own thread, and tests run beside each other.
+    static DESKTOP_LAUNCHES: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
 }
 
 /// Is this session managed by uwsm (Omarchy's, and any `uwsm start`ed Wayland
@@ -14526,51 +14538,6 @@ mod tests {
         assert_eq!(reveal_target("https://example.com/a.png"), None);
     }
 
-    /// Every modified click on a path is decided by one table,
-    /// `docopen::click_intent`, before anything opens, reveals or copies — so
-    /// the gestures cannot drift apart from the table the tests hold. The two
-    /// branches that used to decide it inline are gone: the one that made
-    /// Shift+click OPEN a file (it reveals now), and Super+Ctrl's own.
-    #[test]
-    fn the_pane_click_handler_decides_through_click_intent() {
-        let code = live_code();
-        let body = method_body(&code, "fn on_mouse_down(&mut self, ev: &MouseDownEvent");
-        let decide = body
-            .find("docopen::click_intent(")
-            .expect("on_mouse_down decides through docopen::click_intent");
-        for act in [
-            "open_with_system(",
-            "reveal_with_system(",
-            "self.copy_chip(",
-            "self.open_float(",
-        ] {
-            let at = body
-                .find(act)
-                .unwrap_or_else(|| panic!("{act} is still reachable"));
-            assert!(decide < at, "{act} must come after the table decides");
-        }
-        for gone in [
-            "(ev.modifiers.shift || ev.modifiers.control) &&",
-            "ev.modifiers.platform && ev.modifiers.control",
-            "docopen::alt_click(",
-        ] {
-            assert!(
-                !body.contains(gone),
-                "on_mouse_down decides `{gone}` inline again"
-            );
-        }
-        let float = body
-            .find("self.float_hit(")
-            .expect("a press on the square is the square's");
-        let sticky = body.find("self.sticky_click(").expect("sticky_click");
-        assert!(
-            float < sticky && float < decide,
-            "the square lies over the note and the grid, so it is asked first"
-        );
-        // The copy path goes through the chip resolver, never the old one.
-        assert!(!code.contains("fn copy_hint_at("));
-    }
-
     /// Alt+click on a path did nothing in one agent pane and worked in the
     /// next, and nobody could see why: the grid's hit-test printed under
     /// `TD_HITDEBUG`, the document path of the same click printed nothing. So
@@ -14627,22 +14594,16 @@ mod tests {
         assert!(trace.contains("\"[doc-hit] taken by {branch}"));
     }
 
-    /// A square dragged against the pane's edge leaves the pointer outside
-    /// the pane, where gpui stops handing the pane its mouse-up. The release
-    /// is caught by `on_mouse_up_out` or the square stays stuck to the hand.
-    /// And a held square owns the pointer: its move is taken before the grid
-    /// can build a selection behind it, and its release before the bench's.
+    /// A held square owns the pointer: its move is taken before the grid's
+    /// selection drag, and its release before the bench's. A scan because
+    /// neither order shows today — a press on the square starts no selection,
+    /// and the bench lets nothing go on the terminal face — and each becomes a
+    /// bug the day that stops being true. Letting go outside the pane is
+    /// driven for real, in
+    /// `behaviour::a_square_let_go_outside_the_pane_does_not_follow_the_next_drag`.
     #[test]
-    fn the_pane_releases_a_float_drag_outside_itself() {
-        let code = live_code();
-        assert!(
-            code.contains(
-                ".on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_float_release_out))"
-            ),
-            "the pane root must catch a release outside itself"
-        );
-        let out = method_body(&code, "fn on_float_release_out(");
-        assert!(out.contains("self.float_drag_end(cx)"), "{out}");
+    fn a_held_square_takes_its_move_and_its_release_first() {
+        let code = production_source();
         let up = method_body(&code, "fn on_mouse_up(");
         let end = up
             .find("self.float_drag_end(cx)")
@@ -14657,30 +14618,16 @@ mod tests {
         assert!(drag < select, "the square's drag comes before the grid's");
     }
 
-    /// Leaving the pane puts out what the pointer lit in it.
-    ///
-    /// `on_mouse_move` lights what is under the pointer, and gpui runs it only
-    /// while the pane is hovered, so the move that leaves is never heard
-    /// there. A strip control and a brief's note button both stayed lit that
-    /// way until the pointer came back (issues 724 and 743). Three things
-    /// keep the way out covered. The hook hears both exits. `pointer_left`
-    /// puts out every light the move handler sets, so a new light added there
-    /// with no way out fails here. And the hook is the root's last child, so
-    /// no hitbox in the pane lies above it.
+    /// Every light `on_mouse_move` sets has a way out in `pointer_left`, and
+    /// the hook that calls it is the root's last child, so no hitbox in the
+    /// pane lies above it. Both are about code not written yet — a new light,
+    /// a new child — which is why they stay a scan. What leaving the pane
+    /// does is driven for real, in
+    /// `behaviour::leaving_the_pane_puts_out_the_control_the_pointer_lit`
+    /// (issues 724 and 743).
     #[test]
-    fn leaving_the_pane_puts_out_what_the_pointer_lit() {
-        let code = live_code();
-        let hook = method_body(&code, "fn pointer_leave_hook(");
-        assert!(
-            hook.contains("&MouseMoveEvent") && hook.contains("!hitbox.is_hovered(window)"),
-            "the hook must hear a move that lands off the pane: {hook}"
-        );
-        assert!(
-            hook.contains("&gpui::MouseExitEvent"),
-            "leaving the window arrives as its own event, with no move: {hook}"
-        );
-        assert_eq!(hook.matches("view.pointer_left(cx)").count(), 2, "{hook}");
-
+    fn every_light_the_pointer_sets_has_a_way_out() {
+        let code = production_source();
         let lights: [(&str, &[&str]); 4] = [
             (
                 "self.bench_hover(",
@@ -14710,7 +14657,6 @@ mod tests {
                 );
             }
         }
-
         let render = code
             .find("fn render(&mut self, window: &mut Window, cx: &mut Context<Self>)")
             .expect("render");
@@ -14724,251 +14670,75 @@ mod tests {
         );
     }
 
-    /// The wheel over the floating square pans the document in it, un-bent,
-    /// through the view's own `wheel` — and the FOCUS modal, which scrolls the
-    /// mirror through `scroll_by_wheel` with pointers over the modal, can
-    /// never reach a square hidden underneath it. Ctrl+wheel stays the text
-    /// dial, over the square too.
+    /// The wheel finds the square through the glass's inverse, as a press
+    /// does. The harness drives a flat pane, where the flat box and the
+    /// un-bent one agree, so this one line stays a scan; what the wheel does
+    /// over the square is driven for real, in
+    /// `behaviour::the_wheel_over_the_square_moves_its_document_and_nothing_else`.
     #[test]
-    fn the_wheel_over_a_float_pans_the_document_not_the_scrollback() {
-        let code = live_code();
-        let on_wheel = method_body(&code, "fn on_wheel(");
-        let doc = on_wheel
-            .find("self.doc_wheel(ev, cx)")
-            .expect("on_wheel asks the square");
-        let scroll = on_wheel
-            .find("self.scroll_by_wheel(ev, cx)")
-            .expect("then scrolls");
-        assert!(doc < scroll);
-        let chord = on_wheel
-            .find("self.size_by_wheel(ev, cx)")
-            .expect("on_wheel asks the size chord");
-        assert!(
-            chord < doc,
-            "ctrl+wheel is the text dial, even over the square"
-        );
-        let scroll_body = method_body(&code, "pub fn scroll_by_wheel(");
-        assert!(!scroll_body.contains("doc_wheel("));
+    fn the_wheel_finds_the_square_through_the_glass() {
+        let code = production_source();
         let doc_wheel = method_body(&code, "fn doc_wheel(");
         assert!(doc_wheel.contains("self.float_hit(ev.position)"), "un-bent");
-        assert!(doc_wheel.contains("v.wheel(delta, cx)"), "through the view");
     }
 
     // ── the Document face ───────────────────────────────────────────────────
 
-    /// A key on the Document face either moves the document or stops there.
-    /// Nothing it is handed may reach the shell hidden behind it: no declining
-    /// to the terminal, no bytes to the pseudoterminal.
+    /// A key on the Document face is never declined: declining hands it to
+    /// the window, which is not the document's. And the view is asked before
+    /// the face's own keys, so Escape puts away a brief's dialog before
+    /// anything else hears it. Both stay a scan — a lone pane has no window to
+    /// decline to, and the fake page engine draws no dialog. That nothing
+    /// typed or pasted there reaches the shell is driven for real, in
+    /// `behaviour::the_document_face_swallows_typing_and_pasting`.
     #[test]
-    fn the_document_face_swallows_typing() {
-        let code = live_code();
-        let on_key = method_body(&code, "fn on_key(&mut self, ev: &KeyDownEvent");
-        assert!(
-            on_key.contains("crate::keylayer::Layer::Document => self.doc_key(ks, cx)"),
-            "on_key hands the Document layer to doc_key"
-        );
+    fn the_document_face_never_declines_a_key_and_asks_its_view_first() {
+        let code = production_source();
         let doc_key = method_body(&code, "fn doc_key(");
-        assert!(doc_key.contains("crate::docopen::doc_face_key("));
-        for leak in [
-            "Handled::Declined",
-            "terminal_key(",
-            "notifier",
-            "keystroke_bytes(",
-        ] {
-            assert!(
-                !doc_key.contains(leak),
-                "doc_key must not pass a key on to the hidden shell ({leak})"
-            );
-        }
-        // A paste is typing too: it does not reach the hidden shell either.
-        let paste = method_body(&code, "fn paste_clipboard(");
-        let guard = paste
-            .find("crate::workbench::Face::Document")
-            .expect("paste_clipboard refuses on the Document face");
-        let read = paste.find("read_from_clipboard").expect("the paste");
-        assert!(guard < read);
+        assert!(!doc_key.contains("Handled::Declined"), "{doc_key}");
+        let first = doc_key
+            .find("v.key(ks, cx)")
+            .expect("the face asks the view");
+        let face = doc_key
+            .find("doc_face_key(")
+            .expect("then the face's own keys");
+        assert!(first < face);
     }
 
-    /// A file dropped on a document is not typed into the shell behind it:
-    /// the drop is let go before the terminal face's paste is reached.
+    /// A press on the Document face is un-bent through the tube before the
+    /// view sees it, and a held document's move is taken before the grid's
+    /// selection drag. A scan because the harness drives a flat pane, and a
+    /// press on the face starts no selection for the order to matter to.
+    /// Where the press goes is driven for real, in
+    /// `behaviour::a_press_or_a_drop_on_the_document_face_never_reaches_the_grid`.
     #[test]
-    fn a_file_dropped_on_a_document_is_not_typed_into_the_hidden_shell() {
-        let src = include_str!("pane/bench.rs");
-        let code: String = src[..src.find("\n#[cfg(test)]").unwrap_or(src.len())]
-            .lines()
-            .filter(|l| !l.trim_start().starts_with("//"))
-            .collect::<Vec<_>>()
-            .join("\n");
-        let drop = method_body(&code, "fn bench_drop(");
-        let guard = drop
-            .find("if self.bench.face() == crate::workbench::Face::Document {\n            return;")
-            .expect("bench_drop lets a drop on the Document face go");
-        let paste = drop
-            .find("self.paste_text(")
-            .expect("the terminal face pastes");
-        assert!(guard < paste, "the document is asked before the paste");
-    }
-
-    /// Every press on the Document face is the document's: it is asked before
-    /// the square, the note, the copy/paste tray and the grid's selection, and
-    /// a press it takes stops there.
-    #[test]
-    fn a_press_on_the_document_face_never_reaches_the_grid() {
-        let code = live_code();
-        let body = method_body(&code, "fn on_mouse_down(&mut self, ev: &MouseDownEvent");
-        let doc = body
-            .find("if self.doc_face_press(ev, window, cx) {")
-            .expect("on_mouse_down asks the Document face");
-        for later in [
-            "self.float_hit(",
-            "self.sticky_click(",
-            "self.ctx_menu = Some(",
-            "Selection::new(",
-        ] {
-            let at = body.find(later).unwrap_or_else(|| panic!("{later}"));
-            assert!(doc < at, "the Document face is asked before {later}");
-        }
+    fn a_press_on_the_document_face_is_un_bent_and_held_first() {
+        let code = production_source();
         let press = method_body(&code, "fn doc_face_press(");
-        assert!(
-            press.contains("self.doc_face_local(ev.position)"),
-            "the press is un-bent through the tube before the view sees it"
-        );
+        assert!(press.contains("self.doc_face_local(ev.position)"));
         let local = method_body(&code, "fn doc_face_local(");
         assert!(local.contains("crate::workbench::unwarp("));
-        // The move and the release of a held document come first too.
         let mv = method_body(&code, "fn on_mouse_move(");
         let held = mv.find("self.doc_face_drag_move(ev, cx)").expect("drag");
         let select = mv.find("sel.update(").expect("the grid's selection drag");
         assert!(held < select);
-        let up = method_body(&code, "fn on_mouse_up(");
-        assert!(up.contains("self.doc_face_release(cx)"));
-        let out = method_body(&code, "fn on_float_release_out(");
-        assert!(out.contains("self.doc_face_release(cx)"));
     }
 
-    /// The Document face is reached one way: `show_document`, which sets the
-    /// document and the face together. `set_face` refuses the face to a pane
-    /// with no document, so "on the Document face" and "has a document" cannot
-    /// disagree through this pane's own API.
+    /// Only `show_document` puts a pane on its Document face, where the
+    /// document and the face are set together — a rule about every future
+    /// caller, so a scan. That the face comes only with a document is driven
+    /// for real, in `behaviour::the_document_face_comes_only_with_a_document`.
     #[test]
-    fn the_document_face_comes_only_with_a_document() {
-        let code = live_code();
-        let set = method_body(&code, "pub fn set_face(");
-        let refuse = set
-            .find("face == crate::workbench::Face::Document && self.doc.is_none()")
-            .expect("set_face refuses the Document face without a document");
-        let assign = set.find("self.bench.set_face(face)").expect("assign");
-        assert!(refuse < assign);
-        let show = method_body(&code, "pub(crate) fn show_document(");
-        assert!(show.contains("self.doc = Some(DocFace {"));
-        assert!(show.contains("self.bench.set_face(crate::workbench::Face::Document)"));
-        // Its links are routed from the face, as the square's are from the
-        // square: a promoted view is subscribed again here, once.
-        assert!(show.contains("pane.follow_doc_link(link, crate::docopen::DocSeat::Face, cx)"));
+    fn only_show_document_puts_a_pane_on_its_document_face() {
+        let code = production_source();
         assert_eq!(
             code.matches("set_face(crate::workbench::Face::Document)")
                 .count(),
             1,
             "only show_document puts a pane on its Document face"
         );
-        // A carried view is re-seated, never re-opened.
-        let carried = show
-            .find("Some(view) => view,")
-            .expect("the carry is used as is");
-        let opened = show
-            .find("crate::docview::DocumentView::new(")
-            .expect("without a carry, the file is opened");
-        assert!(carried < opened);
-        assert!(show.contains("v.set_seat(crate::docopen::DocSeat::Face, cx)"));
-    }
-
-    /// A replica repair throws the pane's picture of its grid away and builds
-    /// a new pane; the document on its face and the square over its terminal
-    /// are the window's decisions, and cross with the rest of its presentation.
-    /// The same views cross — nothing is opened again — and the new pane
-    /// subscribes to their links itself.
-    #[test]
-    fn a_repaired_replica_keeps_its_document() {
-        let code = live_code();
-        let lift = method_body(&code, "pub fn presentation(&self)");
-        assert!(lift.contains("doc: self.doc.as_ref().map("), "{lift}");
-        assert!(lift.contains("float: self.float.as_ref().map("), "{lift}");
-        assert!(
-            lift.contains("self.bench.face() == crate::workbench::Face::Document"),
-            "whether the document was the face showing"
-        );
-        let adopt = method_body(&code, "pub fn adopt_presentation(");
-        assert!(
-            adopt.contains("self.show_document(doc.target, Some(doc.view), cx)"),
-            "the document goes back on through the one way onto the face, carried"
-        );
-        assert!(
-            adopt.contains("Self::float_of(f.view, f.rect, cx)"),
-            "the square is rebuilt around the same view"
-        );
-        assert!(adopt.contains("float.note = f.note"));
-        assert!(
-            !adopt.contains("DocumentView::new("),
-            "a repair never opens the file again"
-        );
-    }
-
-    /// A saved document comes back by its name alone, so a file that has
-    /// gone keeps its pane and its face and the view says it cannot read it,
-    /// rather than the pane quietly turning back into a shell.
-    #[test]
-    fn a_missing_document_keeps_its_pane_on_restore() {
-        let code = live_code();
-        let restore = method_body(&code, "pub(crate) fn restore_document(");
-        assert!(
-            restore.contains("crate::docopen::doc_kind_by_name(&path)"),
-            "classified by name, which needs no file"
-        );
-        assert!(
-            !restore.contains("drawable_document("),
-            "drawable_document reads the file, and a missing one would lose the pane"
-        );
-        assert!(restore.contains("self.show_document("));
-        assert!(restore.contains("v.restore_scroll(at, cx)"));
-        let saved = method_body(&code, "pub(crate) fn saved_document(");
-        assert!(
-            saved.contains(".scroll().map(|s| s.top)"),
-            "an unmeasured scroll is carried as None, not as the top"
-        );
-    }
-
-    /// Ctrl+Alt+click asks for the split, and a second Alt+click on the path
-    /// the square is showing promotes the square: both through `OpenDoc`,
-    /// because the tree the split changes belongs to the workspace.
-    #[test]
-    fn the_split_gestures_ask_the_workspace() {
-        let code = live_code();
-        let body = method_body(&code, "fn on_mouse_down(&mut self, ev: &MouseDownEvent");
-        assert!(body.contains("crate::docopen::promotes(floating.as_deref(), &target.path)"));
-        assert!(body.contains("self.promote_float(cx)"));
-        assert!(body.contains("crate::docopen::Asker::Click"));
-        let promote = method_body(&code, "fn promote_float(");
-        assert!(promote.contains("carry: Some(view)"), "the view travels");
-        assert!(promote.contains("crate::docopen::Asker::Float"));
-        let press = method_body(&code, "fn float_press(");
-        assert!(press.contains("FloatHit::Split => {\n                self.promote_float(cx);"));
-    }
-
-    /// The wheel anywhere on the Document face moves the document, asked
-    /// before the floating square and never reaching the hidden scrollback.
-    #[test]
-    fn the_wheel_on_the_document_face_moves_the_document() {
-        let code = live_code();
-        let doc_wheel = method_body(&code, "fn doc_wheel(");
-        let face = doc_wheel
-            .find("self.doc_on_face()")
-            .expect("the face is asked");
-        let float = doc_wheel.find("self.float_hit(").expect("then the square");
-        assert!(face < float);
-        let chord = doc_wheel
-            .find("self.size_by_wheel(")
-            .expect("the text dial");
-        assert!(chord < face, "ctrl+wheel is still the text dial");
+        let show = method_body(&code, "pub(crate) fn show_document(");
+        assert!(show.contains("self.bench.set_face(crate::workbench::Face::Document)"));
     }
 
     /// The right-click menu's link rows come from the same table the tests
@@ -15011,87 +14781,6 @@ mod tests {
         );
     }
 
-    /// A function's body in the pane's live code, from its signature to the
-    /// first line that closes a method.
-    fn method(code: &str, sig: &str) -> String {
-        let at = code.find(sig).unwrap_or_else(|| panic!("{sig}"));
-        let end = code[at..].find("\n    }\n").unwrap_or(code.len() - at);
-        code[at..at + end].to_string()
-    }
-
-    /// A link out of a document is routed in one place: a file TD can draw
-    /// takes the square's place where the square already is, and the rest go
-    /// through the desktop or nowhere, as `docopen::link_route` decides.
-    #[test]
-    fn a_link_out_of_a_document_is_routed_by_the_pane() {
-        let code = live_code();
-        // Every square is built around its view by `float_of`, which is where
-        // the subscription lives — a new square and one carried across a
-        // replica repair alike.
-        let make = method(&code, "fn float_doc(");
-        assert!(make.contains("Self::float_of(view, rect, cx)"), "{make}");
-        let around = method(&code, "fn float_of(");
-        assert!(
-            around.contains("cx.subscribe(") && around.contains("follow_doc_link("),
-            "{around}"
-        );
-        let follow = method(&code, "fn follow_doc_link(");
-        assert!(follow.contains("docopen::link_route("), "{follow}");
-        let replace = follow
-            .split("LinkRoute::Replace =>")
-            .nth(1)
-            .expect("the replace arm");
-        assert!(
-            replace.contains("f.rect") && replace.contains("Self::float_doc("),
-            "the new document opens in the same square: {replace}"
-        );
-        assert!(follow.contains("open_with_system("), "{follow}");
-    }
-
-    /// The document paints in the pane's own resolved theme, handed down
-    /// before the square is built, not in whatever the window's theme is.
-    #[test]
-    fn the_float_paints_in_the_panes_own_theme() {
-        let code = live_code();
-        let render = code
-            .find("fn render(&mut self, window: &mut Window, cx: &mut Context<Self>)")
-            .expect("render");
-        let code = &code[render..];
-        let resolved = code
-            .find("self.resolved_theme(cx)")
-            .expect("the pane's theme");
-        let handed = code.find(".set_theme(").expect("handed to the document");
-        let built = code.find("let float_el = self").expect("the square");
-        assert!(resolved < handed && handed < built);
-    }
-
-    #[test]
-    fn the_pane_root_takes_a_file_drop() {
-        // gpui delivers a dropped file as a mouse-up carrying the paths, and
-        // only to an element that registered `on_drop` for that exact type.
-        // Nothing about `bench_drop` existing makes it reachable: it would
-        // compile, read as live, and never run — the same hole the pane's
-        // right-click tray sat in for months, asserted two tests above.
-        //
-        // Two things make this gate honest rather than decorative. The source
-        // is cut at the test module, so this assertion cannot satisfy itself
-        // with its own needle; and comment lines are dropped, because the
-        // registration is explained in a comment beside it and a gate its own
-        // explanation can pass is a gate that passes on a deleted line.
-        let src = include_str!("pane.rs");
-        let code: String = src[..src.find("\n#[cfg(test)]").unwrap_or(src.len())]
-            .lines()
-            .filter(|l| !l.trim_start().starts_with("//"))
-            .collect::<Vec<_>>()
-            .join("\n");
-        assert!(
-            code.contains(".on_drop::<gpui::ExternalPaths>(cx.listener(Self::bench_drop))"),
-            "TerminalView::bench_drop exists but the root div never registers a drop \
-             listener for gpui::ExternalPaths, so a dropped file reaches nothing — \
-             register it beside the mouse listeners in `render`"
-        );
-    }
-
     /// This file's production source, cut at the test module, with comment
     /// lines dropped and every run of whitespace squashed to one space — so a
     /// scan can neither satisfy itself with its own needle nor be passed by
@@ -15109,32 +14798,14 @@ mod tests {
             .join(" ")
     }
 
-    /// A refused HTML click says why in the pane that was clicked, not only in
-    /// the log (issue 733). The refusal hands its words to `say`, with the row
-    /// the click landed on wherever the road knows one. `say` keeps them up
-    /// for `SAID_FOR`, and only its own timer takes them down, so an older
-    /// timer cannot cut a newer saying short. And the chip is drawn after the
-    /// square, so a link in the square that prompted it cannot hide it.
+    /// The chip a refused click puts up is drawn after the square, so a link in
+    /// the square that prompted it cannot hide it (issue 733). Paint order,
+    /// which nothing a test can press observes, so a scan; the saying itself —
+    /// where, what, and which timer takes it down — is driven for real, in
+    /// `behaviour::an_html_file_nothing_can_draw_goes_to_the_desktop_and_says_why`.
     #[test]
-    fn a_refused_html_click_says_why_where_it_was_clicked() {
-        let code = live_code();
-        let refused = method_body(&code, "fn html_refused(");
-        assert!(refused.contains("why.short_reason()"), "{refused}");
-        assert!(refused.contains("self.say(chip, row, cx)"), "{refused}");
-        for road in ["pub(crate) fn open_float(", "pub(crate) fn request_beside("] {
-            let body = method_body(&code, road);
-            assert!(
-                body.contains("self.html_refused(&target, row, cx)"),
-                "{road} knows the row that was clicked and must pass it"
-            );
-        }
-        let say = method_body(&code, "fn say(");
-        assert!(
-            say.contains("self.said = Some(Said { text, row, at })"),
-            "{say}"
-        );
-        assert!(say.contains(".timer(SAID_FOR)"), "{say}");
-        assert!(say.contains("s.at == at"), "only its own timer: {say}");
+    fn the_refusal_chip_is_drawn_over_the_square() {
+        let code = production_source();
         let render = code
             .find("fn render(&mut self, window: &mut Window, cx: &mut Context<Self>)")
             .expect("render");
@@ -15144,70 +14815,6 @@ mod tests {
             .find(".children(said_el)")
             .expect("the chip is drawn");
         assert!(square < said, "the chip is drawn over the square");
-    }
-
-    /// Every road into a square or a Document face asks whether an HTML file
-    /// can be drawn before anything is made: a machine with no Chromium hands
-    /// the file to the desktop with a sentence, never an empty square or an
-    /// empty pane. And both seats hand the file over when a browser that
-    /// exists will not start, and let a brief's own dialog have Escape first.
-    #[test]
-    fn an_html_file_nothing_can_draw_goes_to_the_desktop_before_a_square_or_pane_is_made() {
-        let code = live_code();
-        let open = method_body(&code, "pub(crate) fn open_float(");
-        let asked = open.find("self.html_refused(").expect("open_float asks");
-        let made = open
-            .find("Self::float_doc(")
-            .expect("open_float makes a square");
-        assert!(asked < made, "asked before the square is made");
-        let beside = method_body(&code, "pub(crate) fn request_beside(");
-        let asked = beside
-            .find("self.html_refused(")
-            .expect("request_beside asks");
-        let made = beside
-            .find("cx.emit(OpenDoc")
-            .expect("request_beside asks for a pane");
-        assert!(asked < made, "asked before a pane is asked for");
-        let follow = method_body(&code, "fn follow_doc_link(");
-        let asked = follow
-            .find("self.html_refused(")
-            .expect("a followed link asks");
-        let made = follow
-            .find("Self::float_doc(")
-            .expect("a link replaces the square");
-        assert!(asked < made);
-        let refused = method_body(&code, "fn html_refused(");
-        assert!(refused.contains("crate::docview::html_ready(cx)"));
-        assert!(
-            refused.contains("open_with_system("),
-            "the file still opens"
-        );
-        for seat in ["fn float_of(", "pub(crate) fn show_document("] {
-            let body = method_body(&code, seat);
-            assert!(
-                body.contains("Self::hand_over_on_give_up("),
-                "{seat} hands the file over when its engine gives up"
-            );
-        }
-        // A pane restored after a restart was not clicked: it opens nothing.
-        let restore = method_body(&code, "pub(crate) fn restore_document(");
-        let shown = restore.find("self.show_document(").expect("restore shows");
-        let quiet = restore
-            .find("doc._gave_up = None")
-            .expect("and hands nothing over");
-        assert!(shown < quiet);
-        let give_up = method_body(&code, "fn hand_over_on_give_up(");
-        assert!(
-            give_up.contains("crate::docview::CannotShow") && give_up.contains("open_with_system(")
-        );
-        let doc_key = method_body(&code, "fn doc_key(");
-        let first = doc_key
-            .find("v.key(ks, cx)")
-            .expect("the face asks the view");
-        let face = doc_key
-            .find("doc_face_key(")
-            .expect("then the face's own keys");
-        assert!(first < face);
     }
 
     /// One method's body out of [`production_source`], up to the next method.
@@ -15348,6 +14955,14 @@ mod tests {
         assert!(code.contains(".children(bench_hint_el)"));
     }
 
+    /// A function's body in the pane's live code, from its signature to the
+    /// first line that closes a method.
+    fn method(code: &str, sig: &str) -> String {
+        let at = code.find(sig).unwrap_or_else(|| panic!("{sig}"));
+        let end = code[at..].find("\n    }\n").unwrap_or(code.len() - at);
+        code[at..at + end].to_string()
+    }
+
     fn method_body(code: &str, signature: &str) -> String {
         let at = code
             .find(signature)
@@ -15355,51 +14970,6 @@ mod tests {
         let rest = &code[at + signature.len()..];
         let end = rest.find(" fn ").unwrap_or(rest.len());
         rest[..end].to_string()
-    }
-
-    /// A pane that owns its pseudoterminal (`TD_NO_SESSIOND=1`) answers
-    /// `CSI 14 t` itself, from what the PTY was last told.
-    ///
-    /// alacritty does not answer this one inline: it hands the event to the
-    /// listener with a formatter, and `handle_term_event` had no arm for it,
-    /// so a program asking a window-owned pane for its size in pixels waited
-    /// for a reply that never came. A hosted pane is answered by the host and
-    /// its replica swallows the question (`term::EventProxy`), so this arm is
-    /// reached only by a terminal this window owns.
-    #[test]
-    fn a_window_owned_pane_answers_the_text_area_question() {
-        let body = method_body(&production_source(), "fn handle_term_event(");
-        assert!(
-            body.contains("TermEvent::TextAreaSizeRequest("),
-            "handle_term_event has no arm for TextAreaSizeRequest, so a window-owned \
-             pane never answers `CSI 14 t` and the program asking hangs until it \
-             gives up"
-        );
-        assert!(
-            body.contains("pty_window_size()"),
-            "the size answer must be built from what the PTY was last told \
-             (`pty_window_size`), or it can disagree with the kernel's own winsize"
-        );
-    }
-
-    /// A pane answers a colour question itself, in both modes, from its own
-    /// theme, back through the notifier (issue 719). A replica passes the
-    /// question on (`term::a_replica_passes_a_colour_question_to_its_pane`)
-    /// and the host leaves it alone (`host::a_colour_question_is_left_to_the_window`),
-    /// so this arm is the one reply.
-    #[test]
-    fn a_pane_answers_a_colour_question_from_its_own_theme() {
-        let body = method_body(&production_source(), "fn handle_term_event(");
-        let arm = body
-            .split("TermEvent::ColorRequest(")
-            .nth(1)
-            .expect("handle_term_event has no arm for a colour question");
-        let arm = &arm[..arm.find("TermEvent::").unwrap_or(arm.len())];
-        assert!(
-            arm.contains("asked_colour(index, &self.resolved_theme(cx))"),
-            "{arm}"
-        );
-        assert!(arm.contains("self.session.notifier.notify("), "{arm}");
     }
 
     /// What a program asking for a colour is told is the colour the pane
@@ -15439,42 +15009,6 @@ mod tests {
         assert_eq!((white.r, white.g, white.b), (255, 255, 255));
         let black = rgb8(gpui::hsla(0.3, 0.8, 0.0, 1.0));
         assert_eq!((black.r, black.g, black.b), (0, 0, 0));
-    }
-
-    /// The PTY is told its cell in device pixels, not in logical pixels cut to
-    /// an integer.
-    ///
-    /// `view.cell_w as u16` told a 6.3 × 14.7 cell on a 1.6× monitor that it
-    /// was 6 × 14, which is neither the logical size nor the pixels a program
-    /// drawing an image actually has. The size staged by `sync_size` now
-    /// carries the cell through `ptyscan::device_cell`, with the window's
-    /// scale factor, and the debounced resize hands that on unchanged.
-    #[test]
-    fn the_resize_carries_device_pixels() {
-        let code = production_source();
-        for truncation in ["cell_w as u16", "cell_h as u16"] {
-            assert!(
-                !code.contains(truncation),
-                "the PTY is told `{truncation}`: a logical cell cut to an integer \
-                 instead of its size in device pixels"
-            );
-        }
-        let ticker = method_body(&code, "fn around(");
-        let tight: String = ticker.split_whitespace().collect();
-        let at = tight
-            .find("view.session.resize(")
-            .expect("the debounced resize in the ticker");
-        let call = &tight[at..at + tight[at..].find(';').expect("end of the call")];
-        assert!(
-            call.contains("cell_px"),
-            "the debounced resize must hand the PTY the staged device-pixel cell: {call}"
-        );
-        let sync = method_body(&code, "fn sync_size(");
-        assert!(
-            sync.contains("device_cell(") && sync.contains("scale_factor()"),
-            "sync_size must stage the cell in device pixels, measured with the \
-             window's scale factor"
-        );
     }
 
     #[test]

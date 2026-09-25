@@ -3769,6 +3769,11 @@ mod owning {
         // A subscription that outlived its socket would be a failed write on
         // every tick for the life of the host.
         let (host, pane) = host_with_cat_pane();
+        // Held from the socket's making to its dropping: a test forking in
+        // between hands its child a copy of the client's end, the drop then
+        // closes nothing, and the pushes below succeed. That is a fork in
+        // flight, not a dead connection kept on the list.
+        let _no_fork_in_flight = crate::testsync::forks_and_locks();
         let window = watching(&host);
         assert_eq!(host.watchers.lock().expect("watchers").len(), 1);
 
