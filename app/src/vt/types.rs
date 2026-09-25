@@ -485,7 +485,6 @@ pub enum CursorShape {
     Block,
     Underline,
     Beam,
-    HollowBlock,
     Hidden,
 }
 

@@ -30,8 +30,15 @@ pub mod pty;
 pub mod pump;
 pub mod socket;
 
+#[cfg(feature = "core-alacritty")]
 mod alacritty;
+#[cfg(feature = "core-alacritty")]
 use alacritty::Core;
+
+#[cfg(not(feature = "core-alacritty"))]
+mod rio;
+#[cfg(not(feature = "core-alacritty"))]
+use rio::Core;
 
 pub use pump::{Msg, Notifier};
 

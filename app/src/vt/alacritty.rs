@@ -216,10 +216,11 @@ impl Backend for Core {
 
     fn cursor(&self) -> Cursor {
         let shape = match self.term.cursor_style().shape {
-            AShape::Block => CursorShape::Block,
+            // A hollow block is how alacritty draws an unfocused block; TD
+            // draws focus itself, so it is a block here.
+            AShape::Block | AShape::HollowBlock => CursorShape::Block,
             AShape::Underline => CursorShape::Underline,
             AShape::Beam => CursorShape::Beam,
-            AShape::HollowBlock => CursorShape::HollowBlock,
             AShape::Hidden => CursorShape::Hidden,
         };
         Cursor {

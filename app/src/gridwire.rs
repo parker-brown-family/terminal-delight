@@ -101,6 +101,36 @@ const RESTORED_MODES: &[(TermMode, &str)] = &[
     (TermMode::LINE_WRAP, "?7"),
 ];
 
+/// The mouse-reporting protocols, weakest first: clicks, clicks and drags,
+/// all motion.
+///
+/// xterm treats these as one setting — turning one on turns the others off,
+/// and turning any off turns reporting off — and so does rio-vt. alacritty
+/// kept them as three independent bits. Written one at a time, as the other
+/// modes are, a later `l` undoes an earlier `h` in a core that keeps one
+/// setting: a pane reporting drags arrived in a replica reporting nothing.
+/// Found by `the_cursor_and_the_modes_come_back` the first time the suite ran
+/// on rio-vt.
+const MOUSE_PROTOCOLS: [(TermMode, &str); 3] = [
+    (TermMode::MOUSE_REPORT_CLICK, "?1000"),
+    (TermMode::MOUSE_DRAG, "?1002"),
+    (TermMode::MOUSE_MOTION, "?1003"),
+];
+
+/// The mouse protocol as one setting: all three off, then each that is on,
+/// weakest first. A core that keeps one setting lands on the strongest; a
+/// core that keeps three bits gets all three back.
+fn restore_mouse_protocol(mode: TermMode, out: &mut String) {
+    for (_, code) in MOUSE_PROTOCOLS {
+        out.push_str(&format!("\x1b[{code}l"));
+    }
+    for (bit, code) in MOUSE_PROTOCOLS {
+        if mode.contains(bit) {
+            out.push_str(&format!("\x1b[{code}h"));
+        }
+    }
+}
+
 /// One SGR sequence carrying a whole style: a reset, then everything that is
 /// not the default. Emitted only where the style changes, so a run of text in
 /// one colour costs one sequence.
@@ -371,6 +401,13 @@ pub fn encode_snapshot(term: &Term) -> Vec<u8> {
 
     // Modes last, for the reasons in RESTORED_MODES.
     for (bit, code) in RESTORED_MODES {
+        if MOUSE_PROTOCOLS.iter().any(|(mouse, _)| mouse == bit) {
+            // Written once, as a setting, where the first of them falls.
+            if *bit == MOUSE_PROTOCOLS[0].0 {
+                restore_mouse_protocol(mode, &mut out);
+            }
+            continue;
+        }
         let set = if mode.contains(*bit) { "h" } else { "l" };
         out.push_str(&format!("\x1b[{code}{set}"));
     }
@@ -698,6 +735,50 @@ mod roundtrip {
         assert_eq!(grid_hash(a), grid_hash(b), "{what}: hashes disagree");
     }
 
+    /// What reading a whole terminal costs: the hash the guard computes and
+    /// the snapshot an attach sends, over a full 10,000-line history.
+    ///
+    /// An instrument, not a gate. rio-vt keeps a cell as a packed word and TD
+    /// reads cells by value, so a reader walking all of history assembles a
+    /// million cells; this is how the two cores compare at doing so. Prints
+    /// one JSON line per measurement.
+    ///
+    /// ```text
+    /// cargo test --release --bin terminal-delight reading_a_full_history -- --ignored --nocapture
+    /// ```
+    #[test]
+    #[ignore = "timing instrument; run with --ignored --nocapture"]
+    fn reading_a_full_history_costs() {
+        let mut bytes = String::new();
+        for i in 0..12_000 {
+            bytes.push_str(&format!(
+                "\x1b[3{}mline {i:05} \x1b[1mbold\x1b[0m {}\r\n",
+                i % 8,
+                "text ".repeat(16)
+            ));
+        }
+        let source = term_fed(100, 30, bytes.as_bytes());
+        assert!(source.history_size() >= 9_000, "a full history");
+        let mut best = (u128::MAX, u128::MAX);
+        let mut sink = 0usize;
+        for _ in 0..5 {
+            let t = std::time::Instant::now();
+            sink ^= grid_hash(&source) as usize;
+            best.0 = best.0.min(t.elapsed().as_micros());
+            let t = std::time::Instant::now();
+            sink ^= encode_snapshot(&source).len();
+            best.1 = best.1.min(t.elapsed().as_micros());
+        }
+        println!(
+            r#"{{"core":"{}","lines":{},"hash_us":{},"snapshot_us":{},"sink":{}}}"#,
+            crate::vt::CORE_NAME,
+            source.history_size() + source.screen_lines(),
+            best.0,
+            best.1,
+            sink % 7
+        );
+    }
+
     #[test]
     fn scrollback_survives_the_trip() {
         // More lines than the screen holds: most of this only exists in history,
@@ -726,21 +807,24 @@ mod roundtrip {
     /// statement buy the same thing here, and the seed is printed on failure,
     /// which is the part that actually matters for a fix.
     ///
-    /// **Ignored because it currently fails, on a real defect rather than a
-    /// flaky one.** It found four in the sitting it was written, all fixed and
-    /// each pinned as its own named fixture beside this one; the fifth is a
-    /// `BOLD` flag reaching a trailing blank the source has plain, at 11x4 seed
-    /// 107. Ignoring it is the honest option of the three available: narrowing
-    /// the generator until it passes would delete the coverage that found the
-    /// four, and a "no more than N failures" ratchet would let the number grow
-    /// back quietly. Un-ignore it the moment the last case is fixed — a
-    /// bug-finding tool nobody runs finds nothing.
+    /// **Runs on rio-vt; ignored on the alacritty fallback, where it fails on
+    /// a real defect rather than a flaky one.** It found four in the sitting it
+    /// was written, all fixed and each pinned as its own named fixture beside
+    /// this one; the fifth is a `BOLD` flag reaching a trailing blank the
+    /// source has plain, at 11x4 seed 107, and it happens only on alacritty.
+    /// Why rio-vt never produces that grid has not been established; what has
+    /// been measured is that all 1,200 seeds pass on it (2026-09-25), so the
+    /// sweep went back into the suite the day the core moved — a bug-finding
+    /// tool nobody runs finds nothing.
     ///
     /// ```text
-    /// cargo test --bin terminal-delight encode_then_replay -- --ignored --nocapture
+    /// cargo test --bin terminal-delight --features core-alacritty encode_then_replay -- --ignored --nocapture
     /// ```
     #[test]
-    #[ignore = "still finds real unfixed encoder defects; run with --ignored and see the issue"]
+    #[cfg_attr(
+        feature = "core-alacritty",
+        ignore = "fails on alacritty's erase (11x4 seed 107); passes on rio-vt"
+    )]
     fn encode_then_replay_is_the_identity_over_generated_content() {
         // Widths that are small enough for a wrap to be likely and odd enough
         // that a wide character can straddle the margin.
@@ -883,8 +967,12 @@ mod roundtrip {
         false
     }
 
+    ///
+    /// On rio-vt the premise itself fails: its erase never leaves half a wide
+    /// character behind, so the grid this test is about cannot occur there.
+    /// It stays, ignored, for the alacritty fallback.
     #[test]
-    #[ignore = "known gap: a torn wide character cannot be reprinted — see the issue"]
+    #[ignore = "known gap on alacritty: a torn wide character cannot be reprinted; rio-vt never tears one"]
     fn a_wide_char_whose_spacer_was_erased_cannot_be_reprinted() {
         // Twenty-five bytes, found by the sweep and shrunk by it. `\x1b[J`
         // erases from the cursor, which is parked on the emoji's second half,
