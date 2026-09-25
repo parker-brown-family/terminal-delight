@@ -253,6 +253,30 @@ struct RailHit {
     deliverable: Option<(f32, f32)>,
 }
 
+/// The local file a declared deliverable names, when it names one: an absolute
+/// path, or a `file://` URL decoded. `None` for a web address, a pull request or
+/// anything else that has no pane to open in.
+fn deliverable_file(href: &str) -> Option<PathBuf> {
+    let href = href.trim();
+    if href.starts_with('/') {
+        return Some(PathBuf::from(href));
+    }
+    if !href.get(..5)?.eq_ignore_ascii_case("file:") {
+        return None;
+    }
+    match docview::resolve_link(std::path::Path::new("/"), href) {
+        docview::LinkTarget::File { path, .. } => Some(path),
+        _ => None,
+    }
+}
+
+/// Whether a deliverable row offers "⇲ beside": its target is a local file
+/// whose NAME is one TD draws. By name only, because the row is painted every
+/// frame; the click then checks the file itself.
+fn rail_offers_beside(href: &str) -> bool {
+    deliverable_file(href).is_some_and(|p| docopen::doc_kind_by_name(&p).is_some())
+}
+
 /// What a click on the queue meant, once the curve was undone.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum RailAction {
@@ -10023,6 +10047,56 @@ impl Workspace {
             t.root.leaves(&mut leaves);
             leaves.iter().any(|p| p.entity_id() == pane)
         })
+    }
+
+    /// `open_document`, on the gpui thread: the document opens in the calling
+    /// agent's own pane or tab, through the same routes a hand uses. "beside"
+    /// is the pane asking for a split exactly as Ctrl+Alt+click does, so the
+    /// workspace router focuses a pane already showing the file, splits under
+    /// four panes, and floats at four; "here" is Alt+click's square over the
+    /// pane. `reply` gets the router's own line, and for a split that is sent
+    /// by [`Self::open_doc_beside`] once it has decided.
+    ///
+    /// The pane is the one the request names, and the request can only name
+    /// the caller: `mcp::open_document` fills the pid in from who called and
+    /// takes none. It is refused here too if the policy does not expose it.
+    fn mcp_open(
+        &mut self,
+        request: mcp::OpenRequest,
+        reply: std::sync::mpsc::Sender<String>,
+        cx: &mut Context<Self>,
+    ) {
+        let mut leaves = vec![];
+        for tab in &self.tabs {
+            tab.root.leaves(&mut leaves);
+        }
+        let Some(leaf) = leaves
+            .into_iter()
+            .find(|l| l.read(cx).shell_pid() == Some(request.pid))
+            .cloned()
+        else {
+            let _ = reply.send(format!(
+                "err pane {} is not in this window any more",
+                request.pid
+            ));
+            return;
+        };
+        if !mcp::should_expose(&self.mcp, leaf.read(cx).mode.is_agent()) {
+            let _ = reply.send(format!(
+                "err pane {} is not exposed under the current policy",
+                request.pid
+            ));
+            return;
+        }
+        match request.placement {
+            mcp::Placement::Beside => leaf.update(cx, |v, cx| {
+                v.request_beside(request.target, None, docopen::Asker::Mcp, Some(reply), cx)
+            }),
+            mcp::Placement::Here => {
+                let said = leaf.update(cx, |v, cx| v.open_here(request.target, cx));
+                let _ = reply.send(said);
+            }
+        }
     }
 
     /// `ctl doc beside <path>`: what Ctrl+Alt+click on that path does, on the
@@ -20366,6 +20440,44 @@ impl Workspace {
         true
     }
 
+    /// "⇲ beside" on the cursor's row: what its turn produced, opened in a
+    /// pane beside the pane that declared it. The pane asks for the split
+    /// exactly as a Ctrl+Alt+click on the path would — so a pane in that tab
+    /// already showing the file is focused, and at four panes it floats over
+    /// the declaring pane — and the queue closes so the person sees where it
+    /// went. Only a file TD can draw goes beside; a URL has nowhere beside to
+    /// go, and `o` still hands anything to the desktop.
+    fn rail_open_beside(&mut self, cx: &mut Context<Self>) -> bool {
+        let (items, panes) = self.rail_waiting(cx);
+        let Some(it) = items.get(self.rail_cursor) else {
+            return false;
+        };
+        let Some(target) = it
+            .deliverable
+            .as_ref()
+            .and_then(|d| deliverable_file(&d.href))
+            .and_then(|p| docopen::drawable_document(&p))
+        else {
+            return false;
+        };
+        let Some(id) = panes.get(&it.pane).copied() else {
+            return false;
+        };
+        let Some(tab) = self.tab_with_leaf(id) else {
+            return false;
+        };
+        let mut leaves = vec![];
+        self.tabs[tab].root.leaves(&mut leaves);
+        let Some(declarer) = leaves.into_iter().find(|l| l.entity_id() == id).cloned() else {
+            return false;
+        };
+        declarer.update(cx, |v, cx| {
+            v.request_beside(target, None, docopen::Asker::Rail, None, cx)
+        });
+        self.rail_close();
+        true
+    }
+
     /// The queue owns the keyboard while it is open. Returns whether the press
     /// was ours — the caller stops propagation on a yes, so no navigation key
     /// ever reaches the terminal underneath.
@@ -20386,6 +20498,8 @@ impl Workspace {
             // reading what a turn produced and visiting the terminal that
             // produced it are different, so they do not share a key.
             "o" => self.rail_activate(true, cx),
+            // And the third: that same document beside the agent that made it.
+            "b" => self.rail_open_beside(cx),
             // Dock or undock. Refused rather than silently ignored on a window
             // with no room: the press answers false, so it falls through to the
             // pane instead of being eaten by a control that is not on offer.
@@ -20911,6 +21025,7 @@ impl Workspace {
                         .child("\u{2191}\u{2193} go")
                         .child("\u{21b5} pane")
                         .child("o open")
+                        .child("b beside")
                         // The pin, drawn inert on a window too narrow to dock
                         // in rather than hidden. A control that disappears at
                         // some width is a control nobody knows exists; one that
@@ -21196,6 +21311,32 @@ impl Workspace {
                                 .child(kind.label()),
                         )
                         .child(d.label.clone())
+                        // "⇲ beside": the same document in a pane beside the
+                        // agent that declared it, through the router a
+                        // Ctrl+Alt+click uses. Offered by the target's name
+                        // alone — the rail is always on screen, and this is
+                        // painted every frame, so it never touches the disk;
+                        // the click checks the file is there to draw.
+                        .children(rail_offers_beside(&d.href).then(|| {
+                            div()
+                                .px(px(4. * s))
+                                .rounded(px(2. * s))
+                                .border_1()
+                                .border_color(hsla(0.58, 0.72, 0.62, 0.6))
+                                .child(SharedString::from("⇲ beside"))
+                                // Its own act, like the link's, and it stops
+                                // there so the link underneath does not also
+                                // hand the file to the desktop.
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                                        cx.stop_propagation();
+                                        ws.rail_cursor = row_index;
+                                        ws.rail_open_beside(cx);
+                                        cx.notify();
+                                    }),
+                                )
+                        }))
                         // Its own click, and it stops there. Opening what a turn
                         // produced and visiting the terminal that produced it are
                         // two different acts, and reading never does the second.
@@ -34081,6 +34222,94 @@ mod tests {
         let open = live_fn("fn open_doc_beside(");
         assert!(open.contains("match beside("), "{open}");
         assert!(open.contains("Beside::Focus(i)") && open.contains("Beside::Float"));
+    }
+
+    /// `open_document` goes through the router a Ctrl+Alt+click goes through,
+    /// on the caller's pane and no other: "beside" is that pane asking for a
+    /// split, so the tests above — a file already showing is focused, and at
+    /// four panes it floats — are its tests too; "here" is Alt+click's square.
+    /// And an agent's request is not a click, so it is never debounced away,
+    /// and at four panes it gets a square rather than nothing.
+    #[test]
+    fn open_document_goes_through_the_click_router_on_the_callers_pane() {
+        let open = live_fn("fn mcp_open(");
+        assert!(
+            open.contains("shell_pid() == Some(request.pid)"),
+            "the pane is the one the request names, which is the caller: {open}"
+        );
+        assert!(
+            open.contains(
+                "request_beside(request.target, None, docopen::Asker::Mcp, Some(reply), cx)"
+            ),
+            "beside goes through the pane's own request: {open}"
+        );
+        assert!(open.contains(".open_here(request.target, cx)"), "{open}");
+        assert!(
+            open.contains("mcp::should_expose("),
+            "the policy is asked again: {open}"
+        );
+        let route = live_fn("fn open_doc_beside(");
+        assert!(
+            route.contains("matches!(ev.by, Asker::Click | Asker::Menu) && !self.debounced()"),
+            "only a pointer is debounced: {route}"
+        );
+        assert!(
+            route.contains("if ev.by != Asker::Float || !v.has_float() {"),
+            "at four panes anything but a promoted square gets a square: {route}"
+        );
+    }
+
+    /// "⇲ beside" on a deliverable row opens it beside the pane that DECLARED
+    /// it, through the same router, and is offered only for a local file whose
+    /// name TD draws — judged by name, because the rail paints every frame.
+    #[test]
+    fn the_rail_opens_a_deliverable_beside_the_pane_that_declared_it() {
+        assert_eq!(
+            deliverable_file("file:///home/p/reports/a%20brief.html"),
+            Some(PathBuf::from("/home/p/reports/a brief.html"))
+        );
+        assert_eq!(
+            deliverable_file("/home/p/notes.md"),
+            Some(PathBuf::from("/home/p/notes.md"))
+        );
+        assert_eq!(deliverable_file("https://github.com/o/r/pull/7"), None);
+        assert_eq!(
+            deliverable_file("report.html"),
+            None,
+            "relative names nothing"
+        );
+        assert!(rail_offers_beside("file:///home/p/r.html"));
+        assert!(rail_offers_beside("/home/p/shot.png"));
+        assert!(
+            !rail_offers_beside("/home/p/data.csv"),
+            "not a file TD draws"
+        );
+        assert!(
+            !rail_offers_beside("https://example.com/r.html"),
+            "a URL has no pane"
+        );
+        let beside = live_fn("fn rail_open_beside(");
+        assert!(
+            beside.contains("panes.get(&it.pane)"),
+            "the declaring pane: {beside}"
+        );
+        assert!(
+            beside.contains("request_beside(target, None, docopen::Asker::Rail, None, cx)"),
+            "{beside}"
+        );
+        assert!(
+            beside.contains("docopen::drawable_document("),
+            "the click checks the file"
+        );
+        let src = include_str!("main.rs");
+        let chip = &src[src
+            .find(concat!("SharedString::from(", "\"⇲ beside\")"))
+            .expect("the chip")..];
+        let chip = &chip[..chip.find("}))").expect("end of the chip")];
+        assert!(
+            chip.contains("cx.stop_propagation()") && chip.contains("ws.rail_open_beside(cx)"),
+            "the chip acts, and the link under it does not also fire: {chip}"
+        );
     }
 
     /// `ctl bench off` turns a window of benches back to its terminals. A pane

@@ -5361,6 +5361,35 @@ impl TerminalView {
         }
     }
 
+    /// `open_document` with placement "here": the document floats over this
+    /// pane, as Alt+click on its path opens it, and the answer is the line
+    /// `ctl doc here` would give. A square already showing the file is left as
+    /// it is. One holding notes not yet saved is kept, as it is for a click,
+    /// and the answer says so rather than claiming a square that never opened.
+    pub(crate) fn open_here(
+        &mut self,
+        target: crate::docopen::DocTarget,
+        cx: &mut Context<Self>,
+    ) -> String {
+        let pane = self
+            .pane_id
+            .map_or_else(|| "?".to_string(), |p| p.to_string());
+        let wanted = std::fs::canonicalize(&target.path).unwrap_or_else(|_| target.path.clone());
+        let showing = |v: &Self, cx: &App| {
+            v.float_path(cx)
+                .map(|p| std::fs::canonicalize(&p).unwrap_or(p))
+                == Some(wanted.clone())
+        };
+        if showing(self, cx) {
+            return format!("ok float pane {pane} — it already shows this file");
+        }
+        match self.open_float(target, None, cx) {
+            Err(why) => format!("desktop {why}"),
+            Ok(()) if showing(self, cx) => format!("ok float pane {pane}"),
+            Ok(()) => "err the square over your pane holds notes not yet saved, so it stays — they have to be saved or dropped first".into(),
+        }
+    }
+
     /// Whether a floating square is open on this pane.
     pub(crate) fn has_float(&self) -> bool {
         self.float.is_some()

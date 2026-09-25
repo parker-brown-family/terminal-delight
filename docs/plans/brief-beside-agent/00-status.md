@@ -8,7 +8,7 @@
 ## Slices
 - [x] Slice 1: `document_notes`, a read-only MCP verb that answers the notes map of the document beside the caller
 - [x] Slice 2: ↪ send to agent, which pastes the notes map into the agent's prompt without pressing Enter (row #9 of the terminal-input manifest)
-- [ ] Slice 3: `open_document`, an MCP verb for an agent to open its own deliverable beside itself, plus "open beside" on the rail's deliverable row
+- [x] Slice 3: `open_document`, an MCP verb for an agent to open its own deliverable beside itself, plus "open beside" on the rail's deliverable row
 
 ## Notes for a fresh session
 - Parker agreed to both ideas on 2026-09-24: *"re-reading a 1500+ word file seems inefficient… I have buy in - agree"* and *"scanning through docs is a bit clunky… agree"*.

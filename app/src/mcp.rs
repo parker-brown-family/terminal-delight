@@ -819,10 +819,32 @@ where
     G: Fn(&[ConfigUpdate]) -> Vec<ApplyOutcome>,
     H: Fn(&str, usize) -> Vec<PaneMatches>,
 {
+    handle_line_full(line, snap, tail, apply, search, no_open)
+}
+
+/// Like [`handle_line_with`], with the one capability that changes the layout:
+/// `open`, which opens a document in the CALLER's pane or tab for
+/// `open_document`. A separate closure rather than a field of the config patch,
+/// because what comes back is the router's own sentence — focused, split,
+/// floated at four panes — and not a grade.
+pub fn handle_line_full<F, G, H, O>(
+    line: &str,
+    snap: &Snapshot,
+    tail: F,
+    apply: G,
+    search: H,
+    open: O,
+) -> Option<String>
+where
+    F: Fn(&PaneInfo, usize) -> Vec<ToolEvent>,
+    G: Fn(&[ConfigUpdate]) -> Vec<ApplyOutcome>,
+    H: Fn(&str, usize) -> Vec<PaneMatches>,
+    O: Fn(&OpenRequest) -> OpenOutcome,
+{
     let req = parse_req(line)?;
     // A notification (no id) is fire-and-forget — never answer it, even on error.
     let id = req.id.clone()?;
-    Some(match dispatch(&req, snap, &tail, &apply, &search) {
+    Some(match dispatch(&req, snap, &tail, &apply, &search, &open) {
         Ok(result) => encode_ok(id, result),
         Err((code, msg)) => encode_err(id, code, msg),
     })
@@ -834,6 +856,100 @@ pub fn no_search(_needle: &str, _cap: usize) -> Vec<PaneMatches> {
     Vec::new()
 }
 
+/// Where `open_document` puts a document.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Placement {
+    /// A pane of its own beside the caller, as Ctrl+Alt+click on its path
+    /// opens one — or, at four panes, floating over the caller instead.
+    Beside,
+    /// Floating over the caller's own pane, as Alt+click on its path opens it.
+    Here,
+}
+
+impl Placement {
+    fn as_str(self) -> &'static str {
+        match self {
+            Placement::Beside => "beside",
+            Placement::Here => "here",
+        }
+    }
+}
+
+/// A validated `open_document` on its way to the GUI thread.
+///
+/// `pid` is always the caller's own pane. There is no way to build one naming
+/// another: the verb takes no pane, and fills this in from who called.
+#[derive(Clone, PartialEq, Debug)]
+pub struct OpenRequest {
+    pub pid: u32,
+    pub target: crate::docopen::DocTarget,
+    pub placement: Placement,
+}
+
+/// What the window did with an `open_document`: the router's own sentence, or
+/// why nothing opened.
+pub type OpenOutcome = Result<String, String>;
+
+/// The `open` of a connection that cannot change the layout.
+pub fn no_open(_: &OpenRequest) -> OpenOutcome {
+    Err("this connection cannot open documents".to_string())
+}
+
+/// The router's reply, as `ctl doc beside` prints it, turned into an outcome:
+/// `ok …` opened or focused, `desktop …` went to the desktop because TD has no
+/// engine to draw it, and anything else is the sentence that refused it.
+pub fn open_outcome(reply: &str) -> OpenOutcome {
+    if let Some(said) = reply.strip_prefix("ok ") {
+        return Ok(said.to_string());
+    }
+    if let Some(why) = reply.strip_prefix("desktop ") {
+        return Ok(format!("handed to the desktop instead: {why}"));
+    }
+    Err(reply.strip_prefix("err ").unwrap_or(reply).to_string())
+}
+
+/// Check an `open_document` path, and say why not in words an agent can act
+/// on. Absolute, as a path or a `file://` URL — a relative path would resolve
+/// against the TERMINAL's directory rather than the agent's, the reason
+/// `declare_deliverable` refuses one — and a file TD can draw: Markdown, HTML
+/// or an image. Reads the file's first sixteen bytes and nothing else.
+pub fn validate_open_path(path: &str) -> Result<crate::docopen::DocTarget, String> {
+    let path = path.trim();
+    if path.is_empty() {
+        return Err("open_document needs a `path`: the absolute path of the file to open".into());
+    }
+    let lower = path.to_ascii_lowercase();
+    let file = if lower.starts_with("file:") {
+        match crate::docview::resolve_link(std::path::Path::new("/"), path) {
+            crate::docview::LinkTarget::File { path, .. } => path,
+            _ => {
+                return Err(format!(
+                    "{path:?} is not a file on this machine — a file:// URL must name one"
+                ))
+            }
+        }
+    } else if path.starts_with('/') {
+        std::path::PathBuf::from(path)
+    } else if lower.starts_with("http://") || lower.starts_with("https://") {
+        return Err(format!(
+            "{path:?} is a web address; open_document opens files TD can draw. \
+             Declare it with declare_deliverable and the rail opens it with the desktop."
+        ));
+    } else {
+        return Err(format!(
+            "{path:?} is relative. It would be resolved against the TERMINAL's \
+             working directory rather than yours, so give an absolute path."
+        ));
+    };
+    crate::docopen::drawable_document(&file).ok_or_else(|| {
+        format!(
+            "{} is not a file TD can draw — Markdown, HTML or an image, and it \
+             has to exist",
+            file.display()
+        )
+    })
+}
+
 /// The read-only `apply`: refuses every update with a clear reason. Used by the
 /// bare [`handle_line`] and by any transport that does not offer writes.
 pub fn no_apply(updates: &[ConfigUpdate]) -> Vec<ApplyOutcome> {
@@ -843,23 +959,25 @@ pub fn no_apply(updates: &[ConfigUpdate]) -> Vec<ApplyOutcome> {
         .collect()
 }
 
-fn dispatch<F, G, H>(
+fn dispatch<F, G, H, O>(
     req: &Req,
     snap: &Snapshot,
     tail: &F,
     apply: &G,
     search: &H,
+    open: &O,
 ) -> Result<Value, (i64, String)>
 where
     F: Fn(&PaneInfo, usize) -> Vec<ToolEvent>,
     G: Fn(&[ConfigUpdate]) -> Vec<ApplyOutcome>,
     H: Fn(&str, usize) -> Vec<PaneMatches>,
+    O: Fn(&OpenRequest) -> OpenOutcome,
 {
     match req.method.as_str() {
         "initialize" => Ok(initialize_result(&req.params)),
         "ping" => Ok(json!({})),
         "tools/list" => Ok(json!({ "tools": tool_defs() })),
-        "tools/call" => tools_call(&req.params, snap, tail, apply, search),
+        "tools/call" => tools_call(&req.params, snap, tail, apply, search, open),
         // We hold no resources/prompts — answer empty so discovery doesn't error.
         "resources/list" => Ok(json!({ "resources": [] })),
         "prompts/list" => Ok(json!({ "prompts": [] })),
@@ -901,8 +1019,9 @@ fn initialize_result(params: &Value) -> Value {
              absolute number you give it, so compute relative changes (\"20% \
              lower\") yourself from a get_pane_config read. `document_notes` \
              hands you the notes a person left on the brief open beside you — \
-             the map alone, not the page. Appearance is all you can change: \
-             nothing here can write bytes to a terminal/PTY."
+             the map alone, not the page; `open_document` opens a document you \
+             made beside you, in your own tab. Appearance and layout are all you \
+             can change: nothing here can write bytes to a terminal/PTY."
     })
 }
 
@@ -1135,6 +1254,31 @@ fn tool_defs() -> Value {
             "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false }
         },
         {
+            "name": "open_document",
+            "description":
+                "Open a document IN TERMINAL DELIGHT, beside you — the page, \
+                 brief or picture you just made, so the person reads it next to \
+                 your prompt instead of going to look for it. `path` is an \
+                 absolute path or a file:// URL to Markdown, HTML or an image. \
+                 `placement` \"beside\" (the default) opens it in a pane of its \
+                 own to the right of yours, exactly as Ctrl+Alt+click on the \
+                 path does: a pane in your tab already showing the file is \
+                 focused instead, and at four panes it floats over your pane. \
+                 \"here\" floats it over your own pane, as Alt+click does. It \
+                 only ever opens in your own pane or tab, and takes no pid. Call \
+                 it after declare_deliverable, for an HTML or Markdown \
+                 deliverable. Requires the writes toggle (TD_MCP_WRITE).",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "absolute path (/home/you/report.html) or file:// URL of a Markdown, HTML or image file" },
+                    "placement": { "type": "string", "enum": ["beside", "here"], "description": "\"beside\" (default): a pane of its own beside yours; \"here\": floating over your own pane" }
+                },
+                "required": ["path"],
+                "additionalProperties": false
+            }
+        },
+        {
             "name": "surface_catalogue",
             "description": "What kinds of work object this build of Terminal Delight can render, the actions a person can take on them, and the weights a surface may carry. Read-only. Ask before presenting if you are unsure a kind exists — an unknown kind still lands, but as unclassified.",
             "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false }
@@ -1161,17 +1305,19 @@ fn tool_defs() -> Value {
     ])
 }
 
-fn tools_call<F, G, H>(
+fn tools_call<F, G, H, O>(
     params: &Value,
     snap: &Snapshot,
     tail: &F,
     apply: &G,
     search: &H,
+    open: &O,
 ) -> Result<Value, (i64, String)>
 where
     F: Fn(&PaneInfo, usize) -> Vec<ToolEvent>,
     G: Fn(&[ConfigUpdate]) -> Vec<ApplyOutcome>,
     H: Fn(&str, usize) -> Vec<PaneMatches>,
+    O: Fn(&OpenRequest) -> OpenOutcome,
 {
     let name = params
         .get("name")
@@ -1189,6 +1335,7 @@ where
         "present_surface" => present_surface(&args, snap, apply),
         "surface_catalogue" => surface_catalogue(),
         "document_notes" => document_notes(&args, snap),
+        "open_document" => open_document(&args, snap, open),
         "grep" => grep(&args, snap, search),
         other => return Err((-32602, format!("unknown tool: {other}"))),
     };
@@ -2020,6 +2167,87 @@ fn document_notes(args: &Value, snap: &Snapshot) -> Value {
     tool_ok(text, structured)
 }
 
+/// `open_document` — an agent opens what it made beside itself.
+///
+/// The other half of a deliverable. `declare_deliverable` puts a click on the
+/// rail; this puts the document on screen beside the agent, so the person who
+/// asked for a brief is reading it the moment it exists. It changes the layout
+/// and writes nothing to any terminal: a split's new pane gets a fresh shell
+/// with no command line, as Ctrl+Alt+click's does.
+///
+/// Scoped to the caller with no way out: there is no pane argument, the pid in
+/// the request is filled in from who called, and the router it goes through
+/// only ever splits the tab the pane that asked is in. A `pid`, or any key but
+/// the two the schema names, is refused rather than ignored, so an agent that
+/// meant to open something in another pane is told that it cannot.
+fn open_document<O>(args: &Value, snap: &Snapshot, open: &O) -> Value
+where
+    O: Fn(&OpenRequest) -> OpenOutcome,
+{
+    if !snap.config.enabled {
+        return tool_err("MCP exposure is disabled. Enable it in the MCP CONTROL panel.");
+    }
+    if !snap.config.writable {
+        return tool_err(
+            "MCP writes are disabled. This server is a read-only watch surface \
+             until you opt in: enable \"writes\" in the MCP CONTROL panel (or set \
+             TD_MCP_WRITE=1) to let an agent open a document.",
+        );
+    }
+    if let Some(stray) = args.as_object().and_then(|a| {
+        a.keys()
+            .find(|k| !matches!(k.as_str(), "path" | "placement"))
+    }) {
+        return tool_err(&format!(
+            "open_document takes `path` and `placement` only, not `{stray}`: it \
+             opens in your own pane or tab, never in one you name"
+        ));
+    }
+    let me = match snap.caller_pane("open_document") {
+        Ok(p) => p,
+        Err(why) => return tool_err(&why),
+    };
+    if !me.exposed {
+        return tool_err(&format!(
+            "the pane you are calling from ({}) is not exposed under the current \
+             policy, so nothing opens in it",
+            me.pid
+        ));
+    }
+    let placement = match args.get("placement").and_then(Value::as_str) {
+        None | Some("beside") => Placement::Beside,
+        Some("here") => Placement::Here,
+        Some(other) => {
+            return tool_err(&format!(
+                "placement {other:?} is not one of \"beside\" or \"here\""
+            ))
+        }
+    };
+    let path = args.get("path").and_then(Value::as_str).unwrap_or("");
+    let target = match validate_open_path(path) {
+        Ok(t) => t,
+        Err(why) => return tool_err(&why),
+    };
+    let shown = target.path.display().to_string();
+    let request = OpenRequest {
+        pid: me.pid,
+        target,
+        placement,
+    };
+    match open(&request) {
+        Ok(said) => tool_ok(
+            format!("{shown} — {said}"),
+            json!({
+                "path": shown,
+                "placement": placement.as_str(),
+                "pane": me.pid,
+                "said": said,
+            }),
+        ),
+        Err(why) => tool_err(&why),
+    }
+}
+
 fn tool_ok(text: String, structured: Value) -> Value {
     json!({ "content": [{ "type": "text", "text": text }], "structuredContent": structured })
 }
@@ -2664,6 +2892,7 @@ mod tests {
             names.contains(&"document_notes"),
             "document_notes advertised"
         );
+        assert!(names.contains(&"open_document"), "open_document advertised");
     }
 
     /// The `present_surface` blurb is the ONLY text about this protocol that
@@ -2767,6 +2996,7 @@ mod tests {
             ),
             ("grep", json!({ "query": "x" })),
             ("document_notes", json!({})),
+            ("open_document", json!({ "path": "/nowhere.md" })),
         ] {
             let out = call(&snap, name, args);
             let text = text_of(&out);
@@ -3206,6 +3436,195 @@ mod tests {
         let out = resp(&handle_line_with(&line, &s, no_tail, apply, no_search).unwrap());
         assert_eq!(out["result"]["structuredContent"]["path"], "/r/brief.html");
         assert_eq!(applied.get(), 0, "document_notes reached the write path");
+    }
+
+    // ---- open_document: the agent's own deliverable, beside it ----
+
+    /// A file on disk for the verb to find, removed when dropped.
+    struct TempDoc(std::path::PathBuf);
+    impl TempDoc {
+        fn new(name: &str, body: &str) -> TempDoc {
+            let dir = std::env::temp_dir().join(format!("td-open-{}", std::process::id()));
+            std::fs::create_dir_all(&dir).unwrap();
+            let path = dir.join(name);
+            std::fs::write(&path, body).unwrap();
+            TempDoc(path)
+        }
+        fn path(&self) -> String {
+            self.0.display().to_string()
+        }
+    }
+    impl Drop for TempDoc {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+
+    /// Call `open_document` on a writable window as the pane with id 9 (pid
+    /// 100), with an `open` that records every request it is handed.
+    fn open_as_caller(args: Value) -> (Value, Vec<OpenRequest>) {
+        let mut s = window_with(vec![]);
+        s.config.writable = true;
+        let seen = std::cell::RefCell::new(Vec::new());
+        let open = |r: &OpenRequest| -> OpenOutcome {
+            seen.borrow_mut().push(r.clone());
+            Ok(match r.placement {
+                Placement::Beside => "beside pane 9 — opened in pane 12".into(),
+                Placement::Here => "float pane 9".into(),
+            })
+        };
+        let line = json!({ "id": 9, "method": "tools/call",
+            "params": { "name": "open_document", "arguments": args } })
+        .to_string();
+        let out = resp(&handle_line_full(&line, &s, no_tail, no_apply, no_search, open).unwrap())
+            ["result"]
+            .clone();
+        (out, seen.into_inner())
+    }
+
+    /// The load-bearing one. `open_document` opens in the caller's own pane
+    /// or tab and nowhere else: a `pid` naming another pane is refused, not
+    /// honoured and not ignored, and so is any key the schema does not name;
+    /// and the one request that does reach the window names the caller.
+    ///
+    /// Mutation-tested: resolving the pane from an argument instead of the
+    /// caller, and dropping the refusal of stray keys, each fail this.
+    #[test]
+    fn open_document_refuses_a_pane_that_is_not_the_callers() {
+        let md = TempDoc::new("theirs.md", "# a page\n");
+        for stray in [
+            json!({ "pid": 200 }),
+            json!({ "pane": 4 }),
+            json!({ "tab": 1 }),
+        ] {
+            let mut args = stray.clone();
+            args["path"] = json!(md.path());
+            let (out, seen) = open_as_caller(args);
+            assert_eq!(
+                out["isError"],
+                true,
+                "{stray} was honoured: {}",
+                text_of(&out)
+            );
+            assert!(seen.is_empty(), "{stray} reached the window: {seen:?}");
+        }
+        let (out, seen) = open_as_caller(json!({ "path": md.path() }));
+        assert_ne!(out["isError"], true, "{}", text_of(&out));
+        assert_eq!(seen.len(), 1);
+        assert_eq!(
+            seen[0].pid, 100,
+            "opened for a pane that is not the caller's"
+        );
+        // No caller, no pane: it does not fall back to any pane at all.
+        let mut anon = window_with(vec![]);
+        anon.config.writable = true;
+        anon.caller = None;
+        let line = json!({ "id": 9, "method": "tools/call",
+            "params": { "name": "open_document", "arguments": { "path": md.path() } } })
+        .to_string();
+        let refused = resp(
+            &handle_line_full(
+                &line,
+                &anon,
+                no_tail,
+                no_apply,
+                no_search,
+                |_: &OpenRequest| panic!("an anonymous caller reached the window"),
+            )
+            .unwrap(),
+        );
+        assert_eq!(refused["result"]["isError"], true);
+    }
+
+    /// Absolute paths only, and only files TD can draw — each refusal in words
+    /// the agent can act on, and none of them reaching the window.
+    #[test]
+    fn open_document_refuses_a_relative_path_and_a_file_td_cannot_draw() {
+        let txt = TempDoc::new("notes.txt", "plain text\n");
+        for (path, says) in [
+            ("report.html", "relative"),
+            ("./report.html", "relative"),
+            ("https://example.com/r.html", "web address"),
+            ("/nowhere/at/all/r.html", "not a file TD can draw"),
+            (txt.path().as_str(), "not a file TD can draw"),
+            ("", "needs a `path`"),
+        ] {
+            let (out, seen) = open_as_caller(json!({ "path": path }));
+            assert_eq!(out["isError"], true, "{path:?} was accepted");
+            assert!(text_of(&out).contains(says), "{path:?}: {}", text_of(&out));
+            assert!(seen.is_empty(), "{path:?} reached the window");
+        }
+        let (out, _) = open_as_caller(json!({ "path": "/r.html", "placement": "elsewhere" }));
+        assert_eq!(out["isError"], true);
+    }
+
+    /// "beside" is the default and asks for a pane beside the caller; "here"
+    /// floats over it. A file:// URL is a path, decoded.
+    #[test]
+    fn open_document_lands_beside_the_caller_or_over_it() {
+        let md = TempDoc::new("my report.md", "# made this turn\n");
+        let (out, seen) = open_as_caller(json!({ "path": md.path() }));
+        assert_eq!(seen[0].placement, Placement::Beside);
+        assert_eq!(seen[0].target.kind, crate::docopen::DocKind::Markdown);
+        assert_eq!(out["structuredContent"]["placement"], "beside");
+        assert!(
+            text_of(&out).contains("opened in pane 12"),
+            "{}",
+            text_of(&out)
+        );
+
+        let url = format!("file://{}", md.path().replace(' ', "%20"));
+        let (out, seen) = open_as_caller(json!({ "path": url, "placement": "here" }));
+        assert_ne!(out["isError"], true, "{}", text_of(&out));
+        assert_eq!(seen[0].placement, Placement::Here);
+        assert_eq!(
+            seen[0].target.path, md.0,
+            "the URL was not decoded to the file"
+        );
+    }
+
+    /// Changing the layout is a write: it needs the writes toggle, as a note
+    /// does.
+    #[test]
+    fn open_document_needs_the_writes_toggle() {
+        let md = TempDoc::new("gate.md", "# gate\n");
+        let s = window_with(vec![]);
+        let line = json!({ "id": 9, "method": "tools/call",
+            "params": { "name": "open_document", "arguments": { "path": md.path() } } })
+        .to_string();
+        let out = resp(
+            &handle_line_full(
+                &line,
+                &s,
+                no_tail,
+                no_apply,
+                no_search,
+                |_: &OpenRequest| panic!("opened with writes off"),
+            )
+            .unwrap(),
+        );
+        assert_eq!(out["result"]["isError"], true);
+        assert!(text_of(&out["result"]).contains("writes"));
+    }
+
+    /// The router's own lines, as `ctl doc beside` prints them, read back.
+    #[test]
+    fn the_routers_reply_becomes_the_answer() {
+        assert_eq!(
+            open_outcome("ok beside pane 9 — opened in pane 12"),
+            Ok("beside pane 9 — opened in pane 12".into())
+        );
+        assert_eq!(
+            open_outcome("ok float pane 9 — the tab has four panes, so it floats instead"),
+            Ok("float pane 9 — the tab has four panes, so it floats instead".into())
+        );
+        assert!(open_outcome("desktop no browser")
+            .unwrap()
+            .contains("desktop"));
+        assert_eq!(
+            open_outcome("err the pane that asked is in no tab"),
+            Err("the pane that asked is in no tab".into())
+        );
     }
 
     /// The map `document_notes` hands over is byte for byte the map `ctl doc
