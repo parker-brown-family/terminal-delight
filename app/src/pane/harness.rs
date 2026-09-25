@@ -342,6 +342,12 @@ impl Pane {
         self.cx.simulate_mouse_up(at, MouseButton::Left, mods);
     }
 
+    /// The modifier keys change with the pointer where it is: Alt pressed or
+    /// let go without a move.
+    pub(super) fn modifiers(&mut self, mods: Modifiers) {
+        self.cx.simulate_modifiers_change(mods);
+    }
+
     /// A right click at `at`: down, then up.
     pub(super) fn right_click(&mut self, at: Point<Pixels>) {
         self.cx

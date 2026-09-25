@@ -685,6 +685,14 @@ impl DocumentView {
         self.backend.notes_said(said, cx);
     }
 
+    /// Alt held, or let go, as the pane saw it: every element that takes a
+    /// note is outlined while the pointer is over the document.
+    pub fn reveal(&mut self, on: bool, cx: &mut Context<Self>) {
+        if self.backend.reveal(on) {
+            cx.notify();
+        }
+    }
+
     /// What a brief's notes layer shows, for the control socket: its state,
     /// its counts, why it is read-only when it is, and the map it would copy.
     /// `None` for anything but a brief, and for a brief not yet laid out.
