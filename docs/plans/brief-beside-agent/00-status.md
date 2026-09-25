@@ -7,7 +7,7 @@
 
 ## Slices
 - [x] Slice 1: `document_notes`, a read-only MCP verb that answers the notes map of the document beside the caller
-- [ ] Slice 2: ↪ send to agent, which pastes the notes map into the agent's prompt without pressing Enter (row #9 of the terminal-input manifest)
+- [x] Slice 2: ↪ send to agent, which pastes the notes map into the agent's prompt without pressing Enter (row #9 of the terminal-input manifest)
 - [ ] Slice 3: `open_document`, an MCP verb for an agent to open its own deliverable beside itself, plus "open beside" on the rail's deliverable row
 
 ## Notes for a fresh session

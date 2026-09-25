@@ -4606,6 +4606,12 @@ fn wire_pane(pane: &Entity<TerminalView>, window: &mut Window, cx: &mut Context<
         ws.open_doc_beside(pane.clone(), ev, window, cx);
     })
     .detach();
+    // ↪ in a brief's notes bar: the map goes to the agent pane the brief sits
+    // beside, and which pane that is only the tree can say.
+    cx.subscribe(pane, |ws, pane, ev: &pane::SendNotesBeside, cx| {
+        ws.send_notes_beside(pane, ev, cx);
+    })
+    .detach();
     // the header × → close just this pane (window-aware: refocuses what's left)
     cx.subscribe_in(pane, window, |ws, pane, _ev: &ClosePane, window, cx| {
         ws.close_pane(pane.entity_id(), window, cx);
@@ -9882,6 +9888,130 @@ impl Workspace {
         self.save(cx);
         cx.notify();
         new_pane
+    }
+
+    /// Which pane ↪ on a brief sends to, and what the bar calls it, over the
+    /// tab holding `host` by [`docopen::send_to`]. `seat` says which of the
+    /// host's documents asks: its floating square sits beside the host
+    /// itself, its Document face beside the pane it was opened beside. The
+    /// name is "agent" unless the tab holds more than one agent pane the
+    /// notes could go to, and then it is the target's own.
+    fn notes_send_target(
+        &self,
+        host: EntityId,
+        seat: docopen::DocSeat,
+        cx: &App,
+    ) -> Option<(Entity<TerminalView>, String)> {
+        let tab = self.tab_with_leaf(host)?;
+        let mut leaves = vec![];
+        self.tabs[tab].root.leaves(&mut leaves);
+        let leaves: Vec<Entity<TerminalView>> = leaves.into_iter().cloned().collect();
+        let at = leaves.iter().position(|l| l.entity_id() == host)?;
+        let facts: Vec<docopen::SendLeaf> = leaves
+            .iter()
+            .map(|l| docopen::SendLeaf {
+                agent: l.read(cx).mode.is_agent(),
+            })
+            .collect();
+        let beside = match seat {
+            docopen::DocSeat::Float => Some(at),
+            docopen::DocSeat::Face => leaves[at]
+                .read(cx)
+                .doc_opened_by()
+                .and_then(|id| leaves.iter().position(|l| l.read(cx).pane_id() == Some(id))),
+        };
+        let to = docopen::send_to(&facts, at, beside)?.index();
+        let candidates = facts
+            .iter()
+            .enumerate()
+            .filter(|(i, l)| l.agent && (*i != at || seat == docopen::DocSeat::Float))
+            .count();
+        let p = leaves[to].read(cx);
+        let name = p
+            .name
+            .clone()
+            .filter(|n| !n.is_empty())
+            .or_else(|| (!p.title.is_empty()).then(|| p.title.clone()))
+            .unwrap_or_else(|| p.mode.label().to_string());
+        Some((leaves[to].clone(), docopen::send_label(candidates, &name)))
+    }
+
+    /// ↪ pressed in the notes bar of a brief on `from`: the map goes into the
+    /// prompt of the agent pane the brief sits beside — pasted, never sent —
+    /// and the bar says where it landed, how much of it is unsaved, or why
+    /// nothing went. The target is worked out again here rather than trusted
+    /// from the last frame, so a pane that stopped being an agent since the
+    /// button was drawn is refused in words.
+    fn send_notes_beside(
+        &mut self,
+        from: Entity<TerminalView>,
+        ev: &pane::SendNotesBeside,
+        cx: &mut Context<Self>,
+    ) {
+        use docview::notes_ui::Said;
+        let said = match self.notes_send_target(from.entity_id(), ev.seat, cx) {
+            None => {
+                Said::Refused("no agent pane is beside this brief now — ⎘ copy map instead".into())
+            }
+            Some((target, who)) => match target.read(cx).send_notes(&ev.map) {
+                Ok(chars) => {
+                    let prompt = if who == "agent" {
+                        "the agent's prompt".to_string()
+                    } else {
+                        format!("{who}'s prompt")
+                    };
+                    let unsaved = match ev.unsaved {
+                        0 => String::new(),
+                        1 => " · it includes 1 edit not saved into the file".to_string(),
+                        n => format!(" · it includes {n} edits not saved into the file"),
+                    };
+                    Said::Done(format!(
+                        "in {prompt}, not sent · {chars} characters{unsaved} · press Enter there"
+                    ))
+                }
+                Err(why) => Said::Refused(why),
+            },
+        };
+        from.update(cx, |v, cx| v.doc_said(ev.seat, said, cx));
+    }
+
+    /// Tell each pane in the active tab that shows a brief who its ↪ sends
+    /// to, so the bar draws the button only beside an agent and names the
+    /// pane when there is a choice. Once a frame over one tab; a pane
+    /// repaints only when its answer changed.
+    fn label_note_sends(&mut self, cx: &mut Context<Self>) {
+        let Some(tab) = self.tabs.get(self.active) else {
+            return;
+        };
+        let mut leaves = vec![];
+        tab.root.leaves(&mut leaves);
+        let leaves: Vec<Entity<TerminalView>> = leaves.into_iter().cloned().collect();
+        for leaf in leaves {
+            let (float, face, labelled) = {
+                let v = leaf.read(cx);
+                (
+                    v.has_float(),
+                    v.has_doc_face(),
+                    v.notes_beside() != &(None, None),
+                )
+            };
+            if !float && !face && !labelled {
+                continue;
+            }
+            let id = leaf.entity_id();
+            let label = |seat| self.notes_send_target(id, seat, cx).map(|(_, who)| who);
+            let on_float = if float {
+                label(docopen::DocSeat::Float)
+            } else {
+                None
+            };
+            let on_face = if face {
+                label(docopen::DocSeat::Face)
+            } else {
+                None
+            };
+            leaf.update(cx, |v, cx| v.set_notes_beside(on_float, on_face, cx));
+        }
     }
 
     /// The tab holding a pane, wherever it sits in that tab's tree.
@@ -23615,6 +23745,9 @@ impl Render for Workspace {
         // is built further down this same pass, so it can never draw an offer
         // this sweep would have taken.
         self.sweep_trash(cx);
+        // Who each brief's ↪ sends to, before any pane in this pass draws its
+        // notes bar.
+        self.label_note_sends(cx);
         // The bay doors, eased toward wherever the drag says they should be —
         // and the fire behind them.
         //

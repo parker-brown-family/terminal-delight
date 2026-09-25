@@ -168,6 +168,19 @@ pub struct FollowLink {
 
 impl EventEmitter<FollowLink> for DocumentView {}
 
+/// ↪ in a brief's notes bar: the map, for the pane to hand to the agent the
+/// brief sits beside. The view cannot see past its own pane, so it says what
+/// was pressed and what it carries, and the pane and the workspace decide
+/// where it goes. `unsaved` counts the edits in `map` not yet saved into the
+/// file — it is sent as shown, and the bar says so.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct SendNotes {
+    pub map: String,
+    pub unsaved: usize,
+}
+
+impl EventEmitter<SendNotes> for DocumentView {}
+
 /// A brief's notes, driven by the control socket: the note box's and the
 /// bar's gestures, for a caller with no pointer.
 #[derive(Clone, Debug, PartialEq)]
@@ -587,6 +600,10 @@ impl DocumentView {
                     cx.emit(link);
                     true
                 }
+                page::Pressed::Send(notes) => {
+                    cx.emit(notes);
+                    true
+                }
                 page::Pressed::Took => true,
                 page::Pressed::Nothing => false,
             },
@@ -686,6 +703,25 @@ impl DocumentView {
     pub fn hover(&mut self, at: Option<Point<Pixels>>, cx: &mut Context<Self>) {
         if let Backend::Page(page) = &mut self.backend {
             page.hover(at, cx);
+        }
+    }
+
+    /// Who the notes bar's ↪ sends to, as the pane works it out every frame:
+    /// "agent", a pane's name, or `None` for no button. Repaints only when
+    /// that changes what the bar draws.
+    pub fn set_beside(&mut self, beside: Option<String>, cx: &mut Context<Self>) {
+        if let Backend::Page(page) = &mut self.backend {
+            if page.set_beside(beside) {
+                cx.notify();
+            }
+        }
+    }
+
+    /// What came of a ↪, said in the notes bar.
+    pub fn notes_said(&mut self, said: notes_ui::Said, cx: &mut Context<Self>) {
+        if let Backend::Page(page) = &mut self.backend {
+            page.notes_said(said);
+            cx.notify();
         }
     }
 

@@ -342,6 +342,8 @@ pub enum Pressed {
     Took,
     /// A link out of this page, for the pane to route.
     Follow(FollowLink),
+    /// The bar's ↪, for the pane to route to the agent beside it.
+    Send(super::SendNotes),
 }
 
 /// What the last paint measured, flat and in the view's own terms.
@@ -387,6 +389,10 @@ pub struct PageDoc {
     /// Where the pointer is over the view, flat and view-local; `None` when
     /// it is elsewhere. Note buttons show under it, as a browser shows them.
     pointer: Option<Point<Pixels>>,
+    /// Who the bar's ↪ would send to — "agent", or a pane's name when the
+    /// tab holds more than one — as the pane last said. `None`: nobody, and
+    /// no button.
+    beside: Option<String>,
     /// A save into the file, running: the write, then the read-back.
     saving: Option<Task<()>>,
     /// The file read again after it changed on disk.
@@ -428,8 +434,27 @@ impl PageDoc {
             last_frame: Vec::new(),
             notes: None,
             pointer: None,
+            beside: None,
             saving: None,
             rereading: None,
+        }
+    }
+
+    /// Who the bar's ↪ sends to. Answers whether that changed what the bar
+    /// draws, so the view repaints only then.
+    pub fn set_beside(&mut self, beside: Option<String>) -> bool {
+        if self.beside == beside {
+            return false;
+        }
+        self.beside = beside;
+        self.notes.is_some()
+    }
+
+    /// Put words in the notes bar: what came of a ↪, which is answered
+    /// outside the view.
+    pub fn notes_said(&mut self, said: Said) {
+        if let Some(layer) = self.notes.as_mut() {
+            layer.say(said);
         }
     }
 
@@ -1099,7 +1124,14 @@ impl PageDoc {
     pub fn notes_report(&self) -> Option<serde_json::Value> {
         let layer = self.notes.as_ref()?;
         let r = self.current.as_ref()?;
-        Some(layer.report(&r.layout.anchors))
+        let mut report = layer.report(&r.layout.anchors);
+        // Who the bar's ↪ would send to, as the button says it: a script can
+        // check the button is drawn beside an agent and absent otherwise
+        // without anybody pressing it.
+        report["send_to"] = serde_json::json!(layer
+            .send_button(&r.layout.anchors, self.beside.as_deref())
+            .map(|(label, _)| label));
+        Some(report)
     }
 
     /// Save the waiting edits into the file.
@@ -1422,7 +1454,14 @@ impl PageDoc {
         if let (Some(layer), Some(origin), Some(r)) =
             (self.notes.as_mut(), origin, self.current.as_ref())
         {
-            match layer.press(origin + at, &r.layout.anchors, SystemTime::now(), cx) {
+            let beside = self.beside.is_some();
+            match layer.press(
+                origin + at,
+                &r.layout.anchors,
+                SystemTime::now(),
+                beside,
+                cx,
+            ) {
                 LayerPress::Took => {
                     cx.notify();
                     return Pressed::Took;
@@ -1430,6 +1469,9 @@ impl PageDoc {
                 LayerPress::Save => {
                     self.save(cx);
                     return Pressed::Took;
+                }
+                LayerPress::Send { map, unsaved } => {
+                    return Pressed::Send(super::SendNotes { map, unsaved });
                 }
                 LayerPress::Pass => {}
             }
@@ -1887,7 +1929,7 @@ impl PageDoc {
         // TD's own chrome over the page: the bar, then the note box above
         // everything, as a browser's dialog sits above its notebar.
         if let (Some(layer), Some(r)) = (&self.notes, &self.current) {
-            layers.push(layer.draw_bar(&r.layout.anchors, th));
+            layers.push(layer.draw_bar(&r.layout.anchors, th, self.beside.as_deref()));
             layers.extend(layer.draw_box(m.size, th));
         }
         div()

@@ -111,6 +111,8 @@ pub struct NoteBox {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Zone {
     CopyMap,
+    /// ↪: the map, into the prompt of the agent the brief sits beside.
+    Send,
     Save,
     /// Anywhere on the bar that is not a button.
     Bar,
@@ -212,6 +214,10 @@ pub enum LayerPress {
     Took,
     /// The bar's save: the view saves, since it holds the engine and the file.
     Save,
+    /// The bar's ↪: the map goes to the pane the brief sits beside, which
+    /// only the workspace can reach. Carries what is sent — the map as shown,
+    /// unsaved edits and all — and how many of those edits are unsaved.
+    Send { map: String, unsaved: usize },
 }
 
 fn rect_css(x: f32, y: f32, w: f32, h: f32) -> RectCss {
@@ -482,6 +488,29 @@ impl NotesLayer {
     fn mappable(&self, anchors: &[Anchor]) -> bool {
         let (notes, concurs) = self.counts(anchors);
         self.notes().is_some() && notes + concurs.unwrap_or(0) > 0
+    }
+
+    /// The bar's ↪, when it is drawn: its words, and whether it can be
+    /// pressed. `beside` names the agent pane the brief sits beside — "agent",
+    /// or that pane's name when the tab holds more than one — and `None`
+    /// means there is none, so there is no button: a brief with nobody beside
+    /// it has nobody to send to. A page that shows no notes has no map to
+    /// send, and draws none either.
+    pub fn send_button(&self, anchors: &[Anchor], beside: Option<&str>) -> Option<(String, bool)> {
+        let who = beside?;
+        self.notes()?;
+        Some((format!("↪ send to {who}"), self.mappable(anchors)))
+    }
+
+    /// What ↪ sends: the map exactly as copy map would give it, notes not yet
+    /// saved included, and how many edits of those are unsaved — so the bar
+    /// can say it sent them as shown. `None` with nothing to send. Sending
+    /// never saves first: saving is its own decision.
+    pub fn send(&self, anchors: &[Anchor]) -> Option<(String, usize)> {
+        if !self.mappable(anchors) {
+            return None;
+        }
+        Some((self.map(anchors)?, self.unsaved()))
     }
 
     /// Pure. Everything the layer draws for these anchors through this
@@ -769,12 +798,14 @@ impl NotesLayer {
     /// A press, `at` in window pixels as the last paint laid things out.
     /// The note box first, which takes every press while it is open — one
     /// outside it puts it away, as a click on a browser dialog's backdrop
-    /// does — then the bar.
+    /// does — then the bar. `beside` is whether an agent pane is beside the
+    /// brief now: ↪ is only ever a press while it is drawn.
     pub fn press(
         &mut self,
         at: Point<Pixels>,
         anchors: &[Anchor],
         now: SystemTime,
+        beside: bool,
         cx: &mut App,
     ) -> LayerPress {
         let zones = self.zones.borrow().clone();
@@ -801,6 +832,10 @@ impl NotesLayer {
                 self.copy_map(anchors, cx);
                 LayerPress::Took
             }
+            Some(Zone::Send) if beside => match self.send(anchors) {
+                Some((map, unsaved)) => LayerPress::Send { map, unsaved },
+                None => LayerPress::Took,
+            },
             Some(Zone::Save) => LayerPress::Save,
             _ if under(Zone::Bar) => LayerPress::Took,
             _ => LayerPress::Pass,
@@ -952,8 +987,9 @@ impl NotesLayer {
         }
     }
 
-    /// The bar, bottom-right and fixed in the view.
-    pub fn draw_bar(&self, anchors: &[Anchor], th: &Theme) -> AnyElement {
+    /// The bar, bottom-right and fixed in the view. `beside` names the agent
+    /// pane ↪ would send to; see [`Self::send_button`].
+    pub fn draw_bar(&self, anchors: &[Anchor], th: &Theme, beside: Option<&str>) -> AnyElement {
         let text = th.font_size * 0.85;
         let (notes, concurs) = self.counts(anchors);
         let mut row = div()
@@ -992,6 +1028,9 @@ impl NotesLayer {
                 }
                 row =
                     row.child(self.button("⎘ copy map", Zone::CopyMap, self.mappable(anchors), th));
+                if let Some((label, live)) = self.send_button(anchors, beside) {
+                    row = row.child(self.button(&label, Zone::Send, live, th));
+                }
                 match &self.writable {
                     Ok(()) if !self.gone => {
                         row = row.child(self.button(
@@ -1599,6 +1638,68 @@ mod tests {
             Path::new("/r/p.html"),
         );
         assert_eq!(script_less.shown(), &Shown::NoScript);
+    }
+
+    /// ↪ is drawn only when an agent pane is beside the brief, names it when
+    /// the pane says there is a choice, and never on a page with no notes to
+    /// send. It can be pressed once there is something in the map.
+    ///
+    /// Mutation-tested: drawing the button whenever the page shows notes
+    /// fails this.
+    #[test]
+    fn the_send_button_is_absent_when_no_agent_pane_is_beside_the_brief() {
+        let anchors = vec![anchor("a", Some(rect_css(0.0, 0.0, 700.0, 200.0)), false)];
+        let l = layer(ONE_NOTE, "{}", ConcurSupport::Supported);
+        assert_eq!(
+            l.send_button(&anchors, None),
+            None,
+            "nobody beside: no button"
+        );
+        assert_eq!(
+            l.send_button(&anchors, Some("agent")),
+            Some(("↪ send to agent".to_string(), true))
+        );
+        assert_eq!(
+            l.send_button(&anchors, Some("CLAUDE")).map(|b| b.0),
+            Some("↪ send to CLAUDE".to_string())
+        );
+        let empty = layer("{}", "{}", ConcurSupport::Supported);
+        assert_eq!(
+            empty.send_button(&anchors, Some("agent")),
+            Some(("↪ send to agent".to_string(), false)),
+            "drawn, and dim until there is a note"
+        );
+        assert_eq!(empty.send(&anchors), None);
+        let read_only = NotesLayer::new(
+            notes::read(b"<html><body><p>just a page</p></body></html>"),
+            None,
+            ConcurSupport::Unknown,
+            0,
+            Path::new("/r/page.html"),
+        );
+        assert_eq!(read_only.send_button(&anchors, Some("agent")), None);
+    }
+
+    /// ↪ sends what the bar shows, unsaved notes included, and counts them;
+    /// it saves nothing on the way.
+    #[test]
+    fn send_carries_the_map_as_shown_and_saves_nothing() {
+        let anchors = vec![anchor("a", Some(rect_css(0.0, 0.0, 700.0, 200.0)), false)];
+        let mut l = layer(ONE_NOTE, "{}", ConcurSupport::Supported);
+        l.add_note(
+            "a".into(),
+            "a title".into(),
+            "not saved yet".into(),
+            "2026-09-25 09:00".into(),
+        );
+        let (map, unsaved) = l.send(&anchors).expect("a map to send");
+        assert!(
+            map.contains("hello") && map.contains("not saved yet"),
+            "{map}"
+        );
+        assert_eq!(map, l.map(&anchors).unwrap(), "the copy map's text");
+        assert_eq!(unsaved, 1);
+        assert_eq!(l.unsaved(), 1, "still waiting to be saved");
     }
 
     /// Every way a page cannot be saved into is said in words before
