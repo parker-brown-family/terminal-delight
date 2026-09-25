@@ -262,6 +262,22 @@ pub struct Segment {
     pub tone: Tone,
 }
 
+/// What the rail calls a checkout: the word, not the abbreviation, singular
+/// or plural.
+///
+/// `WT` saved four letters in the window's busiest row and cost every reader a
+/// lookup — Parker, on the corner badge: *"1 WT -- should just say worktree"*.
+/// One function for every place that names one, so the badge and the table it
+/// unfolds into cannot drift apart again: the first cut of the badge fix left
+/// the table saying `WT` one click away.
+pub fn worktree_noun(n: usize) -> &'static str {
+    if n == 1 {
+        "WORKTREE"
+    } else {
+        "WORKTREES"
+    }
+}
+
 /// What kind of fact a ticker frame carries — so a renderer can pick a glyph,
 /// and a test can say which frames appeared without matching prose.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -1049,11 +1065,7 @@ impl ProjectState {
         let n = self.primary_checkouts().len();
         let shared = self.shared_count();
         let foreign = self.foreign.len();
-        // The word, not the abbreviation. `WT` saved four letters in the
-        // window's busiest row and cost every reader a lookup — Parker, on the
-        // corner: *"1 WT -- should just say worktree"*. Singular and plural
-        // spelled, the way every other count on the rail is.
-        let noun = if n == 1 { "WORKTREE" } else { "WORKTREES" };
+        let noun = worktree_noun(n);
         let wt = if shared == 0 && foreign == 0 && n > 0 {
             format!("{n} {noun} \u{2713}")
         } else {

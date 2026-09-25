@@ -22194,7 +22194,13 @@ impl Workspace {
                     .unwrap_or("?");
                 format!("{} ({repo})", c.line())
             };
-            let kind = if c.shared() { "SHARED" } else { "WT" };
+            // The badge's own word for one checkout, so the table it unfolds
+            // into says what the badge says.
+            let kind = if c.shared() {
+                "SHARED"
+            } else {
+                engstate::worktree_noun(1)
+            };
             let kind_ink = if c.shared() { warn } else { th.accent };
             let dirt = match (c.dirty, c.delta) {
                 (Some(0), _) => "clean".to_string(),
@@ -22435,25 +22441,18 @@ impl Workspace {
     ///
     /// The heartbeat leads, beside the badge, for the same reason: both are
     /// standing readings of the project, where the frames are its news.
-    fn render_ticker(&self, scale: f32, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
+    fn render_ticker(&self, scale: f32, cx: &mut Context<Self>) -> gpui::Div {
         let th = theme::theme(cx);
+        // The row takes the top bar's slack (`flex_1`), so its spare width
+        // collects at the far end — and it carries no hover, because empty bar
+        // is not the ticker. The hold is on `read`, below.
         let mut row = div()
-            .id("eng-ticker")
             .flex()
             .flex_row()
             .items_center()
             .min_w_0()
             .flex_1()
-            .gap(px(10. * scale))
-            .on_hover(cx.listener(|ws, hovered: &bool, _w, _cx| {
-                ws.eng_hover = *hovered;
-                // Leaving is a fresh start rather than a turn that fell due
-                // while you were reading: the frame you were on stays up for a
-                // whole interval after you look away from it.
-                if !*hovered {
-                    ws.eng_frame_at = Instant::now();
-                }
-            }));
+            .gap(px(10. * scale));
         let Some(st) = self.eng_state() else {
             return row;
         };
@@ -22475,13 +22474,34 @@ impl Workspace {
                 .h(px(14. * scale))
                 .bg(th.text.alpha(0.18)),
         );
+        // What you READ — the pips and the sentence — and only that holds the
+        // carousel still. The hover sat on the whole row at first, which is as
+        // wide as the bar's empty middle, so a pointer resting anywhere between
+        // the sentence and the agent counter froze the ticker. Sized to its
+        // content, and still free to shrink so the sentence truncates.
+        let mut read = div()
+            .id("eng-ticker")
+            .flex()
+            .flex_row()
+            .items_center()
+            .min_w_0()
+            .gap(px(10. * scale))
+            .on_hover(cx.listener(|ws, hovered: &bool, _w, _cx| {
+                ws.eng_hover = *hovered;
+                // Leaving is a fresh start rather than a turn that fell due
+                // while you were reading: the frame you were on stays up for a
+                // whole interval after you look away from it.
+                if !*hovered {
+                    ws.eng_frame_at = Instant::now();
+                }
+            }));
         let at = self.eng_frame % frames.len();
         if frames.len() > 1 {
-            row = row.child(self.render_pips(&frames, at, scale, cx));
+            read = read.child(self.render_pips(&frames, at, scale, cx));
         }
         let frame = &frames[at];
         let lead = 6. * scale;
-        row.child(
+        read = read.child(
             div()
                 .relative()
                 .min_w_0()
@@ -22500,7 +22520,8 @@ impl Workspace {
                     Animation::new(Duration::from_millis(320)).with_easing(gpui::ease_out_quint()),
                     move |el, t| el.opacity(t).left(px((1. - t) * lead)),
                 ),
-        )
+        );
+        row.child(read)
     }
 
     /// The carousel's pips: one per frame, the current one lit and long.
@@ -32327,6 +32348,29 @@ mod tests {
             ticker.contains(".on_hover(") && ticker.contains("ws.eng_hover = *hovered;"),
             "the ticker must know when it is being read"
         );
+        // …and only when the pointer is on what you read. The row that takes
+        // the bar's slack is `flex_1`; a hover there made the whole empty middle
+        // of the top bar a pause button.
+        let read_at = ticker.find(".id(\"eng-ticker\")").expect("the read area");
+        let hover_at = ticker[read_at..].find(".on_hover(").expect("its hover") + read_at;
+        assert!(
+            !ticker[read_at..hover_at].contains(".flex_1()"),
+            "the hovered element must not be the one that takes the row's slack"
+        );
+        assert_eq!(
+            ticker.matches(".on_hover(").count(),
+            1,
+            "one hover, on the read area"
+        );
+        assert!(
+            ticker.contains("read = read.child(self.render_pips(")
+                && ticker
+                    .find(".child(frame.text.clone())")
+                    .expect("the sentence")
+                    > hover_at
+                && ticker.contains("row.child(read)"),
+            "the pips and the sentence are the read area's children"
+        );
         // A pip goes straight to its frame — and stops the press there, or it
         // also arms the mother bar's move handle underneath.
         let pips = body("    fn render_pips(");
@@ -32424,6 +32468,28 @@ mod tests {
             STANDING_WASH < 0.12,
             "fainter than the hover, or it stops being a faint indicator"
         );
+    }
+
+    /// The checkouts table names a checkout the way the badge does.
+    ///
+    /// The badge learned to say `1 WORKTREE` — Parker: *"1 WT -- should just
+    /// say worktree"* — and the table one click away kept saying `WT`. Both now
+    /// take the word from `engstate::worktree_noun`, and no `WT` is left to
+    /// find.
+    #[test]
+    fn the_checkouts_table_names_a_checkout_the_way_the_badge_does() {
+        let code = shipped_code();
+        let table = body_of(&code, "fn render_eng_table");
+        assert!(
+            table.contains("engstate::worktree_noun(1)"),
+            "the table's kind column must take the badge's own word"
+        );
+        assert!(
+            !code.contains("\"WT\""),
+            "the abbreviation is back somewhere in the chrome"
+        );
+        assert_eq!(engstate::worktree_noun(1), "WORKTREE");
+        assert_eq!(engstate::worktree_noun(3), "WORKTREES");
     }
 
     /// The tree's actions row carries no scope text.
