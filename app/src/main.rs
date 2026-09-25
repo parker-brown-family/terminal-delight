@@ -1682,6 +1682,18 @@ fn anim_clock() -> f32 {
 /// same amount from the layer above.
 const FOLD_W: f32 = 15.0;
 
+/// How far a carried row shifts right at scale 1.0, on top of its own
+/// depth indent — see `Workspace::bar_cursor_ring`, which multiplies this
+/// by `s` like every other spacing constant in the same rows (`FOLD_W`,
+/// the depth `step`), so a narrowed or enlarged bar shifts the carried
+/// row by the same proportion as everything around it rather than by a
+/// fixed pixel count that only reads right at the scale it was eyeballed
+/// at. Large enough to read as a real step out of the tree's own rhythm
+/// rather than a rounding wobble; small enough that a task carried to
+/// Project depth still sits under the bar's own edge rather than
+/// crowding the fold triangle three layers up.
+const BAR_CARRY_INDENT: f32 = 10.0;
+
 /// The bin glyph's point size at scale 1.0 — two thirds of the 19pt it shipped
 /// at on the first pass, which read as the subject of the panel rather than as
 /// something the panel holds.
@@ -19153,9 +19165,32 @@ impl Workspace {
     /// (`skin::active_row`) and from the scoped branch's lit bar — three
     /// different facts, and a person arrowing past the active task must be able
     /// to see both at once, on the same row, without either disappearing.
-    fn bar_cursor_ring<E: Styled>(&self, row: tree::RowId, th: &theme::Theme, d: E) -> E {
+    fn bar_cursor_ring<E: Styled>(&self, row: tree::RowId, th: &theme::Theme, s: f32, d: E) -> E {
         if self.bar_cursor != Some(row) {
             return d;
+        }
+        if self.bar_carry.is_some() {
+            // Carrying, not just looking — the plain ring below reads as
+            // no different from an ordinary walk, which is exactly what
+            // it was built to be. Parker, on the first cut: *"it must
+            // VISIBLY detach ... indent differently ... further to the
+            // right."* `ml` rather than `pl`: additive to whatever
+            // depth-based padding the row already set, so this never has
+            // to know or preserve that value. A real (non-inset) shadow
+            // reads as LIFTED rather than pressed-in, which inset gives
+            // the plain cursor below — the two must never be confusable,
+            // since a person mid-carry needs the stronger one to win at a
+            // glance.
+            return d
+                .ml(px(BAR_CARRY_INDENT * s))
+                .bg(th.cursor.alpha(0.24))
+                .shadow(vec![BoxShadow {
+                    color: th.cursor.alpha(0.95),
+                    offset: point(px(0.), px(1.)),
+                    blur_radius: px(8.),
+                    spread_radius: px(1.),
+                    inset: false,
+                }]);
         }
         d.bg(th.cursor.alpha(0.14)).shadow(vec![BoxShadow {
             color: th.cursor.alpha(0.85),
@@ -19272,7 +19307,7 @@ impl Workspace {
         // washed, being dropped onto and under the cursor all at once still
         // shows where the keyboard is, which is the only one a person cannot
         // otherwise locate.
-        self.bar_cursor_ring(row_id_kind, th, d)
+        self.bar_cursor_ring(row_id_kind, th, s, d)
             .hover(move |st| st.bg(color.alpha(0.12)))
             .children(caret)
             // The fold: its own target, wide enough to hit without aiming, so
@@ -19536,6 +19571,7 @@ impl Workspace {
         self.bar_cursor_ring(
             tree::RowId::Task(i),
             th,
+            s,
             sk.active_row(
                 div()
                     .id(SharedString::from(format!("bar-task-{i}")))
