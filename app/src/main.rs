@@ -140,6 +140,22 @@ fn may_split(leaves: usize) -> bool {
     leaves < MAX_PANES
 }
 
+/// Whether dropping a dragged pane on tab `t` (currently showing `t_panes`
+/// panes) is refused by the cap, given the drag started at tab `from`.
+///
+/// A drop back onto the pane's OWN tab never grows it — the pane is
+/// already counted in `t_panes` and will still be one of that tab's panes
+/// after the extract-then-splice, just rearranged — so it is never
+/// refused by the cap regardless of `t_panes`, even for a legacy tab
+/// sitting above `MAX_PANES` already. Only a drop that ADDS to a
+/// DIFFERENT tab can push it past the cap. Caught in review: an earlier
+/// version of this check counted the pane against its own tab before
+/// removing it, which refused an ordinary re-layout drag on any tab
+/// already at the cap.
+fn pane_drop_capped(t: usize, from: usize, t_panes: usize) -> bool {
+    t != from && !may_split(t_panes)
+}
+
 /// What a request to open a document beside a pane becomes.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Beside {
@@ -17696,18 +17712,6 @@ impl Workspace {
                 return;
             }
         }
-        // A blocked bar-task target was only ever a hover state, refusing
-        // the drop before release — release must not then quietly do
-        // something else. Checked here, before the pane is even pulled out
-        // of its source, so releasing on a blocked row changes nothing at
-        // all, the same as releasing over empty space. Caught in review:
-        // the match arm below used to return `None` for this case, which
-        // fell through to the "give it a fresh tab" fallback AFTER the pane
-        // had already been extracted — so a refused drop silently orphaned
-        // the pane into a brand new tab instead of leaving it alone.
-        if let DropTarget::BarTask { blocked: true, .. } = &target {
-            return;
-        }
         let Some(from) = self.tabs.iter().position(|t| {
             let mut v = vec![];
             t.root.leaves(&mut v);
@@ -17715,6 +17719,43 @@ impl Workspace {
         }) else {
             return;
         };
+        // A drop that would exceed MAX_PANES is refused before the pane is
+        // touched at all — the tab strip's own drop and the tree's BarTask
+        // row land in the identical spliced-in-as-a-pane outcome, so both
+        // are refused the identical way. Checked fresh against the live
+        // tabs rather than trusting BarTask's `blocked`, which was computed
+        // at the last hover and the drag may have moved since. Must happen
+        // before extraction: a refused drop has to leave the layout exactly
+        // as it was, and extraction cannot be undone once the source tab
+        // has already been rebuilt around the pane's absence.
+        //
+        // Caught in review: this used to guard only BarTask, and even there
+        // the match arm returned `None` for the blocked case, which fell
+        // through to the "give it a fresh tab" fallback AFTER the pane had
+        // already been pulled out — so a refused drop silently orphaned the
+        // pane into a brand-new tab instead of leaving it alone. The plain
+        // tab-strip drop had the identical gap and nothing guarded it at
+        // all, since it never checked the cap in the first place.
+        let target_index = match &target {
+            DropTarget::Tab { index } => Some(*index),
+            DropTarget::BarTask { index, .. } => Some(*index),
+            _ => None,
+        };
+        if let Some(index) = target_index {
+            let would_empty_source = {
+                let mut v = vec![];
+                self.tabs[from].root.leaves(&mut v);
+                v.len() == 1
+            };
+            let t = if would_empty_source && index > from {
+                index - 1
+            } else {
+                index
+            };
+            if pane_drop_capped(t, from, self.tab_pane_count(t)) {
+                return;
+            }
+        }
 
         let pred = |e: &Entity<TerminalView>| e.entity_id() == dragged;
         let src = self.tabs.remove(from);
@@ -17793,11 +17834,12 @@ impl Workspace {
                 };
                 self.splice_pane_into_tab(t, &pane)
             }
-            DropTarget::BarTask { blocked: true, .. } => None,
-            DropTarget::BarTask {
-                index,
-                blocked: false,
-            } => {
+            // `blocked` is ignored here on purpose: the early guard above
+            // already refused the drop, computed fresh, if the target was
+            // at the cap by release time — `blocked` is only ever a hover-
+            // time hint for the highlight and ought not decide anything by
+            // the time a release reaches this match.
+            DropTarget::BarTask { index, .. } => {
                 let t = if source_emptied && index > from {
                     index - 1
                 } else {
@@ -36881,6 +36923,22 @@ mod tests {
             CarryDepth::Task,
             "can't zoom in past the task itself"
         );
+    }
+
+    #[test]
+    fn pane_drop_capped_never_blocks_a_drop_back_onto_its_own_tab() {
+        // A tab at the cap: dropping one of its own panes back onto
+        // itself must not be refused — it is a rearrangement, not a
+        // growth. This is the case review caught an earlier version of
+        // the guard getting wrong.
+        assert!(!pane_drop_capped(2, 2, MAX_PANES));
+        // Even a legacy tab already OVER the cap must not be blocked from
+        // rearranging its own panes.
+        assert!(!pane_drop_capped(2, 2, LEGACY_PANE_CEILING));
+        // A different tab at the cap DOES refuse an incoming pane.
+        assert!(pane_drop_capped(3, 2, MAX_PANES));
+        // A different tab under the cap accepts one.
+        assert!(!pane_drop_capped(3, 2, MAX_PANES - 1));
     }
 
     #[test]
