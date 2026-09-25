@@ -8,7 +8,7 @@ _Written 2026-09-25, when the ten slices and the follow-ups had merged. The Gate
 - `ImageDoc::release` became `give_back`, so the seam's `DocumentView::release` (a pointer let go) doesn't share its name. Textures are given back by the view's release hook, registered in `DocumentView::new`, not by whoever closes it.
 - `doc_wheel` is called from `on_wheel`, not `scroll_by_wheel`, because the FOCUS modal routes its own wheel through the latter.
 - `FollowLink` carries a separate `fragment`, so a `#` in a file name is not ambiguous.
-- The helper the control verbs use to pick a pane was called `bench_apply` and ran the document verbs too; the cleanup PR renames it.
+- The helper the control verbs use to pick a pane was called `bench_apply` and ran the document verbs too; it is now `act_on_picked_pane`.
 - The design says "ten languages"; `lang.rs` has nine tables.
 
 ## Behaviour the design did not specify, or specified differently
