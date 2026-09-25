@@ -5661,6 +5661,70 @@ impl TerminalView {
         }
     }
 
+    /// The pointer is no longer over this pane, so whatever it lit here goes
+    /// out: the square's strip controls, a brief's note buttons, the bench's
+    /// chips and its drop target, the peel corner.
+    ///
+    /// Every one of those is set from [`Self::on_mouse_move`], and gpui runs
+    /// that only while the pane is hovered. The move that leaves the pane is
+    /// the one move the pane never hears, so the last control under the
+    /// pointer stayed lit until the pointer came back. Called from
+    /// [`Self::pointer_leave_hook`]. Notifies only when something was lit;
+    /// each document repaints itself only if a note button goes out.
+    fn pointer_left(&mut self, cx: &mut Context<Self>) {
+        let mut out = false;
+        if let Some(float) = self.float.as_mut() {
+            out |= float.hover.take().is_some();
+        }
+        out |= self.note_hover.take().is_some();
+        out |= self.wb_hover.take().is_some();
+        out |= std::mem::take(&mut self.wb_drop);
+        out |= std::mem::take(&mut self.wb_pointer) != crate::workbench::Pointer::Arrow;
+        let float_doc = self.float.as_ref().map(|f| f.view.clone());
+        let face_doc = self.doc_on_face().map(|d| d.view.clone());
+        for view in [float_doc, face_doc].into_iter().flatten() {
+            view.update(cx, |v, cx| v.hover(None, cx));
+        }
+        if out {
+            cx.notify();
+        }
+    }
+
+    /// Hears the pointer leave this pane, which the pane's own
+    /// `on_mouse_move` never can.
+    ///
+    /// There are two ways out. A move to anywhere this hitbox is not hovered:
+    /// a neighbouring pane, the left bar, a menu drawn over the pane. And the
+    /// pointer leaving the window, which gpui passes on as its own event with
+    /// no move and no new position, so no hitbox test would notice it. Both
+    /// listen in the capture phase, ahead of any bubble handler that stops
+    /// the event (the window's resize edges do).
+    ///
+    /// It is the root's LAST child, so its hitbox has the root's bounds and
+    /// lies above every child's. Anything that stops it being hovered stops
+    /// the root being hovered too, so it acts only on a move the root's own
+    /// handler did not get, and the two never both act on one move.
+    fn pointer_leave_hook(&self, weak: gpui::WeakEntity<Self>) -> impl IntoElement {
+        canvas(
+            |bounds, window, _cx| window.insert_hitbox(bounds, gpui::HitboxBehavior::Normal),
+            move |_bounds, hitbox, window, _cx| {
+                let moved = weak.clone();
+                window.on_mouse_event(move |_: &MouseMoveEvent, phase, window, cx| {
+                    if phase == gpui::DispatchPhase::Capture && !hitbox.is_hovered(window) {
+                        let _ = moved.update(cx, |view, cx| view.pointer_left(cx));
+                    }
+                });
+                window.on_mouse_event(move |_: &gpui::MouseExitEvent, phase, _window, cx| {
+                    if phase == gpui::DispatchPhase::Capture {
+                        let _ = weak.update(cx, |view, cx| view.pointer_left(cx));
+                    }
+                });
+            },
+        )
+        .absolute()
+        .inset_0()
+    }
+
     /// What the document on this pane — the floating square's, else the
     /// Document face's — shows of a brief's notes, as one line of JSON for
     /// the control socket. An error sentence when there is none to ask.
@@ -10490,6 +10554,9 @@ impl Render for TerminalView {
             // the paint overlay is the topmost surface — painted last, above
             // every menu and tray, matching its Esc-first place in on_key
             .children(paint_el)
+            // Draws nothing. Last so its hitbox lies above every child's:
+            // see `pointer_leave_hook`.
+            .child(self.pointer_leave_hook(cx.entity().downgrade()))
     }
 }
 
@@ -13842,6 +13909,73 @@ mod tests {
             .expect("on_mouse_move drags the square");
         let select = mv.find("sel.update(").expect("the grid's selection drag");
         assert!(drag < select, "the square's drag comes before the grid's");
+    }
+
+    /// Leaving the pane puts out what the pointer lit in it.
+    ///
+    /// `on_mouse_move` lights what is under the pointer, and gpui runs it only
+    /// while the pane is hovered, so the move that leaves is never heard
+    /// there. A strip control and a brief's note button both stayed lit that
+    /// way until the pointer came back (issues 724 and 743). Three things
+    /// keep the way out covered. The hook hears both exits. `pointer_left`
+    /// puts out every light the move handler sets, so a new light added there
+    /// with no way out fails here. And the hook is the root's last child, so
+    /// no hitbox in the pane lies above it.
+    #[test]
+    fn leaving_the_pane_puts_out_what_the_pointer_lit() {
+        let code = live_code();
+        let hook = method_body(&code, "fn pointer_leave_hook(");
+        assert!(
+            hook.contains("&MouseMoveEvent") && hook.contains("!hitbox.is_hovered(window)"),
+            "the hook must hear a move that lands off the pane: {hook}"
+        );
+        assert!(
+            hook.contains("&gpui::MouseExitEvent"),
+            "leaving the window arrives as its own event, with no move: {hook}"
+        );
+        assert_eq!(hook.matches("view.pointer_left(cx)").count(), 2, "{hook}");
+
+        let lights: [(&str, &[&str]); 4] = [
+            (
+                "self.bench_hover(",
+                &[
+                    "self.wb_hover.take()",
+                    "&mut self.wb_drop",
+                    "&mut self.wb_pointer",
+                ],
+            ),
+            ("self.float_hover(", &["float.hover.take()"]),
+            ("self.doc_hover(", &["v.hover(None, cx)"]),
+            ("self.sticky_hover(", &["self.note_hover.take()"]),
+        ];
+        let mv = method_body(&code, "fn on_mouse_move(");
+        assert_eq!(
+            mv.matches("_hover(").count(),
+            lights.len(),
+            "on_mouse_move sets a light this test does not know how to put out: {mv}"
+        );
+        let left = method_body(&code, "fn pointer_left(");
+        for (set, outs) in lights {
+            assert!(mv.contains(set), "on_mouse_move no longer calls {set}");
+            for out in outs {
+                assert!(
+                    left.contains(out),
+                    "pointer_left misses {out}, lit by {set}"
+                );
+            }
+        }
+
+        let render = code
+            .find("fn render(&mut self, window: &mut Window, cx: &mut Context<Self>)")
+            .expect("render");
+        let render = &code[render..];
+        let hook_at = render
+            .find(".child(self.pointer_leave_hook(")
+            .expect("the root draws the hook");
+        assert!(
+            !render[hook_at + 1..].contains(".child"),
+            "a child drawn after the hook can cover it"
+        );
     }
 
     /// The wheel over the floating square pans the document in it, un-bent,
