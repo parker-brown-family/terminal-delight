@@ -1140,6 +1140,19 @@ impl TerminalView {
         }
     }
 
+    /// Alt held or let go: the documents on this pane — the floating
+    /// square's and the Document face's — outline everything that takes a
+    /// note while the pointer is over them, so a press on any of it adds one.
+    /// A bare Alt only; Alt with Ctrl or Super is some other chord.
+    pub(super) fn doc_alt(&mut self, mods: &gpui::Modifiers, cx: &mut Context<Self>) {
+        let held = mods.alt && !mods.control && !mods.platform;
+        let float = self.float.as_ref().map(|f| f.view.clone());
+        let face = self.doc_on_face().map(|d| d.view.clone());
+        for view in [float, face].into_iter().flatten() {
+            view.update(cx, |v, cx| v.reveal(held, cx));
+        }
+    }
+
     /// What the document on this pane — the floating square's, else the
     /// Document face's — shows of a brief's notes, as one line of JSON for
     /// the control socket. An error sentence when there is none to ask.

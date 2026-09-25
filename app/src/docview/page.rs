@@ -1189,8 +1189,11 @@ impl PageDoc {
             return;
         }
         let before = self.lit();
+        let entered = self.pointer.is_some() != at.is_some();
         self.pointer = at;
-        if self.lit() != before {
+        // Coming onto the page or leaving it changes what Alt shows.
+        let revealing = self.notes.as_ref().is_some_and(NotesLayer::revealing);
+        if self.lit() != before || (entered && revealing) {
             cx.notify();
         }
     }
@@ -2249,6 +2252,10 @@ impl Backend for PageDoc {
 
     fn set_beside(&mut self, beside: Option<String>) -> bool {
         PageDoc::set_beside(self, beside)
+    }
+
+    fn reveal(&mut self, on: bool) -> bool {
+        self.notes.as_mut().is_some_and(|l| l.reveal(on))
     }
 
     fn notes_said(&mut self, said: Said, cx: &mut Context<DocumentView>) {

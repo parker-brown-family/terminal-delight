@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Introduction · Terminal Delight docs</title>
+<link rel="icon" href="../../favicon.svg">
+<link rel="stylesheet" href="../../assets/fonts/fonts.css">
+<link rel="stylesheet" href="redesign.css">
+<script src="../../assets/kiosk-theme.js"></script>
+<script>TD_KIOSK.paint(TD_KIOSK.resolve().palette);try{document.documentElement.dataset.paper=localStorage.getItem('td-docs-paper')||'off';document.documentElement.dataset.crt=localStorage.getItem('td-docs-crt')||'off'}catch(e){}</script>
+</head>
+<body data-page="/">
+<header id="top" class="top"></header>
+<div class="shell">
+<nav class="side" id="side" aria-label="Contents"></nav>
+<main class="page">
+
+  <h1 class="t"><span class="n">01</span>Introduction</h1>
+  <p class="lede">Terminal Delight is a GPU-native terminal for Linux, written in Rust on gpui and alacritty_terminal. It is a real terminal first, with tiling panes, tabs, session restore, and a CRT look you can dial up or down. When a pane is running a coding agent, it reads that agent's own transcript and shows you what the agent is doing, what it has spent, and whether it is waiting on you.</p>
+
+  <hr class="hard">
+
+  <div class="room">
+    <div class="cards">
+      <a class="glass card" href="install.html"><span class="h">01 · Install</span><b>AppImage and first launch →</b></a>
+      <a class="glass card" href="https://docs.terminal-delight.brownfamilysports.com/panes-and-tabs"><span class="h">02 · Open</span><b>Panes, tabs and sessions →</b></a>
+      <a class="glass card" href="https://docs.terminal-delight.brownfamilysports.com/agent-wall"><span class="h">03 · Watch</span><b>The agent wall and attention →</b></a>
+    </div>
+    <div class="glass start">
+      <span class="h">Start here · 3</span>
+      <span class="path"><a href="install.html">Install</a> → <a href="https://docs.terminal-delight.brownfamilysports.com/first-launch">First launch</a> → <a href="https://docs.terminal-delight.brownfamilysports.com/workbench">Workbench</a></span>
+      <small>read in this order · <kbd>]</kbd> next page</small>
+    </div>
+  </div>
+
+  <h2 class="sec" id="reading"><span class="n">01.0.1</span>Reading these pages<a class="hash" href="#reading">#</a></h2>
+  <p>Every page has a Brief and a Technical version, and a few have a Story as well. Pick the one that fits the time you have: the tabs under a page's title switch between them, and so do <kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd>.</p>
+  <div class="three">
+    <div class="box"><div class="h brief">Brief</div>What it is, what you do with it, and the one key to remember, in under a minute.</div>
+    <div class="box"><div class="h story">Story</div>The same idea told through an analogy, for when you want to know why it exists.</div>
+    <div class="box"><div class="h technical">Technical</div>The keys, the files, the protocol and the limits, with links to the code.</div>
+  </div>
+  <p style="margin-top:16px">Search covers every page, every version, down to the table rows: press <kbd>Ctrl K</kbd> or <kbd>/</kbd>. Everything else here has a key too: press <kbd>?</kbd>.</p>
+
+  <h2 class="sec" id="chapters"><span class="n">01.0.2</span>Every chapter<a class="hash" href="#chapters">#</a></h2>
+  <table class="q">
+    <tr><td>01 Start</td><td><a href="index.html">Introduction</a><span class="dot"> · </span><a href="install.html">Install</a><span class="dot"> · </span><a href="https://docs.terminal-delight.brownfamilysports.com/first-launch">First launch</a><span class="dot"> · </span><a href="https://docs.terminal-delight.brownfamilysports.com/keys">Keys</a></td></tr>
+    <tr><td>02 Agents</td><td><a href="https://docs.terminal-delight.brownfamilysports.com/agent-wall">Agent wall</a><span class="dot"> · </span><a href="https://docs.terminal-delight.brownfamilysports.com/launching">Launching an agent</a><span class="dot"> · </span><a href="https://docs.terminal-delight.brownfamilysports.com/attention">Attention</a><span class="dot"> · </span><a href="https://docs.terminal-delight.brownfamilysports.com/graveyard">Graveyard</a><span class="dot"> · </span><a href="https://docs.terminal-delight.brownfamilysports.com/usage">Usage and vitals</a></td></tr>
+    <tr><td>03 Bench</td><td><a href="https://docs.terminal-delight.brownfamilysports.com/workbench">Workbench</a><span class="dot"> · </span><a href="https://docs.terminal-delight.brownfamilysports.com/surface-protocol">Surface protocol</a><span class="dot"> · </span><a href="https://docs.terminal-delight.brownfamilysports.com/comments">Comments</a></td></tr>
+    <tr><td>04 Workspace</td><td><a href="https://docs.terminal-delight.brownfamilysports.com/left-bar">Left bar and tasks</a><span class="dot"> · </span><a href="https://docs.terminal-delight.brownfamilysports.com/panes-and-tabs">Panes and tabs</a><span class="dot"> · </span><a href="https://docs.terminal-delight.brownfamilysports.com/sticky-notes">Sticky notes</a><span class="dot"> · </span><a href="https://docs.terminal-delight.brownfamilysports.com/sessions">Sessions and restarts</a></td></tr>
+    <tr><td>05 Look</td><td><a href="https://docs.terminal-delight.brownfamilysports.com/themes">Themes</a><span class="dot"> · </span><a href="https://docs.terminal-delight.brownfamilysports.com/skins">Skins</a><span class="dot"> · </span><a href="https://docs.terminal-delight.brownfamilysports.com/crt">CRT</a><span class="dot"> · </span><a href="https://docs.terminal-delight.brownfamilysports.com/focus-reader">Focus reader</a><span class="dot"> · </span><a href="https://docs.terminal-delight.brownfamilysports.com/text-crawl">Text crawl</a></td></tr>
+    <tr><td>06 MCP</td><td><a href="https://docs.terminal-delight.brownfamilysports.com/mcp">MCP server</a><span class="dot"> · </span><a href="https://docs.terminal-delight.brownfamilysports.com/agent-to-agent">Agent to agent</a><span class="dot"> · </span><a href="https://docs.terminal-delight.brownfamilysports.com/ctl">ctl</a><span class="dot"> · </span><a href="https://docs.terminal-delight.brownfamilysports.com/plugins">Plugins</a></td></tr>
+    <tr><td>Reference</td><td><a href="https://docs.terminal-delight.brownfamilysports.com/config-files">Config files</a><span class="dot"> · </span><a href="https://docs.terminal-delight.brownfamilysports.com/environment">Environment flags</a><span class="dot"> · </span><a href="https://docs.terminal-delight.brownfamilysports.com/cli">Command line</a><span class="dot"> · </span><a href="https://docs.terminal-delight.brownfamilysports.com/languages">Languages</a><span class="dot"> · </span><a href="https://docs.terminal-delight.brownfamilysports.com/keys">Keymapping</a></td></tr>
+  </table>
+
+  <nav id="pager" aria-label="Previous and next"></nav>
+  <footer class="foot">
+    <span>Updated 2026-09-25 · true of main at d7cf383</span>
+    <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/docsite/pages/index.html">Edit this page</a>
+    <span>Terminal Delight · MIT</span>
+    <span>Prototype: pages outside Introduction and Install open on the live docs</span>
+  </footer>
+</main>
+</div>
+<script src="redesign.js"></script>
+</body>
+</html>

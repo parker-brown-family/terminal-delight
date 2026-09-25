@@ -7338,6 +7338,9 @@ impl TerminalView {
         // A brief's note buttons show under the pointer, as a browser shows
         // them: the document is told where the pointer is, un-bent.
         self.doc_hover(ev.position, cx);
+        // Alt held over a document outlines what takes a note. Read on every
+        // move, so a pane that was not focused when Alt went down still sees it.
+        self.doc_alt(&ev.modifiers, cx);
         // The peel corner curls under the pointer. No-op with no note stuck here,
         // and it only notifies on a change, so ordinary mousing costs nothing.
         self.sticky_hover(ev.position, cx);
@@ -9847,6 +9850,13 @@ impl Render for TerminalView {
         div()
             .track_focus(&self.focus_handle(cx))
             .on_key_down(cx.listener(Self::on_key))
+            // Alt pressed or let go with the pointer still: the document's
+            // note boxes show and go at once, not on the next move.
+            .on_modifiers_changed(
+                cx.listener(|this, ev: &gpui::ModifiersChangedEvent, _, cx| {
+                    this.doc_alt(&ev.modifiers, cx)
+                }),
+            )
             .on_scroll_wheel(cx.listener(Self::on_wheel))
             // BOTH buttons, and the second one is not optional. gpui's
             // `on_mouse_down` filters on the button it is registered with

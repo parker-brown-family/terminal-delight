@@ -1311,8 +1311,14 @@ fn a_markdown_block_opens_its_note_box_from_the_button_under_the_pointer(cx: &mu
     );
 
     let (x, y, w, _) = pane.float_zone(FloatHit::Body).expect("the square's body");
+    assert_eq!(report["buttons"], 0, "no 💬 before the pointer comes");
     pane.hover(point(px(x + 60.), px(y + PAD + 6.)));
     pane.redraw();
+    assert_eq!(
+        pane.doc_notes().expect("notes")["buttons"],
+        1,
+        "the 💬 of the block under the pointer is DRAWN, not only pressable"
+    );
     let button = point(
         px(x + w - PAD - NOTE_GUTTER / 2.0),
         px(y + PAD + BUTTON_CSS / 2.0),
@@ -1367,4 +1373,93 @@ fn a_picture_a_program_draws_is_shown_and_then_forgotten_when_hidden(cx: &mut Te
         pane.rows().iter().any(|r| r.contains("ready")),
         "the text is untouched"
     );
+}
+
+/// Alt held over a document outlines every element that takes a note, and a
+/// press anywhere inside one opens its note box; let go of Alt and the same
+/// press opens nothing. Parker, 2026-09-25: *"I expect that If I hold alt
+/// hovering over the md file display overlay --- that it will show BOXES
+/// where I can click to add comments to each element"*.
+///
+/// Mutation-tested: dropping the pane's modifiers listener, and drawing no
+/// box while Alt is held, each fail this.
+#[gpui::test]
+fn alt_over_a_markdown_file_outlines_every_block_and_a_press_in_one_opens_it(
+    cx: &mut TestAppContext,
+) {
+    use crate::docview::markdown::PAD;
+    let dir = Scratch::new("md-alt-boxes");
+    let md = dir.join("plan.md");
+    std::fs::write(
+        &md,
+        "A first paragraph that takes a note.\n\nA second one.\n",
+    )
+    .expect("the document");
+    let md = md.to_str().expect("a UTF-8 temp path").to_string();
+    let mut pane = Pane::running(cx, &format!("printf '%s\\n' 'doc {md}' 'ready'; exec cat"));
+    pane.wait_for("ready");
+    let at = pane.point_at(&md);
+    pane.click(at, Pane::alt());
+    pane.redraw();
+    let (x, y, _, _) = pane.float_zone(FloatHit::Body).expect("the square's body");
+    // Over the first paragraph's words, well left of its 💬.
+    let words = point(px(x + 40.), px(y + PAD + 6.));
+    pane.hover(words);
+    pane.redraw();
+    assert_eq!(
+        pane.doc_notes().expect("notes")["boxes"],
+        0,
+        "no boxes without Alt"
+    );
+    pane.click(words, Default::default());
+    pane.redraw();
+    assert_eq!(
+        pane.doc_notes().expect("notes")["open"],
+        serde_json::Value::Null,
+        "without Alt, a press on the words opens nothing"
+    );
+
+    // Alt goes down with the pointer still: the boxes are drawn at once.
+    pane.modifiers(Pane::alt());
+    pane.redraw();
+    let report = pane.doc_notes().expect("notes");
+    assert_eq!(report["boxes"], 2, "both paragraphs outlined: {report}");
+    pane.click(words, Pane::alt());
+    pane.redraw();
+    assert_eq!(
+        pane.doc_notes().expect("notes")["open"],
+        "p-a-first-paragraph-that",
+        "Alt+click on the words opens that paragraph's note box"
+    );
+    pane.keys("escape");
+    pane.modifiers(Default::default());
+    pane.redraw();
+    assert_eq!(
+        pane.doc_notes().expect("notes")["boxes"],
+        0,
+        "let go, and they go"
+    );
+}
+
+/// Alt over a brief outlines its anchors the same way, since a brief and a
+/// Markdown file share one notes layer; let go and they go.
+#[gpui::test]
+fn alt_over_a_brief_outlines_its_anchors(cx: &mut TestAppContext) {
+    let (mut pane, _dir, brief, _png) = pane_showing_a_brief(cx, "brief-alt-boxes");
+    let at = pane.point_at(&brief);
+    pane.click(at, Pane::alt());
+    pane.redraw();
+    let body = Pane::middle(pane.float_zone(FloatHit::Body).expect("the square's body"));
+    pane.hover(body);
+    pane.redraw();
+    assert_eq!(pane.doc_notes().expect("notes")["boxes"], 0);
+    pane.modifiers(Pane::alt());
+    pane.redraw();
+    let boxes = pane.doc_notes().expect("notes")["boxes"]
+        .as_u64()
+        .unwrap_or(0);
+    assert!(boxes >= 1, "every anchor in view is outlined: {boxes}");
+    pane.modifiers(Default::default());
+    pane.redraw();
+    assert_eq!(pane.doc_notes().expect("notes")["boxes"], 0);
 }
