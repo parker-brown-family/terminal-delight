@@ -14,6 +14,8 @@
 #   1. a brief floating over a shell, in a tab with no agent  -> no button
 #   2. the same brief floating over an agent pane             -> "↪ send to agent"
 #   3. the same brief in a pane opened beside the agent        -> "↪ send to agent"
+#   3b. a note added there and not saved                       -> "↪ save & send to agent",
+#       and once saved                                         -> "↪ send to agent"
 #   4. the agent's stdin afterwards                            -> empty: nothing
 #                                                                 was typed at it
 #
@@ -150,6 +152,13 @@ check "doc beside split it off the agent ($r)" test "${r#ok beside pane }" != "$
 check "↪ on the split says it sends to the agent" send_to_is "↪ send to agent"
 found=$(ctl mcp from "$SESSION" "${AGENT:--}" rpc "$(rpc document_notes)" | jq -r .result.structuredContent.found)
 check "and the agent, asking, finds the split it opened ($found)" test "$found" = your-split
+
+echo "== 3b. with a note waiting, ↪ says it saves as it sends"
+r=$(ctl doc note add finding-the-island-is-the "Waiting to be saved.")
+check "a note was added and not saved ($(printf %.40s "$r"))" test "${r%% *}" = ok
+check "↪ says it saves and sends" send_to_is "↪ save & send to agent"
+ctl doc save > /dev/null
+check "saved, ↪ goes back to only sending" send_to_is "↪ send to agent"
 
 echo "== 4. nothing reached the agent unasked"
 sleep 1

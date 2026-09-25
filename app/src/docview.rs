@@ -173,8 +173,9 @@ impl EventEmitter<FollowLink> for DocumentView {}
 /// ↪ in a brief's notes bar: the map, for the pane to hand to the agent the
 /// brief sits beside. The view cannot see past its own pane, so it says what
 /// was pressed and what it carries, and the pane and the workspace decide
-/// where it goes. `unsaved` counts the edits in `map` not yet saved into the
-/// file — it is sent as shown, and the bar says so.
+/// where it goes. The press has already started a save of the waiting edits
+/// where one can be made; `unsaved` counts the edits in `map` that one will
+/// not put in the file — it is sent as shown, and the bar says so.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct SendNotes {
     pub map: String,

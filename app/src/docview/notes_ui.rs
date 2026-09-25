@@ -195,6 +195,10 @@ pub struct NotesLayer {
     writable: Result<(), Refusal>,
     note_box: Option<NoteBox>,
     said: Option<Said>,
+    /// What came of the last ↪, kept apart from `said` because a send saves:
+    /// the save's own progress would otherwise write over where the notes
+    /// landed before anyone had read it.
+    sent: Option<Said>,
     /// A save is running: another waits for it.
     saving: bool,
     /// The file is not on disk any more. The page stays up; saving is off.
@@ -215,9 +219,21 @@ pub enum LayerPress {
     /// The bar's save: the view saves, since it holds the engine and the file.
     Save,
     /// The bar's ↪: the map goes to the pane the brief sits beside, which
-    /// only the workspace can reach. Carries what is sent — the map as shown,
-    /// unsaved edits and all — and how many of those edits are unsaved.
-    Send { map: String, unsaved: usize },
+    /// only the workspace can reach, and the view saves as it goes when
+    /// [`Sending::saves`] says so.
+    Send(Sending),
+}
+
+/// What a press on ↪ does: the map it pastes, and whether it saves.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Sending {
+    /// The map as shown, unsaved edits and all: copy map's text.
+    pub map: String,
+    /// The press saves the waiting edits into the file as it sends them.
+    pub saves: bool,
+    /// Edits in the map that will not be in the file after the press: all of
+    /// them where no save can be made, none where one is under way.
+    pub unsaved: usize,
 }
 
 fn rect_css(x: f32, y: f32, w: f32, h: f32) -> RectCss {
@@ -279,6 +295,7 @@ impl NotesLayer {
             writable,
             note_box: None,
             said: None,
+            sent: None,
             saving: false,
             gone: false,
             close_warned: false,
@@ -329,6 +346,7 @@ impl NotesLayer {
     pub fn carry_from(&mut self, old: NotesLayer) {
         self.pending = old.pending;
         self.said = old.said;
+        self.sent = old.sent;
         self.saving = old.saving;
         self.note_box = old.note_box;
         self.refresh();
@@ -495,22 +513,51 @@ impl NotesLayer {
     /// or that pane's name when the tab holds more than one — and `None`
     /// means there is none, so there is no button: a brief with nobody beside
     /// it has nobody to send to. A page that shows no notes has no map to
-    /// send, and draws none either.
+    /// send, and draws none either. With edits waiting that a press would
+    /// save, the words say it saves too.
     pub fn send_button(&self, anchors: &[Anchor], beside: Option<&str>) -> Option<(String, bool)> {
         let who = beside?;
         self.notes()?;
-        Some((format!("↪ send to {who}"), self.mappable(anchors)))
+        let verb = if self.saves_on_send() {
+            "save & send"
+        } else {
+            "send"
+        };
+        Some((format!("↪ {verb} to {who}"), self.mappable(anchors)))
     }
 
-    /// What ↪ sends: the map exactly as copy map would give it, notes not yet
-    /// saved included, and how many edits of those are unsaved — so the bar
-    /// can say it sent them as shown. `None` with nothing to send. Sending
-    /// never saves first: saving is its own decision.
-    pub fn send(&self, anchors: &[Anchor]) -> Option<(String, usize)> {
+    /// A press on ↪ now would save: there are edits waiting, and a save
+    /// could be made.
+    fn saves_on_send(&self) -> bool {
+        !self.pending.is_empty() && self.can_save().is_ok()
+    }
+
+    /// What ↪ does: the map exactly as copy map would give it, notes not yet
+    /// saved included, and whether the press saves them. `None` with nothing
+    /// to send.
+    ///
+    /// A send saves. Parker, 2026-09-25: *"The Send to Agent button should
+    /// also save the doc."* Notes that reached the agent's prompt and not the
+    /// file were gone the next time the brief opened, and the agent reading
+    /// the file found none of them. Where no save can be made — a build
+    /// input, a format newer than TD, a file gone from disk, a save already
+    /// running — the map still goes as shown, and `unsaved` counts what the
+    /// file will not hold, so the bar can say so.
+    pub fn send(&self, anchors: &[Anchor]) -> Option<Sending> {
         if !self.mappable(anchors) {
             return None;
         }
-        Some((self.map(anchors)?, self.unsaved()))
+        let saves = self.saves_on_send();
+        Some(Sending {
+            map: self.map(anchors)?,
+            saves,
+            unsaved: if saves { 0 } else { self.unsaved() },
+        })
+    }
+
+    /// What came of a ↪, said on its own line of the bar.
+    pub fn say_sent(&mut self, said: Said) {
+        self.sent = Some(said);
     }
 
     /// Pure. Everything the layer draws for these anchors through this
@@ -683,6 +730,7 @@ impl NotesLayer {
             ts,
         });
         self.said = None;
+        self.sent = None;
         self.refresh();
     }
 
@@ -713,6 +761,7 @@ impl NotesLayer {
             None => self.pending.push(NoteEdit::Delete { nid, text, ts }),
         }
         self.said = None;
+        self.sent = None;
         self.refresh();
     }
 
@@ -743,6 +792,7 @@ impl NotesLayer {
             }),
         }
         self.said = None;
+        self.sent = None;
         self.refresh();
         Ok(())
     }
@@ -833,7 +883,7 @@ impl NotesLayer {
                 LayerPress::Took
             }
             Some(Zone::Send) if beside => match self.send(anchors) {
-                Some((map, unsaved)) => LayerPress::Send { map, unsaved },
+                Some(sending) => LayerPress::Send(sending),
                 None => LayerPress::Took,
             },
             Some(Zone::Save) => LayerPress::Save,
@@ -880,6 +930,7 @@ impl NotesLayer {
             "saving": self.saving,
             "gone": self.gone,
             "said": self.said.as_ref().map(|s| s.text().to_string()),
+            "sent": self.sent.as_ref().map(|s| s.text().to_string()),
             "map": self.map(anchors),
             "open": self.note_box.as_ref().map(|b| b.nid.clone()),
         })
@@ -979,11 +1030,11 @@ impl NotesLayer {
             .child(self.record(zone))
     }
 
-    fn said_colour(&self, th: &Theme) -> Hsla {
-        match &self.said {
-            Some(Said::Refused(_)) => th.ansi[9],
-            Some(Said::Working(_)) => th.text.alpha(0.7),
-            _ => th.accent,
+    fn said_colour(said: &Said, th: &Theme) -> Hsla {
+        match said {
+            Said::Refused(_) => th.ansi[9],
+            Said::Working(_) => th.text.alpha(0.7),
+            Said::Done(_) => th.accent,
         }
     }
 
@@ -1052,10 +1103,11 @@ impl NotesLayer {
                 }
             }
         }
-        if let Some(said) = &self.said {
+        // Where the notes went, then the save that went with them.
+        for said in [&self.sent, &self.said].into_iter().flatten() {
             row = row.child(
                 div()
-                    .text_color(self.said_colour(th))
+                    .text_color(Self::said_colour(said, th))
                     .child(said.text().to_string()),
             );
         }
@@ -1680,26 +1732,73 @@ mod tests {
         assert_eq!(read_only.send_button(&anchors, Some("agent")), None);
     }
 
-    /// ↪ sends what the bar shows, unsaved notes included, and counts them;
-    /// it saves nothing on the way.
+    /// ↪ sends what the bar shows, unsaved notes included, and saves them
+    /// as it goes; the button says so while there is something to save.
+    ///
+    /// Mutation-tested: `saves_on_send` answering false, and `send` counting
+    /// the pending edits as unsaved when it saves, each fail this.
     #[test]
-    fn send_carries_the_map_as_shown_and_saves_nothing() {
+    fn send_carries_the_map_as_shown_and_saves_it() {
         let anchors = vec![anchor("a", Some(rect_css(0.0, 0.0, 700.0, 200.0)), false)];
         let mut l = layer(ONE_NOTE, "{}", ConcurSupport::Supported);
+        let clean = l.send(&anchors).expect("a saved note is a map");
+        assert!(!clean.saves, "nothing waiting: a send is only a send");
         l.add_note(
             "a".into(),
             "a title".into(),
             "not saved yet".into(),
             "2026-09-25 09:00".into(),
         );
-        let (map, unsaved) = l.send(&anchors).expect("a map to send");
+        let s = l.send(&anchors).expect("a map to send");
         assert!(
-            map.contains("hello") && map.contains("not saved yet"),
-            "{map}"
+            s.map.contains("hello") && s.map.contains("not saved yet"),
+            "{}",
+            s.map
         );
-        assert_eq!(map, l.map(&anchors).unwrap(), "the copy map's text");
-        assert_eq!(unsaved, 1);
-        assert_eq!(l.unsaved(), 1, "still waiting to be saved");
+        assert_eq!(s.map, l.map(&anchors).unwrap(), "the copy map's text");
+        assert!(s.saves, "an unsaved note is saved by the send");
+        assert_eq!(s.unsaved, 0, "none left out of the file");
+        assert_eq!(
+            l.send_button(&anchors, Some("agent")).map(|b| b.0),
+            Some("↪ save & send to agent".to_string())
+        );
+    }
+
+    /// Where the file cannot be saved into, ↪ still sends and counts what
+    /// the file will not hold; and what the send said stays on the bar
+    /// through the save's own progress, until the next edit.
+    #[test]
+    fn send_without_a_save_counts_the_unsaved_and_its_answer_outlives_the_save() {
+        let anchors = vec![anchor("a", Some(rect_css(0.0, 0.0, 700.0, 200.0)), false)];
+        let mut l = layer(ONE_NOTE, "{}", ConcurSupport::Supported);
+        l.add_note(
+            "a".into(),
+            "t".into(),
+            "one".into(),
+            "2026-09-25 09:00".into(),
+        );
+        l.set_gone(true);
+        let s = l.send(&anchors).expect("still a map");
+        assert!(!s.saves, "a file gone from disk takes no save");
+        assert_eq!(s.unsaved, 1);
+        assert_eq!(
+            l.send_button(&anchors, Some("agent")).map(|b| b.0),
+            Some("↪ send to agent".to_string())
+        );
+        l.set_gone(false);
+        let _ = l.begin_save();
+        l.say_sent(Said::Done("in the agent's prompt, not sent".into()));
+        l.confirmed("brief.html");
+        let bar = l.report(&anchors);
+        assert_eq!(bar["sent"], "in the agent's prompt, not sent");
+        assert_eq!(bar["said"], "saved into brief.html ✓");
+        l.add_note(
+            "a".into(),
+            "t".into(),
+            "two".into(),
+            "2026-09-25 09:01".into(),
+        );
+        assert_eq!(l.report(&anchors)["sent"], serde_json::Value::Null);
     }
 
     /// Every way a page cannot be saved into is said in words before
