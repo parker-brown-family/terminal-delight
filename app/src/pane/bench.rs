@@ -2111,27 +2111,96 @@ impl TerminalView {
 
     /// A single click on a rail row.
     ///
-    /// A document opens in whatever this desktop opens documents with — HTML
-    /// in a browser, Markdown wherever Markdown goes — because that is what a
-    /// click on a file means everywhere else on this machine, and a terminal
-    /// that invented its own viewer would override a choice the person
-    /// already made in their MIME database.
+    /// An artifact TD can draw — HTML, Markdown, a picture — opens in the
+    /// floating square over the bench, and its card stays open underneath.
+    /// Anything else goes to the desktop, and the card still stays: the click
+    /// meant "show me this", and emptying the bench answered it with nothing.
+    /// Parker, 2026-09-25, on the old road (desktop, then `close_card`):
+    /// *"clicking on it wipes the screen (which it shouldn't)"*.
     ///
-    /// Anything that is not a document opens as a card over the conversation.
+    /// Anything that is not an artifact opens as a card over the conversation.
     pub fn bench_open(&mut self, id: &crate::surface::SurfaceId, cx: &mut Context<Self>) {
-        let href = self.bench.get(id).and_then(|s| match &s.kind {
-            crate::surface::Kind::Artifact(a) => Some(a.href.clone()),
-            _ => None,
-        });
+        let href = self.bench_artifact_href(id);
         self.bench.select(id);
-        if let Some(target) = href {
-            open_with_system(&target);
-            // Opened elsewhere, so the bench does not ALSO fill itself with a
-            // card nobody asked for — the click meant "show me this", and the
-            // desktop is now showing it.
-            self.bench.close_card();
+        if let Some(href) = href {
+            self.bench_open_href(&href, cx);
         }
         cx.notify();
+    }
+
+    /// The link an artifact card points at, or `None` for any other kind.
+    fn bench_artifact_href(&self, id: &crate::surface::SurfaceId) -> Option<String> {
+        self.bench.get(id).and_then(|s| match &s.kind {
+            crate::surface::Kind::Artifact(a) => Some(a.href.clone()),
+            _ => None,
+        })
+    }
+
+    /// Open a link from the bench the way the grid opens one: a document TD
+    /// can draw goes to the floating square ([`Self::open_float`], one of the
+    /// two roads a document may take), anything else to the desktop. HTML
+    /// with no engine to draw it is refused by `open_float` itself, which
+    /// has already handed it to the desktop and said why.
+    fn bench_open_href(&mut self, href: &str, cx: &mut Context<Self>) {
+        match self.document_of(href) {
+            Some(target) => {
+                let _ = self.open_float(target, None, cx);
+            }
+            None => open_with_system(href),
+        }
+    }
+
+    /// Alt or Ctrl pressed on an artifact on the bench: its row in the rail,
+    /// or anywhere on its open card. `true` when the press was taken.
+    ///
+    /// Decided by the grid's own table, [`crate::docopen::click_intent`], so
+    /// a modifier means the same thing on both faces: Alt opens the floating
+    /// square, Ctrl+Alt a pane beside, Ctrl alone the desktop. Parker: *"we
+    /// need to extend the ALT+click and ctrl+alt+click behaviour to the MAIN
+    /// workbench space like it is in the terminal side"*.
+    ///
+    /// The whole card answers for its document rather than one row of it:
+    /// every link row on an artifact card — TARGET and the loopback SERVED
+    /// copy — names the same file, and the card's `href` is that file, so the
+    /// page engine never goes to the network for it.
+    pub(super) fn bench_doc_click(
+        &mut self,
+        mods: crate::docopen::Mods,
+        landed: Option<&crate::workbench::Hit>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        use crate::docopen::ClickIntent;
+        use crate::workbench::Hit;
+        let id = match landed {
+            Some(Hit::OpenRow(id)) => Some(id.clone()),
+            Some(Hit::Nothing) | None => self.bench.showing().map(|s| s.id.clone()),
+            _ => None,
+        };
+        let Some(href) = id.as_ref().and_then(|id| self.bench_artifact_href(id)) else {
+            return false;
+        };
+        let doc = self.document_of(&href);
+        let revealable = super::reveal_target(&href);
+        match crate::docopen::click_intent(mods, doc.is_some(), true, revealable.is_some(), false) {
+            ClickIntent::OpenHere => {
+                if let Some(target) = doc {
+                    let _ = self.open_float(target, None, cx);
+                }
+            }
+            ClickIntent::OpenBeside => {
+                if let Some(target) = doc {
+                    self.request_beside(target, None, crate::docopen::Asker::Click, None, cx);
+                }
+            }
+            ClickIntent::Reveal => {
+                if let Some(item) = revealable {
+                    super::reveal_with_system(&item);
+                }
+            }
+            ClickIntent::OpenWithDesktop => open_with_system(&href),
+            ClickIntent::CopyChip | ClickIntent::Pass => return false,
+        }
+        true
     }
 
     /// The verb chips for the card that is open, if it has any.
@@ -3372,7 +3441,7 @@ impl TerminalView {
             .map(|l| l.text().to_string())
             .filter(|c| !c.trim().is_empty());
         match self.bench.act(&action, target, comment) {
-            crate::workbench::Dispatch::Open(href) => open_with_system(&href),
+            crate::workbench::Dispatch::Open(href) => self.bench_open_href(&href, cx),
             // No journal entry and no line typed anywhere. A copy is a person
             // moving their own words with their own hands, and the agent has
             // no business hearing about it — which is the entire reason this
