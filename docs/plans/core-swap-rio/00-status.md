@@ -119,3 +119,36 @@ exposed it.
 What the score missed: none of the gates was approved by Parker, because he was
 away. Every gate says so and records its alternatives, so the first review is of
 the whole design at once.
+
+## Review, before merge (2026-09-25)
+
+The review measured the swap against the host it has to live beside: the same
+94 screens hashed by the build before the swap and by this one on both cores,
+plus three second reviewers with probes that fed both cores the same bytes. The
+design held. What it found was rio-vt's, and the boundary took every fix without
+a patch to the crate. That is the adapter's argument, made a second time:
+
+- **Blanks after a scroll, clear or erase read as alacritty wrote them**
+  (`blank_background`). Before this fix, rio-vt parted from the old host on
+  every such screen. Now it agrees on 92 of 94, pinned against the old build's
+  own hashes (`gridwire`'s `AS_THE_OLD_HOST_HASHED`).
+- **Three denial-of-service paths are stopped before rio-vt's parser:**
+  quadratic combining marks (thirteen bytes took 9.7 s and 2.8 GB); an
+  unterminated picture command (837 MB); and a picture read from a FIFO, which
+  held the lock and, in the host, every pane's keystrokes behind it
+  (`vt/text.rs`, `vt/kitty.rs`, and `Host::pane`).
+- **Temporary picture files are deleted by kitty's rule, not rio-vt's
+  substring test**, which let a path with `..` reach any file.
+- **Seen on screen:**
+  - synchronized updates no longer tear;
+  - hiding a tab forgets both screens' pictures and gives their memory back;
+  - a pre-swap host's snapshot keeps click and drag mouse reporting in a new
+    window (`vt/compat.rs`).
+- **The read loop ends a pane's life** however the child's status is lost.
+- **CI now builds, lints and tests the alacritty fallback.**
+
+What is left is listed in `evidence/core-differences.md` under "Left as they
+are, knowingly". None is worse than one repair by the divergence guard.
+Follow-ups: issue 836, reporting rio-vt's findings upstream and bounding the
+two TD does not guard; issue 837, a closed pane that outlives its close; issue
+838, an attach partway through a string; issue 839, copying and origin mode.

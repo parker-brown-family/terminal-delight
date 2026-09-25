@@ -42,6 +42,8 @@ mod kitty;
 #[cfg(not(feature = "core-alacritty"))]
 mod rio;
 #[cfg(not(feature = "core-alacritty"))]
+mod text;
+#[cfg(not(feature = "core-alacritty"))]
 use rio::Core;
 
 pub use pump::{Msg, Notifier};
@@ -106,8 +108,8 @@ trait Backend: Send + Sized {
 /// is the top of the live screen whatever the view is scrolled to, history
 /// runs negative to `-history_size()`, and a viewport row is a `Line` plus the
 /// display offset. **Every read is clamped** into the grid, because rio-vt only
-/// checks its indices in debug builds and returns the wrong row in a release
-/// build rather than panicking.
+/// checks its indices in debug builds: in a release build a line out of range
+/// reads the wrong row, or past the screen panics.
 pub struct Term {
     core: Core,
     size: TermSize,

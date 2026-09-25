@@ -93,10 +93,75 @@ about cannot occur. It stays ignored, for the fallback.
 - rio-vt checks its row indices only in debug builds. `Term` clamps every read.
 - rio-vt defaults grapheme clustering (DEC 2027) on, which sizes cells by
   cluster rather than by `wcwidth`. It is switched off, matching alacritty and
-  the programs that lay out their screens by `wcwidth`; a program can still turn
-  it on.
+  the programs that lay out their screens by `wcwidth`. Since review a program
+  cannot turn it back on either: `vt/text.rs` drops the request, and DECRQM
+  2027 is answered "not recognised", as alacritty answered, because the cluster
+  path copies a cell's marks the way the next section describes.
 - rio-vt emits render, damage and graphics-queue events TD does not read. The
   adapter drops them so they cannot move a pane's content generation.
+
+## Found in review, and stopped at the boundary
+
+Three second reviewers read the rio adapter against rio-vt's source, the
+pictures, and the read loop, each with probes that fed both cores the same bytes
+(2026-09-25). Four things rio-vt does are unsafe in a terminal whose output TD
+does not control, and are stopped before its parser — `Core::advance` in
+`vt/rio.rs` hands every read through `vt/kitty.rs`, `vt/text.rs` and
+`vt/compat.rs` first:
+
+- **Combining marks cost quadratic time.** rio-vt copies a cell's whole list of
+  marks for each mark it adds. `e`, U+0301 and `ESC[65535b` (thirteen bytes)
+  took 9.7 s and 2.8 GB; alacritty took 1.4 ms. A mark now reaches the core
+  only straight after its character, 32 at most, and a repeat of a mark goes
+  nowhere (`vt/text.rs`).
+- **A picture command with no end is buffered without limit** (837 MB held for
+  768 MB sent). One command is cut at 4 MiB (`vt/kitty.rs`).
+- **A temporary picture file is deleted by a substring test**, so a path through
+  a marked directory with `..` reached any file. The core is handed `t=f` and TD
+  deletes by kitty's rule, after the core has parsed the command.
+- **Shared memory is opened blocking**, so a FIFO in `/dev/shm` held the parser,
+  and the terminal's lock, until written to. Only a regular file reaches it.
+
+And three it did differently from alacritty in a way a person would see:
+
+- **A synchronized update tore** when the read that opened it carried part of
+  the frame: rio-vt holds back only later reads. `vt/text.rs` hands the core the
+  rest of such a read as a read of its own.
+- **Hiding a tab forgot only the screen on show.** A picture drawn before vim
+  opened came back when vim quit, and the bytes of forgotten pictures stayed
+  counted against rio-vt's 320 MB budget, so later pictures evicted visible ones.
+  `forget_pictures` forgets both screens and gives the bytes back.
+- **XTGETTCAP answered as Rio**, 80 by 24 whatever the pane, with sixel and
+  iTerm2 pictures TD does not draw. It goes unanswered, as under alacritty.
+
+## Left as they are, knowingly
+
+Each of these makes a pane on a host from before the swap disagree with its
+window for a while, and costs at most one repair by the divergence guard. None
+is visible except where said:
+
+- **Origin mode** (issue 839). Setting DECOM homes the cursor in alacritty and
+  not in rio-vt. Making rio-vt home would misplace the cursor of every snapshot
+  that restores origin mode, because the snapshot writes the mode after the
+  cursor.
+- **Width tables.** About 3,950 codepoints are sized differently, among them
+  U+00AD, Hangul Jamo Extended-B and some unassigned plane-14 codepoints. rio-vt
+  also drops VS15 and VS16 after a base that is not an emoji. Where such text is
+  on screen, the difference lasts until it scrolls away.
+- **Tabs over written spaces.** alacritty writes `\t` into a cell holding a
+  space, and rio-vt only into an empty one.
+- **`2J` in the primary screen** pushes a different number of lines into
+  history, because rio-vt counts a written space as content.
+- **Copying** (issue 839). A selection that ends at the end of the last line
+  loses its trailing newline in rio-vt, which also trims a trailing space inside
+  the selected range.
+- **Reflow** of a wide character at a wrap boundary differs on resize.
+- **Secondary device attributes** answer rio-vt's version, `528`.
+- **Past 65,535 distinct styles alive in one terminal**, rio-vt draws new
+  colours in the default. It lasts until the history holding them scrolls out
+  (issue 836, with the other things to report upstream).
+- **Sixel and iTerm2 pictures** are decoded and reserve their rows, but TD draws
+  only Kitty pictures yet, so they leave a gap (issue 829).
 
 ## Cost of reading through the boundary
 

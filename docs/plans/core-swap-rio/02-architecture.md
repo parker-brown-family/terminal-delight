@@ -164,7 +164,9 @@ back. Snapshots carry no pictures, by the same rule. Placeholder cells
    keeping it forever (two cores to maintain).
 7. **Grapheme clustering off by default** in rio-vt, matching alacritty's
    widths so the existing tests and a mixed host/window pair agree. Programs
-   can still turn it on with DEC 2027.
+   can still turn it on with DEC 2027. *Amended in review, 2026-09-25: they
+   cannot. The cluster path shares the quadratic cost of combining marks, so
+   the request is dropped at the boundary (`evidence/core-differences.md`).*
 8. **Pictures are attentional:** forgotten when the pane is hidden, never in a
    snapshot. Parker's word, and his to overrule.
 

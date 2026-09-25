@@ -1599,6 +1599,22 @@ mod correctness {
         assert_eq!(fg(&term, 0, 0), Color::Indexed(208));
     }
 
+    /// A synchronized update draws nothing until it closes, even when the read
+    /// that opens it carries half of the frame. alacritty held the rest of
+    /// that read back; rio-vt held back only the reads after it, so a frame
+    /// that straddled two reads was drawn torn — until the guard in
+    /// `vt/text.rs` began handing the core the rest of such a read as a read
+    /// of its own.
+    #[test]
+    fn a_synchronized_update_opened_mid_read_draws_nothing_until_it_closes() {
+        let (mut term, _) = term80();
+        feed(&mut term, b"before\r\n\x1b[?2026hFRAME");
+        assert_eq!(row_text(&term, 0), "before");
+        assert_eq!(row_text(&term, 1), "", "part of the frame was drawn early");
+        feed(&mut term, b"\x1b[?2026l");
+        assert_eq!(row_text(&term, 1), "FRAME");
+    }
+
     /// A blank takes the pen's background and nothing else, however it was
     /// made. xterm's rule, and alacritty's: the green, the inverse and the
     /// underline reach the characters written with the pen, never the blanks

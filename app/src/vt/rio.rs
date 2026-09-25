@@ -90,6 +90,20 @@ fn as_terminal_delight(answer: String) -> Option<String> {
     if body.is_some_and(|flags| !flags.is_empty() && flags.bytes().all(|b| b.is_ascii_digit())) {
         return None;
     }
+    // XTGETTCAP: DCS 1 + r (or 0 + r) … ST. rio-vt answers from Rio's own
+    // termcap, fixed: the name `rio`, 80 columns by 24 lines whatever the
+    // pane is, sixel and iTerm2 pictures TD does not draw. alacritty never
+    // answered, and a program that asks falls back to terminfo, which says
+    // what TD is — so no answer, as before.
+    if answer.starts_with("\x1bP1+r") || answer.starts_with("\x1bP0+r") {
+        return None;
+    }
+    // DECRQM for grapheme clustering (DEC 2027): rio-vt says it can, and a
+    // program that believes it turns clustering on — which TD holds off
+    // (`vt/text.rs`). Not recognised, as alacritty answered.
+    if answer.starts_with("\x1b[?2027;") && answer.ends_with("$y") {
+        return Some("\x1b[?2027;0$y".to_string());
+    }
     Some(answer)
 }
 
@@ -251,24 +265,33 @@ fn flags(style: StyleFlags, wide: Wide, wrapline: bool) -> Flags {
 /// `48;5;n` and then erased: that comes back named, as `4n`. It draws the same
 /// colour, and costs one repair from the divergence guard against a host on
 /// alacritty; the far commoner `4n` then erase costs nothing.
-fn blank_background(grid: &Grid<Square>, square: Square) -> Option<Color> {
+///
+/// A tab passing over a blank leaves its `\t` there, for copying; it is still
+/// a blank, and keeps the character.
+fn blank_background(grid: &Grid<Square>, square: Square) -> Option<(char, Color)> {
     if square.wide() != Wide::Narrow {
         return None;
     }
     match square.content_tag() {
         ContentTag::BgPalette => {
             let index = square.bg_palette_index();
-            Some(match NamedColor::from_index(index as usize) {
+            let bg = match NamedColor::from_index(index as usize) {
                 Some(named) => Color::Named(named),
                 None => Color::Indexed(index),
-            })
+            };
+            Some((' ', bg))
         }
         ContentTag::BgRgb => {
             let (r, g, b) = square.bg_rgb();
-            Some(Color::Spec(Rgb { r, g, b }))
+            Some((' ', Color::Spec(Rgb { r, g, b })))
         }
         ContentTag::Codepoint => {
-            (square.c() == '\0' && !square.has_grapheme()).then(|| color(grid.style_of(&square).bg))
+            let c = match square.c() {
+                '\0' => ' ',
+                '\t' => '\t',
+                _ => return None,
+            };
+            (!square.has_grapheme()).then(|| (c, color(grid.style_of(&square).bg)))
         }
     }
 }
@@ -280,6 +303,9 @@ pub(super) struct Core {
     /// than a limit, and no temporary file deleted outside kitty's rule
     /// (`vt/kitty.rs`).
     guard: super::kitty::Guard,
+    /// Combining marks bounded, grapheme clustering held off, and synchronized
+    /// updates begun where they begin (`vt/text.rs`).
+    text: super::text::TextGuard,
     /// A pre-swap host's mouse restore, read as that host meant it
     /// (`vt/compat.rs`).
     mouse: super::compat::MouseRun,
@@ -301,13 +327,15 @@ impl Backend for Core {
         // cell by grapheme cluster rather than by wcwidth, which is right for
         // Rio's renderer and wrong for everything TD shares a grid with: the
         // programs that lay out their own screens by wcwidth, the session host
-        // and window that must agree cell for cell, and the tests. A program
-        // can still turn it on with DECSET 2027.
+        // and window that must agree cell for cell, and the tests. It stays
+        // off: a program's DECSET 2027 is dropped at the boundary, because the
+        // cluster path copies a cell's marks the way `vt/text.rs` describes.
         term.set_grapheme_clustering(false);
         Self {
             term,
             parser: Processor::default(),
             guard: Default::default(),
+            text: Default::default(),
             mouse: Default::default(),
         }
     }
@@ -317,10 +345,13 @@ impl Backend for Core {
             term,
             parser,
             guard,
+            text,
             mouse,
         } = self;
         guard.feed(bytes, &mut |bytes| {
-            mouse.feed(bytes, &mut |bytes| parser.advance(term, bytes))
+            text.feed(bytes, &mut |bytes| {
+                mouse.feed(bytes, &mut |bytes| parser.advance(term, bytes))
+            })
         });
         // A synchronized update holds its bytes back from the parser; a
         // temporary file named inside one is deleted once it is drawn.
@@ -370,14 +401,14 @@ impl Backend for Core {
         let width = row.len().min(grid.columns());
         for column in 0..width {
             let square = row[RColumn(column)];
-            if let Some(bg) = blank_background(grid, square) {
+            if let Some((c, bg)) = blank_background(grid, square) {
                 let flags = if square.wrapline() {
                     Flags::WRAPLINE
                 } else {
                     Flags::empty()
                 };
                 out.push(Cell::new(
-                    ' ',
+                    c,
                     Color::Named(NamedColor::Foreground),
                     bg,
                     flags,
@@ -576,10 +607,22 @@ impl Backend for Core {
     }
 
     fn forget_pictures(&mut self) {
+        // Both screens: rio-vt keeps the alternate screen's pictures apart
+        // and swaps them back in when a program leaves it, so forgetting only
+        // the screen on show let a picture drawn before vim opened return when
+        // vim quit. rio-vt's reset forgets both, and sixel and iTerm2 pictures
+        // with them, but gives back to its memory budget only the bytes of the
+        // screen not on show. Those of the screen on show are given back here,
+        // or the budget fills with pictures that are gone, and evicts ones
+        // that are not.
         let graphics = &mut self.term.graphics;
-        graphics.kitty_placements.clear();
-        graphics.kitty_virtual_placements.clear();
-        graphics.delete_kitty_images(|_, _| true);
+        let on_show: usize = graphics
+            .kitty_images
+            .values()
+            .map(|image| image.data.pixels.len())
+            .sum();
+        graphics.clear_all_kitty_state();
+        graphics.total_bytes = graphics.total_bytes.saturating_sub(on_show);
     }
 
     #[cfg(test)]
@@ -741,6 +784,95 @@ mod tests {
         let mut term = Term::new(TermSize::new(40, 10, 0, 0), heard.clone());
         place(&mut term, 2, 1);
         assert!(term.pictures().is_empty());
+    }
+
+    #[test]
+    fn thirteen_bytes_of_repeated_mark_cost_nothing() {
+        // rio-vt copies a cell's whole list of marks for every mark it adds,
+        // and the repeat asks for 65,535 of them: 9.7 s and 2.8 GB under the
+        // terminal's lock, unguarded. The guard drops the repeat.
+        let mut term = Term::new(TermSize::new(40, 10, 8, 16), Arc::new(Heard::default()));
+        let started = std::time::Instant::now();
+        term.advance("e\u{301}\x1b[65535b".as_bytes());
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(1),
+            "{:?}",
+            started.elapsed()
+        );
+        let cell = term.cell(crate::vt::Point::new(
+            crate::vt::Line(0),
+            crate::vt::Column(0),
+        ));
+        assert_eq!(cell.zerowidth().map(<[char]>::len), Some(1));
+    }
+
+    #[test]
+    fn a_cell_carries_no_more_marks_than_the_limit() {
+        let mut term = Term::new(TermSize::new(40, 10, 8, 16), Arc::new(Heard::default()));
+        term.advance(format!("e{}x", "\u{301}".repeat(1000)).as_bytes());
+        let cell = term.cell(crate::vt::Point::new(
+            crate::vt::Line(0),
+            crate::vt::Column(0),
+        ));
+        assert_eq!(
+            cell.zerowidth().map(<[char]>::len),
+            Some(super::super::text::MOST_MARKS)
+        );
+        let next = term.cell(crate::vt::Point::new(
+            crate::vt::Line(0),
+            crate::vt::Column(1),
+        ));
+        assert_eq!(next.c, 'x', "and the text after them is where it belongs");
+    }
+
+    #[test]
+    fn grapheme_clustering_is_neither_offered_nor_taken() {
+        use crate::vt::Backend;
+        let (replies, _) = replies_to(b"\x1b[?2027h\x1b[?2027$p");
+        assert_eq!(replies, vec!["\x1b[?2027;0$y".to_string()]);
+        // Asked for anyway, it stays off in the core itself.
+        let mut core = super::Core::new(
+            TermSize::new(40, 10, 8, 16),
+            Arc::new(Heard::default()),
+            100,
+        );
+        core.advance(b"\x1b[?2027h\x1b[?2027;1004h");
+        let mode = core.term.mode();
+        assert!(!mode.contains(rio_vt::crosswords::Mode::GRAPHEME_CLUSTER));
+        assert!(
+            mode.contains(rio_vt::crosswords::Mode::FOCUS_IN_OUT),
+            "and the mode asked for beside it is still set"
+        );
+    }
+
+    #[test]
+    fn a_capability_query_goes_unanswered_rather_than_answered_as_rio() {
+        // XTGETTCAP for the terminal's name, `TN`, in hex.
+        let (replies, _) = replies_to(b"\x1bP+q544e\x1b\\");
+        assert!(replies.is_empty(), "{replies:?}");
+    }
+
+    #[test]
+    fn forgetting_pictures_forgets_both_screens_and_gives_back_their_memory() {
+        use crate::vt::Backend;
+        let mut core = super::Core::new(
+            TermSize::new(40, 10, 8, 16),
+            Arc::new(Heard::default()),
+            100,
+        );
+        let picture = |id: u32| {
+            format!("\x1b_Gi={id},s=2,v=1,a=T,t=d,f=24,c=2,r=1;/wAAAP8A\x1b\\").into_bytes()
+        };
+        core.advance(&picture(1));
+        core.advance(b"\x1b[?1049h");
+        core.advance(&picture(2));
+        core.forget_pictures();
+        assert_eq!(core.term.graphics.total_bytes, 0, "every byte given back");
+        core.advance(b"\x1b[?1049l");
+        assert!(
+            core.pictures().is_empty(),
+            "the main screen's picture came back when the program left the alternate screen"
+        );
     }
 
     /// `t=t` naming `path`, one red pixel, placed.

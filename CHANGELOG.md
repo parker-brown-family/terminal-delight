@@ -37,7 +37,10 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
   cells it asked for, scrolls with its text, and bends with the glass. They are
   attentional: when a pane's tab is hidden it forgets its pictures, so coming
   back shows the text alone, and no snapshot carries them. Sixel and iTerm2
-  pictures are not drawn yet. (#825)
+  pictures are not drawn yet. A picture command cannot grow past 4 MiB. A
+  temporary picture file is deleted only by kitty's own rule. A pipe named as
+  shared memory is never opened. A character carries at most 32 combining
+  marks. (#825)
 
 - **A response carries a `brief` — the bare minimum, in two sentences under
   fifty words.** The tl;dr and the ELI5 came back as ONE register, which is
