@@ -75,6 +75,11 @@ const ERROR_HOOK: &str = "window.__tdErrors = []; \
     window.addEventListener('unhandledrejection', function (e) { window.__tdErrors.push(String(e.reason)); });";
 
 const CALL: Duration = Duration::from_secs(10);
+/// How long a browser just spawned has to give its first answer. That answer
+/// measures the process starting, not a call, and a cold start is slower than
+/// any call: on GitHub's runner the first two browsers started at once, and
+/// the runner's Chromium took longer than `CALL` to answer either of them.
+const START: Duration = Duration::from_secs(30);
 const LOAD: Duration = Duration::from_secs(20);
 const CAPTURE: Duration = Duration::from_secs(30);
 
@@ -433,7 +438,7 @@ impl SnapshotEngine {
             profile,
             stderr,
         };
-        if let Err(e) = cdp.call(None, "Browser.getVersion", json!({}), CALL) {
+        if let Err(e) = cdp.call(None, "Browser.getVersion", json!({}), START) {
             // Read the reason only once the browser is gone and its standard
             // error has been drained to the end: a browser that hangs rather
             // than exits says why only as it is killed.
@@ -447,11 +452,11 @@ impl SnapshotEngine {
             }
             let bytes: Vec<u8> = lock(&said).iter().copied().collect();
             let tail = why_it_died(&String::from_utf8_lossy(&bytes));
-            return Err(EngineError::Launch(if tail.is_empty() {
-                e.to_string()
-            } else {
-                tail
-            }));
+            return Err(EngineError::Launch(launch_failure(
+                matches!(e, CdpError::Timeout),
+                &tail,
+                &e.to_string(),
+            )));
         }
         if std::env::var_os("TD_DOCDEBUG").is_some() {
             eprintln!(
@@ -664,6 +669,24 @@ pub fn why_it_died(stderr: &str) -> String {
         .or_else(|| last(&|l| !in_trace(l)))
         .unwrap_or("");
     line.chars().take(400).collect()
+}
+
+/// The sentence for a browser that was started and never answered.
+///
+/// A browser that crashed says why in its standard error, and that line is the
+/// reason. One that hung may have printed nothing but noise: every headless
+/// Chromium warns that it cannot reach D-Bus, and a CI run once reported that
+/// warning as the reason a browser "would not start" when it had simply not
+/// answered in time. So a hang is named as a hang, and what the browser last
+/// said follows it rather than standing in for it.
+fn launch_failure(timed_out: bool, tail: &str, otherwise: &str) -> String {
+    let waited = format!("it did not answer within {} s", START.as_secs());
+    match (timed_out, tail.is_empty()) {
+        (true, true) => waited,
+        (true, false) => format!("{waited}; the last thing it said was: {tail}"),
+        (false, true) => otherwise.to_string(),
+        (false, false) => tail.to_string(),
+    }
 }
 
 fn close_page(p: &LivePage) {
@@ -1157,6 +1180,32 @@ mod tests {
             "file:///r/2026-09-24-x.html"
         );
         assert_eq!(file_url(Path::new("/r/é.html")), "file:///r/%C3%A9.html");
+    }
+
+    #[test]
+    fn a_browser_that_hung_is_named_as_hung_not_by_its_last_warning() {
+        let dbus = "[7168:7189:0925/002600.448623:ERROR:dbus/bus.cc:405] Failed to connect to the bus: Could not parse server address";
+        let hung = launch_failure(true, dbus, "the browser did not answer in time");
+        assert!(hung.starts_with("it did not answer within 30 s"), "{hung}");
+        assert!(
+            hung.contains("Failed to connect to the bus"),
+            "what it said still follows: {hung}"
+        );
+        assert_eq!(
+            launch_failure(true, "", "x"),
+            "it did not answer within 30 s"
+        );
+        // A browser that died says why, and that line is the whole reason. The
+        // sandbox's refusal must survive either way: the engine tests skip on it.
+        assert_eq!(
+            launch_failure(false, "FATAL: No usable sandbox!", "x"),
+            "FATAL: No usable sandbox!"
+        );
+        assert!(launch_failure(true, "No usable sandbox!", "x").contains("No usable sandbox"));
+        assert_eq!(
+            launch_failure(false, "", "the pipe closed"),
+            "the pipe closed"
+        );
     }
 
     #[test]
