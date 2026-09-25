@@ -187,6 +187,10 @@ pub enum Asker {
     Float,
     /// `ctl doc beside`, the gesture without a pointer.
     Ctl,
+    /// `open_document`, an agent opening its own deliverable beside itself.
+    Mcp,
+    /// "open beside" on the attention rail's deliverable row.
+    Rail,
 }
 
 /// Why a floating square is open when a split was asked for. Said in the

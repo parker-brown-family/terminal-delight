@@ -44,13 +44,17 @@ just spawned — and #8 is the only one of the three that something other than a
 
 **`mcp.rs` and `plugins.rs` reach none of them.** The MCP tool surface changes appearance —
 brightness, contrast, warp, text size — reads pane state, posts a sticky note, declares a
-deliverable and puts work objects on a pane's workbench; the eleven tools are `list_panes`,
-`pane_events`, `get_pane_config`, `set_pane_config`, `leave_note`, `declare_deliverable`,
-`present_surface`, `engineering_state`, `surface_catalogue`, `grep` and `document_notes`, beside
-the protocol's own `ping`. `document_notes` reads the notes a person left on the brief beside the
-calling agent, from the same report `ctl doc notes` prints, and writes nothing. There is no input
-verb, by design, and this audit confirmed it rather than taking the docs' word for it. The plugin
-*host* launches plugin MCP servers over stdio and never holds a `Session`.
+deliverable, puts work objects on a pane's workbench and opens a document beside its caller; the
+twelve tools are `list_panes`, `pane_events`, `get_pane_config`, `set_pane_config`, `leave_note`,
+`declare_deliverable`, `present_surface`, `engineering_state`, `surface_catalogue`, `grep`,
+`document_notes` and `open_document`, beside the protocol's own `ping`. `document_notes` reads the
+notes a person left on the brief beside the calling agent, from the same report `ctl doc notes`
+prints, and writes nothing. `open_document` changes the layout of the caller's own tab and nothing
+else: a document pane it splits off gets a fresh shell with no command line — `PaneRestore` with no
+`resume`, so site #8 has nothing to type — exactly as a Ctrl+Alt+click's does, and it takes no pane
+argument, so it cannot reach another agent's. There is no input verb, by design, and this audit
+confirmed it rather than taking the docs' word for it. The plugin *host* launches plugin MCP servers
+over stdio and never holds a `Session`.
 
 **`ctl.rs` reaches exactly one — site #8, and only by making a new pane.** `ctl adopt --cwd X --run
 "<cmd>"` travels `AdoptReq` → `Workspace::queue_adopt` → `drain_pending_adopts` → `adopt_pane` →

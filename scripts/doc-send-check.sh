@@ -117,7 +117,7 @@ send_to_is() {
 }
 agent_pane() {
   ctl mcp rpc "$(rpc list_panes)" |
-    jq -r '.result.structuredContent.panes[] | select(.mode=="CLAUDE") | .pane_id' | head -1
+    jq -r '.result.structuredContent.panes[]? | select(.mode=="CLAUDE") | .pane_id' | head -1
 }
 
 echo "== launching a hidden window on $WS (session $SESSION)"

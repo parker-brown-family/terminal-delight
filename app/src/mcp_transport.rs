@@ -56,6 +56,11 @@ enum UiReq {
     /// `grep`: search every exposed pane's scrollback for an exact substring
     /// (needle, lines-per-pane cap) and report the per-pane matches.
     Search(String, usize, mpsc::Sender<Vec<mcp::PaneMatches>>),
+    /// `open_document`: open a document in the caller's pane or tab. The
+    /// reply is the router's own line, which for a split arrives only once the
+    /// workspace has handled the pane's request — after this tick — so the
+    /// sender travels with the request rather than being answered here.
+    Open(mcp::OpenRequest, mpsc::Sender<String>),
 }
 
 /// Build a uniform refusal for a whole batch (used when the UI is gone/wedged).
@@ -207,6 +212,16 @@ pub fn start_bridge(cx: &mut Context<Workspace>, push: Option<mpsc::Sender<mcp::
                             }
                         }
                     }
+                    Ok(UiReq::Open(request, reply)) => {
+                        let answer = reply.clone();
+                        if this
+                            .update(cx, |ws, cx| ws.mcp_open(request, reply, cx))
+                            .is_err()
+                        {
+                            let _ = answer.send("err terminal-delight UI not ready".into());
+                            alive = false;
+                        }
+                    }
                     Err(mpsc::TryRecvError::Empty) => break,
                     Err(mpsc::TryRecvError::Disconnected) => return, // reader gone
                 }
@@ -331,12 +346,26 @@ pub(crate) fn respond_as(line: &str, caller: Option<crate::ctl::Caller>) -> Opti
                 }
                 rx.recv_timeout(SNAPSHOT_BUDGET).unwrap_or_default()
             };
-            mcp::handle_line_with(
+            // The layout capability for `open_document`, the same round-trip
+            // and budget. The window answers with the router's own line, sent
+            // when the split, the focus or the square has happened.
+            let open = |request: &mcp::OpenRequest| -> mcp::OpenOutcome {
+                let (tx, rx) = mpsc::channel();
+                if !bridge_send(UiReq::Open(request.clone(), tx)) {
+                    return Err("terminal-delight UI gone".to_string());
+                }
+                match rx.recv_timeout(SNAPSHOT_BUDGET) {
+                    Ok(reply) => mcp::open_outcome(&reply),
+                    Err(_) => Err("terminal-delight UI not ready".to_string()),
+                }
+            };
+            mcp::handle_line_full(
                 line,
                 &snap,
                 |p, n| tail_for(p, &snap.panes, n, &home),
                 apply,
                 search,
+                open,
             )
         }
         Err(RecvTimeoutError::Disconnected) | Err(RecvTimeoutError::Timeout) => {
