@@ -234,6 +234,24 @@ struct CopyHint {
     does: crate::docopen::AltClick,
 }
 
+/// A few words the pane shows for [`SAID_FOR`], in a chip where the click
+/// that prompted them landed: why a click did something other than what its
+/// chip promised. TD has no toast, and this is where the person is looking.
+#[derive(Debug, Clone, PartialEq)]
+struct Said {
+    text: String,
+    /// The painted row the click landed on. `None` when it did not land on
+    /// the grid (a link in a document, a `ctl` caller); the chip then sits
+    /// on the top row.
+    row: Option<usize>,
+    /// When it was said: a later saying replaces it, and only its own timer
+    /// takes it down.
+    at: Instant,
+}
+
+/// How long a [`Said`] chip stays up.
+const SAID_FOR: Duration = Duration::from_secs(8);
+
 /// The Alt chip, decided from what is under the pointer.
 ///
 /// `line` is the logical line under the pointer as `(text, first painted row,
@@ -2315,6 +2333,8 @@ pub struct TerminalView {
     /// When the last Alt+click copy landed — drives the brief "copied"
     /// confirmation in the chip. No timer: the next pointer move repaints it.
     copy_flash: Option<Instant>,
+    /// What the pane is saying about the last click, while it says it.
+    said: Option<Said>,
     /// The document floating over the terminal face, if one is open.
     float: Option<FloatingDoc>,
     /// Where the floating square's strip, buttons and body were laid out,
@@ -3948,6 +3968,7 @@ impl TerminalView {
             hdr_overflow: None,
             copy_hint: None,
             copy_flash: None,
+            said: None,
             float: None,
             float_zones: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
             doc_memo: std::cell::RefCell::new(None),
@@ -4761,7 +4782,7 @@ impl TerminalView {
         row: Option<usize>,
         cx: &mut Context<Self>,
     ) -> Result<(), String> {
-        if let Some(why) = Self::html_refused(&target, cx) {
+        if let Some(why) = self.html_refused(&target, row, cx) {
             return Err(why);
         }
         let (w, h) = self.screen_size().unwrap_or((640.0, 480.0));
@@ -4961,19 +4982,47 @@ impl TerminalView {
     }
 
     /// An HTML document with no engine to draw it goes to the desktop instead
-    /// of into a square, and this says why: the sentence, which also goes to
-    /// TD's log. `None` for anything that can be drawn. Asked before a square
-    /// is placed, so a machine without Chromium never opens one that could
-    /// not fill; nothing on screen carries the sentence yet, because no
-    /// square exists to carry it.
-    fn html_refused(target: &crate::docopen::DocTarget, cx: &mut Context<Self>) -> Option<String> {
+    /// of into a square, and this says why. The sentence goes to TD's log and
+    /// back to the caller; a short form of it goes on screen, in a chip on
+    /// `row`, the painted row the click landed on. `None` for anything that
+    /// can be drawn. Asked before a square is placed, so a machine without
+    /// Chromium never opens one that could not fill, and no square exists to
+    /// carry the words.
+    fn html_refused(
+        &mut self,
+        target: &crate::docopen::DocTarget,
+        row: Option<usize>,
+        cx: &mut Context<Self>,
+    ) -> Option<String> {
         if target.kind != crate::docopen::DocKind::Html {
             return None;
         }
-        let why = crate::docview::html_ready(cx).err()?.sentence();
+        let why = crate::docview::html_ready(cx).err()?;
         open_with_system(&target.path.to_string_lossy());
-        eprintln!("terminal-delight: {}: {why}", target.path.display());
-        Some(why)
+        let sentence = why.sentence();
+        eprintln!("terminal-delight: {}: {sentence}", target.path.display());
+        let s = crate::lang::current().strings();
+        let chip = format!("{} · {}", why.short_reason(), s.chip_opened_on_desktop);
+        self.say(chip, row, cx);
+        Some(sentence)
+    }
+
+    /// Put a [`Said`] chip up on `row`, and take it down after [`SAID_FOR`]
+    /// unless something newer has been said by then.
+    fn say(&mut self, text: String, row: Option<usize>, cx: &mut Context<Self>) {
+        let at = Instant::now();
+        self.said = Some(Said { text, row, at });
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(SAID_FOR).await;
+            let _ = this.update(cx, |view, cx| {
+                if view.said.as_ref().is_some_and(|s| s.at == at) {
+                    view.said = None;
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
     }
 
     /// A link pressed inside a document, routed. `seat` is where the document
@@ -5005,7 +5054,7 @@ impl TerminalView {
                 // A brief linking to another brief, on a machine that cannot
                 // draw one: the linked file goes to the desktop, and the
                 // document that linked to it stays.
-                if Self::html_refused(&target, cx).is_some() {
+                if self.html_refused(&target, None, cx).is_some() {
                     return;
                 }
                 // The old view is dropped here, and gives its textures back
@@ -5149,7 +5198,7 @@ impl TerminalView {
     ) {
         // The split asks the same question the square does, before any pane
         // is made: an HTML file with no engine goes to the desktop instead.
-        if let Some(why) = Self::html_refused(&target, cx) {
+        if let Some(why) = self.html_refused(&target, row, cx) {
             if let Some(reply) = reply {
                 let _ = reply.send(format!("desktop {why}"));
             }
@@ -10200,6 +10249,38 @@ impl Render for TerminalView {
                         )),
                 )
         });
+        // What the pane is saying about the last click, in the Alt chip's own
+        // shape and place: at the right end of the row the click landed on,
+        // where the eye already is. Cut short with an ellipsis rather than
+        // run off a narrow pane; the whole sentence is in the log. Nothing
+        // on the bench face, where no click on the grid or in a document
+        // could have prompted it.
+        let said_el = self.said.as_ref().filter(|_| !on_bench).map(|said| {
+            let (acc, surf) = (th.accent, th.surface);
+            let row = said.row.unwrap_or(0) as f32;
+            div()
+                .absolute()
+                .left(px(grid_pad_x))
+                .right(px(grid_pad_x))
+                .top(px(grid_pad_y + row * self.cell_h - 2.))
+                .flex()
+                .justify_end()
+                .child(
+                    div()
+                        .min_w(px(0.))
+                        .px(px(6.))
+                        .bg(surf)
+                        .border_1()
+                        .border_color(acc.alpha(0.75))
+                        .rounded(px(4.))
+                        .text_color(acc)
+                        .text_size(px(11.))
+                        .whitespace_nowrap()
+                        .overflow_hidden()
+                        .text_ellipsis()
+                        .child(said.text.clone()),
+                )
+        });
         // The sticky note. Its geometry comes from the same `content_bounds` the
         // warp tube is registered from, because the note is drawn through the
         // INVERSE of that tube's distortion and the two must be measuring the
@@ -10455,6 +10536,8 @@ impl Render for TerminalView {
                     // never straightens anything.
                     .children(float_el)
                     .children(float_cursor)
+                    // Over the square: a link in it can be what prompted it.
+                    .children(said_el)
                     // The tube fires. Last child of the SCREEN, so it paints
                     // over the grid but stays inside the registered warp tube —
                     // the curvature and scanlines in the effect are the shader
@@ -14229,6 +14312,43 @@ mod tests {
             .join(" ")
     }
 
+    /// A refused HTML click says why in the pane that was clicked, not only in
+    /// the log (issue 733). The refusal hands its words to `say`, with the row
+    /// the click landed on wherever the road knows one. `say` keeps them up
+    /// for `SAID_FOR`, and only its own timer takes them down, so an older
+    /// timer cannot cut a newer saying short. And the chip is drawn after the
+    /// square, so a link in the square that prompted it cannot hide it.
+    #[test]
+    fn a_refused_html_click_says_why_where_it_was_clicked() {
+        let code = live_code();
+        let refused = method_body(&code, "fn html_refused(");
+        assert!(refused.contains("why.short_reason()"), "{refused}");
+        assert!(refused.contains("self.say(chip, row, cx)"), "{refused}");
+        for road in ["pub(crate) fn open_float(", "pub(crate) fn request_beside("] {
+            let body = method_body(&code, road);
+            assert!(
+                body.contains("self.html_refused(&target, row, cx)"),
+                "{road} knows the row that was clicked and must pass it"
+            );
+        }
+        let say = method_body(&code, "fn say(");
+        assert!(
+            say.contains("self.said = Some(Said { text, row, at })"),
+            "{say}"
+        );
+        assert!(say.contains(".timer(SAID_FOR)"), "{say}");
+        assert!(say.contains("s.at == at"), "only its own timer: {say}");
+        let render = code
+            .find("fn render(&mut self, window: &mut Window, cx: &mut Context<Self>)")
+            .expect("render");
+        let render = &code[render..];
+        let square = render.find(".children(float_el)").expect("the square");
+        let said = render
+            .find(".children(said_el)")
+            .expect("the chip is drawn");
+        assert!(square < said, "the chip is drawn over the square");
+    }
+
     /// Every road into a square or a Document face asks whether an HTML file
     /// can be drawn before anything is made: a machine with no Chromium hands
     /// the file to the desktop with a sentence, never an empty square or an
@@ -14238,14 +14358,14 @@ mod tests {
     fn an_html_file_nothing_can_draw_goes_to_the_desktop_before_a_square_or_pane_is_made() {
         let code = live_code();
         let open = method_body(&code, "pub(crate) fn open_float(");
-        let asked = open.find("Self::html_refused(").expect("open_float asks");
+        let asked = open.find("self.html_refused(").expect("open_float asks");
         let made = open
             .find("Self::float_doc(")
             .expect("open_float makes a square");
         assert!(asked < made, "asked before the square is made");
         let beside = method_body(&code, "pub(crate) fn request_beside(");
         let asked = beside
-            .find("Self::html_refused(")
+            .find("self.html_refused(")
             .expect("request_beside asks");
         let made = beside
             .find("cx.emit(OpenDoc")
@@ -14253,7 +14373,7 @@ mod tests {
         assert!(asked < made, "asked before a pane is asked for");
         let follow = method_body(&code, "fn follow_doc_link(");
         let asked = follow
-            .find("Self::html_refused(")
+            .find("self.html_refused(")
             .expect("a followed link asks");
         let made = follow
             .find("Self::float_doc(")
