@@ -29123,7 +29123,11 @@ impl Render for Workspace {
             // compact column. The floor sits well under 1.0 so a dense read can
             // shrink right down (the old 0.5 floor still felt huge on small panes).
             let ms = (fit * self.focus_zoom).clamp(0.3, 12.0);
-            let cell_h = snap.cell_h * ms;
+            // The row height the mirror's row divs are drawn at: gpui rounds an
+            // authored height to whole device pixels, and the virtual window
+            // below (which rows to build, where the first sits, the total
+            // height) must count in the same rows or a long read drifts.
+            let cell_h = crate::pane::laid_out_length(snap.cell_h * ms, window.scale_factor());
             let glyph_w = (snap.cell_w * ms).max(0.5);
             // "Inherit theme": bend + glare the panel like the pane it mirrors.
             let inherit = self.focus_inherit_theme;
