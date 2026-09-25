@@ -16,8 +16,9 @@
 //! the same bar with ⎘ copy map and ↪. The blocks are its anchors, placed
 //! where the last paint put them; the 💬 sits in a gutter on the column's
 //! right. What differs is where the notes go — TD's own store, as each is
-//! written, never the file (`md_notes.rs`) — so the bar has no 💾 and shows
-//! only once there is something on it.
+//! written, never the file (`md_notes.rs`) — so the bar has no 💾. The bar
+//! is always there, at "0 notes" on a file nobody has commented on, as a
+//! brief's is: it is what says the file takes notes at all.
 
 use std::any::Any;
 use std::path::{Path, PathBuf};
@@ -212,8 +213,8 @@ impl MarkdownDoc {
 // (`MarkdownDoc::wheel(self, …)`): Rust finds an inherent method before a
 // trait's, so that is the document's own and not this one calling itself.
 impl Backend for MarkdownDoc {
-    /// The column, and over it the notes: each block's rule and 💬, the bar
-    /// once there is something on it, and the note box above everything.
+    /// The column, and over it the notes: each block's rule and 💬, the bar,
+    /// and the note box above everything.
     fn element(&mut self, view: &Drawn, window: &mut Window, th: &Theme) -> AnyElement {
         let size = view.frame.map(|(size, _)| size);
         self.view = size;
@@ -229,9 +230,7 @@ impl Backend for MarkdownDoc {
         let marks = layer.marks(&anchors, &self.note_map(size), self.pointer);
         let mut layers = vec![column];
         layers.extend(layer.draw_marks(&marks, th));
-        if layer.shows_bar(&anchors) {
-            layers.push(layer.draw_bar(&anchors, th, self.beside.as_deref()));
-        }
+        layers.push(layer.draw_bar(&anchors, th, self.beside.as_deref()));
         layers.extend(layer.draw_box(size, th));
         div()
             .absolute()

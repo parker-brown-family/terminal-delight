@@ -403,19 +403,6 @@ impl NotesLayer {
         self.refresh();
     }
 
-    /// Whether the bar is drawn. A brief's always is, as the browser draws
-    /// its notebar. A Markdown document's only once there is something on
-    /// it — a note, the last word of a ↪ or a keep, or why it takes none —
-    /// so a plan with nothing written on it reads as the plan. Its blocks'
-    /// 💬 under the pointer is the way in.
-    pub fn shows_bar(&self, anchors: &[Anchor]) -> bool {
-        !self.in_store()
-            || self.counts(anchors).0 > 0
-            || self.said.is_some()
-            || self.sent.is_some()
-            || self.read_only().is_some()
-    }
-
     /// What the bytes show, and whether a save could be made into them.
     fn judge(read: NotesRead, tagged: u32, path: &Path) -> (Shown, Result<(), Refusal>) {
         let hidden = read.regions.island_after_script();
@@ -1124,6 +1111,9 @@ impl NotesLayer {
             "sent": self.sent.as_ref().map(|s| s.text().to_string()),
             "map": self.map(anchors),
             "open": self.note_box.as_ref().map(|b| b.nid.clone()),
+            // Whether the last paint drew the bar: a script can see the way
+            // in is on screen without anybody looking.
+            "bar": self.zones.borrow().iter().any(|(_, z)| *z == Zone::Bar),
             "kept": match &self.keeping {
                 Keeping::File => "file",
                 Keeping::Store(_) => "store",
@@ -2060,11 +2050,10 @@ mod tests {
     }
 
     /// A Markdown document's layer counts every note TD keeps for it, one on
-    /// words the file no longer has included, and its map names lines; its
-    /// bar shows only with something on it; and keeping a note says nothing.
+    /// words the file no longer has included, and its map names lines; and
+    /// keeping a note says nothing.
     ///
-    /// Mutation-tested: counting only the notes on present anchors, and
-    /// drawing the bar whatever it holds, each fail this.
+    /// Mutation-tested: counting only the notes on present anchors fails this.
     #[test]
     fn a_markdown_layer_counts_every_kept_note_and_maps_lines() {
         let anchors = vec![md_anchor("h-a", "# A", 7)];
@@ -2088,20 +2077,19 @@ mod tests {
             "{map}"
         );
         assert_eq!(l.report(&anchors)["kept"], "store");
-        assert!(l.shows_bar(&anchors));
         assert_eq!(l.store_doc(), Some(doc));
 
         let empty = NotesLayer::for_markdown(doc, Ok(NoteMap::default()));
-        assert!(
-            !empty.shows_bar(&anchors),
-            "nothing written: no bar over the plan"
+        assert_eq!(
+            empty.send(&anchors),
+            None,
+            "nothing written, nothing to send"
         );
-        assert_eq!(empty.send(&anchors), None, "and nothing to send");
         let unreadable =
             NotesLayer::for_markdown(doc, Err("its notes were kept by a newer TD".into()));
         assert!(
-            unreadable.shows_bar(&anchors),
-            "a reason is something on the bar"
+            unreadable.read_only().is_some(),
+            "the bar says why it takes none"
         );
         assert!(
             unreadable.can_edit().is_err(),

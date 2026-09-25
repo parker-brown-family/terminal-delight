@@ -9,7 +9,7 @@
 # `ctl doc notes` and the agent's own `document_notes`.
 #
 #   1. a Markdown file floating over an agent, nothing written  -> notes 0, kept in the store,
-#                                                                  "↪ send to agent"
+#                                                                  the bar drawn, "↪ send to agent"
 #   2. a note added on a heading                                -> kept (0 unsaved), in the
 #                                                                  store file, the map names
 #                                                                  its line, the .md unchanged
@@ -165,6 +165,7 @@ check "doc here opened it ($r)" test "${r%% *}" = ok
 check "it shows notes" field_is .state notes
 check "none yet" field_is .notes 0
 check "kept in TD's store" field_is .kept store
+check "the bar is on screen, so the file says it takes notes" field_is .bar true
 check "↪ says it sends to the agent" field_is .send_to "↪ send to agent"
 
 echo "== 2. a note on the second heading"

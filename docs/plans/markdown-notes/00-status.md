@@ -10,6 +10,9 @@
 - [x] Slice 2: list items as anchors of their own
 - [x] Slice 3: a changed file — blocks re-identified, orphaned notes shown and mapped, never dropped. Also, not in the plan: the bar's "N on words no longer here" opens them to be deleted, because a note nobody can delete would ride along in every map sent.
 
+## After the first build
+- Parker, opening this repository's report in the first build: *"not seeing it in this MD"*. That build hid the bar until a note existed and showed the 💬 only under the pointer, so a file nobody had commented on looked exactly as before. The bar is now always drawn, at "0 notes", as a brief's is. A pane-level test hovers a block, presses its 💬 and finds the note box open, and fails both if the hover is ignored and if the bar is hidden at 0 notes.
+
 ## What was not done, on purpose
 - Re-attaching a note to a block by its quoted words after the block's opening changed (least-confident decision 1). A guessed match can put a note on the wrong block, and the reader would then argue with a passage they never commented on. Orphans stay visible, mapped under the words they were written on, and deletable.
 - A nested list item takes no note of its own; its note goes on the top-level item (least-confident decision 2), as planned.
