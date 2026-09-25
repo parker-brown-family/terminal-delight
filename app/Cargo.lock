@@ -5778,6 +5778,7 @@ dependencies = [
  "gpui_wgpu",
  "image",
  "libc",
+ "memchr",
  "parking_lot",
  "polling",
  "rio-vt",

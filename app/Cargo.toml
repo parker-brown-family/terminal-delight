@@ -37,6 +37,11 @@ image = { version = "0.25", default-features = false }
 # A picture sent by reference, rewritten inline for an attached window
 # (src/picturewire.rs). Already in the graph through rio-vt.
 base64 = "0.22"
+# The guards in front of rio-vt's parser (src/vt/kitty.rs, text.rs, compat.rs)
+# look for the bytes they act on in every byte of output; a byte at a time,
+# the search took a third of the core's throughput. Already in the graph
+# through rio-vt and gpui.
+memchr = "2"
 # The flags and modes in src/vt/types.rs, in the bitflags generation both
 # cores use.
 bitflags = "2"
