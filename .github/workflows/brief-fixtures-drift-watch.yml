@@ -1,0 +1,73 @@
+# brief-fixtures-drift-watch — weekly check that TD's notes writer is still held
+# to the brief skill's current format.
+#
+# TD writes notes into Parker's decision briefs, and so does the brief's own save
+# button. Shared fixtures in parker-brown-family/agent-skills pin both writers to
+# one format, and app/tests/fixtures/decision-brief/notes-format/ is TD's
+# byte-identical copy of them, with SOURCE naming the commit. When the skill
+# changes the format, TD's copy goes stale and TD's writer is tested against a
+# format nobody writes any more. That can go unnoticed for as long as nobody
+# runs the comparison, so this runs it on a timer.
+#
+# Never fails the build — like collector-drift-watch, this is a smoke detector.
+# A difference is often legitimate for a while (the skill lands first, TD
+# follows); what is not legitimate is nobody knowing about it.
+name: brief-fixtures-drift-watch
+
+on:
+  schedule:
+    - cron: "17 10 * * 1" # Mondays 10:17 UTC
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      UPSTREAM: parker-brown-family/agent-skills
+      ISSUE_TITLE: "the vendored brief notes fixtures have drifted from the skill"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compare TD's copy with the skill's main
+        id: cmp
+        run: |
+          set -uo pipefail
+          git clone -q "https://github.com/$UPSTREAM.git" "$RUNNER_TEMP/agent-skills"
+          if out=$(scripts/sync-brief-fixtures --check --from "$RUNNER_TEMP/agent-skills" --ref HEAD 2>&1); then
+            echo "drifted=" >>"$GITHUB_OUTPUT"
+          else
+            echo "drifted=yes" >>"$GITHUB_OUTPUT"
+          fi
+          head=$(git -C "$RUNNER_TEMP/agent-skills" rev-parse --short HEAD)
+          echo "head=$head" >>"$GITHUB_OUTPUT"
+          {
+            echo "## brief notes fixtures against $UPSTREAM@$head"
+            echo ""
+            echo '```'
+            echo "$out"
+            echo '```'
+          } >>"$GITHUB_STEP_SUMMARY"
+          printf '%s\n' "$out" >"$RUNNER_TEMP/drift.txt"
+
+      - name: Raise (or refresh) the drift issue
+        if: ${{ steps.cmp.outputs.drifted != '' }}
+        run: |
+          set -euo pipefail
+          body="TD's copy of the decision-brief notes fixtures differs from \`$UPSTREAM@${{ steps.cmp.outputs.head }}\`:
+
+          \`\`\`
+          $(head -40 "$RUNNER_TEMP/drift.txt")
+          \`\`\`
+
+          The skill may have changed the notes format. Read its commit first, then run \`scripts/sync-brief-fixtures\` and \`cargo test --locked docview::notes\`. If TD's writer now fails a case, the format moved and the writer follows it; if the skill bumped \`data-format\`, TD must keep refusing the new version until its writer is taught it."
+          existing=$(gh issue list --state open --search "in:title \"$ISSUE_TITLE\"" --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "$body"
+          else
+            gh issue create --title "$ISSUE_TITLE" --label follow-up --body "$body"
+          fi
