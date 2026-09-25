@@ -320,6 +320,9 @@ pub(crate) struct FloatingDoc {
     /// The document's engine gave up (a browser that will not start): the
     /// file goes to the desktop. Dropped with the square.
     _gave_up: gpui::Subscription,
+    /// ↪ pressed in the brief's notes bar comes back here, to be sent on to
+    /// the workspace. Dropped with the square.
+    _send: gpui::Subscription,
 }
 
 impl FloatingDoc {
@@ -328,6 +331,7 @@ impl FloatingDoc {
         rect: crate::docopen::FloatRect,
         links: gpui::Subscription,
         gave_up: gpui::Subscription,
+        send: gpui::Subscription,
     ) -> Self {
         Self {
             view,
@@ -338,6 +342,7 @@ impl FloatingDoc {
             _links: links,
             note: None,
             _gave_up: gave_up,
+            _send: send,
         }
     }
 }
@@ -361,6 +366,48 @@ pub(crate) struct DocFace {
     /// square's does. `None` for a pane that came back after a restart,
     /// which says why in its own body and opens nothing by itself.
     _gave_up: Option<gpui::Subscription>,
+    /// ↪ pressed in the brief's notes bar, as the square's is.
+    _send: gpui::Subscription,
+}
+
+/// ↪ in the notes bar of a brief on this pane: the pane asks the workspace to
+/// hand the map to the agent pane the brief sits beside — its own pane for a
+/// floating square, the pane a split was opened beside, else the nearest agent
+/// pane in the tab ([`crate::docopen::send_to`]). Only the workspace can see
+/// the tab. `seat` says which of the pane's documents was pressed, so the
+/// answer goes back into the right bar.
+pub struct SendNotesBeside {
+    pub map: String,
+    pub unsaved: usize,
+    pub seat: crate::docopen::DocSeat,
+}
+
+impl gpui::EventEmitter<SendNotesBeside> for TerminalView {}
+
+/// The bytes ↪ writes into an agent's prompt, or `None` when it must write
+/// nothing. Pure, so the one property that matters is held by a test.
+///
+/// **No Enter, ever.** The map goes in as a bracketed paste, which a program
+/// that asked for bracketing treats as text however many newlines it holds, and
+/// every control character is taken out of it first but the newline and the
+/// tab — a carriage return included, and every ESC, so no text in a brief can
+/// close the bracket early and have what follows read as keys. A program that
+/// has NOT asked for bracketed paste gets nothing: there every newline in the
+/// map would be an Enter, and the answer is to say so rather than type.
+pub(crate) fn notes_paste(map: &str, bracketed: bool) -> Option<Vec<u8>> {
+    if !bracketed {
+        return None;
+    }
+    let clean: String = map
+        .replace("\r\n", "\n")
+        .chars()
+        .filter(|c| matches!(c, '\n' | '\t') || !c.is_control())
+        .collect();
+    let clean = clean.trim_end();
+    if clean.is_empty() {
+        return None;
+    }
+    Some([b"\x1b[200~", clean.as_bytes(), b"\x1b[201~"].concat())
 }
 
 /// A flat rectangle in window pixels, `(x, y, w, h)`: where something was
@@ -2448,6 +2495,11 @@ pub struct TerminalView {
     /// and for a document pane restored from a saved layout, which does not
     /// remember: "not recorded" rather than "nobody".
     doc_opened_by: Option<u64>,
+    /// Who ↪ in the notes bar sends to, for the floating square's document
+    /// and the Document face's: "agent", a pane's name, or `None` for no
+    /// button. Set by the workspace, which can see the tab; handed to the
+    /// views every frame, as the theme is.
+    notes_beside: (Option<String>, Option<String>),
     /// Where the Document face's view was laid out, flat, in window pixels:
     /// `(x, y, w, h)`, recorded as it paints. `None` until it has painted.
     doc_rect: std::rc::Rc<std::cell::Cell<Option<FlatRect>>>,
@@ -4078,6 +4130,7 @@ impl TerminalView {
             doc_memo: std::cell::RefCell::new(None),
             doc: None,
             doc_opened_by: None,
+            notes_beside: (None, None),
             doc_rect: std::rc::Rc::new(std::cell::Cell::new(None)),
             doc_holding: false,
             was_focused: false,
@@ -5090,7 +5143,89 @@ impl TerminalView {
             pane.follow_doc_link(link, crate::docopen::DocSeat::Float, cx)
         });
         let gave_up = Self::hand_over_on_give_up(&view, cx);
-        FloatingDoc::new(view, rect, links, gave_up)
+        let send = Self::ask_to_send(&view, crate::docopen::DocSeat::Float, cx);
+        FloatingDoc::new(view, rect, links, gave_up, send)
+    }
+
+    /// ↪ pressed in a document's notes bar goes to the workspace, which can
+    /// see which agent pane the document sits beside.
+    fn ask_to_send(
+        view: &gpui::Entity<crate::docview::DocumentView>,
+        seat: crate::docopen::DocSeat,
+        cx: &mut Context<Self>,
+    ) -> gpui::Subscription {
+        cx.subscribe(view, move |_, _, ev: &crate::docview::SendNotes, cx| {
+            cx.emit(SendNotesBeside {
+                map: ev.map.clone(),
+                unsaved: ev.unsaved,
+                seat,
+            })
+        })
+    }
+
+    /// Who ↪ on each of this pane's documents sends to — the floating
+    /// square's and the Document face's — as the workspace works it out from
+    /// the tab. Repaints only when either changes.
+    pub(crate) fn set_notes_beside(
+        &mut self,
+        float: Option<String>,
+        face: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.notes_beside != (float.clone(), face.clone()) {
+            self.notes_beside = (float, face);
+            cx.notify();
+        }
+    }
+
+    /// What came of a ↪ on this pane's document, said in its notes bar.
+    pub(crate) fn doc_said(
+        &mut self,
+        seat: crate::docopen::DocSeat,
+        said: crate::docview::notes_ui::Said,
+        cx: &mut Context<Self>,
+    ) {
+        let view = match seat {
+            crate::docopen::DocSeat::Float => self.float.as_ref().map(|f| f.view.clone()),
+            crate::docopen::DocSeat::Face => self.doc.as_ref().map(|d| d.view.clone()),
+        };
+        if let Some(view) = view {
+            view.update(cx, |v, cx| v.notes_said(said, cx));
+        }
+    }
+
+    /// ↪ send to agent: a brief's notes map, pasted into this pane's prompt
+    /// and NOT sent. Row #9 of `docs/security/terminal-input.md`.
+    ///
+    /// Started only by a press on ↪ in a brief's notes bar, which the
+    /// workspace routes here from the pane the brief is on — the one way a
+    /// pointer gesture in one pane reaches the prompt beside it. The bytes are
+    /// [`notes_paste`]'s: a bracketed paste with no carriage return and no
+    /// escape inside it, so the person reads the notes in the prompt and
+    /// presses Enter themselves. Answers how many characters went, or why
+    /// nothing did.
+    pub(crate) fn send_notes(&self, map: &str) -> Result<usize, String> {
+        if !self.mode.is_agent() {
+            return Err("the pane beside this brief is not running an agent now".into());
+        }
+        if self.bench.face() != crate::workbench::Face::Terminal {
+            return Err(
+                "the agent's pane is not showing its terminal, so nobody would see the notes land — turn it to its prompt first"
+                    .into(),
+            );
+        }
+        let bracketed = self
+            .session
+            .term
+            .lock()
+            .mode()
+            .contains(TermMode::BRACKETED_PASTE);
+        let bytes = notes_paste(map, bracketed).ok_or_else(|| {
+            "the agent's prompt is not taking a paste right now, and typed without one every line of the map would press Enter — ⎘ copy map instead"
+                .to_string()
+        })?;
+        self.session.notifier.notify(bytes);
+        Ok(map.chars().count())
     }
 
     /// The view is up but its engine cannot draw after all (a browser that
@@ -5379,11 +5514,13 @@ impl TerminalView {
             pane.follow_doc_link(link, crate::docopen::DocSeat::Face, cx)
         });
         let gave_up = Self::hand_over_on_give_up(&view, cx);
+        let send = Self::ask_to_send(&view, crate::docopen::DocSeat::Face, cx);
         self.doc = Some(DocFace {
             view,
             target,
             _links: links,
             _gave_up: Some(gave_up),
+            _send: send,
         });
         self.doc_holding = false;
         self.bench.set_face(crate::workbench::Face::Document);
@@ -5955,6 +6092,17 @@ impl TerminalView {
     /// [`Self::doc_opened_by`]'s field.
     pub(crate) fn doc_opened_by(&self) -> Option<u64> {
         self.doc_opened_by
+    }
+
+    /// Whether the Document face is the one showing.
+    pub(crate) fn has_doc_face(&self) -> bool {
+        self.doc_on_face().is_some()
+    }
+
+    /// Who ↪ on the square's document and on the face's sends to, as the
+    /// workspace last said.
+    pub(crate) fn notes_beside(&self) -> &(Option<String>, Option<String>) {
+        &self.notes_beside
     }
 
     /// Record who this document pane was opened beside. The workspace calls
@@ -10604,14 +10752,23 @@ impl Render for TerminalView {
         // which a pane can hold apart from the window's. Handed down every
         // frame the square is up; the view repaints only when the palette or
         // the text size actually moved.
+        // Who each document's ↪ sends to rides down the same way.
         if let Some(float) = &self.float {
             let theme = Arc::new(th.clone());
-            float.view.update(cx, |v, cx| v.set_theme(theme, cx));
+            let beside = self.notes_beside.0.clone();
+            float.view.update(cx, |v, cx| {
+                v.set_theme(theme, cx);
+                v.set_beside(beside, cx);
+            });
         }
         // The Document face's view, the same way.
         if let Some(doc) = self.doc_on_face() {
             let theme = Arc::new(th.clone());
-            doc.view.update(cx, |v, cx| v.set_theme(theme, cx));
+            let beside = self.notes_beside.1.clone();
+            doc.view.update(cx, |v, cx| {
+                v.set_theme(theme, cx);
+                v.set_beside(beside, cx);
+            });
         }
         let float_el = self.float_el(&th, face_now, cx);
         let float_cursor = (face_now == crate::workbench::Face::Terminal)
@@ -15338,5 +15495,197 @@ mod tests {
                 "{scheme:?} must emit one colour per char"
             );
         }
+    }
+
+    // ── ↪ send to agent: row #9 of the terminal-input manifest ─────────────
+
+    /// ↪ never presses Enter. What it writes is a bracketed paste with no
+    /// carriage return in it and no escape inside the bracket — so a brief
+    /// whose notes hold `ESC[201~` followed by a return cannot close the
+    /// paste early and have the rest read as keys — and a prompt that has
+    /// not asked for bracketing gets nothing at all, because there every
+    /// newline in the map would be an Enter.
+    ///
+    /// Mutation-tested: appending `\r` after the closing marker, letting the
+    /// unbracketed case through, and dropping the control-character filter
+    /// each fail this.
+    #[test]
+    fn send_notes_pastes_bracketed_and_never_sends_a_carriage_return() {
+        let map =
+            "NOTES — brief.html\n\n[ask-a] Which one?\n  - the second\n\n1 notes on 1 elements.\n";
+        let out = notes_paste(map, true).expect("a bracketed prompt takes the map");
+        assert!(out.starts_with(b"\x1b[200~"), "{out:?}");
+        assert!(out.ends_with(b"\x1b[201~"), "{out:?}");
+        assert!(
+            !out.contains(&b'\r'),
+            "a carriage return is an Enter: {out:?}"
+        );
+        let inner = &out[6..out.len() - 6];
+        assert_eq!(inner, map.trim_end().as_bytes(), "the map, as shown");
+
+        // A brief is a file, and anybody can write one.
+        let hostile =
+            "NOTES\r\n[a] A\r\n  - ok\x1b[201~\rrm -rf ~\r\n  - \x03\x04\u{9b}201~\u{7f}\n";
+        let out = notes_paste(hostile, true).expect("still a map");
+        assert!(!out.contains(&b'\r'), "{out:?}");
+        let escapes = out.iter().filter(|b| **b == 0x1b).count();
+        assert_eq!(escapes, 2, "an escape inside the bracket: {out:?}");
+        for c in [0x03u8, 0x04, 0x7f] {
+            assert!(
+                !out.contains(&c),
+                "control byte {c:#x} reached the prompt: {out:?}"
+            );
+        }
+        assert!(
+            !String::from_utf8_lossy(&out).contains('\u{9b}'),
+            "a C1 CSI reached the prompt"
+        );
+        assert!(
+            String::from_utf8_lossy(&out).contains("rm -rf ~"),
+            "text stays text"
+        );
+
+        assert_eq!(
+            notes_paste(map, false),
+            None,
+            "unbracketed, a newline is an Enter"
+        );
+        assert_eq!(notes_paste("\r\n\r\n", true), None, "nothing to send");
+    }
+
+    /// The manifest is checked, not trusted: its counted `notifier.notify`
+    /// expectation is the number of call sites in this file's code, and every
+    /// one of them sits in a function the manifest's table names. The ↪ site
+    /// is row #9, `send_notes`, and it is the only function whose write
+    /// carries `notes_paste`'s bytes.
+    ///
+    /// Mutation-tested: a stray `notifier.notify` in another function, the
+    /// manifest's count left at 10, and row #9 taken out of the table each
+    /// fail this.
+    #[test]
+    fn the_manifest_counts_every_write_to_a_terminal() {
+        let manifest = include_str!("../../docs/security/terminal-input.md");
+        let src = include_str!("pane.rs");
+        let code = &src[..src.find("\n#[cfg(test)]").expect("a test module")];
+        let needle = concat!("notifier", ".notify(");
+
+        let expect: usize = manifest
+            .lines()
+            .find(|l| l.contains(r"'notifier\.notify\('") && l.contains("# expect:"))
+            .and_then(|l| l.split("# expect:").nth(1))
+            .and_then(|l| l.split_whitespace().next())
+            .and_then(|n| n.parse().ok())
+            .expect("the manifest's counted notifier.notify line");
+
+        // The functions the table names, from its "Enclosing function" column.
+        let named: Vec<&str> = manifest
+            .lines()
+            .filter(|l| {
+                l.starts_with("| ")
+                    && l.split('|')
+                        .nth(1)
+                        .is_some_and(|c| c.trim().parse::<u32>().is_ok())
+            })
+            .filter_map(|l| l.split('|').nth(3))
+            .filter_map(|c| c.split('`').nth(1))
+            .collect();
+        assert!(
+            named.contains(&"send_notes"),
+            "row #9 is missing: {named:?}"
+        );
+
+        let mut owner = "<file>";
+        let mut sites: Vec<(&str, &str)> = Vec::new();
+        for line in code.lines() {
+            let t = line.trim_start();
+            if t.starts_with("//") {
+                continue;
+            }
+            // A method (four spaces in) or a free function (none); a closure
+            // or a nested fn inside a method stays the method's.
+            let indent = line.len() - t.len();
+            if indent == 0 || indent == 4 {
+                if let Some(rest) = ["fn ", "pub fn ", "pub(crate) fn "]
+                    .iter()
+                    .find_map(|p| t.strip_prefix(p))
+                {
+                    owner = rest.split(['(', '<']).next().unwrap_or(rest);
+                }
+            }
+            if t.contains(needle) {
+                sites.push((owner, t));
+            }
+        }
+        assert_eq!(
+            sites.len(),
+            expect,
+            "docs/security/terminal-input.md expects {expect} call sites and pane.rs has {}: {sites:?}",
+            sites.len()
+        );
+        let strays: Vec<_> = sites.iter().filter(|(o, _)| !named.contains(o)).collect();
+        assert!(
+            strays.is_empty(),
+            "a write to a terminal in a function the manifest does not name: {strays:?}"
+        );
+        let ours: Vec<_> = sites.iter().filter(|(o, _)| *o == "send_notes").collect();
+        assert_eq!(ours.len(), 1, "send_notes writes once: {ours:?}");
+        let pasted: Vec<&str> = code
+            .lines()
+            .filter(|l| l.contains("notes_paste(") && !l.trim_start().starts_with("//"))
+            .collect();
+        assert_eq!(
+            pasted.len(),
+            2,
+            "notes_paste is defined once and called once, in send_notes: {pasted:?}"
+        );
+        let body = method(code, "pub(crate) fn send_notes(");
+        assert!(body.contains("notes_paste("), "{body}");
+    }
+
+    /// ↪ is the only way to `send_notes`: the workspace calls it from the
+    /// handler of the event the notes bar's press raises, and from nowhere
+    /// else — no socket verb, no MCP verb, no timer.
+    #[test]
+    fn only_a_press_on_the_notes_bar_reaches_send_notes() {
+        // The whole file: main.rs keeps test items all through it, so there
+        // is no one place where its code ends.
+        let main = include_str!("main.rs");
+        let calls: Vec<&str> = main
+            .lines()
+            .filter(|l| l.contains(".send_notes(") && !l.trim_start().starts_with("//"))
+            .collect();
+        assert_eq!(calls.len(), 1, "{calls:?}");
+        let handler = method(main, "fn send_notes_beside(");
+        assert!(handler.contains(".send_notes("), "{handler}");
+        let routed: Vec<&str> = main
+            .lines()
+            .filter(|l| l.contains("send_notes_beside(") && !l.trim_start().starts_with("//"))
+            .collect();
+        assert_eq!(
+            routed.len(),
+            2,
+            "defined, and called from the subscription: {routed:?}"
+        );
+        assert!(main.contains("ev: &pane::SendNotesBeside"));
+        for other in ["ctl.rs", "mcp.rs", "mcp_transport.rs"] {
+            let src = match other {
+                "ctl.rs" => include_str!("ctl.rs"),
+                "mcp.rs" => include_str!("mcp.rs"),
+                _ => include_str!("mcp_transport.rs"),
+            };
+            assert!(!src.contains("send_notes("), "{other} reaches send_notes");
+        }
+        // And the pane raises the event only from the view's own ↪ event.
+        let code = live_code();
+        let asks: Vec<&str> = code
+            .lines()
+            .filter(|l| l.contains("SendNotesBeside {"))
+            .collect();
+        assert_eq!(
+            asks.len(),
+            2,
+            "the struct, and the one place it is raised: {asks:?}"
+        );
+        assert!(method(&code, "fn ask_to_send(").contains("docview::SendNotes"));
     }
 }

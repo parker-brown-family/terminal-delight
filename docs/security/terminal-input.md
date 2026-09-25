@@ -5,7 +5,8 @@ and in an agent pane it is typing into a live conversation with a model that wil
 
 **The rule this repository holds: TD never types into a running terminal on its own initiative.**
 Every byte that reaches the pty of a pane you are already using originates from a key you pressed, a
-pointer gesture you made (a scroll, a ▲/▼ click, a context-menu paste), or the terminal protocol
+pointer gesture you made (a scroll, a ▲/▼ click, a context-menu paste, a ↪ in a brief's notes
+bar), or the terminal protocol
 answering the program running in the pane. No timer, plugin, MCP verb or notification callback can
 put text in front of an agent that is already running.
 
@@ -34,11 +35,12 @@ audited 2026-09-08:
 | 6 | `pane.rs` | `paste_text` | the paste keybinding and the right-click context menu's *Paste* row, through `paste_clipboard`; and a file dropped on the terminal face, whose path it pastes (`bench_drop`) | keystroke + pointer |
 | 7 | `pane.rs` | `seek_agent_prompt` | `alt+↑` / `alt+↓` **and the ▲/▼ header buttons** — walks an alt-screen agent's own scrollback with synthetic wheel notches, or PageUp/PageDown when the program has not asked for mouse reports; a bounded async walk, see below | keystroke + pointer |
 | 8 | `pane.rs:2471` | `new_restored` | a **freshly spawned** shell is handed its recorded command line — session restore, the dead-agent *resurrect* menu, `ctl adopt --run`, or `TD_SEED_RESUME` at launch | see below |
+| 9 | `pane.rs` | `send_notes` | a press on **↪** in a brief's notes bar — the brief's notes map, pasted into the prompt of the agent pane the brief sits beside, bracketed and **never followed by Enter**; see below | pointer |
 
 `send` is the only site that composes bytes from a keystroke, and it is reachable only from the key
 handler. That is the invariant. Everything else is the terminal answering its own program (#2, #3),
-a pointer gesture the person made (#4, #6, #7), or site #8 handing a command line to a shell it just
-spawned — and #8 is the only one of the three that something other than a person can start.
+a pointer gesture the person made (#4, #6, #7, #9), or site #8 handing a command line to a shell it
+just spawned — and #8 is the only one of the three that something other than a person can start.
 
 **`mcp.rs` and `plugins.rs` reach none of them.** The MCP tool surface changes appearance —
 brightness, contrast, warp, text size — reads pane state, posts a sticky note, declares a
@@ -118,6 +120,21 @@ These look like the concern and are not. Recorded so the next reader does not re
   stops early on three unchanged frames or when a human prompt scrolls into view. Synthetic,
   bounded, navigational, started by a keypress **or a click on ▲/▼** — it moves the view, not the
   cursor in a prompt.
+- **↪ send to agent (#9).** The one write that lands in a pane other than the one the gesture was
+  made on: ↪ sits in the notes bar of a brief, and the workspace routes the press to the agent pane
+  that brief sits beside — the pane a floating square is over, the pane a split was opened beside,
+  else the nearest agent pane in the same tab, named on the button when there is more than one.
+  Three things bound it, each held by a test in `pane.rs`. It is a paste and never a submission:
+  the map goes in bracketed, with every control character but newline and tab taken out first, so
+  it carries no carriage return and no ESC that could close the bracket early; a prompt that has
+  not asked for bracketed paste gets nothing, because there every newline would be an Enter. It is
+  reachable only from the press: `send_notes` has one caller, the handler of the event the notes
+  bar raises, and no socket or MCP verb reaches it. And it goes nowhere the person cannot see: the
+  target must be an agent showing its terminal face, and the bar says where the notes landed. The
+  person reads them in the prompt and presses Enter. Unsaved notes are sent as shown, and the bar
+  says how many; ↪ never saves first, because saving is its own decision. Where the button is
+  drawn is checked live, without pressing it, by `scripts/doc-send-check.sh`: absent over a shell,
+  present over an agent and on a split opened beside one, and a stand-in agent's stdin empty after.
 - **The MCP server.** `set_pane_config` stores numbers for appearance. There is no verb that writes
   to a pty, and this audit confirmed the docs' claim rather than repeating it.
 
@@ -160,7 +177,7 @@ check whose expectation is wrong on the day it ships is a check somebody switche
 
 ```
 rg -c 'self\.send\(' app/src/pane.rs        # expect: 1  — pane.rs:4099, inside on_key
-sed '/^#\[cfg(test)\]/q' app/src/pane.rs | rg -c 'notifier\.notify\('  # expect: 10 — the eight rows above, #2 and #4 twice each; code only, since the tests quote the call
+sed '/^#\[cfg(test)\]/q' app/src/pane.rs | rg -c 'notifier\.notify\('  # expect: 11 — the nine rows above, #2 and #4 twice each; code only, since the tests quote the call
 rg -c 'keepalive' app/src/main.rs           # expect: 2  — the module doc, and the header-glyph count comment
 rg -n 'Msg::Input|notifier\.0|notifier:' app/src   # expect: nothing outside term.rs
 ```
@@ -170,6 +187,10 @@ is public — `pub struct Notifier(pub EventLoopSender)`, and `notify` is one li
 Msg::Input(bytes))`. A future call site written as `notifier.0.send(Msg::Input(…))`, or a `Notifier`
 cloned out to another module, writes to a pty while passing every other grep on this page. The
 single primitive is a convention this repository keeps, not something the type system enforces.
+
+The second line is also a test: `the_manifest_counts_every_write_to_a_terminal`, in `pane.rs`, reads
+this page, holds the count above to the code, and fails for a call site in a function the table does
+not name.
 
 A new `notifier.notify` call site is a change to this document, not just to the code. If you are
 adding one, say in the pull request which row of the table it becomes and who initiates it.

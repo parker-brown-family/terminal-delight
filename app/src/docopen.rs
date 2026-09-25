@@ -645,6 +645,73 @@ pub fn float_hit_at(zones: &[FloatZone], x: f32, y: f32) -> Option<FloatZone> {
         .copied()
 }
 
+/// A pane of a tab, as the ↪ rule reads it: whether an agent is running in it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct SendLeaf {
+    pub agent: bool,
+}
+
+/// Which pane a brief's ↪ sends its notes to, by index into the tab's leaves,
+/// and how it was chosen.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum SendTo {
+    /// The pane the brief is beside: the floating square's own pane, or the
+    /// pane a split was opened beside.
+    Beside(usize),
+    /// The pane the brief is beside is not an agent (or is gone from the
+    /// tab), so the nearest agent pane in the tab's order.
+    Nearest(usize),
+}
+
+impl SendTo {
+    pub fn index(self) -> usize {
+        match self {
+            SendTo::Beside(i) | SendTo::Nearest(i) => i,
+        }
+    }
+}
+
+/// Where ↪ on a brief sends, over one tab's leaves in their order.
+///
+/// `host` is the leaf the brief is drawn on: the pane a square floats over,
+/// or a split's own pane. `beside` is the leaf it sits beside — `host` itself
+/// for a square, the pane the split was opened beside for a split, `None` when
+/// that pane is no longer in the tab or was never recorded.
+///
+/// The pane beside it wins when an agent runs there. Otherwise the nearest
+/// agent pane in the tab by leaf order, the earlier of two equally near;
+/// `None` when the tab holds no agent, which draws no button. A split's own
+/// pane is never the target, even with an agent in it: its terminal is behind
+/// the document, and a paste there lands where nobody can see it.
+pub fn send_to(leaves: &[SendLeaf], host: usize, beside: Option<usize>) -> Option<SendTo> {
+    if let Some(b) = beside.filter(|b| leaves.get(*b).is_some_and(|l| l.agent)) {
+        return Some(SendTo::Beside(b));
+    }
+    leaves
+        .iter()
+        .enumerate()
+        .filter(|(i, l)| l.agent && *i != host)
+        .min_by_key(|(i, _)| (i.abs_diff(host), *i))
+        .map(|(i, _)| SendTo::Nearest(i))
+}
+
+/// What ↪ calls the pane it sends to: "agent" when the tab holds one agent
+/// pane, and that pane's own name when it holds more, so the person can see
+/// which prompt the notes will land in before pressing.
+pub fn send_label(agents_in_tab: usize, name: &str) -> String {
+    if agents_in_tab <= 1 {
+        return "agent".to_string();
+    }
+    const MAX: usize = 24;
+    let name = name.trim();
+    if name.chars().count() <= MAX {
+        name.to_string()
+    } else {
+        let cut: String = name.chars().take(MAX - 1).collect();
+        format!("{}…", cut.trim_end())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1218,5 +1285,71 @@ mod tests {
         assert!(inside(c, 400.0, 300.0), "{c:?}");
         assert_eq!((c.w, c.h), (400.0, 300.0));
         assert!(c.contains(10.0, 10.0) && !c.contains(400.0, 10.0));
+    }
+
+    fn tab(agents: &[bool]) -> Vec<SendLeaf> {
+        agents.iter().map(|&agent| SendLeaf { agent }).collect()
+    }
+
+    /// ↪ goes to the pane the brief is beside when an agent runs there: a
+    /// square's own pane, a split's opener.
+    #[test]
+    fn send_goes_to_the_pane_the_brief_is_beside() {
+        // A square over an agent, another agent next to it.
+        assert_eq!(
+            send_to(&tab(&[true, true]), 1, Some(1)),
+            Some(SendTo::Beside(1))
+        );
+        // A split (leaf 2) opened beside the agent in leaf 0, with another
+        // agent nearer to it in leaf 1.
+        assert_eq!(
+            send_to(&tab(&[true, true, false]), 2, Some(0)),
+            Some(SendTo::Beside(0))
+        );
+    }
+
+    /// Otherwise the nearest agent pane in the tab, the earlier of two
+    /// equally near — and never the split's own pane, whose terminal is
+    /// behind the document.
+    #[test]
+    fn send_falls_back_to_the_nearest_agent_in_the_tab() {
+        // The opener is a shell now; the agents sit one and two away.
+        assert_eq!(
+            send_to(&tab(&[false, true, false, true]), 2, Some(0)),
+            Some(SendTo::Nearest(1)),
+            "two equally near: the earlier"
+        );
+        // A restored split with no recorded opener.
+        assert_eq!(
+            send_to(&tab(&[false, false, true]), 0, None),
+            Some(SendTo::Nearest(2))
+        );
+        // An agent running in the split's own pane is not a target.
+        assert_eq!(send_to(&tab(&[true, false]), 0, Some(1)), None);
+        // A square over a shell, with an agent beside it.
+        assert_eq!(
+            send_to(&tab(&[false, true]), 0, Some(0)),
+            Some(SendTo::Nearest(1))
+        );
+    }
+
+    /// No agent pane in the tab: nothing to send to, so no button.
+    #[test]
+    fn send_has_no_target_without_an_agent_beside_the_brief() {
+        assert_eq!(send_to(&tab(&[false, false, false]), 1, Some(0)), None);
+        assert_eq!(send_to(&tab(&[false]), 0, Some(0)), None);
+        assert_eq!(send_to(&tab(&[]), 0, None), None);
+        // An opener index past the tab is a pane that left it.
+        assert_eq!(send_to(&tab(&[false]), 0, Some(7)), None);
+    }
+
+    /// One agent is "agent"; with a choice the button names the pane, cut to
+    /// fit a bar.
+    #[test]
+    fn send_names_the_pane_only_when_there_is_a_choice() {
+        assert_eq!(send_label(1, "claude · brief-beside"), "agent");
+        assert_eq!(send_label(2, "CLAUDE"), "CLAUDE");
+        let long = send_label(3, "an agent pane whose title runs on and on");
+        assert!(long.ends_with('…') && long.chars().count() <= 24, "{long}");
     }
 }
