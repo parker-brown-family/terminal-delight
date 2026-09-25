@@ -3559,7 +3559,7 @@ impl TerminalView {
             .term
             .lock()
             .mode()
-            .contains(alacritty_terminal::term::TermMode::BRACKETED_PASTE);
+            .contains(crate::vt::TermMode::BRACKETED_PASTE);
         let (bytes, delivery) = crate::channel::say_bytes(&text, bracketed);
         let delivery = if self.bench_may_write() {
             delivery

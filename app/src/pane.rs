@@ -20,13 +20,9 @@ mod bench;
 mod doc;
 use crate::term;
 use crate::theme::{self, PaneTheme, Theme};
-use alacritty_terminal::{
-    event::{Event as TermEvent, Notify, WindowSize},
-    grid::{Dimensions, Scroll},
-    index::{Column, Line, Point as TermPoint, Side},
-    selection::{Selection, SelectionType},
-    term::{cell::Flags, viewport_to_point, TermMode},
-    vte::ansi::{Color as AnsiColor, NamedColor},
+use crate::vt::{
+    viewport_to_point, Color as AnsiColor, Column, Event as TermEvent, Flags, Line, NamedColor,
+    Point as TermPoint, Scroll, SelectionType, Side, TermMode, WindowSize,
 };
 use futures::StreamExt;
 use gpui::{
@@ -1206,6 +1202,30 @@ pub(crate) fn laid_out_length(logical: f32, scale: f32) -> f32 {
     (device.abs() - 0.5).ceil().copysign(device) / scale
 }
 
+/// A picture's pixels as a gpui texture: cropped to the part the program asked
+/// to show, and turned from RGBA into the BGRA gpui uploads. Takes the pixels
+/// by value, because they were copied out of the core to be converted here.
+fn picture_texture(data: crate::vt::PictureData, crop: [f32; 4]) -> Option<Arc<gpui::RenderImage>> {
+    let mut pixels = image::RgbaImage::from_raw(data.width, data.height, data.rgba)?;
+    if crop != [0.0, 0.0, 1.0, 1.0] {
+        let (w, h) = (data.width as f32, data.height as f32);
+        let x = (crop[0] * w).round().clamp(0.0, w) as u32;
+        let y = (crop[1] * h).round().clamp(0.0, h) as u32;
+        let right = (crop[2] * w).round().clamp(0.0, w) as u32;
+        let bottom = (crop[3] * h).round().clamp(0.0, h) as u32;
+        if right <= x || bottom <= y {
+            return None;
+        }
+        pixels = image::imageops::crop_imm(&pixels, x, y, right - x, bottom - y).to_image();
+    }
+    for pixel in pixels.as_chunks_mut::<4>().0 {
+        pixel.swap(0, 2);
+    }
+    Some(Arc::new(gpui::RenderImage::new(vec![image::Frame::new(
+        pixels,
+    )])))
+}
+
 /// The grid's padding as gpui lays it out: [`grid_pad`], rounded to whole
 /// device pixels the way gpui rounds every authored padding before layout.
 /// Anything that turns a row into a position adds this, not the raw padding,
@@ -1368,10 +1388,10 @@ fn asked_colour(index: usize, th: &Theme) -> Option<Hsla> {
 }
 
 /// A colour as the eight-bit channels a colour reply carries.
-fn rgb8(c: Hsla) -> alacritty_terminal::vte::ansi::Rgb {
+fn rgb8(c: Hsla) -> crate::vt::Rgb {
     let c = c.to_rgb();
     let byte = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
-    alacritty_terminal::vte::ansi::Rgb {
+    crate::vt::Rgb {
         r: byte(c.r),
         g: byte(c.g),
         b: byte(c.b),
@@ -2479,6 +2499,11 @@ pub struct TerminalView {
     /// selection); cleared whenever a normal key or a fresh mouse-down resets the
     /// selection.
     kbd_sel: Option<(TermPoint, TermPoint)>,
+    /// The pictures programs have drawn in this pane, as gpui textures, keyed by
+    /// image and crop. Built the first frame a picture is on screen, dropped the
+    /// frame it leaves, and all dropped when the pane's tab is hidden: pictures
+    /// in Terminal Delight are attentional, not kept.
+    pictures: std::collections::HashMap<(crate::vt::PictureKey, [u32; 4]), Arc<gpui::RenderImage>>,
     /// When the current agent "thinking" spell began — used to ring the bell on
     /// the thinking→done edge (agents don't reliably emit a terminal BEL).
     think_since: Option<Instant>,
@@ -2949,7 +2974,7 @@ impl TerminalView {
         let (first, last) = {
             let term = self.session.term.lock();
             // Line 0 is the top of the screen; history runs negative from there.
-            let oldest = term.grid().topmost_line().0;
+            let oldest = term.topmost_line().0;
             let newest = (self.grid.rows as i32 - 1).max(0);
             budget_range(oldest, newest, budget.lines)
         };
@@ -3805,7 +3830,7 @@ impl TerminalView {
                         // moves the "esc to interrupt" line off-screen and would trip
                         // a false agent-done bell. Only run the thinking-scan once the
                         // display offset has held steady for 200ms.
-                        let cur_offset = view.session.term.lock().grid().display_offset() as i32;
+                        let cur_offset = view.session.term.lock().display_offset() as i32;
                         let scroll_settled = match view.last_scroll_offset {
                             Some((off, since)) if off == cur_offset => {
                                 since.elapsed() > std::time::Duration::from_millis(200)
@@ -4095,6 +4120,7 @@ impl TerminalView {
             peeled: None,
             note_hover: None,
             kbd_sel: None,
+            pictures: Default::default(),
             think_since: None,
             not_thinking_since: None,
             tokens_banked: 0,
@@ -4180,12 +4206,12 @@ impl TerminalView {
     /// region [`TerminalView::agent_is_thinking`] scans. Feeds the HUD parser.
     fn live_rows(&self) -> Vec<String> {
         let term = self.session.term.lock();
-        let grid = term.grid();
+        let grid = &*term;
         let rows = grid.screen_lines();
         let cols = grid.columns();
         let mut out = Vec::with_capacity(rows);
         for line in 0..rows as i32 {
-            let row = &grid[Line(line)];
+            let row = grid.row(Line(line));
             let mut s = String::with_capacity(cols);
             for col in 0..cols {
                 let cell = &row[Column(col)];
@@ -4221,7 +4247,7 @@ impl TerminalView {
     /// blank input window.
     pub fn last_human_message(&self, max_lines: usize) -> Vec<String> {
         let term = self.session.term.lock();
-        let grid = term.grid();
+        let grid = &*term;
         let cols = grid.columns();
         let screen = grid.screen_lines() as i32;
         // BOUNDED, where it used to be the whole history.
@@ -4236,7 +4262,7 @@ impl TerminalView {
         // the prompt is found even when the agent's reply has scrolled it off the
         // visible screen (the whole point: an idle agent's last ask).
         let read = |line: i32| -> String {
-            let row = &grid[Line(line)];
+            let row = grid.row(Line(line));
             let mut s = String::with_capacity(cols);
             for col in 0..cols {
                 let cell = &row[Column(col)];
@@ -4387,6 +4413,119 @@ impl TerminalView {
     /// screen at ring time)? Only meaningful while [`Self::has_bell`] is true.
     pub fn bell_blocked(&self) -> bool {
         self.bell && self.bell_blocked
+    }
+
+    /// The pictures on this pane's screen, as elements to lay over the grid:
+    /// those under the text (a negative z), then those over it.
+    ///
+    /// Positioned in the grid's own cells: the core reports each picture's
+    /// cell and its size in device pixels, and this converts with the ratio
+    /// between the cell the pane lays out and the cell it told the core.
+    /// Nothing is drawn while the rows are permuted (the anchor-to-top
+    /// inverted read) or in crawl, where a picture would have no one cell to
+    /// sit in; the pictures are still held and come back with the plain read.
+    fn picture_elements(
+        &mut self,
+        pad: (f32, f32),
+        crawl: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> (Vec<gpui::AnyElement>, Vec<gpui::AnyElement>) {
+        let (cell_px_w, cell_px_h) = self.cell_px;
+        let placed = if crawl || self.paint_inverted || cell_px_w == 0 || cell_px_h == 0 {
+            Vec::new()
+        } else {
+            // Read under the terminal's lock; convert after letting it go. The
+            // lock is the read loop's too, and turning a large picture into a
+            // texture takes long enough to hold up the program's output.
+            let wanted: Vec<_> = {
+                let term = self.session.term.lock();
+                let mut fetched = std::collections::HashSet::new();
+                term.pictures()
+                    .into_iter()
+                    .map(|picture| {
+                        let key = (picture.key, picture.crop.map(f32::to_bits));
+                        let data = (!self.pictures.contains_key(&key) && fetched.insert(key))
+                            .then(|| term.picture_data(picture.key))
+                            .flatten();
+                        (key, picture, data)
+                    })
+                    .collect()
+            };
+            let mut placed = Vec::with_capacity(wanted.len());
+            for (key, picture, data) in wanted {
+                let texture = match self.pictures.get(&key) {
+                    Some(texture) => texture.clone(),
+                    None => {
+                        let Some(texture) =
+                            data.and_then(|data| picture_texture(data, picture.crop))
+                        else {
+                            continue;
+                        };
+                        self.pictures.insert(key, texture.clone());
+                        texture
+                    }
+                };
+                placed.push((key, picture, texture));
+            }
+            placed
+        };
+        // A texture whose picture has left the screen goes now, not later.
+        let gone: Vec<_> = self
+            .pictures
+            .keys()
+            .filter(|key| !placed.iter().any(|(k, ..)| k == *key))
+            .copied()
+            .collect();
+        for key in gone {
+            if let Some(texture) = self.pictures.remove(&key) {
+                cx.drop_image(texture, Some(window));
+            }
+        }
+        let (sx, sy) = (
+            self.cell_w / cell_px_w.max(1) as f32,
+            self.cell_h / cell_px_h.max(1) as f32,
+        );
+        let (mut under, mut over) = (Vec::new(), Vec::new());
+        for (_, picture, texture) in placed {
+            let row = picture.line + self.paint_offset as i32;
+            let left = pad.0 + picture.column as f32 * self.cell_w + picture.offset.0 * sx;
+            let top = pad.1 + row as f32 * self.cell_h + picture.offset.1 * sy;
+            let el = gpui::img(gpui::ImageSource::Render(texture))
+                .absolute()
+                .left(px(left))
+                .top(px(top))
+                .w(px(picture.size.0 * sx))
+                .h(px(picture.size.1 * sy))
+                .into_any_element();
+            if picture.z < 0 {
+                under.push(el);
+            } else {
+                over.push(el);
+            }
+        }
+        (under, over)
+    }
+
+    /// Forget every picture this pane holds — the textures here and the images
+    /// in the core. Called when its tab stops being shown.
+    pub fn forget_pictures(&mut self, cx: &mut Context<Self>) {
+        let held = {
+            let mut term = self.session.term.lock();
+            let held = term.pictures().len();
+            term.forget_pictures();
+            held
+        };
+        let textures = self.pictures.len();
+        for (_, texture) in self.pictures.drain() {
+            cx.drop_image(texture, None);
+        }
+        // What a hidden tab let go of, for a window being checked by script:
+        // there is no pointer to switch tabs with there, and no other way to
+        // see that a picture went.
+        if std::env::var_os("TD_PICTUREDEBUG").is_some() && (held > 0 || textures > 0) {
+            eprintln!("[pictures] hidden: forgot {held} picture(s), dropped {textures} texture(s)");
+        }
     }
 
     fn handle_term_event(&mut self, event: TermEvent, cx: &mut Context<Self>) -> bool {
@@ -4679,7 +4818,10 @@ impl TerminalView {
         let (row, col, side) = self.viewport_cell(pos);
         let row = self.paint_row_to_grid_row(row);
         (
-            viewport_to_point(display_offset, TermPoint::new(row, Column(col))),
+            viewport_to_point(
+                display_offset,
+                TermPoint::new(Line(row as i32), Column(col)),
+            ),
             side,
         )
     }
@@ -4699,15 +4841,15 @@ impl TerminalView {
     /// decoration on the live screen, not properties of the text.
     fn grid_rows_in(&self, first: i32, last: i32, th: &Theme) -> Vec<DocLine> {
         let term = self.session.term.lock();
-        let grid = term.grid();
+        let grid = &*term;
         let cols = self.grid.cols;
         let mut out = Vec::with_capacity((last - first + 1).max(0) as usize);
         for l in first..=last {
-            let row = &grid[alacritty_terminal::index::Line(l)];
+            let row = grid.row(Line(l));
             let mut text = String::with_capacity(cols);
             let mut runs: Vec<TextRun> = Vec::new();
             for c in 0..cols {
-                let cell = &row[alacritty_terminal::index::Column(c)];
+                let cell = &row[Column(c)];
                 if cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
                     continue;
                 }
@@ -5053,11 +5195,9 @@ impl TerminalView {
                             .term
                             .lock()
                             .scroll_display(Scroll::Delta(lines));
-                        let offset = view.session.term.lock().grid().display_offset();
+                        let offset = view.session.term.lock().display_offset();
                         let (point, side) = view.cell_at(view.last_mouse, offset);
-                        if let Some(sel) = view.session.term.lock().selection.as_mut() {
-                            sel.update(point, side);
-                        }
+                        view.session.term.lock().update_selection(point, side);
                         cx.notify();
                     }
                     true
@@ -5078,7 +5218,7 @@ impl TerminalView {
     fn send(&mut self, bytes: Vec<u8>, cx: &mut Context<Self>) {
         {
             let mut term = self.session.term.lock();
-            term.selection = None;
+            term.clear_selection();
             term.scroll_display(Scroll::Bottom);
         }
         // a real keystroke ends any keyboard selection in progress
@@ -5944,7 +6084,7 @@ impl TerminalView {
         if let Some(nav) = read_nav(k) {
             let paging = matches!(nav, ReadNav::PageUp | ReadNav::PageDown);
             if !paging || self.mode.is_agent() {
-                let tmode = *self.session.term.lock().mode();
+                let tmode = self.session.term.lock().mode();
                 if !tmode.contains(TermMode::ALT_SCREEN) && !tmode.intersects(TermMode::MOUSE_MODE)
                 {
                     let scroll = match nav {
@@ -5994,7 +6134,7 @@ impl TerminalView {
             let (anchor, active) = match self.kbd_sel {
                 Some(ae) => ae,
                 None => {
-                    if let Some(r) = term.selection.as_ref().and_then(|s| s.to_range(&*term)) {
+                    if let Some(r) = term.selection_range() {
                         (r.start, r.end)
                     } else {
                         let c = term.renderable_content().cursor.point;
@@ -6031,9 +6171,8 @@ impl TerminalView {
             } else {
                 (Side::Right, Side::Left)
             };
-            let mut sel = Selection::new(SelectionType::Simple, anchor, a_side);
-            sel.update(active, e_side);
-            term.selection = Some(sel);
+            term.start_selection(SelectionType::Simple, anchor, a_side);
+            term.update_selection(active, e_side);
             (anchor, active)
         };
         self.kbd_sel = Some(next);
@@ -6178,7 +6317,7 @@ impl TerminalView {
         let up = (lines > 0) ^ self.paint_inverted; // true = reveal OLDER (app "up")
         let count = (lines.unsigned_abs() as usize).clamp(1, 8);
 
-        let mode = *self.session.term.lock().mode();
+        let mode = self.session.term.lock().mode();
         // Diagnostic for the anchor-top read (see docs/spec/anchor-top-read.md §7).
         if std::env::var("TD_ANCHORDEBUG").is_ok() {
             eprintln!(
@@ -6247,7 +6386,7 @@ impl TerminalView {
             return Vec::new();
         }
         let term = self.session.term.lock();
-        let grid = term.grid();
+        let grid = &*term;
         let cols = grid.columns();
         let bot = grid.bottommost_line().0;
         let start = (bot - cap as i32 + 1).max(grid.topmost_line().0);
@@ -6255,7 +6394,7 @@ impl TerminalView {
         let mut buf = String::with_capacity(cols);
         for l in start..=bot {
             buf.clear();
-            let row = &grid[Line(l)];
+            let row = grid.row(Line(l));
             for c in 0..cols {
                 let ch = row[Column(c)].c;
                 buf.push(if ch == '\0' { ' ' } else { ch });
@@ -6287,7 +6426,7 @@ impl TerminalView {
         }
         let ndl: Vec<char> = needle.chars().collect();
         let term = self.session.term.lock();
-        let grid = term.grid();
+        let grid = &*term;
         let cols = grid.columns();
         let bot = grid.bottommost_line().0;
         let start = (bot - cap as i32 + 1).max(grid.topmost_line().0);
@@ -6295,7 +6434,7 @@ impl TerminalView {
         let mut buf = String::with_capacity(cols);
         for l in start..=bot {
             buf.clear();
-            let row = &grid[Line(l)];
+            let row = grid.row(Line(l));
             for c in 0..cols {
                 let ch = row[Column(c)].c;
                 buf.push(if ch == '\0' { ' ' } else { ch });
@@ -6341,16 +6480,15 @@ impl TerminalView {
     ) {
         {
             let mut term = self.session.term.lock();
-            let hist = term.grid().history_size() as i32;
+            let hist = term.history_size() as i32;
             let off = (-line).clamp(0, hist);
-            let cur = term.grid().display_offset() as i32;
+            let cur = term.display_offset() as i32;
             term.scroll_display(Scroll::Delta(off - cur));
             if let Some((lo, hi)) = sel {
                 let a = TermPoint::new(Line(line), Column(lo));
                 let b = TermPoint::new(Line(line), Column(hi));
-                let mut s = Selection::new(SelectionType::Simple, a, Side::Left);
-                s.update(b, Side::Right);
-                term.selection = Some(s);
+                term.start_selection(SelectionType::Simple, a, Side::Left);
+                term.update_selection(b, Side::Right);
             }
         }
         cx.notify();
@@ -6362,11 +6500,11 @@ impl TerminalView {
     /// cheap even on deep history. Agent panes only — call sites gate on mode.
     fn human_line_indices(&self) -> Vec<i32> {
         let term = self.session.term.lock();
-        let grid = term.grid();
+        let grid = &*term;
         let cols = grid.columns().min(24); // prompt caret is near the start
         let mut out = Vec::new();
         for l in grid.topmost_line().0..=grid.bottommost_line().0 {
-            let row = &grid[Line(l)];
+            let row = grid.row(Line(l));
             let mut s = String::with_capacity(cols);
             for c in 0..cols {
                 let ch = row[Column(c)].c;
@@ -6410,7 +6548,7 @@ impl TerminalView {
             return;
         }
         let mut term = self.session.term.lock();
-        let top = -(term.grid().display_offset() as i32);
+        let top = -(term.display_offset() as i32);
         let target = if next {
             idx.iter().copied().filter(|&l| l > top).min()
         } else {
@@ -6418,9 +6556,9 @@ impl TerminalView {
         };
         match target {
             Some(l) => {
-                let hist = term.grid().history_size() as i32;
+                let hist = term.history_size() as i32;
                 let off = (-l).clamp(0, hist);
-                let cur = term.grid().display_offset() as i32;
+                let cur = term.display_offset() as i32;
                 term.scroll_display(Scroll::Delta(off - cur));
             }
             // Already at/below the newest message → snap to the live bottom.
@@ -6444,7 +6582,7 @@ impl TerminalView {
         if self.seeking {
             return;
         }
-        let mode = *self.session.term.lock().mode();
+        let mode = self.session.term.lock().mode();
         let up = !next; // "previous message" = scroll toward OLDER output
         let (step, coarse) = if mode.intersects(TermMode::MOUSE_MODE) {
             (
@@ -6573,14 +6711,14 @@ impl TerminalView {
     ) {
         let (start, end, is_block, display_offset) = {
             let term = self.session.term.lock();
-            let Some(range) = term.selection.as_ref().and_then(|s| s.to_range(&*term)) else {
+            let Some(range) = term.selection_range() else {
                 return;
             };
             (
                 range.start,
                 range.end,
                 range.is_block,
-                term.grid().display_offset(),
+                term.display_offset(),
             )
         };
         let a = self.point_to_painted(start, perm, display_offset);
@@ -6606,7 +6744,7 @@ impl TerminalView {
         let cols = self.grid.cols;
         let (start, end, is_block, display_offset, grid) = {
             let term = self.session.term.lock();
-            let range = term.selection.as_ref().and_then(|s| s.to_range(&*term))?;
+            let range = term.selection_range()?;
             let content = term.renderable_content();
             let display_offset = content.display_offset;
             let mut grid = vec![vec![' '; cols]; rows];
@@ -6702,9 +6840,7 @@ impl TerminalView {
             if content.display_offset != 0 {
                 None
             } else {
-                term.selection
-                    .as_ref()
-                    .and_then(|s| s.to_range(&*term))
+                term.selection_range()
                     // single row, on the cursor's row, ending immediately left of it
                     .filter(|r| {
                         r.start.line == r.end.line
@@ -6716,7 +6852,7 @@ impl TerminalView {
         };
         if let Some(n) = erase {
             self.session.notifier.notify(vec![0x7f; n]); // n × DEL (erase char left)
-            self.session.term.lock().selection = None;
+            self.session.term.lock().clear_selection();
             self.kbd_sel = None;
         }
         cx.notify();
@@ -6768,7 +6904,7 @@ impl TerminalView {
     fn clear_scrollback(&self, cx: &mut Context<Self>) {
         {
             let mut term = self.session.term.lock();
-            term.grid_mut().clear_history();
+            term.clear_history();
             term.scroll_display(Scroll::Bottom);
         }
         cx.notify();
@@ -7079,7 +7215,7 @@ impl TerminalView {
             // terminal face. Nothing extra is read unless the variable is set.
             if std::env::var_os("TD_HITDEBUG").is_some() {
                 let (row, col, _) = self.viewport_cell(ev.position);
-                let mode = *self.session.term.lock().mode();
+                let mode = self.session.term.lock().mode();
                 let face = self.bench.face();
                 let doc_seen = match (&doc, mods.alt && face == crate::workbench::Face::Terminal) {
                     (Some(d), _) => format!("{:?}", d.kind),
@@ -7165,14 +7301,14 @@ impl TerminalView {
                 return;
             }
         }
-        let offset = self.session.term.lock().grid().display_offset();
+        let offset = self.session.term.lock().display_offset();
         let (point, side) = self.cell_at(ev.position, offset);
         let ty = match ev.click_count {
             2 => SelectionType::Semantic,
             n if n >= 3 => SelectionType::Lines,
             _ => SelectionType::Simple,
         };
-        self.session.term.lock().selection = Some(Selection::new(ty, point, side));
+        self.session.term.lock().start_selection(ty, point, side);
         // a fresh mouse selection supersedes any keyboard-extension anchor; the
         // next shift-arrow re-seeds from this new selection's range.
         self.kbd_sel = None;
@@ -7251,11 +7387,9 @@ impl TerminalView {
             return;
         }
         self.last_mouse = ev.position;
-        let offset = self.session.term.lock().grid().display_offset();
+        let offset = self.session.term.lock().display_offset();
         let (point, side) = self.cell_at(ev.position, offset);
-        if let Some(sel) = self.session.term.lock().selection.as_mut() {
-            sel.update(point, side);
-        }
+        self.session.term.lock().update_selection(point, side);
         // dragging to/over an edge arms the auto-scroll ticker (which keeps
         // scrolling even if the cursor then holds still at the edge).
         self.autoscroll = self.autoscroll_rate(ev.position);
@@ -9716,6 +9850,13 @@ impl Render for TerminalView {
         // corners of a page are not the part the barrel pass pushes out of
         // the tube.
         let doc_el = self.doc_face_el((grid_pad_x, grid_pad_y));
+        // The pictures programs drew, over the grid in its own cells — and only
+        // over the grid: the bench and a document face show no terminal.
+        let (pictures_under, pictures_over) = if on_bench || doc_el.is_some() {
+            (Vec::new(), Vec::new())
+        } else {
+            self.picture_elements((grid_pad_x, grid_pad_y), th.crawl, window, cx)
+        };
 
         div()
             .track_focus(&self.focus_handle(cx))
@@ -9866,6 +10007,7 @@ impl Render for TerminalView {
                     // output stopped being watched is not an agent that stopped.
                     // A document the same way: it fills the screen in the
                     // grid's place, and the shell under it keeps running.
+                    .children(pictures_under)
                     .child(if on_bench {
                         bench_el
                     } else if let Some(doc_el) = doc_el {
@@ -9904,6 +10046,7 @@ impl Render for TerminalView {
                             }))
                             .into_any_element()
                     })
+                    .children(pictures_over)
                     .children(copy_el)
                     .children(bench_hint_el)
                     // The sticky note, INSIDE the screen and therefore inside the
@@ -13235,7 +13378,9 @@ mod tests {
         let drag = mv
             .find("self.float_drag_move(ev, cx)")
             .expect("on_mouse_move drags the square");
-        let select = mv.find("sel.update(").expect("the grid's selection drag");
+        let select = mv
+            .find(".update_selection(point, side)")
+            .expect("the grid's selection drag");
         assert!(drag < select, "the square's drag comes before the grid's");
     }
 
@@ -13341,7 +13486,9 @@ mod tests {
         assert!(local.contains("crate::workbench::unwarp("));
         let mv = method_body(&code, "fn on_mouse_move(");
         let held = mv.find("self.doc_face_drag_move(ev, cx)").expect("drag");
-        let select = mv.find("sel.update(").expect("the grid's selection drag");
+        let select = mv
+            .find(".update_selection(point, side)")
+            .expect("the grid's selection drag");
         assert!(held < select);
     }
 

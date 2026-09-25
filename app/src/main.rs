@@ -66,6 +66,7 @@ mod paint;
 mod palette;
 mod pane;
 mod paneident;
+mod picturewire;
 mod plugins;
 mod ptyscan;
 mod recover;
@@ -73,7 +74,6 @@ mod screenread;
 mod session;
 mod skin;
 mod slot;
-mod socketpty;
 mod sticky;
 mod surface;
 mod surfacefeed;
@@ -86,6 +86,7 @@ mod toolprop;
 mod tree;
 mod usage;
 mod vitals;
+mod vt;
 mod warp;
 mod workbench;
 
@@ -4474,6 +4475,11 @@ struct Workspace {
     /// guess about how stale is acceptable, and this needs no guess — the answer
     /// is "not stale at all within one paint, recomputed for the next".
     rail_frame: u64,
+    /// The panes the last frame showed: the active tab's. Compared with this
+    /// frame's so a pane that has left the screen, by whatever route — a tab
+    /// click, a keyboard jump, a pane moved to another tab — can forget the
+    /// pictures it held. See [`Workspace::forget_pictures_out_of_sight`].
+    shown_panes: Vec<gpui::WeakEntity<TerminalView>>,
     /// The projection, memoised for the frame that built it.
     ///
     /// **Why this exists.** `rail_rows` walks every tab and every pane, reads
@@ -5246,7 +5252,7 @@ fn make_pane_attached(
     let pane_id = info.pane;
     let streams = term::AttachStreams {
         bytes: stream,
-        announce_resize: Box::new(move |size: alacritty_terminal::event::WindowSize| {
+        announce_resize: Box::new(move |size: vt::WindowSize| {
             link.announce_resize(
                 pane_id,
                 hostproto::PaneGeom {
@@ -5260,7 +5266,11 @@ fn make_pane_attached(
     };
     // The pid is the host's, and only an attribute: this window did not start
     // that process and will never signal it.
-    let (session, guard) = term::attach_in(grid, streams, Some(info.shell_pid))?;
+    let (session, guard) = term::attach_in(
+        grid.with_cell(geom.cell_width, geom.cell_height),
+        streams,
+        Some(info.shell_pid),
+    )?;
     // The host's cell as well as its grid: a pane that believed the cell were
     // anything else would re-announce the size on its first frame and wake
     // every agent in the window with a resize that changed nothing.
@@ -5774,6 +5784,7 @@ impl Workspace {
             rail_bounds: Arc::new(Mutex::new(None)),
             rail_hits: Arc::new(Mutex::new(Vec::new())),
             rail_frame: 0,
+            shown_panes: Vec::new(),
             rail_memo: std::cell::RefCell::new(None),
             rail_shown: Arc::new(Mutex::new(Vec::new())),
             rail_band: Arc::new(Mutex::new(Vec::new())),
@@ -17890,6 +17901,36 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Pictures are attentional, in Parker's word: a picture a program drew is
+    /// there while its pane is looked at, and a pane whose tab has stopped
+    /// being shown forgets every picture it held, textures and images both.
+    /// Come back and the screen is the text, as it would be in a terminal that
+    /// had never kept the picture.
+    ///
+    /// Asked every frame against the last frame's answer, rather than hooked
+    /// into `activate_tab`, because a tab stops being shown by more routes than
+    /// one function: a tree click, a keyboard jump, a notification, a pane
+    /// carried to another tab. A pane that was shown and is not now is the
+    /// definition, whatever moved it.
+    fn forget_pictures_out_of_sight(&mut self, cx: &mut Context<Self>) {
+        let mut leaves = vec![];
+        if let Some(tab) = self.tabs.get(self.active) {
+            tab.root.leaves(&mut leaves);
+        }
+        let shown: Vec<gpui::WeakEntity<TerminalView>> =
+            leaves.into_iter().map(|pane| pane.downgrade()).collect();
+        let hidden: Vec<Entity<TerminalView>> = self
+            .shown_panes
+            .iter()
+            .filter(|pane| !shown.contains(pane))
+            .filter_map(gpui::WeakEntity::upgrade)
+            .collect();
+        for pane in hidden {
+            pane.update(cx, |view, cx| view.forget_pictures(cx));
+        }
+        self.shown_panes = shown;
+    }
+
     fn reap(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         // An attached pane that reports an ending has not said which ending.
         // Ask before acting on it — this runs every frame, but only speaks to
@@ -24469,6 +24510,7 @@ impl Render for Workspace {
         // then shared by every surface that asks. See [`Workspace::rail_memo`].
         self.rail_frame = self.rail_frame.wrapping_add(1);
         self.reap(window, cx);
+        self.forget_pictures_out_of_sight(cx);
         // Holdings past their window, let go of here because the render pass is
         // the only clock a workspace has — and because the tray that offers them
         // is built further down this same pass, so it can never draw an offer
@@ -37020,6 +37062,7 @@ mod tests {
         let (text, code) = flag_reply(Some("--version")).expect("--version is answered");
         assert_eq!(code, 0);
         assert!(text.starts_with("terminal-delight "), "{text}");
+        assert!(text.contains(vt::CORE_NAME), "{text}");
         assert_eq!(flag_reply(Some("-V")).map(|r| r.1), Some(0));
         let (help, code) = flag_reply(Some("--help")).expect("--help is answered");
         assert_eq!(code, 0);
@@ -39152,7 +39195,17 @@ Environment:
 fn flag_reply(first: Option<&str>) -> Option<(String, i32)> {
     match first {
         Some("--version" | "-V") => {
-            Some((format!("terminal-delight {}", env!("CARGO_PKG_VERSION")), 0))
+            // The core is named because a window can outlive the build it was
+            // started from, and which emulator a running process has is the
+            // first question when a pane draws something wrong.
+            Some((
+                format!(
+                    "terminal-delight {} (terminal core: {})",
+                    env!("CARGO_PKG_VERSION"),
+                    vt::CORE_NAME
+                ),
+                0,
+            ))
         }
         Some("--help" | "-h") => Some((USAGE.to_string(), 0)),
         Some(flag) if flag.starts_with('-') => Some((
@@ -39490,14 +39543,14 @@ fn main() {
     };
 
     // Give every shell we spawn a real terminal type. gpui launches us from the
-    // desktop/WM with TERM unset, and alacritty_terminal's `tty::new` does NOT
-    // set one — so without this, child shells inherit an empty TERM, readline
+    // desktop/WM with TERM unset, and spawning a pseudoterminal does NOT set
+    // one — so without this, child shells inherit an empty TERM, readline
     // can't look up the `clear_screen` capability, and Ctrl+L silently no-ops
     // (the prompt never pops to the top). `setup_env` picks the `alacritty`
     // terminfo if installed, else the universally-present `xterm-256color`, and
     // advertises 24-bit colour (COLORTERM=truecolor). Must run before any PTY is
     // spawned; it mutates the process env, so keep it ahead of the gpui app/threads.
-    alacritty_terminal::tty::setup_env();
+    vt::pty::setup_env();
 
     // Decide boot mode before the window opens. An EXPLICITLY-scratch launch —
     // forced scratch (TD_SCRATCH, the Ctrl+Alt+T quick window), a seeded tear-off

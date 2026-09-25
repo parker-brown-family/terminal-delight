@@ -68,8 +68,12 @@ if [ -n "${HOSTEXE:-}" ]; then
   HOSTSHA=$(basename "$HOSTEXE" | sed -E 's/^td-([0-9a-f]+)-.*/\1/')
   echo "== host wire vs the running host ($HOSTSHA):"
   if git cat-file -e "$HOSTSHA" 2>/dev/null; then
-    git diff --stat "$HOSTSHA" HEAD -- app/src/gridwire.rs app/src/hostproto.rs app/src/socketpty.rs app/src/host.rs | tail -1
-    echo "(empty above = identical wire; a window bounce loses nothing)"
+    # The core behind the boundary is wire too: a window and a host read one
+    # stream with it and compare what they made of it (docs/plans/core-swap-rio).
+    git diff --stat "$HOSTSHA" HEAD -- app/src/gridwire.rs app/src/hostproto.rs app/src/host.rs app/src/picturewire.rs app/src/vt/ app/Cargo.lock | tail -1
+    echo "(empty above = identical wire; a window bounce loses nothing. Not empty: a window"
+    echo " from this build must still agree with that host — gridwire's AS_THE_OLD_HOST_HASHED"
+    echo " pins that for hosts from before the core swap)"
   else
     echo "(the host's sha $HOSTSHA is not in this repository — cannot say; do not bounce blind)"
   fi

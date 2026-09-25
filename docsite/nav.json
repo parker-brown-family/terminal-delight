@@ -85,6 +85,10 @@
           "title": "Sticky notes"
         },
         {
+          "slug": "pictures",
+          "title": "Pictures"
+        },
+        {
           "slug": "sessions",
           "title": "Sessions and restarts"
         }
@@ -196,7 +200,7 @@
     {
       "title": "Terminal core",
       "href": "/install#technical-building-from-source",
-      "note": "alacritty_terminal · gpui"
+      "note": "rio-vt · gpui"
     },
     {
       "title": "Version",
