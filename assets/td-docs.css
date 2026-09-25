@@ -53,7 +53,7 @@
 .map ul { list-style: none; margin: 0; padding: 0; }
 .map li { margin: 0; padding: 5px 0; border-top: 1px solid var(--line); font-size: 15px; display: flex; gap: 10px; align-items: baseline; }
 .map li:first-child { border-top: 0; }
-.map li a { text-decoration: none; color: var(--ink); font-weight: 600; }
+.map li a { text-decoration: none; color: var(--ink); font-weight: 600; white-space: nowrap; }
 .map li a:hover { color: var(--acc-2); }
 .map li small { margin-left: auto; color: var(--ink-3); font-size: 12.5px; text-align: right; }
 .map li.soon { color: var(--ink-3); }
@@ -126,3 +126,8 @@
 .crawl text { font-family: var(--mono); }
 .crawl .t1 { fill: var(--ink); font-size: 13px; font-weight: 600; }
 .crawl .t2 { fill: var(--ink-3); font-size: 11px; }
+
+/* Inline code may break anywhere: a long path in a sentence or a definition
+   otherwise pushes the whole pane sideways on a phone. Code blocks keep their
+   own horizontal scroll. */
+:not(pre) > code { overflow-wrap: anywhere; }

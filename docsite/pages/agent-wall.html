@@ -52,7 +52,7 @@
   <dt>picture</dt><dd>The directory's logo, or a small scene of the tool the agent is using right now, with a caption. With neither, the name's initials over the group colour. The picture is warped like a tiny CRT.</dd>
   <dt>agent chip</dt><dd>Model family and effort, e.g. <code>OPUS · MAX</code>, from the transcript; else the <code>--model</code> it was started with. A shell shows <code>SERVICE</code>.</dd>
   <dt>middle</dt><dd>The three bars, when there are any. Otherwise the agent's latest lines, or a shell's directory.</dd>
-  <dt>corner</dt><dd><code>Δ</code> and <code>Σ</code> tokens, and the state.</dd>
+  <dt>corner</dt><dd><code>Δ</code> and <code>Σ</code> tokens, read from the agent's status line, and the state. When the status line shows no count, <code>Δ</code> currently reads <code>Δ0</code> rather than unknown (<a href="https://github.com/parker-brown-family/terminal-delight/issues/800">issue 800</a>).</dd>
 </dl>
 
 <h3>The bars</h3>

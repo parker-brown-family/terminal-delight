@@ -10,7 +10,7 @@
 
 <section data-register="brief">
 <p class="lede">A sticky note is a small handwritten sheet stuck to the top-right corner of one pane. It says what nothing else on screen can: why this pane exists, or what you want done in it. It's the first thing you read when you come back to a wall of panes.</p>
-<p>Press <kbd>alt</kbd>+<kbd>s</kbd> in a pane, type, and press <kbd>enter</kbd>. Click the paper to edit it. <kbd>alt</kbd>+<kbd>backspace</kbd> peels it off, and <kbd>alt</kbd>+<kbd>s</kbd> right after brings the words back. Right-click the paper to push a pin through it: a pinned note puts <code>📌</code> on its tab and on its row in the left bar, so it can call you back to a tab you aren't looking at.</p>
+<p>Press <kbd>Alt</kbd>+<kbd>S</kbd> in a pane, type, and press <kbd>Enter</kbd>. Click the paper to edit it. <kbd>Alt</kbd>+<kbd>Backspace</kbd> peels it off, and <kbd>Alt</kbd>+<kbd>S</kbd> right after brings the words back. Right-click the paper to push a pin through it: a pinned note puts <code>📌</code> on its tab and on its row in the left bar, so it can call you back to a tab you aren't looking at.</p>
 <p>Each pane holds one note, and notes survive a restart. An agent can leave one on its own pane through the MCP tool <code>leave_note</code>, with a title and up to ten words. The house rule for both: ten words, a shouty title, pinned only when it needs eyes.</p>
 <p class="invite">Technical has the keys, the limits, the agent's side, and where notes are saved.</p>
 </section>
@@ -22,15 +22,15 @@
 <table class="keys">
   <thead><tr><th>Key</th><th>Does</th></tr></thead>
   <tbody>
-    <tr><td><kbd>alt</kbd>+<kbd>s</kbd></td><td>Start a note, or pick the pen up on the one that's there. Pressed while writing, it posts. It never deletes.</td></tr>
-    <tr><td><kbd>enter</kbd>, or a click off the paper</td><td>Post. Posting an empty note removes it. A click away also reaches the terminal underneath.</td></tr>
-    <tr><td><kbd>esc</kbd> while writing</td><td>Put the old text back, or drop a new blank note. The terminal never sees it.</td></tr>
-    <tr><td><kbd>alt</kbd>+<kbd>backspace</kbd></td><td>Peel the note off. Only while a note is on the pane; otherwise it stays the shell's delete-word.</td></tr>
+    <tr><td><kbd>Alt</kbd>+<kbd>S</kbd></td><td>Start a note, or pick the pen up on the one that's there. Pressed while writing, it posts. It never deletes.</td></tr>
+    <tr><td><kbd>Enter</kbd>, or a click off the paper</td><td>Post. Posting an empty note removes it. A click away also reaches the terminal underneath.</td></tr>
+    <tr><td><kbd>Esc</kbd> while writing</td><td>Put the old text back, or drop a new blank note. The terminal never sees it.</td></tr>
+    <tr><td><kbd>Alt</kbd>+<kbd>Backspace</kbd></td><td>Peel the note off. Only while a note is on the pane; otherwise it stays the shell's delete-word.</td></tr>
     <tr><td>click the lifted bottom-left corner</td><td>Peel it off.</td></tr>
     <tr><td>right-click the paper</td><td>Pin or unpin. A right-click beside the paper opens the pane's usual menu.</td></tr>
   </tbody>
 </table>
-<p>While you're writing, the note takes every key. Once it's posted it takes none, and <kbd>esc</kbd> reaches the program in the pane as usual. A peeled note's words are kept: the next <kbd>alt</kbd>+<kbd>s</kbd> opens them selected, so typing replaces them. The note holds 160 characters. A note half-written when the window closes is saved as far as you got. <kbd>alt</kbd>+<kbd>s</kbd> is taken by the pane, so the shell underneath never receives it.</p>
+<p>While you're writing, the note takes every key. Once it's posted it takes none, and <kbd>Esc</kbd> reaches the program in the pane as usual. A peeled note's words are kept: the next <kbd>Alt</kbd>+<kbd>S</kbd> opens them selected, so typing replaces them. The note holds 160 characters. A note half-written when the window closes is saved as far as you got. <kbd>Alt</kbd>+<kbd>S</kbd> is taken by the pane, so the shell underneath never receives it.</p>
 
 <h3>Pins</h3>
 <p>Only right-click sets or clears a pin, and posting or editing leaves it alone. A pinned note shows <code>📌</code> on its tab, or <code>📌2</code> when several panes in the tab have pinned notes, placed before the agent badges so it keeps its spot. The left bar shows <code>📌</code> on the task row, and a folded branch rolls it up.</p>
@@ -55,13 +55,13 @@
     <tr><td><code>clear</code></td><td>Peel the note off. An empty title and text does the same.</td></tr>
   </tbody>
 </table>
-<p>Too long is refused, with the count: <code>note is 14 words; a sticky holds 10 or fewer — say what happened or what you need, not how it went</code>. Success reads <code>posted — the note is on pane 4121's glass</code>. An agent's note is an ordinary note once posted: you can edit, pin or peel it, and a note the agent cleared comes back with <kbd>alt</kbd>+<kbd>s</kbd>. <code>list_panes</code> reads every note back, on each pane's line as <code> · 📝 title — text</code> and in its <code>note</code> field.</p>
+<p>Too long is refused, with the count: <code>note is 14 words; a sticky holds 10 or fewer — say what happened or what you need, not how it went</code>. Success reads <code>posted — the note is on pane 4121's glass</code>. An agent's note is an ordinary note once posted: you can edit, pin or peel it, and a note the agent cleared comes back with <kbd>Alt</kbd>+<kbd>S</kbd>. <code>list_panes</code> reads every note back, on each pane's line as <code> · 📝 title — text</code> and in its <code>note</code> field.</p>
 
 <h3>Where notes are saved</h3>
 <p>On the pane's entry in the session layout, <code>~/.config/terminal-delight/sessions/&lt;session&gt;.toml</code>, beside its working directory: <code>note = { title, text, seed, pinned }</code>. Posting, peeling and pinning each save it.</p>
 
 <h3>What would prove this wrong</h3>
-<p>A posted note that swallows <kbd>esc</kbd>, or any other key, breaks the rule the feature is built on: once it's on the glass it annotates the pane and never gets in the way of what runs in it.</p>
+<p>A posted note that swallows <kbd>Esc</kbd>, or any other key, breaks the rule the feature is built on: once it's on the glass it annotates the pane and never gets in the way of what runs in it.</p>
 </section>
 
 <ol data-sources>

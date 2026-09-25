@@ -1,0 +1,183 @@
+<script type="application/json" data-page>
+{
+  "title": "Keys",
+  "description": "Every key and chord in Terminal Delight: panes and tabs, the left bar, the terminal, clipboard, find, panels, the workbench, documents, the paint overlay and the mouse. How a keystroke decides where it goes.",
+  "updated": "2026-09-25",
+  "trueOf": "main at d7cf383",
+  "summary": "Every chord, and where a keystroke goes"
+}
+</script>
+
+<section data-register="brief">
+<p class="lede">Terminal Delight's keys come in three kinds. <kbd>Alt</kbd> with an arrow or a letter, and anything with <kbd>Ctrl</kbd>+<kbd>Alt</kbd>, belongs to the window: moving between panes, splitting, closing. <kbd>Ctrl</kbd>+<kbd>Shift</kbd> with a letter belongs to the pane: copy, paste, new tab, the panels. Everything else goes to whatever is on top, and underneath everything is the terminal.</p>
+<p>So the window keys work the same whether a pane is showing its terminal or its <a href="/workbench">workbench</a>, and a shell never receives them. <kbd>Ctrl</kbd>+<kbd>C</kbd> always reaches a running program, and <kbd>Esc</kbd> closes the popup on top before a terminal ever sees it.</p>
+<p>The ones worth learning first:</p>
+<table class="keys">
+  <tbody>
+    <tr><td><kbd>F1</kbd></td><td>help: every shortcut, and the language</td></tr>
+    <tr><td><kbd>Alt</kbd>+<kbd>K</kbd></td><td>terminal ⇄ workbench</td></tr>
+    <tr><td><kbd>Alt</kbd>+<kbd>V</kbd> / <kbd>Alt</kbd>+<kbd>H</kbd></td><td>split beside / below</td></tr>
+    <tr><td><kbd>Alt</kbd>+arrows</td><td>move between panes</td></tr>
+    <tr><td><kbd>Alt</kbd>+<kbd>W</kbd> / <kbd>Ctrl</kbd>+<kbd>W</kbd></td><td>close a pane / a tab</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd></td><td>bring back what you closed</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd></td><td>new tab</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd> / <kbd>V</kbd></td><td>copy / paste</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>N</kbd></td><td>which agent needs you</td></tr>
+    <tr><td><kbd>Alt</kbd>+<kbd>R</kbd></td><td>read this pane big</td></tr>
+  </tbody>
+</table>
+<p>None of it can be rebound: there's no keymap file.</p>
+<p class="invite">Technical lists every key, surface by surface.</p>
+</section>
+
+<section data-register="technical" data-headline="Every key">
+<h3>Where a keystroke goes</h3>
+<p>Checked in this order, and the first taker keeps it: <kbd>F1</kbd>, then <kbd>Alt</kbd>+<kbd>K</kbd>, then window chords, the paint overlay, open menus, the <a href="/focus-reader">focus reader</a>, pane chords, a sticky note being written, a rename box, a floating document, the document face, the workbench, and last the terminal. Window chords are <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+anything, and <kbd>Alt</kbd> with an arrow or <kbd>R</kbd> <kbd>V</kbd> <kbd>H</kbd> <kbd>W</kbd> <kbd>K</kbd>. Pane chords are <kbd>Ctrl</kbd>+<kbd>Shift</kbd> with <kbd>T</kbd> <kbd>C</kbd> <kbd>V</kbd> <kbd>K</kbd> <kbd>A</kbd> <kbd>B</kbd> <kbd>N</kbd> <kbd>Z</kbd> <kbd>U</kbd> <kbd>Y</kbd> <kbd>D</kbd> <kbd>G</kbd> <kbd>F</kbd>, plus <kbd>Ctrl</kbd>+<kbd>W</kbd>, <kbd>Ctrl</kbd>+<kbd>F</kbd>, <kbd>Ctrl</kbd>+<kbd>X</kbd> and <kbd>Alt</kbd>+<kbd>S</kbd>. <kbd>Alt</kbd>+<kbd>B</kbd> and <kbd>Alt</kbd>+<kbd>F</kbd> stay with readline.</p>
+
+<h3>Panes and tabs</h3>
+<table class="keys">
+  <tbody>
+    <tr><td><kbd>Alt</kbd>+<kbd>←</kbd> <kbd>→</kbd> <kbd>↑</kbd> <kbd>↓</kbd></td><td>focus the pane that way; nothing that way, nothing happens</td></tr>
+    <tr><td><kbd>Alt</kbd>+<kbd>V</kbd></td><td>split, new pane beside</td></tr>
+    <tr><td><kbd>Alt</kbd>+<kbd>H</kbd>, <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>D</kbd></td><td>split, new pane below</td></tr>
+    <tr><td><kbd>Alt</kbd>+<kbd>W</kbd></td><td>close the pane, into the bay</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>W</kbd></td><td>close the tab; always asks <code>CLOSE TAB?</code></td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd></td><td>new tab, with its name box open</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>PgUp</kbd> / <kbd>PgDn</kbd></td><td>previous / next tab</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>PgUp</kbd> / <kbd>PgDn</kbd></td><td>move the tab left / right, within its group</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd></td><td>reopen the newest thing in the bay; again to go further back</td></tr>
+  </tbody>
+</table>
+<p>A tab holds up to four panes. Tab names are up to 18 characters, pane names up to 24.</p>
+
+<h3>Left bar</h3>
+<table class="keys">
+  <tbody>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>B</kbd></td><td>show or hide the bar</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>↑</kbd> / <kbd>↓</kbd></td><td>move the highlight a row</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>→</kbd></td><td>unfold; step into; on a task, open it</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>←</kbd></td><td>fold; otherwise up to the parent</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>1</kbd>–<kbd>9</kbd></td><td>jump to that top-level branch</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>R</kbd></td><td>rename the highlighted row, or the active tab</td></tr>
+  </tbody>
+</table>
+
+<h3>Terminal</h3>
+<table class="keys">
+  <tbody>
+    <tr><td><kbd>Enter</kbd></td><td>submit</td></tr>
+    <tr><td><kbd>Shift</kbd>+<kbd>Enter</kbd>, <kbd>Alt</kbd>+<kbd>Enter</kbd></td><td>a new line in Claude Code's or Codex's input</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+letter</td><td>the control character, as in any terminal</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>←</kbd> / <kbd>→</kbd></td><td>word left / right in the shell</td></tr>
+    <tr><td><kbd>Shift</kbd>+<kbd>←</kbd> / <kbd>→</kbd></td><td>extend the selection a character; with <kbd>Ctrl</kbd>, a word</td></tr>
+    <tr><td><kbd>PgUp</kbd> / <kbd>PgDn</kbd></td><td>scroll back, in agent panes; in a shell they go to the shell</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>Home</kbd> / <kbd>End</kbd></td><td>oldest / newest line, in every pane</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>K</kbd></td><td>clear the scrollback</td></tr>
+  </tbody>
+</table>
+<p>Programs that manage their own screen, such as <code>less</code>, <code>vim</code> and <code>tmux</code>, get the paging keys themselves.</p>
+
+<h3>Clipboard and find</h3>
+<table class="keys">
+  <tbody>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd></td><td>copy, also to the primary selection</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>V</kbd></td><td>paste</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>X</kbd></td><td>cut: copies the selection, and erases it if it's what you just typed; with nothing selected, the shell gets <code>^X</code></td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>F</kbd></td><td>find in this pane</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd></td><td>find in every pane</td></tr>
+  </tbody>
+</table>
+<p>In find, <kbd>↓</kbd> <kbd>Tab</kbd> and <kbd>↑</kbd> move between hits, <kbd>Enter</kbd> jumps to one, <kbd>Esc</kbd> closes.</p>
+
+<h3>Panels</h3>
+<table class="keys">
+  <tbody>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd></td><td>the <a href="/agent-wall">agent wall</a></td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>U</kbd>, <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Y</kbd></td><td><a href="/usage">usage</a>; Y for when an input method takes U</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>D</kbd></td><td>this pane's DESIGN tray: <a href="/themes">themes</a> and colour</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>G</kbd></td><td>this pane's GAUGES tray: <a href="/crt">grade, warp</a> and <a href="/text-crawl">crawl</a></td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>N</kbd></td><td>the <a href="/attention">attention</a> queue</td></tr>
+    <tr><td><kbd>Alt</kbd>+<kbd>R</kbd></td><td>the <a href="/focus-reader">focus reader</a></td></tr>
+    <tr><td><kbd>Alt</kbd>+<kbd>S</kbd></td><td>stick a <a href="/sticky-notes">note</a> on the pane; while writing, post it</td></tr>
+    <tr><td><kbd>Alt</kbd>+<kbd>Backspace</kbd></td><td>peel the note off, while there is one</td></tr>
+    <tr><td><kbd>Esc</kbd></td><td>close the popup on top</td></tr>
+  </tbody>
+</table>
+<p>The attention queue and the focus reader have keys of their own, on their pages.</p>
+
+<h3>Workbench, reading</h3>
+<table class="keys">
+  <tbody>
+    <tr><td><kbd>Alt</kbd>+<kbd>1</kbd>–<kbd>4</kbd></td><td>OVERVIEW, ARTIFACTS, DECISIONS, COMMENTS</td></tr>
+    <tr><td><kbd>Tab</kbd></td><td>next shelf</td></tr>
+    <tr><td><kbd>↓</kbd> / <kbd>↑</kbd></td><td>walk the cards</td></tr>
+    <tr><td><kbd>Enter</kbd></td><td>the card's first action; on an empty shell bench, <a href="/launching">launch an agent</a></td></tr>
+    <tr><td><kbd>1</kbd>–<kbd>9</kbd></td><td>answer a waiting question; otherwise digits type</td></tr>
+    <tr><td>any letter</td><td>start writing to the agent</td></tr>
+    <tr><td><kbd>Alt</kbd>+<kbd>M</kbd></td><td>a private note on the COMMENTS shelf</td></tr>
+    <tr><td><kbd>Esc</kbd></td><td>close one layer; never leaves the bench</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>C</kbd></td><td>interrupts the agent, as in the terminal</td></tr>
+  </tbody>
+</table>
+
+<h3>Workbench, writing</h3>
+<p>Nothing reaches the agent until you send.</p>
+<table class="keys">
+  <tbody>
+    <tr><td><kbd>Enter</kbd></td><td>send</td></tr>
+    <tr><td><kbd>Shift</kbd>+<kbd>Enter</kbd>, <kbd>Alt</kbd>+<kbd>Enter</kbd></td><td>new line</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>G</kbd></td><td>pause the agent's turn</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>C</kbd></td><td>copy the selection, or the whole draft</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>V</kbd>, <kbd>Shift</kbd>+<kbd>Insert</kbd></td><td>paste, images too</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>A</kbd></td><td>select the whole draft</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>Z</kbd></td><td>undo</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>U</kbd> / <kbd>Ctrl</kbd>+<kbd>K</kbd></td><td>delete to the start / end</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>Backspace</kbd> / <kbd>Alt</kbd>+<kbd>D</kbd></td><td>delete a word left / right</td></tr>
+    <tr><td><kbd>↑</kbd> / <kbd>↓</kbd></td><td>move between lines; on an empty draft, recall what you sent</td></tr>
+    <tr><td><kbd>Esc</kbd></td><td>close, dropping the draft</td></tr>
+  </tbody>
+</table>
+<p>A comment note takes the same editing keys; <kbd>Enter</kbd> posts it and <kbd>Esc</kbd> discards it. Nothing typed there reaches the agent.</p>
+
+<h3>Documents</h3>
+<table class="keys">
+  <tbody>
+    <tr><td><kbd>0</kbd> / <kbd>1</kbd></td><td>fit / actual size</td></tr>
+    <tr><td><kbd>+</kbd> <kbd>=</kbd> / <kbd>-</kbd></td><td>zoom in / out</td></tr>
+    <tr><td>arrows, <kbd>PgUp</kbd> <kbd>PgDn</kbd></td><td>pan, or most of a screen</td></tr>
+    <tr><td><kbd>Alt</kbd>+<kbd>K</kbd></td><td>back to the terminal</td></tr>
+    <tr><td><kbd>Esc</kbd>, over a floating document</td><td>close it</td></tr>
+  </tbody>
+</table>
+
+<h3>Paint overlay</h3>
+<p>Raised by <code>terminal-delight ctl paint on</code>. A set's first letter paints it; arrows walk the panes; <kbd>d</kbd> hands the pane back; <kbd>z</kbd> / <kbd>Shift</kbd>+<kbd>Z</kbd> turn the shelf; <kbd>f</kbd> jumps to favourites and <kbd>Shift</kbd>+<kbd>F</kbd> stars; <kbd>Esc</kbd> folds it. Other letters are swallowed, and chords with a modifier pass through. <a href="/themes#technical-paint">Themes</a> has more.</p>
+
+<h3>Mouse</h3>
+<table class="keys">
+  <tbody>
+    <tr><td>double / triple click</td><td>select a word / a line</td></tr>
+    <tr><td>right-click</td><td><code>Open here · Copy link · Copy · Paste · Clear</code></td></tr>
+    <tr><td><kbd>Ctrl</kbd>+click a link or path</td><td>open it</td></tr>
+    <tr><td><kbd>Shift</kbd>+click a file</td><td>show it in the file manager</td></tr>
+    <tr><td><kbd>Alt</kbd>+click a document</td><td>float it over the pane; again to make it a split</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+click a document</td><td>open it in a pane beside</td></tr>
+    <tr><td><kbd>Alt</kbd>+click a command</td><td>copy the line</td></tr>
+    <tr><td>right-click a name</td><td>rename; <kbd>Ctrl</kbd>+click for colour and group</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+wheel</td><td>size what's under the pointer: text, bench or chrome</td></tr>
+    <tr><td>drop a file</td><td>on the bench, its path; on the terminal, pasted</td></tr>
+  </tbody>
+</table>
+
+<h3>On the desktop</h3>
+<ul>
+  <li><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>T</kbd> on GNOME opens Terminal Delight, once <code>scripts/install-hotkey.sh</code> has bound it. The app itself does nothing with that chord.</li>
+  <li><kbd>Super</kbd>+<kbd>Alt</kbd>+<kbd>T</kbd> on Hyprland or Omarchy moves the focused terminal, and the agent in it, into Terminal Delight, once <code>scripts/install-send-hotkey.sh</code> has bound it.</li>
+  <li><kbd>Super</kbd>+<kbd>W</kbd> on Omarchy closes the whole window: that's the desktop's key, not Terminal Delight's.</li>
+</ul>
+<p><code>TD_KEYDEBUG=1</code> prints where each keystroke went.</p>
+</section>
+
+<ol data-sources>
+  <li id="s1">The routing order and chord sets: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/keylayer.rs">keylayer.rs</a>; window keys: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/main.rs">main.rs</a>; pane keys: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/pane.rs">pane.rs</a>; the workbench: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/workbench.rs">workbench.rs</a> and <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/pane/bench.rs">pane/bench.rs</a>; documents: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/docopen.rs">docopen.rs</a>.</li>
+</ol>

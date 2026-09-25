@@ -337,6 +337,34 @@ for (const [id, prefs] of [['wall', { theme: 'glass', crt: 'on' }], ['bench', { 
   await ctx.close();
 }
 
+/* Every page the site publishes, not only the four above: the list comes from
+   the live search index, so a page added tomorrow is swept without an edit
+   here. Each register a page has is opened by its hash, on a desktop and on
+   a phone, and must load clean, fetch nothing off-site, and not scroll
+   sideways. */
+{
+  const index = await (await fetch(DOCS + '/search.json')).json();
+  const urls = [...new Set(index.map(e => e.u.split('#')[0]))];
+  ok('every page: the search index lists at least 29 pages', urls.length >= 29, `${urls.length}`);
+  for (const u of urls) {
+    for (const w of [1440, 390]) {
+      const { ctx, page, errors, offsite } = await open(DOCS + u, { w, h: w === 390 ? 844 : 900, prefs: { theme: 'glass', crt: 'off' } });
+      const regs = await page.evaluate(() => [...document.querySelectorAll('section.reg-panel[id]')].map(s => s.id));
+      for (const reg of regs.length ? regs : ['']) {
+        if (reg) { await page.evaluate(r => { location.hash = r; }, reg); await page.waitForTimeout(150); }
+        const shown = reg ? await page.evaluate(r => getComputedStyle(document.getElementById(r)).display !== 'none', reg) : true;
+        const o = await overflow(page);
+        const tag = `every page: ${u}${reg ? '#' + reg : ''}@${w}`;
+        ok(`${tag} shows`, shown);
+        ok(`${tag} no horizontal overflow`, o.doc <= 0 && o.tube <= 1, JSON.stringify(o));
+      }
+      ok(`every page: ${u}@${w} clean console`, errors.length === 0, errors.join(' | '));
+      ok(`every page: ${u}@${w} nothing off-site`, offsite.length === 0, offsite.join(' '));
+      await ctx.close();
+    }
+  }
+}
+
 await browser.close();
 console.log(`${pass} passed, ${fail} failed`);
 if (bad.length) console.log(bad.map(b => '  ✗ ' + b).join('\n'));

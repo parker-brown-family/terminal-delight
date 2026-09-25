@@ -10,7 +10,7 @@
 
 <section data-register="brief">
 <p class="lede">Terminal Delight is an MCP server. An agent running in one of its panes can ask about the rest of the window: which panes exist and what each is running, what they printed, what tool another agent is calling right now.</p>
-<p>It starts locked down. Nothing is readable until you turn the server on, in the MCP control panel (<kbd>ctrl</kbd>+<kbd>shift</kbd>+<kbd>a</kbd> in a pane). Even then only agent panes are visible unless you choose <code>all panes</code>. Writing is a second switch, and a write only ever restyles a pane, leaves a note, declares a deliverable, opens a document or puts work on a workbench. <b>No tool can type into a terminal.</b></p>
+<p>It starts locked down. Nothing is readable until you turn the server on, in the MCP control panel (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd> in a pane). Even then only agent panes are visible unless you choose <code>all panes</code>. Writing is a second switch, and a write only ever restyles a pane, leaves a note, declares a deliverable, opens a document or puts work on a workbench. <b>No tool can type into a terminal.</b></p>
 <p>To connect an agent, register the relay as a stdio MCP server:</p>
 <pre class="cmd"><code>claude mcp add --scope user terminal-delight -- terminal-delight mcp</code></pre>
 <p>The relay finds the window it is running in by itself. Every answer ends with the window it came from, because several Terminal Delight windows can run on one machine.</p>
@@ -41,7 +41,7 @@
     <tr><td><code>writes on · agents can restyle</code></td><td>off</td><td>Whether any tool that changes something is allowed.</td></tr>
   </tbody>
 </table>
-<p>They live in the MCP control panel: <kbd>ctrl</kbd>+<kbd>shift</kbd>+<kbd>a</kbd> in a pane, or <code>AGENTS · MCP</code> in the footer's <code>…</code> menu. From a script: <code>ctl mcp on|off</code>, <code>ctl mcp writes on|off</code>, <code>ctl mcp expose agents|all</code>. Each change is saved with the session. <code>TD_MCP</code> starts the in-process transport but does not turn the server on, and <code>TD_MCP_WRITE</code> turns writes on only alongside <code>TD_MCP</code>.</p>
+<p>They live in the MCP control panel: <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd> in a pane, or <code>AGENTS · MCP</code> in the footer's <code>…</code> menu. From a script: <code>ctl mcp on|off</code>, <code>ctl mcp writes on|off</code>, <code>ctl mcp expose agents|all</code>. Each change is saved with the session. <code>TD_MCP</code> starts the in-process transport but does not turn the server on, and <code>TD_MCP_WRITE</code> turns writes on only alongside <code>TD_MCP</code>.</p>
 
 <h3>Tools</h3>
 <table>

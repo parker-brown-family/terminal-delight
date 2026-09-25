@@ -44,6 +44,7 @@
     <tr><td>unknown</td><td>no collector, the collector said it isn't ready, a sign-in has expired, or the vendor has no such window</td><td>hatched rail, <code>—</code></td></tr>
   </tbody>
 </table>
+<p>One gap: a limit that arrives with a label but no <code>percent</code> is currently read as 0% spent, so it draws as full rather than unknown (<a href="https://github.com/parker-brown-family/terminal-delight/issues/799">issue 799</a>).</p>
 
 <h3>The usage card</h3>
 <p><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>U</kbd>, or <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Y</kbd> where an input method takes the U; <code>Σ usage</code> on the agent wall; or a row. At the top is <b>LAUNCH AGENT CONFIG</b>, the <a href="/launching#technical-defaults">launcher's defaults</a>. Then one section per subscription: the vendor's status and what to do about it, each limit as <code>&lt;label&gt;  NN%  resets in &lt;time&gt;</code>, prepaid balances as <code>left</code> and <code>spent of … funded</code>, and <code>TODAY</code>, <code>LAST 7 DAYS</code> and <code>BY MODEL</code>. With no records yet: <code>nothing collected yet — press refresh</code>, and the folders it looked in.</p>

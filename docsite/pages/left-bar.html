@@ -11,8 +11,8 @@
 <section data-register="brief">
 <p class="lede">The left bar is a tree down the left edge of the window with every tab in the session in it. A tab is a <b>task</b>. Tasks are filed under a <b>project</b>, optionally inside a <b>group</b>, and no deeper than that.</p>
 <p>Each task row shows what its agents are doing: a robot that breathes while an agent works and blinks when it needs you, ✅ when it finished, ❌ when it finished against an error, 📌 for a pinned note. Fold a branch and those marks roll up onto the branch row, so a folded project still blinks when something inside it asks a question.</p>
-<p>Click a row to go there. Drag a task onto a project or group to file it. Right-click anything for its menu, including <b>▲ Promote</b> and <b>▼ Demote</b> for what matters today. Delete a branch or close a tab and it goes to the bay at the foot of the bar, where it stays recoverable for an hour or more. <kbd>ctrl</kbd>+<kbd>shift</kbd>+<kbd>z</kbd> brings back the last thing you closed.</p>
-<p><kbd>ctrl</kbd>+<kbd>shift</kbd>+<kbd>b</kbd> shows and hides the bar, and <kbd>ctrl</kbd>+<kbd>alt</kbd> with the arrow keys walks it.</p>
+<p>Click a row to go there. Drag a task onto a project or group to file it. Right-click anything for its menu, including <b>▲ Promote</b> and <b>▼ Demote</b> for what matters today. Delete a branch or close a tab and it goes to the bay at the foot of the bar, where it stays recoverable for an hour or more. <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> brings back the last thing you closed.</p>
+<p><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>B</kbd> shows and hides the bar, and <kbd>Ctrl</kbd>+<kbd>Alt</kbd> with the arrow keys walks it.</p>
 <p class="invite">Technical has every mark, menu, key and saved setting.</p>
 </section>
 
@@ -48,20 +48,20 @@
 <table class="keys">
   <thead><tr><th>Key</th><th>Does</th></tr></thead>
   <tbody>
-    <tr><td><kbd>ctrl</kbd>+<kbd>shift</kbd>+<kbd>b</kbd></td><td>Show or hide the bar. Works from any pane, on either face.</td></tr>
-    <tr><td><kbd>ctrl</kbd>+<kbd>alt</kbd>+<kbd>↑</kbd> <kbd>↓</kbd></td><td>Move the highlight one row, wrapping at both ends. Opens and activates nothing.</td></tr>
-    <tr><td><kbd>ctrl</kbd>+<kbd>alt</kbd>+<kbd>→</kbd></td><td>On a folded branch, open it; on an open branch, step to its first child; on a task, go to it.</td></tr>
-    <tr><td><kbd>ctrl</kbd>+<kbd>alt</kbd>+<kbd>←</kbd></td><td>Fold an open branch, or climb to the parent.</td></tr>
-    <tr><td><kbd>ctrl</kbd>+<kbd>alt</kbd>+<kbd>1</kbd>…<kbd>9</kbd></td><td>Highlight the Nth top-level branch.</td></tr>
-    <tr><td><kbd>ctrl</kbd>+<kbd>alt</kbd>+<kbd>r</kbd></td><td>Rename the highlighted row, or the active tab when nothing is highlighted.</td></tr>
-    <tr><td><kbd>ctrl</kbd>+<kbd>shift</kbd>+<kbd>z</kbd></td><td>Bring back the last thing you closed.</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>B</kbd></td><td>Show or hide the bar. Works from any pane, on either face.</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>↑</kbd> <kbd>↓</kbd></td><td>Move the highlight one row, wrapping at both ends. Opens and activates nothing.</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>→</kbd></td><td>On a folded branch, open it; on an open branch, step to its first child; on a task, go to it.</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>←</kbd></td><td>Fold an open branch, or climb to the parent.</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>1</kbd>…<kbd>9</kbd></td><td>Highlight the Nth top-level branch.</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>R</kbd></td><td>Rename the highlighted row, or the active tab when nothing is highlighted.</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd></td><td>Bring back the last thing you closed.</td></tr>
   </tbody>
 </table>
 <p>The arrow and number chords only work while the bar is open, and they travel over what is drawn, so folding a branch lets the same key press go further. Clicking a project or group goes to its first tab; clicking the branch you are already in does nothing. Double-click any row to rename it. Clicking a fold triangle folds without going anywhere, and the triangle in the bar's header folds or opens the whole tree.</p>
 
 <h3>Filing</h3>
 <p>Drag a task onto a branch row to file it inside. The top or bottom quarter of a branch row, or either half of a task row, puts it above or below instead, and a chip reading <code>into &lt;name&gt;</code>, <code>above &lt;name&gt;</code> or <code>below &lt;name&gt;</code> says which. Dropping onto a task takes that task's branch and place. Dropping onto a project takes the task out of any group. Drag onto the <code>UNFILED</code> line to file it under nothing. A group dragged onto a project moves into it; a group can't go inside another group.</p>
-<p>From the keyboard-free side: <kbd>ctrl</kbd>+click a task for its tray, which has a <code>project</code> section with a chip per project and <code>＋ new project</code>. <code>Adopt loose tabs into their directories</code>, on the header's menu, files every unfiled task under a project named after its git root (a worktree counts as its own root), or its working directory outside a repository. It never moves a task that is already filed.</p>
+<p>From the keyboard-free side: <kbd>Ctrl</kbd>+click a task for its tray, which has a <code>project</code> section with a chip per project and <code>＋ new project</code>. <code>Adopt loose tabs into their directories</code>, on the header's menu, files every unfiled task under a project named after its git root (a worktree counts as its own root), or its working directory outside a repository. It never moves a task that is already filed.</p>
 
 <h3>Menus</h3>
 <table>
@@ -79,7 +79,7 @@
 <p>The bay sits at the foot of the tree: two doors that open a little when you start dragging and all the way when you drag over them, reading <code>drop here to delete</code> and then <code>release to delete</code>. Deleting a project or group, closing a tab when more than one is open, and dropping a task or pane into the bay all put it there. Its shells keep running.<sup><a href="#s3">3</a></sup></p>
 <ul>
   <li>Anything with one pane stays recoverable for an hour; two or more panes, four hours. The bay holds ten things; the eleventh pushes out the oldest, whose shells then end.</li>
-  <li>Deleting a branch that holds anything asks first: <code>DELETE PROJECT?</code> or <code>DELETE GROUP?</code>, <kbd>enter</kbd> to delete, <kbd>esc</kbd> to cancel. An empty branch goes without asking.</li>
+  <li>Deleting a branch that holds anything asks first: <code>DELETE PROJECT?</code> or <code>DELETE GROUP?</code>, <kbd>Enter</kbd> to delete, <kbd>Esc</kbd> to cancel. An empty branch goes without asking.</li>
   <li>With something inside, the shut doors read <code>N recoverable</code>. Click them, or right-click the header, and pick a <code>Recover …</code> row, which shows the time left as <code>under a minute</code>, <code>42m left</code> or <code>3h 5m left</code>.</li>
   <li>A recovered branch comes back with its groups and its tabs in their old places. A recovered pane comes back to its old place if it can, and the bay says which: <code>back where it was</code>, <code>back in its tab, in a new seat</code> or <code>back as its own tab</code>.</li>
   <li>The bay's contents do not survive the window closing.</li>
@@ -106,7 +106,7 @@
 <ul>
   <li>Clicking a project does not open an overview of it; it goes to its first tab.</li>
   <li>There is no keyboard path to delete a branch. Use the menu or drag it to the bay.</li>
-  <li>The help screen has no row for <kbd>ctrl</kbd>+<kbd>shift</kbd>+<kbd>b</kbd> yet.</li>
+  <li>The help screen has no row for <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>B</kbd> yet.</li>
 </ul>
 
 <h3>What would prove this wrong</h3>
