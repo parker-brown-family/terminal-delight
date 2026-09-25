@@ -351,7 +351,10 @@ pub enum Pressed {
 /// What the last paint measured, flat and in the view's own terms.
 #[derive(Clone, Copy, PartialEq, Debug, Default)]
 pub struct Measured {
-    pub origin: Point<Pixels>,
+    /// The view's flat top-left in window pixels, once a paint has placed it.
+    /// `None` before that: an origin nobody has measured is not the window's
+    /// corner, and only the tile snapping reads it.
+    pub origin: Option<Point<Pixels>>,
     pub size: Size<Pixels>,
     pub scale: f32,
 }
@@ -1594,8 +1597,16 @@ impl PageDoc {
             w = vw;
         }
         let h = render.height_dev as f32 / g.scale * per_css;
-        let off_x = snap_offset(m.origin.x.into(), m.scale);
-        let off_y = snap_offset(m.origin.y.into(), m.scale);
+        // Tiles are snapped to whole device pixels against the view's origin.
+        // Before the first paint has placed the view, there is nothing to snap
+        // against, so they draw unsnapped for that one frame and the next
+        // paint, which measures the origin, snaps them.
+        let (off_x, off_y) = m.origin.map_or((0.0, 0.0), |o| {
+            (
+                snap_offset(o.x.into(), m.scale),
+                snap_offset(o.y.into(), m.scale),
+            )
+        });
         let x = ((vw - w) / 2.0).max(0.0);
         let y = if h <= vh {
             (vh - h) / 2.0
@@ -1807,8 +1818,16 @@ impl PageDoc {
         let scroll_dev = (f64::from(self.scroll_css) * f64::from(g.scale))
             .round()
             .max(0.0) as u32;
-        let off_x = snap_offset(m.origin.x.into(), m.scale);
-        let off_y = snap_offset(m.origin.y.into(), m.scale);
+        // Tiles are snapped to whole device pixels against the view's origin.
+        // Before the first paint has placed the view, there is nothing to snap
+        // against, so they draw unsnapped for that one frame and the next
+        // paint, which measures the origin, snaps them.
+        let (off_x, off_y) = m.origin.map_or((0.0, 0.0), |o| {
+            (
+                snap_offset(o.x.into(), m.scale),
+                snap_offset(o.y.into(), m.scale),
+            )
+        });
         let width = g.css_width as f32 * stretch;
         r.tiles
             .bands
@@ -1854,7 +1873,7 @@ impl PageDoc {
         let Some(mut m) = self.view else {
             return div().into_any_element();
         };
-        if let Some(origin) = origin {
+        if origin.is_some() {
             m.origin = origin;
         }
         if let Some(old) = self.old.as_ref() {

@@ -661,10 +661,9 @@ impl DocumentView {
     /// The last paint measured a new size or scale.
     fn measured(&mut self, cx: &mut Context<Self>) {
         if let Some((size, scale)) = self.frame.get() {
-            let origin = self.placed.get().unwrap_or_default();
             self.backend.measured(
                 page::Measured {
-                    origin,
+                    origin: self.placed.get(),
                     size,
                     scale,
                 },
