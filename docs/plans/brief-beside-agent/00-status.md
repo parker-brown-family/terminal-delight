@@ -3,7 +3,7 @@
 **Difficulty: 5/10.** It opens a new way for text to reach an agent's prompt, and a wrong call there is a security review redone. Everything it needs exists already: the notes layer, the split, the MCP server, paste. That buys **one combined plan page and one approval.**
 **Turned out to be:** _filled in at the end_
 
-- Plan (product, architecture, slices in one): awaiting approval. `01-plan.md`; page `reports/2026-09-24-brief-beside.html`.
+- Plan (product, architecture, slices in one): **APPROVED 2026-09-25**. Parker: "Grea t- you go ahead and FIX EVERYHITNG!", in reply to "Approve Brief Beside, or what should change?". Nothing changed, so the three recommendations stand: ↪ pastes without Enter, agents open their own brief beside themselves in their own tab only, and the slices run in the order written. `01-plan.md`; page `reports/2026-09-24-brief-beside.html`.
 
 ## Slices
 - [ ] Slice 1: `document_notes`, a read-only MCP verb that answers the notes map of the document beside the caller
