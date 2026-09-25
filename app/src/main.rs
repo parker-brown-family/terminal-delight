@@ -1094,6 +1094,35 @@ const ENG_STALE: Duration = Duration::from_secs(20);
 /// coming back, which is the moment the afterglow is for.
 const ENG_AFTERGLOW: Duration = Duration::from_secs(15 * 60);
 
+/// How strongly the tree washes the project and group rows holding the active
+/// task, as the alpha of each row's own colour. Under the hover's `0.12` and
+/// well under a pinned scope's `0.20`: a standing fact, read in passing.
+const STANDING_WASH: f32 = 0.08;
+
+/// The column beside the screen on the right — the attention pill at its head,
+/// the split-right button at its foot — as its width plus its left margin, in
+/// points at scale 1. The bottom bezel stops this far (and the screen's own
+/// margin) short of the window's edge, so its split-down button meets the
+/// corner under the column rather than running beneath it.
+const RIGHT_COLUMN_W: f32 = 30.;
+
+/// How long one ticker frame stays up. Six seconds — long enough to read a
+/// sentence, short enough that a person who glanced up and missed one sees
+/// the next before looking away. Counted from the last turn, so a frame chosen
+/// with a pip is given the whole of it.
+const ENG_TURN: Duration = Duration::from_secs(6);
+
+/// Whether the ticker's clock may turn it now: something to turn to, nobody
+/// reading it, and a whole frame's time since the last turn.
+///
+/// Its own function because the three conditions are the carousel's whole
+/// contract, and each is the one a quick edit drops — a ticker that turns
+/// under the pointer, or snaps on the tick after a pip was pressed, still
+/// compiles and still looks like a working carousel in a screenshot.
+fn ticker_may_turn(frames: usize, hovered: bool, since_turn: Duration) -> bool {
+    frames > 1 && !hovered && since_turn >= ENG_TURN
+}
+
 /// Which branch of the tree the rail is reading for.
 ///
 /// The project the active tab is filed under when it has one; else the
@@ -3019,6 +3048,26 @@ impl From<tree::RowId> for BarBranch {
     }
 }
 
+impl BarBranch {
+    /// Whether this is one of the branches the active task stands in — its
+    /// project, or its group — which the tree washes faintly so a glance down
+    /// the bar finds where you are.
+    ///
+    /// `active` must be [`Workspace::place_of`]'s answer, which reads a grouped
+    /// task's project FROM ITS GROUP: a task in a group filed under a project
+    /// is standing in both, and both rows light.
+    fn holds(self, active: tree::Place) -> bool {
+        match self {
+            BarBranch::Project(id) => active.project == Some(id),
+            BarBranch::Initiative(id) => active.initiative == Some(id),
+            // The divider is a heading over the loose tasks, not a branch
+            // anybody stands in: a loose task lights its own row and nothing
+            // above it.
+            BarBranch::Unfiled => false,
+        }
+    }
+}
+
 /// How a menu row reads: ordinary, unavailable, or about to end something.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum MenuTone {
@@ -3886,6 +3935,17 @@ struct Workspace {
     eng_scanning: bool,
     /// Which ticker frame is up, advanced on its own clock.
     eng_frame: usize,
+    /// When the ticker last turned — by its clock or by a pip. The clock
+    /// counts [`ENG_TURN`] from here, so a frame somebody picked by hand gets a
+    /// whole interval before it moves, the way any carousel behaves.
+    eng_frame_at: Instant,
+    /// How many times the ticker has turned. Keys the new frame's fade-in, so
+    /// every turn animates, including one back to a frame shown before.
+    eng_turns: u64,
+    /// The pointer is over the ticker. It holds still while you read it —
+    /// a sentence that moves out from under the eye is the one thing a
+    /// carousel must never do.
+    eng_hover: bool,
     /// The afterglow: what changed between consecutive readings of each
     /// project, with when it was noticed. Kept for [`ENG_AFTERGLOW`] and then
     /// dropped — evidence that something happened, never a notification.
@@ -5358,6 +5418,9 @@ impl Workspace {
             eng: std::collections::HashMap::new(),
             eng_scanning: false,
             eng_frame: 0,
+            eng_frame_at: Instant::now(),
+            eng_turns: 0,
+            eng_hover: false,
             eng_events: std::collections::HashMap::new(),
             // a rig lever, like TD_RAIL_DEBUG: there is no click injection on
             // this machine, so the table is photographed by opening at launch
@@ -5730,12 +5793,15 @@ impl Workspace {
             }
         })
         .detach();
-        // The ticker's clock. Six seconds a frame — long enough to read a
-        // sentence, short enough that a person who glanced up and missed one
-        // sees the next before looking away. A silent rail has no frames and
-        // the tick costs it nothing.
+        // The ticker's clock. It LOOKS twice a second and turns only when
+        // [`ticker_may_turn`] says so: a fixed six-second beat could not hold
+        // still under the pointer, and it would snap a frame somebody had just
+        // picked with a pip a moment later. A look that turns nothing asks for
+        // no repaint, so a silent rail still costs nothing.
         cx.spawn(async move |this, cx| loop {
-            cx.background_executor().timer(Duration::from_secs(6)).await;
+            cx.background_executor()
+                .timer(Duration::from_millis(500))
+                .await;
             if this
                 .update(cx, |ws: &mut Workspace, cx| ws.tick_eng_frame(cx))
                 .is_err()
@@ -12168,13 +12234,23 @@ impl Workspace {
         frames
     }
 
-    /// Advance the ticker. Silent when there is nothing to rotate.
+    /// Advance the ticker when its clock says a frame has had its time.
+    /// Silent when there is nothing to rotate, while the pointer is on it,
+    /// and for a whole frame after any turn — see [`ticker_may_turn`].
     fn tick_eng_frame(&mut self, cx: &mut Context<Self>) {
         let n = self.eng_frames().len();
-        if n == 0 {
+        if !ticker_may_turn(n, self.eng_hover, self.eng_frame_at.elapsed()) {
             return;
         }
-        self.eng_frame = (self.eng_frame + 1) % n;
+        self.turn_eng_frame((self.eng_frame + 1) % n, cx);
+    }
+
+    /// Put frame `to` up — the clock's turn and a pip's are the same act, so
+    /// both restart the interval and both fade the new frame in.
+    fn turn_eng_frame(&mut self, to: usize, cx: &mut Context<Self>) {
+        self.eng_frame = to;
+        self.eng_frame_at = Instant::now();
+        self.eng_turns = self.eng_turns.wrapping_add(1);
         cx.notify();
     }
 
@@ -17835,6 +17911,82 @@ impl Workspace {
         col
     }
 
+    /// A split glyph, drawn from boxes rather than typed: a square frame with
+    /// the half the new pane will open into filled.
+    ///
+    /// It was two characters, `◧` and `⬓`, and only one of them survived the
+    /// font — the same trap as [`Self::triangle`]. `⬓` (U+2B13) sits outside
+    /// the geometric-shapes block the chrome's font carries, so a fallback drew
+    /// it as an empty square with a rule across the bottom. Parker: *"the
+    /// horizontal glyph is not filled in on the bottom and should be"*. Built
+    /// from boxes, the fill is the same in every font, and the pair are the
+    /// same weight because they are the same drawing.
+    ///
+    /// The filled half is where the new pane goes: the right half for a split
+    /// that puts panes side by side, the bottom half for one that stacks them.
+    /// Each button sits on the edge its fill points at — see the corner in
+    /// `bezel_bottom` — so the glyph, its place and its effect all say one
+    /// thing.
+    fn split_glyph(dir: SplitDir, ink: Hsla, s: f32) -> gpui::Div {
+        let side = 13. * s;
+        let frame = div()
+            .flex_none()
+            .w(px(side))
+            .h(px(side))
+            .flex()
+            .border_1()
+            .border_color(ink)
+            // The glyph's own shape, not the chrome's: a split drawn with a
+            // skin's corner radius would stop reading as a window.
+            .rounded(px(1.5 * s))
+            .overflow_hidden();
+        let (old, new) = (div().flex_1(), div().flex_1().bg(ink));
+        match dir {
+            SplitDir::Row => frame.flex_row().child(old).child(new),
+            SplitDir::Col => frame.flex_col().child(old).child(new),
+        }
+    }
+
+    /// One of the corner's two split buttons: a square bezel carrying its
+    /// drawn glyph. The one that stacks panes goes in the bottom bezel and the
+    /// one that sets them side by side at the foot of the right-hand column;
+    /// the same function builds both, so the pair cannot drift apart in size.
+    fn split_button(
+        &self,
+        dir: SplitDir,
+        s: f32,
+        cx: &mut Context<Self>,
+    ) -> gpui::Stateful<gpui::Div> {
+        let sk = skin::skin(cx, s);
+        let (id, arrow) = match dir {
+            SplitDir::Row => ("split-right", "\u{2192}"),
+            SplitDir::Col => ("split-down", "\u{2193}"),
+        };
+        // The word the buttons used to wear, kept as their hover name — in the
+        // window's own language, with an arrow saying which way it goes.
+        let tip = format!("{} {arrow}", self.lang.strings().ch_split);
+        sk.bezel(false, s)
+            .id(id)
+            .tooltip(move |_w, cx| {
+                cx.new(|_| SlotTooltip {
+                    lines: vec![tip.clone()],
+                })
+                .into()
+            })
+            .flex_none()
+            .w(px(24. * s))
+            .h(px(24. * s))
+            .p(px(0.))
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(Self::split_glyph(dir, sk.ink.ink, s))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |ws, _: &MouseDownEvent, window, cx| ws.split(dir, window, cx)),
+            )
+    }
+
     /// The badges a BRANCH row carries: what its tasks are saying, summed.
     ///
     /// A folded branch is exactly when this matters, so the loudest state keeps
@@ -18047,12 +18199,12 @@ impl Workspace {
                 // and the one row whose whole job is to say "these belong to
                 // nobody" was the one saying nothing.
                 //
-                // Not in tension with the strip heading, which deliberately
-                // stays a bare mark for a loose tab (see `place_name`):
-                // there "unfiled" would be the only heading in an unorganised
-                // session, shouting a state. Here it is a divider, and a
-                // divider with filed rows above it and loose rows below has to
-                // name which side is which.
+                // Not in tension with the mother bar's corner, which
+                // deliberately never says "unfiled" for a loose tab: there it
+                // would be the only heading in an unorganised session,
+                // shouting a state. Here it is a divider, and a divider with
+                // filed rows above it and loose rows below has to name which
+                // side is which.
                 //
                 // It is also a drop target — "file this under nothing" is an
                 // answer — so it registers its box and lights up like a branch
@@ -18206,6 +18358,15 @@ impl Workspace {
         }
 
         let grp = SharedString::from(format!("bar-grp-{key}"));
+        // Where you are standing. The project and the group holding the active
+        // task wear a faint wash in their own colour — Parker: *"a FAINT
+        // indicator of the project and group with the actual cursor on the
+        // left tree"*. It took over from the standing label in the mother
+        // bar's corner, which named one of these rows a window's width away
+        // from it. Faint on purpose, and fainter than the hover: it is a
+        // standing fact about the window, read in passing, and the task row
+        // under it already wears the ring that says exactly which task.
+        let here = branch.holds(self.place_of(self.active));
         let d = div()
             .id(row_id)
             .group(grp)
@@ -18219,8 +18380,10 @@ impl Workspace {
             .gap(px(5. * s))
             .rounded(sk.radius())
             .cursor_pointer()
+            .when(here, |d| d.bg(color.alpha(STANDING_WASH)))
             // the scoped branch is lit: the strip beside it is showing exactly
-            // this, and the tree says which branch that is without a legend
+            // this, and the tree says which branch that is without a legend.
+            // Later than the wash, so a pin still reads as the louder fact.
             .when(scoped, |d| {
                 d.bg(color.alpha(0.20)).border_l_2().border_color(th.accent)
             })
@@ -19083,8 +19246,10 @@ impl Workspace {
         let pill = sk.radius_pill();
         let rad = sk.radius();
         let rows = self.slot_rows();
-        let tally = self.slot_tally(cx);
-        if rows.is_empty() && tally.total() == 0 {
+        // The agent rollup that used to close this slot is in the top right of
+        // the mother bar now (see `render_agent_counter`), so the slot is the
+        // allowance rows and nothing else — and with none of those, nothing.
+        if rows.is_empty() {
             return None;
         }
 
@@ -19095,7 +19260,6 @@ impl Workspace {
         let tick_h = 3.0 * SLOT_RAIL_GROWTH * s;
         // Tall enough for the mark, which is now the row's tallest thing.
         let row_h = (SLOT_MARK_PT + 4.0) * s;
-        let counter_h = 17.0 * s;
         let mark_w = SLOT_MARK_PT;
         let val_w = 30.0;
 
@@ -19362,8 +19526,40 @@ impl Workspace {
             );
         }
 
-        // ---- the rollup, on a bordered line of its own ----------------------
-        //
+        Some(
+            // Declared, not discovered — the tree yields exactly this and not
+            // a pixel more, so a busy day cannot push it out of the bar. The
+            // `6.0` is the stack's own gap between components, counted once
+            // per row; the `5.0` is its bottom padding.
+            stack.h(px(rows.len() as f32 * (row_h + 6.0 * s) + 5.0 * s)),
+        )
+    }
+
+    /// The agent counter: every agent pane's state, tallied, in the top right
+    /// of the mother bar.
+    ///
+    /// It closed the tree's bottom slot, under the allowance rails. Parker, on
+    /// the new layout of the chrome: *"Agents counter is in the top right"* —
+    /// the corner the ticker and the scale had just vacated, and the end of the
+    /// row nearest the attention pill, which counts the same agents by what
+    /// they want from you. Up here it is also on screen with the tree shut,
+    /// which the slot never was.
+    ///
+    /// It is still the door to the agent wall, the surface it is a summary OF.
+    /// That door used to be a robot glyph in this same corner, three feet from
+    /// the counter saying the thing you were about to go and look at; a
+    /// rollup that opens the full view is one control instead of two, and the
+    /// one that survives is the one carrying the numbers.
+    fn render_agent_counter(
+        &self,
+        th: &theme::Theme,
+        s: f32,
+        cx: &mut Context<Self>,
+    ) -> gpui::Stateful<gpui::Div> {
+        let sk = skin::skin(cx, s);
+        let rad = sk.radius();
+        let text = th.text;
+        let tally = self.slot_tally(cx);
         // The robot is `U+F06A9` out of the Nerd Font TD resolves, checked
         // against `fc-list :charset` rather than assumed: the mock's `🤖`
         // (`U+1F916`) is in no monospace font on this machine and would paint
@@ -19380,22 +19576,17 @@ impl Workspace {
             // parser gap must not be invisible.
             (hud::AgentState::Unknown, tally.unknown, "?"),
         ];
-        // This line is also the door to the agent wall, which is the surface it
-        // is a summary OF. It used to be opened by a robot glyph in the top
-        // right of the mother bar, three feet of screen away from the counter
-        // saying the thing you were about to go and look at. A rollup that
-        // opens the full view is one control instead of two, and the one that
-        // survives is the one carrying the numbers.
         let acc = th.accent;
         let mut counter = div()
-            .id("slot-agent-rollup")
+            .id("agent-rollup")
+            .flex_none()
             .flex()
             .flex_row()
             .items_center()
-            .h(px(counter_h))
-            .gap(px(4.0 * s))
-            .px(px(4.0 * s))
-            .rounded(px(4.0 * s))
+            .h(px(22.0 * s))
+            .gap(px(5.0 * s))
+            .px(px(6.0 * s))
+            .rounded(sk.radius())
             .border_1()
             .border_color(if tally.needs_you() {
                 hsla(0.11, 0.85, 0.60, 1.).alpha(0.55)
@@ -19404,6 +19595,8 @@ impl Workspace {
             })
             .cursor_pointer()
             .hover(move |st| st.bg(acc.alpha(0.14)).border_color(acc.alpha(0.7)))
+            // Propagation stops here or the press also arms the mother bar's
+            // move handle underneath it.
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
@@ -19415,7 +19608,7 @@ impl Workspace {
             .child(
                 div()
                     .flex_none()
-                    .text_size(px(9.0 * s))
+                    .text_size(px(11.0 * s))
                     .text_color(text.alpha(0.55))
                     .child("\u{f06a9}"),
             );
@@ -19433,32 +19626,21 @@ impl Workspace {
                     .flex()
                     .flex_row()
                     .items_center()
-                    .gap(px(1.0 * s))
-                    .px(px(if chip { 2.5 * s } else { 0. }))
+                    .gap(px(1.5 * s))
+                    .px(px(if chip { 3.0 * s } else { 0. }))
                     .rounded(rad)
                     .bg(if chip {
                         col.alpha(0.22)
                     } else {
                         gpui::transparent_black()
                     })
-                    .text_size(px(8.5 * s))
+                    .text_size(px(10.0 * s))
                     .text_color(col)
                     .child(glyph.to_string())
-                    .child(div().text_size(px(9.0 * s)).child(n.to_string())),
+                    .child(div().text_size(px(10.5 * s)).child(n.to_string())),
             );
         }
-
-        Some(
-            stack
-                .child(counter)
-                // Declared, not discovered — the tree yields exactly this and
-                // not a pixel more, so a busy day cannot push it out of the
-                // bar. The `6.0` is the stack's own gap between components, and
-                // it is counted once per row plus once for the counter.
-                .h(px(rows.len() as f32 * (row_h + 6.0 * s)
-                    + counter_h
-                    + 11.0 * s)),
-        )
+        counter
     }
 
     /// Slice 2: real panes, observed states.
@@ -20158,7 +20340,37 @@ impl Workspace {
     /// It is a flex sibling of the screen, so it costs the terminals its own
     /// width and nothing more. The queue it opens draws *over* the panes instead
     /// of pushing them, which is the property the plan's geometry test checks.
-    fn render_spine(&self, cx: &mut Context<Self>) -> Option<gpui::Div> {
+    /// The column beside the screen on the right: the attention pill at its
+    /// head and the split-right button at its foot.
+    ///
+    /// The foot is new, and it is why the column is drawn even with the pill
+    /// switched off (`TD_SPINE=0`): the split that sets panes side by side
+    /// stands on the window's RIGHT edge, the vertical axis, across the corner
+    /// from its partner on the bottom edge — see `bezel_bottom`.
+    fn render_spine(&self, cx: &mut Context<Self>) -> gpui::Div {
+        let s = theme::outer_choice(cx).grade.scale;
+        let column = div()
+            .flex_none()
+            .w(px((RIGHT_COLUMN_W - 4.) * s))
+            .ml(px(4. * s))
+            .flex()
+            .flex_col()
+            .items_center()
+            .justify_between()
+            .pt(px(8. * s));
+        let head = match self.render_spine_pill(cx) {
+            Some(pill) => pill,
+            // an empty head keeps the button at the foot
+            None => div(),
+        };
+        column
+            .child(head)
+            .child(self.split_button(SplitDir::Row, s, cx))
+    }
+
+    /// The attention pill at the head of the right-hand column, when the
+    /// queue is switched on.
+    fn render_spine_pill(&self, cx: &mut Context<Self>) -> Option<gpui::Div> {
         if !self.rail_on {
             return None;
         }
@@ -20205,95 +20417,85 @@ impl Workspace {
         // Two divs, not one, and the split is what stops the spine being a
         // full-height stripe.
         //
-        // The OUTER div is the flex sibling — it owns the column beside the
-        // screen and is stretched to its full height by the row, which is the
-        // layout contract this surface signed: it costs the terminals its width
-        // and nothing else. The INNER pill is a child of a flex COLUMN, so the
-        // vertical axis is the main axis and it sizes to its own content. One
-        // badge as tall as the things in it, parked at the top, instead of a
-        // rule running the height of the window with three marks near the top of
-        // it.
+        // The OUTER div is `render_spine`'s column — the flex sibling that owns
+        // the space beside the screen and is stretched to its full height by the
+        // row, which is the layout contract this surface signed: it costs the
+        // terminals its width and nothing else. This pill is a child of that
+        // flex COLUMN, so the vertical axis is the main axis and it sizes to its
+        // own content. One badge as tall as the things in it, parked at the top,
+        // instead of a rule running the height of the window with three marks
+        // near the top of it.
         Some(
             div()
-                .flex_none()
-                .w(px(26. * s))
-                .ml(px(4. * s))
                 .flex()
                 .flex_col()
                 .items_center()
-                .pt(px(8. * s))
-                .child(
+                .gap(px(5. * s))
+                // Asymmetric on purpose: the count and the pips are
+                // narrow, so equal padding all round reads as too wide.
+                // The vertical is what gives the badge its shape.
+                .px(px(5. * s))
+                .py(px(7. * s))
+                .rounded(sk.radius())
+                .border_1()
+                // Carried at a lower alpha than the fill it sits on, so
+                // the edge reads as an edge rather than as a second
+                // element. Same pair the tab chips use.
+                .border_color(sk.ink.ink.alpha(0.22))
+                .bg(sk.ink.ink.alpha(0.06))
+                .cursor_pointer()
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        ws.rail_toggle(cx);
+                        cx.notify();
+                    }),
+                )
+                // Nothing waiting draws a single dim nought, because an
+                // empty pill and a pill that has not been computed look
+                // the same, and only one of them is true.
+                .when(wanting == 0, |d| {
+                    d.child(
+                        div()
+                            .text_size(px(11. * s))
+                            .text_color(sk.ink.ink_dim)
+                            .child("0"),
+                    )
+                })
+                .children(per_lane.into_iter().map(|(k, n)| {
                     div()
-                        .flex()
-                        .flex_col()
-                        .items_center()
-                        .gap(px(5. * s))
-                        // Asymmetric on purpose: the count and the pips are
-                        // narrow, so equal padding all round reads as too wide.
-                        // The vertical is what gives the badge its shape.
-                        .px(px(5. * s))
-                        .py(px(7. * s))
-                        .rounded(sk.radius())
-                        .border_1()
-                        // Carried at a lower alpha than the fill it sits on, so
-                        // the edge reads as an edge rather than as a second
-                        // element. Same pair the tab chips use.
-                        .border_color(sk.ink.ink.alpha(0.22))
-                        .bg(sk.ink.ink.alpha(0.06))
-                        .cursor_pointer()
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                                cx.stop_propagation();
-                                ws.rail_toggle(cx);
-                                cx.notify();
-                            }),
-                        )
-                        // Nothing waiting draws a single dim nought, because an
-                        // empty pill and a pill that has not been computed look
-                        // the same, and only one of them is true.
-                        .when(wanting == 0, |d| {
-                            d.child(
-                                div()
-                                    .text_size(px(11. * s))
-                                    .text_color(sk.ink.ink_dim)
-                                    .child("0"),
-                            )
-                        })
-                        .children(per_lane.into_iter().map(|(k, n)| {
-                            div()
-                                .text_size(px(11. * s))
-                                .text_color(Self::rail_ink(k, &sk))
-                                .child(format!("{n}"))
-                        }))
-                        .when(unknown > 0, |d| {
-                            d.child(
-                                div()
-                                    .text_size(px(9. * s))
-                                    .text_color(sk.ink.ink_dim)
-                                    .child("?"),
-                            )
-                        })
-                        // A dot under the numbers whenever something in them has
-                        // not been looked at yet. Not a second number: the
-                        // question the closed spine answers is "is there
-                        // anything NEW", and a person who wants the breakdown is
-                        // one click from the rows themselves, each of which
-                        // carries its own dot.
-                        //
-                        // It disappears the moment the queue is closed again,
-                        // because closing it IS the look — the same contract the
-                        // finish bell has always had.
-                        .when(unseen > 0, |d| {
-                            d.child(
-                                div()
-                                    .mt(px(1. * s))
-                                    .text_size(px(8. * s))
-                                    .text_color(sk.ink.ink)
-                                    .child("\u{25cf}"),
-                            )
-                        }),
-                ),
+                        .text_size(px(11. * s))
+                        .text_color(Self::rail_ink(k, &sk))
+                        .child(format!("{n}"))
+                }))
+                .when(unknown > 0, |d| {
+                    d.child(
+                        div()
+                            .text_size(px(9. * s))
+                            .text_color(sk.ink.ink_dim)
+                            .child("?"),
+                    )
+                })
+                // A dot under the numbers whenever something in them has
+                // not been looked at yet. Not a second number: the
+                // question the closed spine answers is "is there
+                // anything NEW", and a person who wants the breakdown is
+                // one click from the rows themselves, each of which
+                // carries its own dot.
+                //
+                // It disappears the moment the queue is closed again,
+                // because closing it IS the look — the same contract the
+                // finish bell has always had.
+                .when(unseen > 0, |d| {
+                    d.child(
+                        div()
+                            .mt(px(1. * s))
+                            .text_size(px(8. * s))
+                            .text_color(sk.ink.ink)
+                            .child("\u{25cf}"),
+                    )
+                }),
         )
     }
 
@@ -21072,35 +21274,6 @@ impl Workspace {
         self.bar_bounds.lock().unwrap().clear();
 
         let rows = self.bar_rows(cx);
-        let scope_label = match self.scope {
-            // bb calls the unnarrowed view "All Threads"; the same word does the
-            // job here, and it is three ASCII letters no font can fail to draw.
-            tree::Scope::All => "all".to_string(),
-            tree::Scope::Project(id) => self.branch_label(BarBranch::Project(id)),
-            tree::Scope::Initiative(id) => self.branch_label(BarBranch::Initiative(id)),
-            // The default names the branch it is standing in rather than the
-            // rule it is following — "the group you are in" is a thing a person
-            // has to translate, and its name is the thing they already know.
-            // Same reading as the heading over the strip (see `place_name`): an
-            // initiative by name, a loose tab by its project, and a session
-            // with nothing filed says `all`, which is exactly what one bucket
-            // holding every tab amounts to.
-            tree::Scope::Branch => {
-                let place = self.place_of(self.active);
-                match (place.initiative, place.project) {
-                    (Some(gid), _) => self.branch_label(BarBranch::Initiative(gid)),
-                    (None, Some(pid)) => self.branch_label(BarBranch::Project(pid)),
-                    (None, None) => "all".to_string(),
-                }
-            }
-        };
-        // Lit when the strip is actually carrying less than the session, which
-        // under the default is a question about the tabs rather than about the
-        // scope: a window where nothing is filed is unpinned AND showing
-        // everything, and a chip claiming a narrowing there would be the old
-        // lie pointing the other way.
-        let places = self.places();
-        let scoped = tree::shown(&places, self.scope, self.active).len() < places.len();
         let header = sk
             .row()
             // Right-click anywhere on the strip opens the tray — what you can
@@ -21114,45 +21287,20 @@ impl Workspace {
                     ws.open_bar_tray(ev.position, cx);
                 }),
             )
-            .child(
-                // the scope chip: what the mother bar is currently showing, and
-                // the one click between this branch and the whole session.
-                // `chip` carries the whole "this one is in effect" decision — a
-                // wash under the default skin, corner brackets under deco — so
-                // this call site never learns which look is running.
-                sk.chip(scoped)
-                    .id("bar-scope")
-                    .flex_1()
-                    .min_w_0()
-                    .overflow_hidden()
-                    .font_weight(gpui::FontWeight::EXTRA_BOLD)
-                    .cursor_pointer()
-                    // The call site says "this is a small-caps label"; the skin
-                    // decides whether it is also tracked. Under the default skin
-                    // `caps` is the identity, so this is the uppercase the bar
-                    // has always drawn.
-                    .child(sk.caps(&scope_label.to_uppercase()))
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|ws, _: &MouseDownEvent, window, cx| {
-                            cx.stop_propagation();
-                            // One press each way, and the label says which way
-                            // the next one goes. Anything pinned lands on ALL
-                            // first — the press a person reaches for when they
-                            // cannot find a tab is "show me everything", never
-                            // "show me a different narrowing".
-                            //
-                            // [`tree::Scope::toggled`] and nothing spelled out
-                            // here: this used to be its own copy of the same
-                            // two lines, and the copies disagreed for a day —
-                            // `toggled` answered ALL both ways while this one
-                            // came back. Every control that widens the strip
-                            // now asks the same function which way it goes.
-                            let next = ws.scope.toggled(tree::Scope::All);
-                            ws.set_scope(next, window, cx);
-                        }),
-                    ),
-            )
+            // Where the scope chip was, an empty stretch that keeps the buttons
+            // at the right-hand end.
+            //
+            // The chip named what the tab strip was carrying — `ALL`, or the
+            // branch you were in — and pressed between the two. With the tree
+            // open the strip is not drawn (the ticker has the top row), so the
+            // chip changed nothing anybody could see. Parker: *"doesn't do
+            // anything anymore because the tabs are not being displayed like
+            // before"*, and *"we clear out the text in the tree actions row"*.
+            // Where you are standing is on the tree's own rows now (see
+            // `branch_row`); pinning the strip to a branch is still a click on
+            // that branch's row, and the strip still obeys it when the tree is
+            // shut. This row's glyphs and their arrangement are the next pass.
+            .child(div().flex_1().min_w_0())
             .child(
                 // fold or unfold the whole tree. One button rather than two,
                 // showing the triangle of what pressing it does: pointing down
@@ -21536,75 +21684,11 @@ impl Workspace {
             .child(close_x)
     }
 
-    /// The name of the branch this window is standing in — the active tab's
-    /// initiative, or the project it hangs from, or nothing.
+    /// The persistent badge in the mother bar's corner: the isolation health of
+    /// the project the window is standing in.
     ///
-    /// It sits in the mother bar's top-left corner now, beside the app's mark,
-    /// where the words `▸ TERMINAL DELIGHT` used to be. That slot was the widest
-    /// on the busiest row and it said something that never changes; this says
-    /// something that does, and it is the fact you most need when a window holds
-    /// several projects' work.
-    ///
-    /// `width: Some(w)` pins it to a column of exactly that width and centres it
-    /// — how it was drawn as the tab strip's heading, so a long branch name
-    /// truncated inside the column rather than pushing the first tab to the
-    /// right. `None` takes only what the name needs, which is what the header
-    /// row wants. Either way it truncates rather than wrapping: gpui wraps text
-    /// by default, and a wrapped name makes the whole mother bar taller.
-    fn place_name(&self, width: Option<f32>, pt: f32, cx: &mut Context<Self>) -> gpui::Div {
-        let th = theme::theme(cx);
-        let s = theme::outer_choice(cx).grade.scale;
-        let mut col = div()
-            .flex()
-            .flex_none()
-            .flex_row()
-            .items_center()
-            .overflow_hidden()
-            .gap(px(8. * s))
-            .px(px(6. * s));
-        if let Some(w) = width.filter(|w| *w > 0.) {
-            col = col.w(px(w));
-        }
-        // THE BRANCH THE RAIL READS FOR, never the tab. The project the active
-        // tab is filed under when it has one, else the top-level group it
-        // sits in — the same key the scan uses, so the name and the numbers
-        // beside it can never be about different things. Switching tabs
-        // inside that branch changes nothing here; switching branches does.
-        // A loose tab hangs from nothing and gets the mark and the badge
-        // alone: an unorganised session is not labelled "unfiled".
-        let key = self.eng_key();
-        let branch = match key {
-            EngKey::Project(p) => Some(BarBranch::Project(p)),
-            EngKey::Group(g) => Some(BarBranch::Initiative(g)),
-            EngKey::Unfiled => None,
-        };
-        if let (Some(name), Some(branch)) = (self.eng_key_name(key), branch) {
-            col = col.child(
-                div()
-                    .min_w_0()
-                    .truncate()
-                    .text_size(px(pt))
-                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                    .text_color(th.text)
-                    .child(name.to_uppercase())
-                    // a name in the chrome, so it renames the way every
-                    // other one does — the tree row beside it is the
-                    // same branch and answers to the same gesture
-                    .on_mouse_down(
-                        MouseButton::Right,
-                        cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
-                            cx.stop_propagation();
-                            ws.start_bar_rename(branch, window, cx);
-                        }),
-                    ),
-            );
-        }
-        col.child(self.eng_badge(pt, cx))
-    }
-
-    /// The persistent badge beside the project's name: its isolation health.
-    ///
-    /// `[4 WT ✓]`, `[2 WT · 1 SHARED]`, `[⚠ 1 FOREIGN]`, `[NO GIT]` — the
+    /// `[4 WORKTREES ✓]`, `[2 WORKTREES · 1 SHARED]`, `[⚠ 1 FOREIGN]`,
+    /// `[NO GIT]` — the
     /// one thing about a project a person wants at a glance without reading a
     /// ticker: are the things writing into it writing into separate
     /// directories? Until the first scan has landed it says `SCANNING`,
@@ -22037,23 +22121,60 @@ impl Workspace {
         }
     }
 
-    /// The ticker: one frame of the active project's engineering state, and
-    /// its heartbeat. Takes the middle of the top row when the tree is open —
-    /// the tabs it replaces there are the spine's task rows, already on
-    /// screen an inch below.
-    fn render_ticker(&self, scale: f32, cx: &mut Context<Self>) -> gpui::Div {
+    /// The ticker: the active project's engineering state as a carousel of
+    /// frames, hung in the top-left corner off the badge it expands on.
+    ///
+    /// It used to take the middle of the top row with its sentence flush left
+    /// and its `3/7` counter and heartbeat flung to the far right — so the one
+    /// number saying where you were in the rotation sat a window's width from
+    /// the sentence it was counting. Parker: *"the 4/8 here in the top right...
+    /// not sure what that is telling us... oh, 7/8 ... 8/8"*, and then what it
+    /// should be instead: *"the carousel needs to act like the best website
+    /// carousel from 2015 ... pips to denote position"*.
+    ///
+    /// So it is one: a pip per frame with the current one lit and drawn long, a
+    /// press on any pip goes straight to that frame and restarts the clock, the
+    /// rotation holds still while the pointer is on it, and each new frame
+    /// fades in rather than snapping. The pips stand AHEAD of the sentence so
+    /// they never move — sentences come in every length, and a row of dots that
+    /// slid about with them would be a position indicator whose own position
+    /// meant nothing. A single frame draws no pips: one slide is not a carousel.
+    ///
+    /// The heartbeat leads, beside the badge, for the same reason: both are
+    /// standing readings of the project, where the frames are its news.
+    fn render_ticker(&self, scale: f32, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
         let th = theme::theme(cx);
         let mut row = div()
+            .id("eng-ticker")
             .flex()
             .flex_row()
             .items_center()
             .min_w_0()
             .flex_1()
-            .gap(px(12. * scale));
+            .gap(px(10. * scale))
+            .on_hover(cx.listener(|ws, hovered: &bool, _w, _cx| {
+                ws.eng_hover = *hovered;
+                // Leaving is a fresh start rather than a turn that fell due
+                // while you were reading: the frame you were on stays up for a
+                // whole interval after you look away from it.
+                if !*hovered {
+                    ws.eng_frame_at = Instant::now();
+                }
+            }));
         let Some(st) = self.eng_state() else {
             return row;
         };
-        // a thin rule between the badge and the ticker, as the mockup drew it
+        if let Some(p) = st.primary().and_then(|r| r.pulse) {
+            row = row.child(self.render_pulse(&p, scale, cx));
+        }
+        let frames = self.eng_frames();
+        if frames.is_empty() {
+            // Silence means healthy: the badge already said what there is to
+            // say. No rule either — a divider with nothing after it divides
+            // nothing.
+            return row;
+        }
+        // a thin rule between the standing readings and the news
         row = row.child(
             div()
                 .flex_none()
@@ -22061,42 +22182,93 @@ impl Workspace {
                 .h(px(14. * scale))
                 .bg(th.text.alpha(0.18)),
         );
-        let frames = self.eng_frames();
-        if frames.is_empty() {
-            // silence means healthy: the badge already said what there is to
-            // say, and an empty middle is the breathing room that makes the
-            // next non-empty frame land
-            return row.child(div().min_w_0().flex_1());
+        let at = self.eng_frame % frames.len();
+        if frames.len() > 1 {
+            row = row.child(self.render_pips(&frames, at, scale, cx));
         }
-        let frame = &frames[self.eng_frame % frames.len()];
-        row = row.child(
+        let frame = &frames[at];
+        let lead = 6. * scale;
+        row.child(
             div()
+                .relative()
                 .min_w_0()
-                .flex_1()
+                // Never wraps: gpui wraps text by default, and a frame wider
+                // than the row would take a second line and make the whole
+                // mother bar taller.
                 .truncate()
                 .text_size(px(11.5 * scale))
                 .text_color(self.eng_ink(frame.tone, &th))
-                .child(frame.text.clone()),
-        );
-        // the frame counter, so a reader knows there are more and how far
-        // round they are — "3/7" in the quietest ink
-        if frames.len() > 1 {
-            row = row.child(
+                .child(frame.text.clone())
+                // The turn: fade up and settle in from a few pixels right,
+                // keyed on the turn count so every turn plays it — including
+                // one that comes back round to a frame already shown.
+                .with_animation(
+                    ("eng-frame-in", self.eng_turns),
+                    Animation::new(Duration::from_millis(320)).with_easing(gpui::ease_out_quint()),
+                    move |el, t| el.opacity(t).left(px((1. - t) * lead)),
+                ),
+        )
+    }
+
+    /// The carousel's pips: one per frame, the current one lit and long.
+    ///
+    /// Each dot sits in a cell several times its own size, because a five-pixel
+    /// dot is a thing you aim at and a cell is a thing you press. A frame that
+    /// carries a warning keeps the warning's ink on its pip while it waits its
+    /// turn, so the row says which of the frames are the ones to read before
+    /// you have read any of them.
+    fn render_pips(
+        &self,
+        frames: &[engstate::Frame],
+        at: usize,
+        scale: f32,
+        cx: &mut Context<Self>,
+    ) -> gpui::Div {
+        let th = theme::theme(cx);
+        let sk = skin::skin(cx, scale);
+        let mut pips = div().flex_none().flex().flex_row().items_center();
+        for (i, f) in frames.iter().enumerate() {
+            let lit = i == at;
+            let ink = if lit {
+                th.accent
+            } else if f.tone == engstate::Tone::Warn {
+                self.eng_ink(f.tone, &th).alpha(0.75)
+            } else {
+                th.text.alpha(0.28)
+            };
+            let hot = th.accent.alpha(0.75);
+            let grp = SharedString::from(format!("eng-pip-{i}"));
+            pips = pips.child(
                 div()
+                    .id(("eng-pip", i))
+                    .group(grp.clone())
                     .flex_none()
-                    .text_size(px(9.5 * scale))
-                    .text_color(th.text.alpha(0.35))
-                    .child(format!(
-                        "{}/{}",
-                        (self.eng_frame % frames.len()) + 1,
-                        frames.len()
-                    )),
+                    .h(px(16. * scale))
+                    .px(px(2.5 * scale))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .cursor_pointer()
+                    .child(
+                        div()
+                            .w(px(if lit { 14. } else { 5. } * scale))
+                            .h(px(5. * scale))
+                            .rounded(sk.radius_pill())
+                            .bg(ink)
+                            .when(!lit, |d| d.group_hover(grp, move |st| st.bg(hot))),
+                    )
+                    // Propagation stops here or the press also arms the mother
+                    // bar's move handle underneath it.
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            ws.turn_eng_frame(i, cx);
+                        }),
+                    ),
             );
         }
-        if let Some(p) = st.primary().and_then(|r| r.pulse) {
-            row = row.child(self.render_pulse(&p, scale, cx));
-        }
-        row
+        pips
     }
 
     /// The heartbeat: twelve bars, one per five minutes of the last hour,
@@ -23788,36 +23960,23 @@ impl Render for Workspace {
                 }),
             );
 
-        // The split buttons read as primary actions: taller (matched to the
-        // window-control buttons), roomier, larger glyph+label — so they never
-        // get crowded off the bar or look like an afterthought.
-        let split_btn = |label: &str| {
-            Self::bezel_btn_s(&sk, label, false, scale)
-                .h(px(26. * scale))
-                .px(px(10. * scale))
-                .py(px(0.))
-                .text_size(px(13. * scale))
-                .flex()
-                .items_center()
-                .justify_center()
-        };
-        let cluster = div()
-            .flex()
-            .flex_row()
-            .gap(px(5. * scale))
-            .items_center()
-            .child(split_btn(&format!("◧ {}", s.ch_split)).on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|ws, _: &MouseDownEvent, window, cx| {
-                    ws.split(SplitDir::Row, window, cx)
-                }),
-            ))
-            .child(split_btn(&format!("⬓ {}", s.ch_split)).on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|ws, _: &MouseDownEvent, window, cx| {
-                    ws.split(SplitDir::Col, window, cx)
-                }),
-            ));
+        // THE CORNER'S TWO ACTIONS, one on each axis.
+        //
+        // They stood side by side at the end of this bezel as `◧ split` and
+        // `⬓ split` — the same word twice, told apart by a glyph one font
+        // could not draw. Parker: *"The pane split is in the corner... so
+        // HORIZONTAL should be on the horizontal axis and vertical on the
+        // vertical axis"*. So the corner holds them the way a window's edges
+        // hold its panes: the split that STACKS panes lies on the bottom edge,
+        // here, and the split that sets them SIDE BY SIDE stands on the right
+        // edge, at the foot of the column the attention pill heads (see
+        // `render_spine`). Each glyph's filled half points at the edge it is
+        // on, which is where the new pane opens.
+        //
+        // The word went in the move. A button standing on the right edge is
+        // only as wide as the column it stands in, and "split" said nothing
+        // the drawn glyphs do not — they were always what told the two apart.
+        let split_down = self.split_button(SplitDir::Col, scale, cx);
 
         // Frameless window controls — only when the OS gave us none (client-side
         // decorations). A small minimize / maximize-toggle / close cluster that
@@ -23879,12 +24038,16 @@ impl Render for Workspace {
 
         // ---- the chrome's glyph row, and what it becomes on a thin tile ----
         //
-        // These live at the BOTTOM LEFT now, not the top right. The top row had
-        // become the busiest line in the window — brand, five menu glyphs, the
-        // size scrubber, the split cluster, the window buttons — while the
-        // bottom bezel carried one sentence naming the focused pane, which the
-        // pane's own header already says, in the pane you are looking at. So
-        // the glyphs moved to the quiet row and the sentence went.
+        // These live at the BOTTOM RIGHT, beside the scale that sizes them and
+        // short of the corner's split. The top row had become the busiest line
+        // in the window — brand, five menu glyphs, the size scrubber, the split
+        // cluster, the window buttons — while the bottom bezel carried one
+        // sentence naming the focused pane, which the pane's own header already
+        // says. So the glyphs moved to the quiet row and the sentence went.
+        // They sat first at its LEFT end, as the tree's footer; Parker then
+        // sent them and the scale to the other end: *"menu scale + menu glyphs
+        // go down bottom right"*, which makes the bottom right the one place
+        // the window's own controls are kept.
         //
         // Past `CHROME_NARROW` they stop fitting beside the tab and pane counts
         // and collapse to a single `…` that raises them as a menu. Nothing is
@@ -23985,25 +24148,15 @@ impl Render for Workspace {
                 }),
             );
 
-        // The glyph row is the left bar's FOOTER, so it takes the bar's width
-        // (95% of it) and spreads its buttons across that, rather than huddling
-        // four small glyphs at the window's corner with a hundred pixels of
-        // nothing beside them. The 5% it gives back is what keeps the row from
-        // reading as an edge-to-edge strip.
-        //
-        // With the bar closed there is no column to be the footer of, so the
-        // row falls back to its natural width and its own gaps.
-        let is_footer = self.left_bar && !chrome_narrow;
+        // At its natural width with its own gaps. As the tree's footer it was
+        // stretched across the bar's width; at the right-hand end there is no
+        // column under it to be the footer of, and a cluster is what reads as
+        // one group of controls beside the scale.
         let chrome_icons = div()
             .flex()
             .flex_row()
             .items_center()
-            .when(is_footer, |d| {
-                d.w(px(self.left_bar_w * scale * 0.95))
-                    .justify_between()
-                    .px(px(2. * scale))
-            })
-            .when(!is_footer, |d| d.gap(px(12. * scale)))
+            .gap(px(12. * scale))
             .map(|d| {
                 if chrome_narrow {
                     d.child(ic_more)
@@ -24016,10 +24169,13 @@ impl Render for Workspace {
                 }
             });
 
-        // THE MIDDLE of the top row: the project rail while the tree is open
-        // — the tabs it would list there are the spine's task rows, an inch
-        // below — and the tab strip while the tree is shut, when the strip is
-        // the only listing of the tabs there is.
+        // THE MIDDLE of the top row: the ticker while the tree is open, hung
+        // straight off the corner's badge — the tabs it would list there are
+        // the spine's task rows, an inch below — and the tab strip while the
+        // tree is shut, when the strip is the only listing of the tabs there
+        // is. The ticker is `flex_1` like the strip, but its pieces keep their
+        // own widths inside it, so it reads from the corner outward and the
+        // row's slack collects at its far end rather than inside it.
         let middle: gpui::AnyElement = if self.left_bar {
             self.render_ticker(scale, cx).into_any_element()
         } else {
@@ -24030,8 +24186,8 @@ impl Render for Workspace {
             .min_h(px(43. * scale))
             .flex_none()
             .flex()
-            // ONE ROW — the mark and the branch's name, then the tabs, then the
-            // scale and the frame buttons.
+            // ONE ROW — the mark and the project's badge, then the ticker or
+            // the tabs, then the agent counter and the frame buttons.
             //
             // It was two stacked rows, and for a good reason at the time: the
             // strip used to be capped at 55% of the bar and wrapped inside that
@@ -24081,19 +24237,21 @@ impl Render for Workspace {
                 }),
             )
             .child(
-                // THE CORNER: the app's MARK, then the PROJECT this window is
-                // standing in, then that project's isolation badge.
+                // THE CORNER: the app's MARK, then the isolation badge of the
+                // project this window is standing in — and, with the tree
+                // open, the ticker hangs straight off it (see `middle`).
                 //
                 // It used to read `▸ TERMINAL DELIGHT` — the widest thing on
                 // the busiest row, spent saying something that never changes
                 // and that the window's own title already says. Then it named
-                // the active BRANCH, in a box pinned to the tree's width and
-                // sitting directly above the spine row already lit for that
-                // same branch: one fact, said twice, in the two most prominent
-                // places in the window. Now the words say which project, and
-                // the badge says what kind of engineering situation is inside
-                // it — a thing the tree cannot say, because the tree is the
-                // DECLARED organisation and the badge is read off the disk.
+                // the active BRANCH, then the PROJECT, as a standing label.
+                // Parker, on the last of those: *"scrap the standing project /
+                // group label"* and *"hang our ticker to start over there"*.
+                // Where you are standing is the tree's to say now — its
+                // project and group rows are washed faintly for the task you
+                // are in (see `branch_row`) — and the corner keeps what the
+                // tree cannot say: what kind of engineering situation is
+                // inside that project, read off the disk rather than declared.
                 div()
                     .flex_none()
                     // A minimum, not a height. It was `h(22)` from the days the
@@ -24119,7 +24277,7 @@ impl Render for Workspace {
                             .w(px(18. * scale))
                             .h(px(18. * scale)),
                     )
-                    .child(self.place_name(None, 13. * scale, cx)),
+                    .child(self.eng_badge(13. * scale, cx)),
             )
             // the void: no control, no rule, no handle. What makes the strip
             // read as belonging to the screen rather than to the tree.
@@ -24129,12 +24287,11 @@ impl Render for Workspace {
             // slack that used to be dead space on two rows.
             .child(middle)
             .child(
-                // Never compressed or pushed off. The menu glyphs used to lead
-                // this group and the splits followed them; both are at the
-                // bottom now, which leaves this end holding the menu-bar SCALE
-                // and the window's own frame buttons — the scale because it
-                // sizes this very bar, and the frame buttons because they are
-                // the compositor's furniture rather than TD's.
+                // Never compressed or pushed off. The menu glyphs, the splits
+                // and the scale all live at the bottom right now, which leaves
+                // this end holding the AGENT COUNTER — Parker: *"Agents counter
+                // is in the top right"* — and the window's own frame buttons,
+                // which are the compositor's furniture rather than TD's.
                 div()
                     .flex_none()
                     .flex()
@@ -24143,7 +24300,7 @@ impl Render for Workspace {
                     .gap(px(12. * scale))
                     // its own margin, since the row carries no gap
                     .ml(px(12. * scale))
-                    .child(scrubber)
+                    .child(self.render_agent_counter(&th, scale, cx))
                     .child(win_controls),
             );
 
@@ -24155,52 +24312,49 @@ impl Render for Workspace {
             .flex()
             .flex_row()
             .items_center()
-            .justify_between()
-            .gap(px(12. * scale))
-            .px(px(12. * scale))
+            .justify_end()
+            .gap(px(14. * scale))
+            .pl(px(12. * scale))
+            // The right end stops where the SCREEN stops, not where the window
+            // does: the column beside the screen (the attention pill over the
+            // split-right button, `render_spine`) comes down to meet this row,
+            // and the square of bezel under it is the corner both split
+            // buttons sit against. The sum is that column's footprint — its
+            // `26` and its `4` of margin — plus the screen's own `mx_2`.
+            .pr(px(RIGHT_COLUMN_W * scale + 8.))
             // Headroom over the glyph row, so the buttons sit in a band of
             // their own rather than against the tree's bottom edge.
             .pt(px(7. * scale))
             .pb(px(3. * scale))
             .text_size(px(10.5 * scale))
             .text_color(th.text)
-            // THE MENU ROW, at the left — where the top right's glyphs went.
+            // Nothing at the left any more. What was there last was the menu
+            // glyphs, as the tree's footer, and before them
+            // `🎨 · <focused pane title>` — which went rather than moving,
+            // because the focused pane draws its own title in its own header.
             //
-            // What was here was `🎨 · <focused pane title>`, and it went
-            // rather than moving: the focused pane draws its own title in its
-            // own header, so the sentence restated, at the far bottom corner of
-            // the window, something already written at the top of the thing you
-            // are looking at.
+            // THE RIGHT END is where the window's own controls are kept: what
+            // the window holds, the menu glyphs and the scale that sizes
+            // them, and in the corner the split that stacks panes.
+            //
+            // `● READY` is long gone from here — it was lit green in every
+            // frame TD has ever drawn, so it never once distinguished one
+            // state from another. A status light that cannot say anything else
+            // is a decoration in the shape of an instrument.
+            .child(format!(
+                "{} {} · {} {}",
+                tab_count,
+                if tab_count == 1 { s.st_tab } else { s.st_tabs },
+                pane_count,
+                if pane_count == 1 {
+                    s.st_pane
+                } else {
+                    s.st_panes
+                }
+            ))
             .child(chrome_icons)
-            .child(
-                // THE ACTING END, at the right: what the window holds, then the
-                // two things you do to it.
-                //
-                // The splits came down from the top row, which now carries only
-                // the menu-bar scale and the window's own frame buttons. And
-                // `● READY` is gone — it was lit green in every frame TD has
-                // ever drawn, so it never once distinguished one state from
-                // another. A status light that cannot say anything else is a
-                // decoration in the shape of an instrument, and it was sitting
-                // in the slot two real controls needed.
-                div()
-                    .flex()
-                    .flex_row()
-                    .gap(px(10. * scale))
-                    .items_center()
-                    .child(format!(
-                        "{} {} · {} {}",
-                        tab_count,
-                        if tab_count == 1 { s.st_tab } else { s.st_tabs },
-                        pane_count,
-                        if pane_count == 1 {
-                            s.st_pane
-                        } else {
-                            s.st_panes
-                        }
-                    ))
-                    .child(cluster),
-            );
+            .child(scrubber)
+            .child(split_down);
 
         // ---- theme breakout: icon grid + seed swatches, per scope ----
         let menu_overlay = self.theme_menu.clone().map(|scope| {
@@ -27490,14 +27644,17 @@ impl Render for Workspace {
                         }),
                     )
             };
-            let scale_top = 74. * scale;
             let panel = div()
                 .id("scale-panel")
                 .absolute()
-                .top(px(scale_top))
-                .right(px(12. * scale))
+                // Over its own button, which is at the bottom right now — a
+                // menu that opens at the far corner from the thing that raised
+                // it reads as a different control firing. It grows UPWARD, so
+                // the cap is measured from the band's top, like the `…` menu's.
+                .bottom(px((pane::HICON + 10.) * scale))
+                .right(px(RIGHT_COLUMN_W * scale + 12.))
                 .w(px(240.))
-                .max_h(px(self.tray_max_h(scale_top)))
+                .max_h(px(self.tray_max_h(self.tray_band().0)))
                 .overflow_x_hidden()
                 .overflow_y_scroll()
                 .p_4()
@@ -27593,11 +27750,11 @@ impl Render for Workspace {
             let panel = div()
                 .id("more-panel")
                 .absolute()
-                // Under its own button, which is at the bottom left now. A menu
+                // Over its own button, which is at the bottom right now. A menu
                 // that opens at the opposite corner from the thing that raised
                 // it reads as a different control firing.
                 .bottom(px((pane::HICON + 10.) * scale))
-                .left(px(12. * scale))
+                .right(px(RIGHT_COLUMN_W * scale + 12.))
                 .w(px(230.))
                 // It grows UPWARD from the footer, so its own top edge is what
                 // the cap has to be measured from: the band's top, since a menu
@@ -27622,10 +27779,12 @@ impl Render for Workspace {
                     cx.listener(|_, _: &MouseDownEvent, _w, cx| cx.stop_propagation()),
                 )
                 // The agent wall LEADS here, and it is the one entry with no
-                // glyph on the chrome at all: its door is the rollup line at
-                // the bottom of the left bar. That bar can be closed, so
-                // without this row a closed bar plus a narrow window would
-                // leave the surface TD is steered from with no door.
+                // glyph on the chrome at all: its door is the agent counter in
+                // the top right. That counter is on screen with the tree open
+                // or shut, but this menu is what a narrow window has instead
+                // of its glyph row, and a list of the window's surfaces that
+                // left out the one TD is steered from would be a list with a
+                // hole in it.
                 .child(entry("\u{f06a9}", s.s_amcp, "more-mcp").on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
@@ -29192,7 +29351,7 @@ impl Render for Workspace {
             // makes "opening the queue does not resize a pane" true by
             // construction rather than by measurement.
             .children(self.render_rail_docked(cx))
-            .children(self.render_spine(cx));
+            .child(self.render_spine(cx));
 
         let root = div()
             .size_full()
@@ -30189,7 +30348,7 @@ mod tests {
                 "fn render_left_bar(",
             ),
             ("the left bar", "fn render_left_bar(", "fn tab_button("),
-            ("the tab strip", "fn tab_button(", "fn place_name("),
+            ("the tab strip", "fn tab_button(", "fn eng_badge("),
             ("the bar's glyph buttons", "fn hicon_s(", "fn bezel_btn("),
         ] {
             let body = region(from, to);
@@ -30494,10 +30653,12 @@ mod tests {
             &src[at..at + end]
         };
 
+        // The mother bar names no branch any more; the tree's rows are where a
+        // branch's name is drawn, and the same rule holds there.
         assert!(
-            body("fn place_name").contains(".truncate()"),
-            "the project name must truncate: gpui wraps by default, so a long \
-             name grows the mother bar instead of clipping inside its rail"
+            body("fn branch_row(").contains(".whitespace_nowrap()"),
+            "a branch name must not wrap: gpui wraps by default, so a long name \
+             would take a second line and grow its row"
         );
 
         // and the fallback has to actually say something
@@ -31027,29 +31188,71 @@ mod tests {
         );
     }
 
-    /// The menu glyphs are at the bottom left, and the bezel names no pane.
+    /// The window's own controls are kept at the bottom right, and the bezel
+    /// names no pane.
     ///
-    /// Two halves of one move. The top row had become the busiest line in the
+    /// Three moves, one rule. The top row had become the busiest line in the
     /// window while the bottom bezel carried a sentence the focused pane's own
     /// header already says — so the glyphs went down and the sentence went.
+    /// Then Parker sent the glyphs and the scale to the RIGHT end of it:
+    /// *"menu scale + menu glyphs go down bottom right"*, with the corner's
+    /// split beyond them.
     #[test]
-    fn the_menu_glyphs_live_at_the_bottom_left_and_the_bezel_names_no_pane() {
+    fn the_windows_own_controls_live_at_the_bottom_right_and_the_bezel_names_no_pane() {
         let src = shipped_src();
         let region = |sig: &str| -> &str {
             let at = src.find(sig).unwrap_or_else(|| panic!("{sig} not found"));
             let end = src[at..].find("\n        let ").expect("end of region");
             &src[at..at + end]
         };
+        let code = shipped_code();
+        let code_region = |sig: &str| -> String {
+            let at = code.find(sig).unwrap_or_else(|| panic!("{sig} not found"));
+            let end = code[at..].find("\n        let ").expect("end of region");
+            code[at..at + end].to_string()
+        };
         let bottom = region("let bezel_bottom = div()");
         let top = region("let bezel_top = div()");
         assert!(
-            bottom.contains(".child(chrome_icons)"),
-            "the menu glyph row belongs to the bottom bezel now"
+            bottom.contains(".child(chrome_icons)") && bottom.contains(".child(scrubber)"),
+            "the menu glyphs and the scale that sizes them belong to the bottom \
+             bezel"
         );
         assert!(
-            !top.contains("chrome_icons"),
+            !top.contains("chrome_icons") && !top.contains("scrubber"),
             "…and must not also be up top: two copies of one control is worse \
              than either place for it"
+        );
+        // At the RIGHT end: the row packs to its end, and nothing is placed
+        // ahead of the counts — the left end is empty now. Read from code
+        // only, so this comment cannot answer it.
+        let bottom_code = code_region("let bezel_bottom = div()");
+        assert!(
+            bottom_code.contains(".justify_end()") && !bottom_code.contains(".justify_between()"),
+            "the bottom bezel packs its controls to the right-hand end"
+        );
+        let order = [
+            "tab_count,",
+            ".child(chrome_icons)",
+            ".child(scrubber)",
+            ".child(split_down)",
+        ];
+        let at: Vec<usize> = order
+            .iter()
+            .map(|n| {
+                bottom_code
+                    .find(n)
+                    .unwrap_or_else(|| panic!("{n} missing from the bottom bezel"))
+            })
+            .collect();
+        assert!(
+            at.windows(2).all(|w| w[0] < w[1]),
+            "left to right: what the window holds, the glyphs, the scale, then \
+             the corner's split — got {at:?} for {order:?}"
+        );
+        assert!(
+            !code.contains("let is_footer"),
+            "the glyph row is no longer the tree's footer, stretched to its width"
         );
         // The sentence. Spelled in pieces so this test's own source does not
         // answer the search — see `shipped_src`.
@@ -31074,23 +31277,93 @@ mod tests {
             "with headroom above it, or the buttons sit against the tree's edge"
         );
 
-        // The acting end. The splits came down here and the status light went.
+        // The corner. The split that stacks panes lies on the bottom edge; its
+        // partner stands on the right edge (see the axes test below), and the
+        // status light that used to share this end is gone.
         assert!(
-            bottom.contains(".child(cluster)"),
-            "the split buttons are at the bottom right now"
+            bottom.contains(".child(split_down)") && !top.contains("split_down"),
+            "the split-down button is at the bottom right, and only there"
         );
-        assert!(!top.contains(".child(cluster)"), "…and not also up top");
         let ready = ["ch", "ready"].join("_");
         assert!(
             !src.contains(&ready),
             "the READY light is gone: it was lit in every frame TD ever drew, \
              so it never distinguished one state from another"
         );
-        // What is left in the top right: the scale that sizes this very bar,
-        // and the compositor's own frame buttons.
+        // What is left in the top right: the agent counter, and the
+        // compositor's own frame buttons.
         assert!(
-            top.contains(".child(scrubber)") && top.contains(".child(win_controls)"),
-            "the top right keeps the menu-bar scale and the window buttons"
+            top.contains(".child(self.render_agent_counter(")
+                && top.contains(".child(win_controls)"),
+            "the top right holds the agent counter and the window buttons"
+        );
+    }
+
+    /// The corner's two splits sit one on each axis, and draw their glyphs.
+    ///
+    /// They stood side by side as `◧ split` and `⬓ split`, and the second
+    /// glyph came out of a fallback font as an empty square with a rule across
+    /// it. Parker: *"HORIZONTAL should be on the horizontal axis and vertical
+    /// on the vertical axis... + the horizontal glyph is not filled in on the
+    /// bottom and should be"*. So: one builder for both buttons, the stacking
+    /// split on the bottom edge, the side-by-side split at the foot of the
+    /// right-hand column, and no typed split glyph left anywhere in the code.
+    #[test]
+    fn the_corners_splits_sit_one_on_each_axis_and_draw_their_glyphs() {
+        let code = shipped_code();
+        let body = |sig: &str| -> String {
+            let at = code.find(sig).unwrap_or_else(|| panic!("{sig} not found"));
+            let end = code[at..].find("\n    }\n").expect("end of fn");
+            code[at..at + end].to_string()
+        };
+        // On the bottom edge: the split that STACKS panes.
+        assert!(
+            code.contains("let split_down = self.split_button(SplitDir::Col, scale, cx);"),
+            "the bottom bezel's split is the one that stacks panes"
+        );
+        // On the right edge: the split that sets them SIDE BY SIDE, at the foot
+        // of the column the attention pill heads — drawn even with the pill off.
+        let spine = body("    fn render_spine(&self");
+        assert!(
+            spine.contains("self.split_button(SplitDir::Row, s, cx)"),
+            "the right-hand column carries the side-by-side split"
+        );
+        assert!(
+            !spine.contains("return None"),
+            "the column is drawn whether or not the pill is on, or the split \
+             loses its edge with TD_SPINE=0"
+        );
+        // One builder, drawn glyphs, and neither typed glyph anywhere.
+        let button = body("    fn split_button(");
+        assert!(
+            button.contains("Self::split_glyph(dir,"),
+            "both buttons draw their glyph rather than typing one"
+        );
+        for typed in ['\u{25e7}', '\u{2b13}'] {
+            assert!(
+                !code.contains(typed),
+                "{typed} is typed into the chrome again — a fallback font drew \
+                 U+2B13 as an outline, which is the bug this replaced"
+            );
+        }
+        // The glyph fills the half the new pane opens into, and each button
+        // stands on the edge its fill points at: right half for a side-by-side
+        // split, bottom half for a stacked one — the new half is always the
+        // SECOND child of a row or a column.
+        let glyph = body("    fn split_glyph(");
+        assert!(
+            glyph.contains("SplitDir::Row => frame.flex_row().child(old).child(new)")
+                && glyph.contains("SplitDir::Col => frame.flex_col().child(old).child(new)")
+                && glyph.contains("div().flex_1().bg(ink)"),
+            "the filled half is the new pane's: right for Row, bottom for Col"
+        );
+        // And the bottom bezel stops short of the column, so its split meets
+        // the corner rather than running under the one above it.
+        assert!(
+            code.contains(".pr(px(RIGHT_COLUMN_W * scale + 8.))")
+                && spine.contains(".w(px((RIGHT_COLUMN_W - 4.) * s))")
+                && spine.contains(".ml(px(4. * s))"),
+            "the bezel's right inset and the column's footprint are one number"
         );
     }
 
@@ -31441,6 +31714,8 @@ mod tests {
             ("render_savings_overlay", 1),
             ("render_bar_slot", 1),
             ("render", 2),
+            // the corner's two split buttons, both built by this one function
+            ("split_button", 1),
         ];
         for (name, count) in &hung {
             assert_eq!(
@@ -31599,16 +31874,17 @@ mod tests {
     }
 
     /// The header's top-left corner says which PROGRAM this is once, in a mark,
-    /// and then says something that changes.
+    /// then the project's state, and the ticker hangs straight off it.
     ///
     /// It used to read `▸ TERMINAL DELIGHT` — the widest thing on the busiest
     /// row, spent on a string that never changes and that the window title
-    /// already carries. The strip heading below it said the active branch's
-    /// name, so a session whose project is called Terminal Delight printed the
-    /// same three words twice, stacked, in the two most prominent places in the
-    /// window. The mark does the identifying; the words do the informing.
+    /// already carries. Then it named the branch, then the project, as a
+    /// standing label; Parker: *"scrap the standing project / group label"*
+    /// and *"hang our ticker to start over there"*. The mark does the
+    /// identifying, the badge and the ticker do the informing, and the tree
+    /// says where you are standing.
     #[test]
-    fn the_header_corner_carries_the_mark_and_the_projects_state() {
+    fn the_header_corner_carries_the_mark_the_badge_and_the_ticker() {
         let src = shipped_src();
         let region = |sig: &str| -> &str {
             let at = src.find(sig).unwrap_or_else(|| panic!("{sig} not found"));
@@ -31621,9 +31897,16 @@ mod tests {
             "the corner draws the app's own mark"
         );
         assert!(
-            top.contains("self.place_name(None,"),
-            "…and beside it, the project this window is standing in, at its \
-             natural width"
+            top.contains(".child(self.eng_badge(13. * scale, cx))"),
+            "…and beside it, the badge of the project this window is standing in"
+        );
+        // No standing name. Parker: "scrap the standing project / group
+        // label" — the tree's washed rows say where you are standing now.
+        // Read from code, so this comment cannot answer it.
+        let code = shipped_code();
+        assert!(
+            !code.contains("fn place_name(") && !top.contains("eng_key_name("),
+            "the corner no longer names the project or group"
         );
         // The words are gone. Spelled in pieces so this test's own source does
         // not answer the search — see `shipped_src`.
@@ -31671,36 +31954,179 @@ mod tests {
             !row_head.contains(".gap(px("),
             "the mother bar's row must carry no gap"
         );
-        // The corner names the PROJECT, uppercase as the tree draws it, and
-        // carries the badge — never the branch. Switching tabs must not
-        // change the corner; switching projects must.
-        let name = {
-            let at = src.find("    fn place_name").expect("place_name");
+        // The ticker HANGS OFF the corner: the corner, then the void, then the
+        // middle — nothing between them to push the ticker across the row.
+        let corner = top.find(".child(self.eng_badge(").expect("the badge");
+        let void = top.find("w(px(strip_void))").expect("the void");
+        let middle = top.find(".child(middle)").expect("the middle");
+        assert!(
+            corner < void && void < middle,
+            "the ticker must start straight after the corner's badge"
+        );
+        // The badge is read by the key the scan uses — a project, else a
+        // top-level group, else the loose tabs — so it is always about the
+        // branch the ticker is reading for.
+        let badge = {
+            let at = src.find("    fn eng_badge").expect("eng_badge");
             let end = src[at..].find("\n    }\n").expect("end of fn");
             &src[at..at + end]
         };
         assert!(
-            name.contains("width: Option<f32>") && name.contains("pt: f32"),
-            "place_name takes its column width and its size from the caller"
+            badge.contains("self.eng.get(&self.eng_key())"),
+            "the badge must read the same key the ticker reads"
+        );
+    }
+
+    /// The ticker is a carousel: pips for position, press to jump, hold still
+    /// under the pointer.
+    ///
+    /// It carried a `4/8` counter at the far end of the row from the sentence
+    /// it counted. Parker: *"not sure what that is telling us... the carousel
+    /// needs to act like the best website carousel from 2015 ... pips to
+    /// denote position"*. Every clause below is one of that carousel's habits,
+    /// and each is the kind a quick edit drops while the screenshot still looks
+    /// like a working carousel.
+    #[test]
+    fn the_ticker_is_a_carousel_with_pips_that_holds_still_when_read() {
+        let code = shipped_code();
+        let body = |sig: &str| -> String {
+            let at = code.find(sig).unwrap_or_else(|| panic!("{sig} not found"));
+            let end = code[at..].find("\n    }\n").expect("end of fn");
+            code[at..at + end].to_string()
+        };
+        let ticker = body("    fn render_ticker(");
+        assert!(
+            ticker.contains("self.render_pips(&frames, at, scale, cx)")
+                && ticker.contains("if frames.len() > 1"),
+            "the position is a row of pips — and one frame draws none"
+        );
+        assert!(!ticker.contains("\"{}/{}\""), "the n/m counter is gone");
+        // Pips stand AHEAD of the sentence, so they never move while
+        // sentences of different lengths come and go.
+        let pips_at = ticker.find("self.render_pips(").expect("pips");
+        let text_at = ticker
+            .find(".child(frame.text.clone())")
+            .expect("the sentence");
+        assert!(pips_at < text_at, "the pips come before the sentence");
+        assert!(
+            ticker.contains(".truncate()"),
+            "the sentence truncates: gpui wraps by default, and a wrapped frame \
+             would make the whole mother bar taller"
+        );
+        // Holds still under the pointer.
+        assert!(
+            ticker.contains(".on_hover(") && ticker.contains("ws.eng_hover = *hovered;"),
+            "the ticker must know when it is being read"
+        );
+        // A pip goes straight to its frame — and stops the press there, or it
+        // also arms the mother bar's move handle underneath.
+        let pips = body("    fn render_pips(");
+        assert!(
+            pips.contains("cx.stop_propagation();") && pips.contains("ws.turn_eng_frame(i, cx);"),
+            "a pip press jumps to its frame and goes no further"
+        );
+        // The clock and a pip turn the ticker the same way: fresh interval,
+        // fresh fade.
+        let turn = body("    fn turn_eng_frame(");
+        assert!(
+            turn.contains("self.eng_frame_at = Instant::now();")
+                && turn.contains("self.eng_turns = self.eng_turns.wrapping_add(1);"),
+            "every turn restarts the clock and replays the fade"
+        );
+        let tick = body("    fn tick_eng_frame(");
+        assert!(
+            tick.contains("ticker_may_turn(n, self.eng_hover, self.eng_frame_at.elapsed())"),
+            "the clock asks the carousel's contract before turning"
+        );
+    }
+
+    /// The clock's three conditions, as values rather than as source.
+    #[test]
+    fn the_ticker_turns_only_when_there_is_more_nobody_is_reading_and_a_frame_has_had_its_time() {
+        let due = ENG_TURN + Duration::from_millis(1);
+        let early = ENG_TURN - Duration::from_millis(1);
+        assert!(ticker_may_turn(4, false, due), "a due frame turns");
+        assert!(!ticker_may_turn(4, true, due), "never under the pointer");
+        assert!(!ticker_may_turn(4, false, early), "never before its time");
+        assert!(
+            !ticker_may_turn(1, false, due),
+            "one frame has nowhere to go"
+        );
+        assert!(!ticker_may_turn(0, false, due), "and no frames, nothing");
+    }
+
+    /// The tree washes the rows you are standing in: the active task's
+    /// project and its group, and nothing else.
+    #[test]
+    fn the_tree_marks_the_project_and_group_the_active_task_stands_in() {
+        let grouped = tree::Place {
+            project: Some(3),
+            initiative: Some(7),
+        };
+        assert!(BarBranch::Project(3).holds(grouped), "its project");
+        assert!(BarBranch::Initiative(7).holds(grouped), "its group");
+        assert!(
+            !BarBranch::Project(4).holds(grouped),
+            "not a sibling project"
         );
         assert!(
-            name.contains(".child(name.to_uppercase())"),
-            "the corner spells the project the way the tree does"
+            !BarBranch::Initiative(8).holds(grouped),
+            "not a sibling group"
         );
+        assert!(!BarBranch::Unfiled.holds(grouped), "never the divider");
+        let loose = tree::Place::default();
+        for b in [
+            BarBranch::Project(3),
+            BarBranch::Initiative(7),
+            BarBranch::Unfiled,
+        ] {
+            assert!(!b.holds(loose), "a loose task stands in no branch: {b:?}");
+        }
+        // Drawn from the same place the rest of the tree reads, faint, and
+        // under a pinned scope's highlight rather than over it.
+        let code = shipped_code();
+        let row = {
+            let at = code.find("    fn branch_row(").expect("branch_row");
+            let end = code[at..].find("\n    }\n").expect("end of fn");
+            code[at..at + end].to_string()
+        };
         assert!(
-            name.contains("self.eng_badge(pt, cx)"),
-            "the corner carries the isolation badge"
+            row.contains("branch.holds(self.place_of(self.active))"),
+            "the wash is decided by where the active task actually is"
         );
+        let wash = row.find(".when(here,").expect("the wash");
+        let pin = row.find(".when(scoped,").expect("the pin's highlight");
+        assert!(wash < pin, "a pinned scope still reads as the louder fact");
         assert!(
-            name.contains("self.eng_key()") && name.contains("self.eng_key_name("),
-            "the corner must name the branch the rail READS for, by the same key \
-             the scan uses — a project, else a top-level group, else nothing. \
-             Naming the project alone drew a bare mark over Parker's JOB group"
+            STANDING_WASH < 0.12,
+            "fainter than the hover, or it stops being a faint indicator"
         );
+    }
+
+    /// The tree's actions row carries no scope text.
+    ///
+    /// The chip named what the tab strip was carrying and toggled it, but with
+    /// the tree open the strip is not drawn, so it changed nothing anybody could
+    /// see — Parker: *"doesn't do anything anymore"*, *"we clear out the text in
+    /// the tree actions row"*.
+    #[test]
+    fn the_tree_actions_row_carries_no_scope_text() {
+        let code = shipped_code();
+        let bar = {
+            let at = code
+                .find("    fn render_left_bar(")
+                .expect("render_left_bar");
+            let end = code[at..].find("\n    }\n").expect("end of fn");
+            code[at..at + end].to_string()
+        };
         assert!(
-            !name.contains("group_title"),
-            "the corner never draws the strip's old group heading"
+            !bar.contains("bar-scope") && !bar.contains("scope_label"),
+            "the scope chip is gone from the actions row"
         );
+        // The three buttons stay, at the right-hand end.
+        for id in ["bar-fold-all", "bar-new-project", "bar-hide"] {
+            assert!(bar.contains(id), "the actions row lost {id}");
+        }
     }
 
     /// The two sizes Parker asked for, as ratios rather than loose numbers.
@@ -31811,23 +32237,38 @@ mod tests {
         }
     }
 
-    /// The agent wall opens from the rollup that summarises it.
+    /// The agent wall opens from the counter that summarises it, and that
+    /// counter is in the top right.
     ///
-    /// It used to open from a robot glyph in the top right — three feet of
-    /// screen from the counter saying the thing you were about to go and look
-    /// at. A rollup that opens the full view is one control instead of two, and
-    /// the survivor is the one carrying the numbers.
+    /// The wall used to open from a robot glyph in the top right — three feet
+    /// of screen from the counter saying the thing you were about to go and
+    /// look at. A rollup that opens the full view is one control instead of
+    /// two, and the survivor is the one carrying the numbers. It lived in the
+    /// tree's bottom slot until Parker put it where the glyph had been:
+    /// *"Agents counter is in the top right"*.
     #[test]
-    fn the_agent_wall_opens_from_the_rollup_it_summarises() {
+    fn the_agent_wall_opens_from_the_counter_that_summarises_it() {
         let src = shipped_src();
-        let slot = {
-            let at = src.find("fn render_bar_slot").expect("the slot");
+        let body = |sig: &str| -> &str {
+            let at = src.find(sig).unwrap_or_else(|| panic!("{sig} not found"));
             let end = src[at..].find("\n    }\n").expect("end of fn");
             &src[at..at + end]
         };
+        let counter = body("    fn render_agent_counter(");
         assert!(
-            slot.contains("slot-agent-rollup") && slot.contains("ws.mcp_menu = true"),
-            "the rollup line must be the wall's door"
+            counter.contains(".id(\"agent-rollup\")") && counter.contains("ws.mcp_menu = true"),
+            "the counter must be the wall's door"
+        );
+        assert!(
+            counter.contains("cx.stop_propagation();"),
+            "…and stop the press there, or it also arms the mother bar's move \
+             handle underneath it"
+        );
+        // One counter, in one place.
+        let slot = body("fn render_bar_slot");
+        assert!(
+            !slot.contains("self.slot_tally(") && !slot.contains("mcp_menu"),
+            "the tree's bottom slot no longer carries a second counter"
         );
         // The glyph it replaced is gone from the chrome — needle in pieces.
         let old_button = ["ic", "mcp"].join("_");
@@ -31847,10 +32288,22 @@ mod tests {
             "the … menu must still list the agent wall, for a closed left bar"
         );
         assert!(
-            more.contains(".bottom(px(") && more.contains(".left(px("),
-            "and the … panel opens under its own button, which is bottom-left \
+            more.contains(".bottom(px(") && more.contains(".right(px("),
+            "and the … panel opens over its own button, which is bottom-right \
              now — a menu that opens at the far corner reads as a different \
              control firing"
+        );
+        let scale = {
+            let at = src.find("let scale_overlay =").expect("the scale menu");
+            let end = src[at..].find("\n        let ").expect("end of region");
+            &src[at..at + end]
+        };
+        assert!(
+            scale.contains(".bottom(px(")
+                && scale.contains(".right(px(")
+                && !scale.contains(".top(px("),
+            "the scale's panel opens over its button at the bottom right, not \
+             where the button used to be"
         );
     }
 

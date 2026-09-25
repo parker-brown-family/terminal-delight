@@ -10,7 +10,7 @@
 //! PROJECT, so switching tabs does not change it and switching projects does.
 //!
 //! ```text
-//!   TERMINAL DELIGHT   [4 WT · 1 SHARED]   │  3 dirty · +641 −188 · 19 files
+//!   [4 WORKTREES · 1 SHARED]   │  ● ○ ○  3 dirty · +641 −188 · 19 files
 //! ```
 //!
 //! Two truths are compared and neither is allowed to overrule the other:
@@ -1005,7 +1005,7 @@ impl ProjectState {
     /// Nothing here is worth interrupting for: one repository, every
     /// checkout isolated, nothing uncommitted anywhere, no drift, nothing
     /// that would conflict or converge, no idle worktree carrying work. The
-    /// badge says `N WT ✓` and the ticker says nothing — silence means
+    /// badge says `N WORKTREES ✓` and the ticker says nothing — silence means
     /// healthy, and the rail earns trust by not screaming continuously.
     pub fn is_calm(&self) -> bool {
         self.primary().is_some()
@@ -1049,10 +1049,15 @@ impl ProjectState {
         let n = self.primary_checkouts().len();
         let shared = self.shared_count();
         let foreign = self.foreign.len();
+        // The word, not the abbreviation. `WT` saved four letters in the
+        // window's busiest row and cost every reader a lookup — Parker, on the
+        // corner: *"1 WT -- should just say worktree"*. Singular and plural
+        // spelled, the way every other count on the rail is.
+        let noun = if n == 1 { "WORKTREE" } else { "WORKTREES" };
         let wt = if shared == 0 && foreign == 0 && n > 0 {
-            format!("{n} WT \u{2713}")
+            format!("{n} {noun} \u{2713}")
         } else {
-            format!("{n} WT")
+            format!("{n} {noun}")
         };
         out.push(Segment {
             text: wt,
@@ -2143,7 +2148,7 @@ mod tests {
         assert!(st.primary().unwrap().pulse.is_some());
 
         let badge: Vec<String> = st.badge().into_iter().map(|s| s.text).collect();
-        assert_eq!(badge, vec!["2 WT", "1 SHARED"]);
+        assert_eq!(badge, vec!["2 WORKTREES", "1 SHARED"]);
         let kinds: Vec<FrameKind> = st.frames().iter().map(|f| f.kind).collect();
         assert!(kinds.contains(&FrameKind::Dirty));
         assert!(kinds.contains(&FrameKind::Branches));
@@ -2169,6 +2174,29 @@ mod tests {
         assert!(s.contains("main is clean"), "{s}");
     }
 
+    /// The badge spells the word, in the singular when there is one.
+    ///
+    /// It read `1 WT`, and the abbreviation was the whole complaint: Parker,
+    /// looking at the corner, *"1 WT -- should just say worktree"*. One
+    /// checkout is the count a project has most often, so the singular is the
+    /// case a person actually reads.
+    #[test]
+    fn one_checkout_says_one_worktree_in_words() {
+        let rig = Rig::new("oneworktree");
+        let st = scan(&ScanInput {
+            project: Some(1),
+            name: Some("REPO".into()),
+            mine: vec![w(0, "CLAUDE", &rig.main)],
+            others: vec![],
+        });
+        let badge: Vec<String> = st.badge().into_iter().map(|s| s.text).collect();
+        assert_eq!(badge, vec!["1 WORKTREE \u{2713}"]);
+        assert!(
+            badge.iter().all(|b| !b.contains(" WT")),
+            "the abbreviation is gone: {badge:?}"
+        );
+    }
+
     #[test]
     fn isolated_and_clean_is_a_tick_and_near_silence() {
         let rig = Rig::new("clean");
@@ -2179,7 +2207,7 @@ mod tests {
             others: vec![],
         });
         let badge: Vec<String> = st.badge().into_iter().map(|s| s.text).collect();
-        assert_eq!(badge, vec!["2 WT \u{2713}"]);
+        assert_eq!(badge, vec!["2 WORKTREES \u{2713}"]);
         let kinds: Vec<FrameKind> = st.frames().iter().map(|f| f.kind).collect();
         assert!(
             !kinds.contains(&FrameKind::Dirty),
@@ -2232,7 +2260,7 @@ mod tests {
         assert_eq!(st.visitors.len(), 1);
         assert_eq!(st.visitors[0].filed_under.as_deref(), Some("B"));
         let badge: Vec<String> = st.badge().into_iter().map(|s| s.text).collect();
-        assert_eq!(badge, vec!["2 REPOS", "2 WT", "\u{26a0} 1 FOREIGN"]);
+        assert_eq!(badge, vec!["2 REPOS", "2 WORKTREES", "\u{26a0} 1 FOREIGN"]);
         let f = st.frames();
         let foreign = f.iter().find(|f| f.kind == FrameKind::Foreign).unwrap();
         assert_eq!(
@@ -2494,7 +2522,7 @@ mod tests {
             ]
         );
         let badge: Vec<String> = st.badge().into_iter().map(|s| s.text).collect();
-        assert_eq!(badge, vec!["2 WT \u{2713}", "\u{2717} 1 CONFLICT"]);
+        assert_eq!(badge, vec!["2 WORKTREES \u{2713}", "\u{2717} 1 CONFLICT"]);
         let kinds: Vec<FrameKind> = st.frames().iter().map(|f| f.kind).collect();
         assert!(kinds.contains(&FrameKind::Landing));
         assert!(kinds.contains(&FrameKind::Collision));
