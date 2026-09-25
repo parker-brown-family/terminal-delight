@@ -7834,7 +7834,7 @@ impl Workspace {
         // places the chips are drawn, and `Bench::act` already falls back from
         // one to the other. Requiring a selection here refused the case that
         // matters most.
-        self.bench_apply(
+        self.act_on_picked_pane(
             cx,
             |v| {
                 v.bench.face() == workbench::Face::Workbench
@@ -7859,7 +7859,7 @@ impl Workspace {
     /// Qualifies on the same predicate the tab is drawn under, so this lands
     /// where the pointer would land rather than beside it.
     pub(crate) fn bench_submit(&mut self, cx: &mut Context<Self>) -> String {
-        self.bench_apply(
+        self.act_on_picked_pane(
             cx,
             |v| v.bench.face() == workbench::Face::Workbench && v.bench_can_submit(),
             "no pane is showing a bench with a round it can send",
@@ -7882,7 +7882,7 @@ impl Workspace {
             return format!("err {why}");
         };
         let mut refused = None;
-        let said = self.bench_apply(
+        let said = self.act_on_picked_pane(
             cx,
             |v| v.bench.face() == workbench::Face::Terminal,
             "no pane is showing its terminal face",
@@ -7901,7 +7901,7 @@ impl Workspace {
     /// walks a brief top to bottom and back, which is the path that evicts
     /// tiles and brings them back.
     pub(crate) fn doc_scroll(&mut self, dy: f32, cx: &mut Context<Self>) -> String {
-        self.bench_apply(
+        self.act_on_picked_pane(
             cx,
             |v| v.has_float(),
             "no pane has a floating document open",
@@ -7917,7 +7917,7 @@ impl Workspace {
     /// to be checkable by a script against the skill's fixtures.
     pub(crate) fn doc_notes(&mut self, cx: &mut Context<Self>) -> String {
         let mut got = None;
-        let said = self.bench_apply(
+        let said = self.act_on_picked_pane(
             cx,
             |v| v.has_document(),
             "no pane has a document open",
@@ -7939,7 +7939,7 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> String {
         let mut got = None;
-        let said = self.bench_apply(
+        let said = self.act_on_picked_pane(
             cx,
             |v| v.has_document(),
             "no pane has a document open",
@@ -7959,7 +7959,7 @@ impl Workspace {
     /// `ok` would believe the square was gone.
     pub(crate) fn doc_close(&mut self, cx: &mut Context<Self>) -> String {
         let closed = std::cell::Cell::new(true);
-        let said = self.bench_apply(
+        let said = self.act_on_picked_pane(
             cx,
             |v| v.has_float(),
             "no pane has a floating document open",
@@ -7972,7 +7972,6 @@ impl Workspace {
         }
     }
 
-    /// Every leaf, the active tab's first, plus which ones are on screen.
     /// Every leaf, the active tab's first, plus which ones are on screen and
     /// where the FOCUSED pane sits in that order. The pick itself is
     /// [`workbench::bench_target`]: the focused pane when it qualifies, else
@@ -8007,12 +8006,21 @@ impl Workspace {
         (active, leaves, focused)
     }
 
-    /// Apply a scripted bench verb to the pane [`workbench::bench_target`]
-    /// picks, and answer with the OUTCOME — `ok pane 3`, `queued pane 3`, or
-    /// an `err` — because a reply that only meant "the message was accepted"
-    /// let a whole smoke run report green while the window logged that
-    /// nothing happened.
-    fn bench_apply(
+    /// Pick one pane for a control-socket verb, act on it, and answer with
+    /// what happened.
+    ///
+    /// The pick is [`workbench::bench_target`]'s: the focused pane when it
+    /// `qualifies`, else the first pane that does, active tab first. With none,
+    /// the answer is `err` and `refusal`. Every scripted verb that acts on "the
+    /// pane in front of you" goes through here — the bench's (`choose`,
+    /// `submit`, `say`, `type`) and the document's (`doc here`, `doc close`,
+    /// `doc scroll`, `doc notes`, the note box's commands) — which is why it is
+    /// not named for the bench any more.
+    ///
+    /// Answers on the OUTCOME — `ok pane 3`, `queued pane 3`, or an `err` —
+    /// because a reply that only meant "the message was accepted" let a whole
+    /// smoke run report green while the window logged that nothing happened.
+    fn act_on_picked_pane(
         &mut self,
         cx: &mut Context<Self>,
         qualifies: impl Fn(&TerminalView) -> bool,
@@ -8051,7 +8059,7 @@ impl Workspace {
     /// the same method the composer does, so this tests the composer rather
     /// than working around it.
     pub(crate) fn bench_say(&mut self, line: &str, cx: &mut Context<Self>) -> String {
-        self.bench_apply(
+        self.act_on_picked_pane(
             cx,
             |v| v.bench.face() == workbench::Face::Workbench && v.mode.is_agent(),
             "no agent pane is showing its bench",
@@ -8069,7 +8077,7 @@ impl Workspace {
     /// caret sitting in it — is where both caret bugs lived, and it could not
     /// be photographed without borrowing somebody's actual keyboard.
     pub(crate) fn bench_type(&mut self, line: &str, cx: &mut Context<Self>) -> String {
-        self.bench_apply(
+        self.act_on_picked_pane(
             cx,
             |v| v.bench.face() == workbench::Face::Workbench && v.mode.is_agent(),
             "no agent pane is showing its bench",

@@ -40,6 +40,7 @@
 set -uo pipefail
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
+. "$ROOT/scripts/lib/hidden-window.sh"
 CYCLES=100
 TD="$ROOT/app/target/release/terminal-delight"
 BRIEF=""
@@ -67,26 +68,13 @@ for opener in xdg-open uwsm-app; do
   chmod +x "$OUT/bin/$opener"
 done
 
-WINDOWS=""
-SESSIONS=""
 CHROMIUMS=""
 # Everything this run made goes with it: the windows, their session hosts,
-# their lock files and layouts. The browsers are the windows' children and go
-# with them; each one's pid is checked after.
+# their lock files, layouts and layout backups (scripts/lib/hidden-window.sh).
+# The browsers are the windows' children and go with them; each one's pid is
+# checked after.
 cleanup() {
-  local pids s
-  pids="$WINDOWS"
-  for s in $SESSIONS; do pids="$pids $(pgrep -f "serve --session $s" 2>/dev/null)"; done
-  for p in $pids; do kill "$p" 2>/dev/null; done
-  for _ in $(seq 1 50); do
-    alive=0
-    for p in $pids; do kill -0 "$p" 2>/dev/null && alive=1; done
-    [ "$alive" -eq 0 ] && break
-    sleep 0.1
-  done
-  for s in $SESSIONS; do
-    rm -f "$HOME/.config/terminal-delight/sessions/$s".* "$OUT"/config-*/terminal-delight/sessions/"$s".*
-  done
+  hidden_stop
   left=""
   for _ in $(seq 1 30); do
     left=""
@@ -95,9 +83,12 @@ cleanup() {
     sleep 0.1
   done
   [ -n "$left" ] && echo "!! chromium this run started is still running:$left"
-  # A window killed outright leaves its browser's profile for the next TD to
-  # sweep; these windows will not be back, so sweep their own now.
-  for w in $WINDOWS; do rm -rf "${XDG_RUNTIME_DIR:-/nonexistent}/terminal-delight/chromium-$w-"*; done
+  hidden_sweep
+  # The windows given a config of their own keep their sessions in it.
+  for s in $HIDDEN_SESSIONS; do
+    rm -f "$OUT"/config-*/terminal-delight/sessions/"$s".*
+    rm -rf "$OUT"/config-*/terminal-delight/sessions/backups/"$s"
+  done
 }
 trap cleanup EXIT
 
@@ -111,32 +102,11 @@ launch() {
     for line in "$@"; do echo "export $line"; done
     echo "exec $TD > $log 2>&1"
   } > "$script"
-  SESSIONS="$SESSIONS $session"
-  local said
-  said=$(hyprctl dispatch "hl.dsp.exec_cmd(\"sh $script\", { workspace = \"$ws silent\", render_unfocused = true, no_initial_focus = true })" 2>&1)
-  case "$said" in ok|"") ;; *) echo "hyprctl refused the launch: $said"; exit 1 ;; esac
-  WIN=""
-  for _ in $(seq 1 60); do
-    WIN=$(hyprctl clients -j 2>/dev/null | jq -r --arg t "terminal-delight — $session" '.[] | select(.title==$t) | .pid' | head -1)
-    [ -n "$WIN" ] && break
-    sleep 0.5
-  done
-  [ -n "$WIN" ] || { echo "no window appeared — see $log"; exit 1; }
-  WINDOWS="$WINDOWS $WIN"
-  local landed
-  landed=$(hyprctl clients -j | jq -r --argjson p "$WIN" '.[] | select(.pid==$p) | .workspace.name' | head -1)
-  if [ "$landed" != "$ws" ]; then
-    echo "the window landed on '$landed', not $ws — killed, nothing ran"
-    kill "$WIN" 2>/dev/null
-    exit 4
-  fi
+  hidden_launch "$session" "$ws" "$log" "sh $script"
   LOG=$log
-  for _ in $(seq 1 40); do [ "$(ctl ping)" = "pong" ] && break; sleep 0.5; done
-  echo "   $name: window $WIN, hidden on $landed"
+  echo "   $name: window $WIN, hidden on $ws"
 }
 
-# The client prefixes each reply with the answering window's pid and a tab.
-ctl() { "$TD" ctl --pid "$WIN" "$@" 2>&1 | head -1 | sed 's/^[0-9]*\t//'; }
 gpu() { nvidia-smi --query-compute-apps=pid,used_memory --format=csv,noheader,nounits \
   | awk -F', ' -v p="$WIN" '$1==p {print $2}' | head -1; }
 rss() { awk '/VmRSS/ {print int($2/1024)}' "/proc/$WIN/status"; }

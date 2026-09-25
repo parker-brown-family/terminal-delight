@@ -398,6 +398,35 @@ enum Link {
     Path(String),
 }
 
+/// The modifiers a click was made with, as the `[doc-hit]` trace prints them:
+/// `ctrl+alt`, `shift`, or `none`.
+fn held_mods(m: crate::docopen::Mods) -> String {
+    let held: Vec<&str> = [
+        (m.control, "ctrl"),
+        (m.alt, "alt"),
+        (m.shift, "shift"),
+        (m.platform, "super"),
+    ]
+    .into_iter()
+    .filter_map(|(on, name)| on.then_some(name))
+    .collect();
+    if held.is_empty() {
+        "none".into()
+    } else {
+        held.join("+")
+    }
+}
+
+/// The click table's modifiers, from the ones gpui hands a press.
+fn click_mods(m: gpui::Modifiers) -> crate::docopen::Mods {
+    crate::docopen::Mods {
+        alt: m.alt,
+        control: m.control,
+        shift: m.shift,
+        platform: m.platform,
+    }
+}
+
 /// Peel wrapping brackets/quotes and trailing sentence punctuation off a token
 /// so `(https://x.com),` clicks as `https://x.com`.
 fn trim_link_delims(s: &str) -> String {
@@ -4803,6 +4832,20 @@ impl TerminalView {
     }
 
     fn link_under(&self, pos: gpui::Point<Pixels>) -> Option<String> {
+        match self.link_token_under(pos)? {
+            Link::Url(u) => Some(u),
+            Link::Path(p) => {
+                let cwd = self.runtime().cwd;
+                resolve_path(&p, cwd.as_deref()).filter(|a| std::path::Path::new(a).exists())
+            }
+        }
+    }
+
+    /// The URL or path token under the pointer, as the grid spells it, before
+    /// a path is resolved against the pane's cwd and checked on disk. Kept
+    /// apart from [`Self::link_under`] so the `[doc-hit]` trace can tell a
+    /// click on no token from a click on a path that did not resolve.
+    fn link_token_under(&self, pos: gpui::Point<Pixels>) -> Option<Link> {
         let (vrow, vcol, _) = self.viewport_cell(pos);
         // Map the painted/visual row back to the grid viewport row it shows
         // (identity in the default un-anchored path; inverts the anchor-to-top
@@ -4813,13 +4856,7 @@ impl TerminalView {
         // recognised as one token (see `stitch_wrapped_line`).
         let (grid, wraps) = self.grid_snapshot();
         let (line, col) = stitch_wrapped_line(&grid, &wraps, vrow, vcol);
-        match link_at(&line, col)? {
-            Link::Url(u) => Some(u),
-            Link::Path(p) => {
-                let cwd = self.runtime().cwd;
-                resolve_path(&p, cwd.as_deref()).filter(|a| std::path::Path::new(a).exists())
-            }
-        }
+        link_at(&line, col)
     }
 
     /// The document under the pointer, if it is one TD can draw: the path or
@@ -7775,6 +7812,21 @@ impl TerminalView {
         true
     }
 
+    /// `TD_HITDEBUG`: a press that stopped at `branch` before it reached the
+    /// click table. A modified click that never printed its `[doc-hit]`
+    /// decision still says where it went, so "Alt+click did nothing" can be
+    /// told apart from "something on the glass took the press first". Nothing
+    /// is read or printed unless the variable is set.
+    fn trace_press_taken(branch: &str, ev: &MouseDownEvent) {
+        if std::env::var_os("TD_HITDEBUG").is_some() {
+            eprintln!(
+                "[doc-hit] taken by {branch} before the click table: button={:?} held={}",
+                ev.button,
+                held_mods(click_mods(ev.modifiers))
+            );
+        }
+    }
+
     fn on_mouse_down(&mut self, ev: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         // Any press that is not the rename box itself (which stops propagation)
         // closes the rename and saves it — including a press inside this pane's
@@ -7812,6 +7864,7 @@ impl TerminalView {
             // because a click on the bench's empty background lands on no
             // zone and would otherwise never be seen at all.
             if self.bench_dismiss_dial(landed.as_ref().map(|(hit, _)| hit), cx) {
+                Self::trace_press_taken("the bench's open dial menu", ev);
                 cx.stop_propagation();
                 return;
             }
@@ -7821,6 +7874,7 @@ impl TerminalView {
             // selection in the TERMINAL GRID behind the bench — invisible,
             // and the slot this takes.
             if self.bench_press_at(ev.position, landed, window, cx) {
+                Self::trace_press_taken("the bench", ev);
                 cx.stop_propagation();
                 return;
             }
@@ -7830,6 +7884,7 @@ impl TerminalView {
         // the hidden grid, or the copy/paste tray offering the hidden shell's
         // links, would be acting on something nobody can see.
         if self.doc_face_press(ev, window, cx) {
+            Self::trace_press_taken("the document face", ev);
             cx.stop_propagation();
             cx.notify();
             return;
@@ -7841,6 +7896,7 @@ impl TerminalView {
         // recorded as they painted. A right press is the square's too: the
         // copy/paste tray would otherwise offer the link HIDDEN under it.
         if let Some((zone, flat)) = self.float_hit(ev.position) {
+            Self::trace_press_taken("the floating square", ev);
             if ev.button == MouseButton::Left {
                 self.float_press(zone, flat, ev, window, cx);
             }
@@ -7854,6 +7910,7 @@ impl TerminalView {
         // gpui click target for the same reason as the copy chip below — the
         // paper is tilted, and gpui would hit-test its flat layout box.
         if ev.button == MouseButton::Left && self.sticky_click(ev.position, cx) {
+            Self::trace_press_taken("the sticky note", ev);
             cx.stop_propagation();
             return;
         }
@@ -7897,12 +7954,7 @@ impl TerminalView {
         if ev.button == MouseButton::Left
             && (ev.modifiers.alt || ev.modifiers.shift || ev.modifiers.control)
         {
-            let mods = crate::docopen::Mods {
-                alt: ev.modifiers.alt,
-                control: ev.modifiers.control,
-                shift: ev.modifiers.shift,
-                platform: ev.modifiers.platform,
-            };
+            let mods = click_mods(ev.modifiers);
             let link = self.link_under(ev.position);
             let revealable = link.as_deref().and_then(reveal_target);
             let doc = (mods.alt && self.bench.face() == crate::workbench::Face::Terminal)
@@ -7922,6 +7974,40 @@ impl TerminalView {
                 revealable.is_some(),
                 copy.is_some(),
             );
+            // TD_HITDEBUG: one line per modified left press, saying what the
+            // table was handed and what it chose. An Alt+click that does
+            // nothing in one pane and works in the next is otherwise silent;
+            // this line shows whether the pointer found no token, a path that
+            // did not resolve against the pane's cwd, a file that is not a
+            // document, or a grid on the alternate screen with an app reading
+            // the mouse. `unasked` is not `none`: the document and the chip
+            // are only asked for with Alt held, the document only on the
+            // terminal face. Nothing extra is read unless the variable is set.
+            if std::env::var_os("TD_HITDEBUG").is_some() {
+                let (row, col, _) = self.viewport_cell(ev.position);
+                let mode = *self.session.term.lock().mode();
+                let face = self.bench.face();
+                let doc_seen = match (&doc, mods.alt && face == crate::workbench::Face::Terminal) {
+                    (Some(d), _) => format!("{:?}", d.kind),
+                    (None, true) => "none".to_string(),
+                    (None, false) => "unasked".to_string(),
+                };
+                let chip = match (&copy, mods.alt) {
+                    (Some(_), _) => "armed",
+                    (None, true) => "none",
+                    (None, false) => "unasked",
+                };
+                eprintln!(
+                    "[doc-hit] cell=(r{row},c{col}) grid_row={} alt_screen={} mouse_mode={} face={face:?} held={} token={:?} cwd={:?} link={:?} doc={doc_seen} chip={chip} intent={intent:?}",
+                    self.paint_row_to_grid_row(row),
+                    mode.contains(TermMode::ALT_SCREEN),
+                    mode.intersects(TermMode::MOUSE_MODE),
+                    held_mods(mods),
+                    self.link_token_under(ev.position),
+                    self.runtime().cwd,
+                    link,
+                );
+            }
             use crate::docopen::ClickIntent;
             // What the click did, if anything. The Alt gestures stop the event
             // here, as the chip always has; opening and revealing let it
@@ -14131,6 +14217,62 @@ mod tests {
         );
         // The copy path goes through the chip resolver, never the old one.
         assert!(!code.contains("fn copy_hint_at("));
+    }
+
+    /// Alt+click on a path did nothing in one agent pane and worked in the
+    /// next, and nobody could see why: the grid's hit-test printed under
+    /// `TD_HITDEBUG`, the document path of the same click printed nothing. So
+    /// the click table's branch prints one `[doc-hit]` line under the same
+    /// variable — the cell, the alternate screen and mouse reporting, what
+    /// `link_under` found, what `document_of` made of it, and the intent
+    /// chosen — after the table decides and before anything acts. Every early
+    /// return that can take a left press before the table says so too.
+    #[test]
+    fn a_modified_click_says_what_the_click_table_decided() {
+        let code = live_code();
+        let body = method_body(&code, "fn on_mouse_down(&mut self, ev: &MouseDownEvent");
+        let decide = body
+            .find("docopen::click_intent(")
+            .expect("the click table");
+        let act = body.find("let took = match intent").expect("the act");
+        let branch = &body[decide..act];
+        let gate = branch
+            .find("std::env::var_os(\"TD_HITDEBUG\").is_some()")
+            .expect("the click table's branch traces under TD_HITDEBUG");
+        let line = branch[gate..]
+            .find("\"[doc-hit] ")
+            .expect("and the line it prints is a [doc-hit] line");
+        for says in [
+            "cell=(r{row},c{col})",
+            "TermMode::ALT_SCREEN",
+            "TermMode::MOUSE_MODE",
+            "link={:?}",
+            "doc={doc_seen}",
+            "intent={intent:?}",
+        ] {
+            assert!(
+                branch[gate + line..].contains(says),
+                "the [doc-hit] line says {says}"
+            );
+        }
+        for (taken, why) in [
+            (
+                "if self.doc_face_press(ev, window, cx) {",
+                "the document face",
+            ),
+            ("= self.float_hit(ev.position) {", "the floating square"),
+            ("self.sticky_click(ev.position, cx) {", "the sticky note"),
+        ] {
+            let at = body.find(taken).unwrap_or_else(|| panic!("{taken}"));
+            let ret = at + body[at..].find("return;").expect("an early return");
+            assert!(
+                body[at..ret].contains(&format!("Self::trace_press_taken(\"{why}\", ev)")),
+                "a press {why} takes before the click table says so under TD_HITDEBUG"
+            );
+        }
+        let trace = method_body(&code, "fn trace_press_taken(");
+        assert!(trace.contains("std::env::var_os(\"TD_HITDEBUG\").is_some()"));
+        assert!(trace.contains("\"[doc-hit] taken by {branch}"));
     }
 
     /// A square dragged against the pane's edge leaves the pointer outside
