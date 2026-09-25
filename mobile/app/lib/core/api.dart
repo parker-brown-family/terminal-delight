@@ -19,17 +19,17 @@ class Refused implements Exception {
 }
 
 class Api {
-  Api(this.link, this.token)
+  Api(this.base, this.token)
     : _dio = Dio(
         BaseOptions(
-          baseUrl: link.base,
+          baseUrl: base,
           connectTimeout: const Duration(seconds: 6),
           receiveTimeout: const Duration(seconds: 20),
           headers: {'Authorization': 'Bearer $token'},
         ),
       );
 
-  final Link link;
+  final String base;
   final String token;
   final Dio _dio;
 
@@ -97,9 +97,9 @@ class Api {
 
   /// Open a WebSocket on the gateway, authenticated the same way.
   Future<WebSocket> socket(String path, [Map<String, String>? query]) {
-    final base = Uri.parse(link.base);
-    final uri = base.replace(
-      scheme: base.scheme == 'https' ? 'wss' : 'ws',
+    final origin = Uri.parse(base);
+    final uri = origin.replace(
+      scheme: origin.scheme == 'https' ? 'wss' : 'ws',
       path: path,
       queryParameters: query,
     );
@@ -110,11 +110,14 @@ class Api {
   }
 }
 
+/// The client for the route in use. Keyed on the route's address alone, so
+/// looking again and finding the same route changes nothing downstream — only
+/// a different route rebuilds the feed and refetches the screens.
 final apiProvider = Provider<Api?>((ref) {
-  final link = ref.watch(linkProvider).valueOrNull;
-  final pairing = ref.watch(pairingProvider);
-  if (link == null || pairing == null) return null;
-  return Api(link, pairing.token);
+  final base = ref.watch(linkProvider.select((l) => l.valueOrNull?.base));
+  final token = ref.watch(pairingProvider.select((p) => p?.token));
+  if (base == null || token == null) return null;
+  return Api(base, token);
 });
 
 Future<Api> _api(Ref ref) async {
@@ -155,6 +158,12 @@ final benchProvider = FutureProvider.autoDispose
 
 /// The gateway's live hints, turned into refreshes. Held open while anything
 /// on screen is watching it; reconnects with a short backoff.
+///
+/// It is also what notices the route has gone. Pull the cable and the feed
+/// drops at once; a second failure on the same route means the route is dead
+/// rather than hiccuping, so the link looks again — and finds the tailnet —
+/// without anybody tapping anything. With no route at all it keeps looking,
+/// slowly, so a phone that walks back into range reconnects by itself.
 class Events {
   Events(this.ref);
   final Ref ref;
@@ -164,6 +173,7 @@ class Events {
   final _benchDebounce = <int, Timer>{};
   bool _closed = false;
   int _backoff = 1;
+  int _fails = 0;
 
   /// Whether the live feed is open — the dot on the link pill.
   final live = StreamController<bool>.broadcast();
@@ -173,7 +183,13 @@ class Events {
     if (_closed) return;
     final api = ref.read(apiProvider);
     if (api == null) {
-      _schedule();
+      if (ref.read(linkProvider).hasError) {
+        _retry?.cancel();
+        _retry = Timer(Duration(seconds: _backoff), () => unawaited(_lookAgain()));
+        _backoff = (_backoff * 2).clamp(1, 30);
+      } else {
+        _schedule();
+      }
       return;
     }
     try {
@@ -181,6 +197,7 @@ class Events {
       ws.pingInterval = const Duration(seconds: 15);
       _ws = ws;
       _backoff = 1;
+      _fails = 0;
       _set(live: true);
       ws.listen(
         _onMessage,
@@ -201,7 +218,26 @@ class Events {
   void _lost() {
     _ws = null;
     _set(live: false);
-    _schedule();
+    if (_closed) return;
+    _fails++;
+    if (_fails >= 2) {
+      unawaited(_lookAgain());
+    } else {
+      _schedule();
+    }
+  }
+
+  /// Probe every route again. When a different one answers, the api changes
+  /// and this feed is replaced by one on the new route; when none does, this
+  /// one goes on looking.
+  Future<void> _lookAgain() async {
+    if (_closed) return;
+    try {
+      await ref.read(linkProvider.notifier).rediscover();
+    } on Object {
+      // No route answered. `start` sees the error and schedules the next look.
+    }
+    if (!_closed) await start();
   }
 
   void _schedule() {

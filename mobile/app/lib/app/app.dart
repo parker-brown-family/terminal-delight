@@ -5,6 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:terminal_delight/app/theme/td.dart';
+import 'package:terminal_delight/core/api.dart';
+import 'package:terminal_delight/core/link.dart';
 import 'package:terminal_delight/core/pairing.dart';
 import 'package:terminal_delight/features/bench/bench_page.dart';
 import 'package:terminal_delight/features/pair/pair_page.dart';
@@ -88,12 +90,23 @@ class TdApp extends ConsumerStatefulWidget {
 class _TdAppState extends ConsumerState<TdApp> {
   final _links = AppLinks();
   StreamSubscription<Uri>? _sub;
+  AppLifecycleListener? _life;
 
   @override
   void initState() {
     super.initState();
     // Both the link that launched the app and any that arrive while it runs.
     _sub = _links.uriLinkStream.listen(_propose);
+    // Back from the pocket: the phone may have left the cable or the Wi-Fi
+    // while the app slept, so if the live feed is down, look for a route.
+    _life = AppLifecycleListener(
+      onResume: () {
+        if (ref.read(pairingProvider) == null) return;
+        if (!ref.read(eventsProvider).isLive) {
+          unawaited(ref.read(linkProvider.notifier).rediscover().catchError((Object _) {}));
+        }
+      },
+    );
   }
 
   void _propose(Uri uri) {
@@ -104,6 +117,7 @@ class _TdAppState extends ConsumerState<TdApp> {
   @override
   void dispose() {
     unawaited(_sub?.cancel());
+    _life?.dispose();
     super.dispose();
   }
 

@@ -147,6 +147,14 @@ class _TermViewState extends ConsumerState<TermView> {
   bool _started = false;
   bool _ctrl = false;
   bool _composing = false;
+
+  /// Re-attaching after a dropped connection — the cable pulled, the phone
+  /// changing networks. Only a drop the gateway gave no reason for is retried:
+  /// a pane that ended, or that another screen took, stays closed. And it asks
+  /// without taking, so it can never pull a pane back off the desk.
+  int _autoTries = 0;
+  Timer? _auto;
+  static const _autoDelays = [1, 2, 3, 5, 8, 12];
   final _draft = TextEditingController();
   late double _font = ref.read(initialFontProvider) ?? 11.5;
 
@@ -189,10 +197,15 @@ class _TermViewState extends ConsumerState<TermView> {
     _ws?.add(jsonEncode({'resize': {'cols': s.$1, 'rows': s.$2}}));
   }
 
-  Future<void> _connect() async {
+  Future<void> _connect({bool? take}) async {
     final api = ref.read(apiProvider);
     final s = _size;
-    if (api == null || s == null) return;
+    if (s == null) return;
+    if (api == null) {
+      // The route is changing under us; the next try will find the new one.
+      if (_autoTries > 0) _dropped();
+      return;
+    }
     setState(() {
       _link = _Link.connecting;
       _closedWhy = null;
@@ -205,7 +218,7 @@ class _TermViewState extends ConsumerState<TermView> {
           'rows': '${s.$2}',
           'cell_width': '${(_font * 0.6 * 3).round()}',
           'cell_height': '${(_font * 1.2 * 3).round()}',
-          if (widget.take) 'take': 'true',
+          if (take ?? widget.take) 'take': 'true',
         },
       );
       ws.pingInterval = const Duration(seconds: 15);
@@ -218,6 +231,7 @@ class _TermViewState extends ConsumerState<TermView> {
             final m = jMap(jsonDecode(data));
             if (m == null) return;
             if (m.containsKey('attached')) {
+              _autoTries = 0;
               setState(() => _link = _Link.live);
               _sendSize();
             }
@@ -235,33 +249,50 @@ class _TermViewState extends ConsumerState<TermView> {
             _link = _Link.closed;
             _closedWhy ??= 'lost';
           });
+          if (_closedWhy == 'lost') _dropped();
         },
         onError: (Object _) {},
         cancelOnError: true,
       );
     } on WebSocketException catch (e) {
+      if (!mounted) return;
       setState(() {
         _link = _Link.closed;
         _closedWhy = e.message.contains('409') ? 'attached' : e.message;
       });
+      if (_autoTries > 0) _dropped();
     } on Object catch (e) {
+      if (!mounted) return;
       setState(() {
         _link = _Link.closed;
         _closedWhy = '$e';
       });
+      if (_autoTries > 0) _dropped();
     }
   }
 
-  Future<void> _reconnect() async {
+  /// The connection went without a reason. Try again on whatever route the
+  /// link has found by then, a few times, spaced out; after that the card's
+  /// own button is the way back.
+  void _dropped() {
+    if (!mounted || _autoTries >= _autoDelays.length) return;
+    final wait = _autoDelays[_autoTries++];
+    _auto?.cancel();
+    _auto = Timer(Duration(seconds: wait), () => unawaited(_reconnect(take: false)));
+  }
+
+  Future<void> _reconnect({bool? take}) async {
     await _sub?.cancel();
     await _ws?.close();
     _ws = null;
-    await _connect();
+    if (!mounted) return;
+    await _connect(take: take);
   }
 
   @override
   void dispose() {
     _resize?.cancel();
+    _auto?.cancel();
     unawaited(_sub?.cancel());
     // Closing the stream detaches. The terminal keeps running on the laptop.
     unawaited(_ws?.close());
@@ -367,7 +398,12 @@ class _TermViewState extends ConsumerState<TermView> {
   }
 
   Widget _status() {
+    // A retry is already scheduled: say so, rather than showing the socket
+    // error of an attempt that is about to be made again.
+    final retrying = _auto?.isActive ?? false;
     final (title, body, tint) = switch ((_link, _closedWhy)) {
+      (_Link.closed, _) when retrying => ('RECONNECTING', 'The connection dropped. Finding the laptop again…', Td.pending),
+      (_Link.connecting, _) when _autoTries > 0 => ('RECONNECTING', 'The connection dropped. Finding the laptop again…', Td.pending),
       (_Link.connecting, _) => ('ATTACHING', 'Opening the terminal on the laptop…', Td.pending),
       (_, 'ended') => ('ENDED', 'The process in this pane has exited.', Td.inkAt(0.6)),
       (_, 'taken') => ('TAKEN BACK', 'Another screen opened this terminal. It is still running there.', Td.pending),
@@ -390,9 +426,17 @@ class _TermViewState extends ConsumerState<TermView> {
                 Text(title, style: TdType.m(13, color: tint, weight: FontWeight.w700, spacing: 1.8)),
                 const SizedBox(height: 8),
                 Text(body, style: TdType.p(14.5)),
-                if (_link == _Link.closed && _closedWhy != 'ended') ...[
+                if (_link == _Link.closed && _closedWhy != 'ended' && !retrying) ...[
                   const SizedBox(height: 14),
-                  Slab(label: 'Attach again', icon: '↻', dense: true, onPressed: () => unawaited(_reconnect())),
+                  Slab(
+                    label: 'Attach again',
+                    icon: '↻',
+                    dense: true,
+                    onPressed: () {
+                      _autoTries = 0;
+                      unawaited(_reconnect());
+                    },
+                  ),
                 ],
               ],
             ),

@@ -33,6 +33,16 @@ notes on `01-plan.md`.
       harness's own injected turns as prompts, which must not be shown as the
       person's words; and an agent with no file or MCP route prints its card as
       a ```td fence, which the phone now lifts into a card the way the desk does.
+- [x] **Slice 0.5 — the route follows the phone.** DONE 2026-09-25. With the
+      phone on cellular (not the home Wi-Fi) and the cable route removed, the
+      app found legion over Tailscale on launch (`TAILSCALE · 177MS`, relayed
+      through Tailscale's Seattle DERP at 119 ms). Mid-session, with the
+      gateway restarted under an open terminal, the feed noticed the drop,
+      re-probed the routes, and the terminal re-attached by itself to the same
+      pane with its scrollback: every connection to :7717 then came from the
+      phone's tailnet address. Re-attaching never takes a pane; only a tap does.
+      Found on the way: removing an `adb reverse` rule does not cut connections
+      already open through it, so it is not a test of unplugging.
 - [ ] Slice 1 — say a line to a desk agent without taking its pane (needs a
       pane-addressed `bench say` on the window's control socket).
 - [ ] Slice 2 — answer an agent's question from the phone through the channel's
