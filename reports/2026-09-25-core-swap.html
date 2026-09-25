@@ -1,0 +1,1466 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Core Swap</title>
+<style>
+/* decision-brief — surfaces, ink, and the three structural components.
+ *
+ * ONE palette. No theme system, no theme toggle. tps-report shipped four themes and
+ * 165 theme-related rules; nobody ever switched. A brief is read once, quickly, to make
+ * a decision — the reader is not shopping for a skin.
+ *
+ * Categorical colours are the validated dataviz default palette (dark steps), which
+ * clears the CVD, chroma, lightness and contrast gates on the adjacent pairlist.
+ * If you change them, re-run the validator; do not eyeball it.
+ *
+ * What is here: tokens, the modal shell, tables, callouts, code. Everything else —
+ * cards, escalation lists, stat tiles, charts — is the brief's own business.
+ * Build what the material needs.
+ */
+:root {
+  color-scheme: dark;
+
+  --surface-0: #111110;   /* page */
+  --surface-1: #1a1a19;   /* panel */
+  --surface-2: #232321;   /* raised */
+  --surface-3: #2e2e2b;   /* control */
+  --line:      #3a3a36;
+
+  --text-primary:   #ffffff;
+  --text-secondary: #c3c2b7;
+  --text-muted:     #8b8a80;
+
+  /* categorical — assign in fixed order, never cycle */
+  --s1: #3987e5;  --s2: #d95926;  --s3: #199e70;  --s4: #c98500;
+  --s5: #d55181;  --s6: #008300;  --s7: #9085e9;  --s8: #e66767;
+
+  /* status — reserved. Never reuse as "series 5". Always ship with a label. */
+  --good:     #0ca30c;
+  --warning:  #fab219;
+  --serious:  #ec835a;
+  --critical: #d03b3b;
+
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, "JetBrains Mono", Menlo, Consolas, monospace;
+  --sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif;
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0; background: var(--surface-0); color: var(--text-primary);
+  font-family: var(--sans); font-size: 15px; line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+.wrap { max-width: 1180px; margin: 0 auto; padding: 0 24px 120px; }
+header.top .wrap { padding-bottom: 0; }   /* the wrap's bottom padding is for the page, not the header */
+
+/* ---- headings ----
+   A heading names the thing. It does not explain it — an em-dash gloss after a
+   heading breaks the heading. The body does the explaining. */
+h1 { font-size: 34px; line-height: 1.18; margin: 0 0 16px; letter-spacing: -.02em; font-weight: 650; }
+h2.sec {
+  font-size: 13px; font-family: var(--mono); letter-spacing: .13em; text-transform: uppercase;
+  color: var(--text-muted); margin: 56px 0 18px; padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+/* ---- modal shell: where depth lives ---- */
+dialog {
+  border: 1px solid var(--line); border-radius: 12px;
+  background: var(--surface-1); color: var(--text-primary);
+  max-width: 880px; width: calc(100vw - 44px); max-height: 86vh; padding: 0; overflow: hidden;
+}
+dialog::backdrop { background: rgba(0,0,0,.76); backdrop-filter: blur(3px); }
+.dlg-head {
+  position: sticky; top: 0; background: var(--surface-2);
+  border-bottom: 1px solid var(--line); padding: 20px 26px;
+  display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; z-index: 2;
+}
+.dlg-head h3 { margin: 0 0 5px; font-size: 20px; letter-spacing: -.015em; }
+.dlg-head .repo { font-family: var(--mono); font-size: 11.5px; color: var(--text-muted); margin: 0; }
+.x {
+  background: var(--surface-3); border: 1px solid var(--line); color: var(--text-secondary);
+  border-radius: 6px; width: 30px; height: 30px; font-size: 17px; line-height: 1;
+  cursor: pointer; flex: none;
+}
+.x:hover { background: var(--critical); color: #fff; border-color: var(--critical); }
+.dlg-body { padding: 24px 26px 34px; overflow-y: auto; max-height: calc(86vh - 78px); }
+.dlg-body h4 {
+  font-family: var(--mono); font-size: 11.5px; letter-spacing: .12em; text-transform: uppercase;
+  color: var(--text-muted); margin: 30px 0 12px; padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+}
+.dlg-body h4:first-child { margin-top: 0; }
+.dlg-body p  { margin: 0 0 13px; color: var(--text-secondary); font-size: 14.5px; }
+.dlg-body ul { margin: 0 0 15px; padding-left: 20px; color: var(--text-secondary); font-size: 14.5px; }
+.dlg-body li { margin-bottom: 8px; }
+.dlg-body strong { color: var(--text-primary); font-weight: 600; }
+
+/* ---- prose furniture ---- */
+code {
+  font-family: var(--mono); font-size: 12.5px; background: var(--surface-3);
+  padding: 1.5px 5px; border-radius: 4px; color: #e8d9a8; word-break: break-word;
+}
+pre {
+  background: var(--surface-0); border: 1px solid var(--line); border-radius: 7px;
+  padding: 15px 17px; overflow-x: auto; margin: 0 0 15px;
+}
+pre code { background: none; padding: 0; color: var(--text-secondary); font-size: 12.5px; line-height: 1.65; }
+
+table { width: 100%; border-collapse: collapse; margin: 0 0 17px; font-size: 13.5px; }
+th, td { text-align: left; padding: 9px 11px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th {
+  font-family: var(--mono); font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--text-muted); font-weight: 500; background: var(--surface-2);
+}
+td { color: var(--text-secondary); }
+td b, td strong { color: var(--text-primary); }
+
+blockquote {
+  margin: 0 0 15px; padding: 12px 18px; border-left: 3px solid var(--s1);
+  background: var(--surface-2); border-radius: 0 7px 7px 0;
+  color: var(--text-secondary); font-size: 14px; font-style: italic;
+}
+
+.callout {
+  border-left: 3px solid var(--warning); background: rgba(250,178,25,.07);
+  padding: 14px 18px; border-radius: 0 7px 7px 0; margin: 0 0 17px;
+}
+.callout.crit { border-color: var(--critical); background: rgba(208,59,59,.08); }
+.callout.good { border-color: var(--good);     background: rgba(12,163,12,.08); }
+.callout p:last-child { margin-bottom: 0; }
+.callout .lbl {
+  font-family: var(--mono); font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--text-muted); margin: 0 0 7px; display: block;
+}
+
+/* ---- confidence labels. Never assert without one. ---- */
+.tag {
+  display: inline-block; font-family: var(--mono); font-size: 10px; letter-spacing: .07em;
+  text-transform: uppercase; padding: 2.5px 7px; border-radius: 4px;
+  margin-right: 6px; font-weight: 600;
+}
+.tag.v { background: rgba(12,163,12,.18);  color: #6cd46c; border: 1px solid rgba(12,163,12,.4); }   /* measured */
+.tag.w { background: rgba(250,178,25,.14); color: #f5c95f; border: 1px solid rgba(250,178,25,.38); } /* inferred */
+.tag.c { background: rgba(208,59,59,.16);  color: #f08a8a; border: 1px solid rgba(208,59,59,.4); }   /* contradicted / hunch */
+
+footer {
+  margin-top: 70px; padding-top: 26px; border-top: 1px solid var(--line);
+  font-family: var(--mono); font-size: 11.5px; color: var(--text-muted);
+}
+footer p { margin: 0 0 7px; }
+
+@media (max-width: 640px) {
+  h1 { font-size: 26px; }
+  .wrap { padding: 0 16px 80px; }
+}
+
+/* decision-brief — reader notes, styling.
+   Depends on the surface/ink/status custom properties in base.css. */
+
+.notable { position: relative; }
+
+.note-btn {
+  position: absolute; top: 8px; right: 8px; z-index: 6;
+  width: 26px; height: 26px; line-height: 1; padding: 0;
+  background: var(--surface-3); border: 1px solid var(--line); border-radius: 6px;
+  color: var(--text-muted); font-size: 13px; cursor: pointer; opacity: 0;
+  transition: opacity .12s, background .12s, color .12s, border-color .12s;
+}
+/* Hidden until hover: a brief with 130 always-visible affordances reads as a form. */
+.notable:hover > .note-btn,
+.note-btn:focus-visible { opacity: 1; }
+.note-btn:hover { background: var(--warning); border-color: var(--warning); color: var(--surface-1); }
+
+.notable.has-note > .note-btn {
+  opacity: 1; background: var(--warning); border-color: var(--warning);
+  color: var(--surface-1); font-weight: 700;
+}
+.notable.has-note { box-shadow: inset 3px 0 0 var(--warning); }
+tr.notable.has-note > td:first-child { box-shadow: inset 3px 0 0 var(--warning); }
+
+/* Table rows can't host an absolutely-positioned child reliably — inline it. */
+tr.notable .note-btn {
+  position: static; opacity: .35; width: 22px; height: 22px; font-size: 11px;
+  margin-left: 6px; vertical-align: middle; display: inline-block;
+}
+tr.notable:hover .note-btn { opacity: 1; }
+
+/* ---- floating bar ---- */
+.notebar {
+  position: fixed; right: 18px; bottom: 18px; z-index: 900;
+  display: flex; gap: 8px; align-items: center;
+  background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px;
+  padding: 9px 11px; box-shadow: 0 10px 32px rgba(0,0,0,.55);
+  font-family: var(--mono); font-size: 11.5px;
+}
+.notebar .cnt { color: var(--text-muted); padding-right: 4px; }
+.notebar .cnt b { color: var(--warning); font-size: 14px; }
+.notebar button {
+  font-family: var(--mono); font-size: 11px; letter-spacing: .03em; cursor: pointer;
+  background: var(--surface-3); border: 1px solid var(--line); color: var(--text-secondary);
+  border-radius: 6px; padding: 6px 10px;
+  transition: background .12s, color .12s, border-color .12s;
+}
+.notebar button:hover { background: var(--warning); color: var(--surface-1); border-color: var(--warning); }
+.notebar button.primary {
+  background: rgba(250,178,25,.14); border-color: rgba(250,178,25,.45); color: #f5c95f;
+}
+.notebar button:disabled {
+  opacity: .4; cursor: default; background: var(--surface-3);
+  color: var(--text-muted); border-color: var(--line);
+}
+@media (max-width: 640px) {
+  .notebar { right: 8px; bottom: 8px; flex-wrap: wrap; max-width: calc(100vw - 16px); }
+}
+
+/* ---- note dialog ---- */
+dialog#d-note { max-width: 620px; }
+#note-list { margin: 0 0 18px; padding: 0; list-style: none; }
+#note-list li {
+  background: var(--surface-2); border: 1px solid var(--line);
+  border-left: 3px solid var(--warning); border-radius: 0 7px 7px 0;
+  padding: 11px 14px; margin-bottom: 9px; font-size: 14px; color: var(--text-secondary);
+}
+#note-list .nts {
+  font-family: var(--mono); font-size: 10px; color: var(--text-muted);
+  display: flex; justify-content: space-between; gap: 10px; margin-bottom: 6px;
+}
+#note-list .ndel {
+  background: none; border: none; color: var(--text-muted);
+  cursor: pointer; font-size: 11px; padding: 0;
+}
+#note-list .ndel:hover { color: var(--critical); }
+#note-none { color: var(--text-muted); font-size: 13.5px; margin: 0 0 16px; }
+
+#note-text {
+  width: 100%; min-height: 104px; background: var(--surface-0);
+  border: 1px solid var(--line); border-radius: 7px; color: var(--text-primary);
+  padding: 11px 13px; font-family: var(--sans); font-size: 14.5px;
+  resize: vertical; line-height: 1.55;
+}
+#note-text:focus { outline: none; border-color: var(--warning); }
+
+.note-actions { display: flex; gap: 9px; align-items: center; margin-top: 11px; }
+.note-actions button {
+  font-family: var(--mono); font-size: 11.5px; cursor: pointer; border-radius: 6px;
+  padding: 8px 14px; border: 1px solid var(--line);
+  background: var(--surface-3); color: var(--text-secondary);
+}
+.note-actions button.save {
+  background: var(--warning); border-color: var(--warning);
+  color: var(--surface-1); font-weight: 600;
+}
+.note-actions .hintk {
+  font-family: var(--mono); font-size: 10.5px; color: var(--text-muted); margin-left: auto;
+}
+
+/* ---- export dialog ---- */
+dialog#d-export { max-width: 780px; }
+#export-out {
+  width: 100%; min-height: 320px; background: var(--surface-0);
+  border: 1px solid var(--line); border-radius: 7px; color: var(--text-secondary);
+  padding: 13px; font-family: var(--mono); font-size: 12px; line-height: 1.55;
+  resize: vertical; white-space: pre;
+}
+.tokest { font-family: var(--mono); font-size: 11px; color: var(--text-muted); margin: 9px 0 0; }
+
+/* ---- concur: a rubber stamp in a space on each decision's right ----
+   notes.js adds .concurrable to every decision and appends the space. The padding is
+   forced because briefs set .grill .ask padding with a shorthand of their own, and the
+   space must never sit under the note button in the top-right corner. */
+.concurrable {
+  --concur-size: 120px;
+  position: relative;
+  min-height: calc(var(--concur-size) + 58px);
+  padding-right: calc(var(--concur-size) + 34px) !important;
+}
+.concur-zone {
+  position: absolute; right: 14px; top: max(42px, calc(50% - var(--concur-size) / 2));
+  width: var(--concur-size); height: var(--concur-size); margin: 0; padding: 0;
+  background: transparent; border: 1.5px dashed #56554e; border-radius: 14px;
+  color: #6b6a62; font: inherit; cursor: pointer;
+  transition: border-color .15s, color .15s;
+}
+.concur-q {
+  position: absolute; inset: 0 0 18px; display: grid; place-items: center;
+  font: 600 46px/1 var(--sans); transition: opacity .15s;
+}
+.concur-lbl {
+  position: absolute; left: 0; right: 0; bottom: 9px; text-align: center;
+  font: 10px/1 var(--mono); letter-spacing: .14em; text-transform: uppercase;
+  transition: opacity .15s;
+}
+.concur-zone:not(.on):hover,
+.concur-zone:not(.on):focus-visible {
+  border-color: var(--text-secondary); color: var(--text-secondary);
+  animation: concur-throb .9s ease-in-out infinite;
+}
+@keyframes concur-throb { 0%, 100% { scale: 1; } 50% { scale: 1.07; } }
+.concur-zone:focus-visible { outline: 2px solid var(--s1); outline-offset: 3px; }
+.concur-zone.on { border-color: transparent; }
+.concur-zone.on .concur-q, .concur-zone.on .concur-lbl { opacity: 0; }
+.concur-zone.on::after {
+  content: "click to peel"; position: absolute; left: -24px; right: -24px; bottom: -20px;
+  text-align: center; font: 10px/1 var(--mono); letter-spacing: .08em; color: var(--text-muted);
+  opacity: 0; transition: opacity .15s; pointer-events: none;
+}
+.concur-zone.on:hover::after { opacity: 1; }
+
+.concur-stamp {
+  position: absolute; left: -12px; top: -12px;
+  width: calc(100% + 24px); height: calc(100% + 24px);
+  overflow: visible; pointer-events: none;
+  rotate: var(--r, 0deg); translate: var(--dx, 0px) var(--dy, 0px);
+}
+.concur-stamp.thud { animation: concur-thud .2s cubic-bezier(.2,.8,.3,1) both; }
+@keyframes concur-thud { 0% { scale: 1.9; opacity: 0; } 70% { scale: .97; opacity: 1; } 100% { scale: 1; } }
+.concur-stamp.peel { animation: concur-peel .3s cubic-bezier(.5,0,.9,.4) forwards; }
+@keyframes concur-peel {
+  to {
+    rotate: calc(var(--r, 0deg) - 30deg);
+    translate: calc(var(--dx, 0px) + 36px) calc(var(--dy, 0px) - 32px);
+    scale: .72; opacity: 0;
+  }
+}
+.concurrable.concur-jolt { animation: concur-jolt .24s ease-out; }
+@keyframes concur-jolt { 0%, 100% { translate: 0 0; } 30% { translate: 0 2px; } 65% { translate: 0 -1px; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .concur-zone, .concur-stamp, .concurrable { animation: none !important; transition: none !important; }
+}
+@media (max-width: 640px) {
+  .concurrable { --concur-size: 96px; }
+  .concur-q { font-size: 38px; }
+}
+
+/* ---- Core Swap: the showcase layer over decision-brief's base ---- */
+:root {
+  --glow-b: rgba(57, 135, 229, .35);
+  --glow-g: rgba(25, 158, 112, .35);
+  --glow-a: rgba(201, 133, 0, .35);
+  --ink-dim: #6e6d65;
+}
+body { background:
+  radial-gradient(1200px 600px at 12% -8%, rgba(57,135,229,.10), transparent 60%),
+  radial-gradient(900px 500px at 92% 4%, rgba(25,158,112,.08), transparent 60%),
+  var(--surface-0); }
+
+.kicker { font-family: var(--mono); font-size: 11px; letter-spacing: .14em; text-transform: uppercase;
+  color: var(--text-muted); margin: 44px 0 14px; }
+.hero h1 { font-size: clamp(44px, 7.2vw, 88px); line-height: .98; letter-spacing: -.045em; font-weight: 750;
+  margin: 0 0 22px; background: linear-gradient(92deg, #fff 0%, #cfe2ff 38%, #9ae6c4 78%);
+  -webkit-background-clip: text; background-clip: text; color: transparent; }
+.lede { font-size: 17.5px; line-height: 1.68; color: var(--text-secondary); max-width: 68ch; margin: 0 0 22px; }
+.lede b { color: var(--text-primary); }
+.wrap > p, section > p { max-width: 74ch; color: var(--text-secondary); }
+.wrap > p b { color: var(--text-primary); }
+p.bridge { font-size: 16.5px; color: var(--text-primary); max-width: 70ch; }
+.mine { color: #c98500; font-family: var(--mono); font-size: 9.5px; border: 1px solid #c98500;
+  border-radius: 3px; padding: 0 4px; margin-left: 4px; white-space: nowrap; }
+
+/* big numbers */
+.bignums { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 12px; margin: 26px 0 30px; }
+.bignum { border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px 14px;
+  background: linear-gradient(180deg, rgba(255,255,255,.03), rgba(255,255,255,0)); }
+.bignum .n { font-size: 40px; font-weight: 750; letter-spacing: -.03em; line-height: 1; color: #fff; }
+.bignum .n small { font-size: 15px; color: var(--text-muted); font-weight: 500; margin-left: 3px; }
+.bignum .k { font-family: var(--mono); font-size: 10px; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--text-muted); margin-top: 9px; }
+.bignum p { font-size: 12.5px; color: var(--text-secondary); margin: 6px 0 0; line-height: 1.45; }
+.bignum.g { border-color: rgba(25,158,112,.55); box-shadow: 0 0 40px -18px var(--glow-g); }
+.bignum.b { border-color: rgba(57,135,229,.55); box-shadow: 0 0 40px -18px var(--glow-b); }
+.bignum.a { border-color: rgba(201,133,0,.55); box-shadow: 0 0 40px -18px var(--glow-a); }
+
+/* figures */
+figure { margin: 0 0 28px; border: 1px solid var(--line); border-radius: 14px;
+  background: rgba(26,26,25,.86); padding: 18px 20px 16px; }
+figure > .lbl { display: block; font-family: var(--mono); font-size: 10.5px; letter-spacing: .1em;
+  text-transform: uppercase; color: var(--text-muted); margin: 0 0 14px; }
+figcaption { margin-top: 14px; font-size: 13.5px; color: var(--text-secondary); line-height: 1.6; }
+figcaption b { color: var(--text-primary); }
+.scroller { overflow-x: auto; }
+svg { display: block; width: 100%; height: auto; }
+.gutter { margin: 12px 0 0; font-family: var(--mono); font-size: 10.5px; color: var(--text-muted); line-height: 1.55; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 12px 0 0; font-family: var(--mono);
+  font-size: 10.5px; color: var(--text-muted); }
+.legend i { display: inline-block; width: 11px; height: 11px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+
+/* terminal panes: the bake-off triptych */
+.panes { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 14px; min-width: 780px; }
+.pane { border: 1px solid #34342f; border-radius: 10px; background: #0b0c0a; overflow: hidden; }
+.pane .bar { display: flex; justify-content: space-between; align-items: center; padding: 7px 11px;
+  border-bottom: 1px solid #22231f; background: #121310; font-family: var(--mono); font-size: 10.5px; color: #a8a79e; }
+.pane .bar b { color: #fff; font-weight: 600; }
+.pane .verdict { font-size: 9.5px; padding: 1px 7px; border-radius: 99px; border: 1px solid; }
+.verdict.ok { color: #6fe0b0; border-color: rgba(25,158,112,.6); }
+.verdict.no { color: #f0a58a; border-color: rgba(236,131,90,.6); }
+.pane.win { box-shadow: 0 0 0 1px rgba(25,158,112,.35), 0 18px 50px -24px var(--glow-g); }
+.pane.lose { box-shadow: 0 0 0 1px rgba(236,131,90,.25); }
+
+/* the matrix heatmap */
+table.matrix { border-collapse: separate; border-spacing: 3px; font-size: 11.5px; min-width: 960px; width: 100%; }
+table.matrix th { font-family: var(--mono); font-size: 9.5px; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--text-muted); font-weight: 500; padding: 4px 6px; text-align: center; vertical-align: bottom; }
+table.matrix th.opt, table.matrix td.opt { text-align: left; }
+table.matrix td { padding: 7px 6px; border-radius: 6px; text-align: center; font-family: var(--mono); font-size: 10.5px;
+  color: #fff; background: #1d1d1b; }
+table.matrix td.opt { background: transparent; color: var(--text-primary); font-family: var(--sans); font-size: 12.5px;
+  white-space: nowrap; padding-left: 0; }
+table.matrix td.opt small { display: block; color: var(--text-muted); font-size: 10.5px; font-family: var(--mono); }
+table.matrix td.unk { background: repeating-linear-gradient(45deg, #242421 0 5px, #1b1b19 5px 10px); color: var(--text-muted); }
+table.matrix td.blocked { background: rgba(208,59,59,.18); color: #f3a0a0; }
+table.matrix td.score { font-size: 13px; font-weight: 700; }
+table.matrix tr.top td.opt { color: #9ae6c4; }
+table.matrix tr.ref td { opacity: .55; }
+
+/* bars */
+.hbars { display: grid; gap: 8px; min-width: 620px; }
+.hbar { display: grid; grid-template-columns: 200px minmax(0,1fr) 70px; gap: 12px; align-items: center; }
+.hbar .l { font-size: 12.5px; color: var(--text-secondary); }
+.hbar .l small { display: block; font-family: var(--mono); font-size: 10px; color: var(--text-muted); }
+.hbar .t { height: 16px; border-radius: 4px; background: #232321; overflow: hidden; display: flex; }
+.hbar .t span { display: block; height: 100%; }
+.hbar .v { font-family: var(--mono); font-size: 11px; color: #fff; text-align: right; }
+
+/* the pipeline */
+.pipe { display: grid; grid-template-columns: repeat(5, minmax(0,1fr)); gap: 10px; min-width: 860px; align-items: stretch; }
+.stage { border: 1px solid var(--line); border-radius: 10px; padding: 12px 12px 10px; background: #161614; position: relative; }
+.stage .who { font-family: var(--mono); font-size: 9.5px; letter-spacing: .1em; text-transform: uppercase; margin-bottom: 6px; }
+.stage b { display: block; font-size: 13.5px; color: #fff; margin-bottom: 5px; }
+.stage p { margin: 0; font-size: 12px; color: var(--text-secondary); line-height: 1.5; }
+.stage .num { font-family: var(--mono); font-size: 18px; color: #fff; margin-top: 8px; font-weight: 700; }
+.stage + .stage::before { content: '\2192'; position: absolute; left: -10px; top: 44%; color: var(--text-muted); font-size: 13px; }
+.who.code { color: #8fbdf2; } .who.jev { color: #9ae6c4; } .who.agent { color: #f5c95f; } .who.person { color: #f3a0a0; } .who.data { color: #c9c0ff; }
+
+/* tables and tags */
+table.wide { width: 100%; font-size: 12.5px; border-collapse: collapse; }
+table.wide td, table.wide th { padding: 8px 10px; border-bottom: 1px solid #2a2a27; text-align: left; vertical-align: top; }
+table.wide th { font-family: var(--mono); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--text-muted); font-weight: 500; }
+span.y, span.n, span.p, span.u, span.j, span.c, span.a, span.h { font-family: var(--mono); font-size: 10px; padding: 1px 6px; border-radius: 3px; border: 1px solid; white-space: nowrap; }
+span.y { color: #5fcda4; border-color: rgba(25,158,112,.5); }
+span.n { color: #f0a58a; border-color: rgba(236,131,90,.5); }
+span.p { color: #f5c95f; border-color: rgba(201,133,0,.5); }
+span.u { color: #a9a89e; border-color: rgba(139,138,128,.45); border-style: dashed; }
+span.j { color: #9ae6c4; border-color: rgba(154,230,196,.45); }
+span.c { color: #8fbdf2; border-color: rgba(143,189,242,.45); }
+span.a { color: #f5c95f; border-color: rgba(245,201,95,.45); }
+span.h { color: #f3a0a0; border-color: rgba(243,160,160,.45); }
+
+/* the grill */
+.grill { display: grid; gap: 12px; margin: 0 0 26px; }
+.grill .ask { border: 1px solid var(--line); border-left: 3px solid var(--critical); border-radius: 10px; background: var(--surface-1); padding: 14px 16px; }
+.grill .ask h3 { margin: 0 0 8px; font-size: 15px; color: var(--text-primary); }
+.grill .ask p { margin: 0 0 8px; font-size: 13.5px; color: var(--text-secondary); line-height: 1.6; }
+.grill .ask p.rec { margin: 0; color: var(--text-primary); }
+.grill .ask p.rec b { color: #5fcda4; }
+
+.dlgrow { display: flex; flex-wrap: wrap; gap: 9px; margin: 0 0 20px; }
+.dlgrow button { font-family: var(--mono); font-size: 11.5px; padding: 9px 14px; border-radius: 7px;
+  border: 1px solid var(--line); background: var(--surface-2); color: var(--text-secondary); cursor: pointer; }
+.dlgrow button:hover { border-color: var(--s1); color: #fff; }
+dialog.sub .dlg-body { padding: 18px 26px 26px; font-size: 13.5px; color: var(--text-secondary); }
+dialog.sub .dlg-body h4 { color: var(--text-primary); margin: 18px 0 6px; font-size: 13px; }
+dialog.sub .dlg-body code { font-size: 11.5px; }
+p.foot { font-size: 12.5px; color: var(--text-muted); }
+
+@media (max-width: 760px) {
+  .bignums { grid-template-columns: repeat(2, minmax(0,1fr)); }
+  .hero h1 { font-size: 46px; }
+}
+
+/* social cards: rendered to PNG by the build, never shown on the page */
+.card-social { width: 1200px; height: 630px; padding: 56px 64px; box-sizing: border-box; position: relative; overflow: hidden;
+  background: radial-gradient(900px 500px at 10% -10%, rgba(57,135,229,.28), transparent 60%),
+              radial-gradient(800px 500px at 100% 0%, rgba(25,158,112,.22), transparent 60%), #0d0d0c;
+  font-family: var(--sans); color: #fff; }
+.card-social .brand { font-family: var(--mono); font-size: 16px; letter-spacing: .16em; text-transform: uppercase; color: #9a998f; }
+.card-social h2 { font-size: 64px; line-height: 1.02; letter-spacing: -.04em; margin: 18px 0 18px; font-weight: 780;
+  background: linear-gradient(92deg, #fff, #cfe2ff 45%, #9ae6c4); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.card-social p { font-size: 24px; line-height: 1.4; color: #c9c8bd; margin: 0; max-width: 980px; }
+.card-social .foot { position: absolute; left: 64px; bottom: 44px; font-family: var(--mono); font-size: 15px; color: #8b8a80; }
+
+.traps { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 7px; }
+.trap { border: 1px solid; border-radius: 8px; padding: 7px 9px; background: #151513; font-size: 11px; line-height: 1.35; }
+.trap b { display: block; font-family: var(--mono); font-size: 10.5px; color: #fff; }
+.trap span { display: block; font-family: var(--mono); font-size: 9.5px; color: var(--text-muted); margin-bottom: 3px; }
+.trap em { display: block; font-style: normal; color: var(--text-secondary); font-size: 10.5px; }
+
+/* ---- added with the full page, 2026-09-25 ---- */
+.hero { padding-top: 8px; }
+.panes.four { grid-template-columns: repeat(4, minmax(0,1fr)); min-width: 1000px; }
+.panes.two { grid-template-columns: repeat(2, minmax(0,1fr)); min-width: 640px; }
+
+table.bake td small, table.bake td b + small { display: block; font-family: var(--mono); font-size: 10px; color: var(--text-muted); margin-top: 4px; line-height: 1.4; }
+table.bake td b { color: var(--text-primary); font-weight: 600; }
+table.bake { min-width: 900px; }
+table.bake tr.sum td { border-top: 1px solid var(--line); font-family: var(--mono); font-size: 11px; color: var(--text-muted); }
+table.bake td.tally { font-size: 17px; color: #fff; font-weight: 700; }
+
+/* the road map */
+.roads { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 12px; min-width: 940px; }
+.group .gh { font-family: var(--mono); font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--text-muted); margin: 0 0 8px; }
+.group .gh span { display: inline-block; width: 20px; height: 20px; line-height: 20px; text-align: center; border-radius: 5px;
+  background: var(--surface-3); color: #fff; margin-right: 8px; letter-spacing: 0; }
+.road { border: 1px solid #34342f; border-radius: 9px; padding: 9px 11px 8px; margin-bottom: 8px; background: #151513; position: relative; }
+.road b { font-size: 13.5px; color: #fff; }
+.road p { margin: 2px 0 7px; font-size: 11.5px; color: var(--text-secondary); line-height: 1.4; }
+.road .meter { height: 5px; border-radius: 3px; background: #262623; overflow: hidden; }
+.road .meter i { display: block; height: 100%; background: linear-gradient(90deg, #2f5bd0, #7a4fc4 60%, #e0843a); }
+.road .kv { display: flex; justify-content: space-between; margin-top: 5px; font-family: var(--mono); font-size: 9.5px; color: var(--text-muted); }
+.road.baked { border-left: 3px solid #199e70; }
+.road.blocked { background: rgba(208,59,59,.08); border-color: rgba(208,59,59,.4); }
+.road.ref { opacity: .7; border-style: dashed; }
+
+/* claim-check versions */
+.vrows { display: grid; gap: 12px; min-width: 700px; }
+.vrow { display: grid; grid-template-columns: 250px minmax(0,1fr); gap: 14px; align-items: center; }
+.vrow .l { font-size: 13px; color: #fff; font-weight: 600; }
+.vrow .l small { display: block; font-weight: 400; font-size: 11px; color: var(--text-muted); line-height: 1.4; margin-top: 3px; }
+.vrow .t { display: flex; height: 30px; border-radius: 6px; overflow: hidden; background: #232321; }
+.vrow .t span { display: flex; align-items: center; justify-content: center; font-family: var(--mono); font-size: 10.5px; color: #fff; }
+.hbar .l b { color: #fff; font-weight: 600; }
+
+/* core-fit grid */
+table.fit { border-collapse: separate; border-spacing: 2px; min-width: 900px; width: 100%; font-size: 12px; }
+table.fit th { font-family: var(--mono); font-size: 9px; letter-spacing: .05em; text-transform: uppercase; color: var(--text-muted);
+  font-weight: 500; padding: 3px 2px; text-align: center; }
+table.fit th.opt, table.fit td.opt { text-align: left; }
+table.fit td { text-align: center; padding: 5px 0; border-radius: 4px; background: #181816; font-size: 13px; position: relative; }
+table.fit td.opt { background: transparent; font-size: 12px; color: var(--text-primary); white-space: nowrap; padding-right: 8px; }
+table.fit td.traj { font-family: var(--mono); font-size: 9.5px; color: var(--text-secondary); white-space: nowrap; padding: 5px 6px; }
+table.fit tr.ref td { opacity: .55; }
+.fit-p { color: #5fcda4; } .fit-w { color: #b8e0a0; } .fit-x { color: #ec835a; }
+td.fit-u, b.fit-u { color: var(--text-muted); }
+td.fit-u { background: repeating-linear-gradient(45deg, #222220 0 4px, #191917 4px 8px); }
+td.fit-p { background: rgba(25,158,112,.14); } td.fit-w { background: rgba(140,200,120,.10); } td.fit-x { background: rgba(236,131,90,.10); }
+td.truth-ok::after, td.truth-unk::after, td.truth-bad::after { content: ''; position: absolute; left: 3px; right: 3px; bottom: 1px; height: 2px; border-radius: 1px; }
+td.truth-ok::after { background: #5fcda4; } td.truth-unk::after { background: #8b8a80; } td.truth-bad::after { background: #d03b3b; }
+.legend i.tick { width: 14px; height: 2px; border-radius: 1px; background: #5fcda4; vertical-align: 3px; }
+.legend b { font-weight: 400; margin-right: 4px; }
+
+/* traps */
+.trap.ok { border-color: rgba(25,158,112,.55); }
+.trap.sprung { border-color: #d03b3b; background: rgba(208,59,59,.1); }
+
+/* the matrix, revised */
+table.matrix th .src { display: block; font-size: 8.5px; letter-spacing: .08em; margin-bottom: 3px; }
+table.matrix th .src.jev { color: #9ae6c4; } table.matrix th .src.code { color: #8fbdf2; } table.matrix th .src.estimate { color: #f5c95f; }
+table.matrix th .src.measured { color: #c9c0ff; } table.matrix th .src.read { color: #8fbdf2; }
+table.matrix th em.w { display: block; font-style: normal; color: #c98500; font-size: 9px; margin-top: 3px; }
+table.matrix th.gap, table.matrix td.gap { background: transparent; width: 10px; padding: 0; }
+table.matrix td.share { background: transparent; color: var(--text-secondary); }
+table.matrix tr.top td.opt { color: #9ae6c4; font-weight: 600; }
+
+/* head to head */
+.h2hs { display: grid; gap: 7px; min-width: 620px; }
+.h2h { display: grid; grid-template-columns: 150px minmax(0,1fr); gap: 12px; align-items: center; }
+.h2h .k { font-size: 12.5px; color: var(--text-secondary); }
+.h2h .k small { color: #c98500; font-family: var(--mono); font-size: 10px; margin-left: 6px; }
+.h2h .bars { display: grid; gap: 3px; }
+.h2h .ba, .h2h .bb { position: relative; height: 15px; background: #1d1d1b; border-radius: 3px; overflow: hidden; }
+.h2h span { display: block; height: 100%; opacity: .45; }
+.h2h span.lead { opacity: 1; }
+.h2h .ba span { background: #3987e5; } .h2h .bb span { background: #b18cf0; }
+.h2h em { position: absolute; right: 6px; top: 0; font-style: normal; font-family: var(--mono); font-size: 9.5px; line-height: 15px; color: #fff; }
+
+table.checks { min-width: 820px; }
+table.checks td { font-size: 12.5px; color: var(--text-secondary); }
+table.checks td b { color: var(--text-primary); font-weight: 600; }
+
+/* dialogs */
+dialog.sub.wide { max-width: 1100px; width: 94vw; }
+ul.srcs { padding-left: 18px; }
+ul.srcs li { margin-bottom: 8px; font-size: 12.5px; }
+ul.srcs a { color: #8fbdf2; margin-right: 8px; word-break: break-all; }
+.cards { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 14px; }
+.card-frame { aspect-ratio: 1200 / 630; overflow: hidden; border-radius: 10px; border: 1px solid var(--line); position: relative; }
+.card-scale { transform: scale(.42); transform-origin: 0 0; width: 1200px; height: 630px; position: absolute; left: 0; top: 0; }
+
+/* social cards: layout pieces */
+.card-social .split { display: grid; grid-template-columns: 1fr 520px; gap: 40px; align-items: center; }
+.card-social .cbars { display: grid; gap: 12px; }
+.card-social .cb { display: grid; grid-template-columns: 170px 1fr 56px; gap: 12px; align-items: center; font-family: var(--mono); font-size: 17px; color: #c9c8bd; }
+.card-social .cb i { display: block; height: 22px; border-radius: 5px; background: linear-gradient(90deg, #2f5bd0, #199e70); }
+.card-social .cb b { color: #fff; text-align: right; }
+.card-social .chips { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 34px; }
+.card-social .chip { font-family: var(--mono); font-size: 19px; padding: 9px 16px; border-radius: 99px; border: 1.5px solid; }
+.card-social .chip.agent { color: #f5c95f; } .card-social .chip.code { color: #8fbdf2; } .card-social .chip.jev { color: #9ae6c4; } .card-social .chip.person { color: #f3a0a0; }
+
+@media (max-width: 760px) {
+  .cards { grid-template-columns: 1fr; }
+}
+.card-social .cstack { display: flex; gap: 4px; margin-top: 40px; height: 118px; }
+.card-social .cstack span { display: flex; flex-direction: column; justify-content: center; padding: 0 12px; border-radius: 8px; overflow: hidden; min-width: 0; }
+.card-social .cstack b { font-size: 34px; color: #fff; font-weight: 750; line-height: 1; }
+.card-social .cstack em { font-style: normal; font-family: var(--mono); font-size: 14px; color: rgba(255,255,255,.85); margin-top: 8px; white-space: nowrap; }
+.card-social .cb { grid-template-columns: 220px 1fr 56px; }
+
+</style>
+</head>
+<body>
+
+<div class="wrap">
+<header class="hero">
+<p class="kicker">Terminal Delight &middot; research, nothing built &middot; 2026-09-25</p>
+<h1>Core Swap</h1>
+<p class="lede">Terminal Delight gets its screen from alacritty's emulator, a Rust library called alacritty_terminal that turns a
+program's output into rows of cells. When a program sends a picture instead of text, the library drops it, and the rows after it close
+up as if nothing had been sent. Replacing the emulator would reach the session host, every window and the snapshot passed between
+them, so before touching anything we recorded six
+picture programs and fed the same bytes to four emulators, had six agents research twelve ways forward, had Jev check every quoted fact,
+and let code rank the roads. <b>Two roads come out level, rio-vt and wezterm-term, and the weights decide between them.</b> TD's core is
+unchanged.</p>
+<div class="bignums">
+  <div class="bignum g"><div class="n">6<small>/ 6</small></div><div class="k">rio-vt, libghostty-vt</div><p>pictures placed; alacritty placed 0</p></div>
+  <div class="bignum b"><div class="n">315</div><div class="k">quoted facts</div><p>each checked by Jev against its own quote</p></div>
+  <div class="bignum a"><div class="n">0.70<small>vs 0.69</small></div><div class="k">rio-vt, wezterm-term</div><p>the weighted scores</p></div>
+  <div class="bignum"><div class="n">$0.05</div><div class="k">every Jev call</div><p>1,053 requests, 2,646 questions</p></div>
+</div>
+</header>
+
+<h2 class="sec">alacritty drops every picture, and three cores keep them</h2>
+<p>The first question was whether any emulator keeps pictures at all. Each recording is what a picture program wrote to a fake terminal
+that answered like kitty, and a small harness replays it into each emulator and reads back what the emulator kept.</p>
+<figure id="f-quad">
+  <span class="lbl">01 &middot; One recording, four cores</span>
+<div class="scroller"><div class="panes four"><div class="pane lose"><div class="bar"><b>alacritty_terminal 0.26 · TD today</b><span class="verdict no">dropped</span></div><svg viewBox="0 0 384 200" role="img" aria-label="alacritty_terminal 0.26 · TD today: the screen after a line of text, a picture and a second line" font-family="ui-monospace, monospace"><defs><linearGradient id="pic-alacritty" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2f5bd0"/><stop offset=".55" stop-color="#7a4fc4"/><stop offset="1" stop-color="#e0843a"/></linearGradient></defs><rect x="0" y="0" width="384" height="200" fill="#0b0c0a"/><text x="2" y="23" fill="#3a3a36" font-size="8">0</text><text x="2" y="41" fill="#3a3a36" font-size="8">1</text><text x="2" y="59" fill="#3a3a36" font-size="8">2</text><text x="2" y="77" fill="#3a3a36" font-size="8">3</text><text x="2" y="95" fill="#3a3a36" font-size="8">4</text><text x="2" y="113" fill="#3a3a36" font-size="8">5</text><text x="2" y="131" fill="#3a3a36" font-size="8">6</text><text x="2" y="149" fill="#3a3a36" font-size="8">7</text><text x="2" y="167" fill="#3a3a36" font-size="8">8</text><text x="2" y="185" fill="#3a3a36" font-size="8">9</text><text x="14" y="23" fill="#e6e7de" font-size="12">before the picture</text><text x="14" y="59" fill="#e6e7de" font-size="12">after the picture</text><rect x="12" y="66" width="10" height="14" fill="#9ae6c4" opacity=".75"/><rect x="10" y="28" width="260" height="108" rx="4" fill="none" stroke="#ec835a" stroke-dasharray="5 4"/><text x="278" y="68" fill="#f0a58a" font-size="10">where the</text><text x="278" y="81" fill="#f0a58a" font-size="10">picture</text><text x="278" y="94" fill="#f0a58a" font-size="10">belonged</text></svg></div><div class="pane win"><div class="bar"><b>rio-vt 0.5.28</b><span class="verdict ok">placed</span></div><svg viewBox="0 0 384 200" role="img" aria-label="rio-vt 0.5.28: the screen after a line of text, a picture and a second line" font-family="ui-monospace, monospace"><defs><linearGradient id="pic-rio" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2f5bd0"/><stop offset=".55" stop-color="#7a4fc4"/><stop offset="1" stop-color="#e0843a"/></linearGradient></defs><rect x="0" y="0" width="384" height="200" fill="#0b0c0a"/><text x="2" y="23" fill="#3a3a36" font-size="8">0</text><text x="2" y="41" fill="#3a3a36" font-size="8">1</text><text x="2" y="59" fill="#3a3a36" font-size="8">2</text><text x="2" y="77" fill="#3a3a36" font-size="8">3</text><text x="2" y="95" fill="#3a3a36" font-size="8">4</text><text x="2" y="113" fill="#3a3a36" font-size="8">5</text><text x="2" y="131" fill="#3a3a36" font-size="8">6</text><text x="2" y="149" fill="#3a3a36" font-size="8">7</text><text x="2" y="167" fill="#3a3a36" font-size="8">8</text><text x="2" y="185" fill="#3a3a36" font-size="8">9</text><rect x="10" y="28" width="260" height="108" rx="4" fill="url(#pic-rio)"/><text x="18" y="128" fill="#fff" font-size="10" opacity=".9">picture · 20×6 cells</text><text x="14" y="23" fill="#e6e7de" font-size="12">before the picture</text><text x="14" y="149" fill="#e6e7de" font-size="12">after the picture</text><rect x="12" y="156" width="10" height="14" fill="#9ae6c4" opacity=".75"/></svg></div><div class="pane win"><div class="bar"><b>libghostty-vt 0.2.1</b><span class="verdict ok">placed</span></div><svg viewBox="0 0 384 200" role="img" aria-label="libghostty-vt 0.2.1: the screen after a line of text, a picture and a second line" font-family="ui-monospace, monospace"><defs><linearGradient id="pic-ghostty" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2f5bd0"/><stop offset=".55" stop-color="#7a4fc4"/><stop offset="1" stop-color="#e0843a"/></linearGradient></defs><rect x="0" y="0" width="384" height="200" fill="#0b0c0a"/><text x="2" y="23" fill="#3a3a36" font-size="8">0</text><text x="2" y="41" fill="#3a3a36" font-size="8">1</text><text x="2" y="59" fill="#3a3a36" font-size="8">2</text><text x="2" y="77" fill="#3a3a36" font-size="8">3</text><text x="2" y="95" fill="#3a3a36" font-size="8">4</text><text x="2" y="113" fill="#3a3a36" font-size="8">5</text><text x="2" y="131" fill="#3a3a36" font-size="8">6</text><text x="2" y="149" fill="#3a3a36" font-size="8">7</text><text x="2" y="167" fill="#3a3a36" font-size="8">8</text><text x="2" y="185" fill="#3a3a36" font-size="8">9</text><rect x="10" y="28" width="260" height="108" rx="4" fill="url(#pic-ghostty)"/><text x="18" y="128" fill="#fff" font-size="10" opacity=".9">picture · 20×6 cells</text><text x="14" y="23" fill="#e6e7de" font-size="12">before the picture</text><text x="14" y="149" fill="#e6e7de" font-size="12">after the picture</text><rect x="12" y="156" width="10" height="14" fill="#9ae6c4" opacity=".75"/></svg></div><div class="pane win"><div class="bar"><b>wezterm-term, git b09b56c</b><span class="verdict ok">placed</span></div><svg viewBox="0 0 384 200" role="img" aria-label="wezterm-term, git b09b56c: the screen after a line of text, a picture and a second line" font-family="ui-monospace, monospace"><defs><linearGradient id="pic-wezterm" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2f5bd0"/><stop offset=".55" stop-color="#7a4fc4"/><stop offset="1" stop-color="#e0843a"/></linearGradient></defs><rect x="0" y="0" width="384" height="200" fill="#0b0c0a"/><text x="2" y="23" fill="#3a3a36" font-size="8">0</text><text x="2" y="41" fill="#3a3a36" font-size="8">1</text><text x="2" y="59" fill="#3a3a36" font-size="8">2</text><text x="2" y="77" fill="#3a3a36" font-size="8">3</text><text x="2" y="95" fill="#3a3a36" font-size="8">4</text><text x="2" y="113" fill="#3a3a36" font-size="8">5</text><text x="2" y="131" fill="#3a3a36" font-size="8">6</text><text x="2" y="149" fill="#3a3a36" font-size="8">7</text><text x="2" y="167" fill="#3a3a36" font-size="8">8</text><text x="2" y="185" fill="#3a3a36" font-size="8">9</text><rect x="10" y="28" width="260" height="108" rx="4" fill="url(#pic-wezterm)"/><text x="18" y="128" fill="#fff" font-size="10" opacity=".9">picture · 20×6 cells</text><text x="14" y="23" fill="#e6e7de" font-size="12">before the picture</text><text x="14" y="149" fill="#e6e7de" font-size="12">after the picture</text><rect x="12" y="156" width="10" height="14" fill="#9ae6c4" opacity=".75"/></svg></div></div></div>
+  <figcaption><b>When a core drops the picture, the text after it moves up.</b> A test program prints a line, draws a 20×6-cell picture, then prints a second line. alacritty puts the second line on row 2, where the picture should be; the three cores that keep the picture put it on row 7, below. The green block is where each core left its cursor. Drawn from each harness's read-back of the grid.</figcaption>
+</figure>
+<figure id="f-bake">
+  <span class="lbl">02 &middot; Six recordings, four cores</span>
+<div class="scroller"><table class="wide bake"><thead><tr><th>Recording</th><th>alacritty_terminal 0.26 · TD today</th><th>rio-vt 0.5.28</th><th>libghostty-vt 0.2.1</th><th>wezterm-term, git b09b56c</th></tr></thead><tbody><tr><td><b>chafa</b><small>raw pixels at the cursor</small></td><td><span class="n">missed</span><small>no image state</small></td><td><span class="y">placed</span><small>40×12 at row 0; cursor row 12</small></td><td><span class="y">placed</span><small>40×12 at row 0; cursor row 12</small></td><td><span class="y">placed</span><small>40×12 at row 0; cursor row 12</small></td></tr><tr><td><b>kitten icat</b><small>a PNG at the cursor</small></td><td><span class="n">missed</span><small>no image state</small></td><td><span class="y">placed</span><small>64×19 at row 0; cursor row 19</small></td><td><span class="y">placed</span><small>64×19 at row 0; cursor row 19</small></td><td><span class="y">placed</span><small>64×19 at row 0; cursor row 19</small></td></tr><tr><td><b>kitten icat --unicode-placeholder</b><small>placeholder cells</small></td><td><span class="n">missed</span><small>1216 placeholder cells left as text</small></td><td><span class="y">placed</span><small>virtual placement over 1216 placeholder cells</small></td><td><span class="y">placed</span><small>virtual placement over its placeholder cells</small></td><td><span class="n">missed</span><small>drawn at the cursor; 20 rows of placeholder characters left as text</small></td></tr><tr><td><b>ratatui-image</b><small>placeholder cells</small></td><td><span class="n">missed</span><small>1216 placeholder cells left as text</small></td><td><span class="y">placed</span><small>virtual placement over 1216 placeholder cells</small></td><td><span class="y">placed</span><small>virtual placement over its placeholder cells</small></td><td><span class="n">missed</span><small>drawn at the cursor; 19 rows of placeholder characters left as text</small></td></tr><tr><td><b>mpv --vo=kitty</b><small>four video frames</small></td><td><span class="n">missed</span><small>no image state</small></td><td><span class="y">placed</span><small>120×31 at row 3, 4 stacked; cursor row 3</small></td><td><span class="y">placed</span><small>120×31 at row 3, 4 stacked; cursor row 3</small></td><td><span class="y">placed</span><small>120×31 at row 3; cursor row 3</small></td></tr><tr><td><b>a test program</b><small>text, picture, text</small></td><td><span class="n">missed</span><small>no image state</small></td><td><span class="y">placed</span><small>20×6 at row 1; cursor row 8</small></td><td><span class="y">placed</span><small>20×6 at row 1; cursor row 8</small></td><td><span class="y">placed</span><small>20×6 at row 1; cursor row 8</small></td></tr><tr class="sum"><td>placed</td><td class="tally">0 / 6</td><td class="tally">6 / 6</td><td class="tally">6 / 6</td><td class="tally">4 / 6</td></tr></tbody></table></div>
+  <figcaption><b>Placed means the core stored the picture and the harness read back where it sits.</b> wezterm-term misses both programs that use placeholder cells, the Kitty feature where a program prints special characters and the terminal paints the picture over them. viu is left out: its recording points at a temporary file that no longer exists. The mpv row was re-recorded with the same command for the wezterm-term run and all four cores re-ran it.</figcaption>
+</figure>
+<figure id="f-ph">
+  <span class="lbl">03 &middot; Placeholder cells</span>
+<div class="scroller"><div class="panes two"><div class="pane win"><div class="bar"><b>rio-vt · libghostty-vt</b><span class="verdict ok">one picture</span></div><svg viewBox="0 0 384 230" role="img" aria-label="rio-vt and libghostty-vt: kitten icat with placeholder cells" font-family="ui-monospace, monospace"><defs><linearGradient id="ph-rio" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2f5bd0"/><stop offset=".55" stop-color="#7a4fc4"/><stop offset="1" stop-color="#e0843a"/></linearGradient><pattern id="tofu-rio" width="5.2" height="5.2" patternUnits="userSpaceOnUse"><rect x=".8" y=".8" width="3.4" height="3.6" fill="none" stroke="#f0a58a" stroke-width=".6"/></pattern></defs><rect x="0" y="0" width="384" height="230" fill="#0b0c0a"/><rect x="10" y="10" width="332.8" height="98.8" rx="3" fill="url(#ph-rio)"/><text x="16" y="101" fill="#fff" font-size="9">one picture over 1216 placeholder cells</text><text x="10" y="225" fill="#8b8a80" font-size="8">40 rows × 120 columns, left 70 shown</text></svg></div><div class="pane lose"><div class="bar"><b>wezterm-term</b><span class="verdict no">picture + text</span></div><svg viewBox="0 0 384 230" role="img" aria-label="wezterm-term: kitten icat with placeholder cells" font-family="ui-monospace, monospace"><defs><linearGradient id="ph-wez" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2f5bd0"/><stop offset=".55" stop-color="#7a4fc4"/><stop offset="1" stop-color="#e0843a"/></linearGradient><pattern id="tofu-wez" width="5.2" height="5.2" patternUnits="userSpaceOnUse"><rect x=".8" y=".8" width="3.4" height="3.6" fill="none" stroke="#f0a58a" stroke-width=".6"/></pattern></defs><rect x="0" y="0" width="384" height="230" fill="#0b0c0a"/><rect x="10.0" y="10.0" width="332.8" height="98.8" rx="3" fill="url(#ph-wez)"/><text x="16" y="101" fill="#fff" font-size="9">picture drawn at the cursor</text><rect x="10" y="108.8" width="332.8" height="98.8" fill="url(#tofu-wez)"/><rect x="342.8" y="103.6" width="31.2" height="5.2" fill="url(#tofu-wez)"/><rect x="14" y="148" width="226" height="15" rx="3" fill="#0b0c0a" fill-opacity=".92"/><text x="20" y="159" fill="#f0a58a" font-size="9" font-weight="700">20 rows of placeholder characters, shown as text</text><text x="10" y="225" fill="#8b8a80" font-size="8">40 rows × 120 columns, left 70 shown</text></svg></div></div></div>
+  <figcaption><b>wezterm-term ignores the placeholder flag.</b> It draws kitten icat's picture at the cursor, then shows the placeholder characters as text below it; with ratatui-image the same characters land on top of all but one row of the picture. rio-vt and libghostty-vt paint one picture over the cells. Drawn to scale from the read-back.</figcaption>
+</figure>
+
+<h2 class="sec">Twelve ways forward, staying included</h2>
+<p>Four emulators is a sample. The research widened it to every way forward: keep alacritty and teach TD to read pictures itself, patch
+its parser, move to another Rust emulator, cross a C boundary to Ghostty's, or write TD's own.</p>
+<figure id="f-roads">
+  <span class="lbl">04 &middot; Fourteen subjects</span>
+<div class="scroller"><div class="roads"><div class="group"><div class="gh"><span>A</span>Keep alacritty_terminal</div><div class="road baked"><b>alacritty + TD&#x27;s loop</b><p>keep the emulator; TD reads the picture bytes itself</p><div class="meter"><i style="width:0%"></i></div><div class="kv"><span>Kitty 0/14</span><span>Apache-2.0</span></div></div><div class="road"><b>alacritty + patched vte</b><p>patch alacritty&#x27;s parser to hand pictures to TD</p><div class="meter"><i style="width:0%"></i></div><div class="kv"><span>Kitty 0/14</span><span>Apache-2.0</span></div></div><div class="road"><b>alacritty graphics fork</b><p>a one-person fork that adds Sixel</p><div class="meter"><i style="width:0%"></i></div><div class="kv"><span>Kitty 0/14</span><span>Apache-2.0</span></div></div></div><div class="group"><div class="gh"><span>B</span>Swap to a Rust core</div><div class="road baked"><b>rio-vt</b><p>Rio&#x27;s emulator, published as a crate</p><div class="meter"><i style="width:93%"></i></div><div class="kv"><span>Kitty 13/14</span><span>MIT</span></div></div><div class="road baked"><b>wezterm-term</b><p>WezTerm&#x27;s emulator, from its git tree</p><div class="meter"><i style="width:86%"></i></div><div class="kv"><span>Kitty 12/14</span><span>MIT</span></div></div><div class="road"><b>vt100</b><p>a small screen-and-parser crate</p><div class="meter"><i style="width:0%"></i></div><div class="kv"><span>Kitty 0/14</span><span>MIT</span></div></div><div class="road"><b>TD&#x27;s own core</b><p>TD writes its own emulator</p><div class="meter"><i style="width:0%"></i></div><div class="kv"><span>Kitty 0/14</span><span>MIT</span></div></div></div><div class="group"><div class="gh"><span>C</span>Swap to a core across a C boundary</div><div class="road baked"><b>libghostty-vt</b><p>Ghostty&#x27;s emulator, through its C API</p><div class="meter"><i style="width:100%"></i></div><div class="kv"><span>Kitty 14/14</span><span>MIT</span></div></div><div class="road"><b>libvterm</b><p>the C library Neovim adopted</p><div class="meter"><i style="width:0%"></i></div><div class="kv"><span>Kitty 0/14</span><span>MIT</span></div></div><div class="road"><b>Contour vtbackend</b><p>Contour&#x27;s C++ core</p><div class="meter"><i style="width:50%"></i></div><div class="kv"><span>Kitty 7/14</span><span>Apache-2.0</span></div></div><div class="road blocked"><b>kitty&#x27;s core</b><p>kitty&#x27;s own core</p><div class="meter"><i style="width:100%"></i></div><div class="kv"><span>Kitty 14/14</span><span>GPL-3.0 · blocked</span></div></div></div><div class="group"><div class="gh"><span>D</span>Hybrids and references</div><div class="road"><b>Ghostty shadow</b><p>libghostty beside alacritty, for pictures only</p><div class="meter"><i style="width:93%"></i></div><div class="kv"><span>Kitty 13/14</span><span>Apache-2.0</span></div></div><div class="road ref"><b>Zellij&#x27;s grid</b><p>reference: how Zellij grew Sixel</p><div class="meter"><i style="width:79%"></i></div><div class="kv"><span>Kitty 11/14</span><span>MIT</span></div></div><div class="road ref"><b>zmx</b><p>reference: sessions kept alive on libghostty</p><div class="meter"><i style="width:0%"></i></div><div class="kv"><span>Kitty 0/14</span><span>MIT</span></div></div></div></div></div>
+  <figcaption><b>Twelve roads and two references, in four groups.</b> Zellij and zmx are references: each solved part of this already. The bar is how many of fourteen Kitty graphics features each core implements today, counted by code over the agents' feature lists. A green edge marks the four cores the bake-off ran. kitty's own core is out on its GPL licence before anything is weighed. 420 values across thirty fields, gathered in three rounds.</figcaption>
+</figure>
+
+<h2 class="sec">Jev read the research before code ranked it</h2>
+<p>The bake-off could run four of those roads. The other eight exist here only as the 420 values six agents wrote about them, and a
+ranking built on those inherits every overstatement. So Jev, TypeSafe's model that answers typed questions with probabilities, was asked
+two narrow things: for each quoted fact, does the quote state it; and for each core, how does its interface meet thirteen things TD's
+code needs.</p>
+<figure id="f-owners">
+  <span class="lbl">05 &middot; Who owns each step</span>
+<div class="scroller"><table class="wide"><thead><tr><th>Step, as asked</th><th>Owner</th><th>What Jev is asked</th><th>Spec</th></tr></thead><tbody><tr><td>Research the options for swapping the core, staying on alacritty included</td><td><span class="a">agents, gated by code</span></td><td>is each fact&#x27;s quote saying what the agent wrote?</td><td><span class=j>claim-check</span></td></tr><tr><td>Analyse every option across many dimensions</td><td><span class="c">code, over data</span></td><td>how each core&#x27;s interface meets thirteen things TD needs, and how settled that interface is</td><td><span class=j>core-fit</span></td></tr><tr><td>Score and rank the options</td><td><span class="c">code, weights as data</span></td><td>none: each core is asked once and code compares; no pairwise &#x27;which is better&#x27;</td><td></td></tr><tr><td>Documentation and a post</td><td><span class="a">the writer</span></td><td>the narrative gate measures the telling</td><td></td></tr><tr><td>Decide</td><td><span class="h">Parker</span></td><td>none: Jev never chooses</td><td></td></tr></tbody></table></div>
+  <figcaption><b>The request, run through the should-jev method.</b> Jev appears at the two steps where the judgment is about meaning and code cannot make it exactly. Ranking was rewritten away from asking which road is better: each core is asked about once, and code compares.</figcaption>
+</figure>
+<figure id="f-versions">
+  <span class="lbl">06 &middot; One question, three versions</span>
+<div class="scroller"><div class="vrows"><div class="vrow"><div class="l">version 1<small>judged the whole value; composite values read as half-stated, and a missing number check left 112 with no verdict</small></div><div class="t"><span style="width:0.32%;background:#199e70" title="quote states it: 1"></span><span style="width:6.98%;background:#c98500" title="quote states part: 22">22</span><span style="width:57.14%;background:#d03b3b" title="sent to a person: 180">180</span><span style="width:35.56%;background:#2b2b28" title="no verdict: 112">112</span></div></div><div class="vrow"><div class="l">version 2<small>judged the value&#x27;s headline; quotes that were the agent&#x27;s premise came back silent</small></div><div class="t"><span style="width:10.79%;background:#199e70" title="quote states it: 34">34</span><span style="width:21.90%;background:#c98500" title="quote states part: 69">69</span><span style="width:35.56%;background:#6f6e66" title="quote silent: 112">112</span><span style="width:31.75%;background:#d03b3b" title="sent to a person: 100">100</span></div></div><div class="vrow"><div class="l">version 3<small>added &#x27;implies&#x27; for a quote the value follows from</small></div><div class="t"><span style="width:9.21%;background:#199e70" title="quote states it: 29">29</span><span style="width:9.21%;background:#3987e5" title="quote implies it: 29">29</span><span style="width:20.00%;background:#c98500" title="quote states part: 63">63</span><span style="width:31.11%;background:#6f6e66" title="quote silent: 98">98</span><span style="width:30.48%;background:#d03b3b" title="sent to a person: 96">96</span></div></div></div></div><div class="legend"><span><i style="background:#199e70"></i>quote states it</span><span><i style="background:#3987e5"></i>quote implies it</span><span><i style="background:#c98500"></i>quote states part</span><span><i style="background:#6f6e66"></i>quote silent</span><span><i style="background:#d03b3b"></i>sent to a person</span><span><i style="background:#2b2b28"></i>no verdict</span></div>
+  <figcaption><b>claim-check asks whether a fact's own quote states it.</b> The labels beside each bar say what changed. Version 2 showed that agents quote the premise they reasoned from, so the quote says nothing of the conclusion; version 3 gave that case its own answer, and 29 facts took it. Of 315, 29 are stated outright by their quote.</figcaption>
+</figure>
+<figure id="f-labels">
+  <span class="lbl">07 &middot; Hand labels on 40 facts</span>
+<div class="scroller"><div class="hbars"><div class="hbar"><div class="l">Jev said <b>states</b><small>every label agreed</small></div><div class="t"><span style="width:100.0%;background:#199e70"></span></div><div class="v">8 / 8</div></div><div class="hbar"><div class="l">Jev said <b>states part</b><small>the label said 1 states, 2 implies</small></div><div class="t"><span style="width:62.5%;background:#199e70"></span><span style="width:37.5%;background:#d03b3b"></span></div><div class="v">5 / 8</div></div><div class="hbar"><div class="l">Jev said <b>implies</b><small>the label said 1 states, 2 silent</small></div><div class="t"><span style="width:62.5%;background:#199e70"></span><span style="width:37.5%;background:#d03b3b"></span></div><div class="v">5 / 8</div></div><div class="hbar"><div class="l">Jev said <b>silent</b><small>the label said 1 states part, 1 implies</small></div><div class="t"><span style="width:75.0%;background:#199e70"></span><span style="width:25.0%;background:#d03b3b"></span></div><div class="v">6 / 8</div></div><div class="hbar"><div class="l">Jev said <b>contradicts</b><small>the label said 2 states part, 4 implies, 2 silent</small></div><div class="t"><span style="width:100.0%;background:#d03b3b"></span></div><div class="v">0 / 8</div></div></div></div><div class="legend"><span><i style="background:#199e70"></i>label agrees</span><span><i style="background:#d03b3b"></i>label disagrees</span></div>
+  <figcaption><b>Eight facts from each answer, labelled without seeing Jev's.</b> When Jev said the quote states the fact, the label agreed 8 times in 8. It said 'contradicts' 17 times in the run; reading all 17 found no real contradiction, and the verdict already sends that answer to a person. 24 of 40 matched exactly. Labels are the assembling agent's, not Parker's.</figcaption>
+</figure>
+<figure id="f-fit">
+  <span class="lbl">08 &middot; Thirteen needs, fourteen cores</span>
+<div class="scroller"><table class="fit"><thead><tr><th class='opt'>core</th><th>cells</th><th>marks</th><th>underline</th><th>wide</th><th>history</th><th>damage</th><th>snapshot</th><th>own loop</th><th>replies</th><th>threads</th><th>pictures</th><th>placeholders</th><th>file policy</th><th>API</th></tr></thead><tbody><tr class=""><td class="opt">rio-vt</td><td class="fit-p truth-ok" title="provides · checked: pass">●</td><td class="fit-p truth-ok" title="provides · checked: pass">●</td><td class="fit-p truth-ok" title="provides · checked: pass">●</td><td class="fit-p truth-ok" title="provides · checked: pass">●</td><td class="fit-x" title="does not">✕</td><td class="fit-p truth-ok" title="provides · checked: pass">●</td><td class="fit-x truth-ok" title="does not · checked: fail">✕</td><td class="fit-p truth-ok" title="provides · checked: pass">●</td><td class="fit-p truth-ok" title="provides · checked: pass">●</td><td class="fit-w" title="with work">○</td><td class="fit-u truth-unk" title="not established · checked: pass">?</td><td class="fit-u truth-unk" title="not established · checked: pass">?</td><td class="fit-x" title="does not">✕</td><td class="traj">pre-1.0, active</td></tr><tr class=""><td class="opt">wezterm-term</td><td class="fit-p" title="provides">●</td><td class="fit-p" title="provides">●</td><td class="fit-p" title="provides">●</td><td class="fit-w" title="with work">○</td><td class="fit-p" title="provides">●</td><td class="fit-w" title="with work">○</td><td class="fit-x" title="does not">✕</td><td class="fit-p" title="provides">●</td><td class="fit-x" title="does not">✕</td><td class="fit-w" title="with work">○</td><td class="fit-w" title="with work">○</td><td class="fit-x" title="does not">✕</td><td class="fit-x" title="does not">✕</td><td class="traj">pre-1.0, active</td></tr><tr class=""><td class="opt">libghostty-vt</td><td class="fit-p truth-ok" title="provides · checked: pass">●</td><td class="fit-p truth-ok" title="provides · checked: pass">●</td><td class="fit-p truth-ok" title="provides · checked: pass">●</td><td class="fit-p truth-ok" title="provides · checked: pass">●</td><td class="fit-u truth-unk" title="not established · checked: pass">?</td><td class="fit-p truth-ok" title="provides · checked: pass">●</td><td class="fit-w truth-ok" title="with work · checked: pass">○</td><td class="fit-p truth-ok" title="provides · checked: pass">●</td><td class="fit-p truth-ok" title="provides · checked: pass">●</td><td class="fit-x truth-ok" title="does not · checked: fail">✕</td><td class="fit-w truth-ok" title="with work · checked: pass">○</td><td class="fit-u truth-unk" title="not established · checked: pass">?</td><td class="fit-w truth-ok" title="with work · checked: pass">○</td><td class="traj">declared unstable</td></tr><tr class=""><td class="opt">Ghostty shadow</td><td class="fit-w" title="with work">○</td><td class="fit-u" title="not established">?</td><td class="fit-p" title="provides">●</td><td class="fit-p" title="provides">●</td><td class="fit-p" title="provides">●</td><td class="fit-u" title="not established">?</td><td class="fit-x" title="does not">✕</td><td class="fit-w" title="with work">○</td><td class="fit-w" title="with work">○</td><td class="fit-x" title="does not">✕</td><td class="fit-w" title="with work">○</td><td class="fit-w" title="with work">○</td><td class="fit-w" title="with work">○</td><td class="traj">declared unstable</td></tr><tr class=""><td class="opt">alacritty + TD&#x27;s loop</td><td class="fit-p truth-ok" title="provides · checked: pass">●</td><td class="fit-w truth-ok" title="with work · checked: pass">○</td><td class="fit-p truth-ok" title="provides · checked: pass">●</td><td class="fit-p truth-ok" title="provides · checked: pass">●</td><td class="fit-w truth-ok" title="with work · checked: pass">○</td><td class="fit-p truth-ok" title="provides · checked: pass">●</td><td class="fit-x truth-ok" title="does not · checked: fail">✕</td><td class="fit-p truth-ok" title="provides · checked: pass">●</td><td class="fit-p truth-ok" title="provides · checked: pass">●</td><td class="fit-w truth-ok" title="with work · checked: pass">○</td><td class="fit-x truth-ok" title="does not · checked: fail">✕</td><td class="fit-x truth-ok" title="does not · checked: fail">✕</td><td class="fit-x truth-ok" title="does not · checked: fail">✕</td><td class="traj">pre-1.0, active</td></tr><tr class=""><td class="opt">Contour vtbackend</td><td class="fit-p" title="provides">●</td><td class="fit-p" title="provides">●</td><td class="fit-p" title="provides">●</td><td class="fit-u" title="not established">?</td><td class="fit-p" title="provides">●</td><td class="fit-p" title="provides">●</td><td class="fit-w" title="with work">○</td><td class="fit-x" title="does not">✕</td><td class="fit-u" title="not established">?</td><td class="fit-w" title="with work">○</td><td class="fit-w" title="with work">○</td><td class="fit-p" title="provides">●</td><td class="fit-p" title="provides">●</td><td class="traj">declared unstable</td></tr><tr class=""><td class="opt">alacritty graphics fork</td><td class="fit-p" title="provides">●</td><td class="fit-u" title="not established">?</td><td class="fit-u" title="not established">?</td><td class="fit-u" title="not established">?</td><td class="fit-u" title="not established">?</td><td class="fit-p" title="provides">●</td><td class="fit-x" title="does not">✕</td><td class="fit-x" title="does not">✕</td><td class="fit-p" title="provides">●</td><td class="fit-p" title="provides">●</td><td class="fit-u" title="not established">?</td><td class="fit-x" title="does not">✕</td><td class="fit-x" title="does not">✕</td><td class="traj">pre-1.0, active</td></tr><tr class=""><td class="opt">alacritty + patched vte</td><td class="fit-p" title="provides">●</td><td class="fit-u" title="not established">?</td><td class="fit-p" title="provides">●</td><td class="fit-p" title="provides">●</td><td class="fit-u" title="not established">?</td><td class="fit-p" title="provides">●</td><td class="fit-x" title="does not">✕</td><td class="fit-x" title="does not">✕</td><td class="fit-x" title="does not">✕</td><td class="fit-w" title="with work">○</td><td class="fit-x" title="does not">✕</td><td class="fit-x" title="does not">✕</td><td class="fit-x" title="does not">✕</td><td class="traj">declared unstable</td></tr><tr class=""><td class="opt">vt100</td><td class="fit-p" title="provides">●</td><td class="fit-p" title="provides">●</td><td class="fit-x" title="does not">✕</td><td class="fit-p" title="provides">●</td><td class="fit-p" title="provides">●</td><td class="fit-x" title="does not">✕</td><td class="fit-x" title="does not">✕</td><td class="fit-p" title="provides">●</td><td class="fit-w" title="with work">○</td><td class="fit-p" title="provides">●</td><td class="fit-x" title="does not">✕</td><td class="fit-x" title="does not">✕</td><td class="fit-x" title="does not">✕</td><td class="traj">dormant</td></tr><tr class=""><td class="opt">TD&#x27;s own core</td><td class="fit-w" title="with work">○</td><td class="fit-u" title="not established">?</td><td class="fit-w" title="with work">○</td><td class="fit-u" title="not established">?</td><td class="fit-u" title="not established">?</td><td class="fit-u" title="not established">?</td><td class="fit-w" title="with work">○</td><td class="fit-x" title="does not">✕</td><td class="fit-x" title="does not">✕</td><td class="fit-u" title="not established">?</td><td class="fit-x" title="does not">✕</td><td class="fit-x" title="does not">✕</td><td class="fit-u" title="not established">?</td><td class="traj">TD&#x27;s own</td></tr><tr class=""><td class="opt">libvterm</td><td class="fit-p" title="provides">●</td><td class="fit-p" title="provides">●</td><td class="fit-x" title="does not">✕</td><td class="fit-p" title="provides">●</td><td class="fit-x" title="does not">✕</td><td class="fit-p" title="provides">●</td><td class="fit-x" title="does not">✕</td><td class="fit-p" title="provides">●</td><td class="fit-w" title="with work">○</td><td class="fit-x" title="does not">✕</td><td class="fit-x" title="does not">✕</td><td class="fit-x" title="does not">✕</td><td class="fit-x" title="does not">✕</td><td class="traj">dormant</td></tr><tr class=""><td class="opt">kitty&#x27;s core</td><td class="fit-x" title="does not">✕</td><td class="fit-x" title="does not">✕</td><td class="fit-x" title="does not">✕</td><td class="fit-x" title="does not">✕</td><td class="fit-x" title="does not">✕</td><td class="fit-x" title="does not">✕</td><td class="fit-x" title="does not">✕</td><td class="fit-x" title="does not">✕</td><td class="fit-x" title="does not">✕</td><td class="fit-u" title="not established">?</td><td class="fit-x" title="does not">✕</td><td class="fit-x" title="does not">✕</td><td class="fit-x" title="does not">✕</td><td class="traj">declared unstable</td></tr><tr class="ref"><td class="opt">Zellij&#x27;s grid</td><td class="fit-w" title="with work">○</td><td class="fit-x" title="does not">✕</td><td class="fit-u" title="not established">?</td><td class="fit-x" title="does not">✕</td><td class="fit-u" title="not established">?</td><td class="fit-p" title="provides">●</td><td class="fit-x" title="does not">✕</td><td class="fit-x" title="does not">✕</td><td class="fit-x" title="does not">✕</td><td class="fit-x" title="does not">✕</td><td class="fit-x" title="does not">✕</td><td class="fit-x" title="does not">✕</td><td class="fit-x" title="does not">✕</td><td class="traj">pre-1.0, active</td></tr><tr class="ref"><td class="opt">zmx</td><td class="fit-w" title="with work">○</td><td class="fit-u" title="not established">?</td><td class="fit-u" title="not established">?</td><td class="fit-u" title="not established">?</td><td class="fit-w" title="with work">○</td><td class="fit-x" title="does not">✕</td><td class="fit-w" title="with work">○</td><td class="fit-x" title="does not">✕</td><td class="fit-x" title="does not">✕</td><td class="fit-x" title="does not">✕</td><td class="fit-x" title="does not">✕</td><td class="fit-x" title="does not">✕</td><td class="fit-x" title="does not">✕</td><td class="traj">declared unstable</td></tr></tbody></table></div><div class="legend"><span><b class="fit-p">●</b> provides</span><span><b class="fit-w">○</b> with work</span><span><b class="fit-x">✕</b> does not</span><span><b class="fit-u">?</b> not established</span><span><i class="tick"></i>checked against the code</span></div>
+  <figcaption><b>Jev's reading of each core's interface, from the checked evidence.</b> Unknown stays unknown. For the three cores the harnesses touched, 36 cells can be checked against the code: version 2 got 32 right, 0 wrong and left 4 unknown; version 1 had 3 wrong. Reversing the order of the thirteen questions changed 4.4% of answers. Rows in the order code ranks them.</figcaption>
+</figure>
+<figure id="f-rio">
+  <span class="lbl">09 &middot; Why rio-vt's pictures read as unknown</span>
+<svg viewBox="0 0 980 206" role="img" aria-label="Probability of does not, per ask, for rio-vt placements" font-family="ui-sans-serif, sans-serif"><line x1="300" y1="14" x2="300" y2="180" stroke="#232321" /><text x="300" y="196" fill="#8b8a80" font-size="11" text-anchor="middle" font-family="ui-monospace, monospace">0.0</text><line x1="366" y1="14" x2="366" y2="180" stroke="#232321" /><line x1="432" y1="14" x2="432" y2="180" stroke="#232321" /><line x1="498" y1="14" x2="498" y2="180" stroke="#232321" /><line x1="564" y1="14" x2="564" y2="180" stroke="#232321" /><line x1="630" y1="14" x2="630" y2="180" stroke="#4a4a44" stroke-dasharray="3 3"/><text x="630" y="196" fill="#8b8a80" font-size="11" text-anchor="middle" font-family="ui-monospace, monospace">0.5</text><line x1="696" y1="14" x2="696" y2="180" stroke="#232321" /><line x1="762" y1="14" x2="762" y2="180" stroke="#232321" /><line x1="828" y1="14" x2="828" y2="180" stroke="#232321" /><line x1="894" y1="14" x2="894" y2="180" stroke="#232321" /><line x1="960" y1="14" x2="960" y2="180" stroke="#232321" /><text x="960" y="196" fill="#8b8a80" font-size="11" text-anchor="middle" font-family="ui-monospace, monospace">1.0</text><text x="0" y="34" fill="#d6d8cf" font-size="12.5">as sent</text><text x="0" y="49" fill="#8b8a80" font-size="10.5" font-family="ui-monospace, monospace">10 asks</text><circle cx="597.0" cy="25" r="5.5" fill="#199e70" fill-opacity=".85" stroke="#0b0c0a"/><circle cx="636.6" cy="30" r="5.5" fill="#ec835a" fill-opacity=".85" stroke="#0b0c0a"/><circle cx="643.2" cy="35" r="5.5" fill="#ec835a" fill-opacity=".85" stroke="#0b0c0a"/><circle cx="656.4" cy="25" r="5.5" fill="#ec835a" fill-opacity=".85" stroke="#0b0c0a"/><circle cx="656.4" cy="30" r="5.5" fill="#ec835a" fill-opacity=".85" stroke="#0b0c0a"/><circle cx="663.0" cy="35" r="5.5" fill="#ec835a" fill-opacity=".85" stroke="#0b0c0a"/><circle cx="669.6" cy="25" r="5.5" fill="#ec835a" fill-opacity=".85" stroke="#0b0c0a"/><circle cx="676.2" cy="30" r="5.5" fill="#ec835a" fill-opacity=".85" stroke="#0b0c0a"/><circle cx="682.8" cy="35" r="5.5" fill="#ec835a" fill-opacity=".85" stroke="#0b0c0a"/><circle cx="689.4" cy="25" r="5.5" fill="#ec835a" fill-opacity=".85" stroke="#0b0c0a"/><text x="0" y="74" fill="#d6d8cf" font-size="12.5">claim-check labels removed</text><text x="0" y="89" fill="#8b8a80" font-size="10.5" font-family="ui-monospace, monospace">1 ask</text><circle cx="610.2" cy="65" r="5.5" fill="#199e70" fill-opacity=".85" stroke="#0b0c0a"/><text x="0" y="114" fill="#d6d8cf" font-size="12.5">pixels sentence added</text><text x="0" y="129" fill="#8b8a80" font-size="10.5" font-family="ui-monospace, monospace">1 ask</text><circle cx="306.6" cy="105" r="5.5" fill="#199e70" fill-opacity=".85" stroke="#0b0c0a"/><text x="0" y="154" fill="#d6d8cf" font-size="12.5">both</text><text x="0" y="169" fill="#8b8a80" font-size="10.5" font-family="ui-monospace, monospace">1 ask</text><circle cx="306.6" cy="145" r="5.5" fill="#199e70" fill-opacity=".85" stroke="#0b0c0a"/><text x="300" y="10" fill="#8b8a80" font-size="10.5">probability Jev gave to "does not"</text></svg><div class="legend"><span><i style="background:#ec835a"></i>top answer: does not</span><span><i style="background:#199e70"></i>top answer: provides, or with work</span></div>
+  <figcaption><b>A need that asks for four things, where the evidence showed three.</b> From identical evidence Jev put 'does not' on top 9 times in 10, never far from even, so the meaning map routes it to unknown. Removing the claim-check labels changed nothing. One sentence from rio-vt's source, that each image's pixels are public, moved 'does not' to 0.01. The run of record keeps the unknown; the bake-off carries the measurement.</figcaption>
+</figure>
+<figure id="f-traps">
+  <span class="lbl">10 &middot; Traps</span>
+<div class="traps"><div class="trap ok" title="claim-check · support · wanted states, got states"><b>aswell-base</b><span>support</span></div><div class="trap ok" title="claim-check · support · wanted contradicts, got contradicts"><b>aswell-flip</b><span>support</span></div><div class="trap ok" title="claim-check · support · wanted implies/states, got implies"><b>build-base</b><span>support</span></div><div class="trap ok" title="claim-check · support · wanted contradicts, got contradicts"><b>build-flip</b><span>support</span></div><div class="trap ok" title="claim-check · support · wanted states, got states"><b>hedge-base</b><span>support</span></div><div class="trap ok" title="claim-check · support · wanted contradicts, got contradicts"><b>hedge-flip</b><span>support</span></div><div class="trap sprung" title="claim-check · support · wanted implies/states, got silent"><b>implies-base</b><span>support</span></div><div class="trap ok" title="claim-check · support · wanted contradicts, got contradicts"><b>implies-flip</b><span>support</span></div><div class="trap ok" title="claim-check · support · wanted states, got states"><b>less-base</b><span>support</span></div><div class="trap ok" title="claim-check · support · wanted contradicts, got contradicts"><b>less-flip</b><span>support</span></div><div class="trap ok" title="claim-check · support · wanted states, got states"><b>more-base</b><span>support</span></div><div class="trap ok" title="claim-check · support · wanted states_part, got states_part"><b>more-flip</b><span>support</span></div><div class="trap ok" title="claim-check · support · wanted states, got states"><b>no-base</b><span>support</span></div><div class="trap ok" title="claim-check · support · wanted silent, got silent"><b>no-flip</b><span>support</span></div><div class="trap sprung" title="claim-check · support · wanted states, got states_part"><b>number-base</b><span>support</span></div><div class="trap ok" title="claim-check · support · wanted contradicts/states_part/states/silent, got contradicts"><b>number-flip</b><span>support</span></div><div class="trap ok" title="claim-check · support · wanted states, got states"><b>other-base</b><span>support</span></div><div class="trap ok" title="claim-check · other_subject · wanted same/unclear, got same"><b>other-base</b><span>other_subject</span></div><div class="trap ok" title="claim-check · other_subject · wanted other, got other"><b>other-flip</b><span>other_subject</span></div><div class="trap ok" title="claim-check · support · wanted states/states_part, got states"><b>reverse-base</b><span>support</span></div><div class="trap ok" title="claim-check · support · wanted contradicts, got contradicts"><b>reverse-flip</b><span>support</span></div><div class="trap ok" title="claim-check · support · wanted silent, got silent"><b>unrelated-base</b><span>support</span></div><div class="trap ok" title="claim-check · support · wanted states, got states"><b>unrelated-flip</b><span>support</span></div><div class="trap ok" title="core-fit · cell_contents · wanted provides, got provides"><b>cells-base</b><span>cell_contents</span></div><div class="trap ok" title="core-fit · wide_chars · wanted provides/provides_with_work, got provides"><b>cells-base</b><span>wide_chars</span></div><div class="trap ok" title="core-fit · zero_width · wanted provides/provides_with_work, got provides_with_work"><b>cells-base</b><span>zero_width</span></div><div class="trap ok" title="core-fit · cell_contents · wanted does_not, got does_not"><b>cells-flip</b><span>cell_contents</span></div><div class="trap ok" title="core-fit · placements_readable · wanted evidence_silent/provides_with_work, got evidence_silent"><b>claim-vs-shown</b><span>placements_readable</span></div><div class="trap ok" title="core-fit · feed_loop · wanted evidence_silent/provides_with_work/provides, got evidence_silent"><b>claim-vs-shown</b><span>feed_loop</span></div><div class="trap ok" title="core-fit · feed_loop · wanted provides, got provides"><b>loop-base</b><span>feed_loop</span></div><div class="trap ok" title="core-fit · feed_loop · wanted does_not, got does_not"><b>loop-flip</b><span>feed_loop</span></div><div class="trap ok" title="core-fit · placements_readable · wanted provides/provides_with_work, got provides_with_work"><b>place-base</b><span>placements_readable</span></div><div class="trap ok" title="core-fit · placements_readable · wanted does_not, got does_not"><b>place-flip</b><span>placements_readable</span></div><div class="trap ok" title="core-fit · cell_contents · wanted provides, got provides"><b>silent-base</b><span>cell_contents</span></div><div class="trap ok" title="core-fit · cell_contents · wanted evidence_silent, got evidence_silent"><b>silent-flip</b><span>cell_contents</span></div><div class="trap ok" title="core-fit · scrollback_read · wanted evidence_silent, got evidence_silent"><b>silent-flip</b><span>scrollback_read</span></div><div class="trap ok" title="core-fit · snapshot · wanted provides, got provides"><b>snap-base</b><span>snapshot</span></div><div class="trap ok" title="core-fit · snapshot · wanted does_not, got does_not"><b>snap-flip</b><span>snapshot</span></div><div class="trap ok" title="core-fit · threading · wanted provides, got provides"><b>thread-base</b><span>threading</span></div><div class="trap ok" title="core-fit · threading · wanted does_not, got does_not"><b>thread-flip</b><span>threading</span></div><div class="trap ok" title="core-fit · api_trajectory · wanted active_pre_1_0, got active_pre_1_0"><b>traj-active</b><span>api_trajectory</span></div><div class="trap ok" title="core-fit · api_trajectory · wanted dormant, got dormant"><b>traj-dormant</b><span>api_trajectory</span></div><div class="trap ok" title="core-fit · api_trajectory · wanted not_established/active_pre_1_0, got active_pre_1_0"><b>traj-silent</b><span>api_trajectory</span></div><div class="trap ok" title="core-fit · api_trajectory · wanted declared_unstable, got declared_unstable"><b>traj-unstable</b><span>api_trajectory</span></div></div><div class="legend"><span><i style="background:#199e70"></i>held</span><span><i style="background:#d03b3b"></i>sprung</span></div>
+  <figcaption><b>Awkward cases, written before any call, each with a twin that differs in one way.</b> A trap springs when Jev answers it wrong. 42 of 44 held across both specs. The two that sprang need a date window and outside knowledge; both are recorded in the spec with their causes.</figcaption>
+</figure>
+
+<h2 class="sec">Running things overruled some of the reading</h2>
+<p>A quote can match its source and the source can still be wrong. Five claims could be run as well as read.</p>
+<figure id="f-checks">
+  <span class="lbl">11 &middot; Reading against running</span>
+<div class="scroller"><table class="wide checks"><thead><tr><th>Claim</th><th>Where it came from</th><th>What running it showed</th><th></th></tr></thead><tbody><tr><td><b>wezterm-term has no placeholder support</b></td><td>research: kitty_graphics lists no U=1 handling</td><td>it drew the picture at the cursor and printed the placeholder characters as text, in both placeholder recordings</td><td><span class="y">held</span></td></tr><tr><td><b>rio-vt exposes where each picture sits</b></td><td>research: a public map, graphics.kitty_placements; Jev, reading that research, split near evenly</td><td>the harness read every picture in all six recordings from its public maps, placeholder pictures included</td><td><span class="y">held</span></td></tr><tr><td><b>libghostty-vt 0.2.1 moves the cursor one row further than kitty after a picture</b></td><td>research: the full-height move, fixed upstream on 2026-08-18 after the crates.io pin</td><td>its cursor matched rio-vt's in all seven recordings, on the row kitty's rule predicts</td><td><span class="n">overruled</span></td></tr><tr><td><b>vte&#x27;s maintainer declined a parser hook for pictures</b></td><td>the Program Pixels brief, quoting an early review of alacritty/vte#115</td><td>the research found the later review, &ldquo;seems fine to me. Just some minor nits.&rdquo;, before the pull request lapsed</td><td><span class="n">overruled</span></td></tr><tr><td><b>the build each road asks for</b></td><td>a keyword rule in the matrix code</td><td>it read &ldquo;no C compiler, cmake&rdquo; as needing CMake and misread 3 of 12; now read by hand</td><td><span class="p">our rule</span></td></tr></tbody></table></div>
+  <figcaption><b>Five places where a claim met a measurement.</b> Two held, two were overruled, and one exposed a rule of our own.</figcaption>
+</figure>
+
+<h2 class="sec">Code ranks, and two roads finish level</h2>
+<p>With the facts checked and each core's fit read, code could rank. It scores every road on eight weighted dimensions and keeps unknowns
+out of the arithmetic, and it puts rio-vt and wezterm-term a hundredth apart. Staying on alacritty scores
+0.51, and most of that gap is pictures.</p>
+<figure id="f-matrix">
+  <span class="lbl">12 &middot; Every road, every dimension</span>
+<div class="scroller"><table class="matrix"><thead><tr><th class="opt">road</th><th><span class="src code">code</span>Kitty today<em class="w">× 3</em></th><th><span class="src Jev">Jev</span>fits TD<em class="w">× 3</em></th><th><span class="src estimate">estimate</span>TD writes<em class="w">× 2.5</em></th><th><span class="src Jev">Jev</span>API settled<em class="w">× 2</em></th><th><span class="src code">code</span>maintainers<em class="w">× 1.5</em></th><th><span class="src read">read</span>build<em class="w">× 1.5</em></th><th><span class="src code">code</span>VT features<em class="w">× 1</em></th><th><span class="src code">code</span>Sixel, iTerm2<em class="w">× 0.5</em></th><th class="score">score</th><th>first in</th><th class="gap"></th><th><span class="src measured">measured</span>bake-off<em class="w">shown</em></th><th><span class="src measured">measured</span>13 MB in<em class="w">shown</em></th></tr></thead><tbody><tr class="top"><td class="opt">rio-vt</td><td style="background:#205b3d" title="code over the agents&#x27; kitty_tags: 13/14">13/14</td><td style="background:#415429" title="Jev (core-fit.assess), combined by code: 20.0/27">0.74</td><td style="background:#6b4a0f" title="estimate: the assembling agent: L">L</td><td style="background:#594e1a" title="Jev (core-fit.maturity): active_pre_1_0">pre-1.0, active</td><td style="background:#653915" title="code: the first count in the agents&#x27; value: 1">1</td><td style="background:#485225" title="hand-read from the agents&#x27; value: cargo, plus a C++11 compiler through the cc crate (simdutf); built on this box by the bake-off">cargo + C++11</td><td style="background:#135e45" title="code over the agents&#x27; value: 9 yes, 0 no, 0 unknown">9 of 9</td><td style="background:#135e45" title="code over the agents&#x27; values: Sixel yes, iTerm2 yes,">yes · yes</td><td class="score" style="background:#485224">0.70</td><td class="share">37%</td><td class="gap"></td><td style="background:#135e45" title="measured: the bake-off: 6/6">6/6</td><td style="background:#6a4810" title="measured: one parse of a 13 MB mpv recording: 40.7 ms">41 ms</td></tr><tr class="top"><td class="opt">wezterm-term</td><td style="background:#2c5836" title="code over the agents&#x27; kitty_tags: 12/14">12/14</td><td style="background:#5a4e19" title="Jev (core-fit.assess), combined by code: 19.0/32">0.59</td><td style="background:#643417" title="estimate: the assembling agent: XL">XL</td><td style="background:#594e1a" title="Jev (core-fit.maturity): active_pre_1_0">pre-1.0, active</td><td style="background:#135e45" title="code: the first count in the agents&#x27; value: 3">3</td><td style="background:#255a3a" title="hand-read from the agents&#x27; value: cargo, plus the wezterm git workspace">cargo + git</td><td style="background:#275a39" title="code over the agents&#x27; value: 8 yes, 1 no, 0 unknown">8 of 9</td><td style="background:#135e45" title="code over the agents&#x27; values: Sixel yes, iTerm2 yes">yes · yes</td><td class="score" style="background:#495224">0.69</td><td class="share">62%</td><td class="gap"></td><td style="background:#4e5121" title="measured: the bake-off: 4/6">4/6</td><td style="background:#612e19" title="measured: one parse of a 13 MB mpv recording: 109.3 ms">109 ms</td></tr><tr class=""><td class="opt">libghostty-vt</td><td style="background:#135e45" title="code over the agents&#x27; kitty_tags: 14/14">14/14</td><td style="background:#345731" title="Jev (core-fit.assess), combined by code: 22.0/27">0.81</td><td style="background:#6b4a0f" title="estimate: the assembling agent: L">L</td><td style="background:#653915" title="Jev (core-fit.maturity): declared_unstable">declared unstable</td><td style="background:#653915" title="code: the first count in the agents&#x27; value: 1">1</td><td style="background:#684112" title="hand-read from the agents&#x27; value: a Zig 0.15 toolchain, and a git clone of ghostty at build time">Zig</td><td style="background:#135e45" title="code over the agents&#x27; value: 9 yes, 0 no, 0 unknown">9 of 9</td><td style="background:#5c1f1f" title="code over the agents&#x27; values: Sixel no, iTerm2 no">no · no</td><td class="score" style="background:#554f1c">0.62</td><td class="share">1%</td><td class="gap"></td><td style="background:#135e45" title="measured: the bake-off: 6/6">6/6</td><td style="background:#135e45" title="measured: one parse of a 13 MB mpv recording: 19.3 ms">19 ms</td></tr><tr class=""><td class="opt">Ghostty shadow</td><td style="background:#205b3d" title="code over the agents&#x27; kitty_tags: 13/14">13/14</td><td style="background:#5e4d17" title="Jev (core-fit.assess), combined by code: 15.5/27">0.57</td><td style="background:#6b4a0f" title="estimate: the assembling agent: L">L</td><td style="background:#653915" title="Jev (core-fit.maturity): declared_unstable">declared unstable</td><td style="background:#653915" title="hand-read: each of its three upstreams is carried by one or two people: 1">1</td><td style="background:#684112" title="hand-read from the agents&#x27; value: a Zig 0.15 toolchain, and a git clone of ghostty at build time">Zig</td><td style="background:#275a39" title="code over the agents&#x27; value: 8 yes, 1 no, 1 unknown">8 of 9</td><td style="background:#5c1f1f" title="code over the agents&#x27; values: Sixel no., iTerm2 no.">no · no</td><td class="score" style="background:#624c15">0.55</td><td class="share">0%</td><td class="gap"></td><td style="background:#135e45" title="measured: the bake-off: 6/6">6/6</td><td class="unk" title="not measured">?</td></tr><tr class=""><td class="opt">alacritty + TD&#x27;s loop</td><td style="background:#5c1f1f" title="code over the agents&#x27; kitty_tags: 0/14">0/14</td><td style="background:#554f1c" title="Jev (core-fit.assess), combined by code: 20.0/32">0.62</td><td style="background:#6b4a0f" title="estimate: the assembling agent: L">L</td><td style="background:#594e1a" title="Jev (core-fit.maturity): active_pre_1_0">pre-1.0, active</td><td style="background:#594e1a" title="code: the first count in the agents&#x27; value: 2">2</td><td style="background:#135e45" title="hand-read from the agents&#x27; value: cargo only">cargo</td><td style="background:#275a39" title="code over the agents&#x27; value: 8 yes, 1 no, 1 unknown">8 of 9</td><td style="background:#5c1f1f" title="code over the agents&#x27; values: Sixel no, iTerm2 no">no · no</td><td class="score" style="background:#6a4a10">0.51</td><td class="share">1%</td><td class="gap"></td><td style="background:#5c1f1f" title="measured: the bake-off: 0/6">0/6</td><td style="background:#6b490f" title="measured: one parse of a 13 MB mpv recording: 39.8 ms">40 ms</td></tr><tr class=""><td class="opt">Contour vtbackend</td><td style="background:#6b4a0f" title="code over the agents&#x27; kitty_tags: 7/14">7/14</td><td style="background:#3f542a" title="Jev (core-fit.assess), combined by code: 19.5/26">0.75</td><td style="background:#5f281c" title="estimate: the assembling agent: XXL">XXL</td><td style="background:#653915" title="Jev (core-fit.maturity): declared_unstable">declared unstable</td><td style="background:#653915" title="code: the first count in the agents&#x27; value: 1">1</td><td style="background:#602c1a" title="hand-read from the agents&#x27; value: a C++23 compiler and CMake 3.25, with network at configure time">C++23, CMake</td><td style="background:#135e45" title="code over the agents&#x27; value: 9 yes, 0 no, 0 unknown">9 of 9</td><td style="background:#3f542a" title="code over the agents&#x27; values: Sixel yes, iTerm2 partial">yes · partial</td><td class="score" style="background:#694511">0.44</td><td class="share">0%</td><td class="gap"></td><td class="unk" title="not run">?</td><td class="unk" title="not measured">?</td></tr><tr class=""><td class="opt">alacritty graphics fork</td><td style="background:#5c1f1f" title="code over the agents&#x27; kitty_tags: 0/14">0/14</td><td style="background:#614c15" title="Jev (core-fit.assess), combined by code: 10.0/18">0.56</td><td style="background:#643417" title="estimate: the assembling agent: XL">XL</td><td style="background:#594e1a" title="Jev (core-fit.maturity): active_pre_1_0">pre-1.0, active</td><td style="background:#653915" title="hand-read: ayosec alone carries the graphics layer: 1">1</td><td style="background:#255a3a" title="hand-read from the agents&#x27; value: cargo, plus a git dependency">cargo + git</td><td style="background:#275a39" title="code over the agents&#x27; value: 8 yes, 1 no, 0 unknown">8 of 9</td><td style="background:#6b4a0f" title="code over the agents&#x27; values: Sixel yes, iTerm2 no">yes · no</td><td class="score" style="background:#694411">0.43</td><td class="share">0%</td><td class="gap"></td><td class="unk" title="not run">?</td><td class="unk" title="not measured">?</td></tr><tr class=""><td class="opt">alacritty + patched vte</td><td style="background:#5c1f1f" title="code over the agents&#x27; kitty_tags: 0/14">0/14</td><td style="background:#694311" title="Jev (core-fit.assess), combined by code: 11.0/26">0.42</td><td style="background:#6b4a0f" title="estimate: the assembling agent: L">L</td><td style="background:#653915" title="Jev (core-fit.maturity): declared_unstable">declared unstable</td><td style="background:#653915" title="hand-read: vte upstream is one maintainer with three commits in a year: 1">1</td><td style="background:#255a3a" title="hand-read from the agents&#x27; value: cargo, plus a git dependency">cargo + git</td><td style="background:#275a39" title="code over the agents&#x27; value: 8 yes, 1 no, 0 unknown">8 of 9</td><td style="background:#5c1f1f" title="code over the agents&#x27; values: Sixel no, iTerm2 no">no · no</td><td class="score" style="background:#684013">0.39</td><td class="share">0%</td><td class="gap"></td><td class="unk" title="not run">?</td><td class="unk" title="not measured">?</td></tr><tr class=""><td class="opt">vt100</td><td style="background:#5c1f1f" title="code over the agents&#x27; kitty_tags: 0/14">0/14</td><td style="background:#5d4d17" title="Jev (core-fit.assess), combined by code: 18.5/32">0.58</td><td style="background:#643417" title="estimate: the assembling agent: XL">XL</td><td style="background:#5f281c" title="Jev (core-fit.maturity): dormant">dormant</td><td style="background:#5c1f1f" title="code: the first count in the agents&#x27; value: 0">0</td><td style="background:#135e45" title="hand-read from the agents&#x27; value: cargo only">cargo</td><td style="background:#684112" title="code over the agents&#x27; value: 4 yes, 6 no, 0 unknown">4 of 9</td><td style="background:#5c1f1f" title="code over the agents&#x27; values: Sixel no, iTerm2 no">no · no</td><td class="score" style="background:#653915">0.30</td><td class="share">0%</td><td class="gap"></td><td class="unk" title="not run">?</td><td class="unk" title="not measured">?</td></tr><tr class=""><td class="opt">TD&#x27;s own core</td><td style="background:#5c1f1f" title="code over the agents&#x27; kitty_tags: 0/14">0/14</td><td style="background:#623019" title="Jev (core-fit.assess), combined by code: 3.5/18">0.19</td><td style="background:#5f281c" title="estimate: the assembling agent: XXL">XXL</td><td style="background:#485225" title="Jev (core-fit.maturity): owned_by_td">TD&#x27;s own</td><td style="background:#653915" title="code: the first count in the agents&#x27; value: 1">1</td><td style="background:#135e45" title="hand-read from the agents&#x27; value: cargo only">cargo</td><td style="background:#5c1f1f" title="code over the agents&#x27; value: 0 yes, 9 no, 0 unknown">0 of 9</td><td style="background:#5c1f1f" title="code over the agents&#x27; values: Sixel no, iTerm2 no">no · no</td><td class="score" style="background:#643716">0.28</td><td class="share">0%</td><td class="gap"></td><td class="unk" title="not run">?</td><td class="unk" title="not measured">?</td></tr><tr class=""><td class="opt">libvterm</td><td style="background:#5c1f1f" title="code over the agents&#x27; kitty_tags: 0/14">0/14</td><td style="background:#6b4910" title="Jev (core-fit.assess), combined by code: 15.5/32">0.48</td><td style="background:#643417" title="estimate: the assembling agent: XL">XL</td><td style="background:#5f281c" title="Jev (core-fit.maturity): dormant">dormant</td><td style="background:#5c1f1f" title="code: the first count in the agents&#x27; value: 0">0</td><td style="background:#485225" title="hand-read from the agents&#x27; value: a C99 compiler through the cc crate">C99</td><td style="background:#4e5121" title="code over the agents&#x27; value: 8 yes, 4 no, 0 unknown">8 of 9</td><td style="background:#5c1f1f" title="code over the agents&#x27; values: Sixel no, iTerm2 no">no · no</td><td class="score" style="background:#643616">0.27</td><td class="share">0%</td><td class="gap"></td><td class="unk" title="not run">?</td><td class="unk" title="not measured">?</td></tr><tr class=""><td class="opt">kitty&#x27;s core</td><td style="background:#135e45" title="code over the agents&#x27; kitty_tags: 14/14">14/14</td><td class="blocked">·</td><td class="blocked">·</td><td class="blocked">·</td><td class="blocked">·</td><td class="blocked">·</td><td class="blocked">·</td><td class="blocked">·</td><td class="blocked">GPL</td><td class="blocked">—</td><td class="gap"></td><td class="blocked">·</td><td class="blocked">·</td></tr><tr class="ref"><td class="opt">Zellij&#x27;s grid</td><td style="background:#39552e" title="code over the agents&#x27; kitty_tags: 11/14">11/14</td><td style="background:#602a1b" title="Jev (core-fit.assess), combined by code: 3.5/27">0.13</td><td class="unk" title="estimate: the assembling agent">?</td><td style="background:#594e1a" title="Jev (core-fit.maturity): active_pre_1_0">pre-1.0, active</td><td style="background:#653915" title="code: the first count in the agents&#x27; value: 1">1</td><td class="unk" title="hand-read from the agents&#x27; value">?</td><td style="background:#295938" title="code over the agents&#x27; value: 7 yes, 1 no, 0 unknown">7 of 9</td><td style="background:#6b4a0f" title="code over the agents&#x27; values: Sixel yes, iTerm2 no">yes · no</td><td class="unk">reference</td><td class="unk">—</td><td class="gap"></td><td class="unk" title="not run">?</td><td class="unk" title="not measured">?</td></tr><tr class="ref"><td class="opt">zmx</td><td style="background:#5c1f1f" title="code over the agents&#x27; kitty_tags: 0/14">0/14</td><td style="background:#612d1a" title="Jev (core-fit.assess), combined by code: 4.0/24">0.17</td><td class="unk" title="estimate: the assembling agent">?</td><td style="background:#653915" title="Jev (core-fit.maturity): declared_unstable">declared unstable</td><td style="background:#653915" title="code: the first count in the agents&#x27; value: 1">1</td><td class="unk" title="hand-read from the agents&#x27; value">?</td><td style="background:#135e45" title="code over the agents&#x27; value: 7 yes, 0 no, 0 unknown">7 of 9</td><td style="background:#5c1f1f" title="code over the agents&#x27; values: Sixel no, iTerm2 no">no · no</td><td class="unk">reference</td><td class="unk">—</td><td class="gap"></td><td class="unk" title="not run">?</td><td class="unk" title="not measured">?</td></tr></tbody></table></div>
+  <figcaption><b>Green is strong and red weak, on each dimension's own scale; hatching is unknown and never counts as zero.</b> The label over each column says who produced it. The two measured columns on the right carry no weight: they exist for four and three roads, and a weighted column measured for a third of the field lets the rest skip it. Weights in <span class='mine'>amber</span> are a first guess.</figcaption>
+</figure>
+<figure id="f-slope">
+  <span class="lbl">13 &middot; The rule and the matrix</span>
+<svg viewBox="0 0 1000 358" role="img" aria-label="Rank under a plain rule against rank under the weighted matrix" font-family="ui-sans-serif, sans-serif"><text x="300" y="18" fill="#8b8a80" font-size="11" text-anchor="end">a rule written before asking any model</text><text x="640" y="18" fill="#8b8a80" font-size="11">the weighted matrix</text><path d="M310 68 C 410 68, 530 40, 630 40" fill="none" stroke="#9ae6c4" stroke-width="3" stroke-opacity="1"/><text x="300" y="72" fill="#fff" font-size="12.5" text-anchor="end">2. rio-vt</text><text x="640" y="44" fill="#fff" font-size="12.5">1. rio-vt</text><text x="996" y="44" fill="#8b8a80" font-size="11" text-anchor="end" font-family="ui-monospace, monospace">0.70</text><path d="M310 124 C 410 124, 530 68, 630 68" fill="none" stroke="#9ae6c4" stroke-width="3" stroke-opacity="1"/><text x="300" y="128" fill="#fff" font-size="12.5" text-anchor="end">4. wezterm-term</text><text x="640" y="72" fill="#fff" font-size="12.5">2. wezterm-term</text><text x="996" y="72" fill="#8b8a80" font-size="11" text-anchor="end" font-family="ui-monospace, monospace">0.69</text><path d="M310 40 C 410 40, 530 96, 630 96" fill="none" stroke="#8fbdf2" stroke-width="3" stroke-opacity="1"/><text x="300" y="44" fill="#c3c2b7" font-size="12.5" text-anchor="end">1. libghostty-vt</text><text x="640" y="100" fill="#c3c2b7" font-size="12.5">3. libghostty-vt</text><text x="996" y="100" fill="#8b8a80" font-size="11" text-anchor="end" font-family="ui-monospace, monospace">0.62</text><path d="M310 96 C 410 96, 530 124, 630 124" fill="none" stroke="#4a4a44" stroke-width="1.4" stroke-opacity="0.7"/><text x="300" y="100" fill="#c3c2b7" font-size="12.5" text-anchor="end">3. Ghostty shadow</text><text x="640" y="128" fill="#c3c2b7" font-size="12.5">4. Ghostty shadow</text><text x="996" y="128" fill="#8b8a80" font-size="11" text-anchor="end" font-family="ui-monospace, monospace">0.55</text><path d="M310 180 C 410 180, 530 152, 630 152" fill="none" stroke="#4a4a44" stroke-width="1.4" stroke-opacity="0.7"/><text x="300" y="184" fill="#c3c2b7" font-size="12.5" text-anchor="end">6. alacritty + TD&#x27;s loop</text><text x="640" y="156" fill="#c3c2b7" font-size="12.5">5. alacritty + TD&#x27;s loop</text><text x="996" y="156" fill="#8b8a80" font-size="11" text-anchor="end" font-family="ui-monospace, monospace">0.51</text><path d="M310 152 C 410 152, 530 180, 630 180" fill="none" stroke="#4a4a44" stroke-width="1.4" stroke-opacity="0.7"/><text x="300" y="156" fill="#c3c2b7" font-size="12.5" text-anchor="end">5. Contour vtbackend</text><text x="640" y="184" fill="#c3c2b7" font-size="12.5">6. Contour vtbackend</text><text x="996" y="184" fill="#8b8a80" font-size="11" text-anchor="end" font-family="ui-monospace, monospace">0.44</text><path d="M310 264 C 410 264, 530 208, 630 208" fill="none" stroke="#4a4a44" stroke-width="1.4" stroke-opacity="0.7"/><text x="300" y="268" fill="#c3c2b7" font-size="12.5" text-anchor="end">9. alacritty graphics fork</text><text x="640" y="212" fill="#c3c2b7" font-size="12.5">7. alacritty graphics fork</text><text x="996" y="212" fill="#8b8a80" font-size="11" text-anchor="end" font-family="ui-monospace, monospace">0.43</text><path d="M310 292 C 410 292, 530 236, 630 236" fill="none" stroke="#4a4a44" stroke-width="1.4" stroke-opacity="0.7"/><text x="300" y="296" fill="#c3c2b7" font-size="12.5" text-anchor="end">10. alacritty + patched vte</text><text x="640" y="240" fill="#c3c2b7" font-size="12.5">8. alacritty + patched vte</text><text x="996" y="240" fill="#8b8a80" font-size="11" text-anchor="end" font-family="ui-monospace, monospace">0.39</text><path d="M310 208 C 410 208, 530 264, 630 264" fill="none" stroke="#4a4a44" stroke-width="1.4" stroke-opacity="0.7"/><text x="300" y="212" fill="#c3c2b7" font-size="12.5" text-anchor="end">7. vt100</text><text x="640" y="268" fill="#c3c2b7" font-size="12.5">9. vt100</text><text x="996" y="268" fill="#8b8a80" font-size="11" text-anchor="end" font-family="ui-monospace, monospace">0.30</text><path d="M310 236 C 410 236, 530 292, 630 292" fill="none" stroke="#4a4a44" stroke-width="1.4" stroke-opacity="0.7"/><text x="300" y="240" fill="#c3c2b7" font-size="12.5" text-anchor="end">8. TD&#x27;s own core</text><text x="640" y="296" fill="#c3c2b7" font-size="12.5">10. TD&#x27;s own core</text><text x="996" y="296" fill="#8b8a80" font-size="11" text-anchor="end" font-family="ui-monospace, monospace">0.28</text><path d="M310 320 C 410 320, 530 320, 630 320" fill="none" stroke="#4a4a44" stroke-width="1.4" stroke-opacity="0.7"/><text x="300" y="324" fill="#c3c2b7" font-size="12.5" text-anchor="end">11. libvterm</text><text x="640" y="324" fill="#c3c2b7" font-size="12.5">11. libvterm</text><text x="996" y="324" fill="#8b8a80" font-size="11" text-anchor="end" font-family="ui-monospace, monospace">0.27</text></svg>
+  <figcaption><b>A plain rule and the weighted matrix pick the same four, in a different order.</b> The rule ranks by picture coverage first, where libghostty-vt's 14 of 14 wins outright. The matrix trades coverage against migration work, API stability, maintainers and build, and moves rio-vt and wezterm-term ahead.</figcaption>
+</figure>
+<figure id="f-sens">
+  <span class="lbl">14 &middot; Ten thousand random weightings</span>
+<div class="scroller"><div class="hbars"><div class="hbar"><div class="l">wezterm-term</div><div class="t"><span style="width:61.5%;background:#199e70"></span><span style="width:36.7%;background:#23543f"></span></div><div class="v">62% · 98%</div></div><div class="hbar"><div class="l">rio-vt</div><div class="t"><span style="width:36.8%;background:#199e70"></span><span style="width:62.3%;background:#23543f"></span></div><div class="v">37% · 99%</div></div><div class="hbar"><div class="l">alacritty + TD&#x27;s loop</div><div class="t"><span style="width:1.0%;background:#199e70"></span><span style="width:36.1%;background:#23543f"></span></div><div class="v">1% · 37%</div></div><div class="hbar"><div class="l">libghostty-vt</div><div class="t"><span style="width:0.6%;background:#199e70"></span><span style="width:38.4%;background:#23543f"></span></div><div class="v">1% · 39%</div></div><div class="hbar"><div class="l">Contour vtbackend</div><div class="t"><span style="width:0.0%;background:#199e70"></span><span style="width:15.5%;background:#23543f"></span></div><div class="v">0% · 15%</div></div><div class="hbar"><div class="l">alacritty graphics fork</div><div class="t"><span style="width:0.0%;background:#199e70"></span><span style="width:10.0%;background:#23543f"></span></div><div class="v">0% · 10%</div></div></div></div><div class="legend"><span><i style="background:#199e70"></i>ranked first</span><span><i style="background:#23543f"></i>in the top three, not first</span></div>
+  <figcaption><b>The first place belongs to two roads.</b> wezterm-term comes first in 62% of random weightings and rio-vt in 37%. With pictures weighted zero, staying on alacritty rises to third, behind the same two.</figcaption>
+</figure>
+<figure id="f-h2h">
+  <span class="lbl">15 &middot; The two leaders</span>
+<div class="scroller"><div class="h2hs"><div class="h2h"><div class="k">Kitty today<small>× 3</small></div><div class="bars"><div class="ba"><span style="width:93%" class="lead"></span><em>13/14</em></div><div class="bb"><span style="width:86%" class=""></span><em>12/14</em></div></div></div><div class="h2h"><div class="k">fits TD<small>× 3</small></div><div class="bars"><div class="ba"><span style="width:74%" class="lead"></span><em>0.74</em></div><div class="bb"><span style="width:59%" class=""></span><em>0.59</em></div></div></div><div class="h2h"><div class="k">TD writes<small>× 2.5</small></div><div class="bars"><div class="ba"><span style="width:50%" class="lead"></span><em>L</em></div><div class="bb"><span style="width:25%" class=""></span><em>XL</em></div></div></div><div class="h2h"><div class="k">API settled<small>× 2</small></div><div class="bars"><div class="ba"><span style="width:60%" class=""></span><em>pre-1.0, active</em></div><div class="bb"><span style="width:60%" class=""></span><em>pre-1.0, active</em></div></div></div><div class="h2h"><div class="k">maintainers<small>× 1.5</small></div><div class="bars"><div class="ba"><span style="width:30%" class=""></span><em>1</em></div><div class="bb"><span style="width:100%" class="lead"></span><em>3</em></div></div></div><div class="h2h"><div class="k">build<small>× 1.5</small></div><div class="bars"><div class="ba"><span style="width:70%" class=""></span><em>cargo + C++11</em></div><div class="bb"><span style="width:90%" class="lead"></span><em>cargo + git</em></div></div></div><div class="h2h"><div class="k">VT features<small>× 1</small></div><div class="bars"><div class="ba"><span style="width:100%" class="lead"></span><em>9 of 9</em></div><div class="bb"><span style="width:89%" class=""></span><em>8 of 9</em></div></div></div><div class="h2h"><div class="k">Sixel, iTerm2<small>× 0.5</small></div><div class="bars"><div class="ba"><span style="width:100%" class=""></span><em>yes · yes</em></div><div class="bb"><span style="width:100%" class=""></span><em>yes · yes</em></div></div></div></div></div><div class="legend"><span><i style="background:#3987e5"></i>rio-vt · 0.70</span><span><i style="background:#b18cf0"></i>wezterm-term · 0.69</span><span>brighter bar = leads on that dimension</span></div>
+  <figcaption><b>wezterm-term leads on maintainers and build; rio-vt leads on pictures, fit and the size of the rewrite.</b> Three people carry wezterm-term's recent commits against one for rio-vt, and wezterm-term builds with cargo alone, though from an unpublished git tree. rio-vt is on crates.io, needs a C++11 compiler for one dependency, and keeps placeholders.</figcaption>
+</figure>
+
+<h2 class="sec">What a swap costs TD</h2>
+<p>Whichever road leads, TD pays for it in the code that reads alacritty today. The host, the window and the snapshot passed between
+them all use its types, and neither rio-vt nor libghostty-vt can put its pictures into a snapshot yet.</p>
+<figure id="f-files">
+  <span class="lbl">16 &middot; TD's seven files</span>
+<div class="scroller"><div class="hbars"><div class="hbar"><div class="l"><code>gridwire.rs</code><small>the grid, as the snapshot a window replays · 1,462 lines</small></div><div class="t"><span style="width:100%;background:#3987e5"></span></div><div class="v">19</div></div><div class="hbar"><div class="l"><code>term.rs</code><small>the terminal wrapper · 1,756 lines</small></div><div class="t"><span style="width:95%;background:#3987e5"></span></div><div class="v">18</div></div><div class="hbar"><div class="l"><code>socketpty.rs</code><small>the host side of a pane&#x27;s PTY · 442 lines</small></div><div class="t"><span style="width:63%;background:#3987e5"></span></div><div class="v">12</div></div><div class="hbar"><div class="l"><code>host.rs</code><small>the session host · 4,707 lines</small></div><div class="t"><span style="width:42%;background:#3987e5"></span></div><div class="v">8</div></div><div class="hbar"><div class="l"><code>main.rs</code><small>the window · 37,783 lines</small></div><div class="t"><span style="width:16%;background:#3987e5"></span></div><div class="v">3</div></div><div class="hbar"><div class="l"><code>pane.rs</code><small>drawing a pane · 14,523 lines</small></div><div class="t"><span style="width:16%;background:#3987e5"></span></div><div class="v">3</div></div><div class="hbar"><div class="l"><code>pane/bench.rs</code><small>the workbench face · 4,419 lines</small></div><div class="t"><span style="width:5%;background:#3987e5"></span></div><div class="v">1</div></div></div></div>
+  <figcaption><b>Every file in TD that names alacritty_terminal, by how often.</b> gridwire.rs, which turns the grid into the snapshot a window replays, names it most. A swap rewrites all seven; staying rewrites none and writes the Kitty protocol instead. Counted on main at 81ec545.</figcaption>
+</figure>
+
+<h2 class="sec">Four questions before any code</h2>
+<div class="grill">
+  <div class="ask" id="q-worth"><h3>Are pictures worth a core swap?</h3>
+  <p>With pictures weighted zero, staying on alacritty ranks third. TD's foundation review set this swap aside until image support became a committed feature.</p>
+  <p class="rec"><b>Recommended:</b> decide this first. Every question below assumes yes.</p></div>
+  <div class="ask" id="q-leader"><h3>Three maintainers, or placeholders and a published crate?</h3>
+  <p>That trade is the gap between wezterm-term and rio-vt, and wezterm-term would need a fork on day one for placeholders.</p>
+  <p class="rec"><b>Recommended:</b> rio-vt, if the test below passes. Placeholder cells are text, which TD's snapshot already carries (inferred).</p></div>
+  <div class="ask" id="q-replica"><h3>Can a picture cross from TD's host to its windows?</h3>
+  <p>TD's host parses and each window replays a snapshot. rio-vt's own snapshot covers the visible screen without pictures, and libghostty-vt's leaves pictures out.</p>
+  <p class="rec"><b>Recommended:</b> a spike before choosing, with each of the two as the host's core, a window replaying it, and the pictures compared.</p></div>
+  <div class="ask" id="q-weights"><h3>Are the weights right?</h3>
+  <p>They are a first guess, and changing one re-ranks every road without asking Jev again.</p>
+  <p class="rec"><b>Recommended:</b> leave a note on the matrix with yours.</p></div>
+</div>
+
+<div class="dlgrow">
+  <button data-dlg="dlg-method">How the research ran</button>
+  <button data-dlg="dlg-specs">The two Jev specs</button>
+  <button data-dlg="dlg-cost">What it cost</button>
+  <button data-dlg="dlg-doubts">Doubts</button>
+  <button data-dlg="dlg-sources">Sources</button>
+  <button data-dlg="dlg-cards">Cards for socials</button>
+</div>
+<p class="foot">Nothing in app/ was changed. Everything behind this page is in docs/research/terminal-core.</p>
+</div>
+
+
+<dialog class="sub" id="dlg-method"><div class="dlg-head"><div><h3>How the research ran</h3><p class="repo">research-delight · three rounds · 2026-09-25</p></div><button class="x" data-close>&times;</button></div>
+<div class="dlg-body">
+<p>A research-delight plan named fourteen subjects and thirty fields for each, and marked every field as needing a source, a source or a
+flag, or derived by code. Six agents gathered in parallel, one per cluster, under one rule: a value from a source carries a verbatim quote
+of the passage, no longer than 400 characters, and says whether the agent measured it or inferred it. A merge script refused any value
+that broke the rule. Three rounds ran; the third added nothing new and the run stopped, with thirteen of fourteen subjects complete and
+99% of fields filled. The fourteenth, TD's own core, is a design rather than a project, and its gaps are marked as gaps.</p>
+<h4>The bake-off</h4>
+<p>A fake terminal (bake/fakepty.py) ran each picture program, answered its questions like kitty, and recorded every byte. Three harnesses
+fed those bytes to alacritty_terminal 0.26 and rio-vt 0.5.28 (bake/corebake), libghostty-vt 0.2.1 built with Zig 0.15.2 (bake/ghostbake),
+and wezterm-term at git b09b56c (bake/wezbake), in 4,096-byte chunks, then read back placements, cursor, replies and text. wezterm-term keeps
+no placement map, so its harness rebuilds each placement from the picture slices stored in cells. Timings are medians of three runs on one
+machine over the same 12,988,693-byte recording: libghostty-vt 19 ms, alacritty 40 ms,
+rio-vt 41 ms, wezterm-term 109 ms.</p>
+</div></dialog>
+
+<dialog class="sub" id="dlg-specs"><div class="dlg-head"><div><h3>The two Jev specs</h3><p class="repo">jev/specs · Jev Decision Spec format · status shadow</p></div><button class="x" data-close>&times;</button></div>
+<div class="dlg-body">
+<h4>claim-check, version 3</h4>
+<p>One request per quoted fact, two questions. <code>support</code> is a Choice over states, states part, implies, contradicts and silent,
+judged on the value's headline. <code>other_subject</code> is a Noul: does the quote describe something else. Code computes the rest: whether
+the numbers in the headline appear in the quote, whether the source is primary. The verdict goes to a person when the numbers mismatch, when
+Jev says contradicts, when its confidence is under 0.305, or when the quote is likely about another subject.</p>
+<h4>core-fit, version 2</h4>
+<p>One request per core with thirteen Choice questions over the checked evidence, each answering provides, provides with work, does not,
+or evidence silent; and a second request about how settled the API is. Silent, contested and low-confidence answers route to unknown and
+are drawn grey. Weights inside fit: 3 for a must-have, 2 important, 1 nice. Evaluation: 36 ground-truth cells on the three cores
+the harnesses touched (32 right, 0 wrong, 4 unknown), the question-order reversal (4.4% changed, under the
+10% falsifier), and 21 of 21 traps held.</p>
+<h4>Why two specs and not one</h4>
+<p>The first question is about a quote and the second about an interface. They see different state, and asking them together would let
+a doubt about one leak into the other. The rio-vt experiment tested exactly that leak and found none.</p>
+</div></dialog>
+
+<dialog class="sub" id="dlg-cost"><div class="dlg-head"><div><h3>What it cost</h3><p class="repo">jev/cost.json · summed from every receipt · OpenRouter, typesafe/jev-1.13</p></div><button class="x" data-close>&times;</button></div>
+<div class="dlg-body"><table class="wide"><thead><tr><th>Run</th><th>requests</th><th>questions</th><th>tokens</th><th>cost</th><th>median</th></tr></thead><tbody><tr><td>claim-check, version 3 (of record)</td><td>315</td><td>630</td><td>297,660</td><td>$0.0115</td><td>146 ms</td></tr><tr><td>claim-check, version 1</td><td>315</td><td>630</td><td>296,644</td><td>$0.0116</td><td>148 ms</td></tr><tr><td>claim-check, version 2</td><td>315</td><td>630</td><td>267,018</td><td>$0.0103</td><td>148 ms</td></tr><tr><td>core-fit, version 2 (of record)</td><td>28</td><td>196</td><td>115,070</td><td>$0.0043</td><td>203 ms</td></tr><tr><td>core-fit v1, questions reversed</td><td>28</td><td>196</td><td>114,360</td><td>$0.0043</td><td>179 ms</td></tr><tr><td>rio-vt, four variants</td><td>8</td><td>56</td><td>34,127</td><td>$0.0013</td><td>294 ms</td></tr><tr><td>rio-vt asked eight more times</td><td>16</td><td>112</td><td>68,325</td><td>$0.0026</td><td>175 ms</td></tr><tr><td>core-fit, version 1</td><td>28</td><td>196</td><td>114,367</td><td>$0.0043</td><td>181 ms</td></tr><tr class="sum"><td>all of it</td><td>1,053</td><td>2,646</td><td>1,307,571</td><td>$0.0503</td><td></td></tr></tbody></table><p>Trap probes write no receipts and are not in these totals; there were two probe passes per version, 44 traps each.</p></div></dialog>
+
+<dialog class="sub" id="dlg-doubts"><div class="dlg-head"><div><h3>Doubts</h3><p class="repo">what this rests on that has not been measured</p></div><button class="x" data-close>&times;</button></div>
+<div class="dlg-body"><ul>
+<li><b>The weights are a first guess</b> (hunch). The sensitivity figure shows how far the top depends on them.</li>
+<li><b>Maintainers counts people with 10% or more of last year's commits</b> (measured, crude). It scores Ghostty, with thousands of commits and many contributors, the same as a one-person project because one person carries half.</li>
+<li><b>"TD writes" is an estimate</b> from each dossier's migration notes and TD's seven files, sized S to XXL by the assembling agent (inferred).</li>
+<li><b>Labels and ground truth are the assembling agent's</b>, written from TD's use of alacritty and the harnesses, not by Parker (measured, one labeller).</li>
+<li><b>Timings are three runs on one machine</b> over one recording, and the wezterm-term harness scans its cells to find pictures, which the others do not (measured, rough).</li>
+<li><b>Placeholder cells surviving TD's snapshot</b> is inferred from gridwire.rs re-emitting combining marks, not tested.</li>
+</ul></div></dialog>
+
+<dialog class="sub" id="dlg-sources"><div class="dlg-head"><div><h3>Sources</h3><p class="repo">primary sources each agent read, per subject</p></div><button class="x" data-close>&times;</button></div>
+<div class="dlg-body"><ul class='srcs'><li><b>alacritty + TD&#x27;s loop</b> <a href="https://crates.io/api/v1/crates/alacritty_terminal">crates.io/api/v1/crates/alacritty_terminal</a> <a href="https://crates.io/api/v1/crates/alacritty_terminal/reverse_dependencies">crates.io/api/v1/crates/alacritty_terminal/reverse_dependenc</a> <a href="https://api.github.com/repos/alacritty/alacritty/commits?since=2025-09-25T00:00:00Z">api.github.com/repos/alacritty/alacritty/commits?since=2025-</a> <a href="https://github.com/alacritty/alacritty/blob/94e7c8874e526b1e67b349d9ba30ddf81669119e/extra/man/alacritty-escapes.7.scd">github.com/alacritty/alacritty/blob/94e7c8874e526b1e67b349d9</a> <a href="https://github.com/alacritty/alacritty/blob/94e7c8874e526b1e67b349d9ba30ddf81669119e/alacritty_terminal/src/term/mod.rs">github.com/alacritty/alacritty/blob/94e7c8874e526b1e67b349d9</a> <a href="https://github.com/alacritty/alacritty/blob/94e7c8874e526b1e67b349d9ba30ddf81669119e/alacritty_terminal/src/term/cell.rs">github.com/alacritty/alacritty/blob/94e7c8874e526b1e67b349d9</a> <a href="https://github.com/alacritty/alacritty/blob/94e7c8874e526b1e67b349d9ba30ddf81669119e/alacritty_terminal/src/event.rs">github.com/alacritty/alacritty/blob/94e7c8874e526b1e67b349d9</a> <a href="https://github.com/alacritty/alacritty/blob/94e7c8874e526b1e67b349d9ba30ddf81669119e/alacritty_terminal/src/event_loop.rs">github.com/alacritty/alacritty/blob/94e7c8874e526b1e67b349d9</a></li><li><b>alacritty + patched vte</b> <a href="https://github.com/alacritty/vte/issues/109">github.com/alacritty/vte/issues/109</a> <a href="https://github.com/alacritty/vte/pull/110">github.com/alacritty/vte/pull/110</a> <a href="https://github.com/alacritty/vte/pull/115">github.com/alacritty/vte/pull/115</a> <a href="https://github.com/alacritty/vte/pull/133">github.com/alacritty/vte/pull/133</a> <a href="https://github.com/alacritty/vte/pull/135">github.com/alacritty/vte/pull/135</a> <a href="https://github.com/alacritty/alacritty/pull/8507">github.com/alacritty/alacritty/pull/8507</a> <a href="https://raw.githubusercontent.com/boazy/vte/37413f013a27db77598772825e0d3a3b030fc9ac/Cargo.toml">raw.githubusercontent.com/boazy/vte/37413f013a27db7759877282</a> <a href="https://github.com/warpdotdev/vte/tree/copied-apc-support-0.15.0">github.com/warpdotdev/vte/tree/copied-apc-support-0.15.0</a></li><li><b>alacritty graphics fork</b> <a href="https://github.com/alacritty/alacritty/pull/4763">github.com/alacritty/alacritty/pull/4763</a> <a href="https://github.com/alacritty/alacritty/pull/4763#issuecomment-3236877718">github.com/alacritty/alacritty/pull/4763#issuecomment-323687</a> <a href="https://github.com/alacritty/alacritty/pull/4763#issuecomment-1685121031">github.com/alacritty/alacritty/pull/4763#issuecomment-168512</a> <a href="https://github.com/alacritty/alacritty/pull/4763#issuecomment-2136102910">github.com/alacritty/alacritty/pull/4763#issuecomment-213610</a> <a href="https://github.com/alacritty/alacritty/pull/4763#issuecomment-774202448">github.com/alacritty/alacritty/pull/4763#issuecomment-774202</a> <a href="https://github.com/alacritty/alacritty/pull/4763#issuecomment-774136162">github.com/alacritty/alacritty/pull/4763#issuecomment-774136</a> <a href="https://api.github.com/repos/ayosec/alacritty/releases">api.github.com/repos/ayosec/alacritty/releases</a> <a href="https://api.github.com/repos/ayosec/alacritty/compare/alacritty:alacritty:v0.17.0...ayosec:alacritty:v0.17.0-graphics">api.github.com/repos/ayosec/alacritty/compare/alacritty:alac</a></li><li><b>rio-vt</b> <a href="https://github.com/raphamorim/rio/blob/37624389e8dde79ba25a8147a5e809c01d16d1c9/rio-vt/README.md">github.com/raphamorim/rio/blob/37624389e8dde79ba25a8147a5e80</a> <a href="https://github.com/raphamorim/rio/blob/37624389e8dde79ba25a8147a5e809c01d16d1c9/rio-vt/Cargo.toml">github.com/raphamorim/rio/blob/37624389e8dde79ba25a8147a5e80</a> <a href="https://github.com/raphamorim/rio/blob/37624389e8dde79ba25a8147a5e809c01d16d1c9/Cargo.toml">github.com/raphamorim/rio/blob/37624389e8dde79ba25a8147a5e80</a> <a href="https://github.com/raphamorim/rio/blob/37624389e8dde79ba25a8147a5e809c01d16d1c9/rio-vt/src/lib.rs">github.com/raphamorim/rio/blob/37624389e8dde79ba25a8147a5e80</a> <a href="https://github.com/raphamorim/rio/blob/37624389e8dde79ba25a8147a5e809c01d16d1c9/rio-vt/src/crosswords/square.rs">github.com/raphamorim/rio/blob/37624389e8dde79ba25a8147a5e80</a> <a href="https://github.com/raphamorim/rio/blob/37624389e8dde79ba25a8147a5e809c01d16d1c9/rio-vt/src/crosswords/style.rs">github.com/raphamorim/rio/blob/37624389e8dde79ba25a8147a5e80</a> <a href="https://github.com/raphamorim/rio/blob/37624389e8dde79ba25a8147a5e809c01d16d1c9/rio-vt/src/crosswords/grid/mod.rs">github.com/raphamorim/rio/blob/37624389e8dde79ba25a8147a5e80</a> <a href="https://github.com/raphamorim/rio/blob/37624389e8dde79ba25a8147a5e809c01d16d1c9/rio-vt/src/crosswords/mod.rs">github.com/raphamorim/rio/blob/37624389e8dde79ba25a8147a5e80</a></li><li><b>wezterm-term</b> <a href="https://github.com/wezterm/wezterm/blob/c4b1d89fd3cf4b44fdab03df6ac7df925a690060/term/README.md">github.com/wezterm/wezterm/blob/c4b1d89fd3cf4b44fdab03df6ac7</a> <a href="https://github.com/wezterm/wezterm/blob/c4b1d89fd3cf4b44fdab03df6ac7df925a690060/term/Cargo.toml">github.com/wezterm/wezterm/blob/c4b1d89fd3cf4b44fdab03df6ac7</a> <a href="https://github.com/wezterm/wezterm/blob/c4b1d89fd3cf4b44fdab03df6ac7df925a690060/Cargo.toml">github.com/wezterm/wezterm/blob/c4b1d89fd3cf4b44fdab03df6ac7</a> <a href="https://github.com/wezterm/wezterm/blob/c4b1d89fd3cf4b44fdab03df6ac7df925a690060/LICENSE.md">github.com/wezterm/wezterm/blob/c4b1d89fd3cf4b44fdab03df6ac7</a> <a href="https://github.com/wezterm/wezterm/blob/c4b1d89fd3cf4b44fdab03df6ac7df925a690060/term/src/terminal.rs">github.com/wezterm/wezterm/blob/c4b1d89fd3cf4b44fdab03df6ac7</a> <a href="https://github.com/wezterm/wezterm/blob/c4b1d89fd3cf4b44fdab03df6ac7df925a690060/term/src/config.rs">github.com/wezterm/wezterm/blob/c4b1d89fd3cf4b44fdab03df6ac7</a> <a href="https://github.com/wezterm/wezterm/blob/c4b1d89fd3cf4b44fdab03df6ac7df925a690060/term/src/screen.rs">github.com/wezterm/wezterm/blob/c4b1d89fd3cf4b44fdab03df6ac7</a> <a href="https://github.com/wezterm/wezterm/blob/c4b1d89fd3cf4b44fdab03df6ac7df925a690060/term/src/terminalstate/mod.rs">github.com/wezterm/wezterm/blob/c4b1d89fd3cf4b44fdab03df6ac7</a></li><li><b>vt100</b> <a href="https://github.com/doy/vt100-rust">github.com/doy/vt100-rust</a> <a href="https://crates.io/api/v1/crates/vt100">crates.io/api/v1/crates/vt100</a> <a href="https://crates.io/api/v1/crates/vt100/reverse_dependencies">crates.io/api/v1/crates/vt100/reverse_dependencies</a> <a href="https://docs.rs/vt100/0.16.2/vt100/struct.Parser.html">docs.rs/vt100/0.16.2/vt100/struct.Parser.html</a> <a href="https://api.github.com/repos/doy/vt100-rust/issues">api.github.com/repos/doy/vt100-rust/issues</a> <a href="https://api.github.com/repos/doy/vt100-rust/contributors">api.github.com/repos/doy/vt100-rust/contributors</a> <a href="https://raw.githubusercontent.com/console-rs/indicatif/main/Cargo.toml">raw.githubusercontent.com/console-rs/indicatif/main/Cargo.to</a> <a href="https://github.com/a-kenji/tui-term/blob/development/Cargo.toml">github.com/a-kenji/tui-term/blob/development/Cargo.toml</a></li><li><b>TD&#x27;s own core</b> <a href="https://crates.io/api/v1/crates/vte">crates.io/api/v1/crates/vte</a> <a href="https://crates.io/api/v1/crates/vtparse">crates.io/api/v1/crates/vtparse</a> <a href="https://crates.io/api/v1/crates/sixel-image">crates.io/api/v1/crates/sixel-image</a> <a href="https://github.com/zellij-org/zellij">github.com/zellij-org/zellij</a> <a href="https://github.com/zellij-org/zellij/pull/5428">github.com/zellij-org/zellij/pull/5428</a> <a href="https://github.com/zellij-org/zellij/pull/1557">github.com/zellij-org/zellij/pull/1557</a> <a href="https://github.com/warpdotdev/warp">github.com/warpdotdev/warp</a> <a href="https://github.com/warpdotdev/vte">github.com/warpdotdev/vte</a></li><li><b>libghostty-vt</b> <a href="https://mitchellh.com/writing/libghostty-is-coming">mitchellh.com/writing/libghostty-is-coming</a> <a href="https://libghostty.tip.ghostty.org/">libghostty.tip.ghostty.org/</a> <a href="https://libghostty.tip.ghostty.org/group__kitty__graphics.html">libghostty.tip.ghostty.org/group__kitty__graphics.html</a> <a href="https://libghostty.tip.ghostty.org/group__snapshot.html">libghostty.tip.ghostty.org/group__snapshot.html</a> <a href="https://libghostty.tip.ghostty.org/group__render.html">libghostty.tip.ghostty.org/group__render.html</a> <a href="https://libghostty.tip.ghostty.org/group__terminal.html">libghostty.tip.ghostty.org/group__terminal.html</a> <a href="https://libghostty.tip.ghostty.org/group__formatter.html">libghostty.tip.ghostty.org/group__formatter.html</a> <a href="https://libghostty.tip.ghostty.org/group__style.html">libghostty.tip.ghostty.org/group__style.html</a></li><li><b>libvterm</b> <a href="https://www.leonerd.org.uk/code/libvterm/">leonerd.org.uk/code/libvterm/</a> <a href="https://www.leonerd.org.uk/code/libvterm/libvterm-0.3.3.tar.gz">leonerd.org.uk/code/libvterm/libvterm-0.3.3.tar.gz</a> <a href="https://api.launchpad.net/devel/libvterm">api.launchpad.net/devel/libvterm</a> <a href="https://api.launchpad.net/devel/libvterm/releases">api.launchpad.net/devel/libvterm/releases</a> <a href="https://api.launchpad.net/devel/~libvterm/libvterm/trunk">api.launchpad.net/devel/~libvterm/libvterm/trunk</a> <a href="https://github.com/neovim/libvterm/blob/nvim/README.md">github.com/neovim/libvterm/blob/nvim/README.md</a> <a href="https://github.com/neovim/libvterm/tree/mirror">github.com/neovim/libvterm/tree/mirror</a> <a href="https://github.com/neovim/libvterm/blob/mirror/doc/seqs.txt">github.com/neovim/libvterm/blob/mirror/doc/seqs.txt</a></li><li><b>Contour vtbackend</b> <a href="https://github.com/contour-terminal/contour/blob/2ec3c63cfd268f1e466d992e2352fe328d833106/README.md">github.com/contour-terminal/contour/blob/2ec3c63cfd268f1e466</a> <a href="https://github.com/contour-terminal/contour/blob/2ec3c63cfd268f1e466d992e2352fe328d833106/metainfo.xml">github.com/contour-terminal/contour/blob/2ec3c63cfd268f1e466</a> <a href="https://github.com/contour-terminal/contour/blob/2ec3c63cfd268f1e466d992e2352fe328d833106/CMakeLists.txt">github.com/contour-terminal/contour/blob/2ec3c63cfd268f1e466</a> <a href="https://github.com/contour-terminal/contour/blob/2ec3c63cfd268f1e466d992e2352fe328d833106/cmake/ContourThirdParties.cmake">github.com/contour-terminal/contour/blob/2ec3c63cfd268f1e466</a> <a href="https://github.com/contour-terminal/contour/blob/2ec3c63cfd268f1e466d992e2352fe328d833106/src/CMakeLists.txt">github.com/contour-terminal/contour/blob/2ec3c63cfd268f1e466</a> <a href="https://github.com/contour-terminal/contour/blob/2ec3c63cfd268f1e466d992e2352fe328d833106/src/vtbackend/CMakeLists.txt">github.com/contour-terminal/contour/blob/2ec3c63cfd268f1e466</a> <a href="https://github.com/contour-terminal/contour/blob/2ec3c63cfd268f1e466d992e2352fe328d833106/src/crispy/CMakeLists.txt">github.com/contour-terminal/contour/blob/2ec3c63cfd268f1e466</a> <a href="https://github.com/contour-terminal/contour/blob/2ec3c63cfd268f1e466d992e2352fe328d833106/src/text_shaper/CMakeLists.txt">github.com/contour-terminal/contour/blob/2ec3c63cfd268f1e466</a></li><li><b>kitty&#x27;s core</b> <a href="https://github.com/kovidgoyal/kitty/blob/42d3cb2148acc182946901091dbbb0431a5a3344/kitty/graphics.c">github.com/kovidgoyal/kitty/blob/42d3cb2148acc182946901091db</a> <a href="https://github.com/kovidgoyal/kitty/blob/42d3cb2148acc182946901091dbbb0431a5a3344/kitty/screen.c">github.com/kovidgoyal/kitty/blob/42d3cb2148acc182946901091db</a> <a href="https://github.com/kovidgoyal/kitty/blob/42d3cb2148acc182946901091dbbb0431a5a3344/kitty/vt-parser.c">github.com/kovidgoyal/kitty/blob/42d3cb2148acc182946901091db</a> <a href="https://github.com/kovidgoyal/kitty/blob/42d3cb2148acc182946901091dbbb0431a5a3344/kitty/modes.h">github.com/kovidgoyal/kitty/blob/42d3cb2148acc182946901091db</a> <a href="https://github.com/kovidgoyal/kitty/blob/42d3cb2148acc182946901091dbbb0431a5a3344/kitty/line.h">github.com/kovidgoyal/kitty/blob/42d3cb2148acc182946901091db</a> <a href="https://github.com/kovidgoyal/kitty/blob/42d3cb2148acc182946901091dbbb0431a5a3344/kitty/child-monitor.c">github.com/kovidgoyal/kitty/blob/42d3cb2148acc182946901091db</a> <a href="https://github.com/kovidgoyal/kitty/blob/42d3cb2148acc182946901091dbbb0431a5a3344/kitty/window.py">github.com/kovidgoyal/kitty/blob/42d3cb2148acc182946901091db</a> <a href="https://github.com/kovidgoyal/kitty/blob/42d3cb2148acc182946901091dbbb0431a5a3344/kitty/rc/get_text.py">github.com/kovidgoyal/kitty/blob/42d3cb2148acc182946901091db</a></li><li><b>Ghostty shadow</b> <a href="https://github.com/kovidgoyal/kitty/blob/42d3cb2148acc182946901091dbbb0431a5a3344/docs/graphics-protocol.rst">github.com/kovidgoyal/kitty/blob/42d3cb2148acc182946901091db</a> <a href="https://github.com/kovidgoyal/kitty/blob/42d3cb2148acc182946901091dbbb0431a5a3344/kitty/graphics.c">github.com/kovidgoyal/kitty/blob/42d3cb2148acc182946901091db</a> <a href="https://github.com/kovidgoyal/kitty/blob/42d3cb2148acc182946901091dbbb0431a5a3344/kitty/screen.c">github.com/kovidgoyal/kitty/blob/42d3cb2148acc182946901091db</a> <a href="https://github.com/kovidgoyal/kitty/blob/42d3cb2148acc182946901091dbbb0431a5a3344/kittens/icat/transmit.go">github.com/kovidgoyal/kitty/blob/42d3cb2148acc182946901091db</a> <a href="https://github.com/ghostty-org/ghostty/blob/a887df42c56f6de86c0fe6da9c4eeca37931e083/src/terminal/kitty/graphics_exec.zig">github.com/ghostty-org/ghostty/blob/a887df42c56f6de86c0fe6da</a> <a href="https://github.com/ghostty-org/ghostty/blob/a887df42c56f6de86c0fe6da9c4eeca37931e083/src/terminal/kitty/graphics_command.zig">github.com/ghostty-org/ghostty/blob/a887df42c56f6de86c0fe6da</a> <a href="https://github.com/ghostty-org/ghostty/blob/a887df42c56f6de86c0fe6da9c4eeca37931e083/src/terminal/kitty/graphics_storage.zig">github.com/ghostty-org/ghostty/blob/a887df42c56f6de86c0fe6da</a> <a href="https://github.com/ghostty-org/ghostty/blob/a887df42c56f6de86c0fe6da9c4eeca37931e083/src/terminal/Terminal.zig">github.com/ghostty-org/ghostty/blob/a887df42c56f6de86c0fe6da</a></li><li><b>Zellij&#x27;s grid</b> <a href="https://github.com/zellij-org/zellij/tree/2fce032ccebd2e980b9f86eed1c121674e9059fd">github.com/zellij-org/zellij/tree/2fce032ccebd2e980b9f86eed1</a> <a href="https://github.com/zellij-org/zellij/blob/2fce032ccebd2e980b9f86eed1c121674e9059fd/zellij-server/src/panes/kitty_graphics/interceptor.rs">github.com/zellij-org/zellij/blob/2fce032ccebd2e980b9f86eed1</a> <a href="https://github.com/zellij-org/zellij/blob/2fce032ccebd2e980b9f86eed1c121674e9059fd/zellij-server/src/panes/kitty_graphics/parser.rs">github.com/zellij-org/zellij/blob/2fce032ccebd2e980b9f86eed1</a> <a href="https://github.com/zellij-org/zellij/blob/2fce032ccebd2e980b9f86eed1c121674e9059fd/zellij-server/src/panes/kitty_graphics/store.rs">github.com/zellij-org/zellij/blob/2fce032ccebd2e980b9f86eed1</a> <a href="https://github.com/zellij-org/zellij/blob/2fce032ccebd2e980b9f86eed1c121674e9059fd/zellij-server/src/panes/kitty_graphics/replies.rs">github.com/zellij-org/zellij/blob/2fce032ccebd2e980b9f86eed1</a> <a href="https://github.com/zellij-org/zellij/blob/2fce032ccebd2e980b9f86eed1c121674e9059fd/zellij-server/src/panes/kitty_graphics/grid_state.rs">github.com/zellij-org/zellij/blob/2fce032ccebd2e980b9f86eed1</a> <a href="https://github.com/zellij-org/zellij/blob/2fce032ccebd2e980b9f86eed1c121674e9059fd/zellij-server/src/panes/kitty_graphics/mod.rs">github.com/zellij-org/zellij/blob/2fce032ccebd2e980b9f86eed1</a> <a href="https://github.com/zellij-org/zellij/blob/2fce032ccebd2e980b9f86eed1c121674e9059fd/zellij-server/src/panes/grid.rs">github.com/zellij-org/zellij/blob/2fce032ccebd2e980b9f86eed1</a></li><li><b>zmx</b> <a href="https://zmx.sh/">zmx.sh/</a> <a href="https://github.com/neurosnap/zmx">github.com/neurosnap/zmx</a> <a href="https://github.com/neurosnap/zmx/blob/878a8b0cef19448575b4f9fa1619e627b81ddb80/README.md">github.com/neurosnap/zmx/blob/878a8b0cef19448575b4f9fa1619e6</a> <a href="https://github.com/neurosnap/zmx/blob/878a8b0cef19448575b4f9fa1619e627b81ddb80/build.zig.zon">github.com/neurosnap/zmx/blob/878a8b0cef19448575b4f9fa1619e6</a> <a href="https://github.com/neurosnap/zmx/blob/878a8b0cef19448575b4f9fa1619e627b81ddb80/build.zig">github.com/neurosnap/zmx/blob/878a8b0cef19448575b4f9fa1619e6</a> <a href="https://github.com/neurosnap/zmx/blob/878a8b0cef19448575b4f9fa1619e627b81ddb80/src/loop.zig">github.com/neurosnap/zmx/blob/878a8b0cef19448575b4f9fa1619e6</a> <a href="https://github.com/neurosnap/zmx/blob/878a8b0cef19448575b4f9fa1619e627b81ddb80/src/util.zig">github.com/neurosnap/zmx/blob/878a8b0cef19448575b4f9fa1619e6</a> <a href="https://github.com/neurosnap/zmx/blob/878a8b0cef19448575b4f9fa1619e627b81ddb80/src/ipc.zig">github.com/neurosnap/zmx/blob/878a8b0cef19448575b4f9fa1619e6</a></li></ul><p>Every value's own source and quote are in docs/research/terminal-core/run/terminal-core-candidates.html.</p></div></dialog>
+
+<dialog class="sub wide" id="dlg-cards"><div class="dlg-head"><div><h3>Cards for socials</h3><p class="repo">1200×630 · rendered to reports/2026-09-25-core-swap-card-1..4.png</p></div><button class="x" data-close>&times;</button></div>
+<div class="dlg-body"><div class="cards"><div class="card-frame"><div class="card-scale"><div class="card-social"><div class="brand">Terminal Delight &middot; Core Swap</div><h2>Six picture programs.<br>Four terminal cores.</h2><div class="split"><p>The emulator Terminal Delight uses today kept 0 of 6 pictures. rio-vt and libghostty-vt placed all 6 on the same cells. wezterm-term placed 4.</p><svg viewBox="0 0 520 250" font-family="ui-monospace, monospace"><text x="0" y="36" fill="#c9c8bd" font-size="17">alacritty (TD today)</text><rect x="250" y="16" width="32" height="32" rx="7" fill="#3b2320" stroke="#ec835a" stroke-width="1.5"/><rect x="292" y="16" width="32" height="32" rx="7" fill="#3b2320" stroke="#ec835a" stroke-width="1.5"/><rect x="334" y="16" width="32" height="32" rx="7" fill="#3b2320" stroke="#ec835a" stroke-width="1.5"/><rect x="376" y="16" width="32" height="32" rx="7" fill="#3b2320" stroke="#ec835a" stroke-width="1.5"/><rect x="418" y="16" width="32" height="32" rx="7" fill="#3b2320" stroke="#ec835a" stroke-width="1.5"/><rect x="460" y="16" width="32" height="32" rx="7" fill="#3b2320" stroke="#ec835a" stroke-width="1.5"/><text x="0" y="92" fill="#c9c8bd" font-size="17">rio-vt</text><rect x="250" y="72" width="32" height="32" rx="7" fill="#199e70" stroke="#5fcda4" stroke-width="1.5"/><rect x="292" y="72" width="32" height="32" rx="7" fill="#199e70" stroke="#5fcda4" stroke-width="1.5"/><rect x="334" y="72" width="32" height="32" rx="7" fill="#199e70" stroke="#5fcda4" stroke-width="1.5"/><rect x="376" y="72" width="32" height="32" rx="7" fill="#199e70" stroke="#5fcda4" stroke-width="1.5"/><rect x="418" y="72" width="32" height="32" rx="7" fill="#199e70" stroke="#5fcda4" stroke-width="1.5"/><rect x="460" y="72" width="32" height="32" rx="7" fill="#199e70" stroke="#5fcda4" stroke-width="1.5"/><text x="0" y="148" fill="#c9c8bd" font-size="17">libghostty-vt</text><rect x="250" y="128" width="32" height="32" rx="7" fill="#199e70" stroke="#5fcda4" stroke-width="1.5"/><rect x="292" y="128" width="32" height="32" rx="7" fill="#199e70" stroke="#5fcda4" stroke-width="1.5"/><rect x="334" y="128" width="32" height="32" rx="7" fill="#199e70" stroke="#5fcda4" stroke-width="1.5"/><rect x="376" y="128" width="32" height="32" rx="7" fill="#199e70" stroke="#5fcda4" stroke-width="1.5"/><rect x="418" y="128" width="32" height="32" rx="7" fill="#199e70" stroke="#5fcda4" stroke-width="1.5"/><rect x="460" y="128" width="32" height="32" rx="7" fill="#199e70" stroke="#5fcda4" stroke-width="1.5"/><text x="0" y="204" fill="#c9c8bd" font-size="17">wezterm-term</text><rect x="250" y="184" width="32" height="32" rx="7" fill="#199e70" stroke="#5fcda4" stroke-width="1.5"/><rect x="292" y="184" width="32" height="32" rx="7" fill="#199e70" stroke="#5fcda4" stroke-width="1.5"/><rect x="334" y="184" width="32" height="32" rx="7" fill="#3b2320" stroke="#ec835a" stroke-width="1.5"/><rect x="376" y="184" width="32" height="32" rx="7" fill="#3b2320" stroke="#ec835a" stroke-width="1.5"/><rect x="418" y="184" width="32" height="32" rx="7" fill="#199e70" stroke="#5fcda4" stroke-width="1.5"/><rect x="460" y="184" width="32" height="32" rx="7" fill="#199e70" stroke="#5fcda4" stroke-width="1.5"/></svg></div><div class="foot">parkerbrown.dev</div></div></div></div><div class="card-frame"><div class="card-scale"><div class="card-social"><div class="brand">Terminal Delight &middot; Core Swap</div><h2>315 facts, each checked<br>against its own quote</h2><p>Six research agents copied the passage behind each fact. Jev asked whether each passage says what the agent wrote, and 29 of 315 said it outright. Every Jev call behind this decision: 1,053 requests, $0.05.</p><div class="cstack"><span style="flex:29;background:#199e70"><b>29</b><em>stated</em></span><span style="flex:29;background:#3987e5"><b>29</b><em>implied</em></span><span style="flex:63;background:#c98500"><b>63</b><em>stated in part</em></span><span style="flex:98;background:#6f6e66"><b>98</b><em>quote silent</em></span><span style="flex:96;background:#d03b3b"><b>96</b><em>to a person</em></span></div><div class="foot">parkerbrown.dev</div></div></div></div><div class="card-frame"><div class="card-scale"><div class="card-social"><div class="brand">Terminal Delight &middot; Core Swap</div><h2>Two roads,<br>a hundredth apart</h2><div class="split"><p>rio-vt 0.70, wezterm-term 0.69. Across 10,000 random weightings they split 37% to 62%. The weights decide, and a person sets them.</p><div class="cbars"><div class="cb"><span>rio-vt</span><i style="width:70%"></i><b>0.70</b></div><div class="cb"><span>wezterm-term</span><i style="width:69%"></i><b>0.69</b></div><div class="cb"><span>libghostty-vt</span><i style="width:62%"></i><b>0.62</b></div><div class="cb"><span>Ghostty shadow</span><i style="width:55%"></i><b>0.55</b></div><div class="cb"><span>alacritty + TD&#x27;s loop</span><i style="width:51%"></i><b>0.51</b></div></div></div><div class="foot">parkerbrown.dev</div></div></div></div><div class="card-frame"><div class="card-scale"><div class="card-social"><div class="brand">Terminal Delight &middot; Core Swap</div><h2>Jev never picked<br>the winner</h2><p>It answered two narrow questions, about quotes and about interfaces, and code did the ranking over stored answers. Change a weight and the ranking re-runs without asking Jev again.</p><div class="chips"><span class="chip agent">agents gather</span><span class="chip code">code gates quotes</span><span class="chip jev">Jev judges quotes</span><span class="chip jev">Jev judges fit</span><span class="chip code">code ranks</span><span class="chip person">a person decides</span></div><div class="foot">parkerbrown.dev</div></div></div></div></div></div></dialog>
+
+<!-- decision-brief — the markup the notes system needs.
+     Paste immediately before the closing </body>. notes.js finds these by id.
+     Nothing here needs editing except NOTES_FILE. -->
+
+<div class="notebar" id="notebar">
+  <span class="cnt"><b id="note-count">0</b> notes</span>
+  <button id="btn-export" class="primary" data-note-action="export"
+          title="Anchored note map for pasting into a prompt">&#x1F4CB; copy map</button>
+  <button id="btn-embed" data-note-action="embed"
+          title="Download this file with your notes baked in">&#x1F4BE; save into file</button>
+  <button id="btn-clear" data-note-action="clear" title="Delete every note">&#x2715;</button>
+</div>
+
+<dialog id="d-note">
+  <div class="dlg-head">
+    <div>
+      <h3 id="note-title">Note</h3>
+      <p class="repo" id="note-anchor">&nbsp;</p>
+    </div>
+    <button class="x" data-close>&times;</button>
+  </div>
+  <div class="dlg-body">
+    <ul id="note-list"></ul>
+    <p id="note-none">No notes on this yet.</p>
+    <textarea id="note-text"
+      placeholder="Your note. Saved against this element and readable by an agent once you save into the file."></textarea>
+    <div class="note-actions">
+      <button class="save" data-note-action="add">Add note</button>
+      <button data-close>Close</button>
+      <span class="hintk">Ctrl+Enter to add</span>
+    </div>
+  </div>
+</dialog>
+
+<dialog id="d-export">
+  <div class="dlg-head">
+    <div>
+      <h3>Note map</h3>
+      <p class="repo">Anchored to element ids in this file &middot; paste straight into a prompt</p>
+    </div>
+    <button class="x" data-close>&times;</button>
+  </div>
+  <div class="dlg-body">
+    <p style="margin-bottom:12px">
+      Each line is anchored to an element id, so an agent can locate the passage without you
+      pasting the file. Prompt shape: <em>"read my notes in <code>&lt;filename&gt;</code> and act
+      on them."</em>
+    </p>
+    <textarea id="export-out" readonly></textarea>
+    <p class="tokest" id="export-est"></p>
+    <div class="note-actions">
+      <button class="save" data-note-action="copy">Copy to clipboard</button>
+      <button data-close>Close</button>
+    </div>
+  </div>
+</dialog>
+
+<!-- Notes and concurs are baked in here by "save into file". Leave them empty and leave them in,
+     with their data-format: it names the format notes.js writes, and other writers check it. -->
+<script type="application/json" id="report-notes" data-format="1">{}</script>
+<script type="application/json" id="report-concurs" data-format="1">{}</script>
+
+<script>
+  /* Set before notes.js runs. Used for the storage key and the download filename. */
+  window.NOTES_FILE = '2026-09-25-core-swap.html';
+</script>
+<script>
+/* decision-brief — reader notes.
+ *
+ * Drop-in. No build step, no dependencies. Paste this file's contents inline inside a
+ * script element, after the document body — a decision brief must survive being emailed
+ * as one file, so never load it with a src attribute.
+ *
+ * NOTHING IN THIS FILE MAY CONTAIN THE LITERAL CLOSING SCRIPT TAG, not even inside a
+ * comment or a string: an HTML parser ends the script element at the first one it sees,
+ * and everything after it silently becomes page content. Write it broken up, e.g.
+ * "<\/script>", if you ever need to emit one.
+ *
+ * Three outputs, in the order they matter:
+ *   1. copy map    — anchored note map, ~1% of the tokens of the whole document
+ *   2. save into   — bakes notes into a downloadable copy so an agent can READ them
+ *   3. localStorage — live persistence between reloads
+ *
+ * Why the map exists: pasting a whole annotated report into a prompt costs thousands of
+ * tokens; pasting bare notes loses which passage each one is about. The map is the third
+ * option — [element-id] + note, so the agent greps the id and finds the passage itself.
+ *
+ * CONCUR. Every decision (.ask) also gets a space on its right that takes a rubber stamp —
+ * the commonest answer a decision gets, and the quickest way to say the work was good.
+ * A concur is independent of notes, rides in the map as "✓ concur" on the decision's own
+ * line, and is baked into its own island (#report-concurs) so the notes island keeps the
+ * shape every saved brief already has.
+ *
+ * FORMAT 1. Other programs write these islands too (Terminal Delight edits a brief's notes
+ * in place), so what a save writes is a contract, pinned byte for byte by the fixtures in
+ * fixtures/notes-format/ and its reference writer. Each island carries data-format and a
+ * revision, data-rev, the time of the write. Island JSON escapes "<" before "/" and "!",
+ * and the plain-text mirror breaks any sequence that would end an HTML comment. A change
+ * to any of that bumps FORMAT and the fixtures in the same commit.
+ *
+ * Configure before this script runs (all optional):
+ *   window.NOTES_FILE     — filename used for the storage key and the download. Default: location basename.
+ *   window.NOTES_TARGETS  — [[selector, prefix], ...] overriding what gets an affordance.
+ *   window.CONCUR_TARGETS — selector for what takes a concur stamp. Default: the grill's decisions.
+ */
+(function () {
+  'use strict';
+
+  var FILE = window.NOTES_FILE ||
+    (location.pathname.split('/').pop() || 'decision-brief.html');
+  var KEY = 'notes:' + FILE;
+
+  /* Default targets. A prefix keeps exported anchors readable and grouped.
+     Override wholesale with window.NOTES_TARGETS if a brief's shape differs.
+
+     THE GRILL COMES FIRST, AND IT IS NOT OPTIONAL. Until 2026-09-02 this list
+     covered five of the seven components layout.md tells you to build and
+     omitted the grill — so the one section whose entire purpose is a decision
+     the reader has to make was the one section the reader could not comment on.
+     Two briefs shipped that way, each having invented its own class name
+     (`grill-q`, then `q`) because nothing here named one. Both spellings are
+     matched below; `.ask` is the name to use going forward. If you add a
+     component, add it here in the same commit.
+
+     FIGURES ARE SECOND, for the same reason. The 2026-09-15 attention-spine
+     brief carried eleven pictures and had to override NOTES_TARGETS wholesale
+     to make any of them annotatable, because `figure` was not here — a fork of
+     this list living in one report, where nothing else would inherit it. The
+     pictures are the part a reader argues with, so they are in the default list
+     now. `titleOf()` already reads `.lbl`, so a figure labelled `03 · What
+     opening costs` anchors as `fig-03-what-opening-costs`. */
+  var TARGETS = window.NOTES_TARGETS || [
+    ['.grill .q, .grill-q, .ask', 'ask'],
+    ['figure', 'fig'],
+    ['.card', 'verdict'],
+    ['.esc-list li', 'readfirst'],
+    ['.finding', 'finding'],
+    ['.tile', 'stat'],
+    ['table.wide tr', 'row'],
+    ['.bar-row', 'chart'],
+    ['.callout', 'callout'],
+    ['dialog .dlg-body > h4', 'sub']
+  ];
+
+  var FORMAT = '1';
+  /* Concurs: { anchor: 'YYYY-MM-DD HH:MM' }, under their own key and island. */
+  var CKEY = 'concurs:' + FILE;
+  var SKEY = 'notes-sync:' + FILE;
+  var CONCUR_SEL = window.CONCUR_TARGETS || '.grill .q, .grill-q, .ask';
+
+  /* ---- which notes the page shows: the file's and this browser's, together ----
+     Notes live in two places: the islands baked into this file, which is what an agent
+     reads, and localStorage, which keeps a reader's edits between reloads. Before format 1
+     the stored copy simply won, so once a browser had stored any map for this filename,
+     even the {} the clear button leaves, notes written into the file by anyone else never
+     showed again (agent-skills#24).
+
+     So every save stamps a revision on the islands, and this browser keeps, under SKEY,
+     the revision it last took in and every note and concur it has taken from an island or
+     written into one. On load, for notes and concurs alike:
+       - nothing stored: the island, as before;
+       - the island's revision is the one last taken in: the stored copy, as before;
+       - anything else, including an island with no revision (a brief saved before
+         format 1): the stored copy, plus every note and concur in the island this browser
+         has not seen before.
+     Nothing the browser holds is ever dropped, and a note it deleted stays deleted. The
+     price: a note deleted from the file by another writer stays in a browser that still
+     holds it. Revisions are compared for sameness, not order, because a save lands in
+     Downloads while the original may have been changed in the meantime. */
+  function stored(key) {
+    try {
+      var v = JSON.parse(localStorage.getItem(key) || 'null');
+      return v && typeof v === 'object' && !Array.isArray(v) ? v : null;
+    } catch (e) { return null; }
+  }
+  function readIsland(id) {
+    var el = document.getElementById(id), map = {};
+    if (el) {
+      try { map = JSON.parse(el.textContent || '{}'); } catch (e) { /* a malformed island must not break the page */ }
+      if (!map || typeof map !== 'object' || Array.isArray(map)) map = {};
+    }
+    return { map: map, rev: el ? el.getAttribute('data-rev') : null };
+  }
+  function has(o, k) { return Object.prototype.hasOwnProperty.call(o, k); }
+  function noteId(nid, n) { return nid + '\n' + (n.ts || '') + '\n' + n.text; }
+  function idsOf(kind, map) {
+    var out = [];
+    for (var k in map) {
+      if (!has(map, k)) continue;
+      if (kind === 'concurs') out.push(k + '\n' + map[k]);
+      else if (Array.isArray(map[k])) map[k].forEach(function (n) { if (n) out.push(noteId(k, n)); });
+    }
+    return out;
+  }
+  function union(a, b) {
+    var seen = Object.create(null), out = [];
+    a.concat(b).forEach(function (x) { if (!seen[x]) { seen[x] = 1; out.push(x); } });
+    return out;
+  }
+
+  var SYNC = stored(SKEY) || {};
+  ['notes', 'concurs'].forEach(function (k) {
+    var s = SYNC[k];
+    if (!s || typeof s !== 'object' || !Array.isArray(s.seen)) SYNC[k] = { rev: null, seen: [] };
+  });
+
+  function takeIn(kind, key, isl) {
+    var s = SYNC[kind], have = stored(key), added = false;
+    if (have && !(isl.rev && isl.rev === s.rev)) {
+      var seen = Object.create(null), mine = Object.create(null);
+      s.seen.forEach(function (x) { seen[x] = 1; });
+      idsOf(kind, have).forEach(function (x) { mine[x] = 1; });
+      Object.keys(isl.map).forEach(function (k) {
+        if (kind === 'concurs') {
+          if (!has(have, k) && !seen[k + '\n' + isl.map[k]]) { have[k] = isl.map[k]; added = true; }
+          return;
+        }
+        if (!Array.isArray(isl.map[k])) return;
+        isl.map[k].forEach(function (n) {
+          var id = n && noteId(k, n);
+          if (!n || seen[id] || mine[id]) return;
+          if (!Array.isArray(have[k])) have[k] = [];
+          have[k].push(n);
+          mine[id] = 1;
+          added = true;
+        });
+      });
+    }
+    SYNC[kind] = { rev: isl.rev, seen: union(s.seen, idsOf(kind, isl.map)) };
+    return { map: have || isl.map, added: added };
+  }
+
+  var tookN = takeIn('notes', KEY, readIsland('report-notes'));
+  var tookC = takeIn('concurs', CKEY, readIsland('report-concurs'));
+  var N = tookN.map, C = tookC.map;
+  if (tookN.added) save();
+  if (tookC.added) saveConcurs();
+
+  var reduceMotion = !!(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches);
+  var active = null, activeTitle = '';
+
+  /* The sync record goes with every write, so what it says was seen is always stored. */
+  function save() {
+    try { localStorage.setItem(KEY, JSON.stringify(N)); localStorage.setItem(SKEY, JSON.stringify(SYNC)); } catch (e) {}
+  }
+  function saveConcurs() {
+    try { localStorage.setItem(CKEY, JSON.stringify(C)); localStorage.setItem(SKEY, JSON.stringify(SYNC)); } catch (e) {}
+  }
+  function stamp() { return new Date().toISOString().slice(0, 16).replace('T', ' '); }
+  function concurCount() {
+    var n = 0;
+    for (var k in C) { if (C.hasOwnProperty(k)) n++; }
+    return n;
+  }
+  function esc(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+  function slug(s) {
+    return String(s || 'x').toLowerCase().replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '').slice(0, 44) || 'x';
+  }
+  function titleOf(el) {
+    var h = el.querySelector('h2,h3,h4,.bar-lab,.k,.lbl,td:first-child,th:first-child');
+    var t = ((h ? h.textContent : el.textContent) || 'item').replace(/\s+/g, ' ').trim();
+    return t.length > 72 ? t.slice(0, 69) + '…' : t;
+  }
+
+  /* ---- give every target a stable anchor id and a note affordance ---- */
+  function tag() {
+    var used = {};
+    TARGETS.forEach(function (pair) {
+      var sel = pair[0], pre = pair[1];
+      Array.prototype.forEach.call(document.querySelectorAll(sel), function (el, i) {
+        if (el.classList.contains('notable')) return;
+        if (el.tagName === 'TR' && el.querySelector('th')) return;   // header rows
+        if (el.closest('#d-note, #d-export, .notebar')) return;
+
+        /* Numbered lists anchor by position; everything else by a SHORT title slug.
+           Long slugs make the exported map unreadable, which defeats the map. */
+        var id;
+        var num = el.querySelector('.esc-n');
+        if (num) id = pre + '-' + num.textContent.trim();
+        else id = pre + '-' + slug(titleOf(el)).split('-').slice(0, 4).join('-');
+
+        var base = id, n = 2;
+        while (used[id]) id = base + '-' + (n++);
+        used[id] = 1;
+
+        el.classList.add('notable');
+        el.dataset.nid = id;
+        el.dataset.ntitle = titleOf(el);
+        if (!el.id) el.id = id;                      // a real anchor in the file
+
+        var b = document.createElement('button');
+        b.className = 'note-btn';
+        b.type = 'button';
+        b.title = 'Add a note';
+        b.innerHTML = '&#x1F4AC;';
+        b.addEventListener('click', function (ev) {
+          ev.preventDefault(); ev.stopPropagation(); open(el);
+        });
+        el.appendChild(b);
+      });
+    });
+  }
+
+  /* ---- concur: a rubber stamp in a space on each decision's right ----
+     The angle is seeded from the anchor, so a stamp lands the same way on every reload
+     and a page of them still looks hand-done. */
+  function seed(s) {
+    var h = 2166136261;
+    for (var i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+    return (h >>> 0) / 4294967295;
+  }
+  function stampSvg(id) {
+    var r = -12 + 9 * seed(id), dx = (seed(id + ':x') - 0.5) * 6, dy = (seed(id + ':y') - 0.5) * 6;
+    var ink = '#35c27a';
+    return '<svg class="concur-stamp" viewBox="0 0 120 120" aria-label="concur stamp" style="--r:' +
+      r.toFixed(1) + 'deg;--dx:' + dx.toFixed(1) + 'px;--dy:' + dy.toFixed(1) + 'px">' +
+      '<g filter="url(#concur-ink)">' +
+      '<rect x="9" y="33" width="102" height="54" rx="7" fill="none" stroke="' + ink + '" stroke-width="5"/>' +
+      '<rect x="16" y="40" width="88" height="40" rx="3" fill="none" stroke="' + ink + '" stroke-width="1.6"/>' +
+      '<path d="M22 61 L28 67 L39 52" fill="none" stroke="' + ink + '" stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round"/>' +
+      '<text x="70" y="69" text-anchor="middle" textLength="58" lengthAdjust="spacingAndGlyphs" fill="' + ink + '" ' +
+      'font-family="Anton, Oswald, Impact, \'Arial Black\', \'DejaVu Sans Condensed\', sans-serif" ' +
+      'font-weight="800" font-size="21">CONCUR</text></g></svg>';
+  }
+
+  /* Ink that misses in patches, then a slight wobble. One copy per page. */
+  function concurDefs() {
+    if (document.getElementById('concur-defs')) return;
+    var d = document.createElement('div');
+    d.innerHTML = '<svg id="concur-defs" viewBox="0 0 1 1" aria-label="concur stamp ink" focusable="false" ' +
+      'style="position:absolute;width:0;height:0;overflow:hidden"><defs>' +
+      '<filter id="concur-ink" x="-15%" y="-15%" width="130%" height="130%">' +
+      '<feTurbulence type="fractalNoise" baseFrequency="0.55" numOctaves="2" seed="11" result="n"/>' +
+      '<feColorMatrix in="n" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  -6 0 0 0 4.1" result="mask"/>' +
+      '<feComposite in="SourceGraphic" in2="mask" operator="in" result="inked"/>' +
+      '<feTurbulence type="fractalNoise" baseFrequency="0.035" numOctaves="2" seed="5" result="w"/>' +
+      '<feDisplacementMap in="inked" in2="w" scale="3" xChannelSelector="R" yChannelSelector="G"/>' +
+      '</filter></defs></svg>';
+    document.body.appendChild(d.firstChild);
+  }
+
+  function showConcur(el, zone, on, animate) {
+    var live = zone.querySelector('.concur-stamp:not(.peel)');
+    if (on && !live) {
+      zone.insertAdjacentHTML('beforeend', stampSvg(el.dataset.nid));
+      if (animate && !reduceMotion) {
+        zone.querySelector('.concur-stamp:not(.peel)').classList.add('thud');
+        setTimeout(function () {
+          el.classList.remove('concur-jolt'); void el.offsetWidth; el.classList.add('concur-jolt');
+        }, 110);
+      }
+    } else if (!on && live) {
+      if (animate && !reduceMotion) {
+        live.classList.add('peel');
+        setTimeout(function () { live.remove(); }, 320);
+      } else live.remove();
+    }
+    zone.classList.toggle('on', on);
+    el.classList.toggle('has-concur', on);
+    zone.setAttribute('aria-pressed', on ? 'true' : 'false');
+    zone.title = on ? 'Concurred. Click to peel it off' : 'Concur with this decision';
+  }
+
+  function concurZones() {
+    var made = 0;
+    Array.prototype.forEach.call(document.querySelectorAll(CONCUR_SEL), function (el) {
+      if (!el.dataset.nid || el.querySelector(':scope > .concur-zone')) return;
+      if (el.closest('#d-note, #d-export, .notebar')) return;
+      var zone = document.createElement('button');
+      zone.type = 'button';
+      zone.className = 'concur-zone';
+      zone.innerHTML = '<span class="concur-q" aria-hidden="true">?</span><span class="concur-lbl">concur</span>';
+      zone.addEventListener('click', function (ev) {
+        ev.preventDefault(); ev.stopPropagation();
+        var id = el.dataset.nid;
+        if (C[id]) delete C[id]; else C[id] = stamp();
+        saveConcurs();
+        showConcur(el, zone, !!C[id], true);
+        badges();
+      });
+      el.classList.add('concurrable');
+      el.appendChild(zone);
+      showConcur(el, zone, !!C[el.dataset.nid], false);
+      made++;
+    });
+    if (!made) return;
+    concurDefs();
+    var bar = document.getElementById('notebar');
+    if (bar && !document.getElementById('concur-cnt')) {
+      var s = document.createElement('span');
+      s.className = 'cnt';
+      s.id = 'concur-cnt';
+      s.innerHTML = '&middot; <b id="concur-count">0</b> <span id="concur-word">concurs</span>';
+      var first = bar.querySelector('.cnt');
+      if (first) first.parentNode.insertBefore(s, first.nextSibling); else bar.insertBefore(s, bar.firstChild);
+    }
+  }
+
+  function badges() {
+    var total = 0;
+    Array.prototype.forEach.call(document.querySelectorAll('.notable'), function (el) {
+      var n = (N[el.dataset.nid] || []).length;
+      total += n;
+      el.classList.toggle('has-note', n > 0);
+      var b = el.querySelector(':scope > .note-btn');
+      if (b) b.innerHTML = n ? String(n) : '&#x1F4AC;';
+    });
+    var c = document.getElementById('note-count');
+    if (c) c.textContent = total;
+    var cc = concurCount();
+    var ce = document.getElementById('concur-count');
+    if (ce) ce.textContent = cc;
+    var cw = document.getElementById('concur-word');
+    if (cw) cw.textContent = cc === 1 ? 'concur' : 'concurs';
+    /* A concur alone is an answer worth exporting; clear stays notes-only. */
+    ['btn-export', 'btn-embed'].forEach(function (id) {
+      var b = document.getElementById(id);
+      if (b) b.disabled = total + cc === 0;
+    });
+    var bc = document.getElementById('btn-clear');
+    if (bc) bc.disabled = total === 0;
+  }
+
+  function render() {
+    var list = N[active] || [];
+    var ul = document.getElementById('note-list');
+    document.getElementById('note-none').style.display = list.length ? 'none' : 'block';
+    ul.innerHTML = list.map(function (n, i) {
+      return '<li><div class="nts"><span>' + esc(n.ts) + '</span>' +
+        '<button class="ndel" data-i="' + i + '">delete</button></div>' + esc(n.text) + '</li>';
+    }).join('');
+    Array.prototype.forEach.call(ul.querySelectorAll('.ndel'), function (b) {
+      b.addEventListener('click', function () { del(+b.dataset.i); });
+    });
+  }
+
+  function open(el) {
+    active = el.dataset.nid;
+    activeTitle = el.dataset.ntitle;
+    document.getElementById('note-title').textContent = activeTitle;
+    document.getElementById('note-anchor').textContent = '#' + active;
+    render();
+    document.getElementById('d-note').showModal();
+    document.getElementById('note-text').focus();
+  }
+
+  function add() {
+    var ta = document.getElementById('note-text');
+    var t = ta.value.trim();
+    if (!t || !active) return;
+    (N[active] = N[active] || []).push({
+      text: t,
+      title: activeTitle,
+      ts: new Date().toISOString().slice(0, 16).replace('T', ' ')
+    });
+    ta.value = '';
+    save(); render(); badges();
+  }
+
+  function del(i) {
+    N[active].splice(i, 1);
+    if (!N[active].length) delete N[active];
+    save(); render(); badges();
+  }
+
+  /* ---- the map: anchored, compact, prompt-ready ---- */
+  function buildMap() {
+    var count = 0, els = 0;
+    for (var k in N) { if (N.hasOwnProperty(k)) { els++; count += N[k].length; } }
+    var cc = concurCount();
+    var out = [
+      'NOTES — ' + FILE,
+      count + ' notes on ' + els + ' elements' +
+        (cc ? ' · ' + cc + (cc === 1 ? ' concur' : ' concurs') : '') + '.',
+      'Each [anchor] is an element id in that file — search it to find the passage.',
+      ''
+    ];
+    /* Document order, not object order: the map should read the way the brief reads.
+       A concur rides on the decision's own line, so an agreed decision with no note
+       still reaches the agent. */
+    Array.prototype.forEach.call(document.querySelectorAll('.notable'), function (el) {
+      var list = N[el.dataset.nid] || [];
+      var agreed = !!C[el.dataset.nid];
+      if (!list.length && !agreed) return;
+      out.push('[' + el.dataset.nid + '] ' + el.dataset.ntitle + (agreed ? '  ✓ concur' : ''));
+      list.forEach(function (n) { out.push('  · ' + n.text.replace(/\n+/g, ' ')); });
+      out.push('');
+    });
+    return out.join('\n');
+  }
+
+  function exportNotes() {
+    var txt = buildMap();
+    document.getElementById('export-out').value = txt;
+    var est = document.getElementById('export-est');
+    if (est) {
+      est.textContent = txt.length + ' characters ≈ ' + Math.ceil(txt.length / 4) +
+        ' tokens — versus ~' + Math.ceil(document.body.innerText.length / 4) +
+        ' for the whole document.';
+    }
+    document.getElementById('d-export').showModal();
+  }
+
+  function copyExport(btn) {
+    var ta = document.getElementById('export-out');
+    ta.select();
+    try { document.execCommand('copy'); } catch (e) {}
+    if (btn) {
+      var o = btn.textContent;
+      btn.textContent = 'Copied';
+      setTimeout(function () { btn.textContent = o; }, 1400);
+    }
+  }
+
+  /* ---- bake notes into a downloadable copy of this file ----
+     localStorage is invisible to an agent. This is what makes
+     "read my notes in <file>" work. */
+
+  /* JSON leaves "<" alone, so a note reading "<\/script>" used to end the island early:
+     the rest spilled into the page and the reopened brief showed no notes at all
+     (agent-skills#25). Escaped, it is still JSON and parses to the same strings. */
+  function islandJson(map) {
+    return JSON.stringify(map, null, 1).replace(/<\//g, '<\\/').replace(/<!/g, '\\u003c!');
+  }
+  /* The only two sequences that end an HTML comment. A reader's own "---" stays. */
+  function commentSafe(s) {
+    return s.replace(/--!>/g, '--! >').replace(/-->/g, '-- >');
+  }
+  function stampIsland(el, rev) {
+    el.setAttribute('data-format', FORMAT);
+    el.setAttribute('data-rev', rev);
+  }
+  /* The mirror's first line, written once here so a grep of a brief for it finds one
+     line of code and then the mirror itself. */
+  var MIRROR_HEAD = '\nREADER NOTES —';
+  /* The last mirror comment, if it follows the notes island: the one a save replaces. */
+  function lastMirror(root, island) {
+    var w = document.createTreeWalker(root, NodeFilter.SHOW_COMMENT), c, last = null;
+    while ((c = w.nextNode())) if (c.data.indexOf(MIRROR_HEAD) === 0) last = c;
+    if (last && island && !(island.compareDocumentPosition(last) & Node.DOCUMENT_POSITION_FOLLOWING)) return null;
+    return last;
+  }
+
+  function embedNotes() {
+    var rev = new Date().toISOString();
+    var doc = document.documentElement.cloneNode(true);
+    Array.prototype.forEach.call(doc.querySelectorAll('.note-btn'), function (n) { n.remove(); });
+    Array.prototype.forEach.call(doc.querySelectorAll('.notable'), function (n) {
+      n.classList.remove('notable', 'has-note');
+    });
+    var island = doc.querySelector('#report-notes');
+    if (island) { island.textContent = islandJson(N); stampIsland(island, rev); }
+
+    /* Concur UI is rebuilt on load, so strip it; the answers go into their own island,
+       created here, where the reference writer puts it, if the brief predates it and
+       there is something to put in it. */
+    Array.prototype.forEach.call(doc.querySelectorAll('.concur-zone, #concur-defs, #concur-cnt'),
+      function (n) { n.remove(); });
+    Array.prototype.forEach.call(doc.querySelectorAll('.concurrable'), function (n) {
+      n.classList.remove('concurrable', 'has-concur', 'concur-jolt');
+    });
+    var cisl = doc.querySelector('#report-concurs');
+    if (!cisl && concurCount()) {
+      cisl = document.createElement('script');
+      cisl.type = 'application/json';
+      cisl.id = 'report-concurs';
+      if (island && island.parentNode) island.parentNode.insertBefore(cisl, island.nextSibling);
+      else if (doc.querySelector('body')) doc.querySelector('body').appendChild(cisl);
+    }
+    if (cisl) { cisl.textContent = islandJson(C); stampIsland(cisl, rev); }
+
+    /* A plain-text mirror as well, so grep and ctx_read find the notes without anyone
+       having to parse JSON out of a script tag. A save replaces the last one rather than
+       adding another, so saving never leaves a stale map behind for a grep to find. */
+    var text = MIRROR_HEAD + '\n' + commentSafe(buildMap()) + '\n';
+    var mirror = lastMirror(doc, island), body = doc.querySelector('body');
+    if (mirror) mirror.data = text;
+    else if (body) body.appendChild(document.createComment(text));
+
+    /* Everything just written counts as seen, under the revision just stamped. */
+    SYNC.notes = { rev: rev, seen: union(SYNC.notes.seen, idsOf('notes', N)) };
+    SYNC.concurs = { rev: rev, seen: union(SYNC.concurs.seen, idsOf('concurs', C)) };
+    try { localStorage.setItem(SKEY, JSON.stringify(SYNC)); } catch (e) {}
+
+    var blob = new Blob(['<!DOCTYPE html>\n' + doc.outerHTML], { type: 'text/html' });
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = FILE;
+    a.click();
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 4000);
+
+    var b = document.getElementById('btn-embed');
+    if (b) { var o = b.innerHTML; b.innerHTML = 'saved &#x2713;'; setTimeout(function () { b.innerHTML = o; }, 2200); }
+  }
+
+  function clearNotes() {
+    if (!confirm('Delete every note in this brief?')) return;
+    N = {}; save(); badges();
+  }
+
+  /* ---- wiring ---- */
+  function init() {
+    var ta = document.getElementById('note-text');
+    if (ta) {
+      ta.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); add(); }
+      });
+    }
+    document.addEventListener('click', function (e) {
+      var t = e.target.closest('[data-note-action]');
+      if (!t) return;
+      var a = t.dataset.noteAction;
+      if (a === 'add') add();
+      else if (a === 'export') exportNotes();
+      else if (a === 'embed') embedNotes();
+      else if (a === 'clear') clearNotes();
+      else if (a === 'copy') copyExport(t);
+    });
+    ['d-note', 'd-export'].forEach(function (id) {
+      var d = document.getElementById(id);
+      if (!d) return;
+      Array.prototype.forEach.call(d.querySelectorAll('[data-close]'), function (x) {
+        x.addEventListener('click', function () { d.close(); });
+      });
+      d.addEventListener('click', function (e) { if (e.target === d) d.close(); });
+    });
+    tag();
+    concurZones();
+    badges();
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+  else init();
+})();
+
+</script>
+
+<script>
+(function () {
+  document.querySelectorAll('[data-dlg]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      var d = document.getElementById(b.dataset.dlg);
+      if (d && typeof d.showModal === 'function') d.showModal();
+    });
+  });
+  document.querySelectorAll('dialog.sub').forEach(function (d) {
+    d.querySelectorAll('[data-close]').forEach(function (x) { x.addEventListener('click', function () { d.close(); }); });
+    d.addEventListener('click', function (e) { if (e.target === d) d.close(); });
+  });
+})();
+</script>
+</body>
+</html>
