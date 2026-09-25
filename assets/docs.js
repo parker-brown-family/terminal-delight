@@ -130,14 +130,14 @@
     '<div class="td-pop td-keys" id="td-keys" role="dialog" aria-label="Keys"><h3>▸ TERMINAL DELIGHT DOCS · KEYS</h3><div class="cols">' +
       '<div><h4>These pages</h4><dl>' +
         '<dt>Ctrl K · /</dt><dd>Search every page</dd><dt>[ · ]</dt><dd>Previous · next page</dd>' +
-        '<dt>1 · 2 · 3</dt><dd>Brief · Story · Technical</dd><dt>t</dt><dd>Theme tray</dd><dt>w</dt><dd>Wallpaper on or off</dd>' +
+        '<dt>1 · 2 · 3</dt><dd>Brief · Story · Technical</dd><dt>k</dt><dd>Every key in the app</dd><dt>t</dt><dd>Theme tray</dd><dt>w</dt><dd>Wallpaper on or off</dd>' +
         '<dt>c</dt><dd>CRT glass on or off</dd><dt>m</dt><dd>Paper or glass</dd><dt>?</dt><dd>This list</dd><dt>Esc</dt><dd>Close whatever is open</dd></dl></div>' +
       '<div><h4>In Terminal Delight</h4><dl>' +
         '<dt>F1</dt><dd>Every shortcut, and the language</dd>' +
         '<dt>Ctrl+Shift+T</dt><dd>New tab</dd><dt>Alt+V · Alt+H</dt><dd>Split beside · below</dd><dt>Alt + arrows</dt><dd>Move between panes</dd>' +
         '<dt>Alt+W</dt><dd>Close a pane</dd><dt>Ctrl+Shift+Z</dt><dd>Bring back what you closed</dd><dt>Alt+K</dt><dd>Terminal ⇄ workbench</dd>' +
         '<dt>Ctrl+Shift+N</dt><dd>Which agent needs you</dd><dt>Alt+R</dt><dd>Read this pane big</dd></dl></div>' +
-    '</div><div class="kf">Every chord in the app: <a href="/keys">Keys →</a> · Esc to close</div></div>';
+    '</div><div class="kf">Every key in the app: <a href="/keys" data-sheet>the full sheet →</a> · Esc to close</div></div>';
   while (shelf.firstChild) document.body.appendChild(shelf.firstChild);
 
   var open = null, hl = 0;
@@ -180,6 +180,15 @@
   /* the keyboard glyph beside the CRT: the same list ? opens */
   var keysBtn = document.querySelector('.td-keysbtn');
   if (keysBtn) keysBtn.addEventListener('click', function () { open === 'td-keys' ? hide() : show('td-keys'); });
+  /* The Keymapping tab, and any link marked data-sheet, open the app's whole
+     key sheet (written into the page by the build, from the app's own source).
+     A middle click, a modified click, or no script at all still goes to /keys. */
+  document.addEventListener('click', function (e) {
+    var a = e.target.closest('[data-sheet]');
+    if (!a || !$('td-sheet') || e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
+    e.preventDefault();
+    open === 'td-sheet' ? hide() : show('td-sheet');
+  });
 
   /* -------------------------------------------------------------- the keys */
   function press(sel) { var el = document.querySelector(sel); if (el) el.click(); }
@@ -196,6 +205,7 @@
     if (k === '/') { e.preventDefault(); hide(); press('.td-search'); }
     else if (k === '?') { open === 'td-keys' ? hide() : show('td-keys'); }
     else if (k === 't') { open === 'td-tray' ? hide() : show('td-tray'); }
+    else if (k === 'k' && $('td-sheet')) { open === 'td-sheet' ? hide() : show('td-sheet'); }
     else if (k === 'w') setWall(root.dataset.wall === 'off');
     else if (k === 'c') press('[data-td-toggle="crt"]');
     else if (k === 'm') press('[data-td-toggle="theme"]');
