@@ -148,11 +148,28 @@ struct HostTap {
     /// core deletes what it reads, so here is the only place the window's copy
     /// can still be made. See [`crate::picturewire`].
     pictures: crate::picturewire::Inliner,
+    /// The attachment the last chunk was copied to, by serial, so a window
+    /// attached since then is noticed at its first chunk.
+    fed: Option<u64>,
 }
 
 impl vt::pump::Tap for HostTap {
     fn tap(&mut self, bytes: &[u8]) {
         self.spoke.store(true, Ordering::Relaxed);
+        // A window attached since the last chunk has a snapshot taken between
+        // two chunks, and if that fell inside a picture being copied through,
+        // what is left of it is not for this window (`join_mid_stream`).
+        let attached = self
+            .sink
+            .lock()
+            .expect("sink lock")
+            .as_ref()
+            .map(|sink| sink.serial);
+        if attached.is_some() && attached != self.fed {
+            self.pictures.join_mid_stream();
+        }
+        self.fed = attached;
+        self.pictures.watched(attached.is_some());
         let bytes = self.pictures.feed(bytes);
         if bytes.is_empty() {
             return;
@@ -623,6 +640,7 @@ impl Host {
             sink: sink.clone(),
             spoke: self.spoke.clone(),
             pictures: Default::default(),
+            fed: None,
         };
 
         let proxy: Arc<dyn Listener> = Arc::new(HostProxy(events));
@@ -668,7 +686,11 @@ impl Host {
                     // dropping the sink, which happens after the store, so any
                     // observation of the close happens after it — the window
                     // cannot see the hangup and then be told the pane is fine.
-                    TermEvent::ChildExit(_) => {
+                    //
+                    // `Exit` as well as `ChildExit`: the read loop sends a
+                    // status only when it could read one, and `Exit` always,
+                    // last. A pane whose status was lost has still ended.
+                    TermEvent::ChildExit(_) | TermEvent::Exit => {
                         exit_flag.store(true, Ordering::SeqCst);
                         *exit_sink.lock().expect("sink lock") = None;
                     }
@@ -749,9 +771,22 @@ impl Host {
         }
     }
 
+    /// One pane, out from under the table's lock, for a verb that goes on to
+    /// take the pane's terminal lock.
+    ///
+    /// That lock is held while the read loop parses a chunk, and parsing can
+    /// now take a while: a picture is read and decoded inside it. Waiting for
+    /// one pane's lock while holding the table would stop every other pane's
+    /// keystrokes, spawns and attaches behind it — the reason [`pane_list`]
+    /// exists, applied to the verbs that name one pane.
+    ///
+    /// [`pane_list`]: Host::pane_list
+    fn pane(&self, pane: PaneId) -> Option<Arc<HostPane>> {
+        self.panes.lock().expect("panes").get(&pane).cloned()
+    }
+
     pub fn resize(&self, pane: PaneId, geom: PaneGeom) -> Outcome<()> {
-        let panes = self.panes.lock().expect("panes");
-        let Some(p) = panes.get(&pane) else {
+        let Some(p) = self.pane(pane) else {
             return Outcome::Err(format!("no pane {pane}"));
         };
         *p.geom.lock().expect("geom lock") = geom;
@@ -767,8 +802,7 @@ impl Host {
     /// be refused by the ghost of the window it is replacing, so the newest
     /// attach wins and the previous stream is closed.
     pub fn attach(&self, pane: PaneId, stream: UnixStream) -> Outcome<Attachment> {
-        let panes = self.panes.lock().expect("panes");
-        let Some(p) = panes.get(&pane) else {
+        let Some(p) = self.pane(pane) else {
             return Outcome::Err(format!("no pane {pane}"));
         };
 
@@ -839,8 +873,7 @@ impl Host {
     /// has read the same bytes and holds the same update open, so the two
     /// grids agree as they stand, and flushing one side would make them differ.
     pub fn grid_check(&self, pane: PaneId) -> Outcome<GridCheck> {
-        let panes = self.panes.lock().expect("panes");
-        let Some(p) = panes.get(&pane) else {
+        let Some(p) = self.pane(pane) else {
             return Outcome::Err(format!("no pane {pane}"));
         };
         let term = p.term.lock();
@@ -2348,11 +2381,6 @@ mod owning {
         );
     }
 
-    /// Split what a client received into the snapshot and everything after it.
-    ///
-    /// A snapshot ends by restoring the modes, and line wrap is the last one
-    /// written, so its final bytes are that mode change. Ordinary terminal
-    /// output does not contain it.
     /// A picture a program sends as a temporary file reaches an attached
     /// window as a picture.
     ///
@@ -2404,11 +2432,18 @@ mod owning {
         );
     }
 
+    #[cfg(not(feature = "core-alacritty"))]
     struct Silence;
+    #[cfg(not(feature = "core-alacritty"))]
     impl vt::Listener for Silence {
         fn send_event(&self, _event: TermEvent) {}
     }
 
+    /// Split what a client received into the snapshot and everything after it.
+    ///
+    /// A snapshot ends by restoring the modes, and line wrap is the last one
+    /// written, so its final bytes are that mode change. Ordinary terminal
+    /// output does not contain it.
     fn split_snapshot(text: &str) -> (&str, &str) {
         const TAIL: &str = "\x1b[?7";
         match text.rfind(TAIL) {

@@ -20,10 +20,14 @@
 //! the original, so the program is answered, and the file deleted, exactly as
 //! it would be with no window attached.
 //!
-//! The inliner reads nothing the host's core would refuse: the same path
-//! guards and the same size cap as rio-vt's own reader. A command it cannot
-//! or will not read goes through unchanged, so the window fails the same way
-//! the host did.
+//! The inliner reads only a file carrying kitty's marker, under the same
+//! path guards and size cap as rio-vt's own reader. A command it cannot or
+//! will not read goes through unchanged, for the window's core to read, or
+//! fail to, by its own rules (`vt/kitty.rs`).
+//!
+//! A command ends where the cores' parser ends it: at `ESC \`, and also at a
+//! bare `ESC`, a bell, or a cancel. Waiting for `ESC \` alone would hold back
+//! whatever followed a command that ended any other way.
 
 use std::borrow::Cow;
 use std::io::{Read, Seek, SeekFrom};
@@ -32,6 +36,14 @@ use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 
 const ESC: u8 = 0x1b;
+const BEL: u8 = 0x07;
+const CAN: u8 = 0x18;
+const SUB: u8 = 0x1a;
+
+/// Whether `byte` ends an application command for the cores' parser.
+fn ends_a_command(byte: u8) -> bool {
+    matches!(byte, ESC | BEL | CAN | SUB)
+}
 
 /// The largest picture read, rio-vt's own cap (`MAX_SIZE` in its Kitty
 /// graphics reader).
@@ -72,12 +84,32 @@ pub struct Inliner {
     state: State,
     /// Bytes held back while deciding what they are.
     held: Vec<u8>,
-    /// Whether the last byte seen inside a command was `ESC`, the first half
-    /// of the string terminator `ESC \`.
-    esc: bool,
+    /// Dropping the rest of a command a newly attached window never saw the
+    /// start of. See [`Inliner::join_mid_stream`].
+    skipping: bool,
+    /// No window is attached, so what this returns goes nowhere, and a
+    /// picture is not worth reading for it.
+    unwatched: bool,
 }
 
 impl Inliner {
+    /// Whether a window is attached to read what this returns.
+    pub fn watched(&mut self, watched: bool) {
+        self.unwatched = !watched;
+    }
+
+    /// A window has just been attached, and its stream starts here.
+    ///
+    /// Its snapshot was taken between two chunks, and a command being copied
+    /// through when it was — a picture's pixels, sent a chunk at a time — has
+    /// its opening in the old stream and its rest in the new one. The window
+    /// would draw that rest as text, a screenful of base64, so it is dropped
+    /// to the command's end. A command still being held is sent whole, and
+    /// needs nothing: its opening has not gone anywhere yet.
+    pub fn join_mid_stream(&mut self) {
+        self.skipping = matches!(self.state, State::Through);
+    }
+
     /// The bytes to send the window for this chunk of the pane's output.
     ///
     /// Borrowed, and costing one scan, for the common chunk: no command in
@@ -126,53 +158,86 @@ impl Inliner {
                     // Some other application command: not ours to read.
                     out.append(&mut self.held);
                     self.state = State::Through;
-                    self.esc = false;
                     self.step(byte, out);
                 }
             }
             State::Control => {
+                if ends_a_command(byte) {
+                    // Control data and no payload: nothing to read.
+                    out.append(&mut self.held);
+                    self.end_command(byte, out);
+                    return;
+                }
                 self.held.push(byte);
                 if byte == b';' {
                     if names_a_reference(&self.held) {
                         self.state = State::Reference;
-                        self.esc = false;
                     } else {
                         out.append(&mut self.held);
                         self.state = State::Through;
-                        self.esc = false;
                     }
-                } else if byte == ESC || self.held.len() > MAX_CONTROL {
-                    // A command with no payload, or one too long to be a
-                    // command: either way, not a reference to read.
-                    self.esc = byte == ESC;
+                } else if self.held.len() > MAX_CONTROL {
+                    // Too long to be a command anybody sends.
                     out.append(&mut self.held);
                     self.state = State::Through;
                 }
             }
             State::Reference => {
-                self.held.push(byte);
-                if self.esc && byte == b'\\' {
+                if matches!(byte, ESC | BEL) {
+                    // Whole: the cores read it at this byte. Rewritten, it
+                    // carries its own ends, so a bell that only ended the
+                    // original goes with it; an `ESC` may begin more.
                     let command = std::mem::take(&mut self.held);
-                    out.extend_from_slice(&inline(&command).unwrap_or(command));
-                    self.state = State::Text;
-                    self.esc = false;
-                } else if self.held.len() > MAX_CONTROL + MAX_REFERENCE {
+                    let rewritten = if self.unwatched {
+                        None
+                    } else {
+                        inline(&command)
+                    };
+                    match rewritten {
+                        Some(rewritten) => {
+                            out.extend_from_slice(&rewritten);
+                            self.state = State::Text;
+                            if byte == ESC {
+                                self.held.push(ESC);
+                            }
+                        }
+                        None => {
+                            out.extend_from_slice(&command);
+                            self.end_command(byte, out);
+                        }
+                    }
+                } else if matches!(byte, CAN | SUB) {
+                    // Cancelled: the cores read nothing, and neither does this.
                     out.append(&mut self.held);
-                    self.state = State::Through;
-                    self.esc = false;
+                    self.end_command(byte, out);
                 } else {
-                    self.esc = byte == ESC;
+                    self.held.push(byte);
+                    if self.held.len() > MAX_CONTROL + MAX_REFERENCE {
+                        out.append(&mut self.held);
+                        self.state = State::Through;
+                    }
                 }
             }
             State::Through => {
-                out.push(byte);
-                if self.esc && byte == b'\\' {
-                    self.state = State::Text;
-                    self.esc = false;
-                } else {
-                    self.esc = byte == ESC;
+                if ends_a_command(byte) {
+                    self.end_command(byte, out);
+                } else if !self.skipping {
+                    out.push(byte);
                 }
             }
+        }
+    }
+
+    /// A command has ended at `byte`. A bell or a cancel is part of its end,
+    /// and goes where the command went; an `ESC` also begins whatever follows,
+    /// so it is held to be looked at with the byte after it.
+    fn end_command(&mut self, byte: u8, out: &mut Vec<u8>) {
+        let skipped = std::mem::take(&mut self.skipping);
+        self.state = State::Text;
+        if byte == ESC {
+            self.held.push(ESC);
+        } else if !skipped {
+            out.push(byte);
         }
     }
 
@@ -219,9 +284,9 @@ fn names_a_reference(held: &[u8]) -> bool {
 }
 
 /// The command rewritten to carry its pixels, or `None` to send it as it was.
+/// `command` is `ESC _ G <control> ; <payload>`, without whatever ended it.
 fn inline(command: &[u8]) -> Option<Vec<u8>> {
-    // ESC _ G <control> ; <payload> ESC \
-    let body = command.get(3..command.len().checked_sub(2)?)?;
+    let body = command.get(3..)?;
     let split = body.iter().position(|&b| b == b';')?;
     let control = std::str::from_utf8(&body[..split]).ok()?;
     let reference = STANDARD.decode(&body[split + 1..]).ok()?;
@@ -283,24 +348,38 @@ fn inline(command: &[u8]) -> Option<Vec<u8>> {
 /// A temporary file, read the way rio-vt reads one — and refused where it
 /// would refuse. Never deleted here: the host's core deletes it, next.
 fn read_temp_file(path: &str, size: u64, offset: u64) -> Option<Vec<u8>> {
+    use std::os::unix::fs::OpenOptionsExt;
     let lower = path.to_lowercase();
     if !path.contains("tty-graphics-protocol")
         || lower.contains("/proc/")
         || lower.contains("/sys/")
         || lower.contains("/dev/")
-        || !std::path::Path::new(path).is_file()
     {
         return None;
     }
-    read_span(std::fs::File::open(path).ok()?, size, offset)
+    // Opened without waiting: this runs under the terminal's lock, and a pipe
+    // left under a marked name would otherwise hold it until written to.
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK)
+        .open(path)
+        .ok()?;
+    read_span(file, size, offset)
 }
 
 /// A POSIX shared-memory object, read without unlinking it: the host's core
-/// unlinks it, next.
+/// unlinks it, next. Opened without waiting and without following a link,
+/// like `shm_open`'s own open, and read only if it is a plain object.
 fn read_shared_memory(name: &str, size: u64, offset: u64) -> Option<Vec<u8>> {
     use std::os::fd::FromRawFd;
     let name = std::ffi::CString::new(name).ok()?;
-    let fd = unsafe { libc::shm_open(name.as_ptr(), libc::O_RDONLY, 0) };
+    let fd = unsafe {
+        libc::shm_open(
+            name.as_ptr(),
+            libc::O_RDONLY | libc::O_NONBLOCK | libc::O_NOFOLLOW,
+            0,
+        )
+    };
     if fd < 0 {
         return None;
     }
@@ -308,9 +387,15 @@ fn read_shared_memory(name: &str, size: u64, offset: u64) -> Option<Vec<u8>> {
 }
 
 /// `size` bytes from `offset`, or the whole object when `size` is 0 — refused
-/// when the span runs past the end or past the cap.
+/// when it is not a regular file, or the span runs past the end or past the
+/// cap. The type is read from the open descriptor, so what was checked is what
+/// is read.
 fn read_span(mut file: std::fs::File, size: u64, offset: u64) -> Option<Vec<u8>> {
-    let length = file.metadata().ok()?.len();
+    let meta = file.metadata().ok()?;
+    if !meta.is_file() {
+        return None;
+    }
+    let length = meta.len();
     let want = if size > 0 {
         size
     } else {
@@ -469,6 +554,78 @@ mod tests {
             let stream = command("a=T,f=100,t=t", reference.as_bytes());
             assert_eq!(through(&stream, &[]), stream, "{reference}");
         }
+    }
+
+    /// `t=t` naming `path`, ended by `end` rather than by `ESC \`.
+    fn ended_by(path: &std::path::Path, end: &[u8]) -> Vec<u8> {
+        let mut out = b"\x1b_Ga=T,f=100,t=t;".to_vec();
+        out.extend_from_slice(STANDARD.encode(path.to_str().unwrap()).as_bytes());
+        out.extend_from_slice(end);
+        out
+    }
+
+    #[test]
+    fn a_command_ended_by_a_bare_escape_is_sent_and_what_follows_is_not_held() {
+        // The cores end a command at any ESC. Waiting here for `ESC \` held the
+        // prompt that followed until kilobytes more output arrived.
+        let (path, pixels) = temp_png("bare-escape");
+        let out = through(&ended_by(&path, b"\x1b[31mprompt"), &[]);
+        std::fs::remove_file(&path).ok();
+        assert!(
+            out.ends_with(b"\x1b[31mprompt"),
+            "{:?}",
+            String::from_utf8_lossy(&out)
+        );
+        let joined: Vec<u8> = commands(&out).iter().flat_map(|(_, p)| p.clone()).collect();
+        assert_eq!(joined, pixels);
+    }
+
+    #[test]
+    fn a_command_ended_by_a_bell_is_sent_without_the_bell() {
+        // The bell only ended the original; before the window's parser, which
+        // has no command open, it would ring.
+        let (path, _) = temp_png("bell");
+        let out = through(&ended_by(&path, b"\x07after"), &[]);
+        std::fs::remove_file(&path).ok();
+        assert!(!out.contains(&0x07), "the bell reached the window");
+        assert!(out.ends_with(b"after"));
+    }
+
+    #[test]
+    fn a_window_joining_inside_a_picture_is_sent_none_of_the_rest_of_it() {
+        let mut inliner = Inliner::default();
+        let _ = inliner.feed(b"before\x1b_Ga=T,f=100,t=d,m=1;AAAA");
+        inliner.join_mid_stream();
+        let out = inliner.feed(b"BBBB\x1b\\after").into_owned();
+        assert_eq!(
+            out,
+            b"\x1b\\after".to_vec(),
+            "no base64 for the window to print"
+        );
+    }
+
+    #[test]
+    fn with_no_window_attached_no_picture_is_read() {
+        let (path, _) = temp_png("unwatched");
+        let stream = command("a=T,f=100,t=t", path.to_str().unwrap().as_bytes());
+        let mut inliner = Inliner::default();
+        inliner.watched(false);
+        let out = inliner.feed(&stream).into_owned();
+        std::fs::remove_file(&path).ok();
+        assert_eq!(out, stream, "sent as it came, to nobody");
+    }
+
+    #[test]
+    fn a_pipe_named_as_shared_memory_is_not_waited_on() {
+        // Opened without waiting and refused for not being a plain object:
+        // this runs under the terminal's lock.
+        let name = format!("td-inliner-fifo-{}", std::process::id());
+        let path = std::ffi::CString::new(format!("/dev/shm/{name}")).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(path.as_ptr(), 0o600) }, 0, "mkfifo");
+        let stream = command("a=T,f=24,s=1,v=1,t=s", format!("/{name}").as_bytes());
+        let out = through(&stream, &[]);
+        std::fs::remove_file(format!("/dev/shm/{name}")).ok();
+        assert_eq!(out, stream);
     }
 
     #[test]

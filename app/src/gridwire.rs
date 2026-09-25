@@ -106,9 +106,10 @@ const RESTORED_MODES: &[(TermMode, &str)] = &[
 ///
 /// xterm treats these as one setting — turning one on turns the others off,
 /// and turning any off turns reporting off — and so does rio-vt. alacritty
-/// kept them as three independent bits. Written one at a time, as the other
-/// modes are, a later `l` undoes an earlier `h` in a core that keeps one
-/// setting: a pane reporting drags arrived in a replica reporting nothing.
+/// does the first half and not the second: turning one off clears only that
+/// one. Written one at a time, as the other modes are, a later `l` undoes an
+/// earlier `h` in a core that keeps one setting: a pane reporting drags
+/// arrived in a replica reporting nothing.
 /// Found by `the_cursor_and_the_modes_come_back` the first time the suite ran
 /// on rio-vt.
 const MOUSE_PROTOCOLS: [(TermMode, &str); 3] = [
@@ -682,6 +683,186 @@ mod roundtrip {
     /// Feed bytes into a core exactly as the real read loop does.
     fn feed(term: &mut Term, bytes: &[u8]) {
         term.advance(bytes);
+    }
+
+    /// Screens programs commonly leave behind, each with the hash a session
+    /// host built before the core swap gives it: `grid_hash` at 70c6233, on
+    /// alacritty_terminal 0.26, fed these bytes.
+    ///
+    /// The divergence guard compares a host's hash with its window's, and the
+    /// host is the process that is never restarted, so a window from this
+    /// build spends its first weeks attached to a host from the last one. For
+    /// the same bytes the two have to agree, or the guard takes a quiet pane
+    /// again and again over a difference nobody can see. This pins that
+    /// agreement, and because the suite runs on both cores it also pins the
+    /// cores agreeing with each other.
+    ///
+    /// Measured before it was pinned, 2026-09-25: every case run through the
+    /// old build and through this one on both cores. The measurement found
+    /// rio-vt's blanks reading differently after a scroll and after an erase,
+    /// which `blank_background` in `vt/rio.rs` now answers.
+    #[rustfmt::skip]
+    const AS_THE_OLD_HOST_HASHED: &[(&str, usize, usize, &[u8], u64)] = &[
+        ("plain text", 20, 5, b"hello world\r\nsecond line", 0x37fbc118d8a5eff0),
+        ("sgr colours", 40, 5, b"\x1b[31mred\x1b[32mgreen\x1b[0m \x1b[1;33mbold yellow\x1b[0m", 0x3291f322c85b8194),
+        ("bright colours", 40, 5, b"\x1b[91mbright\x1b[0m\x1b[101mbg\x1b[0m\x1b[97;100mx\x1b[0m", 0xb3bebd9fae529bf0),
+        ("256 colours", 40, 5, b"\x1b[38;5;208morange\x1b[48;5;17mblue bg\x1b[38;5;3mlow\x1b[0m", 0x0efbbba38767c2c2),
+        ("truecolor", 40, 5, b"\x1b[38;2;10;20;30mrgb\x1b[48;2;200;100;50mbg\x1b[0m", 0xcb01c661b61994ce),
+        ("attributes", 60, 5, b"\x1b[1mb\x1b[2md\x1b[3mi\x1b[4mu\x1b[5mblink\x1b[7mrev\x1b[8mhid\x1b[9mstrike\x1b[0m", 0x31ac80a49f768bd4),
+        ("attribute resets", 60, 5, b"\x1b[1;3;4;7;9mall\x1b[22;23;24;27;29mnone\x1b[1;2mdb\x1b[22mn", 0x55ed358b73e6b48a),
+        ("underline styles", 60, 5, b"\x1b[4:2mdouble\x1b[4:3mcurl\x1b[4:4mdot\x1b[4:5mdash\x1b[4:0mnone\x1b[21mdbl\x1b[0m", 0x159340a5f8978296),
+        ("underline colour", 40, 5, b"\x1b[4;58;5;196mindexed\x1b[58;2;1;2;3mrgb\x1b[59mplain\x1b[0m", 0xf745b33d4d5c4b72),
+        ("default colours explicit", 40, 5, b"\x1b[31;41mx\x1b[39;49my\x1b[7mz\x1b[0m", 0x16f7830cb6e8ecc8),
+        ("wide chars", 20, 5, "\u{4f60}\u{597d} \u{1f642} ok".as_bytes(), 0x4cac8696944c6dd8),
+        ("wide char at the edge", 10, 3, "123456789\u{4f60}after".as_bytes(), 0x8c2a89980c3f422c),
+        ("combining marks", 20, 5, "e\u{301}a\u{308}\u{303} n\u{303}".as_bytes(), 0xb0c2ef14361dd8f5),
+        ("zero width joiner", 20, 5, "\u{1f468}\u{200d}\u{1f469}\u{200d}\u{1f467} x".as_bytes(), 0x6809918d94e9217d),
+        ("variation selector", 20, 5, "\u{2764}\u{fe0f} \u{263a}\u{fe0e} x".as_bytes(), 0xe849a6b5ba0bc7f1),
+        ("soft wrap", 10, 5, b"abcdefghijklmnopqrstuvwxyz", 0xf2308f533a1e9089),
+        ("exactly full line", 10, 5, b"0123456789", 0x5b781b96fb766302),
+        ("exactly full line then cr", 10, 5, b"0123456789\r", 0xf9c10d0f0b8413fb),
+        ("full line then newline", 10, 5, b"0123456789\r\nnext", 0xabd261c8969b604f),
+        ("scrollback", 20, 5, b"l01\r\nl02\r\nl03\r\nl04\r\nl05\r\nl06\r\nl07\r\nl08\r\nl09\r\nl10\r\nl11\r\nl12", 0xaad89c4bb4a7eab6),
+        ("scrollback with colour", 20, 4, b"\x1b[32ma\r\nb\r\n\x1b[41mc\r\nd\r\ne\r\nf\x1b[0m\r\ng", 0xa5e5c3a207f97ffe),
+        ("cursor moves", 30, 8, b"\x1b[5;10Hhere\x1b[2;3Hthere\x1b[8;30H", 0x05d55397045da1da),
+        ("cursor relative", 30, 8, b"\x1b[3;3Hx\x1b[2Ay\x1b[5Cz\x1b[1Bw\x1b[3Dv\x1b[2Eu\x1b[1Ft", 0x4e36515ad0fc136e),
+        ("erase in line", 20, 5, b"abcdefghij\x1b[5G\x1b[K\r\nklmnopqrst\x1b[5G\x1b[1K\r\nuvwxyz\x1b[2K", 0xac8d19006485144c),
+        ("erase in display", 20, 5, b"row1\r\nrow2\r\nrow3\x1b[2;2H\x1b[J", 0x3db2241575d0236b),
+        ("erase above", 20, 5, b"row1\r\nrow2\r\nrow3\x1b[2;2H\x1b[1J", 0xb1f7bcb29f4c121b),
+        ("erase with colour", 20, 5, b"\x1b[44mblue\x1b[K\r\n\x1b[2Kmore\x1b[0m", 0x9131a4d666d161a8),
+        ("erase characters", 20, 5, b"abcdefghij\x1b[3G\x1b[4X", 0xc2e7088461e1bb5f),
+        ("clear screen", 20, 5, b"stuff\r\nmore\x1b[H\x1b[2J\x1b[3Jfresh", 0x6fb74098921b31e5),
+        ("scroll region", 20, 6, b"a\r\nb\r\nc\r\nd\r\ne\r\nf\x1b[2;4r\x1b[4;1H\n\n\nx\x1b[r", 0xe7ccf40a3623e26e),
+        ("scroll up and down", 20, 6, b"1\r\n2\r\n3\r\n4\r\n5\x1b[2S\x1b[1T", 0xd68024b28b60d614),
+        ("reverse index at top", 20, 4, b"a\r\nb\r\nc\x1b[H\x1bMtop", 0x394fb40c25413f2a),
+        ("index and next line", 20, 4, b"a\x1bDb\x1bEc", 0x49c4c4a3a70dfb8f),
+        ("tabs", 40, 5, b"a\tb\tc\x1b[3g\r\nd\te\x1bH\r\n\tf", 0x621e68f04a66b38c),
+        ("insert and delete characters", 20, 5, b"abcdefgh\x1b[3G\x1b[2@XY\x1b[6G\x1b[2P", 0x715ac97e71250c63),
+        ("insert and delete lines", 20, 6, b"1\r\n2\r\n3\r\n4\r\n5\x1b[2;1H\x1b[2L\x1b[4;1H\x1b[1M", 0x0d0af58bd87a1d13),
+        ("insert mode", 20, 5, b"abcdef\x1b[3G\x1b[4hXY\x1b[4l", 0xe87df326370fed18),
+        ("alt screen", 20, 5, b"main\x1b[?1049halt screen\x1b[5;5Hx", 0xffa3f782fcce54aa),
+        ("alt screen left", 20, 5, b"main\x1b[?1049halt\x1b[?1049lback", 0xc81a5dacd3715c02),
+        ("alt screen 47 and 1047", 20, 5, b"m\x1b[?47ha\x1b[?47l\x1b[?1047hb\x1b[?1047l", 0xb1538a8bcd6be27f),
+        ("save and restore cursor", 20, 5, b"\x1b[3;4H\x1b7\x1b[31m\x1b[1;1Hx\x1b8y\x1b[s\x1b[5;5H\x1b[uz", 0x70be3196024ef6ea),
+        ("modes", 20, 5, b"\x1b[?1h\x1b=\x1b[?2004h\x1b[?1004h\x1b[?25l", 0x88324b02110f223f),
+        ("modes back off", 20, 5, b"\x1b[?1h\x1b=\x1b[?2004h\x1b[?1004h\x1b[?25l\x1b[?1l\x1b>\x1b[?2004l\x1b[?1004l\x1b[?25h", 0xe360fe422afb3be0),
+        ("mouse one protocol", 20, 5, b"\x1b[?1002h\x1b[?1006h", 0x4fbfdd331944d420),
+        ("mouse click only", 20, 5, b"\x1b[?1000h\x1b[?1006h", 0xe3e0dd7a15f18e48),
+        ("mouse three protocols", 20, 5, b"\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1006h", 0xe5607b21d6d48580),
+        ("mouse on then off", 20, 5, b"\x1b[?1000h\x1b[?1002h\x1b[?1006h\x1b[?1002l\x1b[?1000l\x1b[?1006l", 0xe360fe422afb3be0),
+        ("mouse utf8 and sgr", 20, 5, b"\x1b[?1000h\x1b[?1005h\x1b[?1006h", 0xe3e0dd7a15f18e48),
+        ("alternate scroll off", 20, 5, b"\x1b[?1007l", 0x8ea37e3fb6fbe660),
+        ("alternate scroll on", 20, 5, b"\x1b[?1007h", 0xe360fe422afb3be0),
+        ("origin mode", 20, 6, b"\x1b[2;5r\x1b[?6h\x1b[1;1Hx\x1b[?6l\x1b[r", 0x042a97c3ec8380ac),
+        ("line feed new line", 20, 5, b"\x1b[20ha\nb\x1b[20l\nc", 0x660b83d71344dd51),
+        ("autowrap off", 10, 5, b"\x1b[?7labcdefghijklmnop\x1b[?7h", 0xeb2e81c33ef0df48),
+        ("full reset", 20, 5, b"junk\x1b[?1049h\x1b[31m\x1b[?1h\x1bcafter reset", 0xaf7bb4cefe7a91f6),
+        ("soft reset", 20, 5, b"\x1b[31m\x1b[4h\x1b[?6h\x1b[!pafter", 0x3bf596abee0c3bbf),
+        ("dec line drawing", 20, 5, b"\x1b(0lqqk\r\nx  x\r\nmqqj\x1b(B", 0xd7fa0682957e6b74),
+        ("hyperlink", 30, 5, b"\x1b]8;;http://example.com\x07link\x1b]8;;\x07 plain", 0x8d5d8d4974c94fac),
+        ("title", 20, 5, b"\x1b]0;a title\x07text\x1b]2;other\x1b\\", 0xa4817cc2837d3539),
+        ("sync update closed", 20, 5, b"\x1b[?2026hinside\x1b[?2026l after", 0x9d18d4167d37180a),
+        ("decaln", 10, 4, b"\x1b#8", 0xf7b97ac47a1a3bd4),
+        ("cursor shapes", 20, 5, b"\x1b[5 qbeam\x1b[3 qunder\x1b[2 qblock\x1b[0 q", 0x3d2c6ceddbe83a46),
+        ("bell and controls", 20, 5, b"a\x07b\x08c\x0bd\x0ce", 0x3e68d162891baa07),
+        ("repeat character", 20, 5, b"x\x1b[5b", 0xe5ccd15c7814bd06),
+        ("backspace over wide char", 20, 5, "\u{4f60}\x08\x08ab".as_bytes(), 0x93427296c35455cb),
+        ("overwrite half a wide char", 20, 5, "\u{4f60}\u{597d}\x1b[1;2Hx".as_bytes(), 0xc0aeb69f7274e774),
+        ("dim and bright bold", 30, 5, b"\x1b[1;30mbold black\x1b[0m\x1b[2;37mdim white\x1b[0m", 0x1d3e2d03c099ed48),
+        ("claude-like frame", 60, 12, "\x1b[?2026h\x1b[2K\x1b[1G\x1b[38;2;215;119;87m\u{256d}\u{2500}\u{2500}\u{2500}\u{256e}\x1b[39m\r\n\x1b[38;2;215;119;87m\u{2502}\x1b[39m \x1b[1m> \x1b[22mtype here \x1b[2m(shift+tab)\x1b[22m\r\n\x1b[38;2;215;119;87m\u{2570}\u{2500}\u{2500}\u{2500}\u{256f}\x1b[39m\r\n\x1b[2m  ? for shortcuts\x1b[22m\x1b[?2026l".as_bytes(), 0x3a0307257d3995eb),
+        ("prompt with rprompt", 40, 5, b"\x1b[1;32muser@host\x1b[0m:\x1b[1;34m~/w\x1b[0m$ \x1b[s\x1b[40G\x1b[7D\x1b[33m12:00:00\x1b[u", 0xe7bd58dbec81e0c3),
+        ("progress bar redraw", 40, 5, b"[#####     ] 50%\r[##########] 100%\r\n", 0x400c353e41c99fe5),
+        ("resized content", 20, 5, b"\x1b[8;5;20t\x1b[18t", 0xe360fe422afb3be0),
+        ("device queries", 20, 5, b"\x1b[c\x1b[>c\x1b[5n\x1b[6n\x1b[?u\x1b[>0q\x1b[16t\x1b[14t", 0xe360fe422afb3be0),
+        ("kitty graphics no cursor move", 20, 5, b"\x1b_Gi=8,s=2,v=1,a=T,t=d,f=24,c=4,r=2,C=1;/wAAAP8A\x1b\\after", 0xc3744af53ab0e06f),
+        ("sixel", 20, 5, b"\x1bPq#0;2;0;0;0#1;2;100;100;0#1~~@@vv@@~~$\x1b\\after", 0xc3744af53ab0e06f),
+        ("unterminated osc", 20, 5, b"\x1b]0;never ends text", 0xe360fe422afb3be0),
+        ("c1 controls", 20, 5, b"a\xc2\x9b31mb\xc2\x9b0mc", 0x8089feec9fbb4a50),
+        ("invalid utf8", 20, 5, b"a\xff\xfeb\xc3c", 0xa4abc847b76bd698),
+        ("pen through a scroll", 6, 2, b"\x1b[4;7;32;41ma\r\nb\r\nc", 0x5b7c339581d69d7e),
+        ("pen through scroll up", 6, 3, b"x\x1b[4;7;32;41m\x1b[1S", 0x3e4ef2ce6ff24c07),
+        ("pen through scroll down", 6, 3, b"x\x1b[4;7;32;41m\x1b[1T", 0xef0e56e2d99bba91),
+        ("pen through insert lines", 6, 3, b"x\r\ny\x1b[1;1H\x1b[4;7;32;41m\x1b[1L", 0xa280e644bcaef45b),
+        ("pen through delete lines", 6, 3, b"x\r\ny\x1b[1;1H\x1b[4;7;32;41m\x1b[1M", 0x46fcb65ae83f24e9),
+        ("pen through insert chars", 6, 2, b"abc\x1b[1;1H\x1b[4;7;32;41m\x1b[2@", 0x0e18a130e8b495b6),
+        ("pen through delete chars", 6, 2, b"abcdef\x1b[1;1H\x1b[4;7;32;41m\x1b[2P", 0x7815fdd31af1cf86),
+        ("pen through erase chars", 6, 2, b"abcdef\x1b[1;1H\x1b[4;7;32;41m\x1b[2X", 0x3d66cd3818931b66),
+        ("pen through erase line", 6, 2, b"abcdef\x1b[1;3H\x1b[4;7;32;41m\x1b[K", 0xf2aa12c5024f3f21),
+        ("pen through erase display", 6, 2, b"abcdef\x1b[4;7;32;41m\x1b[2J", 0x8b3f065a09491a62),
+        ("pen through reverse index", 6, 2, b"x\x1b[1;1H\x1b[4;7;32;41m\x1bM", 0x63910a330a62c332),
+        ("erase with a high palette background", 6, 2, b"ab\x1b[48;5;200m\x1b[K", 0xf5658eed8af2da29),
+        ("erase with an rgb background", 6, 2, b"ab\x1b[48;2;1;2;3m\x1b[K\r\n\x1b[2K", 0x7cfe7dafd50ca786),
+        ("erase with a bright background", 6, 2, b"ab\x1b[103m\x1b[K", 0x04b2b3804842a101),
+        ("vim-like clear", 20, 5, b"\x1b[38;5;252;48;5;235m\x1b[H\x1b[2J\x1b[1;1H~\x1b[2;1H~\x1b[5;1H\x1b[7m-- INSERT --\x1b[27m", 0x0e7face4e64b17b1),
+        ("styled wide char", 20, 3, "\x1b[1;31;44m\u{4f60}\x1b[0m\u{597d}".as_bytes(), 0xc78a1e14fb3f688d),
+    ];
+
+    /// Where rio-vt parts from a host built before the swap, on purpose, with
+    /// the old host's hash. The fallback core still matches it; rio-vt does
+    /// not, for a reason each can name:
+    ///
+    /// - a Kitty picture, which the old host drops in its parser and rio-vt
+    ///   places, moving the cursor below it;
+    /// - a palette index under 16 set with `48;5;n` and then erased, which
+    ///   rio-vt stores without saying whether the colour was named, and which
+    ///   TD reads back as named because `4n` then erase is far commoner.
+    #[rustfmt::skip]
+    const WHERE_RIO_PARTS: &[(&str, usize, usize, &[u8], u64)] = &[
+        ("kitty graphics inline", 20, 5, b"\x1b_Gi=7,s=2,v=1,a=T,t=d,f=24,c=4,r=2;/wAAAP8A\x1b\\after", 0xc3744af53ab0e06f),
+        ("erase with a palette background", 6, 2, b"ab\x1b[48;5;4m\x1b[K", 0x41f18ce63e45a129),
+    ];
+
+    #[test]
+    fn a_screen_hashes_as_a_host_from_before_the_core_swap_hashed_it() {
+        let wrong: Vec<String> = AS_THE_OLD_HOST_HASHED
+            .iter()
+            .filter_map(|(name, cols, rows, bytes, old)| {
+                let got = grid_hash(&term_fed(*cols, *rows, bytes));
+                (got != *old).then(|| format!("{name}: {got:#018x}, the old host {old:#018x}"))
+            })
+            .collect();
+        assert!(
+            wrong.is_empty(),
+            "on {}, a window would disagree with a host from before the swap about:\n{}",
+            crate::vt::CORE_NAME,
+            wrong.join("\n")
+        );
+    }
+
+    /// A host built before the core swap restores mouse reporting as a run of
+    /// three settings written one at a time, on or off, and a window has to
+    /// come out of that run reporting what the host reports. On rio-vt it came
+    /// out reporting nothing whenever clicks or drags were on — every reset
+    /// turns reporting off there — until `vt/compat.rs`.
+    #[test]
+    fn a_snapshot_from_a_host_before_the_swap_keeps_its_mouse_reporting() {
+        for (run, reporting) in [
+            (
+                "\x1b[?1000h\x1b[?1002l\x1b[?1003l",
+                TermMode::MOUSE_REPORT_CLICK,
+            ),
+            ("\x1b[?1000l\x1b[?1002h\x1b[?1003l", TermMode::MOUSE_DRAG),
+            ("\x1b[?1000l\x1b[?1002l\x1b[?1003h", TermMode::MOUSE_MOTION),
+            ("\x1b[?1000l\x1b[?1002l\x1b[?1003l", TermMode::empty()),
+        ] {
+            let term = term_fed(20, 5, run.as_bytes());
+            assert_eq!(term.mode() & TermMode::MOUSE_MODE, reporting, "{run:?}");
+        }
+    }
+
+    #[test]
+    fn where_rio_parts_from_a_host_before_the_swap_is_on_purpose() {
+        for (name, cols, rows, bytes, old) in WHERE_RIO_PARTS {
+            let got = grid_hash(&term_fed(*cols, *rows, bytes));
+            if cfg!(feature = "core-alacritty") {
+                assert_eq!(got, *old, "{name}: the fallback is the old host's core");
+            } else {
+                assert_ne!(
+                    got, *old,
+                    "{name}: rio-vt agrees with the old host now; move it to AS_THE_OLD_HOST_HASHED"
+                );
+            }
+        }
     }
 
     /// Encode `source`, replay it into a fresh terminal of the same size, and

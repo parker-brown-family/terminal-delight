@@ -1599,6 +1599,63 @@ mod correctness {
         assert_eq!(fg(&term, 0, 0), Color::Indexed(208));
     }
 
+    /// A blank takes the pen's background and nothing else, however it was
+    /// made. xterm's rule, and alacritty's: the green, the inverse and the
+    /// underline reach the characters written with the pen, never the blanks
+    /// an erase, a scroll, an inserted line or a cleared screen leaves. On
+    /// rio-vt the last three used to carry the whole pen, so a line that
+    /// scrolled in under inverse was drawn inverted from edge to edge — and an
+    /// erase read its red back as a palette index rather than as red.
+    #[test]
+    fn a_blank_takes_the_pens_background_and_nothing_else() {
+        const PEN: &str = "\x1b[4;7;32;41m";
+        let cases = [
+            (
+                "an erase",
+                6,
+                2,
+                format!("abcdef\x1b[1;3H{PEN}\x1b[K"),
+                (0, 4),
+            ),
+            ("a scroll", 6, 2, format!("{PEN}a\r\nb\r\nc"), (1, 3)),
+            (
+                "an inserted line",
+                6,
+                3,
+                format!("x\r\ny\x1b[1;1H{PEN}\x1b[1L"),
+                (0, 2),
+            ),
+            (
+                "a cleared screen",
+                6,
+                2,
+                format!("abcdef{PEN}\x1b[2J"),
+                (1, 2),
+            ),
+        ];
+        for (how, cols, rows, bytes, (row, col)) in cases {
+            let (mut term, _) = harness(cols, rows);
+            feed(&mut term, bytes.as_bytes());
+            let blank = term.cell(Point::new(Line(row), Column(col)));
+            assert_eq!(blank.c, ' ', "{how}");
+            assert_eq!(
+                blank.bg,
+                Color::Named(NamedColor::Red),
+                "{how}: the background"
+            );
+            assert_eq!(
+                blank.fg,
+                Color::Named(NamedColor::Foreground),
+                "{how}: no pen colour"
+            );
+            assert!(
+                blank.flags.is_empty(),
+                "{how}: no pen flags, {:?}",
+                blank.flags
+            );
+        }
+    }
+
     #[test]
     fn sgr_truecolor_fg() {
         let (mut term, _) = term80();

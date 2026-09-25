@@ -21,14 +21,14 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
   replica needed. A window still attaches to a session host built before the
   swap: the host protocol stays at version 1 and the divergence hash is over
   alacritty's frozen numbering. The decision, the plan and every difference
-  found between the cores are in `docs/plans/core-swap-rio/`. (#XXX)
+  found between the cores are in `docs/plans/core-swap-rio/`. (#825)
 - **Terminal Delight says what it is when a program asks.** Device attributes
   are `?62;22c`, long enough for `kitten icat`'s detector, which used to wait
   ten seconds in every pane and then give up (#750); XTVERSION is
   `terminal-delight 0.3.0`; the cell size (`CSI 16 t`) is answered in every
   pane, where before only a pane on a session host answered it. The kitty
   keyboard query goes unanswered, because TD sends legacy key encodings.
-  `--version` names the core. (#XXX)
+  `--version` names the core. (#825)
 
 ### Added
 
@@ -37,7 +37,7 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
   cells it asked for, scrolls with its text, and bends with the glass. They are
   attentional: when a pane's tab is hidden it forgets its pictures, so coming
   back shows the text alone, and no snapshot carries them. Sixel and iTerm2
-  pictures are not drawn yet. (#XXX)
+  pictures are not drawn yet. (#825)
 
 - **A response carries a `brief` — the bare minimum, in two sentences under
   fifty words.** The tl;dr and the ELI5 came back as ONE register, which is

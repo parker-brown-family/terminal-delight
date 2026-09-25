@@ -14,18 +14,41 @@ suite passed unchanged.
 **The four mouse-reporting modes are one setting.** Found by
 `gridwire::roundtrip::the_cursor_and_the_modes_come_back`. xterm treats DEC
 9/1000/1002/1003 as one setting (turning one on turns the others off, turning
-any off turns reporting off) and so does rio-vt; alacritty kept three
-independent bits. The snapshot encoder wrote them one at a time, so a later
-`?1003l` undid an earlier `?1002h` and a pane reporting drags arrived in a
-replica reporting nothing. The encoder now restores them as one setting — all
-off, then each that is on, weakest first — which lands correctly on either core.
-`gridwire.rs`, `MOUSE_PROTOCOLS`. The hash is unchanged.
+any off turns reporting off) and so does rio-vt. alacritty 0.26 does the first
+half — setting one clears the others — but turning one off clears only that
+one. The snapshot encoder wrote them one at a time, so a later `?1003l` undid an
+earlier `?1002h` and a pane reporting drags arrived in a replica reporting
+nothing. The encoder now restores them as one setting — all off, then each that
+is on, weakest first — which lands correctly on either core. `gridwire.rs`,
+`MOUSE_PROTOCOLS`. The hash is unchanged.
 
-*Left as it is:* an old session host (alacritty) and a new window (rio-vt)
-disagree about a program that turns on two mouse protocols, because alacritty
-keeps both and rio-vt keeps the last. The divergence guard sees the mode bits
-differ, re-snapshots once, and then leaves the pane alone — its standing rule.
-The screen itself is identical. This lasts only while an old host is running.
+*Left as it is:* because both cores clear the others when a protocol is set, an
+old session host (alacritty) and a new window (rio-vt) agree about every
+program that turns protocols on, however many it names (corrected in review;
+this note first said alacritty kept all three bits). They part only when a
+program turns off a protocol other than the one that is on — `?1002h` then
+`?1000l` leaves alacritty reporting drags and rio-vt reporting nothing. The
+divergence guard sees the mode bits differ, re-snapshots once, and then leaves
+the pane alone, its standing rule. This lasts only while an old host is
+running.
+
+**A blank is its background alone.** Found in review by hashing the same 94
+screens with the build before the swap, which is what a running session host
+still is, and with this one on both cores. alacritty through the boundary
+matched the old build on all 94; rio-vt parted on every screen that erased,
+scrolled, inserted or cleared while a pen was set. rio-vt keeps blanks two
+ways, and neither reads back as alacritty or xterm writes them. An erase
+(`K`, `X`, `@`, `P`) keeps the background inline and loses whether it was a
+named colour, so `44` then `K` read as `48;5;4`. A scroll, an inserted or
+deleted line and a cleared screen fill with the whole pen, so a line that
+scrolled in while inverse or underline was on drew inverted or underlined
+from edge to edge — visible, not only hashed. `blank_background` in `vt/rio.rs`
+reads both as alacritty does: the background, a named colour where it can be
+one, and nothing else. `gridwire::roundtrip::AS_THE_OLD_HOST_HASHED` pins all
+92 screens that agree to the old build's hash, on both cores; the two that
+part on purpose — a Kitty picture, which the old host drops, and a palette
+index under 16 set with `48;5;n` and then erased, which now reads as named —
+are pinned in `WHERE_RIO_PARTS`.
 
 **rio-vt introduces itself as Rio.** Read from the source
 (`crosswords/mod.rs`, `identify_terminal`, `report_version`,

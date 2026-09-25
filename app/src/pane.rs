@@ -1202,17 +1202,11 @@ pub(crate) fn laid_out_length(logical: f32, scale: f32) -> f32 {
     (device.abs() - 0.5).ceil().copysign(device) / scale
 }
 
-/// The grid's padding as gpui lays it out: [`grid_pad`], rounded to whole
-/// device pixels the way gpui rounds every authored padding before layout.
-/// Anything that turns a row into a position adds this, not the raw padding,
-/// or it lands up to half a device pixel off the drawn grid.
 /// A picture's pixels as a gpui texture: cropped to the part the program asked
-/// to show, and turned from RGBA into the BGRA gpui uploads.
-fn picture_texture(
-    data: &crate::vt::PictureData,
-    crop: [f32; 4],
-) -> Option<Arc<gpui::RenderImage>> {
-    let mut pixels = image::RgbaImage::from_raw(data.width, data.height, data.rgba.clone())?;
+/// to show, and turned from RGBA into the BGRA gpui uploads. Takes the pixels
+/// by value, because they were copied out of the core to be converted here.
+fn picture_texture(data: crate::vt::PictureData, crop: [f32; 4]) -> Option<Arc<gpui::RenderImage>> {
+    let mut pixels = image::RgbaImage::from_raw(data.width, data.height, data.rgba)?;
     if crop != [0.0, 0.0, 1.0, 1.0] {
         let (w, h) = (data.width as f32, data.height as f32);
         let x = (crop[0] * w).round().clamp(0.0, w) as u32;
@@ -1232,6 +1226,10 @@ fn picture_texture(
     )])))
 }
 
+/// The grid's padding as gpui lays it out: [`grid_pad`], rounded to whole
+/// device pixels the way gpui rounds every authored padding before layout.
+/// Anything that turns a row into a position adds this, not the raw padding,
+/// or it lands up to half a device pixel off the drawn grid.
 fn grid_pad_drawn(w: f32, h: f32, k1: f32, k2: f32, scale: f32) -> (f32, f32) {
     let (x, y) = grid_pad(w, h, k1, k2);
     (laid_out_length(x, scale), laid_out_length(y, scale))
@@ -4437,17 +4435,30 @@ impl TerminalView {
         let placed = if crawl || self.paint_inverted || cell_px_w == 0 || cell_px_h == 0 {
             Vec::new()
         } else {
-            let term = self.session.term.lock();
-            let pictures = term.pictures();
-            let mut placed = Vec::with_capacity(pictures.len());
-            for picture in pictures {
-                let key = (picture.key, picture.crop.map(f32::to_bits));
+            // Read under the terminal's lock; convert after letting it go. The
+            // lock is the read loop's too, and turning a large picture into a
+            // texture takes long enough to hold up the program's output.
+            let wanted: Vec<_> = {
+                let term = self.session.term.lock();
+                let mut fetched = std::collections::HashSet::new();
+                term.pictures()
+                    .into_iter()
+                    .map(|picture| {
+                        let key = (picture.key, picture.crop.map(f32::to_bits));
+                        let data = (!self.pictures.contains_key(&key) && fetched.insert(key))
+                            .then(|| term.picture_data(picture.key))
+                            .flatten();
+                        (key, picture, data)
+                    })
+                    .collect()
+            };
+            let mut placed = Vec::with_capacity(wanted.len());
+            for (key, picture, data) in wanted {
                 let texture = match self.pictures.get(&key) {
                     Some(texture) => texture.clone(),
                     None => {
-                        let Some(texture) = term
-                            .picture_data(picture.key)
-                            .and_then(|data| picture_texture(&data, picture.crop))
+                        let Some(texture) =
+                            data.and_then(|data| picture_texture(data, picture.crop))
                         else {
                             continue;
                         };

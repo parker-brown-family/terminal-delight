@@ -20,9 +20,10 @@ use rio_vt::ansi::graphics::{kitty_overlay_geometry, OverlayViewport};
 use rio_vt::ansi::CursorShape as RShape;
 use rio_vt::clipboard::ClipboardType as RClipboard;
 use rio_vt::config::colors::{AnsiColor, ColorRgb};
+use rio_vt::crosswords::grid::Grid;
 use rio_vt::crosswords::grid::{Dimensions, Scroll as RScroll};
 use rio_vt::crosswords::pos::{Column as RColumn, Direction, Line as RLine, Pos};
-use rio_vt::crosswords::square::Wide;
+use rio_vt::crosswords::square::{ContentTag, Square, Wide};
 use rio_vt::crosswords::style::StyleFlags;
 use rio_vt::crosswords::{Crosswords, CrosswordsSize};
 use rio_vt::event::{EventListener, RioEvent, WindowId};
@@ -48,6 +49,9 @@ use super::{
 /// means the mask has to be explicit: `from_bits_truncate` keeps every bit
 /// when one flag is all of them.
 const READ_MODES: u32 = (1 << 18) - 1;
+
+/// The most pictures one pane draws in a frame.
+const MOST_SHOWN: usize = 256;
 
 /// Primary device attributes, as Terminal Delight answers them: a VT220 with
 /// ANSI colour.
@@ -228,9 +232,57 @@ fn flags(style: StyleFlags, wide: Wide, wrapline: bool) -> Flags {
     out
 }
 
+/// The background of a cell that holds no character, or `None` for a cell
+/// that holds one.
+///
+/// A blank, in TD as in alacritty and xterm, is its background colour and
+/// nothing else. rio-vt keeps blanks two ways, and neither reads back that
+/// way. An erase (`K`, `X`, `@`, `P`) stores the background inline and forgets
+/// whether it was one of the sixteen named colours or a palette index, so
+/// `44` then `K` would come back as `48;5;4`. A scroll, an inserted or deleted
+/// line and a cleared screen fill with the whole pen instead — foreground,
+/// underline, inverse — so a line that scrolled in while a program had inverse
+/// on would draw inverted from edge to edge, where every other terminal draws
+/// the background. Both are read here the way alacritty wrote them, because a
+/// window and a session host on different cores compare their grids cell by
+/// cell (`gridwire::grid_hash`), and because the second one is visible.
+///
+/// The one case this reads wrongly is a palette index under 16 set with
+/// `48;5;n` and then erased: that comes back named, as `4n`. It draws the same
+/// colour, and costs one repair from the divergence guard against a host on
+/// alacritty; the far commoner `4n` then erase costs nothing.
+fn blank_background(grid: &Grid<Square>, square: Square) -> Option<Color> {
+    if square.wide() != Wide::Narrow {
+        return None;
+    }
+    match square.content_tag() {
+        ContentTag::BgPalette => {
+            let index = square.bg_palette_index();
+            Some(match NamedColor::from_index(index as usize) {
+                Some(named) => Color::Named(named),
+                None => Color::Indexed(index),
+            })
+        }
+        ContentTag::BgRgb => {
+            let (r, g, b) = square.bg_rgb();
+            Some(Color::Spec(Rgb { r, g, b }))
+        }
+        ContentTag::Codepoint => {
+            (square.c() == '\0' && !square.has_grapheme()).then(|| color(grid.style_of(&square).bg))
+        }
+    }
+}
+
 pub(super) struct Core {
     term: Crosswords<Relay>,
     parser: Processor,
+    /// What of the Kitty graphics protocol reaches `parser`: no APC longer
+    /// than a limit, and no temporary file deleted outside kitty's rule
+    /// (`vt/kitty.rs`).
+    guard: super::kitty::Guard,
+    /// A pre-swap host's mouse restore, read as that host meant it
+    /// (`vt/compat.rs`).
+    mouse: super::compat::MouseRun,
 }
 
 impl Backend for Core {
@@ -255,11 +307,26 @@ impl Backend for Core {
         Self {
             term,
             parser: Processor::default(),
+            guard: Default::default(),
+            mouse: Default::default(),
         }
     }
 
     fn advance(&mut self, bytes: &[u8]) {
-        self.parser.advance(&mut self.term, bytes);
+        let Self {
+            term,
+            parser,
+            guard,
+            mouse,
+        } = self;
+        guard.feed(bytes, &mut |bytes| {
+            mouse.feed(bytes, &mut |bytes| parser.advance(term, bytes))
+        });
+        // A synchronized update holds its bytes back from the parser; a
+        // temporary file named inside one is deleted once it is drawn.
+        if parser.sync_bytes_count() == 0 {
+            guard.delete_what_the_core_read();
+        }
     }
 
     fn sync_bytes_count(&self) -> usize {
@@ -272,6 +339,7 @@ impl Backend for Core {
 
     fn flush_sync(&mut self) {
         self.parser.stop_sync(&mut self.term);
+        self.guard.delete_what_the_core_read();
     }
 
     fn resize(&mut self, size: TermSize) {
@@ -302,6 +370,20 @@ impl Backend for Core {
         let width = row.len().min(grid.columns());
         for column in 0..width {
             let square = row[RColumn(column)];
+            if let Some(bg) = blank_background(grid, square) {
+                let flags = if square.wrapline() {
+                    Flags::WRAPLINE
+                } else {
+                    Flags::empty()
+                };
+                out.push(Cell::new(
+                    ' ',
+                    Color::Named(NamedColor::Foreground),
+                    bg,
+                    flags,
+                ));
+                continue;
+            }
             let style = grid.style_of(&square);
             // An erased or never-written cell holds NUL. TD's blank is a space,
             // as alacritty's was, and word selection, trimming and the
@@ -456,6 +538,12 @@ impl Backend for Core {
         out.sort_by(|a, b| {
             (a.z, a.line, a.column, a.key.image).cmp(&(b.z, b.line, b.column, b.key.image))
         });
+        // Placing a picture costs a program a few bytes and costs a frame an
+        // element, so a program placing one small picture thousands of times
+        // would slow every frame of its pane. The topmost are drawn.
+        if out.len() > MOST_SHOWN {
+            out.drain(..out.len() - MOST_SHOWN);
+        }
         out
     }
 
@@ -653,6 +741,86 @@ mod tests {
         let mut term = Term::new(TermSize::new(40, 10, 0, 0), heard.clone());
         place(&mut term, 2, 1);
         assert!(term.pictures().is_empty());
+    }
+
+    /// `t=t` naming `path`, one red pixel, placed.
+    fn temporary_file_command(path: &std::path::Path) -> Vec<u8> {
+        use base64::Engine;
+        let reference = base64::engine::general_purpose::STANDARD
+            .encode(path.to_str().expect("a UTF-8 path").as_bytes());
+        format!("\x1b_Ga=T,q=2,f=24,s=1,v=1,t=t;{reference}\x1b\\").into_bytes()
+    }
+
+    #[test]
+    fn a_temporary_file_is_drawn_and_then_deleted() {
+        let path = std::env::temp_dir().join(format!(
+            "tty-graphics-protocol-td-rio-{}.rgb",
+            std::process::id()
+        ));
+        std::fs::write(&path, [0xff, 0, 0]).expect("one red pixel");
+        let mut term = Term::new(TermSize::new(40, 10, 8, 16), Arc::new(Heard::default()));
+        term.advance(&temporary_file_command(&path));
+        assert_eq!(term.pictures().len(), 1, "drawn");
+        assert!(!path.exists(), "and deleted, as kitty deletes one");
+    }
+
+    #[test]
+    fn a_temporary_file_inside_a_synchronized_update_is_drawn_before_it_is_deleted() {
+        let path = std::env::temp_dir().join(format!(
+            "tty-graphics-protocol-td-rio-sync-{}.rgb",
+            std::process::id()
+        ));
+        std::fs::write(&path, [0xff, 0, 0]).expect("one red pixel");
+        let mut term = Term::new(TermSize::new(40, 10, 8, 16), Arc::new(Heard::default()));
+        term.advance(b"\x1b[?2026h");
+        term.advance(&temporary_file_command(&path));
+        assert!(path.exists(), "the update holds the command back, unread");
+        term.advance(b"\x1b[?2026l");
+        assert_eq!(term.pictures().len(), 1, "drawn when the update closed");
+        assert!(!path.exists(), "and deleted after");
+    }
+
+    /// rio-vt's own rule for which temporary file it may delete is that the
+    /// path contains the marker somewhere, so a path through a marked
+    /// directory reaches any file the terminal can delete. TD's guard hands
+    /// the core such a command as a plain file, which it draws and leaves.
+    #[test]
+    fn a_temporary_file_outside_kittys_rule_is_drawn_and_never_deleted() {
+        let root = std::env::temp_dir().join(format!("td-rio-victim-{}", std::process::id()));
+        let marked = root.join("tty-graphics-protocol-dir");
+        std::fs::create_dir_all(&marked).expect("a marked directory");
+        let victim = root.join("notes");
+        std::fs::write(&victim, [0xff, 0, 0]).expect("the victim");
+        let mut term = Term::new(TermSize::new(40, 10, 8, 16), Arc::new(Heard::default()));
+        term.advance(&temporary_file_command(&marked.join("..").join("notes")));
+        assert_eq!(term.pictures().len(), 1, "read as a plain file, and drawn");
+        assert!(victim.exists(), "a file outside kitty's rule was deleted");
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn output_after_a_picture_command_past_the_limit_is_drawn_as_usual() {
+        // Past the limit the guard ends the command for the core and drops the
+        // rest (what the core is handed is pinned in `vt/kitty.rs`); none of
+        // the dropped payload reaches the screen as text, and what follows
+        // the command's real end does.
+        let mut term = Term::new(TermSize::new(40, 10, 8, 16), Arc::new(Heard::default()));
+        term.advance(b"\x1b_Ga=T,f=100;");
+        let chunk = vec![b'A'; 1 << 20];
+        for _ in 0..(super::super::kitty::MAX_APC >> 20) + 3 {
+            term.advance(&chunk);
+        }
+        term.advance(b"\x1b\\after");
+        let row: String = (0..5)
+            .map(|c| {
+                term.cell(crate::vt::Point::new(
+                    crate::vt::Line(0),
+                    crate::vt::Column(c),
+                ))
+                .c
+            })
+            .collect();
+        assert_eq!(row, "after");
     }
 
     #[test]

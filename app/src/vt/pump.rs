@@ -268,8 +268,13 @@ impl Pump {
                     Read::Drained | Read::Budget => {}
                     Read::Closed => {
                         if self.source.child_fd().is_none() {
-                            // A stream with no program behind it has ended.
-                            self.end(None);
+                            // Nothing will say when a program has gone, so the
+                            // end of the stream is the end: a replica's, whose
+                            // program is the host's and has no status here, or
+                            // a pseudoterminal's on a kernel without pidfds,
+                            // whose child is on its way out and is reaped now.
+                            let status = self.source.reap();
+                            self.end(status);
                             break;
                         }
                         // A pseudoterminal hangs up before its child is reaped;
@@ -285,10 +290,13 @@ impl Pump {
                 if self.reading {
                     while let Read::Budget = self.read(&mut buf, TURN) {}
                 }
-                if let Some(status) = self.source.reap() {
-                    self.end(Some(status));
-                    break;
-                }
+                // The pidfd says the child has exited, and it stays readable
+                // from now on, so the loop ends here whether or not the status
+                // can still be read — something else reaping the child would
+                // otherwise leave this thread spinning on it.
+                let status = self.source.reap();
+                self.end(status);
+                break;
             }
 
             self.write();

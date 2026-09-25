@@ -97,7 +97,7 @@ impl Source for PtySource {
     fn reap(&mut self) -> Option<ExitStatus> {
         match self.child.try_wait() {
             Ok(Some(status)) => Some(status),
-            // Without a pidfd this is only asked once the stream has closed,
+            // Without a pidfd the loop asks only once the stream has closed,
             // when the child is on its way out; waiting for it is then brief
             // and is the only way to learn its status.
             Ok(None) if self.pidfd.is_none() => self.child.wait().ok(),
@@ -109,9 +109,15 @@ impl Source for PtySource {
 impl Drop for PtySource {
     fn drop(&mut self) {
         // alacritty's hang-up on the way out: the shell is told its terminal
-        // has gone, and waited for so it does not linger as a zombie.
-        unsafe {
-            libc::kill(self.child.id() as i32, libc::SIGHUP);
+        // has gone, and waited for so it does not linger as a zombie. Only a
+        // child not yet reaped is signalled. Once the loop has reaped it, its
+        // pid is free, and may already be another process's. Unreaped, even
+        // a child that has exited still holds its pid, so the check cannot
+        // race.
+        if matches!(self.child.try_wait(), Ok(None)) {
+            unsafe {
+                libc::kill(self.child.id() as i32, libc::SIGHUP);
+            }
         }
         let _ = self.child.wait();
     }
@@ -284,6 +290,13 @@ fn winsize(size: WindowSize) -> Winsize {
 fn pidfd_open(pid: u32) -> Option<OwnedFd> {
     let fd = unsafe { libc::syscall(libc::SYS_pidfd_open, pid as libc::pid_t, 0) };
     if fd < 0 {
+        // Survivable — the end of the stream stands in for the child's exit —
+        // but a terminal that loses its pidfds to a descriptor limit or a
+        // sandbox has changed how it notices a program end, so it is said.
+        eprintln!(
+            "td: no pidfd for process {pid} ({}); its exit will be noticed when its terminal closes",
+            std::io::Error::last_os_error()
+        );
         return None;
     }
     Some(unsafe { OwnedFd::from_raw_fd(fd as i32) })
