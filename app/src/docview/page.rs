@@ -31,6 +31,7 @@
 //! a blurred seam. [`place`] maps a page rect into the view the same way, for
 //! the links and dialog buttons a press can land on.
 
+use std::any::Any;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -38,10 +39,11 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use gpui::{
-    div, hsla, img, point, prelude::*, px, size, App, Bounds, Context, ImageSource, ObjectFit,
-    Pixels, Point, RenderImage, ScrollDelta, Size, Task,
+    div, hsla, img, point, prelude::*, px, size, App, Bounds, Context, ImageSource, Keystroke,
+    ObjectFit, Pixels, Point, RenderImage, ScrollDelta, Size, Task, Window,
 };
 
+use super::backend::{Backend, Drawn};
 use super::cache::{self, CacheKey};
 use super::engine::ConcurSupport;
 use super::engine::{
@@ -51,7 +53,7 @@ use super::engine::{
 use super::notes::{self, NotesRead};
 use super::notes_ui::{self, LayerPress, Mark, MarkHit, NotesLayer, Said};
 use super::snapshot::EXTRACT_VERSION;
-use super::{resolve_link, Backend, DocumentView, FollowLink, LinkTarget};
+use super::{resolve_link, DocumentView, FileStamp, FollowLink, LinkTarget};
 use crate::docopen::DocScroll;
 use crate::theme::Theme;
 
@@ -405,10 +407,7 @@ fn debug() -> bool {
 
 /// The view's page, from a task that only holds a weak handle.
 fn page_of(view: &mut DocumentView) -> Option<&mut PageDoc> {
-    match &mut view.backend {
-        Backend::Page(p) => Some(p),
-        _ => None,
-    }
+    view.backend.downcast_mut::<PageDoc>()
 }
 
 impl PageDoc {
@@ -2016,6 +2015,147 @@ pub fn moved_anchors(drawn: &[(String, Option<RectCss>)], now: &[Anchor]) -> Vec
         );
     }
     out
+}
+
+// The view's calls, handed to the page's own methods above. Where one of those
+// has the trait method's name it is named with its type
+// (`PageDoc::press(self, …)`): Rust finds an inherent method before a trait's,
+// so that is the page's own and not this one calling itself.
+//
+// A page does nearly everything a document can: it scrolls, lands on a
+// fragment, follows its file and carries a brief's notes. It does not zoom or
+// follow a drag, so those are the trait's defaults.
+impl Backend for PageDoc {
+    fn element(&mut self, view: &Drawn, _window: &mut Window, th: &Theme) -> gpui::AnyElement {
+        PageDoc::element(self, th, view.placed)
+    }
+
+    fn give_back(&mut self, path: &Path, cx: &mut App) {
+        let n = self.release(cx);
+        if debug() {
+            eprintln!("[doc] released {} textures={n}", path.display());
+        }
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+
+    /// The note box, the bar, a note button, a dialog, a link: see
+    /// [`PageDoc::press`]. A link out and the bar's ↪ are the pane's to
+    /// route, so they are emitted.
+    fn press(&mut self, at: Point<Pixels>, view: &Drawn, cx: &mut Context<DocumentView>) -> bool {
+        match PageDoc::press(self, at, view.placed, cx) {
+            Pressed::Follow(link) => {
+                cx.emit(link);
+                true
+            }
+            Pressed::Send(notes) => {
+                cx.emit(notes);
+                true
+            }
+            Pressed::Took => true,
+            Pressed::Nothing => false,
+        }
+    }
+
+    /// The page notifies for itself: a turn also moves tiles on and off the
+    /// GPU.
+    fn wheel(
+        &mut self,
+        delta: ScrollDelta,
+        _line: f32,
+        _view: Size<Pixels>,
+        _sf: f32,
+        cx: &mut Context<DocumentView>,
+    ) -> bool {
+        PageDoc::wheel(self, delta, cx);
+        false
+    }
+
+    fn hover(&mut self, at: Option<Point<Pixels>>, cx: &mut Context<DocumentView>) {
+        PageDoc::hover(self, at, cx);
+    }
+
+    fn key(&mut self, ks: &Keystroke, floating: bool, cx: &mut Context<DocumentView>) -> bool {
+        PageDoc::key(self, ks, floating, cx)
+    }
+
+    fn has_caret(&self) -> bool {
+        PageDoc::has_caret(self)
+    }
+
+    fn scroll(&self) -> Option<DocScroll> {
+        PageDoc::scroll(self)
+    }
+
+    fn restore_scroll(&mut self, at: DocScroll, cx: &mut Context<DocumentView>) {
+        PageDoc::restore_scroll(self, at.top, cx);
+    }
+
+    fn show_fragment(
+        &mut self,
+        fragment: String,
+        _view_h: Option<f32>,
+        cx: &mut Context<DocumentView>,
+    ) {
+        PageDoc::show_fragment(self, fragment, cx);
+    }
+
+    fn measured(&mut self, m: Measured, cx: &mut Context<DocumentView>) {
+        PageDoc::measured(self, m, cx);
+    }
+
+    /// A brief is re-read when it changes, and a save of its own notes is
+    /// told apart from anyone else's write by the view's `own_write`.
+    fn follows_its_file(&self) -> bool {
+        true
+    }
+
+    /// Stamped as it opens, so the watcher's first tick finds the file as it
+    /// was rather than new. The page reads the file itself only once the view
+    /// has been measured, which is later.
+    fn opened(&mut self, path: &Path, _cx: &mut Context<DocumentView>) -> Option<FileStamp> {
+        FileStamp::of(path)
+    }
+
+    fn file_changed(&mut self, _path: &Path, came_back: bool, cx: &mut Context<DocumentView>) {
+        if came_back {
+            self.gone(false, cx);
+        }
+        self.changed_on_disk(cx);
+    }
+
+    fn file_gone(&mut self, cx: &mut Context<DocumentView>) {
+        self.gone(true, cx);
+    }
+
+    fn set_beside(&mut self, beside: Option<String>) -> bool {
+        PageDoc::set_beside(self, beside)
+    }
+
+    fn notes_said(&mut self, said: Said, cx: &mut Context<DocumentView>) {
+        PageDoc::notes_said(self, said);
+        cx.notify();
+    }
+
+    fn notes_report(&self) -> Option<serde_json::Value> {
+        PageDoc::notes_report(self)
+    }
+
+    fn notes_command(
+        &mut self,
+        cmd: super::NotesCommand,
+        cx: &mut Context<DocumentView>,
+    ) -> Result<serde_json::Value, String> {
+        PageDoc::notes_command(self, cmd, cx)?;
+        PageDoc::notes_report(self)
+            .ok_or_else(|| "the document is not a laid-out HTML page yet".into())
+    }
+
+    fn guard_close(&mut self, cx: &mut Context<DocumentView>) -> bool {
+        PageDoc::guard_close(self, cx)
+    }
 }
 
 #[cfg(test)]

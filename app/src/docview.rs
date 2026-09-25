@@ -11,6 +11,16 @@
 //! found only once the view is up; the view then says why in its body and
 //! emits [`CannotShow`], and the pane hands the file over.
 //!
+//! # One view, three backends
+//!
+//! The view does what is the same for every document — the release hook, the
+//! file watcher, the canvases that measure it, the theme and the seat — and
+//! hands the rest to one [`backend::Backend`]: an image ([`image`]), a
+//! Markdown file ([`markdown_view`]) or a page ([`page`]). What a backend
+//! cannot do is the trait's default, written once with the reason beside it,
+//! rather than a wildcard arm in every method that has to ask. See
+//! [`backend`] for the whole contract.
+//!
 //! # A brief's notes
 //!
 //! Over an HTML page that is a decision brief, TD draws the brief's notes
@@ -70,11 +80,13 @@
 //! the view stays at the top, or, when that block is gone, the same fraction of
 //! the page.
 
+pub mod backend;
 pub mod cache;
 pub mod cdp;
 pub mod engine;
 pub mod image;
 pub mod markdown;
+pub mod markdown_view;
 pub mod notes;
 pub mod notes_ui;
 pub mod page;
@@ -88,20 +100,16 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
 use gpui::{
-    canvas, div, prelude::*, px, App, Context, EventEmitter, Global, ImgResourceLoader, Keystroke,
-    Modifiers, Pixels, Point, RenderImage, Resource, ScrollDelta, Size, Task, Window,
+    canvas, div, prelude::*, App, Context, EventEmitter, Global, Keystroke, Modifiers, Pixels,
+    Point, ScrollDelta, Size, Task, Window,
 };
 
 use crate::docopen::{DocKind, DocScroll, DocSeat, DocTarget};
 use crate::theme::Theme;
+use backend::{Backend, Drawn};
 use engine::{PageEngine, Unavailable};
 
 pub use image::{ImageZoom, ZoomStep};
-
-/// How far one notch of a wheel that counts in lines moves a picture, in
-/// logical pixels. Three lines of text at a common size, which is what a
-/// notch scrolls in a browser.
-const WHEEL_LINE_PX: f32 = 48.0;
 
 /// How often an open document asks whether its file changed: the skin and
 /// theme hot-reload's pattern, at the pace the program design set.
@@ -110,7 +118,9 @@ pub const WATCH_EVERY: Duration = Duration::from_millis(500);
 /// A document on screen.
 pub struct DocumentView {
     target: DocTarget,
-    backend: Backend,
+    /// Whatever draws the document: the picture, the Markdown file or the
+    /// page. Made with the view and kept for its life; see [`backend`].
+    backend: Box<dyn Backend>,
     /// The pane's resolved theme, handed down by [`Self::set_theme`]; the
     /// window's until the pane first paints the square.
     theme: Option<Arc<Theme>>,
@@ -139,20 +149,12 @@ pub struct DocumentView {
     /// watcher tells that save from anyone else's, so a save never reloads
     /// the page under the person making it.
     own_write: Option<FileStamp>,
-    reading: Task<()>,
     _watch: Task<()>,
 }
 
 /// A view's measured size, in logical pixels, and the scale factor it was
 /// measured under.
 type Frame = (Size<Pixels>, f32);
-
-enum Backend {
-    Image(image::ImageDoc),
-    Markdown(markdown::MarkdownDoc),
-    /// Boxed: a page carries its tiles, dialog and tasks, ten times an image.
-    Page(Box<page::PageDoc>),
-}
 
 /// A press on a link that leaves this document. The pane decides where it
 /// goes: a file TD can draw takes the square's place, anything else goes to
@@ -444,48 +446,19 @@ fn paints_alike(a: &Theme, b: &Theme) -> bool {
         && a.font_family == b.font_family
 }
 
-/// The scroll a backend has to save. `None` for an image, which has none, and
-/// for a page never laid out, where nothing has been measured.
-fn scroll_of(backend: &Backend) -> Option<DocScroll> {
-    match backend {
-        Backend::Markdown(md) => md.scroll(),
-        Backend::Page(page) => page.scroll(),
-        Backend::Image(_) => None,
-    }
-}
-
-/// A picture a Markdown document embeds, as decoded, or the sentence its box
-/// says instead.
-fn embedded<E: std::fmt::Display>(
-    decoded: Result<Arc<RenderImage>, E>,
-) -> Result<Arc<RenderImage>, String> {
-    let image = decoded.map_err(|e| format!("could not be read: {e}"))?;
-    let size = image.size(0);
-    let (w, h) = (size.width.0.max(0) as u32, size.height.0.max(0) as u32);
-    if image::too_large(w, h) {
-        return Err(format!(
-            "{w} × {h} pixels, past the {} the GPU can hold here",
-            image::MAX_SIDE
-        ));
-    }
-    Ok(image)
-}
-
 impl DocumentView {
     pub fn new(target: DocTarget, cx: &mut Context<Self>) -> Self {
-        let backend = match target.kind {
-            DocKind::Image => Backend::Image(image::ImageDoc::load(&target.path, cx)),
-            DocKind::Markdown => Backend::Markdown(markdown::MarkdownDoc::new()),
-            DocKind::Html => Backend::Page(Box::new(page::PageDoc::new(&target.path, engine(cx)))),
+        let mut backend: Box<dyn Backend> = match target.kind {
+            DocKind::Image => Box::new(image::ImageDoc::load(&target.path, cx)),
+            DocKind::Markdown => Box::new(markdown::MarkdownDoc::new()),
+            DocKind::Html => Box::new(page::PageDoc::new(&target.path, engine(cx))),
         };
         cx.on_release(|view, cx| view.give_back(cx)).detach();
-        // Markdown is re-read on a change; a brief is too, and a save of its
-        // notes is told apart from anyone else's by `own_write`.
-        let watch = matches!(backend, Backend::Markdown(_) | Backend::Page(_));
-        let seen = match backend {
-            Backend::Page(_) => FileStamp::of(&target.path),
-            _ => None,
-        };
+        // Markdown is re-read on a change, and starts its first read here; a
+        // brief is re-read too, stamped now, and a save of its notes is told
+        // apart from anyone else's by `own_write`.
+        let seen = backend.opened(&target.path, cx);
+        let watch = backend.follows_its_file();
         let mut view = Self {
             target,
             backend,
@@ -497,13 +470,9 @@ impl DocumentView {
             links: markdown::LinkSink::default(),
             seen,
             own_write: None,
-            reading: Task::ready(()),
             _watch: Task::ready(()),
         };
         if watch {
-            if matches!(view.backend, Backend::Markdown(_)) {
-                view.read_markdown(cx);
-            }
             view._watch = view.watch(cx);
         }
         view
@@ -533,21 +502,14 @@ impl DocumentView {
     /// Where the document is scrolled, for the saved layout to keep. `None`
     /// for an image and for a page not yet laid out.
     pub fn scroll(&self) -> Option<DocScroll> {
-        scroll_of(&self.backend)
+        self.backend.scroll()
     }
 
     /// Go back to a place the saved layout kept, as soon as the page has been
     /// laid out: the file is still being read when a restore asks. A picture
     /// has no scroll to go back to.
     pub fn restore_scroll(&mut self, at: DocScroll, cx: &mut Context<Self>) {
-        match &mut self.backend {
-            Backend::Markdown(md) => {
-                md.restore_fraction(at.top);
-                cx.notify();
-            }
-            Backend::Page(page) => page.restore_scroll(at.top, cx),
-            Backend::Image(_) => {}
-        }
+        self.backend.restore_scroll(at, cx);
     }
 
     /// Paint in this palette from now on: the pane's own, which can differ
@@ -574,6 +536,19 @@ impl DocumentView {
         self.frame.get().map(|(size, _)| f32::from(size.height))
     }
 
+    /// The backend, and the view as the last paint left it, borrowed apart so
+    /// the one can be handed the other.
+    fn backend_and_view(&mut self) -> (&mut dyn Backend, Drawn<'_>) {
+        let view = Drawn {
+            path: &self.target.path,
+            frame: self.frame.get(),
+            placed: self.placed.get(),
+            painted_at: self.painted_at.get(),
+            links: &self.links,
+        };
+        (&mut *self.backend, view)
+    }
+
     // ── input, already un-bent by the pane ──────────────────────────────────
     //
     // Every point below is flat and relative to the view's own top-left. The
@@ -592,60 +567,8 @@ impl DocumentView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        match &mut self.backend {
-            Backend::Image(img) => img.press(at),
-            Backend::Markdown(_) => self.press_link(at, cx),
-            Backend::Page(page) => match page.press(at, self.placed.get(), cx) {
-                page::Pressed::Follow(link) => {
-                    cx.emit(link);
-                    true
-                }
-                page::Pressed::Send(notes) => {
-                    cx.emit(notes);
-                    true
-                }
-                page::Pressed::Took => true,
-                page::Pressed::Nothing => false,
-            },
-        }
-    }
-
-    /// A press on a Markdown document, looked up among its links.
-    fn press_link(&mut self, at: Point<Pixels>, cx: &mut Context<Self>) -> bool {
-        let (Some(origin), Some((size, _))) = (self.painted_at.get(), self.frame.get()) else {
-            return false;
-        };
-        // Above the view is the square's strip; a link scrolled up under it
-        // is not what was pressed.
-        if at.x < px(0.) || at.y < px(0.) || at.x >= size.width || at.y >= size.height {
-            return false;
-        }
-        let Backend::Markdown(md) = &mut self.backend else {
-            return false;
-        };
-        let Some(href) = markdown::link_at(&self.links.borrow(), origin + at) else {
-            return false;
-        };
-        let dir = self.target.path.parent().unwrap_or(Path::new("/"));
-        let view_h = Some(f32::from(size.height));
-        match resolve_link(dir, &href) {
-            LinkTarget::Fragment(fragment) => md.go_to_fragment(fragment, view_h),
-            LinkTarget::File { path, fragment } if path == self.target.path => {
-                if let Some(fragment) = fragment {
-                    md.go_to_fragment(fragment, view_h);
-                }
-            }
-            LinkTarget::File { path, fragment } => cx.emit(FollowLink {
-                target: path.to_string_lossy().into_owned(),
-                fragment,
-            }),
-            LinkTarget::Url(url) => cx.emit(FollowLink {
-                target: url,
-                fragment: None,
-            }),
-        }
-        cx.notify();
-        true
+        let (backend, view) = self.backend_and_view();
+        backend.press(at, &view, cx)
     }
 
     /// The pointer moved with the left button still held since [`Self::press`].
@@ -653,18 +576,14 @@ impl DocumentView {
         let Some((view, sf)) = self.frame.get() else {
             return;
         };
-        if let Backend::Image(img) = &mut self.backend {
-            if img.drag(at, view, sf) {
-                cx.notify();
-            }
+        if self.backend.drag(at, view, sf) {
+            cx.notify();
         }
     }
 
     /// The held press ended, wherever the pointer is now.
     pub fn release(&mut self, _cx: &mut Context<Self>) {
-        if let Backend::Image(img) = &mut self.backend {
-            img.end_pan();
-        }
+        self.backend.end_press();
     }
 
     /// A wheel turn over the document: it pans a picture larger than the
@@ -675,23 +594,7 @@ impl DocumentView {
             return;
         };
         let line = self.theme(cx).font_size * 1.6;
-        let moved = match &mut self.backend {
-            Backend::Image(img) => {
-                let (dx, dy) = match delta {
-                    ScrollDelta::Pixels(p) => (f32::from(p.x), f32::from(p.y)),
-                    ScrollDelta::Lines(l) => (l.x * WHEEL_LINE_PX, l.y * WHEEL_LINE_PX),
-                };
-                img.pan_by(dx, dy, view, sf)
-            }
-            Backend::Markdown(md) => md.wheel(delta, line, Some(f32::from(view.height))),
-            Backend::Page(page) => {
-                // The page notifies for itself: a turn also moves tiles on
-                // and off the GPU.
-                page.wheel(delta, cx);
-                false
-            }
-        };
-        if moved {
+        if self.backend.wheel(delta, line, view, sf, cx) {
             cx.notify();
         }
     }
@@ -701,38 +604,28 @@ impl DocumentView {
     /// because its note buttons show under the pointer as a browser shows
     /// them.
     pub fn hover(&mut self, at: Option<Point<Pixels>>, cx: &mut Context<Self>) {
-        if let Backend::Page(page) = &mut self.backend {
-            page.hover(at, cx);
-        }
+        self.backend.hover(at, cx);
     }
 
     /// Who the notes bar's ↪ sends to, as the pane works it out every frame:
     /// "agent", a pane's name, or `None` for no button. Repaints only when
     /// that changes what the bar draws.
     pub fn set_beside(&mut self, beside: Option<String>, cx: &mut Context<Self>) {
-        if let Backend::Page(page) = &mut self.backend {
-            if page.set_beside(beside) {
-                cx.notify();
-            }
+        if self.backend.set_beside(beside) {
+            cx.notify();
         }
     }
 
     /// What came of a ↪, said in the notes bar.
     pub fn notes_said(&mut self, said: notes_ui::Said, cx: &mut Context<Self>) {
-        if let Backend::Page(page) = &mut self.backend {
-            page.notes_said(said);
-            cx.notify();
-        }
+        self.backend.notes_said(said, cx);
     }
 
     /// What a brief's notes layer shows, for the control socket: its state,
     /// its counts, why it is read-only when it is, and the map it would copy.
     /// `None` for anything but a brief, and for a brief not yet laid out.
     pub fn notes_report(&self) -> Option<serde_json::Value> {
-        match &self.backend {
-            Backend::Page(page) => page.notes_report(),
-            _ => None,
-        }
+        self.backend.notes_report()
     }
 
     /// A key the pane's layer ladder handed to the view. Escape answers true
@@ -742,26 +635,17 @@ impl DocumentView {
     /// answers whether it kept itself open, once, because closing would lose
     /// notes not yet saved into the file. Only a brief carries notes.
     pub fn guard_close(&mut self, cx: &mut Context<Self>) -> bool {
-        match &mut self.backend {
-            Backend::Page(page) => page.guard_close(cx),
-            _ => false,
-        }
+        self.backend.guard_close(cx)
     }
 
     pub fn key(&mut self, ks: &Keystroke, cx: &mut Context<Self>) -> bool {
-        match &mut self.backend {
-            Backend::Page(page) => page.key(ks, self.seat == DocSeat::Float, cx),
-            _ => false,
-        }
+        self.backend.key(ks, self.seat == DocSeat::Float, cx)
     }
 
     /// Whether a note is being written in a brief's note box: while it is,
     /// the pane hands the view every key that is not a chord.
     pub fn has_caret(&self) -> bool {
-        match &self.backend {
-            Backend::Page(page) => page.has_caret(),
-            _ => false,
-        }
+        self.backend.has_caret()
     }
 
     /// A brief's notes, driven from the control socket. Answers with what
@@ -771,19 +655,14 @@ impl DocumentView {
         cmd: NotesCommand,
         cx: &mut Context<Self>,
     ) -> Result<serde_json::Value, String> {
-        let Backend::Page(page) = &mut self.backend else {
-            return Err("the document is not an HTML page".into());
-        };
-        page.notes_command(cmd, cx)?;
-        page.notes_report()
-            .ok_or_else(|| "the document is not a laid-out HTML page yet".into())
+        self.backend.notes_command(cmd, cx)
     }
 
     /// The last paint measured a new size or scale.
     fn measured(&mut self, cx: &mut Context<Self>) {
-        if let (Backend::Page(page), Some((size, scale))) = (&mut self.backend, self.frame.get()) {
+        if let Some((size, scale)) = self.frame.get() {
             let origin = self.placed.get().unwrap_or_default();
-            page.measured(
+            self.backend.measured(
                 page::Measured {
                     origin,
                     size,
@@ -800,10 +679,7 @@ impl DocumentView {
         let Some((view, sf)) = self.frame.get() else {
             return false;
         };
-        let changed = match &mut self.backend {
-            Backend::Image(img) => img.zoom(step, view, sf),
-            Backend::Markdown(_) | Backend::Page(_) => false,
-        };
+        let changed = self.backend.zoom(step, view, sf);
         if changed {
             cx.notify();
         }
@@ -813,10 +689,7 @@ impl DocumentView {
     /// The zoom a picture is at, for the strip's label. `None` for a document
     /// with no zoom to show, so the strip draws no zoom controls for it.
     pub fn zoom_now(&self) -> Option<ImageZoom> {
-        match &self.backend {
-            Backend::Image(img) => Some(img.zoom_now()),
-            Backend::Markdown(_) | Backend::Page(_) => None,
-        }
+        self.backend.zoom_now()
     }
 
     /// Show what a fragment names as soon as the document has been laid out:
@@ -824,117 +697,7 @@ impl DocumentView {
     /// brief, opens that file there.
     pub fn show_fragment(&mut self, fragment: String, cx: &mut Context<Self>) {
         let view_h = self.view_h();
-        match &mut self.backend {
-            Backend::Markdown(md) => {
-                md.go_to_fragment(fragment, view_h);
-                cx.notify();
-            }
-            Backend::Page(page) => page.show_fragment(fragment, cx),
-            Backend::Image(_) => {}
-        }
-    }
-
-    /// Read and parse the Markdown file off the main thread.
-    fn read_markdown(&mut self, cx: &mut Context<Self>) {
-        let path = self.target.path.clone();
-        let read = cx.background_executor().spawn(async move {
-            // Stamped BEFORE reading: a write landing in between leaves a
-            // stamp older than the text, and the next tick reads again, which
-            // is harmless. The other order could miss that write for good.
-            let stamp = FileStamp::of(&path);
-            let parsed = std::fs::read(&path)
-                .map(|bytes| markdown::parse(&String::from_utf8_lossy(&bytes), path.parent()))
-                .map_err(|e| format!("Could not read {}: {e}", path.display()));
-            (stamp, parsed)
-        });
-        self.reading = cx.spawn(async move |this, cx| {
-            let (stamp, parsed) = read.await;
-            this.update(cx, |view, cx| view.markdown_read(stamp, parsed, cx))
-                .ok();
-        });
-    }
-
-    fn markdown_read(
-        &mut self,
-        stamp: Option<FileStamp>,
-        parsed: Result<markdown::MdDoc, String>,
-        cx: &mut Context<Self>,
-    ) {
-        self.seen = stamp;
-        let Backend::Markdown(md) = &mut self.backend else {
-            return;
-        };
-        match parsed {
-            Ok(doc) => {
-                for image in md.replace(Rc::new(doc)) {
-                    cx.drop_image(image, None);
-                }
-            }
-            // A document already on screen stays there when a re-read fails:
-            // an editor writing in two steps would otherwise flash an error.
-            Err(why) if matches!(md.doc, Some(Ok(_))) => {
-                if std::env::var_os("TD_DOCDEBUG").is_some() {
-                    eprintln!("[doc] kept the last render: {why}");
-                }
-            }
-            Err(why) => {
-                if std::env::var_os("TD_DOCDEBUG").is_some() {
-                    eprintln!("[doc] cannot read {}", self.target.path.display());
-                }
-                md.doc = Some(Err(why));
-            }
-        }
-        self.decode_images(cx);
-        cx.notify();
-    }
-
-    /// Start decoding every local picture the document draws and the view
-    /// does not hold yet, owned the way the image backend owns its one.
-    fn decode_images(&mut self, cx: &mut Context<Self>) {
-        let Backend::Markdown(md) = &mut self.backend else {
-            return;
-        };
-        let Some(Ok(doc)) = md.doc.clone() else {
-            return;
-        };
-        for path in markdown::image_paths(&doc) {
-            if md.images.contains_key(&path) || md.decoding.contains_key(&path) {
-                continue;
-            }
-            let resource = Resource::Path(Arc::from(path.as_path()));
-            let (decode, _) = cx.fetch_asset::<ImgResourceLoader>(&resource);
-            // Out of gpui's cache at once, as the image backend does: the
-            // pixels are this view's alone, so dropping them frees them.
-            cx.remove_asset::<ImgResourceLoader>(&resource);
-            let key = path.clone();
-            let task = cx.spawn(async move |this, cx| {
-                let result = embedded(decode.await);
-                this.update(cx, |view, cx| view.image_decoded(key, result, cx))
-                    .ok();
-            });
-            md.decoding.insert(path, task);
-        }
-    }
-
-    fn image_decoded(
-        &mut self,
-        path: PathBuf,
-        result: Result<Arc<RenderImage>, String>,
-        cx: &mut Context<Self>,
-    ) {
-        let Backend::Markdown(md) = &mut self.backend else {
-            return;
-        };
-        // No longer wanted — a re-read stopped drawing it. It was never
-        // painted, so it is in no atlas; letting it drop is the whole release.
-        let Some(running) = md.decoding.remove(&path) else {
-            return;
-        };
-        // This is that task, finishing: let it finish rather than cancel it
-        // from inside itself.
-        running.detach();
-        md.images.insert(path, result);
-        cx.notify();
+        self.backend.show_fragment(fragment, view_h, cx);
     }
 
     /// Ask the disk every [`WATCH_EVERY`] whether the file changed. Owned by
@@ -962,24 +725,13 @@ impl DocumentView {
             WatchSays::OwnWrite => self.seen = now,
             WatchSays::Gone => {
                 self.seen = None;
-                if let Backend::Page(page) = &mut self.backend {
-                    page.gone(true, cx);
-                }
+                self.backend.file_gone(cx);
             }
             WatchSays::Changed => {
                 // Seen now, so the next tick does not start a second read
                 // while this one is still running.
                 self.seen = now;
-                match &mut self.backend {
-                    Backend::Markdown(_) => self.read_markdown(cx),
-                    Backend::Page(page) => {
-                        if was_gone {
-                            page.gone(false, cx);
-                        }
-                        page.changed_on_disk(cx);
-                    }
-                    Backend::Image(_) => {}
-                }
+                self.backend.file_changed(&self.target.path, was_gone, cx);
             }
         }
     }
@@ -987,27 +739,7 @@ impl DocumentView {
     /// Give back everything this view holds on the GPU. Runs from the release
     /// hook registered in [`Self::new`], once, as the view is dropped.
     fn give_back(&mut self, cx: &mut App) {
-        match &mut self.backend {
-            Backend::Image(img) => img.release(&self.target.path, cx),
-            Backend::Markdown(md) => {
-                md.decoding.clear();
-                for (_, image) in md.images.drain() {
-                    if let Ok(image) = image {
-                        cx.drop_image(image, None);
-                    }
-                }
-                if std::env::var_os("TD_DOCDEBUG").is_some() {
-                    eprintln!("[doc] released {}", self.target.path.display());
-                }
-            }
-            Backend::Page(page) => {
-                let n = page.release(cx);
-                if std::env::var_os("TD_DOCDEBUG").is_some() {
-                    eprintln!("[doc] released {} textures={n}", self.target.path.display());
-                }
-            }
-        }
-        self.reading = Task::ready(());
+        self.backend.give_back(&self.target.path, cx);
         self._watch = Task::ready(());
     }
 }
@@ -1015,22 +747,12 @@ impl DocumentView {
 impl Render for DocumentView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let th = self.theme(cx);
-        let frame = self.frame.get();
         // Nothing is known to be laid out until this render's last element
         // says so; the links are rebuilt below, as their text is.
         self.painted_at.set(None);
         self.links.borrow_mut().clear();
-        let body = match &mut self.backend {
-            Backend::Image(img) => img.element(&self.target.path, frame, window, &th),
-            Backend::Markdown(md) => md.element(
-                &self.target.path,
-                &th,
-                frame.map(|(size, _)| size),
-                &self.links,
-                window,
-            ),
-            Backend::Page(page) => page.element(&th, self.placed.get()),
-        };
+        let (backend, view) = self.backend_and_view();
+        let body = backend.element(&view, window, &th);
         // Measured, not listened to: a canvas records the box this view was
         // given and the scale it paints at, and asks for one more frame when
         // either changed, so a zoom placed against a stale size corrects
@@ -1096,10 +818,18 @@ mod tests {
         };
         vec![
             ("docview.rs", strip(include_str!("docview.rs"))),
+            (
+                "docview/backend.rs",
+                strip(include_str!("docview/backend.rs")),
+            ),
             ("docview/image.rs", strip(include_str!("docview/image.rs"))),
             (
                 "docview/markdown.rs",
                 strip(include_str!("docview/markdown.rs")),
+            ),
+            (
+                "docview/markdown_view.rs",
+                strip(include_str!("docview/markdown_view.rs")),
             ),
             ("docview/page.rs", strip(include_str!("docview/page.rs"))),
             (
@@ -1119,6 +849,30 @@ mod tests {
                 strip(include_str!("docview/notes_ui.rs")),
             ),
         ]
+    }
+
+    /// One file of [`view_sources`], by name.
+    fn source_of(name: &str) -> String {
+        view_sources()
+            .into_iter()
+            .find(|(n, _)| *n == name)
+            .map(|(_, s)| s)
+            .unwrap_or_else(|| panic!("{name} is scanned"))
+    }
+
+    /// The body of `fn <name>(` in the `impl Backend for <ty>` block of `src`:
+    /// what one backend does for one call, as it wrote it.
+    fn backend_fn(src: &str, ty: &str, name: &str) -> String {
+        let imp = src
+            .split(&format!("impl Backend for {ty} {{"))
+            .nth(1)
+            .unwrap_or_else(|| panic!("impl Backend for {ty}"));
+        let imp = imp.split("\n}\n").next().unwrap_or(imp);
+        let f = imp
+            .split(&format!("fn {name}("))
+            .nth(1)
+            .unwrap_or_else(|| panic!("{ty} has its own {name}"));
+        f.split("\n    }\n").next().unwrap_or(f).to_string()
     }
 
     /// The CRT pass bends the pixels after layout and gpui hit-tests the flat
@@ -1183,6 +937,8 @@ mod tests {
         // runtime directory; that is its only writing, and no brief.
         for name in [
             "docview.rs",
+            "docview/backend.rs",
+            "docview/markdown_view.rs",
             "docview/notes_ui.rs",
             "docview/page.rs",
             "docview/engine.rs",
@@ -1213,7 +969,8 @@ mod tests {
 
     /// A link from another document hands its fragment to whichever kind of
     /// document can land on one. A brief was once left out, and a link into
-    /// its middle opened it at the top (issue 734).
+    /// its middle opened it at the top (issue 734). The trait's default lands
+    /// nowhere, so each backend that can land on one has to say so itself.
     #[test]
     fn a_fragment_reaches_every_document_that_can_land_on_one() {
         let (_, src) = &view_sources()[0];
@@ -1222,8 +979,15 @@ mod tests {
             .nth(1)
             .expect("DocumentView::show_fragment");
         let show = show.split("\n    }\n").next().unwrap_or(show);
-        assert!(show.contains("md.go_to_fragment("), "{show}");
-        assert!(show.contains("page.show_fragment("), "{show}");
+        assert!(show.contains("self.backend.show_fragment("), "{show}");
+        let md = backend_fn(
+            &source_of("docview/markdown_view.rs"),
+            "MarkdownDoc",
+            "show_fragment",
+        );
+        assert!(md.contains("self.go_to_fragment("), "{md}");
+        let page = backend_fn(&source_of("docview/page.rs"), "PageDoc", "show_fragment");
+        assert!(page.contains("PageDoc::show_fragment(self,"), "{page}");
     }
 
     /// However a square ends, dropping its view gives the texture back: the
@@ -1248,13 +1012,15 @@ mod tests {
         let release = src.split("fn give_back(").nth(1).expect("give_back");
         let release = release.split("\n    }\n").next().unwrap_or(release);
         assert!(
-            release.contains("page.release(cx)"),
+            release.contains("self.backend.give_back("),
+            "the view hands its release to the backend"
+        );
+        let src = source_of("docview/page.rs");
+        let release = backend_fn(&src, "PageDoc", "give_back");
+        assert!(
+            release.contains("self.release(cx)"),
             "a page's tiles are given back when its view goes"
         );
-        let (_, src) = view_sources()
-            .into_iter()
-            .find(|(name, _)| *name == "docview/page.rs")
-            .expect("page.rs is scanned");
         let release = src
             .split("pub fn release(&mut self, cx: &mut App)")
             .nth(1)
@@ -1303,21 +1069,15 @@ mod tests {
     /// reference would free nothing.
     #[test]
     fn a_markdown_documents_pictures_are_given_back() {
-        let (_, src) = &view_sources()[0];
-        let release = src.split("fn give_back(").nth(1).expect("give_back");
-        let release = release.split("\n    }\n").next().unwrap_or(release);
-        let md_arm = release
-            .split("Backend::Markdown(md) =>")
-            .nth(1)
-            .expect("release has a Markdown arm");
-        let md_arm = md_arm.split("Backend::Page").next().unwrap_or(md_arm);
-        assert!(md_arm.contains("drop_image("), "{md_arm}");
+        let src = source_of("docview/markdown_view.rs");
+        let release = backend_fn(&src, "MarkdownDoc", "give_back");
+        assert!(release.contains("drop_image("), "{release}");
 
         let read = src
             .split("fn markdown_read(")
             .nth(1)
             .expect("markdown_read");
-        let read = read.split("\n    }\n").next().unwrap_or(read);
+        let read = read.split("\n}\n").next().unwrap_or(read);
         assert!(
             read.contains("md.replace(") && read.contains("drop_image("),
             "a re-read gives back what it stops drawing: {read}"
@@ -1327,7 +1087,7 @@ mod tests {
             .split("fn decode_images(")
             .nth(1)
             .expect("decode_images");
-        let decode = decode.split("\n    }\n").next().unwrap_or(decode);
+        let decode = decode.split("\n}\n").next().unwrap_or(decode);
         let fetch = decode
             .find("fetch_asset::<ImgResourceLoader>")
             .expect("fetch");
@@ -1399,10 +1159,10 @@ mod tests {
     /// position nobody was ever at.
     #[test]
     fn an_image_has_no_scroll_to_save() {
-        let image = Backend::Image(image::ImageDoc::unloaded());
-        assert_eq!(scroll_of(&image), None);
-        let md = Backend::Markdown(markdown::MarkdownDoc::new());
-        assert_eq!(scroll_of(&md), None, "a page not yet laid out");
+        let image: Box<dyn Backend> = Box::new(image::ImageDoc::unloaded());
+        assert_eq!(image.scroll(), None);
+        let md: Box<dyn Backend> = Box::new(markdown::MarkdownDoc::new());
+        assert_eq!(md.scroll(), None, "a page not yet laid out");
     }
 
     /// Saving notes into a file (a later slice) changes its stamp. A watcher

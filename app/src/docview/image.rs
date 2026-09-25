@@ -27,17 +27,24 @@
 //! [`ImageDoc::zoom`] with flat, view-local numbers; the geometry is the pure
 //! functions below, which is where the tests hold it.
 
+use std::any::Any;
 use std::path::Path;
 use std::sync::Arc;
 
 use gpui::{
     div, img, point, prelude::*, px, size, AnyElement, App, Bounds, Context, DevicePixels,
-    ImageSource, ImgResourceLoader, ObjectFit, Pixels, Point, RenderImage, Resource, Size, Task,
-    Window,
+    ImageSource, ImgResourceLoader, ObjectFit, Pixels, Point, RenderImage, Resource, ScrollDelta,
+    Size, Task, Window,
 };
 
-use super::{Backend, DocumentView};
+use super::backend::{Backend, Drawn};
+use super::DocumentView;
 use crate::theme::Theme;
+
+/// How far one notch of a wheel that counts in lines moves a picture, in
+/// logical pixels. Three lines of text at a common size, which is what a
+/// notch scrolls in a browser.
+const WHEEL_LINE_PX: f32 = 48.0;
 
 /// How large the image is drawn.
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -232,7 +239,7 @@ impl ImageDoc {
                 Err(e) => Err(format!("Could not read this image: {e}")),
             };
             this.update(cx, |view, cx| {
-                if let Backend::Image(doc) = &mut view.backend {
+                if let Some(doc) = view.backend.downcast_mut::<ImageDoc>() {
                     doc.loaded = Some(result);
                 }
                 cx.notify();
@@ -464,6 +471,65 @@ impl ImageDoc {
             drawn: false,
             _load: Task::ready(()),
         }
+    }
+}
+
+// The view's calls, handed to the picture's own methods above. Where one of
+// those has the trait method's name it is named with its type
+// (`ImageDoc::press(self, …)`): Rust finds an inherent method before a
+// trait's, so that is the picture's own and not this one calling itself.
+//
+// A picture pans, zooms and gives its texture back, and nothing else: it has
+// no scroll to save, no fragment to land on, no file to follow and no notes,
+// so those are the trait's defaults.
+impl Backend for ImageDoc {
+    fn element(&mut self, view: &Drawn, window: &mut Window, th: &Theme) -> AnyElement {
+        ImageDoc::element(self, view.path, view.frame, window, th)
+    }
+
+    fn give_back(&mut self, path: &Path, cx: &mut App) {
+        self.release(path, cx);
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+
+    /// The start of a pan.
+    fn press(&mut self, at: Point<Pixels>, _view: &Drawn, _cx: &mut Context<DocumentView>) -> bool {
+        ImageDoc::press(self, at)
+    }
+
+    fn drag(&mut self, at: Point<Pixels>, view: Size<Pixels>, sf: f32) -> bool {
+        ImageDoc::drag(self, at, view, sf)
+    }
+
+    fn end_press(&mut self) {
+        self.end_pan();
+    }
+
+    /// Pans a picture larger than the view.
+    fn wheel(
+        &mut self,
+        delta: ScrollDelta,
+        _line: f32,
+        view: Size<Pixels>,
+        sf: f32,
+        _cx: &mut Context<DocumentView>,
+    ) -> bool {
+        let (dx, dy) = match delta {
+            ScrollDelta::Pixels(p) => (f32::from(p.x), f32::from(p.y)),
+            ScrollDelta::Lines(l) => (l.x * WHEEL_LINE_PX, l.y * WHEEL_LINE_PX),
+        };
+        self.pan_by(dx, dy, view, sf)
+    }
+
+    fn zoom(&mut self, step: ZoomStep, view: Size<Pixels>, sf: f32) -> bool {
+        ImageDoc::zoom(self, step, view, sf)
+    }
+
+    fn zoom_now(&self) -> Option<ImageZoom> {
+        Some(ImageDoc::zoom_now(self))
     }
 }
 
