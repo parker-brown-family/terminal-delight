@@ -189,10 +189,13 @@
     function schedule(ms) { clearTimeout(timer); timer = setTimeout(render, ms); }
 
     new MutationObserver(function () { schedule(40); }).observe(win, { attributes: true, attributeFilter: ['data-wear'] });
-    new MutationObserver(function () { schedule(40); }).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+    new MutationObserver(function () { schedule(40); }).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'data-palette'] });
     if ('ResizeObserver' in window) new ResizeObserver(function () { schedule(120); }).observe(win);
     (document.fonts ? document.fonts.ready : Promise.resolve()).then(function () { schedule(0); });
   }
 
+  /* A page that draws its window later (the docs, when their example window is
+     opened) calls setup on it once it is in the document. */
+  window.TD_PANES = { setup: setup };
   document.querySelectorAll('[data-pane-warp]').forEach(setup);
 })();

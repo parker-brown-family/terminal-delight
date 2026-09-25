@@ -170,6 +170,7 @@
       btn.title = 'Theme: ' + p.name + ' (t)';
     }
     $('td-traynow').textContent = p.name;
+    wear(p);
   }
   function pick(i) { setTheme(K.PALETTES[i], true); hide(); }
 
@@ -180,6 +181,42 @@
   /* the keyboard glyph beside the CRT: the same list ? opens */
   var keysBtn = document.querySelector('.td-keysbtn');
   if (keysBtn) keysBtn.addEventListener('click', function () { open === 'td-keys' ? hide() : show('td-keys'); });
+  /* The example window: the info kiosk's drawing of the app (the build lifts it
+     out of info.html into /assets/td-window.html), fetched the first time the
+     key sheet's big button is pressed, dressed in the theme you picked, and
+     handed to td-panes.js, which curves each pane on its own. The colours go
+     inline on the window itself, because td-panes.js draws a clone of it and
+     a clone keeps its own style attribute. */
+  var demo = null, demoWin = null;
+  function wear(p) {
+    if (!demoWin) return;
+    var map = { '--w-bg': p.bg, '--w-surface': p.bg2, '--w-text': p.fg, '--w-acc': p.acc, '--w-faint': p.sel, '--w-cur': p.fgb, '--w-you': p.blu, '--w-warn': p.yel };
+    Object.keys(map).forEach(function (k) { demoWin.style.setProperty(k, map[k]); });
+    demoWin.setAttribute('data-wear', 'docs-' + p.name);       // td-panes.js redraws on a change of wear
+    var nm = demo.querySelector('.sh .nm'); if (nm) nm.textContent = p.name;
+  }
+  function openDemo() {
+    if (!demo) {
+      demo = document.createElement('div');
+      demo.className = 'td-pop td-demo'; demo.id = 'td-demo';
+      demo.setAttribute('role', 'dialog'); demo.setAttribute('aria-label', 'An example Terminal Delight window');
+      demo.innerHTML = '<div class="sh"><h3>▸ TERMINAL DELIGHT · AN EXAMPLE WINDOW</h3><span class="k">wearing <b class="nm"></b> · t for another · Esc to close</span></div><div class="slot"></div>';
+      document.body.appendChild(demo);
+      fetch('/assets/td-window.html').then(function (r) { if (!r.ok) throw 0; return r.text(); }).then(function (html) {
+        demo.querySelector('.slot').innerHTML = html;
+        demoWin = demo.querySelector('.win');
+        wear(current);
+        if (window.TD_PANES && demoWin) window.TD_PANES.setup(demoWin);
+      }, function () { demo.querySelector('.slot').textContent = 'The example window did not load.'; });
+    }
+    show('td-demo');
+    if (demoWin) wear(current);
+  }
+  document.addEventListener('click', function (e) {
+    if (!e.target.closest('[data-demo]')) return;
+    e.preventDefault(); openDemo();
+  });
+
   /* The Keymapping tab, and any link marked data-sheet, open the app's whole
      key sheet (written into the page by the build, from the app's own source).
      A middle click, a modified click, or no script at all still goes to /keys. */
