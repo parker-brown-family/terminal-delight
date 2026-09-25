@@ -16,7 +16,9 @@
 #   - the note count and the concur count the bar shows, against the counts
 #     a fresh browser's notebar showed (expect.json, shown_before/after);
 #   - for every written brief, the map copy map would put on the clipboard,
-#     against expected-map.txt: the text the brief's own exportNotes() gave.
+#     against expected-map.txt: the text the brief's own exportNotes() gave;
+#   - for every brief, the map `document_notes` hands an agent calling from
+#     the pane the square floats over, against `ctl doc notes`' byte for byte.
 #
 # Afterwards every copy's sha256 and modification time must be what they were.
 #
@@ -85,6 +87,7 @@ launch() {
   } > "$script"
   hidden_launch "$session" "$ws" "$log" "sh $script"
   LOG=$log
+  SESSION=$session
   echo "   window $WIN, hidden on $ws"
 }
 
@@ -122,6 +125,20 @@ echo "== read: what the notes layer shows, against what a browser showed"
 launch read
 fail=0
 checked=0
+# The same notes asked for the way an agent asks: `document_notes`, called as
+# the pane the square floats over. The window's exposure is its own session's
+# setting and goes with the session when the run ends; `expose all` because the
+# pane here is a shell, and the policy otherwise shows an agent's panes only.
+ctl mcp on > /dev/null
+ctl mcp expose all > /dev/null
+rpc() { printf '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"%s","arguments":{}}}' "$1"; }
+PANE=""
+for _ in $(seq 1 40); do
+  PANE=$(ctl mcp rpc "$(rpc list_panes)" | jq -r '.result.structuredContent.panes[0].pane_id // empty' 2>/dev/null)
+  [ -n "$PANE" ] && break
+  sleep 0.25
+done
+[ -n "$PANE" ] || { echo "FAIL: no pane to ask document_notes from: $(ctl mcp rpc "$(rpc list_panes)")"; fail=1; }
 for dir in "$OUT"/copies/*/; do
   id=$(basename "$dir")
   name=${id%-*}
@@ -158,12 +175,22 @@ for dir in "$OUT"/copies/*/; do
     jq -j .map <<< "$json" > "$dir/map.txt"
     cmp -s "$dir/map.txt" "$case_dir/expected-map.txt" || problems="$problems map differs (see $dir/map.txt)"
   fi
+  # document_notes hands an agent ctl doc notes' map, byte for byte — null
+  # where the page shows no notes — and says it found the square over its pane.
+  agent=$(ctl mcp from "$SESSION" "$PANE" rpc "$(rpc document_notes)")
+  echo "$agent" > "$dir/document-notes.json"
+  [ "$(jq -r .result.structuredContent.found <<< "$agent")" = float-over-you ] ||
+    problems="$problems document_notes did not find the square over its pane (see $dir/document-notes.json)"
+  jq -j '.result.structuredContent.map // "null"' <<< "$agent" > "$dir/agent-map.txt"
+  jq -j '.map // "null"' <<< "$json" > "$dir/ctl-map.txt"
+  cmp -s "$dir/agent-map.txt" "$dir/ctl-map.txt" ||
+    problems="$problems document_notes' map is not ctl doc notes' map (see $dir/agent-map.txt)"
   r=$(ctl doc close)
   case "$r" in ok*) ;; *) problems="$problems doc close said: $r" ;; esac
   if [ -n "$problems" ]; then
     echo "FAIL $id:$problems"; fail=1
   else
-    echo "   ok $id: $state$([ "$state" = notes ] && echo " · $(jq -r .notes <<< "$json") notes · $(jq -r .concurs <<< "$json") concurs")$([ "$file" = expected ] && echo ' · map identical')"
+    echo "   ok $id: $state$([ "$state" = notes ] && echo " · $(jq -r .notes <<< "$json") notes · $(jq -r .concurs <<< "$json") concurs")$([ "$file" = expected ] && echo ' · map identical') · document_notes identical"
   fi
   checked=$((checked + 1))
 done

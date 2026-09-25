@@ -7151,6 +7151,36 @@ impl Workspace {
         out
     }
 
+    /// Every document open in this window, for `document_notes`: each pane's
+    /// floating square and Document face, with the tab it is in, who it was
+    /// opened beside, and what its notes layer shows. Read-only, like the
+    /// rest of the snapshot — the report is the one `ctl doc notes` prints.
+    fn mcp_documents(&self, cx: &App) -> Vec<mcp::DocInfo> {
+        let mut out = vec![];
+        for (ti, tab) in self.tabs.iter().enumerate() {
+            let mut leaves = vec![];
+            tab.root.leaves(&mut leaves);
+            for leaf in leaves {
+                let p = leaf.read(cx);
+                let Some(pid) = p.shell_pid() else { continue };
+                for (place, path, notes) in p.documents_open(cx) {
+                    out.push(mcp::DocInfo {
+                        tab: ti,
+                        pane: pid,
+                        place,
+                        opened_by: match place {
+                            mcp::DocPlace::Split => p.doc_opened_by(),
+                            mcp::DocPlace::Float => None,
+                        },
+                        path,
+                        notes,
+                    });
+                }
+            }
+        }
+        out
+    }
+
     /// The window-level outer grade, for `get_pane_config`'s `outer` target.
     fn mcp_outer_grade(&self, cx: &App) -> mcp::GradeReport {
         Self::grade_report(&theme::outer_choice(cx).grade)
@@ -9827,7 +9857,15 @@ impl Workspace {
                 v.release_float(cx);
             });
         }
-        new_pane.update(cx, |v, cx| v.show_document(target, carry, cx));
+        // Who it was opened beside, by the host's durable id rather than the
+        // entity: a replica repair rebuilds the opener's pane under a new
+        // entity and the same id. It is how `document_notes` tells the split
+        // an agent opened from any other document in the tab.
+        let opener = from.read(cx).pane_id();
+        new_pane.update(cx, |v, cx| {
+            v.show_document(target, carry, cx);
+            v.set_doc_opened_by(opener);
+        });
         let from_id = from.entity_id();
         self.tabs[tab].root.split_leaf(
             &|p| p.entity_id() == from_id,

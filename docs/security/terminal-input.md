@@ -27,11 +27,11 @@ audited 2026-09-08:
 | # | Site | Enclosing function | What initiates it | Class |
 |---|---|---|---|---|
 | 1 | `pane.rs` | `send` | `on_key` — **its only caller** | keystroke |
-| 2 | `pane.rs` | `handle_term_event` → `TermEvent::PtyWrite` | the program in the pane asking the terminal a question (cursor reports, device attributes) | protocol reply |
+| 2 | `pane.rs` | `handle_term_event` → `TermEvent::PtyWrite` and `TermEvent::ColorRequest` | the program in the pane asking the terminal a question (cursor reports, device attributes, the colour of a palette slot) | protocol reply |
 | 3 | `pane.rs` | `render` | focus in/out, `\x1b[I` / `\x1b[O`, only when the program set `FOCUS_IN_OUT` | protocol reply |
 | 4 | `pane.rs` | `scroll_by_wheel` ×2 | mouse wheel over an alt-screen program, translated to arrow keys | pointer |
 | 5 | `pane.rs` | `cut_selection` | the cut keybinding — sends DEL for the removed characters | keystroke |
-| 6 | `pane.rs` | `paste_clipboard` | the paste keybinding, and the right-click context menu's *Paste* row | keystroke + pointer |
+| 6 | `pane.rs` | `paste_text` | the paste keybinding and the right-click context menu's *Paste* row, through `paste_clipboard`; and a file dropped on the terminal face, whose path it pastes (`bench_drop`) | keystroke + pointer |
 | 7 | `pane.rs` | `seek_agent_prompt` | `alt+↑` / `alt+↓` **and the ▲/▼ header buttons** — walks an alt-screen agent's own scrollback with synthetic wheel notches, or PageUp/PageDown when the program has not asked for mouse reports; a bounded async walk, see below | keystroke + pointer |
 | 8 | `pane.rs:2471` | `new_restored` | a **freshly spawned** shell is handed its recorded command line — session restore, the dead-agent *resurrect* menu, `ctl adopt --run`, or `TD_SEED_RESUME` at launch | see below |
 
@@ -41,10 +41,14 @@ a pointer gesture the person made (#4, #6, #7), or site #8 handing a command lin
 spawned — and #8 is the only one of the three that something other than a person can start.
 
 **`mcp.rs` and `plugins.rs` reach none of them.** The MCP tool surface changes appearance —
-brightness, contrast, warp, text size — reads pane state, and posts a sticky note; the seven verbs
-are `list_panes`, `pane_events`, `get_pane_config`, `set_pane_config`, `leave_note`, `grep` and
-`ping`. There is no input verb, by design, and this audit confirmed it rather than taking the docs'
-word for it. The plugin *host* launches plugin MCP servers over stdio and never holds a `Session`.
+brightness, contrast, warp, text size — reads pane state, posts a sticky note, declares a
+deliverable and puts work objects on a pane's workbench; the eleven tools are `list_panes`,
+`pane_events`, `get_pane_config`, `set_pane_config`, `leave_note`, `declare_deliverable`,
+`present_surface`, `engineering_state`, `surface_catalogue`, `grep` and `document_notes`, beside
+the protocol's own `ping`. `document_notes` reads the notes a person left on the brief beside the
+calling agent, from the same report `ctl doc notes` prints, and writes nothing. There is no input
+verb, by design, and this audit confirmed it rather than taking the docs' word for it. The plugin
+*host* launches plugin MCP servers over stdio and never holds a `Session`.
 
 **`ctl.rs` reaches exactly one — site #8, and only by making a new pane.** `ctl adopt --cwd X --run
 "<cmd>"` travels `AdoptReq` → `Workspace::queue_adopt` → `drain_pending_adopts` → `adopt_pane` →
@@ -156,7 +160,7 @@ check whose expectation is wrong on the day it ships is a check somebody switche
 
 ```
 rg -c 'self\.send\(' app/src/pane.rs        # expect: 1  — pane.rs:4099, inside on_key
-rg -c 'notifier\.notify\(' app/src/pane.rs  # expect: 9  — the eight rows above, #4 twice
+sed '/^#\[cfg(test)\]/q' app/src/pane.rs | rg -c 'notifier\.notify\('  # expect: 10 — the eight rows above, #2 and #4 twice each; code only, since the tests quote the call
 rg -c 'keepalive' app/src/main.rs           # expect: 2  — the module doc, and the header-glyph count comment
 rg -n 'Msg::Input|notifier\.0|notifier:' app/src   # expect: nothing outside term.rs
 ```

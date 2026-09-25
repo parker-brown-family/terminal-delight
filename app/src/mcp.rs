@@ -571,6 +571,96 @@ pub struct Snapshot {
     /// drift, what it would take to land everything. The `engineering_state`
     /// tool's whole answer; empty until the rail's first scan lands.
     pub engineering: Vec<crate::engstate::Report>,
+    /// Every document open in this window, floating or on a pane of its own,
+    /// with what its notes layer shows. What `document_notes` looks through
+    /// for the one beside its caller.
+    pub documents: Vec<DocInfo>,
+}
+
+/// Where an open document is drawn: floating over a pane's terminal, or on a
+/// pane of its own beside it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DocPlace {
+    Float,
+    Split,
+}
+
+/// One document open in this window, as `document_notes` sees it.
+///
+/// Built on the main thread with the rest of the snapshot, so the verb stays
+/// pure over data and its one rule — which document counts as beside whom —
+/// is tested without a window. See [`document_beside`].
+#[derive(Clone, PartialEq, Debug)]
+pub struct DocInfo {
+    /// Index of the tab the document is in.
+    pub tab: usize,
+    /// The shell pid of the pane it is drawn on: the pane a floating square
+    /// floats over, or the split's own pane.
+    pub pane: u32,
+    pub place: DocPlace,
+    /// For a split, the host id of the pane it was opened beside. `None` for a
+    /// float, whose pane is [`Self::pane`], and for a split whose opening this
+    /// window did not see — one restored from a saved layout — which is still
+    /// found by its tab.
+    pub opened_by: Option<u64>,
+    pub path: String,
+    /// What the notes layer reports: the same JSON `ctl doc notes` prints,
+    /// map included. `Err` says why there is none — a document that is not a
+    /// brief, or a brief not laid out yet.
+    pub notes: Result<Value, String>,
+}
+
+/// How the document beside a caller was found, which the answer says out
+/// loud so the agent knows how sure to be.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Beside {
+    /// A floating square over the caller's own pane.
+    FloatOverYou,
+    /// A pane in the caller's tab that was opened beside the caller.
+    YourSplit,
+    /// A document pane in the caller's tab that this window did not see the
+    /// caller open. `of` counts such panes; the first in the tab's order is
+    /// the one answered.
+    InYourTab { of: usize },
+}
+
+/// The document beside `caller`: a floating square over its own pane, else a
+/// document pane in its tab that it opened, else a document pane in its tab.
+///
+/// Never a document in another tab, and never a square floating over another
+/// pane: those are beside somebody else, and a person's notes on them are not
+/// this caller's to read. The tab is checked on every rule, including the one
+/// matching on who opened the split, because a pane can be dragged into
+/// another tab and take its opener's id with it.
+pub fn document_beside<'a>(
+    docs: &'a [DocInfo],
+    caller: &PaneInfo,
+) -> Option<(&'a DocInfo, Beside)> {
+    let here = |d: &&DocInfo| d.tab == caller.tab;
+    if let Some(d) = docs
+        .iter()
+        .filter(here)
+        .find(|d| d.place == DocPlace::Float && d.pane == caller.pid)
+    {
+        return Some((d, Beside::FloatOverYou));
+    }
+    let splits: Vec<&DocInfo> = docs
+        .iter()
+        .filter(here)
+        .filter(|d| d.place == DocPlace::Split)
+        .collect();
+    // An opener nobody recorded is not the caller. `None == None` would say it
+    // is, and hand a pane with no host id every split restored from a layout.
+    if let Some(d) = splits
+        .iter()
+        .find(|d| d.opened_by.is_some() && d.opened_by == caller.pane_id)
+    {
+        return Some((d, Beside::YourSplit));
+    }
+    splits
+        .first()
+        .map(|d| (*d, Beside::InYourTab { of: splits.len() }))
 }
 
 /// Who is asking, as derived from their own process tree by the relay.
@@ -636,6 +726,38 @@ impl Snapshot {
             })
     }
 
+    /// The pane the caller is sitting in, for a verb that answers for that
+    /// pane and no other.
+    ///
+    /// [`Self::target_pane`]'s three ways of not knowing, in sentences that do
+    /// not send the caller off to find a pid: a verb scoped to its caller takes
+    /// none, so "pass a pid" would be advice it refuses.
+    fn caller_pane(&self, verb: &str) -> Result<&PaneInfo, String> {
+        let Some(caller) = &self.caller else {
+            return Err(format!(
+                "this connection did not say who is calling, and {verb} answers \
+                 only for the pane it is called from — call it from inside a \
+                 Terminal Delight pane"
+            ));
+        };
+        let Some(pane) = caller.pane else {
+            return Err(format!(
+                "the host could not say which pane you are in (a pane it did not \
+                 start, or a process detached from its own parents), and {verb} \
+                 answers only for the pane it is called from"
+            ));
+        };
+        self.panes
+            .iter()
+            .find(|p| p.pane_id == Some(pane))
+            .ok_or_else(|| {
+                format!(
+                    "pane {pane} — the pane you are calling from — is not in this \
+                     window's listing"
+                )
+            })
+    }
+
     /// A snapshot that exposes nothing — used to answer snapshot-independent
     /// methods (initialize / tools/list / ping …) without a main-thread
     /// round-trip, and as the safe fallback when the UI has gone away.
@@ -647,6 +769,7 @@ impl Snapshot {
             instance: None,
             caller: None,
             engineering: vec![],
+            documents: vec![],
         }
     }
 }
@@ -776,8 +899,10 @@ fn initialize_result(params: &Value) -> Value {
              warp, text size, crawl — in uniform 0..100 percents; writes need the \
              server's opt-in writes toggle. The config API is dumb: it stores the \
              absolute number you give it, so compute relative changes (\"20% \
-             lower\") yourself from a get_pane_config read. Appearance is all you \
-             can change: nothing here can write bytes to a terminal/PTY."
+             lower\") yourself from a get_pane_config read. `document_notes` \
+             hands you the notes a person left on the brief open beside you — \
+             the map alone, not the page. Appearance is all you can change: \
+             nothing here can write bytes to a terminal/PTY."
     })
 }
 
@@ -995,6 +1120,21 @@ fn tool_defs() -> Value {
             "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false }
         },
         {
+            "name": "document_notes",
+            "description":
+                "The notes a person left on the document open BESIDE YOU — a \
+                 brief floating over your own pane, else a document pane in your \
+                 tab that you opened, else a document pane in your tab. Answers \
+                 the notes map (anchor, heading, the notes under it), which is \
+                 the text the brief's \"copy map\" gives, so you read 80 words \
+                 of notes instead of re-reading the whole page. Notes added and \
+                 not yet saved into the file are included, and the answer counts \
+                 them. Takes no arguments: it answers for the pane you call it \
+                 from and never reaches a document in another tab. Read-only; it \
+                 writes nothing, anywhere.",
+            "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false }
+        },
+        {
             "name": "surface_catalogue",
             "description": "What kinds of work object this build of Terminal Delight can render, the actions a person can take on them, and the weights a surface may carry. Read-only. Ask before presenting if you are unsure a kind exists — an unknown kind still lands, but as unclassified.",
             "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false }
@@ -1048,6 +1188,7 @@ where
         "declare_deliverable" => declare_deliverable(&args, snap, apply),
         "present_surface" => present_surface(&args, snap, apply),
         "surface_catalogue" => surface_catalogue(),
+        "document_notes" => document_notes(&args, snap),
         "grep" => grep(&args, snap, search),
         other => return Err((-32602, format!("unknown tool: {other}"))),
     };
@@ -1767,6 +1908,118 @@ fn surface_catalogue() -> Value {
     )
 }
 
+/// `document_notes` — the notes on the document beside the agent that asks.
+///
+/// The other half of a brief: an agent writes one, a person reads it beside
+/// the agent and leaves notes on it, and until this the agent's way back was
+/// "read my notes in <file>" — the whole page re-read to find the eighty words
+/// that were new. This hands over the map alone, the text the brief's own copy
+/// map gives, taken from the same notes layer `ctl doc notes` reads.
+///
+/// Scoped to the caller with no way to name anything else: no `pid`, no path.
+/// Which document counts as beside the caller is [`document_beside`]. It reads
+/// and writes nothing — the snapshot already holds the report, built on the
+/// main thread with the rest of it.
+fn document_notes(args: &Value, snap: &Snapshot) -> Value {
+    if !snap.config.enabled {
+        return tool_err(
+            "MCP exposure is disabled. Enable it in terminal-delight's MCP \
+             CONTROL panel (the robot button on the mother bar).",
+        );
+    }
+    if args.as_object().is_some_and(|a| !a.is_empty()) {
+        return tool_err(
+            "document_notes takes no arguments: it answers for the pane you call \
+             it from, and only that one.",
+        );
+    }
+    let me = match snap.caller_pane("document_notes") {
+        Ok(p) => p,
+        Err(why) => return tool_err(&why),
+    };
+    if !me.exposed {
+        return tool_err(&format!(
+            "the pane you are calling from ({}) is not exposed under the current \
+             policy, so nothing about it is answered",
+            me.pid
+        ));
+    }
+    let Some((doc, how)) = document_beside(&snap.documents, me) else {
+        return tool_ok(
+            "nothing is open beside you — no brief floats over your pane, and no \
+             pane in your tab shows a document"
+                .to_string(),
+            json!({
+                "path": null, "place": null, "pane": null, "found": null,
+                "notes": null, "concurs": null, "unsaved": null, "map": null,
+            }),
+        );
+    };
+    let (found, whereabouts) = match how {
+        Beside::FloatOverYou => ("float-over-you", "floating over your pane".to_string()),
+        Beside::YourSplit => (
+            "your-split",
+            "in the pane you opened it in, beside you".to_string(),
+        ),
+        Beside::InYourTab { of: 1 } => ("in-your-tab", "in a pane in your tab".to_string()),
+        Beside::InYourTab { of } => (
+            "in-your-tab",
+            format!("in a pane in your tab — the first of {of} documents open there"),
+        ),
+    };
+    let report = doc.notes.as_ref().ok();
+    let field = |k: &str| {
+        report
+            .and_then(|r| r.get(k))
+            .cloned()
+            .unwrap_or(Value::Null)
+    };
+    let mut structured = json!({
+        "path": doc.path,
+        "place": doc.place,
+        "pane": doc.pane,
+        "found": found,
+        "notes": field("notes"),
+        "concurs": field("concurs"),
+        "unsaved": field("unsaved"),
+        "map": field("map"),
+        "state": field("state"),
+        "read_only": field("read_only"),
+    });
+    let head = format!("{} — {whereabouts}", doc.path);
+    let text = match (&doc.notes, report.and_then(|r| r["map"].as_str())) {
+        (Err(why), _) => {
+            structured["why"] = json!(why);
+            format!("{head}\nno notes to read: {why}")
+        }
+        (Ok(r), Some(map)) => {
+            let n = r["notes"].as_u64();
+            let mut counts = n.map_or_else(
+                || "notes uncounted".to_string(),
+                |n| format!("{n} {}", if n == 1 { "note" } else { "notes" }),
+            );
+            if let Some(c) = r["concurs"].as_u64() {
+                counts.push_str(&format!(
+                    " · {c} {}",
+                    if c == 1 { "concur" } else { "concurs" }
+                ));
+            }
+            if let Some(u) = r["unsaved"].as_u64().filter(|u| *u > 0) {
+                counts.push_str(&format!(
+                    " · {u} {} not saved into the file yet, included below",
+                    if u == 1 { "edit" } else { "edits" }
+                ));
+            }
+            format!("{head} · {counts}\n\n{map}")
+        }
+        (Ok(r), None) => {
+            let why = r["read_only"].as_str().unwrap_or("it shows no notes");
+            format!("{head}\nno notes to read: {why}")
+        }
+    };
+    tool_ok(text, structured)
+}
+
 fn tool_ok(text: String, structured: Value) -> Value {
     json!({ "content": [{ "type": "text", "text": text }], "structuredContent": structured })
 }
@@ -2169,6 +2422,7 @@ mod tests {
             }),
             caller: None,
             engineering: vec![],
+            documents: vec![],
         }
     }
 
@@ -2406,6 +2660,10 @@ mod tests {
         assert!(names.contains(&"get_pane_config"), "config GET advertised");
         assert!(names.contains(&"set_pane_config"), "config SET advertised");
         assert!(names.contains(&"grep"), "grep advertised");
+        assert!(
+            names.contains(&"document_notes"),
+            "document_notes advertised"
+        );
     }
 
     /// The `present_surface` blurb is the ONLY text about this protocol that
@@ -2508,6 +2766,7 @@ mod tests {
                 json!({ "pid": 100, "href": "/tmp/x.html" }),
             ),
             ("grep", json!({ "query": "x" })),
+            ("document_notes", json!({})),
         ] {
             let out = call(&snap, name, args);
             let text = text_of(&out);
@@ -2695,6 +2954,345 @@ mod tests {
             "the line hid the missing id instead of drawing it: {}",
             text_of(&out)
         );
+    }
+
+    // ---- document_notes: the brief beside the caller ----
+
+    /// A notes report the way the notes layer writes one, with `map` as given.
+    fn report(map: &str, notes: u64, unsaved: u64) -> Value {
+        json!({
+            "state": "notes", "label": "brief.html", "notes": notes,
+            "concurs": 0, "anchors": 4, "read_only": null, "writable": null,
+            "refusal": null, "unsaved": unsaved, "saving": false, "gone": false,
+            "said": null, "map": map, "open": null,
+        })
+    }
+
+    fn doc(tab: usize, pane: u32, place: DocPlace, opened_by: Option<u64>, path: &str) -> DocInfo {
+        DocInfo {
+            tab,
+            pane,
+            place,
+            opened_by,
+            path: path.into(),
+            notes: Ok(report(&format!("NOTES — {path}\n"), 1, 0)),
+        }
+    }
+
+    /// A window: the caller is pane id 9 (pid 100) in tab 0, a shell sits
+    /// beside it in tab 0 (pid 300), and tab 1 holds another agent (pid 200,
+    /// pane id 4) with a shell of its own (pid 400).
+    fn window_with(documents: Vec<DocInfo>) -> Snapshot {
+        let mut me = agent_pane(100, true);
+        me.pane_id = Some(9);
+        let mut shell = agent_pane(300, false);
+        shell.pane_id = Some(12);
+        shell.is_agent = false;
+        let mut other = agent_pane(200, true);
+        other.pane_id = Some(4);
+        other.tab = 1;
+        let mut other_shell = agent_pane(400, false);
+        other_shell.pane_id = Some(13);
+        other_shell.tab = 1;
+        let mut s = snap(true, true, vec![me, shell, other, other_shell]);
+        s.caller = Some(Caller {
+            session: "tdclip".into(),
+            pane: Some(9),
+        });
+        s.documents = documents;
+        s
+    }
+
+    fn notes_of(s: &Snapshot) -> Value {
+        call(s, "document_notes", json!({}))
+    }
+
+    /// The square floating over the caller's own pane is the one it hears
+    /// about, map and counts, and the map rides the text a model reads.
+    #[test]
+    fn document_notes_answers_the_float_over_the_callers_own_pane() {
+        let s = window_with(vec![
+            doc(0, 300, DocPlace::Split, None, "/r/other.html"),
+            doc(0, 100, DocPlace::Float, None, "/r/brief.html"),
+        ]);
+        let out = notes_of(&s);
+        assert_ne!(out["isError"], true, "{}", text_of(&out));
+        let got = &out["structuredContent"];
+        assert_eq!(
+            got["path"], "/r/brief.html",
+            "the float wins over a split: {got}"
+        );
+        assert_eq!(got["place"], "float");
+        assert_eq!(got["found"], "float-over-you");
+        assert_eq!(got["map"], "NOTES — /r/brief.html\n");
+        assert_eq!(got["notes"], 1);
+        assert!(
+            text_of(&out).contains("NOTES — /r/brief.html"),
+            "{}",
+            text_of(&out)
+        );
+    }
+
+    /// With no square, the split the caller opened is answered — ahead of a
+    /// document pane in the same tab that somebody else opened.
+    #[test]
+    fn document_notes_answers_the_split_the_caller_opened() {
+        let s = window_with(vec![
+            doc(0, 300, DocPlace::Split, Some(12), "/r/theirs.html"),
+            doc(0, 301, DocPlace::Split, Some(9), "/r/mine.html"),
+        ]);
+        let got = notes_of(&s)["structuredContent"].clone();
+        assert_eq!(got["path"], "/r/mine.html", "{got}");
+        assert_eq!(got["found"], "your-split");
+        assert_eq!(got["map"], "NOTES — /r/mine.html\n");
+        // No split recorded as the caller's: the first document pane in the
+        // tab, and the answer says how many there were to choose from.
+        let s = window_with(vec![
+            doc(0, 300, DocPlace::Split, None, "/r/a.html"),
+            doc(0, 301, DocPlace::Split, Some(12), "/r/b.html"),
+        ]);
+        let out = notes_of(&s);
+        assert_eq!(out["structuredContent"]["path"], "/r/a.html");
+        assert_eq!(out["structuredContent"]["found"], "in-your-tab");
+        assert!(
+            text_of(&out).contains("the first of 2"),
+            "{}",
+            text_of(&out)
+        );
+    }
+
+    /// Nothing beside the caller is an answer, not an error, and every field
+    /// is there and null — absence visible, never a zero count.
+    #[test]
+    fn document_notes_answers_none_when_nothing_is_beside_the_caller() {
+        let out = notes_of(&window_with(vec![]));
+        assert_ne!(out["isError"], true, "{}", text_of(&out));
+        let got = &out["structuredContent"];
+        for key in ["path", "notes", "concurs", "unsaved", "map"] {
+            assert!(
+                got.get(key).is_some_and(Value::is_null),
+                "{key} should be present and null: {got}"
+            );
+        }
+        assert!(text_of(&out).contains("nothing is open beside you"));
+    }
+
+    /// The load-bearing one. Another tab's documents are never the caller's,
+    /// whatever they look like: a square over a pane there, a split there
+    /// recorded as opened by the caller's own id (a pane dragged across tabs
+    /// takes its opener with it), and a square over ANOTHER pane in the
+    /// caller's own tab. Every one of those is beside somebody else.
+    ///
+    /// Mutation-tested: dropping the tab filter from [`document_beside`], or
+    /// matching a float on the tab alone, makes this fail.
+    #[test]
+    fn document_notes_never_reaches_another_tabs_document() {
+        let s = window_with(vec![
+            doc(1, 200, DocPlace::Float, None, "/r/their-float.html"),
+            doc(1, 400, DocPlace::Split, Some(9), "/r/moved-split.html"),
+            doc(1, 400, DocPlace::Split, Some(4), "/r/their-split.html"),
+            doc(
+                0,
+                300,
+                DocPlace::Float,
+                None,
+                "/r/float-over-the-shell.html",
+            ),
+        ]);
+        let out = notes_of(&s);
+        assert_ne!(out["isError"], true, "{}", text_of(&out));
+        assert!(
+            out["structuredContent"]["path"].is_null(),
+            "the caller was handed a document that is not beside it: {}",
+            text_of(&out)
+        );
+        assert!(
+            !text_of(&out).contains("NOTES"),
+            "another tab's notes reached the text: {}",
+            text_of(&out)
+        );
+        // And the pure rule agrees, for a caller in each tab.
+        let me = &s.panes[0];
+        assert!(document_beside(&s.documents, me).is_none());
+        let them = &s.panes[2];
+        let (d, how) = document_beside(&s.documents, them).expect("tab 1 has its own");
+        assert_eq!(
+            (d.path.as_str(), how),
+            ("/r/their-float.html", Beside::FloatOverYou)
+        );
+    }
+
+    /// Nobody recorded as the opener is not the caller. A caller with no host
+    /// id must not be handed a split restored from a layout as "yours" — the
+    /// `None == None` that an unguarded comparison would call a match.
+    #[test]
+    fn an_unrecorded_opener_is_not_the_caller() {
+        let mut me = agent_pane(100, true);
+        me.pane_id = None;
+        let docs = vec![doc(0, 300, DocPlace::Split, None, "/r/restored.html")];
+        let (_, how) = document_beside(&docs, &me).expect("still in the tab");
+        assert_eq!(how, Beside::InYourTab { of: 1 });
+    }
+
+    /// Scoped to the caller with no way out of it: a `pid` is refused rather
+    /// than honoured, and a caller that cannot be placed is told which way it
+    /// could not be.
+    #[test]
+    fn document_notes_names_nothing_but_its_caller() {
+        let s = window_with(vec![doc(
+            1,
+            200,
+            DocPlace::Float,
+            None,
+            "/r/their-float.html",
+        )]);
+        let out = call(&s, "document_notes", json!({ "pid": 200 }));
+        assert_eq!(
+            out["isError"],
+            true,
+            "a pid was honoured: {}",
+            text_of(&out)
+        );
+        assert!(!text_of(&out).contains("NOTES"));
+
+        let mut anon = window_with(vec![]);
+        anon.caller = None;
+        let e = text_of(&notes_of(&anon));
+        assert!(e.contains("did not say who is calling"), "{e}");
+        assert!(!e.contains("pass a pid"), "advice the verb refuses: {e}");
+
+        let mut off = window_with(vec![]);
+        off.config.enabled = false;
+        assert_eq!(notes_of(&off)["isError"], true);
+    }
+
+    /// Unsaved notes are in the map, as the brief's own copy map includes
+    /// them, and the answer says how many — never silently.
+    #[test]
+    fn document_notes_says_how_much_of_the_map_is_unsaved() {
+        let mut d = doc(0, 100, DocPlace::Float, None, "/r/brief.html");
+        d.notes = Ok(report("NOTES — brief.html\n\n[a] A\n  - new\n", 3, 2));
+        let out = notes_of(&window_with(vec![d]));
+        assert_eq!(out["structuredContent"]["unsaved"], 2);
+        assert!(
+            text_of(&out).contains("2 edits not saved into the file yet"),
+            "{}",
+            text_of(&out)
+        );
+        // A document with no notes layer says why, and every count is null.
+        let mut md = doc(0, 100, DocPlace::Float, None, "/r/notes.md");
+        md.notes = Err("a Markdown document takes no notes".into());
+        let out = notes_of(&window_with(vec![md]));
+        assert!(out["structuredContent"]["notes"].is_null());
+        assert!(text_of(&out).contains("a Markdown document takes no notes"));
+    }
+
+    /// It writes nothing: through a connection that CAN write, the apply
+    /// capability is never reached.
+    #[test]
+    fn document_notes_writes_nothing() {
+        let mut s = window_with(vec![doc(0, 100, DocPlace::Float, None, "/r/brief.html")]);
+        s.config.writable = true;
+        let applied = std::cell::Cell::new(0);
+        let apply = |ups: &[ConfigUpdate]| -> Vec<ApplyOutcome> {
+            applied.set(applied.get() + 1);
+            ups.iter()
+                .map(|(t, _)| (t.clone(), Ok(GradeReport::default())))
+                .collect()
+        };
+        let line = json!({ "id": 9, "method": "tools/call",
+            "params": { "name": "document_notes", "arguments": {} } })
+        .to_string();
+        let out = resp(&handle_line_with(&line, &s, no_tail, apply, no_search).unwrap());
+        assert_eq!(out["result"]["structuredContent"]["path"], "/r/brief.html");
+        assert_eq!(applied.get(), 0, "document_notes reached the write path");
+    }
+
+    /// The map `document_notes` hands over is byte for byte the map `ctl doc
+    /// notes` prints, on every written case of the decision-brief skill's
+    /// shared fixtures — and both are the skill's own expected-map.txt.
+    ///
+    /// `ctl doc notes` prints the notes layer's report (`DocumentView::
+    /// notes_report` → `NotesLayer::report`); the snapshot carries that same
+    /// report. So this builds the layer from each fixture exactly as the page
+    /// does, takes its report as `ctl doc notes` would, and puts the report
+    /// through the verb.
+    #[test]
+    fn document_notes_map_is_ctl_doc_notes_map_on_the_shared_fixtures() {
+        use crate::docview::engine::{Anchor, ConcurSupport, RectCss};
+        use crate::docview::{notes, notes_ui::NotesLayer};
+        let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/decision-brief/notes-format/cases");
+        let read_json = |p: std::path::PathBuf| -> Value {
+            serde_json::from_slice(&std::fs::read(p).unwrap()).unwrap()
+        };
+        let mut cases: Vec<_> = std::fs::read_dir(&fixtures).unwrap().flatten().collect();
+        cases.sort_by_key(|e| e.file_name());
+        let mut checked = 0;
+        for case in cases {
+            let dir = case.path();
+            let (Ok(bytes), Ok(want)) = (
+                std::fs::read(dir.join("expected.html")),
+                std::fs::read_to_string(dir.join("expected-map.txt")),
+            ) else {
+                continue;
+            };
+            let expect = read_json(dir.join("expect.json"));
+            let support = if expect["concur_support"] == "supported" {
+                ConcurSupport::Supported
+            } else {
+                ConcurSupport::NotSupported
+            };
+            let rect = RectCss {
+                x: 0.0,
+                y: 0.0,
+                w: 700.0,
+                h: 200.0,
+            };
+            let anchors: Vec<Anchor> = read_json(dir.join("anchors.json"))
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|a| Anchor {
+                    nid: a["nid"].as_str().unwrap().into(),
+                    title: a["title"].as_str().unwrap().into(),
+                    tag: "div".into(),
+                    dialog: None,
+                    rect: Some(rect),
+                    button: None,
+                    concur_zone: a["concurrable"].as_bool().unwrap().then_some(rect),
+                    has_note: None,
+                    has_concur: None,
+                })
+                .collect();
+            let layer = NotesLayer::new(
+                notes::read(&bytes),
+                expect["notes_file"].as_str().map(str::to_string),
+                support,
+                anchors.len() as u32,
+                &dir.join("brief.html"),
+            );
+            let ctl = layer.report(&anchors);
+            let mut d = doc(0, 100, DocPlace::Float, None, "/r/brief.html");
+            d.notes = Ok(ctl.clone());
+            let out = notes_of(&window_with(vec![d]));
+            let name = case.file_name();
+            let got = out["structuredContent"]["map"]
+                .as_str()
+                .unwrap_or_else(|| panic!("{name:?}: no map: {}", text_of(&out)));
+            assert_eq!(
+                Some(got),
+                ctl["map"].as_str(),
+                "{name:?}: not ctl doc notes' map"
+            );
+            assert_eq!(got, want, "{name:?}: not the skill's expected-map.txt");
+            assert!(
+                text_of(&out).contains(&want),
+                "{name:?}: the text a model reads lost bytes of the map"
+            );
+            checked += 1;
+        }
+        assert_eq!(checked, 11, "every written case of the fixtures has a map");
     }
 
     /// Call set_pane_config with a fake gpui-thread `apply`: pid 100 succeeds
