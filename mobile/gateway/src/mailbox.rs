@@ -273,8 +273,13 @@ pub fn pulse(session: &str, pane: u64, resume: Option<&str>, ended: bool) -> Val
 /// reporting back, a slash command's expansion, a shell escape's output. Shown
 /// as "you asked", each is a sentence the person never said.
 pub fn from_harness(text: &str) -> bool {
-    const TAGS: [&str; 10] = [
+    // Measured 2026-09-25 across session 1's 1,050 prompt records: 315 opened
+    // `<task-notification>`, 86 `<cross-session-message`, 5 `<agent-message`.
+    // The desk's own table (app/src/benchstore.rs, SYSTEM_ENVELOPES) has the
+    // first two; the rest are here because the harness sends them too.
+    const TAGS: [&str; 11] = [
         "<task-notification>",
+        "<cross-session-message",
         "<agent-message ",
         "<teammate-message ",
         "[SYSTEM NOTIFICATION",
@@ -366,6 +371,8 @@ mod tests {
         assert!(from_harness("<task-notification>\n<task-id>b1</task-id>"));
         assert!(from_harness("  <command-name>/clear</command-name>"));
         assert!(from_harness("<agent-message from=\"a8131\">\n[Subagent hand-back]"));
+        assert!(from_harness("<cross-session-message from=\"u1\">hi</cross-session-message>"));
+        assert!(!from_harness("<pasted_content id=\"11f4\">a person's paste"));
         assert!(!from_harness("make the <div> wider"));
         assert!(!from_harness("Okay, we are finally going to build it"));
     }

@@ -225,6 +225,8 @@ class _HarnessSaid extends StatelessWidget {
         ? 'a background task reported back'
         : t.startsWith('<agent-message') || t.startsWith('<teammate-message')
         ? 'another agent reported back'
+        : t.startsWith('<cross-session-message')
+        ? 'another session wrote in'
         : t.contains('<command-name>')
         ? 'a slash command ran'
         : t.contains('<bash-')
