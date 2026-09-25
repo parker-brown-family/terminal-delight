@@ -140,6 +140,22 @@ fn may_split(leaves: usize) -> bool {
     leaves < MAX_PANES
 }
 
+/// Whether dropping a dragged pane on tab `t` (currently showing `t_panes`
+/// panes) is refused by the cap, given the drag started at tab `from`.
+///
+/// A drop back onto the pane's OWN tab never grows it — the pane is
+/// already counted in `t_panes` and will still be one of that tab's panes
+/// after the extract-then-splice, just rearranged — so it is never
+/// refused by the cap regardless of `t_panes`, even for a legacy tab
+/// sitting above `MAX_PANES` already. Only a drop that ADDS to a
+/// DIFFERENT tab can push it past the cap. Caught in review: an earlier
+/// version of this check counted the pane against its own tab before
+/// removing it, which refused an ordinary re-layout drag on any tab
+/// already at the cap.
+fn pane_drop_capped(t: usize, from: usize, t_panes: usize) -> bool {
+    t != from && !may_split(t_panes)
+}
+
 /// What a request to open a document beside a pane becomes.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Beside {
@@ -17736,7 +17752,7 @@ impl Workspace {
             } else {
                 index
             };
-            if !may_split(self.tab_pane_count(t)) {
+            if pane_drop_capped(t, from, self.tab_pane_count(t)) {
                 return;
             }
         }
@@ -36907,6 +36923,22 @@ mod tests {
             CarryDepth::Task,
             "can't zoom in past the task itself"
         );
+    }
+
+    #[test]
+    fn pane_drop_capped_never_blocks_a_drop_back_onto_its_own_tab() {
+        // A tab at the cap: dropping one of its own panes back onto
+        // itself must not be refused — it is a rearrangement, not a
+        // growth. This is the case review caught an earlier version of
+        // the guard getting wrong.
+        assert!(!pane_drop_capped(2, 2, MAX_PANES));
+        // Even a legacy tab already OVER the cap must not be blocked from
+        // rearranging its own panes.
+        assert!(!pane_drop_capped(2, 2, LEGACY_PANE_CEILING));
+        // A different tab at the cap DOES refuse an incoming pane.
+        assert!(pane_drop_capped(3, 2, MAX_PANES));
+        // A different tab under the cap accepts one.
+        assert!(!pane_drop_capped(3, 2, MAX_PANES - 1));
     }
 
     #[test]
