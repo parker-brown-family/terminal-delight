@@ -209,7 +209,16 @@ function renderPage(p, doc) {
     if (/data-docs-map/.test(body)) body = body.replace(/<div data-docs-map><\/div>/, map(metaBySlug));
     search.push({ u: url(p.slug), t: doc.meta.title || p.title, g: p.group, r: '', s: '', a: '', x: text(body).slice(0, 2400) });
   }
-  const sources = doc.sources ? `<h2 class="src-head" id="sources">Sources</h2>\n<ol class="src">\n${doc.sources}\n</ol>` : '';
+  /* A link to a page that is listed but not written yet is drawn as text,
+     and becomes a link by itself the day that page exists. */
+  const soonUrls = new Set(order.filter((o) => !o.live).map((o) => url(o.slug)));
+  const unlinkSoon = (html) => html.replace(/<a href="(\/[a-z0-9-]*)(#[^"]*)?">([\s\S]*?)<\/a>/g, (m, path, hash, inner) => {
+    if (!soonUrls.has(path)) return m;
+    warn(where, `link to ${path} waits for that page`);
+    return `<span class="soon-link" title="This page is still being written">${inner}</span>`;
+  });
+  body = unlinkSoon(body);
+  const sources = doc.sources ? `<h2 class="src-head" id="sources">Sources</h2>\n<ol class="src">\n${unlinkSoon(doc.sources)}\n</ol>` : '';
   if (doc.sources) lint(`${where} (sources)`, doc.sources);
   const title = doc.meta.title || p.title;
   const fill = {

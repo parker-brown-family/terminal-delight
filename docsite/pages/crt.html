@@ -1,0 +1,139 @@
+<script type="application/json" data-page>
+{
+  "title": "CRT",
+  "description": "Every Terminal Delight pane is drawn as a small CRT tube: curved glass, scanlines, glow, a rolling tracking band. The theme sets the texture, the per-pane warp sets the curve, and the GAUGES tray grades each pane like a monitor.",
+  "updated": "2026-09-25",
+  "trueOf": "main at d7cf383",
+  "summary": "Curved glass, scanlines and the GAUGES tray"
+}
+</script>
+
+<section data-register="brief">
+<p class="lede">Every pane in Terminal Delight is drawn as a small CRT tube. Its glass curves, its edges fall into shadow, scanlines run across it, and now and then a faint band rolls down it the way it did on an old monitor. Only the panes bend. The tabs, bars and menus around them stay flat, and a click lands on whatever is drawn under the pointer.</p>
+<p>Two settings decide how much of it you get. The <a href="/themes">theme</a> sets the texture: scanlines, glow, the rolling band, flicker. The warp sets the curve, pane by pane, from 0 for flat glass to 1.5; the default is 1.43. Press <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>G</kbd> on a pane to open its <b>GAUGES</b> tray, where warp sits beside brightness, contrast, colour and text size.</p>
+<p>For none of it, choose <code>quiet-command</code> in the DESIGN tray (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>D</kbd>) and set warp to 0.</p>
+<p class="invite">Technical has the warp's formula, every effect and every gauge.</p>
+</section>
+
+<section data-register="technical" data-headline="The tube">
+<p>There are two layers. Scanlines, the tracking band, vignette, bloom, flicker, jiggle and the bezel are drawn over each pane, at strengths the theme's <code>[effects]</code> sets. The barrel warp and the glass glare run in a pass added to the renderer, which bends each pane's own rectangle after the frame is drawn; the same pass does the <a href="/text-crawl">text crawl</a> and the <a href="/focus-reader">focus reader</a>'s blur.</p>
+
+<figure class="td-fig">
+  <div class="figwrap">
+<svg class="barrel" viewBox="0 0 700 244" role="img" aria-label="Two panes' content grids. On the left, warp 0: a flat, square grid. On the right, warp 1.43, the default: the same grid bowed outward, pulled in at the corners, with black glass left in each corner.">
+  <g transform="translate(20 0)">
+    <rect class="frame" x="0" y="34" width="300" height="190" rx="6"/>
+    <path class="tube" d="M0.0 34.0L300.0 34.0L300.0 224.0L0.0 224.0Z"/>
+    <path class="g2" d="M0.0 34.0L0.0 224.0"/>
+    <path class="g" d="M25.0 34.0L25.0 224.0"/>
+    <path class="g" d="M50.0 34.0L50.0 224.0"/>
+    <path class="g" d="M75.0 34.0L75.0 224.0"/>
+    <path class="g" d="M100.0 34.0L100.0 224.0"/>
+    <path class="g" d="M125.0 34.0L125.0 224.0"/>
+    <path class="g2" d="M150.0 34.0L150.0 224.0"/>
+    <path class="g" d="M175.0 34.0L175.0 224.0"/>
+    <path class="g" d="M200.0 34.0L200.0 224.0"/>
+    <path class="g" d="M225.0 34.0L225.0 224.0"/>
+    <path class="g" d="M250.0 34.0L250.0 224.0"/>
+    <path class="g" d="M275.0 34.0L275.0 224.0"/>
+    <path class="g2" d="M300.0 34.0L300.0 224.0"/>
+    <path class="g2" d="M0.0 34.0L300.0 34.0"/>
+    <path class="g" d="M0.0 57.8L300.0 57.8"/>
+    <path class="g" d="M0.0 81.5L300.0 81.5"/>
+    <path class="g" d="M0.0 105.3L300.0 105.3"/>
+    <path class="g2" d="M0.0 129.0L300.0 129.0"/>
+    <path class="g" d="M0.0 152.8L300.0 152.8"/>
+    <path class="g" d="M0.0 176.5L300.0 176.5"/>
+    <path class="g" d="M0.0 200.3L300.0 200.3"/>
+    <path class="g2" d="M0.0 224.0L300.0 224.0"/>
+    <text class="t1" x="0" y="20">warp 0</text>
+    <text class="t2" x="300" y="20" text-anchor="end">flat</text>
+    <rect class="frame" x="360" y="34" width="300" height="190" rx="6"/>
+    <path class="tube" d="M373.4 42.5L383.9 41.9L394.6 41.3L405.6 40.8L416.7 40.3L428.0 39.9L439.4 39.6L450.9 39.2L462.6 39.0L474.4 38.8L486.2 38.6L498.1 38.5L510.0 38.5L521.9 38.5L533.8 38.6L545.6 38.8L557.4 39.0L569.1 39.2L580.6 39.6L592.0 39.9L603.3 40.3L614.4 40.8L625.4 41.3L636.1 41.9L646.6 42.5L647.6 49.1L648.4 55.9L649.3 62.9L650.0 69.9L650.7 77.0L651.2 84.3L651.7 91.6L652.1 99.0L652.5 106.4L652.7 113.9L652.8 121.5L652.9 129.0L652.8 136.5L652.7 144.1L652.5 151.6L652.1 159.0L651.7 166.4L651.2 173.7L650.7 181.0L650.0 188.1L649.3 195.1L648.4 202.1L647.6 208.9L646.6 215.5L636.1 216.1L625.4 216.7L614.4 217.2L603.3 217.7L592.0 218.1L580.6 218.4L569.1 218.8L557.4 219.0L545.6 219.2L533.8 219.4L521.9 219.5L510.0 219.5L498.1 219.5L486.2 219.4L474.4 219.2L462.6 219.0L450.9 218.8L439.4 218.4L428.0 218.1L416.7 217.7L405.6 217.2L394.6 216.7L383.9 216.1L373.4 215.5L372.4 208.9L371.6 202.1L370.7 195.1L370.0 188.1L369.3 181.0L368.8 173.7L368.3 166.4L367.9 159.0L367.5 151.6L367.3 144.1L367.2 136.5L367.1 129.0L367.2 121.5L367.3 113.9L367.5 106.4L367.9 99.0L368.3 91.6L368.8 84.3L369.3 77.0L370.0 69.9L370.7 62.9L371.6 55.9L372.4 49.1Z"/>
+    <path class="g2" d="M373.4 42.5L372.4 49.1L371.6 55.9L370.7 62.9L370.0 69.9L369.3 77.0L368.8 84.3L368.3 91.6L367.9 99.0L367.5 106.4L367.3 113.9L367.2 121.5L367.1 129.0L367.2 136.5L367.3 144.1L367.5 151.6L367.9 159.0L368.3 166.4L368.8 173.7L369.3 181.0L370.0 188.1L370.7 195.1L371.6 202.1L372.4 208.9L373.4 215.5"/>
+    <path class="g" d="M394.6 41.3L393.8 48.1L393.0 54.9L392.3 61.9L391.7 69.1L391.1 76.3L390.6 83.6L390.2 91.1L389.8 98.6L389.6 106.1L389.4 113.7L389.2 121.4L389.2 129.0L389.2 136.6L389.4 144.3L389.6 151.9L389.8 159.4L390.2 166.9L390.6 174.4L391.1 181.7L391.7 188.9L392.3 196.1L393.0 203.1L393.8 209.9L394.6 216.7"/>
+    <path class="g" d="M416.7 40.3L416.0 47.1L415.4 54.1L414.8 61.2L414.2 68.4L413.8 75.7L413.4 83.1L413.0 90.6L412.7 98.2L412.5 105.8L412.3 113.5L412.2 121.3L412.2 129.0L412.2 136.7L412.3 144.5L412.5 152.2L412.7 159.8L413.0 167.4L413.4 174.9L413.8 182.3L414.2 189.6L414.8 196.8L415.4 203.9L416.0 210.9L416.7 217.7"/>
+    <path class="g" d="M439.4 39.6L438.9 46.4L438.4 53.4L437.9 60.5L437.5 67.8L437.2 75.2L436.8 82.7L436.6 90.2L436.3 97.9L436.2 105.6L436.0 113.4L436.0 121.2L435.9 129.0L436.0 136.8L436.0 144.6L436.2 152.4L436.3 160.1L436.6 167.8L436.8 175.3L437.2 182.8L437.5 190.2L437.9 197.5L438.4 204.6L438.9 211.6L439.4 218.4"/>
+    <path class="g" d="M462.6 39.0L462.3 45.9L461.9 52.9L461.6 60.1L461.4 67.4L461.1 74.8L460.9 82.3L460.7 90.0L460.6 97.7L460.4 105.5L460.3 113.3L460.3 121.1L460.3 129.0L460.3 136.9L460.3 144.7L460.4 152.5L460.6 160.3L460.7 168.0L460.9 175.7L461.1 183.2L461.4 190.6L461.6 197.9L461.9 205.1L462.3 212.1L462.6 219.0"/>
+    <path class="g" d="M486.2 38.6L486.0 45.5L485.9 52.6L485.7 59.8L485.6 67.1L485.5 74.6L485.3 82.2L485.2 89.8L485.2 97.6L485.1 105.4L485.1 113.2L485.0 121.1L485.0 129.0L485.0 136.9L485.1 144.8L485.1 152.6L485.2 160.4L485.2 168.2L485.3 175.8L485.5 183.4L485.6 190.9L485.7 198.2L485.9 205.4L486.0 212.5L486.2 219.4"/>
+    <path class="g2" d="M510.0 38.5L510.0 45.4L510.0 52.5L510.0 59.7L510.0 67.0L510.0 74.5L510.0 82.1L510.0 89.8L510.0 97.5L510.0 105.3L510.0 113.2L510.0 121.1L510.0 129.0L510.0 136.9L510.0 144.8L510.0 152.7L510.0 160.5L510.0 168.2L510.0 175.9L510.0 183.5L510.0 191.0L510.0 198.3L510.0 205.5L510.0 212.6L510.0 219.5"/>
+    <path class="g" d="M533.8 38.6L534.0 45.5L534.1 52.6L534.3 59.8L534.4 67.1L534.5 74.6L534.7 82.2L534.8 89.8L534.8 97.6L534.9 105.4L534.9 113.2L535.0 121.1L535.0 129.0L535.0 136.9L534.9 144.8L534.9 152.6L534.8 160.4L534.8 168.2L534.7 175.8L534.5 183.4L534.4 190.9L534.3 198.2L534.1 205.4L534.0 212.5L533.8 219.4"/>
+    <path class="g" d="M557.4 39.0L557.7 45.9L558.1 52.9L558.4 60.1L558.6 67.4L558.9 74.8L559.1 82.3L559.3 90.0L559.4 97.7L559.6 105.5L559.7 113.3L559.7 121.1L559.7 129.0L559.7 136.9L559.7 144.7L559.6 152.5L559.4 160.3L559.3 168.0L559.1 175.7L558.9 183.2L558.6 190.6L558.4 197.9L558.1 205.1L557.7 212.1L557.4 219.0"/>
+    <path class="g" d="M580.6 39.6L581.1 46.4L581.6 53.4L582.1 60.5L582.5 67.8L582.8 75.2L583.2 82.7L583.4 90.2L583.7 97.9L583.8 105.6L584.0 113.4L584.0 121.2L584.1 129.0L584.0 136.8L584.0 144.6L583.8 152.4L583.7 160.1L583.4 167.8L583.2 175.3L582.8 182.8L582.5 190.2L582.1 197.5L581.6 204.6L581.1 211.6L580.6 218.4"/>
+    <path class="g" d="M603.3 40.3L604.0 47.1L604.6 54.1L605.2 61.2L605.8 68.4L606.2 75.7L606.6 83.1L607.0 90.6L607.3 98.2L607.5 105.8L607.7 113.5L607.8 121.3L607.8 129.0L607.8 136.7L607.7 144.5L607.5 152.2L607.3 159.8L607.0 167.4L606.6 174.9L606.2 182.3L605.8 189.6L605.2 196.8L604.6 203.9L604.0 210.9L603.3 217.7"/>
+    <path class="g" d="M625.4 41.3L626.2 48.1L627.0 54.9L627.7 61.9L628.3 69.1L628.9 76.3L629.4 83.6L629.8 91.1L630.2 98.6L630.4 106.1L630.6 113.7L630.8 121.4L630.8 129.0L630.8 136.6L630.6 144.3L630.4 151.9L630.2 159.4L629.8 166.9L629.4 174.4L628.9 181.7L628.3 188.9L627.7 196.1L627.0 203.1L626.2 209.9L625.4 216.7"/>
+    <path class="g2" d="M646.6 42.5L647.6 49.1L648.4 55.9L649.3 62.9L650.0 69.9L650.7 77.0L651.2 84.3L651.7 91.6L652.1 99.0L652.5 106.4L652.7 113.9L652.8 121.5L652.9 129.0L652.8 136.5L652.7 144.1L652.5 151.6L652.1 159.0L651.7 166.4L651.2 173.7L650.7 181.0L650.0 188.1L649.3 195.1L648.4 202.1L647.6 208.9L646.6 215.5"/>
+    <path class="g2" d="M373.4 42.5L383.9 41.9L394.6 41.3L405.6 40.8L416.7 40.3L428.0 39.9L439.4 39.6L450.9 39.2L462.6 39.0L474.4 38.8L486.2 38.6L498.1 38.5L510.0 38.5L521.9 38.5L533.8 38.6L545.6 38.8L557.4 39.0L569.1 39.2L580.6 39.6L592.0 39.9L603.3 40.3L614.4 40.8L625.4 41.3L636.1 41.9L646.6 42.5"/>
+    <path class="g" d="M370.7 62.9L381.4 62.4L392.3 61.9L403.5 61.5L414.8 61.2L426.3 60.8L437.9 60.5L449.7 60.3L461.6 60.1L473.6 59.9L485.7 59.8L497.8 59.7L510.0 59.7L522.2 59.7L534.3 59.8L546.4 59.9L558.4 60.1L570.3 60.3L582.1 60.5L593.7 60.8L605.2 61.2L616.5 61.5L627.7 61.9L638.6 62.4L649.3 62.9"/>
+    <path class="g" d="M368.8 84.3L379.6 83.9L390.6 83.6L401.9 83.4L413.4 83.1L425.0 82.9L436.8 82.7L448.8 82.5L460.9 82.3L473.1 82.2L485.3 82.2L497.7 82.1L510.0 82.1L522.3 82.1L534.7 82.2L546.9 82.2L559.1 82.3L571.2 82.5L583.2 82.7L595.0 82.9L606.6 83.1L618.1 83.4L629.4 83.6L640.4 83.9L651.2 84.3"/>
+    <path class="g" d="M367.5 106.4L378.4 106.3L389.6 106.1L400.9 106.0L412.5 105.8L424.2 105.7L436.2 105.6L448.2 105.5L460.4 105.5L472.7 105.4L485.1 105.4L497.5 105.3L510.0 105.3L522.5 105.3L534.9 105.4L547.3 105.4L559.6 105.5L571.8 105.5L583.8 105.6L595.8 105.7L607.5 105.8L619.1 106.0L630.4 106.1L641.6 106.3L652.5 106.4"/>
+    <path class="g2" d="M367.1 129.0L378.0 129.0L389.2 129.0L400.6 129.0L412.2 129.0L424.0 129.0L435.9 129.0L448.0 129.0L460.3 129.0L472.6 129.0L485.0 129.0L497.5 129.0L510.0 129.0L522.5 129.0L535.0 129.0L547.4 129.0L559.7 129.0L572.0 129.0L584.1 129.0L596.0 129.0L607.8 129.0L619.4 129.0L630.8 129.0L642.0 129.0L652.9 129.0"/>
+    <path class="g" d="M367.5 151.6L378.4 151.7L389.6 151.9L400.9 152.0L412.5 152.2L424.2 152.3L436.2 152.4L448.2 152.5L460.4 152.5L472.7 152.6L485.1 152.6L497.5 152.7L510.0 152.7L522.5 152.7L534.9 152.6L547.3 152.6L559.6 152.5L571.8 152.5L583.8 152.4L595.8 152.3L607.5 152.2L619.1 152.0L630.4 151.9L641.6 151.7L652.5 151.6"/>
+    <path class="g" d="M368.8 173.7L379.6 174.1L390.6 174.4L401.9 174.6L413.4 174.9L425.0 175.1L436.8 175.3L448.8 175.5L460.9 175.7L473.1 175.8L485.3 175.8L497.7 175.9L510.0 175.9L522.3 175.9L534.7 175.8L546.9 175.8L559.1 175.7L571.2 175.5L583.2 175.3L595.0 175.1L606.6 174.9L618.1 174.6L629.4 174.4L640.4 174.1L651.2 173.7"/>
+    <path class="g" d="M370.7 195.1L381.4 195.6L392.3 196.1L403.5 196.5L414.8 196.8L426.3 197.2L437.9 197.5L449.7 197.7L461.6 197.9L473.6 198.1L485.7 198.2L497.8 198.3L510.0 198.3L522.2 198.3L534.3 198.2L546.4 198.1L558.4 197.9L570.3 197.7L582.1 197.5L593.7 197.2L605.2 196.8L616.5 196.5L627.7 196.1L638.6 195.6L649.3 195.1"/>
+    <path class="g2" d="M373.4 215.5L383.9 216.1L394.6 216.7L405.6 217.2L416.7 217.7L428.0 218.1L439.4 218.4L450.9 218.8L462.6 219.0L474.4 219.2L486.2 219.4L498.1 219.5L510.0 219.5L521.9 219.5L533.8 219.4L545.6 219.2L557.4 219.0L569.1 218.8L580.6 218.4L592.0 218.1L603.3 217.7L614.4 217.2L625.4 216.7L636.1 216.1L646.6 215.5"/>
+    <text class="t1" x="360" y="20">warp 1.43</text>
+    <text class="t2" x="660" y="20" text-anchor="end">the default</text>
+  </g>
+</svg>
+  </div>
+  <figcaption><b>Figure 1.</b> One pane's content grid at warp 0 and at the default 1.43, bent by the app's own formula. The centre doesn't move. A corner of the glass shows content from 12% further out, so the content's edge lands 2.4% inside the frame at mid-height and 4.5% at the top, and the corners are left as black glass. Drawn by <code>docsite/tools/barrel-figure.mjs</code> from the shader in the renderer patch.</figcaption>
+</figure>
+
+<h3>Warp</h3>
+<p>For a point <code>c</code> on the pane, measured from its centre in the pane's own 0–1 space, the pass shows the content at <code>c × (1 + k1·r² + k2·r⁴)</code>, where <code>r = |c|</code>, <code>k1 = 0.14 × warp</code> and <code>k2 = 0.06 × warp</code>. Brightness falls to 86% toward the edge, and a bent pane is drawn 35% brighter overall so it doesn't look dim beside flat chrome. A pane at warp 0 skips the pass entirely and looks exactly as it would without it.</p>
+<ul>
+  <li>Clicks, selection and links are mapped through the same curve, so they land on what you see.</li>
+  <li>While a menu or dialog is open, every pane's glass is drawn flat for that frame.</li>
+  <li>Up to 32 bent rectangles per frame, enough for the <a href="/agent-wall">agent wall</a>'s card pictures.</li>
+  <li>A new bent pane powers on over 300 ms: the phosphor floods in, collapses to a line, then pinches to a star while the terminal appears behind it. Closing it plays the second half. Flat panes skip this.</li>
+</ul>
+
+<h3>Effects</h3>
+<p>Set in the theme file's <code>[effects]</code> table. Every key is optional and clamped to its range; one left out is off.</p>
+<table>
+  <thead><tr><th>Key</th><th>Range</th><th>Default</th><th>Draws</th></tr></thead>
+  <tbody>
+    <tr><td><code>scanline_opacity</code></td><td>0–0.6</td><td>0</td><td>A dark line every <code>scanline_step</code> pixels, with a faint accent line under it.</td></tr>
+    <tr><td><code>scanline_step</code></td><td>2 and up</td><td>4</td><td>Pixels between scanlines.</td></tr>
+    <tr><td><code>vignette</code></td><td>0–1</td><td>0</td><td>Shadow toward the edges, and a soft highlight at the top left. Off on the workbench and on documents.</td></tr>
+    <tr><td><code>glow</code></td><td>0–1</td><td>0</td><td>An accent glow around the pane header.</td></tr>
+    <tr><td><code>bloom</code></td><td>0–1</td><td>0</td><td>An accent haze rising toward the middle of the pane.</td></tr>
+    <tr><td><code>tracking</code></td><td>0–1</td><td>0</td><td>A 160 px band that rolls from top to bottom.</td></tr>
+    <tr><td><code>tracking_period</code></td><td>2–120 s</td><td>14</td><td>Seconds from one band to the next.</td></tr>
+    <tr><td><code>tracking_sweep</code></td><td>1–30 s</td><td>7</td><td>Seconds one band takes to cross.</td></tr>
+    <tr><td><code>flicker</code></td><td>0–1</td><td>0</td><td>Every 9 to 17 seconds, a half-second stutter in brightness.</td></tr>
+    <tr><td><code>jiggle</code></td><td>0–1</td><td>0</td><td>Every 6 to 9 seconds, the picture hops a pixel or two.</td></tr>
+    <tr><td><code>screen_glare</code></td><td>0–1</td><td>0, or 0.42 for a theme named <code>hacker</code></td><td>A glare spot and streak at the top left of the glass. Shows only on a bent pane.</td></tr>
+    <tr><td><code>bezel</code></td><td>0–1</td><td>0</td><td>A raised frame around the glass.</td></tr>
+  </tbody>
+</table>
+<p>A <code>curvature</code> key in older theme files is ignored: the curve is the per-pane warp now. On a fresh install your theme file starts as a copy of <code>hacker</code>, which turns most of these on, and the window tints it amber.</p>
+
+<h3>GAUGES</h3>
+<p><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>G</kbd> on a pane opens <code>GAUGES — THIS PANE</code>; the <code>⛭</code> in the window's footer opens <code>GAUGES — OUTER</code> for the whole window. A pane follows the window on every gauge until you move that gauge on the pane; <code>◉ follow outer</code> hands it back.</p>
+<table>
+  <thead><tr><th>Gauge</th><th>Range</th><th>Fresh window</th><th>After <code>reset</code></th></tr></thead>
+  <tbody>
+    <tr><td><code>text size</code></td><td>0.6–2×</td><td>0.75×</td><td>1×</td></tr>
+    <tr><td><code>bench size</code></td><td>0.6–2×, or follow text size</td><td>follows text size</td><td>1×</td></tr>
+    <tr><td><code>brightness</code></td><td>0–1</td><td>0.38</td><td>0.5</td></tr>
+    <tr><td><code>contrast</code>, <code>colour</code>, <code>text</code>, <code>background</code>, <code>gamma</code></td><td>0–1</td><td>0.5</td><td>0.5</td></tr>
+    <tr><td><code>menu bar</code></td><td>0.7–1.6×</td><td>0.8×</td><td>1×</td></tr>
+    <tr><td><code>warp</code></td><td>0–1.5</td><td>1.43</td><td>0, flat</td></tr>
+  </tbody>
+</table>
+<p>0.5 is neutral on the colour gauges, and they read as a signed offset from it: <code>+19</code>, <code>-34</code>. Text and background are graded separately, and brightness can only dim text, never push it past white. Below the gauges, <code>roll</code>, <code>roll spd</code> and <code>roll size</code> override this pane's tracking band, and <code>↺ roll → per-theme</code> gives it back to the theme.</p>
+<p><kbd>Ctrl</kbd> and the mouse wheel size whatever is under the pointer: the terminal's text, the workbench, or, over a header or the chrome, the menu bar. One notch is 5%.</p>
+<p>An agent can set the same gauges through the <a href="/mcp">MCP server</a>'s <code>set_pane_config</code>, each as a percentage of its range, with writes on.</p>
+
+<h3>Switches for debugging</h3>
+<p><code>TD_NOGLASS</code> skips everything drawn over the pane: scanlines, the band, vignette, bloom, glare. <code>TD_NOCANVAS</code> skips only the scanlines and the band. Neither turns off the warp; set it to 0 for that. <code>TD_IGNITION_FREEZE=0.7</code> holds the power-on at that point for a screenshot.</p>
+
+<h3>What would prove this wrong</h3>
+<p>Click a word near the corner of a bent pane. If the selection starts anywhere other than the word you clicked, the click mapping and the drawing have come apart.</p>
+</section>
+
+<ol data-sources>
+  <li id="s1">The warp and glare: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/docs/patches/0001-td-crt-pass.patch">0001-td-crt-pass.patch</a>; the overlay effects and ignition: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/crt.rs">crt.rs</a>; effects, gauges and their defaults: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/theme.rs">theme.rs</a>; the tube list: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/warp.rs">warp.rs</a>.</li>
+</ol>

@@ -1,0 +1,70 @@
+<script type="application/json" data-page>
+{
+  "title": "Usage and vitals",
+  "description": "The foot of the left bar shows how much of each AI subscription is left, from records written by small per-vendor collectors. With no reading, a rail is hatched and says —, never 0%. The usage card has the detail.",
+  "updated": "2026-09-25",
+  "trueOf": "main at d7cf383",
+  "summary": "How much of each plan is left"
+}
+</script>
+
+<section data-register="brief">
+<p class="lede">At the foot of the <a href="/left-bar">left bar</a>, each AI subscription you use gets a row: Claude Code, Codex, Fireworks. A solid rail is the long window, usually the week. A notched rail is the short one, usually five hours. The number is how much of the week is left.</p>
+<p>Terminal Delight doesn't measure this itself. A small collector for each vendor asks it and writes down the answer, and the rows read what was written. When there's no answer (no collector, an expired sign-in, a window that vendor doesn't have) the rail is hatched and the number reads <code>—</code>. It never reads 0%, because an empty bar would tell you that you've run out.</p>
+<p>Click a row, or press <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>U</kbd>, for the usage card: every limit with when it resets, today's use, the last seven days, and which models it went to. Each agent's own health is on the <a href="/agent-wall">agent wall</a>.</p>
+<p class="invite">Technical has the collectors, the record format and how a reading goes stale.</p>
+</section>
+
+<section data-register="technical" data-headline="Readings">
+<h3>Where the numbers come from</h3>
+<p>One JSON record per subscription, read from two folders; if both have the same subscription, the newer record wins:</p>
+<ul>
+  <li><code>~/.local/state/omarchy/agents/usage/</code>, where Omarchy's own collectors write</li>
+  <li><code>~/.local/state/terminal-delight/agents/usage/</code>, where Terminal Delight writes</li>
+</ul>
+<p>The collectors are Omarchy's scripts, included unedited and built into the binary: <code>claude</code> reads Claude Code's transcripts and Anthropic's usage endpoint, <code>codex</code> asks Codex's app server, <code>fireworks</code> asks Fireworks' billing API. They need <code>python3</code>.</p>
+<pre class="cmd"><code>terminal-delight agent-usage update</code></pre>
+<p><code>update</code> runs every collector and writes a record for each that answers; <code>--only claude</code> runs one; <code>list</code> names them; <code>where</code> prints the folders. It exits 1 only if every collector failed. The rows refresh when the window opens, five seconds later, every five minutes after that, and each time the card opens. <code>↻ refresh</code> on the card runs <code>omarchy-agent-usage-update</code> if you have it, and this binary's own collectors if not.</p>
+
+<h3>A row</h3>
+<dl class="defs">
+  <dt>mark</dt><dd>The provider's logo from <code>~/.config/terminal-delight/marks/&lt;id&gt;.svg</code>, drawn in one colour, or two initials.</dd>
+  <dt>solid rail</dt><dd>The long window. A limit whose label says week, day or month.</dd>
+  <dt>notched rail</dt><dd>The short window, with one notch per unit its label names: five for <code>Session (5-hour)</code>. A label with session, hour or current in it.</dd>
+  <dt>number</dt><dd>The long window. <code>NN%</code> when fresh, its age (<code>45m</code>, <code>6h</code>, <code>2d</code>) when stale, <code>—</code> with no reading. Dropped when the bar is narrower than 190 px.</dd>
+</dl>
+<p>A limit whose label names neither is placed by order: first short, then long. Rail length shows what's left, or what's spent if you flip the card's <code>bar · what's left</code> chip. Rail colour always shows what's spent: green, amber from 66%, red from 85%. Any use at all draws at least a sliver. Hover a row for the vendor's own names and figures: <code>Weekly (7-day): 41% spent</code>, or <code>…: no reading</code>.</p>
+
+<h3>Fresh, stale, unknown</h3>
+<table>
+  <thead><tr><th>Reading</th><th>When</th><th>Drawn</th></tr></thead>
+  <tbody>
+    <tr><td>fresh</td><td>recent enough for the window it describes</td><td><code>NN%</code></td></tr>
+    <tr><td>stale</td><td>true, but older than the window it describes; a record with no time on it counts as stale, age <code>?</code></td><td>dimmed, with its age</td></tr>
+    <tr><td>unknown</td><td>no collector, the collector said it isn't ready, a sign-in has expired, or the vendor has no such window</td><td>hatched rail, <code>—</code></td></tr>
+  </tbody>
+</table>
+
+<h3>The usage card</h3>
+<p><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>U</kbd>, or <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Y</kbd> where an input method takes the U; <code>Σ usage</code> on the agent wall; or a row. At the top is <b>LAUNCH AGENT CONFIG</b>, the <a href="/launching#technical-defaults">launcher's defaults</a>. Then one section per subscription: the vendor's status and what to do about it, each limit as <code>&lt;label&gt;  NN%  resets in &lt;time&gt;</code>, prepaid balances as <code>left</code> and <code>spent of … funded</code>, and <code>TODAY</code>, <code>LAST 7 DAYS</code> and <code>BY MODEL</code>. With no records yet: <code>nothing collected yet — press refresh</code>, and the folders it looked in.</p>
+
+<h3>The record</h3>
+<pre><code>{
+  "id": "claude",
+  "name": "Claude Code",
+  "ready": true,
+  "limits": [
+    { "label": "Session (5-hour)", "percent": 0.23, "resetsAt": "2026-09-25T15:00:00Z" },
+    { "label": "Weekly (7-day)", "percent": 0.41, "resetsAt": "2026-09-29T00:00:00Z" }
+  ],
+  "updatedAt": "2026-09-25T11:02:00Z"
+}</code></pre>
+<p><code>id</code> is required. <code>percent</code> is a fraction from 0 to 1, spent. Also read: <code>tierLabel</code>, <code>usageStatusText</code>, <code>authHelpText</code>, <code>balance</code> (<code>remaining</code>, <code>funded</code>, <code>spent</code>, <code>currency</code>, <code>estimated</code>), <code>todayPrompts</code>, <code>todaySessions</code>, <code>todayTotalTokens</code>, <code>recentDays</code>, <code>modelUsage</code>, <code>totalPrompts</code>, <code>totalSessions</code>, <code>activeDays</code>. Anything that can write this file can put a subscription in the bar.</p>
+
+<h3>Keepalive</h3>
+<p>Earlier builds could type into idle agents on a timer to keep their prompt cache warm. That was removed, along with the AWAY screen that went with it: Terminal Delight never types into a terminal by itself.</p>
+</section>
+
+<ol data-sources>
+  <li id="s1">Records, collectors and <code>agent-usage</code>: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/usage.rs">usage.rs</a>; rails and readings: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/slot.rs">slot.rs</a>; the card: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/main.rs">main.rs</a>.</li>
+</ol>

@@ -1,0 +1,125 @@
+<script type="application/json" data-page>
+{
+  "title": "Panes and tabs",
+  "description": "A tab holds up to four panes, each a real shell with its own header. Split with alt+v and alt+h, move focus with alt and the arrows, close with alt+w; a closed pane keeps running in the bay and ctrl+shift+z brings it back.",
+  "updated": "2026-09-25",
+  "trueOf": "main at d7cf383",
+  "summary": "Splitting, moving, closing, sizing"
+}
+</script>
+
+<section data-register="brief">
+<p class="lede">A tab holds up to four panes, tiled. Every pane is a real shell with its own header, and every divider can be dragged.</p>
+<p><kbd>alt</kbd>+<kbd>v</kbd> splits the pane you're in side by side; <kbd>alt</kbd>+<kbd>h</kbd> splits it top and bottom. The new pane opens in the same directory. <kbd>alt</kbd> and an arrow key moves between panes. Drag a pane's title onto another pane to move it there, onto a tab to send it to that tab, or out past the edge of the window to give it a window of its own.</p>
+<p>Closing doesn't end anything straight away. <kbd>alt</kbd>+<kbd>w</kbd> closes a pane and <kbd>ctrl</kbd>+<kbd>w</kbd> a tab, and either one goes to the bay at the foot of the left bar with its shells still running. <kbd>ctrl</kbd>+<kbd>shift</kbd>+<kbd>z</kbd> brings it back. Closing the last tab is the one close that quits.</p>
+<p>To make anything bigger, hold <kbd>ctrl</kbd> and turn the wheel over it: over a pane's text it sizes that pane's font, over its header the header, over the chrome the whole window's chrome.</p>
+<p class="invite">Technical covers the header, the three faces, documents in a pane, the tab strip, the top bar and the footer.</p>
+</section>
+
+<section data-register="technical" data-headline="Layout">
+<p>Each tab is a tiling tree. A split replaces the pane you're in with two panes at half each, the new one on the right or below, and hands it your working directory and your focus. A second split within 200 ms is ignored, so a held key doesn't fill the tab.<sup><a href="#s1">1</a></sup></p>
+
+<h3>Splitting and moving</h3>
+<table class="keys">
+  <thead><tr><th>Key</th><th>Does</th></tr></thead>
+  <tbody>
+    <tr><td><kbd>alt</kbd>+<kbd>v</kbd></td><td>Split beside: a new pane on the right.</td></tr>
+    <tr><td><kbd>alt</kbd>+<kbd>h</kbd> or <kbd>ctrl</kbd>+<kbd>alt</kbd>+<kbd>d</kbd></td><td>Split below: a new pane underneath.</td></tr>
+    <tr><td><kbd>alt</kbd>+<kbd>←</kbd> <kbd>→</kbd> <kbd>↑</kbd> <kbd>↓</kbd></td><td>Move focus to the pane in that direction. Nothing happens at the edge; it doesn't wrap.</td></tr>
+    <tr><td><kbd>alt</kbd>+<kbd>w</kbd></td><td>Close the focused pane, into the bay.</td></tr>
+    <tr><td><kbd>alt</kbd>+<kbd>k</kbd></td><td>Flip the pane between its terminal and its workbench.</td></tr>
+    <tr><td><kbd>alt</kbd>+<kbd>r</kbd></td><td>Open the <a href="/focus-reader">focus reader</a> on the focused pane.</td></tr>
+  </tbody>
+</table>
+<p>The buttons do the same: <code>split →</code> sits at the foot of the right-hand column and <code>split ↓</code> at the right end of the bottom edge. A tab takes <b>four panes</b> at most; a fifth split is refused. Layouts saved before that limit can still hold up to eight.</p>
+<p>Drag a divider to resize; it stops at 15 % and 85 %. There is no key for resizing. Drag a pane by its header title: onto another pane, it splits that pane on the side you drop nearest; onto the outer edge of a region, it re-frames the whole region; onto a tab in the strip, it joins that tab; past the edge of the window, it opens a new window with a fresh shell in the same directory, resuming the same Claude or Codex session. A running shell can't move between processes, so the new window starts its own. Tearing a pane off needs more than one pane in the window.</p>
+
+<h3>Closing and bringing back</h3>
+<p>A closed pane or tab is held, not ended. Its shell keeps running in the bay at the foot of the <a href="/left-bar#technical-the-bay">left bar</a> for an hour, or four hours if it had two or more panes. The bay holds ten things.</p>
+<table>
+  <thead><tr><th>You close</th><th>What happens</th></tr></thead>
+  <tbody>
+    <tr><td>A pane, with <kbd>alt</kbd>+<kbd>w</kbd> or its <code>×</code></td><td>The split collapses onto its neighbour; the pane goes to the bay. A pane alone in its tab closes as a tab.</td></tr>
+    <tr><td>A tab, with <kbd>ctrl</kbd>+<kbd>w</kbd></td><td>Always asks first: <code>CLOSE TAB?</code>, <kbd>enter</kbd> to close, <kbd>esc</kbd> to cancel.</td></tr>
+    <tr><td>A tab, with its <code>×</code> in the strip</td><td>Closes a one-pane tab straight away and asks first for more.</td></tr>
+    <tr><td>The last tab</td><td>Asks, then ends its shells and quits: <code>“notes” is the last tab — closing it ends its shell and quits. This can’t be undone.</code></td></tr>
+  </tbody>
+</table>
+<p><kbd>ctrl</kbd>+<kbd>shift</kbd>+<kbd>z</kbd> reopens the newest thing in the bay, and pressing it again walks further back. A reopened pane says where it landed: <code>back where it was</code>, <code>back in its tab, in a new seat</code> or <code>back as its own tab</code>. When a shell exits by itself, its pane is removed, and the app quits when the last pane anywhere is gone.</p>
+
+<h3>The pane header</h3>
+<p>The title reads <code>▸ MODE · label</code>. The mode is <code>SHELL</code>, <code>CLAUDE</code>, <code>CODEX</code>, <code>REMOTE</code>, <code>UNKNOWN</code> or the name of the program running. The label is the name you gave the pane, or the file name when it shows a document, or the shell's own title. Double-click or right-click the title to rename it (up to 24 characters), and drag it to move the pane. Left of the title is the pane's logo; click it to pick one.</p>
+<p>On the right, in order:</p>
+<ul>
+  <li>The face switch, <code>TERM</code> · <code>BENCH</code>, or <code>DOC</code> · <code>TERM</code> · <code>BENCH</code> on a pane showing a document. When the bench is holding answers for the agent it adds <code>N answers waiting</code>.</li>
+  <li><code>🎨</code> for the pane's theme and the display icon for its dials. On a narrow pane these move into the <code>⋯</code> menu as <code>🎨 Theme</code> and <code>📊 Display</code>.</li>
+  <li>The status word: <code>❓ your turn</code>, <code>✘ blocked</code>, <code>✔ done</code>, <code>exited</code> or <code>live</code>, in that order of precedence.</li>
+  <li><code>×</code> closes the pane. The face switch and <code>×</code> never fold into the <code>⋯</code> menu.</li>
+</ul>
+
+<h3>Documents in a pane</h3>
+<p>A pane can show a Markdown file, an HTML page or an image in place of its terminal. That is its <code>DOC</code> face.</p>
+<table class="keys">
+  <thead><tr><th>Click on a file path</th><th>Opens</th></tr></thead>
+  <tbody>
+    <tr><td><kbd>ctrl</kbd>+<kbd>alt</kbd>+click</td><td>Beside you: the tab splits and the new pane shows the document, with focus left where you were. If a pane already shows that file, it comes forward. In a full tab the document floats over your pane instead.</td></tr>
+    <tr><td><kbd>alt</kbd>+click</td><td>In a floating square over the pane, with <code>⇲ split</code>, <code>↗ desktop</code> and <code>✕ esc</code>. A second <kbd>alt</kbd>+click on the same file turns it into a split.</td></tr>
+    <tr><td><kbd>shift</kbd> or <kbd>ctrl</kbd>+click</td><td>Any link, with your desktop's own app.</td></tr>
+  </tbody>
+</table>
+<p>On the <code>DOC</code> face, <kbd>0</kbd> fits the page, <kbd>1</kbd> shows it at actual size, <kbd>+</kbd> and <kbd>-</kbd> zoom, the arrows pan and <kbd>PgUp</kbd> <kbd>PgDn</kbd> page. Other keys are held back so nothing types into the hidden shell. HTML is drawn by a headless Chromium; without one, the file goes to the desktop. A document pane comes back after a restart on the same page. From a script: <code>terminal-delight ctl doc here|beside &lt;path&gt;</code>, <code>ctl doc close</code>, <code>ctl doc scroll &lt;pixels&gt;</code>.</p>
+
+<h3>Sizing</h3>
+<p><kbd>ctrl</kbd>+wheel sizes whatever the pointer is over, and only that becomes the pane's own setting.</p>
+<table>
+  <thead><tr><th>Pointer over</th><th>Sizes</th><th>Range</th></tr></thead>
+  <tbody>
+    <tr><td>the chrome (top bar, tabs, left bar, gaps)</td><td>the window's chrome</td><td>70 % to 160 %</td></tr>
+    <tr><td>a pane's header</td><td>that pane's header</td><td>70 % to 160 %</td></tr>
+    <tr><td>a pane's terminal text</td><td>that pane's font; the shell reflows</td><td>60 % to 200 %</td></tr>
+    <tr><td>a pane's workbench</td><td>the bench's text</td><td>60 % to 200 %</td></tr>
+  </tbody>
+</table>
+<p>Each notch is 5 %. The bench's size starts out following the terminal's until you turn it. The footer's <code>▭ N%</code> button sets the chrome size on a track.</p>
+
+<h3>The tab strip</h3>
+<p>The tab strip is on screen while the <a href="/left-bar">left bar</a> is hidden. With the bar open, which is the default, the middle of the top row is the project ticker instead. The strip shows the tabs of the group you're in, headed by chips for the project and its groups.</p>
+<table class="keys">
+  <thead><tr><th>Key or gesture</th><th>Does</th></tr></thead>
+  <tbody>
+    <tr><td><kbd>ctrl</kbd>+<kbd>shift</kbd>+<kbd>t</kbd>, or <code>+</code></td><td>New tab in the branch you're in, with its name box open.</td></tr>
+    <tr><td><kbd>ctrl</kbd>+<kbd>PgUp</kbd> <kbd>PgDn</kbd></td><td>Previous or next tab, wrapping.</td></tr>
+    <tr><td><kbd>ctrl</kbd>+<kbd>shift</kbd>+<kbd>PgUp</kbd> <kbd>PgDn</kbd></td><td>Move the tab one place, never out of its group.</td></tr>
+    <tr><td>double-click or right-click a tab</td><td>Rename it (up to 18 characters).</td></tr>
+    <tr><td><kbd>ctrl</kbd>+click a tab</td><td>Its tray: colour, text colour, group and project.</td></tr>
+    <tr><td>drag a tab</td><td>Reorder it; past the bottom of the strip, start a new row.</td></tr>
+  </tbody>
+</table>
+<p>A tab shows <code>📌</code> for pinned notes, then up to four agent badges and <code>+N</code>, then <code>×</code>. The active tab is drawn larger, lifted and underlined.</p>
+
+<h3>The top bar</h3>
+<p>From the left: the app's mark and the <b>worktree badge</b>, then the ticker or the tab strip, then the <b>agent counter</b>. Drag the bar to move the window.</p>
+<dl class="defs">
+  <dt>worktree badge</dt><dd>What the project's git worktrees are doing: <code>4 WORKTREES ✓</code>, <code>2 WORKTREES · 1 SHARED</code>, <code>⚠ 1 FOREIGN</code>, <code>✗ 1 CONFLICT</code>, <code>NO GIT</code> or <code>SCANNING</code>. A <code>◆</code> means something happened in the last fifteen minutes. Click it for the full table; <kbd>esc</kbd> closes it.</dd>
+  <dt>activity</dt><dd>Twelve bars, one per five minutes of the last hour. A quiet hour draws twelve dots.</dd>
+  <dt>ticker</dt><dd>The project's git state, one sentence at a time, six seconds each. Hover to pause it. The dots below it jump to a sentence; a warning keeps its tint on its dot.</dd>
+  <dt>agent counter</dt><dd><code>▶</code> working, <code>‖</code> blocked, <code>✕</code> error, <code>✓</code> finished, <code>○</code> idle, <code>?</code> unknown, each with a count. It turns amber when an agent needs you; click it for the <a href="/agent-wall">agent wall</a>.</dd>
+</dl>
+
+<h3>The footer</h3>
+<p>Right-aligned: <code>N tabs · M panes</code>, then <code>🎨</code> for the window's theme, the display dials, <code>🪦</code> for the <a href="/graveyard">graveyard</a>, <code>🔔</code> for notifications, <code>🧩</code> for <a href="/plugins">plugins</a>, the <code>▭ N%</code> chrome size, and <code>split ↓</code>. Below 720 px of window width the glyphs fold into <code>…</code>.</p>
+
+<h3>Not yet</h3>
+<ul>
+  <li>No keyboard resize for panes.</li>
+  <li>The bay does not survive the window closing, which is why closing the last tab still ends its shells.</li>
+  <li>The help screen still lists jumping between your own messages, which no key does any more.</li>
+</ul>
+
+<h3>What would prove this wrong</h3>
+<p>If a pane you closed with <kbd>alt</kbd>+<kbd>w</kbd> comes back with <kbd>ctrl</kbd>+<kbd>shift</kbd>+<kbd>z</kbd> as a fresh shell instead of the one you left, with its history gone, the bay has failed at the only thing it promises.</p>
+</section>
+
+<ol data-sources>
+  <li id="s1">Splits, the pane cap, closing and the bay: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/main.rs">main.rs</a> (the workspace) and <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/hold.rs">hold.rs</a>; the header and faces: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/pane.rs">pane.rs</a> and <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/workbench.rs">workbench.rs</a>; documents: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/docopen.rs">docopen.rs</a>; the top bar's badge and ticker: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/engstate.rs">engstate.rs</a>.</li>
+</ol>

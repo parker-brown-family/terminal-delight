@@ -63,6 +63,9 @@
 .td-group span.is-soon { display: flex; align-items: center; gap: 10px; padding: 6px 12px; margin: 1px 0; font-size: 14.5px; line-height: 1.35; color: var(--ink-3); }
 .td-group span.is-soon::after { content: "soon"; margin-left: auto; font: 500 10px/1 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); border: 1px solid var(--line); border-radius: 4px; padding: 2px 4px; }
 
+/* a link to a page still being written reads as text */
+.td-doc .soon-link { color: var(--ink); border-bottom: 1px dotted var(--ink-3); cursor: help; }
+
 /* a key table: the chord in its own column, never wrapped */
 .keys td:first-child { white-space: nowrap; }
 .keys td:first-child kbd + kbd { margin-left: 2px; }
@@ -82,3 +85,44 @@
   .defs { grid-template-columns: minmax(0, 1fr); gap: 2px 0; }
   .defs dd { margin-bottom: 8px; }
 }
+
+/* The CRT page's barrel figure (docsite/tools/barrel-figure.mjs): the frame is
+   the pane, .tube is where content lands, the corners left over are black glass. */
+.barrel .frame { fill: #050806; stroke: var(--line-2); }
+.barrel .tube { fill: color-mix(in srgb, var(--acc) 7%, #06100a); stroke: none; }
+.barrel .g { stroke: var(--ink-3); stroke-width: .6; fill: none; opacity: .75; }
+.barrel .g2 { stroke: var(--acc); stroke-width: 1.2; fill: none; }
+.barrel text { font-family: var(--mono); }
+.barrel .t1 { fill: var(--ink); font-size: 13px; font-weight: 600; }
+.barrel .t2 { fill: var(--ink-3); font-size: 11px; }
+
+/* The skins page's figure: one tab strip per built-in skin, drawn by hand from
+   each skin's shape and metric tokens (app/skins/*.toml) over the hacker
+   palette. A reconstruction, and its caption says so. */
+.skinfig { display: grid; gap: 10px; }
+.skinfig .row { display: grid; grid-template-columns: 116px 1fr; align-items: center; gap: 12px; }
+.skinfig .who { font: 600 12px/1.2 var(--mono); color: var(--ink); }
+.skinfig .who span { display: block; font-weight: 400; color: var(--ink-3); font-size: 11px; margin-top: 2px; }
+.skinfig .strip { display: flex; gap: 4px; align-items: center; padding: 8px 10px; background: #03100a; border-radius: 8px; font: 12px/1 var(--mono); color: #86efac; }
+.skinfig .tab { padding: 4px 6px; color: rgba(134, 239, 172, .7); }
+.skinfig .tab.on { color: #86efac; }
+.skinfig .chip { margin-left: auto; padding: 1px 5px; color: #03100a; background: #22c55e; }
+.sk-default .tab { border: 1px solid rgba(34, 197, 94, .35); border-radius: 4px; background: linear-gradient(#0c2718, #071a10); }
+.sk-default .tab.on { border-color: #22c55e; box-shadow: 0 0 5.25px rgba(34, 197, 94, .55); }
+.sk-default .chip { border-radius: 4px; }
+.sk-deco .strip { border-radius: 0; }
+.sk-deco .tab { border: 3px double rgba(34, 197, 94, .5); background: #071a10; letter-spacing: .14em; padding: 4px 8px; }
+.sk-deco .tab.on { border-color: #22c55e; box-shadow: 0 0 6px rgba(34, 197, 94, .6); }
+.sk-deco .chip { letter-spacing: .14em; padding: 1px 7px; }
+.sk-console .strip { border-radius: 0; gap: 6px; }
+.sk-console .tab { text-transform: uppercase; padding: 6px 10px; background: #071a10; }
+.sk-console .tab.on { box-shadow: inset 0 -3px 0 #22c55e; }
+.sk-console .chip { text-transform: uppercase; padding: 1px 7px; }
+
+/* The text-crawl page's figure (docsite/tools/crawl-figure.mjs). */
+.crawl .frame { fill: #050806; stroke: var(--line-2); }
+.crawl .plane { fill: color-mix(in srgb, var(--acc) 7%, #06100a); }
+.crawl .row { fill: var(--acc); opacity: .85; }
+.crawl text { font-family: var(--mono); }
+.crawl .t1 { fill: var(--ink); font-size: 13px; font-weight: 600; }
+.crawl .t2 { fill: var(--ink-3); font-size: 11px; }

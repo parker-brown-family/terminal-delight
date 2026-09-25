@@ -1,0 +1,92 @@
+<script type="application/json" data-page>
+{
+  "title": "MCP server",
+  "description": "Terminal Delight is an MCP server: an agent can list the panes of the window it runs in, grep their scrollback, tail another agent's tool calls, leave notes, and put work on a workbench. Reads are off until you turn the server on; writes need a second switch; nothing can type into a terminal.",
+  "updated": "2026-09-25",
+  "trueOf": "main at d7cf383",
+  "summary": "Twelve tools for agents, off by default"
+}
+</script>
+
+<section data-register="brief">
+<p class="lede">Terminal Delight is an MCP server. An agent running in one of its panes can ask about the rest of the window: which panes exist and what each is running, what they printed, what tool another agent is calling right now.</p>
+<p>It starts locked down. Nothing is readable until you turn the server on, in the MCP control panel (<kbd>ctrl</kbd>+<kbd>shift</kbd>+<kbd>a</kbd> in a pane). Even then only agent panes are visible unless you choose <code>all panes</code>. Writing is a second switch, and a write only ever restyles a pane, leaves a note, declares a deliverable, opens a document or puts work on a workbench. <b>No tool can type into a terminal.</b></p>
+<p>To connect an agent, register the relay as a stdio MCP server:</p>
+<pre class="cmd"><code>claude mcp add --scope user terminal-delight -- terminal-delight mcp</code></pre>
+<p>The relay finds the window it is running in by itself. Every answer ends with the window it came from, because several Terminal Delight windows can run on one machine.</p>
+<p class="invite">Technical lists all twelve tools with their arguments, the switches, and the errors.</p>
+</section>
+
+<section data-register="technical" data-headline="The server">
+<p>The server speaks newline-delimited JSON-RPC 2.0, advertises MCP protocol <code>2025-06-18</code>, names itself <code>terminal-delight</code>, and offers <code>tools</code> and <code>logging</code>. It answers for the panes of one window.<sup><a href="#s1">1</a></sup></p>
+
+<h3>Connecting</h3>
+<p>There are three ways in:</p>
+<dl class="defs">
+  <dt>the relay</dt><dd><code>terminal-delight mcp</code>, registered as a stdio server. It forwards each request to a running window over that window's control socket. It finds its own window by walking up its parent processes to the pane it was started in, so it needs no environment variable; <code>--pid &lt;N&gt;</code> picks a window explicitly. If the window is replaced mid-session, the relay reconnects to the same session once and says so on stderr. Each call waits up to ten seconds.</dd>
+  <dt>in-process</dt><dd>An MCP client that launches <code>terminal-delight</code> itself with <code>TD_MCP</code> set gets the server on the window's own stdio. This is the only way that receives pushed notifications.</dd>
+  <dt>one call from a script</dt><dd><code>terminal-delight ctl mcp rpc '&lt;json&gt;'</code> hands one JSON-RPC line to a window.</dd>
+</dl>
+<p>The registration this machine uses, in <code>~/.claude.json</code>:</p>
+<pre><code>"terminal-delight": { "type": "stdio", "command": "terminal-delight", "args": ["mcp"] }</code></pre>
+<p>A relay that located itself names its session and pane with every call. If that session isn't the window's, the call is refused with <code>-32001</code>, <code>wrong window: this is terminal-delight session "1" (window 31337), and you asked for session "2". Nothing was read or written.</code>, so a relay pointed at the wrong window gets an error instead of someone else's panes.</p>
+
+<h3>The switches</h3>
+<table>
+  <thead><tr><th>Switch</th><th>Default</th><th>Means</th></tr></thead>
+  <tbody>
+    <tr><td><code>server enabled</code></td><td>off</td><td>Nothing is readable until this is on.</td></tr>
+    <tr><td><code>expose:</code> <code>agents only</code> · <code>all panes</code></td><td>agents only</td><td>Which panes the server can see. An agent pane runs Claude Code or Codex.</td></tr>
+    <tr><td><code>stream tool-call events</code></td><td>on</td><td>Whether <code>pane_events</code> and the push feed work.</td></tr>
+    <tr><td><code>writes on · agents can restyle</code></td><td>off</td><td>Whether any tool that changes something is allowed.</td></tr>
+  </tbody>
+</table>
+<p>They live in the MCP control panel: <kbd>ctrl</kbd>+<kbd>shift</kbd>+<kbd>a</kbd> in a pane, or <code>AGENTS · MCP</code> in the footer's <code>…</code> menu. From a script: <code>ctl mcp on|off</code>, <code>ctl mcp writes on|off</code>, <code>ctl mcp expose agents|all</code>. Each change is saved with the session. <code>TD_MCP</code> starts the in-process transport but does not turn the server on, and <code>TD_MCP_WRITE</code> turns writes on only alongside <code>TD_MCP</code>.</p>
+
+<h3>Tools</h3>
+<table>
+  <thead><tr><th>Tool</th><th>Needs</th><th>Arguments</th><th>Does</th></tr></thead>
+  <tbody>
+    <tr><td><code>list_panes</code></td><td>on</td><td>none</td><td>Every visible pane: <code>tab</code>, <code>title</code>, <code>mode</code>, <code>pid</code>, <code>pane_id</code>, <code>cwd</code>, <code>session</code> (the resume command), the <code>tool</code> in flight, and its sticky <code>note</code>.</td></tr>
+    <tr><td><code>grep</code></td><td>on</td><td><code>query</code>, <code>scrollback</code> (default 2000 lines)</td><td>An exact, case-insensitive search across every visible pane's scrollback, up to 50 matches per pane.</td></tr>
+    <tr><td><code>pane_events</code></td><td>on, events</td><td><code>pid</code>, <code>limit</code> (default 20, up to 200)</td><td>An agent's recent tool calls, from its own transcript.</td></tr>
+    <tr><td><code>get_pane_config</code></td><td>on</td><td><code>targets</code>: pids and/or <code>"outer"</code></td><td>Each pane's appearance, as percentages.</td></tr>
+    <tr><td><code>set_pane_config</code></td><td>on, writes</td><td><code>updates</code>: <code>[{target, config}]</code></td><td>Restyle panes or the window.</td></tr>
+    <tr><td><code>leave_note</code></td><td>on, writes</td><td><code>pid</code>, <code>title</code>, <code>text</code>, <code>pin</code>, <code>clear</code></td><td>Put a <a href="/sticky-notes">sticky note</a> on a pane's glass.</td></tr>
+    <tr><td><code>declare_deliverable</code></td><td>on, writes</td><td><code>pid</code>, <code>label</code> (48 characters), <code>href</code>, <code>clear</code></td><td>Name the thing this pane produced, on its row in the attention rail.</td></tr>
+    <tr><td><code>present_surface</code></td><td>on, writes</td><td><code>pid</code>, <code>surface</code></td><td>Put a work object on a pane's <a href="/workbench">workbench</a>. It is saved to disk first.</td></tr>
+    <tr><td><code>surface_catalogue</code></td><td>nothing</td><td>none</td><td>What the running build can draw: the <a href="/surface-protocol">surface</a> kinds, actions and weights.</td></tr>
+    <tr><td><code>open_document</code></td><td>on, writes</td><td><code>path</code>, <code>placement</code>: <code>beside</code> or <code>here</code></td><td>Open a Markdown, HTML or image file next to your pane, or over it.</td></tr>
+    <tr><td><code>document_notes</code></td><td>on</td><td>none</td><td>The notes a person left on the document open beside you.</td></tr>
+    <tr><td><code>engineering_state</code></td><td>on</td><td>none</td><td>Every project's git state as the top bar sees it. A missing number means not measured, never zero.</td></tr>
+  </tbody>
+</table>
+<p>Where a tool takes a <code>pid</code>, leaving it out means your own pane, which only works through the relay because only the relay says who is calling. Without it you get <code>no `pid`, and this connection did not say who is calling — pass a pid from list_panes</code>. A write to a pane the policy hides is refused.</p>
+
+<h3>Appearance</h3>
+<p><code>get_pane_config</code> and <code>set_pane_config</code> use 0 to 100 percent for <code>brightness</code>, <code>contrast</code>, <code>colour</code>, <code>text</code>, <code>background</code>, <code>gamma</code>, <code>menu_bar</code>, <code>text_size</code>, <code>bench_size</code>, <code>warp</code>, <code>crawl_angle</code> and <code>crawl_depth</code>, plus <code>crawl</code> as true or false, and <code>logo</code> as an image path for a pane. An update names only what changes; a misspelled channel is an error. The values are absolute, so "20 % lower" is yours to compute from a read. On a pane, only the channels you set become its own; <code>outer</code> changes every pane that follows the window.</p>
+
+<h3>Every answer says where it came from</h3>
+<p>Each tool result, errors included, ends with a line like <code>— terminal-delight · session 1 · window 31337 · td-81ec545-rows-where-drawn</code> and carries the same in <code>structuredContent.instance</code>. To find your own pane in <code>list_panes</code>, match its <code>pane &lt;n&gt;</code> against <code>$TD_PANE_ID</code>; titles and directories are not unique.</p>
+
+<h3>Pushed notifications</h3>
+<p>Over the in-process transport, after <code>initialize</code> and with events on, the server pushes <code>notifications/message</code> with <code>data.event</code> set to <code>agent_appeared</code>, <code>agent_vanished</code> or <code>tool_call</code>, about once a second. <code>logging/setLevel</code> to <code>warning</code> or above silences it. The relay carries no pushes.</p>
+
+<h3>Errors</h3>
+<table>
+  <thead><tr><th>Code</th><th>When</th></tr></thead>
+  <tbody>
+    <tr><td><code>-32000</code></td><td><code>terminal-delight UI not ready</code>: the window didn't answer within five seconds.</td></tr>
+    <tr><td><code>-32001</code></td><td>The relay named a different session from this window's.</td></tr>
+    <tr><td><code>-32601</code></td><td>An unknown method.</td></tr>
+    <tr><td><code>-32602</code></td><td>A tool call with no name, or an unknown tool.</td></tr>
+  </tbody>
+</table>
+
+<h3>What would prove this wrong</h3>
+<p>Any tool call that puts bytes into a pane's terminal breaks the server's first rule. So does any answer that describes another window's panes without saying which window it came from.</p>
+</section>
+
+<ol data-sources>
+  <li id="s1">The server, its tools and the policy: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/mcp.rs">mcp.rs</a>; the transports: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/mcp_transport.rs">mcp_transport.rs</a>; the relay: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/ctl.rs">ctl.rs</a>.</li>
+</ol>

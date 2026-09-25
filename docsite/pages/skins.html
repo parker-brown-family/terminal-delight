@@ -1,0 +1,104 @@
+<script type="application/json" data-page>
+{
+  "title": "Skins",
+  "description": "A skin sets the shape of Terminal Delight's chrome: round or square corners, how edges are drawn, how the active tab is marked, how labels are set. Three are built in, and your own skin.toml reloads as you save it. Any skin works with any theme.",
+  "updated": "2026-09-25",
+  "trueOf": "main at d7cf383",
+  "summary": "The shape of the chrome around the panes"
+}
+</script>
+
+<section data-register="brief">
+<p class="lede">A <a href="/themes">theme</a> decides the colours. A skin decides the shape of everything around the terminals: whether corners are round or square, whether an edge is a hairline, a double rule or nothing, how the active tab stands out, and whether labels are capitals.</p>
+<figure class="td-fig">
+  <div class="figwrap skinfig" role="img" aria-label="The same row of three tabs and a chip in the three built-in skins. default: rounded tabs with hairline edges, the active one glowing. deco: square tabs with double rules and widely spaced letters. console: square tabs with no edges, capital letters, and a bar under the active one.">
+    <div class="row sk-default"><div class="who">default <span>▢ round · glow</span></div><div class="strip"><span class="tab">api</span><span class="tab on">docs</span><span class="tab">logs</span><span class="chip">2 need you</span></div></div>
+    <div class="row sk-deco"><div class="who">deco <span>◈ square · double</span></div><div class="strip"><span class="tab">api</span><span class="tab on">docs</span><span class="tab">logs</span><span class="chip">2 need you</span></div></div>
+    <div class="row sk-console"><div class="who">console <span>▤ square · rail</span></div><div class="strip"><span class="tab">api</span><span class="tab on">docs</span><span class="tab">logs</span><span class="chip">2 need you</span></div></div>
+  </div>
+  <figcaption><b>Figure 1.</b> One strip of tabs in each built-in skin, with the same colours. Drawn by hand from each skin's settings over the <code>hacker</code> palette, not photographed from the app.</figcaption>
+</figure>
+<p>Pick one from the <b>SKIN</b> row in the window's DESIGN tray (<code>🎨</code> in the footer), or run <code>terminal-delight ctl skin deco</code>. A skin applies to the whole window, never to one pane. Because a skin describes its colours as adjustments to the theme's (the accent at half strength, the text a little dimmer), every skin works with every theme.</p>
+<p class="invite">Technical has how a skin gets chosen and every key in <code>skin.toml</code>.</p>
+</section>
+
+<section data-register="technical" data-headline="skin.toml">
+<h3>Which skin draws</h3>
+<ol>
+  <li><code>terminal-delight ctl skin &lt;name&gt;</code>, until <code>ctl skin theme</code> undoes it.</li>
+  <li>The file <code>TD_SKIN</code> names.</li>
+  <li>Your <code>~/.config/terminal-delight/skin.toml</code>, reloaded when you save it.</li>
+  <li><code>skin = "…"</code> in the theme file; <code>deco</code> asks for <code>deco</code>.</li>
+  <li><code>default</code>.</li>
+</ol>
+<p>In the tray, <code>SKIN</code> lights whichever skin is drawing, and <code>◎ theme</code> appears once you've chosen one, to hand the choice back. Nothing is written on first run: with no <code>skin.toml</code>, the theme decides. An unknown name is refused with the list of known ones.</p>
+
+<h3>The file</h3>
+<p>Start from <code>app/skins/default.toml</code> in the repository, which lists every key, commented out. Every key is optional; one you leave out takes its default, worked out against the live palette.</p>
+<pre><code>name = "mine"
+icon = "▲"
+
+[shape]
+corner   = "square"    # round | square
+boundary = "double"    # hairline | double | inset | none
+emphasis = "rail"      # fill | underline | bracket | rail | glow
+divider  = "line"      # line | double | none
+caps     = "tracked"   # off | upper | tracked
+shine    = "flat"      # gradient | flat
+
+[metric]
+radius = 0
+pad_x  = 8
+rail   = 3
+
+[ink]
+rule = { from = "accent", a = 0.5 }
+ink_on_mark = { from = "bg" }
+panel_raised = { from = "surface", l = 1.25, max_l = 0.30 }</code></pre>
+
+<h3>Shape</h3>
+<table>
+  <thead><tr><th>Key</th><th>Default</th><th>Decides</th></tr></thead>
+  <tbody>
+    <tr><td><code>corner</code></td><td><code>round</code></td><td>Rounded corners or none.</td></tr>
+    <tr><td><code>boundary</code></td><td><code>hairline</code></td><td>How a region's edge is drawn. <code>double</code> is two thin rules.</td></tr>
+    <tr><td><code>emphasis</code></td><td><code>fill</code>; the <code>default</code> skin sets <code>glow</code></td><td>How the active item stands out. <code>glow</code> is a phosphor ring, <code>rail</code> a bar along one side.</td></tr>
+    <tr><td><code>divider</code></td><td><code>line</code></td><td>Horizontal dividers.</td></tr>
+    <tr><td><code>caps</code></td><td><code>off</code></td><td>Labels as written, in capitals, or <code>tracked</code> with thin spaces between the letters.</td></tr>
+    <tr><td><code>shine</code></td><td><code>gradient</code></td><td>Whether raised surfaces carry a soft gradient.</td></tr>
+  </tbody>
+</table>
+
+<h3>Metrics</h3>
+<p>In pixels before the window's scale is applied; borders never scale. Defaults: <code>radius</code> 4, <code>radius_lg</code> 10, <code>hairline</code> 1, <code>border</code> 1, <code>rule_gap</code> 2, <code>gap</code> 4, <code>pad_x</code> 6, <code>pad_y</code> 4, <code>chip_px</code> 5, <code>chip_py</code> 1, <code>row_h</code> 15, <code>label_size</code> 9, <code>bracket</code> 5, <code>rail</code> 2, <code>glow</code> 5.25 (how far the ring spreads) and <code>glow_a</code> 0.11 (how bright it is, 0 to 1).</p>
+
+<h3>Inks</h3>
+<p>An ink is either a fixed colour, <code>"#1a2226"</code>, or a recipe over one of the theme's colours: <code>{ from = "accent", l = 0.8, s = 1.2, a = 0.5, max_l = 0.3, toward = "text", t = 0.4 }</code>. <code>from</code> and <code>toward</code> name <code>bg</code>, <code>surface</code>, <code>text</code>, <code>accent</code>, <code>complement</code>, <code>human</code>, <code>faint</code>, <code>cursor</code>, <code>white</code>, <code>black</code> or <code>ansi0</code> to <code>ansi15</code>. <code>l</code> scales lightness, <code>max_l</code> caps it, <code>s</code> scales saturation, <code>toward</code> blends by <code>t</code> (0.5 if left out), and <code>a</code> sets opacity, applied in that order.</p>
+<table>
+  <thead><tr><th>Group</th><th>Inks and their defaults</th></tr></thead>
+  <tbody>
+    <tr><td>grounds</td><td><code>panel</code> bg · <code>panel_raised</code> surface · <code>panel_sunken</code> surface at 0.4 lightness · <code>panel_glass</code> bg at 0.7 · <code>btn_face</code> surface at 0.8 lightness</td></tr>
+    <tr><td>edges</td><td><code>rule</code> faint at 0.25 · <code>rule_strong</code> surface at 0.3 lightness · <code>edge</code> accent at 0.35 · <code>edge_strong</code> accent at 0.5 · <code>focus</code> accent</td></tr>
+    <tr><td>text</td><td><code>ink</code> text · <code>ink_dim</code> text at 0.7 · <code>ink_off</code> faint · <code>ink_faint</code> text at 0.6 · <code>ink_ghost</code> text at 0.2 · <code>ink_on_mark</code> white at 0.95</td></tr>
+    <tr><td>controls</td><td><code>ink_lit</code> text at 0.92 · <code>edge_rest</code> text at 0.3 · <code>face_rest</code> text at 0.06</td></tr>
+    <tr><td>marks</td><td><code>mark</code> accent · <code>mark_soft</code> 0.85 · <code>mark_dim</code> 0.4 · <code>mark_wash</code> 0.14 · <code>select</code> human · <code>row_active</code> human at 0.08 · <code>hover</code> white at 0.12</td></tr>
+    <tr><td>states</td><td><code>live</code> complement · <code>ok</code> ansi10 · <code>warn</code> ansi11 · <code>danger</code> ansi9</td></tr>
+  </tbody>
+</table>
+<p>Fractions without a word are opacity. <code>ink_faint</code> at 0.6 is the lowest setting at which faint text passes 4.5:1 contrast on all six built-in themes. Selection uses the <code>👤</code> colour from the theme's wheel, not the accent.</p>
+<p>A key the parser doesn't know is reported, never fatal, with a guess: <code>rule_stong (no such token — did you mean rule_strong?)</code>.</p>
+
+<h3>Checking a skin</h3>
+<pre class="cmd"><code>terminal-delight skin --skin deco --theme hacker</code></pre>
+<p>Prints every resolved shape, ink, metric and type size as JSON, without a window. <code>--list</code> names the skins this build has; <code>--scale</code> is the menu-bar gauge (0.7 to 1.6) and <code>--text-size</code> the text-size gauge's factor (0.6 to 2.0). Exit codes: 0, 1 for a file that doesn't load, 2 for usage.</p>
+
+<h3>Not yet</h3>
+<ul>
+  <li>Some overlays, such as the usage card and the paint tray, may still draw rounded corners under a square skin.</li>
+  <li>Chamfered corners can't be drawn yet; <code>corner</code> is round or square.</li>
+</ul>
+</section>
+
+<ol data-sources>
+  <li id="s1">Tokens, recipes, precedence and the <code>skin</code> verb: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/skin.rs">skin.rs</a>; the built-in skins: <a href="https://github.com/parker-brown-family/terminal-delight/tree/main/app/skins">app/skins/</a>.</li>
+</ol>

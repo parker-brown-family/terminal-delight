@@ -1,0 +1,100 @@
+<script type="application/json" data-page>
+{
+  "title": "Agent wall",
+  "description": "The agent wall shows every pane in the window as a card: which agent, where, what it's doing, and three bars read from its own transcript that say whether it should keep going, compact, hand off or stop.",
+  "updated": "2026-09-25",
+  "trueOf": "main at d7cf383",
+  "summary": "Every agent as a card, with three health bars"
+}
+</script>
+
+<section data-register="brief">
+<p class="lede">The agent wall shows every pane in the window as a card. Open it with <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd>, or by clicking the agent counter in the top right. Click a card and you're in that pane.</p>
+<p>Each card names the agent, the directory it's in, the model it's running and what it's doing right now. Cards are grouped the way your tabs are, and the chips across the top narrow them by group, by program and by state, so twelve agents can come down to the two that are blocked.</p>
+<p>A Claude agent's card also carries three bars, read from its own transcript: how full its context is, how worn it is, and how much of what it's holding is still about the task. When those add up to <b>STOP</b> or <b>HAND OFF</b>, the card turns up a red <code>CALL</code> chip and a <code>⚠</code>, because those two need a person to decide.</p>
+<p class="invite">Story explains the three bars. Technical has how each is computed.</p>
+</section>
+
+<section data-register="story" data-headline="Three bars">
+<p>An agent works like someone at a desk. Everything it reads stays in front of it: the files it opened, the command output, your messages. <b>CTX WINDOW</b> is how much of the desk is covered. When it's nearly full, Claude Code clears it and keeps a summary. That's called compacting, and it throws detail away.</p>
+<p>A clear desk doesn't make a fresh worker. Someone eight hours into a shift, whose desk has been cleared twice, who keeps rerunning the command that failed and reopening files they read an hour ago, is tired. <b>FATIGUE</b> looks for exactly those signs in the transcript: how long the agent has been going, how many times it was compacted, whether its errors are climbing, whether it repeats itself, whether its answers are getting slower.</p>
+<p>The desk can also be full of the wrong things. An agent that spent the morning on the database and the afternoon on the login page is still carrying the database files, and it rereads them every turn. <b>RELEVANCE</b> is the share of the desk that's about what it has been doing since you last spoke to it.</p>
+<p>Read together, the bars say what to do next. A worn-out agent should stop, since a new session starts cleaner than this one continues. One whose desk is full of work it's still using should hand off, because compacting would throw that work away. One whose desk is full of old papers can simply compact. Only stopping and handing off are your call, so only those two light up the card.</p>
+</section>
+
+<section data-register="technical" data-headline="Cards, bars and the call">
+<h3>Opening it</h3>
+<ul>
+  <li><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd> from any pane.</li>
+  <li>The agent counter in the top right of the window. It counts <code>▶</code> working, <code>‖</code> blocked, <code>✕</code> error, <code>✓</code> finished, <code>○</code> idle and <code>?</code> unknown, and fills a cell only when that state needs you.</li>
+  <li><code>AGENTS · MCP</code>, first in the <code>…</code> menu.</li>
+</ul>
+<p>Click outside the panel to close it. Clicking a card focuses that pane, switches to its tab and closes the wall.</p>
+
+<h3>The header</h3>
+<p><code>AGENT WALL</code>, then <code>Δ</code> (tokens this turn) and <code>Σ</code> (tokens this session) for the whole fleet, and two buttons: <code>&lt;/&gt; savings</code> for lean-ctx's token savings and <code>Σ usage</code> for the <a href="/usage">usage card</a>. Below them, the <a href="/mcp">MCP server</a>'s switches (on or off, which panes to expose, tool-call events, writes) and the card-size slider, which scales every card from 0.7 to 1.6 and applies to the <a href="/graveyard">graveyard</a> too.</p>
+
+<h3>Filters</h3>
+<table>
+  <thead><tr><th>Row</th><th>Chips</th></tr></thead>
+  <tbody>
+    <tr><td>Group</td><td><code>ALL</code>, one per tab group, <code>Ungrouped</code></td></tr>
+    <tr><td>Program</td><td><code>ANY PROGRAM</code>, then one per program present: <code>CLAUDE</code>, <code>CODEX</code>, <code>SHELL</code>, <code>REMOTE</code>, or the program's name</td></tr>
+    <tr><td>State</td><td><code>ANY STATE</code>, then <code>▶ WORKING</code>, <code>⏸ BLOCKED</code>, <code>✕ ERROR</code>, <code>✓ DONE</code>, <code>· IDLE</code>, <code>? UNKNOWN</code>; a state with no agents gets no chip</td></tr>
+  </tbody>
+</table>
+<p>State comes from the agent's own status line on screen. Blocked and error need you. Unknown means the screen matched no rule, and it's counted apart from idle rather than guessed into it.</p>
+
+<h3>A card</h3>
+<dl class="defs">
+  <dt>title</dt><dd><code>◈</code> if the pane is exposed to MCP, <code>◇</code> if not; a red <code>⚠</code> when it needs you; the pane's name, else its terminal title; the program.</dd>
+  <dt>directory</dt><dd>The last part of its working directory, as <code>project/</code>.</dd>
+  <dt>picture</dt><dd>The directory's logo, or a small scene of the tool the agent is using right now, with a caption. With neither, the name's initials over the group colour. The picture is warped like a tiny CRT.</dd>
+  <dt>agent chip</dt><dd>Model family and effort, e.g. <code>OPUS · MAX</code>, from the transcript; else the <code>--model</code> it was started with. A shell shows <code>SERVICE</code>.</dd>
+  <dt>middle</dt><dd>The three bars, when there are any. Otherwise the agent's latest lines, or a shell's directory.</dd>
+  <dt>corner</dt><dd><code>Δ</code> and <code>Σ</code> tokens, and the state.</dd>
+</dl>
+
+<h3>The bars</h3>
+<p>Each bar's length is its number; its colour only says which end is bad. Every one is read from the whole transcript, not the tail.</p>
+<table>
+  <thead><tr><th>Bar</th><th>Measures</th><th>Turns red</th></tr></thead>
+  <tbody>
+    <tr><td><code>CTX WINDOW</code></td><td>Tokens in the context on the latest turn (input plus cache writes plus cache reads) over the model's limit: 1,000,000 for a <code>[1m]</code> model, otherwise 200,000.</td><td>from 60%, fully at 98%</td></tr>
+    <tr><td><code>FATIGUE</code></td><td>A weighted sum: compactions and what they dropped (0.28), tool errors climbing (0.18), repeated calls (0.18), slowing turns (0.14), rereading what it already had (0.12), hours on the clock (0.10). The heaviest part is the reason given.</td><td>from 55%, fully at 78%; healthy agents read 14 to 25%</td></tr>
+    <tr><td><code>RELEVANCE</code></td><td>Of the tool results still in the context, the share about files touched since you last typed. Off-topic results count at 0.35; results superseded by a later read or that errored count at nothing.</td><td>at 45% and below; green at 65% and above</td></tr>
+  </tbody>
+</table>
+<p>Relevance is a proxy, and it's labelled as one. A transcript with no answer from the agent yet draws no bars at all, rather than three empty ones.</p>
+
+<h3>The call</h3>
+<p>Checked in order; the first that matches wins.</p>
+<table>
+  <thead><tr><th>When</th><th>Call</th></tr></thead>
+  <tbody>
+    <tr><td>fatigue ≥ 70%</td><td><code>STOP</code></td></tr>
+    <tr><td>window ≥ 85% and relevance ≥ 65%</td><td><code>HAND OFF</code></td></tr>
+    <tr><td>window ≥ 85%</td><td><code>COMPACT</code></td></tr>
+    <tr><td>window ≥ 60% and relevance &lt; 45%</td><td><code>COMPACT</code></td></tr>
+    <tr><td>off-task context ≥ 120k tokens, or a quarter of the limit if that's more</td><td><code>COMPACT</code></td></tr>
+    <tr><td>ten turns or fewer before 92% full, at its recent rate</td><td><code>WATCH</code></td></tr>
+    <tr><td>window ≥ 60% or fatigue ≥ 45%</td><td><code>WATCH</code></td></tr>
+    <tr><td>otherwise</td><td><code>RUN</code></td></tr>
+  </tbody>
+</table>
+<p>Only <code>STOP</code> and <code>HAND OFF</code> show on the card, as a red <code>CALL</code>. 92% is where Claude Code starts compacting on its own. <code>terminal-delight agent-vitals &lt;transcript.jsonl&gt;</code> prints all of it as JSON, with the one-line reason for the call.</p>
+
+<h3>When bars don't draw</h3>
+<ul>
+  <li>The bars refresh every ten seconds, and only while the wall is open.</li>
+  <li>A pane draws bars only when Terminal Delight is sure which conversation it's in: the agent said so, or its process started with it, or it's the only one in that directory. A pane matched by a weaker guess shows its latest lines instead.</li>
+  <li>Codex panes have no bars yet.</li>
+</ul>
+
+<h3>What would prove this wrong</h3>
+<p>If a card ever draws bars from a conversation other than the one in its pane, the binding rule above has failed. The wall watches panes and never writes to a terminal, as its own footer says.</p>
+</section>
+
+<ol data-sources>
+  <li id="s1">The wall and its cards: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/main.rs">main.rs</a>; the bars and the call: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/vitals.rs">vitals.rs</a>, ported from <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/scripts/td-agent-vitals.mjs">td-agent-vitals.mjs</a>; agent states: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/hud.rs">hud.rs</a>.</li>
+</ol>
