@@ -13915,7 +13915,7 @@ mod tests {
             refused.contains("open_with_system("),
             "the file still opens"
         );
-        for seat in ["fn float_doc(", "pub(crate) fn show_document("] {
+        for seat in ["fn float_of(", "pub(crate) fn show_document("] {
             let body = method_body(&code, seat);
             assert!(
                 body.contains("Self::hand_over_on_give_up("),
