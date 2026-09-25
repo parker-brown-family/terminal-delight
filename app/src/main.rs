@@ -20342,10 +20342,10 @@ impl Workspace {
             return false;
         };
         if open_deliverable {
-            let Some(d) = it.deliverable.as_ref() else {
+            let Some(href) = it.deliverable.as_ref().map(|d| d.href.clone()) else {
                 return false;
             };
-            pane::open_with_system(&d.href);
+            self.rail_open_here(&href, cx);
             return true;
         }
         let Some(id) = panes.get(&it.pane).copied() else {
@@ -20354,6 +20354,45 @@ impl Workspace {
         self.pending_jump = Some(id);
         self.rail_close();
         true
+    }
+
+    /// Open a deliverable from the rail the way Alt+click opens a document:
+    /// a file TD can draw floats over the pane the person is looking at — the
+    /// focused pane when it shows its terminal or its bench, else the first
+    /// that does — and the queue closes so the square is in view. Anything
+    /// else (a URL, a PDF) goes to the desktop, as every deliverable used to.
+    ///
+    /// Reading does not visit: the square opens where the person already is,
+    /// not over the agent that declared it, because opening what a turn
+    /// produced and going to the terminal that produced it stay two acts.
+    /// Parker, 2026-09-25: *"the single click open artifacts will now use this
+    /// instead of goto new window on OS"*.
+    fn rail_open_here(&mut self, href: &str, cx: &mut Context<Self>) {
+        let Some(target) = deliverable_file(href).and_then(|p| docopen::drawable_document(&p))
+        else {
+            pane::open_with_system(href);
+            return;
+        };
+        let said = self.act_on_picked_pane(
+            cx,
+            |v| {
+                matches!(
+                    v.bench.face(),
+                    workbench::Face::Terminal | workbench::Face::Workbench
+                )
+            },
+            "no pane is showing its terminal or its bench to float a document over",
+            // A refused HTML file (no engine) has already gone to the desktop
+            // inside `open_float`, and said why.
+            |view, cx| {
+                let _ = view.open_float(target, None, cx);
+            },
+        );
+        if said.starts_with("err") {
+            pane::open_with_system(href);
+        } else {
+            self.rail_close();
+        }
     }
 
     /// "⇲ beside" on the cursor's row: what its turn produced, opened in a
@@ -21258,9 +21297,9 @@ impl Workspace {
                         // two different acts, and reading never does the second.
                         .on_mouse_down(
                             MouseButton::Left,
-                            cx.listener(move |_ws, _: &MouseDownEvent, _w, cx| {
+                            cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
                                 cx.stop_propagation();
-                                pane::open_with_system(&href);
+                                ws.rail_open_here(&href, cx);
                                 cx.notify();
                             }),
                         )
@@ -35209,6 +35248,34 @@ mod tests {
     /// `rail_waiting`, and this is the check that keeps them there: a future
     /// edit that reaches for `rail_rows` or `rail_queue` in either place turns
     /// this red rather than silently focusing a neighbour's terminal.
+    /// A deliverable opened from the rail floats in TD, over the pane the
+    /// person is looking at, when TD can draw it; only anything else goes to
+    /// the desktop. Parker: *"the single click open artifacts will now use
+    /// this instead of goto new window on OS"*.
+    #[test]
+    fn a_rail_deliverable_opens_in_td_before_the_desktop() {
+        let src = include_str!("main.rs");
+        let at = src.find("fn rail_open_here(").expect("rail_open_here");
+        let body = &src[at..at + src[at..].find("\n    }\n").expect("end")];
+        let drawable = body
+            .find("docopen::drawable_document(")
+            .expect("asks TD first");
+        let float = body
+            .find("view.open_float(target, None, cx)")
+            .expect("the square");
+        let desktop = body
+            .find("pane::open_with_system(href)")
+            .expect("the fallback");
+        assert!(drawable < desktop && drawable < float, "{body}");
+        assert!(body.contains("workbench::Face::Terminal | workbench::Face::Workbench"));
+        assert!(
+            body.contains("self.rail_close()"),
+            "the queue gets out of the way"
+        );
+        // The row's own click takes the same road as the key.
+        assert!(src.contains("ws.rail_open_here(&href, cx);"));
+    }
+
     #[test]
     fn the_cursor_and_the_click_resolve_a_row_through_the_same_list() {
         let src = include_str!("main.rs");
@@ -35223,6 +35290,13 @@ mod tests {
         assert!(
             !body.contains("self.rail_rows(cx)"),
             "the raw projection includes unknown rows the queue never draws"
+        );
+        // And a deliverable opened from the row goes through the one place
+        // that decides between TD's square and the desktop.
+        assert!(body.contains("self.rail_open_here(&href, cx)"), "{body}");
+        assert!(
+            !body.contains("open_with_system"),
+            "not straight to the desktop"
         );
         // And the click handler must not re-resolve its own list either.
         let click = src
