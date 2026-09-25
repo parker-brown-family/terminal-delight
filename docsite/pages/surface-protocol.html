@@ -1,0 +1,135 @@
+<script type="application/json" data-page>
+{
+  "title": "Surface protocol",
+  "description": "The Terminal Delight Surface Protocol, TDSP 0.4: the JSON an agent sends to put its work on a pane's workbench, the four ways to send it, what the window does with each field, and the line that comes back when a person acts.",
+  "updated": "2026-09-25",
+  "trueOf": "main at d7cf383",
+  "summary": "The JSON an agent sends to the workbench"
+}
+</script>
+
+<section data-register="brief">
+<p class="lede">An agent tells Terminal Delight what it made by sending a small JSON document called a surface: a reply, a decision it wants taken, a change to review, a file it wrote, a table, a diagram or a question. It says what the thing <em>is</em>. The window decides how it looks, and it lands on the pane's <a href="/workbench">workbench</a>.</p>
+<pre><code>{ "td": "0.4", "kind": "decision", "id": "cache-eviction",
+  "title": "Cache eviction policy",
+  "model": { "question": "LRU or TTL?",
+             "options": [ { "name": "LRU", "recommended": true,
+                            "case": "3× fewer misses on the replay corpus.",
+                            "cost": "A cold start is slower." },
+                          { "name": "TTL" } ] } }</code></pre>
+<p>The easiest way to send one is to write it as a <code>.json</code> file into the pane's own folder, which the window checks every second. It can also go through the <a href="/mcp">MCP server</a>, be piped to <code>terminal-delight surface</code>, or be printed in a <code>```td</code> block in the agent's reply.</p>
+<p>When a person presses <b>approve</b> on that card, one line is typed into the agent's terminal: <code>[workbench:k7f2q9ax] approve on surface cache-eviction</code>. The tag matches the pane's <code>$TD_TAG</code>, so the agent can tell its operator from text that only looks like one.</p>
+<p class="invite">Technical has every field, kind, route and limit.</p>
+</section>
+
+<section data-register="technical" data-headline="TDSP 0.4">
+<p>The protocol's spec lives in the repository at <code>docs/spec/td-surface-protocol.md</code>. It has fallen behind the code in places, including the kinds, the shelves and its question example, and where the two differ this page follows the code.</p>
+
+<h3>Version</h3>
+<p><code>td</code> is a string, <code>"0.4"</code>. Only the major number is compared: <code>"0.1"</code> and <code>"0.9"</code> are accepted, <code>"1.0"</code> is refused, and so is a missing or numeric <code>td</code>.</p>
+
+<h3>Envelope</h3>
+<table>
+  <thead><tr><th>Field</th><th>Needed</th><th>What the window does</th></tr></thead>
+  <tbody>
+    <tr><td><code>td</code></td><td>always</td><td>Checks the major version.</td></tr>
+    <tr><td><code>op</code></td><td>no</td><td><code>present</code> (the default), <code>update</code> or <code>retire</code>.</td></tr>
+    <tr><td><code>id</code></td><td>for <code>retire</code></td><td>Keeps letters, digits and <code>- _ . :</code>, up to 96 characters. Left out, it's made from the kind and title.</td></tr>
+    <tr><td><code>kind</code></td><td>except <code>retire</code></td><td>One of the kinds below.</td></tr>
+    <tr><td><code>title</code></td><td>no</td><td>Trimmed and cut to 72 characters; empty gets a default for the kind.</td></tr>
+    <tr><td><code>model</code></td><td>except <code>retire</code></td><td>The kind's content.</td></tr>
+    <tr><td><code>weight</code></td><td>no</td><td>Effort, complexity, foundation, confidence; see <a href="/workbench#technical-responses">the workbench</a>.</td></tr>
+    <tr><td><code>source</code></td><td>no</td><td><code>files</code>, <code>command</code>, <code>reference</code>. The <b>source</b> button opens the first file.</td></tr>
+    <tr><td><code>actions</code></td><td>no</td><td>Verbs added after the kind's own. They can add buttons, never remove one.</td></tr>
+    <tr><td><code>pane</code></td><td>no</td><td>Accepted and not used; the route decides the pane.</td></tr>
+  </tbody>
+</table>
+<p>Always send an <code>id</code>. Two surfaces of the same kind with no id and the same title, or no title, get the same made-up id, and the second replaces the first.</p>
+
+<h3>Kinds</h3>
+<table>
+  <thead><tr><th>Kind</th><th>Needs in <code>model</code></th><th>May also have</th><th>Shelf</th><th>Buttons</th></tr></thead>
+  <tbody>
+    <tr><td><code>response</code></td><td><code>layman</code></td><td><code>brief</code>, <code>technical</code>, <code>evidence</code>, <code>asks</code>, <code>next</code>, <code>doubts</code>, <code>escalation</code>, any other key</td><td>overview</td><td>comment, ask</td></tr>
+    <tr><td><code>artifact</code></td><td><code>href</code> (or <code>path</code>, <code>url</code>, <code>open</code>, <code>file</code>, <code>link</code>)</td><td><code>mime</code>, <code>summary</code>, any other note</td><td>artifacts</td><td>open, comment</td></tr>
+    <tr><td><code>markdown</code></td><td><code>body</code></td><td></td><td>artifacts</td><td>comment</td></tr>
+    <tr><td><code>table</code></td><td><code>columns</code></td><td><code>rows</code>; a <code>null</code> cell reads <code>unavailable</code></td><td>artifacts</td><td>comment</td></tr>
+    <tr><td><code>architecture</code></td><td><code>nodes</code>, each with an <code>id</code></td><td>node <code>label</code>, <code>state</code>, <code>group</code>; <code>edges</code> of <code>from</code>, <code>to</code>, <code>label</code></td><td>artifacts</td><td>comment, ask</td></tr>
+    <tr><td><code>changeset</code></td><td><code>hunks</code>, each with a <code>file</code></td><td><code>repository</code>; hunk <code>id</code>, <code>patch</code></td><td>decisions</td><td>accept and reject per hunk, comment, approve</td></tr>
+    <tr><td><code>decision</code></td><td><code>question</code></td><td><code>options</code> (<code>name</code>, <code>case</code>, <code>cost</code>, one <code>recommended</code>), <code>consequences</code></td><td>decisions</td><td>approve, reject, comment</td></tr>
+    <tr><td><code>question</code></td><td><code>question</code>, <code>options</code></td><td>options as strings or <code>{label, what_happens}</code>; <code>recommend</code></td><td>decisions</td><td>one per option</td></tr>
+  </tbody>
+</table>
+<p>A kind this build doesn't know is shown as <code>unclassified</code>, with its raw payload, rather than dropped. <code>comment</code> is the kind a person's own notes use; it isn't offered to agents. The <a href="/workbench#technical-responses">workbench</a> page has what each response register is for.</p>
+<p>An artifact's location must be an absolute path or an <code>http://</code>, <code>https://</code> or <code>file://</code> address. A relative path is refused, because it would be read from the terminal's directory rather than the agent's, and so is any other scheme.</p>
+
+<h3>present, update, retire</h3>
+<ul>
+  <li><b>present</b> with a new id adds the surface; with an id already there, replaces it.</li>
+  <li><b>update</b> merges into the existing surface, or adds it if the id is new. It still needs <code>kind</code> and <code>model</code>, and a missing <code>title</code> becomes the kind's default rather than keeping the old one.</li>
+  <li><b>retire</b> with an <code>id</code> takes the surface off the bench.</li>
+</ul>
+<p>An arrival never changes the shelf a person is looking at and never selects anything. It's marked unseen unless its shelf is on screen. Each pane keeps its 64 newest surfaces.</p>
+
+<h3>Four routes</h3>
+<dl class="defs">
+  <dt>file</dt><dd>Write the document to <code>$XDG_STATE_HOME/terminal-delight/surfaces/$TD_SESSION/$TD_PANE_ID/&lt;name&gt;.json</code> (<code>~/.local/state/…</code> by default). The window reads new and changed files once a second, oldest first. A file that isn't valid JSON is skipped until it is. Valid JSON that isn't a valid surface lands as <code>unclassified</code>, so a mistake shows up. Write beside and rename into place so a half-written file is never read. The folder is also how a new window gets the bench back.</dd>
+  <dt>MCP</dt><dd><code>present_surface</code> with the pane's <code>pid</code> and the document as <code>surface</code>. It needs the server on and writes on, checks the document strictly and returns the reason if it's refused, and saves it to the pane's folder on the way past. A <code>retire</code> deletes that file.</dd>
+  <dt>command line</dt><dd><code>terminal-delight surface [file]</code>, reading stdin with no file, from inside a pane. It takes one document, or every <code>```td</code> block in the input, and writes each to the pane's folder. Exit 0 if it wrote something, 2 if nothing was usable, 3 outside a pane.</dd>
+  <dt>transcript</dt><dd>A <code>```td</code> or <code>```tdsp</code> block in the agent's own reply. The window reads the last 256 KiB of the agent's transcript, when it's sure which transcript is the pane's. Use this when nothing else is available.</dd>
+</dl>
+<p><code>terminal-delight surface --catalogue</code>, or the <code>surface_catalogue</code> MCP tool, lists the kinds and actions this build handles. <code>terminal-delight surface --derive &lt;transcript.jsonl&gt;</code> shows what the window would read out of a transcript.</p>
+
+<h3>The line that comes back</h3>
+<pre><code>[workbench:&lt;tag&gt;] &lt;action&gt; on surface &lt;id&gt; · &lt;target&gt; — &lt;comment&gt;</code></pre>
+<p>Typed into the agent's terminal, followed by a return. <code>· &lt;target&gt;</code> appears when the action names a part, such as a hunk or an option; <code>— &lt;comment&gt;</code> when the person had written something in the composer. Line breaks and control characters become spaces. For example:</p>
+<pre><code>[workbench:k7f2q9ax] reject_part on surface change-847 · src/surface.rs#hunk-4 — Tube geometry shouldn't depend on terminal state.
+[workbench:k7f2q9ax] choose on surface q1 · Coffee</code></pre>
+<p>Each is also appended to <code>actions.jsonl</code> in the pane's folder, with the comment as written:</p>
+<pre><code>{"td":"0.4","type":"action","surface":"change-847","action":"reject_part","target":"src/surface.rs#hunk-4","comment":"…"}</code></pre>
+<table>
+  <thead><tr><th>Action</th><th>Button</th><th>Done by</th></tr></thead>
+  <tbody>
+    <tr><td><code>approve</code>, <code>reject</code></td><td>approve, reject</td><td>the agent</td></tr>
+    <tr><td><code>accept_part</code>, <code>reject_part</code></td><td>accept, reject, per hunk</td><td>the agent</td></tr>
+    <tr><td><code>comment</code>, <code>ask_agent</code></td><td>comment, ask; <kbd>Enter</kbd> opens the composer first</td><td>the agent</td></tr>
+    <tr><td><code>choose</code></td><td>one per question option</td><td>the agent</td></tr>
+    <tr><td><code>open</code>, <code>open_source</code>, <code>copy</code></td><td>open, source, copy</td><td>the window; nothing is sent</td></tr>
+    <tr><td>anything else</td><td>its name, with spaces for underscores</td><td>the agent</td></tr>
+  </tbody>
+</table>
+<p><b>open</b> shows a local Markdown, HTML or image file in a floating document over the pane, and hands anything else to the desktop.</p>
+
+<h3>The agent channel</h3>
+<p>A second, smaller protocol, TDAC 0.2, carries what Claude Code's hooks see: your prompts, its questions, your answers and its replies. <code>scripts/install-agent-hooks.sh</code> installs the hooks (see <a href="/install#technical-agent-hooks">Install</a>). They append to <code>inbound.jsonl</code> in the pane's folder, and the window turns each question into a question card and each reply into a response if the agent sent none. When the bench is open, a question waits up to 540 seconds for an answer written to <code>answers/&lt;id&gt;.json</code>, so a person can answer it from the bench. <code>bench.json</code> in the same folder says whether the bench is open. Codex can't use this yet.</p>
+
+<h3>Limits</h3>
+<table>
+  <thead><tr><th></th><th>Limit</th></tr></thead>
+  <tbody>
+    <tr><td>title</td><td>72 characters</td></tr>
+    <tr><td>id</td><td>96 characters</td></tr>
+    <tr><td>file name</td><td>64 characters of letters, digits, <code>-</code> and <code>_</code></td></tr>
+    <tr><td>surfaces per pane</td><td>64 in memory, 512 files on disk; the oldest go first</td></tr>
+    <tr><td>idle sessions</td><td>a session folder untouched for 30 days is removed</td></tr>
+    <tr><td>unclassified payload</td><td>4096 bytes kept, 20 lines shown</td></tr>
+    <tr><td>table cell</td><td>600 characters</td></tr>
+    <tr><td>changeset patch</td><td>24 lines drawn per hunk</td></tr>
+  </tbody>
+</table>
+
+<h3>Refusals</h3>
+<p>The MCP route checks strictly and says why:</p>
+<ul>
+  <li><code>missing `td` version field — this build speaks TDSP 0.4</code></li>
+  <li><code>unknown kind "hologram" — this build renders response, artifact, …</code></li>
+  <li><code>a response needs a `layman` — the plain-English explanation of the whole reply</code></li>
+  <li><code>"report.html" is relative — it would resolve against the TERMINAL's directory, not yours. Send an absolute path or a full URL.</code></li>
+  <li><code>`retire` needs the `id` of the surface to take off the bench</code></li>
+</ul>
+<p>The file and transcript routes don't refuse. JSON they can't read as a surface lands as <code>unclassified</code> with the reason; a file that isn't JSON at all is left unread until it is.</p>
+</section>
+
+<ol data-sources>
+  <li id="s1">The envelope, kinds, actions and limits: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/surface.rs">surface.rs</a>; the file and command-line routes: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/surfacefeed.rs">surfacefeed.rs</a>; the MCP route: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/mcp.rs">mcp.rs</a>; the transcript route: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/derive.rs">derive.rs</a>; the agent channel: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/channel.rs">channel.rs</a> and <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/scripts/td-agent-hooks">td-agent-hooks</a>; the spec: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/docs/spec/td-surface-protocol.md">td-surface-protocol.md</a>.</li>
+</ol>
