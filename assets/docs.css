@@ -445,6 +445,21 @@ canvas.td-tube[hidden] { display: none; }
 .td-keys dt { font: 13px/1.5 var(--mono); color: var(--acc); }
 .td-keys dd { margin: 0; color: var(--ink); }
 .td-keys .kf { margin-top: 10px; font: 12px/1.5 var(--mono); color: var(--dim); }
+/* the app's own key sheet (F1 in Terminal Delight), from the Keymapping tab */
+.td-sheet { top: 50%; left: 50%; transform: translate(-50%, -50%); width: min(1180px, 95vw); max-height: 90vh; overflow: auto; padding: 22px 28px 16px;
+  background: linear-gradient(var(--glass-tint), var(--glass-tint-2)), color-mix(in srgb, var(--bg2) 90%, transparent);
+  border-color: color-mix(in srgb, var(--acc) 70%, transparent); overscroll-behavior: contain; }
+.td-sheet .sh { display: flex; align-items: baseline; gap: 16px; margin-bottom: 16px; }
+.td-sheet h3 { margin: 0; font: 600 17px/1.3 var(--mono); color: var(--mag); letter-spacing: .04em; }
+.td-sheet .sh .k { margin-left: auto; font: 11.5px/1 var(--mono); color: var(--dim); }
+.td-sheet .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 0 44px; }
+.td-sheet h4 { margin: 16px 0 7px; font: 600 12px/1.3 var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--mag); }
+.td-sheet .cols > div > h4:first-child { margin-top: 0; }
+.td-sheet dl { display: grid; grid-template-columns: minmax(150px, 40%) 1fr; gap: 6px 16px; margin: 0; font-size: 14px; }
+.td-sheet dt { font: 13px/1.5 var(--mono); color: var(--acc); }
+.td-sheet dd { margin: 0; line-height: 1.5; color: var(--ink); }
+.td-sheet .kf { margin: 16px 0 0; padding-top: 10px; border-top: 1px solid var(--line); font: 12px/1.55 var(--mono); color: var(--dim); }
+.td-sheet .kf a { color: var(--ink); }
 .td-keys a { color: var(--ink); }
 
 /* ------------------------------------------------------------------ narrow */
@@ -467,7 +482,9 @@ canvas.td-tube[hidden] { display: none; }
   .td-pager { grid-template-columns: 1fr; } .td-pager .next { grid-column: 1; } .td-pager a { margin: 0; }
   .td-doc .q td:first-child { white-space: normal; overflow-wrap: anywhere; }
   .td-doc .q td a { white-space: normal; }
-  .td-keys .cols { grid-template-columns: 1fr; }
+  .td-keys .cols, .td-sheet .cols { grid-template-columns: 1fr; }
+  .td-sheet dl { grid-template-columns: minmax(110px, 40%) 1fr; }
+  .td-sheet .sh .k { display: none; }
 }
 @media (max-width: 560px) {
   .td-top .r1 { padding: 0 10px; gap: 10px; }

@@ -158,6 +158,81 @@ function commands(html) {
   });
 }
 
+/* ------------------------------------------------------ the app's key sheet
+   The Keymapping tab opens the sheet F1 shows in the app, read straight out of
+   the app's source when the docs are built: the SHORTCUTS columns in main.rs,
+   and their English strings in lang.rs. So the sheet cannot drift from the app.
+   A few of the app's own rows no longer say what the code does (#803 records
+   them). Each fix below gives the code's version and where it comes from, and
+   the build refuses to ship a fix whose row has disappeared, because that means
+   the app's row was put right and the fix should be deleted. */
+const APP_KEY_FIXES = [
+  { key: 'Ctrl+Shift+PgUp / PgDn', text: 'Move tab (in / across groups)', to: [null, 'Move tab left / right, within its group'],
+    why: 'a tab never crosses a group (main.rs, the tab move)' },
+  { key: 'theme icon (top-right)', text: 'DESIGN — Themes & colour wheel', to: ['🎨 (bottom-right)', null],
+    why: 'the 🎨 sits bottom-right' },
+  { key: '▲ / ▼', text: 'Jump to your previous / next message', drop: true,
+    why: 'the jump glyph is hidden (pane.rs)' },
+  { key: '🤖 (mother bar)', text: 'MCP — read-only agent-watch surface', drop: true,
+    why: 'the wall has no chrome glyph' },
+  { key: 'Ctrl+Shift+A', text: 'MCP — read-only agent-watch surface', to: [null, 'The agent wall: every agent pane as a card'],
+    why: 'OpenAgentPanel raises the agent wall (pane.rs, main.rs)' },
+  { key: 'wheel / shift+wheel', text: 'Pan a zoomed FOCUS read down / sideways', to: ['wheel', 'Pan a zoomed FOCUS read; it wraps, so only down'],
+    why: 'the reader wraps and has no horizontal axis' },
+  { key: 'Ctrl+Alt+T', text: 'New window (quick scratch)', to: [null, 'Opens Terminal Delight on GNOME, once scripts/install-hotkey.sh binds it'],
+    why: 'a desktop hotkey; the app does nothing with the chord' },
+];
+async function appKeys() {
+  const where = 'the key sheet';
+  const main = await readFile(join(ROOT, 'app', 'src', 'main.rs'), 'utf8');
+  const lang = await readFile(join(ROOT, 'app', 'src', 'lang.rs'), 'utf8');
+  const block = lang.match(/pub const EN: Strings = Strings \{([\s\S]*?)\n\};/);
+  if (!block) { fail(where, 'app/src/lang.rs has no EN strings block'); return []; }
+  const en = {};
+  for (const m of block[1].matchAll(/^\s+(\w+): "((?:[^"\\]|\\.)*)",/gm)) {
+    en[m[1]] = m[2].replace(/\\u\{([0-9a-f]+)\}/gi, (_, h) => String.fromCodePoint(parseInt(h, 16))).replace(/\\"/g, '"');
+  }
+  const start = main.indexOf('let col_a = div()'), end = main.indexOf('// The FEATURES view', start);
+  if (start < 0 || end < 0) { fail(where, 'the help sheet in app/src/main.rs moved; update appKeys()'); return []; }
+  const region = main.slice(start, end), split = region.indexOf('let col_b');
+  const string = (name) => (name in en ? en[name] : (fail(where, `lang.rs has no English string ${name}`), name));
+  const label = (expr) => {
+    let m;
+    if ((m = expr.match(/^"((?:[^"\\]|\\.)*)"$/))) return m[1];
+    if ((m = expr.match(/^s\.(\w+)$/))) return string(m[1]);
+    if ((m = expr.match(/^&format!\("((?:[^"\\]|\\.)*)",\s*s\.(\w+)\)$/))) return m[1].replace('{}', string(m[2]));
+    fail(where, `a help row it cannot read: ${expr}`); return expr;
+  };
+  const ROW = /row\(\s*("(?:[^"\\]|\\.)*"|&format!\("(?:[^"\\]|\\.)*",\s*s\.\w+\)|s\.\w+)\s*,\s*s\.(\w+)\s*\)/g;
+  const cols = [region.slice(0, split), region.slice(split)].map((part) =>
+    [...part.matchAll(/section\(\s*s\.(\w+),\s*vec!\[([\s\S]*?)\]\s*,?\s*\)/g)].map((sm) => ({
+      title: string(sm[1]),
+      rows: [...sm[2].matchAll(ROW)].map((rm) => [label(rm[1]), string(rm[2])]),
+    })));
+  const count = cols.flat().reduce((n, s) => n + s.rows.length, 0);
+  if (cols.some((c) => !c.length) || count < 30) fail(where, `read only ${count} rows from app/src/main.rs; the help sheet's shape changed`);
+  for (const f of APP_KEY_FIXES) {
+    let hit = false;
+    for (const sec of cols.flat()) {
+      sec.rows = sec.rows.flatMap((r) => {
+        if (r[0] !== f.key || r[1] !== f.text) return [r];
+        hit = true;
+        return f.drop ? [] : [[f.to[0] ?? r[0], f.to[1] ?? r[1]]];
+      });
+    }
+    if (!hit) fail(where, `the fix for "${f.key}" matches no row: the app changed it, so check the row and delete the fix`);
+  }
+  return cols;
+}
+function keySheet(cols) {
+  const sec = (s) => `<h4>${esc(s.title)}</h4><dl>${s.rows.map((r) => `<dt>${esc(r[0])}</dt><dd>${esc(r[1])}</dd>`).join('')}</dl>`;
+  return '<div class="td-pop td-sheet" id="td-sheet" role="dialog" aria-label="Every key in Terminal Delight">'
+    + '<div class="sh"><h3>▸ TERMINAL DELIGHT · KEYS</h3><span class="k">F1 in the app · k here · Esc to close</span></div>'
+    + `<div class="cols">${cols.map((c) => `<div>${c.map(sec).join('')}</div>`).join('')}</div>`
+    + '<p class="kf">The sheet F1 opens in the app, read from the app\'s source. A few of the app\'s own rows are out of date, and here they say what the code does. '
+    + '<a href="/keys">Every key, surface by surface →</a></p></div>';
+}
+
 /* The Reference tab's menu, from nav.json, so its links are checked like any other. */
 const refMenu = (nav.reference || []).map((r) => `<a href="${esc(r.href)}">${esc(r.title)}<small>${esc(r.note)}</small></a>`).join('');
 
@@ -213,6 +288,7 @@ const metaBySlug = Object.fromEntries(Object.entries(parsed).filter(([, v]) => v
 
 const search = [];
 const pagesOut = {};
+const appSheet = keySheet(await appKeys());
 
 function renderPage(p, doc) {
   const where = `pages/${p.slug}.html`;
@@ -277,6 +353,7 @@ function renderPage(p, doc) {
     META_ROW: esc(`Updated ${doc.meta.updated} · true of ${doc.meta.trueOf}`),
     TAB_DOCS: tab('docs'), TAB_REF: tab('reference'), TAB_LANG: tab('languages'), TAB_KEYS: tab('keys'),
     REF_MENU: refMenu,
+    APP_KEYS: appSheet,
     BODY: body,
     SOURCES: sources,
     PAGER: pager(p.slug),

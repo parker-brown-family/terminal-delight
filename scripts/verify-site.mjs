@@ -331,6 +331,19 @@ for (const path of ['/info', DOCS + '/', DOCS + '/workbench', DOCS + '/install']
   await page.click('.td-actions .td-keysbtn');
   ok('docs: the keyboard glyph opens the same list', await page.evaluate(() => document.getElementById('td-keys').classList.contains('on') && document.querySelector('.td-keysbtn').getAttribute('aria-expanded') === 'true'));
   await page.keyboard.press('Escape');
+  /* Keymapping opens the app's own key sheet, read from its source by the build */
+  await page.click('.td-tab[data-sheet]');
+  const sheet = await page.evaluate(() => ({ open: document.getElementById('td-sheet').classList.contains('on'), path: location.pathname,
+    sections: [...document.querySelectorAll('#td-sheet h4')].map(h => h.textContent), rows: document.querySelectorAll('#td-sheet dt').length,
+    href: document.querySelector('.td-tab[data-sheet]').getAttribute('href'), rowText: [...document.querySelectorAll('#td-sheet dt')].map(d => d.textContent) }));
+  ok('docs: Keymapping opens the app\'s key sheet in place', sheet.open && sheet.path === '/install', JSON.stringify({ open: sheet.open, path: sheet.path }));
+  ok('docs: the sheet carries the app\'s sections and rows', ['TABS & PANES', 'EDITING & CLIPBOARD', 'LINKS', 'SCROLLBACK', 'LOOK & FEEL', 'WINDOW'].every(t => sheet.sections.includes(t)) && sheet.rows >= 40, JSON.stringify(sheet.sections) + ' ' + sheet.rows);
+  ok('docs: the sheet says what the code does where the app\'s row is stale', !sheet.rowText.includes('▲ / ▼') && sheet.rowText.includes('🎨 (bottom-right)'), JSON.stringify(sheet.rowText.slice(0, 8)));
+  ok('docs: without a script, Keymapping still goes to the keys page', sheet.href === '/keys');
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('k');
+  ok('docs: k opens the sheet', await page.evaluate(() => document.getElementById('td-sheet').classList.contains('on')));
+  await page.keyboard.press('Escape');
   ok('docs: Esc closes it', await page.evaluate(() => !document.getElementById('td-keys').classList.contains('on')));
   /* the scroll choreography, from the wellness-with-kate build by way of the Omarchy kiosk */
   const s0 = await page.evaluate(() => parseFloat(document.querySelector('.backdrop').style.getPropertyValue('--s')) || 1);

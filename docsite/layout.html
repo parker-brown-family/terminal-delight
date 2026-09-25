@@ -61,7 +61,7 @@
     <a class="td-tab" href="/"{{TAB_DOCS}}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v15H6.5A2.5 2.5 0 0 0 4 20.5z"/><path d="M4 20.5A2.5 2.5 0 0 0 6.5 23H20v-5"/></svg>Documentation</a>
     <span class="td-tab" tabindex="0"{{TAB_REF}}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="m8 7-5 5 5 5M16 7l5 5-5 5"/></svg>Reference ▾<span class="menu">{{REF_MENU}}</span></span>
     <a class="td-tab" href="/languages"{{TAB_LANG}}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3.2 3 14.8 0 18M12 3c-3 3.2-3 14.8 0 18"/></svg>Languages</a>
-    <a class="td-tab" href="/keys"{{TAB_KEYS}}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/></svg>Keymapping</a>
+    <a class="td-tab" href="/keys" data-sheet{{TAB_KEYS}}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/></svg>Keymapping</a>
   </nav>
 </header>
 
@@ -78,6 +78,7 @@
     <footer class="td-foot"><span>{{META_ROW}}</span><a href="{{EDIT_URL}}">Edit this page</a><a href="{{REPO}}/blob/main/CHANGELOG.md">Changelog</a><span>Terminal Delight · MIT</span></footer>
   </article>
 </main>
+{{APP_KEYS}}
 <div id="td-fx" aria-hidden="true"><div class="scan"></div><div class="vig"></div><div class="bloom"></div><div class="band"></div></div>
 <script src="/assets/td-shell.js"></script>
 <script src="/assets/docs.js"></script>
