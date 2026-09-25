@@ -434,6 +434,21 @@ impl Unavailable {
             ),
         }
     }
+
+    /// The reason in a few words, for the chip in the pane that was clicked.
+    /// Whole sentences go to the log and to a `ctl doc` caller; a pane can be
+    /// narrower than any of them.
+    pub fn short_reason(&self) -> String {
+        match self {
+            Unavailable::Off => "HTML engine off in documents.toml".into(),
+            Unavailable::UnknownEngine(name) => format!("no HTML engine called \"{name}\""),
+            Unavailable::Prefs(_) => "documents.toml could not be read".into(),
+            Unavailable::NoBrowser {
+                configured: true, ..
+            } => "no Chromium where documents.toml says".into(),
+            Unavailable::NoBrowser { .. } => "no Chromium found".into(),
+        }
+    }
 }
 
 /// The part of a PNG that says how big it is: width and height from IHDR.
@@ -548,6 +563,41 @@ mod tests {
             (top - 1280.0).abs() < 1e-9 && (h - 1280.0).abs() < 1e-9,
             "{top} {h}"
         );
+    }
+
+    /// The chip's form of each reason names its cause and fits beside a
+    /// line: the longest configured path cannot stretch it, because it
+    /// carries no path at all.
+    #[test]
+    fn every_reason_has_a_form_short_enough_for_a_chip() {
+        let long = PathBuf::from(format!("/opt/{}/chromium", "deep/".repeat(40)));
+        let cases = [
+            (Unavailable::Off, "off"),
+            (Unavailable::UnknownEngine("servo".into()), "servo"),
+            (Unavailable::Prefs("EACCES".into()), "documents.toml"),
+            (
+                Unavailable::NoBrowser {
+                    searched: vec![PathBuf::from("chromium")],
+                    configured: false,
+                },
+                "Chromium",
+            ),
+            (
+                Unavailable::NoBrowser {
+                    searched: vec![long],
+                    configured: true,
+                },
+                "Chromium",
+            ),
+        ];
+        for (why, names) in cases {
+            let short = why.short_reason();
+            assert!(short.contains(names), "{short} should name {names}");
+            assert!(
+                short.chars().count() <= 40,
+                "{short} is too long for a chip"
+            );
+        }
     }
 
     #[test]
