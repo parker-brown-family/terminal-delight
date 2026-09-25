@@ -52,6 +52,9 @@ BAKE_RA = json.loads((R / "bake/results/bake-rio-alac.json").read_text())
 BAKE_G = json.loads((R / "bake/results/bake-ghostty.json").read_text())
 BAKE_W = json.loads((R / "bake/results/bake-wezterm.json").read_text())
 PARSE = json.loads((R / "bake/results/parse-times.json").read_text())
+JITTER = json.loads((JEV / "jitter.json").read_text())
+AGREE = json.loads((JEV / "runs/core-fit/agreement.json").read_text())
+WHATIF = json.loads((JEV / "what-if.json").read_text())
 
 
 def fv(oid, key):
@@ -409,7 +412,8 @@ def p_does_not(run, item_prefix):
 
 def rio_experiment():
     groups = [
-        ("as sent", p_does_not("core-fit", "rio-vt") + p_does_not("core-fit-rio-repeat", "rio-vt/copy") + p_does_not("core-fit-rio-ablation", "rio-vt/A")),
+        ("as sent", p_does_not("core-fit-v2-before-wezbake", "rio-vt") + p_does_not("core-fit-rio-repeat", "rio-vt/copy") + p_does_not("core-fit-rio-ablation", "rio-vt/A")
+                     + p_does_not("core-fit-r1", "rio-vt") + p_does_not("core-fit-r2", "rio-vt") + p_does_not("core-fit-r3", "rio-vt")),
         ("claim-check labels removed", p_does_not("core-fit-rio-ablation", "rio-vt/B")),
         ("pixels sentence added", p_does_not("core-fit-rio-ablation", "rio-vt/C")),
         ("both", p_does_not("core-fit-rio-ablation", "rio-vt/D")),
@@ -606,6 +610,10 @@ CHECKS = [
      "the Program Pixels brief, quoting an early review of alacritty/vte#115",
      "the research found the later review, &ldquo;seems fine to me. Just some minor nits.&rdquo;, before the pull request lapsed",
      "overruled"),
+    ("wezterm-term cannot pass its replies back",
+     "Jev, reading research that said wezterm-term has no reply event, only a writer it is handed",
+     "the harness caught its replies in that writer; with the observation added to its evidence, all three runs said it provides",
+     "overruled"),
     ("the build each road asks for",
      "a keyword rule in the matrix code",
      "it read &ldquo;no C compiler, cmake&rdquo; as needing CMake and misread 3 of 12; now read by hand",
@@ -696,7 +704,7 @@ def build_cards(tally):
           f'and {V["supported"]} of {N_CLAIMS} said it outright. Every Jev call behind this decision: {TOTAL["requests"]:,} requests, ${TOTAL["cost_usd"]:.2f}.</p>'
           f'<div class="cstack">{stack}</div>{foot}</div>')
     bars = "".join(f'<div class="cb"><span>{E(short(o))}</span><i style="width:{SCORE[o] * 100:.0f}%"></i><b>{SCORE[o]:.2f}</b></div>' for o in RANKED[:5])
-    c3 = (f'<div class="card-social">{brand}<h2>Two roads,<br>a hundredth apart</h2>'
+    c3 = (f'<div class="card-social">{brand}<h2>Two roads,<br>one weight between them</h2>'
           f'<div class="split"><p>{E(short(a))} {SCORE[a]:.2f}, {E(short(b))} {SCORE[b]:.2f}. Across 10,000 random weightings they split '
           f'{pct(TOP1[a])} to {pct(TOP1[b])}. The weights decide, and a person sets them.</p><div class="cbars">{bars}</div></div>{foot}</div>')
     chips = "".join(f'<span class="chip {k}">{t}</span>' for k, t in (("agent", "agents gather"), ("code", "code gates quotes"), ("jev", "Jev judges quotes"), ("jev", "Jev judges fit"), ("code", "code ranks"), ("person", "a person decides")))
@@ -754,11 +762,14 @@ def build():
         f"in 8. It said 'contradicts' 17 times in the run; reading all 17 found no real contradiction, and the verdict already sends "
         f"that answer to a person. {lab['exact']} of {lab['n']} matched exactly. Labels are the assembling "
         f"agent's, not Parker's.", "f-labels")
+    jit = [v["share"] for v in JITTER["identical_input"].values()]
+    ncores = len([c for c in TRUTH if any(v[0] in ("pass", "fail") for v in TRUTH[c].values())])
     figs["fit"] = fig("Thirteen needs, fourteen cores", fit_grid(),
-        f"<b>Jev's reading of each core's interface, from the checked evidence.</b> Unknown stays unknown. For the three cores the harnesses "
-        f"touched, {V2['scored']} cells can be checked against the code: version 2 got {V2['right']} right, {V2['wrong']} wrong and left "
-        f"{V2['unknown']} unknown; version 1 had {V1['wrong']} wrong. Reversing the order of the thirteen questions changed 4.4% of answers. "
-        f"Rows in the order code ranks them.", "f-fit")
+        f"<b>Jev's reading of each core's interface, from the checked evidence.</b> Unknown stays unknown. Each cell is the majority of three "
+        f"runs on identical input, which agreed on {AGREE['unanimous']} of {AGREE['cells']} cells; repeating a run changes "
+        f"{min(jit) * 100:.0f}–{max(jit) * 100:.0f}% of answers, and reversing the question order changed 4.4%, inside that noise. "
+        f"For the {['no', 'one', 'two', 'three', 'four', 'five'][ncores]} cores the harnesses touched, {V2['scored']} cells can be checked against the code: {V2['right']} right, "
+        f"{V2['wrong']} wrong, {V2['unknown']} unknown. Version 1 had {V1['wrong']} wrong.", "f-fit")
     figs["rio"] = fig("Why rio-vt's pictures read as unknown", rio_html,
         f"<b>A need that asks for four things, where the evidence showed three.</b> From identical evidence Jev put 'does not' on top "
         f"{n_dn} times in {len(as_sent)}, never far from even, so the meaning map routes it to unknown. Removing the claim-check labels changed "
@@ -769,7 +780,7 @@ def build():
         f"{held} of {total} held across both specs. The two that sprang need a date window and outside knowledge; both are recorded in the "
         f"spec with their causes.", "f-traps")
     figs["checks"] = fig("Reading against running", checks_table(),
-        "<b>Five places where a claim met a measurement.</b> Two held, two were overruled, and one exposed a rule of our own.", "f-checks")
+        "<b>Six places where a claim met a measurement.</b> Two held, three were overruled, one of them Jev's own reading, and one exposed a rule of our own.", "f-checks")
     figs["matrix"] = fig("Every road, every dimension", matrix_table(),
         "<b>Green is strong and red weak, on each dimension's own scale; hatching is unknown and never counts as zero.</b> The label over each "
         "column says who produced it. The two measured columns on the right carry no weight: they exist for four and three roads, and a weighted "
@@ -778,14 +789,25 @@ def build():
         f"<b>A plain rule and the weighted matrix pick the same four, in a different order.</b> The rule ranks by picture coverage first, "
         f"where libghostty-vt's 14 of 14 wins outright. The matrix trades coverage against migration work, API stability, maintainers and build, "
         f"and moves {short(a)} and {short(b)} ahead.", "f-slope")
+    lead1, lead2 = sorted([a, b], key=lambda o: TOP1.get(o, 0), reverse=True)
+    ahead = no_pics[:stay_rank - 1]
+    ordinal = ["first", "second", "third", "fourth", "fifth"][stay_rank - 1]
     figs["sens"] = fig("Ten thousand random weightings", sensitivity(),
-        f"<b>The first place belongs to two roads.</b> {short(b)} comes first in {pct(TOP1[b])} of random weightings and {short(a)} in "
-        f"{pct(TOP1[a])}. With pictures weighted zero, staying on alacritty rises to {['first', 'second', 'third', 'fourth'][stay_rank - 1]}, behind "
-        f"the same two.", "f-sens")
+        f"<b>The first place belongs to two roads.</b> {short(lead1)} comes first in {pct(TOP1[lead1])} of random weightings and "
+        f"{short(lead2)} in {pct(TOP1[lead2])}. With pictures weighted zero, staying on alacritty rises to {ordinal}"
+        f"{', behind ' + ' and '.join(short(o) for o in ahead) if ahead else ''}.", "f-sens")
+    wins = {a: [], b: []}
+    for k, l in WDIMS:
+        sa, sb = ROWS[a]["dims"][k]["score"], ROWS[b]["dims"][k]["score"]
+        if sa is not None and sb is not None and abs(sa - sb) >= 0.01:
+            wins[a if sa > sb else b].append({"Kitty today": "pictures", "fits TD": "fit", "TD writes": "the size of the rewrite", "API settled": "API stability",
+                                              "Sixel, iTerm2": "Sixel and iTerm2"}.get(l, l))
+    def said(xs):
+        return ", ".join(xs[:-1]) + (" and " if len(xs) > 1 else "") + xs[-1] if xs else "nothing"
     figs["h2h"] = fig("The two leaders", head_to_head(),
-        f"<b>{short(b)} leads on maintainers and build; {short(a)} leads on pictures, fit and the size of the rewrite.</b> Three people carry "
+        f"<b>{short(a)} leads on {said(wins[a])}; {short(b)} leads on {said(wins[b])}.</b> Three people carry "
         f"wezterm-term's recent commits against one for rio-vt, and wezterm-term builds with cargo alone, though from an unpublished git tree. "
-        f"rio-vt is on crates.io, needs a C++11 compiler for one dependency, and keeps placeholders.", "f-h2h")
+        f"rio-vt is on crates.io, needs a C++11 compiler for one dependency, and keeps placeholders, which wezterm-term would need a fork to add.", "f-h2h")
     figs["files"] = fig("TD's seven files", td_files(),
         "<b>Every file in TD that names alacritty_terminal, by how often.</b> gridwire.rs, which turns the grid into the snapshot a window "
         "replays, names it most. A swap rewrites all seven; staying rewrites none and writes the Kitty protocol instead. Counted on main at 81ec545.",
@@ -801,7 +823,7 @@ program's output into rows of cells. When a program sends a picture instead of t
 up as if nothing had been sent. Replacing the emulator would reach the session host, every window and the snapshot passed between
 them, so before touching anything we recorded six
 picture programs and fed the same bytes to four emulators, had six agents research twelve ways forward, had Jev check every quoted fact,
-and let code rank the roads. <b>Two roads come out level, rio-vt and wezterm-term, and the weights decide between them.</b> TD's core is
+and let code rank the roads. <b>Two roads come out close, {E(short(a))} and {E(short(b))}, and one weight decides between them.</b> TD's core is
 unchanged.</p>
 <div class="bignums">
   <div class="bignum g"><div class="n">{tally['rio']}<small>/ 6</small></div><div class="k">rio-vt, libghostty-vt</div><p>pictures placed; alacritty placed {tally['alacritty']}</p></div>
@@ -836,12 +858,13 @@ code needs.</p>
 {figs['traps']}
 
 <h2 class="sec">Running things overruled some of the reading</h2>
-<p>A quote can match its source and the source can still be wrong. Five claims could be run as well as read.</p>
+<p>A quote can match its source and the source can still be wrong, and Jev can misread a source that is right. Six claims could be
+run as well as read.</p>
 {figs['checks']}
 
-<h2 class="sec">Code ranks, and two roads finish level</h2>
+<h2 class="sec">Code ranks, and two roads finish close</h2>
 <p>With the facts checked and each core's fit read, code could rank. It scores every road on eight weighted dimensions and keeps unknowns
-out of the arithmetic, and it puts {E(short(a))} and {E(short(b))} a hundredth apart. Staying on alacritty scores
+out of the arithmetic, and it puts {E(short(a))} ahead of {E(short(b))} by {SCORE[a] - SCORE[b]:.2f}. Staying on alacritty scores
 {SCORE['alacritty-own-loop']:.2f}, and most of that gap is pictures.</p>
 {figs['matrix']}
 {figs['slope']}
@@ -859,8 +882,8 @@ them all use its types, and neither rio-vt nor libghostty-vt can put its picture
   <p>With pictures weighted zero, staying on alacritty ranks {['first', 'second', 'third', 'fourth'][stay_rank - 1]}. TD's foundation review set this swap aside until image support became a committed feature.</p>
   <p class="rec"><b>Recommended:</b> decide this first. Every question below assumes yes.</p></div>
   <div class="ask" id="q-leader"><h3>Three maintainers, or placeholders and a published crate?</h3>
-  <p>That trade is the gap between wezterm-term and rio-vt, and wezterm-term would need a fork on day one for placeholders.</p>
-  <p class="rec"><b>Recommended:</b> rio-vt, if the test below passes. Placeholder cells are text, which TD's snapshot already carries (inferred).</p></div>
+  <p>The matrix leans wezterm-term, first in {pct(TOP1['wezterm-term'])} of random weightings, mostly on its three maintainers. It would need a fork on day one for placeholders, and TD would maintain that fork.</p>
+  <p class="rec"><b>Recommended:</b> rio-vt, if the test below passes. The maintainer advantage stops at the fork, a judgement the matrix does not encode (inferred).</p></div>
   <div class="ask" id="q-replica"><h3>Can a picture cross from TD's host to its windows?</h3>
   <p>TD's host parses and each window replays a snapshot. rio-vt's own snapshot covers the visible screen without pictures, and libghostty-vt's leaves pictures out.</p>
   <p class="rec"><b>Recommended:</b> a spike before choosing, with each of the two as the host's core, a window replaying it, and the pictures compared.</p></div>
@@ -910,7 +933,7 @@ Jev says contradicts, when its confidence is under 0.305, or when the quote is l
 or evidence silent; and a second request about how settled the API is. Silent, contested and low-confidence answers route to unknown and
 are drawn grey. Weights inside fit: 3 for a must-have, 2 important, 1 nice. Evaluation: {V2['scored']} ground-truth cells on the three cores
 the harnesses touched ({V2['right']} right, {V2['wrong']} wrong, {V2['unknown']} unknown), the question-order reversal (4.4% changed, under the
-10% falsifier), and {PROBES['core-fit']['landed'][0]} of {PROBES['core-fit']['landed'][1]} traps held.</p>
+10% falsifier and inside the noise of repeating a run), and {PROBES['core-fit']['landed'][0]} of {PROBES['core-fit']['landed'][1]} traps held.</p>
 <h4>Why two specs and not one</h4>
 <p>The first question is about a quote and the second about an interface. They see different state, and asking them together would let
 a doubt about one leak into the other. The rio-vt experiment tested exactly that leak and found none.</p>
@@ -925,6 +948,7 @@ a doubt about one leak into the other. The rio-vt experiment tested exactly that
 <li><b>Maintainers counts people with 10% or more of last year's commits</b> (measured, crude). It scores Ghostty, with thousands of commits and many contributors, the same as a one-person project because one person carries half.</li>
 <li><b>"TD writes" is an estimate</b> from each dossier's migration notes and TD's seven files, sized S to XXL by the assembling agent (inferred).</li>
 <li><b>Labels and ground truth are the assembling agent's</b>, written from TD's use of alacritty and the harnesses, not by Parker (measured, one labeller).</li>
+<li><b>Core-fit answers move between runs</b> (measured): identical input changes a few percent of cells, so each cell is a majority of three runs, and a cell with no majority is unknown.</li>
 <li><b>Timings are three runs on one machine</b> over one recording, and the wezterm-term harness scans its cells to find pictures, which the others do not (measured, rough).</li>
 <li><b>Placeholder cells surviving TD's snapshot</b> is inferred from gridwire.rs re-emitting combining marks, not tested.</li>
 </ul></div></dialog>

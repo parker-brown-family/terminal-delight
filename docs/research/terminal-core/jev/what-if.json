@@ -1,0 +1,176 @@
+{
+ "weights": {
+  "as_published": {
+   "pictures": 3.0,
+   "fit": 3.0,
+   "td_work": 2.5,
+   "trajectory": 2.0,
+   "bus_factor": 1.5,
+   "build": 1.5,
+   "vt_features": 1.0,
+   "other_protocols": 0.5
+  },
+  "without_jev": {
+   "pictures": 3.0,
+   "fit": 0.0,
+   "td_work": 2.5,
+   "trajectory": 0.0,
+   "bus_factor": 1.5,
+   "build": 1.5,
+   "vt_features": 1.0,
+   "other_protocols": 0.5
+  },
+  "measured_weighted": {
+   "pictures": 3.0,
+   "fit": 3.0,
+   "td_work": 2.5,
+   "trajectory": 2.0,
+   "bus_factor": 1.5,
+   "build": 1.5,
+   "vt_features": 1.0,
+   "other_protocols": 0.5,
+   "pictures_measured": 1.0,
+   "performance": 0.5
+  }
+ },
+ "ranked": {
+  "as_published": [
+   [
+    "wezterm-term",
+    0.719
+   ],
+   [
+    "rio-vt",
+    0.686
+   ],
+   [
+    "libghostty-vt",
+    0.622
+   ],
+   [
+    "ghostty-shadow",
+    0.553
+   ],
+   [
+    "alacritty-own-loop",
+    0.51
+   ],
+   [
+    "contour-vtbackend",
+    0.441
+   ],
+   [
+    "alacritty-graphics-fork",
+    0.429
+   ],
+   [
+    "alacritty-patched-vte",
+    0.387
+   ],
+   [
+    "vt100-rust",
+    0.295
+   ],
+   [
+    "libvterm",
+    0.293
+   ],
+   [
+    "td-own-core",
+    0.267
+   ]
+  ],
+  "without_jev": [
+   [
+    "wezterm-term",
+    0.744
+   ],
+   [
+    "rio-vt",
+    0.704
+   ],
+   [
+    "libghostty-vt",
+    0.63
+   ],
+   [
+    "ghostty-shadow",
+    0.597
+   ],
+   [
+    "alacritty-own-loop",
+    0.454
+   ],
+   [
+    "alacritty-patched-vte",
+    0.394
+   ],
+   [
+    "contour-vtbackend",
+    0.38
+   ],
+   [
+    "alacritty-graphics-fork",
+    0.356
+   ],
+   [
+    "vt100-rust",
+    0.253
+   ],
+   [
+    "libvterm",
+    0.234
+   ],
+   [
+    "td-own-core",
+    0.22
+   ]
+  ],
+  "measured_weighted": [
+   [
+    "wezterm-term",
+    0.7
+   ],
+   [
+    "rio-vt",
+    0.699
+   ],
+   [
+    "libghostty-vt",
+    0.656
+   ],
+   [
+    "ghostty-shadow",
+    0.581
+   ],
+   [
+    "alacritty-own-loop",
+    0.478
+   ],
+   [
+    "contour-vtbackend",
+    0.441
+   ],
+   [
+    "alacritty-graphics-fork",
+    0.429
+   ],
+   [
+    "alacritty-patched-vte",
+    0.387
+   ],
+   [
+    "vt100-rust",
+    0.295
+   ],
+   [
+    "libvterm",
+    0.293
+   ],
+   [
+    "td-own-core",
+    0.267
+   ]
+  ]
+ }
+}

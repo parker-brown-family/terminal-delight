@@ -96,7 +96,9 @@ BUILD = {
 # Weighted dimensions only. pictures_measured and performance are shown but not weighted: they
 # were measured for four and three of the twelve options, and with unknowns excluded rather than
 # scored as zero, a weighted dimension measured for a third of the field lets the unmeasured
-# two-thirds skip it. On 2026-09-25 that let wezterm-term, never run, top 37% of random weightings.
+# two-thirds skip it: on 2026-09-25 wezterm-term, not yet run, skipped the parse-speed column where
+# rio-vt scored 0.37. Weighted now that wezterm-term has been run, the two columns leave the top two
+# 0.001 apart (scripts/what_if.py).
 DEFAULT_WEIGHTS = {"pictures": 3.0, "fit": 3.0, "td_work": 2.5, "trajectory": 2.0, "bus_factor": 1.5,
                    "build": 1.5, "vt_features": 1.0, "other_protocols": 0.5}
 

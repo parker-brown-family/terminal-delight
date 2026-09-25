@@ -45,14 +45,44 @@
     2
    ]
   },
-  "core-fit": {
+  "core-fit-r1": {
    "requests": 28,
    "items": 14,
    "questions": 196,
-   "input_tokens": 103531,
-   "output_tokens": 11539,
-   "cost_usd": 0.004348,
-   "p50_ms": 203.1,
+   "input_tokens": 103681,
+   "output_tokens": 11537,
+   "cost_usd": 0.004355,
+   "p50_ms": 188.4,
+   "model": [
+    "typesafe/jev-1.13-20260917"
+   ],
+   "spec_version": [
+    2
+   ]
+  },
+  "core-fit-r2": {
+   "requests": 28,
+   "items": 14,
+   "questions": 196,
+   "input_tokens": 103681,
+   "output_tokens": 11540,
+   "cost_usd": 0.004355,
+   "p50_ms": 168.6,
+   "model": [
+    "typesafe/jev-1.13-20260917"
+   ],
+   "spec_version": [
+    2
+   ]
+  },
+  "core-fit-r3": {
+   "requests": 28,
+   "items": 14,
+   "questions": 196,
+   "input_tokens": 103681,
+   "output_tokens": 11549,
+   "cost_usd": 0.004355,
+   "p50_ms": 173.1,
    "model": [
     "typesafe/jev-1.13-20260917"
    ],
@@ -119,13 +149,28 @@
    "spec_version": [
     1
    ]
+  },
+  "core-fit-v2-before-wezbake": {
+   "requests": 28,
+   "items": 14,
+   "questions": 196,
+   "input_tokens": 103531,
+   "output_tokens": 11539,
+   "cost_usd": 0.004348,
+   "p50_ms": 203.1,
+   "model": [
+    "typesafe/jev-1.13-20260917"
+   ],
+   "spec_version": [
+    2
+   ]
   }
  },
  "total": {
-  "requests": 1053,
-  "questions": 2646,
-  "input_tokens": 1197570,
-  "output_tokens": 110001,
-  "cost_usd": 0.050298
+  "requests": 1137,
+  "questions": 3234,
+  "input_tokens": 1508613,
+  "output_tokens": 144627,
+  "cost_usd": 0.063363
  }
 }

@@ -213,4 +213,18 @@ spec["evaluation"]["runs"].append({"name": "v2", "version": 2, "items": 14,
     "repeat": "the identical rio-vt state asked nine more times (runs/core-fit-rio-repeat, runs/core-fit-rio-ablation A): does_not eight times, provides_with_work once, never above 0.53 for either",
     "ablation": "runs/core-fit-rio-ablation: removing the claim-check verdicts left does_not at 0.47; adding one sourced sentence that the images' pixels are public (rio-graphics GraphicData.pixels) dropped does_not to 0.01. The requirement asks for four things and the evidence showed three"})
 (HERE / "core-fit.jds.json").write_text(json.dumps(spec, indent=2, ensure_ascii=False))
+
+# ── the run of record becomes a consensus (appended 2026-09-25, after bake/wezbake ran; no version change) ──
+spec = json.loads((HERE / "core-fit.jds.json").read_text())
+spec["evaluation"]["labels"]["rubric"] = spec["evaluation"]["labels"]["rubric"].replace(
+    "for alacritty-own-loop, rio-vt and libghostty-vt", "for alacritty-own-loop, rio-vt, libghostty-vt and (from bake/wezbake) wezterm-term")
+spec["evaluation"]["labels"]["n"] = 44
+spec["evaluation"]["jitter"] = {"repeats": 3, "measured": "identical input, pairwise: 13, 10 and 7 of 196 answers changed (3.6-6.6%); jev/jitter.json",
+                                "consequence": "the question-order reversal (4.4%) sits inside that noise; the run of record is now the per-cell majority of three runs, no majority read as unknown"}
+spec["evaluation"]["runs"].append({"name": "v2 consensus", "version": 2, "items": 14,
+    "input_change": "wezterm-term's bake-off observation joined its evidence, through the frame field that already existed for every core the bake-off ran",
+    "runs": ["runs/core-fit-r1", "runs/core-fit-r2", "runs/core-fit-r3"], "consensus": "runs/core-fit (scripts/consensus.py): 181 of 196 cells unanimous, 15 split, 4 with no majority",
+    "against_truth": "44 cells over four cores: consensus 40 right, 0 wrong, 4 unknown; v2 before the observation 39 right, 1 wrong (wezterm-term replies_out read as does_not from 'no reply event, only a writer'), 4 unknown; v1 40 right, 4 wrong",
+    "effect_on_ranking": "wezterm-term's fit rose from 0.59 to 0.72 and it moved to first (0.72 against rio-vt 0.69); with fit and API trajectory weighted zero it leads anyway (jev/what-if.json)"})
+(HERE / "core-fit.jds.json").write_text(json.dumps(spec, indent=2, ensure_ascii=False))
 print("core-fit is version", spec["version"])

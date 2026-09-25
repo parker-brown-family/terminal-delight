@@ -1,0 +1,11 @@
+{
+  "spec": "core-fit",
+  "version": 2,
+  "items": 14,
+  "wall_s": 1.3,
+  "model_requested": "jev-latest",
+  "items_file": "jev/items/cores.json",
+  "sample": null,
+  "seed": 20260924,
+  "started": "2026-09-25T10:25:38+00:00"
+}

@@ -54,6 +54,8 @@ MEASURED = {
     "rio-vt": "Fed six recorded image programs through Processor::advance, rio-vt 0.5.28 stored their pictures and the harness read each placement (image id, row, column, columns, rows) from the public map graphics.kitty_placements, and virtual placements from graphics.kitty_virtual_placements; replies arrived as PtyWrite events.",
     "libghostty-vt": "Fed six recorded image programs through vt_write, libghostty-vt 0.2.1 stored their pictures and the harness read each placement's image, viewport row and column, and size in cells through PlacementIterator; virtual placements are flagged; PNG needed a decoder the harness supplied; replies arrived through on_pty_write.",
     "ghostty-shadow": "Its picture half is libghostty-vt, which in the bake-off stored every picture and exposed placements through PlacementIterator; the text half, alacritty_terminal, dropped them all.",
+    # added 2026-09-25 when bake/wezbake ran; the frame already names this field for every core the bake-off ran
+    "wezterm-term": "Fed six recorded image programs through Terminal::advance_bytes with enable_kitty_graphics turned on, wezterm-term (git b09b56c) stored the pictures of the four direct-placement programs as per-cell image slices, from which the harness rebuilt each placement (image id, row, column, columns, rows) by scanning cells; for the two placeholder programs it ignored U=1, drew the picture at the cursor and left the placeholder characters as text. Replies, including Kitty OK answers and DA1, arrived through the writer passed to Terminal::new. The harness read scrollback through lines_in_phys_range.",
 }
 SKIP = {"primary_sources", "td_migration", "biggest_risk", "kitty_tags", "licence_gate", "kitty_coverage", "evidence_grade"}
 

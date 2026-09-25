@@ -16,7 +16,7 @@ for run in sys.argv[1:]:
     rows = []
     for core, reqs in truth.items():
         for r, (lab, why) in reqs.items():
-            if lab == "unsure":
+            if lab in ("unsure", "note"):
                 continue
             a = recs[core].get(r)
             if a is None or a == "evidence_silent":

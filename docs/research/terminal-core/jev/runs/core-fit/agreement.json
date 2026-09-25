@@ -1,0 +1,161 @@
+{
+ "runs": [
+  "jev/runs/core-fit-r1",
+  "jev/runs/core-fit-r2",
+  "jev/runs/core-fit-r3"
+ ],
+ "cells": 196,
+ "unanimous": 181,
+ "split": [
+  {
+   "item": "alacritty-own-loop",
+   "q": "scrollback_read",
+   "votes": [
+    "provides_with_work",
+    null,
+    null
+   ],
+   "taken": null
+  },
+  {
+   "item": "alacritty-patched-vte",
+   "q": "zero_width",
+   "votes": [
+    "provides",
+    null,
+    "provides"
+   ],
+   "taken": "provides"
+  },
+  {
+   "item": "alacritty-patched-vte",
+   "q": "wide_chars",
+   "votes": [
+    "provides",
+    null,
+    null
+   ],
+   "taken": null
+  },
+  {
+   "item": "rio-vt",
+   "q": "wide_chars",
+   "votes": [
+    "provides",
+    "provides_with_work",
+    "provides_with_work"
+   ],
+   "taken": "provides_with_work"
+  },
+  {
+   "item": "rio-vt",
+   "q": "threading",
+   "votes": [
+    "provides",
+    "provides_with_work",
+    "provides_with_work"
+   ],
+   "taken": "provides_with_work"
+  },
+  {
+   "item": "wezterm-term",
+   "q": "damage",
+   "votes": [
+    "provides",
+    "provides",
+    "provides_with_work"
+   ],
+   "taken": "provides"
+  },
+  {
+   "item": "td-own-core",
+   "q": "underline_colour",
+   "votes": [
+    "provides_with_work",
+    "provides",
+    "provides_with_work"
+   ],
+   "taken": "provides_with_work"
+  },
+  {
+   "item": "libghostty-vt",
+   "q": "snapshot",
+   "votes": [
+    "provides",
+    "provides_with_work",
+    "provides_with_work"
+   ],
+   "taken": "provides_with_work"
+  },
+  {
+   "item": "libghostty-vt",
+   "q": "placeholders",
+   "votes": [
+    "provides_with_work",
+    null,
+    "provides_with_work"
+   ],
+   "taken": "provides_with_work"
+  },
+  {
+   "item": "libvterm",
+   "q": "api_trajectory",
+   "votes": [
+    "declared_unstable",
+    "dormant",
+    "declared_unstable"
+   ],
+   "taken": "declared_unstable"
+  },
+  {
+   "item": "contour-vtbackend",
+   "q": "wide_chars",
+   "votes": [
+    null,
+    "provides_with_work",
+    "provides_with_work"
+   ],
+   "taken": "provides_with_work"
+  },
+  {
+   "item": "contour-vtbackend",
+   "q": "replies_out",
+   "votes": [
+    "does_not",
+    null,
+    null
+   ],
+   "taken": null
+  },
+  {
+   "item": "zmx",
+   "q": "cell_contents",
+   "votes": [
+    "provides_with_work",
+    null,
+    "provides_with_work"
+   ],
+   "taken": "provides_with_work"
+  },
+  {
+   "item": "zmx",
+   "q": "scrollback_read",
+   "votes": [
+    "provides",
+    "provides_with_work",
+    "provides_with_work"
+   ],
+   "taken": "provides_with_work"
+  },
+  {
+   "item": "zmx",
+   "q": "feed_loop",
+   "votes": [
+    null,
+    null,
+    "does_not"
+   ],
+   "taken": null
+  }
+ ]
+}

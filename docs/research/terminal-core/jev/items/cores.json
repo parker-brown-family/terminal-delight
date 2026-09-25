@@ -329,7 +329,8 @@
     "recorded": "3 contributors above 10% of 141 commits in the last 12 months: bew (Benoit de Chezelles) 57 (40.4%), wez (Wez Furlong, creator and lead) 36 (25.5%), xtqqczze 19 (13.4%). Activity resumed in mid-2026: by commit date, 147 of 182 commits since 2025-09-25 landed June to September 2026, after one in March and none in February, April or May; wez last committed on 2026-08-12. 'Stalled' now describes releases, not commits.",
     "check": "human"
    }
-  }
+  },
+  "measured": "Fed six recorded image programs through Terminal::advance_bytes with enable_kitty_graphics turned on, wezterm-term (git b09b56c) stored the pictures of the four direct-placement programs as per-cell image slices, from which the harness rebuilt each placement (image id, row, column, columns, rows) by scanning cells; for the two placeholder programs it ignored U=1, drew the picture at the cursor and left the placeholder characters as text. Replies, including Kitty OK answers and DA1, arrived through the writer passed to Terminal::new. The harness read scrollback through lines_in_phys_range."
  },
  {
   "id": "vt100-rust",

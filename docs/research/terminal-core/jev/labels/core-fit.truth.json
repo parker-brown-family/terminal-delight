@@ -47,6 +47,22 @@
       "placements_readable": ["pass", "PlacementIterator: image id, viewport_pos, grid_size, image pixels — ghostbake reads it"],
       "placeholders": ["pass", "virtual placements are flagged; positions come from the embedder's own scan (with work)"],
       "media_policy": ["pass", "set_kitty_image_from_file/temp_file/shared_mem_allowed"]
+    },
+    "wezterm-term": {
+      "_added": ["note", "added 2026-09-25 after bake/wezbake ran against git b09b56c; cells the harness did not touch are unsure"],
+      "cell_contents": ["pass", "Line::visible_cells() yields CellRef with str() and attrs() — wezbake reads both"],
+      "zero_width": ["pass", "CellRef::str() returns the whole grapheme (wezterm-surface cellref.rs)"],
+      "underline_colour": ["unsure", "not read by the harness"],
+      "wide_chars": ["pass", "CellRef::width(); visible_cells() skips the cell a wide character covers"],
+      "scrollback_read": ["pass", "Screen::lines_in_phys_range(0..scrollback_rows()) — wezbake reads history this way"],
+      "damage": ["unsure", "not read by the harness"],
+      "snapshot": ["unsure", "not read by the harness"],
+      "feed_loop": ["pass", "Terminal::advance_bytes(bytes) — wezbake calls it"],
+      "replies_out": ["pass", "replies are written to the Box<dyn Write + Send> given to Terminal::new — wezbake captured Kitty OK and DA1 there"],
+      "threading": ["unsure", "not established by the harness"],
+      "placements_readable": ["pass", "CellAttributes::images() gives ImageCell with image id, placement id and Arc<ImageData>; the placement rectangle is rebuilt by scanning cells (with work)"],
+      "placeholders": ["fail", "measured: U=1 ignored, picture drawn at the cursor, placeholder characters left as text, in both placeholder recordings"],
+      "media_policy": ["unsure", "not read by the harness"]
     }
   }
 }
