@@ -50,9 +50,9 @@ use std::sync::Arc;
 use comrak::nodes::{AstNode, ListType, NodeValue};
 use comrak::{parse_document, Anchorizer, Arena, Options};
 use gpui::{
-    canvas, div, img, prelude::*, px, AnyElement, Div, FontStyle, FontWeight, HighlightStyle, Hsla,
-    ImageSource, ObjectFit, Pixels, Point, RenderImage, ScrollDelta, SharedString,
-    StrikethroughStyle, TextLayout, UnderlineStyle,
+    canvas, div, img, prelude::*, px, AnyElement, Bounds, Div, FontStyle, FontWeight,
+    HighlightStyle, Hsla, ImageSource, ObjectFit, Pixels, Point, RenderImage, ScrollDelta,
+    SharedString, StrikethroughStyle, TextLayout, UnderlineStyle,
 };
 
 use crate::docopen::DocScroll;
@@ -117,6 +117,9 @@ pub struct BlockMeta {
     pub fp: u64,
     /// The zero-based source line the block starts on.
     pub line: usize,
+    /// For a list, the zero-based source line each of its items starts on;
+    /// empty for any other block. A note on a list is on one item.
+    pub items: Vec<usize>,
 }
 
 /// Collapse all runs of whitespace to single spaces and trim — the basis for a
@@ -174,9 +177,17 @@ pub fn parse(text: &str, dir: Option<&Path>) -> MdDoc {
             if matches!(b, Block::Heading { .. }) {
                 anchors.push((anchorizer.anchorize(&plain), blocks.len()));
             }
+            let items = match b {
+                Block::List(_) => node
+                    .children()
+                    .map(|item| item.data.borrow().sourcepos.start.line.saturating_sub(1))
+                    .collect(),
+                _ => Vec::new(),
+            };
             meta.push(BlockMeta {
                 fp: fingerprint(&plain),
                 line,
+                items,
             });
             blocks.push(b);
         }
@@ -727,8 +738,25 @@ fn styled(inline: &Inline, style: &MdStyle, links: Option<&LinkSink>) -> AnyElem
     styled.into_any_element()
 }
 
-/// Window y of each top-level block at the last paint; `None` until painted.
-pub type Tops = Rc<RefCell<Vec<Option<f32>>>>;
+/// Where each top-level block landed at the last paint, and each item of a
+/// top-level list: window boxes, `None` until painted. A block's top places
+/// the view after a reload; the boxes are where notes are drawn and pressed.
+#[derive(Clone, Default)]
+pub struct Tops {
+    pub blocks: Rc<RefCell<Vec<Painted>>>,
+    /// By top-level block, its items' boxes; empty for a block not a list.
+    pub items: Rc<RefCell<Vec<Vec<Painted>>>>,
+}
+
+/// A window box from the last paint, `None` until something was painted.
+pub type Painted = Option<Bounds<Pixels>>;
+
+/// A canvas over its parent that hands `write` the parent's window box.
+fn record(write: impl Fn(Bounds<Pixels>) + 'static) -> impl IntoElement {
+    canvas(move |bounds, _, _| write(bounds), |_, _, _, _| {})
+        .absolute()
+        .inset_0()
+}
 
 /// Every block, top to bottom. `links: None` draws links that cannot be
 /// pressed, and `images: None` draws every image as its placeholder: the
@@ -753,10 +781,18 @@ pub fn column(
     images: Option<&Images>,
     tops: Option<&Tops>,
 ) -> Div {
+    let shown = &doc.blocks[..count.min(doc.blocks.len())];
     if let Some(tops) = tops {
-        let mut tops = tops.borrow_mut();
-        tops.clear();
-        tops.resize(count.min(doc.blocks.len()), None);
+        let mut blocks = tops.blocks.borrow_mut();
+        blocks.clear();
+        blocks.resize(shown.len(), None);
+        *tops.items.borrow_mut() = shown
+            .iter()
+            .map(|b| match b {
+                Block::List(items) => vec![None; items.len()],
+                _ => Vec::new(),
+            })
+            .collect();
     }
     div()
         .flex()
@@ -764,31 +800,80 @@ pub fn column(
         .gap(style.body * 0.75)
         .text_size(style.body)
         .text_color(style.palette.text)
-        .children(doc.blocks.iter().take(count).enumerate().map(|(i, b)| {
-            let el = block(b, doc, style, links, images);
-            match tops {
-                Some(tops) => {
-                    let tops = tops.clone();
+        .children(shown.iter().enumerate().map(|(i, b)| {
+            let Some(tops) = tops else {
+                return block(b, doc, style, links, images);
+            };
+            let el = match b {
+                Block::List(items) => list(items, doc, style, links, images, Some((tops, i))),
+                _ => block(b, doc, style, links, images),
+            };
+            let blocks = tops.blocks.clone();
+            div()
+                .relative()
+                .child(el)
+                .child(record(move |bounds| {
+                    if let Some(slot) = blocks.borrow_mut().get_mut(i) {
+                        *slot = Some(bounds);
+                    }
+                }))
+                .into_any_element()
+        }))
+}
+
+/// A list, its items one under another. `tops`, for a list at the top of
+/// the document, records where each item landed under that block's index.
+fn list(
+    items: &[(SharedString, Vec<Block>)],
+    doc: &MdDoc,
+    style: &MdStyle,
+    links: Option<&LinkSink>,
+    images: Option<&Images>,
+    tops: Option<(&Tops, usize)>,
+) -> AnyElement {
+    let p = &style.palette;
+    let inner = |b: &Block| self::block(b, doc, style, links, images);
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .pl(px(4.))
+        .children(items.iter().enumerate().map(|(j, (marker, blocks))| {
+            let row = div()
+                .flex()
+                .flex_row()
+                .items_start()
+                .gap_2()
+                .child(
                     div()
-                        .relative()
-                        .child(el)
-                        .child(
-                            canvas(
-                                move |bounds, _, _| {
-                                    if let Some(slot) = tops.borrow_mut().get_mut(i) {
-                                        *slot = Some(f32::from(bounds.origin.y));
-                                    }
-                                },
-                                |_, _, _, _| {},
-                            )
-                            .absolute()
-                            .inset_0(),
-                        )
-                        .into_any_element()
+                        .flex_none()
+                        .min_w(style.body * 1.2)
+                        .text_color(p.accent)
+                        .child(marker.clone()),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .flex()
+                        .flex_col()
+                        .gap_1()
+                        .children(blocks.iter().map(inner)),
+                );
+            match tops {
+                Some((tops, i)) => {
+                    let items = tops.items.clone();
+                    row.relative().child(record(move |bounds| {
+                        if let Some(slot) = items.borrow_mut().get_mut(i).and_then(|v| v.get_mut(j))
+                        {
+                            *slot = Some(bounds);
+                        }
+                    }))
                 }
-                None => el,
+                None => row,
             }
         }))
+        .into_any_element()
 }
 
 /// One block. Was markdown-delight's `block_element(&Block)` and `element(&Block)`.
@@ -850,35 +935,7 @@ pub fn block(
             .flex_col()
             .children(lines.iter().map(|l| div().child(text(l.clone()))))
             .into_any_element(),
-        Block::List(items) => div()
-            .flex()
-            .flex_col()
-            .gap_1()
-            .pl(px(4.))
-            .children(items.iter().map(|(marker, blocks)| {
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_start()
-                    .gap_2()
-                    .child(
-                        div()
-                            .flex_none()
-                            .min_w(style.body * 1.2)
-                            .text_color(p.accent)
-                            .child(marker.clone()),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .flex()
-                            .flex_col()
-                            .gap_1()
-                            .children(blocks.iter().map(inner)),
-                    )
-            }))
-            .into_any_element(),
+        Block::List(items) => list(items, doc, style, links, images, None),
         Block::Table(rows) => div()
             .my_1()
             .border_1()
@@ -995,6 +1052,10 @@ pub fn parsed(body: &str) -> Rc<MdDoc> {
 /// Space around the column inside the view, in logical pixels.
 pub const PAD: f32 = 14.;
 
+/// Extra space on the column's right where a document takes notes: the 💬
+/// on each block sits in it rather than over the block's last words.
+pub const NOTE_GUTTER: f32 = 30.;
+
 /// A Markdown document on screen: what was parsed, where it is scrolled, and
 /// every image it holds.
 pub struct MarkdownDoc {
@@ -1007,10 +1068,10 @@ pub struct MarkdownDoc {
     /// hand: nothing under `docview` may scroll by itself (see the module notes
     /// in `docview.rs`).
     pub top: f32,
-    /// Window y of each top-level block at the last paint.
+    /// Window box of each top-level block at the last paint.
     pub tops: Tops,
-    /// The column's window y and height at the last paint.
-    pub column: Rc<Cell<Option<(f32, f32)>>>,
+    /// The column's window box at the last paint, its padding included.
+    pub column: Rc<Cell<Option<Bounds<Pixels>>>>,
     /// Which parse the last paint drew.
     pub painted: Rc<Cell<Option<u64>>>,
     /// Where to put the view once the current parse has been laid out.
@@ -1027,6 +1088,21 @@ pub struct MarkdownDoc {
     /// The reader's zoom on top of the pane's text size: 1 is the size the
     /// pane's text dial gives it. See [`super::READING_ZOOM`].
     pub zoom: f32,
+    /// The notes on this document, from TD's store (`md_notes.rs`); `None`
+    /// until the first read has come back with them. Driven from
+    /// `markdown_view.rs`.
+    pub notes: Option<super::notes_ui::NotesLayer>,
+    /// Every block that takes a note, from the current parse.
+    pub anchors: Vec<super::md_notes::MdAnchor>,
+    /// Where the pointer is over the view, flat and view-local: the 💬 on the
+    /// block under it shows.
+    pub pointer: Option<Point<Pixels>>,
+    /// Who the notes bar's ↪ sends to; `None` draws no ↪.
+    pub beside: Option<String>,
+    /// The view's size at the last render, for a hover, which is handed none.
+    pub view: Option<gpui::Size<Pixels>>,
+    /// The notes being kept, when they are; a newer keep waits for it.
+    pub keeping: gpui::Task<()>,
 }
 
 /// A place in the document to go to once it has been laid out.
@@ -1069,7 +1145,7 @@ impl MarkdownDoc {
             doc: None,
             generation: 0,
             top: 0.0,
-            tops: Rc::default(),
+            tops: Tops::default(),
             column: Rc::default(),
             painted: Rc::default(),
             pending: None,
@@ -1078,6 +1154,12 @@ impl MarkdownDoc {
             reading: gpui::Task::ready(()),
             drew_all: false,
             zoom: 1.0,
+            notes: None,
+            anchors: Vec::new(),
+            pointer: None,
+            beside: None,
+            view: None,
+            keeping: gpui::Task::ready(()),
         }
     }
 
@@ -1112,15 +1194,15 @@ impl MarkdownDoc {
     /// The column's height, once the current parse has been painted.
     fn content_h(&self) -> Option<f32> {
         (self.painted.get() == Some(self.generation))
-            .then(|| self.column.get().map(|(_, h)| h))
+            .then(|| self.column.get().map(|c| f32::from(c.size.height)))
             .flatten()
     }
 
     /// Where a top-level block sits in the column, from the last paint.
     fn block_y(&self, index: usize) -> Option<f32> {
-        let (col_y, _) = self.column.get()?;
-        let y = (*self.tops.borrow().get(index)?)?;
-        Some(y - col_y)
+        let col = self.column.get()?;
+        let b = (*self.tops.blocks.borrow().get(index)?)?;
+        Some(f32::from(b.origin.y - col.origin.y))
     }
 
     /// The top of the view as a fraction of the page. `None` before the
@@ -1142,7 +1224,7 @@ impl MarkdownDoc {
             return None;
         }
         let mut at = None;
-        for i in 0..self.tops.borrow().len() {
+        for i in 0..self.tops.blocks.borrow().len() {
             match self.block_y(i) {
                 Some(y) if y <= self.top => at = Some((i, self.top - y)),
                 Some(_) => break,
@@ -1255,13 +1337,15 @@ impl MarkdownDoc {
     }
 
     /// The document's element: the column, offset by the scroll, measured as
-    /// it paints. `view` is the view's size at the last paint.
+    /// it paints. `view` is the view's size at the last paint; `gutter` is
+    /// room kept on the right beyond the padding, for notes.
     pub fn element(
         &mut self,
         path: &Path,
         th: &Theme,
         view: Option<gpui::Size<Pixels>>,
         links: &LinkSink,
+        gutter: f32,
         window: &mut gpui::Window,
     ) -> AnyElement {
         let note = |s: String| {
@@ -1284,7 +1368,7 @@ impl MarkdownDoc {
         }
         let mut style = MdStyle::document(th, self.zoom);
         style.scale = window.scale_factor();
-        style.image_cap = view.map(|v| (f32::from(v.width) - 2.0 * PAD).max(1.0));
+        style.image_cap = view.map(|v| (f32::from(v.width) - 2.0 * PAD - gutter).max(1.0));
         let wanted = image_paths(&doc);
         if !self.drew_all && wanted.iter().all(|p| self.images.contains_key(p)) {
             self.drew_all = true;
@@ -1300,6 +1384,7 @@ impl MarkdownDoc {
             .w_full()
             .top(px(-self.top))
             .p(px(PAD))
+            .pr(px(PAD + gutter))
             .child(document(
                 &doc,
                 &style,
@@ -1310,10 +1395,7 @@ impl MarkdownDoc {
             .child(
                 canvas(
                     move |bounds, _, _| {
-                        column.set(Some((
-                            f32::from(bounds.origin.y),
-                            f32::from(bounds.size.height),
-                        )));
+                        column.set(Some(bounds));
                         painted.set(Some(generation));
                     },
                     |_, _, _, _| {},
@@ -1357,7 +1439,10 @@ mod tests {
         assert!(md.pending.is_some(), "and the place is still waiting");
         // The first paint of this parse: a column 1,000 pixels tall.
         md.painted.set(Some(md.generation));
-        md.column.set(Some((0.0, 1000.0)));
+        md.column.set(Some(Bounds::new(
+            gpui::point(px(0.), px(0.)),
+            gpui::size(px(600.), px(1000.)),
+        )));
         md.settle(Some(100.0));
         assert!((md.top - 370.0).abs() < 1e-3, "{}", md.top);
         assert!(md.pending.is_none(), "restored once, then left alone");
@@ -1369,6 +1454,11 @@ mod tests {
         assert!((md.top - 900.0).abs() < 1e-3, "{}", md.top);
     }
 
+    /// A painted box `h` tall at window y `y`, the width of no concern here.
+    fn at_y(y: f32, h: f32) -> Bounds<Pixels> {
+        Bounds::new(gpui::point(px(0.), px(y)), gpui::size(px(600.), px(h)))
+    }
+
     /// A zoom keeps the reader's place: the block at the top of the view
     /// stays at the top, as far into it as it was, scaled with the text. And
     /// nothing the paint at the old size measured may place the new one.
@@ -1378,8 +1468,8 @@ mod tests {
         // Painted at 100%: three blocks 400 px apart, the reader 50 px into
         // the second.
         md.painted.set(Some(md.generation));
-        md.column.set(Some((0.0, 1200.0)));
-        *md.tops.borrow_mut() = vec![Some(0.0), Some(400.0), Some(800.0)];
+        md.column.set(Some(at_y(0.0, 1200.0)));
+        *md.tops.blocks.borrow_mut() = [0.0, 400.0, 800.0].map(|y| Some(at_y(y, 400.0))).to_vec();
         md.top = 450.0;
 
         md.set_zoom(2.0);
@@ -1387,8 +1477,8 @@ mod tests {
         assert_eq!(md.top, 450.0, "not placed by the old size's paint");
         // The first paint at 200%: every block twice as far down.
         md.painted.set(Some(md.generation));
-        md.column.set(Some((0.0, 2400.0)));
-        *md.tops.borrow_mut() = vec![Some(0.0), Some(800.0), Some(1600.0)];
+        md.column.set(Some(at_y(0.0, 2400.0)));
+        *md.tops.blocks.borrow_mut() = [0.0, 800.0, 1600.0].map(|y| Some(at_y(y, 800.0))).to_vec();
         md.settle(Some(300.0));
         assert!(
             (md.top - 900.0).abs() < 1e-3,
@@ -1613,7 +1703,10 @@ mod tests {
         assert_eq!(md.scroll(), None);
         md.replace(Rc::new(parse("# a\n\nb\n", None)));
         assert_eq!(md.scroll(), None, "parsed, but never painted");
-        md.column.set(Some((100.0, 1000.0)));
+        md.column.set(Some(Bounds::new(
+            gpui::point(px(0.), px(100.)),
+            gpui::size(px(600.), px(1000.)),
+        )));
         md.painted.set(Some(md.generation));
         md.top = 250.0;
         assert_eq!(md.scroll(), Some(DocScroll { top: 0.25 }));

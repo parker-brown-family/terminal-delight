@@ -1182,7 +1182,9 @@ impl TerminalView {
                 let report = v.notes_report().ok_or_else(|| {
                     match target.kind {
                         crate::docopen::DocKind::Html => "the page is not laid out yet",
-                        crate::docopen::DocKind::Markdown => "a Markdown document takes no notes",
+                        crate::docopen::DocKind::Markdown => {
+                            "the Markdown document is not read yet"
+                        }
                         crate::docopen::DocKind::Image => "an image takes no notes",
                     }
                     .to_string()

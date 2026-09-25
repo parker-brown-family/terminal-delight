@@ -3161,6 +3161,7 @@ mod tests {
                 concur_zone: if a.concurrable { zone } else { None },
                 has_note: Some(!plan.notes.on(&a.nid).is_empty()),
                 has_concur: Some(plan.concurs.as_ref().unwrap().has(&a.nid)),
+                line: None,
             })
             .collect();
         assert_eq!(confirm(&plan, &shown), Ok(()));

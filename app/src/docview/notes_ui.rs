@@ -63,8 +63,9 @@ use crate::theme::Theme;
 use crate::EditBuffer;
 
 /// notes.css: the brief's note button is 26 × 26 CSS px, 8 px in from its
-/// anchor's top-right corner.
-const BUTTON_CSS: f32 = 26.0;
+/// anchor's top-right corner. A Markdown block's is the same size, in the
+/// column's gutter.
+pub const BUTTON_CSS: f32 = 26.0;
 const BUTTON_INSET_CSS: f32 = 8.0;
 /// notes.css: the rule down the left edge of an anchor with notes.
 const RULE_CSS: f32 = 3.0;
@@ -105,6 +106,9 @@ pub struct NoteBox {
     pub nid: String,
     pub title: String,
     pub draft: EditBuffer,
+    /// Open on notes whose words a Markdown file no longer has: they can be
+    /// read and deleted, and nothing can be added to them.
+    pub gone: bool,
 }
 
 /// A part of the bar or the note box, as the last paint laid it out.
@@ -114,6 +118,8 @@ pub enum Zone {
     /// ↪: the map, into the prompt of the agent the brief sits beside.
     Send,
     Save,
+    /// Notes on words a Markdown file no longer has: opens them.
+    Gone,
     /// Anywhere on the bar that is not a button.
     Bar,
     /// Anywhere inside the note box.
@@ -179,10 +185,23 @@ impl Said {
 /// that recorded it.
 type Zones = Rc<RefCell<Vec<(Bounds<Pixels>, Zone)>>>;
 
-/// A brief's notes, as TD shows them over its page.
+/// Where a layer's notes are written.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Keeping {
+    /// Into the brief itself, by 💾 save into file (and by ↪).
+    File,
+    /// Into TD's own store as each is written, for a Markdown document whose
+    /// notes never go into it (see `md_notes.rs`). There is nothing to save,
+    /// so the bar has no 💾, and the map names this path and lines.
+    Store(std::path::PathBuf),
+}
+
+/// A document's notes, as TD shows them over it: a brief's over its page,
+/// a Markdown file's over its column.
 pub struct NotesLayer {
     /// The page's `NOTES_FILE`, what the map's header names.
     label: String,
+    keeping: Keeping,
     /// What the file held when it was last read.
     base: Shown,
     concur: ConcurSupport,
@@ -288,6 +307,7 @@ impl NotesLayer {
         let (base, writable) = Self::judge(read, tagged, path);
         let mut layer = NotesLayer {
             label,
+            keeping: Keeping::File,
             base,
             concur,
             pending: Vec::new(),
@@ -303,6 +323,97 @@ impl NotesLayer {
         };
         layer.refresh();
         layer
+    }
+
+    /// A Markdown document's notes, as TD's store holds them for `doc`. A
+    /// store that cannot be read shows its reason and takes no notes: writing
+    /// over it would lose whatever it holds.
+    pub fn for_markdown(doc: &Path, read: Result<NoteMap, String>) -> NotesLayer {
+        let label = doc
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let (base, writable) = match read {
+            Ok(notes) => (
+                Shown::Notes {
+                    notes,
+                    concurs: ConcurMap::default(),
+                },
+                Ok(()),
+            ),
+            Err(why) => (
+                Shown::Unreadable(why.clone()),
+                Err(Refusal::Unreadable(why)),
+            ),
+        };
+        let mut layer = NotesLayer {
+            label,
+            keeping: Keeping::Store(doc.to_path_buf()),
+            base,
+            concur: ConcurSupport::NotSupported,
+            pending: Vec::new(),
+            applied: None,
+            writable,
+            note_box: None,
+            said: None,
+            sent: None,
+            saving: false,
+            gone: false,
+            close_warned: false,
+            zones: Rc::new(RefCell::new(Vec::new())),
+        };
+        layer.refresh();
+        layer
+    }
+
+    /// Whether the notes go into TD's store rather than the file.
+    pub fn in_store(&self) -> bool {
+        matches!(self.keeping, Keeping::Store(_))
+    }
+
+    /// The document whose notes TD's store keeps, when it does.
+    pub fn store_doc(&self) -> Option<&Path> {
+        match &self.keeping {
+            Keeping::Store(doc) => Some(doc),
+            Keeping::File => None,
+        }
+    }
+
+    /// TD's store, read again with the document: what it holds is what the
+    /// edits still waiting are shown on top of, as a brief's are rebased. A
+    /// keep in flight is left to land, since it read the store after this did
+    /// or will.
+    pub fn rekept(&mut self, read: Result<NoteMap, String>) {
+        if self.saving {
+            return;
+        }
+        match read {
+            Ok(notes) => {
+                self.base = Shown::Notes {
+                    notes,
+                    concurs: ConcurMap::default(),
+                };
+                self.writable = Ok(());
+            }
+            Err(why) => {
+                self.base = Shown::Unreadable(why.clone());
+                self.writable = Err(Refusal::Unreadable(why));
+            }
+        }
+        self.refresh();
+    }
+
+    /// Whether the bar is drawn. A brief's always is, as the browser draws
+    /// its notebar. A Markdown document's only once there is something on
+    /// it — a note, the last word of a ↪ or a keep, or why it takes none —
+    /// so a plan with nothing written on it reads as the plan. Its blocks'
+    /// 💬 under the pointer is the way in.
+    pub fn shows_bar(&self, anchors: &[Anchor]) -> bool {
+        !self.in_store()
+            || self.counts(anchors).0 > 0
+            || self.said.is_some()
+            || self.sent.is_some()
+            || self.read_only().is_some()
     }
 
     /// What the bytes show, and whether a save could be made into them.
@@ -473,13 +584,24 @@ impl NotesLayer {
 
     /// Whether a draft is open to type into: every key goes to it.
     pub fn has_caret(&self) -> bool {
+        self.note_box.as_ref().is_some_and(|b| !b.gone) && self.can_delete()
+    }
+
+    /// Whether the open box's notes can be deleted: an edit can be made, on
+    /// words still in the file or gone from it.
+    fn can_delete(&self) -> bool {
         self.note_box.is_some() && self.writable.is_ok() && !self.gone
     }
 
     /// The bar's counts, as a browser's notebar counts them: notes on the
-    /// page's anchors, and every concur, where the brief takes concurs.
+    /// page's anchors, and every concur, where the brief takes concurs. A
+    /// Markdown document counts every note it keeps, those on words the file
+    /// no longer has included, because its map carries them too.
     pub fn counts(&self, anchors: &[Anchor]) -> (usize, Option<usize>) {
-        let notes = anchors.iter().map(|a| self.count_on(&a.nid)).sum();
+        let notes = match (&self.keeping, self.notes()) {
+            (Keeping::Store(_), Some(n)) => n.count(),
+            _ => anchors.iter().map(|a| self.count_on(&a.nid)).sum(),
+        };
         (notes, self.concurs().map(ConcurMap::count))
     }
 
@@ -488,6 +610,13 @@ impl NotesLayer {
     /// page shows no notes; empty of blocks when it has none yet.
     pub fn map(&self, anchors: &[Anchor]) -> Option<String> {
         let notes = self.notes()?;
+        if let Keeping::Store(doc) = &self.keeping {
+            let lines: Vec<(&str, &str, Option<u32>)> = anchors
+                .iter()
+                .map(|a| (a.nid.as_str(), a.title.as_str(), a.line))
+                .collect();
+            return Some(super::md_notes::build_map(doc, notes, &lines));
+        }
         let empty = ConcurMap::default();
         let pairs: Vec<(&str, &str)> = anchors
             .iter()
@@ -647,7 +776,39 @@ impl NotesLayer {
             nid,
             title,
             draft: EditBuffer::default(),
+            gone: false,
         });
+    }
+
+    /// Open the note box on notes whose words the file no longer has, to
+    /// read them and delete them.
+    pub fn open_gone(&mut self, nid: String, title: String) {
+        self.note_box = Some(NoteBox {
+            nid,
+            title,
+            draft: EditBuffer::default(),
+            gone: true,
+        });
+    }
+
+    /// Notes kept on words a Markdown file no longer has, by id, with the
+    /// title each was written against: none on a brief, whose notes on a
+    /// missing anchor are the page's business.
+    pub fn orphans(&self, anchors: &[Anchor]) -> Vec<(String, String)> {
+        let (Keeping::Store(_), Some(notes)) = (&self.keeping, self.notes()) else {
+            return Vec::new();
+        };
+        notes
+            .0
+            .iter()
+            .map(|(nid, _)| nid)
+            .filter(|nid| !anchors.iter().any(|a| a.nid == *nid))
+            .filter_map(|nid| {
+                let list = notes.on(nid);
+                let first = list.first()?;
+                Some((nid.to_string(), first.title.unwrap_or(nid).to_string()))
+            })
+            .collect()
     }
 
     /// A close asked for with edits not saved — Escape, the ✕, the control
@@ -661,9 +822,11 @@ impl NotesLayer {
         }
         self.close_warned = true;
         let n = self.pending.len();
-        self.said = Some(Said::Refused(format!(
-            "{n} unsaved · save them into the file, or close again to leave without them"
-        )));
+        self.said = Some(Said::Refused(if self.in_store() {
+            format!("{n} not kept · close again to leave without them")
+        } else {
+            format!("{n} unsaved · save them into the file, or close again to leave without them")
+        }));
         true
     }
 
@@ -712,7 +875,7 @@ impl NotesLayer {
             return false;
         };
         let text = trimmed(&b.draft.text()).to_string();
-        if text.is_empty() || self.writable.is_err() {
+        if text.is_empty() || b.gone || self.writable.is_err() {
             return false;
         }
         b.draft = EditBuffer::default();
@@ -803,8 +966,30 @@ impl NotesLayer {
     /// while it runs waits for the next one.
     pub fn begin_save(&mut self) -> Vec<NoteEdit> {
         self.saving = true;
-        self.said = Some(Said::Working(format!("saving into {}…", self.label)));
+        // A note kept as it is written says nothing while it is kept.
+        if !self.in_store() {
+            self.said = Some(Said::Working(format!("saving into {}…", self.label)));
+        }
         self.pending.clone()
+    }
+
+    /// A Markdown document's notes were kept: the store now holds `notes`,
+    /// and the first `made` edits are in it. Nothing is said: keeping is
+    /// what writing a note does, and only a failure is news.
+    pub fn kept(&mut self, made: usize, notes: NoteMap) {
+        self.saving = false;
+        self.pending.drain(..made.min(self.pending.len()));
+        self.base = Shown::Notes {
+            notes,
+            concurs: ConcurMap::default(),
+        };
+        self.refresh();
+    }
+
+    /// Whether edits are waiting to be kept and none is being kept now: a
+    /// Markdown document keeps them at once.
+    pub fn wants_keeping(&self) -> bool {
+        self.in_store() && !self.pending.is_empty() && !self.saving && self.can_edit().is_ok()
     }
 
     /// The save landed. The file now holds `notes` and `concurs`, the first
@@ -871,7 +1056,7 @@ impl NotesLayer {
                 Some(Zone::AddNote) => {
                     self.add(now);
                 }
-                Some(Zone::Delete(i)) if self.has_caret() => self.delete_shown(i),
+                Some(Zone::Delete(i)) if self.can_delete() => self.delete_shown(i),
                 _ if !under(Zone::Box) => self.note_box = None,
                 _ => {}
             }
@@ -887,6 +1072,12 @@ impl NotesLayer {
                 None => LayerPress::Took,
             },
             Some(Zone::Save) => LayerPress::Save,
+            Some(Zone::Gone) => {
+                if let Some((nid, title)) = self.orphans(anchors).into_iter().next() {
+                    self.open_gone(nid, title);
+                }
+                LayerPress::Took
+            }
             _ if under(Zone::Bar) => LayerPress::Took,
             _ => LayerPress::Pass,
         }
@@ -933,6 +1124,10 @@ impl NotesLayer {
             "sent": self.sent.as_ref().map(|s| s.text().to_string()),
             "map": self.map(anchors),
             "open": self.note_box.as_ref().map(|b| b.nid.clone()),
+            "kept": match &self.keeping {
+                Keeping::File => "file",
+                Keeping::Store(_) => "store",
+            },
         })
     }
 
@@ -1082,7 +1277,19 @@ impl NotesLayer {
                 if let Some((label, live)) = self.send_button(anchors, beside) {
                     row = row.child(self.button(&label, Zone::Send, live, th));
                 }
+                let gone: usize = self
+                    .orphans(anchors)
+                    .iter()
+                    .map(|(nid, _)| self.count_on(nid))
+                    .sum();
+                if gone > 0 {
+                    let label = format!("{gone} on words no longer here");
+                    row = row.child(self.button(&label, Zone::Gone, true, th));
+                }
                 match &self.writable {
+                    // Kept as written: nothing to save, and nothing to say
+                    // unless keeping failed, which `said` carries.
+                    Ok(()) if self.in_store() => {}
                     Ok(()) if !self.gone => {
                         row = row.child(self.button(
                             "💾 save into file",
@@ -1155,6 +1362,7 @@ impl NotesLayer {
     pub fn draw_box(&self, view: gpui::Size<Pixels>, th: &Theme) -> Option<AnyElement> {
         let b = self.note_box.as_ref()?;
         let editable = self.has_caret();
+        let deletable = self.can_delete();
         let notes = self.notes().map(|n| n.on(&b.nid)).unwrap_or_default();
         let (vw, vh) = (f32::from(view.width), f32::from(view.height));
         let w = (vw * 0.76).clamp(220.0_f32.min(vw), 620.0);
@@ -1175,7 +1383,7 @@ impl NotesLayer {
                 .text_size(px(body * 0.72))
                 .text_color(th.faint)
                 .child(n.ts.unwrap_or("").to_string());
-            if editable {
+            if deletable {
                 head = head.child(
                     div()
                         .relative()
@@ -1250,6 +1458,13 @@ impl NotesLayer {
                     .text_size(px(body * 0.8))
                     .text_color(th.text.alpha(0.6))
                     .child(why.sentence()),
+            );
+        } else if b.gone {
+            content = content.child(
+                div()
+                    .text_size(px(body * 0.8))
+                    .text_color(th.text.alpha(0.6))
+                    .child("These were written on words no longer in the file."),
             );
         }
         content = content.child(actions);
@@ -1374,6 +1589,7 @@ mod tests {
             }),
             has_note: None,
             has_concur: None,
+            line: None,
         }
     }
 
@@ -1827,5 +2043,143 @@ mod tests {
             Path::new("/r/_x_body.html"),
         );
         assert!(build.can_save().unwrap_err().contains("build input"));
+    }
+
+    fn kept_map(json: &str) -> NoteMap {
+        match notes::parse_json(json.as_bytes()).expect("a map") {
+            notes::Json::Obj(o) => NoteMap(o),
+            _ => panic!("an object"),
+        }
+    }
+
+    fn md_anchor(nid: &str, title: &str, line: u32) -> Anchor {
+        let mut a = anchor(nid, Some(rect_css(0.0, 0.0, 700.0, 40.0)), false);
+        a.title = title.into();
+        a.line = Some(line);
+        a
+    }
+
+    /// A Markdown document's layer counts every note TD keeps for it, one on
+    /// words the file no longer has included, and its map names lines; its
+    /// bar shows only with something on it; and keeping a note says nothing.
+    ///
+    /// Mutation-tested: counting only the notes on present anchors, and
+    /// drawing the bar whatever it holds, each fail this.
+    #[test]
+    fn a_markdown_layer_counts_every_kept_note_and_maps_lines() {
+        let anchors = vec![md_anchor("h-a", "# A", 7)];
+        let doc = Path::new("/r/plan.md");
+        let mut l = NotesLayer::for_markdown(
+            doc,
+            Ok(kept_map(
+                r##"{"h-a":[{"text":"one","title":"# A","ts":"2026-09-25 10:00"}],"p-gone":[{"text":"two","title":"Gone words","ts":"2026-09-25 10:01"}]}"##,
+            )),
+        );
+        assert_eq!(
+            l.counts(&anchors),
+            (2, None),
+            "the one on gone words counts"
+        );
+        let map = l.map(&anchors).expect("a map");
+        assert!(map.starts_with("NOTES — /r/plan.md\n"), "{map}");
+        assert!(map.contains("[L7] # A\n  · one"), "{map}");
+        assert!(
+            map.contains("On words no longer in the file:\n\n[p-gone] Gone words\n  · two"),
+            "{map}"
+        );
+        assert_eq!(l.report(&anchors)["kept"], "store");
+        assert!(l.shows_bar(&anchors));
+        assert_eq!(l.store_doc(), Some(doc));
+
+        let empty = NotesLayer::for_markdown(doc, Ok(NoteMap::default()));
+        assert!(
+            !empty.shows_bar(&anchors),
+            "nothing written: no bar over the plan"
+        );
+        assert_eq!(empty.send(&anchors), None, "and nothing to send");
+        let unreadable =
+            NotesLayer::for_markdown(doc, Err("its notes were kept by a newer TD".into()));
+        assert!(
+            unreadable.shows_bar(&anchors),
+            "a reason is something on the bar"
+        );
+        assert!(
+            unreadable.can_edit().is_err(),
+            "and nothing is written over it"
+        );
+
+        l.add_note(
+            "h-a".into(),
+            "# A".into(),
+            "three".into(),
+            "2026-09-25 10:02".into(),
+        );
+        assert!(l.wants_keeping());
+        let edits = l.begin_save();
+        assert_eq!(edits.len(), 1);
+        assert_eq!(
+            l.report(&anchors)["said"],
+            serde_json::Value::Null,
+            "keeping says nothing"
+        );
+        assert!(!l.wants_keeping(), "one keep at a time");
+        let mut after = l.notes().cloned().expect("notes");
+        let mut c = ConcurMap::default();
+        apply(&mut after, &mut c, &[], &[], false).unwrap();
+        l.kept(1, after);
+        assert_eq!(l.unsaved(), 0);
+        assert_eq!(l.counts(&anchors).0, 3);
+    }
+
+    /// Closing over a note not yet kept is held once, in the words of a
+    /// store rather than a file.
+    #[test]
+    fn a_markdown_note_not_yet_kept_holds_a_close_once() {
+        let mut l = NotesLayer::for_markdown(Path::new("/r/plan.md"), Ok(NoteMap::default()));
+        l.add_note(
+            "h-a".into(),
+            "# A".into(),
+            "x".into(),
+            "2026-09-25 10:00".into(),
+        );
+        assert!(l.guard_close());
+        let said = l.report(&[])["said"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
+        assert!(said.contains("not kept"), "{said}");
+        assert!(!l.guard_close(), "the second close goes");
+    }
+
+    /// Notes on words a Markdown file no longer has are found, open to be
+    /// read and deleted, and take no new note: there is nothing left to
+    /// hang one on.
+    ///
+    /// Mutation-tested: letting a box on gone words take a caret fails this.
+    #[test]
+    fn notes_on_gone_words_can_be_deleted_and_not_added_to() {
+        let anchors = vec![md_anchor("h-a", "# A", 7)];
+        let mut l = NotesLayer::for_markdown(
+            Path::new("/r/plan.md"),
+            Ok(kept_map(
+                r##"{"h-a":[{"text":"one","title":"# A","ts":"2026-09-25 10:00"}],"p-gone":[{"text":"two","title":"Gone words","ts":"2026-09-25 10:01"}]}"##,
+            )),
+        );
+        assert_eq!(
+            l.orphans(&anchors),
+            vec![("p-gone".to_string(), "Gone words".to_string())]
+        );
+        l.open_gone("p-gone".into(), "Gone words".into());
+        assert!(!l.has_caret(), "no draft on gone words");
+        assert!(!l.add(SystemTime::now()), "and nothing added");
+        l.delete_shown(0);
+        assert_eq!(
+            l.orphans(&anchors),
+            Vec::<(String, String)>::new(),
+            "deleted"
+        );
+        assert_eq!(l.unsaved(), 1, "a delete waiting to be kept");
+        let brief = layer(ONE_NOTE, "{}", ConcurSupport::Supported);
+        assert!(brief.orphans(&[]).is_empty(), "a brief has no such notes");
     }
 }

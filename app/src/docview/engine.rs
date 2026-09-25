@@ -278,6 +278,10 @@ pub struct Anchor {
     /// Whether the brief's own notes.js drew a stamp on it.
     #[serde(default)]
     pub has_concur: Option<bool>,
+    /// The line a Markdown block starts on, counted from 1: what the map
+    /// names it by. `None` on a page, whose anchors are element ids.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line: Option<u32>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
