@@ -587,7 +587,7 @@ code { font-variant-ligatures: none; font-feature-settings: "liga" 0, "calt" 0; 
 <h1>Floating Square</h1>
 
 <p class="lede">This morning you approved ten slices for opening documents inside Terminal Delight&rsquo;s panes,
-and the first one is built. Alt+click the path of a picture in any pane and the picture opens in a square
+and by this evening seven of them are merged and installed on your launcher. It started with the first one. Alt+click the path of a picture in any pane and the picture opens in a square
 beside the line that printed it; Escape puts it away. Before anything else was stacked on top of it, one
 question needed a number rather than a belief. A square you open and close all day holds a decoded picture
 and a texture on the graphics card, so does closing it give that memory back?</p>
@@ -625,11 +625,13 @@ wrote <span class="lnk">/home/parker/Pictures/td/pane-3.png</span>
 <table class="wide">
   <thead><tr><th>You do</th><th>Today</th></tr></thead>
   <tbody>
-    <tr><td>Alt+click a PNG, JPEG, WebP, GIF, BMP or SVG path</td><td>the picture opens in the square</td></tr>
-    <tr><td>Escape</td><td>the square closes; every other key goes to the shell</td></tr>
-    <tr><td>Alt+click a Markdown or HTML path</td><td>a square that says it is not drawn here yet, and that ctrl+click opens it with the desktop</td></tr>
+    <tr><td>Alt+click a picture, Markdown or HTML path</td><td>it opens in the square: pictures fitted, Markdown in your palette, briefs drawn by headless Chromium</td></tr>
+    <tr><td>Ctrl+Alt+click the same path</td><td>it opens in a pane beside the one you clicked, and focus stays where you were</td></tr>
+    <tr><td>The square&rsquo;s strip</td><td>drag it, &minus; fit + to zoom, &#8599; to the desktop, &#10005; or Escape to close; a second Alt+click makes it a split</td></tr>
+    <tr><td>alt+k in a document pane</td><td>flips between the document and its shell</td></tr>
+    <tr><td>Shift+click a path</td><td>shows it in the file manager; ctrl+click still opens it with the desktop</td></tr>
+    <tr><td>Restart the window</td><td>a pane showing a document comes back with your place kept</td></tr>
     <tr><td>Alt+click a command line</td><td>copies the line, as before</td></tr>
-    <tr><td>Ctrl+Alt+click a document</td><td>what it did before, until the split arrives in slice 4</td></tr>
   </tbody>
 </table>
 </div>
@@ -684,35 +686,46 @@ line whatever the code did, so the same run was pointed at a build with the rele
 way it should. The window&rsquo;s ordinary memory rose 15 MiB across the hundred cycles, under a quarter of
 one decoded picture. That is recorded as measured, not as zero.</p>
 
+<p>Each later slice ran the same test on what it added. A Markdown file holding a 4096-pixel picture grew
+2 MiB over a hundred cycles. The tallest brief in the archive, drawn by Chromium as fifteen tiles, was opened,
+scrolled top to bottom and back, and closed a hundred times, and grew 2 MiB against an 8 MiB tile, with never
+more than four tiles on the card at once.</p>
+
 <!-- ============================================================ 4 -->
 <h2 class="sec">Where the ten slices stand</h2>
 
-<p>The rest of the plan is already moving. Three slices touch different files, so three agents are building
-them side by side, and each lands as its own pull request once its checks pass.</p>
+<p>Slices that touched different files were built side by side, each landing as its own pull request once its
+checks passed, and the build went onto your launcher three times: after the square&rsquo;s controls, after the
+split, and after HTML. The notes are what is left, and they are the careful part, because they write into your
+briefs.</p>
 
 <figure>
   <span class="lbl">03 &middot; The ten slices, at the time of writing</span>
   <div class="scroller">
-    <div class="board" role="img" aria-label="Ten slices in two rows. Slice 9, size answers, is merged. Slice 1, the floating square, is in review. Slices 2, 3 and 6 are being built. Slices 4, 5, 7, 8 and 10 wait for the slices they depend on.">
-      <div class="s review"><b>1 &middot; Alt+click a picture</b>the square, Escape, textures given back<em>in review</em></div>
-      <div class="s building"><b>2 &middot; The square, whole</b>drag, its buttons, zoom, the chip, the menu<em>being built</em></div>
-      <div class="s building"><b>3 &middot; Markdown</b>drawn in your palette, links followed<em>being built</em></div>
-      <div class="s"><b>4 &middot; The split</b>Ctrl+Alt+click opens it beside you<em>waits for 2</em></div>
-      <div class="s"><b>5 &middot; Remembered</b>document panes survive a restart<em>waits for 4</em></div>
-      <div class="s building"><b>6 &middot; HTML, read-only</b>your briefs drawn by headless Chromium<em>being built</em></div>
-      <div class="s"><b>7 &middot; Notes, read</b>badges, buttons, concur stamps<em>waits for 6</em></div>
-      <div class="s"><b>8 &middot; Notes, write</b>saved into the brief itself<em>waits for 7</em></div>
-      <div class="s merged"><b>9 &middot; Size answers</b>programs told the pane&rsquo;s real size<em>merged</em></div>
+    <div class="board" role="img" aria-label="Ten slices in two rows. Slices 1 to 6 and 9 are merged and installed. Slice 7, notes read, is being built, and slice 8, notes write, follows it with the same agent. Slice 10, the guards, is last.">
+      <div class="s merged"><b>1 &middot; Alt+click a picture</b>the square, Escape, textures given back<em>installed</em></div>
+      <div class="s merged"><b>2 &middot; The square, whole</b>drag, its buttons, zoom, the chip, the menu<em>installed</em></div>
+      <div class="s merged"><b>3 &middot; Markdown</b>drawn in your palette, links followed<em>installed</em></div>
+      <div class="s merged"><b>4 &middot; The split</b>Ctrl+Alt+click opens it beside you<em>installed</em></div>
+      <div class="s merged"><b>5 &middot; Remembered</b>document panes survive a restart<em>installed</em></div>
+      <div class="s merged"><b>6 &middot; HTML, read-only</b>your briefs drawn by headless Chromium<em>installed</em></div>
+      <div class="s building"><b>7 &middot; Notes, read</b>badges, buttons, concur stamps<em>being built</em></div>
+      <div class="s"><b>8 &middot; Notes, write</b>saved into the brief itself<em>next, same agent</em></div>
+      <div class="s merged"><b>9 &middot; Size answers</b>programs told the pane&rsquo;s real size<em>installed</em></div>
       <div class="s"><b>10 &middot; Guards</b>format watch, licences<em>last</em></div>
     </div>
   </div>
-  <div class="legend2"><span><i class="m"></i>merged</span><span><i class="r"></i>in review</span><span><i class="b"></i>being built now</span><span><i></i>waiting</span></div>
-  <figcaption>From the plan&rsquo;s slice list and the pull requests open when this page was written. <b>Pictures get
-  their full controls in slice 2 and Markdown is drawn from slice 3; your briefs arrive in slice 6 and saved
-  notes in slice 8.</b> The split and the notes wait on the slices they stand on.</figcaption>
+  <div class="legend2"><span><i class="m"></i>merged and installed</span><span><i class="b"></i>being built now</span><span><i></i>waiting</span></div>
+  <figcaption>From the plan&rsquo;s slice list and the merged pull requests. <b>Everything but the notes is on your
+  launcher</b>; the notes wait on the shared test cases the brief skill now carries, which merged this
+  afternoon along with fixes to the brief&rsquo;s own save.</figcaption>
 </figure>
 
-<p>The size answers are already on main. A program that asks a pane how big it is in pixels now hears the size
+<p>To try it, press Ctrl+Alt+T for a fresh window, which starts from the launcher, and run
+<code>scripts/doc-demo.sh</code> in it: it prints the gestures and a handful of pictures, Markdown files and
+briefs to click. Your main window keeps its old build until you restart it.</p>
+
+<p>The size answers are on main too. A program that asks a pane how big it is in pixels now hears the size
 the pane is now, where it used to hear the size the pane was when it started, and that closes the stale-size
 issue you had open. The agent that built it found one more gap on the way: colour queries go unanswered in
 every pane. That is filed as its own issue rather than fixed on the side.</p>
@@ -722,12 +735,14 @@ every pane. That is filed as its own issue rather than fixed on the side.</p>
 
 <div class="grill">
   <div class="ask">
-    <h3>1 &middot; Install the build on your launcher when slice 2 merges?</h3>
-    <p>The plan puts the first install after slice 2, when the square can be dragged, zoomed and closed with its
-    own button. Installing points the launcher at the new build and nothing more: the windows you have open keep
-    running what they run until you restart one.</p>
-    <p class="rec"><b>Recommendation:</b> yes. I will install it with the repository&rsquo;s own landing script
-    and tell you which restart picks it up.</p>
+    <h3>1 &middot; Let CI run the tests that drive a real Chromium?</h3>
+    <p>Nine of the HTML slice&rsquo;s tests start a real browser. They run on this laptop and skip on GitHub,
+    whose runner blocks the browser&rsquo;s sandbox, so a change that breaks the engine against a real browser
+    passes CI. The fix is one line in the workflow file, and pushing a workflow file needs a scope this
+    machine&rsquo;s token for your account does not have.</p>
+    <p class="rec"><b>Recommendation:</b> grant it once with
+    <code>gh auth switch -u parker-brown-family &amp;&amp; gh auth refresh -h github.com -s workflow</code>,
+    and I will push the line and watch the nine run.</p>
   </div>
 </div>
 
@@ -833,9 +848,10 @@ pull request</a>. The soak is <code>scripts/doc-float-soak.sh</code>, and the sa
   </div>
 </dialog>
 
-<!-- Notes and concurs are baked in here by "save into file". Leave them empty and leave them in. -->
-<script type="application/json" id="report-notes">{}</script>
-<script type="application/json" id="report-concurs">{}</script>
+<!-- Notes and concurs are baked in here by "save into file". Leave them empty and leave them in,
+     with their data-format: it names the format notes.js writes, and other writers check it. -->
+<script type="application/json" id="report-notes" data-format="1">{}</script>
+<script type="application/json" id="report-concurs" data-format="1">{}</script>
 
 <script>
   /* Set before notes.js runs. Used for the storage key and the download filename. */
@@ -867,6 +883,13 @@ pull request</a>. The soak is <code>scripts/doc-float-soak.sh</code>, and the sa
  * A concur is independent of notes, rides in the map as "✓ concur" on the decision's own
  * line, and is baked into its own island (#report-concurs) so the notes island keeps the
  * shape every saved brief already has.
+ *
+ * FORMAT 1. Other programs write these islands too (Terminal Delight edits a brief's notes
+ * in place), so what a save writes is a contract, pinned byte for byte by the fixtures in
+ * fixtures/notes-format/ and its reference writer. Each island carries data-format and a
+ * revision, data-rev, the time of the write. Island JSON escapes "<" before "/" and "!",
+ * and the plain-text mirror breaks any sequence that would end an HTML comment. A change
+ * to any of that bumps FORMAT and the fixtures in the same commit.
  *
  * Configure before this script runs (all optional):
  *   window.NOTES_FILE     — filename used for the storage key and the download. Default: location basename.
@@ -912,38 +935,109 @@ pull request</a>. The soak is <code>scripts/doc-float-soak.sh</code>, and the sa
     ['dialog .dlg-body > h4', 'sub']
   ];
 
-  /* Notes baked into the file win on first load — a fresh browser should see what the
-     author saved. After that localStorage is the live copy. */
-  var baked = {};
-  try {
-    var island = document.getElementById('report-notes');
-    if (island) baked = JSON.parse(island.textContent || '{}');
-  } catch (e) { /* a malformed island must not break the page */ }
-
-  var N;
-  try { N = JSON.parse(localStorage.getItem(KEY) || 'null') || baked; }
-  catch (e) { N = baked; }
-
-  /* Concurs: { anchor: 'YYYY-MM-DD HH:MM' }. Same baked-then-local rule as notes. */
+  var FORMAT = '1';
+  /* Concurs: { anchor: 'YYYY-MM-DD HH:MM' }, under their own key and island. */
   var CKEY = 'concurs:' + FILE;
+  var SKEY = 'notes-sync:' + FILE;
   var CONCUR_SEL = window.CONCUR_TARGETS || '.grill .q, .grill-q, .ask';
-  var bakedC = {};
-  try {
-    var cisland = document.getElementById('report-concurs');
-    if (cisland) bakedC = JSON.parse(cisland.textContent || '{}');
-  } catch (e) { /* same rule as the notes island */ }
-  var C;
-  try { C = JSON.parse(localStorage.getItem(CKEY) || 'null') || bakedC; }
-  catch (e) { C = bakedC; }
+
+  /* ---- which notes the page shows: the file's and this browser's, together ----
+     Notes live in two places: the islands baked into this file, which is what an agent
+     reads, and localStorage, which keeps a reader's edits between reloads. Before format 1
+     the stored copy simply won, so once a browser had stored any map for this filename,
+     even the {} the clear button leaves, notes written into the file by anyone else never
+     showed again (agent-skills#24).
+
+     So every save stamps a revision on the islands, and this browser keeps, under SKEY,
+     the revision it last took in and every note and concur it has taken from an island or
+     written into one. On load, for notes and concurs alike:
+       - nothing stored: the island, as before;
+       - the island's revision is the one last taken in: the stored copy, as before;
+       - anything else, including an island with no revision (a brief saved before
+         format 1): the stored copy, plus every note and concur in the island this browser
+         has not seen before.
+     Nothing the browser holds is ever dropped, and a note it deleted stays deleted. The
+     price: a note deleted from the file by another writer stays in a browser that still
+     holds it. Revisions are compared for sameness, not order, because a save lands in
+     Downloads while the original may have been changed in the meantime. */
+  function stored(key) {
+    try {
+      var v = JSON.parse(localStorage.getItem(key) || 'null');
+      return v && typeof v === 'object' && !Array.isArray(v) ? v : null;
+    } catch (e) { return null; }
+  }
+  function readIsland(id) {
+    var el = document.getElementById(id), map = {};
+    if (el) {
+      try { map = JSON.parse(el.textContent || '{}'); } catch (e) { /* a malformed island must not break the page */ }
+      if (!map || typeof map !== 'object' || Array.isArray(map)) map = {};
+    }
+    return { map: map, rev: el ? el.getAttribute('data-rev') : null };
+  }
+  function has(o, k) { return Object.prototype.hasOwnProperty.call(o, k); }
+  function noteId(nid, n) { return nid + '\n' + (n.ts || '') + '\n' + n.text; }
+  function idsOf(kind, map) {
+    var out = [];
+    for (var k in map) {
+      if (!has(map, k)) continue;
+      if (kind === 'concurs') out.push(k + '\n' + map[k]);
+      else if (Array.isArray(map[k])) map[k].forEach(function (n) { if (n) out.push(noteId(k, n)); });
+    }
+    return out;
+  }
+  function union(a, b) {
+    var seen = Object.create(null), out = [];
+    a.concat(b).forEach(function (x) { if (!seen[x]) { seen[x] = 1; out.push(x); } });
+    return out;
+  }
+
+  var SYNC = stored(SKEY) || {};
+  ['notes', 'concurs'].forEach(function (k) {
+    var s = SYNC[k];
+    if (!s || typeof s !== 'object' || !Array.isArray(s.seen)) SYNC[k] = { rev: null, seen: [] };
+  });
+
+  function takeIn(kind, key, isl) {
+    var s = SYNC[kind], have = stored(key), added = false;
+    if (have && !(isl.rev && isl.rev === s.rev)) {
+      var seen = Object.create(null), mine = Object.create(null);
+      s.seen.forEach(function (x) { seen[x] = 1; });
+      idsOf(kind, have).forEach(function (x) { mine[x] = 1; });
+      Object.keys(isl.map).forEach(function (k) {
+        if (kind === 'concurs') {
+          if (!has(have, k) && !seen[k + '\n' + isl.map[k]]) { have[k] = isl.map[k]; added = true; }
+          return;
+        }
+        if (!Array.isArray(isl.map[k])) return;
+        isl.map[k].forEach(function (n) {
+          var id = n && noteId(k, n);
+          if (!n || seen[id] || mine[id]) return;
+          if (!Array.isArray(have[k])) have[k] = [];
+          have[k].push(n);
+          mine[id] = 1;
+          added = true;
+        });
+      });
+    }
+    SYNC[kind] = { rev: isl.rev, seen: union(s.seen, idsOf(kind, isl.map)) };
+    return { map: have || isl.map, added: added };
+  }
+
+  var tookN = takeIn('notes', KEY, readIsland('report-notes'));
+  var tookC = takeIn('concurs', CKEY, readIsland('report-concurs'));
+  var N = tookN.map, C = tookC.map;
+  if (tookN.added) save();
+  if (tookC.added) saveConcurs();
 
   var reduceMotion = !!(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches);
   var active = null, activeTitle = '';
 
+  /* The sync record goes with every write, so what it says was seen is always stored. */
   function save() {
-    try { localStorage.setItem(KEY, JSON.stringify(N)); } catch (e) {}
+    try { localStorage.setItem(KEY, JSON.stringify(N)); localStorage.setItem(SKEY, JSON.stringify(SYNC)); } catch (e) {}
   }
   function saveConcurs() {
-    try { localStorage.setItem(CKEY, JSON.stringify(C)); } catch (e) {}
+    try { localStorage.setItem(CKEY, JSON.stringify(C)); localStorage.setItem(SKEY, JSON.stringify(SYNC)); } catch (e) {}
   }
   function stamp() { return new Date().toISOString().slice(0, 16).replace('T', ' '); }
   function concurCount() {
@@ -1217,35 +1311,72 @@ pull request</a>. The soak is <code>scripts/doc-float-soak.sh</code>, and the sa
   /* ---- bake notes into a downloadable copy of this file ----
      localStorage is invisible to an agent. This is what makes
      "read my notes in <file>" work. */
+
+  /* JSON leaves "<" alone, so a note reading "<\/script>" used to end the island early:
+     the rest spilled into the page and the reopened brief showed no notes at all
+     (agent-skills#25). Escaped, it is still JSON and parses to the same strings. */
+  function islandJson(map) {
+    return JSON.stringify(map, null, 1).replace(/<\//g, '<\\/').replace(/<!/g, '\\u003c!');
+  }
+  /* The only two sequences that end an HTML comment. A reader's own "---" stays. */
+  function commentSafe(s) {
+    return s.replace(/--!>/g, '--! >').replace(/-->/g, '-- >');
+  }
+  function stampIsland(el, rev) {
+    el.setAttribute('data-format', FORMAT);
+    el.setAttribute('data-rev', rev);
+  }
+  /* The mirror's first line, written once here so a grep of a brief for it finds one
+     line of code and then the mirror itself. */
+  var MIRROR_HEAD = '\nREADER NOTES —';
+  /* The last mirror comment, if it follows the notes island: the one a save replaces. */
+  function lastMirror(root, island) {
+    var w = document.createTreeWalker(root, NodeFilter.SHOW_COMMENT), c, last = null;
+    while ((c = w.nextNode())) if (c.data.indexOf(MIRROR_HEAD) === 0) last = c;
+    if (last && island && !(island.compareDocumentPosition(last) & Node.DOCUMENT_POSITION_FOLLOWING)) return null;
+    return last;
+  }
+
   function embedNotes() {
+    var rev = new Date().toISOString();
     var doc = document.documentElement.cloneNode(true);
     Array.prototype.forEach.call(doc.querySelectorAll('.note-btn'), function (n) { n.remove(); });
     Array.prototype.forEach.call(doc.querySelectorAll('.notable'), function (n) {
       n.classList.remove('notable', 'has-note');
     });
     var island = doc.querySelector('#report-notes');
-    if (island) island.textContent = JSON.stringify(N, null, 1);
+    if (island) { island.textContent = islandJson(N); stampIsland(island, rev); }
 
     /* Concur UI is rebuilt on load, so strip it; the answers go into their own island,
-       created here if the brief predates it. */
+       created here, where the reference writer puts it, if the brief predates it and
+       there is something to put in it. */
     Array.prototype.forEach.call(doc.querySelectorAll('.concur-zone, #concur-defs, #concur-cnt'),
       function (n) { n.remove(); });
     Array.prototype.forEach.call(doc.querySelectorAll('.concurrable'), function (n) {
       n.classList.remove('concurrable', 'has-concur', 'concur-jolt');
     });
     var cisl = doc.querySelector('#report-concurs');
-    if (!cisl) {
+    if (!cisl && concurCount()) {
       cisl = document.createElement('script');
       cisl.type = 'application/json';
       cisl.id = 'report-concurs';
       if (island && island.parentNode) island.parentNode.insertBefore(cisl, island.nextSibling);
       else if (doc.querySelector('body')) doc.querySelector('body').appendChild(cisl);
     }
-    cisl.textContent = JSON.stringify(C, null, 1);
-    /* A plain-text mirror as well, so grep and ctx_read find the notes
-       without anyone having to parse JSON out of a script tag. */
-    var body = doc.querySelector('body');
-    if (body) body.appendChild(document.createComment('\nREADER NOTES —\n' + buildMap() + '\n'));
+    if (cisl) { cisl.textContent = islandJson(C); stampIsland(cisl, rev); }
+
+    /* A plain-text mirror as well, so grep and ctx_read find the notes without anyone
+       having to parse JSON out of a script tag. A save replaces the last one rather than
+       adding another, so saving never leaves a stale map behind for a grep to find. */
+    var text = MIRROR_HEAD + '\n' + commentSafe(buildMap()) + '\n';
+    var mirror = lastMirror(doc, island), body = doc.querySelector('body');
+    if (mirror) mirror.data = text;
+    else if (body) body.appendChild(document.createComment(text));
+
+    /* Everything just written counts as seen, under the revision just stamped. */
+    SYNC.notes = { rev: rev, seen: union(SYNC.notes.seen, idsOf('notes', N)) };
+    SYNC.concurs = { rev: rev, seen: union(SYNC.concurs.seen, idsOf('concurs', C)) };
+    try { localStorage.setItem(SKEY, JSON.stringify(SYNC)); } catch (e) {}
 
     var blob = new Blob(['<!DOCTYPE html>\n' + doc.outerHTML], { type: 'text/html' });
     var a = document.createElement('a');
