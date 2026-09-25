@@ -533,6 +533,15 @@ fn lexical_normalize(path: &str) -> String {
     out.to_string_lossy().into_owned()
 }
 
+/// The link under byte `byte` of a run of bench text — the offset gpui's
+/// layout answers a point with. [`link_at`] counts CHARACTERS, and bench text
+/// is full of multi-byte glyphs (`→`, `◳`, `·`) ahead of the paths it quotes,
+/// so the offset is converted here, once, rather than at each caller. `None`
+/// for an offset that is not on a character boundary.
+fn run_link(text: &str, byte: usize) -> Option<Link> {
+    link_at(text, text.get(..byte)?.chars().count())
+}
+
 /// The link sitting under column `col` of a row of terminal text, if any. Pure:
 /// expands the whitespace-delimited token, trims delimiters, then classifies it
 /// as a URL (known scheme or `www.`) or a filesystem path (`/`, `~/`, `./`, `..`).
@@ -2488,6 +2497,10 @@ pub struct TerminalView {
     /// would do: open the document under the pointer, or copy a command line.
     /// Recomputed only while Alt is down, so ordinary mousing costs nothing.
     copy_hint: Option<CopyHint>,
+    /// The bench's Alt chip: the flat rectangle of the document link a held
+    /// bare Alt would open, as [`TerminalView::bench_alt_hint`] resolved it
+    /// on the last move. The grid's `copy_hint`, on the bench's face.
+    wb_alt_hint: Option<(f32, f32, f32, f32)>,
     /// When the last Alt+click copy landed — drives the brief "copied"
     /// confirmation in the chip. No timer: the next pointer move repaints it.
     copy_flash: Option<Instant>,
@@ -4138,6 +4151,7 @@ impl TerminalView {
             bell_player: crate::bell::BellPlayer::default(),
             hdr_overflow: None,
             copy_hint: None,
+            wb_alt_hint: None,
             copy_flash: None,
             said: None,
             float: None,
@@ -8153,6 +8167,7 @@ impl TerminalView {
             // selection. See `bench_doc_click`.
             if (ev.modifiers.alt || ev.modifiers.control)
                 && self.bench_doc_click(
+                    ev.position,
                     click_mods(ev.modifiers),
                     landed.as_ref().map(|(hit, _)| hit),
                     cx,
@@ -8364,6 +8379,14 @@ impl TerminalView {
         // only, like the two below.
         if self.bench.face() == crate::workbench::Face::Workbench {
             self.bench_hover(ev.position, cx);
+            // The bench's Alt chip, on the grid's terms: only while a bare
+            // Alt is held, so ordinary mousing reads nothing.
+            let bare_alt = ev.modifiers.alt && !ev.modifiers.control && !ev.modifiers.platform;
+            let hint = bare_alt.then(|| self.bench_alt_hint(ev.position)).flatten();
+            if hint != self.wb_alt_hint {
+                self.wb_alt_hint = hint;
+                cx.notify();
+            }
         }
         // A held strip or a held document owns the pointer, ahead of anything
         // else that reads a move: the square follows the hand, or the picture
@@ -10746,6 +10769,45 @@ impl Render for TerminalView {
                         )),
                 )
         });
+        // The bench's Alt chip: the run a held bare Alt would open, outlined,
+        // with the grid's own label. Drawn in the screen's coordinates, which
+        // are the flat ones the bench's text was recorded in, less the
+        // screen's origin — so the tube bends it exactly as it bends the text
+        // it sits on.
+        let bench_hint_el = self
+            .wb_alt_hint
+            .filter(|_| on_bench)
+            .and_then(|(x, y, w, h)| {
+                let b = (*self.content_bounds.lock().ok()?)?;
+                let (ox, oy) = (f32::from(b.origin.x), f32::from(b.origin.y));
+                let (acc, surf) = (th.accent, th.surface);
+                Some(
+                    div()
+                        .absolute()
+                        .left(px(x - ox - 3.))
+                        .top(px(y - oy - 2.))
+                        .w(px(w + 6.))
+                        .h(px(h + 4.))
+                        .border_1()
+                        .border_color(acc.alpha(0.75))
+                        .rounded(px(4.))
+                        .child(
+                            div()
+                                .absolute()
+                                .right(px(2.))
+                                .top(px(-14.))
+                                .px(px(6.))
+                                .bg(surf)
+                                .border_1()
+                                .border_color(acc.alpha(0.75))
+                                .rounded(px(4.))
+                                .text_color(acc)
+                                .text_size(px(11.))
+                                .whitespace_nowrap()
+                                .child(crate::lang::current().strings().chip_open_here),
+                        ),
+                )
+            });
         // What the pane is saying about the last click, in the Alt chip's own
         // shape and place: at the right end of the row the click landed on,
         // where the eye already is. Cut short with an ellipsis rather than
@@ -11024,6 +11086,7 @@ impl Render for TerminalView {
                             .into_any_element()
                     })
                     .children(copy_el)
+                    .children(bench_hint_el)
                     // The sticky note, INSIDE the screen and therefore inside the
                     // registered warp tube. It has to be: the note is drawn
                     // pre-distorted so the barrel pass straightens it out, and
@@ -15210,6 +15273,69 @@ mod tests {
             bench_src.contains("Dispatch::Open(href) => self.bench_open_href(&href, cx)"),
             "the card's own open button takes the same road"
         );
+    }
+
+    /// A link written in bench text is found at the byte gpui's layout
+    /// answers with, past any multi-byte glyph ahead of it.
+    #[test]
+    fn a_link_in_bench_text_is_found_at_a_layout_byte_offset() {
+        let text = "\u{25f3} Target: file:///home/parker/Work/r/brief.html \u{2192} served";
+        let at = text.find("brief").unwrap();
+        match run_link(text, at) {
+            Some(Link::Url(u)) => assert_eq!(u, "file:///home/parker/Work/r/brief.html"),
+            other => panic!("{other:?}"),
+        }
+        // On the colon just before the link, which is a word and not a link.
+        // Two bytes of the glyph ahead of it are what a character-for-byte
+        // mix-up would add, and that would land on the link's first letter.
+        assert!(run_link(text, text.find("Target:").unwrap() + 6).is_none());
+        // Inside a multi-byte glyph is not a character boundary.
+        assert!(run_link(text, 1).is_none());
+        // A path, as a response's Links table writes it.
+        let row = "  \u{2022} /home/parker/Work/reports/notes.md \u{2014} the notes";
+        match run_link(row, row.find("notes.md").unwrap()) {
+            Some(Link::Path(p)) => assert_eq!(p, "/home/parker/Work/reports/notes.md"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    /// The bench's modified press looks for a link in the text FIRST, maps a
+    /// loopback copy of the card's own file to that file, and only then falls
+    /// back to the artifact under the pointer. And its Alt chip is asked only
+    /// under a bare Alt, and drawn only on the bench.
+    #[test]
+    fn a_link_anywhere_on_the_bench_answers_alt_and_ctrl_alt() {
+        let bench_src: String = include_str!("pane/bench.rs")
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        // The ORDER is `bench_press_pick`'s, tested by what it does in
+        // bench.rs; here only that the resolver feeds it the text under the
+        // pointer.
+        let press = method_body(&bench_src, "fn bench_press_link(");
+        assert!(press.contains("self.bench_link_under(flat)"), "{press}");
+        assert!(press.contains("bench_press_pick("), "{press}");
+        let click = method_body(&bench_src, "pub(super) fn bench_doc_click(");
+        assert!(
+            click.contains("self.bench_press_link(at, landed)"),
+            "{click}"
+        );
+        let hint = method_body(&bench_src, "pub(super) fn bench_alt_hint(");
+        assert!(
+            hint.contains("self.document_of(&link)?"),
+            "only a document gets the chip"
+        );
+
+        let code = live_code();
+        let mv = method_body(&code, "fn on_mouse_move(");
+        assert!(mv.contains("ev.modifiers.alt && !ev.modifiers.control && !ev.modifiers.platform"));
+        assert!(mv.contains("bare_alt.then(|| self.bench_alt_hint(ev.position))"));
+        assert!(
+            code.contains(".filter(|_| on_bench)"),
+            "the chip is the bench's alone"
+        );
+        assert!(code.contains(".children(bench_hint_el)"));
     }
 
     fn method_body(code: &str, signature: &str) -> String {
