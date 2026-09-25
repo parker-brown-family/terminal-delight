@@ -1,0 +1,63 @@
+<script type="application/json" data-page>
+{
+  "title": "First launch",
+  "description": "What happens the first time you run Terminal Delight: one window, one terminal, and a background session host that keeps your shells alive when the window closes. What you're looking at, the first keys to try, and what comes back next time.",
+  "updated": "2026-09-25",
+  "trueOf": "main at d7cf383",
+  "summary": "What you see, and the first keys to try"
+}
+</script>
+
+<section data-register="brief">
+<p class="lede">Run <code>terminal-delight</code> and one window opens with one terminal in it. Behind the window, a small background process called the session host starts and takes charge of your shells, so closing the window, or losing it to a crash, doesn't end them.</p>
+<p>The <a href="/left-bar">left bar</a> runs down the left side and holds your session as a tree of projects, groups and tasks. At the top of the right edge, a small pill counts agents waiting on you. The window's own controls (theme, gauges, dead agents, notifications, plugins) sit at the bottom right. The terminal itself is drawn as a <a href="/crt">CRT</a>: scanlines, a soft glow, and glass that curves.</p>
+<p>A few things to try first:</p>
+<table class="keys">
+  <tbody>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd></td><td>a new tab</td></tr>
+    <tr><td><kbd>Alt</kbd>+<kbd>V</kbd> / <kbd>Alt</kbd>+<kbd>H</kbd></td><td>split the pane side by side, or stacked</td></tr>
+    <tr><td><kbd>Alt</kbd>+arrows</td><td>move between panes</td></tr>
+    <tr><td><kbd>Alt</kbd>+<kbd>K</kbd></td><td>turn a pane to its <a href="/workbench">workbench</a> and back</td></tr>
+    <tr><td><kbd>F1</kbd></td><td>every shortcut, and the <a href="/languages">language</a></td></tr>
+  </tbody>
+</table>
+<p>Type <code>claude</code> or <code>codex</code> at a prompt and Terminal Delight notices the agent, or press <kbd>Alt</kbd>+<kbd>K</kbd> and use <b>⌁ LAUNCH AGENT</b> to <a href="/launching">start one</a> from a panel. Close the window and open it again: your tabs, splits, directories and agents come back where they were.</p>
+<p class="invite">Technical has which session a window opens, what is saved, and when.</p>
+</section>
+
+<section data-register="technical" data-headline="Starting up">
+<h3>Which session opens</h3>
+<p>A session is a set of tabs and panes with a name of its own, <code>1</code>, <code>2</code> or <code>work</code>, saved as <code>~/.config/terminal-delight/sessions/&lt;name&gt;.toml</code>. A window opens:</p>
+<ol>
+  <li>the session in <code>TD_SESSION</code>, if set;</li>
+  <li>otherwise a session whose host is running with no window attached, which is what happens when you close the window and open it again;</li>
+  <li>otherwise the most recently saved session, preferring one last used on this Hyprland workspace and one with more than a single pane;</li>
+  <li>otherwise a new one, numbered from <code>1</code>.</li>
+</ol>
+<p>The window's title says which: <code>terminal-delight — 1</code>. On stderr it prints <code>attached to the session host for session '1'</code>. If no host can be reached, it says so and opens anyway, owning its terminals itself. <a href="/sessions">Sessions</a> has the rest, including running without a host.</p>
+
+<h3>The window</h3>
+<ul>
+  <li>No title bar from the desktop: Terminal Delight draws its own frame and its own <code>—</code> <code>☐</code> <code>✕</code>. Drag the top bar to move it. <code>✕</code> saves before closing.</li>
+  <li>With no saved size, it opens at 1280 by 720, centred.</li>
+  <li>At startup it prints the GPU and driver it found, and warns if the theme's font is missing.</li>
+  <li>Narrower than 720 px, the controls at the bottom right fold into a <code>…</code> menu.</li>
+</ul>
+
+<h3>The first look</h3>
+<p>First run writes your own theme file, <code>theme.toml</code>, as a copy of the built-in <code>hacker</code> theme, and the window tints it with a warm amber seed, <code>#e0913a</code>. Programs show their real colours. Every pane follows the window's look and starts with a warp of 1.43, text at 75% and the chrome at 80%. <a href="/themes">Themes</a> and <a href="/crt">CRT</a> say how to change any of it.</p>
+
+<h3>What's saved</h3>
+<p>The session file keeps the window's size, every tab with its name, colours, group and project, the split layout, the left bar, the look, the <a href="/mcp">MCP</a> switches and the language. For each pane it keeps the directory the foreground program is in and, if that program is Claude Code or Codex, the command that resumes its conversation: <code>claude --resume &lt;id&gt;</code> or <code>codex resume &lt;id&gt;</code>. Reopening starts a shell in that directory and types the command.</p>
+<p>It saves after anything that changes the layout, every 30 seconds, and when you press <code>✕</code>. A save that would lose more than half the panes or tabs without your having closed them is refused, and the last ten versions are kept in <code>sessions/backups/</code>.</p>
+
+<h3>Closing</h3>
+<p>Closing a tab sends it to the bay at the foot of the left bar, still running, and <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> brings it back. Closing the <em>last</em> tab asks first, then ends its shells and quits. A session host with no window attached and nothing printed for twelve hours saves and stops.</p>
+
+<h3>On the desktop</h3>
+<p>From a source checkout, <code>scripts/install-desktop.sh</code> adds a launcher and icon, and on Omarchy or Hyprland <code>scripts/install-send-hotkey.sh</code> binds <kbd>Super</kbd>+<kbd>Alt</kbd>+<kbd>T</kbd> to pull the terminal you're in, and the agent running in it, into Terminal Delight.</p>
+</section>
+
+<ol data-sources>
+  <li id="s1">Session choice: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/instance.rs">instance.rs</a>; the window, saving and the safety nets: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/main.rs">main.rs</a>; what a pane remembers: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/session.rs">session.rs</a>; the first look: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/theme.rs">theme.rs</a> (<code>house_outer</code>); the host's idle stop: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/host.rs">host.rs</a>.</li>
+</ol>

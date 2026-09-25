@@ -3,7 +3,7 @@
   "title": "Install",
   "description": "Terminal Delight ships as one file, terminal-delight-x86_64.AppImage, for 64-bit Linux on X11 or Wayland. Download it, make it executable, run it.",
   "updated": "2026-09-25",
-  "trueOf": "main at 81ec545, release v0.3.0",
+  "trueOf": "main at d7cf383, release v0.3.0",
   "summary": "One AppImage, three commands"
 }
 </script>
@@ -49,7 +49,7 @@ bash scripts/prepare-gpui.sh
 cd app &amp;&amp; cargo run
 # or build a release binary: app/target/release/terminal-delight
 cd app &amp;&amp; cargo build --release</code></pre>
-<p><code>prepare-gpui.sh</code> sets up a sibling <code>zed-upstream/</code> directory at Zed commit <code>abbe85a</code> and applies five patches from <code>docs/patches/</code>: <code>0001-td-crt-pass</code> (the per-pane barrel warp), <code>0002-focus-blur</code>, <code>0003-text-crawl</code>, <code>0004-warp-tube-cap-32</code>, and <code>0002-sever-gpl-crates</code>. CI builds the same way. <code>CONTRIBUTING.md</code> has the CI bar and the clean-room rule.</p>
+<p><code>prepare-gpui.sh</code> sets up a sibling <code>zed-upstream/</code> directory at Zed commit <code>abbe85a</code> and applies six patches from <code>docs/patches/</code>: <code>0001-td-crt-pass</code> (the per-pane barrel warp), <code>0002-focus-blur</code>, <code>0003-text-crawl</code>, <code>0004-warp-tube-cap-32</code>, <code>0005-glyph-transform</code>, and <code>0002-sever-gpl-crates</code>. CI builds the same way. <code>CONTRIBUTING.md</code> has the CI bar and the clean-room rule.</p>
 
 <h3>Why there is no <code>cargo install</code></h3>
 <p>The crate is not on crates.io, and it cannot be published as it stands. <code>app/Cargo.toml</code> sets <code>publish = false</code>, and gpui is a path dependency on the pinned Zed checkout. The gpui that is on crates.io ships an older renderer, blade, with known problems on NVIDIA under X11.</p>

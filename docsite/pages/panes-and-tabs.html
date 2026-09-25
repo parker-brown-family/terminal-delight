@@ -1,7 +1,7 @@
 <script type="application/json" data-page>
 {
   "title": "Panes and tabs",
-  "description": "A tab holds up to four panes, each a real shell with its own header. Split with alt+v and alt+h, move focus with alt and the arrows, close with alt+w; a closed pane keeps running in the bay and ctrl+shift+z brings it back.",
+  "description": "A tab holds up to four panes, each a real shell with its own header. Split with Alt+V and Alt+H, move focus with Alt and the arrows, close with Alt+W; a closed pane keeps running in the bay and Ctrl+Shift+Z brings it back.",
   "updated": "2026-09-25",
   "trueOf": "main at d7cf383",
   "summary": "Splitting, moving, closing, sizing"
@@ -10,9 +10,9 @@
 
 <section data-register="brief">
 <p class="lede">A tab holds up to four panes, tiled. Every pane is a real shell with its own header, and every divider can be dragged.</p>
-<p><kbd>alt</kbd>+<kbd>v</kbd> splits the pane you're in side by side; <kbd>alt</kbd>+<kbd>h</kbd> splits it top and bottom. The new pane opens in the same directory. <kbd>alt</kbd> and an arrow key moves between panes. Drag a pane's title onto another pane to move it there, onto a tab to send it to that tab, or out past the edge of the window to give it a window of its own.</p>
-<p>Closing doesn't end anything straight away. <kbd>alt</kbd>+<kbd>w</kbd> closes a pane and <kbd>ctrl</kbd>+<kbd>w</kbd> a tab, and either one goes to the bay at the foot of the left bar with its shells still running. <kbd>ctrl</kbd>+<kbd>shift</kbd>+<kbd>z</kbd> brings it back. Closing the last tab is the one close that quits.</p>
-<p>To make anything bigger, hold <kbd>ctrl</kbd> and turn the wheel over it: over a pane's text it sizes that pane's font, over its header the header, over the chrome the whole window's chrome.</p>
+<p><kbd>Alt</kbd>+<kbd>V</kbd> splits the pane you're in side by side; <kbd>Alt</kbd>+<kbd>H</kbd> splits it top and bottom. The new pane opens in the same directory. <kbd>Alt</kbd> and an arrow key moves between panes. Drag a pane's title onto another pane to move it there, onto a tab to send it to that tab, or out past the edge of the window to give it a window of its own.</p>
+<p>Closing doesn't end anything straight away. <kbd>Alt</kbd>+<kbd>W</kbd> closes a pane and <kbd>Ctrl</kbd>+<kbd>W</kbd> a tab, and either one goes to the bay at the foot of the left bar with its shells still running. <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> brings it back. Closing the last tab is the one close that quits.</p>
+<p>To make anything bigger, hold <kbd>Ctrl</kbd> and turn the wheel over it: over a pane's text it sizes that pane's font, over its header the header, over the chrome the whole window's chrome.</p>
 <p class="invite">Technical covers the header, the three faces, documents in a pane, the tab strip, the top bar and the footer.</p>
 </section>
 
@@ -23,12 +23,12 @@
 <table class="keys">
   <thead><tr><th>Key</th><th>Does</th></tr></thead>
   <tbody>
-    <tr><td><kbd>alt</kbd>+<kbd>v</kbd></td><td>Split beside: a new pane on the right.</td></tr>
-    <tr><td><kbd>alt</kbd>+<kbd>h</kbd> or <kbd>ctrl</kbd>+<kbd>alt</kbd>+<kbd>d</kbd></td><td>Split below: a new pane underneath.</td></tr>
-    <tr><td><kbd>alt</kbd>+<kbd>←</kbd> <kbd>→</kbd> <kbd>↑</kbd> <kbd>↓</kbd></td><td>Move focus to the pane in that direction. Nothing happens at the edge; it doesn't wrap.</td></tr>
-    <tr><td><kbd>alt</kbd>+<kbd>w</kbd></td><td>Close the focused pane, into the bay.</td></tr>
-    <tr><td><kbd>alt</kbd>+<kbd>k</kbd></td><td>Flip the pane between its terminal and its workbench.</td></tr>
-    <tr><td><kbd>alt</kbd>+<kbd>r</kbd></td><td>Open the <a href="/focus-reader">focus reader</a> on the focused pane.</td></tr>
+    <tr><td><kbd>Alt</kbd>+<kbd>V</kbd></td><td>Split beside: a new pane on the right.</td></tr>
+    <tr><td><kbd>Alt</kbd>+<kbd>H</kbd> or <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>D</kbd></td><td>Split below: a new pane underneath.</td></tr>
+    <tr><td><kbd>Alt</kbd>+<kbd>←</kbd> <kbd>→</kbd> <kbd>↑</kbd> <kbd>↓</kbd></td><td>Move focus to the pane in that direction. Nothing happens at the edge; it doesn't wrap.</td></tr>
+    <tr><td><kbd>Alt</kbd>+<kbd>W</kbd></td><td>Close the focused pane, into the bay.</td></tr>
+    <tr><td><kbd>Alt</kbd>+<kbd>K</kbd></td><td>Flip the pane between its terminal and its workbench.</td></tr>
+    <tr><td><kbd>Alt</kbd>+<kbd>R</kbd></td><td>Open the <a href="/focus-reader">focus reader</a> on the focused pane.</td></tr>
   </tbody>
 </table>
 <p>The buttons do the same: <code>split →</code> sits at the foot of the right-hand column and <code>split ↓</code> at the right end of the bottom edge. A tab takes <b>four panes</b> at most; a fifth split is refused. Layouts saved before that limit can still hold up to eight.</p>
@@ -39,13 +39,13 @@
 <table>
   <thead><tr><th>You close</th><th>What happens</th></tr></thead>
   <tbody>
-    <tr><td>A pane, with <kbd>alt</kbd>+<kbd>w</kbd> or its <code>×</code></td><td>The split collapses onto its neighbour; the pane goes to the bay. A pane alone in its tab closes as a tab.</td></tr>
-    <tr><td>A tab, with <kbd>ctrl</kbd>+<kbd>w</kbd></td><td>Always asks first: <code>CLOSE TAB?</code>, <kbd>enter</kbd> to close, <kbd>esc</kbd> to cancel.</td></tr>
+    <tr><td>A pane, with <kbd>Alt</kbd>+<kbd>W</kbd> or its <code>×</code></td><td>The split collapses onto its neighbour; the pane goes to the bay. A pane alone in its tab closes as a tab.</td></tr>
+    <tr><td>A tab, with <kbd>Ctrl</kbd>+<kbd>W</kbd></td><td>Always asks first: <code>CLOSE TAB?</code>, <kbd>Enter</kbd> to close, <kbd>Esc</kbd> to cancel.</td></tr>
     <tr><td>A tab, with its <code>×</code> in the strip</td><td>Closes a one-pane tab straight away and asks first for more.</td></tr>
     <tr><td>The last tab</td><td>Asks, then ends its shells and quits: <code>“notes” is the last tab — closing it ends its shell and quits. This can’t be undone.</code></td></tr>
   </tbody>
 </table>
-<p><kbd>ctrl</kbd>+<kbd>shift</kbd>+<kbd>z</kbd> reopens the newest thing in the bay, and pressing it again walks further back. A reopened pane says where it landed: <code>back where it was</code>, <code>back in its tab, in a new seat</code> or <code>back as its own tab</code>. When a shell exits by itself, its pane is removed, and the app quits when the last pane anywhere is gone.</p>
+<p><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> reopens the newest thing in the bay, and pressing it again walks further back. A reopened pane says where it landed: <code>back where it was</code>, <code>back in its tab, in a new seat</code> or <code>back as its own tab</code>. When a shell exits by itself, its pane is removed, and the app quits when the last pane anywhere is gone.</p>
 
 <h3>The pane header</h3>
 <p>The title reads <code>▸ MODE · label</code>. The mode is <code>SHELL</code>, <code>CLAUDE</code>, <code>CODEX</code>, <code>REMOTE</code>, <code>UNKNOWN</code> or the name of the program running. The label is the name you gave the pane, or the file name when it shows a document, or the shell's own title. Double-click or right-click the title to rename it (up to 24 characters), and drag it to move the pane. Left of the title is the pane's logo; click it to pick one.</p>
@@ -62,15 +62,15 @@
 <table class="keys">
   <thead><tr><th>Click on a file path</th><th>Opens</th></tr></thead>
   <tbody>
-    <tr><td><kbd>ctrl</kbd>+<kbd>alt</kbd>+click</td><td>Beside you: the tab splits and the new pane shows the document, with focus left where you were. If a pane already shows that file, it comes forward. In a full tab the document floats over your pane instead.</td></tr>
-    <tr><td><kbd>alt</kbd>+click</td><td>In a floating square over the pane, with <code>⇲ split</code>, <code>↗ desktop</code> and <code>✕ esc</code>. A second <kbd>alt</kbd>+click on the same file turns it into a split.</td></tr>
-    <tr><td><kbd>shift</kbd> or <kbd>ctrl</kbd>+click</td><td>Any link, with your desktop's own app.</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+click</td><td>Beside you: the tab splits and the new pane shows the document, with focus left where you were. If a pane already shows that file, it comes forward. In a full tab the document floats over your pane instead.</td></tr>
+    <tr><td><kbd>Alt</kbd>+click</td><td>In a floating square over the pane, with <code>⇲ split</code>, <code>↗ desktop</code> and <code>✕ esc</code>. A second <kbd>Alt</kbd>+click on the same file turns it into a split.</td></tr>
+    <tr><td><kbd>Shift</kbd> or <kbd>Ctrl</kbd>+click</td><td>Any link, with your desktop's own app.</td></tr>
   </tbody>
 </table>
 <p>On the <code>DOC</code> face, <kbd>0</kbd> fits the page, <kbd>1</kbd> shows it at actual size, <kbd>+</kbd> and <kbd>-</kbd> zoom, the arrows pan and <kbd>PgUp</kbd> <kbd>PgDn</kbd> page. Other keys are held back so nothing types into the hidden shell. HTML is drawn by a headless Chromium; without one, the file goes to the desktop. A document pane comes back after a restart on the same page. From a script: <code>terminal-delight ctl doc here|beside &lt;path&gt;</code>, <code>ctl doc close</code>, <code>ctl doc scroll &lt;pixels&gt;</code>.</p>
 
 <h3>Sizing</h3>
-<p><kbd>ctrl</kbd>+wheel sizes whatever the pointer is over, and only that becomes the pane's own setting.</p>
+<p><kbd>Ctrl</kbd>+wheel sizes whatever the pointer is over, and only that becomes the pane's own setting.</p>
 <table>
   <thead><tr><th>Pointer over</th><th>Sizes</th><th>Range</th></tr></thead>
   <tbody>
@@ -87,11 +87,11 @@
 <table class="keys">
   <thead><tr><th>Key or gesture</th><th>Does</th></tr></thead>
   <tbody>
-    <tr><td><kbd>ctrl</kbd>+<kbd>shift</kbd>+<kbd>t</kbd>, or <code>+</code></td><td>New tab in the branch you're in, with its name box open.</td></tr>
-    <tr><td><kbd>ctrl</kbd>+<kbd>PgUp</kbd> <kbd>PgDn</kbd></td><td>Previous or next tab, wrapping.</td></tr>
-    <tr><td><kbd>ctrl</kbd>+<kbd>shift</kbd>+<kbd>PgUp</kbd> <kbd>PgDn</kbd></td><td>Move the tab one place, never out of its group.</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd>, or <code>+</code></td><td>New tab in the branch you're in, with its name box open.</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>PgUp</kbd> <kbd>PgDn</kbd></td><td>Previous or next tab, wrapping.</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>PgUp</kbd> <kbd>PgDn</kbd></td><td>Move the tab one place, never out of its group.</td></tr>
     <tr><td>double-click or right-click a tab</td><td>Rename it (up to 18 characters).</td></tr>
-    <tr><td><kbd>ctrl</kbd>+click a tab</td><td>Its tray: colour, text colour, group and project.</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+click a tab</td><td>Its tray: colour, text colour, group and project.</td></tr>
     <tr><td>drag a tab</td><td>Reorder it; past the bottom of the strip, start a new row.</td></tr>
   </tbody>
 </table>
@@ -100,7 +100,7 @@
 <h3>The top bar</h3>
 <p>From the left: the app's mark and the <b>worktree badge</b>, then the ticker or the tab strip, then the <b>agent counter</b>. Drag the bar to move the window.</p>
 <dl class="defs">
-  <dt>worktree badge</dt><dd>What the project's git worktrees are doing: <code>4 WORKTREES ✓</code>, <code>2 WORKTREES · 1 SHARED</code>, <code>⚠ 1 FOREIGN</code>, <code>✗ 1 CONFLICT</code>, <code>NO GIT</code> or <code>SCANNING</code>. A <code>◆</code> means something happened in the last fifteen minutes. Click it for the full table; <kbd>esc</kbd> closes it.</dd>
+  <dt>worktree badge</dt><dd>What the project's git worktrees are doing: <code>4 WORKTREES ✓</code>, <code>2 WORKTREES · 1 SHARED</code>, <code>⚠ 1 FOREIGN</code>, <code>✗ 1 CONFLICT</code>, <code>NO GIT</code> or <code>SCANNING</code>. A <code>◆</code> means something happened in the last fifteen minutes. Click it for the full table; <kbd>Esc</kbd> closes it.</dd>
   <dt>activity</dt><dd>Twelve bars, one per five minutes of the last hour. A quiet hour draws twelve dots.</dd>
   <dt>ticker</dt><dd>The project's git state, one sentence at a time, six seconds each. Hover to pause it. The dots below it jump to a sentence; a warning keeps its tint on its dot.</dd>
   <dt>agent counter</dt><dd><code>▶</code> working, <code>‖</code> blocked, <code>✕</code> error, <code>✓</code> finished, <code>○</code> idle, <code>?</code> unknown, each with a count. It turns amber when an agent needs you; click it for the <a href="/agent-wall">agent wall</a>.</dd>
@@ -117,7 +117,7 @@
 </ul>
 
 <h3>What would prove this wrong</h3>
-<p>If a pane you closed with <kbd>alt</kbd>+<kbd>w</kbd> comes back with <kbd>ctrl</kbd>+<kbd>shift</kbd>+<kbd>z</kbd> as a fresh shell instead of the one you left, with its history gone, the bay has failed at the only thing it promises.</p>
+<p>If a pane you closed with <kbd>Alt</kbd>+<kbd>W</kbd> comes back with <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> as a fresh shell instead of the one you left, with its history gone, the bay has failed at the only thing it promises.</p>
 </section>
 
 <ol data-sources>

@@ -19,7 +19,7 @@
   <thead><tr><th>Command</th><th>Does</th><th>Exit</th></tr></thead>
   <tbody>
     <tr><td><code>terminal-delight</code></td><td>Open a window and restore this workspace's session.</td><td></td></tr>
-    <tr><td><code>terminal-delight &lt;dir&gt;</code></td><td>Open a window whose first terminal starts in <code>&lt;dir&gt;</code>. Ignored when there is a layout to restore.</td><td></td></tr>
+    <tr><td><code>terminal-delight &lt;dir&gt;</code></td><td>Open a window whose first terminal starts in <code>&lt;dir&gt;</code>. Only without the session host (<code>TD_NO_SESSIOND=1</code>) and with no layout to restore; with the session host, the default, the directory is ignored.</td><td></td></tr>
     <tr><td><code>ctl …</code></td><td>Script a running window. See <a href="/ctl">ctl</a>.</td><td>0, 1, 2</td></tr>
     <tr><td><code>mcp [--pid &lt;N&gt;]</code></td><td>The stdio MCP relay into a running window. See <a href="/mcp">MCP server</a>.</td><td>0 at end of input; 1 no window; 2 window lost</td></tr>
     <tr><td><code>surface [file]</code></td><td>Put a work object on the calling pane's <a href="/workbench">workbench</a>, from a file or stdin. <code>--catalogue</code> prints what this build can draw; <code>--derive &lt;transcript.jsonl&gt;</code> prints what it would draw from a transcript.</td><td>0 accepted; 2 nothing usable; 3 not inside a pane</td></tr>

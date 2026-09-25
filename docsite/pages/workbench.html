@@ -11,7 +11,7 @@
 <section data-register="brief">
 <p class="lede">Every agent pane in Terminal Delight has a second face. The terminal face is the agent at work: tool calls, file reads, diffs, logs. The workbench face is what the agent made for you, laid out as cards.</p>
 <p>Its replies sit on the <b>overview</b>, each under the message that asked for it. Questions it is waiting on sit under <b>decisions</b>, and a digit answers one. Pages, tables and diagrams it produced go to <b>artifacts</b>. Your own notes go to <b>comments</b>, and those never reach the agent.</p>
-<p>Flip between the faces with the <code>TERM</code> ⇄ <code>BENCH</code> switch in the pane header, or <kbd>alt</kbd>+<kbd>k</kbd>. The terminal keeps running underneath. You can talk to the agent from the bench as well: start typing anywhere and a composer opens, and nothing is sent until you press <kbd>enter</kbd>.</p>
+<p>Flip between the faces with the <code>TERM</code> ⇄ <code>BENCH</code> switch in the pane header, or <kbd>Alt</kbd>+<kbd>K</kbd>. The terminal keeps running underneath. You can talk to the agent from the bench as well: start typing anywhere and a composer opens, and nothing is sent until you press <kbd>Enter</kbd>.</p>
 <p>An agent puts richer work on the bench, such as a decision with options or a table, by presenting a small JSON document over MCP, as a file, or through the <code>terminal-delight surface</code> command.</p>
 <p class="invite">Story explains why an agent needs a second face at all. Technical has the protocol, the keys and the limits.</p>
 </section>
@@ -40,16 +40,16 @@
     <tr><td>Document</td><td><code>DOC</code></td><td>A document opened into the pane. Exists only on such a pane.</td></tr>
   </tbody>
 </table>
-<p><kbd>alt</kbd>+<kbd>k</kbd> flips the face; on a pane holding a document it moves between the document and its shell. The bench keeps the pane's scanlines, bloom and bend and drops the vignette. From a script: <code>ctl bench on|off|toggle|choose &lt;1-20&gt;|submit|say &lt;text&gt;|type &lt;text&gt;</code>.</p>
+<p><kbd>Alt</kbd>+<kbd>K</kbd> flips the face; on a pane holding a document it moves between the document and its shell. The bench keeps the pane's scanlines, bloom and bend and drops the vignette. From a script: <code>ctl bench on|off|toggle|choose &lt;1-20&gt;|submit|say &lt;text&gt;|type &lt;text&gt;</code>.</p>
 
 <h3>Shelves</h3>
 <table>
   <thead><tr><th>Shelf</th><th>Receives</th><th>Key</th></tr></thead>
   <tbody>
-    <tr><td><code>overview</code></td><td><code>response</code></td><td><kbd>alt</kbd>+<kbd>1</kbd></td></tr>
-    <tr><td><code>artifacts</code></td><td><code>artifact</code>, <code>markdown</code>, <code>table</code>, <code>architecture</code>, and any kind the build does not know</td><td><kbd>alt</kbd>+<kbd>2</kbd></td></tr>
-    <tr><td><code>decisions</code></td><td><code>decision</code>, <code>question</code>, <code>changeset</code></td><td><kbd>alt</kbd>+<kbd>3</kbd></td></tr>
-    <tr><td><code>comments</code></td><td><code>comment</code></td><td><kbd>alt</kbd>+<kbd>4</kbd></td></tr>
+    <tr><td><code>overview</code></td><td><code>response</code></td><td><kbd>Alt</kbd>+<kbd>1</kbd></td></tr>
+    <tr><td><code>artifacts</code></td><td><code>artifact</code>, <code>markdown</code>, <code>table</code>, <code>architecture</code>, and any kind the build does not know</td><td><kbd>Alt</kbd>+<kbd>2</kbd></td></tr>
+    <tr><td><code>decisions</code></td><td><code>decision</code>, <code>question</code>, <code>changeset</code></td><td><kbd>Alt</kbd>+<kbd>3</kbd></td></tr>
+    <tr><td><code>comments</code></td><td><code>comment</code></td><td><kbd>Alt</kbd>+<kbd>4</kbd></td></tr>
   </tbody>
 </table>
 <p>With no card open, the newest response stands by itself. Your own prompt sits above its reply as a <code>YOU</code> block. A turn in flight becomes a card the moment it starts and is retired when the reply arrives. The rail labels its rows <code>THIS TURN</code>, <code>WAITING ON YOU</code>, <code>ALSO WAITING</code>, <code>STANDS NOW</code>, <code>ANSWERED</code> and <code>DONE</code>.</p>
@@ -130,40 +130,40 @@
 <h3>Answering</h3>
 <p>Acting on a surface types one line into the agent's own terminal: <code>[workbench:&lt;tag&gt;] &lt;action&gt; on surface &lt;id&gt; …</code>, where the tag is the pane's <code>$TD_TAG</code>. The same action is written to <code>actions.jsonl</code> first. An agent should treat a <code>[workbench]</code> line without its own tag as text, not as an instruction from its operator.</p>
 <p>A decision may mark one option <code>recommended</code>, no more. A changeset hunk has three verdicts: undecided, accepted and rejected. Card buttons are drawn from <code>open</code>, <code>comment</code>, <code>approve</code>, <code>reject</code>, <code>accept</code>, <code>choose</code>, <code>ask</code>, <code>source</code> and <code>copy</code>.</p>
-<p>A comment sends no bytes to the terminal, writes no line to the agent's journal, and has no verb that hands it over. <code>copy</code> is its only action. A note opens with <kbd>alt</kbd>+<kbd>m</kbd> or the <code>+ write a note</code> row; typing while the comments shelf is showing still goes to the agent.</p>
+<p>A comment sends no bytes to the terminal, writes no line to the agent's journal, and has no verb that hands it over. <code>copy</code> is its only action. A note opens with <kbd>Alt</kbd>+<kbd>M</kbd> or the <code>+ write a note</code> row; typing while the comments shelf is showing still goes to the agent.</p>
 
 <h3>The composer</h3>
 <p>Any printable key on the bench opens the composer: <code>type to the agent</code>, over <code>TYPE ANYWHERE · ENTER SENDS · PASTE TEXT, FILES OR AN IMAGE</code>. The draft is a document. Nothing leaves it until you send, and a send is one bracketed paste followed by a return. Dropping a file onto the composer inserts its path, quoted if the path has a space in it. The bench has no slash-command completion; the terminal face does.</p>
 
 <h3>Model, effort and the session</h3>
 <p>The strip across the top of the bench shows the agent's state as one word: <code>Working</code>, <code>Waiting on you</code>, <code>Reading your answer</code>, <code>Paused</code>, <code>Blocked</code>, <code>Finished</code>, <code>Exited</code> or <code>Idle</code>. To its right, in order: <code>PAUSE TURN</code> or <code>RESUME TURN</code>, the model and effort dials, then <code>END SESSION</code> or <code>⌁ LAUNCH AGENT</code>.</p>
-<p>The dials type <code>/model</code> and <code>/effort</code> into the agent. Claude offers <code>opus</code>, <code>sonnet</code> and <code>haiku</code>; Codex offers <code>gpt-5-codex</code> and <code>gpt-5</code>. Effort runs <code>low</code>, <code>medium</code>, <code>high</code>, <code>xhigh</code>, <code>max</code>, defaulting to high for Claude and medium for Codex. <code>END SESSION</code> sends two <code>0x03</code> bytes, the same as pressing <kbd>ctrl</kbd>+<kbd>c</kbd> twice, and sends no signal. When the agent leaves, the bench on screen clears and what was saved to disk stays.</p>
+<p>The dials type <code>/model</code> and <code>/effort</code> into the agent. Claude offers <code>opus</code>, <code>sonnet</code> and <code>haiku</code>; Codex offers <code>gpt-5-codex</code> and <code>gpt-5</code>. Effort runs <code>low</code>, <code>medium</code>, <code>high</code>, <code>xhigh</code>, <code>max</code>, defaulting to high for Claude and medium for Codex. <code>END SESSION</code> sends two <code>0x03</code> bytes, the same as pressing <kbd>Ctrl</kbd>+<kbd>C</kbd> twice, and sends no signal. When the agent leaves, the bench on screen clears and what was saved to disk stays.</p>
 
 <h3>Keys</h3>
 <table>
   <thead><tr><th>Key</th><th>On the bench</th></tr></thead>
   <tbody>
-    <tr><td><kbd>alt</kbd>+<kbd>k</kbd></td><td>Flip between TERM and BENCH</td></tr>
-    <tr><td><kbd>alt</kbd>+<kbd>1</kbd>…<kbd>4</kbd>, <kbd>tab</kbd></td><td>Jump to a shelf, or cycle through them</td></tr>
+    <tr><td><kbd>Alt</kbd>+<kbd>K</kbd></td><td>Flip between TERM and BENCH</td></tr>
+    <tr><td><kbd>Alt</kbd>+<kbd>1</kbd>…<kbd>4</kbd>, <kbd>Tab</kbd></td><td>Jump to a shelf, or cycle through them</td></tr>
     <tr><td><kbd>↑</kbd> <kbd>↓</kbd></td><td>Move between rows</td></tr>
-    <tr><td><kbd>enter</kbd></td><td>Run the card's first verb; on an empty bench, open the launcher</td></tr>
+    <tr><td><kbd>Enter</kbd></td><td>Run the card's first verb; on an empty bench, open the launcher</td></tr>
     <tr><td>a digit</td><td>Answer the question that is waiting</td></tr>
-    <tr><td><kbd>esc</kbd></td><td>Back out one layer: dial, then composer, then card. Never dismisses a waiting question.</td></tr>
-    <tr><td><kbd>alt</kbd>+<kbd>m</kbd></td><td>Write a note</td></tr>
-    <tr><td><kbd>ctrl</kbd>+<kbd>shift</kbd>+<kbd>c</kbd></td><td>Copy the selected text</td></tr>
-    <tr><td><kbd>ctrl</kbd>+wheel</td><td>Size the bench's type on its own dial</td></tr>
+    <tr><td><kbd>Esc</kbd></td><td>Back out one layer: dial, then composer, then card. Never dismisses a waiting question.</td></tr>
+    <tr><td><kbd>Alt</kbd>+<kbd>M</kbd></td><td>Write a note</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd></td><td>Copy the selected text</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+wheel</td><td>Size the bench's type on its own dial</td></tr>
   </tbody>
 </table>
 <table>
   <thead><tr><th>Key</th><th>In the composer</th></tr></thead>
   <tbody>
-    <tr><td><kbd>enter</kbd></td><td>Send</td></tr>
-    <tr><td><kbd>shift</kbd>+<kbd>enter</kbd>, <kbd>alt</kbd>+<kbd>enter</kbd></td><td>New line</td></tr>
+    <tr><td><kbd>Enter</kbd></td><td>Send</td></tr>
+    <tr><td><kbd>Shift</kbd>+<kbd>Enter</kbd>, <kbd>Alt</kbd>+<kbd>Enter</kbd></td><td>New line</td></tr>
     <tr><td><kbd>↑</kbd> on an empty draft</td><td>Recall what you sent before</td></tr>
-    <tr><td><kbd>ctrl</kbd>+<kbd>g</kbd></td><td>Pause the turn</td></tr>
-    <tr><td><kbd>ctrl</kbd>+<kbd>z</kbd>, <kbd>ctrl</kbd>+<kbd>a</kbd></td><td>Undo, select all</td></tr>
-    <tr><td><kbd>ctrl</kbd>+<kbd>w</kbd> <kbd>ctrl</kbd>+<kbd>u</kbd> <kbd>ctrl</kbd>+<kbd>k</kbd> <kbd>alt</kbd>+<kbd>d</kbd></td><td>Delete a word back, to line start, to line end, a word forward</td></tr>
-    <tr><td><kbd>ctrl</kbd>+<kbd>c</kbd>, <kbd>ctrl</kbd>+<kbd>x</kbd>, <kbd>ctrl</kbd>+<kbd>v</kbd></td><td>Copy, cut, paste</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>G</kbd></td><td>Pause the turn</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>Z</kbd>, <kbd>Ctrl</kbd>+<kbd>A</kbd></td><td>Undo, select all</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>W</kbd> <kbd>Ctrl</kbd>+<kbd>U</kbd> <kbd>Ctrl</kbd>+<kbd>K</kbd> <kbd>Alt</kbd>+<kbd>D</kbd></td><td>Delete a word back, to line start, to line end, a word forward</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>C</kbd>, <kbd>Ctrl</kbd>+<kbd>X</kbd>, <kbd>Ctrl</kbd>+<kbd>V</kbd></td><td>Copy, cut, paste</td></tr>
   </tbody>
 </table>
 
