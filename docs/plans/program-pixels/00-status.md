@@ -20,9 +20,14 @@
 - ratatui-image and viu ask with Kitty queries and fall back to half-blocks; chafa never asks and reads `TERM=alacritty`; mpv is told by a flag. Of chafa, timg and ratatui-image, only ratatui-image uses Unicode placeholders.
 - A hosted pane takes in video-sized Kitty frames at 110–149 MB/s (discarded today), against mpv's 97 MB/s at 1200×675 and 30 fps; the window's copy was never dropped in the runs that watched for it.
 
+## Open follow-ups (2026-09-24)
+
+- #750 — `kitten icat` hangs ten seconds in every pane because the device-attributes reply is too short for it (step 0 of the build closes it).
+- #751 — two comments on the pane read path describe code that no longer exists (`host.rs:59-61`, `socketpty.rs:23-29`).
+
 ## Notes for a fresh session
 
-- Worktree `~/Work/td-program-pixels`, branch `plan/program-pixels`, cut from main at 81ec545.
+- The brief and this folder are in PR #752. Worktree `~/Work/td-program-pixels`, branch `plan/program-pixels`, cut from main at 81ec545.
 - The brief is assembled: edit `reports/_program_pixels_body.html` and `reports/_program_pixels.css`, then run `python3 reports/_assemble_program_pixels.py`. The notes system is read from the decision-brief skill at build time.
 - The narrative gate was run on the draft and the final: arc `journey`, opens cold 0.71.
 - Parker's annotated copy will come back as a download; read its notes with the same island parser used for the morning brief.
