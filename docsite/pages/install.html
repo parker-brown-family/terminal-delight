@@ -30,7 +30,7 @@ chmod +x terminal-delight-x86_64.AppImage
     <tr><td>Display</td><td>X11 or Wayland.</td></tr>
     <tr><td>Graphics</td><td>A working Vulkan or OpenGL driver, taken from your system. The renderer is wgpu, which targets NVIDIA, AMD and Intel. At startup the app reports the GPU and driver it found.</td></tr>
     <tr><td>Fonts</td><td>Nothing to install. It walks an explicit monospace fallback chain and warns at startup if the default font is missing.</td></tr>
-    <tr><td>Sound (optional)</td><td><code>ffplay</code>, from ffmpeg, plays the bell when an agent finishes. Without it the bell stays silent. The default sounds are bundled and copied into place on first run.</td></tr>
+    <tr><td>Sound (optional)</td><td><code>ffplay</code>, from ffmpeg, plays a short built-in ping when an agent finishes in a pane you aren't watching; PipeWire's <code>pw-play</code> is tried without it. With neither, the ping is silent and nothing else changes.</td></tr>
   </tbody>
 </table>
 <p>Wider testing on AMD, Intel, Wayland and fractional scaling is open work for 1.0, and so is a Flatpak.<sup><a href="#s2">2</a></sup></p>

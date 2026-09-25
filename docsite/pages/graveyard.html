@@ -1,0 +1,42 @@
+<script type="application/json" data-page>
+{
+  "title": "Graveyard",
+  "description": "The graveyard lists Claude Code and Codex conversations that are saved on disk but not running in any pane, after a crash, a reboot or a closed terminal. Click one to resume it in a new tab.",
+  "updated": "2026-09-25",
+  "trueOf": "main at d7cf383",
+  "summary": "Resume agents that aren't running anywhere"
+}
+</script>
+
+<section data-register="brief">
+<p class="lede">Claude Code and Codex save every conversation to disk. When the terminal an agent was running in goes away (a crash, a reboot, a window you closed), the conversation is still there, just not running. The graveyard lists those.</p>
+<p>Click <code>🪦</code> in the window's footer, or <b>Session restore</b> in the <code>…</code> menu. Each row says what the conversation was about, where it ran and how long ago. Click one and it resumes in a new tab, in its own directory, where it left off.</p>
+<p>Something you closed a minute ago is probably in the <a href="/left-bar#technical-the-bay">bay</a> instead, still running: <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> brings it back.</p>
+<p class="invite">Technical has what counts as dead and what a row shows.</p>
+</section>
+
+<section data-register="technical" data-headline="Dead agents">
+<h3>What's listed</h3>
+<p>Every saved conversation that isn't the one any open agent pane would resume:</p>
+<ul>
+  <li>Claude Code: <code>~/.claude/projects/&lt;project&gt;/&lt;id&gt;.jsonl</code></li>
+  <li>Codex: <code>~/.codex/sessions/**/rollout-*.jsonl</code></li>
+</ul>
+<p>Newest first, up to 80 each time it opens. Ids that aren't plain letters, digits, <code>-</code> and <code>_</code> are left out, since they would be typed into a shell. The graveyard only reads these files; it never changes one.</p>
+
+<h3>The panel</h3>
+<p>The header reads <code>🪦 DEAD AGENTS</code>, then how many are Claude and how many Codex, the card-size slider it shares with the <a href="/agent-wall">agent wall</a>, and <code>&lt;n&gt; recoverable</code>. That count is conversations found here; the same words on the bay count what's held there. Chips filter by project: <code>ALL</code>, then one per directory name. Rows are grouped by project with <code>&lt;n&gt; dead</code> on each group.</p>
+<p>A row's title is the conversation's own summary, or failing that its first message, cut to 96 characters; with neither, <code>CLAUDE session</code>. Under it:</p>
+<pre><code>~/project · 3h ago · 7f3a91c2 · 412 KB</code></pre>
+<p>Directory, age (<code>s</code>, <code>m</code>, <code>h</code> or <code>d</code>, one unit), the first eight characters of the conversation id, and size. With nothing to list: <code>No recoverable agents — every saved session is either live or already gone.</code> Click outside to close.</p>
+
+<h3>Resurrect</h3>
+<p>Clicking a row, or its <code>RESURRECT ⏎</code>, opens a new tab in the row's directory, in the branch of the left bar you're in, and types <code>claude --resume &lt;id&gt;</code> or <code>codex resume &lt;id&gt;</code>. If the session is already running that conversation somewhere, it isn't started twice.</p>
+
+<h3>Harvest</h3>
+<p>With the context-delight <a href="/plugins">plugin</a> installed, each row also has <code>⬇ .cdx</code>, which packs the conversation into a portable file in <code>~/.local/share/context-delight/</code>.</p>
+</section>
+
+<ol data-sources>
+  <li id="s1">The scan: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/recover.rs">recover.rs</a>; the panel and resurrect: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/main.rs">main.rs</a>.</li>
+</ol>

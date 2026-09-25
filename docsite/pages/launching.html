@@ -1,0 +1,78 @@
+<script type="application/json" data-page>
+{
+  "title": "Launching an agent",
+  "description": "The LAUNCH AGENT panel starts Claude Code or Codex in a project without typing a command line: pick the project, harness, model, effort and how much it may do unasked, and read the exact command before it runs.",
+  "updated": "2026-09-25",
+  "trueOf": "main at d7cf383",
+  "summary": "Start Claude Code or Codex from a panel"
+}
+</script>
+
+<section data-register="brief">
+<p class="lede">On a pane with nothing on its <a href="/workbench">workbench</a>, press <b>⌁ LAUNCH AGENT</b>, or just <kbd>↵</kbd>. A panel opens with your projects listed, newest first, and the one you're in already picked.</p>
+<p>Type to filter, then choose Claude Code or Codex, a model, an effort level, and how far the agent may go without asking: <b>this repo</b>, <b>this machine</b> or <b>anywhere</b>. The bottom of the panel shows the whole command it will run. <kbd>↵</kbd> runs it.</p>
+<p>If the pane you started from is sitting at a shell prompt, the agent starts right there. If something is already running in it, you get a new tab instead, next to the one you're in. The last line of the panel tells you which before you press <kbd>↵</kbd>.</p>
+<p class="invite">Technical has the keys, the exact commands and where the defaults live.</p>
+</section>
+
+<section data-register="technical" data-headline="The panel">
+<h3>Opening it</h3>
+<ul>
+  <li>The <code>⌁ LAUNCH AGENT</code> button under <code>NOTHING ON THE WORKBENCH</code>.</li>
+  <li><kbd>↵</kbd> on a workbench with no agent and no card open.</li>
+  <li>When a pane's agent has ended, the verb at the end of its bench strip changes from <code>END SESSION</code> to <code>LAUNCH AGENT</code>.</li>
+</ul>
+
+<h3>Keys</h3>
+<table class="keys">
+  <tbody>
+    <tr><td>typing</td><td>filter projects</td></tr>
+    <tr><td><kbd>↑</kbd> <kbd>↓</kbd></td><td>pick a project</td></tr>
+    <tr><td><kbd>Tab</kbd></td><td>next model</td></tr>
+    <tr><td><kbd>⇧</kbd>+<kbd>Tab</kbd></td><td>switch harness</td></tr>
+    <tr><td><kbd>←</kbd> <kbd>→</kbd></td><td>effort</td></tr>
+    <tr><td>click a chip</td><td>reach</td></tr>
+    <tr><td><kbd>↵</kbd></td><td>launch</td></tr>
+    <tr><td><kbd>Esc</kbd></td><td>close</td></tr>
+  </tbody>
+</table>
+
+<h3>Projects</h3>
+<p>Directories one level deep under a fixed set of folders, your home directory among them, newest-modified first, with hidden directories skipped. <code>◆</code> marks a git repository. Matches rank by exact name, then prefix, then anywhere in the name, then anywhere in the path; a repository beats a plain directory at the same rank. Up to 40 rows show; the filter reaches the rest. With nothing matching: <code>nothing matches — ⌫ to widen</code>.</p>
+
+<h3>Choices</h3>
+<table>
+  <thead><tr><th></th><th><code>claude</code></th><th><code>codex</code></th></tr></thead>
+  <tbody>
+    <tr><td>models</td><td><code>opus</code>, <code>sonnet</code>, <code>haiku</code></td><td><code>gpt-5-codex</code>, <code>gpt-5</code></td></tr>
+    <tr><td>effort</td><td><code>low</code> <code>medium</code> <code>high</code> <code>xhigh</code> <code>max</code>; default <code>high</code></td><td><code>low</code> <code>medium</code> <code>high</code> <code>xhigh</code>; default <code>medium</code></td></tr>
+    <tr><td><code>this repo</code></td><td><code>--permission-mode acceptEdits</code></td><td><code>--sandbox workspace-write</code></td></tr>
+    <tr><td><code>this machine</code></td><td><code>--permission-mode auto</code></td><td><code>--sandbox danger-full-access</code></td></tr>
+    <tr><td><code>anywhere</code></td><td>no flag</td><td>no flag</td></tr>
+  </tbody>
+</table>
+<p>Switching harness moves the effort to the nearest level the other one has, so <code>max</code> becomes <code>xhigh</code> on Codex. The panel always opens on <code>anywhere</code>.</p>
+
+<h3>The command</h3>
+<pre><code>claude --model &lt;model&gt; --effort &lt;effort&gt; [reach] --append-system-prompt "$(cat '&lt;briefing&gt;')"
+codex --model &lt;model&gt; [reach] -c model_reasoning_effort=&lt;effort&gt;</code></pre>
+<p>The briefing is the workbench's instructions to the agent, written owner-only to <code>briefing.txt</code> in the session's state folder. Codex takes no briefing flag and reads <code>AGENTS.md</code> instead.</p>
+
+<h3>Where it lands</h3>
+<p>If the pane you opened the panel from is known to be at an idle prompt, Terminal Delight types into it: <kbd>Ctrl</kbd>+<kbd>U</kbd> to clear anything half-typed, <code>cd</code> to the project if the pane is somewhere else, then the command. If the pane is busy, or hasn't been read yet, a new tab opens in the same branch of the <a href="/left-bar">left bar</a>. The hint ends in <code>↵ starts in this pane</code> or <code>↵ opens a new tab</code>. The pane keeps whichever face it had.</p>
+<p>Each launch is recorded in <code>launches.jsonl</code> in the session's state folder: harness, model, effort, reach, directory, command and where it landed.</p>
+
+<h3>Defaults</h3>
+<p>Open <code>Σ usage</code>, unfold <b>LAUNCH AGENT CONFIG</b> and press a chip. Each row reads <code>chosen</code> or <code>unset</code>; pressing a lit chip clears it. That writes <code>~/.config/terminal-delight/launch.toml</code> at once:</p>
+<pre><code>harness = "codex"
+model = "gpt-5"
+effort = "high"</code></pre>
+<p>Every key is optional. A missing file, a word neither harness knows, or a model from the other harness all read as unset, and unset means Claude, its first model and its default effort. Reach is never stored.</p>
+
+<h3>After it starts</h3>
+<p>The bench strip has model and effort dials. They type the harness's own <code>/model</code> and <code>/effort</code> commands and keep whatever you had in the composer. The launcher only starts agents; bringing one back is the job of <a href="/sessions">session restore</a> and the <a href="/graveyard">graveyard</a>.</p>
+</section>
+
+<ol data-sources>
+  <li id="s1">Projects, harnesses and the command line: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/launcher.rs">launcher.rs</a>; defaults: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/launchpref.rs">launchpref.rs</a>; the panel: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/main.rs">main.rs</a>.</li>
+</ol>
