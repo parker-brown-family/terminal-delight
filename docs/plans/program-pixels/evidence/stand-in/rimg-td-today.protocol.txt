@@ -1,0 +1,1 @@
+protocol=Halfblocks font_size=FontSize { width: 10, height: 22 }

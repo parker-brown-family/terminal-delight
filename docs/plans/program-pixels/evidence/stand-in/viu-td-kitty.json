@@ -1,0 +1,73 @@
+{
+ "identity": "td-kitty",
+ "cmd": [
+  "/tmp/claude-1000/-home-parker-Work-terminal-delight/2aae45b7-7163-4590-8990-5cc58ef8f92f/scratchpad/cargo/bin/viu",
+  "-w",
+  "60",
+  "test.png"
+ ],
+ "bytes_out": 206,
+ "secs": 0.01,
+ "placeholder_cells_U10EEEE": 0,
+ "apc_payload_bytes": 100,
+ "apc_a_T_count": 1,
+ "apc_keys": {
+  "s=*": 3,
+  "v=*": 3,
+  "i=*": 2,
+  "a=q": 2,
+  "t=t": 2,
+  "t=d": 1,
+  "f=24": 1,
+  "f=32": 1,
+  "c=*": 1,
+  "r=*": 1,
+  "a=T": 1
+ },
+ "seq_counts": {
+  "CSI c": 1,
+  "CSI nn": 1
+ },
+ "events": [
+  {
+   "t": 0.002,
+   "apc": "i=31,s=1,v=1,a=q,t=d,f=24",
+   "payload": 4
+  },
+  {
+   "t": 0.002,
+   "reply": "\u001b_Gi=31;OK\u001b\\"
+  },
+  {
+   "t": 0.003,
+   "q": "DA1"
+  },
+  {
+   "t": 0.003,
+   "reply": "\u001b[?6c"
+  },
+  {
+   "t": 0.003,
+   "apc": "i=31,s=1,v=1,a=q,t=t",
+   "payload": 48
+  },
+  {
+   "t": 0.003,
+   "reply": "\u001b_Gi=31;OK\u001b\\"
+  },
+  {
+   "t": 0.007,
+   "apc": "f=32,s=640,v=400,c=60,r=18,a=T,t=t",
+   "payload": 48
+  },
+  {
+   "t": 0.007,
+   "q": "DSR5"
+  },
+  {
+   "t": 0.007,
+   "reply": "\u001b[0n"
+  }
+ ],
+ "text": "\n"
+}
