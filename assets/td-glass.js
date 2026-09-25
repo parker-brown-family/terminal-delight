@@ -32,6 +32,69 @@
    It runs only with the tube on, in glass, on a pane at least 600px wide,
    with WebGL2. Anywhere else td-shell.js's flat glass overlay stands in.
    ========================================================================== */
+/* ---------------------------------------------------------------- TD_SNAP
+   Drawing a piece of our own page into an image, shared by the tube below
+   and by anything else that bends part of the page (assets/td-panes.js). */
+(function () {
+  'use strict';
+  var root = document.documentElement, cssPromise = null;
+
+  function toDataUrl(url) {
+    return fetch(url).then(function (r) { return r.arrayBuffer(); }).then(function (buf) {
+      var bytes = new Uint8Array(buf), bin = '';
+      for (var i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+      return 'data:font/woff2;base64,' + btoa(bin);
+    });
+  }
+
+  /* Every stylesheet on the page, once, with the selectors that address the
+     document root pointed at the snapshot's wrapper instead, :hover turned
+     into a class the snapshot can set, and the woff2 files inlined. */
+  function css() {
+    if (cssPromise) return cssPromise;
+    var links = Array.prototype.filter.call(document.querySelectorAll('link[rel="stylesheet"]'), function (l) { return l.href.indexOf(location.origin) === 0; });
+    cssPromise = Promise.all(links.map(function (l) { return fetch(l.href).then(function (r) { return r.text(); }); })).then(function (parts) {
+      document.querySelectorAll('style').forEach(function (s) { parts.push(s.textContent); });
+      var text = parts.join('\n');
+      var fonts = {}; text.replace(/url\(\s*['"]?([^'")]+\.woff2)['"]?\s*\)/g, function (_, u) { fonts[u] = true; return _; });
+      return Promise.all(Object.keys(fonts).map(function (u) { return toDataUrl(new URL(u, location.href).href).then(function (d) { fonts[u] = d; }); })).then(function () {
+        text = text.replace(/url\(\s*['"]?([^'")]+\.woff2)['"]?\s*\)/g, function (_, u) { return 'url(' + fonts[u] + ')'; });
+        text = text.replace(/:root/g, '.snap-root')
+                   .replace(/(^|[\s,}>(])(html|body)(?=[\s,{.:\[>)])/g, '$1.snap-root')
+                   .replace(/:hover/g, '.snap-hover');
+        /* the tube is laid out as a plain block of its full height here */
+        text += '\n.snap-root #tube{position:static!important;overflow:visible!important;height:auto!important;filter:none!important;scroll-behavior:auto!important}';
+        return text.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+      });
+    });
+    return cssPromise;
+  }
+
+  /* One element, at its own laid-out size, as an image. Its outer margin is
+     dropped, so the image starts at its border box. */
+  function element(el) {
+    var W = el.offsetWidth, H = el.offsetHeight;
+    return css().then(function (text) {
+      var clone = el.cloneNode(true);
+      clone.style.margin = '0';
+      var html = new XMLSerializer().serializeToString(clone).replace(/<!--[\s\S]*?-->/g, '');
+      var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + W + '" height="' + H + '">' +
+        '<foreignObject x="0" y="0" width="' + W + '" height="' + H + '">' +
+        '<div xmlns="http://www.w3.org/1999/xhtml" class="snap-root" data-theme="' + root.dataset.theme + '" data-crt="' + root.dataset.crt + '"' +
+        ' style="margin:0;width:' + W + 'px;height:' + H + 'px;overflow:hidden;background:none">' +
+        '<style>' + text + '</style>' + html + '</div></foreignObject></svg>';
+      return new Promise(function (ok, no) {
+        var img = new Image();
+        img.onload = function () { ok({ img: img, w: W, h: H }); };
+        img.onerror = function () { no(new Error('the element snapshot did not load')); };
+        img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+      });
+    });
+  }
+
+  window.TD_SNAP = { css: css, element: element };
+})();
+
 (function () {
   'use strict';
 
@@ -49,7 +112,7 @@
   var cv = null, gl = null, tex = null, U = {}, MAX = 0, scene = null;
   var total = 1, texScale = 1, gen = 0, busy = false, again = false, live = false, failed = false, raf = 0, timer = 0;
   var islandBuf = null;
-  var hover = null, forwarding = false, cssPromise = null;
+  var hover = null, forwarding = false;
 
   function wanted() {
     return !failed && root.dataset.crt === 'on' && root.dataset.theme !== 'paper' && tube.clientWidth >= MIN_WIDTH;
@@ -186,38 +249,7 @@
 
   /* ---------------------------------------------------------- snapshot */
 
-  function toDataUrl(url) {
-    return fetch(url).then(function (r) { return r.arrayBuffer(); }).then(function (buf) {
-      var bytes = new Uint8Array(buf), bin = '';
-      for (var i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
-      return 'data:font/woff2;base64,' + btoa(bin);
-    });
-  }
-
-  /* Every stylesheet on the page, once, with the selectors that address the
-     document root pointed at the snapshot's wrapper instead, :hover turned
-     into a class the snapshot can set, and the woff2 files inlined. */
-  function pageCss() {
-    if (cssPromise) return cssPromise;
-    var parts = [];
-    var links = Array.prototype.filter.call(document.querySelectorAll('link[rel="stylesheet"]'), function (l) { return l.href.indexOf(location.origin) === 0; });
-    cssPromise = Promise.all(links.map(function (l) { return fetch(l.href).then(function (r) { return r.text(); }); })).then(function (texts) {
-      parts = texts;
-      document.querySelectorAll('style').forEach(function (s) { parts.push(s.textContent); });
-      var css = parts.join('\n');
-      var fonts = {}; css.replace(/url\(\s*['"]?([^'")]+\.woff2)['"]?\s*\)/g, function (_, u) { fonts[u] = true; return _; });
-      return Promise.all(Object.keys(fonts).map(function (u) { return toDataUrl(new URL(u, location.href).href).then(function (d) { fonts[u] = d; }); })).then(function () {
-        css = css.replace(/url\(\s*['"]?([^'")]+\.woff2)['"]?\s*\)/g, function (_, u) { return 'url(' + fonts[u] + ')'; });
-        css = css.replace(/:root/g, '.snap-root')
-                 .replace(/(^|[\s,}>(])(html|body)(?=[\s,{.:\[>)])/g, '$1.snap-root')
-                 .replace(/:hover/g, '.snap-hover');
-        /* the tube is laid out as a plain block of its full height here */
-        css += '\n.snap-root #tube{position:static!important;overflow:visible!important;height:auto!important;filter:none!important;scroll-behavior:auto!important}';
-        return css.replace(/&/g, '&amp;').replace(/</g, '&lt;');
-      });
-    });
-    return cssPromise;
-  }
+  var pageCss = window.TD_SNAP.css;
 
   function pathTo(el) {
     var p = [];

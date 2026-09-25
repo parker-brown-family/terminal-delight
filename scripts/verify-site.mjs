@@ -198,6 +198,39 @@ for (const [path, name] of [['/info', 'info'], ['/docsite/', 'docs-index'], ['/d
   await ctx.close();
 }
 
+// the hero window: each pane bent on its own (assets/td-panes.js)
+{
+  const { ctx, page, errors } = await open('/info', { prefs: { theme: 'glass', crt: 'off' } });
+  const drawn = await page.waitForFunction(() => { const c = document.querySelector('canvas.pane-warp'); return c && !c.hidden; }, null, { timeout: 20000 }).then(() => true, () => false);
+  ok('hero: the pane-warped window is drawn', drawn);
+  /* Read the canvas back: just inside the focused pane's corner the bent
+     glass has pulled the content away, so it is black; the pane's centre
+     carries content. The flat HTML has the pane background in both. */
+  const px = await page.evaluate(() => {
+    const cv = document.querySelector('canvas.pane-warp'), win = document.getElementById('win');
+    const body = win.querySelector('[data-focus]').getBoundingClientRect(), box = win.getBoundingClientRect();
+    const s = cv.width / box.width, c2 = document.createElement('canvas');
+    c2.width = cv.width; c2.height = cv.height;
+    const g = c2.getContext('2d'); g.drawImage(cv, 0, 0);
+    const at = (x, y) => Array.from(g.getImageData(Math.round((x - box.left) * s), Math.round((y - box.top) * s), 1, 1).data);
+    return { corner: at(body.left + 3, body.top + 3), centre: at(body.left + body.width / 2, body.top + body.height / 2), panes: win.querySelectorAll('[data-warp]').length };
+  });
+  ok('hero: inside a pane corner the glass is black', px.corner[3] === 255 && px.corner[0] + px.corner[1] + px.corner[2] < 12, JSON.stringify(px.corner));
+  ok('hero: three panes are marked to bend', px.panes === 3, String(px.panes));
+  await page.click('.wear button[data-wear="deco"]');
+  const redrawn = await page.waitForFunction(() => (document.querySelector('canvas.pane-warp').__tdFrame || 0) >= 2, null, { timeout: 10000 }).then(() => true, () => false);
+  ok('hero: a theme chip redraws the bent window', redrawn);
+  ok('hero: clean console', errors.length === 0, errors.join(' | '));
+  await ctx.close();
+}
+{
+  const { ctx, page } = await open('/info', { prefs: { theme: 'glass', crt: 'on' } });
+  await tubeLive(page);
+  const up = await page.waitForFunction(() => /:\d+$/.test((document.querySelector('canvas.pane-warp') || {}).__tdUploaded || ''), null, { timeout: 20000 }).then(() => true, () => false);
+  ok('hero: under the tube the bent window reaches the curved page', up);
+  await ctx.close();
+}
+
 // registers: deep link, radios, copy scoped to one register
 {
   const { ctx, page } = await open('/docsite/workbench.html#story', { prefs: { theme: 'glass', crt: 'off' } });

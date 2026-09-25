@@ -86,7 +86,6 @@
     .w-dots { display: flex; align-items: center; gap: 4px; }
     .w-dots i { width: 5px; height: 5px; border-radius: 50%; background: color-mix(in srgb, var(--w-text) 25%, transparent); }
     .w-dots i.r { background: var(--w-red); } .w-dots i.pill { width: 14px; border-radius: 3px; background: var(--w-warn); }
-    .w-branch { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--w-red); }
     .w-count { margin-left: auto; display: inline-flex; gap: 7px; padding: 4px 8px; border: 1px solid var(--w-faint); border-radius: 5px; font: 600 9.5px/1 var(--mono); }
     .w-count .a { color: var(--w-warn); } .w-count .ok { color: var(--w-green); } .w-count .q { opacity: .5; }
 
@@ -171,42 +170,51 @@
     .w-foot .bat { display: inline-flex; gap: 5px; align-items: center; padding: 2px 7px; border: 1px solid var(--w-faint); border-radius: 4px; font-size: 9.5px; }
     .w-foot .lay { width: 18px; height: 18px; display: grid; place-items: center; border: 1px solid var(--w-faint); border-radius: 4px; font-size: 9px; }
 
-    /* the busy window: a terminal pane and a bench pane side by side */
-    .w-body.two { grid-template-columns: 168px minmax(0, 1.08fr) minmax(0, 1fr) 14px; }
-    .w-pane.focus { box-shadow: 0 0 0 1px color-mix(in srgb, var(--w-acc) 30%, transparent), 0 0 26px -10px color-mix(in srgb, var(--w-acc) 70%, transparent); }
-    .w-pane.dim { border-color: color-mix(in srgb, var(--w-text) 22%, transparent); }
-    .w-pane.dim .w-bench { grid-template-columns: minmax(0, 1fr) 112px; gap: 8px; padding: 9px; }
-    .w-tx { position: relative; flex: 1; min-height: 0; overflow: hidden; padding: 10px 12px; font: 9.5px/1.6 var(--mono); }
-    .w-tx > div:not(.w-note):not(.w-doc) { white-space: pre; overflow: hidden; text-overflow: ellipsis; }
-    .w-tx .tool { color: var(--w-green); } .w-tx .dim { opacity: .5; } .w-tx .lk { color: var(--w-blue); text-decoration: underline; }
-    .w-tx .fl { color: var(--w-green); } .w-tx .warn { color: var(--w-warn); } .w-tx .red { color: var(--w-red); }
-    .w-tx .rule { height: 0; margin: 5px 0; border-top: 1px solid color-mix(in srgb, var(--w-text) 25%, transparent); }
-    .w-tx .cur { display: inline-block; width: .6em; height: 1.1em; vertical-align: -2px; background: var(--w-cur); animation: td-blink 1.06s steps(1) infinite; }
-    .w-note {
-      position: absolute; top: 12px; right: 14px; width: 112px; padding: 15px 9px 9px;
-      background: #e7cf98; color: #3b2a10; font: 800 11px/1.15 var(--mono); letter-spacing: .02em; text-transform: uppercase;
-      border-radius: 2px; transform: rotate(-4deg); box-shadow: 0 10px 16px -8px rgba(0, 0, 0, .7);
+    /* The hero: one agent terminal in focus, two quieter panes, and the list
+       of what needs you. Each pane body carries data-warp, and
+       assets/td-panes.js bends every one of them on its own, the way the app
+       bends a pane; the chrome between them stays flat. */
+    .shot { position: relative; max-width: 1020px; margin: 46px auto 0; }
+    .shot > .win { margin: 0; max-width: none; }
+    .shot > canvas.pane-warp { position: absolute; left: 0; top: 0; pointer-events: none; border-radius: 14px; }
+    .w-say { min-width: 0; overflow: hidden; text-overflow: ellipsis; opacity: .8; }
+    .w-chip .dia { color: var(--w-warn); }
+    .w-body.calm { position: relative; grid-template-columns: 180px minmax(0, 1.25fr) minmax(0, 1fr) 14px; height: 540px; }
+    .w-col { display: grid; grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; min-width: 0; min-height: 0; }
+    .w-pane.focus { border-width: 2px; box-shadow: 0 0 0 1px color-mix(in srgb, var(--w-acc) 30%, transparent), 0 0 26px -10px color-mix(in srgb, var(--w-acc) 70%, transparent); }
+    .w-pane.dim { border-color: color-mix(in srgb, var(--w-text) 18%, transparent); }
+    .w-pane.dim > * { opacity: .42; }
+    .w-tx { position: relative; flex: 1; min-height: 0; overflow: hidden; padding: 14px 16px; font: 9.5px/1.62 var(--mono); }
+    .w-tx > div { white-space: pre; overflow: hidden; text-overflow: ellipsis; }
+    .w-tx > p { margin: 0 0 9px; white-space: normal; opacity: .86; }
+    .w-tx .h { margin: 4px 0 10px; font-weight: 700; opacity: .95; }
+    .w-tx .tg { color: var(--w-warn); } .w-tx .dim { opacity: .5; } .w-tx .lk { color: var(--w-blue); text-decoration: underline; }
+    .w-tx .fl { color: var(--w-green); } .w-tx .warn { color: var(--w-warn); }
+    .w-tx .rule { height: 0; margin: 6px 0; border-top: 1px solid color-mix(in srgb, var(--w-text) 25%, transparent); }
+    .w-tx .gap { height: 8px; }
+    .w-tx .cur { display: inline-block; width: .6em; height: 1.1em; vertical-align: -2px; background: var(--w-cur); }
+    .w-tx .right { text-align: right; }
+    .w-side .w-recover { margin: auto 2px 10px; padding: 14px 0; border: 1px solid var(--w-faint); border-radius: 6px; text-align: center; font-size: 8.5px; opacity: .6; }
+    .w-side .w-recover + .w-vit { margin-top: 0; }
+    .w-needs {
+      position: absolute; top: 2px; right: 24px; width: 318px; z-index: 2;
+      background: var(--w-bg); border: 2px solid var(--w-warn); border-radius: 9px;
+      box-shadow: 0 18px 40px -14px rgba(0, 0, 0, .9), 0 0 22px -12px var(--w-warn);
+      font: 9px/1.35 var(--sans);
     }
-    .w-note::before { content: ""; position: absolute; top: -5px; left: 50%; width: 12px; height: 12px; margin-left: -6px; border-radius: 50%; background: radial-gradient(circle at 35% 35%, #9cc0ff, #2f5fd0); box-shadow: 0 2px 3px rgba(0, 0, 0, .5); }
-    .w-doc {
-      position: absolute; left: 24%; right: 6%; top: 74px; overflow: hidden;
-      background: var(--w-bg); border: 1.5px solid var(--w-warn); border-radius: 8px;
-      box-shadow: 0 18px 36px -12px rgba(0, 0, 0, .85); font: 9.5px/1.5 var(--sans);
-    }
-    .w-doc .dh { display: flex; align-items: center; gap: 10px; padding: 5px 9px; border-bottom: 1px solid var(--w-faint); font: 8.5px/1 var(--mono); color: var(--w-warn); white-space: nowrap; }
-    .w-doc .dh .sp { flex: 1; } .w-doc .dh .a { opacity: .75; }
-    .w-doc .db { padding: 8px 11px 10px; }
-    .w-doc h5 { margin: 0 0 5px; font: 600 12.5px/1.25 var(--sans); color: var(--w-warn); }
-    .w-doc p { margin: 0 0 5px; opacity: .88; }
-    .w-doc ul { margin: 0; padding-left: 13px; } .w-doc li { margin: 2px 0; }
-    .w-doc li::marker { color: var(--w-warn); }
-    .w-resp .x { margin-bottom: 3px; color: var(--w-blue); font-size: 9px; }
-    .w-resp .path { margin-top: 6px; font: 9px/1.45 var(--mono); opacity: .8; word-break: break-all; }
-    .w-resp .acts { display: flex; gap: 6px; margin-top: 9px; }
-    .w-resp .acts span { padding: 4px 10px; border: 1px solid var(--w-faint); border-radius: 4px; font-size: 10px; }
-    .w-resp .acts .open { color: var(--w-blue); border-color: var(--w-blue); background: color-mix(in srgb, var(--w-blue) 14%, transparent); }
+    .w-needs .nh { display: flex; gap: 8px; padding: 8px 11px; font: 600 8.5px/1 var(--sans); letter-spacing: .04em; opacity: .85; white-space: nowrap; }
+    .w-needs .nh .sp { flex: 1; } .w-needs .nh span:not(.sp):not(:first-child) { opacity: .7; font-weight: 400; }
+    .w-needs .it { margin: 0 7px 7px; padding: 7px 9px; border-left: 3px solid var(--w-green); border-radius: 4px; background: color-mix(in srgb, var(--w-text) 6%, transparent); }
+    .w-needs .it.open { background: color-mix(in srgb, var(--w-text) 11%, transparent); }
+    .w-needs .row { display: flex; gap: 6px; align-items: center; white-space: nowrap; font-size: 8px; }
+    .w-needs .row .rv { color: var(--w-green); font-weight: 700; letter-spacing: .06em; }
+    .w-needs .row .up { color: var(--w-green); }
+    .w-needs .row .t { margin-left: auto; opacity: .6; }
+    .w-needs .what { margin-top: 3px; font-size: 10.5px; font-weight: 500; }
+    .w-needs .bell { margin-top: 1px; font-size: 7.5px; opacity: .55; }
+    .w-needs dl { display: grid; grid-template-columns: 76px 1fr; gap: 2px 8px; margin: 7px 0 0; padding-top: 6px; border-top: 1px solid color-mix(in srgb, var(--w-text) 15%, transparent); font-size: 8px; }
+    .w-needs dt { opacity: .6; } .w-needs dd { margin: 0; opacity: .5; } .w-needs dd.b { opacity: .9; }
     .w-stand .kind { display: block; margin-bottom: 3px; text-align: center; font-size: 7.5px; letter-spacing: .06em; opacity: .55; }
-    .w-strip .note { font-size: 8.5px; opacity: .6; }
 
     .wear { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin: 18px auto 0; }
     .wear button {
@@ -307,21 +315,19 @@
     .win { container-type: inline-size; }
     .w-strip { overflow: hidden; }
     @container (max-width: 980px) {
-      .w-body.two { grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); }
+      .w-body.calm { grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); }
       .w-body > .w-side, .w-body > .w-mini { display: none; }
-      .w-branch { display: none; }
+      .w-say { display: none; }
       .flip .face.bench .w-bench { grid-template-columns: minmax(0, 1fr) 150px; }
     }
-    @container (max-width: 760px) {
-      .w-pane.dim .w-bench { grid-template-columns: minmax(0, 1fr); }
-      .w-pane.dim .w-rail { display: none; }
+    @container (max-width: 720px) {
+      .w-body.calm { grid-template-columns: minmax(0, 1fr); height: 460px; }
+      .w-body.calm > .w-col, .w-needs { display: none; }
     }
     @container (max-width: 600px) {
-      .w-body.two { grid-template-columns: minmax(0, 1fr); height: 380px; padding: 8px; }
-      .w-body.two > .w-pane.dim { display: none; }
+      .w-body.calm { height: 420px; padding: 8px; }
       .w-bench, .flip .face.bench .w-bench { grid-template-columns: minmax(0, 1fr); }
-      .w-rail, .w-spark, .w-dots, .w-sep, .w-woken, .w-strip .b, .w-note, .w-head .w-ib, .w-count .q { display: none; }
-      .w-doc { left: 8%; right: 8%; }
+      .w-rail, .w-spark, .w-dots, .w-sep, .w-woken, .w-strip .b, .w-head .w-ib, .w-count .q { display: none; }
       .w-foot .w-ib { display: none; }
     }
     @media (max-width: 900px) {
@@ -416,102 +422,130 @@
         <a class="td-btn" href="https://docs.terminal-delight.brownfamilysports.com/">Read the docs →</a>
       </div>
 
-      <div class="win" id="win" role="img" aria-label="A drawing of the Terminal Delight window: the worktree and activity strip along the top, a left bar of task groups with their status marks and usage bars, an agent's terminal with a sticky note and a document open over it, and a second agent pane showing its workbench — an artifact to open, the composer, and a rail of what stands now.">
+      <div class="shot">
+      <div class="win" id="win" data-pane-warp role="img" aria-label="A drawing of the Terminal Delight window. A left bar of task groups; one agent's terminal in focus, showing the reply it just finished; two quieter terminals beside it; and the list of three agents that need you. Each terminal's glass is curved on its own, the way the app draws it.">
         <div class="w-top">
           <span class="w-mark"><i></i><i></i><i></i></span>
-          <span class="w-chip">1 WORKTREE <span class="red">1 SHARED</span></span>
-          <span class="w-spark"><i style="height:30%"></i><i style="height:55%"></i><i style="height:40%"></i><i style="height:85%"></i><i style="height:60%"></i><i style="height:35%"></i><i style="height:70%"></i><i style="height:45%"></i><i style="height:25%"></i><i style="height:20%"></i></span>
+          <span class="w-chip">1 WORKTREE <span class="red">1 SHARED</span> <span class="dia">◆</span></span>
+          <span class="w-spark"><i style="height:45%"></i><i style="height:70%"></i><i style="height:30%"></i><i style="height:25%"></i><i style="height:20%"></i><i style="height:35%"></i><i style="height:25%"></i><i style="height:60%"></i><i style="height:85%"></i></span>
           <span class="w-sep"></span>
-          <span class="w-dots"><i></i><i></i><i></i><i></i><i class="r"></i><i class="r"></i><i class="r"></i><i></i><i class="pill"></i><i></i><i class="r"></i><i></i></span>
-          <span class="w-branch">◇ docs/site · feat/left-bar-groups converge on 1 file</span>
-          <span class="w-count"><span class="a">▶ 3</span><span class="q">│</span><span>0</span><span>✕ 0</span><span class="ok">✓ 1</span><span>○ 16</span><span class="q">? 0</span></span>
+          <span class="w-dots"><i></i><i class="r"></i><i></i><i></i><i></i><i class="r"></i><i class="r"></i><i class="r"></i><i></i><i class="pill"></i><i></i></span>
+          <span class="w-say">1 line of work, one shared · nothing uncommitted · 2 pairs converging</span>
+          <span class="w-count"><span class="a">▶ 3</span><span class="q">│</span><span>0</span><span>✕ 0</span><span class="ok">✓ 3</span><span>○ 14</span><span class="q">? 0</span></span>
         </div>
-        <div class="w-body two">
+        <div class="w-body calm">
           <div class="w-side">
             <div class="ctl"><span>▼</span><b>+</b><span>◀</span></div>
-            <div class="w-row grp"><span class="tw">▼</span><i class="g" style="--c:#e8834a"></i>Global</div>
-            <div class="w-row l1"><span class="tw"></span>release notes</div>
-            <div class="w-row grp open"><span class="tw">▼</span><i class="g" style="--c:#3ec6d1"></i>Terminal Delight</div>
-            <div class="w-row grp l1"><span class="tw">▼</span><i class="rail" style="--c:#3ec6d1"></i>Workbench</div>
-            <div class="w-row l2"><i class="rail" style="--c:#3ec6d1"></i>model dials<span class="st"><span class="bot">◉</span></span></div>
-            <div class="w-row l2"><i class="rail" style="--c:#3ec6d1"></i>comments shelf<span class="st"><span class="up">▲</span></span></div>
-            <div class="w-row grp l1"><span class="tw">▼</span><i class="rail" style="--c:#3ec6d1"></i>Site</div>
-            <div class="w-row l2"><i class="rail" style="--c:#3ec6d1"></i>docs<span class="st"><span class="up">▲</span><span class="bot">◉</span><span class="pin">▼</span></span></div>
-            <div class="w-row l2"><i class="rail" style="--c:#3ec6d1"></i>install page<span class="st"><span class="ok">✓</span></span></div>
-            <div class="w-row l1 here"><span class="tw"></span>info kiosk<span class="st"><span class="up">▲</span></span></div>
-            <div class="w-row grp"><span class="tw">▼</span><i class="g" style="--c:#7c83f0"></i>Jev</div>
-            <div class="w-row l1"><span class="tw"></span>lead scoring<span class="st"><span class="up">▲</span></span></div>
+            <div class="w-row grp"><span class="tw">▶</span><i class="g" style="--c:#e8834a"></i>Global</div>
+            <div class="w-row grp"><span class="tw">▶</span><i class="g" style="--c:#7c83f0"></i>Jev<span class="st"><span class="ok">✓</span></span></div>
             <div class="w-row grp"><span class="tw">▶</span><i class="g" style="--c:#8bd450"></i>Webdev</div>
+            <div class="w-row grp open"><span class="tw">▼</span><i class="g" style="--c:#3ec6d1"></i>Terminal Delight</div>
+            <div class="w-row grp l1"><span class="tw">▶</span><i class="rail" style="--c:#3ec6d1"></i>Workbench<span class="st"><span class="ok">✓</span></span></div>
+            <div class="w-row grp l1"><span class="tw">▼</span><i class="rail" style="--c:#3ec6d1"></i>Site</div>
+            <div class="w-row l2"><i class="rail" style="--c:#3ec6d1"></i>docs<span class="st"><span class="up">▲</span><span class="ok">✓</span></span></div>
+            <div class="w-row l2 here"><i class="rail" style="--c:#3ec6d1"></i>info kiosk</div>
+            <div class="w-row l1"><span class="tw"></span>wrangle<span class="st"><span class="up">▲</span></span></div>
+            <div class="w-row grp"><span class="tw">▶</span><i class="g" style="--c:#e0b050"></i>Next run<span class="st"><span class="bot">◉</span></span></div>
             <div class="w-row grp"><span class="tw">▶</span><i class="rail" style="--c:#8a8f98"></i>Marketing</div>
             <div class="w-unfiled">UNFILED</div>
+            <div class="w-recover">1 recoverable</div>
             <div class="w-vit">
-              <div><span class="ic">✳</span><span class="bars"><i style="--v:85%"></i><i style="--v:62%"></i></span><span>85%</span></div>
-              <div><span class="ic">⊛</span><span class="bars"><i style="--v:58%"></i><i style="--v:18%;--k:var(--w-red)"></i></span><span>58%</span></div>
+              <div><span class="ic">✳</span><span class="bars"><i style="--v:80%"></i><i style="--v:20%;--k:var(--w-warn)"></i></span><span>80%</span></div>
+              <div><span class="ic">⊛</span><span class="bars"><i style="--v:58%"></i><i style="--v:16%;--k:var(--w-red)"></i></span><span>58%</span></div>
               <div><span class="ic">FI</span><span class="bars"><i style="--v:0%"></i><i style="--v:0%"></i></span><span>—</span></div>
             </div>
           </div>
+
           <div class="w-pane focus">
-            <div class="w-head"><span class="w-tile"><span class="w-mark"><i></i><i></i><i></i></span></span><span class="who">• CLAUDE · docs site</span><span class="sp"></span><span class="w-seg"><span class="on">TERM</span><span>BENCH</span></span><span class="w-ib">🎨</span><span class="w-ib">📊</span><span class="live">live</span><span class="x">✕</span></div>
-            <div class="w-tx">
-              <div><span class="tool">●</span> Bash(node scripts/verify-site.mjs)</div>
-              <div class="dim">  ⎿  259 passed, 0 failed</div>
-              <div><span class="tool">●</span> Update(assets/td-glass.js)</div>
-              <div class="dim">  ⎿  Updated with 12 additions and 3 removals</div>
-              <div> </div>
-              <div>The tube bends the page itself now, and the text</div>
-              <div>stays sharp. A click lands on what is drawn under</div>
-              <div>the pointer, even at the rim.</div>
-              <div> </div>
-              <div>  Links</div>
-              <div>  Target: <span class="lk">https://docs.terminal-delight.brownfamilysports.com/workbench</span></div>
-              <div class="dim">  What it is: the live docs, tube on</div>
-              <div>  Target: <span class="fl">file:///home/you/Work/td/docs/plans/docs-site/00-status.md</span></div>
-              <div class="dim">  What it is: the plan, round four</div>
-              <div>  Target: <span class="lk">https://github.com/you/terminal-delight/pull/771</span></div>
-              <div class="dim">  What it is: the branch, waiting on a merge</div>
-              <div> </div>
-              <div class="dim">✳ Waiting for 1 background agent to finish</div>
+            <div class="w-head"><span class="w-tile"><span class="w-mark"><i></i><i></i><i></i></span></span><span class="who">• CLAUDE · shell</span><span class="sp"></span><span class="w-seg"><span class="on">TERM</span><span>BENCH</span></span><span class="w-ib">🎨</span><span class="w-ib">📊</span><span class="live">live</span><span class="x">✕</span></div>
+            <div class="w-tx" data-warp data-focus>
+              <div class="h">What changed</div>
+              <p>The tube bent the page itself at first, and at the curve you asked for, the text came apart. The fix was already written down in the curved-glass lessons: bend a picture of the page, never the page.</p>
+              <p>So the page is drawn into a texture at twice the resolution and bent in a shader. Text stays whole, a click lands on whatever is drawn under the pointer, and the docs went live with it.</p>
+              <div class="gap"></div>
+              <div>Links</div>
+              <div class="gap"></div>
+              <div><span class="tg">Target:</span> <span class="lk">https://docs.terminal-delight.brownfamilysports.com/workbench</span></div>
+              <div>What it is: The live docs, tube on</div>
               <div class="rule"></div>
-              <div>&gt; ship it <span class="cur"></span></div>
+              <div><span class="tg">Target:</span> <span class="fl">file:///home/you/Work/td/assets/td-glass.js</span></div>
+              <div>What it is: The engine, and the checks that prove it</div>
               <div class="rule"></div>
-              <div class="warn">  ⏵⏵ auto mode on · 1 shell</div>
-              <div class="w-note">Ship the docs</div>
-              <div class="w-doc">
-                <div class="dh"><span>≡ workbench.md</span><span class="sp"></span><span class="a">⇲ split</span><span class="a">↗ desktop</span><span class="a">✕ esc</span></div>
-                <div class="db">
-                  <h5>Workbench</h5>
-                  <p>Every agent pane has a second face. The terminal face is the agent at work; the workbench face is what it made for you, laid out as cards.</p>
-                  <ul><li>overview — its replies</li><li>decisions — what it is waiting on</li><li>artifacts — pages, tables, diagrams</li></ul>
-                </div>
+              <div><span class="tg">Target:</span> <span class="lk">https://github.com/parker-brown-family/terminal-delight</span></div>
+              <div>What it is: The branch, waiting on a merge</div>
+              <div class="gap"></div>
+              <div class="dim">✻ Cogitated for 8m 53s · done 2:18 AM</div>
+              <div class="gap"></div>
+              <div class="dim">※ recap: the page bends and the text survives. Next: merge the branch.</div>
+              <div class="dim right">new task? <span class="lk">/clear</span> to save 412.6k tokens</div>
+              <div class="rule"></div>
+              <div>❯ <span class="cur"></span></div>
+              <div class="rule"></div>
+              <div class="warn">  ⏵⏵ auto mode on (shift+tab to cycle) · ← 2 agents</div>
+            </div>
+          </div>
+
+          <div class="w-col">
+            <div class="w-pane dim">
+              <div class="w-head"><span class="w-tile"><span class="w-mark"><i></i><i></i><i></i></span></span><span class="who">• CLAUDE · shell</span></div>
+              <div class="w-tx" data-warp>
+                <div class="rule"></div>
+                <div><span class="tg">Target:</span> <span class="lk">https://docs.terminal-delight.brownfamilysports.com/install</span></div>
+                <div>What it is: The install page, three commands</div>
+                <div class="gap"></div>
+                <div><span class="tg">Target:</span> <span class="fl">file:///home/you/FOLLOWUPS.md</span></div>
+                <div>What it is: The rollup, regenerated</div>
+                <div class="gap"></div>
+                <div class="dim">✻ Sautéed for 55s · done 2:16 AM</div>
+                <div class="dim">※ recap: Install replaced Download on every page.</div>
+                <div class="rule"></div>
+                <div>❯ <span class="cur"></span></div>
+                <div class="rule"></div>
+                <div class="warn">  ⏵⏵ auto mode on · ← 2 agents</div>
+              </div>
+            </div>
+            <div class="w-pane dim">
+              <div class="w-head"><span class="w-tile"><span class="w-mark"><i></i><i></i><i></i></span></span><span class="who">• CLAUDE · shell</span><span class="sp"></span><span class="w-seg"><span class="on">TERM</span><span>BENCH</span></span></div>
+              <div class="w-tx" data-warp>
+                <div class="rule"></div>
+                <div><span class="tg">Target:</span> <span class="fl">file:///home/you/Work/td/reports/left-bar.html</span></div>
+                <div>What it is: The review brief, ten figures</div>
+                <div class="gap"></div>
+                <div><span class="tg">Target:</span> <span class="lk">https://github.com/parker-brown-family/terminal-delight</span></div>
+                <div>What it is: Closed, not merged</div>
+                <div class="gap"></div>
+                <div class="dim">✻ Sautéed for 2m 0s · done 2:16 AM</div>
+                <div class="rule"></div>
+                <div>❯ open the report</div>
+                <div class="rule"></div>
+                <div class="warn">  ⏵⏵ auto mode on · ← 2 agents</div>
               </div>
             </div>
           </div>
-          <div class="w-pane dim">
-            <div class="w-head"><span class="w-tile"><span class="w-mark"><i></i><i></i><i></i></span></span><span class="who">• CLAUDE · left bar</span><span class="sp"></span><span class="w-seg"><span>TERM</span><span class="on">BENCH</span></span><span class="w-ib">🎨</span><span class="live">live</span><span class="x">✕</span></div>
-            <div class="w-bench">
-              <div class="main">
-                <div class="w-strip"><span style="opacity:.5">◎</span><span class="st">Working</span><span class="ago">1m</span><span class="note">at the console</span><span class="sp"></span><span class="b">PAUSE TURN</span></div>
-                <div class="w-resp">
-                  <div class="x">✕</div>
-                  <div class="hd"><span class="chip">artifact</span><span class="t">Left bar, revised</span></div>
-                  <div class="prov">declared in the agent's own reply</div>
-                  <div class="prov">read from this agent's own record</div>
-                  <div class="path">~/Work/td/reports/left-bar.html</div>
-                  <div class="acts"><span class="open">open</span><span>comment</span></div>
-                </div>
-                <div class="w-compose">type to the agent<small>TYPE ANYWHERE · ENTER SENDS · PASTE TEXT, FILES OR AN IMAGE</small></div>
-              </div>
-              <div class="w-rail">
-                <div class="tabs"><span>overview</span><span class="on">artifacts</span><span>decisions</span><span>comments</span></div>
-                <div class="w-stand now"><span class="k">STANDS NOW · HTML</span>Left bar, revised<small>declared in the agent's own…</small></div>
-                <div class="w-stand"><span class="kind">table</span>Theme audit<small>6 rows · 4 columns</small></div>
-                <div class="w-stand"><span class="kind">unclassified</span>Group header notes<small>a changeset needs hunks…</small></div>
-              </div>
+          <div class="w-mini"><span class="n">3</span><span>●</span></div>
+
+          <div class="w-needs" data-warp-flat>
+            <div class="nh"><span>NEEDS ME · 3</span><span class="sp"></span><span>↑↓ go</span><span>↵ pane</span><span>o open</span><span>p pin</span><span>esc</span></div>
+            <div class="it open">
+              <div class="row"><span class="rv">REVIEW</span><span>SITE:docs</span><span class="up">▲</span><span class="t">5m</span></div>
+              <div class="what">Finished, not yet seen</div>
+              <div class="bell">bell · 5m</div>
+              <dl><dt>deliverable</dt><dd>unavailable</dd><dt>changes</dt><dd>unavailable</dd><dt>checks</dt><dd>unavailable</dd><dt>read by</dt><dd class="b">bell</dd></dl>
+            </div>
+            <div class="it">
+              <div class="row"><span class="rv">REVIEW</span><span>WORKBENCH:model dials</span><span class="up">▲</span><span class="t">8s</span></div>
+              <div class="what">Finished, not yet seen</div>
+              <div class="bell">bell · 8s</div>
+            </div>
+            <div class="it">
+              <div class="row"><span>SITE:install page</span><span class="t">11s</span></div>
+              <div class="what">Finished, not yet seen</div>
+              <div class="bell">bell · 11s</div>
             </div>
           </div>
-          <div class="w-mini"><span class="n">1</span><span>●</span></div>
         </div>
-        <div class="w-foot"><span>3 tabs · 5 panes</span><span class="w-ib">🎨</span><span class="w-ib">📊</span><span class="w-ib">🪦</span><span class="w-ib">🔔</span><span class="w-ib">🧩</span><span class="bat">▭ 85%</span><span class="lay">◧</span></div>
+        <div class="w-foot"><span>4 tabs · 9 panes</span><span class="w-ib">🎨</span><span class="w-ib">📊</span><span class="w-ib">🪦</span><span class="w-ib">🔔</span><span class="w-ib">🧩</span><span class="bat">▭ 85%</span><span class="lay">◧</span></div>
+      </div>
       </div>
 
       <div class="wear" role="group" aria-label="Paint the window with a built-in theme">
@@ -712,6 +746,7 @@ cd app &amp;&amp; cargo run</pre>
 
 <script src="/assets/td-shell.js"></script>
 <script src="/assets/td-glass.js"></script>
+<script src="/assets/td-panes.js"></script>
 <script>
   /* The theme chips. The pick is remembered with the rest of the shell's
      prefs; with none, glass wears hacker and paper wears quiet-command, the
