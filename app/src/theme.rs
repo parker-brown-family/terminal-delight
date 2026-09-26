@@ -168,6 +168,11 @@ pub struct Theme {
     /// Crawl depth: ratio of text height at the BOTTOM vs the TOP of the crawl
     /// (`0.05..=15`). `>1` = classic (near text bigger); `1` = no foreshortening.
     pub crawl_depth: f32,
+    /// The CRT master switch, resolved from the scope's [`Grade::crt`]. The
+    /// tube's own effects are already zeroed by [`flatten_tube`] when it is
+    /// off; this is for chrome that bleeds onto the glass and is only right
+    /// on a tube — the pane header's bloom (`pane::header_shadows`).
+    pub crt: bool,
     pub flicker: f32,
     pub jiggle: f32,
     pub screen_glare: f32,
@@ -2373,7 +2378,8 @@ pub fn resolve(cx: &App, choice: &ThemeChoice) -> Arc<Theme> {
     // The CRT switch, after warp and tracking have been written so it has the
     // last word on them. The grade keeps its dials; only this resolved copy
     // goes flat.
-    if !choice.grade.crt {
+    th.crt = choice.grade.crt;
+    if !th.crt {
         flatten_tube(&mut th);
     }
     // Layer 4 — the INVERT dimension: the LAST colour op, photo-negating the whole
@@ -2396,8 +2402,10 @@ pub fn resolve(cx: &App, choice: &ThemeChoice) -> Arc<Theme> {
 ///
 /// **Glow is deliberately kept.** It is the accent halo on the header, the
 /// cursor and the bench cards, and the chrome skins lean on it too; it belongs
-/// to the chrome, not the tube. Crawl is kept as well, since it is its own
-/// switch.
+/// to the chrome, not the tube. The one exception is the header's bloom, which
+/// falls onto the glass below it: on a flat screen it read as a coloured haze
+/// under every header, so it follows [`Theme::crt`] instead (see
+/// `pane::header_shadows`). Crawl is kept as well, since it is its own switch.
 pub fn flatten_tube(th: &mut Theme) {
     th.warp = 0.0;
     th.tracking = 0.0;
@@ -2469,9 +2477,12 @@ pub const HOUSE_TEXT_SIZE: f32 = 0.7365;
 /// A fresh window's contrast: +25 on the dial.
 ///
 /// Parker's window runs +10, with bloom lifting the text. A flat screen has no
-/// bloom, and he asked for contrast "turned up a fair bit" on the default. +25
-/// is an estimate made on 2026-09-25, to be settled by eye against +10 and +40
-/// on a photographed flat window.
+/// bloom, and he asked for contrast "turned up a fair bit" on the default.
+/// Settled on 2026-09-25: he looked at a fresh window at +25 and brightness −24
+/// and shipped it as it was. Measured the same day, contrast barely moves a flat
+/// screen (the brightest text: 93, 100, 108 of 255 at +10, +25, +40) and
+/// brightness moves it a lot, so a darker or brighter default is the brightness
+/// dial's to change, not this one's.
 pub const HOUSE_CONTRAST: f32 = 0.75;
 /// The roll bar a fresh window keeps for when the CRT is switched on:
 /// `[intensity, speed, size]`, Parker's dials on 2026-09-25.
@@ -2855,6 +2866,9 @@ pub(crate) fn parse(source: &str) -> Result<Theme, String> {
         crawl: false,
         crawl_angle: CRAWL_ANGLE_DEFAULT,
         crawl_depth: CRAWL_DEPTH_DEFAULT,
+        // A theme file is the tube as authored; whether it is switched on is
+        // the scope's grade, applied in resolve().
+        crt: true,
         flicker: file.effects.flicker.unwrap_or(0.).clamp(0., 1.),
         jiggle: file.effects.jiggle.unwrap_or(0.).clamp(0., 1.),
         screen_glare: file
@@ -4137,6 +4151,7 @@ warp = 1.5
                 assert_eq!(v, 0.0, "{what} is off on a flat screen");
             }
             assert!(flat.glow > 0.0, "glow is the chrome's, and stays");
+            assert!(!flat.crt, "and the header's bloom can see the tube is off");
             assert_eq!(
                 flat.accent,
                 hex("#67F454").unwrap(),
@@ -4147,6 +4162,7 @@ warp = 1.5
             let mut on = off.clone();
             on.grade.crt = true;
             let tube = resolve(cx, &on);
+            assert!(tube.crt);
             let hacker = parse(DEFAULT_THEME_TOML).unwrap();
             assert_eq!(tube.warp, WARP_MAX);
             assert!((tube.tracking - HOUSE_ROLL[0]).abs() < 1e-6, "the roll bar");

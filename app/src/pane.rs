@@ -251,6 +251,38 @@ struct Said {
 /// How long a [`Said`] chip stays up.
 const SAID_FOR: Duration = Duration::from_secs(8);
 
+/// The pane header's shadows: the bright inner edge that makes it read as
+/// solid, and, on a tube, its bloom.
+///
+/// The bloom is an outer shadow in the header's own ink, blurred 16 px and cast
+/// one pixel down, so it falls onto the top of the screen below the header. On
+/// a CRT that is phosphor glow and the scanlines and vignette sit over it. On a
+/// flat screen nothing does, and it showed as a coloured haze under every
+/// header — magenta on the Terminal Delight palette. So the bloom follows the
+/// CRT switch, and the glow everywhere else (text, cursor, bench cards) stays.
+pub(crate) fn header_shadows(ink: Hsla, glow: f32, crt: bool) -> Vec<BoxShadow> {
+    let mut shadows = vec![
+        // the reflection: bright inner top edge
+        BoxShadow {
+            color: gpui::white().alpha(0.16),
+            offset: point(px(1.), px(1.)),
+            blur_radius: px(0.),
+            spread_radius: px(0.),
+            inset: true,
+        },
+    ];
+    if crt && glow > 0.001 {
+        shadows.push(BoxShadow {
+            color: ink.alpha(glow * 0.5),
+            offset: point(px(0.), px(1.)),
+            blur_radius: px(16.),
+            spread_radius: px(0.),
+            inset: false,
+        });
+    }
+    shadows
+}
+
 /// The Alt chip, decided from what is under the pointer.
 ///
 /// `line` is the logical line under the pointer as `(text, first painted row,
@@ -9653,28 +9685,7 @@ impl Render for TerminalView {
                             ),
                     ),
             );
-        {
-            let mut shadows = vec![
-                // the reflection: bright inner top edge
-                BoxShadow {
-                    color: gpui::white().alpha(0.16),
-                    offset: point(px(1.), px(1.)),
-                    blur_radius: px(0.),
-                    spread_radius: px(0.),
-                    inset: true,
-                },
-            ];
-            if glow > 0.001 {
-                shadows.push(BoxShadow {
-                    color: bar_fg.alpha(glow * 0.5),
-                    offset: point(px(0.), px(1.)),
-                    blur_radius: px(16.),
-                    spread_radius: px(0.),
-                    inset: false,
-                });
-            }
-            header = header.shadow(shadows);
-        }
+        header = header.shadow(header_shadows(bar_fg, glow, th.crt));
 
         let jiggle = self.fx.jiggle_px;
         // 🎰 GAMBA reels — shown only on the gamba DESIGN texture while the agent
@@ -10141,6 +10152,26 @@ impl Render for TerminalView {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_flat_screen_gets_no_header_bloom_and_a_tube_keeps_it() {
+        let ink = gpui::rgb(0xd070ff).into();
+        let outer = |s: &[gpui::BoxShadow]| s.iter().filter(|b| !b.inset).count();
+        let flat = super::header_shadows(ink, 0.85, false);
+        assert_eq!(
+            outer(&flat),
+            0,
+            "nothing falls onto the glass of a flat screen"
+        );
+        assert_eq!(flat.len(), 1, "the header still reads as solid");
+        let tube = super::header_shadows(ink, 0.85, true);
+        assert_eq!(outer(&tube), 1, "a tube keeps its phosphor bloom");
+        assert_eq!(
+            outer(&super::header_shadows(ink, 0.0, true)),
+            0,
+            "and a theme with no glow has none to cast"
+        );
+    }
+
     /// [`read_nav`], from the parts these tests have to hand.
     ///
     /// Inside the test module on purpose: a file-scope `#[cfg(test)]` item above

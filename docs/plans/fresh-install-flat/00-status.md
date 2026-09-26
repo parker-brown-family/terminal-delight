@@ -25,10 +25,32 @@ clears warp) each turn a test red.
 Photographed from hidden fresh-install windows, which settled the contrast
 question differently than planned: from +10 to +40 the brightest text only
 climbs from 93 to 108 of 255 grey at brightness −24, while brightness −10 takes
-it to 145 and 0 to 173. Recommended in the review page: brightness −10,
-contrast +25. **Merge waits on that pick.** Review page:
-`reports/2026-09-25-fresh-install-flat.html` in the primary checkout.
+it to 145 and 0 to 173. The review page recommended brightness −10 with
+contrast +25 (`reports/2026-09-25-fresh-install-flat.html` in the primary
+checkout).
 
-Post-hoc score: 5 held so far. The gate drew no amendments, and the one number
-that is moving is moving on a measurement taken after the build, which the
-plan had scheduled.
+## Landed — 2026-09-25
+
+Parker asked for a demo in a fresh instance, looked at the flat window at
+brightness −24 and contrast +25, and said *"Looks amazing - SHIP IT!"*. The
+defaults shipped as built, and the −10 recommendation was not taken. Merged as
+`08a0a4a` after main was merged in and the whole suite run on the result (2039
+pass). Installed as `td-08a0a4a-fresh-flat`, with one test skipped: the
+skill-fixture test, which failed only because another session had uncommitted
+edits in the brief skill (issue 850).
+
+Follow-ups from the same thread:
+
+- The docs homepage reel was re-filmed on this default (pull request 854,
+  deployed).
+- The public demos still show the tube: issue 849.
+- Filming found a pane-freeze bug under heavy picture output: issue 853.
+- **The coloured haze under every pane header** on the flat screen was the
+  header's bloom, the one glow this change kept, cast onto the glass. In
+  hindsight it belonged with the tube, so it now follows the CRT switch
+  (`pane::header_shadows`).
+
+**Post-hoc score: 5, held.** The gate drew no amendments. The one open number
+was settled by eye on the build, as the plan scheduled. The miss was in the
+look: keeping all of glow let one piece of the tube's bloom through, and only a
+photograph of a flat window at full size showed it.
