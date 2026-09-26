@@ -985,7 +985,7 @@ fn compact(surface: &Surface, picks: Option<&Picks>, sk: &Skin, th: &Theme) -> D
         // A compact card may legitimately show LESS. It may not show a control
         // that is missing, which is what the reader reads as a broken feature
         // rather than as a small screen.
-        Kind::Response(r) => response(r, picks, sk, th),
+        Kind::Response(r) => response(&surface.title, r, picks, sk, th),
         // DELEGATES, and belongs on the list the delegation test walks: a
         // comment is short by nature, so there is nothing a narrow pane could
         // usefully show LESS of. A second renderer here would exist only to
@@ -1011,7 +1011,7 @@ fn full(surface: &Surface, picks: Option<&Picks>, sk: &Skin, th: &Theme) -> Div 
         Kind::Changeset(c) => changeset(c, sk, th),
         Kind::Decision(d) => decision(d, sk, th),
         Kind::Question(q) => question(q, picks, sk, th),
-        Kind::Response(r) => response(r, picks, sk, th),
+        Kind::Response(r) => response(&surface.title, r, picks, sk, th),
         Kind::Comment(_) => comment(surface, sk, th),
         Kind::Unclassified(u) => unclassified(u, sk, th),
     }
@@ -1177,7 +1177,7 @@ fn doubts_measure(r: &Response) -> String {
 /// What the reader picked is not decided here: [`Picks`] carries it, and absent
 /// means they have not chosen. Without picks the first tab's first register is
 /// drawn and nothing is pressable, which is what a summary is.
-fn response(r: &Response, picks: Option<&Picks>, sk: &Skin, th: &Theme) -> Div {
+fn response(title: &str, r: &Response, picks: Option<&Picks>, sk: &Skin, th: &Theme) -> Div {
     use crate::workbench::Leaf;
     let promoted = escalation_call(r).is_some();
     // Every readable thing, bucketed into its tabs, by the ONE function that
@@ -1342,7 +1342,7 @@ fn response(r: &Response, picks: Option<&Picks>, sk: &Skin, th: &Theme) -> Div {
             None => d,
         },
         Leaf::Layman => d.child(section_body(
-            &crate::surface::Body::Prose(r.layman.clone()),
+            &crate::surface::Body::Prose(layman_without_echoed_title(title, &r.layman).to_string()),
             Register::Layman,
             sk,
             th,
@@ -4098,9 +4098,64 @@ pub fn launch_button(sk: &Skin, th: &Theme) -> Div {
 /// Compares against the subtitle's UNCLIPPED text, not the 44-character
 /// preview `rail_row` draws — the preview is a display decision made after
 /// this one, and a long title that outruns a short clip must still be caught.
+///
+/// Checks BOTH directions, whichever string is shorter against the start of
+/// the longer one — a hook-synthesized title is usually the shorter, but a
+/// long authored title can outrun a terse `layman` the other way, and that
+/// is just as redundant to draw twice.
+///
+/// The match must land on a WORD BOUNDARY: `title="Ready"` must not claim a
+/// subtitle beginning "Readying the release…" — that is one word sharing a
+/// prefix with another, not the same text repeated. The one exception is a
+/// title that itself ends in an ellipsis: that already says "this was cut
+/// off", so landing mid-word there is the truncation working as intended,
+/// not a coincidence to filter out.
 fn title_echoes_subtitle(title: &str, subtitle: &str) -> bool {
-    let title = title.trim();
-    !title.is_empty() && subtitle.trim_start().starts_with(title)
+    let subtitle = subtitle.trim();
+    let raw_title = title.trim();
+    if raw_title.is_empty() || subtitle.is_empty() {
+        return false;
+    }
+    let title_truncated = raw_title.ends_with('\u{2026}');
+    let title = raw_title.trim_end_matches('\u{2026}').trim_end();
+    if title.is_empty() {
+        return false;
+    }
+    let title_is_shorter = title.chars().count() <= subtitle.chars().count();
+    let (shorter, longer) = if title_is_shorter {
+        (title, subtitle)
+    } else {
+        (subtitle, title)
+    };
+    let Some(rest) = longer.strip_prefix(shorter) else {
+        return false;
+    };
+    if title_truncated && title_is_shorter {
+        return true;
+    }
+    !matches!(rest.chars().next(), Some(c) if c.is_alphanumeric())
+}
+
+/// The full card's version of the same fix `rail_row` applies to its own
+/// preview: `heading()` draws `title` large and, for a `Response`, leaves the
+/// subtitle to the body — but a hook-synthesized reply's title is already the
+/// layman's own opening line, so drawing the layman verbatim underneath
+/// repeats it. Unlike the rail's 44-character clip, the layman is the actual
+/// content, so the fix is not to hide it — it is to drop only the ONE line
+/// already shown as the title, never the whole thing: a layman with nothing
+/// past its echoed opening line is returned unchanged, because showing it
+/// once, as the body, beats showing an empty card.
+fn layman_without_echoed_title<'a>(title: &str, layman: &'a str) -> &'a str {
+    if !title_echoes_subtitle(title, layman) {
+        return layman;
+    }
+    let after_first_line = layman.find('\n').map_or("", |i| &layman[i + 1..]);
+    let rest = after_first_line.trim_start_matches('\n');
+    if rest.trim().is_empty() {
+        layman
+    } else {
+        rest
+    }
 }
 
 /// Cut to a character budget, with an ellipsis that says it was cut.
@@ -4158,6 +4213,93 @@ mod tests {
         // An empty title never "echoes" — nothing to skip drawing the
         // subtitle over.
         assert!(!title_echoes_subtitle("", "Done.\nmore text"));
+    }
+
+    #[test]
+    fn title_echoes_subtitle_requires_a_word_boundary_not_a_bare_prefix() {
+        // Review-caught false positive: a short title sharing only its first
+        // letters with an unrelated, longer word must not be flagged.
+        assert!(!title_echoes_subtitle(
+            "Ready",
+            "Readying the release for tomorrow's ship window; three checks still need a green run.",
+        ));
+        assert!(!title_echoes_subtitle(
+            "Fix",
+            "Fixing the login bug across three call sites."
+        ));
+        // Landing exactly on a boundary (space, period, end of string) is
+        // still an echo, whatever the boundary character is.
+        assert!(title_echoes_subtitle(
+            "Fixed the login bug",
+            "Fixed the login bug."
+        ));
+        assert!(title_echoes_subtitle("Done", "Done"));
+    }
+
+    #[test]
+    fn title_echoes_subtitle_also_catches_a_title_longer_than_its_subtitle() {
+        // Review-caught direction gap: an authored title that fully contains
+        // a shorter, genuinely redundant subtitle is just as doubled as the
+        // usual (shorter title, longer subtitle) shape.
+        assert!(title_echoes_subtitle(
+            "Ship the workbench redesign now",
+            "Ship the workbench",
+        ));
+        // But not when the shorter string only shares a word-prefix, same
+        // rule as the other direction.
+        assert!(!title_echoes_subtitle(
+            "Readying the release for tomorrow",
+            "Ready",
+        ));
+    }
+
+    #[test]
+    fn title_echoes_subtitle_trusts_its_own_ellipsis_to_explain_a_mid_word_cut() {
+        // A title truncated with a trailing ellipsis is EXPECTED to land
+        // mid-word — the ellipsis already says "cut off here", so the word-
+        // boundary rule (which exists to catch a COINCIDENTAL shared prefix)
+        // must not also reject a genuine, marked truncation.
+        assert!(title_echoes_subtitle(
+            "A title that got truncated right here becau\u{2026}",
+            "A title that got truncated right here because the source line ran long",
+        ));
+        // The ellipsis exemption only excuses the boundary check where the
+        // prefix genuinely matches — an ellipsis-truncated title that ISN'T
+        // actually a prefix of the subtitle is still not an echo.
+        assert!(!title_echoes_subtitle(
+            "Something else entirely\u{2026}",
+            "A title that got truncated right here because the source line ran long",
+        ));
+    }
+
+    #[test]
+    fn layman_without_echoed_title_drops_only_the_repeated_opening_line() {
+        // The rail's own fix, one panel over: the FULL card must not repeat
+        // the title as the layman's first line either.
+        assert_eq!(
+            layman_without_echoed_title(
+                "Nearly done. Every step so far is verified:",
+                "Nearly done. Every step so far is verified:\n- Real windows: photographed.\n- Tests: 1960 passed.",
+            ),
+            "- Real windows: photographed.\n- Tests: 1960 passed.",
+        );
+        // A distinct, authored title: the layman is untouched, including its
+        // own first line.
+        assert_eq!(
+            layman_without_echoed_title(
+                "Agent wall images switch: pull request 858, CI green",
+                "CI has passed on the pull request for the agent wall's images switch.",
+            ),
+            "CI has passed on the pull request for the agent wall's images switch.",
+        );
+        // Never strips down to nothing: a layman that IS just the echoed
+        // title, with no further paragraphs, is returned whole rather than
+        // emptied — an echoed-but-present body beats a blank card.
+        assert_eq!(layman_without_echoed_title("Done.", "Done."), "Done.",);
+        assert_eq!(
+            layman_without_echoed_title("Done.", "Done.\n\n   \n"),
+            "Done.\n\n   \n",
+        );
     }
 
     /// Every size on the bench goes through the pane's gauge.
