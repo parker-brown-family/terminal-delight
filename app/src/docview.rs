@@ -2,21 +2,23 @@
 //!
 //! # What is here
 //!
-//! Images, Markdown and HTML are drawn. HTML is drawn by a page engine
+//! Images, Markdown, HTML and video are drawn. HTML is drawn by a page engine
 //! ([`engine`]) — today a snapshot taken by headless Chromium ([`snapshot`])
 //! — as tiles the view scrolls itself ([`page`]). The router asks
 //! [`html_ready`] before it places an HTML document, so a machine without
 //! Chromium hands the file to the desktop with a sentence instead of opening
 //! a square that can never fill. A browser that exists but will not start is
 //! found only once the view is up; the view then says why in its body and
-//! emits [`CannotShow`], and the pane hands the file over.
+//! emits [`CannotShow`], and the pane hands the file over. Video is played by
+//! libmpv ([`mpv`]), and the router asks [`video_ready`] the same way.
 //!
-//! # One view, three backends
+//! # One view, four backends
 //!
 //! The view does what is the same for every document — the release hook, the
 //! file watcher, the canvases that measure it, the theme and the seat — and
 //! hands the rest to one [`backend::Backend`]: an image ([`image`]), a
-//! Markdown file ([`markdown_view`]) or a page ([`page`]). What a backend
+//! Markdown file ([`markdown_view`]), a page ([`page`]) or a video
+//! ([`video`]). What a backend
 //! cannot do is the trait's default, written once with the reason beside it,
 //! rather than a wildcard arm in every method that has to ask. See
 //! [`backend`] for the whole contract.
@@ -88,11 +90,13 @@ pub mod image;
 pub mod markdown;
 pub mod markdown_view;
 pub mod md_notes;
+pub mod mpv;
 pub mod notes;
 pub mod notes_ui;
 pub mod page;
 pub mod pref;
 pub mod snapshot;
+pub mod video;
 
 use std::cell::Cell;
 use std::path::{Component, Path, PathBuf};
@@ -338,6 +342,33 @@ pub fn html_ready(cx: &mut App) -> Result<(), Unavailable> {
     engine(cx).map(|_| ())
 }
 
+/// For the router, before it places a video: is there a libmpv to play it?
+/// Found once and kept; a missing one is looked for again after thirty
+/// seconds, as a missing browser is. Nothing plays.
+pub fn video_ready(cx: &mut App) -> Result<(), mpv::Missing> {
+    #[cfg(test)]
+    if let Some(VideoAnswer(answer)) = cx.try_global::<VideoAnswer>() {
+        return answer.clone();
+    }
+    let _ = cx;
+    mpv::available()
+}
+
+/// What [`video_ready`] answers in a test instead of looking for libmpv. A
+/// gpui global rather than a static, like the page engine's slot, so a test
+/// that says "no libmpv" is not overheard by one running beside it.
+#[cfg(test)]
+struct VideoAnswer(Result<(), mpv::Missing>);
+#[cfg(test)]
+impl Global for VideoAnswer {}
+
+/// Answer every "can a video be played?" with `answer` from now on, for a
+/// test: the machine running it may or may not have mpv.
+#[cfg(test)]
+pub(crate) fn set_video_ready(cx: &mut App, answer: Result<(), mpv::Missing>) {
+    cx.set_global(VideoAnswer(answer));
+}
+
 /// TD is quitting: close the browser now and remove its profile, rather
 /// than leaving it to the kernel's SIGKILL and the next launch's sweep.
 pub fn shutdown(cx: &mut App) {
@@ -515,6 +546,7 @@ impl DocumentView {
             DocKind::Image => Box::new(image::ImageDoc::load(&target.path, cx)),
             DocKind::Markdown => Box::new(markdown::MarkdownDoc::new()),
             DocKind::Html => Box::new(page::PageDoc::new(&target.path, engine(cx))),
+            DocKind::Video => Box::new(video::VideoDoc::open(&target.path, cx)),
         };
         cx.on_release(|view, cx| view.give_back(cx)).detach();
         // Markdown is re-read on a change, and starts its first read here; a
@@ -808,6 +840,13 @@ impl DocumentView {
         self.backend.zoom_now()
     }
 
+    /// Nobody asked for this document just now: a restart put it back, so a
+    /// video waits paused for a press rather than playing with sound by
+    /// itself.
+    pub fn hold(&mut self) {
+        self.backend.hold();
+    }
+
     /// Show what a fragment names as soon as the document has been laid out:
     /// a link that named a heading in another file, or an element of a
     /// brief, opens that file there.
@@ -1012,6 +1051,8 @@ mod tests {
                 "docview/notes_ui.rs",
                 strip(include_str!("docview/notes_ui.rs")),
             ),
+            ("docview/video.rs", strip(include_str!("docview/video.rs"))),
+            ("docview/mpv.rs", strip(include_str!("docview/mpv.rs"))),
         ]
     }
 
@@ -1195,6 +1236,39 @@ mod tests {
         assert!(
             new.contains("cx.on_release(") && new.contains(".give_back(cx)"),
             "DocumentView::new must register its own release"
+        );
+    }
+
+    /// A video gives back both frames it holds when its view goes, and stops
+    /// its player; a frame replaced while it plays goes through the deferred
+    /// path, never straight to the atlas from whatever update it arrived in.
+    #[test]
+    fn a_video_gives_every_frame_back() {
+        let src = source_of("docview/video.rs");
+        let release = backend_fn(&src, "VideoDoc", "give_back");
+        assert!(release.contains("self.release("), "{release}");
+        let release = src
+            .split("pub fn release(&mut self, path: &Path, cx: &mut App)")
+            .nth(1)
+            .expect("VideoDoc::release");
+        let release = release.split("\n    }\n").next().unwrap_or(release);
+        for slot in [
+            "self.shown.take()",
+            "self.before.take()",
+            "drop_image(",
+            "self.player = Err(",
+        ] {
+            assert!(release.contains(slot), "release must give back {slot}");
+        }
+        let pull = src.split("fn pull(&mut self").nth(1).expect("pull");
+        let pull = pull.split("\n    }\n").next().unwrap_or(pull);
+        assert!(
+            pull.contains("page::give_back("),
+            "a replaced frame goes back deferred"
+        );
+        assert!(
+            !pull.contains("drop_image("),
+            "never a direct drop per frame"
         );
     }
 

@@ -433,6 +433,12 @@ impl Pane {
             .update(|_, cx| crate::docview::set_engine(cx, answer));
     }
 
+    /// Answer every "can a video be played?" with `answer` from now on.
+    pub(super) fn video_ready(&mut self, answer: Result<(), crate::docview::mpv::Missing>) {
+        self.cx
+            .update(|_, cx| crate::docview::set_video_ready(cx, answer));
+    }
+
     /// What the document on the pane shows of a brief's notes: the control
     /// socket's `doc notes`.
     pub(super) fn doc_notes(&mut self) -> Result<serde_json::Value, String> {

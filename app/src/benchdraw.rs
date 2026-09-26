@@ -2358,8 +2358,10 @@ const COMPACT_MARKDOWN_LINES: usize = 6;
 /// ellipsis if more follow — the same cut the card made when it printed raw
 /// lines, now of rendered blocks, so a heading reads as a heading rather than
 /// as a line starting with `#`. Links are drawn in the accent without an
-/// underline, since nothing on a card can follow them, and pictures as the box
-/// that names them: a card holds no decoded images.
+/// underline, since a plain press on a card never follows one; Alt, Ctrl+Alt
+/// and Ctrl on a label do, as on the grid, because each run carries the
+/// target its label hides (`sel_linked`). Pictures are the box that names
+/// them: a card holds no decoded images.
 fn markdown(m: &crate::surface::Markdown, size: CardSize, sk: &Skin, th: &Theme) -> Div {
     use crate::docview::markdown as md;
     let doc = md::parsed(&m.body);
@@ -2833,6 +2835,8 @@ pub struct Slots {
 pub struct Drawn {
     layout: gpui::TextLayout,
     text: gpui::SharedString,
+    /// Links whose target the text does not show; see [`sel_linked`].
+    links: Vec<(std::ops::Range<usize>, String)>,
 }
 
 thread_local! {
@@ -2897,6 +2901,19 @@ impl Drop for Collecting {
 /// Outside a [`collecting`] scope this is a plain `StyledText` and registers
 /// nothing, which is what makes it safe to use anywhere in this file.
 pub fn sel(text: impl Into<gpui::SharedString>) -> gpui::StyledText {
+    sel_linked(text, Vec::new())
+}
+
+/// [`sel`], for a run whose links hide their targets: a Markdown
+/// `[label](target)` draws only the label, so the run's own text has no path
+/// in it for an Alt+click to find. `links` are byte ranges of `text` and the
+/// target each one stands for, as written. On the terminal the same link
+/// arrives as an OSC 8 hyperlink and Alt+click opens it; this is what lets
+/// the bench do the same.
+pub fn sel_linked(
+    text: impl Into<gpui::SharedString>,
+    links: Vec<(std::ops::Range<usize>, String)>,
+) -> gpui::StyledText {
     let text = text.into();
     let styled = gpui::StyledText::new(text.clone());
     SINK.with(|s| {
@@ -2904,6 +2921,7 @@ pub fn sel(text: impl Into<gpui::SharedString>) -> gpui::StyledText {
             into.borrow_mut().push(Drawn {
                 layout: styled.layout().clone(),
                 text,
+                links,
             });
         }
     });
@@ -2944,6 +2962,7 @@ pub fn resolve(
             w,
             h,
             text: d.text.to_string(),
+            links: d.links.clone(),
             region: region(x, y, w, h),
         });
         layouts.push(d.layout.clone());
