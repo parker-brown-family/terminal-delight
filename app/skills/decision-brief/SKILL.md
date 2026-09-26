@@ -139,9 +139,10 @@ and that it is on the bench. Do not paste the brief's contents into the reply.
 
 ## Read the notes back
 
-The person presses **↪ send to agent** in the square's notes bar. The map is
-pasted into your prompt **without Enter**, so it arrives when they choose to send
-it. It looks like this:
+The person presses **↪ send to agent** in the square's notes bar, or
+Ctrl+Shift+Enter over the square. The map lands in your prompt — or, when your
+pane is showing its bench, in the bench's composer — **without Enter**, so it
+arrives when they choose to send it. It looks like this:
 
 ```
 NOTES — 2026-09-25-cache-eviction.html

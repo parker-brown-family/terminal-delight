@@ -5885,6 +5885,7 @@ impl TerminalView {
                 .float
                 .as_ref()
                 .is_some_and(|f| f.view.read(cx).has_caret()),
+            float_sends: self.float.as_ref().is_some_and(|f| f.view.read(cx).sends()),
         }
     }
 

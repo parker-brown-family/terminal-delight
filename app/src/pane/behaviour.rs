@@ -1464,6 +1464,52 @@ fn alt_over_a_brief_outlines_its_anchors(cx: &mut TestAppContext) {
     assert_eq!(pane.doc_notes().expect("notes")["boxes"], 0);
 }
 
+/// Ctrl+shift+enter over a brief is ↪ from the keyboard. With an agent beside
+/// the square it raises the very event a press on the bar's button raises,
+/// carrying the map with the note not yet saved; with nobody beside it the
+/// chord is not the square's, nothing is sent and the square stays up.
+#[gpui::test]
+fn ctrl_shift_enter_over_a_brief_sends_its_notes_as_the_button_does(cx: &mut TestAppContext) {
+    let (mut pane, _dir, brief, _png) = pane_showing_a_brief(cx, "send-chord");
+    open_the_brief_with_an_unsaved_note(&mut pane, &brief);
+    let sent = std::rc::Rc::new(std::cell::RefCell::new(Vec::<String>::new()));
+    let log = sent.clone();
+    let view = pane.view.clone();
+    pane.cx.update(|_, cx| {
+        cx.subscribe(&view, move |_, ev: &super::SendNotesBeside, _| {
+            log.borrow_mut().push(ev.map.clone());
+        })
+        .detach();
+    });
+
+    pane.keys("ctrl-shift-enter");
+    pane.redraw();
+    assert!(sent.borrow().is_empty(), "nobody beside it: nothing sent");
+    assert!(pane.float_path().is_some(), "and the square stays up");
+
+    // What the workspace works out every frame from the tab, said here.
+    pane.view.update(pane.cx, |v, cx| {
+        v.set_notes_beside(Some("agent".into()), None, cx)
+    });
+    pane.redraw();
+    let square = pane.float_view().expect("the square");
+    assert!(
+        square.read_with(pane.cx, |v, _| v.sends()),
+        "the bar draws ↪ once somebody is beside it: {}",
+        pane.doc_notes().map(|r| r.to_string()).unwrap_or_default()
+    );
+    pane.keys("ctrl-shift-enter");
+    pane.redraw();
+    let sent = sent.borrow();
+    assert_eq!(sent.len(), 1, "one send: {sent:?}");
+    assert!(
+        sent[0].contains("Keep the tiles."),
+        "the map carries the unsaved note: {}",
+        sent[0]
+    );
+    assert!(pane.float_path().is_some(), "the square stays up after it");
+}
+
 /// ↪ on a brief beside an agent that is showing its BENCH puts the notes map
 /// in the bench's composer, whole, and writes nothing to the terminal; the
 /// same press on the terminal face pastes it into the prompt, unsent. A brief

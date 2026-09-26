@@ -35,7 +35,7 @@ audited 2026-09-08:
 | 6 | `pane.rs` | `paste_text` | the paste keybinding and the right-click context menu's *Paste* row, through `paste_clipboard`; and a file dropped on the terminal face, whose path it pastes (`bench_drop`) | keystroke + pointer |
 | 7 | `pane.rs` | `seek_agent_prompt` | `alt+↑` / `alt+↓` **and the ▲/▼ header buttons** — walks an alt-screen agent's own scrollback with synthetic wheel notches, or PageUp/PageDown when the program has not asked for mouse reports; a bounded async walk, see below | keystroke + pointer |
 | 8 | `pane.rs:2471` | `new_restored` | a **freshly spawned** shell is handed its recorded command line — session restore, the dead-agent *resurrect* menu, `ctl adopt --run`, or `TD_SEED_RESUME` at launch | see below |
-| 9 | `pane.rs` | `send_notes` | a press on **↪** in a brief's notes bar — the brief's notes map, pasted into the prompt of the agent pane the brief sits beside, bracketed and **never followed by Enter**; on the bench face it goes into the composer instead and writes nothing here; see below | pointer |
+| 9 | `pane.rs` | `send_notes` | a press on **↪** in a brief's notes bar, or its chord **ctrl+shift+enter** over the square while the button is drawn — the brief's notes map, pasted into the prompt of the agent pane the brief sits beside, bracketed and **never followed by Enter**; on the bench face it goes into the composer instead and writes nothing here; see below | pointer + keystroke |
 
 `send` is the only site that composes bytes from a keystroke, and it is reachable only from the key
 handler. That is the invariant. Everything else is the terminal answering its own program (#2, #3),
@@ -133,7 +133,9 @@ These look like the concern and are not. Recorded so the next reader does not re
   it carries no carriage return and no ESC that could close the bracket early; a prompt that has
   not asked for bracketed paste gets nothing, because there every newline would be an Enter. It is
   reachable only from the press: `send_notes` has one caller, the handler of the event the notes
-  bar raises, and no socket or MCP verb reaches it. And it goes nowhere the person cannot see: the
+  bar raises, and no socket or MCP verb reaches it. The chord raises that same event from the
+  document's own key handler, and `keylayer` gives it to the square only while the square draws
+  the button, so it is the same gesture on the other hand. And it goes nowhere the person cannot see: the
   target must be an agent showing its terminal face, and the bar says where the notes landed. The
   person reads them in the prompt and presses Enter. An agent showing its **bench** face — where a
   brief opened from a bench card sits — takes the map into the bench's composer instead, as a draft:

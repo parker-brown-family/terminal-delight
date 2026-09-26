@@ -1463,8 +1463,15 @@ impl PageDoc {
         self.notes.as_ref().is_some_and(NotesLayer::has_caret)
     }
 
+    /// Whether the notes bar draws ↪: the brief takes notes and the pane has
+    /// said who it sits beside.
+    pub fn sends(&self) -> bool {
+        self.notes.is_some() && self.beside.is_some()
+    }
+
     /// A key the view was handed. The note box takes every key while it is
-    /// open; otherwise Escape puts away one of the brief's own dialogs, and,
+    /// open; otherwise ctrl+shift+enter is ↪, the same send as a press on the
+    /// bar's button, and Escape puts away one of the brief's own dialogs, and,
     /// in a floating square that the next Escape would close, keeps it open
     /// once to say that edits are unsaved.
     pub fn key(
@@ -1479,6 +1486,13 @@ impl PageDoc {
                 return true;
             }
         }
+        let m = &ks.modifiers;
+        if crate::keylayer::send_chord(&ks.key, m.control, m.shift, m.alt) {
+            if let Some(notes) = self.send_by_key(cx) {
+                cx.emit(notes);
+            }
+            return true;
+        }
         if ks.key != "escape" {
             return false;
         }
@@ -1488,6 +1502,22 @@ impl PageDoc {
         // Nothing open over the page: Escape would close the document, and
         // with it every edit not yet saved.
         floating && self.guard_close(cx)
+    }
+
+    /// ↪ by its chord: what a press on the bar's button sends, saving first
+    /// as the press does, or `None` when the bar draws no button or has
+    /// nothing to send.
+    fn send_by_key(&mut self, cx: &mut Context<DocumentView>) -> Option<super::SendNotes> {
+        self.beside.as_ref()?;
+        let anchors = &self.current.as_ref()?.layout.anchors;
+        let sending = self.notes.as_ref()?.send(anchors)?;
+        if sending.saves {
+            self.save(cx);
+        }
+        Some(super::SendNotes {
+            map: sending.map,
+            unsaved: sending.unsaved,
+        })
     }
 
     /// Keep the document open once if closing it would lose edits not yet
@@ -2203,6 +2233,10 @@ impl Backend for PageDoc {
 
     fn has_caret(&self) -> bool {
         PageDoc::has_caret(self)
+    }
+
+    fn sends(&self) -> bool {
+        PageDoc::sends(self)
     }
 
     fn scroll(&self) -> Option<DocScroll> {
