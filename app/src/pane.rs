@@ -4407,7 +4407,25 @@ impl TerminalView {
             // is the best this side has; the voice stays unknown, because a
             // screen cannot tell a person typing from a task notification
             // being pasted in.
-            if self.bench.live().is_none() {
+            //
+            // Gated on the STARTING edge (`!self.tok_was_working`), not merely
+            // on `working` being true this poll. A turn's own response surface
+            // can reach `apply` — and retire `self.live` — before the turn has
+            // actually finished (the agent can keep working after presenting
+            // it, e.g. to compose its closing reply): a bare `bench.live().is_none()`
+            // check would read that as a brand new turn beginning on the very
+            // next poll, open a phantom `LiveTurn` for the tail end of the
+            // SAME turn, and then have nothing left to retire it, since the
+            // one response surface that turn will ever present already went
+            // by. The pane's screen was never wrong here — it was continuously
+            // working the whole time — only the `live()->None` reading was
+            // premature, and re-opening on a level rather than an edge turned
+            // that momentary staleness into a workbench stuck forever saying
+            // "no reply has landed" over a turn that answered minutes ago.
+            // Requiring the idle→working edge means a turn already in flight,
+            // however `self.live` reads, is never mistaken for a new one — the
+            // fallback only fires for a spinner that just started.
+            if self.bench.live().is_none() && !self.tok_was_working {
                 let headline = self.wb_asked.first().cloned();
                 self.bench
                     .turn_seen_working(headline, crate::surfacefeed::now_ms());

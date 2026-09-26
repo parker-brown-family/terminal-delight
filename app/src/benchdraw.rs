@@ -407,14 +407,22 @@ pub fn rail_row(row: &Row, sk: &Skin, th: &Theme) -> Div {
         // without its provenance is asking to be trusted on nothing — the
         // spine's words, and the reason its rows read as evidence rather than
         // as assertions.
-        .when(!row.subtitle.trim().is_empty(), |d| {
-            d.child(
-                div()
-                    .text_size(px(sk.pt(Step::Tag)))
-                    .text_color(sk.ink.ink_faint)
-                    .child(sel(clip(&row.subtitle, 44))),
-            )
-        })
+        //
+        // Also skipped when the subtitle would just be the title again in
+        // smaller type — see `title_echoes_subtitle`. The title, drawn first
+        // and larger, is what a scanning eye reads; repeating it fainter
+        // below adds nothing and reads as the row having glitched.
+        .when(
+            !row.subtitle.trim().is_empty() && !title_echoes_subtitle(&row.title, &row.subtitle),
+            |d| {
+                d.child(
+                    div()
+                        .text_size(px(sk.pt(Step::Tag)))
+                        .text_color(sk.ink.ink_faint)
+                        .child(sel(clip(&row.subtitle, 44))),
+                )
+            },
+        )
 }
 
 /// The `+ write a note` row, at the head of the comments board.
@@ -4077,6 +4085,24 @@ pub fn launch_button(sk: &Skin, th: &Theme) -> Div {
     )
 }
 
+/// Would showing the title ALSO be showing the subtitle a second time?
+///
+/// A hook-synthesized reply (`channel::reply_surface`, used when an agent
+/// answers in plain prose rather than presenting a `response` surface) has no
+/// authored headline — its title is mechanically the first line of the same
+/// text the subtitle shows in full. For a short, self-contained opening
+/// sentence ("Nearly done. Every step so far is verified:"), that puts the
+/// identical words on the rail row twice, at two sizes, reading as a broken
+/// template rather than a summary over a detail.
+///
+/// Compares against the subtitle's UNCLIPPED text, not the 44-character
+/// preview `rail_row` draws — the preview is a display decision made after
+/// this one, and a long title that outruns a short clip must still be caught.
+fn title_echoes_subtitle(title: &str, subtitle: &str) -> bool {
+    let title = title.trim();
+    !title.is_empty() && subtitle.trim_start().starts_with(title)
+}
+
 /// Cut to a character budget, with an ellipsis that says it was cut.
 fn clip(text: &str, max: usize) -> String {
     let count = text.chars().count();
@@ -4105,6 +4131,34 @@ fn join_cells(row: &[Option<String>], sep: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn title_echoes_subtitle_catches_a_hook_replys_first_line_as_its_own_title() {
+        // The exact shape channel::reply_surface produces: title is the
+        // first line of the same text the subtitle shows in full.
+        assert!(title_echoes_subtitle(
+            "Nearly done. Every step so far is verified:",
+            "Nearly done. Every step so far is verified:\n- Real windows: …",
+        ));
+        // A title longer than the subtitle's 44-char rail clip still counts —
+        // this compares against the FULL subtitle, not the clipped preview.
+        assert!(title_echoes_subtitle(
+            "A rather long opening sentence that outruns the short rail preview",
+            "A rather long opening sentence that outruns the short rail preview by a lot more text after it",
+        ));
+        // An authored title, genuinely distinct from its layman: never caught.
+        assert!(!title_echoes_subtitle(
+            "Agent wall images switch: pull request 858, CI green",
+            "CI has passed on the pull request for the agent wall's images switch.",
+        ));
+        // Leading whitespace on the subtitle (a raw reply's first line can
+        // carry it; the title never does, since `reply_surface` trims each
+        // line before taking one) must not defeat the match.
+        assert!(title_echoes_subtitle("Done.", "  Done.\nmore text"));
+        // An empty title never "echoes" — nothing to skip drawing the
+        // subtitle over.
+        assert!(!title_echoes_subtitle("", "Done.\nmore text"));
+    }
 
     /// Every size on the bench goes through the pane's gauge.
     ///
