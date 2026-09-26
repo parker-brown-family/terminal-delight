@@ -2725,6 +2725,18 @@ struct StateFile {
     /// the OUTER design tray and the choice is saved from then on.
     #[serde(default)]
     agent_tint: bool,
+    /// The agent wall's IMAGES switch: whether each card draws its art window
+    /// — the uploaded logo, the robot holding the tool in flight, or the
+    /// generated crest. Off is the plain wall: the same card in text, shorter
+    /// by exactly the window it no longer carries.
+    ///
+    /// Absent means nobody has chosen, which draws the pictures every wall had
+    /// before the switch existed. It stays `None` rather than being written as
+    /// `true`, so a later change of default reaches the people who never chose
+    /// and leaves alone the ones who did. [`wall_card_art`] is the one place it
+    /// becomes a yes or a no.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    card_art: Option<bool>,
     /// Chrome language for the UI (the language pack). Absent on old files →
     /// English; keycaps and symbols are never translated.
     #[serde(default)]
@@ -2797,6 +2809,7 @@ impl Default for StateFile {
             focus_inherit: true,
             anchor_top: false,
             agent_tint: false,
+            card_art: None,
             lang: lang::Lang::default(),
             last_workspace: None,
             undo_hinted: false,
@@ -3638,6 +3651,32 @@ struct LogoCandidate {
     tier: LogoTier,
 }
 
+/// An agent-wall card's height at card scale 1, art window included.
+const WALL_CARD_H: f32 = 296.;
+/// The art window's height at card scale 1: the portrait the IMAGES switch
+/// takes out of every card.
+const WALL_ART_H: f32 = 116.;
+/// The gap between a card's stacked parts (`gap_1`, a quarter rem). It does
+/// not grow with the card scale.
+const WALL_CARD_GAP: f32 = 4.;
+
+/// Whether the agent wall's cards draw their art window. A session that never
+/// chose gets the pictures, which is the wall as it was before the switch.
+fn wall_card_art(choice: Option<bool>) -> bool {
+    choice.unwrap_or(true)
+}
+
+/// An agent-wall card's height at card scale `cs`. With the art window off,
+/// the card gives back exactly the room the window and its gap took, so the
+/// feed box below keeps its size instead of stretching into a tall empty well.
+fn wall_card_h(cs: f32, art: bool) -> f32 {
+    if art {
+        WALL_CARD_H * cs
+    } else {
+        (WALL_CARD_H - WALL_ART_H) * cs - WALL_CARD_GAP
+    }
+}
+
 /// DEMO ONLY: deterministically assign a stock "logo" to a card from the
 /// demo-logo dir so the agent wall shows off per-card art without real uploads.
 /// Gated entirely behind `TD_DEMO_LOGOS` / `TD_WALL_DEMO` — returns `None`
@@ -4245,6 +4284,9 @@ struct Workspace {
     mcp_theme_preview: bool,
     /// Text+size scale for ALL agent-wall cards (the A-/A+ control). Session-scoped.
     card_scale: f32,
+    /// The agent wall's IMAGES switch, persisted as the session saved it:
+    /// `None` until someone chooses. Read through [`wall_card_art`].
+    card_art: Option<bool>,
     /// Agent-wall view filter (the chip strip) — transient, not persisted.
     mcp_filter: McpFilter,
     /// Agent-wall state filter. Combines with [`Self::mcp_filter`] so a group
@@ -5716,6 +5758,7 @@ impl Workspace {
             // preview toggle, never exposes real panes.
             mcp_theme_preview: std::env::var_os("TD_WALL_THEME").is_some(),
             card_scale: 1.0,
+            card_art: saved.card_art,
             mcp_filter: McpFilter::All,
             mcp_state_filter: None,
             mcp_program_filter: None,
@@ -7136,6 +7179,7 @@ impl Workspace {
             focus_inherit: self.focus_inherit_theme,
             anchor_top: self.anchor_top,
             agent_tint: self.agent_tint,
+            card_art: self.card_art,
             lang: self.lang,
             // Where this session is right now, recorded every save so a cold
             // launch can prefer the session that was last open *here*. A hint
@@ -16057,6 +16101,15 @@ impl Workspace {
     /// published to [`pane::set_agent_tint`] every render frame.
     fn toggle_agent_tint(&mut self, cx: &mut Context<Self>) {
         self.agent_tint = !self.agent_tint;
+        self.save(cx);
+        cx.notify();
+    }
+
+    /// Flip the agent wall's IMAGES switch, persist it, and repaint. The first
+    /// press on a session that never chose turns the pictures OFF, because
+    /// never chosen draws them.
+    fn toggle_card_art(&mut self, cx: &mut Context<Self>) {
+        self.card_art = Some(!wall_card_art(self.card_art));
         self.save(cx);
         cx.notify();
     }
@@ -26825,6 +26878,30 @@ impl Render for Workspace {
                     cx.notify();
                 }),
             );
+            // The IMAGES switch: the plain wall, for anyone who reads the cards
+            // for their words and numbers and finds the portraits noise. It takes
+            // the whole art window out (logo, robot and crest alike) rather than
+            // blanking the picture inside it, because an empty frame is not
+            // cleaner than a full one.
+            let show_art = wall_card_art(self.card_art);
+            let images_btn = Self::bezel_btn(
+                &sk,
+                &if show_art {
+                    format!("\u{25c9} {}", t.m_images_on)
+                } else {
+                    format!("\u{25cb} {}", t.m_images_off)
+                },
+                show_art,
+            )
+            .id("mcp-btn-images")
+            .hover(|s| s.border_color(th.accent))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                    cx.stop_propagation();
+                    ws.toggle_card_art(cx);
+                }),
+            );
 
             // Live pane list — walk the REAL tree (not the wire snapshot) so each
             // row can carry the pane's own resolved colours and focus it on click.
@@ -27666,7 +27743,7 @@ impl Render for Workspace {
                         .w(px(228. * cs))
                         .min_w(px(228. * cs))
                         .max_w(px(228. * cs))
-                        .h(px(296. * cs))
+                        .h(px(wall_card_h(cs, show_art)))
                         .flex_none()
                         .flex_shrink_0()
                         // MTG-style card FRAME: the metallic body takes this
@@ -27784,12 +27861,14 @@ impl Render for Workspace {
                                         .text_color(row_text.alpha(0.4))
                                         .child(line2),
                                 )
-                                // ART WINDOW: the per-terminal logo as the card "portrait"
-                                .child(
+                                // ART WINDOW: the per-terminal logo as the card "portrait".
+                                // Built only while the IMAGES switch is on: the plain
+                                // wall constructs none of it, its warp tube included.
+                                .children(show_art.then(|| {
                                     div()
                                         .flex_none()
                                         .w_full()
-                                        .h(px(116. * cs))
+                                        .h(px(WALL_ART_H * cs))
                                         .overflow_hidden()
                                         .relative()
                                         // the logo's tiny-CRT bezel: a dark
@@ -27971,8 +28050,8 @@ impl Render for Workspace {
                                                     linear_color_stop(white().alpha(0.0), 0.55),
                                                 ),
                                             ),
-                                        ),
-                                )
+                                        )
+                                }))
                                 // STAT BAR: model/service + effort. Status lives in
                                 // the bottom-right chip beside the ✓/✕/○ marker.
                                 .child({
@@ -28269,28 +28348,48 @@ impl Render for Workspace {
                         t.m_read_only
                     }
                 )))
-                .child(section(
-                    "MCP SERVER",
+                .child(
+                    // The wall's own controls, in two groups: what the MCP server
+                    // does, and how the cards look. The size slider used to end
+                    // the server's row, where it read as a fifth server setting.
                     div()
                         .flex()
-                        .flex_col()
-                        .gap_1()
-                        .child(
+                        .flex_row()
+                        .flex_wrap()
+                        .gap_3()
+                        .child(section(
+                            "MCP SERVER",
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap_1()
+                                .child(
+                                    div()
+                                        .flex()
+                                        .flex_row()
+                                        .flex_wrap()
+                                        .items_center()
+                                        .gap_1()
+                                        .child(enable_btn)
+                                        .child(expose_btn)
+                                        .child(events_btn)
+                                        .child(writes_btn),
+                                )
+                                .child(label(format!("{exposed}/{total} {}", t.m_exposed)))
+                                .into_any_element(),
+                        ))
+                        .child(section(
+                            t.m_cards,
                             div()
                                 .flex()
                                 .flex_row()
-                                .flex_wrap()
                                 .items_center()
-                                .gap_1()
-                                .child(enable_btn)
-                                .child(expose_btn)
-                                .child(events_btn)
-                                .child(writes_btn)
-                                .child(card_slider),
-                        )
-                        .child(label(format!("{exposed}/{total} {}", t.m_exposed)))
-                        .into_any_element(),
-                ))
+                                .gap_2()
+                                .child(images_btn)
+                                .child(card_slider)
+                                .into_any_element(),
+                        )),
+                )
                 .child({
                     // Each filter DIMENSION (group · program · state) lives in its
                     // own lightly-themed card so they read as distinct controls; the
@@ -38415,6 +38514,72 @@ node = "Leaf"
         assert!(
             !old.agent_tint,
             "a pre-feature session inherits its theme rather than wearing the program"
+        );
+    }
+
+    /// The wall's IMAGES switch persists, and a session that never touched it
+    /// keeps its pictures without that being written down as a choice.
+    #[test]
+    fn the_wall_images_switch_persists_and_never_choosing_keeps_the_pictures() {
+        // Turning the pictures off survives a save/load …
+        let state = StateFile {
+            card_art: Some(false),
+            ..Default::default()
+        };
+        let body = toml::to_string(&state).expect("serializes");
+        let back: StateFile = toml::from_str(&body).expect("round-trips");
+        assert_eq!(back.card_art, Some(false), "the IMAGES switch persists");
+        assert!(!wall_card_art(back.card_art), "…and draws the plain wall");
+        // … every file written before the switch existed has no opinion, and
+        // keeps none: absent loads as `None`, and `None` draws the pictures.
+        let old: StateFile =
+            toml::from_str("active = 0\n[[tabs]]\nnode = \"Leaf\"\n").expect("loads old file");
+        assert_eq!(
+            old.card_art, None,
+            "never chosen is not the same as chose on"
+        );
+        assert!(
+            wall_card_art(old.card_art),
+            "a wall that never chose keeps its pictures"
+        );
+        // … and a fresh state file does not record a choice nobody made.
+        let fresh = toml::to_string(&StateFile::default()).expect("serializes");
+        assert!(
+            !fresh.contains("card_art"),
+            "an unchosen switch must not be saved as a choice"
+        );
+    }
+
+    /// The plain wall's card is the pictured card minus its art window and the
+    /// gap above it, and nothing else. The feed box under the window is
+    /// `flex_1`, so a card that kept its height would hand the whole window to
+    /// that box: a tall, mostly empty well, which is the opposite of plain.
+    #[test]
+    fn the_plain_card_gives_back_exactly_its_art_window() {
+        for cs in [0.7, 1.0, 1.6] {
+            let given_back = wall_card_h(cs, true) - wall_card_h(cs, false);
+            assert!(
+                (given_back - (WALL_ART_H * cs + WALL_CARD_GAP)).abs() < 0.01,
+                "at card scale {cs} the plain card gave back {given_back:.1}px, \
+                 not the art window and its gap"
+            );
+        }
+        // The window the switch removes is the one the arithmetic subtracts:
+        // both read one constant, so neither can drift from the other.
+        let code = shipped_code();
+        assert!(
+            code.contains(".h(px(wall_card_h(cs, show_art)))"),
+            "the card's height follows the IMAGES switch"
+        );
+        assert!(
+            code.contains(".children(show_art.then(|| {")
+                && code.contains(".h(px(WALL_ART_H * cs))"),
+            "the art window is built only while shown, at the height the card gives back"
+        );
+        assert!(
+            !code.contains("296. * cs") && !code.contains("116. * cs"),
+            "a literal card or window height is a second copy of a number the \
+             switch's arithmetic depends on"
         );
     }
 
