@@ -406,6 +406,24 @@ impl Backend for MarkdownDoc {
             cx.notify();
             return true;
         }
+        let m = &ks.modifiers;
+        if crate::keylayer::send_chord(&ks.key, m.control, m.shift, m.alt) {
+            // ↪ by its chord: the same send as a press on the bar's button.
+            let anchors = self.note_anchors();
+            let sending = match (&self.beside, self.notes.as_ref()) {
+                (Some(_), Some(layer)) => layer.send(&anchors),
+                _ => None,
+            };
+            if let Some(sending) = sending {
+                cx.emit(SendNotes {
+                    map: sending.map,
+                    unsaved: sending.unsaved,
+                });
+                self.keep(cx);
+                cx.notify();
+            }
+            return true;
+        }
         if ks.key != "escape" {
             return false;
         }
@@ -414,6 +432,10 @@ impl Backend for MarkdownDoc {
 
     fn has_caret(&self) -> bool {
         self.notes.as_ref().is_some_and(NotesLayer::has_caret)
+    }
+
+    fn sends(&self) -> bool {
+        self.notes.is_some() && self.beside.is_some()
     }
 
     fn reveal(&mut self, on: bool) -> bool {

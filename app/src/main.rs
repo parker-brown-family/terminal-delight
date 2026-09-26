@@ -32,6 +32,7 @@ mod attention;
 mod bell;
 mod benchdraw;
 mod benchstore;
+mod briefkit;
 mod channel;
 mod crt;
 mod csd;
@@ -10155,12 +10156,16 @@ impl Workspace {
             None => {
                 Said::Refused("no agent pane is beside this brief now — ⎘ copy map instead".into())
             }
-            Some((target, who)) => match target.read(cx).send_notes(&ev.map) {
-                Ok(chars) => {
+            Some((target, who)) => match target.update(cx, |v, cx| v.send_notes(&ev.map, cx)) {
+                Ok(landed) => {
+                    let (place, chars) = match landed {
+                        pane::NotesLanded::Prompt(n) => ("prompt", n),
+                        pane::NotesLanded::Composer(n) => ("composer on the bench", n),
+                    };
                     let prompt = if who == "agent" {
-                        "the agent's prompt".to_string()
+                        format!("the agent's {place}")
                     } else {
-                        format!("{who}'s prompt")
+                        format!("{who}'s {place}")
                     };
                     // A send saves as it goes; this counts only what a
                     // brief that cannot be saved into kept out of the file.
@@ -13722,7 +13727,23 @@ impl Workspace {
         // the pane id does not exist yet — and not needed, for the same reason.
         let briefing_path = match (recipe.takes_briefing(), surfacefeed::session_dir()) {
             (true, Some(dir)) => {
-                let text = recipe.briefing(&format!("{}/$TD_PANE_ID", dir.display()));
+                // The decision-brief kit the briefing points at, laid down
+                // for this launch. A kit that cannot be written is left out
+                // of the briefing rather than named at a path with nothing
+                // there.
+                let kit = match briefkit::default_root().map(|root| briefkit::write(&root)) {
+                    Some(Ok(skill)) => Some(skill),
+                    Some(Err(err)) => {
+                        eprintln!(
+                            "terminal-delight: could not write the decision-brief kit ({err}); \
+                             briefing without it"
+                        );
+                        None
+                    }
+                    None => None,
+                };
+                let text =
+                    recipe.briefing(&format!("{}/$TD_PANE_ID", dir.display()), kit.as_deref());
                 match launcher::write_briefing(&dir, &text) {
                     Ok(p) => Some(p),
                     Err(err) => {

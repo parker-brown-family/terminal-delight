@@ -123,9 +123,10 @@ pub enum Layer {
     /// The inline rename box in the header, also drawn on both faces, also a
     /// caret you can see. Same terms as [`Layer::Sticky`].
     Rename,
-    /// A document floating over the terminal face. Escape closes it, and that
-    /// is all it takes: every other key still reaches the shell underneath,
-    /// which is the whole point of reading beside it rather than instead of it.
+    /// A document floating over the terminal face. Escape closes it, and
+    /// [`send_chord`] is its ↪ while its bar draws one; that is all it takes:
+    /// every other key still reaches the shell underneath, which is the whole
+    /// point of reading beside it rather than instead of it.
     ///
     /// Below [`Layer::Sticky`] and [`Layer::Rename`], so a caret blinking
     /// somewhere else on the pane keeps its own Escape.
@@ -195,8 +196,27 @@ pub struct Up {
     /// The floating document has a note being written in it: a caret, which
     /// takes every key the chords above it leave, like a sticky note's.
     pub float_caret: bool,
+    /// The floating document's notes bar draws ↪: it sits beside an agent,
+    /// so [`send_chord`] is the square's.
+    pub float_sends: bool,
     /// The pane is showing its DOCUMENT face.
     pub document: bool,
+}
+
+/// ↪ send to agent, from the keyboard: ctrl+shift+enter over a floating
+/// document whose notes bar draws the button.
+///
+/// The bar's ↪ was pointer-only, which left a person on the keyboard — and a
+/// film with no pointer to press it — no way to finish the loop a brief exists
+/// for. Shift keeps it apart from ctrl+enter, which the note box and the
+/// brief's own dialog both read as "add this note". Claimed only while the
+/// button is drawn: with no agent beside the square the chord goes where it
+/// always went.
+///
+/// Takes the parts rather than a [`Key`], so the document, which reads a
+/// `gpui::Keystroke`, asks the same question with the same answer.
+pub fn send_chord(key: &str, control: bool, shift: bool, alt: bool) -> bool {
+    key == "enter" && control && shift && !alt
 }
 
 /// One rung: the layer, and whether it claims this keystroke.
@@ -221,7 +241,10 @@ const LADDER: [Rung; 13] = [
     (Layer::Sticky, |_, u| u.sticky),
     (Layer::Rename, |_, u| u.rename),
     (Layer::Float, |k, u| {
-        u.float && (u.float_caret || k.key == "escape")
+        u.float
+            && (u.float_caret
+                || k.key == "escape"
+                || (u.float_sends && send_chord(k.key, k.control, k.shift, k.alt)))
     }),
     (Layer::Document, |_, u| u.document),
     (Layer::Bench, |_, u| u.bench),
@@ -472,7 +495,7 @@ mod tests {
 
     /// The ladder is total and monotone over every combination of state.
     ///
-    /// All 1,024 state combinations against a corpus of twelve keys, and the
+    /// All 4,096 state combinations against a corpus of thirteen keys, and the
     /// answer is always the FIRST rung that claims — the whole contract stated
     /// as a property rather than as rows. A variant moved in the enum fails this
     /// without anybody having to remember to add a case for it.
@@ -491,8 +514,9 @@ mod tests {
             named("pageup"),
             named("left"),
             named("enter"),
+            ctrl_shift("enter"),
         ];
-        for bits in 0u16..2048 {
+        for bits in 0u16..4096 {
             let up = Up {
                 paint: bits & 1 != 0,
                 ctx_menu: bits & 2 != 0,
@@ -505,6 +529,7 @@ mod tests {
                 float: bits & 256 != 0,
                 document: bits & 512 != 0,
                 float_caret: bits & 1024 != 0,
+                float_sends: bits & 2048 != 0,
             };
             for k in &keys {
                 let want = LADDER
@@ -589,6 +614,37 @@ mod tests {
         assert_eq!(route(&ch("a"), &floating()), Layer::Terminal);
         assert_eq!(route(&ctrl("c"), &floating()), Layer::Terminal);
         assert_eq!(route(&named("enter"), &floating()), Layer::Terminal);
+    }
+
+    /// ctrl+shift+enter is ↪ over a square whose bar draws the button, and
+    /// goes where it always went over one that does not — or with no square
+    /// at all. The window's and the pane's chords still pass it by.
+    #[test]
+    fn ctrl_shift_enter_is_the_squares_only_while_it_draws_send() {
+        let send = ctrl_shift("enter");
+        let mut up = floating();
+        assert_eq!(route(&send, &up), Layer::Terminal, "no button, no claim");
+        up.float_sends = true;
+        assert_eq!(route(&send, &up), Layer::Float);
+        up.bench = true;
+        assert_eq!(route(&send, &up), Layer::Float, "over the bench too");
+        assert_eq!(
+            route(&named("enter"), &up),
+            Layer::Bench,
+            "plain enter is the bench's"
+        );
+        assert_eq!(route(&ctrl("enter"), &up), Layer::Bench, "and ctrl+enter");
+        let stray = Up {
+            float_sends: true,
+            ..Up::default()
+        };
+        assert_eq!(route(&send, &stray), Layer::Terminal, "it is the square's");
+        assert!(send_chord("enter", true, true, false));
+        assert!(!send_chord("enter", true, true, true), "not with alt");
+        assert!(
+            !send_chord("enter", true, false, false),
+            "ctrl+enter adds a note"
+        );
     }
 
     /// A note being written in a brief floating over the terminal is a caret:
@@ -1063,6 +1119,7 @@ mod tests {
             float: true,
             document: true,
             float_caret: true,
+            float_sends: true,
         };
         assert_eq!(route(&named("f1"), &everything), Layer::Help);
     }

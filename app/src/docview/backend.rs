@@ -157,6 +157,12 @@ pub trait Backend {
         false
     }
 
+    /// Whether the notes bar draws ↪ — the document takes notes and sits
+    /// beside an agent — so its keyboard chord is this document's to take.
+    fn sends(&self) -> bool {
+        false
+    }
+
     /// One press of a zoom control, or one notch of ctrl+wheel. Answers
     /// whether anything changed. A picture steps its own ladder; a page and a
     /// Markdown document step [`super::READING_ZOOM`]. A kind of document

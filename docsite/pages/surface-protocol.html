@@ -98,7 +98,7 @@
     <tr><td>anything else</td><td>its name, with spaces for underscores</td><td>the agent</td></tr>
   </tbody>
 </table>
-<p><b>open</b> shows a local Markdown, HTML or image file in a floating document over the pane, and hands anything else to the desktop.</p>
+<p><b>open</b> shows a local Markdown, HTML or image file in a floating document over the pane, and hands anything else to the desktop. An HTML artifact built as a <a href="/briefs">decision brief</a> takes notes there, and its notes go back to the agent.</p>
 
 <h3>The agent channel</h3>
 <p>A second, smaller protocol, TDAC 0.2, carries what Claude Code's hooks see: your prompts, its questions, your answers and its replies. <code>scripts/install-agent-hooks.sh</code> installs the hooks (see <a href="/install#technical-agent-hooks">Install</a>). They append to <code>inbound.jsonl</code> in the pane's folder, and the window turns each question into a question card and each reply into a response if the agent sent none. When the bench is open, a question waits up to 540 seconds for an answer written to <code>answers/&lt;id&gt;.json</code>, so a person can answer it from the bench. <code>bench.json</code> in the same folder says whether the bench is open. Codex can't use this yet.</p>

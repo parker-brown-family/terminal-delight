@@ -1,0 +1,282 @@
+#!/usr/bin/env python3
+"""brief-wall — dress a brief in a random Omarchy wallpaper and the palette of the theme it came from.
+
+Prints one <style id="brief-wall"> block. Paste it straight after base.css and the brief
+wears that theme: the wallpaper, blurred, sits under a scrim of the theme's own ground,
+every glass surface is tinted by it, and the ink is the theme's ink.
+
+    brief-wall                      a random theme, then a random wallpaper from it
+    brief-wall --theme tokyo-night  that theme, a random wallpaper from it
+    brief-wall --image PATH         that exact file (its theme is read from the path)
+    brief-wall --list               every theme and how many wallpapers it has
+    brief-wall --json               what was picked and measured, instead of the CSS
+
+The pick is made once, at build time, and baked in as a data URI, so the brief stays one
+self-contained file and looks the same on every machine it is mailed to. The theme is
+chosen first and then the wallpaper, so a theme that ships fifteen wallpapers is no more
+likely than one that ships two.
+
+Contrast is measured, not hoped for. Body text has to clear 7:1, and muted text and links
+4.5:1, over the brightest tenth of the blurred wallpaper; the ink is lightened and the
+scrim thickened until they do (settle() says in what order, and why). The numbers are in
+the block's opening comment, so they can be checked. A light theme is turned dark (its ink becomes the ground and its paper the ink),
+because the figures a brief draws are drawn for a dark page.
+
+Needs `vips` (libvips). Standard library otherwise.
+"""
+import argparse, base64, json, os, random, re, subprocess, sys, tempfile
+
+THEME_ROOTS = [
+    '/usr/share/omarchy/themes',
+    os.path.expanduser('~/.local/share/omarchy/themes'),
+    os.path.expanduser('~/.config/omarchy/themes'),
+]
+IMAGE_EXT = ('.jpg', '.jpeg', '.png', '.webp')
+
+# The role names the Terminal Delight kiosk family paints with (assets/kiosk-theme.js),
+# read straight out of an Omarchy colors.toml.
+ROLE_KEYS = {
+    'bg': 'background', 'bg2': 'lighter_background', 'bg0': 'darker_background',
+    'fg': 'foreground', 'fg2': 'dark_foreground', 'fgb': 'bright_foreground',
+    'acc': 'accent', 'mut': 'muted', 'sel': 'selection',
+    'red': 'red', 'grn': 'green', 'yel': 'yellow', 'blu': 'blue', 'mag': 'magenta', 'cyn': 'cyan',
+}
+
+BODY_MIN, MUTED_MIN = 7.0, 4.5
+# The Terminal Delight docs redesign runs its wallpaper under a scrim of 0.80, and that is the
+# look this copies. 0.86 is as far as the scrim moves before the ink is asked to change.
+SCRIM_START, SCRIM_SOFT, SCRIM_MAX = 0.78, 0.86, 0.93
+
+
+# ---------------------------------------------------------------- colour arithmetic
+def hx(s):
+    s = s.strip().lstrip('#')
+    if len(s) == 3:
+        s = ''.join(c * 2 for c in s)
+    return tuple(int(s[i:i + 2], 16) for i in (0, 2, 4))
+
+def to_hex(c):
+    return '#%02x%02x%02x' % tuple(max(0, min(255, round(v))) for v in c)
+
+def mix(a, b, t):
+    """t of a, the rest b — sRGB, the way CSS opacity and color-mix(in srgb) composite."""
+    return tuple(a[i] * t + b[i] * (1 - t) for i in range(3))
+
+def lum(c):
+    def lin(v):
+        v /= 255
+        return v / 12.92 if v <= 0.04045 else ((v + 0.055) / 1.055) ** 2.4
+    r, g, b = (lin(v) for v in c)
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+def contrast(a, b):
+    la, lb = sorted((lum(a), lum(b)), reverse=True)
+    return (la + 0.05) / (lb + 0.05)
+
+WHITE, BLACK = (255, 255, 255), (0, 0, 0)
+
+
+# ---------------------------------------------------------------- themes
+def themes():
+    found = {}
+    for root in THEME_ROOTS:
+        if not os.path.isdir(root):
+            continue
+        for name in sorted(os.listdir(root)):
+            d = os.path.join(root, name)
+            colors = os.path.join(d, 'colors.toml')
+            bgdir = os.path.join(d, 'backgrounds')
+            if not (os.path.isfile(colors) and os.path.isdir(bgdir)):
+                continue
+            images = sorted(os.path.join(bgdir, f) for f in os.listdir(bgdir)
+                            if f.lower().endswith(IMAGE_EXT))
+            if images:
+                found[name] = {'name': name, 'dir': os.path.realpath(d), 'colors': colors, 'images': images}
+    return found  # a user theme of the same name shadows the system one, as Omarchy does
+
+def read_colors(path):
+    vals = {}
+    for line in open(path, encoding='utf-8'):
+        m = re.match(r'\s*([a-z_]+)\s*=\s*"([^"]*)"', line)
+        if m:
+            vals[m.group(1)] = m.group(2)
+    return vals
+
+def roles_for(vals):
+    """The kiosk roles, with any role the theme leaves out derived rather than invented."""
+    mode = vals.get('mode', 'dark')
+    get = lambda k: hx(vals[k]) if k in vals else None
+    r = {role: get(key) for role, key in ROLE_KEYS.items()}
+    bg = r['bg'] or BLACK
+    fg = r['fg'] or WHITE
+    if mode == 'light':
+        # A light theme, turned dark: its ink becomes the ground and its paper the ink. Its
+        # chromatic colours were chosen to sit on paper, so they are lifted until they read.
+        ink = r['fg'] or BLACK
+        paper = r['bg'] or WHITE
+        r['bg0'], r['bg'], r['bg2'] = mix(ink, BLACK, .16), mix(ink, BLACK, .26), mix(ink, BLACK, .40)
+        r['fgb'] = paper
+        r['fg'] = mix(paper, ink, .86)
+        r['fg2'] = mix(paper, ink, .55)
+        r['mut'] = mix(paper, ink, .35)
+        r['sel'] = mix(ink, BLACK, .55)
+        for k in ('acc', 'red', 'grn', 'yel', 'blu', 'mag', 'cyn'):
+            c = r[k] or r['fg']
+            while contrast(c, r['bg']) < 4.5 and lum(c) < .9:
+                c = mix(c, WHITE, .88)
+            r[k] = c
+    else:
+        r['bg0'] = r['bg0'] or mix(bg, BLACK, .6)
+        r['bg2'] = r['bg2'] or mix(bg, fg, .9)
+        r['fgb'] = r['fgb'] or fg
+        r['fg2'] = r['fg2'] or mix(fg, bg, .55)
+        r['mut'] = r['mut'] or mix(fg, bg, .35)
+        r['sel'] = r['sel'] or mix(bg, fg, .8)
+        r['acc'] = r['acc'] or r['blu'] or fg
+        for k in ('red', 'grn', 'yel', 'blu', 'mag', 'cyn'):
+            r[k] = r[k] or r['acc']
+    return mode, r
+
+
+# ---------------------------------------------------------------- the wallpaper
+def vips(*args):
+    subprocess.run(['vips', *args], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+def vips_out(*args):
+    return subprocess.run(['vips', *args], check=True, capture_output=True, text=True).stdout.strip()
+
+def encode(image, width, quality, tmp):
+    out = os.path.join(tmp, 'wall.webp')
+    vips('thumbnail', image, f'{out}[Q={quality},strip]', str(width), '--size', 'down')
+    # The brightest tenth of the picture is what the text has to survive, measured after a
+    # blur about the size of the one the page applies.
+    grey = os.path.join(tmp, 'grey.v')
+    vips('colourspace', out, grey, 'b-w')
+    blurred = os.path.join(tmp, 'blur.v')
+    vips('gaussblur', grey, blurred, '6')
+    p90 = float(vips_out('percent', blurred, '90'))
+    mean = float(vips_out('avg', grey))
+    with open(out, 'rb') as f:
+        data = f.read()
+    return data, p90, mean
+
+
+# ---------------------------------------------------------------- contrast
+def settle(r, wall_p90):
+    """Make the page read over the wall's bright tenth, keeping as much wall as possible.
+
+    The order matters. A muted colour that sits on its own theme's ground (everforest,
+    miasma) is the palette's problem, so it is lifted first; thickening the scrim for it
+    would bury the wallpaper to fix something the wallpaper did not cause. Then the scrim
+    may thicken a little, then the ink lightens, and only then does the scrim go further.
+    """
+    bright = (wall_p90,) * 3
+    dim = lambda: mix(r['fg'], r['fg2'], .60)  # base.css derives --dim the same way
+    scrim = SCRIM_START
+    need = {'fg': BODY_MIN, 'fgb': BODY_MIN, 'dim': MUTED_MIN, 'acc': MUTED_MIN}
+    def worst():
+        g = mix(r['bg'], bright, scrim)
+        return {'fg': contrast(r['fg'], g), 'fgb': contrast(r['fgb'], g),
+                'dim': contrast(dim(), g), 'acc': contrast(r['acc'], g)}
+    def failing():
+        return any(v < need[k] for k, v in worst().items())
+    lifted = []
+    def lift(role, test, step):
+        while test() and lum(r[role]) < .95:
+            r[role] = mix(r[role], WHITE, step)
+            if role not in lifted:
+                lifted.append(role)
+
+    # 1 · a muted ink that fails against the theme's own ground, before any wall is involved
+    lift('fg2', lambda: contrast(dim(), r['bg']) < MUTED_MIN + 1.5, .85)
+    # 2 · a little more scrim
+    while failing() and scrim < SCRIM_SOFT:
+        scrim = round(scrim + .01, 2)
+    # 3 · lighter ink
+    lift('fg', lambda: worst()['fg'] < need['fg'], .92)
+    lift('fgb', lambda: worst()['fgb'] < need['fgb'], .92)
+    lift('acc', lambda: worst()['acc'] < need['acc'], .9)
+    lift('fg2', lambda: worst()['dim'] < need['dim'], .85)
+    # 4 · whatever is left, the scrim pays for
+    while failing() and scrim < SCRIM_MAX:
+        scrim = round(scrim + .01, 2)
+    return scrim, {k: round(v, 2) for k, v in worst().items()}, to_hex(dim()), lifted
+
+
+# ---------------------------------------------------------------- output
+def css_block(pick, r, scrim, dim, wall_b64, measured, lifted):
+    label = f"{pick['theme']} · {os.path.basename(pick['image'])}"
+    roles = '\n'.join(f'  --{k}: {to_hex(v)};' for k, v in r.items())
+    note = (f"theme {pick['theme']} ({pick['mode']}{', turned dark' if pick['mode'] == 'light' else ''}), "
+            f"wallpaper {os.path.basename(pick['image'])}\n"
+            f"   scrim {scrim:.2f}; contrast over the wall's brightest tenth: "
+            + ', '.join(f'{k} {v}:1' for k, v in measured.items())
+            + (f"\n   lightened to clear it: {', '.join(lifted)}" if lifted else ''))
+    return (f'<style id="brief-wall">\n'
+            f'/* brief-wall — {note} */\n'
+            f':root {{\n{roles}\n  --dim: {dim};\n  --scrim: {round(scrim * 100)}%;\n'
+            f'  --wall-label: "wallpaper · {label}";\n'
+            f'  --wall: url("data:image/webp;base64,{wall_b64}");\n}}\n</style>')
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
+    ap.add_argument('--theme')
+    ap.add_argument('--image')
+    ap.add_argument('--seed', type=int)
+    # The page blurs the wall, so 1600 px wide is sharper than anything the reader can see,
+    # and it keeps a photographic wallpaper near 200 KB inside the file.
+    ap.add_argument('--width', type=int, default=1600)
+    ap.add_argument('--quality', type=int, default=55)
+    ap.add_argument('--list', action='store_true')
+    ap.add_argument('--json', action='store_true')
+    ap.add_argument('--out')
+    a = ap.parse_args()
+
+    all_themes = themes()
+    if not all_themes:
+        sys.exit('brief-wall: no Omarchy themes with backgrounds found under ' + ', '.join(THEME_ROOTS))
+    if a.list:
+        for t in all_themes.values():
+            print(f"{t['name']:<20} {len(t['images']):>2}  {read_colors(t['colors']).get('mode', 'dark'):<5}  {t['dir']}")
+        return
+    rng = random.Random(a.seed)
+
+    if a.image:
+        image = os.path.realpath(a.image)
+        owner = next((t for t in all_themes.values() if image.startswith(t['dir'] + os.sep)), None)
+        if owner is None and not a.theme:
+            sys.exit(f'brief-wall: {a.image} is not inside a theme; name the palette with --theme')
+        theme = all_themes[a.theme] if a.theme else owner
+    else:
+        if a.theme and a.theme not in all_themes:
+            sys.exit(f"brief-wall: no theme '{a.theme}' — try --list")
+        theme = all_themes[a.theme] if a.theme else all_themes[rng.choice(sorted(all_themes))]
+        image = rng.choice(theme['images'])
+
+    mode, r = roles_for(read_colors(theme['colors']))
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            data, p90, mean = encode(image, a.width, a.quality, tmp)
+    except FileNotFoundError:
+        sys.exit('brief-wall: needs vips (libvips) on PATH — pacman -S libvips')
+    except subprocess.CalledProcessError as e:
+        sys.exit(f'brief-wall: vips failed on {image}: {e.stderr.decode(errors="replace").strip()[-300:]}')
+    scrim, measured, dim, lifted = settle(r, p90)
+    pick = {'theme': theme['name'], 'mode': mode, 'image': image}
+
+    if a.json:
+        print(json.dumps({**pick, 'bytes': len(data), 'wall_p90': round(p90, 1), 'wall_mean': round(mean, 1),
+                          'scrim': scrim, 'contrast': measured, 'lifted': lifted, 'dim': dim,
+                          'roles': {k: to_hex(v) for k, v in r.items()}}, indent=1))
+        return
+    block = css_block(pick, r, scrim, dim, base64.b64encode(data).decode(), measured, lifted)
+    if a.out:
+        with open(a.out, 'w', encoding='utf-8') as f:
+            f.write(block + '\n')
+        print(f"brief-wall: {pick['theme']} · {os.path.basename(image)} · {len(data) // 1024} KB · "
+              f"scrim {scrim:.2f} · {a.out}", file=sys.stderr)
+    else:
+        print(block)
+
+if __name__ == '__main__':
+    main()

@@ -59,6 +59,10 @@
           "title": "Workbench"
         },
         {
+          "slug": "briefs",
+          "title": "Decision briefs"
+        },
+        {
           "slug": "surface-protocol",
           "title": "Surface protocol"
         },

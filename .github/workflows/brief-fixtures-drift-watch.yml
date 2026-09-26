@@ -43,6 +43,14 @@ jobs:
           else
             echo "drifted=yes" >>"$GITHUB_OUTPUT"
           fi
+          # The decision-brief kit the Workbench launcher writes for agents
+          # (app/skills/decision-brief) is vendored from the same skill. It
+          # drifts on the same timer and is reported in the same issue.
+          if kit=$(scripts/sync-brief-skill --check --from "$RUNNER_TEMP/agent-skills" --ref HEAD 2>&1); then
+            echo "kit_drifted=" >>"$GITHUB_OUTPUT"
+          else
+            echo "kit_drifted=yes" >>"$GITHUB_OUTPUT"
+          fi
           head=$(git -C "$RUNNER_TEMP/agent-skills" rev-parse --short HEAD)
           echo "head=$head" >>"$GITHUB_OUTPUT"
           {
@@ -51,20 +59,26 @@ jobs:
             echo '```'
             echo "$out"
             echo '```'
+            echo ""
+            echo "## the Workbench's decision-brief kit against $UPSTREAM@$head"
+            echo ""
+            echo '```'
+            echo "$kit"
+            echo '```'
           } >>"$GITHUB_STEP_SUMMARY"
-          printf '%s\n' "$out" >"$RUNNER_TEMP/drift.txt"
+          printf '%s\n\nkit: %s\n' "$out" "$kit" >"$RUNNER_TEMP/drift.txt"
 
       - name: Raise (or refresh) the drift issue
-        if: ${{ steps.cmp.outputs.drifted != '' }}
+        if: ${{ steps.cmp.outputs.drifted != '' || steps.cmp.outputs.kit_drifted != '' }}
         run: |
           set -euo pipefail
-          body="TD's copy of the decision-brief notes fixtures differs from \`$UPSTREAM@${{ steps.cmp.outputs.head }}\`:
+          body="TD's copy of the decision-brief notes fixtures, or of the Workbench's decision-brief kit, differs from \`$UPSTREAM@${{ steps.cmp.outputs.head }}\`:
 
           \`\`\`
-          $(head -40 "$RUNNER_TEMP/drift.txt")
+          $(head -60 "$RUNNER_TEMP/drift.txt")
           \`\`\`
 
-          The skill may have changed the notes format. Read its commit first, then run \`scripts/sync-brief-fixtures\` and \`cargo test --locked docview::notes\`. If TD's writer now fails a case, the format moved and the writer follows it; if the skill bumped \`data-format\`, TD must keep refusing the new version until its writer is taught it."
+          The skill may have changed the notes format. Read its commit first, then run \`scripts/sync-brief-fixtures\` and \`cargo test --locked docview::notes\`. If TD's writer now fails a case, the format moved and the writer follows it; if the skill bumped \`data-format\`, TD must keep refusing the new version until its writer is taught it. For the kit, run \`scripts/sync-brief-skill\` and \`cargo test --locked briefkit\`, and read the skill's SKILL.md diff for anything the Workbench edition (app/skills/decision-brief/SKILL.md) should follow."
           existing=$(gh issue list --state open --search "in:title \"$ISSUE_TITLE\"" --json number --jq '.[0].number // empty')
           if [ -n "$existing" ]; then
             gh issue comment "$existing" --body "$body"

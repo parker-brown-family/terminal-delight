@@ -728,6 +728,12 @@ impl DocumentView {
         self.backend.has_caret()
     }
 
+    /// Whether the notes bar draws ↪, so ctrl+shift+enter is this view's to
+    /// take ([`crate::keylayer::send_chord`]).
+    pub fn sends(&self) -> bool {
+        self.backend.sends()
+    }
+
     /// A brief's notes, driven from the control socket. Answers with what
     /// the layer shows afterwards, or the sentence that refused it.
     pub fn notes_command(

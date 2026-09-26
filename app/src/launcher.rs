@@ -558,8 +558,12 @@ impl Recipe {
     /// The surface briefing and nothing about effort: effort is a flag on the
     /// same command line now, and a sentence asking for the same thing in
     /// prose would be a second instruction that can drift from the first.
-    pub fn briefing(&self, drop_dir: &str) -> String {
-        crate::surface::launch_briefing(drop_dir)
+    ///
+    /// `kit` is the decision-brief `SKILL.md` written for this launch, when it
+    /// could be written; see [`crate::briefkit`].
+    pub fn briefing(&self, drop_dir: &str, kit: Option<&Path>) -> String {
+        let kit = kit.map(|p| p.display().to_string());
+        crate::surface::launch_briefing(drop_dir, kit.as_deref())
     }
 
     /// Does this harness take a briefing from us at all?
@@ -755,7 +759,7 @@ mod tests {
         let texts: Vec<String> = Harness::Claude
             .efforts()
             .iter()
-            .map(|e| recipe(Harness::Claude, *e).briefing("/run/td/7"))
+            .map(|e| recipe(Harness::Claude, *e).briefing("/run/td/7", None))
             .collect();
         assert!(
             texts.windows(2).all(|w| w[0] == w[1]),
@@ -902,9 +906,21 @@ mod tests {
         assert_eq!(String::from_utf8_lossy(&out.stdout), to.to_string_lossy());
     }
 
+    /// The kit the launch wrote reaches the briefing by its path, and a launch
+    /// that could not write one briefs without it.
+    #[test]
+    fn the_briefing_names_the_kit_the_launch_wrote() {
+        let r = recipe(Harness::Claude, Effort::High);
+        let kit = Path::new("/data/terminal-delight/skills/decision-brief/SKILL.md");
+        assert!(r
+            .briefing("/run/td/7", Some(kit))
+            .contains(&*kit.to_string_lossy()));
+        assert!(!r.briefing("/run/td/7", None).contains("SKILL.md"));
+    }
+
     #[test]
     fn the_briefing_carries_the_drop_directory_and_the_verb() {
-        let text = recipe(Harness::Claude, Effort::Max).briefing("/run/td/surfaces/s/7");
+        let text = recipe(Harness::Claude, Effort::Max).briefing("/run/td/surfaces/s/7", None);
         assert!(text.contains("/run/td/surfaces/s/7"));
         assert!(text.contains("present_surface"), "and the verb");
         assert!(

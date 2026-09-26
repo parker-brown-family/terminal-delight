@@ -323,6 +323,26 @@
   window.__tdDocs = { setTheme: function (name) { var p = K.byName(name); if (p) setTheme(p, true); }, current: function () { return current.name; } };
 })();
 
+/* A playing video's Pause button, painted into its tube island. The island
+   covers the button in the bent page, so it carries a copy of it, drawn from
+   the button's own place and colours. The reel and the clips share it. */
+function tdPaintToggle(ctx, live, btn) {
+  var c = live.getBoundingClientRect(), b = btn.getBoundingClientRect(), cs = getComputedStyle(btn);
+  if (!c.width) return;
+  var k = live.width / c.width, x = (b.left - c.left) * k, y = (b.top - c.top) * k, w = b.width * k, h = b.height * k, r = h / 2;
+  ctx.save();
+  ctx.globalAlpha = parseFloat(cs.opacity) || 1;
+  ctx.beginPath();
+  ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
+  ctx.fillStyle = cs.backgroundColor; ctx.fill();
+  ctx.lineWidth = k; ctx.strokeStyle = cs.borderTopColor; ctx.stroke();
+  ctx.fillStyle = cs.color; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.font = cs.fontWeight + ' ' + (parseFloat(cs.fontSize) * k) + 'px ' + cs.fontFamily;
+  ctx.fillText(btn.textContent, x + w / 2, y + h / 2 + k * 0.5);
+  ctx.restore();
+}
+
 /* ------------------------------------------------------------------- the reel
    The Introduction's first demo: Terminal Delight playing a recording of
    itself, filmed once per theme on one timeline, so second 12 of every take is
@@ -430,26 +450,8 @@
     ctx.globalAlpha = fading ? Math.min(1, (performance.now() - fading.at) / 350) : 1;
     ctx.drawImage(shown, 0, 0, live.width, live.height);
     ctx.globalAlpha = 1;
-    button();
+    tdPaintToggle(ctx, live, btn);
     live.__tdFrame = (live.__tdFrame || 0) + 1;
-  }
-  /* The island covers the button in the bent page, so it carries a copy of it,
-     drawn from the button's own place and colours. */
-  function button() {
-    var c = live.getBoundingClientRect(), b = btn.getBoundingClientRect(), cs = getComputedStyle(btn);
-    if (!c.width) return;
-    var k = live.width / c.width, x = (b.left - c.left) * k, y = (b.top - c.top) * k, w = b.width * k, h = b.height * k, r = h / 2;
-    ctx.save();
-    ctx.globalAlpha = parseFloat(cs.opacity) || 1;
-    ctx.beginPath();
-    ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
-    ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
-    ctx.fillStyle = cs.backgroundColor; ctx.fill();
-    ctx.lineWidth = k; ctx.strokeStyle = cs.borderTopColor; ctx.stroke();
-    ctx.fillStyle = cs.color; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.font = cs.fontWeight + ' ' + (parseFloat(cs.fontSize) * k) + 'px ' + cs.fontFamily;
-    ctx.fillText(btn.textContent, x + w / 2, y + h / 2 + k * 0.5);
-    ctx.restore();
   }
 
   btn.addEventListener('click', function () { paused = !paused; label(); run(); });
@@ -466,4 +468,50 @@
   run();
   requestAnimationFrame(paint);
   window.__tdReel = { shown: function () { return shown; }, names: NAMES };
+})();
+
+/* ------------------------------------------------------------------- clips
+   A single recording on a page — the Decision briefs film — played the way
+   the reel is: muted, looping, only while on screen, waiting on its poster
+   until someone presses Play when reduced motion is asked for, and painted
+   into its canvas[data-glass-live] island so the tube can carry it. One take,
+   not one per theme: what it shows is a window, and the window wears the
+   theme it was filmed in. */
+(function () {
+  'use strict';
+  Array.prototype.forEach.call(document.querySelectorAll('figure[data-clip]'), function (fig) {
+    var v = fig.querySelector('video');
+    var live = fig.querySelector('canvas[data-glass-live]');
+    var btn = fig.querySelector('[data-reel-toggle]');
+    if (!v || !btn) return;
+    var paused = matchMedia('(prefers-reduced-motion: reduce)').matches, onScreen = true;
+    function run() {
+      if (!paused && onScreen) {
+        v.preload = 'auto';
+        var p = v.play(); if (p) p.catch(function () {});
+      } else v.pause();
+    }
+    function label() {
+      btn.textContent = paused ? 'Play' : 'Pause';
+      btn.setAttribute('aria-pressed', String(paused));
+      btn.setAttribute('aria-label', paused ? 'Play the demo' : 'Pause the demo');
+    }
+    var ctx = live && live.getContext('2d'), lastT = -1, lastLabel = '';
+    function paint() {
+      requestAnimationFrame(paint);
+      if (!ctx || live.offsetParent === null || v.readyState < 2) return;
+      if (v.currentTime === lastT && btn.textContent === lastLabel) return;
+      lastT = v.currentTime; lastLabel = btn.textContent;
+      ctx.drawImage(v, 0, 0, live.width, live.height);
+      tdPaintToggle(ctx, live, btn);
+      live.__tdFrame = (live.__tdFrame || 0) + 1;
+    }
+    btn.addEventListener('click', function () { paused = !paused; label(); run(); });
+    if ('IntersectionObserver' in window) {
+      new IntersectionObserver(function (es) { onScreen = es[es.length - 1].isIntersecting; run(); }).observe(fig);
+    }
+    label();
+    run();
+    requestAnimationFrame(paint);
+  });
 })();

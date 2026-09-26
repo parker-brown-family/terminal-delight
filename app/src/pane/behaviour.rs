@@ -1463,3 +1463,97 @@ fn alt_over_a_brief_outlines_its_anchors(cx: &mut TestAppContext) {
     pane.redraw();
     assert_eq!(pane.doc_notes().expect("notes")["boxes"], 0);
 }
+
+/// Ctrl+shift+enter over a brief is ↪ from the keyboard. With an agent beside
+/// the square it raises the very event a press on the bar's button raises,
+/// carrying the map with the note not yet saved; with nobody beside it the
+/// chord is not the square's, nothing is sent and the square stays up.
+#[gpui::test]
+fn ctrl_shift_enter_over_a_brief_sends_its_notes_as_the_button_does(cx: &mut TestAppContext) {
+    let (mut pane, _dir, brief, _png) = pane_showing_a_brief(cx, "send-chord");
+    open_the_brief_with_an_unsaved_note(&mut pane, &brief);
+    let sent = std::rc::Rc::new(std::cell::RefCell::new(Vec::<String>::new()));
+    let log = sent.clone();
+    let view = pane.view.clone();
+    pane.cx.update(|_, cx| {
+        cx.subscribe(&view, move |_, ev: &super::SendNotesBeside, _| {
+            log.borrow_mut().push(ev.map.clone());
+        })
+        .detach();
+    });
+
+    pane.keys("ctrl-shift-enter");
+    pane.redraw();
+    assert!(sent.borrow().is_empty(), "nobody beside it: nothing sent");
+    assert!(pane.float_path().is_some(), "and the square stays up");
+
+    // What the workspace works out every frame from the tab, said here.
+    pane.view.update(pane.cx, |v, cx| {
+        v.set_notes_beside(Some("agent".into()), None, cx)
+    });
+    pane.redraw();
+    let square = pane.float_view().expect("the square");
+    assert!(
+        square.read_with(pane.cx, |v, _| v.sends()),
+        "the bar draws ↪ once somebody is beside it: {}",
+        pane.doc_notes().map(|r| r.to_string()).unwrap_or_default()
+    );
+    pane.keys("ctrl-shift-enter");
+    pane.redraw();
+    let sent = sent.borrow();
+    assert_eq!(sent.len(), 1, "one send: {sent:?}");
+    assert!(
+        sent[0].contains("Keep the tiles."),
+        "the map carries the unsaved note: {}",
+        sent[0]
+    );
+    assert!(pane.float_path().is_some(), "the square stays up after it");
+}
+
+/// ↪ on a brief beside an agent that is showing its BENCH puts the notes map
+/// in the bench's composer, whole, and writes nothing to the terminal; the
+/// same press on the terminal face pastes it into the prompt, unsent. A brief
+/// opened from a bench card floats over the bench, so the first is the
+/// Workbench's own loop — it used to be refused with "turn it to its prompt
+/// first".
+#[gpui::test]
+fn notes_sent_to_an_agent_on_its_bench_land_in_the_composer(cx: &mut TestAppContext) {
+    // `cat` echoes whatever reaches the terminal, and bracketed paste is
+    // turned on first, as an agent does, so a paste would have somewhere to go.
+    let mut pane = Pane::running(cx, "printf '\\033[?2004hready\\n'; exec cat");
+    pane.wait_for("ready");
+    let map = "NOTES — brief.html\n\n[fig-01-what-a-miss] 01 · What a miss costs\n  · Draw the cold start too.";
+    pane.view.update(pane.cx, |v, cx| {
+        v.mode = super::PaneMode::Claude;
+        v.set_face(Face::Workbench, cx);
+    });
+    pane.redraw();
+
+    let landed = pane.view.update(pane.cx, |v, cx| v.send_notes(map, cx));
+    assert_eq!(
+        landed,
+        Ok(super::NotesLanded::Composer(map.chars().count())),
+        "on the bench the map goes to the composer"
+    );
+    let draft = pane.read(|v| v.wb_compose.as_ref().map(|l| l.text().to_string()));
+    assert_eq!(draft.as_deref(), Some(map), "whole, as a draft");
+    std::thread::sleep(std::time::Duration::from_millis(150));
+    pane.redraw();
+    assert!(
+        !pane.rows().iter().any(|r| r.contains("cold start")),
+        "and nothing of it reached the terminal: {:?}",
+        pane.rows()
+    );
+
+    pane.view.update(pane.cx, |v, cx| {
+        v.wb_compose = None;
+        v.set_face(Face::Terminal, cx);
+    });
+    let landed = pane.view.update(pane.cx, |v, cx| v.send_notes(map, cx));
+    assert_eq!(landed, Ok(super::NotesLanded::Prompt(map.chars().count())));
+    pane.wait_for("cold start");
+    assert!(
+        pane.read(|v| v.wb_compose.is_none()),
+        "the terminal face pastes, and leaves the composer alone"
+    );
+}
