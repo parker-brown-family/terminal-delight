@@ -2215,7 +2215,11 @@ impl TerminalView {
         }
 
         if let (Some(q), Some(id)) = (asking, now_id) {
-            let title: String = q.question.chars().take(72).collect();
+            let title: String = q
+                .question
+                .chars()
+                .take(crate::surface::TITLE_MAX_CHARS)
+                .collect();
             let kind = Kind::Question(q);
             let actions = kind.default_actions();
             self.wb_live_q = Some(id.clone());

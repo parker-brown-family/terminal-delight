@@ -2556,8 +2556,13 @@ pub struct TerminalView {
     /// Agent-wall HUD token accounting (agent panes only). `tokens_banked` sums
     /// the peak token count of every *completed* turn this session;
     /// `turn_peak_tokens` is the running peak of the turn in flight;
-    /// `tok_was_working` edge-detects turn end to bank the peak. Fed by
-    /// [`TerminalView::accrue_tokens`], read by the agent-wall HUD.
+    /// `tok_was_working` edge-detects turn end to bank the peak, AND (a second
+    /// consumer, added later) gates `should_open_a_new_turn`'s spinner
+    /// fallback on the idle→working edge rather than the working level. Fed
+    /// by [`TerminalView::accrue_tokens`]; the first two are read by the
+    /// agent-wall HUD. All three are reset in `set_mode`'s `departed` branch —
+    /// a pane can outlive the agent that set them, and each has its own
+    /// concrete failure mode if left stale for the next one.
     tokens_banked: u64,
     turn_peak_tokens: u64,
     tok_was_working: bool,
@@ -3654,6 +3659,27 @@ impl TerminalView {
             // it is one of four ways an agent leaves a pane and the only one
             // that goes through the strip.
             self.wb_paused_ms = None;
+            // And the HUD token-accounting trio, for the same reason as
+            // `wb_paused_ms`: nothing else corrects them, because
+            // `accrue_tokens` returns early on a non-agent pane and so never
+            // reaches its own reset. Left alone, a NEXT agent in this pane
+            // inherits two different faults from ONE stale bit.
+            // `tok_was_working` is also `turn_seen_working`'s idle→working
+            // edge-guard (`accrue_tokens`) — stuck at `true` from whatever the
+            // departed agent was doing, the next agent's very first working
+            // poll reads `live().is_none() && !tok_was_working` as
+            // `true && false`, and the fallback that is supposed to open its
+            // live-turn card never fires: the workbench shows no live turn
+            // for a visibly-working agent, the exact symptom this field's
+            // guard exists to prevent, reintroduced by the one path that was
+            // never supposed to leave it stale. And `turn_peak_tokens`,
+            // uncleared, is a departed agent's leftover peak waiting to be
+            // banked onto whichever agent starts here next the first time it
+            // goes idle — its spend, attributed to a session that never spent
+            // it.
+            self.tok_was_working = false;
+            self.tokens_banked = 0;
+            self.turn_peak_tokens = 0;
         }
         cx.notify();
     }
@@ -4388,6 +4414,35 @@ impl TerminalView {
         self.tokens_banked.saturating_add(self.turn_peak_tokens)
     }
 
+    /// Should a working poll open a new live-turn via the spinner fallback?
+    ///
+    /// `live_is_none` alone (the pre-existing rule) is a LEVEL check, and a
+    /// turn's own response surface can reach `Bench::apply` — retiring
+    /// `self.live` — before the turn has actually finished: the agent can
+    /// keep working after presenting it, e.g. to compose its closing reply.
+    /// A level check reads that as a brand new turn beginning on the very
+    /// next poll, opens a phantom `LiveTurn` for the tail end of the SAME
+    /// turn, and then has nothing left to retire it, since the one response
+    /// surface that turn will ever present already went by. The pane's
+    /// screen was never wrong here — it was continuously working the whole
+    /// time — only the `live()->None` reading was premature, and re-opening
+    /// on a level rather than an EDGE turned that momentary staleness into a
+    /// workbench stuck forever saying "no reply has landed" over a turn that
+    /// answered minutes ago.
+    ///
+    /// Requiring `!was_working` — the idle→working edge, not merely `working`
+    /// this poll — means a turn already in flight, however `self.live` reads,
+    /// is never mistaken for a new one: the fallback only fires for a spinner
+    /// that just started. `was_working` is `tok_was_working`, an edge bit
+    /// already tracked for token-banking one poll away; callers of THIS
+    /// function are responsible for resetting it on every path that can end
+    /// an agent's tenancy in a pane (see `set_mode`'s `departed` branch) —
+    /// a stale `true` surviving a departed agent silently disables this
+    /// fallback for whichever agent starts in that pane next.
+    fn should_open_a_new_turn(live_is_none: bool, was_working: bool) -> bool {
+        live_is_none && !was_working
+    }
+
     /// Drive HUD token accounting off the live status line: track the current
     /// turn's peak token count and, on the working→idle edge, bank it into the
     /// session total. Called (throttled) from the per-pane effects clock.
@@ -4406,8 +4461,9 @@ impl TerminalView {
             // neither. The latched message is offered as a headline because it
             // is the best this side has; the voice stays unknown, because a
             // screen cannot tell a person typing from a task notification
-            // being pasted in.
-            if self.bench.live().is_none() {
+            // being pasted in. See `should_open_a_new_turn`'s own doc for why
+            // this is gated on an edge rather than a level.
+            if Self::should_open_a_new_turn(self.bench.live().is_none(), self.tok_was_working) {
                 let headline = self.wb_asked.first().cloned();
                 self.bench
                     .turn_seen_working(headline, crate::surfacefeed::now_ms());
@@ -10180,6 +10236,24 @@ mod tests {
         );
     }
 
+    #[test]
+    fn should_open_a_new_turn_only_on_the_idle_to_working_edge() {
+        use super::TerminalView;
+        // The default, common case: no live turn, and the poll before this
+        // one was not working — a genuine idle→working edge. Open it.
+        assert!(TerminalView::should_open_a_new_turn(true, false));
+        // A turn was already in flight (self.live is Some): never open a
+        // second one regardless of the edge.
+        assert!(!TerminalView::should_open_a_new_turn(false, false));
+        assert!(!TerminalView::should_open_a_new_turn(false, true));
+        // THE BUG THIS GUARDS: self.live reads None (a response surface
+        // retired it early) but the pane was ALREADY working last poll too —
+        // this is the tail of the SAME turn, not a new one starting. Must
+        // stay false, or a phantom live-turn opens with nothing left to
+        // retire it.
+        assert!(!TerminalView::should_open_a_new_turn(true, true));
+    }
+
     /// [`read_nav`], from the parts these tests have to hand.
     ///
     /// Inside the test module on purpose: a file-scope `#[cfg(test)]` item above
@@ -10546,6 +10620,7 @@ mod tests {
             "wb_asked",
             "wb_channel",
             "wb_asked_by_hook",
+            "wb_woken",
             "wb_recall",
             "wb_live_q",
             "wb_queued",
@@ -10561,6 +10636,17 @@ mod tests {
             "wb_conv_bond",
             "wb_writer",
             "wb_unfiled",
+            // The HUD token-accounting trio, added alongside a fix for the
+            // exact failure this gate exists to catch: `tok_was_working`
+            // stuck `true` past a departure silently disabled the very
+            // fallback that fix relied on for the NEXT agent, and
+            // `turn_peak_tokens` survived to be banked onto a session that
+            // never spent it. Named here so a future edit that drops one of
+            // these three lines fails loud instead of shipping the same bug
+            // a third time.
+            "tok_was_working",
+            "tokens_banked",
+            "turn_peak_tokens",
         ] {
             assert!(
                 cleared(field),

@@ -210,7 +210,11 @@ impl Asked {
         // and when the channel is carrying the round, the pane drops this copy
         // in favour of the fuller one (see `TerminalView::present`).
         let id = crate::channel::question_surface_id(&self.id, 0);
-        let title = self.question.chars().take(72).collect::<String>();
+        let title = self
+            .question
+            .chars()
+            .take(crate::surface::TITLE_MAX_CHARS)
+            .collect::<String>();
         let waiting = matches!(self.answer, Answered::Waiting);
         let kind = Kind::Question(Question {
             question: self.question,
