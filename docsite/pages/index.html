@@ -1,14 +1,18 @@
 <script type="application/json" data-page>
 {
   "title": "Introduction",
-  "description": "How Terminal Delight works: a native terminal for Linux and Omarchy that wears your Omarchy themes and reads your coding agents' own transcripts. Every page comes in up to three registers: Brief, Story and Technical.",
+  "description": "Terminal Delight is a style-first native terminal for Linux and Omarchy. Its sessions and half-written prompts outlive the window; its Workbench reads coding agents' own transcripts.",
   "updated": "2026-09-25",
   "trueOf": "main at 1e2eb6c",
-  "summary": "What it is, and how these pages work"
+  "summary": "A native Omarchy terminal whose work outlives its window"
 }
 </script>
 
-<p class="lede">Terminal Delight is a terminal made for Linux, and for Omarchy in particular: a native app, written in Rust on gpui and rio-vt, the terminal core from the Rio terminal, drawn by your GPU. It is a real terminal first, with tiling panes, tabs, session restore, pictures that programs draw, and a CRT look you can dial up or down. When a pane is running a coding agent, it reads that agent's own transcript and shows you what the agent is doing, what it has spent, and whether it is waiting on you.</p>
+<div class="lede">
+  <p>Close Terminal Delight halfway through a prompt. Reopen it, and every word already typed is still there, with the cursor waiting after the last one. If an agent was working, it never stopped. Shells, agents, servers, scrollback and the unfinished prompt live in a background session host; the window can close, crash or relaunch without taking any of them with it.</p>
+  <p>Built for Linux, and for Omarchy in particular, Terminal Delight is a style-first native app written in Rust on gpui and built on rio-vt, the terminal core from Rio. Every Omarchy theme installed on the machine is already inside it. It tiles panes and tabs, draws pictures from terminal programs, and lets the CRT look run from clean glass to old tube.</p>
+  <p>Agent panes have a second face. TERM is the whole terminal. BENCH holds the replies, decisions and artifacts meant for you, read from the agent's own transcript. The processes stay with the session host while the interface moves around them — between terminal and Workbench today, and eventually to another device.</p>
+</div>
 
 <figure class="reel" data-reel data-reel-themes="tokyo-night ethereal everforest gruvbox last-voyage miasma osaka-jade retro-82" aria-label="A screen recording of Terminal Delight playing a thirty-second tour of itself in one of its panes">
   <div class="reel-screen">
