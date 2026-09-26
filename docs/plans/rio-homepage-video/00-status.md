@@ -115,6 +115,49 @@ and `encode.sh` for the web files. In outline:
   published on parker.brownfamilysports.com (parkerbrown-dev main `c91ed2a`).
   The reel's browser check passes 9 of 9 against the live site.
 
+## Re-filmed on the flat default (2026-09-25, evening)
+
+Pull request 821 made a fresh install open flat: the tube off, the CRT an
+easter egg in the gauges. Parker, seeing it beside the old look: *"looks 100x
+cleaner for public facing draw"*. Of this reel he asked for a redo in the
+default theme, and said *"the theme adapter on the demo is 100000% killER!!! so
+that MUST stay"*. The player, the page and the eight-theme switching are
+untouched. Only the takes changed.
+
+- **The look is the fresh-install default** (`theme::house_outer` at
+  `08a0a4a`): `crt = false`, on-theme program colour, agentic syntax,
+  brightness −24, contrast +25, colour +50, and the `hacker` theme file a fresh
+  install seeds. Each take still wears its docs theme's palette, which is the
+  adapter. Only the two size dials keep the film's framing (text 100%, menu
+  bar 99%), for legibility at the size the page plays the video.
+- **A grade with no `crt` key now reads as on.** The old film layouts wrote
+  none, so a re-film from them would have come back with scanlines, bloom and
+  vignette. The layouts now say `crt = false` explicitly.
+- **The nested tour froze in three of the first eight outer takes**, and in
+  ethereal every time (six of six). The window's log said *"pane 5 is being
+  shown by another window; this one keeps what it last drew and stops there"*.
+  mpv's Kitty frames outran the host's 512-chunk queue for that window, and the
+  host dropped the stream as its comment intends ("it re-attaches"). The
+  window then read the live pane as taken by another window, and froze it.
+  Filed as issue 853. **mpv is now capped at 15 fps** (`--vf=fps=15` in the
+  template's `bin/reel`). With the cap, all eight outer takes dropped zero
+  frames, against 218 to 373 before, and every one passed on the first try.
+  The tour was already showing about 20 fps inside the pane after drops, so
+  the cap costs little.
+- **The correlation in `align.py` stops meaning anything on dark, flat
+  palettes.** Scores fell to 0.02 on the frozen takes, and a lag search from 0
+  to 1.5 s cannot see a tour that stopped. Two cross-checks now sit beside it
+  in the kit. `align-events.py` times the tour's own chords (queue, workbench,
+  wall) in each take and takes the median. `wall-time.py` finds when the agent
+  wall lands in absolute seconds, which is what proved the frozen takes were
+  frozen. The takes are trimmed by the event medians, 0.133 to 0.167 s.
+
+Measured on the takes as shipped: the wall lands at 18.63 to 18.73 s in all
+eight takes, a spread of three frames. Each take is 29.97 s and 2.2 to 2.7 MB.
+The reel's browser check passes 9 of 9 locally, with theme switches landing
+0.002 to 0.090 s from where the old take would have been.
+`scripts/verify-site.mjs` passes 688 of 688.
+
 ## Retrospective
 
 **Post-hoc difficulty: 7 / 10, as scored.** The coupling cost what the score
