@@ -1720,7 +1720,7 @@ pub fn reply_surface(text: &str, now_ms: u64, n: u32) -> Option<Surface> {
         .find(|l| !l.is_empty())
         .unwrap_or("reply")
         .chars()
-        .take(72)
+        .take(crate::surface::TITLE_MAX_CHARS)
         .collect();
     let value = json!({
         "td": crate::surface::TDSP_VERSION,

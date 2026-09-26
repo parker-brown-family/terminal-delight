@@ -10635,6 +10635,17 @@ mod tests {
             "wb_conv_bond",
             "wb_writer",
             "wb_unfiled",
+            // The HUD token-accounting trio, added alongside a fix for the
+            // exact failure this gate exists to catch: `tok_was_working`
+            // stuck `true` past a departure silently disabled the very
+            // fallback that fix relied on for the NEXT agent, and
+            // `turn_peak_tokens` survived to be banked onto a session that
+            // never spent it. Named here so a future edit that drops one of
+            // these three lines fails loud instead of shipping the same bug
+            // a third time.
+            "tok_was_working",
+            "tokens_banked",
+            "turn_peak_tokens",
         ] {
             assert!(
                 cleared(field),
