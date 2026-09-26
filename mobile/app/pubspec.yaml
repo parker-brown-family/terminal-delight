@@ -1,0 +1,61 @@
+name: terminal_delight
+description: "Terminal Delight in your pocket: the workbench and the terminal, on the phone."
+publish_to: 'none'
+version: 0.1.0+1
+
+environment:
+  sdk: ^3.11.0
+  flutter: ^3.41.0
+
+# Next Run's stack (next-run/mobile/pubspec.yaml), which is HC Video's minus what
+# it did not use: Riverpod 2, go_router, dio, flutter_secure_storage,
+# hand-written fromJson. Plus the two things a terminal client needs and a
+# coaching app does not — a VT emulator and a deep link for USB pairing.
+dependencies:
+  app_links: ^7.0.0
+  dio: ^5.7.0
+  flutter:
+    sdk: flutter
+  flutter_riverpod: ^2.6.1
+  flutter_secure_storage: ^9.2.4
+  go_router: ^14.8.1
+  xterm: ^4.0.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  very_good_analysis: ^6.0.0
+
+flutter:
+  uses-material-design: true
+  fonts:
+    # JetBrains Mono, the desk's own face (the Hacker theme names it), in its
+    # Nerd Font build so a shell prompt's powerline glyphs draw on the phone as
+    # they do on the desk. SIL Open Font License — assets/fonts/OFL-JetBrainsMono.txt.
+    - family: TDMono
+      fonts:
+        - asset: assets/fonts/JetBrainsMonoNerdFont-Regular.ttf
+        - asset: assets/fonts/JetBrainsMonoNerdFont-Bold.ttf
+          weight: 700
+    # Space Grotesk for prose: a card's plain reading is paragraphs, and on a
+    # phone a paragraph reads better proportional. It descends from Space Mono,
+    # so it sits beside the mono without a seam. OFL, from Next Run.
+    - family: Grotesk
+      fonts:
+        - asset: assets/fonts/SpaceGrotesk-Regular.ttf
+        - asset: assets/fonts/SpaceGrotesk-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/SpaceGrotesk-Bold.ttf
+          weight: 700
+    # The symbols an agent TUI draws that neither the Nerd Font nor the phone's
+    # subsetted system fonts carry — Claude Code's ⏵⏵ mode marker among them.
+    # Arch's noto-fonts build; its licence sits beside it.
+    - family: TDSymbols
+      fonts:
+        - asset: assets/fonts/NotoSansSymbols2-Regular.ttf
+    # Caveat is what the desk writes sticky notes in (app/src/sticky.rs). OFL.
+    - family: Caveat
+      fonts:
+        - asset: assets/fonts/Caveat-Regular.ttf
+        - asset: assets/fonts/Caveat-Bold.ttf
+          weight: 700
