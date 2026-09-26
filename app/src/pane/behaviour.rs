@@ -1370,6 +1370,57 @@ fn a_markdown_block_opens_its_note_box_from_the_button_under_the_pointer(cx: &mu
     assert_eq!(report["notes"], 0, "and nothing was written");
 }
 
+/// A note being written wraps at the width of its box. Forty words typed on
+/// one line come out as several lines of the box's width, so the draft grows
+/// taller than the four and a half lines it opens at and stays as wide as
+/// the box. It used to be drawn as the text before the caret and the text
+/// after it side by side, each measured at its full length, so the whole
+/// note ran on as one line past the box's edge.
+#[gpui::test]
+fn a_note_being_written_wraps_at_the_width_of_its_box(cx: &mut TestAppContext) {
+    use crate::docview::markdown::{NOTE_GUTTER, PAD};
+    use crate::docview::notes_ui::BUTTON_CSS;
+    let dir = Scratch::new("md-note-wraps");
+    let md = dir.join("plan.md");
+    std::fs::write(&md, "A paragraph that takes a note.\n").expect("the document");
+    let md = md.to_str().expect("a UTF-8 temp path").to_string();
+    let mut pane = Pane::running(cx, &format!("printf '%s\\n' 'doc {md}' 'ready'; exec cat"));
+    pane.wait_for("ready");
+    let at = pane.point_at(&md);
+    pane.click(at, Pane::alt());
+    pane.redraw();
+    let (x, y, w, _) = pane.float_zone(FloatHit::Body).expect("the square's body");
+    pane.hover(point(px(x + 60.), px(y + PAD + 6.)));
+    pane.redraw();
+    pane.click(
+        point(
+            px(x + w - PAD - NOTE_GUTTER / 2.0),
+            px(y + PAD + BUTTON_CSS / 2.0),
+        ),
+        Default::default(),
+    );
+    pane.redraw();
+    let size = |pane: &mut Pane| -> (f64, f64) {
+        let report = pane.doc_notes().expect("notes");
+        let d = &report["draft"];
+        (
+            d[0].as_f64().expect("a drawn draft"),
+            d[1].as_f64().expect("a drawn draft"),
+        )
+    };
+    let (empty_w, empty_h) = size(&mut pane);
+
+    let word = "w r a p p i n g space";
+    pane.keys(&vec![word; 40].join(" "));
+    pane.redraw();
+    let (typed_w, typed_h) = size(&mut pane);
+    assert_eq!(typed_w, empty_w, "the draft stays as wide as its box");
+    assert!(
+        typed_h > empty_h * 1.5,
+        "forty words wrap onto more lines than the box opens with: {empty_h} → {typed_h}"
+    );
+}
+
 /// A program draws a picture with the Kitty graphics protocol — here two
 /// pixels, red and green, over four cells by two — and the pane builds one
 /// texture for it and lays it over the grid. Then the pane's tab is hidden,

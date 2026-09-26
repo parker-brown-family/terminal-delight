@@ -124,6 +124,10 @@ pub enum Zone {
     Bar,
     /// Anywhere inside the note box.
     Box,
+    /// The draft being written, inside the box. Pressing it does what
+    /// pressing the box does; it is recorded so the report can say how large
+    /// the draft was drawn, which is how a test sees that it wraps.
+    Draft,
     CloseBox,
     AddNote,
     /// The delete on the note box's `n`th note.
@@ -1082,7 +1086,7 @@ impl NotesLayer {
         let hit = zones
             .iter()
             .rev()
-            .find(|(b, z)| b.contains(&at) && !matches!(z, Zone::Box | Zone::Bar))
+            .find(|(b, z)| b.contains(&at) && !matches!(z, Zone::Box | Zone::Draft | Zone::Bar))
             .map(|(_, z)| *z);
         if self.note_box.is_some() {
             match hit {
@@ -1158,6 +1162,11 @@ impl NotesLayer {
             "sent": self.sent.as_ref().map(|s| s.text().to_string()),
             "map": self.map(anchors),
             "open": self.note_box.as_ref().map(|b| b.nid.clone()),
+            // The draft's drawn width and height in logical pixels, as the
+            // last paint laid it out; null when no draft was drawn.
+            "draft": self.zones.borrow().iter().find(|(_, z)| *z == Zone::Draft).map(|(b, _)| {
+                [f32::from(b.size.width).round(), f32::from(b.size.height).round()]
+            }),
             // Whether the last paint drew the bar: a script can see the way
             // in is on screen without anybody looking.
             "bar": self.zones.borrow().iter().any(|(_, z)| *z == Zone::Bar),
@@ -1381,29 +1390,36 @@ impl NotesLayer {
             .into_any_element()
     }
 
-    /// The draft as lines with a caret, split where the note has a newline:
-    /// the single-line box TD draws elsewhere cannot hold a note.
+    /// The draft, a run of text for each line the note has, split where it
+    /// has a newline. Each run wraps at the box's width, whatever the pane's
+    /// size and the text size.
+    ///
+    /// The caret rides IN the run, as a highlight on the character it is on,
+    /// the way the bench composer draws its own (`benchdraw::composer`). It
+    /// used to be a bar between the text before it and the text after it, in
+    /// a row of three: text in a row is measured at its full length, so each
+    /// half ran on as one line past the box, and the only break was the one
+    /// the caret made.
     fn draw_draft(draft: &EditBuffer, th: &Theme) -> gpui::Div {
         let text = draft.text();
         let caret_at = draft.caret();
-        let caret = || div().w(px(2.)).h(px(th.font_size * 1.1)).bg(th.accent);
+        let caret = gpui::HighlightStyle {
+            background_color: Some(th.accent),
+            color: Some(th.bg),
+            ..Default::default()
+        };
         let mut col = div().flex().flex_col().min_h(px(th.font_size * 4.5));
         let mut start = 0usize;
         for line in text.split('\n') {
             let len = line.chars().count();
-            let mut row = div()
-                .flex()
-                .flex_row()
-                .flex_wrap()
-                .min_h(px(th.font_size * 1.3));
-            if (start..=start + len).contains(&caret_at) {
-                let split = caret_at - start;
-                let before: String = line.chars().take(split).collect();
-                let after: String = line.chars().skip(split).collect();
-                row = row.child(before).child(caret()).child(after);
-            } else {
-                row = row.child(line.to_string());
-            }
+            let row = div().w_full().min_h(px(th.font_size * 1.3));
+            let row = match caret_at.checked_sub(start).filter(|at| *at <= len) {
+                Some(at) => {
+                    let (shown, span) = caret_span(line, at);
+                    row.child(gpui::StyledText::new(shown).with_highlights(vec![(span, caret)]))
+                }
+                None => row.child(line.to_string()),
+            };
             col = col.child(row);
             start += len + 1;
         }
@@ -1488,23 +1504,30 @@ impl NotesLayer {
                     .child("ctrl+enter to add"),
             );
         }
+        // A draft that wraps grows downward, and the box stops at eight
+        // tenths of the view. The notes already written give up their room
+        // first, so the draft and Add note stay on screen as it grows.
         let mut content = div()
             .flex()
             .flex_col()
+            .min_h(px(0.))
             .gap(px(10.))
             .px(px(12.))
             .py(px(10.))
-            .child(list);
+            .child(list.min_h(px(0.)).overflow_hidden());
         if editable {
             content = content.child(
                 div()
+                    .relative()
+                    .flex_none()
                     .px(px(8.))
                     .py(px(6.))
                     .rounded(px(5.))
                     .border_1()
                     .border_color(th.accent)
                     .bg(th.bg.alpha(0.6))
-                    .child(Self::draw_draft(&b.draft, th)),
+                    .child(Self::draw_draft(&b.draft, th))
+                    .child(self.record(Zone::Draft)),
             );
         } else if let Some(why) = self.writable.as_ref().err() {
             content = content.child(
@@ -1521,7 +1544,7 @@ impl NotesLayer {
                     .child("These were written on words no longer in the file."),
             );
         }
-        content = content.child(actions);
+        content = content.child(actions.flex_none());
         let panel = div()
             .absolute()
             .left(px(((vw - w) / 2.0).max(0.0)))
@@ -1541,6 +1564,7 @@ impl NotesLayer {
             .child(self.record(Zone::Box))
             .child(
                 div()
+                    .flex_none()
                     .flex()
                     .flex_col()
                     .px(px(12.))
@@ -1566,6 +1590,20 @@ impl NotesLayer {
                 .into_any_element(),
         )
     }
+}
+
+/// Pure. A draft line as drawn with its caret at character `at`: the line
+/// with a space after it, which holds the caret when it sits past the last
+/// character (there is nothing else there to highlight), and the byte range
+/// of the character the caret is on.
+pub fn caret_span(line: &str, at: usize) -> (String, std::ops::Range<usize>) {
+    let shown = format!("{line} ");
+    let start = shown.char_indices().nth(at).map_or(line.len(), |(i, _)| i);
+    let end = shown[start..]
+        .chars()
+        .next()
+        .map_or(shown.len(), |c| start + c.len_utf8());
+    (shown, start..end)
 }
 
 /// The anchor an edit is about.
@@ -1648,6 +1686,23 @@ mod tests {
     use super::*;
     use crate::docview::notes;
     use gpui::{point, size, Modifiers};
+
+    /// The caret sits on the character it is before, and past the last one on
+    /// the space added to hold it; a character of several bytes is covered
+    /// whole, never split.
+    #[test]
+    fn the_caret_covers_the_character_it_is_on() {
+        assert_eq!(caret_span("hello", 0), ("hello ".into(), 0..1));
+        assert_eq!(caret_span("hello", 2), ("hello ".into(), 2..3));
+        assert_eq!(
+            caret_span("hello", 5),
+            ("hello ".into(), 5..6),
+            "at the end"
+        );
+        assert_eq!(caret_span("", 0), (" ".into(), 0..1), "an empty line");
+        let (shown, span) = caret_span("né x", 1);
+        assert_eq!(&shown[span], "é", "two bytes, one character");
+    }
 
     fn anchor(nid: &str, rect: Option<RectCss>, concur: bool) -> Anchor {
         Anchor {
