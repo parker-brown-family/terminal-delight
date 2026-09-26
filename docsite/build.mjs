@@ -410,7 +410,12 @@ pagesOut['404'] = renderPage({ slug: '404', title: 'Not here', group: 'Docs' }, 
 
 const SHIPPED = ['td-shell.js', 'td-glass.js', 'td-panes.js', 'td-docs.css', 'docs.css', 'docs.js', 'kiosk-theme.js'];
 const WALLS = (await readdir(join(ROOT, 'assets', 'omarchy', 'bg'))).filter((f) => f.endsWith('.webp'));
-const assets = new Set([...SHIPPED.map((f) => '/assets/' + f), '/assets/td-window.css', '/assets/td-window.html', '/assets/fonts/fonts.css', '/favicon.ico', '/favicon.svg', '/search.json', '/sitemap.xml']);
+/* single recordings a page plays (docs.js "clips"), and example briefs a reader
+   can open and annotate in the browser; both are copied whole */
+const CLIPS = (await readdir(join(ROOT, 'assets', 'clips')).catch(() => [])).filter((f) => /\.(mp4|jpg)$/.test(f));
+const BRIEFS = (await readdir(join(ROOT, 'assets', 'briefs')).catch(() => [])).filter((f) => f.endsWith('.html'));
+const assets = new Set([...SHIPPED.map((f) => '/assets/' + f), ...CLIPS.map((f) => '/assets/clips/' + f), ...BRIEFS.map((f) => '/assets/briefs/' + f),
+  '/assets/td-window.css', '/assets/td-window.html', '/assets/fonts/fonts.css', '/favicon.ico', '/favicon.svg', '/search.json', '/sitemap.xml']);
 const liveUrls = new Set(live.map((p) => url(p.slug)));
 for (const [slug, html] of Object.entries(pagesOut)) {
   const where = `pages/${slug}.html`;
@@ -428,6 +433,8 @@ for (const [slug, html] of Object.entries(pagesOut)) {
     }
   }
   for (const m of html.matchAll(/<sup><a href="#(s\d+)">/g)) if (!ids.has(m[1])) fail(where, `citation ${m[1]} has no source`);
+  /* a clip's video and poster are src and poster, not href, so the link check above never sees them */
+  for (const m of html.matchAll(/(?:src|poster)="(\/assets\/clips\/[^"]+)"/g)) if (!assets.has(m[1])) fail(where, `${m[1]} is not in assets/clips`);
 }
 
 /* the Introduction's reel is one recording per theme; docs.js swaps them with the theme */
@@ -460,6 +467,10 @@ for (const f of WALLS) await copyFile(join(ROOT, 'assets', 'omarchy', 'bg', f), 
 for (const f of await readdir(join(ROOT, 'assets', 'fonts'))) await copyFile(join(ROOT, 'assets', 'fonts', f), join(OUT, 'assets', 'fonts', f));
 await mkdir(join(OUT, 'assets', 'reel'), { recursive: true });
 for (const f of REEL) await copyFile(join(ROOT, 'assets', 'reel', f), join(OUT, 'assets', 'reel', f));
+for (const [dir, files] of [['clips', CLIPS], ['briefs', BRIEFS]]) {
+  await mkdir(join(OUT, 'assets', dir), { recursive: true });
+  for (const f of files) await copyFile(join(ROOT, 'assets', dir, f), join(OUT, 'assets', dir, f));
+}
 for (const f of ['favicon.ico', 'favicon.svg']) await copyFile(join(ROOT, f), join(OUT, f));
 
 console.log(`built ${live.length} pages (${order.length - live.length} still to write) and ${search.length} search entries into ${OUT}`);

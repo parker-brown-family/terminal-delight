@@ -64,7 +64,7 @@ fi
 
 echo "▸ verifying $URL"
 fail=0
-for p in / /install /workbench /assets/docs.css /assets/docs.js /assets/kiosk-theme.js /assets/td-shell.js /assets/td-glass.js /assets/td-docs.css /assets/omarchy/bg/last-voyage.webp /assets/fonts/fonts.css /assets/fonts/inter-latin.woff2 /favicon.svg; do
+for p in / /install /workbench /briefs /assets/clips/decision-briefs.mp4 /assets/briefs/telemetry-cache.html /assets/docs.css /assets/docs.js /assets/kiosk-theme.js /assets/td-shell.js /assets/td-glass.js /assets/td-docs.css /assets/omarchy/bg/last-voyage.webp /assets/fonts/fonts.css /assets/fonts/inter-latin.woff2 /favicon.svg; do
   code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 "$URL$p" || true)
   echo "  $code $p"
   [ "$code" = "200" ] || fail=1

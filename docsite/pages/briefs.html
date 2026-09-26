@@ -1,0 +1,112 @@
+<script type="application/json" data-page>
+{
+  "title": "Decision briefs",
+  "description": "An agent in Terminal Delight's workbench can hand you a decision brief: one HTML page, mostly pictures, that opens inside the window, takes a note on any element, and sends your notes back to the agent with one key.",
+  "updated": "2026-09-25",
+  "trueOf": "main at 426188d",
+  "summary": "Drawn pages you annotate, and the notes go back to the agent"
+}
+</script>
+
+<section data-register="brief">
+<p class="lede">When an agent finishes work you have to decide on, such as an audit, a comparison of options or a set of findings, it can hand you a decision brief: one HTML page, mostly pictures, that opens in a square inside the window. You read it beside the agent, put a note on any figure or finding, and stamp <b>CONCUR</b> on the decisions you agree with. <b>↪ send to agent</b> then puts every note in front of the agent, anchored to the element it is about, and the agent answers them.</p>
+
+<figure class="reel" data-clip aria-label="A screen recording of Terminal Delight: an agent puts a decision brief on its workbench, the brief opens inside the window, two notes and a concur are added, and the notes are sent back to the agent, which answers them">
+  <div class="reel-screen">
+    <video class="on" src="/assets/clips/decision-briefs.mp4" poster="/assets/clips/decision-briefs.jpg" muted playsinline loop preload="none" aria-hidden="true"></video>
+    <canvas class="reel-live" data-glass-live width="1280" height="720" aria-hidden="true"></canvas>
+    <button type="button" class="reel-toggle" data-reel-toggle aria-pressed="false">Pause</button>
+  </div>
+  <figcaption>An agent measures two cache policies, writes a brief and puts it on its bench. The brief opens from the bench card, takes a note on the read-first list and one on figure 03, and a concur on the first decision. <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Enter</kbd> sends all three to the agent's composer, <kbd>Enter</kbd> sends the composer, and the agent answers each note. The agent and its work are mock data.</figcaption>
+</figure>
+
+<p>Agents started from the workbench's <a href="/launching">LAUNCH AGENT</a> panel are told how to build one, and Terminal Delight carries the kit they build it with. An agent you start yourself in a terminal is told nothing new.</p>
+<p>The brief in the film is <a href="/assets/briefs/telemetry-cache.html">here to open in your browser</a>, and its notes work there too.</p>
+<p class="invite">Technical has the loop step by step, what the agent is told, where the kit lives and the keys.</p>
+</section>
+
+<section data-register="technical" data-headline="The brief loop">
+<h3>The loop</h3>
+<table>
+  <thead><tr><th>Step</th><th>Who</th><th>What happens</th></tr></thead>
+  <tbody>
+    <tr><td>1</td><td>the agent</td><td>Writes one self-contained HTML file, <code>reports/&lt;date&gt;-&lt;topic&gt;.html</code> in the project, with the kit's stylesheet and notes script inlined.</td></tr>
+    <tr><td>2</td><td>the agent</td><td>Presents it as an <code>artifact</code> <a href="/surface-protocol">surface</a> whose <code>href</code> is the file's absolute path and whose <code>mime</code> is <code>text/html</code>.</td></tr>
+    <tr><td>3</td><td>you</td><td>Open the card from the <code>artifacts</code> shelf (<kbd>Alt</kbd>+<kbd>2</kbd>) with <kbd>Enter</kbd> or a click. The brief opens in the floating square over the bench, and the card stays open under it.</td></tr>
+    <tr><td>4</td><td>you</td><td>Note any element that takes one: each figure, each read-first item, each finding and card, each decision. A decision also takes a <b>CONCUR</b> stamp. Holding <kbd>Alt</kbd> outlines every element that takes a note.</td></tr>
+    <tr><td>5</td><td>you</td><td>Press <b>↪ send to agent</b> in the square's notes bar, or <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Enter</kbd>. Waiting notes are saved into the file first, and the button reads <b>↪ save &amp; send to agent</b> while there are any.</td></tr>
+    <tr><td>6</td><td>you</td><td>The notes map lands where you can see it and is not sent. Press <kbd>Enter</kbd> there to send it.</td></tr>
+  </tbody>
+</table>
+<p>Where step 6 puts the map depends on what the agent's pane is showing:</p>
+<table>
+  <thead><tr><th>The agent's pane shows</th><th>The map goes</th><th>The bar says</th></tr></thead>
+  <tbody>
+    <tr><td>its bench</td><td>into the bench's composer, as a draft</td><td><code>in the agent's composer on the bench, not sent · … · press Enter there</code></td></tr>
+    <tr><td>its terminal</td><td>into the agent's prompt, as one bracketed paste with no Enter</td><td><code>in the agent's prompt, not sent · … · press Enter there</code></td></tr>
+    <tr><td>a document</td><td>nowhere</td><td>says why, and <b>⎘ copy map</b> still works</td></tr>
+  </tbody>
+</table>
+
+<h3>The notes map</h3>
+<p>This is the map the film sends. Each line in brackets is an element id in the brief, so the agent finds the passage without rereading the page.</p>
+<pre><code>NOTES — 2026-09-25-telemetry-cache.html
+2 notes on 2 elements · 1 concur.
+Each [anchor] is an element id in that file — search it to find the passage.
+
+[readfirst-a-60-second-cap] A 60-second cap costs 0.6 points. The cap evicts anything older than …
+  · Is 60 s the planner's own limit?
+
+[fig-03-age-of-the] 03 · Age of the reading served
+  · Show the cold start too, not only the quiet pass.
+
+[ask-1-evict-by-recency] 1 · Evict by recency or by age?  ✓ concur</code></pre>
+<p>A concur with no note reads as <em>approved as recommended</em>. An agent connected to the <a href="/mcp">MCP server</a> can ask for the same map with <code>document_notes</code>, which includes notes not yet saved.</p>
+
+<h3>What the agent is told</h3>
+<p>The launcher hands a Claude agent its briefing through <code>--append-system-prompt</code>, and writes it to <code>$XDG_STATE_HOME/terminal-delight/surfaces/$TD_SESSION/briefing.txt</code>. When the kit could be written, the briefing carries this paragraph, with the kit's directory in place of <code>&lt;kit&gt;</code>:</p>
+<blockquote><p>DECISION BRIEFS. When what you finish is something the person has to read and then decide on — an audit, a review, a comparison of options, a findings write-up, a proposal — build it as a decision brief: one self-contained HTML page, drawn rather than written, that they read inside this window. Read &lt;kit&gt;/SKILL.md before you start; Terminal Delight wrote it for you, with the assets it names beside it. Keep it SHORT and DRAWN: five minutes to read, a figure for every argument, prose only as captions, depth in modals. The page is yours to lay out; the surface only points at it, as an `artifact` whose href is the file's absolute path and whose mime is text/html. A click on that card opens the page over the bench, where the person notes any element, stamps CONCUR on a decision, and presses ↪ to paste the notes into your prompt as [anchor] lines, each anchor an element id in your file. A question with a few short answers is a `decision` surface, not a brief; one brief per decision is the rate.</p></blockquote>
+<p>When the kit could not be written, the paragraph is left out rather than pointing at a file that is not there. Codex takes no briefing from Terminal Delight, so it is not told either.</p>
+
+<h3>The kit</h3>
+<p>The binary carries the kit and writes it to <code>$XDG_DATA_HOME/terminal-delight/skills/decision-brief/</code>, or <code>~/.local/share/terminal-delight/skills/decision-brief/</code>, each time the launcher briefs an agent. Only files whose bytes changed are rewritten, so the kit on disk is always the one the running build carries.</p>
+<table>
+  <thead><tr><th>File</th><th>What it is</th></tr></thead>
+  <tbody>
+    <tr><td><code>SKILL.md</code></td><td>The workbench edition of the skill: the loop, the budget and the checks.</td></tr>
+    <tr><td><code>assets/base.css</code></td><td>The look: glass over an Omarchy wallpaper, and every component a brief uses.</td></tr>
+    <tr><td><code>assets/notes.js</code>, <code>assets/notes.css</code></td><td>The notes: an anchor on every element, the concur stamp, the map, and save into file.</td></tr>
+    <tr><td><code>reference/pictures.md</code></td><td>How to draw a brief: eleven kinds of figure and what each is for.</td></tr>
+    <tr><td><code>reference/glass.md</code>, <code>layout.md</code>, <code>evidence.md</code>, <code>notes-markup.html</code></td><td>The look, the layout, confidence labels, and the markup the notes need.</td></tr>
+    <tr><td><code>scripts/brief-wall</code></td><td>Picks a random Omarchy theme and wallpaper and prints the style block that dresses the brief in it. Needs <code>vips</code> and Omarchy's themes; without them the brief keeps a plain glow.</td></tr>
+  </tbody>
+</table>
+<p>The workbench edition asks for less than the skill it comes from: five minutes of reading, at most three read-first items, a figure for every argument, and no paragraph over three sentences on the page.</p>
+
+<h3>Keys</h3>
+<table class="keys">
+  <thead><tr><th>Keys</th><th>Where</th><th>What it does</th></tr></thead>
+  <tbody>
+    <tr><td><kbd>Alt</kbd>+<kbd>2</kbd></td><td>the bench</td><td>The <code>artifacts</code> shelf, where the brief's card is.</td></tr>
+    <tr><td><kbd>Enter</kbd></td><td>a card</td><td>Takes the card's first action; for a brief, opens it in the square.</td></tr>
+    <tr><td><kbd>Alt</kbd> held</td><td>over the brief</td><td>Outlines every element that takes a note.</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>Enter</kbd></td><td>the note box</td><td>Adds the note.</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Enter</kbd></td><td>the square</td><td>↪ send to agent, while the bar shows the button.</td></tr>
+    <tr><td><kbd>Esc</kbd></td><td>the square</td><td>Closes the note box, then the brief's own dialog, then the square. With notes not yet saved it asks once.</td></tr>
+    <tr><td><kbd>Enter</kbd></td><td>the composer</td><td>Sends the notes to the agent.</td></tr>
+  </tbody>
+</table>
+
+<h3>Limits</h3>
+<ul>
+  <li>↪ is drawn only when an agent pane is beside the brief: the pane the square floats over, or the pane a split was opened beside, else the nearest agent in the same tab.</li>
+  <li>On the terminal face the agent must have bracketed paste on. Without it every line of the map would press Enter, so nothing is sent and the bar says so.</li>
+  <li>An HTML file without the notes markup opens and reads normally, and takes no notes.</li>
+</ul>
+
+<h3>The film</h3>
+<p>The recording was made from a real window running this build, on a hidden workspace, with a mock agent playing back made-up work. The keys were sent to the window through the compositor. Nothing on this machine can click a hidden window, so the scrolling, the two notes and the concur went through Terminal Delight's control socket (<code>ctl doc scroll</code>, <code>ctl doc note add</code>, <code>ctl doc concur</code>), which drives the same notes layer a click does.</p>
+
+<h3>What would prove this wrong</h3>
+<p>Launch a Claude agent from LAUNCH AGENT and open <code>briefing.txt</code> in the session's surfaces folder. If it has no DECISION BRIEFS paragraph, or the <code>SKILL.md</code> it names is missing, this page is wrong. So is it if <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Enter</kbd> over a brief with notes, beside an agent on its bench, leaves the composer empty.</p>
+</section>

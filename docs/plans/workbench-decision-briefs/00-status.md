@@ -15,7 +15,13 @@ full commit merge and docuemntaion deployment etc..."*. No gate was held for a
 second approval; the decisions below are the ones he would otherwise have been
 asked, each with the call made.
 
-**Turned out to be:** _filled in at the end_
+**Turned out to be: 6/10.** Two things the plan did not see. The loop broke at
+its last step inside the Workbench itself: ↪ on a brief floating over an
+agent's bench refused with "turn it to its prompt first", so the bench face now
+takes the map into its composer. And ↪ had no keyboard route, which the film
+needed because this machine cannot click a hidden window; it now answers
+ctrl+shift+enter. Both are real product changes with tests and a line in
+`docs/security/terminal-input.md`, not film scaffolding.
 
 ## What he asked for
 
@@ -43,9 +49,23 @@ asked, each with the call made.
 
 ## Slices
 
-- [ ] 1 · The kit: `app/skills/decision-brief/` (vendored + TD `SKILL.md`), `briefkit.rs` embeds and writes it, `scripts/sync-brief-skill` re-vendors it
-- [ ] 2 · The briefing: `launch_briefing` names the kit and asks for briefs on decision-shaped work, only when the kit was written; tests read the returned string
-- [ ] 3 · The spec: TDSP §5 artifact, the brief loop; implementation map
-- [ ] 4 · The docs site: a Decision briefs page, the workbench and surface-protocol pages linked to it
-- [ ] 5 · The film: a brief opening from the bench, notes made, ↪ into the agent, as mp4 on that page
+- [x] 1 · The kit: `app/skills/decision-brief/` (vendored + TD `SKILL.md`), `briefkit.rs` embeds and writes it, `scripts/sync-brief-skill` re-vendors it
+- [x] 2 · The briefing: `launch_briefing` names the kit and asks for briefs on decision-shaped work, only when the kit was written; tests read the returned string
+- [x] 3 · The spec: TDSP §5 artifact, the brief loop; implementation map
+- [x] 3b · ↪ on the bench face lands in the composer (was refused); ↪ answers ctrl+shift+enter
+- [x] 4 · The docs site: a Decision briefs page, the workbench and surface-protocol pages linked to it, the example brief served whole
+- [x] 5 · The film: a brief opening from the bench, notes made, ↪ into the agent, as mp4 on that page (`assets/clips/decision-briefs.mp4`, 37.5 s, 1080p, 2.0 MB)
 - [ ] 6 · Land: PR, CI, merge, install, deploy the docs site
+
+## The film
+
+Filmed with `~/Work/td-film-kit` (outside the repository, as the kit's own
+README requires): `setup-demo-home.sh`, then `setup-briefs.sh <brief.html>`,
+then `take-briefs.sh last-horizon <out.mp4>` with `TD_BIN` at a build of this
+branch. The mock agent's `orbit-cache` scenario writes the brief and presents
+it, then waits for a bracketed paste and answers the notes in it. Keys go to
+the hidden window through `hl.dsp.send_shortcut`; the scroll, the two notes and
+the concur go through `ctl doc scroll|note add|concur`, and the page says so.
+The brief itself was assembled from this branch's kit; its source and the
+assembler sit beside the take in the session scratchpad, and the finished file
+ships as `assets/briefs/telemetry-cache.html`.
