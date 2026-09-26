@@ -12382,12 +12382,17 @@ impl Workspace {
     /// ALONE should get me out of the group! ... up should just AUTO bump
     /// me into the next available slot ABOVE."*
     ///
-    /// Landing anywhere resets the depth to `Task`, whichever layer actually
-    /// moved it: the NEXT press tries the narrowest scope again first, which
-    /// is what makes holding one direction feel like walking the tree row by
-    /// row rather than jumping whole branches at a time. `Left`/`Right`
-    /// still zoom deliberately, for a press that means to skip a layer
-    /// outright rather than exhaust it one row at a time.
+    /// A move that escalated past the depth this press started at resets to
+    /// `Task`: the NEXT press tries the narrowest scope again first, which is
+    /// what makes holding one direction feel like walking the tree row by
+    /// row rather than jumping whole branches at a time. A move that landed
+    /// WITHOUT escalating — the ordinary Task-depth case, or an explicit
+    /// Left-zoom's first Up/Down at the depth it zoomed to — leaves the
+    /// depth exactly where it was, so `Left` then repeated `Up` still walks
+    /// sibling initiatives/projects rather than collapsing back to Task
+    /// after the first one, per `CarryDepth`'s own contract. A press that
+    /// moved nothing at all (every layer exhausted) leaves the depth alone
+    /// too — nothing happened, so there is nothing to reset.
     fn bar_carry_move(&mut self, down: bool, cx: &mut Context<Self>) {
         let carry = self.bar_carry_or_seed(cx);
         // Every arm can relocate `carry.task` — the swap, or a refile that
@@ -12395,11 +12400,13 @@ impl Workspace {
         // follow wherever it actually ended up, not the index it started
         // this one press at. Losing this was the bug: a second press moved
         // whatever tab now sat at the OLD index, not the one being carried.
-        let task = self.bar_carry_move_cascading(carry.task, carry.depth, down, cx);
-        self.bar_carry = Some(BarCarry {
-            task,
-            depth: CarryDepth::Task,
-        });
+        let (task, landed_at) = self.bar_carry_move_cascading(carry.task, carry.depth, down, cx);
+        let depth = match landed_at {
+            Some(d) if d == carry.depth => carry.depth,
+            Some(_) => CarryDepth::Task,
+            None => carry.depth,
+        };
+        self.bar_carry = Some(BarCarry { task, depth });
         self.bar_carry_show(cx);
         cx.notify();
     }
@@ -12407,28 +12414,53 @@ impl Workspace {
     /// Try the move at `depth`; a no-op there (the edge of that layer)
     /// zooms out one layer and tries again, up to Project — where a no-op
     /// means there is truly nowhere left to go, and `task` comes back
-    /// unmoved. Kept separate from `bar_carry_move` so the recursion has
-    /// somewhere to land without re-deciding the resulting depth each time.
+    /// unmoved. Returns the task's (possibly new) index, and — when
+    /// something moved — the depth that move actually happened at, so
+    /// `bar_carry_move` can tell "landed at the depth it was asked to try"
+    /// from "had to escalate to get anywhere."
+    ///
+    /// Escalating is also what tells `carry_to_sibling_initiative`/`_project`
+    /// whether seeding a fresh landing is appropriate: `depth == entered_at`
+    /// only on the FIRST attempt (whatever depth this whole press started
+    /// at, whether that's Task by default or a depth the user explicitly
+    /// zoomed to). A fallthrough attempt — reached only because a narrower
+    /// layer was exhausted — must never seed a task into a branch it isn't
+    /// currently part of; see the doc comment on those two functions.
     fn bar_carry_move_cascading(
         &mut self,
         task: usize,
         depth: CarryDepth,
         down: bool,
         cx: &mut Context<Self>,
-    ) -> usize {
+    ) -> (usize, Option<CarryDepth>) {
+        self.bar_carry_move_cascading_from(task, depth, depth, down, cx)
+    }
+
+    fn bar_carry_move_cascading_from(
+        &mut self,
+        task: usize,
+        depth: CarryDepth,
+        entered_at: CarryDepth,
+        down: bool,
+        cx: &mut Context<Self>,
+    ) -> (usize, Option<CarryDepth>) {
+        let entering = depth == entered_at;
         let dir = if down { 1 } else { -1 };
         match depth {
-            CarryDepth::Task => self.nudge_tab_at(task, dir, cx).unwrap_or_else(|| {
-                self.bar_carry_move_cascading(task, CarryDepth::Initiative, down, cx)
-            }),
-            CarryDepth::Initiative => self
-                .carry_to_sibling_initiative(task, down, cx)
-                .unwrap_or_else(|| {
-                    self.bar_carry_move_cascading(task, CarryDepth::Project, down, cx)
-                }),
-            CarryDepth::Project => self
-                .carry_to_sibling_project(task, down, cx)
-                .unwrap_or(task),
+            CarryDepth::Task => match self.nudge_tab_at(task, dir, cx) {
+                Some(landed) => (landed, Some(CarryDepth::Task)),
+                None => self.bar_carry_move_cascading_from(task, depth.out(), entered_at, down, cx),
+            },
+            CarryDepth::Initiative => match self
+                .carry_to_sibling_initiative(task, entering, down, cx)
+            {
+                Some(landed) => (landed, Some(CarryDepth::Initiative)),
+                None => self.bar_carry_move_cascading_from(task, depth.out(), entered_at, down, cx),
+            },
+            CarryDepth::Project => match self.carry_to_sibling_project(task, entering, down, cx) {
+                Some(landed) => (landed, Some(CarryDepth::Project)),
+                None => (task, None),
+            },
         }
     }
 
@@ -12511,51 +12543,76 @@ impl Workspace {
     /// needing to move an initiative itself: groups are locked to their
     /// project, so only the task travels.
     ///
-    /// `None` means there is no sibling initiative to move to (none exist,
-    /// or this is the only one) — the cascade in `bar_carry_move_cascading`
-    /// reads that as "this layer is exhausted, try the next one out", so it
-    /// must stay `None` rather than fall back to `task` the way this used
-    /// to before `bar_carry_move` grew that cascade.
+    /// `None` means there is no sibling initiative to move to: none exist,
+    /// this is the only one (`tree::sibling_landing`'s job to catch), or
+    /// `task` is not currently in any initiative AND `entering` is false —
+    /// a fallthrough from an exhausted Task depth must not seed an ungrouped
+    /// task into "the first/last initiative that happens to exist" just
+    /// because nothing is currently selected there; that seeding is only
+    /// right on the FIRST attempt at this depth, i.e. when the user asked
+    /// for Initiative depth on purpose (`entering`). The cascade in
+    /// `bar_carry_move_cascading` reads `None` as "this layer is exhausted,
+    /// try the next one out", so it must stay `None` rather than fall back
+    /// to `task` the way this used to before `bar_carry_move` grew that
+    /// cascade.
     fn carry_to_sibling_initiative(
         &mut self,
         task: usize,
+        entering: bool,
         down: bool,
         cx: &mut Context<Self>,
     ) -> Option<usize> {
         let place = self.place_of(task);
+        if !entering && place.initiative.is_none() {
+            return None;
+        }
         let siblings = self.project_initiatives_in_tree_order(place.project);
         let target = tree::sibling_landing(&siblings, place.initiative, down)?;
-        self.file_task(task, BarBranch::Initiative(target));
-        Some(match self.end_of_initiative_run(target, task) {
-            Some(slot) => self.move_tab(task, slot, cx),
-            None => {
-                self.save(cx);
-                task
-            }
-        })
+        let slot = self.end_of_initiative_run(target, task);
+        Some(self.carry_land_in(task, BarBranch::Initiative(target), slot, cx))
     }
 
     /// Project-depth carry move: refile `task` into the previous/next
     /// sibling project, ungrouped — `file_task` already clears the group
     /// the moment a project is set directly. Same `None`-means-exhausted
-    /// contract as `carry_to_sibling_initiative`, and the same reason for it.
+    /// contract as `carry_to_sibling_initiative`, and the same reason for
+    /// each of its two causes, `entering` included.
     fn carry_to_sibling_project(
         &mut self,
         task: usize,
+        entering: bool,
         down: bool,
         cx: &mut Context<Self>,
     ) -> Option<usize> {
-        let ids: Vec<u32> = self.projects.iter().map(|p| p.id).collect();
         let place = self.place_of(task);
+        if !entering && place.project.is_none() {
+            return None;
+        }
+        let ids: Vec<u32> = self.projects.iter().map(|p| p.id).collect();
         let target = tree::sibling_landing(&ids, place.project, down)?;
-        self.file_task(task, BarBranch::Project(target));
-        Some(match self.end_of_project_run(target, task) {
+        let slot = self.end_of_project_run(target, task);
+        Some(self.carry_land_in(task, BarBranch::Project(target), slot, cx))
+    }
+
+    /// The shared tail of both `carry_to_sibling_*` functions once a
+    /// landing sibling has been picked: refile `task` there and place it
+    /// contiguous with that branch's existing run — at the end if it has
+    /// one, saved in place (nothing to reorder around) if it doesn't.
+    fn carry_land_in(
+        &mut self,
+        task: usize,
+        into: BarBranch,
+        end_of_run: Option<usize>,
+        cx: &mut Context<Self>,
+    ) -> usize {
+        self.file_task(task, into);
+        match end_of_run {
             Some(slot) => self.move_tab(task, slot, cx),
             None => {
                 self.save(cx);
                 task
             }
-        })
+        }
     }
 
     /// Fold / unfold a branch of the tree.

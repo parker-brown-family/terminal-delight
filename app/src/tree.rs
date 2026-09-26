@@ -527,6 +527,15 @@ pub fn reorder(ids: &mut Vec<u32>, moving: u32, neighbour: u32, after: bool) {
 /// next/previous in `siblings`, wrapping — or the first/last (by direction)
 /// when nothing is currently selected there, the same seed-by-direction
 /// convention `bar_leave`'s first press already uses.
+///
+/// `None` also when `current` is the only element `siblings` has: wrapping
+/// from a singleton lands back on itself, which is "nowhere else to go",
+/// not a move. Callers that read `None` as "this layer is exhausted,
+/// escalate" (`Workspace::carry_to_sibling_initiative`/`_project`) depend on
+/// that — a self-wrap read as a successful move was a real, confirmed bug
+/// (a project with exactly one initiative, or a workspace with exactly one
+/// project, silently "moved" a task to the far end of its own unchanged
+/// branch instead of escalating past it).
 pub fn sibling_landing(siblings: &[u32], current: Option<u32>, down: bool) -> Option<u32> {
     if siblings.is_empty() {
         return None;
@@ -538,6 +547,9 @@ pub fn sibling_landing(siblings: &[u32], current: Option<u32>, down: bool) -> Op
         None if down => 0,
         None => siblings.len() - 1,
     };
+    if at == Some(next) {
+        return None;
+    }
     Some(siblings[next])
 }
 
@@ -825,6 +837,21 @@ mod tests {
             sibling_landing(&[], Some(10), true),
             None,
             "no siblings, nowhere to land"
+        );
+        assert_eq!(
+            sibling_landing(&[10], Some(10), true),
+            None,
+            "a singleton wraps back onto itself, which is not a move"
+        );
+        assert_eq!(
+            sibling_landing(&[10], Some(10), false),
+            None,
+            "singleton self-wrap is direction-independent"
+        );
+        assert_eq!(
+            sibling_landing(&[10], None, true),
+            Some(10),
+            "a singleton still seeds fresh when nothing is currently selected"
         );
     }
 
