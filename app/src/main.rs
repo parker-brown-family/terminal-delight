@@ -3464,6 +3464,25 @@ impl CarryDepth {
     }
 }
 
+/// What `bar_carry_move` sets the carry's depth to after one press, given
+/// the depth the press started at and — from `bar_carry_move_cascading` —
+/// the depth a move actually landed at, if anything moved.
+///
+/// Landing at the SAME depth the press started at (no escalation needed)
+/// keeps that depth, honoring an explicit Left-zoom's contract that
+/// repeated Up/Down keeps walking siblings there. Landing at a WIDER depth
+/// (the cascade had to escalate to find room) resets to `Task`, so the next
+/// press starts narrow again rather than staying zoomed out from a rescue
+/// that was only needed once. Moving nothing at all leaves the depth alone
+/// — nothing happened, so there is nothing to reset.
+fn carry_depth_after_move(started_at: CarryDepth, landed_at: Option<CarryDepth>) -> CarryDepth {
+    match landed_at {
+        Some(d) if d == started_at => started_at,
+        Some(_) => CarryDepth::Task,
+        None => started_at,
+    }
+}
+
 /// What the find panel is searching, and where it centres.
 enum FindScope {
     /// Ctrl+F: just this pane; the panel centres over the pane's on-screen box.
@@ -12372,9 +12391,28 @@ impl Workspace {
 
     /// Ctrl+Shift+Alt+↑/↓: move the carried tab to the previous/next sibling
     /// at the carry's current depth — the "do something" verb the zoom
-    /// levels set up. At Task depth this is `nudge_active_tab`'s own
-    /// same-group-clamped swap, generalised off the carried index rather
-    /// than assuming `self.active`.
+    /// levels set up.
+    ///
+    /// Up/Down alone WALK OUT of an exhausted layer rather than stopping
+    /// there: hitting the edge of the current group (or project) escalates
+    /// to the next layer out and tries again, all within this one press —
+    /// see `bar_carry_move_cascading`. Parker, on the version that stopped
+    /// at the group edge and needed an explicit Left first: *"UP arrow
+    /// ALONE should get me out of the group! ... up should just AUTO bump
+    /// me into the next available slot ABOVE."*
+    ///
+    /// A move that escalated past the depth this press started at resets to
+    /// `Task`: the NEXT press tries the narrowest scope again first, which is
+    /// what makes holding one direction feel like walking the tree row by
+    /// row rather than jumping whole branches at a time. A move that landed
+    /// WITHOUT escalating — the ordinary Task-depth case, or an explicit
+    /// Left-zoom's first Up/Down at the depth it zoomed to — leaves the
+    /// depth exactly where it was, so `Left` then repeated `Up` still walks
+    /// sibling initiatives/projects rather than collapsing back to Task
+    /// after the first one, per `CarryDepth`'s own contract. A press that
+    /// moved nothing at all (every layer exhausted) leaves the depth alone
+    /// too — nothing happened, so there is nothing to reset. See
+    /// `carry_depth_after_move`.
     fn bar_carry_move(&mut self, down: bool, cx: &mut Context<Self>) {
         let carry = self.bar_carry_or_seed(cx);
         // Every arm can relocate `carry.task` — the swap, or a refile that
@@ -12382,19 +12420,56 @@ impl Workspace {
         // follow wherever it actually ended up, not the index it started
         // this one press at. Losing this was the bug: a second press moved
         // whatever tab now sat at the OLD index, not the one being carried.
-        let task = match carry.depth {
-            CarryDepth::Task => self
-                .nudge_tab_at(carry.task, if down { 1 } else { -1 }, cx)
-                .unwrap_or(carry.task),
-            CarryDepth::Initiative => self.carry_to_sibling_initiative(carry.task, down, cx),
-            CarryDepth::Project => self.carry_to_sibling_project(carry.task, down, cx),
-        };
-        self.bar_carry = Some(BarCarry {
-            task,
-            depth: carry.depth,
-        });
+        let (task, landed_at) =
+            self.bar_carry_move_cascading(carry.task, carry.depth, carry.depth, down, cx);
+        let depth = carry_depth_after_move(carry.depth, landed_at);
+        self.bar_carry = Some(BarCarry { task, depth });
         self.bar_carry_show(cx);
         cx.notify();
+    }
+
+    /// Try the move at `depth`; a no-op there (the edge of that layer)
+    /// zooms out one layer and tries again, up to Project — where a no-op
+    /// means there is truly nowhere left to go, and `task` comes back
+    /// unmoved. Returns the task's (possibly new) index, and — when
+    /// something moved — the depth that move actually happened at, so
+    /// `bar_carry_move` can tell "landed at the depth it was asked to try"
+    /// from "had to escalate to get anywhere" (`carry_depth_after_move`).
+    ///
+    /// `entered_at` is the depth `bar_carry_move` started this whole press
+    /// at — Task by default, or whatever the user last zoomed to — and
+    /// stays fixed across the recursion so `depth == entered_at` is true
+    /// only on the FIRST attempt. That `entering` flag is what tells
+    /// `carry_to_sibling_initiative`/`_project` whether seeding a fresh
+    /// landing is appropriate: a fallthrough attempt, reached only because a
+    /// narrower layer was exhausted, must never seed a task into a branch it
+    /// isn't currently part of; see the doc comment on those two functions.
+    fn bar_carry_move_cascading(
+        &mut self,
+        task: usize,
+        depth: CarryDepth,
+        entered_at: CarryDepth,
+        down: bool,
+        cx: &mut Context<Self>,
+    ) -> (usize, Option<CarryDepth>) {
+        let entering = depth == entered_at;
+        let dir = if down { 1 } else { -1 };
+        match depth {
+            CarryDepth::Task => match self.nudge_tab_at(task, dir, cx) {
+                Some(landed) => (landed, Some(CarryDepth::Task)),
+                None => self.bar_carry_move_cascading(task, depth.out(), entered_at, down, cx),
+            },
+            CarryDepth::Initiative => {
+                match self.carry_to_sibling_initiative(task, entering, down, cx) {
+                    Some(landed) => (landed, Some(CarryDepth::Initiative)),
+                    None => self.bar_carry_move_cascading(task, depth.out(), entered_at, down, cx),
+                }
+            }
+            CarryDepth::Project => match self.carry_to_sibling_project(task, entering, down, cx) {
+                Some(landed) => (landed, Some(CarryDepth::Project)),
+                None => (task, None),
+            },
+        }
     }
 
     /// The generalised body of `nudge_active_tab`, off an explicit index
@@ -12475,48 +12550,66 @@ impl Workspace {
     /// project boundary at this depth. That is what keeps a carry from ever
     /// needing to move an initiative itself: groups are locked to their
     /// project, so only the task travels.
-    /// Returns `task`'s index AFTER the move, since `file_task` never moves
-    /// it (only `move_tab` does) — a caller tracking what it is carrying
-    /// must follow this return value rather than keep the index it called
-    /// in with.
+    ///
+    /// `None` means there is no sibling initiative to move to: none exist,
+    /// this is the only one, or `task` is not currently in any initiative
+    /// AND `entering` is false — all three are `tree::sibling_landing`'s job
+    /// to catch (its `may_seed` parameter is this same `entering`). A
+    /// fallthrough from an exhausted Task depth must not seed an ungrouped
+    /// task into "the first/last initiative that happens to exist" just
+    /// because nothing is currently selected there; that seeding is only
+    /// right on the FIRST attempt at this depth, i.e. when the user asked
+    /// for Initiative depth on purpose. The cascade in
+    /// `bar_carry_move_cascading` reads `None` as "this layer is exhausted,
+    /// try the next one out", so it must stay `None` rather than fall back
+    /// to `task` the way this used to before `bar_carry_move` grew that
+    /// cascade.
     fn carry_to_sibling_initiative(
         &mut self,
         task: usize,
+        entering: bool,
         down: bool,
         cx: &mut Context<Self>,
-    ) -> usize {
+    ) -> Option<usize> {
         let place = self.place_of(task);
         let siblings = self.project_initiatives_in_tree_order(place.project);
-        let Some(target) = tree::sibling_landing(&siblings, place.initiative, down) else {
-            return task;
-        };
-        self.file_task(task, BarBranch::Initiative(target));
-        match self.end_of_initiative_run(target, task) {
-            Some(slot) => self.move_tab(task, slot, cx),
-            None => {
-                self.save(cx);
-                task
-            }
-        }
+        let target = tree::sibling_landing(&siblings, place.initiative, entering, down)?;
+        let slot = self.end_of_initiative_run(target, task);
+        Some(self.carry_land_in(task, BarBranch::Initiative(target), slot, cx))
     }
 
     /// Project-depth carry move: refile `task` into the previous/next
     /// sibling project, ungrouped — `file_task` already clears the group
-    /// the moment a project is set directly. Same return contract as
-    /// `carry_to_sibling_initiative`.
+    /// the moment a project is set directly. Same `None`-means-exhausted
+    /// contract as `carry_to_sibling_initiative`, and the same reason for
+    /// each of its causes, `entering` included.
     fn carry_to_sibling_project(
         &mut self,
         task: usize,
+        entering: bool,
         down: bool,
         cx: &mut Context<Self>,
-    ) -> usize {
-        let ids: Vec<u32> = self.projects.iter().map(|p| p.id).collect();
+    ) -> Option<usize> {
         let place = self.place_of(task);
-        let Some(target) = tree::sibling_landing(&ids, place.project, down) else {
-            return task;
-        };
-        self.file_task(task, BarBranch::Project(target));
-        match self.end_of_project_run(target, task) {
+        let ids: Vec<u32> = self.projects.iter().map(|p| p.id).collect();
+        let target = tree::sibling_landing(&ids, place.project, entering, down)?;
+        let slot = self.end_of_project_run(target, task);
+        Some(self.carry_land_in(task, BarBranch::Project(target), slot, cx))
+    }
+
+    /// The shared tail of both `carry_to_sibling_*` functions once a
+    /// landing sibling has been picked: refile `task` there and place it
+    /// contiguous with that branch's existing run — at the end if it has
+    /// one, saved in place (nothing to reorder around) if it doesn't.
+    fn carry_land_in(
+        &mut self,
+        task: usize,
+        into: BarBranch,
+        end_of_run: Option<usize>,
+        cx: &mut Context<Self>,
+    ) -> usize {
+        self.file_task(task, into);
+        match end_of_run {
             Some(slot) => self.move_tab(task, slot, cx),
             None => {
                 self.save(cx);
@@ -37173,6 +37266,31 @@ mod tests {
             CarryDepth::Task,
             "can't zoom in past the task itself"
         );
+    }
+
+    #[test]
+    fn carry_depth_after_move_resets_only_on_escalation() {
+        use CarryDepth::{Initiative, Project, Task};
+        // Landed at the depth the press started at, whatever that was:
+        // keep it. This is the ordinary Task-depth case, and an explicit
+        // zoom's first Up/Down at the depth it zoomed to.
+        assert_eq!(carry_depth_after_move(Task, Some(Task)), Task);
+        assert_eq!(
+            carry_depth_after_move(Initiative, Some(Initiative)),
+            Initiative
+        );
+        assert_eq!(carry_depth_after_move(Project, Some(Project)), Project);
+        // Landed WIDER than the press started at: the cascade had to
+        // escalate, so the next press starts narrow again. Reverting this
+        // to an unconditional Task-reset (the bug this fix corrected) would
+        // still pass here for the Task-start cases below, but not these.
+        assert_eq!(carry_depth_after_move(Task, Some(Initiative)), Task);
+        assert_eq!(carry_depth_after_move(Task, Some(Project)), Task);
+        assert_eq!(carry_depth_after_move(Initiative, Some(Project)), Task);
+        // Moved nothing at all: leave the zoom exactly where it was.
+        assert_eq!(carry_depth_after_move(Task, None), Task);
+        assert_eq!(carry_depth_after_move(Initiative, None), Initiative);
+        assert_eq!(carry_depth_after_move(Project, None), Project);
     }
 
     #[test]
