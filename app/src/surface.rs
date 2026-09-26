@@ -72,6 +72,13 @@ pub const TDSP_VERSION: &str = "0.4";
 
 /// Longest title a rail row can carry before it stops being readable at the
 /// rail's width. Measured against [`crate::workbench::RAIL_W`], not guessed.
+///
+/// A second consumer as of `benchdraw::title_echoes_subtitle`: a title
+/// riding at or above this exact length is read as "possibly cut mid-word"
+/// by length alone, since none of this constant's callers mark a truncation
+/// with an ellipsis. A layout-only change to this number (a wider rail, a
+/// different font) also moves that detection boundary — check
+/// `title_echoes_subtitle`'s own doc before retuning it for layout reasons.
 pub const TITLE_MAX_CHARS: usize = 72;
 
 /// How many surfaces one pane keeps. A pane is a workbench, not an archive:
@@ -2019,6 +2026,7 @@ pub fn parse_lenient(value: &Value, now_ms: u64, fallback_title: &str) -> Post {
                 .get("title")
                 .and_then(Value::as_str)
                 .unwrap_or(fallback_title)
+                .trim()
                 .chars()
                 .take(TITLE_MAX_CHARS)
                 .collect::<String>();

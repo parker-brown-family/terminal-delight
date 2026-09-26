@@ -4085,7 +4085,24 @@ pub fn launch_button(sk: &Skin, th: &Theme) -> Div {
     )
 }
 
-/// Would showing the title ALSO be showing the subtitle a second time?
+/// Whether `title` echoes `subtitle` (or vice versa), and if so, the BYTE
+/// offset within TRIMMED `subtitle` where the echoed part ends — `0` when
+/// `subtitle` is itself the shorter, fully-contained echoed side, in which
+/// case there is nothing past it to reveal. `None` when there is no echo.
+///
+/// The one thing that may never happen is `title_echoes_subtitle` and
+/// `layman_without_echoed_title` disagreeing about where a match landed — an
+/// earlier version had each independently re-derive "the title's own
+/// length" from a separately re-trimmed copy, and for a mechanically
+/// truncated title whose very last character happened to be whitespace, the
+/// two trims disagreed by exactly one character: one counted it as part of
+/// the match, the other didn't, and the byte the first one silently dropped
+/// the second one silently kept — reconstructing the source with one
+/// character duplicated. Computing the match here ONCE, and having both
+/// public functions build on this same `Option<usize>`, makes that
+/// particular disagreement structurally impossible rather than merely
+/// tested-against: there is only one boundary to disagree about, because
+/// there is only one place that computes it.
 ///
 /// A hook-synthesized reply (`channel::reply_surface`, used when an agent
 /// answers in plain prose rather than presenting a `response` surface) has no
@@ -4107,35 +4124,67 @@ pub fn launch_button(sk: &Skin, th: &Theme) -> Div {
 /// The match must land on a WORD BOUNDARY: `title="Ready"` must not claim a
 /// subtitle beginning "Readying the release…" — that is one word sharing a
 /// prefix with another, not the same text repeated (`_` counts as part of
-/// the word too, matching this file's own `trailing_number`). The one
-/// exception is a title AT `crate::surface::TITLE_MAX_CHARS` — both
-/// producers of a mechanically-derived title (`channel::reply_surface`,
-/// `default_title`) cut there with no ellipsis or other marker, so a title
-/// riding that exact length is read as "possibly cut mid-word" by length
-/// alone; below it, a title is either a complete line or someone's
-/// deliberate, complete words, and a boundary mismatch there means two
-/// different words, not one cut short.
-fn title_echoes_subtitle(title: &str, subtitle: &str) -> bool {
-    let title = title.trim();
-    let subtitle = subtitle.trim();
-    if title.is_empty() || subtitle.is_empty() {
-        return false;
+/// the word too, matching this file's own `trailing_number`). Two things
+/// excuse a mid-word landing instead: a title ending in its own ellipsis
+/// (an author's own "cut off here" marker, on a title of any length — the
+/// ellipsis itself comes off before comparing, since it is never part of the
+/// underlying text and left on can only fail to match), or a title AT
+/// `crate::surface::TITLE_MAX_CHARS` (both producers of a
+/// mechanically-derived title — `channel::reply_surface`, `default_title` —
+/// cut there with no ellipsis or other marker, so length alone is the only
+/// signal that one is left). Below that length, with no ellipsis, a title
+/// is either a complete line or someone's deliberate, complete words, and a
+/// boundary mismatch there means two different words, not one cut short.
+///
+/// Only the ellipsis comes off `title` — no additional whitespace trim
+/// beyond that, and none at all on a title with no ellipsis. Trimming
+/// further felt harmless and was the exact source of the disagreement above:
+/// a mechanically-derived title is exactly as long as what it actually
+/// consumed from the source text, and treating any of that as
+/// negotiable is what let the two functions compute a different length for
+/// the identical title.
+///
+/// **Known, accepted gap:** a title that happens to land at EXACTLY
+/// `TITLE_MAX_CHARS` by coincidence — genuinely complete, not cut — is
+/// indistinguishable from a real truncation by length alone, so it is
+/// exempted from the boundary check same as a real one would be. Requires an
+/// authored title of that exact length to also happen to be a literal-byte
+/// prefix of an unrelated subtitle with no space at the join — assessed as
+/// implausible in practice for real authored text; a length check cannot
+/// rule it out the way a typed "this title was actually cut" fact could.
+/// See the follow-up filed for a marker-based redesign.
+fn title_echo_end(title: &str, subtitle: &str) -> Option<usize> {
+    let trimmed_subtitle = subtitle.trim();
+    if title.is_empty() || trimmed_subtitle.is_empty() {
+        return None;
+    }
+    let title_marked_cut = title.ends_with('\u{2026}');
+    let title = if title_marked_cut {
+        title.trim_end_matches('\u{2026}')
+    } else {
+        title
+    };
+    if title.is_empty() {
+        return None;
     }
     let title_len = title.chars().count();
-    let title_may_be_cut = title_len >= crate::surface::TITLE_MAX_CHARS;
-    let title_is_shorter = title_len <= subtitle.chars().count();
-    let (shorter, longer) = if title_is_shorter {
-        (title, subtitle)
+    let title_may_be_cut = title_marked_cut || title_len >= crate::surface::TITLE_MAX_CHARS;
+    let title_is_shorter = title_len <= trimmed_subtitle.chars().count();
+    if title_is_shorter {
+        let rest = trimmed_subtitle.strip_prefix(title)?;
+        let boundary_ok = title_may_be_cut
+            || !matches!(rest.chars().next(), Some(c) if c.is_alphanumeric() || c == '_');
+        boundary_ok.then_some(title.len())
     } else {
-        (subtitle, title)
-    };
-    let Some(rest) = longer.strip_prefix(shorter) else {
-        return false;
-    };
-    if title_may_be_cut && title_is_shorter {
-        return true;
+        let rest = title.strip_prefix(trimmed_subtitle)?;
+        let boundary_ok =
+            !matches!(rest.chars().next(), Some(c) if c.is_alphanumeric() || c == '_');
+        boundary_ok.then_some(trimmed_subtitle.len())
     }
-    !matches!(rest.chars().next(), Some(c) if c.is_alphanumeric() || c == '_')
+}
+
+fn title_echoes_subtitle(title: &str, subtitle: &str) -> bool {
+    title_echo_end(title, subtitle).is_some()
 }
 
 /// The full card's version of the same fix `rail_row` applies to its own
@@ -4146,31 +4195,19 @@ fn title_echoes_subtitle(title: &str, subtitle: &str) -> bool {
 /// content, so the fix is not to hide it — it is to drop only the PART
 /// already shown as the title, never the whole thing.
 ///
-/// Cuts at the matched prefix's own character length within the TRIMMED
-/// layman — the same basis `title_echoes_subtitle` compared against — never
-/// at the first newline: a title cut mid-word at `TITLE_MAX_CHARS` has more
-/// to skip than one line, and a layman with a blank line before its real
-/// content would otherwise have only that blank line removed, leaving the
-/// echoed text fully visible right below the title.
-///
-/// When the title is the LONGER side (it fully contains a short, single-line
-/// layman), there is no further content past the echoed part to reveal —
-/// showing that short layman once, redundant with the title, still beats
-/// showing nothing, so it is returned unchanged rather than emptied.
+/// Cuts at `title_echo_end`'s own byte offset within the trimmed layman —
+/// the exact boundary the match validated, nothing recomputed and nothing
+/// trimmed further. When the title is the LONGER side (it fully contains a
+/// short, single-line layman), there is no further content past the echoed
+/// part to reveal — showing that short layman once, redundant with the
+/// title, still beats showing nothing, so it is returned unchanged rather
+/// than emptied.
 fn layman_without_echoed_title<'a>(title: &str, layman: &'a str) -> &'a str {
-    if !title_echoes_subtitle(title, layman) {
-        return layman;
-    }
-    let title_len = title.trim().chars().count();
     let trimmed = layman.trim();
-    if title_len > trimmed.chars().count() {
+    let Some(end) = title_echo_end(title, layman) else {
         return layman;
-    }
-    let cut = trimmed
-        .char_indices()
-        .nth(title_len)
-        .map_or(trimmed.len(), |(i, _)| i);
-    let rest = trimmed[cut..].trim_start();
+    };
+    let rest = &trimmed[end..];
     if rest.is_empty() {
         layman
     } else {
@@ -4316,15 +4353,37 @@ mod tests {
     }
 
     #[test]
+    fn title_echoes_subtitle_still_trusts_a_short_titles_own_ellipsis() {
+        // Review-caught regression: the length-based cutoff check replaced
+        // the ellipsis check outright instead of joining it — a title well
+        // under TITLE_MAX_CHARS that ends in its OWN, author-written
+        // ellipsis (not a mechanical cut) must still be exempted from the
+        // word-boundary rule, the same as it was before length-based
+        // detection existed.
+        assert!(title_echoes_subtitle(
+            "A title that got truncated right here becau\u{2026}",
+            "A title that got truncated right here because the source line ran long",
+        ));
+        // The exemption only excuses the boundary check where the prefix
+        // genuinely matches — an ellipsis-marked title that ISN'T actually a
+        // prefix of the subtitle is still not an echo.
+        assert!(!title_echoes_subtitle(
+            "Something else entirely\u{2026}",
+            "A title that got truncated right here because the source line ran long",
+        ));
+    }
+
+    #[test]
     fn layman_without_echoed_title_drops_only_the_repeated_opening_line() {
         // The rail's own fix, one panel over: the FULL card must not repeat
-        // the title as the layman's first line either.
+        // the title as the layman's first line either. The leading newline
+        // stays — only the matched prefix itself is cut, nothing beyond it.
         assert_eq!(
             layman_without_echoed_title(
                 "Nearly done. Every step so far is verified:",
                 "Nearly done. Every step so far is verified:\n- Real windows: photographed.\n- Tests: 1960 passed.",
             ),
-            "- Real windows: photographed.\n- Tests: 1960 passed.",
+            "\n- Real windows: photographed.\n- Tests: 1960 passed.",
         );
         // A distinct, authored title: the layman is untouched, including its
         // own first line.
@@ -4348,14 +4407,35 @@ mod tests {
         // `reply_surface`'s title-builder skips blank lines to find the
         // first real one, so its layman and its title can disagree about
         // where "line one" starts. Cutting on the matched prefix's own
-        // length within the TRIMMED layman fixes this.
+        // length within the TRIMMED layman fixes this — the leading blank
+        // line is gone (trim() took it), and only the matched "Actual
+        // content here" is cut, leaving its own trailing newline in place.
         assert_eq!(
             layman_without_echoed_title("Actual content here", "\nActual content here\nmore stuff",),
-            "more stuff",
+            "\nmore stuff",
+        );
+        // Review-caught: an earlier version called `.trim_start()` on the
+        // remainder, which silently ate every run of consecutive whitespace
+        // at the cut rather than just what the boundary itself implies —
+        // here the mechanical title's own 72nd character is one of three
+        // consecutive spaces, and the other two must survive in the body.
+        let padded_layman = format!("{}   next", "x".repeat(71));
+        let padded_title: String = padded_layman
+            .chars()
+            .take(crate::surface::TITLE_MAX_CHARS)
+            .collect();
+        assert_eq!(padded_title.chars().count(), 72);
+        let padded_body = layman_without_echoed_title(&padded_title, &padded_layman);
+        assert_eq!(
+            format!("{padded_title}{padded_body}"),
+            padded_layman,
+            "title+body must reconstruct the source exactly, spaces included"
         );
         // A title cut mid-word at TITLE_MAX_CHARS: the body picks up
         // exactly where the title left off, mid-word, rather than repeating
-        // the whole sentence intact underneath a truncated title.
+        // the whole sentence intact underneath a truncated title. Checked
+        // as the same reconstruction invariant, generally: whatever the cut
+        // point, title+body must equal the trimmed source exactly.
         let long_layman = "Nearly done. Every step so far is verified, including the full regression suite across all supported platforms, which took eleven minutes to complete.";
         let cut_title: String = long_layman
             .chars()
@@ -4363,6 +4443,16 @@ mod tests {
             .collect();
         let body = layman_without_echoed_title(&cut_title, long_layman);
         assert_eq!(format!("{cut_title}{body}"), long_layman);
+        // The restored ellipsis exemption (a short, hand-authored title
+        // that legitimately ends "…") still strips correctly too, using the
+        // same ellipsis-stripped length title_echoes_subtitle matched on.
+        assert_eq!(
+            layman_without_echoed_title(
+                "A title that got truncated right here becau\u{2026}",
+                "A title that got truncated right here because the source line ran long",
+            ),
+            "se the source line ran long",
+        );
         // Accepted limitation, documented rather than silently wrong: when
         // the title is the LONGER side and fully contains a short,
         // single-line layman, there is nothing past the echoed part to

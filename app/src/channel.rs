@@ -879,7 +879,11 @@ impl Round {
                 let actions = kind.default_actions();
                 Surface {
                     id: self.surface_id(i),
-                    title: q.question.chars().take(72).collect(),
+                    title: q
+                        .question
+                        .chars()
+                        .take(crate::surface::TITLE_MAX_CHARS)
+                        .collect(),
                     kind,
                     weight: Weight::default(),
                     actions,

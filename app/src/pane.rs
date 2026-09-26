@@ -10620,6 +10620,7 @@ mod tests {
             "wb_asked",
             "wb_channel",
             "wb_asked_by_hook",
+            "wb_woken",
             "wb_recall",
             "wb_live_q",
             "wb_queued",
