@@ -2771,8 +2771,11 @@ impl Default for StateFile {
             win: None,
             scale: None,
             theme: None,
-            warp: theme::WARP_DEFAULT, // fresh install: the classic dial
-            track: None,
+            // `build` folds these two over the outer grade on every load, the
+            // fresh install included, so they must say what `house_outer` says
+            // or they would overwrite the CRT dials it keeps for switching on.
+            warp: theme::house_outer().grade.warp,
+            track: theme::house_outer().grade.tracking,
             tabs: Vec::new(),
             closed: Vec::new(),
             groups: Vec::new(),
@@ -2785,7 +2788,12 @@ impl Default for StateFile {
             slot_remaining: None,
             scope: None,
             mcp: None,
-            focus_inherit: false,
+            // A fresh install's reader wears the pane it reads. With the CRT
+            // off that is a flat screen either way; switch the tube on and the
+            // reader follows it, as it does on the machine this default was
+            // taken from. A file without the key still reads `false`, which is
+            // what everyone had before the preference existed.
+            focus_inherit: true,
             anchor_top: false,
             agent_tint: false,
             lang: lang::Lang::default(),
@@ -2920,6 +2928,25 @@ fn load_state() -> StateFile {
         .ok()
         .and_then(|s| toml::from_str(&s).ok())
         .unwrap_or_default()
+}
+
+/// The outer look a window opens on, from its state file: the saved choice, or
+/// [`theme::house_outer`] on a fresh install, with the legacy top-level fields
+/// folded in. Pure, so a test can boot it from an empty state and from a real
+/// one.
+fn settled_outer(saved: &StateFile) -> ThemeChoice {
+    let mut outer = saved.theme.clone().unwrap_or_else(theme::house_outer);
+    // Text size now lives in the outer grade (`grade.scale`); fold a legacy
+    // top-level `scale` from older state files into it on load.
+    if let Some(s) = saved.scale {
+        outer.grade.scale = s.clamp(0.7, 1.6);
+    }
+    // Warp + tracking now ride the grade group (per-pane override + inherit);
+    // fold a legacy top-level `warp`/`track` from older state files into the
+    // outer grade so a saved fishbowl/roll survives the migration.
+    outer.grade.warp = saved.warp.clamp(0.0, theme::WARP_MAX);
+    outer.grade.tracking = saved.track;
+    outer
 }
 
 /// Count the terminal leaves (panes) under a saved node — the "richness" metric
@@ -3068,6 +3095,17 @@ impl FrameJiggle {
         }
         false
     }
+}
+
+/// The GAUGES tray's two collapsed sections: the text crawl, and the CRT.
+///
+/// Both sit at the foot of the tray as one faint row each, and both start shut
+/// every time the tray opens, because they are easter eggs rather than
+/// controls anyone should trip over.
+#[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
+struct OsdEggs {
+    crawl: bool,
+    crt: bool,
 }
 
 /// Which scope the open theme breakout is editing.
@@ -4059,6 +4097,10 @@ struct Workspace {
     osd_menu: Option<MenuScope>,
     /// Window-space anchor for the open OSD tray (a pane display-icon click).
     osd_at: Option<Point<Pixels>>,
+    /// Which of the GAUGES tray's two collapsed sections are open. Both are
+    /// easter eggs, so neither is remembered: every opening of the tray starts
+    /// them shut (see [`Self::open_osd`]).
+    osd_eggs: OsdEggs,
     /// Read-only MCP control-surface policy (persisted). The 🤖 mother-bar
     /// button edits this; the live snapshot it would expose is derived per-frame.
     mcp: mcp::McpConfig,
@@ -4631,8 +4673,7 @@ fn wire_pane(pane: &Entity<TerminalView>, window: &mut Window, cx: &mut Context<
     .detach();
     // the header display icon → open this pane's monitor-OSD tray at the click
     cx.subscribe(pane, |ws, pane, ev: &OpenDisplayMenu, cx| {
-        ws.osd_menu = Some(MenuScope::Pane(pane));
-        ws.osd_at = Some(ev.at);
+        ws.open_osd(MenuScope::Pane(pane), Some(ev.at));
         cx.notify();
     })
     .detach();
@@ -5592,17 +5633,7 @@ impl Workspace {
         };
         // scale + theme are read even in scratch mode so a quick window still
         // looks like the rest of the session; only the *layout* is skipped.
-        // Text size now lives in the outer grade (`grade.scale`); fold a legacy
-        // top-level `scale` from older state files into it on load.
-        let mut outer = saved.theme.clone().unwrap_or_else(theme::house_outer);
-        if let Some(s) = saved.scale {
-            outer.grade.scale = s.clamp(0.7, 1.6);
-        }
-        // Warp + tracking now ride the grade group (per-pane override + inherit);
-        // fold a legacy top-level `warp`/`track` from older state files into the
-        // outer grade so a saved fishbowl/roll survives the migration.
-        outer.grade.warp = saved.warp.clamp(0.0, theme::WARP_MAX);
-        outer.grade.tracking = saved.track;
+        let outer = settled_outer(&saved);
         // Panes written by a pre-per-channel build carry `inherit_grade = false`,
         // which detached all thirteen channels whether or not a human had ever
         // touched them. Resolve that against the outer grade we just settled:
@@ -5632,6 +5663,7 @@ impl Workspace {
             menu_at: None,
             osd_menu: None,
             osd_at: None,
+            osd_eggs: OsdEggs::default(),
             mcp: saved.mcp.clone().unwrap_or_default(),
             mcp_menu: false,
             scale_menu: false,
@@ -7367,6 +7399,7 @@ impl Workspace {
             crawl: g.crawl,
             crawl_angle: K::CrawlAngle.to_percent(g.crawl_angle),
             crawl_depth: K::CrawlDepth.to_percent(g.crawl_depth),
+            crt: g.crt,
         }
     }
 
@@ -7429,6 +7462,10 @@ impl Workspace {
         if let Some(c) = patch.crawl {
             g.crawl = c;
             touched.insert(theme::GradeChannel::Crawl);
+        }
+        if let Some(c) = patch.crt {
+            g.crt = c;
+            touched.insert(theme::GradeChannel::Crt);
         }
         touched
     }
@@ -18123,16 +18160,48 @@ impl Workspace {
         self.write_grade(&scope, grade, theme::GradePins::only(key.into()), cx);
     }
 
-    /// Reset the active OSD scope's grade to the neutral identity — no monitor
-    /// grading at all (this clears the shipped house grade too, see
-    /// [`theme::Grade::neutral`]). An explicit "I want nothing here", so on a
-    /// pane it pins EVERY channel: reset and "follow outer" are different
-    /// gestures, and neutral is not the same as whatever outer happens to say.
+    /// Reset the active OSD scope's MAIN gauges to the neutral identity — no
+    /// monitor grading at all (this clears the shipped house grade too, see
+    /// [`theme::Grade::reset_gauges`]). An explicit "I want nothing here", so on
+    /// a pane it pins every main-gauge channel: reset and "follow outer" are
+    /// different gestures, and neutral is not the same as whatever outer
+    /// happens to say.
+    ///
+    /// The CRT and crawl sections are left alone. They keep the tube somebody
+    /// tuned for the day it is switched on, and a pane that owned none of them
+    /// goes on following outer's.
     fn reset_grade(&mut self, cx: &mut Context<Self>) {
         let Some(scope) = self.osd_menu.clone() else {
             return;
         };
-        self.write_grade(&scope, theme::Grade::neutral(), theme::GradePins::all(), cx);
+        let grade = self.choice_for(&scope, cx).grade.reset_gauges();
+        self.write_grade(&scope, grade, theme::GradePins::main_gauges(), cx);
+    }
+
+    /// Open the GAUGES tray on `scope`, anchored at `at` (a pane header click)
+    /// or rising from the footer (`None`). The collapsed sections start shut on
+    /// every opening; that is what keeps them easter eggs.
+    fn open_osd(&mut self, scope: MenuScope, at: Option<Point<Pixels>>) {
+        self.osd_menu = Some(scope);
+        self.osd_at = at;
+        self.osd_eggs = OsdEggs::default();
+    }
+
+    /// Flip the active OSD scope's CRT master switch, per-pane via the grade
+    /// group like crawl. Off ⇒ a flat screen; the warp and roll dials stay as
+    /// they are, so switching back on restores the same tube.
+    fn toggle_crt(&mut self, cx: &mut Context<Self>) {
+        let Some(scope) = self.osd_menu.clone() else {
+            return;
+        };
+        let mut grade = self.choice_for(&scope, cx).grade;
+        grade.crt = !grade.crt;
+        self.write_grade(
+            &scope,
+            grade,
+            theme::GradePins::only(theme::GradeChannel::Crt),
+            cx,
+        );
     }
 
     /// Flip the active OSD scope's Star-Wars text-crawl mode (per-pane via the
@@ -18444,12 +18513,13 @@ impl Workspace {
         &self,
         idx: usize,
         label: &str,
+        dials: [f32; 3],
         th: &theme::Theme,
         cx: &mut Context<Self>,
     ) -> gpui::Div {
         const TRACK: f32 = 108.;
         let store = self.track_bounds[idx].clone();
-        let frac = theme::tracking_dials_of(th)[idx].clamp(0.0, 1.0);
+        let frac = dials[idx].clamp(0.0, 1.0);
         div()
             .flex()
             .flex_row()
@@ -24747,9 +24817,15 @@ impl Render for Workspace {
         // other tray raised from the bottom-right glyph row, so a change to
         // where that row's panels open can be photographed in both of them
         // without a pointer, which this machine cannot inject.
-        if std::env::var("TD_OSD_DEMO").is_ok() && self.osd_menu.is_none() {
-            self.osd_menu = Some(MenuScope::Outer);
-            cx.notify();
+        // `TD_OSD_DEMO=crt` / `=crawl` also opens that collapsed section, so
+        // the easter eggs can be photographed open as well as shut.
+        if let Ok(demo) = std::env::var("TD_OSD_DEMO") {
+            if self.osd_menu.is_none() {
+                self.open_osd(MenuScope::Outer, None);
+                self.osd_eggs.crt = demo.split(',').any(|s| s == "crt");
+                self.osd_eggs.crawl = demo.split(',').any(|s| s == "crawl");
+                cx.notify();
+            }
         }
         // demo/capture hook (TD_SAVINGS_DEMO): open the </> LeanCTX savings overlay
         // with FICTIONAL data (never the real ~/.lean-ctx ledger), so the surface
@@ -25391,8 +25467,7 @@ impl Render for Workspace {
                 MouseButton::Left,
                 cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
                     cx.stop_propagation();
-                    ws.osd_menu = Some(MenuScope::Outer);
-                    ws.osd_at = None;
+                    ws.open_osd(MenuScope::Outer, None);
                     cx.notify();
                 }),
             );
@@ -26010,16 +26085,24 @@ impl Render for Workspace {
             // dynamics (glyph only — no caption, no hover). The seed wheel below
             // stays the colour knob; the dynamic decides how that seed becomes the
             // palette. Overflow wraps into more columns to the right.
-            let mut dyn_entries: Vec<(theme::Dynamic, bool)> = theme::Dynamic::NAMED
-                .iter()
-                .cloned()
-                .map(|d| {
-                    let active = cur.dynamic.same_kind(&d);
-                    (d, active)
-                })
-                .collect();
+            //
+            // The column opens on 📺, the Terminal Delight palette: the look a
+            // fresh install wears, pulled from the same Omarchy theme the
+            // desktop uses (TD ships a copy, see `palette::SHIPPED`). A tile is
+            // a `paint::Pick`, so a set and a palette replace each other here
+            // exactly as they do in the paint overlay, and one tile is lit.
+            let wearing_td =
+                cur.palette.as_deref() == Some(palette::TERMINAL_DELIGHT) && cur.dynamic.is_plain();
+            let mut dyn_entries: Vec<(paint::Pick, bool)> = vec![(
+                paint::Pick::Palette(palette::TERMINAL_DELIGHT.into()),
+                wearing_td,
+            )];
+            dyn_entries.extend(theme::Dynamic::NAMED.iter().cloned().map(|d| {
+                let active = cur.dynamic.same_kind(&d);
+                (paint::Pick::Set(d), active)
+            }));
             dyn_entries.push((
-                theme::Dynamic::Custom(Box::default()),
+                paint::Pick::Set(theme::Dynamic::Custom(Box::default())),
                 matches!(cur.dynamic, theme::Dynamic::Custom(_)),
             ));
             const PER_COL: usize = 10; // fill a column vertically before wrapping
@@ -26029,15 +26112,20 @@ impl Render for Workspace {
                     dyn_cols = dyn_cols.child(vsep());
                 }
                 let mut col = div().flex().flex_col().gap_2();
-                for (d, active) in chunk {
+                for (pick, active) in chunk {
                     let active = *active;
-                    let glyph = d.glyph().to_string();
                     // A per-set swatch tints the plain symbol glyphs (❖ ⚡ ☼ …) to
                     // their palette colour so the tray reads at a glance; colour
                     // emoji ignore the tint and keep their own hues.
-                    let swatch = d.swatch();
-                    let box_id = SharedString::from(format!("dyn-{}", d.label()));
-                    let d_click = d.clone();
+                    let (glyph, swatch, name) = match pick {
+                        paint::Pick::Set(d) => (d.glyph(), d.swatch(), d.label()),
+                        // A CRT monitor: the house look, and the one tile that
+                        // is a palette rather than a colour set.
+                        _ => ("📺", None, palette::TERMINAL_DELIGHT),
+                    };
+                    let glyph = glyph.to_string();
+                    let box_id = SharedString::from(format!("dyn-{name}"));
+                    let pick_click = pick.clone();
                     let cur_c = cur.clone();
                     col = col.child(
                         div()
@@ -26072,19 +26160,14 @@ impl Render for Workspace {
                                 MouseButton::Left,
                                 cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
                                     cx.stop_propagation();
-                                    // Picking a colour set clears the wheel
-                                    // overrides so its signature palette shows;
-                                    // the user then tweaks from there.
-                                    ws.set_menu_choice(
-                                        ThemeChoice {
-                                            dynamic: d_click.clone(),
-                                            seed: None,
-                                            text: None,
-                                            complement: None,
-                                            ..cur_c.clone()
-                                        },
-                                        cx,
-                                    );
+                                    // Picking a tile clears the wheel overrides
+                                    // so its signature colours show, and a set
+                                    // and a palette replace each other — the
+                                    // paint overlay's own stamp, so the two
+                                    // pickers cannot disagree about a pick.
+                                    let mut g = theme::ThemeGroup::of(&cur_c);
+                                    paint::stamp(&mut g, &pick_click);
+                                    ws.set_menu_choice(cur_c.clone().with_group(g), cx);
                                 }),
                             ),
                     );
@@ -26327,11 +26410,21 @@ impl Render for Workspace {
                     theme::GradeKey::Background => t.g_background,
                     theme::GradeKey::Gamma => t.g_gamma,
                     theme::GradeKey::Scale => t.g_menu_bar,
-                    theme::GradeKey::Warp => t.g_warp,
                     _ => _name,
                 };
                 rows = rows.child(self.slider_row(key, name, grade.get(key), &th, cx));
             }
+            // The foot of the tray: one faint disclosure row per easter egg.
+            // Deliberately quieter than every label above it — somebody has to
+            // go looking.
+            let egg_row = |id: &'static str, open: bool, name: &str| {
+                div()
+                    .id(id)
+                    .text_size(px(9.))
+                    .text_color(th.text.alpha(if open { 0.55 } else { 0.28 }))
+                    .cursor_pointer()
+                    .child(format!("{} {}", if open { "▾" } else { "▸" }, name))
+            };
             const PANEL_W: f32 = 300.;
             const PANEL_H_EST: f32 = 328.; // 8 slider rows + reset + follow-outer
             let mut panel = div().id("osd-panel").absolute().w(px(PANEL_W));
@@ -26388,67 +26481,62 @@ impl Render for Workspace {
                             ws.reset_grade(cx);
                         }),
                     ),
-                )
-                // warp now rides the grade channels above (GradeKey::Warp), so it
-                // scopes to pane/outer like the rest of the DISPLAY tray.
-                .child(self.track_slider(0, t.d_roll, &th, cx))
-                .child(self.track_slider(1, t.d_roll_spd, &th, cx))
-                .child(self.track_slider(2, t.d_roll_size, &th, cx))
-                .child(
-                    div()
-                        .id("track-reset")
-                        .text_size(px(9.))
-                        .text_color(th.text.alpha(0.5))
-                        .cursor_pointer()
-                        .child(format!("↺ {}", t.d_roll_reset))
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                                cx.stop_propagation();
-                                // clear THIS scope's tracking override → back to the
-                                // theme's authored roll bar (per-pane via the grade).
-                                if let Some(scope) = ws.osd_menu.clone() {
-                                    let mut g = ws.choice_for(&scope, cx).grade;
-                                    g.tracking = None;
-                                    ws.write_grade(
-                                        &scope,
-                                        g,
-                                        theme::GradePins::only(theme::GradeChannel::Tracking),
-                                        cx,
-                                    );
-                                }
-                            }),
-                        ),
                 );
-            // ---- TEXT CRAWL: per-pane Star-Wars crawl toggle + its two knobs.
-            // Rides the grade group like everything else here, so it scopes to
-            // pane/outer and inherits via "follow outer". The angle/depth sliders
-            // only appear while crawl is on.
-            {
+            if is_pane {
+                // Grade-group toggle, independent of the theme tray's: on = this
+                // pane's monitor grade tracks the outer sliders live; off = it
+                // keeps its own. Non-destructive (PaneTheme::toggle_grade).
+                // Above the two collapsed rows, which stay the tray's last lines.
+                let lbl = if following {
+                    format!("◉ {}", t.follow_outer)
+                } else {
+                    format!("◯ {}", t.follow_outer)
+                };
+                panel = panel.child(Self::bezel_btn(&sk, &lbl, following).on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        if let Some(scope) = ws.osd_menu.clone() {
+                            ws.toggle_grade_inherit(&scope, cx);
+                        }
+                    }),
+                ));
+            }
+            // ---- TEXT CRAWL: per-pane Star-Wars crawl toggle + its two knobs,
+            // behind the first collapsed row. Rides the grade group like
+            // everything else here, so it scopes to pane/outer and inherits via
+            // "follow outer". The angle/depth sliders only appear while crawl is
+            // on.
+            panel = panel.child(
+                egg_row("osd-egg-crawl", self.osd_eggs.crawl, t.d_crawl_hdr).on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        ws.osd_eggs.crawl = !ws.osd_eggs.crawl;
+                        cx.notify();
+                    }),
+                ),
+            );
+            if self.osd_eggs.crawl {
                 let crawl_on = grade.crawl;
-                let mut block = div()
-                    .flex()
-                    .flex_col()
-                    .gap_1()
-                    .child(label(t.d_crawl_hdr))
-                    .child(
-                        Self::bezel_btn(
-                            &sk,
-                            &if crawl_on {
-                                format!("\u{25a3} {}", t.d_crawl_on)
-                            } else {
-                                format!("\u{25a2} {}", t.d_crawl_off)
-                            },
-                            crawl_on,
-                        )
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                                cx.stop_propagation();
-                                ws.toggle_crawl(cx);
-                            }),
-                        ),
-                    );
+                let mut block = div().flex().flex_col().gap_1().child(
+                    Self::bezel_btn(
+                        &sk,
+                        &if crawl_on {
+                            format!("\u{25a3} {}", t.d_crawl_on)
+                        } else {
+                            format!("\u{25a2} {}", t.d_crawl_off)
+                        },
+                        crawl_on,
+                    )
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            ws.toggle_crawl(cx);
+                        }),
+                    ),
+                );
                 if crawl_on {
                     block = block
                         .child(self.slider_row(
@@ -26468,24 +26556,90 @@ impl Render for Workspace {
                 }
                 panel = panel.child(block);
             }
-            if is_pane {
-                // Grade-group toggle, independent of the theme tray's: on = this
-                // pane's monitor grade tracks the outer sliders live; off = it
-                // keeps its own. Non-destructive (PaneTheme::toggle_grade).
-                let lbl = if following {
-                    format!("◉ {}", t.follow_outer)
-                } else {
-                    format!("◯ {}", t.follow_outer)
-                };
-                panel = panel.child(Self::bezel_btn(&sk, &lbl, following).on_mouse_down(
+            // ---- CRT: the master switch, then the tube it switches — warp and
+            // the roll bar — behind the second collapsed row. Off is a flat
+            // screen, and the knobs only appear while it is on, as crawl's do:
+            // the dials keep their values either way, so switching on restores
+            // exactly the tube they describe (see `theme::flatten_tube`).
+            panel = panel.child(
+                egg_row("osd-egg-crt", self.osd_eggs.crt, t.d_crt_hdr).on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
                         cx.stop_propagation();
-                        if let Some(scope) = ws.osd_menu.clone() {
-                            ws.toggle_grade_inherit(&scope, cx);
-                        }
+                        ws.osd_eggs.crt = !ws.osd_eggs.crt;
+                        cx.notify();
                     }),
-                ));
+                ),
+            );
+            if self.osd_eggs.crt {
+                let crt_on = grade.crt;
+                let mut block = div().flex().flex_col().gap_1().child(
+                    Self::bezel_btn(
+                        &sk,
+                        &if crt_on {
+                            format!("\u{25a3} {}", t.d_crt_on)
+                        } else {
+                            format!("\u{25a2} {}", t.d_crt_off)
+                        },
+                        crt_on,
+                    )
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            ws.toggle_crt(cx);
+                        }),
+                    ),
+                );
+                if crt_on {
+                    // The grade's own dials when it has them — a flattened
+                    // resolved theme would read the roll as zero — and the
+                    // scope's authored roll bar when it defers to the theme.
+                    let dials = grade
+                        .tracking
+                        .unwrap_or_else(|| self.scope_track_seed(&scope, cx));
+                    block = block
+                        .child(self.slider_row(
+                            theme::GradeKey::Warp,
+                            t.g_warp,
+                            grade.warp,
+                            &th,
+                            cx,
+                        ))
+                        .child(self.track_slider(0, t.d_roll, dials, &th, cx))
+                        .child(self.track_slider(1, t.d_roll_spd, dials, &th, cx))
+                        .child(self.track_slider(2, t.d_roll_size, dials, &th, cx))
+                        .child(
+                            div()
+                                .id("track-reset")
+                                .text_size(px(9.))
+                                .text_color(th.text.alpha(0.5))
+                                .cursor_pointer()
+                                .child(format!("↺ {}", t.d_roll_reset))
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                                        cx.stop_propagation();
+                                        // clear THIS scope's tracking override →
+                                        // back to the theme's authored roll bar
+                                        // (per-pane via the grade).
+                                        if let Some(scope) = ws.osd_menu.clone() {
+                                            let mut g = ws.choice_for(&scope, cx).grade;
+                                            g.tracking = None;
+                                            ws.write_grade(
+                                                &scope,
+                                                g,
+                                                theme::GradePins::only(
+                                                    theme::GradeChannel::Tracking,
+                                                ),
+                                                cx,
+                                            );
+                                        }
+                                    }),
+                                ),
+                        );
+                }
+                panel = panel.child(block);
             }
             // full-screen scrim: click anywhere outside closes
             div()
@@ -29117,8 +29271,7 @@ impl Render for Workspace {
                     cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
                         cx.stop_propagation();
                         ws.more_menu = false;
-                        ws.osd_menu = Some(MenuScope::Outer);
-                        ws.osd_at = None;
+                        ws.open_osd(MenuScope::Outer, None);
                         cx.notify();
                     }),
                 ))
@@ -37921,6 +38074,79 @@ id = "hacker"
         let off: StateFile =
             toml::from_str("active = 0\nwarp = false\n[[tabs]]\nnode = \"Leaf\"\n").unwrap();
         assert_eq!(off.warp, 0.0, "false → flat");
+    }
+
+    #[test]
+    fn a_fresh_install_boots_flat_with_the_crt_dials_it_keeps() {
+        // No state file at all: `load_state` hands `build` the default.
+        let outer = settled_outer(&StateFile::default());
+        let house = theme::house_outer();
+        assert!(!outer.grade.crt, "flat");
+        assert_eq!(
+            outer.palette.as_deref(),
+            Some(palette::TERMINAL_DELIGHT),
+            "in TD colours"
+        );
+        // The legacy top-level fold runs on a fresh install too; it must not
+        // swap the kept tube for the old classic dial.
+        assert_eq!(outer.grade.warp, theme::WARP_MAX, "warp kept at +150");
+        assert_eq!(outer.grade.tracking, house.grade.tracking, "roll kept");
+        assert_eq!(outer.grade, house.grade, "nothing else moved either");
+        assert!(
+            StateFile::default().focus_inherit,
+            "the reader wears the pane"
+        );
+    }
+
+    #[test]
+    fn this_machines_session_still_boots_its_tube() {
+        // The head of this machine's session file on 2026-09-25, trimmed to
+        // what settles the outer, and written before the CRT switch existed.
+        let saved: StateFile = toml::from_str(
+            r#"active = 0
+tabs = []
+scale = 0.8500000238418579
+track = [0.5203396081924438, 0.8148148059844971, 0.2068965584039688]
+warp = 1.5
+
+[theme]
+color = "on-theme"
+id = "custom"
+palette = "terminal-delight"
+syntax = true
+syntax_scheme = "agentic"
+
+[theme.grade]
+background = 0.5
+brightness = 0.2588020861148834
+colour = 1.0
+contrast = 0.59940105676651
+crawl_angle = 12.0
+crawl_depth = 2.5
+gamma = 0.5
+scale = 0.8500000238418579
+text = 0.5
+text_size = 0.7365000247955322
+tracking = [0.5203396081924438, 0.8148148059844971, 0.2068965584039688]
+warp = 1.5
+"#,
+        )
+        .unwrap();
+        let outer = settled_outer(&saved);
+        assert!(outer.grade.crt, "no `crt` key: the tube stays on");
+        assert_eq!(outer.grade.warp, 1.5);
+        assert_eq!(outer.grade.tracking, saved.track);
+        assert!(
+            !saved.focus_inherit,
+            "a file with no `focus_inherit` keeps the reader it always had"
+        );
+        // …and saving it back writes no switch it never had.
+        let wire = toml::to_string(&StateFile {
+            theme: Some(outer),
+            ..Default::default()
+        })
+        .unwrap();
+        assert!(!wire.contains("crt"), "{wire}");
     }
 
     #[test]
