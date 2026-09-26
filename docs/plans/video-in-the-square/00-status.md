@@ -17,6 +17,12 @@ certainly can be done--- parity in workbench! both on artifacts AND main work
 surface <3 get to!"* No gate was held for a second approval; the decisions
 below are the ones he would otherwise have been asked, each with the call made.
 
+**Turned out to be: 6/10.** The estimate held. The libmpv half behaved as its
+headers said it would and needed no second attempt. What the plan did not see was
+on the bench: outlining a Markdown link's words alone, instead of a whole line,
+pushed the Alt chip off the card's left edge, because the chip had always
+hung from the outline's right end. It now hangs from whichever end has room.
+
 ## What he asked for
 
 - **MP4 opens where images, HTML and Markdown already open**: Alt+click into
@@ -56,7 +62,7 @@ same link arrives as an OSC 8 hyperlink and Alt+click already opens it.
 - [x] 6 · Docs: panes-and-tabs (video), workbench (Alt / Ctrl+Alt / Ctrl on the bench), TDSP artifact section, `open_document`'s description
 - [x] 7 · Verified in a hidden window. `scripts/video-check.sh` drives an agent pane's bench through the control socket and passes all eight of its checks: the film artifact's row floats the film over the bench; its player's threads run; the window's GPU memory held at 186 MB across eight seconds of playback; closing ends the threads; Alt over a Markdown label outlines the words alone; Alt+click floats the clip they hide; Ctrl+Alt+click plays it in a pane beside; nothing reaches the desktop. A second rig photographed the square and the Document face with the 1080p film and a 640×360 clip, a corrupt `.mp4` ("unrecognized file format") and a clip with no audio device ("audio output initialization failed"), and measured about 0.6 of a core for the 1080p film in the square, back to idle on close.
 - [x] 7b · The bench's Alt chip hangs from whichever end of its outline has room. It hung from the right end, which was only ever right because the outline used to be a whole line; a label near a card's left edge pushed it off the bench ("lt+click").
-- [ ] 8 · Land: PR, CI, merge, install
+- [x] 8 · Land: PR #859 merged as `393ce33` after CI, the whole suite green on the merged tree (1,977 passed), installed as `td-393ce33-video-square` with the launcher repointed from `td-84fe523-flat-header`, its ancestor. #859 changed no host wire file, so a new window pairs with the running host as before. Seven mutations, one per new guard, were each caught. The docs site was deployed from `393ce33` after a dry run showed exactly three files changing (the two pages and the search index). Running windows keep their old binary until relaunched. A socket test in `host.rs` failed once under a loaded run and passed alone and on rerun; filed as #860.
 
 ## Not done
 
@@ -64,6 +70,8 @@ same link arrives as an OSC 8 hyperlink and Alt+click already opens it.
   program-pixels plan's, and nothing here changes it.
 - **The rail's row label** says `open` for a video, as it does for a picture:
   only HTML and Markdown are named there today.
-- **No libmpv path is not exercised by a test.** The router's refusal is the
-  HTML engine's shape with a different reason, but nothing on this machine
-  lacks libmpv to prove it; see the doubts in the PR.
+- **The no-libmpv path is tested with a stand-in answer.** The pane harness
+  answers "is there a libmpv?" with no (a gpui global, like the HTML engine's),
+  and `a_video_nothing_can_play_goes_to_the_desktop_and_says_why` proves the
+  refusal. The real lookup (`dlopen` finding nothing) has not run on a machine
+  without mpv.
