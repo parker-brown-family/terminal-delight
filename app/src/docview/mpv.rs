@@ -709,7 +709,7 @@ pub fn pack(src: &[u8], width: u32, height: u32, stride: usize) -> Vec<u8> {
     for y in 0..height as usize {
         out.extend_from_slice(&src[y * stride..y * stride + row]);
     }
-    for px in out.chunks_exact_mut(4) {
+    for px in out.as_chunks_mut::<4>().0 {
         px[3] = 0xff;
     }
     out

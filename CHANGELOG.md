@@ -32,6 +32,17 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ### Added
 
+- **A video plays in the floating square.** Alt+click on an `.mp4`, `.mov`,
+  `.webm`, `.mkv`, `.m4v`, `.ogv` or `.avi` path plays it there, looping, with
+  sound; Ctrl+Alt+click plays it in a pane beside, where Space, ← → and M pause,
+  skip and mute. A bar along the bottom pauses, shows the time, seeks and mutes.
+  A video artifact floats over the bench, and `open_document` opens one beside
+  an agent. It plays through libmpv, found when the first video opens; without
+  mpv installed, the file goes to the desktop with a chip saying why. A video
+  pane put back by a restart comes back paused.
+- **A Markdown link's words open what they point at, on the bench.** Alt,
+  Ctrl+Alt and Ctrl on the words of `[the clip](clip.mp4)` in a bench card do
+  what they do on the terminal, and a held Alt outlines just those words.
 - **Pictures a program draws appear in the pane.** Anything speaking the Kitty
   graphics protocol — `kitten icat`, chafa, an agent's chart — draws in the
   cells it asked for, scrolls with its text, and bends with the glass. They are
