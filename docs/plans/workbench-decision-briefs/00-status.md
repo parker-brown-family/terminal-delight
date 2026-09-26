@@ -55,7 +55,12 @@ ctrl+shift+enter. Both are real product changes with tests and a line in
 - [x] 3b · ↪ on the bench face lands in the composer (was refused); ↪ answers ctrl+shift+enter
 - [x] 4 · The docs site: a Decision briefs page, the workbench and surface-protocol pages linked to it, the example brief served whole
 - [x] 5 · The film: a brief opening from the bench, notes made, ↪ into the agent, as mp4 on that page (`assets/clips/decision-briefs.mp4`, 37.5 s, 1080p, 2.0 MB)
-- [ ] 6 · Land: PR, CI, merge, install, deploy the docs site
+- [x] 6 · Land: PR #851 merged as `d7ada4c` after CI (Rust checks 10m35s), the whole suite green on the merged tree (1,958 passed), installed as `td-d7ada4c-decision-briefs` with the launcher repointed. The docs site was deployed from a clean checkout of `d7ada4c` after a live diff showed only this change; the live site then matched the build on all 33 pages and assets, and the clip plays there. Running windows keep their old binary until relaunched; the wire files are unchanged from the `08a0a4a` build the launcher held before.
+
+## Not done
+
+- The square's own CONCUR stamp still has no wet ink or stamp-down; that is issue #824, which this work refreshed the fixtures for and left open.
+- Whether the briefing's "one brief per decision" keeps agents from writing a brief every turn is unmeasured until a few Workbench sessions have run with it.
 
 ## The film
 
