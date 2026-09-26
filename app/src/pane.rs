@@ -9760,6 +9760,12 @@ impl Render for TerminalView {
         // are the flat ones the bench's text was recorded in, less the
         // screen's origin — so the tube bends it exactly as it bends the text
         // it sits on.
+        //
+        // The label hangs from whichever end of the outline has room: from
+        // its right end when the outline reaches past the screen's middle,
+        // as a whole line of text does, and from its left end otherwise. A
+        // Markdown link's words are outlined alone, and a short label near a
+        // card's left edge would otherwise push the label off the bench.
         let bench_hint_el = self
             .wb_alt_hint
             .filter(|_| on_bench)
@@ -9767,6 +9773,7 @@ impl Render for TerminalView {
                 let b = (*self.content_bounds.lock().ok()?)?;
                 let (ox, oy) = (f32::from(b.origin.x), f32::from(b.origin.y));
                 let (acc, surf) = (th.accent, th.surface);
+                let from_right = x - ox + w > f32::from(b.size.width) / 2.0;
                 Some(
                     div()
                         .absolute()
@@ -9780,7 +9787,8 @@ impl Render for TerminalView {
                         .child(
                             div()
                                 .absolute()
-                                .right(px(2.))
+                                .when(from_right, |d| d.right(px(2.)))
+                                .when(!from_right, |d| d.left(px(2.)))
                                 .top(px(-14.))
                                 .px(px(6.))
                                 .bg(surf)

@@ -313,7 +313,7 @@ from the rail keeps it until they close it.
 | `summary` | no | One line. |
 
 A click on the card opens a document the window can draw — HTML, Markdown, a
-picture — in the floating square over the bench, and the card stays open
+picture, a video — in the floating square over the bench, and the card stays open
 underneath. Anything else goes to the desktop's own handler. The window never
 hard-wires a viewer for a type it cannot draw.
 

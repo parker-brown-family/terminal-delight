@@ -787,6 +787,43 @@ fn a_link_out_of_a_document_is_routed_by_the_pane(cx: &mut TestAppContext) {
     );
 }
 
+/// A video with no libmpv to play it goes to the desktop before any square or
+/// pane is made, and the pane says why on the row that was clicked — the HTML
+/// engine's refusal, for mpv. A split asked for is refused the same way.
+#[gpui::test]
+fn a_video_nothing_can_play_goes_to_the_desktop_and_says_why(cx: &mut TestAppContext) {
+    let dir = Scratch::new("no-libmpv");
+    let clip = dir.join("clip.mp4");
+    // An MP4's first box. Nothing plays it here: the refusal comes first.
+    std::fs::write(&clip, b"\0\0\0\x20ftypisom\0\0\x02\0isomiso2avc1mp41").expect("write");
+    let clip = clip.to_str().expect("UTF-8").to_string();
+    let mut pane = Pane::running(
+        cx,
+        &format!("printf '%s\\n' 'clip {clip}' 'ready'; exec cat"),
+    );
+    pane.video_ready(Err(crate::docview::mpv::Missing::NotFound));
+    pane.wait_for("ready");
+    let asked = pane.asks_beside();
+
+    let at = pane.point_at(&clip);
+    let row = pane.painted_row(at);
+    let got = launched_by(&mut pane, at, Pane::alt());
+    assert!(
+        got.len() == 1 && got[0].ends_with(&format!("xdg-open {clip}")),
+        "the clip goes to the desktop: {got:?}"
+    );
+    assert_eq!(pane.float_path(), None, "and no square is made for it");
+    let (text, on) = pane
+        .read(|v| v.said.as_ref().map(|s| (s.text.clone(), s.row)))
+        .expect("the pane says why");
+    assert!(text.contains("no libmpv"), "{text}");
+    assert_eq!(on, Some(row), "on the row that was clicked");
+
+    let got = launched_by(&mut pane, at, held(true, true, false, false));
+    assert_eq!(got.len(), 1, "a split is refused the same way: {got:?}");
+    assert_eq!(*asked.borrow(), Vec::<Asked>::new(), "no pane is asked for");
+}
+
 /// An HTML file with nothing to draw it goes to the desktop before any square
 /// or pane is made, and the pane says why where it was clicked, in a chip only
 /// its own timer takes down. A link to one from a document leaves the document

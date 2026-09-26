@@ -164,16 +164,16 @@ impl TerminalView {
     /// control socket has none). A square already open is replaced, and the
     /// one it replaces gives its texture back as it is dropped.
     ///
-    /// An HTML document with no engine to draw it is handed to the desktop
-    /// instead, and the answer is the sentence saying why
-    /// ([`Self::html_refused`]).
+    /// A document with nothing on this machine to draw it — an HTML page with
+    /// no engine, a video with no libmpv — is handed to the desktop instead,
+    /// and the answer is the sentence saying why ([`Self::engine_refused`]).
     pub(crate) fn open_float(
         &mut self,
         target: crate::docopen::DocTarget,
         row: Option<usize>,
         cx: &mut Context<Self>,
     ) -> Result<(), String> {
-        if let Some(why) = self.html_refused(&target, row, cx) {
+        if let Some(why) = self.engine_refused(&target, row, cx) {
             return Err(why);
         }
         let (w, h) = self.screen_size().unwrap_or((640.0, 480.0));
@@ -198,9 +198,10 @@ impl TerminalView {
     }
 
     /// The floating square, drawn with the hyperglow every surface that floats
-    /// wears (`float_shadows` plus a two-pixel rim in the accent). Only on the
-    /// terminal face: the bench is its own opaque surface, and a square over it
-    /// would belong to neither.
+    /// wears (`float_shadows` plus a two-pixel rim in the accent). On the
+    /// terminal face and over the bench, where an artifact or a link opens
+    /// into it and the card stays underneath; never on the Document face,
+    /// which is already a document filling the pane (`float_shows_on`).
     ///
     /// A strip across the top carries the file's name and its controls — zoom
     /// for anything that zooms, "↗ desktop" and "✕ esc" for everything — and
@@ -410,28 +411,35 @@ impl TerminalView {
         })
     }
 
-    /// An HTML document with no engine to draw it goes to the desktop instead
-    /// of into a square, and this says why. The sentence goes to TD's log and
-    /// back to the caller; a short form of it goes on screen, in a chip on
-    /// `row`, the painted row the click landed on. `None` for anything that
-    /// can be drawn. Asked before a square is placed, so a machine without
-    /// Chromium never opens one that could not fill, and no square exists to
+    /// A document with nothing on this machine to draw it — an HTML page with
+    /// no engine, a video with no libmpv — goes to the desktop instead of into
+    /// a square, and this says why. The sentence goes to TD's log and back to
+    /// the caller; a short form of it goes on screen, in a chip on `row`, the
+    /// painted row the click landed on. `None` for anything that can be
+    /// drawn. Asked before a square is placed, so a machine without Chromium
+    /// or mpv never opens one that could not fill, and no square exists to
     /// carry the words.
-    fn html_refused(
+    fn engine_refused(
         &mut self,
         target: &crate::docopen::DocTarget,
         row: Option<usize>,
         cx: &mut Context<Self>,
     ) -> Option<String> {
-        if target.kind != crate::docopen::DocKind::Html {
-            return None;
-        }
-        let why = crate::docview::html_ready(cx).err()?;
+        let (sentence, short) = match target.kind {
+            crate::docopen::DocKind::Html => {
+                let why = crate::docview::html_ready(cx).err()?;
+                (why.sentence(), why.short_reason())
+            }
+            crate::docopen::DocKind::Video => {
+                let why = crate::docview::video_ready(cx).err()?;
+                (why.sentence(), why.short_reason())
+            }
+            crate::docopen::DocKind::Markdown | crate::docopen::DocKind::Image => return None,
+        };
         open_with_system(&target.path.to_string_lossy());
-        let sentence = why.sentence();
         eprintln!("terminal-delight: {}: {sentence}", target.path.display());
         let s = crate::lang::current().strings();
-        let chip = format!("{} · {}", why.short_reason(), s.chip_opened_on_desktop);
+        let chip = format!("{short} · {}", s.chip_opened_on_desktop);
         self.say(chip, row, cx);
         Some(sentence)
     }
@@ -465,7 +473,7 @@ impl TerminalView {
                 // A brief linking to another brief, on a machine that cannot
                 // draw one: the linked file goes to the desktop, and the
                 // document that linked to it stays.
-                if self.html_refused(&target, None, cx).is_some() {
+                if self.engine_refused(&target, None, cx).is_some() {
                     return;
                 }
                 // The old view is dropped here, and gives its textures back
@@ -638,7 +646,7 @@ impl TerminalView {
     ) {
         // The split asks the same question the square does, before any pane
         // is made: an HTML file with no engine goes to the desktop instead.
-        if let Some(why) = self.html_refused(&target, row, cx) {
+        if let Some(why) = self.engine_refused(&target, row, cx) {
             if let Some(reply) = reply {
                 let _ = reply.send(format!("desktop {why}"));
             }
@@ -742,9 +750,11 @@ impl TerminalView {
         };
         self.show_document(crate::docopen::DocTarget { path, kind }, None, cx);
         // Nobody clicked: a brief that cannot be drawn after a restart says
-        // why in its pane, and no browser window opens by itself.
+        // why in its pane, and no browser window opens by itself; a video
+        // waits paused, and no sound starts by itself either.
         if let Some(doc) = self.doc.as_mut() {
             doc._gave_up = None;
+            doc.view.update(cx, |v, _| v.hold());
         }
         if let (Some(top), Some(doc)) = (scroll, self.doc.as_ref()) {
             let at = crate::docopen::DocScroll { top };
@@ -1199,6 +1209,7 @@ impl TerminalView {
                             "the Markdown document is not read yet"
                         }
                         crate::docopen::DocKind::Image => "an image takes no notes",
+                        crate::docopen::DocKind::Video => "a video takes no notes",
                     }
                     .to_string()
                 });

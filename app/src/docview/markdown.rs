@@ -721,12 +721,16 @@ fn text(s: SharedString) -> gpui::StyledText {
 
 fn styled(inline: &Inline, style: &MdStyle, links: Option<&LinkSink>) -> AnyElement {
     let pressable = links.is_some();
-    let styled = text(inline.text.clone()).with_highlights(
-        inline
-            .runs
-            .iter()
-            .map(|(range, e)| (range.clone(), run_style(*e, &style.palette, pressable))),
-    );
+    // On the bench the run carries its links' targets, which the label hides,
+    // so Alt+click on a label opens what it points at, as the terminal's OSC 8
+    // link does. Everywhere else this is `text`.
+    let styled = crate::benchdraw::sel_linked(inline.text.clone(), inline.links.clone())
+        .with_highlights(
+            inline
+                .runs
+                .iter()
+                .map(|(range, e)| (range.clone(), run_style(*e, &style.palette, pressable))),
+        );
     if let Some(sink) = links {
         if !inline.links.is_empty() {
             sink.borrow_mut().push(LinkSpan {

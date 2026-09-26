@@ -2,10 +2,11 @@
 //!
 //! # One door
 //!
-//! [`DocumentView`] shows three kinds of document: a picture
+//! [`DocumentView`] shows four kinds of document: a picture
 //! ([`super::image::ImageDoc`]), a Markdown file
-//! ([`super::markdown::MarkdownDoc`]) and an HTML page
-//! ([`super::page::PageDoc`]). It used to tell them apart with an enum,
+//! ([`super::markdown::MarkdownDoc`]), an HTML page
+//! ([`super::page::PageDoc`]) and a video ([`super::video::VideoDoc`]). It
+//! used to tell them apart with an enum,
 //! matched afresh in every method that had to know — a press, a wheel turn, a
 //! key, a zoom, a scroll to restore, a fragment to land on, a note to save —
 //! fifty-odd arms across twenty-odd methods. Every new capability was another
@@ -18,7 +19,7 @@
 //!
 //! So the view holds one `Box<dyn Backend>` and hands every call through it,
 //! and each backend implements the trait beside the rest of its code: in
-//! `image.rs`, `markdown_view.rs` and `page.rs`. What a backend cannot do is
+//! `image.rs`, `markdown_view.rs`, `page.rs` and `video.rs`. What a backend cannot do is
 //! written down here, once, as the trait's default, with the reason on the
 //! default rather than on a wildcard in some method's last arm. A backend that
 //! can do a thing overrides it; a new kind of document starts out doing
@@ -116,8 +117,9 @@ pub trait Backend {
 
     /// The pointer moved with the button still held since the press. `view`
     /// and `sf` are the view's measured size and the window's scale factor.
-    /// Answers whether anything moved, for the view to repaint. Only a
-    /// picture follows a drag; a document scrolls by the wheel.
+    /// Answers whether anything moved, for the view to repaint. A picture
+    /// follows a drag and a video's track scrubs; a document scrolls by the
+    /// wheel.
     fn drag(&mut self, _at: Point<Pixels>, _view: Size<Pixels>, _sf: f32) -> bool {
         false
     }
@@ -237,6 +239,11 @@ pub trait Backend {
 
     /// The file went missing. The last render stays up either way.
     fn file_gone(&mut self, _cx: &mut Context<DocumentView>) {}
+
+    /// Nobody asked for this document just now: a restart put it back. A
+    /// document that moves or sounds by itself waits for a press instead of
+    /// starting on its own. Only a video does either.
+    fn hold(&mut self) {}
 
     // ── notes ───────────────────────────────────────────────────────────────
     //

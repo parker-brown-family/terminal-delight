@@ -58,7 +58,7 @@
 </ul>
 
 <h3>Documents in a pane</h3>
-<p>A pane can show a Markdown file, an HTML page or an image in place of its terminal. That is its <code>DOC</code> face.</p>
+<p>A pane can show a Markdown file, an HTML page, an image or a video in place of its terminal. That is its <code>DOC</code> face.</p>
 <table class="keys">
   <thead><tr><th>Click on a file path</th><th>Opens</th></tr></thead>
   <tbody>
@@ -67,7 +67,9 @@
     <tr><td><kbd>Shift</kbd> or <kbd>Ctrl</kbd>+click</td><td>Any link, with your desktop's own app.</td></tr>
   </tbody>
 </table>
-<p>On the <code>DOC</code> face, <kbd>0</kbd> fits the page, <kbd>1</kbd> shows it at actual size, <kbd>+</kbd> and <kbd>-</kbd> zoom, the arrows pan and <kbd>PgUp</kbd> <kbd>PgDn</kbd> page. Other keys are held back so nothing types into the hidden shell. HTML is drawn by a headless Chromium; without one, the file goes to the desktop. A document pane comes back after a restart on the same page. From a script: <code>terminal-delight ctl doc here|beside &lt;path&gt;</code>, <code>ctl doc close</code>, <code>ctl doc scroll &lt;pixels&gt;</code>.</p>
+<p>On the <code>DOC</code> face, <kbd>0</kbd> fits the page, <kbd>1</kbd> shows it at actual size, <kbd>+</kbd> and <kbd>-</kbd> zoom, the arrows pan and <kbd>PgUp</kbd> <kbd>PgDn</kbd> page. Other keys are held back so nothing types into the hidden shell. HTML is drawn by a headless Chromium; without one, the file goes to the desktop. A document pane comes back after a restart on the same page.</p>
+<p>A video (<code>.mp4</code>, <code>.mov</code>, <code>.webm</code>, <code>.mkv</code>, <code>.m4v</code>, <code>.ogv</code>, <code>.avi</code>) plays in the square or on the <code>DOC</code> face, looping, with sound, through <code>libmpv</code>; without mpv installed, it goes to the desktop. A bar along the bottom pauses it (so does a click on the picture), shows the time, seeks when you press or drag its track, and mutes it. On the <code>DOC</code> face, <kbd>Space</kbd> pauses, <kbd>←</kbd> <kbd>→</kbd> skip five seconds and <kbd>M</kbd> mutes; over the terminal those keys stay the prompt's. A video pane put back by a restart comes back paused.</p>
+<p> From a script: <code>terminal-delight ctl doc here|beside &lt;path&gt;</code>, <code>ctl doc close</code>, <code>ctl doc scroll &lt;pixels&gt;</code>.</p>
 
 <h3>Sizing</h3>
 <p><kbd>Ctrl</kbd>+wheel sizes whatever the pointer is over, and only that becomes the pane's own setting.</p>

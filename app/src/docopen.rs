@@ -7,12 +7,15 @@
 //! *is this a document TD can draw*, and *where does the square go*. Both are
 //! here, and neither needs a window to answer.
 //!
-//! **Drawable** means Markdown, HTML, or an image. The name decides for the
-//! first two. An image has to prove it: a `.png` that is really a log file
-//! would open as an empty square, so a raster name must also carry a raster
-//! signature in its first bytes, and a file with no extension at all counts as
-//! an image when it carries one (screenshot tools often drop the suffix).
-//! SVG is text, so it has no signature to check and its name decides.
+//! **Drawable** means Markdown, HTML, an image, or a video. The name decides
+//! for the first two. An image has to prove it: a `.png` that is really a log
+//! file would open as an empty square, so a raster name must also carry a
+//! raster signature in its first bytes, and a file with no extension at all
+//! counts as an image when it carries one (screenshot tools often drop the
+//! suffix). SVG is text, so it has no signature to check and its name decides.
+//! A video has to prove it the same way, by its container's signature, but a
+//! video never goes by its bytes alone: an HEIC photo opens with the same
+//! `ftyp` box an MP4 does.
 //!
 //! **Where it goes** is a square beside the line that was clicked: right-aligned,
 //! just below that line when it fits and above it when it does not, and never
@@ -38,6 +41,8 @@ pub enum DocKind {
     Markdown,
     Html,
     Image,
+    /// Played by libmpv (`docview/mpv.rs`), looping, with sound.
+    Video,
 }
 
 /// A document a click asked for: the file, and what it was recognised as.
@@ -59,8 +64,23 @@ pub fn doc_kind_by_name(path: &std::path::Path) -> Option<DocKind> {
         "md" | "markdown" => Some(DocKind::Markdown),
         "html" | "htm" => Some(DocKind::Html),
         "png" | "jpg" | "jpeg" | "webp" | "gif" | "bmp" | "svg" => Some(DocKind::Image),
+        "mp4" | "m4v" | "mov" | "webm" | "mkv" | "ogv" | "avi" => Some(DocKind::Video),
         _ => None,
     }
+}
+
+/// The containers a video name is checked against: ISO media (MP4, M4V, and
+/// QuickTime, whose oldest files open on a box other than `ftyp`), Matroska
+/// and WebM, Ogg, and AVI.
+fn video_signature(head: &[u8]) -> bool {
+    let boxed = head.len() >= 8
+        && [b"ftyp", b"moov", b"mdat", b"wide", b"free", b"skip"]
+            .iter()
+            .any(|b| &head[4..8] == *b);
+    boxed
+        || head.starts_with(b"\x1a\x45\xdf\xa3")
+        || head.starts_with(b"OggS")
+        || (head.len() >= 12 && head.starts_with(b"RIFF") && &head[8..12] == b"AVI ")
 }
 
 /// The formats gpui decodes that announce themselves in their first bytes.
@@ -77,7 +97,9 @@ fn raster_signature(head: &[u8]) -> bool {
 ///
 /// A raster name on bytes that are not a raster is not drawable. A name TD does
 /// not know, on bytes that are a raster, is an image. SVG, Markdown and HTML are
-/// by name only: they are text, and text has no signature worth trusting.
+/// by name only: they are text, and text has no signature worth trusting. A
+/// video name needs a container's signature, and a video is never found by its
+/// bytes alone (see the module notes).
 pub fn doc_kind(path: &std::path::Path, head: &[u8]) -> Option<DocKind> {
     let is_svg = path
         .extension()
@@ -86,6 +108,7 @@ pub fn doc_kind(path: &std::path::Path, head: &[u8]) -> Option<DocKind> {
     match doc_kind_by_name(path) {
         Some(DocKind::Image) if is_svg => Some(DocKind::Image),
         Some(DocKind::Image) => raster_signature(head).then_some(DocKind::Image),
+        Some(DocKind::Video) => video_signature(head).then_some(DocKind::Video),
         Some(kind) => Some(kind),
         None if path.extension().is_none() && raster_signature(head) => Some(DocKind::Image),
         None => None,
@@ -892,7 +915,7 @@ mod tests {
     }
 
     #[test]
-    fn a_markdown_html_or_image_name_is_drawable_and_anything_else_is_not() {
+    fn a_markdown_html_image_or_video_name_is_drawable_and_anything_else_is_not() {
         for (name, want) in [
             ("a.md", DocKind::Markdown),
             ("A.MARKDOWN", DocKind::Markdown),
@@ -905,6 +928,9 @@ mod tests {
             ("x.gif", DocKind::Image),
             ("x.bmp", DocKind::Image),
             ("x.Svg", DocKind::Image),
+            ("clip.mp4", DocKind::Video),
+            ("clip.WEBM", DocKind::Video),
+            ("take.mov", DocKind::Video),
         ] {
             assert_eq!(doc_kind_by_name(Path::new(name)), Some(want), "{name}");
         }
@@ -939,6 +965,53 @@ mod tests {
         // An extension TD does not know is not a guess at an image, even on
         // image bytes: `.dat` is somebody's format, and it is not ours to draw.
         assert_eq!(doc_kind(Path::new("frame.dat"), PNG), None);
+    }
+
+    /// A video name is drawable on the bytes of a container mpv plays, and
+    /// not on anything else. A log file named `.mp4` would open a square that
+    /// never shows a frame.
+    #[test]
+    fn a_video_name_needs_a_container_signature() {
+        let mp4 = b"\0\0\0\x20ftypisom\0\0\x02\0";
+        let old_mov = b"\0\0\0\x08wide\0\0\0\0mdat";
+        let webm = b"\x1a\x45\xdf\xa3\x9f\x42\x86\x81";
+        let ogg = b"OggS\0\x02\0\0\0\0\0\0";
+        let avi = b"RIFF\x24\0\0\0AVI LIST";
+        for (name, head) in [
+            ("clip.mp4", &mp4[..]),
+            ("clip.M4V", &mp4[..]),
+            ("take.mov", &mp4[..]),
+            ("take.mov", &old_mov[..]),
+            ("clip.webm", &webm[..]),
+            ("clip.mkv", &webm[..]),
+            ("clip.ogv", &ogg[..]),
+            ("clip.avi", &avi[..]),
+        ] {
+            assert_eq!(
+                doc_kind(Path::new(name), head),
+                Some(DocKind::Video),
+                "{name}"
+            );
+        }
+        assert_eq!(doc_kind(Path::new("clip.mp4"), b"not a video at all"), None);
+        assert_eq!(doc_kind(Path::new("clip.mp4"), b""), None);
+        assert_eq!(
+            doc_kind(Path::new("clip.avi"), b"RIFF\x24\0\0\0WEBPVP8 "),
+            None
+        );
+    }
+
+    /// No video is found by its bytes alone: a photo from a phone opens with
+    /// the same `ftyp` box an MP4 does, and it is not a video.
+    #[test]
+    fn a_video_is_never_recognised_without_its_name() {
+        let heic = b"\0\0\0\x18ftypheic\0\0\0\0";
+        assert_eq!(doc_kind(Path::new("IMG_0001"), heic), None);
+        assert_eq!(doc_kind(Path::new("IMG_0001.heic"), heic), None);
+        assert_eq!(
+            doc_kind(Path::new("rec"), b"\x1a\x45\xdf\xa3\x9f\x42\x86\x81"),
+            None
+        );
     }
 
     #[test]

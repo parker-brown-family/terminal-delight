@@ -123,9 +123,10 @@ impl TerminalView {
         )
     }
 
-    /// `ctl bench probe`: every zone the bench recorded, and every text run
-    /// that carries a link, each with its flat rectangle — where a scripted
-    /// click has to aim.
+    /// `ctl bench probe`: every zone the bench recorded, every text run that
+    /// carries a link, and every Markdown link label with the target it
+    /// hides, each with its flat rectangle — where a scripted click has to
+    /// aim. A label that wraps is given its run's rectangle.
     pub(crate) fn bench_probe(&self) -> String {
         let mut out = Vec::new();
         for z in self.wb_zones.borrow().iter() {
@@ -134,7 +135,8 @@ impl TerminalView {
                 z.x, z.y, z.w, z.h, z.hit
             ));
         }
-        for a in self.wb_atoms.borrow().0.iter() {
+        let atoms = self.wb_atoms.borrow();
+        for (i, a) in atoms.0.iter().enumerate() {
             if a.text.contains("://") || a.text.contains("/home/") {
                 out.push(format!(
                     "text {:.0} {:.0} {:.0} {:.0} {:?}",
@@ -143,6 +145,17 @@ impl TerminalView {
                     a.w,
                     a.h,
                     a.text.chars().take(100).collect::<String>()
+                ));
+            }
+            for (range, target) in &a.links {
+                let (x, y, w, h) = atoms
+                    .1
+                    .get(i)
+                    .and_then(|layout| label_rect(layout, range.clone()))
+                    .unwrap_or((a.x, a.y, a.w, a.h));
+                out.push(format!(
+                    "label {x:.0} {y:.0} {w:.0} {h:.0} {:?} {target:?}",
+                    a.text.get(range.clone()).unwrap_or_default()
                 ));
             }
         }
@@ -2271,6 +2284,13 @@ impl TerminalView {
     /// a path resolved against this pane's directory and required to exist —
     /// with the run's flat rectangle, for the Alt chip to outline.
     ///
+    /// A Markdown link's label comes first: `[the clip](clip.mp4)` draws only
+    /// "the clip", and the run carries the target it hides
+    /// ([`crate::benchdraw::sel_linked`]). That target is resolved as the
+    /// floating square resolves one ([`crate::docview::resolve_link`]), with
+    /// the pane's directory standing in for the document's folder, and the
+    /// rectangle is the label's own when it sits on one line.
+    ///
     /// The point has to be INSIDE the run. [`Self::bench_caret_at`] also
     /// answers for a point merely near one, which is right for a selection
     /// and wrong here: an Alt+click in the margin beside a path is not a click
@@ -2283,13 +2303,23 @@ impl TerminalView {
         if !(fx >= a.x && fx < a.x + a.w && fy >= a.y && fy < a.y + a.h) {
             return None;
         }
+        let cwd = || self.runtime().cwd;
+        if let Some((range, href)) = hidden_link_at(&a.links, caret.byte) {
+            let link = match hidden_link_target(href, cwd().as_deref())? {
+                super::Link::Url(u) => u,
+                super::Link::Path(p) => Some(p).filter(|p| std::path::Path::new(p).exists())?,
+            };
+            let rect = atoms
+                .1
+                .get(caret.atom)
+                .and_then(|layout| label_rect(layout, range))
+                .unwrap_or((a.x, a.y, a.w, a.h));
+            return Some((link, rect));
+        }
         let link = match super::run_link(&a.text, caret.byte)? {
             super::Link::Url(u) => u,
-            super::Link::Path(p) => {
-                let cwd = self.runtime().cwd;
-                super::resolve_path(&p, cwd.as_deref())
-                    .filter(|x| std::path::Path::new(x).exists())?
-            }
+            super::Link::Path(p) => super::resolve_path(&p, cwd().as_deref())
+                .filter(|x| std::path::Path::new(x).exists())?,
         };
         Some((link, (a.x, a.y, a.w, a.h)))
     }
@@ -4728,6 +4758,116 @@ fn bench_press_pick(
         return card.map(|href| (href.to_string(), None));
     }
     None
+}
+
+/// The Markdown link whose label the caret at `byte` is in, and its range.
+///
+/// A caret sits between characters, so a press on the right half of a
+/// label's last letter lands on its end. That end counts, unless it is also
+/// where the next link starts — `[a](x)[b](y)` — where the press was on the
+/// second.
+fn hidden_link_at(
+    links: &[(std::ops::Range<usize>, String)],
+    byte: usize,
+) -> Option<(std::ops::Range<usize>, &str)> {
+    let hit = |inside: &dyn Fn(&std::ops::Range<usize>) -> bool| {
+        links
+            .iter()
+            .find(|(r, _)| inside(r))
+            .map(|(r, t)| (r.clone(), t.as_str()))
+    };
+    hit(&|r| r.contains(&byte)).or_else(|| hit(&|r| r.end == byte && r.start < byte))
+}
+
+/// A hidden link's target, as the bench opens it: resolved the way the
+/// floating square resolves one ([`crate::docview::resolve_link`]), with the
+/// pane's directory as the folder a relative target is read against. A
+/// relative target with no directory to read it against, and a link to a
+/// heading, open nothing: the bench has no document for either to be in.
+/// Touches no disk; the caller asks whether a path is there.
+fn hidden_link_target(href: &str, cwd: Option<&str>) -> Option<super::Link> {
+    use crate::docview::LinkTarget;
+    let dir = std::path::PathBuf::from(cwd.unwrap_or_default());
+    match crate::docview::resolve_link(&dir, href) {
+        LinkTarget::Url(u) => Some(super::Link::Url(u)),
+        LinkTarget::File { path, .. } if path.is_absolute() => {
+            Some(super::Link::Path(path.to_string_lossy().into_owned()))
+        }
+        LinkTarget::File { .. } | LinkTarget::Fragment(_) => None,
+    }
+}
+
+/// A label's own rectangle, when it sits on one line: the Alt chip outlines
+/// the words that will open, not the whole paragraph around them. `None`
+/// for a label that wraps, where the run's rectangle stands in.
+fn label_rect(layout: &gpui::TextLayout, range: std::ops::Range<usize>) -> Option<Rect4> {
+    let (a, b) = (
+        layout.position_for_index(range.start)?,
+        layout.position_for_index(range.end)?,
+    );
+    let line = f32::from(layout.line_height());
+    let (ay, by) = (f32::from(a.y), f32::from(b.y));
+    ((ay - by).abs() < line / 2.0 && b.x > a.x).then(|| {
+        let x = f32::from(a.x);
+        (x, ay, f32::from(b.x) - x, line)
+    })
+}
+
+#[cfg(test)]
+mod hidden_link_tests {
+    use super::{hidden_link_at, hidden_link_target};
+    use crate::pane::Link;
+
+    fn links() -> Vec<(std::ops::Range<usize>, String)> {
+        // "see a b" with [a](x.md) at 4..5 and [b](y.mp4) at 6..7
+        vec![(4..5, "x.md".into()), (6..7, "y.mp4".into())]
+    }
+
+    /// A caret inside a label, or at its end, is on that label; one in the
+    /// text around it is on nothing.
+    #[test]
+    fn a_caret_on_a_label_finds_its_target() {
+        let l = links();
+        assert_eq!(hidden_link_at(&l, 4).map(|(_, t)| t), Some("x.md"));
+        assert_eq!(
+            hidden_link_at(&l, 5).map(|(_, t)| t),
+            Some("x.md"),
+            "its end"
+        );
+        assert_eq!(hidden_link_at(&l, 0), None);
+        assert_eq!(hidden_link_at(&[], 4), None);
+    }
+
+    /// Where one label ends and the next begins, the press is on the next.
+    #[test]
+    fn two_labels_side_by_side_are_told_apart() {
+        let l = vec![(0..1, "x".to_string()), (1..2, "y".to_string())];
+        assert_eq!(hidden_link_at(&l, 1).map(|(_, t)| t), Some("y"));
+        assert_eq!(hidden_link_at(&l, 2).map(|(_, t)| t), Some("y"));
+    }
+
+    /// A target resolves as the floating square resolves it: relative against
+    /// the pane's directory, `file://` decoded, a web address as written. A
+    /// heading, or a relative target with no directory, opens nothing.
+    #[test]
+    fn a_target_resolves_against_the_panes_directory() {
+        let path = |p: &str| Some(Link::Path(p.to_string()));
+        assert_eq!(
+            hidden_link_target("clips/demo.mp4", Some("/home/p/proj")),
+            path("/home/p/proj/clips/demo.mp4")
+        );
+        assert_eq!(
+            hidden_link_target("file:///home/p/a%20b.mp4", None),
+            path("/home/p/a b.mp4")
+        );
+        assert_eq!(hidden_link_target("/tmp/x.md#top", None), path("/tmp/x.md"));
+        assert_eq!(
+            hidden_link_target("https://example.com/v.mp4", None),
+            Some(Link::Url("https://example.com/v.mp4".into()))
+        );
+        assert_eq!(hidden_link_target("#heading", Some("/home/p")), None);
+        assert_eq!(hidden_link_target("demo.mp4", None), None);
+    }
 }
 
 #[cfg(test)]

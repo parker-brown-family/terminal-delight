@@ -1513,6 +1513,10 @@ pub struct Atom {
     /// What it says. Owned, because the selection has to survive the frame
     /// that drew it — see [`Sel::still_valid`].
     pub text: String,
+    /// Where `text` stands for a target it does not show — a Markdown link's
+    /// label — the byte range and the target as written. Empty for a run that
+    /// shows everything it links to.
+    pub links: Vec<(std::ops::Range<usize>, String)>,
     pub region: Region,
 }
 
@@ -9257,6 +9261,7 @@ mod tests {
             w,
             h: 14.0,
             text: text.to_string(),
+            links: Vec::new(),
             region,
         };
         vec![
@@ -9341,6 +9346,7 @@ mod tests {
                     w: 9.,
                     h: 9.,
                     text: String::new(),
+                    links: Vec::new(),
                     region: Region::Body
                 }],
                 1.0,
@@ -9435,6 +9441,7 @@ mod tests {
             w: 150.0,
             h: 14.0,
             text: text.to_string(),
+            links: Vec::new(),
             region,
         };
         let p = vec![
@@ -9517,6 +9524,7 @@ mod tests {
             w: 90.,
             h: 14.,
             text: text.to_string(),
+            links: Vec::new(),
             region: Region::Body,
         }];
         let s = Sel {
