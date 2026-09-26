@@ -1,6 +1,8 @@
 # Terminal Delight on the phone
 
-Two pieces, and the plan they come from is `docs/plans/mobile/01-plan.md`.
+Two pieces. How they are designed, the gateway's API, and what it would take to
+open this up beyond one laptop and one phone: `DESIGN.md`. The plan they came
+from: `docs/plans/mobile/01-plan.md`.
 
 ```
 mobile/gateway   the door on the laptop — Rust, speaks the session host protocol

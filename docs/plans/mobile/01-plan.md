@@ -1,5 +1,8 @@
 # Terminal Delight on the phone — the plan
 
+*Written before the build. What was built, and why each decision held or
+moved, is `mobile/DESIGN.md`.*
+
 ## What it is for
 
 A person away from the desk should be able to see what every agent is doing,
