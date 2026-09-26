@@ -25,6 +25,7 @@ surfaced first — the wall pulls your attention to the agents that actually nee
 | **Needs-you highlighting** | Blocked/errored agents get a bright border + are drawn first | `AgentState::needs_you()` | Shipped |
 | **Per-card theme + logo + art** | Each card wears its pane's theme colours and a logo/portrait; a **theme swatch badge** sits on the card's right frame edge | card paint; `register_overlay_tube` | Shipped |
 | **Per-card warp** | The card's logo square bends with CRT curvature while the card stays a flat click target | `warp.rs` overlay tube (cap 32) | Shipped |
+| **Images switch** | **CARDS → images on/off** in the wall's control strip, beside the card-size slider. Off takes every card's art window out (logo, robot scene and crest alike) and shortens the card by exactly that window, so the wall reads as plain text. Saved with the session; a session that never chose keeps the pictures | `wall_card_art` · `wall_card_h` in `main.rs`; `card_art` in the state file | Shipped |
 | **Rollup** | Fleet totals: ▶ working / ‖ blocked / ✕ error / ✓ done / ○ idle, Δ turn tokens, Σ session tokens | wall header | Shipped |
 | **Click → watch** | Click a card to open a faithful read-only terminal facsimile of that agent's transcript | wall + modal | Shipped |
 
@@ -32,7 +33,7 @@ surfaced first — the wall pulls your attention to the agents that actually nee
 
 Frame in the pane's **theme colour** + a thin rim in the **program colour**
 (Claude/Codex/Shell); inside: crest · name · **kind badge** (top-right) · cwd lore
-strip · **art window** (logo, warped) · MODEL/EFFORT chips · the recent-message
+strip · **art window** (logo, warped; gone when images are off) · MODEL/EFFORT chips · the recent-message
 feed · corner stats (Δ tokens · Σ session · status pip) · and the **theme swatch**
 on the middle-right edge.
 
