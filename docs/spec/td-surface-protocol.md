@@ -312,8 +312,40 @@ from the rail keeps it until they close it.
 | `mime` | no | Shown when present; the row says nothing rather than guessing from the extension. |
 | `summary` | no | One line. |
 
-Opened with the desktop's own handler, so Markdown goes wherever this machine
-sends Markdown. The window never hard-wires a viewer.
+A click on the card opens a document the window can draw — HTML, Markdown, a
+picture — in the floating square over the bench, and the card stays open
+underneath. Anything else goes to the desktop's own handler. The window never
+hard-wires a viewer for a type it cannot draw.
+
+#### A decision brief is an artifact
+
+When the work is something a person has to read and then decide on — an audit,
+a review, options with costs, findings — an agent the Workbench launched is
+asked for a **decision brief**: one self-contained HTML page, drawn rather than
+written, sent as an artifact.
+
+```json
+{ "td": "0.4", "kind": "artifact", "id": "brief-cache-eviction",
+  "title": "Cache eviction: LRU, with one guard",
+  "model": { "href": "/abs/path/reports/2026-09-25-cache-eviction.html",
+             "mime": "text/html",
+             "summary": "Three findings, two options, one decision waiting" } }
+```
+
+Nothing about it is new on the wire; what makes it a brief is the page. Built
+with the decision-brief notes markup, every element of it takes a note in the
+square, a decision takes a CONCUR stamp, and **↪ send to agent** in the notes
+bar pastes the notes into the agent's prompt as a map of `[anchor]` lines —
+pasted, never sent, so the person presses Enter. The agent can also ask for the
+same map with the `document_notes` MCP verb. The notes are saved into the file
+itself, so the brief stays the record.
+
+The launcher's briefing names the how: the decision-brief skill, which the
+binary carries (`app/skills/decision-brief/`, written under
+`$XDG_DATA_HOME/terminal-delight/skills/` on launch). Its Workbench edition asks
+for five minutes of reading and a figure for every argument. The paragraph is
+only in the briefing when the kit was written, and an agent started by hand in
+a terminal is told none of it.
 
 ### `markdown` — prose with structure
 
@@ -637,6 +669,13 @@ the sender can read.
 
 ### What changed
 
+**0.4, 2026-09-25** — no wire change, and so no bump. The launcher's briefing
+asks for a decision brief, sent as an `artifact`, when the work is
+decision-shaped, and the binary carries the skill it points at. The artifact
+section also stopped claiming every artifact goes to the desktop's handler: a
+drawable one has opened in the floating square over the bench since the same
+day.
+
 **0.4, 2026-09-22** — `brief`, the bare minimum: at most two sentences and
 under fifty words, drawn **last** in the reading group. It is optional and it
 moves no default, so **no payload that parsed before fails now** and every
@@ -746,6 +785,7 @@ drawn with the recommended option lit. Press `approve`, and the agent reads:
 | Transports: the sweep, the fence, the journal, the CLI | `app/src/surfacefeed.rs` |
 | The MCP verbs | `app/src/mcp.rs` |
 | The launcher that briefs an agent it starts | `app/src/launcher.rs` |
+| The decision-brief kit the briefing names, embedded and written on launch | `app/src/briefkit.rs`, `app/skills/decision-brief/` |
 
 ### Flags for the person debugging the bench
 

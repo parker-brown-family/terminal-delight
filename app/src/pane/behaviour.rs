@@ -1463,3 +1463,51 @@ fn alt_over_a_brief_outlines_its_anchors(cx: &mut TestAppContext) {
     pane.redraw();
     assert_eq!(pane.doc_notes().expect("notes")["boxes"], 0);
 }
+
+/// ↪ on a brief beside an agent that is showing its BENCH puts the notes map
+/// in the bench's composer, whole, and writes nothing to the terminal; the
+/// same press on the terminal face pastes it into the prompt, unsent. A brief
+/// opened from a bench card floats over the bench, so the first is the
+/// Workbench's own loop — it used to be refused with "turn it to its prompt
+/// first".
+#[gpui::test]
+fn notes_sent_to_an_agent_on_its_bench_land_in_the_composer(cx: &mut TestAppContext) {
+    // `cat` echoes whatever reaches the terminal, and bracketed paste is
+    // turned on first, as an agent does, so a paste would have somewhere to go.
+    let mut pane = Pane::running(cx, "printf '\\033[?2004hready\\n'; exec cat");
+    pane.wait_for("ready");
+    let map = "NOTES — brief.html\n\n[fig-01-what-a-miss] 01 · What a miss costs\n  · Draw the cold start too.";
+    pane.view.update(pane.cx, |v, cx| {
+        v.mode = super::PaneMode::Claude;
+        v.set_face(Face::Workbench, cx);
+    });
+    pane.redraw();
+
+    let landed = pane.view.update(pane.cx, |v, cx| v.send_notes(map, cx));
+    assert_eq!(
+        landed,
+        Ok(super::NotesLanded::Composer(map.chars().count())),
+        "on the bench the map goes to the composer"
+    );
+    let draft = pane.read(|v| v.wb_compose.as_ref().map(|l| l.text().to_string()));
+    assert_eq!(draft.as_deref(), Some(map), "whole, as a draft");
+    std::thread::sleep(std::time::Duration::from_millis(150));
+    pane.redraw();
+    assert!(
+        !pane.rows().iter().any(|r| r.contains("cold start")),
+        "and nothing of it reached the terminal: {:?}",
+        pane.rows()
+    );
+
+    pane.view.update(pane.cx, |v, cx| {
+        v.wb_compose = None;
+        v.set_face(Face::Terminal, cx);
+    });
+    let landed = pane.view.update(pane.cx, |v, cx| v.send_notes(map, cx));
+    assert_eq!(landed, Ok(super::NotesLanded::Prompt(map.chars().count())));
+    pane.wait_for("cold start");
+    assert!(
+        pane.read(|v| v.wb_compose.is_none()),
+        "the terminal face pastes, and leaves the composer alone"
+    );
+}

@@ -383,6 +383,16 @@ pub struct SendNotesBeside {
 
 impl gpui::EventEmitter<SendNotesBeside> for TerminalView {}
 
+/// Where ↪ put a brief's notes map, and how many characters of it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum NotesLanded {
+    /// Pasted into the agent's prompt on its terminal face, not sent.
+    Prompt(usize),
+    /// Written into the bench's composer as a draft: nothing reached the
+    /// terminal, and the composer's own send is what delivers it.
+    Composer(usize),
+}
+
 /// The bytes ↪ writes into an agent's prompt, or `None` when it must write
 /// nothing. Pure, so the one property that matters is held by a test.
 ///
@@ -5029,17 +5039,35 @@ impl TerminalView {
     /// pointer gesture in one pane reaches the prompt beside it. The bytes are
     /// [`notes_paste`]'s: a bracketed paste with no carriage return and no
     /// escape inside it, so the person reads the notes in the prompt and
-    /// presses Enter themselves. Answers how many characters went, or why
-    /// nothing did.
-    pub(crate) fn send_notes(&self, map: &str) -> Result<usize, String> {
+    /// presses Enter themselves. Answers where the map went and how many
+    /// characters, or why nothing did.
+    ///
+    /// On the WORKBENCH face the map goes into the bench's composer instead,
+    /// as a draft, and nothing reaches the terminal at all: the composer's own
+    /// send is the write, when the person makes it. That is where a brief
+    /// opened from a bench card sits — floating over the bench — and a ↪
+    /// that answered "turn it to its prompt first" there broke the one loop
+    /// the Workbench asks agents to build briefs for.
+    pub(crate) fn send_notes(
+        &mut self,
+        map: &str,
+        cx: &mut Context<Self>,
+    ) -> Result<NotesLanded, String> {
         if !self.mode.is_agent() {
             return Err("the pane beside this brief is not running an agent now".into());
         }
-        if self.bench.face() != crate::workbench::Face::Terminal {
-            return Err(
-                "the agent's pane is not showing its terminal, so nobody would see the notes land — turn it to its prompt first"
-                    .into(),
-            );
+        match self.bench.face() {
+            crate::workbench::Face::Terminal => {}
+            crate::workbench::Face::Workbench => {
+                self.bench_type(map, cx);
+                return Ok(NotesLanded::Composer(map.chars().count()));
+            }
+            crate::workbench::Face::Document => {
+                return Err(
+                    "the agent's pane is showing a document, so nobody would see the notes land — turn it to its prompt or its bench first"
+                        .into(),
+                );
+            }
         }
         let bracketed = self
             .session
@@ -5052,7 +5080,7 @@ impl TerminalView {
                 .to_string()
         })?;
         self.session.notifier.notify(bytes);
-        Ok(map.chars().count())
+        Ok(NotesLanded::Prompt(map.chars().count()))
     }
 
     /// Put a [`Said`] chip up on `row`, and take it down after [`SAID_FOR`]
