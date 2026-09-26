@@ -218,6 +218,11 @@ impl Backend for MarkdownDoc {
     fn element(&mut self, view: &Drawn, window: &mut Window, th: &Theme) -> AnyElement {
         let size = view.frame.map(|(size, _)| size);
         self.view = size;
+        // Where the LAST paint put each block, read before the column is
+        // built again: building it clears those places for this paint to
+        // fill, and anchors read after that have none, so no 💬 was ever
+        // drawn. A press, which comes after a paint, never saw the gap.
+        let anchors = self.note_anchors();
         let column =
             MarkdownDoc::element(self, view.path, th, size, view.links, NOTE_GUTTER, window);
         let (Some(layer), Some(size)) = (self.notes.as_ref(), size) else {
@@ -226,7 +231,6 @@ impl Backend for MarkdownDoc {
         // Forget where the bar and the note box were; the canvases below
         // record where they land this frame.
         layer.clear_zones();
-        let anchors = self.note_anchors();
         let marks = layer.marks(&anchors, &self.note_map(size), self.pointer);
         let mut layers = vec![column];
         layers.extend(layer.draw_marks(&marks, th));
@@ -380,8 +384,11 @@ impl Backend for MarkdownDoc {
             return;
         }
         let before = self.lit();
+        let entered = self.pointer.is_some() != at.is_some();
         self.pointer = at;
-        if self.lit() != before {
+        // Coming onto the document or leaving it changes what Alt shows.
+        let revealing = self.notes.as_ref().is_some_and(NotesLayer::revealing);
+        if self.lit() != before || (entered && revealing) {
             cx.notify();
         }
     }
@@ -407,6 +414,10 @@ impl Backend for MarkdownDoc {
 
     fn has_caret(&self) -> bool {
         self.notes.as_ref().is_some_and(NotesLayer::has_caret)
+    }
+
+    fn reveal(&mut self, on: bool) -> bool {
+        self.notes.as_mut().is_some_and(|l| l.reveal(on))
     }
 
     fn set_beside(&mut self, beside: Option<String>) -> bool {

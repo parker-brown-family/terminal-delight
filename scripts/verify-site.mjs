@@ -272,19 +272,134 @@ for (const [path, name] of [['/info', 'info'], [DOCS + '/', 'docs-index'], [DOCS
   ok('a search hit opens its page in the right register', /^\/install#technical/.test(landed.url) && landed.tech, JSON.stringify(landed));
   await ctx.close();
 }
-// one top bar everywhere: the same four sections, and Install where Download was
+// The kiosk's top bar keeps its four sections; the docs have their own
+// header, with no kiosk in its tabs and the tools in Parker's order.
 for (const path of ['/info', DOCS + '/', DOCS + '/workbench', DOCS + '/install']) {
   const { ctx, page } = await open(path, { prefs: { theme: 'glass', crt: 'off' } });
   const bar = await page.evaluate(() => ({
-    sections: [...document.querySelectorAll('.td-sections a')].map(a => a.textContent.trim()),
+    sections: [...document.querySelectorAll('.td-sections > a, .td-sections > span')].map(a => a.firstChild && a.childNodes.length ? [...a.childNodes].filter(n => n.nodeType === 3).map(n => n.textContent).join('').trim() : a.textContent.trim()),
+    tools: [...document.querySelectorAll('.td-actions > *')].map(e => e.matches('.td-themebtn') ? 'theme' : e.matches('[data-td-toggle="crt"]') ? 'crt' : e.matches('.td-keysbtn') ? 'keys' : e.matches('[data-td-toggle="theme"]') ? 'light-dark' : e.matches('.gh') ? 'github' : e.matches('.td-btn.primary') ? 'install' : e.className),
     button: (document.querySelector('.td-actions .td-btn.primary') || {}).textContent,
     href: (document.querySelector('.td-actions .td-btn.primary') || {}).href || '',
     download: [...document.querySelectorAll('.td-top a, .td-top button')].some(el => /download/i.test(el.textContent)),
+    kioskTabs: [...document.querySelectorAll('.td-sections > a')].filter(a => a.host && a.host !== location.host).map(a => a.href),
   }));
-  ok(`${path}: top bar reads Overview · Docs · Omarchy · Global`, bar.sections.join('|') === 'Overview|Docs|Omarchy|Global', bar.sections.join('|'));
+  if (path === '/info') ok(`${path}: top bar reads Overview · Docs · Omarchy · Global`, bar.sections.join('|') === 'Overview|Docs|Omarchy|Global', bar.sections.join('|'));
+  else {
+    ok(`${path}: tabs read Documentation · Reference · Languages · Keymapping`, bar.sections.join('|') === 'Documentation|Reference ▾|Languages|Keymapping', bar.sections.join('|'));
+    ok(`${path}: no kiosk among the tabs`, bar.kioskTabs.length === 0, bar.kioskTabs.join(' '));
+    ok(`${path}: tools run theme · CRT · keys · light/dark · GitHub · Install`, bar.tools.join('|') === 'theme|crt|keys|light-dark|github|install', bar.tools.join('|'));
+  }
   ok(`${path}: the bar's button is Install`, (bar.button || '').trim() === 'Install', bar.button);
   ok(`${path}: Install opens the install page`, /\/install$/.test(bar.href), bar.href);
   ok(`${path}: nothing in the bar says Download`, !bar.download);
+  await ctx.close();
+}
+
+// the docs' own furniture: numbers, the theme, the wallpaper, the keys
+{
+  const { ctx, page, errors } = await open(DOCS + '/install', { prefs: { theme: 'glass', crt: 'off' } });
+  const nums = await page.evaluate(() => ({
+    h1: getComputedStyle(document.querySelector('.td-doc > h1'), '::before').content,
+    h1Text: document.querySelector('.td-doc > h1').textContent,
+    strong: (document.querySelector('.td-spine a[aria-current="page"]') || {}).textContent,
+    weak: (document.querySelector('.td-spine a.weak') || {}).textContent,
+    prompts: [...document.querySelectorAll('pre.cmd code')].every(c => c.querySelector('.ln') && [...c.children].every(l => l.matches('.ln, .cm'))),
+    lnPrompt: getComputedStyle(document.querySelector('pre.cmd .ln'), '::before').content,
+  }));
+  ok('docs: the title carries its number beside it, not in its text', nums.h1 === '"01.1"' && nums.h1Text === 'Install', JSON.stringify(nums));
+  ok('docs: the spine lights the page strongly and its chapter weakly', /01\.1\s*Install/.test(nums.strong) && /01 \/\s*Start/.test(nums.weak), JSON.stringify(nums));
+  ok('docs: every command line wears a prompt', nums.prompts && nums.lnPrompt === '"$ "', JSON.stringify(nums));
+  const before = await page.evaluate(() => ({ p: document.documentElement.dataset.palette, css: document.getElementById('td-palette').textContent }));
+  await page.keyboard.press('t');
+  ok('docs: t opens the theme tray', await page.evaluate(() => document.getElementById('td-tray').classList.contains('on')));
+  ok('docs: the tray has a line drawing for every theme', await page.evaluate(() => [...document.querySelectorAll('.td-chip')].every(c => c.querySelector('svg path, svg rect, svg circle'))) && await page.evaluate(() => document.querySelectorAll('.td-chip').length === 8));
+  await page.click('.td-chip[data-i="3"]');
+  await page.waitForTimeout(900);
+  const after = await page.evaluate(() => ({ p: document.documentElement.dataset.palette, css: document.getElementById('td-palette').textContent, stored: localStorage.getItem('td-kiosk-theme'),
+    wall: (document.querySelector('.backdrop .layer.on') || { style: {} }).style.backgroundImage || '', name: document.querySelector('.td-themebtn .nm').textContent }));
+  ok('docs: picking a theme repaints through the palette style', after.p === 'tokyo-night' && after.css !== before.css && /--acc:#7aa2f7/.test(after.css), JSON.stringify(after));
+  ok('docs: the pick is remembered', after.stored === 'tokyo-night');
+  ok('docs: the theme wears its own wallpaper', /omarchy\/bg\/tokyo-night\.webp/.test(after.wall), after.wall);
+  ok('docs: the picker names the theme', after.name === 'tokyo-night', after.name);
+  await page.keyboard.press('w');
+  ok('docs: w takes the wallpaper away', await page.evaluate(() => document.documentElement.dataset.wall === 'off' && getComputedStyle(document.querySelector('.backdrop')).display === 'none'));
+  await page.keyboard.press('w');
+  await page.keyboard.press('?');
+  ok('docs: ? lists the keys', await page.evaluate(() => document.getElementById('td-keys').classList.contains('on')));
+  await page.keyboard.press('Escape');
+  await page.click('.td-actions .td-keysbtn');
+  ok('docs: the keyboard glyph opens the same list', await page.evaluate(() => document.getElementById('td-keys').classList.contains('on') && document.querySelector('.td-keysbtn').getAttribute('aria-expanded') === 'true'));
+  await page.keyboard.press('Escape');
+  /* Keymapping opens the app's own key sheet, read from its source by the build */
+  await page.click('.td-tab[data-sheet]');
+  const sheet = await page.evaluate(() => ({ open: document.getElementById('td-sheet').classList.contains('on'), path: location.pathname,
+    sections: [...document.querySelectorAll('#td-sheet h4')].map(h => h.textContent), rows: document.querySelectorAll('#td-sheet dt').length,
+    href: document.querySelector('.td-tab[data-sheet]').getAttribute('href'), rowText: [...document.querySelectorAll('#td-sheet dt')].map(d => d.textContent) }));
+  ok('docs: Keymapping opens the app\'s key sheet in place', sheet.open && sheet.path === '/install', JSON.stringify({ open: sheet.open, path: sheet.path }));
+  ok('docs: the sheet carries the app\'s sections and rows', ['TABS & PANES', 'EDITING & CLIPBOARD', 'LINKS', 'SCROLLBACK', 'LOOK & FEEL', 'WINDOW'].every(t => sheet.sections.includes(t)) && sheet.rows >= 40, JSON.stringify(sheet.sections) + ' ' + sheet.rows);
+  ok('docs: the sheet says what the code does where the app\'s row is stale', !sheet.rowText.includes('▲ / ▼') && sheet.rowText.includes('🎨 (bottom-right)'), JSON.stringify(sheet.rowText.slice(0, 8)));
+  ok('docs: without a script, Keymapping still goes to the keys page', sheet.href === '/keys');
+  /* the sheet's big button opens the example window: the kiosk's drawing, in the reader's theme */
+  await page.click('#td-sheet .td-demo-btn');
+  const demoUp = await page.waitForFunction(() => document.querySelector('#td-demo .win[data-pane-warp]'), null, { timeout: 8000 }).then(() => true, () => false);
+  const demo = await page.evaluate(() => { const w = document.querySelector('#td-demo .win'); return w && { open: document.getElementById('td-demo').classList.contains('on'),
+    acc: getComputedStyle(w).getPropertyValue('--w-acc').trim(), pal: document.documentElement.dataset.palette, panes: w.querySelectorAll('[data-warp]').length }; });
+  ok('docs: the sheet\'s big button opens the example window', demoUp && demo && demo.open && demo.panes >= 2, JSON.stringify(demo));
+  ok('docs: the example window wears the reader\'s theme', demo && demo.acc === '#7aa2f7' && demo.pal === 'tokyo-night', JSON.stringify(demo));
+  await page.keyboard.press('Escape');
+  ok('docs: Esc puts the example window away', await page.evaluate(() => !document.getElementById('td-demo').classList.contains('on')));
+  await page.keyboard.press('k');
+  ok('docs: k opens the sheet', await page.evaluate(() => document.getElementById('td-sheet').classList.contains('on')));
+  await page.keyboard.press('Escape');
+  ok('docs: Esc closes it', await page.evaluate(() => !document.getElementById('td-keys').classList.contains('on')));
+  /* the scroll choreography, from the wellness-with-kate build by way of the Omarchy kiosk */
+  const s0 = await page.evaluate(() => parseFloat(document.querySelector('.backdrop').style.getPropertyValue('--s')) || 1);
+  /* where the wall sits before the scroll, measured before it */
+  const b0 = await page.evaluate(() => document.querySelector('.backdrop').getBoundingClientRect().top);
+  await page.evaluate(() => { const t = document.getElementById('tube'); t.style.scrollBehavior = 'auto'; t.scrollTop = (t.scrollHeight - t.clientHeight) * 0.5; });
+  await page.waitForTimeout(400);
+  const ch = await page.evaluate(() => ({ s: parseFloat(document.querySelector('.backdrop').style.getPropertyValue('--s')), out: document.querySelectorAll('#tube .choreo.out').length,
+    top: document.querySelector('.backdrop').getBoundingClientRect().top, bottom: document.querySelector('.backdrop').getBoundingClientRect().bottom, vh: innerHeight,
+    cut: [...document.querySelectorAll('#tube .choreo:not(.out)')].filter(e => getComputedStyle(e).filter !== 'none' || getComputedStyle(e).opacity !== '1').length }));
+  ok('docs: the wall grows as you scroll down', ch.s > s0 + 0.05, JSON.stringify({ s0, ...ch }));
+  ok('docs: and the view pans down it, with no edge showing', ch.top < b0 - 20 && ch.bottom > ch.vh, JSON.stringify({ b0, ...ch }));
+  ok('docs: blocks leaving the pane roll out of focus', ch.out > 0, JSON.stringify(ch));
+  ok('docs: a block in focus carries no filter or fade that would cut its glass off from the wall', ch.cut === 0, JSON.stringify(ch));
+  await page.evaluate(() => { document.getElementById('tube').scrollTop = 0; });
+  await page.keyboard.press('2');
+  ok('docs: 2 opens the second version', await page.evaluate(() => document.getElementById('r-technical').checked && location.hash === '#technical'));
+  await page.keyboard.press('m');
+  ok('docs: m switches to paper', await page.evaluate(() => document.documentElement.dataset.theme === 'paper'));
+  await page.keyboard.press('m');
+  /* asserted before ] navigates, because leaving the page aborts whatever is still in flight */
+  ok('docs: the tray and keys ran clean', errors.length === 0, errors.join(' | '));
+  await Promise.all([page.waitForURL(/\/first-launch$/, { timeout: 5000 }).catch(() => null), page.keyboard.press(']')]);
+  ok('docs: ] turns to the next page', /\/first-launch$/.test(page.url()), page.url());
+  await ctx.close();
+}
+// With the tube on, it bends the reading pane and nothing else, and a new theme reaches it.
+{
+  const { ctx, page } = await open(DOCS + '/install', { prefs: { theme: 'glass', crt: 'on' } });
+  ok('docs: the tube goes live', await tubeLive(page));
+  const box = await page.evaluate(() => {
+    const cv = document.querySelector('canvas.td-tube').getBoundingClientRect(), top = document.querySelector('.td-top').getBoundingClientRect(), sp = document.querySelector('.td-spine').getBoundingClientRect();
+    return { cvLeft: cv.left, cvTop: cv.top, headerBottom: top.bottom, spineRight: sp.right,
+      blur: [...document.querySelectorAll('#tube *')].filter(e => getComputedStyle(e).backdropFilter !== 'none').length };
+  });
+  ok('docs: the curve leaves the header and the spine flat', box.cvTop >= box.headerBottom - 1 && box.cvLeft >= box.spineRight - 1, JSON.stringify(box));
+  /* the wallpaper stays on under the tube: docs.js hands it over as a texture and the shader lays the page on it */
+  await page.waitForTimeout(800);
+  ok('docs: the wall is drawn under the tube', await page.evaluate(() => !!(window.__tdGlass && window.__tdGlass.wall) && window.TD_GLASS_WALL.canvas.width > 0));
+  ok('docs: nothing inside the screen blurs a backdrop the snapshot cannot draw', box.blur === 0, String(box.blur));
+  await page.evaluate(() => { const t = document.getElementById('tube'); t.style.scrollBehavior = 'auto'; t.scrollTop = 600; });
+  await page.waitForTimeout(400);
+  ok('docs: under the tube the blocks stand still, so scrolling asks for no snapshot', await page.evaluate(() => document.querySelectorAll('#tube .choreo').length === 0));
+  const gen0 = await page.evaluate(() => document.getElementById('td-palette').textContent);
+  await page.evaluate(() => window.__tdDocs.setTheme('everforest'));
+  await page.waitForTimeout(1500);
+  ok('docs: a theme picked under the tube keeps the tube live', await page.evaluate(() => document.documentElement.dataset.tube === 'gl' && document.documentElement.dataset.palette === 'everforest'));
+  ok('docs: and the snapshot reads the new palette', await page.evaluate(() => window.TD_SNAP.css().then(c => /--acc:#7fbbb3/.test(c))) && gen0 !== await page.evaluate(() => document.getElementById('td-palette').textContent));
   await ctx.close();
 }
 
@@ -298,7 +413,15 @@ for (const path of ['/info', DOCS + '/', DOCS + '/workbench', DOCS + '/install']
   ok('install: Brief tab shows Brief', JSON.stringify(await vis()) === '["brief"]', JSON.stringify(await vis()));
   await page.click('#brief pre.cmd [data-copy-code]');
   const cmd = await page.evaluate(() => window.__tdLastCopy || '');
-  ok('install: copying the commands copies three lines of commands', cmd.split('\n').length === 3 && cmd.startsWith('curl -LO https://') && !/copy/i.test(cmd), JSON.stringify(cmd));
+  /* one line, so one paste runs them in order and stops at the first failure */
+  ok('install: copying the commands copies them as one line, joined with &&', !cmd.includes('\n') && cmd.split(' && ').length === 3 && cmd.startsWith('curl -LO https://') && cmd.endsWith('./terminal-delight-x86_64.AppImage') && !/copy|\$ /i.test(cmd), JSON.stringify(cmd));
+  /* the throb starts when the clipboard write resolves, so wait for it rather than sample once */
+  ok('install: the copy says so by throbbing', await page.waitForFunction(() => document.querySelector('#brief pre.cmd').classList.contains('throb'), null, { timeout: 1300 }).then(() => true, () => false));
+  await page.click('label[for="r-technical"]');
+  await page.click('#technical-building-from-source ~ * pre.cmd [data-copy-code], .pair:has(#technical-building-from-source) pre.cmd [data-copy-code]');
+  const built = await page.evaluate(() => window.__tdLastCopy || '');
+  ok('install: a comment line is shown but never copied', built === 'bash scripts/setup-deps.sh && bash scripts/prepare-gpui.sh && cd app && cargo run', JSON.stringify(built));
+  await page.click('label[for="r-brief"]');
   await page.click('#brief .reg-head .td-copy');
   const reg = await page.evaluate(() => window.__tdLastCopy || '');
   ok('install: register copy carries the commands without a button label', reg.includes('chmod +x terminal-delight-x86_64.AppImage') && !/\nCopy\n|Copy$/.test(reg), reg.slice(-200));

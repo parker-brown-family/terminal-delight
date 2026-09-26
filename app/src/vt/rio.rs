@@ -1,0 +1,1308 @@
+//! The core: rio-vt 0.5.28, the emulator inside the Rio terminal, behind TD's
+//! boundary.
+//!
+//! rio-vt began as a fork of alacritty's `Term`, so most of the translation
+//! below is renaming: `Pos{row, col}` for `Point{line, column}`, `AnsiColor`
+//! for `Color`, `Mode` for `TermMode` (the same bits, plus a few of rio's own,
+//! which are masked off). The one real difference in shape is the cell. rio-vt
+//! packs a cell into a `u64` and keeps its colours and attributes in a side
+//! table, so a cell is assembled here, by value, from the packed word, the
+//! style table and the grid's store of combining marks.
+//!
+//! Four of rio-vt's defaults are changed, each for a reason stated where it is
+//! done: grapheme clustering is off, the `pty` feature is off, the `graphics`
+//! feature is on, and the grid is always told the real pixel size of a cell.
+
+use std::sync::Arc;
+use std::time::Instant;
+
+use rio_vt::ansi::graphics::{kitty_overlay_geometry, OverlayViewport};
+use rio_vt::ansi::CursorShape as RShape;
+use rio_vt::clipboard::ClipboardType as RClipboard;
+use rio_vt::config::colors::{AnsiColor, ColorRgb};
+use rio_vt::crosswords::grid::Grid;
+use rio_vt::crosswords::grid::{Dimensions, Scroll as RScroll};
+use rio_vt::crosswords::pos::{Column as RColumn, Direction, Line as RLine, Pos};
+use rio_vt::crosswords::square::{ContentTag, Square, Wide};
+use rio_vt::crosswords::style::StyleFlags;
+use rio_vt::crosswords::{Crosswords, CrosswordsSize};
+use rio_vt::event::{EventListener, RioEvent, WindowId};
+use rio_vt::performer::handler::Processor;
+use rio_vt::selection::{Selection, SelectionType as RType};
+
+#[cfg(test)]
+use super::Hyperlink;
+use super::{
+    Backend, Cell, ClipboardType, Color, Column, Cursor, CursorShape, Event, Flags, Line, Listener,
+    NamedColor, Picture, PictureData, PictureKey, Point, Rgb, Scroll, SelectionRange,
+    SelectionType, Side, TermMode, TermSize, WindowSize,
+};
+
+/// The modes TD reads from rio-vt: bits 0 to 17, which rio numbers exactly as
+/// alacritty did.
+///
+/// Masked off: the five kitty keyboard bits (18 to 22), because TD encodes
+/// keys itself and does not speak that protocol — alacritty's core had it
+/// switched off and never set them, and these do the same — and everything
+/// from bit 23 up, where rio keeps modes TD's numbering does not have (X10
+/// mouse reporting, grapheme clustering, three sixel modes). `TermMode::ANY`
+/// means the mask has to be explicit: `from_bits_truncate` keeps every bit
+/// when one flag is all of them.
+const READ_MODES: u32 = (1 << 18) - 1;
+
+/// The most pictures one pane draws in a frame.
+const MOST_SHOWN: usize = 256;
+
+/// Primary device attributes, as Terminal Delight answers them: a VT220 with
+/// ANSI colour.
+///
+/// rio-vt's own answer adds sixel and OSC 52 clipboard access, and TD draws no
+/// sixel and does not act on OSC 52, so a program believing it would send
+/// pictures and clipboard writes into nothing. The answer still has more than
+/// three characters of parameters, which is what `kitten icat` looks for;
+/// alacritty's `?6c` did not, and icat waited ten seconds in every pane
+/// (issue 750).
+const DEVICE_ATTRIBUTES: &str = "\x1b[?62;22c";
+
+/// What TD says a program asked, in place of what rio-vt would say about Rio.
+///
+/// `None` drops the answer. Matched on the answers' shapes rather than their
+/// exact text, and each is pinned by a test below, so a rio-vt that changes
+/// its wording is caught rather than obeyed.
+fn as_terminal_delight(answer: String) -> Option<String> {
+    // Primary device attributes: CSI ? … c.
+    if answer.starts_with("\x1b[?") && answer.ends_with('c') {
+        return Some(DEVICE_ATTRIBUTES.to_string());
+    }
+    // XTVERSION: DCS > | name ST. A program that read "Rio" here would pick
+    // the picture protocol Rio prefers, which TD does not draw.
+    if answer.starts_with("\x1bP>|") {
+        return Some(format!(
+            "\x1bP>|terminal-delight {}\x1b\\",
+            env!("CARGO_PKG_VERSION")
+        ));
+    }
+    // The kitty keyboard protocol's `CSI ? flags u`. Answering it tells a
+    // program TD will encode keys that way, and TD will not.
+    let body = answer
+        .strip_prefix("\x1b[?")
+        .and_then(|rest| rest.strip_suffix('u'));
+    if body.is_some_and(|flags| !flags.is_empty() && flags.bytes().all(|b| b.is_ascii_digit())) {
+        return None;
+    }
+    // XTGETTCAP: DCS 1 + r (or 0 + r) … ST. rio-vt answers from Rio's own
+    // termcap, fixed: the name `rio`, 80 columns by 24 lines whatever the
+    // pane is, sixel and iTerm2 pictures TD does not draw. alacritty never
+    // answered, and a program that asks falls back to terminfo, which says
+    // what TD is — so no answer, as before.
+    if answer.starts_with("\x1bP1+r") || answer.starts_with("\x1bP0+r") {
+        return None;
+    }
+    // DECRQM for grapheme clustering (DEC 2027): rio-vt says it can, and a
+    // program that believes it turns clustering on — which TD holds off
+    // (`vt/text.rs`). Not recognised, as alacritty answered.
+    if answer.starts_with("\x1b[?2027;") && answer.ends_with("$y") {
+        return Some("\x1b[?2027;0$y".to_string());
+    }
+    Some(answer)
+}
+
+/// rio-vt's size, with the real pixels of a cell. A cell of 0×0 is what
+/// rio-vt's own constructor gives, and it silently drops every picture a
+/// program sends, having already told the program the picture was received.
+fn dimensions(size: TermSize) -> CrosswordsSize {
+    let (cell_w, cell_h) = (size.cell_width as u32, size.cell_height as u32);
+    CrosswordsSize::new_with_dimensions(
+        size.columns,
+        size.screen_lines,
+        size.columns as u32 * cell_w,
+        size.screen_lines as u32 * cell_h,
+        cell_w,
+        cell_h,
+    )
+}
+
+/// Carries rio-vt's events across into TD's, and no further than TD reads.
+///
+/// rio-vt calls this on the parsing thread with the terminal's lock held; it
+/// only translates and forwards, as `Listener` requires.
+struct Relay(Arc<dyn Listener>);
+
+impl EventListener for Relay {
+    fn send_event(&self, event: RioEvent, _window: WindowId) {
+        let event = match event {
+            RioEvent::PtyWrite(_, text) => match as_terminal_delight(text) {
+                Some(text) => Event::PtyWrite(text),
+                None => return,
+            },
+            // rio-vt hands its formatter the text area in total pixels; TD's
+            // callers answer from the pseudoterminal's cell size, and the
+            // conversion is theirs to trust, so it happens here once.
+            RioEvent::TextAreaSizeRequest(_, format) => {
+                Event::TextAreaSizeRequest(Arc::new(move |size: WindowSize| {
+                    format(rio_vt::event::WindowSize {
+                        rows: size.num_lines,
+                        cols: size.num_cols,
+                        width: size.num_cols.saturating_mul(size.cell_width),
+                        height: size.num_lines.saturating_mul(size.cell_height),
+                    })
+                }))
+            }
+            RioEvent::ColorRequest(_, index, format) => Event::ColorRequest(
+                index,
+                Arc::new(move |c: Rgb| {
+                    format(ColorRgb {
+                        r: c.r,
+                        g: c.g,
+                        b: c.b,
+                    })
+                }),
+            ),
+            RioEvent::Title(_, title) => Event::Title(title),
+            RioEvent::ResetTitle => Event::ResetTitle,
+            RioEvent::Bell(_) => Event::Bell,
+            RioEvent::ClipboardStore(ty, text) => Event::ClipboardStore(clipboard(ty), text),
+            RioEvent::CursorBlinkingChange | RioEvent::CursorBlinkingChangeOnRoute(_) => {
+                Event::CursorBlinkingChange
+            }
+            RioEvent::MouseCursorDirty => Event::MouseCursorDirty,
+            // Render requests, damage, graphics queues, desktop
+            // notifications, progress, the glyph protocol, and a clipboard
+            // read (which TD refuses): nothing TD reads. Dropped here so they
+            // cannot move a pane's content generation.
+            _ => return,
+        };
+        self.0.send_event(event);
+    }
+}
+
+fn clipboard(ty: RClipboard) -> ClipboardType {
+    match ty {
+        RClipboard::Selection => ClipboardType::Selection,
+        _ => ClipboardType::Clipboard,
+    }
+}
+
+fn color(c: AnsiColor) -> Color {
+    match c {
+        AnsiColor::Named(n) => {
+            Color::Named(NamedColor::from_index(n as usize).unwrap_or(NamedColor::Foreground))
+        }
+        AnsiColor::Spec(rgb) => Color::Spec(Rgb {
+            r: rgb.r,
+            g: rgb.g,
+            b: rgb.b,
+        }),
+        AnsiColor::Indexed(i) => Color::Indexed(i),
+    }
+}
+
+fn pos(p: Point) -> Pos {
+    Pos::new(RLine(p.line.0), RColumn(p.column.0))
+}
+
+fn point(p: Pos) -> Point {
+    Point::new(Line(p.row.0), Column(p.col.0))
+}
+
+fn side(side: Side) -> Direction {
+    match side {
+        Side::Left => Direction::Left,
+        Side::Right => Direction::Right,
+    }
+}
+
+/// A cell's attributes in TD's flags, from rio-vt's three places for them: the
+/// style (SGR), the wide-character state, and the soft-wrap mark.
+fn flags(style: StyleFlags, wide: Wide, wrapline: bool) -> Flags {
+    const PAIRS: [(StyleFlags, Flags); 11] = [
+        (StyleFlags::INVERSE, Flags::INVERSE),
+        (StyleFlags::BOLD, Flags::BOLD),
+        (StyleFlags::ITALIC, Flags::ITALIC),
+        (StyleFlags::DIM, Flags::DIM),
+        (StyleFlags::HIDDEN, Flags::HIDDEN),
+        (StyleFlags::STRIKEOUT, Flags::STRIKEOUT),
+        (StyleFlags::UNDERLINE, Flags::UNDERLINE),
+        (StyleFlags::DOUBLE_UNDERLINE, Flags::DOUBLE_UNDERLINE),
+        (StyleFlags::UNDERCURL, Flags::UNDERCURL),
+        (StyleFlags::DOTTED_UNDERLINE, Flags::DOTTED_UNDERLINE),
+        (StyleFlags::DASHED_UNDERLINE, Flags::DASHED_UNDERLINE),
+    ];
+    let mut out = Flags::empty();
+    for (from, to) in PAIRS {
+        if style.contains(from) {
+            out |= to;
+        }
+    }
+    out |= match wide {
+        Wide::Narrow => Flags::empty(),
+        Wide::Wide => Flags::WIDE_CHAR,
+        Wide::Spacer => Flags::WIDE_CHAR_SPACER,
+        Wide::LeadingSpacer => Flags::LEADING_WIDE_CHAR_SPACER,
+    };
+    if wrapline {
+        out |= Flags::WRAPLINE;
+    }
+    out
+}
+
+/// The background of a cell that holds no character, or `None` for a cell
+/// that holds one.
+///
+/// A blank, in TD as in alacritty and xterm, is its background colour and
+/// nothing else. rio-vt keeps blanks two ways, and neither reads back that
+/// way. An erase (`K`, `X`, `@`, `P`) stores the background inline and forgets
+/// whether it was one of the sixteen named colours or a palette index, so
+/// `44` then `K` would come back as `48;5;4`. A scroll, an inserted or deleted
+/// line and a cleared screen fill with the whole pen instead — foreground,
+/// underline, inverse — so a line that scrolled in while a program had inverse
+/// on would draw inverted from edge to edge, where every other terminal draws
+/// the background. Both are read here the way alacritty wrote them, because a
+/// window and a session host on different cores compare their grids cell by
+/// cell (`gridwire::grid_hash`), and because the second one is visible.
+///
+/// The one case this reads wrongly is a palette index under 16 set with
+/// `48;5;n` and then erased: that comes back named, as `4n`. It draws the same
+/// colour, and costs one repair from the divergence guard against a host on
+/// alacritty; the far commoner `4n` then erase costs nothing.
+///
+/// A tab passing over a blank leaves its `\t` there, for copying; it is still
+/// a blank, and keeps the character.
+fn blank_background(grid: &Grid<Square>, square: Square) -> Option<(char, Color)> {
+    if square.wide() != Wide::Narrow {
+        return None;
+    }
+    match square.content_tag() {
+        ContentTag::BgPalette => {
+            let index = square.bg_palette_index();
+            let bg = match NamedColor::from_index(index as usize) {
+                Some(named) => Color::Named(named),
+                None => Color::Indexed(index),
+            };
+            Some((' ', bg))
+        }
+        ContentTag::BgRgb => {
+            let (r, g, b) = square.bg_rgb();
+            Some((' ', Color::Spec(Rgb { r, g, b })))
+        }
+        ContentTag::Codepoint => {
+            let c = match square.c() {
+                '\0' => ' ',
+                '\t' => '\t',
+                _ => return None,
+            };
+            (!square.has_grapheme()).then(|| (c, color(grid.style_of(&square).bg)))
+        }
+    }
+}
+
+pub(super) struct Core {
+    term: Crosswords<Relay>,
+    parser: Processor,
+    /// What of the Kitty graphics protocol reaches `parser`: no APC longer
+    /// than a limit, and no temporary file deleted outside kitty's rule
+    /// (`vt/kitty.rs`).
+    guard: super::kitty::Guard,
+    /// Combining marks bounded, grapheme clustering held off, and synchronized
+    /// updates begun where they begin (`vt/text.rs`).
+    text: super::text::TextGuard,
+    /// A pre-swap host's mouse restore, read as that host meant it
+    /// (`vt/compat.rs`).
+    mouse: super::compat::MouseRun,
+}
+
+impl Backend for Core {
+    const NAME: &'static str = "rio-vt 0.5.28";
+
+    fn new(size: TermSize, listener: Arc<dyn Listener>, scrollback: usize) -> Self {
+        let mut term = Crosswords::new(
+            dimensions(size),
+            RShape::Block,
+            Relay(listener),
+            WindowId::from(0),
+            0,
+            scrollback,
+        );
+        // Off, where rio-vt defaults it on. With DEC 2027 on, rio-vt sizes a
+        // cell by grapheme cluster rather than by wcwidth, which is right for
+        // Rio's renderer and wrong for everything TD shares a grid with: the
+        // programs that lay out their own screens by wcwidth, the session host
+        // and window that must agree cell for cell, and the tests. It stays
+        // off: a program's DECSET 2027 is dropped at the boundary, because the
+        // cluster path copies a cell's marks the way `vt/text.rs` describes.
+        term.set_grapheme_clustering(false);
+        Self {
+            term,
+            parser: Processor::default(),
+            guard: Default::default(),
+            text: Default::default(),
+            mouse: Default::default(),
+        }
+    }
+
+    fn advance(&mut self, bytes: &[u8]) {
+        let Self {
+            term,
+            parser,
+            guard,
+            text,
+            mouse,
+        } = self;
+        guard.feed(bytes, &mut |bytes| {
+            text.feed(bytes, &mut |bytes| {
+                mouse.feed(bytes, &mut |bytes| parser.advance(term, bytes))
+            })
+        });
+        // A synchronized update holds its bytes back from the parser; a
+        // temporary file named inside one is deleted once it is drawn.
+        if parser.sync_bytes_count() == 0 {
+            guard.delete_what_the_core_read();
+        }
+    }
+
+    fn sync_bytes_count(&self) -> usize {
+        self.parser.sync_bytes_count()
+    }
+
+    fn sync_deadline(&self) -> Option<Instant> {
+        self.parser.sync_timeout().sync_timeout()
+    }
+
+    fn flush_sync(&mut self) {
+        self.parser.stop_sync(&mut self.term);
+        self.guard.delete_what_the_core_read();
+    }
+
+    fn resize(&mut self, size: TermSize) {
+        self.term.resize(dimensions(size));
+    }
+
+    fn columns(&self) -> usize {
+        self.term.columns()
+    }
+
+    fn screen_lines(&self) -> usize {
+        self.term.screen_lines()
+    }
+
+    fn history_size(&self) -> usize {
+        self.term.history_size()
+    }
+
+    fn display_offset(&self) -> usize {
+        self.term.display_offset()
+    }
+
+    fn row_into(&self, line: Line, out: &mut Vec<Cell>) {
+        let grid = &self.term.grid;
+        let row = &grid[RLine(line.0)];
+        // A history row keeps the width it was written at when the terminal
+        // later grows wider; `Term` pads what is missing with blanks.
+        let width = row.len().min(grid.columns());
+        for column in 0..width {
+            let square = row[RColumn(column)];
+            if let Some((c, bg)) = blank_background(grid, square) {
+                let flags = if square.wrapline() {
+                    Flags::WRAPLINE
+                } else {
+                    Flags::empty()
+                };
+                out.push(Cell::new(
+                    c,
+                    Color::Named(NamedColor::Foreground),
+                    bg,
+                    flags,
+                ));
+                continue;
+            }
+            let style = grid.style_of(&square);
+            // An erased or never-written cell holds NUL. TD's blank is a space,
+            // as alacritty's was, and word selection, trimming and the
+            // snapshot all read it that way.
+            let c = match square.c() {
+                '\0' => ' ',
+                c => c,
+            };
+            let mut cell = Cell::new(
+                c,
+                color(style.fg),
+                color(style.bg),
+                flags(style.flags, square.wide(), square.wrapline()),
+            );
+            let underline = style.underline_color.map(color);
+            if square.has_grapheme() || underline.is_some() {
+                let marks: Vec<char> = if square.has_grapheme() {
+                    grid.cell_text(Pos::new(RLine(line.0), RColumn(column)))
+                        .skip(1)
+                        .collect()
+                } else {
+                    Vec::new()
+                };
+                cell = cell.with_extra(&marks, underline);
+            }
+            out.push(cell);
+        }
+    }
+
+    fn cursor(&self) -> Cursor {
+        let shape = match self.term.cursor_shape {
+            RShape::Block => CursorShape::Block,
+            RShape::Underline => CursorShape::Underline,
+            RShape::Beam => CursorShape::Beam,
+            RShape::Hidden => CursorShape::Hidden,
+        };
+        Cursor {
+            point: point(self.term.grid.cursor.pos),
+            shape,
+        }
+    }
+
+    fn mode(&self) -> TermMode {
+        TermMode::from_bits_retain(self.term.mode().bits() & READ_MODES)
+    }
+
+    fn scroll_display(&mut self, scroll: Scroll) {
+        self.term.scroll_display(match scroll {
+            Scroll::Delta(lines) => RScroll::Delta(lines),
+            Scroll::PageUp => RScroll::PageUp,
+            Scroll::PageDown => RScroll::PageDown,
+            Scroll::Top => RScroll::Top,
+            Scroll::Bottom => RScroll::Bottom,
+        });
+    }
+
+    fn clear_history(&mut self) {
+        self.term.clear_saved_history();
+    }
+
+    fn start_selection(&mut self, ty: SelectionType, point: Point, direction: Side) {
+        let ty = match ty {
+            SelectionType::Simple => RType::Simple,
+            SelectionType::Semantic => RType::Semantic,
+            SelectionType::Lines => RType::Lines,
+        };
+        self.term.selection = Some(Selection::new(ty, pos(point), side(direction)));
+    }
+
+    fn update_selection(&mut self, point: Point, direction: Side) {
+        if let Some(selection) = self.term.selection.as_mut() {
+            selection.update(pos(point), side(direction));
+        }
+    }
+
+    fn clear_selection(&mut self) {
+        self.term.selection = None;
+    }
+
+    fn selection_range(&self) -> Option<SelectionRange> {
+        let range = self.term.selection.as_ref()?.to_range(&self.term)?;
+        Some(SelectionRange::new(
+            point(range.start),
+            point(range.end),
+            range.is_block,
+        ))
+    }
+
+    fn selection_to_string(&self) -> Option<String> {
+        self.term.selection_to_string()
+    }
+
+    fn semantic_search_left(&self, at: Point) -> Point {
+        point(self.term.semantic_search_left(pos(at)))
+    }
+
+    fn semantic_search_right(&self, at: Point) -> Point {
+        point(self.term.semantic_search_right(pos(at)))
+    }
+
+    fn pictures(&self) -> Vec<Picture> {
+        let graphics = &self.term.graphics;
+        if graphics.kitty_placements.is_empty() {
+            return Vec::new();
+        }
+        // A placement's row is absolute: counted from the first line this
+        // terminal ever had, so it stays glued to its text as history grows
+        // and old lines are evicted. The screen's top is that far down, less
+        // however far the view is scrolled back.
+        let base = self.term.lines_evicted() as i64 + self.term.history_size() as i64;
+        let offset = self.term.display_offset() as i64;
+        let viewport = OverlayViewport {
+            cell_width: graphics.cell_width,
+            cell_height: graphics.cell_height,
+            origin_x: 0.0,
+            origin_y: 0.0,
+            history_size: base,
+            display_offset: offset,
+            screen_lines: self.term.screen_lines() as i64,
+        };
+        let mut out: Vec<Picture> = graphics
+            .kitty_placements
+            .values()
+            .filter_map(|placement| {
+                let image = graphics.kitty_images.get(&placement.image_id)?;
+                let geometry = kitty_overlay_geometry(
+                    placement,
+                    image.data.width,
+                    image.data.height,
+                    &viewport,
+                )?;
+                let line = placement.dest_row - (base - offset);
+                Some(Picture {
+                    key: PictureKey {
+                        image: placement.image_id,
+                        sent: image.transmission_time,
+                    },
+                    line: line as i32,
+                    column: placement.dest_col,
+                    offset: (
+                        geometry.x - placement.dest_col as f32 * graphics.cell_width,
+                        geometry.y - line as f32 * graphics.cell_height,
+                    ),
+                    size: (geometry.width, geometry.height),
+                    crop: geometry.source_rect,
+                    z: placement.z_index,
+                })
+            })
+            .collect();
+        // Lowest first, and a stable order among equals, so two pictures in
+        // one place do not trade places from frame to frame.
+        out.sort_by(|a, b| {
+            (a.z, a.line, a.column, a.key.image).cmp(&(b.z, b.line, b.column, b.key.image))
+        });
+        // Placing a picture costs a program a few bytes and costs a frame an
+        // element, so a program placing one small picture thousands of times
+        // would slow every frame of its pane. The topmost are drawn.
+        if out.len() > MOST_SHOWN {
+            out.drain(..out.len() - MOST_SHOWN);
+        }
+        out
+    }
+
+    fn picture_data(&self, key: PictureKey) -> Option<PictureData> {
+        let image = self.term.graphics.kitty_images.get(&key.image)?;
+        if image.transmission_time != key.sent {
+            return None;
+        }
+        let data = &image.data;
+        // Three bytes a pixel or four: the protocol's `f=24` and `f=32`, and a
+        // decoded PNG, which rio-vt keeps as four.
+        let pixels = data.width * data.height;
+        let rgba = if data.pixels.len() == pixels * 4 {
+            data.pixels.clone()
+        } else if data.pixels.len() == pixels * 3 {
+            data.pixels
+                .as_chunks::<3>()
+                .0
+                .iter()
+                .flat_map(|&[r, g, b]| [r, g, b, 0xff])
+                .collect()
+        } else {
+            return None;
+        };
+        Some(PictureData {
+            width: data.width as u32,
+            height: data.height as u32,
+            rgba,
+        })
+    }
+
+    fn forget_pictures(&mut self) {
+        // Both screens: rio-vt keeps the alternate screen's pictures apart
+        // and swaps them back in when a program leaves it, so forgetting only
+        // the screen on show let a picture drawn before vim opened return when
+        // vim quit. rio-vt's reset forgets both, and sixel and iTerm2 pictures
+        // with them, but gives back to its memory budget only the bytes of the
+        // screen not on show. Those of the screen on show are given back here,
+        // or the budget fills with pictures that are gone, and evicts ones
+        // that are not.
+        let graphics = &mut self.term.graphics;
+        let on_show: usize = graphics
+            .kitty_images
+            .values()
+            .map(|image| image.data.pixels.len())
+            .sum();
+        graphics.clear_all_kitty_state();
+        graphics.total_bytes = graphics.total_bytes.saturating_sub(on_show);
+    }
+
+    #[cfg(test)]
+    fn hyperlink(&self, at: Point) -> Option<Hyperlink> {
+        let link = self
+            .term
+            .cell_hyperlink(RLine(at.line.0), RColumn(at.column.0))?;
+        Some(Hyperlink::new(link.id(), link.uri()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! What rio-vt does that alacritty did not, and what TD makes of it. The
+    //! shared behaviour is pinned by the correctness matrix in `term.rs`, which
+    //! runs on both cores; these are the places the cores part.
+    use std::sync::{Arc, Mutex};
+
+    use crate::vt::{Event, Listener, Term, TermMode, TermSize};
+
+    #[derive(Default)]
+    struct Heard(Mutex<Vec<String>>);
+    impl Listener for Heard {
+        fn send_event(&self, event: Event) {
+            if let Event::PtyWrite(text) = event {
+                self.0.lock().unwrap().push(text);
+            }
+        }
+    }
+
+    fn replies_to(question: &[u8]) -> (Vec<String>, TermMode) {
+        let heard = Arc::new(Heard::default());
+        let mut term = Term::new(TermSize::new(80, 24, 8, 16), heard.clone());
+        term.advance(question);
+        let replies = heard.0.lock().unwrap().clone();
+        (replies, term.mode())
+    }
+
+    #[test]
+    fn device_attributes_describe_terminal_delight_and_satisfy_icat() {
+        let (replies, _) = replies_to(b"\x1b[c");
+        assert_eq!(replies, vec!["\x1b[?62;22c".to_string()]);
+        // icat's detector wants more than three characters of parameters.
+        let params = replies[0]
+            .trim_start_matches("\x1b[?")
+            .trim_end_matches('c');
+        assert!(params.len() > 3, "{params:?}");
+    }
+
+    #[test]
+    fn xtversion_names_terminal_delight_not_rio() {
+        let (replies, _) = replies_to(b"\x1b[>0q");
+        assert_eq!(replies.len(), 1, "{replies:?}");
+        assert!(
+            replies[0].starts_with("\x1bP>|terminal-delight "),
+            "{:?}",
+            replies[0]
+        );
+        assert!(!replies[0].contains("Rio"), "{:?}", replies[0]);
+    }
+
+    #[test]
+    fn the_kitty_keyboard_protocol_is_neither_offered_nor_taken() {
+        // Asked: no answer, so a program keeps to legacy keys.
+        let (replies, _) = replies_to(b"\x1b[?u");
+        assert!(replies.is_empty(), "{replies:?}");
+        // Pushed regardless: TD's modes do not move, because TD's key encoder
+        // is what would have to honour them.
+        let (_, mode) = replies_to(b"\x1b[>1u");
+        assert!(
+            !mode.intersects(TermMode::KITTY_KEYBOARD_PROTOCOL),
+            "{mode:?}"
+        );
+    }
+
+    #[test]
+    fn a_cell_size_question_is_answered_from_the_cell_the_core_was_given() {
+        let (replies, _) = replies_to(b"\x1b[16t");
+        assert_eq!(replies, vec!["\x1b[6;16;8t".to_string()]);
+    }
+
+    /// A 2x1 picture — one red pixel, one green — placed at the cursor,
+    /// covering `c` columns and `r` rows.
+    fn place(term: &mut Term, c: u32, r: u32) {
+        let body = format!("\x1b_Gi=7,s=2,v=1,a=T,t=d,f=24,c={c},r={r};/wAAAP8A\x1b\\");
+        term.advance(body.as_bytes());
+    }
+
+    #[test]
+    fn a_placed_picture_is_on_the_screen_where_the_cursor_was() {
+        let mut term = Term::new(TermSize::new(40, 10, 8, 16), Arc::new(Heard::default()));
+        term.advance(b"\x1b[3;5H");
+        place(&mut term, 4, 2);
+        let pictures = term.pictures();
+        assert_eq!(pictures.len(), 1, "{pictures:?}");
+        let p = &pictures[0];
+        assert_eq!((p.line, p.column), (2, 4), "row 3, column 5, from zero");
+        assert_eq!(p.size, (32.0, 32.0), "4 cells of 8 by 2 cells of 16");
+        assert_eq!(p.crop, [0.0, 0.0, 1.0, 1.0]);
+
+        let data = term.picture_data(p.key).expect("its pixels");
+        assert_eq!((data.width, data.height), (2, 1));
+        assert_eq!(data.rgba, vec![0xff, 0, 0, 0xff, 0, 0xff, 0, 0xff]);
+    }
+
+    #[test]
+    fn a_picture_moves_up_with_its_text_as_output_scrolls() {
+        let mut term = Term::new(TermSize::new(40, 5, 8, 16), Arc::new(Heard::default()));
+        // Two rows tall, so that two lines up it is still half on the screen:
+        // a picture wholly above the top is not on the screen and is not
+        // reported.
+        term.advance(b"\x1b[2;1H");
+        place(&mut term, 2, 2);
+        assert_eq!(term.pictures()[0].line, 1);
+        term.advance(b"\x1b[5;1H\r\n\r\n");
+        assert_eq!(
+            term.pictures()[0].line,
+            -1,
+            "two lines up, its top row now above the screen"
+        );
+        term.scroll_display(crate::vt::Scroll::Delta(1));
+        assert_eq!(
+            term.pictures()[0].line,
+            0,
+            "and back in view, scrolled back one"
+        );
+    }
+
+    #[test]
+    fn a_resent_image_gets_a_new_key_so_a_renderer_redraws_it() {
+        let mut term = Term::new(TermSize::new(40, 10, 8, 16), Arc::new(Heard::default()));
+        place(&mut term, 2, 1);
+        let first = term.pictures()[0].key;
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        place(&mut term, 2, 1);
+        let second = term.pictures()[0].key;
+        assert_ne!(first, second);
+        assert!(
+            term.picture_data(first).is_none(),
+            "an old key must not hand back new pixels"
+        );
+    }
+
+    #[test]
+    fn forgetting_pictures_takes_them_off_the_screen_and_out_of_the_core() {
+        let mut term = Term::new(TermSize::new(40, 10, 8, 16), Arc::new(Heard::default()));
+        place(&mut term, 2, 1);
+        let key = term.pictures()[0].key;
+        term.forget_pictures();
+        assert!(term.pictures().is_empty());
+        assert!(term.picture_data(key).is_none(), "the pixels are gone too");
+    }
+
+    #[test]
+    fn a_picture_needs_a_cell_size_to_be_placed() {
+        // rio-vt's own default is a 0x0 cell, which acknowledges a picture and
+        // then drops it. TD always tells the core its cell; this is why.
+        let heard = Arc::new(Heard::default());
+        let mut term = Term::new(TermSize::new(40, 10, 0, 0), heard.clone());
+        place(&mut term, 2, 1);
+        assert!(term.pictures().is_empty());
+    }
+
+    #[test]
+    fn thirteen_bytes_of_repeated_mark_cost_nothing() {
+        // rio-vt copies a cell's whole list of marks for every mark it adds,
+        // and the repeat asks for 65,535 of them: 9.7 s and 2.8 GB under the
+        // terminal's lock, unguarded. The guard drops the repeat.
+        let mut term = Term::new(TermSize::new(40, 10, 8, 16), Arc::new(Heard::default()));
+        let started = std::time::Instant::now();
+        term.advance("e\u{301}\x1b[65535b".as_bytes());
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(1),
+            "{:?}",
+            started.elapsed()
+        );
+        let cell = term.cell(crate::vt::Point::new(
+            crate::vt::Line(0),
+            crate::vt::Column(0),
+        ));
+        assert_eq!(cell.zerowidth().map(<[char]>::len), Some(1));
+    }
+
+    #[test]
+    fn a_cell_carries_no_more_marks_than_the_limit() {
+        let mut term = Term::new(TermSize::new(40, 10, 8, 16), Arc::new(Heard::default()));
+        term.advance(format!("e{}x", "\u{301}".repeat(1000)).as_bytes());
+        let cell = term.cell(crate::vt::Point::new(
+            crate::vt::Line(0),
+            crate::vt::Column(0),
+        ));
+        assert_eq!(
+            cell.zerowidth().map(<[char]>::len),
+            Some(super::super::text::MOST_MARKS)
+        );
+        let next = term.cell(crate::vt::Point::new(
+            crate::vt::Line(0),
+            crate::vt::Column(1),
+        ));
+        assert_eq!(next.c, 'x', "and the text after them is where it belongs");
+    }
+
+    #[test]
+    fn grapheme_clustering_is_neither_offered_nor_taken() {
+        use crate::vt::Backend;
+        let (replies, _) = replies_to(b"\x1b[?2027h\x1b[?2027$p");
+        assert_eq!(replies, vec!["\x1b[?2027;0$y".to_string()]);
+        // Asked for anyway, it stays off in the core itself.
+        let mut core = super::Core::new(
+            TermSize::new(40, 10, 8, 16),
+            Arc::new(Heard::default()),
+            100,
+        );
+        core.advance(b"\x1b[?2027h\x1b[?2027;1004h");
+        let mode = core.term.mode();
+        assert!(!mode.contains(rio_vt::crosswords::Mode::GRAPHEME_CLUSTER));
+        assert!(
+            mode.contains(rio_vt::crosswords::Mode::FOCUS_IN_OUT),
+            "and the mode asked for beside it is still set"
+        );
+    }
+
+    #[test]
+    fn a_capability_query_goes_unanswered_rather_than_answered_as_rio() {
+        // XTGETTCAP for the terminal's name, `TN`, in hex.
+        let (replies, _) = replies_to(b"\x1bP+q544e\x1b\\");
+        assert!(replies.is_empty(), "{replies:?}");
+    }
+
+    #[test]
+    fn forgetting_pictures_forgets_both_screens_and_gives_back_their_memory() {
+        use crate::vt::Backend;
+        let mut core = super::Core::new(
+            TermSize::new(40, 10, 8, 16),
+            Arc::new(Heard::default()),
+            100,
+        );
+        let picture = |id: u32| {
+            format!("\x1b_Gi={id},s=2,v=1,a=T,t=d,f=24,c=2,r=1;/wAAAP8A\x1b\\").into_bytes()
+        };
+        core.advance(&picture(1));
+        core.advance(b"\x1b[?1049h");
+        core.advance(&picture(2));
+        core.forget_pictures();
+        assert_eq!(core.term.graphics.total_bytes, 0, "every byte given back");
+        core.advance(b"\x1b[?1049l");
+        assert!(
+            core.pictures().is_empty(),
+            "the main screen's picture came back when the program left the alternate screen"
+        );
+    }
+
+    /// `t=t` naming `path`, one red pixel, placed.
+    fn temporary_file_command(path: &std::path::Path) -> Vec<u8> {
+        use base64::Engine;
+        let reference = base64::engine::general_purpose::STANDARD
+            .encode(path.to_str().expect("a UTF-8 path").as_bytes());
+        format!("\x1b_Ga=T,q=2,f=24,s=1,v=1,t=t;{reference}\x1b\\").into_bytes()
+    }
+
+    #[test]
+    fn a_temporary_file_is_drawn_and_then_deleted() {
+        let path = std::env::temp_dir().join(format!(
+            "tty-graphics-protocol-td-rio-{}.rgb",
+            std::process::id()
+        ));
+        std::fs::write(&path, [0xff, 0, 0]).expect("one red pixel");
+        let mut term = Term::new(TermSize::new(40, 10, 8, 16), Arc::new(Heard::default()));
+        term.advance(&temporary_file_command(&path));
+        assert_eq!(term.pictures().len(), 1, "drawn");
+        assert!(!path.exists(), "and deleted, as kitty deletes one");
+    }
+
+    #[test]
+    fn a_temporary_file_inside_a_synchronized_update_is_drawn_before_it_is_deleted() {
+        let path = std::env::temp_dir().join(format!(
+            "tty-graphics-protocol-td-rio-sync-{}.rgb",
+            std::process::id()
+        ));
+        std::fs::write(&path, [0xff, 0, 0]).expect("one red pixel");
+        let mut term = Term::new(TermSize::new(40, 10, 8, 16), Arc::new(Heard::default()));
+        term.advance(b"\x1b[?2026h");
+        term.advance(&temporary_file_command(&path));
+        assert!(path.exists(), "the update holds the command back, unread");
+        term.advance(b"\x1b[?2026l");
+        assert_eq!(term.pictures().len(), 1, "drawn when the update closed");
+        assert!(!path.exists(), "and deleted after");
+    }
+
+    /// rio-vt's own rule for which temporary file it may delete is that the
+    /// path contains the marker somewhere, so a path through a marked
+    /// directory reaches any file the terminal can delete. TD's guard hands
+    /// the core such a command as a plain file, which it draws and leaves.
+    #[test]
+    fn a_temporary_file_outside_kittys_rule_is_drawn_and_never_deleted() {
+        let root = std::env::temp_dir().join(format!("td-rio-victim-{}", std::process::id()));
+        let marked = root.join("tty-graphics-protocol-dir");
+        std::fs::create_dir_all(&marked).expect("a marked directory");
+        let victim = root.join("notes");
+        std::fs::write(&victim, [0xff, 0, 0]).expect("the victim");
+        let mut term = Term::new(TermSize::new(40, 10, 8, 16), Arc::new(Heard::default()));
+        term.advance(&temporary_file_command(&marked.join("..").join("notes")));
+        assert_eq!(term.pictures().len(), 1, "read as a plain file, and drawn");
+        assert!(victim.exists(), "a file outside kitty's rule was deleted");
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn output_after_a_picture_command_past_the_limit_is_drawn_as_usual() {
+        // Past the limit the guard ends the command for the core and drops the
+        // rest (what the core is handed is pinned in `vt/kitty.rs`); none of
+        // the dropped payload reaches the screen as text, and what follows
+        // the command's real end does.
+        let mut term = Term::new(TermSize::new(40, 10, 8, 16), Arc::new(Heard::default()));
+        term.advance(b"\x1b_Ga=T,f=100;");
+        let chunk = vec![b'A'; 1 << 20];
+        for _ in 0..(super::super::kitty::MAX_APC >> 20) + 3 {
+            term.advance(&chunk);
+        }
+        term.advance(b"\x1b\\after");
+        let row: String = (0..5)
+            .map(|c| {
+                term.cell(crate::vt::Point::new(
+                    crate::vt::Line(0),
+                    crate::vt::Column(c),
+                ))
+                .c
+            })
+            .collect();
+        assert_eq!(row, "after");
+    }
+
+    #[test]
+    fn a_kitty_picture_is_received_and_acknowledged() {
+        // One red pixel, RGB, sent directly. rio-vt answers the way a
+        // terminal that keeps pictures answers; alacritty said nothing, and
+        // the program's text overwrote the space the picture should have had.
+        let (replies, _) = replies_to(b"\x1b_Gi=31,s=1,v=1,a=T,t=d,f=24;/wAA\x1b\\");
+        assert_eq!(replies, vec!["\x1b_Gi=31;OK\x1b\\".to_string()]);
+    }
+
+    /// One way of handing a read to the core, timed by
+    /// [`what_the_guards_cost`].
+    type Feed = fn(&mut super::Core, &[u8]);
+
+    /// What the three guards in front of rio-vt's parser cost, in throughput.
+    ///
+    /// rio-vt was chosen at 97 MB/s — MiB, strictly — on the research bake-off's
+    /// stream of coloured text (`bake/text_stream.py` on `research/terminal-core`:
+    /// 8 MiB in 4 KiB reads at 120 by 40, median of five). The review then put
+    /// `vt/kitty.rs`, `vt/text.rs` and `vt/compat.rs` in front of the parser,
+    /// and each of them reads every byte before the core does. This feeds five
+    /// kinds of output through the core alone, through each guard with the
+    /// core behind it, through `advance` as it runs, and through the guards
+    /// with no core at all, and prints the rates as a Markdown table. The core
+    /// alone runs first and again last in every round, so the gap between
+    /// those two columns is the noise any other difference has to clear.
+    ///
+    /// ```text
+    /// cargo test --release --bin terminal-delight what_the_guards_cost -- --ignored --nocapture
+    /// ```
+    ///
+    /// Release, always: a debug build measures the debug build. Set
+    /// `TD_BOUNDARY_STREAM` to a recorded stream, such as the bake-off's own
+    /// `text-8mb.bin`, to time that as well.
+    #[test]
+    #[ignore = "throughput instrument — run in release, see its comment"]
+    fn what_the_guards_cost() {
+        use crate::vt::Backend;
+        use std::time::{Duration, Instant};
+
+        const MIB: usize = 1 << 20;
+        const ROUNDS: usize = 7;
+        const WAYS: [(&str, Feed); 7] = [
+            ("core", |core, bytes| {
+                core.parser.advance(&mut core.term, bytes)
+            }),
+            ("+ kitty", |core, bytes| {
+                let super::Core {
+                    term,
+                    parser,
+                    guard,
+                    ..
+                } = core;
+                guard.feed(bytes, &mut |bytes| parser.advance(term, bytes));
+            }),
+            ("+ text", |core, bytes| {
+                let super::Core {
+                    term, parser, text, ..
+                } = core;
+                text.feed(bytes, &mut |bytes| parser.advance(term, bytes));
+            }),
+            ("+ mouse", |core, bytes| {
+                let super::Core {
+                    term,
+                    parser,
+                    mouse,
+                    ..
+                } = core;
+                mouse.feed(bytes, &mut |bytes| parser.advance(term, bytes));
+            }),
+            ("advance", |core, bytes| core.advance(bytes)),
+            ("guards, no core", |core, bytes| {
+                let super::Core {
+                    guard, text, mouse, ..
+                } = core;
+                guard.feed(bytes, &mut |bytes| {
+                    text.feed(bytes, &mut |bytes| {
+                        mouse.feed(bytes, &mut |bytes| {
+                            std::hint::black_box(bytes);
+                        })
+                    })
+                });
+            }),
+            ("core again", |core, bytes| {
+                core.parser.advance(&mut core.term, bytes)
+            }),
+        ];
+
+        let mut streams = vec![
+            ("text", text_stream(8 * MIB)),
+            ("ascii", ascii_stream(8 * MIB)),
+            ("unicode", unicode_stream(8 * MIB)),
+            ("redraw", redraw_stream(8 * MIB)),
+            ("pictures", picture_stream(8 * MIB)),
+        ];
+        if let Ok(path) = std::env::var("TD_BOUNDARY_STREAM") {
+            streams.push((
+                "recorded",
+                std::fs::read(&path).expect("TD_BOUNDARY_STREAM"),
+            ));
+        }
+
+        let mut table = format!(
+            "| stream | MiB | {} |\n|---|---|{}\n",
+            WAYS.map(|(name, _)| name).join(" | "),
+            "---|".repeat(WAYS.len())
+        );
+        for (name, bytes) in &streams {
+            let mut taken = vec![Vec::<Duration>::new(); WAYS.len()];
+            // Round-robin, so a machine that speeds up or slows down partway
+            // through slows every way alike.
+            for _ in 0..ROUNDS {
+                for (way, (_, feed)) in WAYS.iter().enumerate() {
+                    let mut core = super::Core::new(
+                        TermSize::new(120, 40, 10, 22),
+                        Arc::new(Heard::default()),
+                        10_000,
+                    );
+                    let started = Instant::now();
+                    for read in bytes.chunks(4096) {
+                        feed(&mut core, read);
+                    }
+                    taken[way].push(started.elapsed());
+                }
+            }
+            let median = |way: usize| {
+                let mut runs = taken[way].clone();
+                runs.sort();
+                runs[ROUNDS / 2]
+            };
+            let size = bytes.len() as f64 / MIB as f64;
+            let core = median(0);
+            let rate = |took: Duration| size / took.as_secs_f64();
+            let cells: Vec<String> = (0..WAYS.len())
+                .map(|way| {
+                    let took = median(way);
+                    match WAYS[way].0 {
+                        "core" => format!("{:.1}", rate(took)),
+                        "guards, no core" => format!(
+                            "{:.1} ms, {:.1}% of the core's",
+                            took.as_secs_f64() * 1e3,
+                            took.as_secs_f64() / core.as_secs_f64() * 100.0
+                        ),
+                        _ => format!(
+                            "{:.1} ({:+.1}%)",
+                            rate(took),
+                            (rate(took) / rate(core) - 1.0) * 100.0
+                        ),
+                    }
+                })
+                .collect();
+            table += &format!("| {name} | {size:.1} | {} |\n", cells.join(" | "));
+        }
+        println!("MiB/s, median of {ROUNDS}; in brackets, against the core alone\n\n{table}");
+    }
+
+    const WORDS: [&str; 30] = [
+        "cargo",
+        "build",
+        "release",
+        "warning",
+        "unused",
+        "variable",
+        "test",
+        "passed",
+        "failed",
+        "thread",
+        "main",
+        "panicked",
+        "compiling",
+        "finished",
+        "target",
+        "debug",
+        "info",
+        "error",
+        "src",
+        "lib",
+        "rs",
+        "mod",
+        "fn",
+        "impl",
+        "struct",
+        "enum",
+        "match",
+        "let",
+        "self",
+        "use",
+    ];
+
+    /// The bake-off's text, from `bake/text_stream.py` with a different dice:
+    /// lines of 60 to 118 columns, a colour or attribute change every few
+    /// words, now and then a wide CJK character, an accented letter or an
+    /// emoji, and every 400 lines a progress bar redrawn over itself.
+    fn text_stream(size: usize) -> Vec<u8> {
+        const SGR: [&str; 9] = [
+            "\x1b[31m",
+            "\x1b[32m",
+            "\x1b[33m",
+            "\x1b[34m",
+            "\x1b[1m",
+            "\x1b[3m",
+            "\x1b[38;5;208m",
+            "\x1b[38;2;120;200;255m",
+            "\x1b[0m",
+        ];
+        let cjk: Vec<char> = "日本語の文字列漢字表示確認".chars().collect();
+        let mut dice = crate::demo::Rng::new(20_260_925);
+        let (mut out, mut lines) = (String::with_capacity(size + 4096), 0);
+        while out.len() < size {
+            lines += 1;
+            let (width, mut cols) = (dice.range(60, 118) as usize, 0);
+            while cols < width {
+                let roll = dice.range(0, 999);
+                if roll < 120 {
+                    out += dice.pick(&SGR);
+                    continue;
+                }
+                if roll < 150 {
+                    let (c, n) = (dice.pick(&cjk), dice.range(1, 3) as usize);
+                    out.extend(std::iter::repeat_n(c, n));
+                    cols += 2 * n;
+                } else if roll < 170 {
+                    out += dice.pick(&["é", "ä", "ñ", "ô"]);
+                    cols += 1;
+                } else if roll < 180 {
+                    out += dice.pick(&["\u{1f680}", "✅", "❌", "\u{1f4e6}"]);
+                    cols += 2;
+                } else {
+                    let word = dice.pick(&WORDS);
+                    out += word;
+                    cols += word.len();
+                }
+                out.push(' ');
+                cols += 1;
+            }
+            out += "\x1b[0m\r\n";
+            if lines % 400 == 0 {
+                for done in (0..=100).step_by(20) {
+                    let bar = "#".repeat(done / 5);
+                    out += &format!("\r\x1b[32m[{bar:<20}] {done:3}%\x1b[0m");
+                }
+                out += "\r\n";
+            }
+        }
+        out.into_bytes()
+    }
+
+    /// A source file going past: printable ASCII and line ends and nothing
+    /// else. The core is fastest here, so a guard shows most.
+    fn ascii_stream(size: usize) -> Vec<u8> {
+        let mut dice = crate::demo::Rng::new(1);
+        let mut out = String::with_capacity(size + 256);
+        while out.len() < size {
+            let width = dice.range(0, 100) as usize;
+            let mut line = "    ".repeat(dice.range(0, 3) as usize);
+            while line.len() < width {
+                line += dice.pick(&WORDS);
+                line.push(' ');
+            }
+            out += &line;
+            out += "\r\n";
+        }
+        out.into_bytes()
+    }
+
+    /// Text that is mostly not ASCII: CJK, box drawing, accents written as a
+    /// letter and its combining marks, and emoji. The text guard decodes every
+    /// character of it, so this is its worst ordinary case.
+    fn unicode_stream(size: usize) -> Vec<u8> {
+        const TOKENS: [&str; 8] = [
+            "日本語の文字列",
+            "漢字表示確認",
+            "────────",
+            "│",
+            "e\u{301}",
+            "o\u{302}\u{323}",
+            "a\u{308}",
+            "\u{1f680}",
+        ];
+        let mut dice = crate::demo::Rng::new(2);
+        let mut out = String::with_capacity(size + 256);
+        while out.len() < size {
+            for _ in 0..dice.range(8, 20) {
+                out += dice.pick(&TOKENS);
+                out.push(' ');
+            }
+            out += "\r\n";
+        }
+        out.into_bytes()
+    }
+
+    /// A full-screen program's frames, drawn the way ratatui draws them: each
+    /// inside a synchronized update, most rows rewritten after a cursor move,
+    /// in colour, between box-drawing edges.
+    fn redraw_stream(size: usize) -> Vec<u8> {
+        let mut dice = crate::demo::Rng::new(3);
+        let mut out = String::with_capacity(size + 16_384);
+        while out.len() < size {
+            out += "\x1b[?2026h\x1b[?25l";
+            for row in 1..=40 {
+                if dice.range(0, 9) < 4 {
+                    // Unchanged since the last frame, so not drawn.
+                    continue;
+                }
+                out += &format!("\x1b[{row};1H\x1b[38;5;240m│\x1b[0m ");
+                let mut cols = 2;
+                loop {
+                    let word = dice.pick(&WORDS);
+                    if cols + word.len() + 1 > 118 {
+                        break;
+                    }
+                    if dice.range(0, 4) == 0 {
+                        out += &format!("\x1b[38;5;{}m", dice.range(0, 255));
+                    }
+                    out += word;
+                    out.push(' ');
+                    cols += word.len() + 1;
+                }
+                out += "\x1b[0m\x1b[K\x1b[38;5;240m│\x1b[0m";
+            }
+            let (row, col) = (dice.range(1, 40), dice.range(1, 120));
+            out += &format!("\x1b[{row};{col}H\x1b[?25h\x1b[?2026l");
+        }
+        out.into_bytes()
+    }
+
+    /// Pictures the way `kitten icat` and mpv send them when they cannot share
+    /// memory: 256 by 256 RGBA, in base64, in 4,096-byte pieces.
+    fn picture_stream(size: usize) -> Vec<u8> {
+        use base64::Engine;
+        let mut dice = crate::demo::Rng::new(4);
+        let pixels: Vec<u8> = (0..256 * 256 * 4).map(|_| dice.next() as u8).collect();
+        let payload = base64::engine::general_purpose::STANDARD.encode(pixels);
+        let pieces: Vec<&[u8]> = payload.as_bytes().chunks(4096).collect();
+        let mut out = Vec::with_capacity(size + payload.len() * 2);
+        while out.len() < size {
+            for (at, piece) in pieces.iter().enumerate() {
+                let more = u8::from(at + 1 < pieces.len());
+                if at == 0 {
+                    out.extend_from_slice(
+                        format!("\x1b_Ga=T,f=32,s=256,v=256,q=2,m={more};").as_bytes(),
+                    );
+                } else {
+                    out.extend_from_slice(format!("\x1b_Gm={more};").as_bytes());
+                }
+                out.extend_from_slice(piece);
+                out.extend_from_slice(b"\x1b\\");
+            }
+        }
+        out
+    }
+}

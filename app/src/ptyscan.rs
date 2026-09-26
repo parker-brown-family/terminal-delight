@@ -11,10 +11,11 @@
 //! swallowed before alacritty ever sees it, and a program that asks waits for a
 //! reply that is never coming.
 //!
-//! Patching vte is the only way to hear it from inside the parser. The session
-//! host already watches every byte a pane prints — its tee copies the output to
-//! the attached window — so [`CellSizeQuery`] watches the same bytes for the
-//! question, and the host answers it from the geometry it holds.
+//! Patching vte is the only way to hear it from inside the parser, so
+//! [`CellSizeQuery`] watches the bytes on their way in instead, and the
+//! alacritty adapter (`vt/alacritty.rs`) answers from the cell size the core
+//! was given. rio-vt answers `16 t` itself, so the scanner is compiled only
+//! with the alacritty fallback; it goes when that does.
 //!
 //! The price is ordering. The scanner sees a read before the parser does, so a
 //! program that writes another question and then `CSI 16 t` in one go is
@@ -39,23 +40,26 @@
 ///
 /// Exactly these five. `CSI 16 ; t` is left alone on purpose: xterm may read a
 /// trailing empty parameter as `16 t` as well, and nobody here has checked.
+#[cfg(any(test, feature = "core-alacritty"))]
 const CELL_SIZE_QUESTION: &[u8] = b"\x1b[16t";
 
 /// How much of `CSI 16 t` the output has shown so far.
 ///
 /// Kept across reads, because a read can end anywhere and a question split
 /// across two of them is still one question.
+#[cfg(any(test, feature = "core-alacritty"))]
 #[derive(Default, Debug)]
 pub struct CellSizeQuery {
     /// Bytes of [`CELL_SIZE_QUESTION`] matched, `0..5`.
     seen: usize,
 }
 
+#[cfg(any(test, feature = "core-alacritty"))]
 impl CellSizeQuery {
     /// Feed one chunk of a pane's output; answers how many complete
     /// `CSI 16 t` it finished.
     ///
-    /// Runs on the host's reader thread for every chunk of every pane, so it
+    /// Runs on the read loop's thread for every chunk of every pane, so it
     /// allocates nothing and looks at each byte once. The question's only
     /// escape byte is its first, so a mismatch restarts at zero, or at one when
     /// the byte that broke the match is itself an escape — which is how vte

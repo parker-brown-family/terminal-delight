@@ -134,6 +134,14 @@ pub enum Zone {
 /// coordinates.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Mark {
+    /// While Alt is held over the document: the anchor's whole box, outlined,
+    /// so everything that takes a note shows at once and a press anywhere in
+    /// it opens the note box.
+    Target {
+        nid: String,
+        title: String,
+        at: Bounds<Pixels>,
+    },
     /// The rule down the left edge of an anchor with notes.
     Rule { at: Bounds<Pixels> },
     /// The note button: the count on it, or none while it only shows because
@@ -225,6 +233,14 @@ pub struct NotesLayer {
     /// Escape was pressed once with edits unsaved, and the bar said so: the
     /// next Escape closes the document without them.
     close_warned: bool,
+    /// Alt is held: while the pointer is over the document, every anchor is
+    /// outlined and takes a press. Parker, 2026-09-25: *"If I hold alt
+    /// hovering over the md file ... it will show BOXES where I can click to
+    /// add comments to each element"*.
+    revealing: bool,
+    /// How many outlined boxes and 💬 the last paint drew, for the report:
+    /// what reached the screen, which is not always what a press would find.
+    drawn: std::cell::Cell<(usize, usize)>,
     zones: Zones,
 }
 
@@ -319,6 +335,8 @@ impl NotesLayer {
             saving: false,
             gone: false,
             close_warned: false,
+            revealing: false,
+            drawn: std::cell::Cell::new((0, 0)),
             zones: Rc::new(RefCell::new(Vec::new())),
         };
         layer.refresh();
@@ -360,10 +378,25 @@ impl NotesLayer {
             saving: false,
             gone: false,
             close_warned: false,
+            revealing: false,
+            drawn: std::cell::Cell::new((0, 0)),
             zones: Rc::new(RefCell::new(Vec::new())),
         };
         layer.refresh();
         layer
+    }
+
+    /// Alt held, or let go. Answers whether that changed anything, for the
+    /// view to repaint only then.
+    pub fn reveal(&mut self, on: bool) -> bool {
+        let changed = self.revealing != on;
+        self.revealing = on;
+        changed
+    }
+
+    /// Whether Alt is held.
+    pub fn revealing(&self) -> bool {
+        self.revealing
     }
 
     /// Whether the notes go into TD's store rather than the file.
@@ -690,6 +723,20 @@ impl NotesLayer {
         if self.notes().is_none() {
             return out;
         }
+        // Only while the pointer is over the document: Alt held over the
+        // terminal beside it is the terminal's.
+        let reveal = self.revealing && pointer.is_some();
+        if reveal {
+            for a in anchors {
+                if let Some(at) = a.rect.and_then(|r| place(r, map)) {
+                    out.push(Mark::Target {
+                        nid: a.nid.clone(),
+                        title: a.title.clone(),
+                        at,
+                    });
+                }
+            }
+        }
         for a in anchors {
             let Some(rect) = a.rect else { continue };
             let count = self.count_on(&a.nid);
@@ -723,7 +770,7 @@ impl NotesLayer {
                 }
             }
             let open = self.note_box.as_ref().is_some_and(|b| b.nid == a.nid);
-            if count > 0 || open || hot(a, map, pointer) {
+            if count > 0 || open || reveal || hot(a, map, pointer) {
                 if let Some(at) = button_rect(a).and_then(|r| place(r, map)) {
                     out.push(Mark::Button {
                         nid: a.nid.clone(),
@@ -1114,6 +1161,10 @@ impl NotesLayer {
             // Whether the last paint drew the bar: a script can see the way
             // in is on screen without anybody looking.
             "bar": self.zones.borrow().iter().any(|(_, z)| *z == Zone::Bar),
+            // And how many elements it outlined, which only Alt does, and
+            // how many 💬 it drew.
+            "boxes": self.drawn.get().0,
+            "buttons": self.drawn.get().1,
             "kept": match &self.keeping {
                 Keeping::File => "file",
                 Keeping::Store(_) => "store",
@@ -1127,6 +1178,7 @@ impl NotesLayer {
     /// before the canvases below record the new places.
     pub fn clear_zones(&self) {
         self.zones.borrow_mut().clear();
+        self.drawn.set((0, 0));
     }
 
     /// A canvas that records where its parent was painted as `zone`.
@@ -1142,10 +1194,22 @@ impl NotesLayer {
 
     /// The marks, drawn: under the bar and the note box.
     pub fn draw_marks(&self, marks: &[Mark], th: &Theme) -> Vec<AnyElement> {
+        let count = |f: fn(&Mark) -> bool| marks.iter().filter(|m| f(m)).count();
+        let (boxes, buttons) = self.drawn.get();
+        self.drawn.set((
+            boxes + count(|m| matches!(m, Mark::Target { .. })),
+            buttons + count(|m| matches!(m, Mark::Button { .. })),
+        ));
         let accent = th.accent;
         marks
             .iter()
             .map(|m| match m {
+                Mark::Target { at, .. } => at_rect(div(), *at)
+                    .rounded(px(4.))
+                    .border_1()
+                    .border_color(accent.alpha(0.75))
+                    .bg(accent.alpha(0.07))
+                    .into_any_element(),
                 Mark::Rule { at } => at_rect(div(), *at).bg(accent).into_any_element(),
                 Mark::Button {
                     at, count, open, ..
@@ -1526,7 +1590,7 @@ pub fn hit(marks: &[Mark], at: Point<Pixels>) -> Option<MarkHit> {
         }),
         _ => None,
     });
-    button.or_else(|| {
+    let concur = || {
         marks.iter().rev().find_map(|m| match m {
             Mark::ConcurSpace { nid, at: b } | Mark::Stamp { nid, at: b, .. }
                 if b.contains(&at) =>
@@ -1535,7 +1599,27 @@ pub fn hit(marks: &[Mark], at: Point<Pixels>) -> Option<MarkHit> {
             }
             _ => None,
         })
-    })
+    };
+    // An outlined box last, so a 💬 or a stamp inside it keeps its own press.
+    // The innermost box wins where boxes nest, as a list item's does in a
+    // brief's section.
+    let target = || {
+        marks
+            .iter()
+            .filter_map(|m| match m {
+                Mark::Target { nid, title, at: b } if b.contains(&at) => Some((nid, title, b)),
+                _ => None,
+            })
+            .min_by(|x, y| {
+                let area = |b: &Bounds<Pixels>| f32::from(b.size.width) * f32::from(b.size.height);
+                area(x.2).total_cmp(&area(y.2))
+            })
+            .map(|(nid, title, _)| MarkHit::Open {
+                nid: nid.clone(),
+                title: title.clone(),
+            })
+    };
+    button.or_else(concur).or_else(target)
 }
 
 fn at_rect(d: gpui::Div, at: Bounds<Pixels>) -> gpui::Div {

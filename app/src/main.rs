@@ -66,6 +66,7 @@ mod paint;
 mod palette;
 mod pane;
 mod paneident;
+mod picturewire;
 mod plugins;
 mod ptyscan;
 mod recover;
@@ -73,7 +74,6 @@ mod screenread;
 mod session;
 mod skin;
 mod slot;
-mod socketpty;
 mod sticky;
 mod surface;
 mod surfacefeed;
@@ -86,6 +86,7 @@ mod toolprop;
 mod tree;
 mod usage;
 mod vitals;
+mod vt;
 mod warp;
 mod workbench;
 
@@ -138,6 +139,22 @@ const _: () = assert!(MAX_PANES <= LEGACY_PANE_CEILING);
 /// arranged six panes before the cap dropped keeps all six.
 fn may_split(leaves: usize) -> bool {
     leaves < MAX_PANES
+}
+
+/// Whether dropping a dragged pane on tab `t` (currently showing `t_panes`
+/// panes) is refused by the cap, given the drag started at tab `from`.
+///
+/// A drop back onto the pane's OWN tab never grows it — the pane is
+/// already counted in `t_panes` and will still be one of that tab's panes
+/// after the extract-then-splice, just rearranged — so it is never
+/// refused by the cap regardless of `t_panes`, even for a legacy tab
+/// sitting above `MAX_PANES` already. Only a drop that ADDS to a
+/// DIFFERENT tab can push it past the cap. Caught in review: an earlier
+/// version of this check counted the pane against its own tab before
+/// removing it, which refused an ordinary re-layout drag on any tab
+/// already at the cap.
+fn pane_drop_capped(t: usize, from: usize, t_panes: usize) -> bool {
+    t != from && !may_split(t_panes)
 }
 
 /// What a request to open a document beside a pane becomes.
@@ -1666,6 +1683,18 @@ fn anim_clock() -> f32 {
 /// same amount from the layer above.
 const FOLD_W: f32 = 15.0;
 
+/// How far a carried row shifts right at scale 1.0, on top of its own
+/// depth indent — see `Workspace::bar_cursor_ring`, which multiplies this
+/// by `s` like every other spacing constant in the same rows (`FOLD_W`,
+/// the depth `step`), so a narrowed or enlarged bar shifts the carried
+/// row by the same proportion as everything around it rather than by a
+/// fixed pixel count that only reads right at the scale it was eyeballed
+/// at. Large enough to read as a real step out of the tree's own rhythm
+/// rather than a rounding wobble; small enough that a task carried to
+/// Project depth still sits under the bar's own edge rather than
+/// crowding the fold triangle three layers up.
+const BAR_CARRY_INDENT: f32 = 10.0;
+
 /// The bin glyph's point size at scale 1.0 — two thirds of the 19pt it shipped
 /// at on the first pass, which read as the subject of the panel rather than as
 /// something the panel holds.
@@ -3118,6 +3147,15 @@ enum DropTarget {
     Edge { container: u64, zone: Zone },
     /// Move the dragged pane into main tab `index`.
     Tab { index: usize },
+    /// Dropped on a left-bar TASK row: join that tab as an additional pane —
+    /// the same landing as `Tab`, reached from the tree instead of the strip.
+    /// `blocked` is set the moment the cap is hit, so the hover can refuse it
+    /// before release rather than after.
+    BarTask { index: usize, blocked: bool },
+    /// Dropped on a left-bar Initiative, Project, or the Unfiled row: pulled
+    /// out into a fresh tab of its own, filed there — the pane-drag's version
+    /// of what a tab-drag already does via `file_task`.
+    BarBranch(BarBranch),
 }
 
 /// How a `Zone` maps to a split: which axis, and whether the dropped pane takes
@@ -3374,6 +3412,55 @@ enum BarDragged {
     /// A project, by id. Reorders the top layer, which is the only layer whose
     /// order is its own rather than the tab strip's.
     Project(u32),
+}
+
+/// The keyboard sibling of [`BarDrag`]: a task being carried by
+/// Ctrl+Shift+Alt+arrows, and how far the arrows have zoomed out from it.
+///
+/// Scoped to tasks only — a group cannot change project ("groups will be
+/// locked into their project"), so there is no "carry a whole group"
+/// version of this to grow into. [`CarryDepth::Project`] refiles the TASK
+/// under a sibling project; it never moves an initiative.
+#[derive(Clone, Copy, Debug)]
+struct BarCarry {
+    /// The tab index being carried, held by index like everything else that
+    /// points at a tab (`self.active`, `TabDrag::from`).
+    task: usize,
+    depth: CarryDepth,
+}
+
+/// How far Ctrl+Shift+Alt+← has zoomed a carry out from the task itself.
+///
+/// Three layers because the tree has three: a task hangs from an
+/// initiative, which hangs from a project. Left walks out one layer at a
+/// time and Right walks back in — that alone moves nothing. Up/Down at a
+/// given depth move the carried task to the previous/next sibling AT that
+/// depth; see `Workspace::bar_carry_move`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum CarryDepth {
+    Task,
+    Initiative,
+    Project,
+}
+
+impl CarryDepth {
+    /// One layer further out. Clamps at `Project` — there is no fourth
+    /// layer to zoom into, so a third Left in a row is a no-op rather than
+    /// a wrap: zooming is a ladder, not the ring `bar_walk`'s Up/Down are.
+    fn out(self) -> CarryDepth {
+        match self {
+            CarryDepth::Task => CarryDepth::Initiative,
+            CarryDepth::Initiative | CarryDepth::Project => CarryDepth::Project,
+        }
+    }
+
+    /// One layer back in. Clamps at `Task`, the mirror of `out`.
+    fn in_(self) -> CarryDepth {
+        match self {
+            CarryDepth::Project => CarryDepth::Initiative,
+            CarryDepth::Initiative | CarryDepth::Task => CarryDepth::Task,
+        }
+    }
 }
 
 /// What the find panel is searching, and where it centres.
@@ -4282,6 +4369,11 @@ struct Workspace {
     /// at a row that no longer exists — a closed tab, a folded-away branch —
     /// and `tree::step` re-enters the list rather than trusting it.
     bar_cursor: Option<tree::RowId>,
+    /// The task being carried by Ctrl+Shift+Alt+arrows, if any, and how far
+    /// zoomed out. Deliberately not persisted, for the same reason
+    /// `bar_cursor` is not: it is a gesture in progress, not a fact about
+    /// the session.
+    bar_carry: Option<BarCarry>,
     /// The bar list's scroll position, held only so the keyboard can bring the
     /// cursor's row into view.
     ///
@@ -4425,6 +4517,11 @@ struct Workspace {
     /// guess about how stale is acceptable, and this needs no guess — the answer
     /// is "not stale at all within one paint, recomputed for the next".
     rail_frame: u64,
+    /// The panes the last frame showed: the active tab's. Compared with this
+    /// frame's so a pane that has left the screen, by whatever route — a tab
+    /// click, a keyboard jump, a pane moved to another tab — can forget the
+    /// pictures it held. See [`Workspace::forget_pictures_out_of_sight`].
+    shown_panes: Vec<gpui::WeakEntity<TerminalView>>,
     /// The projection, memoised for the frame that built it.
     ///
     /// **Why this exists.** `rail_rows` walks every tab and every pane, reads
@@ -5196,7 +5293,7 @@ fn make_pane_attached(
     let pane_id = info.pane;
     let streams = term::AttachStreams {
         bytes: stream,
-        announce_resize: Box::new(move |size: alacritty_terminal::event::WindowSize| {
+        announce_resize: Box::new(move |size: vt::WindowSize| {
             link.announce_resize(
                 pane_id,
                 hostproto::PaneGeom {
@@ -5210,7 +5307,11 @@ fn make_pane_attached(
     };
     // The pid is the host's, and only an attribute: this window did not start
     // that process and will never signal it.
-    let (session, guard) = term::attach_in(grid, streams, Some(info.shell_pid))?;
+    let (session, guard) = term::attach_in(
+        grid.with_cell(geom.cell_width, geom.cell_height),
+        streams,
+        Some(info.shell_pid),
+    )?;
     // The host's cell as well as its grid: a pane that believed the cell were
     // anything else would re-announce the size on its first frame and wake
     // every agent in the window with a resize that changed nothing.
@@ -5666,6 +5767,7 @@ impl Workspace {
             slot_remaining: saved.slot_remaining.unwrap_or(SLOT_REMAINING_DEFAULT),
             bar_resize: None,
             bar_cursor: None,
+            bar_carry: None,
             bar_scroll: ScrollHandle::new(),
             bar_rename: None,
             bar_drag: None,
@@ -5714,6 +5816,7 @@ impl Workspace {
             rail_bounds: Arc::new(Mutex::new(None)),
             rail_hits: Arc::new(Mutex::new(Vec::new())),
             rail_frame: 0,
+            shown_panes: Vec::new(),
             rail_memo: std::cell::RefCell::new(None),
             rail_shown: Arc::new(Mutex::new(Vec::new())),
             rail_band: Arc::new(Mutex::new(Vec::new())),
@@ -10278,43 +10381,34 @@ impl Workspace {
     /// Slide outer tab `from` to insertion slot `to` (in the pre-removal index
     /// space, 0..=len). Keeps `self.active` pointing at the very same tab it did
     /// before, whether or not the moved tab was the active one.
-    fn move_tab(&mut self, from: usize, to: usize, cx: &mut Context<Self>) {
+    /// Moves the tab and returns where it ended up — `from` unchanged on a
+    /// no-op (out of range, or dropped back into its own slot), so a caller
+    /// can always trust the return value as the tab's current index rather
+    /// than needing to special-case "did it move".
+    fn move_tab(&mut self, from: usize, to: usize, cx: &mut Context<Self>) -> usize {
         if from >= self.tabs.len() {
-            return;
+            return from;
         }
         let (dest, new_active) = reorder_indices(from, to, self.tabs.len(), self.active);
         if dest == from {
-            return; // no-op: dropped back into its own slot
+            return from; // no-op: dropped back into its own slot
         }
         let tab = self.tabs.remove(from);
         self.tabs.insert(dest, tab);
         self.active = new_active;
         self.save(cx);
         cx.notify();
+        dest
     }
 
     /// Keyboard tab reorder (ctrl+shift+pgup / pgdn): slide the active tab one
-    /// slot in `dir` (−1 left / +1 right) — but never across a group boundary. A
-    /// grouped tab can't be shoved out of its group, nor an ungrouped tab pulled
-    /// into one; only same-group (or both-ungrouped) neighbours swap. Mirrors the
-    /// drag-reorder group clamp so both gestures behave alike.
+    /// slot in `dir` (−1 left / +1 right) — but never across a group boundary.
+    /// `nudge_tab_at`'s own clamp, called on `self.active`: its active-
+    /// tracking already covers the `task == self.active` case this always
+    /// is, so the group-boundary rule lives in exactly one place rather than
+    /// two that a later change could leave disagreeing.
     fn nudge_active_tab(&mut self, dir: i32, cx: &mut Context<Self>) {
-        let cur = self.active;
-        let n = self.tabs.len();
-        let nb = match dir {
-            d if d < 0 && cur > 0 => cur - 1,
-            d if d > 0 && cur + 1 < n => cur + 1,
-            _ => return,
-        };
-        // boundary clamp: the swap is allowed only when both tabs share the same
-        // group membership (both `None`, or both the same group id).
-        if self.tabs[cur].group != self.tabs[nb].group {
-            return;
-        }
-        self.tabs.swap(cur, nb);
-        self.active = nb;
-        self.save(cx);
-        cx.notify();
+        self.nudge_tab_at(self.active, dir, cx);
     }
 
     /// Slide a whole group to insertion slot `to` (pre-removal index space,
@@ -11896,8 +11990,15 @@ impl Workspace {
         self.prune_groups();
     }
 
-    /// Move a whole initiative — and therefore every task in it — under a
-    /// project, or out to the top level.
+    /// File an initiative under a project for the FIRST time — the one
+    /// write this makes once a group already has one is none at all.
+    ///
+    /// Parker: *"groups will be locked into their project."* A group with no
+    /// project yet (every group from a session written before the tree
+    /// existed, or one made loose on purpose) may still be given one; a
+    /// group that already has a project cannot be moved to a different one
+    /// or back to Unfiled. `apply_bar_drop`'s Initiative arm is the mouse's
+    /// door to the identical write and carries the identical guard.
     fn file_initiative(&mut self, gid: u32, into: BarBranch) {
         let project = match into {
             BarBranch::Project(p) => Some(p),
@@ -11907,7 +12008,15 @@ impl Workspace {
             BarBranch::Initiative(_) => return,
         };
         if let Some(g) = self.groups.iter_mut().find(|g| g.id == gid) {
-            g.project = project;
+            // Locked against reassignment to a DIFFERENT project — not
+            // against being taken out entirely. The tab-config chip's
+            // existing "press the project you're already in to take it
+            // back out" gesture has to keep working, so `Some(A) -> None`
+            // and `None -> Some(X)` both stay allowed; only
+            // `Some(A) -> Some(B)` with `A != B` is refused.
+            if g.project.is_none() || project.is_none() || g.project == project {
+                g.project = project;
+            }
         }
     }
 
@@ -12185,6 +12294,232 @@ impl Workspace {
         }
     }
 
+    /// Where a fresh carry starts: the live cursor's task, or the active
+    /// tab — the same fallback `rename_here` already uses for "whatever is
+    /// under consideration right now."
+    fn bar_carry_seed(&self, cx: &App) -> usize {
+        let rows = self.bar_rows(cx);
+        match self.bar_live_cursor(&rows) {
+            Some(tree::RowId::Task(i)) => i,
+            _ => self.active,
+        }
+    }
+
+    /// The live carry, or a fresh one seeded on the current task — the
+    /// entry point every carry chord goes through first, so "press an
+    /// arrow with nothing carried yet" and "press another arrow mid-carry"
+    /// are the same code path. A carry whose task has since gone missing
+    /// (closed by some other door mid-gesture) is treated as fresh too,
+    /// rather than trusted at a stale index.
+    fn bar_carry_or_seed(&self, cx: &App) -> BarCarry {
+        match self.bar_carry {
+            Some(c) if c.task < self.tabs.len() => c,
+            _ => BarCarry {
+                task: self.bar_carry_seed(cx),
+                depth: CarryDepth::Task,
+            },
+        }
+    }
+
+    /// Ctrl+Shift+Alt+←: zoom the carry out one layer — task, to initiative,
+    /// to project — without moving anything. The keyboard sibling of
+    /// `bar_leave`, changing what Up/Down means next rather than closing a
+    /// branch.
+    fn bar_carry_out(&mut self, cx: &mut Context<Self>) {
+        let mut carry = self.bar_carry_or_seed(cx);
+        carry.depth = carry.depth.out();
+        self.bar_carry = Some(carry);
+        self.bar_carry_show(cx);
+        cx.notify();
+    }
+
+    /// Ctrl+Shift+Alt+→: zoom the carry back in one layer, the mirror of
+    /// `bar_carry_out`.
+    fn bar_carry_in(&mut self, cx: &mut Context<Self>) {
+        let mut carry = self.bar_carry_or_seed(cx);
+        carry.depth = carry.depth.in_();
+        self.bar_carry = Some(carry);
+        self.bar_carry_show(cx);
+        cx.notify();
+    }
+
+    /// Point `bar_cursor` at whatever the carry is currently zoomed to, so
+    /// the existing cursor ring is the carry's visual feedback for free —
+    /// the task itself at Task depth, else its CURRENT initiative/project
+    /// at that depth (a zoom alone has moved nothing yet).
+    fn bar_carry_show(&mut self, cx: &App) {
+        let Some(carry) = self.bar_carry else { return };
+        let place = self.place_of(carry.task);
+        self.bar_cursor = Some(match carry.depth {
+            CarryDepth::Task => tree::RowId::Task(carry.task),
+            CarryDepth::Initiative => match place.initiative {
+                Some(g) => tree::RowId::Initiative(g),
+                None => tree::RowId::Task(carry.task),
+            },
+            CarryDepth::Project => match place.project {
+                Some(p) => tree::RowId::Project(p),
+                None => tree::RowId::Task(carry.task),
+            },
+        });
+        let rows = self.bar_rows(cx);
+        self.bar_reveal(&rows);
+    }
+
+    /// Ctrl+Shift+Alt+↑/↓: move the carried tab to the previous/next sibling
+    /// at the carry's current depth — the "do something" verb the zoom
+    /// levels set up. At Task depth this is `nudge_active_tab`'s own
+    /// same-group-clamped swap, generalised off the carried index rather
+    /// than assuming `self.active`.
+    fn bar_carry_move(&mut self, down: bool, cx: &mut Context<Self>) {
+        let carry = self.bar_carry_or_seed(cx);
+        // Every arm can relocate `carry.task` — the swap, or a refile that
+        // lands the tab somewhere else in the vec — so the carry has to
+        // follow wherever it actually ended up, not the index it started
+        // this one press at. Losing this was the bug: a second press moved
+        // whatever tab now sat at the OLD index, not the one being carried.
+        let task = match carry.depth {
+            CarryDepth::Task => self
+                .nudge_tab_at(carry.task, if down { 1 } else { -1 }, cx)
+                .unwrap_or(carry.task),
+            CarryDepth::Initiative => self.carry_to_sibling_initiative(carry.task, down, cx),
+            CarryDepth::Project => self.carry_to_sibling_project(carry.task, down, cx),
+        };
+        self.bar_carry = Some(BarCarry {
+            task,
+            depth: carry.depth,
+        });
+        self.bar_carry_show(cx);
+        cx.notify();
+    }
+
+    /// The generalised body of `nudge_active_tab`, off an explicit index
+    /// rather than `self.active`, so a carry can move a task that is not
+    /// the active one (the bar cursor's, say) without disturbing which tab
+    /// is open. Same clamp: a grouped task can't be shoved past its group's
+    /// edge, nor an ungrouped one pulled into a neighbour's.
+    fn nudge_tab_at(&mut self, task: usize, dir: i32, cx: &mut Context<Self>) -> Option<usize> {
+        let n = self.tabs.len();
+        let nb = match dir {
+            d if d < 0 && task > 0 => task - 1,
+            d if d > 0 && task + 1 < n => task + 1,
+            _ => return None,
+        };
+        if self.tabs[task].group != self.tabs[nb].group {
+            return None;
+        }
+        self.tabs.swap(task, nb);
+        if self.active == task {
+            self.active = nb;
+        } else if self.active == nb {
+            self.active = task;
+        }
+        self.save(cx);
+        cx.notify();
+        Some(nb)
+    }
+
+    /// A project's initiatives, in the same order the tree draws them — by
+    /// where their first task sits on the strip, the key `bar_rows` sorts
+    /// by. Kept in one place so a sibling walk here and the tree's own
+    /// drawn order can never quietly disagree.
+    fn project_initiatives_in_tree_order(&self, project: Option<u32>) -> Vec<u32> {
+        let first_task_of = |gid: u32| {
+            self.tabs
+                .iter()
+                .position(|t| t.group == Some(gid))
+                .unwrap_or(usize::MAX)
+        };
+        let mut ids: Vec<u32> = self
+            .groups
+            .iter()
+            .filter(|g| g.project == project)
+            .map(|g| g.id)
+            .collect();
+        ids.sort_by_key(|&id| first_task_of(id));
+        ids
+    }
+
+    /// The index just after the last tab (other than `exclude`) in
+    /// initiative `gid` — the contiguous landing slot for a task freshly
+    /// filed there. `exclude` is the task being filed: by the time this is
+    /// asked, `file_task` has usually already set its group to `gid`, and
+    /// without excluding it a task that lands last would count itself as
+    /// its own predecessor.
+    fn end_of_initiative_run(&self, gid: u32, exclude: usize) -> Option<usize> {
+        self.tabs
+            .iter()
+            .enumerate()
+            .rev()
+            .find(|&(i, t)| i != exclude && t.group == Some(gid))
+            .map(|(i, _)| i + 1)
+    }
+
+    /// The index just after the last tab (other than `exclude`) under
+    /// `project` — direct or through an initiative. Same exclusion reason
+    /// as `end_of_initiative_run`.
+    fn end_of_project_run(&self, project: u32, exclude: usize) -> Option<usize> {
+        (0..self.tabs.len())
+            .rev()
+            .filter(|&i| i != exclude)
+            .find(|&i| self.place_of(i).project == Some(project))
+            .map(|i| i + 1)
+    }
+
+    /// Initiative-depth carry move: refile `task` into the previous/next
+    /// sibling initiative within its CURRENT project — never crossing a
+    /// project boundary at this depth. That is what keeps a carry from ever
+    /// needing to move an initiative itself: groups are locked to their
+    /// project, so only the task travels.
+    /// Returns `task`'s index AFTER the move, since `file_task` never moves
+    /// it (only `move_tab` does) — a caller tracking what it is carrying
+    /// must follow this return value rather than keep the index it called
+    /// in with.
+    fn carry_to_sibling_initiative(
+        &mut self,
+        task: usize,
+        down: bool,
+        cx: &mut Context<Self>,
+    ) -> usize {
+        let place = self.place_of(task);
+        let siblings = self.project_initiatives_in_tree_order(place.project);
+        let Some(target) = tree::sibling_landing(&siblings, place.initiative, down) else {
+            return task;
+        };
+        self.file_task(task, BarBranch::Initiative(target));
+        match self.end_of_initiative_run(target, task) {
+            Some(slot) => self.move_tab(task, slot, cx),
+            None => {
+                self.save(cx);
+                task
+            }
+        }
+    }
+
+    /// Project-depth carry move: refile `task` into the previous/next
+    /// sibling project, ungrouped — `file_task` already clears the group
+    /// the moment a project is set directly. Same return contract as
+    /// `carry_to_sibling_initiative`.
+    fn carry_to_sibling_project(
+        &mut self,
+        task: usize,
+        down: bool,
+        cx: &mut Context<Self>,
+    ) -> usize {
+        let ids: Vec<u32> = self.projects.iter().map(|p| p.id).collect();
+        let place = self.place_of(task);
+        let Some(target) = tree::sibling_landing(&ids, place.project, down) else {
+            return task;
+        };
+        self.file_task(task, BarBranch::Project(target));
+        match self.end_of_project_run(target, task) {
+            Some(slot) => self.move_tab(task, slot, cx),
+            None => {
+                self.save(cx);
+                task
+            }
+        }
+    }
+
     /// Fold / unfold a branch of the tree.
     fn toggle_branch(&mut self, branch: BarBranch, cx: &mut Context<Self>) {
         match branch {
@@ -12388,6 +12723,28 @@ impl Workspace {
                 let Some(landing) = tree::land_initiative(&places, &inis, gid, drop) else {
                     return false;
                 };
+                let current_project = self
+                    .groups
+                    .iter()
+                    .find(|g| g.id == gid)
+                    .and_then(|g| g.project);
+                // Locked against reassignment to a DIFFERENT project — see
+                // `file_initiative`, the keyboard/menu door to the identical
+                // rule and the reason this checks both sides are `Some` and
+                // unequal rather than just "already has one": taking a group
+                // OUT of its project (dropped on Unfiled) is a separate,
+                // still-allowed gesture, the drag version of the tab-config
+                // chip's "press it again to remove it". Refused WHOLE rather
+                // than just skipping the project write: `landing.slot` was
+                // computed assuming the change lands, and repositioning the
+                // group there without it would separate its tabs from the
+                // branch its own colour band still claims.
+                if current_project.is_some()
+                    && landing.project.is_some()
+                    && current_project != landing.project
+                {
+                    return false;
+                }
                 if let Some(g) = self.groups.iter_mut().find(|g| g.id == gid) {
                     g.project = landing.project;
                 }
@@ -15721,16 +16078,32 @@ impl Workspace {
             // highlight left behind somewhere else in the session, which is
             // where a walk kept starting from.
             self.bar_cursor = None;
+            self.bar_carry = None;
             // Visiting the tab IS reading its finish badges: clear every
             // latched ✅/❌ in it. The focus-in edge alone can miss — a bell
             // that latched while this pane already held (idle) keyboard focus
             // never produces an edge, and the badge froze exactly there.
+            //
+            // It is also where a bench whose agent has gone closes whatever
+            // card was left open on it — same `close_card` the Escape and ✕
+            // paths already use — for the same reason `bar_cursor` gets
+            // dropped just above: arriving is when stale pointer state stops
+            // meaning anything. Without it, the LAUNCH AGENT offer a dead
+            // agent's last card leaves behind never earns `Anchor::Eye`
+            // (`body_anchor` sees a card in the room) and Enter never reaches
+            // it either (`return_launches` sees a selection that is really
+            // just leftovers).
             if let Some(tab) = self.tabs.get(i) {
                 let mut leaves = vec![];
                 tab.root.leaves(&mut leaves);
                 let leaves: Vec<_> = leaves.into_iter().cloned().collect();
                 for p in leaves {
-                    p.update(cx, |v, cx| v.ack_bell(cx));
+                    p.update(cx, |v, cx| {
+                        v.ack_bell(cx);
+                        if !v.mode.is_agent() {
+                            v.bench.close_card();
+                        }
+                    });
                 }
             }
             self.save(cx);
@@ -15835,6 +16208,7 @@ impl Workspace {
         }
         self.confirm_close = None;
         self.tab_menu = None;
+        self.bar_carry = None;
 
         // A close is a retirement, not an ending. The shells keep running in the
         // trash until somebody asks for them back or the holding runs out, which
@@ -16191,6 +16565,17 @@ impl Workspace {
         // for the whole app. A capture-phase handler (see render) catches it even
         // while a terminal holds focus; this is the same dismissal for the
         // no-pane-focused case. Esc NEVER closes a terminal.
+        // A carry is state, not a panel — it draws nothing of its own (see
+        // `bar_carry_show`, which just repoints the existing cursor ring),
+        // so it does not belong in `close_popups`'s list: that list is read
+        // by `every_overlay_esc_can_close_also_flattens_the_glass` as "is
+        // this a warped overlay", and a carry is not one. Handled here,
+        // one step earlier, instead.
+        if ks.key.as_str() == "escape" && self.bar_carry.take().is_some() {
+            self.bar_cursor = None;
+            cx.notify();
+            return;
+        }
         if ks.key.as_str() == "escape" && self.close_popups() {
             cx.notify();
             return;
@@ -16576,11 +16961,33 @@ impl Workspace {
                 // be keys that do nothing visible with the bar hidden, and "the
                 // binding is broken" is the reasonable thing to conclude from a
                 // press with no feedback.
+                // Shift added to any of the three turns the walk into a
+                // carry: the same tree, the same rows, but the active tab
+                // (or the live cursor's task) travels with the arrows
+                // instead of just the highlight. See `bar_carry_move`,
+                // `bar_carry_out`, `bar_carry_in`.
                 "up" | "down" if self.left_bar => {
-                    self.bar_walk(ks.key.as_str() == "down", cx);
+                    let down = ks.key.as_str() == "down";
+                    if m.shift {
+                        self.bar_carry_move(down, cx);
+                    } else {
+                        self.bar_walk(down, cx);
+                    }
                 }
-                "right" if self.left_bar => self.bar_enter(window, cx),
-                "left" if self.left_bar => self.bar_leave(cx),
+                "right" if self.left_bar => {
+                    if m.shift {
+                        self.bar_carry_in(cx);
+                    } else {
+                        self.bar_enter(window, cx);
+                    }
+                }
+                "left" if self.left_bar => {
+                    if m.shift {
+                        self.bar_carry_out(cx);
+                    } else {
+                        self.bar_leave(cx);
+                    }
+                }
                 // Ctrl+Alt+1…9 land straight on a top-level branch. The arrows
                 // are a ring now, so every row is reachable from every other
                 // one — but "reachable" in a session with fifty drawn rows can
@@ -17268,6 +17675,19 @@ impl Workspace {
                 return Some(DropTarget::Tab { index });
             }
         }
+        // The left bar's own rows — same registry `BarDrag` already fills
+        // every frame, just never read from this side before. Newest-last
+        // like `bar_drop_at`, so the innermost row wins where boxes overlap.
+        let bar_row = {
+            let bar = self.bar_bounds.lock().unwrap();
+            bar.iter()
+                .rev()
+                .find(|(_, rect)| rect.contains(&pos))
+                .map(|(row, _)| *row)
+        };
+        if let Some(row) = bar_row {
+            return self.bar_drop_target(row);
+        }
         // Re-frame band: the cursor is hugging some container's perimeter. The
         // OUTERMOST (largest) qualifying container wins, so hugging the field
         // edge re-splits the whole field; hugging an inner divider re-splits
@@ -17298,6 +17718,43 @@ impl Workspace {
         None
     }
 
+    /// What dropping a dragged PANE on left-bar row `row` would do — a task
+    /// row means "join this tab" (capped at `MAX_PANES`, same as any other
+    /// split), and everything else means "file a fresh tab here", the same
+    /// three landings `BarBranch` already gives a dragged TAB.
+    fn bar_drop_target(&self, row: tree::RowId) -> Option<DropTarget> {
+        Some(match row {
+            tree::RowId::Task(i) => DropTarget::BarTask {
+                index: i,
+                blocked: !may_split(self.tab_pane_count(i)),
+            },
+            tree::RowId::Initiative(g) => DropTarget::BarBranch(BarBranch::Initiative(g)),
+            tree::RowId::Project(p) => DropTarget::BarBranch(BarBranch::Project(p)),
+            tree::RowId::Unfiled => DropTarget::BarBranch(BarBranch::Unfiled),
+        })
+    }
+
+    /// Splice `pane` into tab `t` as an additional pane, refusing when the
+    /// tab is already at `MAX_PANES` — the one door into a tab both the
+    /// strip's drop and the tree's now share, so they cannot quietly
+    /// disagree about the limit the way they used to.
+    fn splice_pane_into_tab(&mut self, t: usize, pane: &Entity<TerminalView>) -> Option<usize> {
+        if !may_split(self.tab_pane_count(t)) {
+            return None;
+        }
+        self.tabs.get_mut(t).map(|tab| {
+            let old = std::mem::replace(&mut tab.root, Node::Leaf(pane.clone()));
+            tab.root = Node::Split {
+                id: next_split_id(),
+                dir: SplitDir::Row,
+                ratio: 0.5,
+                a: Box::new(old),
+                b: Box::new(Node::Leaf(pane.clone())),
+            };
+            t
+        })
+    }
+
     /// Land a dragged sub-tab: pull it out of its source tab (collapsing what it
     /// leaves behind), then either split the pane it was dropped on (L/R/T/B) or
     /// add it to the main tab it was dropped on. The pane is never lost — an
@@ -17322,6 +17779,43 @@ impl Workspace {
         }) else {
             return;
         };
+        // A drop that would exceed MAX_PANES is refused before the pane is
+        // touched at all — the tab strip's own drop and the tree's BarTask
+        // row land in the identical spliced-in-as-a-pane outcome, so both
+        // are refused the identical way. Checked fresh against the live
+        // tabs rather than trusting BarTask's `blocked`, which was computed
+        // at the last hover and the drag may have moved since. Must happen
+        // before extraction: a refused drop has to leave the layout exactly
+        // as it was, and extraction cannot be undone once the source tab
+        // has already been rebuilt around the pane's absence.
+        //
+        // Caught in review: this used to guard only BarTask, and even there
+        // the match arm returned `None` for the blocked case, which fell
+        // through to the "give it a fresh tab" fallback AFTER the pane had
+        // already been pulled out — so a refused drop silently orphaned the
+        // pane into a brand-new tab instead of leaving it alone. The plain
+        // tab-strip drop had the identical gap and nothing guarded it at
+        // all, since it never checked the cap in the first place.
+        let target_index = match &target {
+            DropTarget::Tab { index } => Some(*index),
+            DropTarget::BarTask { index, .. } => Some(*index),
+            _ => None,
+        };
+        if let Some(index) = target_index {
+            let would_empty_source = {
+                let mut v = vec![];
+                self.tabs[from].root.leaves(&mut v);
+                v.len() == 1
+            };
+            let t = if would_empty_source && index > from {
+                index - 1
+            } else {
+                index
+            };
+            if pane_drop_capped(t, from, self.tab_pane_count(t)) {
+                return;
+            }
+        }
 
         let pred = |e: &Entity<TerminalView>| e.entity_id() == dragged;
         let src = self.tabs.remove(from);
@@ -17386,6 +17880,11 @@ impl Workspace {
                     from
                 })
             }
+            // `Tab` (dropped on the strip) and `BarTask` (dropped on the
+            // tree) land the same way — join as an additional pane, capped
+            // at `MAX_PANES` — so both go through the one door that knows
+            // how, `splice_pane_into_tab`, rather than disagreeing about the
+            // limit from two copies of the same splice.
             DropTarget::Tab { index, .. } => {
                 // a source-tab removal shifts later indices down by one
                 let t = if source_emptied && index > from {
@@ -17393,16 +17892,38 @@ impl Workspace {
                 } else {
                     index
                 };
-                self.tabs.get_mut(t).map(|tab| {
-                    let old = std::mem::replace(&mut tab.root, Node::Leaf(pane.clone()));
-                    tab.root = Node::Split {
-                        id: next_split_id(),
-                        dir: SplitDir::Row,
-                        ratio: 0.5,
-                        a: Box::new(old),
-                        b: Box::new(Node::Leaf(pane.clone())),
-                    };
-                    t
+                self.splice_pane_into_tab(t, &pane)
+            }
+            // `blocked` is ignored here on purpose: the early guard above
+            // already refused the drop, computed fresh, if the target was
+            // at the cap by release time — `blocked` is only ever a hover-
+            // time hint for the highlight and ought not decide anything by
+            // the time a release reaches this match.
+            DropTarget::BarTask { index, .. } => {
+                let t = if source_emptied && index > from {
+                    index - 1
+                } else {
+                    index
+                };
+                self.splice_pane_into_tab(t, &pane)
+            }
+            DropTarget::BarBranch(branch) => {
+                let mut fresh = Tab::new(Node::Leaf(pane.clone()), None);
+                match branch {
+                    BarBranch::Project(p) => fresh.project = Some(p),
+                    BarBranch::Initiative(g) => fresh.group = Some(g),
+                    BarBranch::Unfiled => {}
+                }
+                self.tabs.push(fresh);
+                let idx = self.tabs.len() - 1;
+                let slot = match branch {
+                    BarBranch::Initiative(g) => self.end_of_initiative_run(g, idx),
+                    BarBranch::Project(p) => self.end_of_project_run(p, idx),
+                    BarBranch::Unfiled => None,
+                };
+                Some(match slot {
+                    Some(slot) => self.move_tab(idx, slot, cx),
+                    None => idx,
                 })
             }
         };
@@ -17415,6 +17936,36 @@ impl Workspace {
         window.focus(&pane.focus_handle(cx), cx);
         self.save(cx);
         cx.notify();
+    }
+
+    /// Pictures are attentional, in Parker's word: a picture a program drew is
+    /// there while its pane is looked at, and a pane whose tab has stopped
+    /// being shown forgets every picture it held, textures and images both.
+    /// Come back and the screen is the text, as it would be in a terminal that
+    /// had never kept the picture.
+    ///
+    /// Asked every frame against the last frame's answer, rather than hooked
+    /// into `activate_tab`, because a tab stops being shown by more routes than
+    /// one function: a tree click, a keyboard jump, a notification, a pane
+    /// carried to another tab. A pane that was shown and is not now is the
+    /// definition, whatever moved it.
+    fn forget_pictures_out_of_sight(&mut self, cx: &mut Context<Self>) {
+        let mut leaves = vec![];
+        if let Some(tab) = self.tabs.get(self.active) {
+            tab.root.leaves(&mut leaves);
+        }
+        let shown: Vec<gpui::WeakEntity<TerminalView>> =
+            leaves.into_iter().map(|pane| pane.downgrade()).collect();
+        let hidden: Vec<Entity<TerminalView>> = self
+            .shown_panes
+            .iter()
+            .filter(|pane| !shown.contains(pane))
+            .filter_map(gpui::WeakEntity::upgrade)
+            .collect();
+        for pane in hidden {
+            pane.update(cx, |view, cx| view.forget_pictures(cx));
+        }
+        self.shown_panes = shown;
     }
 
     fn reap(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -18725,9 +19276,30 @@ impl Workspace {
     /// (`skin::active_row`) and from the scoped branch's lit bar — three
     /// different facts, and a person arrowing past the active task must be able
     /// to see both at once, on the same row, without either disappearing.
-    fn bar_cursor_ring<E: Styled>(&self, row: tree::RowId, th: &theme::Theme, d: E) -> E {
+    fn bar_cursor_ring<E: Styled>(&self, row: tree::RowId, th: &theme::Theme, s: f32, d: E) -> E {
         if self.bar_cursor != Some(row) {
             return d;
+        }
+        if self.bar_carry.is_some() {
+            // Carrying, not just looking — the plain ring below reads as
+            // no different from an ordinary walk, which is exactly what
+            // it was built to be. Parker, on the first cut: *"it must
+            // VISIBLY detach ... indent differently ... further to the
+            // right."* `ml` rather than `pl`: additive to whatever
+            // depth-based padding the row already set, so this never has
+            // to know or preserve that value.
+            //
+            // The first shape of this shadow-and-0.24-alpha answer to that
+            // ask came back "way too much ... brutally glaring": the shift
+            // alone already says "not an ordinary walk"; the colour only
+            // has to say WHOSE, the same job `STANDING_WASH` already does
+            // for the project/group holding the active task. Parker: *"about
+            // equivalent to the secondary highlight with group and project
+            // but COLOURED like the SELECTED one."* Same wash, `th.cursor`
+            // in place of the branch's own colour, no shadow.
+            return d
+                .ml(px(BAR_CARRY_INDENT * s))
+                .bg(th.cursor.alpha(STANDING_WASH));
         }
         d.bg(th.cursor.alpha(0.14)).shadow(vec![BoxShadow {
             color: th.cursor.alpha(0.85),
@@ -18831,12 +19403,20 @@ impl Workspace {
             // pins the light claimed a narrowing nothing drew; a click now GOES
             // to the branch instead (`go_to_branch`, #757), so the wash above
             // is the one mark of where you are.
-            .when(drop_hi, |d| d.bg(th.accent.alpha(0.28)));
+            .when(drop_hi, |d| d.bg(th.accent.alpha(0.28)))
+            .when(self.pane_drop_hot(row_id_kind) == Some(false), |d| {
+                d.bg(th.accent.alpha(0.28))
+            })
+            .when(self.pane_drop_hot(row_id_kind) == Some(true), |d| {
+                // The same red `bar_menu_row` already uses for a Danger
+                // tone — one hard-coded red, not a second invention of it.
+                d.bg(hsla(0., 0.72, 0.60, 1.).alpha(0.28))
+            });
         // The keyboard ring goes on LAST of the backgrounds — a row that is
         // washed, being dropped onto and under the cursor all at once still
         // shows where the keyboard is, which is the only one a person cannot
         // otherwise locate.
-        self.bar_cursor_ring(row_id_kind, th, d)
+        self.bar_cursor_ring(row_id_kind, th, s, d)
             .hover(move |st| st.bg(color.alpha(0.12)))
             .children(caret)
             // The fold: its own target, wide enough to hit without aiming, so
@@ -19015,6 +19595,35 @@ impl Workspace {
         }
     }
 
+    /// Whether left-bar row `row` is where a dragged PANE — not a dragged
+    /// tree row — would land right now, and whether that landing is
+    /// refused. Kept apart from `bar_drop_marks`: a different drag, a
+    /// different source of truth (`drop_target` rather than `bar_drag`), so
+    /// extending one can never silently change what the other lights up.
+    /// `Some(true)` reads as blocked (the tab is already at `MAX_PANES`),
+    /// `Some(false)` as an ordinary landing, `None` as not this row.
+    fn pane_drop_hot(&self, row: tree::RowId) -> Option<bool> {
+        match &self.drop_target {
+            Some(DropTarget::BarTask { index, blocked }) if tree::RowId::Task(*index) == row => {
+                Some(*blocked)
+            }
+            // NOT `BarBranch::from(row)`: that conversion deliberately
+            // collapses every Task row to `Unfiled` (a task triggers no
+            // branch gesture of its own) — reusing it here would light up
+            // every task row in the tree the moment the target was
+            // `BarBranch::Unfiled`. Built the exact target row instead.
+            Some(DropTarget::BarBranch(branch)) => {
+                let target = match branch {
+                    BarBranch::Project(p) => tree::RowId::Project(*p),
+                    BarBranch::Initiative(g) => tree::RowId::Initiative(*g),
+                    BarBranch::Unfiled => tree::RowId::Unfiled,
+                };
+                (target == row).then_some(false)
+            }
+            _ => None,
+        }
+    }
+
     /// A TASK row: one tab, seen from the tree.
     fn task_row(
         &self,
@@ -19071,6 +19680,7 @@ impl Workspace {
         self.bar_cursor_ring(
             tree::RowId::Task(i),
             th,
+            s,
             sk.active_row(
                 div()
                     .id(SharedString::from(format!("bar-task-{i}")))
@@ -19091,6 +19701,17 @@ impl Workspace {
                     .cursor_pointer(),
                 is_active,
             ),
+        )
+        .when(
+            self.pane_drop_hot(tree::RowId::Task(i)) == Some(false),
+            |d| d.bg(th.accent.alpha(0.28)),
+        )
+        .when(
+            self.pane_drop_hot(tree::RowId::Task(i)) == Some(true),
+            |d| {
+                // The same red `bar_menu_row` already uses for a Danger tone.
+                d.bg(hsla(0., 0.72, 0.60, 1.).alpha(0.28))
+            },
         )
         .hover(move |st| st.bg(hsla(0., 0., 1., 0.06)))
         // the task's own colour, if it has one — the same fill its tab
@@ -23959,6 +24580,7 @@ impl Render for Workspace {
         // then shared by every surface that asks. See [`Workspace::rail_memo`].
         self.rail_frame = self.rail_frame.wrapping_add(1);
         self.reap(window, cx);
+        self.forget_pictures_out_of_sight(cx);
         // Holdings past their window, let go of here because the render pass is
         // the only clock a workspace has — and because the tray that offers them
         // is built further down this same pass, so it can never draw an offer
@@ -36515,6 +37137,40 @@ mod tests {
     }
 
     #[test]
+    fn carry_depth_zoom_clamps_at_both_ends() {
+        assert_eq!(CarryDepth::Task.out(), CarryDepth::Initiative);
+        assert_eq!(CarryDepth::Initiative.out(), CarryDepth::Project);
+        assert_eq!(
+            CarryDepth::Project.out(),
+            CarryDepth::Project,
+            "no fourth layer to zoom into"
+        );
+        assert_eq!(CarryDepth::Project.in_(), CarryDepth::Initiative);
+        assert_eq!(CarryDepth::Initiative.in_(), CarryDepth::Task);
+        assert_eq!(
+            CarryDepth::Task.in_(),
+            CarryDepth::Task,
+            "can't zoom in past the task itself"
+        );
+    }
+
+    #[test]
+    fn pane_drop_capped_never_blocks_a_drop_back_onto_its_own_tab() {
+        // A tab at the cap: dropping one of its own panes back onto
+        // itself must not be refused — it is a rearrangement, not a
+        // growth. This is the case review caught an earlier version of
+        // the guard getting wrong.
+        assert!(!pane_drop_capped(2, 2, MAX_PANES));
+        // Even a legacy tab already OVER the cap must not be blocked from
+        // rearranging its own panes.
+        assert!(!pane_drop_capped(2, 2, LEGACY_PANE_CEILING));
+        // A different tab at the cap DOES refuse an incoming pane.
+        assert!(pane_drop_capped(3, 2, MAX_PANES));
+        // A different tab under the cap accepts one.
+        assert!(!pane_drop_capped(3, 2, MAX_PANES - 1));
+    }
+
+    #[test]
     fn scratch_decision_covers_force_seed_and_ownership() {
         // took the workspace's session → restore it, no seed
         let (scratch, seed) = scratch_decision(false, true, None, None);
@@ -36559,6 +37215,7 @@ mod tests {
         let (text, code) = flag_reply(Some("--version")).expect("--version is answered");
         assert_eq!(code, 0);
         assert!(text.starts_with("terminal-delight "), "{text}");
+        assert!(text.contains(vt::CORE_NAME), "{text}");
         assert_eq!(flag_reply(Some("-V")).map(|r| r.1), Some(0));
         let (help, code) = flag_reply(Some("--help")).expect("--help is answered");
         assert_eq!(code, 0);
@@ -38764,7 +39421,17 @@ Environment:
 fn flag_reply(first: Option<&str>) -> Option<(String, i32)> {
     match first {
         Some("--version" | "-V") => {
-            Some((format!("terminal-delight {}", env!("CARGO_PKG_VERSION")), 0))
+            // The core is named because a window can outlive the build it was
+            // started from, and which emulator a running process has is the
+            // first question when a pane draws something wrong.
+            Some((
+                format!(
+                    "terminal-delight {} (terminal core: {})",
+                    env!("CARGO_PKG_VERSION"),
+                    vt::CORE_NAME
+                ),
+                0,
+            ))
         }
         Some("--help" | "-h") => Some((USAGE.to_string(), 0)),
         Some(flag) if flag.starts_with('-') => Some((
@@ -39102,14 +39769,14 @@ fn main() {
     };
 
     // Give every shell we spawn a real terminal type. gpui launches us from the
-    // desktop/WM with TERM unset, and alacritty_terminal's `tty::new` does NOT
-    // set one — so without this, child shells inherit an empty TERM, readline
+    // desktop/WM with TERM unset, and spawning a pseudoterminal does NOT set
+    // one — so without this, child shells inherit an empty TERM, readline
     // can't look up the `clear_screen` capability, and Ctrl+L silently no-ops
     // (the prompt never pops to the top). `setup_env` picks the `alacritty`
     // terminfo if installed, else the universally-present `xterm-256color`, and
     // advertises 24-bit colour (COLORTERM=truecolor). Must run before any PTY is
     // spawned; it mutates the process env, so keep it ahead of the gpui app/threads.
-    alacritty_terminal::tty::setup_env();
+    vt::pty::setup_env();
 
     // Decide boot mode before the window opens. An EXPLICITLY-scratch launch —
     // forced scratch (TD_SCRATCH, the Ctrl+Alt+T quick window), a seeded tear-off

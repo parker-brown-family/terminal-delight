@@ -185,14 +185,16 @@ check whose expectation is wrong on the day it ships is a check somebody switche
 rg -c 'self\.send\(' app/src/pane.rs        # expect: 1  — pane.rs:4099, inside on_key
 sed '/^#\[cfg(test)\]/q' app/src/pane.rs | rg -c 'notifier\.notify\('  # expect: 11 — the nine rows above, #2 and #4 twice each; code only, since the tests quote the call
 rg -c 'keepalive' app/src/main.rs           # expect: 2  — the module doc, and the header-glyph count comment
-rg -n 'Msg::Input|notifier\.0|notifier:' app/src   # expect: nothing outside term.rs
+rg -n 'Msg::Input|notifier\.0|notifier:' app/src   # expect: the type in vt/pump.rs and vt/socket.rs's test, the field in term.rs, and host.rs's own three writes (the recipe, write_to, a test) — nothing in pane.rs or main.rs
 ```
 
-The fourth line is the one that is easy to forget. `Notifier` is alacritty's newtype and its sender
-is public — `pub struct Notifier(pub EventLoopSender)`, and `notify` is one line, `self.0.send(
-Msg::Input(bytes))`. A future call site written as `notifier.0.send(Msg::Input(…))`, or a `Notifier`
-cloned out to another module, writes to a pty while passing every other grep on this page. The
-single primitive is a convention this repository keeps, not something the type system enforces.
+The fourth line is the one that is easy to forget. `Notifier` is TD's own type since the core swap
+(`app/src/vt/pump.rs`), and its sender is private, so the old escape — `notifier.0.send(Msg::Input(…))`
+on alacritty's newtype, whose sender was public — no longer compiles. What remains is
+`Notifier::send(Msg::Input(…))`, which is public because the session host writes a pane's recipe and a
+client's keystrokes through it. A call site written that way in the pane, or a `Notifier` cloned out
+to another module, writes to a pty while passing every other grep on this page. The single primitive
+is a convention this repository keeps, not something the type system enforces.
 
 The second line is also a test: `the_manifest_counts_every_write_to_a_terminal`, in `pane.rs`, reads
 this page, holds the count above to the code, and fails for a call site in a function the table does

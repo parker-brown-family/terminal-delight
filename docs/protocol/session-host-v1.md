@@ -290,9 +290,12 @@ Everything after that line is the terminal's bytes: keystrokes up, output down.
 The host answers by writing a **snapshot** — the pane's scrollback, screen,
 colours, cursor and modes as VT bytes another terminal can eat — and then the
 live stream, with nothing lost or doubled between them. The seam is closed by
-taking alacritty's terminal *lease* across both, so every byte falls on exactly
-one side: read before the fence and therefore already in the snapshot, or read
-after it and therefore sent live.
+holding the terminal's lock across both: the host's read loop copies each chunk
+to the client and parses it in one step under that same lock, so every byte
+falls on exactly one side — read before the fence and therefore already in the
+snapshot, or read after it and therefore sent live. An open synchronized update
+is drawn into the grid before the snapshot is taken, so bytes the parser was
+holding back are not left out of it. Pictures are never in a snapshot.
 
 **The newest attach wins.** A window relaunching after a crash must not be
 refused by the ghost of the window it is replacing, so a second stream on the
@@ -505,11 +508,16 @@ be confidently wrong about.
 
 ## Invariants, and the tripwires that hold them
 
-- **The lease is the fence.** Alacritty's reader holds a lease for its whole
-  cycle, so a lease taken here cannot overlap one. The fair `lock` takes the
-  lease too — holding a lease and then calling `lock` deadlocks against
-  yourself, which is why the snapshot pairs a lease with `lock_unfair`, exactly
-  as alacritty's own reader does. **Re-verify this on any alacritty upgrade.**
+- **The lock is the fence.** The read loop (`app/src/vt/pump.rs`) reads a chunk
+  outside the lock, then taps, counts and parses it under the lock in one step,
+  and the snapshot, the hash probe and the alternate-screen heal all read under
+  that lock. Before the core swap (2026-09-25) this was alacritty's `FairMutex`
+  lease paired with `lock_unfair`, which held only because alacritty's reader
+  kept the lease across a whole read.
+- **The hash is over frozen numbers.** `grid_hash` hashes cell flags, modes and
+  named colours by alacritty 0.26's numbering, which `app/src/vt/types.rs` pins
+  by test, so a window and a host built on different cores agree about an
+  identical screen and protocol version 1 still holds.
 - **The host's pane table beats the session file.** A live pane the saved
   layout does not claim is adopted, never dropped.
 - **Ids are never reused**, so a message naming a dead pane is answered with an

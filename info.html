@@ -48,6 +48,7 @@
     .hero .cta .td-btn { height: 42px; padding: 0 18px; font-size: 14px; }
     @media (prefers-reduced-motion: reduce) { .hero h1 .cur { animation: none; } }
 
+    /* td-window:start (the docs read the drawn window from here to td-window:end: docsite/build.mjs) */
     /* ----------------------------------------------- the drawn window
        Every colour here is one of the app's own theme values, read from
        app/themes/*.toml. Picking a chip swaps the whole set. */
@@ -227,6 +228,7 @@
     .cap { margin: 14px auto 0; max-width: 620px; text-align: center; font-size: 13.5px; color: var(--ink-3); }
     .cap.left { text-align: left; margin-left: 0; }
 
+    /* td-window:end */
     /* ----------------------------------------------------- the wall */
     .cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
     .agent { padding: 16px; border-radius: 12px; background: var(--bg-2); border: 1px solid var(--line); font: 12.5px/1.5 var(--mono); box-shadow: var(--shadow); }
@@ -308,6 +310,7 @@
     .foot .ch a { width: 10px; height: 10px; border-radius: 50%; border: 1px solid var(--line-2); background: var(--bg-2); }
     .foot .ch a:hover { background: var(--acc); border-color: var(--acc); box-shadow: 0 0 10px var(--glow); }
 
+    /* td-window:start (the docs read the drawn window from here to td-window:end: docsite/build.mjs) */
     /* The drawn windows answer to their own width, not the viewport's: the
        space they get depends on the spine beside the page as much as on the
        window, so a viewport rule leaves them cramped at one width and sparse
@@ -330,6 +333,7 @@
       .w-rail, .w-spark, .w-dots, .w-sep, .w-woken, .w-strip .b, .w-head .w-ib, .w-count .q { display: none; }
       .w-foot .w-ib { display: none; }
     }
+    /* td-window:end */
     @media (max-width: 900px) {
       .td-kiosk { padding: 0 22px; }
       .stop { padding: 60px 0 64px; }
@@ -422,6 +426,7 @@
         <a class="td-btn" href="https://docs.terminal-delight.brownfamilysports.com/">Read the docs →</a>
       </div>
 
+      <!-- td-window:start (the docs' example window is read from here: docsite/build.mjs) -->
       <div class="shot">
       <div class="win" id="win" data-pane-warp role="img" aria-label="A drawing of the Terminal Delight window. A left bar of task groups; one agent's terminal in focus, showing the reply it just finished; two quieter terminals beside it; and the list of three agents that need you. Each terminal's glass is curved on its own, the way the app draws it.">
         <div class="w-top">
@@ -547,6 +552,7 @@
         <div class="w-foot"><span>4 tabs · 9 panes</span><span class="w-ib">🎨</span><span class="w-ib">📊</span><span class="w-ib">🪦</span><span class="w-ib">🔔</span><span class="w-ib">🧩</span><span class="bat">▭ 85%</span><span class="lay">◧</span></div>
       </div>
       </div>
+      <!-- td-window:end -->
 
       <div class="wear" role="group" aria-label="Paint the window with a built-in theme">
         <button data-wear="hacker" style="--c1:#03100a;--c2:#22c55e"><i></i>&gt;_ hacker</button>
@@ -735,7 +741,7 @@ cd app &amp;&amp; cargo run</pre>
     </section>
 
     <footer class="foot">
-      <span>terminal delight · MIT · built in Rust on gpui and alacritty_terminal</span>
+      <span>terminal delight · MIT · built in Rust on gpui and rio-vt</span>
       <a href="https://github.com/parker-brown-family/terminal-delight">GitHub</a>
       <a href="https://docs.terminal-delight.brownfamilysports.com/">Docs</a>
       <span class="ch" aria-label="Other channels"><a href="/tv" title="Channel 2" aria-label="Channel 2"></a><a href="/gamba" title="Channel 7" aria-label="Channel 7"></a><a href="/start-crawl" title="Channel 9" aria-label="Channel 9"></a></span>

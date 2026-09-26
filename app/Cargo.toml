@@ -15,18 +15,52 @@ publish = false
 # of the repo root and `git apply` the patch (scripts/prepare-gpui.sh does both).
 zed_rev = "abbe85a3321bf6cb7f5b241e623d9c2e16c29187"
 
+[features]
+# The terminal emulator core is rio-vt. `core-alacritty` builds on
+# alacritty_terminal 0.26 instead, behind the same boundary (src/vt/): kept as
+# the way back if rio-vt misbehaves in daily use, and as the oracle the test
+# suite checks rio-vt against, until a follow-up removes it. See
+# docs/plans/core-swap-rio/.
+default = []
+core-alacritty = ["dep:alacritty_terminal"]
+
 [dependencies]
-alacritty_terminal = "0.26"
+alacritty_terminal = { version = "0.26", optional = true }
+# The terminal emulator core, reached only through src/vt/. Without its
+# defaults, which bring Rio's own pseudoterminal and event loop (TD has its
+# own); with `graphics`, which is what decodes a PNG a program sends — without
+# it rio-vt fails a PNG picture silently and tells the program it succeeded.
+rio-vt = { version = "=0.5.28", default-features = false, features = ["graphics"] }
+# A picture's pixels as the frame gpui draws (src/pane.rs, `picture_texture`).
+# gpui already links it; named here to build the frame, with nothing added.
+image = { version = "0.25", default-features = false }
+# A picture sent by reference, rewritten inline for an attached window
+# (src/picturewire.rs). Already in the graph through rio-vt.
+base64 = "0.22"
+# The guards in front of rio-vt's parser (src/vt/kitty.rs, text.rs, compat.rs)
+# look for the bytes they act on in every byte of output; a byte at a time,
+# the search took a third of the core's throughput. Already in the graph
+# through rio-vt and gpui.
+memchr = "2"
+# The flags and modes in src/vt/types.rs, in the bitflags generation both
+# cores use.
+bitflags = "2"
 # CommonMark + GFM for Markdown drawn in the pane (docview/markdown.rs, lifted
 # from markdown-delight at the same version so the copy compiles unchanged).
 # Without its defaults: they bring clap, syntect and the onig C library for
 # comrak's own CLI and highlighter, and the renderer uses none of them.
 comrak = { version = "0.52", default-features = false }
 futures = "0.3"
-# The same poller alacritty_terminal registers its PTY with. Named directly
-# because `EventedReadWrite` is spelled in these types and the crate does not
-# re-export them; cargo unifies it with alacritty's own copy.
+# What TD's read loop (src/vt/pump.rs) waits on: a terminal's descriptor, its
+# child's pidfd, and the wake a keystroke sends.
 polling = "3.8"
+# The lock every terminal is shared under: the renderer, the read loop and the
+# session host's fence. `unlock_fair` is what hands it to a waiting renderer
+# after each chunk the loop parses.
+parking_lot = "0.12"
+# Opening a pseudoterminal and setting IUTF8 on it (src/vt/pty.rs), the crate
+# alacritty's own tty module uses.
+rustix-openpty = "0.2"
 gpui = { path = "../../zed-upstream/crates/gpui" }
 gpui_platform = { path = "../../zed-upstream/crates/gpui_platform", features = ["x11", "wayland"] }
 libc = "0.2.186"

@@ -26,8 +26,9 @@ are no surprises.
 
 ## The licence boundary (one paragraph)
 
-Repo is **MIT**; gpui + gpui_wgpu + alacritty_terminal are **Apache-2.0** (gpui is
-*not* GPL — common misconception). The distributed **binary** is MIT because the GPL
+Repo is **MIT**; gpui + gpui_wgpu are **Apache-2.0** (gpui is *not* GPL — common
+misconception), and the terminal core, rio-vt, is **MIT** (the fallback core built with
+`--features core-alacritty`, alacritty_terminal, is Apache-2.0). The distributed **binary** is MIT because the GPL
 trace-only crates were severed (`0002`); source builds are clean either way. Zed's
 own `crates/terminal` is GPL — used as **shape reference only, never copied**
 (clean-room).

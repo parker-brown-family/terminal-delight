@@ -133,9 +133,9 @@ impl Pane {
         };
         // The reader thread and the child outlive the pane unless told: a
         // window-owned terminal is ended by its child, and `cat` never ends.
-        let reader = session.notifier.0.clone();
+        let reader = session.notifier.clone();
         cx.on_quit(move || {
-            let _ = reader.send(alacritty_terminal::event_loop::Msg::Shutdown);
+            reader.shutdown();
         });
         let window = cx.open_window(size(px(WINDOW.0), px(WINDOW.1)), move |_, cx| {
             TerminalView::around(
@@ -351,6 +351,12 @@ impl Pane {
         self.cx.simulate_mouse_up(at, MouseButton::Left, mods);
     }
 
+    /// The modifier keys change with the pointer where it is: Alt pressed or
+    /// let go without a move.
+    pub(super) fn modifiers(&mut self, mods: Modifiers) {
+        self.cx.simulate_modifiers_change(mods);
+    }
+
     /// A right click at `at`: down, then up.
     pub(super) fn right_click(&mut self, at: Point<Pixels>) {
         self.cx
@@ -481,7 +487,7 @@ impl Pane {
 
     /// How far the terminal's view is scrolled back into its history, in rows.
     pub(super) fn scrolled_back(&mut self) -> usize {
-        self.read(|v| v.session.term.lock().grid().display_offset())
+        self.read(|v| v.session.term.lock().display_offset())
     }
 
     /// The pseudoterminal's size as the kernel holds it, once `settled` says

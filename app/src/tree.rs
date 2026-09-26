@@ -523,6 +523,24 @@ pub fn reorder(ids: &mut Vec<u32>, moving: u32, neighbour: u32, after: bool) {
     ids.insert(if after { at + 1 } else { at }, moving);
 }
 
+/// The sibling to land on when Up/Down walks a carried item at one depth:
+/// next/previous in `siblings`, wrapping — or the first/last (by direction)
+/// when nothing is currently selected there, the same seed-by-direction
+/// convention `bar_leave`'s first press already uses.
+pub fn sibling_landing(siblings: &[u32], current: Option<u32>, down: bool) -> Option<u32> {
+    if siblings.is_empty() {
+        return None;
+    }
+    let at = current.and_then(|id| siblings.iter().position(|&s| s == id));
+    let next = match at {
+        Some(p) if down => (p + 1) % siblings.len(),
+        Some(p) => (p + siblings.len() - 1) % siblings.len(),
+        None if down => 0,
+        None => siblings.len() - 1,
+    };
+    Some(siblings[next])
+}
+
 /// The tasks the strip draws, in tab order: the active task's own branch —
 /// its group's tabs, or its project's loose ones — and nothing else.
 ///
@@ -773,6 +791,42 @@ pub fn first_child(rows: &[Row], of: RowId) -> Option<RowId> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sibling_landing_wraps_and_seeds_by_direction() {
+        let ids = [10, 20, 30];
+        assert_eq!(sibling_landing(&ids, Some(10), true), Some(20));
+        assert_eq!(
+            sibling_landing(&ids, Some(30), true),
+            Some(10),
+            "wraps forward"
+        );
+        assert_eq!(
+            sibling_landing(&ids, Some(10), false),
+            Some(30),
+            "wraps backward"
+        );
+        assert_eq!(
+            sibling_landing(&ids, None, true),
+            Some(10),
+            "seeds first going down"
+        );
+        assert_eq!(
+            sibling_landing(&ids, None, false),
+            Some(30),
+            "seeds last going up"
+        );
+        assert_eq!(
+            sibling_landing(&ids, Some(999), true),
+            Some(10),
+            "an id not among the siblings seeds fresh, same as no current id"
+        );
+        assert_eq!(
+            sibling_landing(&[], Some(10), true),
+            None,
+            "no siblings, nowhere to land"
+        );
+    }
 
     /// The nearest parent, in all four shapes a task can be filed in.
     ///
