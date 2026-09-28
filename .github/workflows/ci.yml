@@ -16,6 +16,9 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      # poppler-utils is not a build dependency: the PDF test in
+      # docview/poppler.rs drives the real pdfinfo and pdftoppm, and fails
+      # under CI rather than skipping when they are missing.
       - name: Install Linux build dependencies
         run: |
           sudo apt-get update
@@ -27,7 +30,8 @@ jobs:
             libxcb1-dev \
             libxkbcommon-dev \
             libxkbcommon-x11-dev \
-            pkg-config
+            pkg-config \
+            poppler-utils
 
       - uses: dtolnay/rust-toolchain@stable
         with:

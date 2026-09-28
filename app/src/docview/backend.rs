@@ -2,10 +2,11 @@
 //!
 //! # One door
 //!
-//! [`DocumentView`] shows four kinds of document: a picture
+//! [`DocumentView`] shows five kinds of document: a picture
 //! ([`super::image::ImageDoc`]), a Markdown file
 //! ([`super::markdown::MarkdownDoc`]), an HTML page
-//! ([`super::page::PageDoc`]) and a video ([`super::video::VideoDoc`]). It
+//! ([`super::page::PageDoc`]), a video ([`super::video::VideoDoc`]) and a PDF
+//! ([`super::pdf::PdfDoc`]). It
 //! used to tell them apart with an enum,
 //! matched afresh in every method that had to know — a press, a wheel turn, a
 //! key, a zoom, a scroll to restore, a fragment to land on, a note to save —
@@ -19,7 +20,7 @@
 //!
 //! So the view holds one `Box<dyn Backend>` and hands every call through it,
 //! and each backend implements the trait beside the rest of its code: in
-//! `image.rs`, `markdown_view.rs`, `page.rs` and `video.rs`. What a backend cannot do is
+//! `image.rs`, `markdown_view.rs`, `page.rs`, `video.rs` and `pdf.rs`. What a backend cannot do is
 //! written down here, once, as the trait's default, with the reason on the
 //! default rather than on a wildcard in some method's last arm. A backend that
 //! can do a thing overrides it; a new kind of document starts out doing

@@ -412,13 +412,13 @@ impl TerminalView {
     }
 
     /// A document with nothing on this machine to draw it — an HTML page with
-    /// no engine, a video with no libmpv — goes to the desktop instead of into
-    /// a square, and this says why. The sentence goes to TD's log and back to
-    /// the caller; a short form of it goes on screen, in a chip on `row`, the
-    /// painted row the click landed on. `None` for anything that can be
-    /// drawn. Asked before a square is placed, so a machine without Chromium
-    /// or mpv never opens one that could not fill, and no square exists to
-    /// carry the words.
+    /// no engine, a video with no libmpv, a PDF with no poppler — goes to the
+    /// desktop instead of into a square, and this says why. The sentence goes
+    /// to TD's log and back to the caller; a short form of it goes on screen,
+    /// in a chip on `row`, the painted row the click landed on. `None` for
+    /// anything that can be drawn. Asked before a square is placed, so a
+    /// machine without Chromium, mpv or poppler never opens one that could not
+    /// fill, and no square exists to carry the words.
     fn engine_refused(
         &mut self,
         target: &crate::docopen::DocTarget,
@@ -432,6 +432,10 @@ impl TerminalView {
             }
             crate::docopen::DocKind::Video => {
                 let why = crate::docview::video_ready(cx).err()?;
+                (why.sentence(), why.short_reason())
+            }
+            crate::docopen::DocKind::Pdf => {
+                let why = crate::docview::pdf_ready(cx).err()?;
                 (why.sentence(), why.short_reason())
             }
             crate::docopen::DocKind::Markdown | crate::docopen::DocKind::Image => return None,
@@ -1210,6 +1214,7 @@ impl TerminalView {
                         }
                         crate::docopen::DocKind::Image => "an image takes no notes",
                         crate::docopen::DocKind::Video => "a video takes no notes",
+                        crate::docopen::DocKind::Pdf => "a PDF takes no notes",
                     }
                     .to_string()
                 });

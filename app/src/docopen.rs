@@ -7,15 +7,16 @@
 //! *is this a document TD can draw*, and *where does the square go*. Both are
 //! here, and neither needs a window to answer.
 //!
-//! **Drawable** means Markdown, HTML, an image, or a video. The name decides
-//! for the first two. An image has to prove it: a `.png` that is really a log
-//! file would open as an empty square, so a raster name must also carry a
+//! **Drawable** means Markdown, HTML, an image, a video, or a PDF. The name
+//! decides for the first two. An image has to prove it: a `.png` that is really
+//! a log file would open as an empty square, so a raster name must also carry a
 //! raster signature in its first bytes, and a file with no extension at all
 //! counts as an image when it carries one (screenshot tools often drop the
 //! suffix). SVG is text, so it has no signature to check and its name decides.
 //! A video has to prove it the same way, by its container's signature, but a
 //! video never goes by its bytes alone: an HEIC photo opens with the same
-//! `ftyp` box an MP4 does.
+//! `ftyp` box an MP4 does. A PDF proves it with `%PDF-`, which belongs to
+//! nothing else, so a file with no extension that starts with it is a PDF.
 //!
 //! **Where it goes** is a square beside the line that was clicked: right-aligned,
 //! just below that line when it fits and above it when it does not, and never
@@ -43,6 +44,9 @@ pub enum DocKind {
     Image,
     /// Played by libmpv (`docview/mpv.rs`), looping, with sound.
     Video,
+    /// Drawn a tile at a time by poppler (`docview/poppler.rs`), as one
+    /// column of pages.
+    Pdf,
 }
 
 /// A document a click asked for: the file, and what it was recognised as.
@@ -65,8 +69,16 @@ pub fn doc_kind_by_name(path: &std::path::Path) -> Option<DocKind> {
         "html" | "htm" => Some(DocKind::Html),
         "png" | "jpg" | "jpeg" | "webp" | "gif" | "bmp" | "svg" => Some(DocKind::Image),
         "mp4" | "m4v" | "mov" | "webm" | "mkv" | "ogv" | "avi" => Some(DocKind::Video),
+        "pdf" => Some(DocKind::Pdf),
         _ => None,
     }
+}
+
+/// What every PDF starts with. The spec lets a header sit anywhere in the
+/// first kilobyte; a file whose first bytes are anything else is not one TD
+/// guesses at, and the click falls through to what it did before.
+fn pdf_signature(head: &[u8]) -> bool {
+    head.starts_with(b"%PDF-")
 }
 
 /// The containers a video name is checked against: ISO media (MP4, M4V, and
@@ -99,7 +111,8 @@ fn raster_signature(head: &[u8]) -> bool {
 /// not know, on bytes that are a raster, is an image. SVG, Markdown and HTML are
 /// by name only: they are text, and text has no signature worth trusting. A
 /// video name needs a container's signature, and a video is never found by its
-/// bytes alone (see the module notes).
+/// bytes alone (see the module notes). A PDF needs `%PDF-`, and with no
+/// extension at all `%PDF-` is enough.
 pub fn doc_kind(path: &std::path::Path, head: &[u8]) -> Option<DocKind> {
     let is_svg = path
         .extension()
@@ -109,8 +122,10 @@ pub fn doc_kind(path: &std::path::Path, head: &[u8]) -> Option<DocKind> {
         Some(DocKind::Image) if is_svg => Some(DocKind::Image),
         Some(DocKind::Image) => raster_signature(head).then_some(DocKind::Image),
         Some(DocKind::Video) => video_signature(head).then_some(DocKind::Video),
+        Some(DocKind::Pdf) => pdf_signature(head).then_some(DocKind::Pdf),
         Some(kind) => Some(kind),
         None if path.extension().is_none() && raster_signature(head) => Some(DocKind::Image),
+        None if path.extension().is_none() && pdf_signature(head) => Some(DocKind::Pdf),
         None => None,
     }
 }
@@ -915,7 +930,7 @@ mod tests {
     }
 
     #[test]
-    fn a_markdown_html_image_or_video_name_is_drawable_and_anything_else_is_not() {
+    fn a_markdown_html_image_video_or_pdf_name_is_drawable_and_anything_else_is_not() {
         for (name, want) in [
             ("a.md", DocKind::Markdown),
             ("A.MARKDOWN", DocKind::Markdown),
@@ -931,12 +946,14 @@ mod tests {
             ("clip.mp4", DocKind::Video),
             ("clip.WEBM", DocKind::Video),
             ("take.mov", DocKind::Video),
+            ("paper.pdf", DocKind::Pdf),
+            ("INVOICE.PDF", DocKind::Pdf),
         ] {
             assert_eq!(doc_kind_by_name(Path::new(name)), Some(want), "{name}");
         }
         for name in [
             "notes.txt",
-            "paper.pdf",
+            "paper.pdfx",
             "Makefile",
             "archive.tar.gz",
             ".md",
@@ -1012,6 +1029,24 @@ mod tests {
             doc_kind(Path::new("rec"), b"\x1a\x45\xdf\xa3\x9f\x42\x86\x81"),
             None
         );
+    }
+
+    /// A PDF name is drawable only on `%PDF-`: a log named `.pdf` would open
+    /// a square poppler can never fill. And `%PDF-` belongs to nothing else,
+    /// so a download that lost its suffix is still a PDF, where an extension
+    /// TD does not know is not a guess at one.
+    #[test]
+    fn a_pdf_is_recognised_by_its_header_and_needs_it() {
+        let pdf = b"%PDF-1.7\n%\xe2\xe3\xcf\xd3\n";
+        assert_eq!(doc_kind(Path::new("paper.pdf"), pdf), Some(DocKind::Pdf));
+        assert_eq!(doc_kind(Path::new("paper.PDF"), pdf), Some(DocKind::Pdf));
+        assert_eq!(doc_kind(Path::new("paper.pdf"), b"not a pdf at all"), None);
+        assert_eq!(doc_kind(Path::new("paper.pdf"), b""), None);
+        assert_eq!(doc_kind(Path::new("paper.pdf"), b" %PDF-1.7"), None);
+        assert_eq!(doc_kind(Path::new("download"), pdf), Some(DocKind::Pdf));
+        assert_eq!(doc_kind(Path::new("scan.dat"), pdf), None);
+        // A PDF's bytes under an image's name are not a picture.
+        assert_eq!(doc_kind(Path::new("scan.png"), pdf), None);
     }
 
     #[test]

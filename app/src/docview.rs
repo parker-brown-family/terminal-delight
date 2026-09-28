@@ -2,7 +2,7 @@
 //!
 //! # What is here
 //!
-//! Images, Markdown, HTML and video are drawn. HTML is drawn by a page engine
+//! Images, Markdown, HTML, video and PDF are drawn. HTML is drawn by a page engine
 //! ([`engine`]) — today a snapshot taken by headless Chromium ([`snapshot`])
 //! — as tiles the view scrolls itself ([`page`]). The router asks
 //! [`html_ready`] before it places an HTML document, so a machine without
@@ -10,15 +10,17 @@
 //! a square that can never fill. A browser that exists but will not start is
 //! found only once the view is up; the view then says why in its body and
 //! emits [`CannotShow`], and the pane hands the file over. Video is played by
-//! libmpv ([`mpv`]), and the router asks [`video_ready`] the same way.
+//! libmpv ([`mpv`]), and the router asks [`video_ready`] the same way. A PDF's
+//! pages are drawn by poppler in child processes ([`poppler`]), and the router
+//! asks [`pdf_ready`].
 //!
-//! # One view, four backends
+//! # One view, five backends
 //!
 //! The view does what is the same for every document — the release hook, the
 //! file watcher, the canvases that measure it, the theme and the seat — and
 //! hands the rest to one [`backend::Backend`]: an image ([`image`]), a
-//! Markdown file ([`markdown_view`]), a page ([`page`]) or a video
-//! ([`video`]). What a backend
+//! Markdown file ([`markdown_view`]), a page ([`page`]), a video
+//! ([`video`]) or a PDF ([`pdf`]). What a backend
 //! cannot do is the trait's default, written once with the reason beside it,
 //! rather than a wildcard arm in every method that has to ask. See
 //! [`backend`] for the whole contract.
@@ -94,6 +96,8 @@ pub mod mpv;
 pub mod notes;
 pub mod notes_ui;
 pub mod page;
+pub mod pdf;
+pub mod poppler;
 pub mod pref;
 pub mod snapshot;
 pub mod video;
@@ -369,6 +373,37 @@ pub(crate) fn set_video_ready(cx: &mut App, answer: Result<(), mpv::Missing>) {
     cx.set_global(VideoAnswer(answer));
 }
 
+/// For the router, before it places a PDF: is there a poppler to draw it
+/// with? A cached PATH lookup, looked again after thirty seconds when
+/// nothing was found. Nothing runs.
+pub fn pdf_ready(cx: &mut App) -> Result<(), poppler::Missing> {
+    pdf_tools(cx).map(|_| ())
+}
+
+/// The tools a PDF is drawn with, or why there are none.
+pub fn pdf_tools(cx: &mut App) -> Result<poppler::Tools, poppler::Missing> {
+    #[cfg(test)]
+    if let Some(PdfAnswer(answer)) = cx.try_global::<PdfAnswer>() {
+        return answer.clone();
+    }
+    let _ = cx;
+    poppler::tools()
+}
+
+/// What [`pdf_tools`] answers in a test instead of looking on PATH, a gpui
+/// global for the reason [`VideoAnswer`] is one.
+#[cfg(test)]
+struct PdfAnswer(Result<poppler::Tools, poppler::Missing>);
+#[cfg(test)]
+impl Global for PdfAnswer {}
+
+/// Answer every "can a PDF be drawn?" with `answer` from now on, for a test:
+/// the machine running it may or may not have poppler.
+#[cfg(test)]
+pub(crate) fn set_pdf_tools(cx: &mut App, answer: Result<poppler::Tools, poppler::Missing>) {
+    cx.set_global(PdfAnswer(answer));
+}
+
 /// TD is quitting: close the browser now and remove its profile, rather
 /// than leaving it to the kernel's SIGKILL and the next launch's sweep.
 pub fn shutdown(cx: &mut App) {
@@ -547,6 +582,7 @@ impl DocumentView {
             DocKind::Markdown => Box::new(markdown::MarkdownDoc::new()),
             DocKind::Html => Box::new(page::PageDoc::new(&target.path, engine(cx))),
             DocKind::Video => Box::new(video::VideoDoc::open(&target.path, cx)),
+            DocKind::Pdf => Box::new(pdf::PdfDoc::open(&target.path, cx)),
         };
         cx.on_release(|view, cx| view.give_back(cx)).detach();
         // Markdown is re-read on a change, and starts its first read here; a
@@ -891,6 +927,15 @@ impl DocumentView {
         }
     }
 
+    /// A PDF's page count, `None` while it is being read, and how many of
+    /// its tiles are on the GPU. `None` for any other kind of document.
+    #[cfg(test)]
+    pub(crate) fn pdf_shown(&mut self) -> Option<(Option<usize>, usize)> {
+        self.backend
+            .downcast_mut::<pdf::PdfDoc>()
+            .map(|doc| doc.shown())
+    }
+
     /// Give back everything this view holds on the GPU. Runs from the release
     /// hook registered in [`Self::new`], once, as the view is dropped.
     fn give_back(&mut self, cx: &mut App) {
@@ -1053,7 +1098,36 @@ mod tests {
             ),
             ("docview/video.rs", strip(include_str!("docview/video.rs"))),
             ("docview/mpv.rs", strip(include_str!("docview/mpv.rs"))),
+            ("docview/pdf.rs", strip(include_str!("docview/pdf.rs"))),
+            (
+                "docview/poppler.rs",
+                strip(include_str!("docview/poppler.rs")),
+            ),
         ]
+    }
+
+    /// Every Rust file under `docview/` is in [`view_sources`]: the list is
+    /// written by hand, and a backend added later and left off it would be a
+    /// file the guards here never read. The PDF backend was, until this.
+    #[test]
+    fn every_document_view_file_is_scanned() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/docview");
+        let scanned: Vec<&str> = view_sources().iter().map(|(n, _)| *n).collect();
+        let mut seen = 0;
+        for entry in std::fs::read_dir(&dir).expect("src/docview") {
+            let name = entry.expect("an entry").file_name();
+            let name = name.to_string_lossy();
+            if !name.ends_with(".rs") {
+                continue;
+            }
+            seen += 1;
+            let want = format!("docview/{name}");
+            assert!(
+                scanned.contains(&want.as_str()),
+                "{want} is not in view_sources, so no guard here reads it"
+            );
+        }
+        assert!(seen >= 10, "found only {seen} files in {}", dir.display());
     }
 
     /// One file of [`view_sources`], by name.
@@ -1147,6 +1221,8 @@ mod tests {
             "docview/notes_ui.rs",
             "docview/page.rs",
             "docview/engine.rs",
+            "docview/pdf.rs",
+            "docview/poppler.rs",
         ] {
             let src = find(name);
             for w in writes {

@@ -32,6 +32,18 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ### Added
 
+- **A PDF opens in the floating square.** Alt+click on a `.pdf` path shows it
+  there as one column of pages, the widest fitted to the width, with the page
+  in view counted at the bottom right; Ctrl+Alt+click opens it in a pane beside.
+  It scrolls, drags, and zooms from 50% to 300% on the same controls a page and
+  a Markdown document use, panning sideways when zoomed past the width, and
+  stays sharp because poppler draws each page again at the size shown, a tile
+  of at most 2,048 pixels at a time and only where the view is looking. A PDF
+  artifact floats over the bench, `open_document` opens one beside an agent,
+  and a document's link to `paper.pdf#page=3` opens it on page 3. A PDF rewritten while it is
+  open is read again on the page you were reading. poppler runs as a child
+  process, found when the first PDF opens; without it, the file goes to the
+  desktop with a chip saying why.
 - **A video plays in the floating square.** Alt+click on an `.mp4`, `.mov`,
   `.webm`, `.mkv`, `.m4v`, `.ogv` or `.avi` path plays it there, looping, with
   sound; Ctrl+Alt+click plays it in a pane beside, where Space, ← → and M pause,
