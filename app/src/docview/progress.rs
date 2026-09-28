@@ -149,15 +149,24 @@ pub fn rail(r: Reading, view_h: f32, th: &Theme) -> Option<AnyElement> {
             .border_1()
             .border_color(rim);
         // The view's own blocks cast light, as a lit phosphor does, so where
-        // the reader is stands out from what they have read.
+        // the reader is stands out from what they have read. That light rides
+        // the phosphor gauge like every other; turned all the way down, the
+        // block's own fill and rim still say where the reader is.
         match b {
-            Block::Here => block.shadow(vec![BoxShadow {
-                color: lit.alpha(0.6),
-                offset: point(px(0.), px(0.)),
-                blur_radius: px(6.),
-                spread_radius: px(0.),
-                inset: false,
-            }]),
+            Block::Here => block.shadow(
+                crate::theme::phosphor(
+                    th.grade.phosphor,
+                    BoxShadow {
+                        color: lit.alpha(0.6),
+                        offset: point(px(0.), px(0.)),
+                        blur_radius: px(6.),
+                        spread_radius: px(0.),
+                        inset: false,
+                    },
+                )
+                .into_iter()
+                .collect(),
+            ),
             _ => block,
         }
     });
