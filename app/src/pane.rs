@@ -300,8 +300,9 @@ fn alt_hint(
 ) -> Option<CopyHint> {
     let is_command = !alt_screen && line.is_some_and(|(text, _, _)| is_copyable_command(text));
     let does = crate::docopen::alt_click(alt_screen, is_command, doc)?;
+    // The margin an agent draws its reply behind is not part of the command.
     let (text, first_paint, last_paint) = match line {
-        Some((text, first, last)) if !alt_screen => (text.to_string(), first, last),
+        Some((text, first, last)) if !alt_screen => (text.trim().to_string(), first, last),
         _ => (String::new(), pointer_row, pointer_row),
     };
     Some(CopyHint {
@@ -905,14 +906,15 @@ fn reflow_wrapped_copy_spans(rows: &[&str], cols: usize) -> Vec<LogicalLine> {
     }
     let mut out: Vec<LogicalLine> = Vec::new();
     // The logical line under construction: its text, the char-width of the last
-    // raw row appended (the row the wrap test is applied against), and the span
-    // of input rows it has consumed so far.
-    let mut cur: Option<(String, usize, usize, usize)> = None;
+    // raw row appended (the row the wrap test is applied against), that row's
+    // margin, and the span of input rows it has consumed so far.
+    let mut cur: Option<(String, usize, usize, usize, usize)> = None;
     for (i, raw) in rows.iter().enumerate() {
         let raw = *raw;
         let row_len = raw.chars().count();
+        let indent = raw.len() - raw.trim_start_matches(' ').len();
         if raw.trim().is_empty() {
-            if let Some((text, _, first, last)) = cur.take() {
+            if let Some((text, _, _, first, last)) = cur.take() {
                 out.push(LogicalLine { text, first, last });
             }
             out.push(LogicalLine {
@@ -923,29 +925,39 @@ fn reflow_wrapped_copy_spans(rows: &[&str], cols: usize) -> Vec<LogicalLine> {
             continue;
         }
         match cur.take() {
-            None => cur = Some((raw.to_string(), row_len, i, i)),
-            Some((mut acc, prev_len, first, last)) => match wrap_join(&acc, prev_len, raw, cols) {
-                WrapJoin::Glue => {
-                    acc.push_str(raw);
-                    cur = Some((acc, row_len, first, i));
+            None => cur = Some((raw.to_string(), row_len, indent, i, i)),
+            Some((mut acc, prev_len, prev_indent, first, last)) => {
+                // Claude Code starts every row of a reply two columns in. An
+                // indent that two rows share is a margin, not structure, so the
+                // pair is judged as if it were not there; an indent that differs
+                // from the row above is still structure and still breaks. Every
+                // joined row shares the margin, so `acc` opens with it too.
+                let m = if indent == prev_indent { indent } else { 0 };
+                let joined = wrap_join(&acc[m..], prev_len - m, &raw[m..], cols.saturating_sub(m));
+                let raw = &raw[m..];
+                match joined {
+                    WrapJoin::Glue => {
+                        acc.push_str(raw);
+                        cur = Some((acc, row_len, indent, first, i));
+                    }
+                    WrapJoin::Space => {
+                        acc.push(' ');
+                        acc.push_str(raw);
+                        cur = Some((acc, row_len, indent, first, i));
+                    }
+                    WrapJoin::Break => {
+                        out.push(LogicalLine {
+                            text: acc,
+                            first,
+                            last,
+                        });
+                        cur = Some((rows[i].to_string(), row_len, indent, i, i));
+                    }
                 }
-                WrapJoin::Space => {
-                    acc.push(' ');
-                    acc.push_str(raw);
-                    cur = Some((acc, row_len, first, i));
-                }
-                WrapJoin::Break => {
-                    out.push(LogicalLine {
-                        text: acc,
-                        first,
-                        last,
-                    });
-                    cur = Some((raw.to_string(), row_len, i, i));
-                }
-            },
+            }
         }
     }
-    if let Some((text, _, first, last)) = cur.take() {
+    if let Some((text, _, _, first, last)) = cur.take() {
         out.push(LogicalLine { text, first, last });
     }
     out
@@ -12609,6 +12621,42 @@ mod tests {
         // a box-drawing rule between two full rows is never absorbed.
         let ruled = "a full width heading line here\n──────────────────────────────\nbody paragraph text follows on";
         assert_eq!(reflow_wrapped_copy(ruled, cols), ruled);
+    }
+
+    #[test]
+    fn reflow_reads_a_margin_two_rows_share_as_a_margin_and_not_as_structure() {
+        // Claude Code's rows, 40 wide: a command broken between words, then a
+        // path broken mid-word at the very edge.
+        let cols = 40;
+        let rows = [
+            "  cargo test --locked -- disk_decides",
+            "  two_links_meet wears_colour",
+            "  see /tmp/a-long-directory/and-a-longer",
+            "  -file-name.md now",
+        ];
+        assert_eq!(rows[2].len(), cols, "the third row must fill the pane");
+        let lines = reflow_wrapped_copy_spans(&rows, cols);
+        let texts: Vec<&str> = lines.iter().map(|l| l.text.as_str()).collect();
+        assert_eq!(
+            texts,
+            [
+                "  cargo test --locked -- disk_decides two_links_meet wears_colour",
+                "  see /tmp/a-long-directory/and-a-longer-file-name.md now",
+            ],
+            "the margin opens the line once and is gone from every row joined to it"
+        );
+        assert_eq!((lines[1].first, lines[1].last), (2, 3));
+
+        // Indented deeper than the row above is still structure: a code block
+        // under a paragraph, both behind the same margin.
+        let code = [
+            "  this prose line runs right up to edge",
+            "        let x = code_block();",
+        ];
+        assert_eq!(reflow_wrapped_copy_spans(&code, cols).len(), 2);
+        // And two rows behind one margin that the width did not break stay two.
+        let short = ["  git status", "  git log --oneline -3"];
+        assert_eq!(reflow_wrapped_copy_spans(&short, cols).len(), 2);
     }
 
     #[test]

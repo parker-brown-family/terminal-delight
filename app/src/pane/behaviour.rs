@@ -145,6 +145,129 @@ fn alt_click_on_a_command_line_copies_it_and_opens_nothing(cx: &mut TestAppConte
     assert!(!pane.read(|v| v.has_selection()));
 }
 
+/// `text` laid out the way Claude Code lays out a reply in a pane `cols` wide:
+/// two columns of margin on every row, broken between words.
+fn claude_rows(text: &str, cols: usize) -> Vec<String> {
+    let width = cols - 2;
+    let mut rows = Vec::new();
+    let mut row = String::new();
+    for word in text.split(' ') {
+        if !row.is_empty() && row.len() + 1 + word.len() > width {
+            rows.push(std::mem::take(&mut row));
+        }
+        if !row.is_empty() {
+            row.push(' ');
+        }
+        row.push_str(word);
+        assert!(row.len() <= width, "a word wider than the row: {word}");
+    }
+    rows.push(row);
+    rows.into_iter().map(|r| format!("  {r}")).collect()
+}
+
+/// A pane that has printed `rows` as they are, then `ready`.
+fn pane_printing(cx: &mut TestAppContext, rows: &[String]) -> Pane {
+    let quoted: Vec<String> = rows.iter().map(|r| format!("'{r}'")).collect();
+    let mut pane = Pane::running(
+        cx,
+        &format!("printf '%s\\n' {} 'ready'; exec cat", quoted.join(" ")),
+    );
+    pane.wait_for("ready");
+    pane
+}
+
+/// A command Claude Code wrapped at the pane's width, behind its margin, is
+/// copied whole by an Alt+click on either row: one line, one space where the
+/// break was.
+#[gpui::test]
+fn alt_click_on_a_command_claude_wrapped_copies_it_whole(cx: &mut TestAppContext) {
+    let command =
+        "cargo test --locked --bin terminal-delight -- a_link_claude_broke_behind_its_margin \
+                   a_soft_wrapped_url the_disk_decides two_links_that_meet wears_the_link_colour";
+    let rows = claude_rows(command, 100);
+    assert_eq!(rows.len(), 2, "the fixture must wrap once: {rows:?}");
+    let mut pane = pane_printing(cx, &rows);
+
+    for word in ["--locked", "two_links_that_meet"] {
+        let at = pane.point_at(word);
+        pane.click(at, Pane::alt());
+        assert_eq!(
+            pane.clipboard().as_deref(),
+            Some(command),
+            "alt+click on {word:?} copies the whole command"
+        );
+    }
+    assert_eq!(pane.float_path(), None, "a copy opens no square");
+    assert_eq!(desktop_launches(), Vec::<String>::new());
+}
+
+/// A command whose last word Claude cut at the pane's edge is copied with the
+/// word whole: the two halves meet with no space between them.
+#[gpui::test]
+fn alt_click_on_a_command_cut_mid_word_copies_the_word_whole(cx: &mut TestAppContext) {
+    let path = format!(
+        "/home/parker/Work/terminal-delight/reports/{}.html",
+        "a-report-name".repeat(6)
+    );
+    let command = format!("ls -la {path}");
+    let (head, tail) = command.split_at(98);
+    let rows = [format!("  {head}"), format!("  {tail}")];
+    let mut pane = pane_printing(cx, &rows);
+
+    let at = pane.point_at("ls -la");
+    pane.click(at, Pane::alt());
+    assert_eq!(pane.clipboard().as_deref(), Some(command.as_str()));
+}
+
+/// A one-row command Claude indented copies without its margin.
+#[gpui::test]
+fn alt_click_on_an_indented_command_copies_it_without_the_margin(cx: &mut TestAppContext) {
+    let command = "cargo clippy --locked -- -D warnings";
+    let mut pane = pane_printing(
+        cx,
+        &[format!("  {command}"), "  and a sentence after it.".into()],
+    );
+    let at = pane.point_at("clippy");
+    pane.click(at, Pane::alt());
+    assert_eq!(pane.clipboard().as_deref(), Some(command));
+}
+
+/// A `file://` link Claude Code cut at the pane's edge and carried on behind
+/// its margin opens whole from its second half: Alt+click floats the picture,
+/// Ctrl+click hands the whole link to the desktop.
+#[gpui::test]
+fn a_link_claude_wrapped_opens_whole_from_its_second_half(cx: &mut TestAppContext) {
+    let dir =
+        Scratch::new("claude-wrapped-link-long-enough-that-its-path-crosses-the-edge-of-the-pane");
+    let png = dir.fixture(PICTURE, "shot.png");
+    let png = png.to_str().expect("a UTF-8 temp path").to_string();
+    let url = format!("file://{png}");
+    let label = "Target: ";
+    let cut = 98 - label.len();
+    assert!(url.len() > cut, "the link must cross the edge: {url}");
+    let rows = [
+        format!("  {label}{}", &url[..cut]),
+        format!("  {}", &url[cut..]),
+        "  What it is: a picture".to_string(),
+    ];
+    let mut pane = pane_printing(cx, &rows);
+    let second_half = &url[cut..];
+
+    let at = pane.point_at(second_half);
+    let got = launched_by(&mut pane, at, held(false, true, false, false));
+    assert!(
+        got.len() == 1 && got[0].ends_with(&format!("xdg-open {url}")),
+        "ctrl+click on the second half opens the whole link: {got:?}"
+    );
+    let at = pane.point_at(second_half);
+    pane.click(at, Pane::alt());
+    assert_eq!(
+        pane.float_path().as_deref(),
+        Some(std::path::Path::new(&png)),
+        "alt+click on the second half floats the picture"
+    );
+}
+
 /// A pane that has printed the fixture brief's path and a picture's, with a
 /// page engine that lays the brief out without a browser.
 fn pane_showing_a_brief(cx: &mut TestAppContext, tag: &str) -> (Pane, Scratch, String, String) {
