@@ -274,15 +274,16 @@ pub fn give_back(images: Vec<Arc<RenderImage>>, cx: &mut App) {
 
 /// Up while someone still wants what a task is fetching; lowered when the
 /// task holding it is dropped, so work finishing on the background pool can
-/// tell it arrived for nobody.
-struct Wanted(Arc<AtomicBool>);
+/// tell it arrived for nobody. A PDF's tiles hold one each, and poppler is
+/// stopped mid-page when it drops.
+pub(super) struct Wanted(Arc<AtomicBool>);
 
 impl Wanted {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self(Arc::new(AtomicBool::new(true)))
     }
 
-    fn flag(&self) -> Arc<AtomicBool> {
+    pub(super) fn flag(&self) -> Arc<AtomicBool> {
         self.0.clone()
     }
 }

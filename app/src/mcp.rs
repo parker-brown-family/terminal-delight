@@ -916,7 +916,8 @@ pub fn open_outcome(reply: &str) -> OpenOutcome {
 /// on. Absolute, as a path or a `file://` URL — a relative path would resolve
 /// against the TERMINAL's directory rather than the agent's, the reason
 /// `declare_deliverable` refuses one — and a file TD can draw: Markdown, HTML,
-/// an image or a video. Reads the file's first sixteen bytes and nothing else.
+/// an image, a video or a PDF. Reads the file's first sixteen bytes and
+/// nothing else.
 pub fn validate_open_path(path: &str) -> Result<crate::docopen::DocTarget, String> {
     let path = path.trim();
     if path.is_empty() {
@@ -947,7 +948,7 @@ pub fn validate_open_path(path: &str) -> Result<crate::docopen::DocTarget, Strin
     };
     crate::docopen::drawable_document(&file).ok_or_else(|| {
         format!(
-            "{} is not a file TD can draw — Markdown, HTML, an image or a video, and it \
+            "{} is not a file TD can draw — Markdown, HTML, an image, a video or a PDF, and it \
              has to exist",
             file.display()
         )
@@ -1266,9 +1267,10 @@ fn tool_defs() -> Value {
             "name": "open_document",
             "description":
                 "Open a document IN TERMINAL DELIGHT, beside you — the page, \
-                 brief, picture or clip you just made, so the person reads it next to \
-                 your prompt instead of going to look for it. `path` is an \
-                 absolute path or a file:// URL to Markdown, HTML, an image or a video. \
+                 brief, picture, clip or PDF you just made, so the person reads it next \
+                 to your prompt instead of going to look for it. `path` is an \
+                 absolute path or a file:// URL to Markdown, HTML, an image, a video or \
+                 a PDF. \
                  `placement` \"beside\" (the default) opens it in a pane of its \
                  own to the right of yours, exactly as Ctrl+Alt+click on the \
                  path does: a pane in your tab already showing the file is \
@@ -1280,7 +1282,7 @@ fn tool_defs() -> Value {
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "path": { "type": "string", "description": "absolute path (/home/you/report.html) or file:// URL of a Markdown, HTML, image or video file" },
+                    "path": { "type": "string", "description": "absolute path (/home/you/report.html) or file:// URL of a Markdown, HTML, image, video or PDF file" },
                     "placement": { "type": "string", "enum": ["beside", "here"], "description": "\"beside\" (default): a pane of its own beside yours; \"here\": floating over your own pane" }
                 },
                 "required": ["path"],

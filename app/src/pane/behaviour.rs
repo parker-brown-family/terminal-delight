@@ -824,6 +824,109 @@ fn a_video_nothing_can_play_goes_to_the_desktop_and_says_why(cx: &mut TestAppCon
     assert_eq!(*asked.borrow(), Vec::<Asked>::new(), "no pane is asked for");
 }
 
+/// A PDF with no poppler to draw it goes to the desktop before any square or
+/// pane is made, and the pane says why on the row that was clicked, as a video
+/// with no libmpv does. A split asked for is refused the same way.
+#[gpui::test]
+fn a_pdf_nothing_can_draw_goes_to_the_desktop_and_says_why(cx: &mut TestAppContext) {
+    let dir = Scratch::new("no-poppler");
+    let pdf = dir.join("paper.pdf");
+    std::fs::write(&pdf, crate::docview::poppler::two_page_pdf()).expect("write");
+    let pdf = pdf.to_str().expect("UTF-8").to_string();
+    let mut pane = Pane::running(cx, &format!("printf '%s\\n' 'pdf {pdf}' 'ready'; exec cat"));
+    pane.pdf_tools(Err(crate::docview::poppler::Missing::NotFound("pdfinfo")));
+    pane.wait_for("ready");
+    let asked = pane.asks_beside();
+
+    let at = pane.point_at(&pdf);
+    let row = pane.painted_row(at);
+    let got = launched_by(&mut pane, at, Pane::alt());
+    assert!(
+        got.len() == 1 && got[0].ends_with(&format!("xdg-open {pdf}")),
+        "the PDF goes to the desktop: {got:?}"
+    );
+    assert_eq!(pane.float_path(), None, "and no square is made for it");
+    let (text, on) = pane
+        .read(|v| v.said.as_ref().map(|s| (s.text.clone(), s.row)))
+        .expect("the pane says why");
+    assert!(text.contains("no poppler"), "{text}");
+    assert_eq!(on, Some(row), "on the row that was clicked");
+
+    let got = launched_by(&mut pane, at, held(true, true, false, false));
+    assert_eq!(got.len(), 1, "a split is refused the same way: {got:?}");
+    assert_eq!(*asked.borrow(), Vec::<Asked>::new(), "no pane is asked for");
+}
+
+/// Alt+click on a PDF's path floats it over the pane, read by the real
+/// poppler: both its pages known, and the page in view drawn. Closing the
+/// square drops the view and every tile with it; nothing went to the desktop.
+///
+/// Runs wherever poppler is installed, and under `CI`, which installs it,
+/// fails rather than passing unseen when it is missing.
+#[gpui::test]
+fn a_pdf_alt_clicked_floats_as_its_pages(cx: &mut TestAppContext) {
+    let tools = match crate::docview::poppler::locate(std::env::var_os("PATH").as_deref()) {
+        Ok(tools) => tools,
+        Err(why) if std::env::var_os("CI").is_none() => {
+            eprintln!("skipped: {}", why.reason());
+            return;
+        }
+        Err(why) => panic!("{}", why.reason()),
+    };
+    let dir = Scratch::new("pdf-square");
+    let pdf = dir.join("paper.pdf");
+    std::fs::write(&pdf, crate::docview::poppler::two_page_pdf()).expect("write");
+    let pdf = pdf.to_str().expect("UTF-8").to_string();
+    let mut pane = Pane::running(cx, &format!("printf '%s\\n' 'pdf {pdf}' 'ready'; exec cat"));
+    pane.pdf_tools(Ok(tools));
+    pane.wait_for("ready");
+    let before = desktop_launches().len();
+
+    let at = pane.point_at(&pdf);
+    pane.click(at, Pane::alt());
+    assert_eq!(
+        pane.float_path().as_deref(),
+        Some(std::path::Path::new(&pdf))
+    );
+    let view = pane.float_view().expect("a square");
+    let (pages, tiles) = pane.pdf_once(&view, |pages, tiles| pages == Some(2) && tiles >= 1);
+    assert_eq!(pages, Some(2), "both pages read");
+    assert!(tiles >= 1, "the page in view is drawn");
+    assert_eq!(
+        pane.scroll_of(&view),
+        Some(0.0),
+        "laid out at the top, so a restart can keep the place"
+    );
+
+    // A document's link to `#page=2` of it opens on the second page.
+    view.update(pane.cx, |_, cx| {
+        cx.emit(crate::docview::FollowLink {
+            target: pdf.clone(),
+            fragment: Some("page=2".into()),
+        })
+    });
+    pane.redraw();
+    let view = pane.float_view().expect("a square");
+    pane.pdf_once(&view, |pages, tiles| pages == Some(2) && tiles >= 1);
+    let top = pane.scroll_of(&view).expect("laid out");
+    assert!(top > 0.3, "on the second page: {top}");
+
+    let weak = view.downgrade();
+    drop(view);
+    pane.keys("escape");
+    pane.redraw();
+    assert_eq!(pane.float_path(), None, "Escape closes the square");
+    assert!(
+        weak.upgrade().is_none(),
+        "and the view, with its tiles, is gone"
+    );
+    assert_eq!(
+        desktop_launches().len(),
+        before,
+        "nothing went to the desktop"
+    );
+}
+
 /// An HTML file with nothing to draw it goes to the desktop before any square
 /// or pane is made, and the pane says why where it was clicked, in a chip only
 /// its own timer takes down. A link to one from a document leaves the document

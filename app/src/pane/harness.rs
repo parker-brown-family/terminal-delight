@@ -439,6 +439,34 @@ impl Pane {
             .update(|_, cx| crate::docview::set_video_ready(cx, answer));
     }
 
+    /// Answer every "can a PDF be drawn?" with `answer` from now on.
+    pub(super) fn pdf_tools(
+        &mut self,
+        answer: Result<crate::docview::poppler::Tools, crate::docview::poppler::Missing>,
+    ) {
+        self.cx
+            .update(|_, cx| crate::docview::set_pdf_tools(cx, answer));
+    }
+
+    /// Draw frames until the PDF in `view` holds what `done` waits for, or
+    /// [`PATIENCE`] runs out, and answer what it holds then: its page count,
+    /// `None` while it is still being read, and the tiles on the GPU.
+    pub(super) fn pdf_once(
+        &mut self,
+        view: &Entity<crate::docview::DocumentView>,
+        done: impl Fn(Option<usize>, usize) -> bool,
+    ) -> (Option<usize>, usize) {
+        let deadline = Instant::now() + PATIENCE;
+        loop {
+            self.redraw();
+            let now = view.update(self.cx, |v, _| v.pdf_shown()).expect("a PDF");
+            if done(now.0, now.1) || Instant::now() > deadline {
+                return now;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
     /// What the document on the pane shows of a brief's notes: the control
     /// socket's `doc notes`.
     pub(super) fn doc_notes(&mut self) -> Result<serde_json::Value, String> {
