@@ -14,7 +14,10 @@ const BLINKER: &[u8] = include_bytes!("../assets/img/blinker-only.png");
 /// headroom over the ~18px the mother bar draws it at. A raster rather than the
 /// SVG because gpui paints an SVG as a single-colour MASK, and this mark is
 /// three phosphor colours in a bezel: as a mask it is a filled rounded square.
-const MARK: &[u8] = include_bytes!("../assets/img/logo-mark.png");
+///
+/// Also the logo a new install's panes wear: [`crate::dirlogo::seed_if_absent`]
+/// writes these bytes beside the config it seeds.
+pub(crate) const MARK: &[u8] = include_bytes!("../assets/img/logo-mark.png");
 
 /// Write an embedded asset to the runtime dir once (size-checked, so a
 /// truncated write from a crashed run heals) and hand back the path.

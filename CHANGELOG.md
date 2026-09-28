@@ -9,6 +9,13 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ### Changed
 
+- **A new install's panes wear Terminal Delight's own mark.** With no
+  `dir-logos.toml` at all, the first start writes one mapping `/` to the app's
+  mark, saved as `~/.config/terminal-delight/logos/terminal-delight.png`. Every
+  pane without a nearer mapping inherits it, where it used to show the bare
+  `＋ logo` placeholder. An existing file is never touched, even an empty one:
+  removing the default with ✕ in the logo picker leaves an empty map, and it
+  stays empty across restarts.
 - **The terminal emulator core is rio-vt, the core inside the Rio terminal.**
   alacritty_terminal did the emulation from the start; it is still built with
   `--features core-alacritty`, as a fallback and as the oracle the whole suite
