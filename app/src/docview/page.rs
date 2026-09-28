@@ -62,6 +62,7 @@ use super::engine::{
 };
 use super::notes::{self, NotesRead};
 use super::notes_ui::{self, LayerPress, Mark, MarkHit, NotesLayer, Said};
+use super::progress::Reading;
 use super::snapshot::EXTRACT_VERSION;
 use super::{resolve_link, DocumentView, FileStamp, FollowLink, LinkTarget};
 use crate::docopen::DocScroll;
@@ -1696,6 +1697,15 @@ impl PageDoc {
         })
     }
 
+    /// Which part of the page the view shows, in the page's CSS pixels.
+    /// `None` before it has been laid out, and before the view is measured.
+    pub fn reading(&self) -> Option<Reading> {
+        let r = self.current.as_ref()?;
+        let m = self.view?;
+        let view_css = f32::from(m.size.height) / self.stretch(r);
+        Reading::of(self.scroll_css, view_css, r.layout.height_css)
+    }
+
     /// Where the open dialog's picture sits in the view, and logical px per
     /// dialog CSS px.
     fn dialog_frame(&self) -> Option<(Bounds<Pixels>, f32)> {
@@ -2242,6 +2252,10 @@ impl Backend for PageDoc {
 
     fn scroll(&self) -> Option<DocScroll> {
         PageDoc::scroll(self)
+    }
+
+    fn reading(&self) -> Option<Reading> {
+        PageDoc::reading(self)
     }
 
     fn restore_scroll(&mut self, at: DocScroll, cx: &mut Context<DocumentView>) {

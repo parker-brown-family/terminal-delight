@@ -99,6 +99,7 @@ pub mod page;
 pub mod pdf;
 pub mod poppler;
 pub mod pref;
+pub mod progress;
 pub mod snapshot;
 pub mod video;
 
@@ -953,6 +954,12 @@ impl Render for DocumentView {
         self.links.borrow_mut().clear();
         let (backend, view) = self.backend_and_view();
         let body = backend.element(&view, window, &th);
+        // Asked after the body, which settles this frame's scroll first.
+        let rail = self
+            .backend
+            .reading()
+            .zip(self.view_h())
+            .and_then(|(r, view_h)| progress::rail(r, view_h, &th));
         // Measured, not listened to: a canvas records the box this view was
         // given and the scale it paints at, and asks for one more frame when
         // either changed, so a zoom placed against a stale size corrects
@@ -992,6 +999,7 @@ impl Render for DocumentView {
             .overflow_hidden()
             .child(measure)
             .child(body)
+            .children(rail)
             .child(drawn)
     }
 }
@@ -1087,6 +1095,10 @@ mod tests {
             ("docview/cdp.rs", strip(include_str!("docview/cdp.rs"))),
             ("docview/cache.rs", strip(include_str!("docview/cache.rs"))),
             ("docview/pref.rs", strip(include_str!("docview/pref.rs"))),
+            (
+                "docview/progress.rs",
+                strip(include_str!("docview/progress.rs")),
+            ),
             ("docview/notes.rs", strip(include_str!("docview/notes.rs"))),
             (
                 "docview/md_notes.rs",

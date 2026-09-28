@@ -1381,9 +1381,10 @@ impl NotesLayer {
                     .child(said.text().to_string()),
             );
         }
+        // Clear of the reading rail down the right edge.
         div()
             .absolute()
-            .right(px(10.))
+            .right(px(super::progress::GUTTER))
             .bottom(px(10.))
             .max_w(px(900.))
             .child(row)

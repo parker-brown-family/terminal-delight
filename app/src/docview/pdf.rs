@@ -59,6 +59,7 @@ use super::backend::{Backend, Drawn};
 use super::image::{ImageZoom, ZoomStep};
 use super::page::{give_back, snap_offset, Measured, Wanted};
 use super::poppler::{self, PageBox, Picture, Refused, Region, Tools};
+use super::progress::{Reading, GUTTER};
 use super::{DocumentView, FileStamp};
 use crate::docopen::DocScroll;
 use crate::theme::Theme;
@@ -802,7 +803,7 @@ impl Backend for PdfDoc {
         let counter = page_at(col, self.top + vh / 2.0).map(|p| {
             div()
                 .absolute()
-                .right(px(8.))
+                .right(px(GUTTER))
                 .bottom(px(8.))
                 .px(px(7.))
                 .py(px(2.))
@@ -936,6 +937,12 @@ impl Backend for PdfDoc {
         Some(DocScroll {
             top: (self.top / col.height.max(1.0)).clamp(0.0, 1.0),
         })
+    }
+
+    fn reading(&self) -> Option<Reading> {
+        let (col, ..) = self.laid.as_ref()?;
+        let (size, _) = self.frame?;
+        Reading::of(self.top, f32::from(size.height), col.height)
     }
 
     fn restore_scroll(&mut self, at: DocScroll, cx: &mut Context<DocumentView>) {

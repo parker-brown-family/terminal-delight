@@ -37,6 +37,7 @@ use super::markdown::{self, MarkdownDoc, NOTE_GUTTER, PAD};
 use super::md_notes;
 use super::notes_ui::{self, LayerPress, MarkHit, NotesLayer, Said, BUTTON_CSS};
 use super::page::PageToView;
+use super::progress::Reading;
 use super::{
     image, resolve_link, DocumentView, FileStamp, FollowLink, LinkTarget, NotesCommand, SendNotes,
 };
@@ -342,6 +343,10 @@ impl Backend for MarkdownDoc {
 
     fn scroll(&self) -> Option<DocScroll> {
         MarkdownDoc::scroll(self)
+    }
+
+    fn reading(&self) -> Option<Reading> {
+        MarkdownDoc::reading(self)
     }
 
     fn restore_scroll(&mut self, at: DocScroll, cx: &mut Context<DocumentView>) {
