@@ -480,7 +480,7 @@ impl gpui::EventEmitter<OpenDoc> for TerminalView {}
 /// A shift-clickable target lifted out of the grid: a web/file URL handed
 /// straight to the system opener, or a filesystem path resolved against the
 /// pane's cwd before opening.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 enum Link {
     Url(String),
     Path(String),
@@ -603,7 +603,13 @@ fn link_at(line: &str, col: usize) -> Option<Link> {
     while end + 1 < chars.len() && !chars[end + 1].is_whitespace() {
         end += 1;
     }
-    let tok = trim_link_delims(&chars[start..=end].iter().collect::<String>());
+    link_of_token(&chars[start..=end].iter().collect::<String>())
+}
+
+/// Classify one whitespace-free token as a link: trim delimiters, then a URL
+/// (known scheme or `www.`) or a filesystem path (`/`, `~/`, `./`, `..`).
+fn link_of_token(raw: &str) -> Option<Link> {
+    let tok = trim_link_delims(raw);
     if tok.is_empty() {
         return None;
     }
@@ -629,61 +635,203 @@ fn link_at(line: &str, col: usize) -> Option<Link> {
     None
 }
 
-/// Does grid row `r` flow into `r+1` as one logical token? Two signals: the
-/// terminal's own soft-wrap (`wraps[r]`, the `WRAPLINE` flag), OR a *width-wrap*
-/// — an app (Claude Code, and our own Links tables) that hard-wraps a long
-/// URL/path to the pane width emits real rows with NO `WRAPLINE`, but the token
-/// runs edge-to-edge: row `r` has no trailing space (its last cell is filled)
-/// and row `r+1` begins with a non-space char. Links/paths carry no interior
-/// spaces, so an edge-filled boundary is exactly a mid-token break. A row that
-/// wrapped at a word boundary keeps its trailing space, so prose never trips this.
-fn row_flows_into_next(rows: &[Vec<char>], wraps: &[bool], r: usize) -> bool {
-    if r + 1 >= rows.len() {
-        return false;
+/// The column where a token broken at the end of grid row `r` carries on in row
+/// `r+1`, or `None` when nothing runs across that boundary.
+///
+/// Row `r` must be filled to its last cell: a token that stopped short of the
+/// edge was not broken by width. Then there are two ways a line gets broken. The
+/// terminal's own soft wrap sets `WRAPLINE` (`wraps[r]`) and carries on at column
+/// 0, so a space there means the token ended. An app that breaks its own lines
+/// sets no flag and carries on at its margin: Claude Code indents every row of a
+/// reply by two columns, so the second half of a path it broke begins at the
+/// first cell with ink in it, never at column 0. Reading column 0 there is why a
+/// wrapped link in a Claude pane opened as its first half, or not at all.
+fn continuation_start(rows: &[Vec<char>], wraps: &[bool], r: usize) -> Option<usize> {
+    let next = rows.get(r + 1)?;
+    if !rows[r].last().is_some_and(|c| !c.is_whitespace()) {
+        return None;
     }
     if wraps.get(r).copied().unwrap_or(false) {
-        return true;
+        return next
+            .first()
+            .is_some_and(|c| !c.is_whitespace())
+            .then_some(0);
     }
-    let filled = rows[r].last().is_some_and(|c| !c.is_whitespace());
-    let continues = rows[r + 1].first().is_some_and(|c| !c.is_whitespace());
-    filled && continues
+    next.iter().position(|c| !c.is_whitespace())
 }
 
-/// Stitch a click on a wrapped row back into its full logical line. A terminal
-/// wraps a long URL/path mid-token with no space; the break is carried either by
-/// the `WRAPLINE` flag (`wraps[r]`) or, for app-hard-wrapped output, by the token
-/// running edge-to-edge (see `row_flows_into_next`). We walk up while the row
-/// above flows into us and down while we keep flowing, concatenate those rows,
-/// and return the stitched line together with the absolute column of the original
-/// click within it — so `link_at` sees the whole token instead of a truncated
-/// fragment. Pure: testable without a live grid.
-fn stitch_wrapped_line(
+/// The whitespace-free run of `row` that holds column `col`, as `start..end`.
+fn token_span(row: &[char], col: usize) -> Option<(usize, usize)> {
+    if !row.get(col).is_some_and(|c| !c.is_whitespace()) {
+        return None;
+    }
+    let mut start = col;
+    while start > 0 && !row[start - 1].is_whitespace() {
+        start -= 1;
+    }
+    let mut end = col + 1;
+    while end < row.len() && !row[end].is_whitespace() {
+        end += 1;
+    }
+    Some((start, end))
+}
+
+/// One reading of the link under a click, and the grid rows it covers.
+#[derive(Debug, Clone, PartialEq)]
+struct LinkSpan {
+    link: Link,
+    first: usize,
+    last: usize,
+}
+
+/// Every reading of the link under a click on grid row `vrow`, column `vcol`,
+/// the most-joined first. Pure: testable without a live grid.
+///
+/// The clicked token is extended upward while it begins where its row carries
+/// on from the row above (see [`continuation_start`]), and downward while it
+/// runs to its row's last cell and the next row carries it on. Each half is only
+/// the token at that edge, never the whole row, so a margin, a `Target:` label
+/// or the prose after the link stays out of it.
+///
+/// Every join is offered rather than the longest alone, because the width alone
+/// cannot tell a path broken at the edge from a path that ended exactly at the
+/// edge with the next word starting the row below. [`pick_link`] asks the disk.
+/// A join that holds two schemes is two links that happened to meet, and is
+/// dropped here.
+fn wrapped_link_candidates(
     rows: &[Vec<char>],
     wraps: &[bool],
     vrow: usize,
     vcol: usize,
-) -> (String, usize) {
-    if rows.is_empty() {
-        return (String::new(), vcol);
+) -> Vec<LinkSpan> {
+    let Some((start, end)) = rows.get(vrow).and_then(|row| token_span(row, vcol)) else {
+        return Vec::new();
+    };
+    let text = |r: usize, a: usize, b: usize| rows[r][a..b].iter().collect::<String>();
+    // The halves above, nearest first.
+    let mut ups: Vec<String> = Vec::new();
+    let (mut r, mut from) = (vrow, start);
+    while r > 0 && continuation_start(rows, wraps, r - 1) == Some(from) {
+        let above = &rows[r - 1];
+        let Some((a, b)) = token_span(above, above.len() - 1) else {
+            break;
+        };
+        ups.push(text(r - 1, a, b));
+        (r, from) = (r - 1, a);
     }
-    let vrow = vrow.min(rows.len() - 1);
-    // first row of the logical line: walk up while the row above flows into us
-    let mut top = vrow;
-    while top > 0 && row_flows_into_next(rows, wraps, top - 1) {
-        top -= 1;
+    // The halves below, nearest first.
+    let mut downs: Vec<String> = Vec::new();
+    let (mut r, mut to) = (vrow, end);
+    while to == rows[r].len() {
+        let Some(c) = continuation_start(rows, wraps, r) else {
+            break;
+        };
+        let Some((a, b)) = token_span(&rows[r + 1], c) else {
+            break;
+        };
+        downs.push(text(r + 1, a, b));
+        (r, to) = (r + 1, b);
     }
-    // last row: walk down while the current row flows into the next
-    let mut bot = vrow;
-    while bot + 1 < rows.len() && row_flows_into_next(rows, wraps, bot) {
-        bot += 1;
+    let middle = text(vrow, start, end);
+    let mut out: Vec<LinkSpan> = Vec::new();
+    for up in (0..=ups.len()).rev() {
+        for down in (0..=downs.len()).rev() {
+            let mut tok: String = ups[..up].iter().rev().map(String::as_str).collect();
+            tok.push_str(&middle);
+            downs[..down].iter().for_each(|d| tok.push_str(d));
+            if up + down > 0 && tok.matches("://").count() > 1 {
+                continue;
+            }
+            let Some(link) = link_of_token(&tok) else {
+                continue;
+            };
+            if out.iter().all(|c| c.link != link) {
+                out.push(LinkSpan {
+                    link,
+                    first: vrow - up,
+                    last: vrow + down,
+                });
+            }
+        }
     }
-    let mut line = String::new();
-    for row in &rows[top..=bot] {
-        line.extend(row.iter());
+    out
+}
+
+/// The link a click opens, chosen from its readings most-joined first, as the
+/// target and the grid rows it covers.
+///
+/// Anything on this disk is checked on this disk: a path or a `file://` link
+/// is taken only if what it names exists, so a path that ended at the edge
+/// before an ordinary word opens as itself rather than as the two glued
+/// together. A web address cannot be checked and the most-joined one is taken.
+/// With nothing confirmed, a `file://` link is still handed on as the old click
+/// did, and a bare path that names nothing is not a link at all.
+fn pick_link(
+    readings: &[LinkSpan],
+    cwd: Option<&str>,
+    exists: impl Fn(&str) -> bool,
+) -> Option<(String, usize, usize)> {
+    for c in readings {
+        let target = match &c.link {
+            Link::Url(u) => match reveal_target(u) {
+                Some(path) if !exists(&path) => continue,
+                _ => u.clone(),
+            },
+            Link::Path(p) => match resolve_path(p, cwd).filter(|a| exists(a)) {
+                Some(abs) => abs,
+                None => continue,
+            },
+        };
+        return Some((target, c.first, c.last));
     }
-    // click column within the stitched line = chars in the rows above it + vcol
-    let offset: usize = rows[top..vrow].iter().map(|r| r.len()).sum();
-    (line, offset + vcol)
+    match readings.first() {
+        Some(LinkSpan {
+            link: Link::Url(u),
+            first,
+            last,
+        }) => Some((u.clone(), *first, *last)),
+        _ => None,
+    }
+}
+
+/// Paint the rest of a link the width broke in the colour of its first half.
+///
+/// The overlay classifies one row at a time, so a fragment on the row below
+/// was coloured only when it looked like a link by itself: Claude's
+/// `es/HANDOFF-….md` has a slash and lit up, `ascade-and-….md` has none and
+/// stayed prose. Here, a row whose last token is a link (or the carried-on half
+/// of one) and fills the row to its edge hands the colour of its last cell to
+/// the token that carries it on, and a row that is nothing but that half hands
+/// it further down. Colour only — [`wrapped_link_candidates`] decides what a
+/// click opens.
+fn carry_link_colour(rows: &[Vec<char>], wraps: &[bool], palettes: &mut [Vec<Hsla>]) {
+    // The span of the carried-on half on the current row, if one arrived.
+    let mut carried: Option<(usize, usize)> = None;
+    for r in 0..rows.len() {
+        let came = carried.take();
+        let Some(c) = continuation_start(rows, wraps, r) else {
+            continue;
+        };
+        let row = &rows[r];
+        let Some((a, b)) = token_span(row, row.len() - 1) else {
+            continue;
+        };
+        let inside =
+            came == Some((a, b)) || link_of_token(&row[a..b].iter().collect::<String>()).is_some();
+        let (Some(ink), Some((na, nb))) = (
+            palettes.get(r).and_then(|p| p.get(b - 1)).copied(),
+            token_span(&rows[r + 1], c),
+        ) else {
+            continue;
+        };
+        if !inside {
+            continue;
+        }
+        if let Some(next) = palettes.get_mut(r + 1) {
+            next.iter_mut().take(nb).skip(na).for_each(|h| *h = ink);
+        }
+        carried = Some((na, nb));
+    }
 }
 
 /// Smart-reflow selected terminal text for the clipboard. TUI agents like Claude
@@ -4973,13 +5121,6 @@ impl TerminalView {
         out
     }
 
-    /// Read the whole visible grid as characters plus per-row soft-wrap flags,
-    /// both in grid-viewport order. One term lock, one `display_iter` pass.
-    ///
-    /// Rows are space-padded to the full column count — that is what
-    /// `stitch_wrapped_line` wants, since it maps a click column into the
-    /// concatenated line. Anything doing width arithmetic (the copy reflow) must
-    /// trim the padding first; see [`grid_logical_lines`].
     /// Resolve the Alt chip for a pointer position: what an Alt+click there
     /// would do, and the painted rows to frame. See [`alt_hint`] for the rule.
     ///
@@ -5020,14 +5161,24 @@ impl TerminalView {
                 .into_iter()
                 .find(|l| l.first <= grow && grow <= l.last)
         };
+        // A document's frame takes in every row its path was broken across. The
+        // copy reflow keeps a Claude reply's indented rows apart, so the logical
+        // line alone would frame one half of the path the click is about to open.
+        let rows = line.as_ref().map(|line| {
+            let link = doc
+                .as_ref()
+                .and_then(|_| self.link_span_under(pos))
+                .map_or((line.first, line.last), |(_, a, b)| (a, b));
+            (line.first.min(link.0), line.last.max(link.1))
+        });
         // Map the GRID span back to painted rows. The paint transform can be an
         // arbitrary permutation (anchor-to-top reverses in groups), so invert it
         // by scanning every row rather than assuming the identity mapping.
-        let span = line.as_ref().and_then(|line| {
+        let span = line.as_ref().zip(rows).and_then(|(line, (first, last))| {
             let painted: Vec<usize> = (0..self.grid.rows)
                 .filter(|p| {
                     let g = self.paint_row_to_grid_row(*p);
-                    line.first <= g && g <= line.last
+                    first <= g && g <= last
                 })
                 .collect();
             Some((line.text.as_str(), *painted.first()?, *painted.last()?))
@@ -5035,6 +5186,13 @@ impl TerminalView {
         alt_hint(alt_screen, prow, span, doc)
     }
 
+    /// Read the whole visible grid as characters plus per-row soft-wrap flags,
+    /// both in grid-viewport order. One term lock, one `display_iter` pass.
+    ///
+    /// Rows are space-padded to the full column count — that is what
+    /// [`wrapped_link_candidates`] wants, since a row filled to its last cell is
+    /// how it tells a broken token. Anything doing width arithmetic (the copy
+    /// reflow) must trim the padding first; see [`grid_logical_lines`].
     fn grid_snapshot(&self) -> (Vec<Vec<char>>, Vec<bool>) {
         let term = self.session.term.lock();
         let content = term.renderable_content();
@@ -5082,13 +5240,17 @@ impl TerminalView {
     }
 
     fn link_under(&self, pos: gpui::Point<Pixels>) -> Option<String> {
-        match self.link_token_under(pos)? {
-            Link::Url(u) => Some(u),
-            Link::Path(p) => {
-                let cwd = self.runtime().cwd;
-                resolve_path(&p, cwd.as_deref()).filter(|a| std::path::Path::new(a).exists())
-            }
-        }
+        self.link_span_under(pos).map(|(target, _, _)| target)
+    }
+
+    /// What a click at `pos` opens, and the grid rows its link covers. A path
+    /// is resolved against the pane's cwd; see [`pick_link`] for which of the
+    /// readings of a broken link is taken.
+    fn link_span_under(&self, pos: gpui::Point<Pixels>) -> Option<(String, usize, usize)> {
+        let cwd = self.runtime().cwd;
+        pick_link(&self.link_readings_under(pos), cwd.as_deref(), |p| {
+            std::path::Path::new(p).exists()
+        })
     }
 
     /// The URL or path token under the pointer, as the grid spells it, before
@@ -5096,17 +5258,23 @@ impl TerminalView {
     /// apart from [`Self::link_under`] so the `[doc-hit]` trace can tell a
     /// click on no token from a click on a path that did not resolve.
     fn link_token_under(&self, pos: gpui::Point<Pixels>) -> Option<Link> {
+        self.link_readings_under(pos)
+            .into_iter()
+            .next()
+            .map(|c| c.link)
+    }
+
+    /// Every reading of the link under the pointer, the most-joined first.
+    fn link_readings_under(&self, pos: gpui::Point<Pixels>) -> Vec<LinkSpan> {
         let (vrow, vcol, _) = self.viewport_cell(pos);
         // Map the painted/visual row back to the grid viewport row it shows
         // (identity in the default un-anchored path; inverts the anchor-to-top
         // flip + any bottom-anchor offset otherwise).
         let vrow = self.paint_row_to_grid_row(vrow);
-        // Read the whole visible grid plus per-row soft-wrap flags, then stitch
-        // the clicked row to its neighbours so a URL/path wrapped across rows is
-        // recognised as one token (see `stitch_wrapped_line`).
+        // Read the whole visible grid plus per-row soft-wrap flags, so a
+        // URL/path broken across rows is read as one token.
         let (grid, wraps) = self.grid_snapshot();
-        let (line, col) = stitch_wrapped_line(&grid, &wraps, vrow, vcol);
-        link_at(&line, col)
+        wrapped_link_candidates(&grid, &wraps, vrow, vcol)
     }
 
     /// Alt+click on a chip armed for a copy: the command line goes to both
@@ -7572,6 +7740,7 @@ impl TerminalView {
         let agent = self.mode.is_agent();
         // Build per-row literal text once if either the syntax overlay or the
         // human-input highlighting needs it.
+        let mut wraps = vec![false; self.grid.rows];
         let rows_text: Vec<String> = if syntax || agent {
             let mut rows_text = vec![String::new(); self.grid.rows];
             for indexed in &cells {
@@ -7583,6 +7752,9 @@ impl TerminalView {
                 if cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
                     continue;
                 }
+                if cell.flags.contains(Flags::WRAPLINE) {
+                    wraps[row as usize] = true;
+                }
                 rows_text[row as usize].push(if cell.c == '\0' { ' ' } else { cell.c });
             }
             rows_text
@@ -7590,7 +7762,11 @@ impl TerminalView {
             Vec::new()
         };
         let palettes: Vec<Vec<Hsla>> = if syntax {
-            rows_text.iter().map(|t| syntax_colors(t, th)).collect()
+            let mut palettes: Vec<Vec<Hsla>> =
+                rows_text.iter().map(|t| syntax_colors(t, th)).collect();
+            let rows: Vec<Vec<char>> = rows_text.iter().map(|t| t.chars().collect()).collect();
+            carry_link_colour(&rows, &wraps, &mut palettes);
+            palettes
         } else {
             Vec::new()
         };
@@ -11900,88 +12076,258 @@ mod tests {
         assert_eq!(link_at("", 0), None);
     }
 
-    #[test]
-    fn stitch_wrapped_line_rejoins_a_url_split_across_rows() {
-        // a narrow 8-col terminal; the URL fills row 0 (wraps) and spills into row 1
-        let cols = 8;
-        let pad = |s: &str| {
-            let mut v: Vec<char> = s.chars().collect();
-            v.resize(cols, ' ');
-            v
-        };
-        let rows = vec![
-            pad("https://"), // wraps into the next row (full width)
-            pad("a.dev/x "), // tail of the URL, then padding
-            pad("next    "),
-        ];
-        let wraps = vec![true, false, false];
+    /// Grid rows as `grid_snapshot` reads them: space-padded to `cols`.
+    fn padded_grid(cols: usize, rows: &[&str]) -> Vec<Vec<char>> {
+        rows.iter()
+            .map(|s| {
+                let mut v: Vec<char> = s.chars().collect();
+                assert!(v.len() <= cols, "fixture row wider than the grid: {s:?}");
+                v.resize(cols, ' ');
+                v
+            })
+            .collect()
+    }
 
-        // click on the first row → stitched line + adjusted column find the whole URL
-        let (line, col) = stitch_wrapped_line(&rows, &wraps, 0, 2);
-        assert_eq!(line, "https://a.dev/x ");
-        assert_eq!(col, 2);
-        assert_eq!(
-            link_at(&line, col),
-            Some(Link::Url("https://a.dev/x".into()))
-        );
-
-        // click on the *continuation* row → walks up, same URL, column offset by cols
-        let (line, col) = stitch_wrapped_line(&rows, &wraps, 1, 3);
-        assert_eq!(line, "https://a.dev/x ");
-        assert_eq!(col, cols + 3);
-        assert_eq!(
-            link_at(&line, col),
-            Some(Link::Url("https://a.dev/x".into()))
-        );
-
-        // a non-wrapping row stitches to just itself
-        let (line, col) = stitch_wrapped_line(&rows, &wraps, 2, 1);
-        assert_eq!(line, "next    ");
-        assert_eq!(col, 1);
-
-        // empty grid is harmless
-        assert_eq!(stitch_wrapped_line(&[], &[], 0, 4), (String::new(), 4));
+    /// The link a click at `(row, col)` opens, with every file taken to exist.
+    fn opens(
+        rows: &[Vec<char>],
+        wraps: &[bool],
+        row: usize,
+        col: usize,
+    ) -> Option<(String, usize, usize)> {
+        pick_link(
+            &wrapped_link_candidates(rows, wraps, row, col),
+            None,
+            |_| true,
+        )
     }
 
     #[test]
-    fn stitch_rejoins_an_app_hard_wrapped_link_without_wrapline() {
-        // Claude Code / our Links tables hard-wrap a long file:// path to the pane
-        // width: real rows, NO WRAPLINE flag, but the token runs edge-to-edge.
-        let cols = 12;
-        let pad = |s: &str| {
-            let mut v: Vec<char> = s.chars().collect();
-            v.resize(cols, ' ');
-            v
-        };
-        let rows = vec![
-            pad("file:///home"), // filled to the edge → flows into next
-            pad("/pbrown/a.js"), // filled to the edge → flows into next
-            pad("onl next"),     // ends with a space before "next"
-        ];
-        let wraps = vec![false, false, false]; // <-- the app hard-wrapped; no flag
-
-        // click the FIRST row → stitched to the whole path, click column preserved
-        let (line, col) = stitch_wrapped_line(&rows, &wraps, 0, 3);
-        assert_eq!(line.trim_end(), "file:///home/pbrown/a.jsonl next");
-        assert_eq!(col, 3);
+    fn a_soft_wrapped_url_opens_whole_from_either_row() {
+        // a narrow 8-col terminal; the URL fills row 0 (WRAPLINE) and spills into row 1
+        let rows = padded_grid(8, &["https://", "a.dev/x", "next"]);
+        let wraps = [true, false, false];
+        let whole = Some(("https://a.dev/x".to_string(), 0, 1));
+        assert_eq!(opens(&rows, &wraps, 0, 2), whole);
+        assert_eq!(opens(&rows, &wraps, 1, 3), whole);
+        assert_eq!(opens(&rows, &wraps, 2, 1), None);
+        // A soft wrap carries on at column 0, so a space there ends the token.
+        let ended = padded_grid(8, &["https://", " a.dev/x"]);
         assert_eq!(
-            link_at(&line, col),
-            Some(Link::Url("file:///home/pbrown/a.jsonl".into()))
+            opens(&ended, &[true, false], 0, 2),
+            Some(("https://".to_string(), 0, 0))
+        );
+        assert_eq!(opens(&[], &[], 0, 4), None);
+    }
+
+    #[test]
+    fn a_link_an_app_broke_at_column_zero_opens_whole() {
+        // An app that breaks its own lines sets no WRAPLINE; the token runs
+        // edge to edge across three rows and stops before a word on the third.
+        let rows = padded_grid(12, &["file:///home", "/pbrown/a.js", "onl next"]);
+        let wraps = [false; 3];
+        let whole = Some(("file:///home/pbrown/a.jsonl".to_string(), 0, 2));
+        assert_eq!(opens(&rows, &wraps, 0, 3), whole);
+        assert_eq!(opens(&rows, &wraps, 1, 2), whole);
+        assert_eq!(opens(&rows, &wraps, 2, 1), whole);
+        assert_eq!(opens(&rows, &wraps, 2, 6), None, "the word after it");
+    }
+
+    /// Parker's screenshot of 2026-09-28, as the grid held it: a pane 96 columns
+    /// wide, Claude's two-column margin on every row, the path broken at the edge.
+    /// Only the first half opened, and only the first half was coloured.
+    fn claude_links_rows() -> Vec<Vec<char>> {
+        padded_grid(
+            96,
+            &[
+                "  Target: file:///home/parker/Work/terminal-delight/handoffs/HANDOFF-2026-09-28-left-bar-carry-c",
+                "  ascade-and-workbench-turn-fix.md",
+                "  What it is: Same handoff, repo copy",
+            ],
+        )
+    }
+
+    const CLAUDE_LINK: &str = "file:///home/parker/Work/terminal-delight/handoffs/HANDOFF-2026-09-28-left-bar-carry-cascade-and-workbench-turn-fix.md";
+
+    #[test]
+    fn a_link_claude_broke_behind_its_margin_opens_whole_from_either_half() {
+        let rows = claude_links_rows();
+        assert_eq!(
+            rows[0].last(),
+            Some(&'c'),
+            "the fixture's first half must fill the row, as it did on screen"
+        );
+        let wraps = [false; 3];
+        let whole = Some((CLAUDE_LINK.to_string(), 0, 1));
+        assert_eq!(opens(&rows, &wraps, 0, 20), whole, "the first half");
+        assert_eq!(
+            opens(&rows, &wraps, 0, 95),
+            whole,
+            "the last cell of the first half"
+        );
+        assert_eq!(opens(&rows, &wraps, 1, 2), whole, "the second half");
+        assert_eq!(
+            opens(&rows, &wraps, 1, 0),
+            None,
+            "the margin is not the link"
+        );
+        assert_eq!(
+            opens(&rows, &wraps, 0, 4),
+            None,
+            "the label is not the link"
+        );
+        assert_eq!(opens(&rows, &wraps, 2, 5), None);
+    }
+
+    #[test]
+    fn a_link_broken_over_three_rows_under_a_hanging_indent_opens_whole() {
+        // A list item hangs its continuation two columns deeper than its first row,
+        // and the middle row is nothing but the link.
+        let rows = padded_grid(
+            24,
+            &[
+                "  - see file:///home/par",
+                "    ker/applications/rem",
+                "    ote/-letter.pdf ok",
+            ],
+        );
+        let wraps = [false; 3];
+        let whole = Some((
+            "file:///home/parker/applications/remote/-letter.pdf".to_string(),
+            0,
+            2,
+        ));
+        for (row, col) in [(0, 10), (1, 8), (2, 6)] {
+            assert_eq!(
+                opens(&rows, &wraps, row, col),
+                whole,
+                "clicked ({row}, {col})"
+            );
+        }
+    }
+
+    #[test]
+    fn the_disk_decides_whether_a_path_at_the_edge_was_broken_or_finished() {
+        // The path ends exactly at the edge and the next word starts the row
+        // below: from the width alone that reads as a break.
+        let rows = padded_grid(21, &["  see /tmp/x/notes.md", "  and then more"]);
+        let wraps = [false; 2];
+        let readings = wrapped_link_candidates(&rows, &wraps, 0, 10);
+        let named: Vec<&Link> = readings.iter().map(|c| &c.link).collect();
+        assert_eq!(
+            named,
+            [
+                &Link::Path("/tmp/x/notes.mdand".into()),
+                &Link::Path("/tmp/x/notes.md".into())
+            ]
+        );
+        let exists = |p: &str| p == "/tmp/x/notes.md";
+        assert_eq!(
+            pick_link(&readings, None, exists),
+            Some(("/tmp/x/notes.md".to_string(), 0, 0))
+        );
+        // A path that names nothing on this disk is not a link, joined or not.
+        assert_eq!(pick_link(&readings, None, |_| false), None);
+
+        // The same for a file:// link: the disk is asked for the decoded path.
+        let rows = padded_grid(24, &["  see file:///tmp/x/a.md", "  and more"]);
+        let readings = wrapped_link_candidates(&rows, &wraps, 0, 10);
+        assert_eq!(
+            pick_link(&readings, None, |p| p == "/tmp/x/a.md"),
+            Some(("file:///tmp/x/a.md".to_string(), 0, 0))
+        );
+        // With nothing confirmed, a file:// link is handed on as it always was.
+        assert_eq!(
+            pick_link(&readings, None, |_| false),
+            Some(("file:///tmp/x/a.mdand".to_string(), 0, 1))
+        );
+    }
+
+    #[test]
+    fn two_links_that_meet_at_the_edge_stay_two_links() {
+        let rows = padded_grid(17, &["  https://a.dev/x", "  https://b.dev/y"]);
+        let wraps = [false; 2];
+        assert_eq!(
+            opens(&rows, &wraps, 0, 5),
+            Some(("https://a.dev/x".to_string(), 0, 0))
+        );
+        assert_eq!(
+            opens(&rows, &wraps, 1, 5),
+            Some(("https://b.dev/y".to_string(), 1, 1))
+        );
+        // A link starting a row under a full row of prose is not glued to its last word.
+        let rows = padded_grid(19, &["  see the following", "  https://b.dev/y"]);
+        assert_eq!(
+            opens(&rows, &wraps, 1, 5),
+            Some(("https://b.dev/y".to_string(), 1, 1))
+        );
+    }
+
+    /// The agentic overlay's colours for `rows`, collapsed to two inks so a
+    /// test can say which cells read as a link.
+    fn agentic_inks(rows: &[Vec<char>], link: Hsla, text: Hsla) -> Vec<Vec<Hsla>> {
+        rows.iter()
+            .map(|r| {
+                classify_agentic(&r.iter().collect::<String>())
+                    .into_iter()
+                    .map(|role| if role == Role::Secondary { link } else { text })
+                    .collect()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_second_half_of_a_broken_link_wears_the_link_colour() {
+        let (link, text) = (gpui::hsla(0.8, 0.9, 0.5, 1.), gpui::hsla(0.3, 0.4, 0.5, 1.));
+        let rows = claude_links_rows();
+        let mut inks = agentic_inks(&rows, link, text);
+        assert_eq!(
+            inks[1][2], text,
+            "the bug: a half with no slash reads as prose"
+        );
+        carry_link_colour(&rows, &[false; 3], &mut inks);
+        let half = "ascade-and-workbench-turn-fix.md".len();
+        assert!(
+            inks[1][2..2 + half].iter().all(|h| *h == link),
+            "{:?}",
+            &inks[1][..4]
+        );
+        assert!(inks[1][..2]
+            .iter()
+            .chain(&inks[1][2 + half..])
+            .all(|h| *h == text));
+        assert!(
+            inks[2].iter().all(|h| *h == text),
+            "the row after is untouched"
         );
 
-        // click a CONTINUATION row (row 1) → walks up to the same full link
-        let (line, col) = stitch_wrapped_line(&rows, &wraps, 1, 2);
-        assert_eq!(col, cols + 2);
-        assert_eq!(
-            link_at(&line, col),
-            Some(Link::Url("file:///home/pbrown/a.jsonl".into()))
+        // Down through a middle row that is nothing but the link.
+        let rows = padded_grid(
+            24,
+            &[
+                "  Target: file:///home/p",
+                "  arker/applications/rem",
+                "  ote-cover-letter.pdf",
+            ],
+        );
+        let mut inks = agentic_inks(&rows, link, text);
+        carry_link_colour(&rows, &[false; 3], &mut inks);
+        assert!(
+            inks[2][2..22].iter().all(|h| *h == link),
+            "the third row's half"
         );
 
-        // a word-boundary wrap (trailing space) does NOT over-stitch: two short
-        // distinct rows stay separate.
-        let prose = vec![pad("hello "), pad("world ")];
-        let (line, _) = stitch_wrapped_line(&prose, &[false, false], 0, 1);
-        assert_eq!(line.trim_end(), "hello");
+        // A row that merely ends in something the overlay colours hands nothing
+        // on: `episode/handoff` lights up for its slash, but it is not a link.
+        let rows = padded_grid(
+            25,
+            &["  Session episode/handoff", "  (APES) for the record"],
+        );
+        let mut inks = agentic_inks(&rows, link, text);
+        assert_eq!(inks[0][24], link, "the fixture must end on a coloured cell");
+        let before = inks.clone();
+        carry_link_colour(&rows, &[false; 2], &mut inks);
+        assert_eq!(inks, before);
     }
 
     #[test]
