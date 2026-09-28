@@ -1222,6 +1222,13 @@ impl MarkdownDoc {
         })
     }
 
+    /// Which part of the column the view shows. `None` before the first
+    /// layout, and before the view has been measured.
+    pub fn reading(&self) -> Option<super::progress::Reading> {
+        let view_h = f32::from(self.view?.height);
+        super::progress::Reading::of(self.top, view_h, self.content_h()?)
+    }
+
     /// The block at the top of the view and how far into it the view is.
     pub fn block_at_top(&self) -> Option<(usize, f32)> {
         if self.painted.get() != Some(self.generation) {

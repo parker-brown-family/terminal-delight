@@ -62,6 +62,7 @@ use super::image::{ImageZoom, ZoomStep};
 use super::markdown::LinkSink;
 use super::notes_ui::Said;
 use super::page::Measured;
+use super::progress::Reading;
 use super::{DocumentView, FileStamp, Frame, NotesCommand};
 use crate::docopen::DocScroll;
 use crate::theme::Theme;
@@ -193,6 +194,14 @@ pub trait Backend {
     /// nothing has been measured: either, written down as a number, would be
     /// a position nobody was ever at.
     fn scroll(&self) -> Option<DocScroll> {
+        None
+    }
+
+    /// Which part of the document the view shows, for the reading rail
+    /// ([`super::progress`]). `None` for a document with no scroll, and for
+    /// one not yet laid out: a rail drawn from nothing measured would put the
+    /// reader at the top of something nobody has measured.
+    fn reading(&self) -> Option<Reading> {
         None
     }
 
