@@ -1422,13 +1422,20 @@ fn slider_switch(on: bool, th: &theme::Theme) -> gpui::Div {
                 .rounded_full()
                 .bg(if on { th.accent } else { th.text.alpha(0.45) })
                 .when(on, |d| {
-                    d.shadow(vec![BoxShadow {
-                        color: th.accent.alpha(0.8),
-                        offset: point(px(0.), px(0.)),
-                        blur_radius: px(6.),
-                        spread_radius: px(0.),
-                        inset: false,
-                    }])
+                    d.shadow(
+                        theme::phosphor(
+                            th.grade.phosphor,
+                            BoxShadow {
+                                color: th.accent.alpha(0.8),
+                                offset: point(px(0.), px(0.)),
+                                blur_radius: px(6.),
+                                spread_radius: px(0.),
+                                inset: false,
+                            },
+                        )
+                        .into_iter()
+                        .collect(),
+                    )
                 }),
         )
 }
@@ -1478,7 +1485,7 @@ fn marquee_banner(text: &str, age: f32, th: &theme::Theme) -> gpui::Div {
                 .border_1()
                 .border_color(th.accent.alpha(0.8 * fade))
                 .bg(th.bg.alpha(0.88 * fade))
-                .shadow(float_shadows(th.accent))
+                .shadow(float_shadows(th.accent, th.grade.phosphor))
                 .child(bulbs(0))
                 .child(
                     div()
@@ -3970,7 +3977,13 @@ fn scan_logo_candidates_in(home_path: &std::path::Path) -> Vec<LogoCandidate> {
 
 /// Wrap one tab-group's header + its agent cards in a section with a SUBTLE
 /// background glow in the group's theme colour, so each group reads as one stack.
-fn group_section(header: gpui::Div, gcol: gpui::Hsla, cards: Vec<gpui::AnyElement>) -> gpui::Div {
+/// The glow rides the `phosphor` gauge; the tinted panel and its border do not.
+fn group_section(
+    header: gpui::Div,
+    gcol: gpui::Hsla,
+    cards: Vec<gpui::AnyElement>,
+    phosphor: f32,
+) -> gpui::Div {
     div()
         .w_full()
         .flex()
@@ -3983,13 +3996,20 @@ fn group_section(header: gpui::Div, gcol: gpui::Hsla, cards: Vec<gpui::AnyElemen
         .bg(gcol.alpha(0.07))
         .border_1()
         .border_color(gcol.alpha(0.30))
-        .shadow(vec![gpui::BoxShadow {
-            color: gcol.alpha(0.16),
-            offset: point(px(0.), px(0.)),
-            blur_radius: px(24.),
-            spread_radius: px(0.),
-            inset: false,
-        }])
+        .shadow(
+            theme::phosphor(
+                phosphor,
+                gpui::BoxShadow {
+                    color: gcol.alpha(0.16),
+                    offset: point(px(0.), px(0.)),
+                    blur_radius: px(24.),
+                    spread_radius: px(0.),
+                    inset: false,
+                },
+            )
+            .into_iter()
+            .collect(),
+        )
         .child(
             // a coloured rule + the group header, so the panel is titled + themed.
             div()
@@ -7464,6 +7484,7 @@ impl Workspace {
             crawl_angle: K::CrawlAngle.to_percent(g.crawl_angle),
             crawl_depth: K::CrawlDepth.to_percent(g.crawl_depth),
             crt: g.crt,
+            phosphor: K::Phosphor.to_percent(g.phosphor),
         }
     }
 
@@ -7522,6 +7543,9 @@ impl Workspace {
         }
         if let Some(p) = patch.crawl_depth {
             set!(K::CrawlDepth, p);
+        }
+        if let Some(p) = patch.phosphor {
+            set!(K::Phosphor, p);
         }
         if let Some(c) = patch.crawl {
             g.crawl = c;
@@ -9888,7 +9912,7 @@ impl Workspace {
             .border_2()
             .border_color(th.accent.alpha(0.85))
             .bg(darken(th.surface, 0.62))
-            .shadow(float_shadows(th.accent))
+            .shadow(float_shadows(th.accent, th.grade.phosphor))
             .flex()
             .flex_col()
             .gap_3()
@@ -11054,7 +11078,7 @@ impl Workspace {
             .border_2()
             .border_color(danger.alpha(0.9))
             .bg(darken(th.surface, 0.62))
-            .shadow(float_shadows(danger))
+            .shadow(float_shadows(danger, th.grade.phosphor))
             .text_color(th.text)
             .on_mouse_down(
                 MouseButton::Left,
@@ -14445,7 +14469,7 @@ impl Workspace {
             .bg(darken(th.surface, 0.35))
             .border_2()
             .border_color(th.accent.alpha(0.85))
-            .shadow(float_shadows(th.accent))
+            .shadow(float_shadows(th.accent, th.grade.phosphor))
             .child(header)
             .child(div().pb_1().flex().flex_col().child(list))
             .child(
@@ -14610,7 +14634,7 @@ impl Workspace {
             .border_2()
             .border_color(th.accent.alpha(0.85))
             .bg(darken(th.surface, 0.6))
-            .shadow(float_shadows(th.accent))
+            .shadow(float_shadows(th.accent, th.grade.phosphor))
             .flex()
             .flex_col()
             .gap_2()
@@ -14741,7 +14765,7 @@ impl Workspace {
             .border_2()
             .border_color(th.accent.alpha(0.85))
             .bg(darken(th.surface, 0.6))
-            .shadow(float_shadows(th.accent))
+            .shadow(float_shadows(th.accent, th.grade.phosphor))
             .flex()
             .flex_col()
             .gap_2()
@@ -14999,7 +15023,7 @@ impl Workspace {
                 }
                 d
             })
-            .shadow(float_shadows(th.accent))
+            .shadow(float_shadows(th.accent, th.grade.phosphor))
             .child(header)
             .child(div().pb_1().flex().flex_col().child(list))
             .child(
@@ -18512,13 +18536,15 @@ impl Workspace {
                     .w(px(28.))
                     .text_size(px(9.))
                     .text_color(th.accent)
-                    // Sizes (menu bar, terminal text) read as absolute "110%";
+                    // Sizes (menu bar, terminal text) and the phosphor gain read
+                    // as absolute "110%" — phosphor's 100% is the house glow;
                     // crawl angle in degrees, crawl depth as a ratio; colour
                     // channels read as a signed offset ("-12", "+0").
                     .child(match key {
                         theme::GradeKey::Scale
                         | theme::GradeKey::TextSize
-                        | theme::GradeKey::BenchSize => {
+                        | theme::GradeKey::BenchSize
+                        | theme::GradeKey::Phosphor => {
                             format!("{}%", (v * 100.).round() as i32)
                         }
                         theme::GradeKey::CrawlAngle => format!("{}\u{00b0}", v.round() as i32),
@@ -21869,7 +21895,7 @@ impl Workspace {
             .border_2()
             .border_color(th.accent.alpha(0.85))
             .bg(darken(th.surface, 0.45))
-            .shadow(float_shadows(th.accent));
+            .shadow(float_shadows(th.accent, th.grade.phosphor));
 
         list = list.child(
             div()
@@ -22493,11 +22519,14 @@ impl Workspace {
             .bg(darken(th.surface, 0.45))
             .text_color(th.text)
             .font_family(th.font_family.clone())
-            .shadow(float_shadows(if aimed {
-                th.accent
-            } else {
-                th.accent.alpha(0.35)
-            }))
+            .shadow(float_shadows(
+                if aimed {
+                    th.accent
+                } else {
+                    th.accent.alpha(0.35)
+                },
+                th.grade.phosphor,
+            ))
             .child(head)
             .children(pills)
             .children(grid)
@@ -23551,7 +23580,7 @@ impl Workspace {
                 .border_2()
                 .border_color(th.accent.alpha(0.85))
                 .bg(darken(th.surface, 0.45))
-                .shadow(float_shadows(th.accent))
+                .shadow(float_shadows(th.accent, th.grade.phosphor))
                 // a click inside the panel is the panel's, not the scrim's
                 .on_mouse_down(
                     MouseButton::Left,
@@ -24035,7 +24064,7 @@ fn over_the_glass_tip(th: &theme::Theme, sk: &skin::Skin, s: f32) -> gpui::Div {
         .border_2()
         .border_color(th.accent.alpha(0.85))
         .bg(darken(th.surface, 0.45))
-        .shadow(float_shadows(th.accent))
+        .shadow(float_shadows(th.accent, th.grade.phosphor))
 }
 
 /// The hover over one of the bottom slot's allowance rows: the provider, then
@@ -24266,20 +24295,23 @@ fn agent_program_glow(fallback: Hsla, label: &str) -> Hsla {
 /// same grammar as focused terminal panes and floating panels: a crisp phosphor
 /// rim, soft bloom, downward cast shadow, and tight contact shadow. `live=false`
 /// keeps the physical lift but turns the phosphor mostly off for idle/dead rows.
-fn agent_card_shadows(glow: Hsla, live: bool) -> Vec<BoxShadow> {
+/// `phosphor` is the gauge reading the bloom goes through; the rim and the two
+/// shadows do not, so a card turned all the way down is still a raised card.
+fn agent_card_shadows(glow: Hsla, live: bool, phosphor: f32) -> Vec<BoxShadow> {
     let (rim, halo, cast, contact) = if live {
         (0.82, 0.38, 0.48, 0.42)
     } else {
         (0.26, 0.10, 0.34, 0.32)
     };
-    vec![
-        BoxShadow {
-            color: glow.alpha(rim),
-            offset: point(px(0.), px(0.)),
-            blur_radius: px(0.),
-            spread_radius: px(1.),
-            inset: false,
-        },
+    let mut out = vec![BoxShadow {
+        color: glow.alpha(rim),
+        offset: point(px(0.), px(0.)),
+        blur_radius: px(0.),
+        spread_radius: px(1.),
+        inset: false,
+    }];
+    out.extend(theme::phosphor(
+        phosphor,
         BoxShadow {
             color: glow.alpha(halo),
             offset: point(px(0.), px(1.)),
@@ -24287,6 +24319,8 @@ fn agent_card_shadows(glow: Hsla, live: bool) -> Vec<BoxShadow> {
             spread_radius: px(if live { 1. } else { 0. }),
             inset: false,
         },
+    ));
+    out.extend([
         BoxShadow {
             color: hsla(0., 0., 0., cast),
             offset: point(px(0.), px(12.)),
@@ -24301,7 +24335,8 @@ fn agent_card_shadows(glow: Hsla, live: bool) -> Vec<BoxShadow> {
             spread_radius: px(-2.),
             inset: false,
         },
-    ]
+    ]);
+    out
 }
 
 /// Shadow stack for any surface that floats ABOVE the workspace (modals + menus).
@@ -24311,17 +24346,22 @@ fn agent_card_shadows(glow: Hsla, live: bool) -> Vec<BoxShadow> {
 /// workspace beneath it sits in shadow. `glow` is the rim colour (the theme
 /// accent; a danger hue for destructive dialogs). Pair with `.border_2()` in the
 /// same hue, and `.rounded_*()` so the glow follows the corners.
-pub(crate) fn float_shadows(glow: Hsla) -> Vec<BoxShadow> {
-    vec![
-        // the doubled border: a crisp 1px outer ring in the rim colour
-        BoxShadow {
-            color: glow.alpha(0.9),
-            offset: point(px(0.), px(0.)),
-            blur_radius: px(0.),
-            spread_radius: px(1.),
-            inset: false,
-        },
-        // the lit border casting light: a soft phosphor glow around the rim
+///
+/// `phosphor` is the gauge reading the halo goes through (the scope's
+/// `grade.phosphor`). Only the halo: the doubled border is a line and the two
+/// dark shadows are the lift, and neither is light.
+pub(crate) fn float_shadows(glow: Hsla, phosphor: f32) -> Vec<BoxShadow> {
+    // the doubled border: a crisp 1px outer ring in the rim colour
+    let mut out = vec![BoxShadow {
+        color: glow.alpha(0.9),
+        offset: point(px(0.), px(0.)),
+        blur_radius: px(0.),
+        spread_radius: px(1.),
+        inset: false,
+    }];
+    // the lit border casting light: a soft phosphor glow around the rim
+    out.extend(theme::phosphor(
+        phosphor,
         BoxShadow {
             color: glow.alpha(0.5),
             offset: point(px(0.), px(1.)),
@@ -24329,6 +24369,8 @@ pub(crate) fn float_shadows(glow: Hsla) -> Vec<BoxShadow> {
             spread_radius: px(2.),
             inset: false,
         },
+    ));
+    out.extend([
         // the shadow that light casts on the workspace below — broad, dark, downward
         BoxShadow {
             color: hsla(0., 0., 0., 0.62),
@@ -24345,7 +24387,8 @@ pub(crate) fn float_shadows(glow: Hsla) -> Vec<BoxShadow> {
             spread_radius: px(-2.),
             inset: false,
         },
-    ]
+    ]);
+    out
 }
 
 /// `Hsla` → `#rrggbb` (drops alpha) for storing a wheel-picked seed colour.
@@ -24480,8 +24523,12 @@ fn render_node(
             let id = e.entity_id();
             let is_focused = focused == Some(id);
             // highlight in the PANE's own theme (override / mode tint), not the
-            // outer chrome's; shadows (not border width) so the grid never reflows
-            let acc = e.read(cx).resolved_theme(cx).accent;
+            // outer chrome's; shadows (not border width) so the grid never reflows.
+            // Its glow follows the pane's own phosphor gauge for the same reason.
+            let (acc, glow) = {
+                let pth = e.read(cx).resolved_theme(cx);
+                (pth.accent, pth.grade.phosphor)
+            };
             // is a dragged sub-tab hovering THIS pane right now? which side?
             let drop_zone = match drop {
                 Some(DropTarget::Split { pane, zone, .. }) if *pane == id => Some(*zone),
@@ -24508,7 +24555,7 @@ fn render_node(
                 // flex box, so the grid never reflows — only inner content shifts 1px)
                 .when(is_focused, |d| d.border_2())
                 .when(is_focused, |d| {
-                    d.shadow(vec![
+                    let mut stack = vec![
                         // crisp 1px outer ring: reads as a double border
                         BoxShadow {
                             color: acc.alpha(0.9),
@@ -24526,7 +24573,10 @@ fn render_node(
                             spread_radius: px(1.),
                             inset: false,
                         },
-                        // soft accent halo around the live tube
+                    ];
+                    // soft accent halo around the live tube
+                    stack.extend(theme::phosphor(
+                        glow,
                         BoxShadow {
                             color: acc.alpha(0.55),
                             offset: point(px(0.), px(0.)),
@@ -24534,7 +24584,8 @@ fn render_node(
                             spread_radius: px(2.),
                             inset: false,
                         },
-                    ])
+                    ));
+                    d.shadow(stack)
                 })
                 // measure this pane's box (entity → rect) for drop hit-testing
                 .child(
@@ -26506,7 +26557,7 @@ impl Render for Workspace {
                 .max_h(px(self.tray_max_h(tray_top)))
                 .overflow_x_hidden()
                 .overflow_y_scroll()
-                .shadow(float_shadows(th.accent))
+                .shadow(float_shadows(th.accent, th.grade.phosphor))
                 .flex()
                 .flex_row()
                 .gap_3()
@@ -26577,6 +26628,7 @@ impl Render for Workspace {
                     theme::GradeKey::Background => t.g_background,
                     theme::GradeKey::Gamma => t.g_gamma,
                     theme::GradeKey::Scale => t.g_menu_bar,
+                    theme::GradeKey::Phosphor => t.g_phosphor,
                     _ => _name,
                 };
                 rows = rows.child(self.slider_row(key, name, grade.get(key), &th, cx));
@@ -26593,7 +26645,7 @@ impl Render for Workspace {
                     .child(format!("{} {}", if open { "▾" } else { "▸" }, name))
             };
             const PANEL_W: f32 = 300.;
-            const PANEL_H_EST: f32 = 328.; // 8 slider rows + reset + follow-outer
+            const PANEL_H_EST: f32 = 346.; // 10 slider rows + reset + follow-outer
             let mut panel = div().id("osd-panel").absolute().w(px(PANEL_W));
             let tray_top = match self.osd_at {
                 Some(at) => {
@@ -26624,7 +26676,7 @@ impl Render for Workspace {
                 .border_2()
                 .border_color(th.accent.alpha(0.85))
                 .bg(darken(th.surface, 0.6))
-                .shadow(float_shadows(th.accent))
+                .shadow(float_shadows(th.accent, th.grade.phosphor))
                 .flex()
                 .flex_col()
                 .gap_2()
@@ -27854,7 +27906,11 @@ impl Render for Workspace {
                             linear_color_stop(brighten(theme_col, 1.1).alpha(0.34), 0.),
                             linear_color_stop(darken(theme_col, 0.5).alpha(0.5), 1.),
                         ))
-                        .shadow(agent_card_shadows(status_glow, live_glow))
+                        .shadow(agent_card_shadows(
+                            status_glow,
+                            live_glow,
+                            th.grade.phosphor,
+                        ))
                         .cursor_pointer()
                         .hover(move |s| s.border_color(kind_col.alpha(0.6)))
                         .on_mouse_down(
@@ -28259,13 +28315,20 @@ impl Render for Workspace {
                                                 .font_weight(gpui::FontWeight::EXTRA_BOLD)
                                                 .text_color(status_glow)
                                                 .when(live_glow, |d| {
-                                                    d.shadow(vec![gpui::BoxShadow {
-                                                        color: status_glow.alpha(0.85),
-                                                        offset: point(px(0.), px(0.)),
-                                                        blur_radius: px(11.),
-                                                        spread_radius: px(0.7),
-                                                        inset: false,
-                                                    }])
+                                                    d.shadow(
+                                                        theme::phosphor(
+                                                            th.grade.phosphor,
+                                                            gpui::BoxShadow {
+                                                                color: status_glow.alpha(0.85),
+                                                                offset: point(px(0.), px(0.)),
+                                                                blur_radius: px(11.),
+                                                                spread_radius: px(0.7),
+                                                                inset: false,
+                                                            },
+                                                        )
+                                                        .into_iter()
+                                                        .collect(),
+                                                    )
                                                 })
                                                 .child(
                                                     div().text_size(px(13. * cs)).child(pip_glyph),
@@ -28302,7 +28365,7 @@ impl Render for Workspace {
                             .font_weight(gpui::FontWeight::EXTRA_BOLD)
                             .child(gname.to_uppercase()),
                     );
-                list = list.child(group_section(header, gcol, cards));
+                list = list.child(group_section(header, gcol, cards, th.grade.phosphor));
             }
             if ri == 0 {
                 list = list.child(label(t.m_no_panes.to_string()));
@@ -28335,7 +28398,7 @@ impl Render for Workspace {
                 } else {
                     darken(th.surface, 0.6)
                 })
-                .shadow(float_shadows(th.accent))
+                .shadow(float_shadows(th.accent, th.grade.phosphor))
                 .flex()
                 .flex_col()
                 .gap_2()
@@ -28909,7 +28972,7 @@ impl Render for Workspace {
                         .border_2()
                         .border_color(dead_border)
                         .bg(dead_bg)
-                        .shadow(agent_card_shadows(dead_glow, false))
+                        .shadow(agent_card_shadows(dead_glow, false, th.grade.phosphor))
                         .cursor_pointer()
                         .hover(move |s| s.border_color(dead_hover))
                         // ---- content column: a dim dead-dot, the kind chip, the
@@ -29055,7 +29118,7 @@ impl Render for Workspace {
                 .border_2()
                 .border_color(th.accent.alpha(0.85))
                 .bg(darken(th.surface, 0.6))
-                .shadow(float_shadows(th.accent))
+                .shadow(float_shadows(th.accent, th.grade.phosphor))
                 .flex()
                 .flex_col()
                 .gap_2()
@@ -29344,7 +29407,7 @@ impl Render for Workspace {
                 .bg(darken(th.surface, 0.45))
                 .text_color(th.text)
                 .font_family(th.font_family.clone())
-                .shadow(float_shadows(th.accent))
+                .shadow(float_shadows(th.accent, th.grade.phosphor))
                 .flex()
                 .flex_col()
                 .gap_3()
@@ -29445,7 +29508,7 @@ impl Render for Workspace {
                 .bg(darken(th.surface, 0.45))
                 .text_color(th.text)
                 .font_family(th.font_family.clone())
-                .shadow(float_shadows(th.accent))
+                .shadow(float_shadows(th.accent, th.grade.phosphor))
                 .flex()
                 .flex_col()
                 .gap_0p5()
@@ -29834,7 +29897,7 @@ impl Render for Workspace {
                     }
                     d
                 })
-                .shadow(float_shadows(th.accent))
+                .shadow(float_shadows(th.accent, th.grade.phosphor))
                 .flex()
                 .flex_col()
                 .gap_4()
@@ -30196,7 +30259,7 @@ impl Render for Workspace {
                     .border_1()
                     .border_color(th.accent.alpha(0.85))
                     .bg(darken(th.surface, 0.6))
-                    .shadow(float_shadows(th.accent))
+                    .shadow(float_shadows(th.accent, th.grade.phosphor))
                     .flex()
                     .flex_col()
                     .gap_2()
@@ -30342,7 +30405,7 @@ impl Render for Workspace {
                 .border_2()
                 .border_color(th.accent.alpha(0.85))
                 .bg(darken(th.surface, 0.6))
-                .shadow(float_shadows(th.accent))
+                .shadow(float_shadows(th.accent, th.grade.phosphor))
                 .flex()
                 .flex_col()
                 .gap_2()
@@ -30693,22 +30756,26 @@ impl Render for Workspace {
                 .bg(snap.bg)
                 .border_2()
                 .border_color(snap.accent.alpha(0.7))
-                .shadow(vec![
-                    BoxShadow {
+                .shadow(
+                    std::iter::once(BoxShadow {
                         color: hsla(0., 0., 0., 0.7),
                         offset: point(px(0.), px(10.)),
                         blur_radius: px(40.),
                         spread_radius: px(2.),
                         inset: false,
-                    },
-                    BoxShadow {
-                        color: snap.accent.alpha(0.18),
-                        offset: point(px(0.), px(0.)),
-                        blur_radius: px(48.),
-                        spread_radius: px(2.),
-                        inset: false,
-                    },
-                ])
+                    })
+                    .chain(theme::phosphor(
+                        th.grade.phosphor,
+                        BoxShadow {
+                            color: snap.accent.alpha(0.18),
+                            offset: point(px(0.), px(0.)),
+                            blur_radius: px(48.),
+                            spread_radius: px(2.),
+                            inset: false,
+                        },
+                    ))
+                    .collect(),
+                )
                 .child(header)
                 .child(
                     // The reading area: a clip box with the mirror absolutely
@@ -31092,37 +31159,44 @@ impl Render for Workspace {
                     ))
                     .border_2()
                     .border_color(th.accent.alpha(0.45))
-                    .shadow(vec![
-                        // upper-left light source: glint biased to (1,1)
-                        BoxShadow {
-                            color: white().alpha(0.14),
-                            offset: point(px(1.), px(1.)),
-                            blur_radius: px(0.),
-                            spread_radius: px(0.),
-                            inset: true,
-                        },
-                        BoxShadow {
-                            color: hsla(0., 0., 0., 0.5),
-                            offset: point(px(-2.), px(-2.)),
-                            blur_radius: px(3.),
-                            spread_radius: px(0.),
-                            inset: true,
-                        },
-                        BoxShadow {
-                            color: hsla(0., 0., 0., 0.6),
-                            offset: point(px(4.), px(6.)),
-                            blur_radius: px(22.),
-                            spread_radius: px(0.),
-                            inset: false,
-                        },
-                        BoxShadow {
-                            color: th.accent.alpha(0.10 * th.glow),
-                            offset: point(px(0.), px(0.)),
-                            blur_radius: px(30.),
-                            spread_radius: px(2.),
-                            inset: false,
-                        },
-                    ])
+                    .shadow(
+                        vec![
+                            // upper-left light source: glint biased to (1,1)
+                            BoxShadow {
+                                color: white().alpha(0.14),
+                                offset: point(px(1.), px(1.)),
+                                blur_radius: px(0.),
+                                spread_radius: px(0.),
+                                inset: true,
+                            },
+                            BoxShadow {
+                                color: hsla(0., 0., 0., 0.5),
+                                offset: point(px(-2.), px(-2.)),
+                                blur_radius: px(3.),
+                                spread_radius: px(0.),
+                                inset: true,
+                            },
+                            BoxShadow {
+                                color: hsla(0., 0., 0., 0.6),
+                                offset: point(px(4.), px(6.)),
+                                blur_radius: px(22.),
+                                spread_radius: px(0.),
+                                inset: false,
+                            },
+                        ]
+                        .into_iter()
+                        .chain(theme::phosphor(
+                            th.grade.phosphor,
+                            BoxShadow {
+                                color: th.accent.alpha(0.10 * th.glow),
+                                offset: point(px(0.), px(0.)),
+                                blur_radius: px(30.),
+                                spread_radius: px(2.),
+                                inset: false,
+                            },
+                        ))
+                        .collect::<Vec<_>>(),
+                    )
                     .child(bezel_top)
                     .child(stage)
                     .child(bezel_bottom)
@@ -33339,7 +33413,7 @@ mod tests {
             "border_2()",
             "th.accent.alpha(0.85)",
             "darken(th.surface, 0.45)",
-            "float_shadows(th.accent)",
+            "float_shadows(th.accent, th.grade.phosphor)",
         ] {
             assert!(
                 panel.contains(token),
@@ -38666,6 +38740,51 @@ node = "Leaf"
             !fresh.contains("card_art"),
             "an unchosen switch must not be saved as a choice"
         );
+    }
+
+    /// The phosphor gauge moves the LIGHT and nothing else. At the house setting
+    /// a floating surface and a wall card each cast the one halo they always
+    /// did, all the way down they cast none, and at every setting the crisp rims
+    /// and the dark shadows that lift them are the same shadows — so a panel
+    /// turned all the way down is still bordered and still raised.
+    #[test]
+    fn the_phosphor_gauge_moves_the_halos_and_leaves_the_rims_and_the_lift() {
+        let ink = hsla(0.33, 0.9, 0.6, 1.0);
+        // Light is a coloured, blurred, outer shadow. A rim has no blur and a
+        // lift shadow is black, so neither counts.
+        let lit = |s: &BoxShadow| !s.inset && s.blur_radius > px(0.) && s.color.l > 0.0;
+        let fixed = |v: &[BoxShadow]| v.iter().filter(|s| !lit(s)).cloned().collect::<Vec<_>>();
+        let stacks: [(&str, fn(Hsla, f32) -> Vec<BoxShadow>); 3] = [
+            ("a floating surface", |c, g| float_shadows(c, g)),
+            ("a live wall card", |c, g| agent_card_shadows(c, true, g)),
+            ("an idle wall card", |c, g| agent_card_shadows(c, false, g)),
+        ];
+        for (what, at) in stacks {
+            let house = at(ink, 1.0);
+            let dark = at(ink, 0.0);
+            assert_eq!(
+                house.iter().filter(|s| lit(s)).count(),
+                1,
+                "{what}: one halo"
+            );
+            assert_eq!(
+                dark.iter().filter(|s| lit(s)).count(),
+                0,
+                "{what}: none at zero"
+            );
+            assert_eq!(fixed(&dark), fixed(&house), "{what}: rims and lift at zero");
+            assert_eq!(
+                fixed(&at(ink, theme::PHOSPHOR_MAX)),
+                fixed(&house),
+                "{what}: rims and lift at the top"
+            );
+        }
+        // The house setting is the stack as it was before the gauge existed.
+        let halo = float_shadows(ink, 1.0)
+            .into_iter()
+            .find(|s| lit(s))
+            .expect("halo");
+        assert_eq!((halo.color.a, halo.blur_radius), (0.5, px(22.)));
     }
 
     /// The plain wall's card is the pictured card minus its art window and the

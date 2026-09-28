@@ -649,6 +649,12 @@ pub struct Skin {
     /// [`Skin::with_type`]; the pane header, which is chrome, deliberately
     /// does not.
     pub ty: crate::workbench::Type,
+    /// The phosphor gauge of the theme this was baked from — the scope's
+    /// `grade.phosphor`. The metrics keep the skin's own bloom (`glow`,
+    /// `glow_a`) as authored; this is the gain [`crate::theme::phosphor`]
+    /// applies to it at draw time, so a control's ring moves with the frames
+    /// around it on one dial.
+    pub phosphor: f32,
 }
 
 impl SkinSpec {
@@ -661,6 +667,7 @@ impl SkinSpec {
             shape: self.shape.bake(),
             scale,
             ty: crate::workbench::Type::neutral(),
+            phosphor: th.grade.phosphor,
         }
     }
 }
@@ -1150,13 +1157,25 @@ impl Skin {
         // read at a glance against the track it sits in.
         d.bg(tint.alpha((self.ink.mark_wash.a * 1.6).min(0.28)))
             .text_color(self.ink.ink_lit)
-            .shadow(vec![gpui::BoxShadow {
+            .shadow(self.bloom(tint))
+    }
+
+    /// This skin's control bloom in `tint`, through the phosphor gauge — the one
+    /// halo [`Skin::halo`] and the lit half of a slider both wear. Empty when
+    /// the gauge is all the way down.
+    fn bloom(&self, tint: Hsla) -> Vec<gpui::BoxShadow> {
+        crate::theme::phosphor(
+            self.phosphor,
+            gpui::BoxShadow {
                 color: tint.alpha(self.m.glow_a.clamp(0., 1.)),
                 offset: gpui::point(px(0.), px(0.)),
                 blur_radius: px(self.m.glow),
                 spread_radius: px(0.),
                 inset: false,
-            }])
+            },
+        )
+        .into_iter()
+        .collect()
     }
 
     /// The phosphor ring: a lit border that blooms outward.
@@ -1214,14 +1233,7 @@ impl Skin {
     /// the tube's own bloom pass then multiplies whatever this emits. Parker:
     /// *"about 3x or 4 to much extra!!!! dial it WAY back"*.
     pub fn halo<E: Styled>(&self, d: E, tint: Hsla) -> E {
-        let a = self.m.glow_a.clamp(0., 1.);
-        d.shadow(vec![gpui::BoxShadow {
-            color: tint.alpha(a),
-            offset: gpui::point(px(0.), px(0.)),
-            blur_radius: px(self.m.glow),
-            spread_radius: px(0.),
-            inset: false,
-        }])
+        d.shadow(self.bloom(tint))
     }
 
     /// Four corner ticks around whatever the div holds. One div per corner, each
@@ -2761,5 +2773,25 @@ mod tests {
         let th = palette();
         let r = Recipe::of(Role::Text).a(0.2).toward(Role::Accent, 0.5);
         assert_eq!(r.bake(&th).a, 0.2);
+    }
+
+    /// A control's ring follows the scope's phosphor gauge like every frame
+    /// around it: at the house setting it is the skin's own authored bloom, and
+    /// all the way down there is no bloom at all — the border stays, drawn by
+    /// `ring`, and only the light goes.
+    #[test]
+    fn a_controls_bloom_follows_the_phosphor_gauge() {
+        let mut th = palette();
+        let tint = th.accent;
+        let house = SkinSpec::default().bake(&th, 1.0);
+        let bloom = house.bloom(tint);
+        assert_eq!(bloom.len(), 1, "one halo at the house setting");
+        assert_eq!(bloom[0].color.a, house.m.glow_a, "the skin's own heat");
+        assert_eq!(bloom[0].blur_radius, px(house.m.glow), "and its own reach");
+
+        th.grade.phosphor = 0.0;
+        let dark = SkinSpec::default().bake(&th, 1.0);
+        assert!(dark.bloom(tint).is_empty(), "all the way down, no bloom");
+        assert_eq!(dark.m, house.m, "the authored metrics are untouched");
     }
 }

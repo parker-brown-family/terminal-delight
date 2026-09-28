@@ -260,7 +260,11 @@ const SAID_FOR: Duration = Duration::from_secs(8);
 /// flat screen nothing does, and it showed as a coloured haze under every
 /// header — magenta on the Terminal Delight palette. So the bloom follows the
 /// CRT switch, and the glow everywhere else (text, cursor, bench cards) stays.
-pub(crate) fn header_shadows(ink: Hsla, glow: f32, crt: bool) -> Vec<BoxShadow> {
+///
+/// On a tube, the bloom then goes through the pane's `phosphor` gauge like
+/// every other border halo; the inner reflection is a bevel, not light, and
+/// stays at every setting.
+pub(crate) fn header_shadows(ink: Hsla, glow: f32, crt: bool, phosphor: f32) -> Vec<BoxShadow> {
     let mut shadows = vec![
         // the reflection: bright inner top edge
         BoxShadow {
@@ -272,13 +276,16 @@ pub(crate) fn header_shadows(ink: Hsla, glow: f32, crt: bool) -> Vec<BoxShadow> 
         },
     ];
     if crt && glow > 0.001 {
-        shadows.push(BoxShadow {
-            color: ink.alpha(glow * 0.5),
-            offset: point(px(0.), px(1.)),
-            blur_radius: px(16.),
-            spread_radius: px(0.),
-            inset: false,
-        });
+        shadows.extend(crate::theme::phosphor(
+            phosphor,
+            BoxShadow {
+                color: ink.alpha(glow * 0.5),
+                offset: point(px(0.), px(1.)),
+                blur_radius: px(16.),
+                spread_radius: px(0.),
+                inset: false,
+            },
+        ));
     }
     shadows
 }
@@ -9929,7 +9936,7 @@ impl Render for TerminalView {
                             ),
                     ),
             );
-        header = header.shadow(header_shadows(bar_fg, glow, th.crt));
+        header = header.shadow(header_shadows(bar_fg, glow, th.crt, th.grade.phosphor));
 
         let jiggle = self.fx.jiggle_px;
         // 🎰 GAMBA reels — shown only on the gamba DESIGN texture while the agent
@@ -10408,19 +10415,39 @@ mod tests {
     fn a_flat_screen_gets_no_header_bloom_and_a_tube_keeps_it() {
         let ink = gpui::rgb(0xd070ff).into();
         let outer = |s: &[gpui::BoxShadow]| s.iter().filter(|b| !b.inset).count();
-        let flat = super::header_shadows(ink, 0.85, false);
+        let flat = super::header_shadows(ink, 0.85, false, 1.0);
         assert_eq!(
             outer(&flat),
             0,
             "nothing falls onto the glass of a flat screen"
         );
         assert_eq!(flat.len(), 1, "the header still reads as solid");
-        let tube = super::header_shadows(ink, 0.85, true);
+        let tube = super::header_shadows(ink, 0.85, true, 1.0);
         assert_eq!(outer(&tube), 1, "a tube keeps its phosphor bloom");
         assert_eq!(
-            outer(&super::header_shadows(ink, 0.0, true)),
+            outer(&super::header_shadows(ink, 0.0, true, 1.0)),
             0,
             "and a theme with no glow has none to cast"
+        );
+    }
+
+    /// On a tube the header's bloom is phosphor like any other border halo, so
+    /// the pane's gauge turns it down to nothing — and the bevel that makes the
+    /// header read as solid stays, because it is not light.
+    #[test]
+    fn a_tubes_header_bloom_follows_the_pane_phosphor_gauge() {
+        let ink = gpui::rgb(0xd070ff).into();
+        let outer = |s: &[gpui::BoxShadow]| s.iter().filter(|b| !b.inset).count();
+        let dark = super::header_shadows(ink, 0.85, true, 0.0);
+        assert_eq!(outer(&dark), 0, "turned all the way down, no bloom");
+        assert_eq!(dark.len(), 1, "the bevel stays");
+        let hot = super::header_shadows(ink, 0.85, true, crate::theme::PHOSPHOR_MAX);
+        let house = super::header_shadows(ink, 0.85, true, 1.0);
+        let bloom = |s: &[gpui::BoxShadow]| s.iter().find(|b| !b.inset).cloned().expect("a bloom");
+        assert!(
+            bloom(&hot).color.a > bloom(&house).color.a
+                && bloom(&hot).blur_radius > bloom(&house).blur_radius,
+            "turned up, the bloom is hotter and wider than the house"
         );
     }
 
@@ -14092,7 +14119,7 @@ mod tests {
             "note, then the square, then the glass"
         );
         assert!(
-            code.contains("float_shadows(th.accent)"),
+            code.contains("float_shadows(th.accent, th.grade.phosphor)"),
             "the square wears the hyperglow every floating surface wears"
         );
     }
