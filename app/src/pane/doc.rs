@@ -300,7 +300,7 @@ impl TerminalView {
                 .border_2()
                 .border_color(th.accent)
                 .rounded(px(6.))
-                .shadow(crate::float_shadows(th.accent))
+                .shadow(crate::float_shadows(th.accent, th.grade.phosphor))
                 .overflow_hidden()
                 .child(strip)
                 .child(

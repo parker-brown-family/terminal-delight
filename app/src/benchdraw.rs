@@ -197,7 +197,10 @@ pub fn spine_frame<E: Styled>(el: E, tint: Hsla, strength: f32, sk: &Skin, th: &
         .border_2()
         .border_color(lit)
         .bg(crate::darken(th.surface, 0.45))
-        .shadow(crate::float_shadows(tint.alpha(strength)))
+        .shadow(crate::float_shadows(
+            tint.alpha(strength),
+            th.grade.phosphor,
+        ))
 }
 
 /// Depth AND the tube's phosphor — for the one thing on a surface that is
@@ -239,17 +242,23 @@ pub fn aglow<E: Styled>(el: E, tint: Hsla, th: &Theme) -> E {
 /// `strength` scales the bloom's alpha and its spread together, so a half-lit
 /// thing is smaller as well as dimmer — halving only the alpha leaves a
 /// same-sized halo that still draws the eye from across a pane.
+///
+/// The bloom then goes through the scope's phosphor gauge, like every border
+/// halo in the window; the depth under it does not.
 pub fn aglow_at<E: Styled>(el: E, tint: Hsla, strength: f32, th: &Theme) -> E {
     let mut shadows = depth();
     let strength = strength.clamp(0., 1.);
     if th.glow > 0.001 && strength > 0.001 {
-        shadows.push(BoxShadow {
-            color: tint.alpha((th.glow * 0.45 * strength).min(0.5)),
-            offset: point(px(0.), px(0.)),
-            blur_radius: px(22. * strength.max(0.5)),
-            spread_radius: px(strength),
-            inset: false,
-        });
+        shadows.extend(crate::theme::phosphor(
+            th.grade.phosphor,
+            BoxShadow {
+                color: tint.alpha((th.glow * 0.45 * strength).min(0.5)),
+                offset: point(px(0.), px(0.)),
+                blur_radius: px(22. * strength.max(0.5)),
+                spread_radius: px(strength),
+                inset: false,
+            },
+        ));
     }
     el.shadow(shadows)
 }

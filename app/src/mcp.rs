@@ -208,6 +208,9 @@ pub struct GradeReport {
     /// The CRT master switch (a bool). Off = a flat screen: `warp` and the
     /// roll bar keep their stored values but draw nothing until it is on.
     pub crt: bool,
+    /// Border phosphor: how much light the lit borders cast. `0` is none, and
+    /// the house glow sits at `25` — the range runs to four times it.
+    pub phosphor: f32,
 }
 
 /// The **POST** shape: a *partial* grade. Every field is optional and an absent
@@ -234,6 +237,8 @@ pub struct ConfigPatch {
     pub crawl_angle: Option<f32>,
     pub crawl_depth: Option<f32>,
     pub crt: Option<bool>,
+    /// Border phosphor, `0..=100` (`25` is the house glow, `0` none).
+    pub phosphor: Option<f32>,
     /// Attach (or clear) the pane's card LOGO: an absolute path to an image file
     /// (png/jpg/jpeg/svg/webp). An empty string clears it. Lets an agent brand the
     /// terminal it's working in — shown as the card portrait on the agent wall.
@@ -1062,7 +1067,8 @@ fn tool_defs() -> Value {
                 "Read the appearance (monitor grade) of one or more panes, or the \
                  window-level `outer` scope. Every channel is reported as a \
                  0..100 percent (brightness, contrast, colour, text, background, \
-                 gamma, menu_bar, text_size, bench_size, warp, crawl_angle, crawl_depth) plus \
+                 gamma, menu_bar, text_size, bench_size, warp, crawl_angle, crawl_depth, \
+                 phosphor — the glow of the lit borders, 25 the house look, 0 none) plus \
                  a `crawl` boolean and a `crt` boolean (off = a flat screen; \
                  warp and the roll bar keep their values but draw nothing). \
                  Omit `targets` to report every exposed pane \
@@ -1112,7 +1118,7 @@ fn tool_defs() -> Value {
                                 },
                                 "config": {
                                     "type": "object",
-                                    "description": "partial grade — any of brightness/contrast/colour/text/background/gamma/menu_bar/text_size/bench_size/warp/crawl_angle/crawl_depth (0..100) and crawl/crt (bool) — AND `logo`: an absolute path to an image file (png/jpg/jpeg/svg/webp) to ATTACH as this pane's card logo (the agent wall portrait); an empty string clears it. Pane targets only."
+                                    "description": "partial grade — any of brightness/contrast/colour/text/background/gamma/menu_bar/text_size/bench_size/warp/crawl_angle/crawl_depth/phosphor (0..100; phosphor 25 = the house border glow, 0 = none) and crawl/crt (bool) — AND `logo`: an absolute path to an image file (png/jpg/jpeg/svg/webp) to ATTACH as this pane's card logo (the agent wall portrait); an empty string clears it. Pane targets only."
                                 }
                             },
                             "required": ["target", "config"],

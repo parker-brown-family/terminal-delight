@@ -353,6 +353,11 @@ pub enum GradeKey {
     /// Crawl depth — text-height ratio bottom:top (`0.05..=15`). Rides the grade
     /// group like [`GradeKey::CrawlAngle`].
     CrawlDepth,
+    /// Border phosphor, `0..=PHOSPHOR_MAX` with `1.0` the house look: how much
+    /// light the lit borders cast. Not a paint grade — it scales halos through
+    /// [`phosphor`] — but it rides the grade group, so a pane's own frame and
+    /// header can glow by its own amount while the chrome follows outer.
+    Phosphor,
 }
 
 impl GradeKey {
@@ -366,6 +371,7 @@ impl GradeKey {
             GradeKey::Warp => (0.0, WARP_MAX, 0.0),
             GradeKey::CrawlAngle => (CRAWL_ANGLE_MIN, CRAWL_ANGLE_MAX, CRAWL_ANGLE_DEFAULT),
             GradeKey::CrawlDepth => (CRAWL_DEPTH_MIN, CRAWL_DEPTH_MAX, CRAWL_DEPTH_DEFAULT),
+            GradeKey::Phosphor => (0.0, PHOSPHOR_MAX, 1.0),
             _ => (0.0, 1.0, 0.5),
         }
     }
@@ -502,6 +508,11 @@ pub struct Grade {
     /// ([`house_outer`]) and what the GAUGES toggle writes.
     #[serde(default = "yes", skip_serializing_if = "is_true")]
     pub crt: bool,
+    /// Border phosphor (`0..=PHOSPHOR_MAX`, `1.0` = the house look): the gain on
+    /// every halo a lit border casts, applied through [`phosphor`]. A grade
+    /// written before this dial existed has no key and fills from
+    /// [`Grade::default`], which is `1.0` — exactly the glow it was drawn with.
+    pub phosphor: f32,
 }
 
 /// One addressable channel of a [`Grade`] — every dial a pane can own, the two
@@ -526,6 +537,7 @@ pub enum GradeChannel {
     Crawl,
     Tracking,
     Crt,
+    Phosphor,
 }
 
 impl GradeChannel {
@@ -533,7 +545,10 @@ impl GradeChannel {
     /// pin list reads the same way every time. Safe to insert into: a pin list
     /// travels as channel NAMES, never as the bitmask, so the discriminants are
     /// an in-memory detail and a new dial can sit beside its sibling.
-    pub const ALL: [GradeChannel; 15] = [
+    ///
+    /// Sixteen is also the most the bitmask holds — [`GradePins`] is a `u16` —
+    /// so a seventeenth channel widens that first.
+    pub const ALL: [GradeChannel; 16] = [
         Self::Brightness,
         Self::Contrast,
         Self::Colour,
@@ -549,6 +564,7 @@ impl GradeChannel {
         Self::Crawl,
         Self::Tracking,
         Self::Crt,
+        Self::Phosphor,
     ];
 
     /// The wire name. STABLE — it is written into state files, so renaming one
@@ -570,6 +586,7 @@ impl GradeChannel {
             Self::Crawl => "crawl",
             Self::Tracking => "tracking",
             Self::Crt => "crt",
+            Self::Phosphor => "phosphor",
         }
     }
 
@@ -611,6 +628,7 @@ impl GradeChannel {
             Self::CrawlDepth => close(a.crawl_depth, b.crawl_depth),
             Self::Crawl => a.crawl == b.crawl,
             Self::Crt => a.crt == b.crt,
+            Self::Phosphor => close(a.phosphor, b.phosphor),
             Self::Tracking => match (a.tracking, b.tracking) {
                 (None, None) => true,
                 (Some(x), Some(y)) => x.iter().zip(y.iter()).all(|(p, q)| close(*p, *q)),
@@ -637,6 +655,7 @@ impl GradeChannel {
             Self::Crawl => dst.crawl = src.crawl,
             Self::Tracking => dst.tracking = src.tracking,
             Self::Crt => dst.crt = src.crt,
+            Self::Phosphor => dst.phosphor = src.phosphor,
         }
     }
 }
@@ -656,6 +675,7 @@ impl From<GradeKey> for GradeChannel {
             GradeKey::Warp => Self::Warp,
             GradeKey::CrawlAngle => Self::CrawlAngle,
             GradeKey::CrawlDepth => Self::CrawlDepth,
+            GradeKey::Phosphor => Self::Phosphor,
         }
     }
 }
@@ -811,6 +831,8 @@ impl Default for Grade {
             // What a grade with no `crt` key has always meant. The fresh
             // install's flat screen is [`house_outer`]'s to say, not this.
             crt: true,
+            // The glow every border had before the gauge existed.
+            phosphor: 1.0,
         }
     }
 }
@@ -823,7 +845,7 @@ impl Grade {
     /// roll bar live in the collapsed CRT section and the crawl knobs in their
     /// own, so this list is also exactly what `reset` clears — see
     /// [`Grade::reset_gauges`].
-    pub const CHANNELS: [(GradeKey, &'static str); 9] = [
+    pub const CHANNELS: [(GradeKey, &'static str); 10] = [
         (GradeKey::TextSize, "text size"),
         (GradeKey::BenchSize, "bench size"),
         (GradeKey::Brightness, "brightness"),
@@ -833,6 +855,7 @@ impl Grade {
         (GradeKey::Background, "background"),
         (GradeKey::Gamma, "gamma"),
         (GradeKey::Scale, "menu bar"),
+        (GradeKey::Phosphor, "phosphor"),
     ];
 
     /// This grade with its MAIN gauges ([`Self::CHANNELS`]) back at neutral and
@@ -853,6 +876,7 @@ impl Grade {
             scale: n.scale,
             text_size: n.text_size,
             bench_size: n.bench_size,
+            phosphor: n.phosphor,
             ..self
         }
     }
@@ -884,12 +908,16 @@ impl Grade {
             // was. With warp at 0 that is still the theme's own scanlines,
             // exactly what this identity resolved to before `crt` existed.
             crt: true,
+            // Reset puts the borders back to the house glow, which is what
+            // `1.0` means — not to none, which is a choice somebody makes.
+            phosphor: 1.0,
         }
     }
 
     /// True when every channel sits at neutral — the grade is the identity and
-    /// takes `resolve`'s fast path. NB: `warp`/`tracking` are NOT paint grades, so
-    /// they're deliberately excluded — a curved-but-ungraded pane still fast-paths.
+    /// takes `resolve`'s fast path. NB: `warp`/`tracking`/`phosphor` are NOT paint
+    /// grades, so they're deliberately excluded — a curved-but-ungraded pane
+    /// still fast-paths, and so does one whose borders glow more than the house.
     pub fn is_neutral(&self) -> bool {
         const EPS: f32 = 1e-3;
         [
@@ -955,6 +983,7 @@ impl Grade {
             && (self.crawl_angle - d.crawl_angle).abs() < EPS
             && (self.crawl_depth - d.crawl_depth).abs() < EPS
             && self.crt == d.crt
+            && (self.phosphor - d.phosphor).abs() < EPS
     }
 
     /// The multiplier the WORKBENCH face's type ramp is drawn at.
@@ -983,6 +1012,7 @@ impl Grade {
             GradeKey::Warp => self.warp,
             GradeKey::CrawlAngle => self.crawl_angle,
             GradeKey::CrawlDepth => self.crawl_depth,
+            GradeKey::Phosphor => self.phosphor,
         }
     }
 
@@ -1002,6 +1032,7 @@ impl Grade {
             GradeKey::Warp => self.warp = v,
             GradeKey::CrawlAngle => self.crawl_angle = v,
             GradeKey::CrawlDepth => self.crawl_depth = v,
+            GradeKey::Phosphor => self.phosphor = v,
         }
     }
 }
@@ -1118,6 +1149,7 @@ pub fn house_outer() -> ThemeChoice {
             crawl: false,
             crawl_angle: CRAWL_ANGLE_DEFAULT,
             crawl_depth: CRAWL_DEPTH_DEFAULT,
+            phosphor: 1.0, // the house glow; the gauge goes to 400% and to none
         },
         dynamic: Dynamic::Plain,
         // The Terminal Delight palette, which TD ships its own copy of, so it is
@@ -2489,6 +2521,39 @@ pub const HOUSE_CONTRAST: f32 = 0.75;
 pub const HOUSE_ROLL: [f32; 3] = [0.52, 0.815, 0.207];
 pub const WARP_MAX: f32 = 1.5;
 
+/// The top of the phosphor gauge. `1.0` is the house look every lit border was
+/// drawn with before the gauge existed, and the range runs to four times that:
+/// the house look was tuned to be tasteful, not to be the most there is, and
+/// the gauge exists for the person who wants a lot more of it — and for the
+/// person who wants none, which is `0.0`.
+pub const PHOSPHOR_MAX: f32 = 4.0;
+
+/// One phosphor halo — the soft light a lit border casts — scaled by a
+/// phosphor gauge reading.
+///
+/// Every border glow in the chrome is built at its house strength and then
+/// passed through here, so the one dial moves all of them together. Alpha
+/// scales linearly and caps at fully lit; the blur scales by the square root,
+/// so the top of the dial is a wider bloom as well as a hotter one without the
+/// light running off past whatever it surrounds. The crisp rims beside these
+/// halos and the black shadows under a floating surface are NOT phosphor and
+/// never come through here: turned all the way down, a border is still a
+/// border and a raised panel is still raised.
+///
+/// `None` at zero, so a gauge turned all the way down draws no halo at all
+/// rather than an invisible one.
+pub fn phosphor(gauge: f32, halo: gpui::BoxShadow) -> Option<gpui::BoxShadow> {
+    let g = gauge.clamp(0.0, PHOSPHOR_MAX);
+    if g <= f32::EPSILON || halo.color.a <= 0.0 {
+        return None;
+    }
+    Some(gpui::BoxShadow {
+        color: halo.color.alpha((halo.color.a * g).min(1.0)),
+        blur_radius: halo.blur_radius * g.sqrt(),
+        ..halo
+    })
+}
+
 /// The barrel coefficients `(k1, k2)` the renderer + hit-testing use for a given
 /// warp amount — kept here so geometry stays in sync with the shader's scaling.
 pub fn warp_coeffs(amount: f32) -> (f32, f32) {
@@ -3625,6 +3690,8 @@ mod tests {
             tracking: Some([0.3, 0.4, 0.5]),
             // neutral() keeps the tube on, so the walk needs it off here.
             crt: false,
+            // and the house glow, so the walk needs another.
+            phosphor: 2.5,
         };
         for c in GradeChannel::ALL {
             assert_eq!(
@@ -4414,6 +4481,7 @@ warp = 1.5
             GradeKey::Warp,
             GradeKey::CrawlAngle,
             GradeKey::CrawlDepth,
+            GradeKey::Phosphor,
         ];
         for k in keys {
             let (min, max, _) = k.range();
@@ -4792,6 +4860,114 @@ size = 9.0
         assert!(err.contains("palette"), "the message names the file: {err}");
 
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// The phosphor gauge's contract, which every border halo in the window
+    /// inherits by going through [`phosphor`]: nothing at zero, exactly the
+    /// halo as built at one, and at the top four times as hot (capped at fully
+    /// lit) and twice as wide — with nothing but heat and width moving.
+    #[test]
+    fn the_phosphor_gauge_is_none_at_zero_the_house_at_one_and_four_times_at_the_top() {
+        let ink = gpui::hsla(0.33, 0.9, 0.6, 1.0);
+        let halo = gpui::BoxShadow {
+            color: ink.alpha(0.2),
+            offset: gpui::point(gpui::px(0.), gpui::px(1.)),
+            blur_radius: gpui::px(16.),
+            spread_radius: gpui::px(2.),
+            inset: false,
+        };
+        assert_eq!(
+            phosphor(0.0, halo.clone()),
+            None,
+            "all the way down, no halo at all"
+        );
+        assert_eq!(phosphor(-3.0, halo.clone()), None, "below zero is zero");
+        assert_eq!(
+            phosphor(1.0, halo.clone()),
+            Some(halo.clone()),
+            "the house setting is the halo exactly as it was built"
+        );
+        let top = phosphor(PHOSPHOR_MAX, halo.clone()).expect("lit at the top");
+        assert!(
+            (top.color.a - 0.8).abs() < 1e-4,
+            "four times as hot: {}",
+            top.color.a
+        );
+        assert_eq!(top.blur_radius, gpui::px(32.), "twice as wide");
+        assert_eq!(
+            (top.offset, top.spread_radius, top.inset),
+            (halo.offset, halo.spread_radius, halo.inset),
+            "only the heat and the width move"
+        );
+        let hot = gpui::BoxShadow {
+            color: ink.alpha(0.5),
+            ..halo.clone()
+        };
+        assert_eq!(
+            phosphor(PHOSPHOR_MAX, hot).map(|s| s.color.a),
+            Some(1.0),
+            "a hot halo caps at fully lit"
+        );
+        assert_eq!(
+            phosphor(99.0, halo.clone()),
+            phosphor(PHOSPHOR_MAX, halo),
+            "past the top is the top"
+        );
+    }
+
+    /// A grade saved before the gauge existed has no `phosphor` key, and must
+    /// open on exactly the glow it was drawn with. A turned gauge must survive a
+    /// save, a reset must bring back the house glow rather than none, and a pane
+    /// must be able to own the dial by name without owning anything else.
+    #[test]
+    fn a_grade_from_before_the_phosphor_gauge_opens_at_the_house_glow() {
+        let old: Grade = toml::from_str("brightness = 0.2\ncontrast = 0.5\n").expect("loads");
+        assert_eq!(old.phosphor, 1.0, "no key is the glow it always had");
+        assert_eq!(Grade::default().phosphor, 1.0);
+        assert_eq!(
+            house_outer().grade.phosphor,
+            1.0,
+            "a fresh install opens on it too"
+        );
+        assert_eq!(
+            Grade::neutral().phosphor,
+            1.0,
+            "reset brings back the house glow"
+        );
+
+        let mut g = Grade::default();
+        g.set(GradeKey::Phosphor, 0.0);
+        assert!(
+            !g.is_default(),
+            "a turned gauge is not the default, so it is written"
+        );
+        let body = toml::to_string(&g).expect("serializes");
+        let back: Grade = toml::from_str(&body).expect("round-trips");
+        assert_eq!(back.phosphor, 0.0, "all the way down survives a save");
+        assert_eq!(
+            g.reset_gauges().phosphor,
+            1.0,
+            "RESET clears it with the main gauges"
+        );
+        g.set(GradeKey::Phosphor, 9.0);
+        assert_eq!(g.phosphor, PHOSPHOR_MAX, "the dial stops at the top");
+
+        assert_eq!(
+            GradeChannel::parse("phosphor"),
+            Some(GradeChannel::Phosphor)
+        );
+        let outer = Grade::default();
+        let own = Grade {
+            phosphor: 3.0,
+            brightness: 0.9,
+            ..Grade::default()
+        };
+        let pane = GradePins::only(GradeChannel::Phosphor).merge(outer, own);
+        assert_eq!(
+            (pane.phosphor, pane.brightness),
+            (3.0, outer.brightness),
+            "a pane that owns its phosphor owns nothing else"
+        );
     }
 }
 
