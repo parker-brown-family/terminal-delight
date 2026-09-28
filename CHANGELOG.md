@@ -85,6 +85,24 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ### Fixed
 
+- **A link Claude Code breaks across two rows opens whole from either half.**
+  Claude cuts a long path at the pane's width and starts the second half at its
+  two-column margin. The click only looked for the rest of a link in column 0,
+  so Alt+click and Ctrl+click on a wrapped `file://` path opened nothing, or the
+  wrong half. The rest of the link is now found at the margin. When a path could
+  have been broken at the edge or could have ended there with the next word
+  below it, the disk decides: the reading that names an existing file wins. The
+  second half is also painted in the link colour even when it carries no slash;
+  before, `ascade-and-workbench-turn-fix.md` stayed prose while
+  `es/HANDOFF-….md` lit up. (#XXX)
+- **The Alt copy chip copies a command Claude Code wrapped as one line.** The
+  copy only rejoined rows that started in column 0, and every row of a Claude
+  reply starts two columns in. So Alt+click on a wrapped command copied its
+  first row, cut off mid-command and with the margin in front of it. A margin
+  two rows share is now read as a margin. The command copies whole from either
+  row with no leading spaces, and a code block indented under a paragraph still
+  stays apart. (#881)
+
 - **Output reaches the terminal core faster.** The guards the core swap put in
   front of rio-vt's parser read every byte one at a time and took about a third
   of its throughput: coloured text ran at 88 MiB/s through them, against 138
