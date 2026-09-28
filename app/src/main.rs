@@ -40233,6 +40233,10 @@ fn main() {
         // …and the user's own shortlist across both vocabularies, which the
         // paint overlay shows as its first shelf. Seeded on first run.
         fav::init(cx);
+        // A new install's directory-logo map: `/` → TD's own mark, so its panes
+        // wear the app's logo instead of `＋ logo`. Only when no map exists at
+        // all; must precede the first workspace, which loads the map.
+        dirlogo::seed_if_absent();
         // Release the workspace claim at the very start of shutdown — `on_app_quit`
         // handlers run BEFORE windows/PTYs tear down (App::shutdown), so this
         // frees the lock seconds ahead of actual process exit. That is what lets
