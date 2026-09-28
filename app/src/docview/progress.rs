@@ -31,7 +31,7 @@
 //! own bottom-right corner — a brief's notes bar, a PDF's page counter — keeps
 //! [`GUTTER`] clear of the edge, so the rail runs the whole height beside it.
 
-use gpui::{div, prelude::*, px, AnyElement};
+use gpui::{div, point, prelude::*, px, AnyElement, BoxShadow};
 
 use crate::theme::Theme;
 
@@ -138,16 +138,28 @@ pub fn rail(r: Reading, view_h: f32, th: &Theme) -> Option<AnyElement> {
     let column = blocks(r, count(track)).into_iter().map(|b| {
         let (fill, rim) = match b {
             Block::Here => (lit, lit),
-            Block::Passed => (lit.alpha(0.42), lit.alpha(0.55)),
+            Block::Passed => (lit.alpha(0.32), lit.alpha(0.5)),
             Block::Ahead => (lit.alpha(0.07), lit.alpha(0.22)),
         };
-        div()
+        let block = div()
             .flex_1()
             .min_h(px(1.))
             .rounded(px(1.5))
             .bg(fill)
             .border_1()
-            .border_color(rim)
+            .border_color(rim);
+        // The view's own blocks cast light, as a lit phosphor does, so where
+        // the reader is stands out from what they have read.
+        match b {
+            Block::Here => block.shadow(vec![BoxShadow {
+                color: lit.alpha(0.6),
+                offset: point(px(0.), px(0.)),
+                blur_radius: px(6.),
+                spread_radius: px(0.),
+                inset: false,
+            }]),
+            _ => block,
+        }
     });
     let rail = div()
         .absolute()
