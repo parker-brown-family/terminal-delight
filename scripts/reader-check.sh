@@ -26,6 +26,11 @@
 # <label>-later.png, is taken LATER_WAIT seconds (default 2) after that.
 # UNBOUND=1 runs the same agent with no transcript laid down, so there is
 # nothing to bind it to and the reader must say so and read the screen.
+# A Codex rollout (one that opens with `session_meta`) is staged the Codex way:
+# laid under the scratch HOME's .codex/sessions with its directory rewritten to
+# the pane's, and resumed by a stand-in named `codex` (`codex resume <id>`);
+# app/tests/fixtures/reader/codex.jsonl is one. That stand-in draws nothing of
+# Codex's screen, which nobody here has a specimen of.
 #
 # Stages the layout the reader is opened for: a 1,576 x 950 window (Parker's) with
 # a tab of three panes whose first is a quarter of the window wide, each running a
@@ -58,7 +63,12 @@ mkdir -p "$OUT"
 OUT=$(cd "$OUT" && pwd)
 SESSION="readercheck$$"
 WS="special:tdreader$$"
-trap hidden_cleanup EXIT
+# Where a stand-in agent lives. Not under OUT: a pane is taken for Claude Code
+# when its command line so much as contains "/claude", and an agent's scratch
+# directory (/tmp/claude-1000/…) does — a stand-in named codex there reads as
+# Claude and binds nothing.
+BIN="${XDG_RUNTIME_DIR:-/tmp}/td-reader-check-$$"
+trap 'hidden_cleanup; rm -rf "$BIN"' EXIT
 
 # What every pane prints, then keeps quiet with cat so the pane stays alive.
 {
@@ -77,19 +87,38 @@ FIRST_RUN="sh $OUT/pane.sh"
 WINDOW_HOME=$HOME
 if [ -n "$AGENT" ]; then
   [ -f "$AGENT" ] || { echo "no transcript at $AGENT"; exit 2; }
-  # The id the stand-in resumes is the one the records carry, and the copy is
-  # named for it: Claude Code's file stem IS the session id.
-  ID=$(jq -r 'select(.sessionId) | .sessionId' "$AGENT" | head -1)
-  [ -n "$ID" ] || ID=5f0c2a9e-7d1b-4c3e-9a28-1e6b0d4f7c31
   WINDOW_HOME="$OUT/home"
   FIRST_CWD="$OUT/work"
-  mkdir -p "$FIRST_CWD" "$OUT/bin"
-  # Claude Code's directory for a cwd: every character that is not a letter or a
-  # digit becomes a dash.
-  TALK="$WINDOW_HOME/.claude/projects/$(printf %s "$FIRST_CWD" | sed 's/[^A-Za-z0-9]/-/g')/$ID.jsonl"
-  mkdir -p "$(dirname "$TALK")"
-  [ "${UNBOUND:-}" = 1 ] || cp "$AGENT" "$TALK"
-  cat > "$OUT/bin/claude" <<'STAND_IN'
+  mkdir -p "$FIRST_CWD" "$BIN"
+  if [ "$(head -1 "$AGENT" | jq -r .type)" = session_meta ]; then
+    # A Codex rollout is found by the directory its opening record names, and
+    # named for the session it opens.
+    ID=$(head -1 "$AGENT" | jq -r .payload.id)
+    WAS=$(head -1 "$AGENT" | jq -r .payload.cwd)
+    TALK="$WINDOW_HOME/.codex/sessions/2026/09/29/rollout-2026-09-29T16-58-00-$ID.jsonl"
+    mkdir -p "$(dirname "$TALK")"
+    [ "${UNBOUND:-}" = 1 ] || sed "s#$WAS#$FIRST_CWD#g" "$AGENT" > "$TALK"
+    cat > "$BIN/codex" <<'STAND_IN'
+#!/bin/bash
+# reader-check's stand-in for Codex: its name and its resume line are what bind
+# the pane to a rollout. It draws nothing of Codex's own screen.
+printf '\033]0;codex\007\033[?25l\033[H\033[2J  (a stand-in for Codex)\n'
+while :; do sleep 1; done
+STAND_IN
+    chmod +x "$BIN/codex"
+    echo "exec $BIN/codex resume $ID" > "$OUT/agent.sh"
+    FIRST_RUN="sh $OUT/agent.sh"
+  else
+    # The id the stand-in resumes is the one the records carry, and the copy is
+    # named for it: Claude Code's file stem IS the session id.
+    ID=$(jq -r 'select(.sessionId) | .sessionId' "$AGENT" | head -1)
+    [ -n "$ID" ] || ID=5f0c2a9e-7d1b-4c3e-9a28-1e6b0d4f7c31
+    # Claude Code's directory for a cwd: every character that is not a letter or a
+    # digit becomes a dash.
+    TALK="$WINDOW_HOME/.claude/projects/$(printf %s "$FIRST_CWD" | sed 's/[^A-Za-z0-9]/-/g')/$ID.jsonl"
+    mkdir -p "$(dirname "$TALK")"
+    [ "${UNBOUND:-}" = 1 ] || cp "$AGENT" "$TALK"
+    cat > "$BIN/claude" <<'STAND_IN'
 #!/bin/bash
 # reader-check's stand-in for Claude Code. Its name and its --resume line are
 # what bind the pane to a transcript; the rest is the bottom of Claude Code's
@@ -109,9 +138,10 @@ trap draw WINCH
 draw
 while :; do sleep 1; done
 STAND_IN
-  chmod +x "$OUT/bin/claude"
-  echo "exec $OUT/bin/claude --resume $ID" > "$OUT/agent.sh"
-  FIRST_RUN="sh $OUT/agent.sh"
+    chmod +x "$BIN/claude"
+    echo "exec $BIN/claude --resume $ID" > "$OUT/agent.sh"
+    FIRST_RUN="sh $OUT/agent.sh"
+  fi
 fi
 
 {
@@ -159,8 +189,8 @@ SIZE=$(hyprctl clients -j | jq -r --argjson p "$WIN" '.[] | select(.pid==$p) | "
 sleep "$SETTLE"
 # A window that started a real agent is a process on somebody's desk, not a
 # fixture: the run stops, and the cleanup takes the window and its host with it.
-if grep -q "launching — claude" "$LOG"; then
-  echo "the window launched a real claude — stopped; see $LOG"
+if grep -qE "launching — (claude|codex)" "$LOG"; then
+  echo "the window launched a real agent — stopped; see $LOG"
   exit 5
 fi
 for chord in $KEYS; do

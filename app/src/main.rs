@@ -13554,15 +13554,20 @@ impl Workspace {
     /// Start reading the conversation at `path` for the FOCUS reader: each half
     /// second, off the main thread, the transcript's new lines are folded in and
     /// — when that changed anything, or a tool call was opened or closed — the
-    /// conversation is drawn again and handed across. Dropping the returned
+    /// conversation is drawn again and handed across, the agent's side under
+    /// `agent` (the pane's own label: CLAUDE, CODEX). Dropping the returned
     /// [`ReaderTalk`] stops it.
     fn read_talk(
         path: std::path::PathBuf,
         ink: transcript::Ink,
+        agent: String,
         cx: &mut Context<Self>,
     ) -> ReaderTalk {
         let open: Arc<Mutex<(std::collections::HashSet<usize>, u64)>> = Arc::default();
-        let you = lang::current().strings().reader_you;
+        let (you, empty) = {
+            let s = lang::current().strings();
+            (s.reader_you, s.reader_empty)
+        };
         let shared = open.clone();
         let file = path.clone();
         let read = cx.spawn(async move |this, cx| {
@@ -13572,7 +13577,7 @@ impl Workspace {
             let mut drawn_for: Option<(u64, u64)> = None;
             let mut drawings = 0u64;
             loop {
-                let (open, ink) = (shared.clone(), ink.clone());
+                let (open, ink, agent) = (shared.clone(), ink.clone(), agent.clone());
                 let (t, c, drawing) = cx
                     .background_executor()
                     .spawn(async move {
@@ -13596,8 +13601,14 @@ impl Workspace {
                             (o.0.clone(), o.1)
                         };
                         let key = (talk.rev(), turned);
-                        let drawing = (restarted || Some(key) != drawn_for)
-                            .then(|| (key, transcript::draw(&talk, &ink, you, "CLAUDE", &set)));
+                        let drawing = (restarted || Some(key) != drawn_for).then(|| {
+                            let words = transcript::Words {
+                                you,
+                                agent: &agent,
+                                empty,
+                            };
+                            (key, transcript::draw(&talk, &ink, &words, &set))
+                        });
                         (tail, talk, drawing)
                     })
                     .await;
@@ -31123,7 +31134,7 @@ impl Render for Workspace {
             let snap = pane.update(cx, |v, cx| v.mirror_snapshot(cx));
             // An agent pane whose transcript the sweep bound for certain reads
             // its conversation, where the reader can fold that agent's records
-            // (Claude Code's: `PaneMode::reads_transcript`). A binding that
+            // (Claude Code's and Codex's: `PaneMode::reads_transcript`). A binding that
             // appears, moves or goes while the reader is up starts, restarts or
             // stops the reading; until the first read lands, and in crawl, the
             // reader reads the screen.
@@ -31142,7 +31153,8 @@ impl Render for Workspace {
                         path.display()
                     );
                     let ink = pane.read(cx).reader_ink(cx);
-                    self.focus_talk = Some(Self::read_talk(path, ink, cx));
+                    let agent = pane.read(cx).mode.label().to_string();
+                    self.focus_talk = Some(Self::read_talk(path, ink, agent, cx));
                 }
                 None => self.focus_talk = None,
             }

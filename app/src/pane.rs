@@ -135,11 +135,12 @@ impl PaneMode {
     }
 
     /// True when the FOCUS reader can read this agent's conversation from
-    /// its transcript. Only Claude Code's records fold today; a Codex pane
-    /// is read from its screen until its rollouts do, rather than bound to
-    /// a file the reader would read as an empty conversation.
+    /// its transcript: an agent whose records `transcript::Conversation`
+    /// folds — Claude Code's transcripts and Codex's rollouts. Another agent
+    /// arriving is read from its screen until its records fold too, rather
+    /// than bound to a file the reader would read as an empty conversation.
     pub fn reads_transcript(&self) -> bool {
-        matches!(self, PaneMode::Claude)
+        matches!(self, PaneMode::Claude | PaneMode::Codex)
     }
 
     /// Is this terminal sitting at its own shell prompt, waiting to be typed
@@ -11945,15 +11946,14 @@ mod tests {
     }
 
     /// The reader reads a conversation only where it can fold the agent's
-    /// records, which today means Claude Code's. A Codex pane is bound by the
-    /// same sweep, and its rollout would fold to an empty conversation.
+    /// records: Claude Code's transcripts and Codex's rollouts. Anything else
+    /// the sweep might one day bind would fold to an empty conversation, so it
+    /// keeps its screen until its records fold too.
     #[test]
-    fn only_claudes_conversation_is_read_until_codex_folds() {
+    fn a_conversation_is_read_only_where_its_records_fold() {
         assert!(PaneMode::Claude.reads_transcript());
-        assert!(
-            !PaneMode::Codex.reads_transcript(),
-            "its screen is the better read until its rollouts fold"
-        );
+        assert!(PaneMode::Codex.reads_transcript());
+        assert!(!PaneMode::Other("aider".into()).reads_transcript());
         assert!(!PaneMode::Shell.reads_transcript());
         assert!(!PaneMode::Unknown.reads_transcript());
     }

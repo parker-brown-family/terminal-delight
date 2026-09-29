@@ -49,7 +49,10 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
   is being read: TRANSCRIPT, SCREEN when the transcript could not be bound for
   certain (the reader then reads the screen, never a guess at whose
   conversation it is), SCROLLBACK for a shell, and ALTERNATE SCREEN for a
-  full-screen program. A Codex pane still reads its screen.
+  full-screen program. A Codex pane reads its rollout the same way, under
+  CODEX: what you typed rather than the instructions Codex files beside it, and
+  each script it ran summed up by what the script printed; its screen has no
+  input box the reader recognises, so it has no live foot yet.
 
 - **A new install's panes wear Terminal Delight's own mark.** With no
   `dir-logos.toml` at all, the first start writes one mapping `/` to the app's
