@@ -78,6 +78,9 @@ trait Backend: Send + Sized {
     fn columns(&self) -> usize;
     fn screen_lines(&self) -> usize;
     fn history_size(&self) -> usize;
+    /// Rows ever pushed off the top of the history, when the core counts them.
+    /// `None` is "this core does not count", not zero.
+    fn lines_evicted(&self) -> Option<u64>;
     fn display_offset(&self) -> usize;
     /// Append the cells of `line`, which is already clamped into the grid.
     /// May append fewer than `columns()`; [`Term`] pads.
@@ -174,6 +177,17 @@ impl Term {
 
     pub fn history_size(&self) -> usize {
         self.core.history_size()
+    }
+
+    /// Rows ever pushed off the top of the history, if this core counts them.
+    ///
+    /// With [`Self::history_size`] it says how many rows have entered the
+    /// history since some earlier moment, even once the history is full and
+    /// every new row pushes an old one out — which is what lets a reader keep
+    /// the rows it has already read. rio-vt counts; alacritty does not, and
+    /// says so with `None` rather than a zero that would read as "nothing left".
+    pub fn lines_evicted(&self) -> Option<u64> {
+        self.core.lines_evicted()
     }
 
     /// Screen and history together.

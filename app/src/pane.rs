@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use crate::crt;
-use crate::doc::{wrap_join, DocLine, Document, DocumentSource, RowBudget, WrapJoin};
+use crate::doc::{wrap_join, DocLine, Document, DocumentSource, GridRow, RowBudget, WrapJoin};
 use crate::screenread::{
     blocked_row, clip_evidence, human_input_rows, is_human_input_line, looks_blocked,
     rows_fingerprint, wants_human_row, wants_human_unless_answered, PROMPT_TAIL_ROWS,
@@ -2368,7 +2368,7 @@ type ThemeMemo = Option<(theme::ThemeChoice, PaneMode, bool, bool, u64, Theme)>;
 
 /// Cache key for [`TerminalView::mirror_document`]. Matching keys guarantee a
 /// byte-identical document: `generation` moves on every terminal event, the
-/// grid dimensions cover resizes, and the remaining fields are exactly what
+/// grid dimensions cover resizes, and `style` is exactly what
 /// [`TerminalView::resolved_theme`]'s memo keys on — its guarantee is what makes
 /// comparing these enough, with no hash over the resolved palette.
 #[derive(Clone, PartialEq)]
@@ -2376,6 +2376,14 @@ struct MirrorDocKey {
     generation: u64,
     cols: usize,
     rows: usize,
+    style: ReadStyle,
+}
+
+/// What decides how a grid row reads in the FOCUS reader's styled runs: the
+/// inputs [`TerminalView::resolved_theme`]'s memo keys on, and nothing else. The
+/// document's memo and the kept history rows both key on it.
+#[derive(Clone, PartialEq)]
+struct ReadStyle {
     eff: theme::ThemeChoice,
     mode: PaneMode,
     inherit: bool,
@@ -2568,6 +2576,10 @@ pub struct TerminalView {
     /// downstream caches (the reader's layout) can key on it safely where an
     /// `Arc` pointer would be unsound (a freed allocation's address can recur).
     mirror_doc: RefCell<Option<(MirrorDocKey, u64, Arc<Document>)>>,
+    /// The history rows the FOCUS reader has read, kept while it reads this pane
+    /// so a streaming pane costs the rows that arrived rather than the whole
+    /// history (see `readrows`). Dropped when the reader closes.
+    read_history: RefCell<Option<crate::readrows::ReadHistory<ReadStyle>>>,
     /// Right-click context menu (Copy / Paste / Open link) anchor, window-space.
     ctx_menu: Option<gpui::Point<Pixels>>,
     /// An agent in this pane finished and nobody has looked yet: the ping has
@@ -3172,28 +3184,99 @@ fn budget_range(oldest: i32, newest: i32, lines: usize) -> (i32, i32) {
 pub struct PaneSource<'a> {
     pub pane: &'a TerminalView,
     pub theme: &'a Theme,
+    style: &'a ReadStyle,
 }
 
 impl DocumentSource for PaneSource<'_> {
     fn document(&self, budget: RowBudget) -> Document {
-        self.pane.document_with(budget, self.theme)
+        self.pane.document_with(budget, self.theme, self.style)
     }
 }
 
 impl TerminalView {
-    /// Build a [`Document`] from this pane's grid, reading back up to
-    /// `budget.lines` rows into scrollback. Clamped to what history actually
-    /// holds, so a fresh pane simply yields fewer lines rather than blank filler.
-    pub fn document_with(&self, budget: RowBudget, th: &Theme) -> Document {
-        let (first, last) = {
+    /// Build a [`Document`] from this pane's grid: its history, kept between
+    /// reads (see `readrows`), then its live screen — the newest `budget.lines`
+    /// rows of them, clamped to what the terminal holds.
+    ///
+    /// A shell's rows join exactly where the terminal soft-wrapped them. An
+    /// agent's screen still goes through the width guess, because its TUI broke
+    /// its own lines and left no flag to join on. Blank rows under the last line
+    /// are dropped, so a short screen does not push its content off the top of a
+    /// reader that follows the bottom.
+    fn document_with(&self, budget: RowBudget, th: &Theme, style: &ReadStyle) -> Document {
+        let mut kept = self.read_history.borrow_mut();
+        let screen = {
             let term = self.session.term.lock();
-            // Line 0 is the top of the screen; history runs negative from there.
-            let oldest = term.topmost_line().0;
-            let newest = (self.grid.rows as i32 - 1).max(0);
-            budget_range(oldest, newest, budget.lines)
+            crate::readrows::ReadHistory::refresh(&mut kept, &term, style, |cells| {
+                grid_row(cells, th)
+            });
+            crate::readrows::screen_rows(&term, |cells| grid_row(cells, th))
         };
-        let rows = self.grid_rows_in(first, last, th);
-        Document::from_grid_rows(&rows, self.grid.cols)
+        let history = kept.as_ref().map(|h| h.rows());
+        let held = history.map_or(0, |h| h.len()) as i32;
+        // Line 0 is the top of the screen; history runs negative from there.
+        let (first, last) = budget_range(-held, screen.len() as i32 - 1, budget.lines);
+        let (skip, take) = ((first + held) as usize, (last - first + 1).max(0) as usize);
+        let rows = history
+            .into_iter()
+            .flatten()
+            .chain(screen.iter())
+            .skip(skip)
+            .take(take);
+        let mut doc = if self.mode.is_agent() {
+            let lines: Vec<DocLine> = rows.map(|r| r.line.clone()).collect();
+            Document::from_grid_rows(&lines, self.grid.cols)
+        } else {
+            Document::from_wrapped_rows(rows)
+        };
+        while doc.lines.last().is_some_and(|l| l.text.trim().is_empty()) {
+            doc.lines.pop();
+        }
+        doc
+    }
+}
+
+/// One grid row as the FOCUS reader reads it: the characters, their foreground
+/// colours, and the terminal's own soft-wrap flag.
+///
+/// Colour comes from the cells, so history keeps the ANSI colours the program
+/// emitted; TD's own overlays (the syntax pass, human-input tinting, selection,
+/// cursor) are viewport-only and deliberately not reproduced — they are
+/// decoration on the live screen, not properties of the text. A wide
+/// character's spacer cells are skipped, including the one it leaves at the end
+/// of a row it did not fit on, or the join would put a blank inside the line.
+fn grid_row(cells: &[crate::vt::Cell], th: &Theme) -> GridRow {
+    let mut text = String::with_capacity(cells.len());
+    let mut runs: Vec<TextRun> = Vec::new();
+    let mut wrapped = false;
+    for cell in cells {
+        wrapped |= cell.flags.contains(Flags::WRAPLINE);
+        if cell
+            .flags
+            .intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER)
+        {
+            continue;
+        }
+        let ch = if cell.c == '\0' { ' ' } else { cell.c };
+        let color = ansi_to_hsla(cell.fg, th, th.text);
+        let len = ch.len_utf8();
+        text.push(ch);
+        // coalesce identical adjacent styles so a row is a handful of runs
+        match runs.last_mut() {
+            Some(prev) if prev.color == color => prev.len += len,
+            _ => runs.push(TextRun {
+                len,
+                font: grid_font(th, FontWeight::default()),
+                color,
+                background_color: None,
+                underline: None,
+                strikethrough: None,
+            }),
+        }
+    }
+    GridRow {
+        line: DocLine::new(text, runs),
+        wrapped,
     }
 }
 
@@ -3436,18 +3519,21 @@ impl TerminalView {
     /// [`Self::resolved_theme`]'s own memo keys on. Same key ⇒ same colours went
     /// into every run, by that memo's guarantee — no hashing of the theme itself.
     ///
-    /// A mouse-move frame therefore costs one Arc clone; only real PTY output,
-    /// a resize, or a theme change pays for the 10k-line rebuild.
+    /// A mouse-move frame therefore costs one Arc clone; real PTY output reads
+    /// the rows that arrived plus the screen, and only a resize or a theme change
+    /// reads the whole history again (see `readrows`).
     fn mirror_document(&self, th: &Theme, cx: &App) -> (Arc<Document>, u64) {
         let key = MirrorDocKey {
             generation: self.session.content_generation(),
             cols: self.grid.cols,
             rows: self.grid.rows,
-            eff: self.appearance.effective(&theme::outer_choice(cx)),
-            mode: self.mode.clone(),
-            inherit: self.appearance.inherit_theme,
-            tint: agent_tint(),
-            theme_gen: theme::theme_gen(cx),
+            style: ReadStyle {
+                eff: self.appearance.effective(&theme::outer_choice(cx)),
+                mode: self.mode.clone(),
+                inherit: self.appearance.inherit_theme,
+                tint: agent_tint(),
+                theme_gen: theme::theme_gen(cx),
+            },
         };
         let next_rev = {
             let cache = self.mirror_doc.borrow();
@@ -3461,6 +3547,7 @@ impl TerminalView {
             PaneSource {
                 pane: self,
                 theme: th,
+                style: &key.style,
             }
             .document(RowBudget::all()),
         );
@@ -3551,9 +3638,14 @@ impl TerminalView {
     }
 
     /// Toggle whether this pane is the one currently mirrored in the FOCUS modal.
-    /// When set, a plain Esc closes the modal instead of reaching the PTY.
+    /// When set, a plain Esc closes the modal instead of reaching the PTY. When
+    /// cleared, the history rows the reader kept are let go: up to ten thousand
+    /// styled rows are worth holding while someone reads them, and not after.
     pub fn set_being_read(&mut self, on: bool) {
         self.being_read = on;
+        if !on {
+            *self.read_history.get_mut() = None;
+        }
     }
 
     /// What this pane is doing right now — cwd + resumable agent session —
@@ -4346,6 +4438,7 @@ impl TerminalView {
             seeking: false,
             theme_cache: RefCell::new(None),
             mirror_doc: RefCell::new(None),
+            read_history: RefCell::new(None),
             gamba: crate::gamba::Reels::new(seed),
             last_think_scan: Instant::now()
                 .checked_sub(std::time::Duration::from_secs(1))
@@ -5089,55 +5182,6 @@ impl TerminalView {
             ),
             side,
         )
-    }
-
-    /// The shift-clickable link under a screen point, if any: read the clicked
-    /// row out of the visible grid, scan around the column, and resolve a path
-    /// against the pane's cwd (only returning paths that actually exist).
-    /// Read grid rows as styled text over an arbitrary line range, INCLUDING
-    /// scrollback. `first`/`last` are alacritty grid line indices, where negative
-    /// lines are history — `grid.topmost_line()` is the oldest row retained.
-    ///
-    /// This is the scrollback counterpart to [`Self::styled_lines`], which can only
-    /// ever see the visible viewport because it walks `display_iter`. Colour comes
-    /// from the cells themselves, so history keeps the ANSI colours the program
-    /// emitted; TD's own overlays (the syntax pass, human-input tinting, selection,
-    /// cursor) are viewport-only and deliberately not reproduced here — they are
-    /// decoration on the live screen, not properties of the text.
-    fn grid_rows_in(&self, first: i32, last: i32, th: &Theme) -> Vec<DocLine> {
-        let term = self.session.term.lock();
-        let grid = &*term;
-        let cols = self.grid.cols;
-        let mut out = Vec::with_capacity((last - first + 1).max(0) as usize);
-        for l in first..=last {
-            let row = grid.row(Line(l));
-            let mut text = String::with_capacity(cols);
-            let mut runs: Vec<TextRun> = Vec::new();
-            for c in 0..cols {
-                let cell = &row[Column(c)];
-                if cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
-                    continue;
-                }
-                let ch = if cell.c == '\0' { ' ' } else { cell.c };
-                let color = ansi_to_hsla(cell.fg, th, th.text);
-                let len = ch.len_utf8();
-                text.push(ch);
-                // coalesce identical adjacent styles so a row is a handful of runs
-                match runs.last_mut() {
-                    Some(prev) if prev.color == color => prev.len += len,
-                    _ => runs.push(TextRun {
-                        len,
-                        font: grid_font(th, FontWeight::default()),
-                        color,
-                        background_color: None,
-                        underline: None,
-                        strikethrough: None,
-                    }),
-                }
-            }
-            out.push(DocLine::new(text, runs));
-        }
-        out
     }
 
     /// Resolve the Alt chip for a pointer position: what an Alt+click there

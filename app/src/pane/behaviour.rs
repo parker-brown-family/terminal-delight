@@ -1871,3 +1871,34 @@ fn notes_sent_to_an_agent_on_its_bench_land_in_the_composer(cx: &mut TestAppCont
         "the terminal face pastes, and leaves the composer alone"
     );
 }
+
+/// A shell's lines reach the FOCUS reader exactly as the program printed them:
+/// joined where the terminal soft-wrapped them, and nowhere else.
+///
+/// Both cases here are ones the old width guess got wrong on this very pane.
+/// A line that wraps into a row starting with spaces was refused, because an
+/// indented row looked like a code block; and a half-full row followed by a
+/// long first word was glued to it, because the word "could not have fit".
+/// The terminal knew both answers all along, in its soft-wrap flag.
+#[gpui::test]
+fn the_reader_joins_a_shells_lines_where_the_terminal_wrapped_them(cx: &mut TestAppContext) {
+    let wide = format!("{}    tail", "x".repeat(100));
+    let half = "h".repeat(60);
+    let word = "L".repeat(50);
+    let script = format!("printf '%s\\n%s\\n%s\\n' '{wide}' '{half}' '{word}'; exec cat");
+    let mut pane = Pane::running(cx, &script);
+    pane.wait_for(&word);
+    let doc = pane
+        .view
+        .read_with(pane.cx, |v, cx| v.mirror_snapshot(cx).doc);
+    let lines: Vec<&str> = doc.lines.iter().map(|l| l.text.as_str()).collect();
+    assert!(
+        lines.contains(&wide.as_str()),
+        "the 108-character line wraps into an indented row on a 100-column pane, \
+         and still reads whole: {lines:?}"
+    );
+    assert!(
+        lines.contains(&half.as_str()) && lines.contains(&word.as_str()),
+        "two lines the program ended stay two lines: {lines:?}"
+    );
+}

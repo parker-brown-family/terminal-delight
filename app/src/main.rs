@@ -70,6 +70,7 @@ mod paneident;
 mod picturewire;
 mod plugins;
 mod ptyscan;
+mod readrows;
 mod recover;
 mod screenread;
 mod session;
@@ -4128,6 +4129,44 @@ struct FocusMap {
     inherit: bool,
 }
 
+/// The FOCUS reader's glass and the text area inside it, in logical px, for a
+/// window of a given size. Only the window decides it; the pane being read never
+/// does, which is what gives the reader a size of its own.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct ReaderGlass {
+    panel_w: f32,
+    panel_h: f32,
+    /// Top and bottom padding inside the glass.
+    pad: f32,
+    /// Side padding: 7% of the glass, so the text keeps a margin on a wide
+    /// monitor, floored at `pad` on a small window.
+    pad_x: f32,
+    hdr_h: f32,
+    /// The text area's width and height.
+    avail_w: f32,
+    avail_h: f32,
+}
+
+impl ReaderGlass {
+    fn in_window(win_w: f32, win_h: f32) -> Self {
+        let panel_w = (win_w * 0.8).max(320.);
+        let panel_h = (win_h * 0.8).max(240.);
+        // A third roomier than the old 16px, so the text breathes inside the glass.
+        let pad = 21.0_f32;
+        let pad_x = (panel_w * 0.07).max(pad);
+        let hdr_h = 30.0_f32;
+        Self {
+            panel_w,
+            panel_h,
+            pad,
+            pad_x,
+            hdr_h,
+            avail_w: (panel_w - pad_x * 2.).max(1.),
+            avail_h: (panel_h - hdr_h - pad * 2.).max(1.),
+        }
+    }
+}
+
 struct Workspace {
     tabs: Vec<Tab>,
     active: usize,
@@ -4506,10 +4545,11 @@ struct Workspace {
     /// The pane currently mirrored in the FOCUS reading modal, if any. Weak so a
     /// closed pane (its × / shell exit) drops normally — the modal just vanishes.
     focus_read: Option<gpui::WeakEntity<TerminalView>>,
-    /// User text-size multiplier for the FOCUS mirror, on top of the auto-fit
-    /// scale. 1.0 = fit-to-modal; the header slider drives it `FZ_MIN..=FZ_MAX`.
-    /// Non-destructive — it scales only the mirror, never the real terminal's
-    /// grid. Reset to 1.0 whenever the modal (re)opens on a pane.
+    /// The FOCUS reader's letter size against the pane's own letters. 1.0 draws
+    /// them as the pane does, so opening the reader only ever adds room; the
+    /// header slider and Ctrl+wheel move it `FZ_MIN..=FZ_MAX` (see
+    /// [`reader_scale`]). Non-destructive — it scales only the reader, never the
+    /// real terminal's grid. Reset to 1.0 whenever the modal (re)opens on a pane.
     focus_zoom: f32,
     /// True while the FOCUS text-size slider thumb is being dragged.
     focus_zoom_drag: bool,
@@ -15789,14 +15829,38 @@ impl Workspace {
         )
     }
 
-    /// FOCUS text-size slider range — a multiplier on the auto-fit scale.
-    /// 1.0 (fit) sits near mid-track so the thumb has travel both ways. The
-    /// low end reaches well below fit so a dense read can shrink to a compact,
-    /// glanceable column (the reader wraps, so smaller never means narrower-only).
-    /// The high end is deliberately modest: past ~1.6× the text is billboard-sized
-    /// and the whole top half of the range was unusable (field-tested at 3.0).
-    const FZ_MIN: f32 = 0.35;
-    const FZ_MAX: f32 = 1.6;
+    /// FOCUS letter-size range, against the pane's own letters.
+    ///
+    /// Until 2026-09-29 the range multiplied an auto-fit that divided the glass by
+    /// the pane's width, so a 48-column pane opened at 3.65× and its smallest
+    /// setting was still 1.28× — the reader could never show a tiny pane at its
+    /// own size, which is the case it is opened for. Against the pane's letters,
+    /// 1.0 is "the same letters, more room", and 0.5–2.5 stays inside what the old
+    /// range actually drew: 0.87× to 5.8× across the panes measured that day, with
+    /// everything past about 1.6× of a full-width pane called billboard-sized.
+    const FZ_MIN: f32 = 0.5;
+    const FZ_MAX: f32 = 2.5;
+
+    /// The FOCUS reader's letter scale, from the pane's letters.
+    ///
+    /// A flat read has its own size: the glass is the window's, and `zoom` alone
+    /// sets the letters, so a narrow pane opens with as many columns as the glass
+    /// holds rather than with its own few columns blown up. Only crawl, which
+    /// never wraps, still fits the pane's grid into the glass (`fit`).
+    fn reader_scale(crawl: bool, fit: f32, zoom: f32) -> f32 {
+        if crawl {
+            (fit * zoom).clamp(0.3, 12.0)
+        } else {
+            zoom.clamp(Self::FZ_MIN, Self::FZ_MAX)
+        }
+    }
+
+    /// One Ctrl+wheel gesture over the FOCUS reader: ten percent a notch,
+    /// multiplied so the steps feel even at either end, held to the slider's
+    /// range. Positive notches are the wheel pushed away, which enlarges.
+    fn focus_zoom_step(zoom: f32, notches: f32) -> f32 {
+        (zoom * 1.1_f32.powf(notches)).clamp(Self::FZ_MIN, Self::FZ_MAX)
+    }
 
     /// Map a window-x to a 0..1 fraction along the FOCUS slider track (`None`
     /// until the track has been measured once).
@@ -30478,46 +30542,30 @@ impl Render for Workspace {
                 .last_win
                 .map(|(_, _, w, h)| (w, h))
                 .unwrap_or((1200., 800.));
-            let panel_w = (ww * 0.8).max(320.);
-            let panel_h = (wh * 0.8).max(240.);
-            // Reader padding: a third roomier than the old 16px so the text
-            // breathes inside the glass.
-            let pad = 21.0_f32;
-            // Side padding scales with the panel — a fixed 21px reads as a hairline
-            // margin on a wide monitor. 7% each side keeps the text off the glass
-            // edge at any size, with the old 21px as the floor on a small window.
-            let pad_x = (panel_w * 0.07).max(pad);
-            let hdr_h = 30.0_f32;
-            let avail_w = (panel_w - pad_x * 2.).max(1.);
-            let avail_h = (panel_h - hdr_h - pad * 2.).max(1.);
+            let ReaderGlass {
+                panel_w,
+                panel_h,
+                pad,
+                pad_x,
+                hdr_h,
+                avail_w,
+                avail_h,
+            } = ReaderGlass::in_window(ww, wh);
             let content_w = (snap.cols as f32 * snap.cell_w).max(1.);
             let content_h = (snap.rows as f32 * snap.cell_h).max(1.);
-            // Auto-fit (1.0 on the slider) = fill the WIDTH.
-            //
-            // The mirror carries the source pane's grid rows, already hard-broken at
-            // ITS column count — so no mirrored row is ever longer than `snap.cols`
-            // and re-wrapping them at a wider `fit_cols` can never lengthen a line.
-            // Fitting to height therefore left the text in a narrow column with the
-            // panel's whole width empty either side: a 57-column pane opened into a
-            // full-screen reader read as a thin ribbon.
-            //
-            // Scaling to the width instead makes those columns span the glass, which
-            // is the whole point of a reader. A short read no longer fills the height
-            // — `v_offset` centres it, which looks deliberate where a thin ribbon
-            // looked broken. Crawl doesn't wrap at all, so it keeps the both-axes fit
-            // that guarantees each whole row stays visible.
-            let fit = if snap.crawl {
-                (avail_w / content_w).min(avail_h / content_h)
-            } else {
-                avail_w / content_w
-            }
-            .clamp(0.7, 6.0);
-            // The header slider rides on top of the fit: 1.0 = fit-to-modal. The
-            // reader WRAPS rather than scrolling sideways, so a bigger size never
-            // runs lines off the edge — it just wraps more; a smaller size shows a
-            // compact column. The floor sits well under 1.0 so a dense read can
-            // shrink right down (the old 0.5 floor still felt huge on small panes).
-            let ms = (fit * self.focus_zoom).clamp(0.3, 12.0);
+            // The reader's size is its own. A flat read draws the pane's letters at
+            // `focus_zoom` (1.0 = as the pane draws them) across the glass's whole
+            // width, so a narrow pane opens with as many columns as the glass holds
+            // — about 175 × 46 in a 1,576 × 950 window — instead of its own few
+            // columns blown up to fill it. Scaling the pane's width to the glass
+            // (2026-08-31) ended the thin ribbon a narrow pane used to read as, but
+            // made the letters the pane's width decided: 3.65× on a 48-column pane.
+            // Crawl doesn't wrap, so it alone still fits the grid on both axes,
+            // which keeps each whole row visible.
+            let fit = (avail_w / content_w)
+                .min(avail_h / content_h)
+                .clamp(0.7, 6.0);
+            let ms = Self::reader_scale(snap.crawl, fit, self.focus_zoom);
             // The row height the mirror's row divs are drawn at: gpui rounds an
             // authored height to whole device pixels, and the virtual window
             // below (which rows to build, where the first sits, the total
@@ -30593,24 +30641,18 @@ impl Render for Workspace {
             // blank band jammed against the top OR the bottom. Once it overflows
             // this is 0 and the wheel pans `scroll_y` from the top.
             let v_offset = (avail_h - total_h).max(0.0) * 0.5;
-            // Horizontal frame: size it to the FULL grid width at this zoom (capped
-            // at the panel), NOT to the live content. Sizing to content made the
-            // whole block re-centre and JIGGLE sideways every time a line's length
-            // changed — fatal for a reader whose eye is locked on one spot. The grid
-            // width is fixed, so the left edge never moves. When the grid is narrower
-            // than the glass (a zoomed-down read) this fixed frame is centred;
-            // otherwise it fills and left-anchors at `pad`.
-            let body_w = if crawl {
-                avail_w
-            } else {
-                (snap.cols as f32 * glyph_w).min(avail_w)
-            };
-            let h_offset = ((avail_w - body_w) * 0.5).max(0.0);
+            // Horizontal frame: the glass's whole inner width, NOT the live content.
+            // Sizing to content made the whole block re-centre and JIGGLE sideways
+            // every time a line's length changed — fatal for a reader whose eye is
+            // locked on one spot. The frame is fixed, so the left edge never moves.
+            // It used to be the pane's grid width at this zoom, which is what kept
+            // the text to the pane's own columns; the reader's text now wraps at
+            // its own width (`fit_cols`), so its frame is the glass.
+            let body_w = avail_w;
             // Left inset of the content this frame — the hit-test maps clicks against
-            // it, so it must include the side padding AND the centring offset. It
-            // tracks `pad_x`, not `pad`: get this wrong and every reader click lands
-            // one margin's worth off.
-            let content_left = pad_x + h_offset;
+            // it. It tracks `pad_x`, not `pad`: get this wrong and every reader click
+            // lands one margin's worth off.
+            let content_left = pad_x;
             let base_size = snap.base_size * ms;
             // Stash this frame's layout + document so a click in the reading area
             // maps back to a document position for selection + copy. Both are Arc
@@ -30918,22 +30960,20 @@ impl Render for Workspace {
                     // scrollback — the wheel is never lost.
                     .on_scroll_wheel(cx.listener(|ws, ev: &ScrollWheelEvent, _w, cx| {
                         // ctrl+wheel is the size gesture and never a pan. The
-                        // reader mirrors the GRID on both faces (see
-                        // `the_focus_reader_mirrors_the_grid_on_both_faces`), so
-                        // the dial it turns is the grid's, named here rather
-                        // than resolved from the cursor: the scrim covers the
-                        // window, so where the pointer is says nothing about
-                        // which region of the pane is being read.
+                        // reader has a size of its own, so the dial it turns is
+                        // its own: the pane behind the scrim keeps its letters.
+                        // It used to turn the pane's text dial, when the reader's
+                        // letters were the pane's scaled up; now that would
+                        // resize a pane nobody is looking at.
                         //
                         // It halts, like the pane's own handler. Before this the
                         // chord panned the reader AND — propagation never
                         // stopped — resized the outer bar behind it.
                         if ev.modifiers.control {
-                            if let Some(pane) = ws.focus_read.as_ref().and_then(|w| w.upgrade()) {
-                                let notches = theme::wheel_notches(ev.delta);
-                                pane.update(cx, |v, cx| {
-                                    v.nudge_size(theme::GradeKey::TextSize, notches, cx)
-                                });
+                            let notches = theme::wheel_notches(ev.delta);
+                            let next = Self::focus_zoom_step(ws.focus_zoom, notches);
+                            if (next - ws.focus_zoom).abs() > f32::EPSILON {
+                                ws.focus_zoom = next;
                                 cx.notify();
                             }
                             cx.stop_propagation();
@@ -33542,28 +33582,28 @@ mod tests {
         );
     }
 
-    /// The FOCUS reader names the dial it turns instead of guessing at one.
+    /// The FOCUS reader turns its own size dial, and never the pane's.
     ///
     /// Its scrim `.occlude()`s the whole window, so the reader's own wheel
-    /// handler is the only one a flick reaches — and where the pointer happens
-    /// to be says nothing about which region of the mirrored pane is being
-    /// read. The reader mirrors the GRID on both faces (see
-    /// `the_focus_reader_mirrors_the_grid_on_both_faces` in pane.rs), so the
-    /// grid's dial is the answer and it is written down here rather than
-    /// resolved from a cursor that is standing on a modal.
+    /// handler is the only one a flick reaches. Until 2026-09-29 the reader's
+    /// letters were the pane's scaled to the glass, so the chord turned the
+    /// pane's text dial. The reader now has a size of its own, and turning the
+    /// pane's dial would resize a pane nobody is looking at while the reader
+    /// followed along — so the chord steps the reader's zoom, and the pane's
+    /// text size must not appear in the branch at all.
     ///
     /// It also has to HALT, and take ctrl before the pan. Before that the chord
     /// scrolled the reader and — propagation never stopped — resized the outer
     /// bar behind it, off one flick.
     ///
-    /// Mutation-tested: dropping the halt, putting the pan first, and swapping
-    /// the named dial for the bench's each fail this test.
+    /// Mutation-tested: dropping the halt, putting the pan first, and turning
+    /// the pane's text dial again each fail this test.
     #[test]
     fn the_focus_reader_does_not_pan_on_the_size_chord() {
         let code = shipped_code();
         let at = code
-            .find("if let Some(pane) = ws.focus_read.as_ref()")
-            .expect("the FOCUS reader's wheel handler");
+            .find("if ws.focus_overflow > 0.0")
+            .expect("the FOCUS reader's wheel pan");
         // Back up to the top of the listener so the ctrl branch is in view.
         let at = code[..at]
             .rfind(".on_scroll_wheel(cx.listener(|ws, ev: &ScrollWheelEvent")
@@ -33587,10 +33627,14 @@ mod tests {
 
         let branch = &body[ctrl..pan];
         assert!(
-            branch.contains("theme::GradeKey::TextSize"),
-            "the reader mirrors the GRID, so the grid's dial is the one it \
-             turns — and it says so, rather than resolving a region from a \
-             pointer that is standing on the scrim"
+            branch.contains("Self::focus_zoom_step(ws.focus_zoom, notches)"),
+            "the reader has its own size, so the chord steps the reader's zoom"
+        );
+        assert!(
+            !branch.contains("GradeKey::TextSize"),
+            "the chord must leave the pane's text size alone: the reader no \
+             longer draws the pane's letters scaled up, so resizing the pane \
+             would change a pane nobody is looking at"
         );
         assert!(
             branch.contains("theme::wheel_notches("),
@@ -33600,6 +33644,85 @@ mod tests {
             branch.contains("cx.stop_propagation();"),
             "the reader must halt the chord it answered, or the root handler \
              resizes the outer bar off the same notch"
+        );
+    }
+
+    /// The reader opens a narrow pane at the pane's own letters, as wide as the
+    /// glass — the case it is opened for.
+    ///
+    /// Parker's window on 2026-09-29: 1,576 × 950 logical px, cells 6.19 px wide
+    /// and 14.73 tall (JetBrains Mono at 14 px, 20 px rows, text grade 0.7365).
+    /// Until then a 48 × 51 pane opened at 3.65× its letters with its own 48
+    /// columns across the glass, about twelve rows at a time, and the slider's
+    /// smallest setting was still 1.28×. Parker: "If I open a reader for a tiny,
+    /// tiny pane, it's exactly because it's a tiny pane and I can't read it."
+    #[test]
+    fn the_reader_opens_a_narrow_pane_at_its_own_letters_across_the_glass() {
+        let glass = ReaderGlass::in_window(1576.0, 950.0);
+        let (cell_w, cell_h) = (14.0 * 0.7365 * 0.6, 20.0 * 0.7365);
+        let fit = (glass.avail_w / (48.0 * cell_w))
+            .min(glass.avail_h / (51.0 * cell_h))
+            .clamp(0.7, 6.0);
+
+        let ms = Workspace::reader_scale(false, fit, 1.0);
+        assert_eq!(
+            ms, 1.0,
+            "a flat read opens at the pane's own letters, whatever its width"
+        );
+        assert_eq!((glass.avail_w / (cell_w * ms)).floor() as usize, 175);
+        assert_eq!((glass.avail_h / (cell_h * ms)).floor() as usize, 46);
+
+        assert!(
+            Workspace::reader_scale(false, fit, Workspace::FZ_MIN) < 1.0,
+            "the slider can still go below the pane's letters for a dense read"
+        );
+        assert!(
+            Workspace::reader_scale(false, fit, Workspace::FZ_MAX) > 2.0,
+            "…and well above them for a big one"
+        );
+        assert!(
+            (Workspace::reader_scale(true, fit, 1.0) - fit).abs() < 1e-6,
+            "crawl never wraps, so it alone keeps fitting the grid to the glass"
+        );
+    }
+
+    /// Ctrl+wheel over the reader steps its own zoom: evenly, reversibly, and
+    /// only within the slider's range.
+    #[test]
+    fn ctrl_wheel_steps_the_readers_zoom_evenly_within_the_slider() {
+        let up = Workspace::focus_zoom_step(1.0, 1.0);
+        assert!(
+            (up - 1.1).abs() < 1e-6,
+            "one notch away enlarges by a tenth"
+        );
+        let back = Workspace::focus_zoom_step(up, -1.0);
+        assert!(
+            (back - 1.0).abs() < 1e-6,
+            "a notch each way comes back to the start"
+        );
+        assert_eq!(Workspace::focus_zoom_step(2.4, 5.0), Workspace::FZ_MAX);
+        assert_eq!(Workspace::focus_zoom_step(0.55, -5.0), Workspace::FZ_MIN);
+    }
+
+    /// The reader's text frame is the glass, never the pane's width.
+    ///
+    /// The frame used to be the pane's grid width at the reader's zoom, which is
+    /// what held a narrow pane's read to its own few columns however wide the
+    /// glass was. A mutation back to that fails here.
+    #[test]
+    fn the_reader_frames_its_text_at_the_glass_not_the_pane() {
+        let code = shipped_code();
+        let overlay = code
+            .find("} = ReaderGlass::in_window(ww, wh);")
+            .expect("the FOCUS overlay's glass");
+        let at = overlay
+            + code[overlay..]
+                .find("let body_w =")
+                .expect("the reader's text frame");
+        let stmt = &code[at..at + code[at..].find(';').expect("end of statement")];
+        assert!(
+            !stmt.contains("snap.cols"),
+            "the reader's frame must not come from the pane's columns: `{stmt}`"
         );
     }
 
