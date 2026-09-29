@@ -559,6 +559,12 @@ impl PageDoc {
     /// is laid out again at it once the notches stop.
     fn zoom_to(&mut self, step: super::ZoomStep, cx: &mut Context<DocumentView>) -> bool {
         let next = super::step_reading_zoom(self.zoom, step);
+        self.set_zoom(next, cx)
+    }
+
+    /// Draw at `next` and lay the page out again at it, as [`Self::zoom_to`]
+    /// does for a step. Answers whether it was a change.
+    fn set_zoom(&mut self, next: f32, cx: &mut Context<DocumentView>) -> bool {
         if (next - self.zoom).abs() < 1e-3 {
             return false;
         }
@@ -2264,6 +2270,13 @@ impl Backend for PageDoc {
     /// says why now, and there is no page to zoom.
     fn zoom_now(&self) -> Option<super::ImageZoom> {
         (!self.handed_over).then_some(super::ImageZoom::Scale(self.zoom))
+    }
+
+    fn zoom_back(&mut self, was: super::ImageZoom, cx: &mut Context<DocumentView>) -> bool {
+        match was {
+            super::ImageZoom::Scale(z) => self.set_zoom(z, cx),
+            super::ImageZoom::Fit => false,
+        }
     }
 
     fn hover(&mut self, at: Option<Point<Pixels>>, cx: &mut Context<DocumentView>) {

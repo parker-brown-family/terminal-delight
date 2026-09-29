@@ -60,6 +60,9 @@ Branch `feat/alt-r-reader` in `~/Work/td-alt-r-reader`, off main at `5ba60ed`.
   brief read through Alt+R, and ↪ lands where it lands from the pane.
 - **Proof:** each of the five kinds opened through Alt+R in a rig window,
   photographed; a note and a concur saved from inside the reader, read back.
+- **As built** (2026-09-29): the pane records the lent view by entity rather than
+  `Option<DocSeat>`; the floating square came in from slice 4; and two older bugs
+  were fixed on the way. What and why: `00-status.md`, slice 2.
 
 ## Slice 3 — an agent reads its conversation
 
@@ -80,7 +83,8 @@ Branch `feat/alt-r-reader` in `~/Work/td-alt-r-reader`, off main at `5ba60ed`.
 
 ## Slice 4 — the floating square, and Codex
 
-- `read_from` with a square up → `Document(Float)`.
+- ~~`read_from` with a square up → `Document(Float)`.~~ Done in slice 2: lending
+  is one mechanism for both seats.
 - Codex rollouts (`response_item` stream, `call_id` pairs) fold into the same
   `Conversation`.
 

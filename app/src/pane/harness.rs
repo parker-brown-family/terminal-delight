@@ -68,9 +68,17 @@ pub(super) fn desktop_launches() -> Vec<String> {
 /// second pane without waiting on itself.
 static ONE_AT_A_TIME: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+/// The turn a harness test holds: its own, and the warp tests' — a pane
+/// registers its tube in the process-global tube set every time it paints, so
+/// a harness test and a warp test running at once miscount each other's
+/// ([`crate::warp::WARP_SERIAL`]). Always taken in this order.
+type Turn = (
+    std::sync::MutexGuard<'static, ()>,
+    std::sync::MutexGuard<'static, ()>,
+);
+
 thread_local! {
-    static HOLDING: RefCell<Option<std::sync::MutexGuard<'static, ()>>> =
-        const { RefCell::new(None) };
+    static HOLDING: RefCell<Option<Turn>> = const { RefCell::new(None) };
 }
 
 fn take_the_turn() {
@@ -79,7 +87,10 @@ fn take_the_turn() {
             let turn = ONE_AT_A_TIME
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
-            *held.borrow_mut() = Some(turn);
+            let tubes = crate::warp::WARP_SERIAL
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            *held.borrow_mut() = Some((turn, tubes));
         }
     });
 }
@@ -627,6 +638,110 @@ pub(super) struct Asked {
     pub(super) row: Option<usize>,
 }
 
+/// A window standing in for the FOCUS reader's glass.
+///
+/// The glass belongs to the workspace, which this harness does not build. So
+/// this asks the pane what it lends the reader every frame, as the workspace
+/// does, and draws the document filling the window. The view starts at the
+/// window's top-left, so a point in this window is a point in the view — the
+/// conversion the workspace makes from its reading area — and [`Reader`]
+/// hands the view a press, a move and a release the way the workspace does.
+pub(super) struct GlassStandIn {
+    pane: Entity<TerminalView>,
+}
+
+impl gpui::Render for GlassStandIn {
+    fn render(
+        &mut self,
+        _: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) -> impl gpui::IntoElement {
+        use gpui::{ParentElement, Styled};
+        let lent = self.pane.update(cx, |v, cx| v.reader_document(cx));
+        gpui::div().size_full().children(lent)
+    }
+}
+
+/// The FOCUS reader open on a harness pane, with its glass stood in for.
+pub(super) struct Reader {
+    glass: Entity<GlassStandIn>,
+    cx: &'static mut VisualTestContext,
+}
+
+impl Reader {
+    /// Ask for a frame of the glass and let it be drawn, then one of the pane.
+    pub(super) fn redraw(&mut self, pane: &mut Pane) {
+        self.glass.update(self.cx, |_, cx| cx.notify());
+        self.cx.run_until_parked();
+        pane.redraw();
+    }
+
+    /// Let `ms` of gpui's clock pass — a page waits that long before laying
+    /// itself out at a new size — and draw both windows.
+    pub(super) fn wait(&mut self, pane: &mut Pane, ms: u64) {
+        self.cx.executor().advance_clock(Duration::from_millis(ms));
+        self.redraw(pane);
+    }
+
+    /// The pointer over `at` in the reader, as the workspace hands it to the
+    /// lent view.
+    pub(super) fn hover(&mut self, pane: &mut Pane, at: Point<Pixels>) {
+        let view = pane.lent().expect("a document is lent to the reader");
+        view.update(self.cx, |v, cx| v.hover(Some(at), cx));
+        self.redraw(pane);
+    }
+
+    /// A left click at `at` in the reader: down on the lent view, then up.
+    pub(super) fn click(&mut self, pane: &mut Pane, at: Point<Pixels>) {
+        let view = pane.lent().expect("a document is lent to the reader");
+        self.cx.update(|window, cx| {
+            view.update(cx, |v, cx| {
+                v.press(at, Modifiers::default(), window, cx);
+                v.release(cx);
+            })
+        });
+        self.redraw(pane);
+    }
+
+    /// Close the reader, as the workspace does once it hears Escape: the pane
+    /// is told it is no longer read, and the glass goes. Gone, it asks the pane
+    /// nothing more, as the workspace stops asking — so whatever the pane gets
+    /// back, it got from being told, and not from a glass still drawing.
+    pub(super) fn close(self, pane: &mut Pane) {
+        pane.view
+            .update(pane.cx, |v, cx| v.set_being_read(false, cx));
+        self.cx.update(|window, _| window.remove_window());
+        self.cx.run_until_parked();
+        pane.redraw();
+    }
+}
+
+impl Pane {
+    /// Open the FOCUS reader on this pane, as Alt+R does: the pane is read,
+    /// and a window of `size` stands in for the reader's glass ([`GlassStandIn`]).
+    pub(super) fn open_reader(&mut self, size: (f32, f32)) -> Reader {
+        self.view
+            .update(self.cx, |v, cx| v.set_being_read(true, cx));
+        let pane = self.view.clone();
+        let mut app = self.cx.cx.clone();
+        let window = app.open_window(gpui::size(px(size.0), px(size.1)), move |_, _| {
+            GlassStandIn { pane }
+        });
+        let glass = window
+            .root(&mut app)
+            .expect("the glass is its window's root view");
+        let cx = VisualTestContext::from_window(window.into(), &app).into_mut();
+        let mut reader = Reader { glass, cx };
+        reader.redraw(self);
+        reader
+    }
+
+    /// The document this pane lends the reader now.
+    pub(super) fn lent(&mut self) -> Option<Entity<crate::docview::DocumentView>> {
+        self.read(|v| v.lent_view())
+    }
+}
+
 /// A page engine that lays a brief out without a browser.
 ///
 /// It answers `open` with three of the anchors
@@ -703,6 +818,47 @@ impl PageEngine for FakeBriefEngine {
     }
 
     fn close(&self, _: PageId) {}
+}
+
+/// [`FakeBriefEngine`]'s brief as a decision brief: its brief's notes.js
+/// takes CONCUR stamps, and its first anchor is a decision with a space for
+/// one at [`CONCUR_SPACE`], as notes.js lays one out.
+pub(super) struct FakeDecisionEngine;
+
+/// Where [`FakeDecisionEngine`] puts the first anchor's CONCUR space, in CSS
+/// pixels: inside the anchor, clear of its 💬 in the top-right corner.
+pub(super) const CONCUR_SPACE: RectCss = RectCss {
+    x: 400.0,
+    y: 90.0,
+    w: 96.0,
+    h: 32.0,
+};
+
+impl PageEngine for FakeDecisionEngine {
+    fn name(&self) -> &'static str {
+        "harness-decision"
+    }
+
+    fn open(&self, req: &PageRequest) -> Result<PageLayout, EngineError> {
+        let mut layout = FakeBriefEngine.open(req)?;
+        layout.capability.concur = ConcurSupport::Supported;
+        if let Some(first) = layout.anchors.first_mut() {
+            first.concur_zone = Some(CONCUR_SPACE);
+        }
+        Ok(layout)
+    }
+
+    fn tile(&self, page: PageId, generation: u64, band: Band) -> Result<Tile, EngineError> {
+        FakeBriefEngine.tile(page, generation, band)
+    }
+
+    fn dialog(&self, page: PageId, generation: u64, id: &str) -> Result<DialogRender, EngineError> {
+        FakeBriefEngine.dialog(page, generation, id)
+    }
+
+    fn close(&self, page: PageId) {
+        FakeBriefEngine.close(page)
+    }
 }
 
 /// A directory of its own for one test, removed when the test ends.

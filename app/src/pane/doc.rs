@@ -34,6 +34,20 @@ fn resize_cursor(e: crate::docopen::Edges) -> gpui::CursorStyle {
     }
 }
 
+/// What a pane draws where its document was while the FOCUS reader has it:
+/// one quiet line, so a pane glimpsed behind the reader's glass says where
+/// its document went instead of looking empty.
+fn being_read(ink: gpui::Hsla) -> gpui::AnyElement {
+    div()
+        .size_full()
+        .flex()
+        .items_center()
+        .justify_center()
+        .text_color(ink.alpha(0.55))
+        .child(crate::lang::current().strings().doc_being_read)
+        .into_any_element()
+}
+
 /// Whether a pointer lands on a floating square, as the bent glass shows it.
 ///
 /// `screen` is the tube in window pixels, `k` its curvature, `rect` the square
@@ -309,7 +323,11 @@ impl TerminalView {
                         .flex_1()
                         .min_h(px(0.))
                         .child(float_zone(zones, FloatHit::Body))
-                        .child(float.view.clone()),
+                        .child(if self.lends(&float.view) {
+                            being_read(th.text)
+                        } else {
+                            float.view.clone().into_any_element()
+                        }),
                 )
                 .into_any_element(),
         )
@@ -333,11 +351,17 @@ impl TerminalView {
 
     /// A square around a view that already exists — a new one, or one carried
     /// across a replica repair — with this pane subscribed to its links.
+    ///
+    /// A carried view may have been lent to the FOCUS reader by the pane it
+    /// came from, and a repair rebuilds that pane without closing the reader
+    /// the proper way; so it is handed back here, where it arrives, and comes
+    /// back at the zoom it was lent at.
     pub(super) fn float_of(
         view: gpui::Entity<crate::docview::DocumentView>,
         rect: crate::docopen::FloatRect,
         cx: &mut Context<Self>,
     ) -> FloatingDoc {
+        view.update(cx, |v, cx| v.lend(false, cx));
         let links = cx.subscribe(&view, |pane, _, link: &crate::docview::FollowLink, cx| {
             pane.follow_doc_link(link, crate::docopen::DocSeat::Float, cx)
         });
@@ -696,7 +720,13 @@ impl TerminalView {
                 cx.new(|cx| crate::docview::DocumentView::new(target, cx))
             }
         };
-        view.update(cx, |v, cx| v.set_seat(crate::docopen::DocSeat::Face, cx));
+        // A view carried here — a promoted square, or a repaired replica's —
+        // may have been lent to the reader where it was; it arrives handed
+        // back, as `float_of` hands back one it is given.
+        view.update(cx, |v, cx| {
+            v.lend(false, cx);
+            v.set_seat(crate::docopen::DocSeat::Face, cx)
+        });
         let links = cx.subscribe(&view, |pane, _, link: &crate::docview::FollowLink, cx| {
             pane.follow_doc_link(link, crate::docopen::DocSeat::Face, cx)
         });
@@ -858,7 +888,6 @@ impl TerminalView {
         let Some(key) = crate::docopen::doc_face_key(&ks.key, m.alt, m.control, m.platform) else {
             return Handled::Consumed;
         };
-        let page_h = self.doc_rect.get().map_or(0.0, |(_, _, _, h)| h) * 0.9;
         view.update(cx, |v, cx| match key {
             DocKey::Fit => {
                 v.zoom(ZoomStep::Fit, cx);
@@ -875,9 +904,16 @@ impl TerminalView {
             DocKey::Pan(dx, dy) => {
                 v.wheel(gpui::ScrollDelta::Pixels(point(px(dx), px(dy))), cx);
             }
+            // By the view's own height, which is the reader's glass while the
+            // view is lent to it and this face's box otherwise.
             DocKey::Page(dir) => {
-                let dy = -f32::from(dir) * page_h;
-                v.wheel(gpui::ScrollDelta::Pixels(point(px(0.), px(dy))), cx);
+                use crate::keylayer::Paging;
+                let paging = if dir < 0 {
+                    Paging::PageUp
+                } else {
+                    Paging::PageDown
+                };
+                v.page(paging, cx);
             }
         });
         Handled::Consumed
@@ -886,9 +922,16 @@ impl TerminalView {
     /// The Document face's view, filling the screen inside the same padding
     /// the grid keeps off the bent edges, with a canvas that records where it
     /// landed so a press can be made relative to it. Nothing here listens.
-    pub(super) fn doc_face_el(&self, pad: (f32, f32)) -> Option<gpui::AnyElement> {
+    /// While the view is lent to the FOCUS reader, the face says so in `ink`
+    /// instead of drawing it.
+    pub(super) fn doc_face_el(&self, pad: (f32, f32), ink: gpui::Hsla) -> Option<gpui::AnyElement> {
         let doc = self.doc_on_face()?;
         let store = self.doc_rect.clone();
+        let body = if self.lends(&doc.view) {
+            being_read(ink)
+        } else {
+            doc.view.clone().into_any_element()
+        };
         Some(
             div()
                 .absolute()
@@ -914,7 +957,7 @@ impl TerminalView {
                             .absolute()
                             .inset_0(),
                         )
-                        .child(doc.view.clone()),
+                        .child(body),
                 )
                 .into_any_element(),
         )

@@ -932,6 +932,21 @@ impl Backend for PdfDoc {
         Some(ImageZoom::Scale(self.zoom))
     }
 
+    /// Laid out at it when the view is next measured, which a view handed
+    /// back always is, keeping the place as any new size does: laid out now,
+    /// it would be laid out at the reader's size and then again.
+    fn zoom_back(&mut self, was: ImageZoom, cx: &mut Context<DocumentView>) -> bool {
+        let ImageZoom::Scale(z) = was else {
+            return false;
+        };
+        if (z - self.zoom).abs() < 1e-3 {
+            return false;
+        }
+        self.zoom = z;
+        cx.notify();
+        true
+    }
+
     fn scroll(&self) -> Option<DocScroll> {
         let (col, ..) = self.laid.as_ref()?;
         Some(DocScroll {

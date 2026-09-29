@@ -24,6 +24,17 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
   the last line no longer push a short screen's content out of view, and the
   reader keeps the history it has read instead of re-reading all of it, under
   the terminal's lock, on every frame a shell streams.
+- **Alt+R on a document pane reads the document.** A pane opened to show a
+  Markdown file, a page, a PDF, a picture or a video lends the reader its own
+  view, and so does a square floating over a terminal or a bench; the reader
+  used to show the shell hidden behind them. The document is drawn at the
+  reader's size and read there as on its pane: the wheel scrolls it, Ctrl+wheel
+  zooms it, PageUp and PageDown turn pages of the reader's height, and a brief
+  takes notes, CONCUR stamps and ↪ inside the reader, saved into the same file.
+  Escape closes an open note box before the reader, and the pane gets its
+  document back at its own zoom and at the place it was read to. A small
+  picture stays at its own pixels until zoomed. The workbench face still reads
+  the terminal.
 
 - **A new install's panes wear Terminal Delight's own mark.** With no
   `dir-logos.toml` at all, the first start writes one mapping `/` to the app's
@@ -108,6 +119,15 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ### Fixed
 
+- **Escape reaches a pane again after it closes the reader there.** Closing
+  the FOCUS reader with Escape never told the pane it had been reading, so from
+  then on Escape and the page keys in that pane went to a reader that was no
+  longer open, and never reached its terminal: Esc could not interrupt an agent
+  there until the reader was reopened and closed with a click. Wrong since
+  2026-06-24.
+- **A Markdown document keeps its place through two quick re-layouts.** A
+  second zoom, or the reader opened and closed at once, before the first had
+  settled used to land on a different block.
 - **A link Claude Code breaks across two rows opens whole from either half.**
   Claude cuts a long path at the pane's width and starts the second half at its
   two-column margin. The click only looked for the rest of a link in column 0,

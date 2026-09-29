@@ -345,6 +345,24 @@ impl Backend for MarkdownDoc {
         Some(image::ImageZoom::Scale(self.zoom))
     }
 
+    fn zoom_back(&mut self, was: image::ImageZoom, cx: &mut Context<DocumentView>) -> bool {
+        let image::ImageZoom::Scale(z) = was else {
+            return false;
+        };
+        if (z - self.zoom).abs() < 1e-3 {
+            return false;
+        }
+        self.set_zoom(z);
+        cx.notify();
+        true
+    }
+
+    /// The new box re-flows the column, so the place is noted by its block
+    /// before it does.
+    fn reseated(&mut self) {
+        self.relay_out(1.0);
+    }
+
     fn scroll(&self) -> Option<DocScroll> {
         MarkdownDoc::scroll(self)
     }

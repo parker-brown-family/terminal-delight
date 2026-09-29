@@ -185,10 +185,19 @@ pub struct DocumentView {
     /// The floating square, or a pane's Document face. A view is made for
     /// one and can be moved to the other; see [`Self::set_seat`].
     seat: DocSeat,
+    /// Lent to the FOCUS reader, which draws it in the reader's glass while
+    /// its pane draws "being read"; see [`Self::lend`]. `None` while it is
+    /// drawn in its own seat.
+    lent: Option<Lent>,
     /// The view's own size and the window's scale factor, as the last paint
     /// measured them. `None` until it has painted once: an unmeasured view is
     /// not a zero-sized one, and nothing that needs the size runs without it.
     frame: Rc<Cell<Option<Frame>>>,
+    /// The box measured before the last one, and how many measurements running
+    /// have gone back to it. A view drawn in two places at once is measured in
+    /// one box and then the other, every frame, re-laying itself out for each in
+    /// turn and never settling; [`TWO_PLACES`] flips in a row says so.
+    flips: Rc<Cell<(Option<Frame>, u32)>>,
     /// The view's flat top-left in window pixels as the last paint placed it.
     /// Unlike `painted_at` it survives the next render, which is when a page
     /// needs it: tiles are snapped to the device grid from where the view is.
@@ -216,6 +225,27 @@ pub struct DocumentView {
 /// A view's measured size, in logical pixels, and the scale factor it was
 /// measured under.
 type Frame = (Size<Pixels>, f32);
+
+/// How many measurements in a row may go back to the box before the last one
+/// before the view is taken to be drawn in two places at once. A person
+/// dragging an edge never lands on the same two sizes this many times running.
+const TWO_PLACES: u32 = 16;
+
+/// What is said when a view is drawn in two places at once: in a debug build
+/// it stops there, so a test fails with this instead of hanging on a frame
+/// that never settles, and a release build says it once and goes on spinning.
+const DRAWN_TWICE: &str = "a document view is being drawn in two places at once: it \
+     is measured in one box and then the other, every frame, and re-lays itself out \
+     for each in turn without end. One view, one place: a pane draws \"being read\" \
+     while the FOCUS reader holds its view";
+
+/// A view lent to the FOCUS reader, and what goes back with it.
+#[derive(Clone, Copy, Debug)]
+struct Lent {
+    /// The zoom it had when it was lent, put back when it is handed back.
+    /// `None` for a document with no zoom, which has nothing to put back.
+    zoom: Option<ImageZoom>,
+}
 
 /// A press on a link that leaves this document. The pane decides where it
 /// goes: a file TD can draw takes the square's place, anything else goes to
@@ -729,7 +759,9 @@ impl DocumentView {
             backend,
             theme: None,
             seat: DocSeat::Float,
+            lent: None,
             frame: Rc::new(Cell::new(None)),
+            flips: Rc::new(Cell::new((None, 0))),
             placed: Rc::new(Cell::new(None)),
             painted_at: Rc::new(Cell::new(None)),
             links: markdown::LinkSink::default(),
@@ -759,6 +791,61 @@ impl DocumentView {
         self.seat = seat;
         self.frame.set(None);
         cx.notify();
+    }
+
+    /// Lend this view to the FOCUS reader, or hand it back (`false`).
+    ///
+    /// The pane still owns the view — its seat, its links, its ↪ and its
+    /// place in the saved layout all stay where they were — and only the box
+    /// it is drawn in changes. So, as a move between seats does, it forgets
+    /// what it measured in the old box, and a Markdown column notes its place
+    /// by block before the new width re-flows it. The zoom it was lent at is
+    /// put back when it returns: the reader's size is its own, and a picture
+    /// zoomed up to read in the reader is not the pane's to inherit. The
+    /// place it was read to comes back with it.
+    pub fn lend(&mut self, reading: bool, cx: &mut Context<Self>) {
+        match (self.lent.take(), reading) {
+            (None, true) => {
+                self.lent = Some(Lent {
+                    zoom: self.backend.zoom_now(),
+                });
+            }
+            (Some(lent), false) => {
+                if let Some(was) = lent.zoom {
+                    self.backend.zoom_back(was, cx);
+                }
+            }
+            (already, _) => {
+                self.lent = already;
+                return;
+            }
+        }
+        self.frame.set(None);
+        self.backend.reseated();
+        cx.notify();
+    }
+
+    /// PageUp, PageDown and the two ends, wherever the view is drawn: a page
+    /// is nine tenths of the view's own measured height, so it is the reader's
+    /// page while the view is lent and the pane's once it is back, and an end
+    /// is farther than any document is long, which every backend stops at.
+    /// Before the view has been measured there is no page to turn.
+    pub fn page(&mut self, paging: crate::keylayer::Paging, cx: &mut Context<Self>) {
+        use crate::keylayer::Paging;
+        let Some(view_h) = self.view_h() else {
+            return;
+        };
+        let pages = match paging {
+            Paging::PageUp => -1.0,
+            Paging::PageDown => 1.0,
+            Paging::Top => -1e6,
+            Paging::Bottom => 1e6,
+        };
+        let dy = -pages * view_h * 0.9;
+        self.wheel(
+            ScrollDelta::Pixels(gpui::point(gpui::px(0.), gpui::px(dy))),
+            cx,
+        );
     }
 
     pub fn target(&self) -> &DocTarget {
@@ -912,6 +999,9 @@ impl DocumentView {
         self.backend.guard_close(cx)
     }
 
+    /// A square lent to the FOCUS reader is not closed by Escape — the reader
+    /// is, and the square comes back holding every note — so it answers as the
+    /// Document face does, and never warns about notes it will not lose.
     pub fn key(&mut self, ks: &Keystroke, cx: &mut Context<Self>) -> bool {
         // A paste while a note is being written is the note's, by any of the
         // three chords: ctrl+v, ctrl+shift+v, and shift+insert, which is what
@@ -923,7 +1013,31 @@ impl DocumentView {
             let pasted = notes_ui::Pasted::from_clipboard(cx.read_from_clipboard().as_ref());
             return self.backend.paste(pasted, cx);
         }
-        self.backend.key(ks, self.seat == DocSeat::Float, cx)
+        let floating = self.seat == DocSeat::Float && self.lent.is_none();
+        self.backend.key(ks, floating, cx)
+    }
+
+    /// Which part of the document the view shows, as the reading rail draws
+    /// it, for a test: `None` for a document with no scroll.
+    #[cfg(test)]
+    pub(crate) fn reading_now(&self) -> Option<progress::Reading> {
+        self.backend.reading()
+    }
+
+    /// The box the view was last drawn in, for a test asking where it was
+    /// drawn: `None` before it has been.
+    #[cfg(test)]
+    pub(crate) fn drawn_size(&self) -> Option<Size<Pixels>> {
+        self.frame.get().map(|(size, _)| size)
+    }
+
+    /// The Markdown block at the top of the view and how far into it, for a
+    /// test: `None` for any other document, and before a layout.
+    #[cfg(test)]
+    pub(crate) fn block_at_top(&mut self) -> Option<(usize, f32)> {
+        self.backend
+            .downcast_mut::<markdown::MarkdownDoc>()?
+            .block_at_top()
     }
 
     /// Which seat the view is in, and the palette it was last handed, for a
@@ -1109,13 +1223,24 @@ impl Render for DocumentView {
         // itself at once. A page hears of the change too: its size is the
         // width the brief is laid out at.
         let store = self.frame.clone();
+        let flips = self.flips.clone();
         let placed = self.placed.clone();
         let weak = cx.entity().downgrade();
         let measure = canvas(
             move |bounds, window, cx| {
                 placed.set(Some(bounds.origin));
                 let now = Some((bounds.size, window.scale_factor()));
-                if store.get() != now {
+                let was = store.get();
+                if was != now {
+                    let (before, runs) = flips.get();
+                    let runs = if before == now { runs + 1 } else { 0 };
+                    flips.set((was, runs));
+                    if runs == TWO_PLACES {
+                        eprintln!("terminal-delight: {DRAWN_TWICE}");
+                        if cfg!(debug_assertions) {
+                            panic!("{DRAWN_TWICE}");
+                        }
+                    }
                     store.set(now);
                     let weak = weak.clone();
                     cx.defer(move |cx| {
