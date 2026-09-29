@@ -16004,25 +16004,25 @@ impl Workspace {
         )
     }
 
-    /// Dim + LOCK scrim over the whole window. `.occlude()` makes it swallow
-    /// every mouse event (clicks AND scroll) so nothing behind the reader can be
-    /// focused, scrolled, or typed into — you stay in the FOCUS pane. The 0.60
-    /// dim rides UNDER the frosted backdrop the CRT pass paints (the shader
-    /// blurs these dimmed pixels). A click on the dimmed area outside the glass
-    /// closes the reader; esc closes it too.
-    fn reader_scrim(ramp: f32, cx: &mut Context<Self>) -> gpui::Div {
-        div()
-            .absolute()
-            .inset_0()
-            .occlude()
+    /// The dim + LOCK scrim over the whole window, holding the reader's glass.
+    /// Built through [`Self::over_the_glass`], so it swallows every mouse event
+    /// (clicks AND scroll) — nothing behind the reader can be focused, scrolled
+    /// or typed into, and you stay in the FOCUS pane — and the frame is flat by
+    /// construction, as it already was through the reader's place on `render`'s
+    /// suppression list. The 0.60 dim rides UNDER the frosted backdrop the CRT
+    /// pass paints (the shader blurs these dimmed pixels). A click on the dimmed
+    /// area outside the glass closes the reader; esc closes it too.
+    fn reader_scrim(
+        &self,
+        glass: impl IntoElement,
+        ramp: f32,
+        cx: &mut Context<Self>,
+    ) -> gpui::Div {
+        self.over_the_glass(glass, |ws, _window, cx| ws.close_focus_read(cx), cx)
             .flex()
             .items_center()
             .justify_center()
             .bg(hsla(0., 0., 0., 0.6 * ramp))
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|ws, _: &MouseDownEvent, _w, cx| ws.close_focus_read(cx)),
-            )
     }
 
     /// The document the pane being read has lent the reader, if it has one.
@@ -16143,7 +16143,7 @@ impl Workspace {
                 MouseButton::Left,
                 cx.listener(|_, _: &MouseDownEvent, _w, cx| cx.stop_propagation()),
             );
-        Self::reader_scrim(ramp, cx)
+        self.reader_scrim(panel, ramp, cx)
             // The wheel over the reader is the document's, wherever the pointer
             // is: ctrl+wheel zooms it and a plain turn scrolls it, as on its pane.
             .on_scroll_wheel(cx.listener(|ws, ev: &ScrollWheelEvent, _w, cx| {
@@ -16190,7 +16190,6 @@ impl Workspace {
                     }
                 }),
             )
-            .child(panel)
             .into_any_element()
     }
 
@@ -31199,7 +31198,7 @@ impl Render for Workspace {
                         cx.listener(|_, _: &MouseDownEvent, _w, cx| cx.stop_propagation()),
                     );
             Some(
-                Self::reader_scrim(focus_ramp, cx)
+                self.reader_scrim(panel, focus_ramp, cx)
                     // The reader wraps, so it only ever overflows VERTICALLY; the
                     // wheel pans it so the off-screen rows are reachable. There is no
                     // horizontal axis to pan. At the top/bottom edge (or when the read
@@ -31262,7 +31261,6 @@ impl Render for Workspace {
                             ws.focus_drag_release(cx);
                         }),
                     )
-                    .child(panel)
                     .into_any_element(),
             )
         } else {
@@ -33609,7 +33607,9 @@ mod tests {
             ("render_logo_picker", 1),
             ("render_paint_outer", 1),
             ("render_rail", 1),
-            ("render", 5),
+            // Five until 2026-09-29, when the FOCUS reader's scrim moved into
+            // `reader_scrim`, built through `over_the_glass`.
+            ("render", 4),
         ];
         assert!(
             sites.iter().any(|(n, _)| n == "over_the_glass"),

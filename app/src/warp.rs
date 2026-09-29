@@ -168,19 +168,24 @@ fn rect_crawl(i: usize) -> [f32; 3] {
     rects[i].4
 }
 
+/// Taken by every test that touches the tube set or its flags. `RECTS`,
+/// `SUPPRESSED` and `FLATTENED` are process-global, `cargo test` runs tests on
+/// parallel threads, and more than the tests below drive them: a real pane
+/// registers its tube each time it paints, so the pane harness holds this for
+/// as long as its test runs (`pane::harness`). Without it a harness pane
+/// painting mid-test made `rect_count()` read 3 where a test here wanted 2 —
+/// the same flake as the one a concurrent warp test caused before these were
+/// serialized among themselves. Poison-tolerant, so one failing test cannot
+/// cascade into the others.
+#[cfg(test)]
+pub(crate) static WARP_SERIAL: Mutex<()> = Mutex::new(());
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     /// A crawl triad with crawl disabled (identity: off, no taper, flat depth).
     const CRAWL_OFF: [f32; 3] = [0.0, 1.0, 1.0];
-
-    // `RECTS`/`SUPPRESSED` are process-global and MORE THAN ONE test drives them
-    // (suppression + crawl). Serialize those tests through this lock so `cargo test`'s
-    // parallel threads can't clobber each other's tube count — the flaky CI failure
-    // was a concurrent test's tubes making `rect_count()` read 4 where a test wanted 2.
-    // Poison-tolerant so one failing test can't cascade into the others.
-    static WARP_SERIAL: Mutex<()> = Mutex::new(());
 
     /// `flatten()` is what a scrim built over the glass calls for itself: it
     /// holds for the frame whatever the workspace's own list said, and the

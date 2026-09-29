@@ -68,9 +68,17 @@ pub(super) fn desktop_launches() -> Vec<String> {
 /// second pane without waiting on itself.
 static ONE_AT_A_TIME: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+/// The turn a harness test holds: its own, and the warp tests' — a pane
+/// registers its tube in the process-global tube set every time it paints, so
+/// a harness test and a warp test running at once miscount each other's
+/// ([`crate::warp::WARP_SERIAL`]). Always taken in this order.
+type Turn = (
+    std::sync::MutexGuard<'static, ()>,
+    std::sync::MutexGuard<'static, ()>,
+);
+
 thread_local! {
-    static HOLDING: RefCell<Option<std::sync::MutexGuard<'static, ()>>> =
-        const { RefCell::new(None) };
+    static HOLDING: RefCell<Option<Turn>> = const { RefCell::new(None) };
 }
 
 fn take_the_turn() {
@@ -79,7 +87,10 @@ fn take_the_turn() {
             let turn = ONE_AT_A_TIME
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
-            *held.borrow_mut() = Some(turn);
+            let tubes = crate::warp::WARP_SERIAL
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            *held.borrow_mut() = Some((turn, tubes));
         }
     });
 }
