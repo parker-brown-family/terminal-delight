@@ -49,8 +49,8 @@ use std::sync::OnceLock;
 use std::time::SystemTime;
 
 use gpui::{
-    canvas, div, hsla, prelude::*, px, radians, rgb, svg, AnyElement, App, Bounds, ClipboardItem,
-    FontWeight, Hsla, Keystroke, Pixels, Point, SharedString, Transformation,
+    canvas, div, hsla, prelude::*, px, radians, rgb, svg, AnyElement, App, Bounds, ClipboardEntry,
+    ClipboardItem, FontWeight, Hsla, Keystroke, Pixels, Point, SharedString, Transformation,
 };
 
 use super::engine::{Anchor, ConcurSupport, RectCss};
@@ -74,9 +74,83 @@ const STAMP_OVERHANG_CSS: f32 = 12.0;
 /// notes.js: the stamp's ink.
 const STAMP_INK: u32 = 0x35c27a;
 /// A note longer than this is a paste gone wrong, not a note.
-const MAX_NOTE_CHARS: usize = 20_000;
+pub const MAX_NOTE_CHARS: usize = 20_000;
 
 const STAMP_SVG: &[u8] = include_bytes!("../../assets/img/concur-stamp.svg");
+
+/// What a paste into a note found on the clipboard. The view that can reach
+/// the clipboard reads it once and hands this to the layer, which owns the
+/// note and never touches the clipboard itself.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Pasted {
+    /// Words: the clipboard's text, and any copied files as their paths.
+    Words(String),
+    /// A picture, and nothing on the clipboard that reads as words.
+    Picture,
+    /// An empty clipboard, or one holding nothing a note takes.
+    Nothing,
+}
+
+impl Pasted {
+    /// Sort a clipboard item into what a note takes from it. Text first, as
+    /// gpui's own read puts it; copied files as their paths, one word each and
+    /// quoted where a path holds a space, as the bench pastes them
+    /// ([`crate::workbench::paths_as_words`]) — gpui's own `text()` runs two
+    /// paths together with nothing between them; a picture alone is a picture.
+    pub fn from_clipboard(item: Option<&ClipboardItem>) -> Pasted {
+        let Some(item) = item else {
+            return Pasted::Nothing;
+        };
+        let mut words: Vec<String> = Vec::new();
+        let mut picture = false;
+        for entry in item.entries() {
+            match entry {
+                ClipboardEntry::String(s) => words.push(s.text().to_string()),
+                ClipboardEntry::ExternalPaths(paths) => {
+                    let w = crate::workbench::paths_as_words(paths.paths());
+                    if !w.is_empty() {
+                        words.push(w);
+                    }
+                }
+                ClipboardEntry::Image(_) => picture = true,
+            }
+        }
+        let words = words.join(" ");
+        if !words.is_empty() {
+            Pasted::Words(words)
+        } else if picture {
+            Pasted::Picture
+        } else {
+            Pasted::Nothing
+        }
+    }
+}
+
+/// Pure. Pasted text as a note keeps it: every line break a newline, and
+/// every other control character gone but the tab. The rule ↪ applies to the
+/// map on the way out (`pane::notes_paste`), applied where the text comes in,
+/// so a note never holds an escape that would have to be cleaned out of it
+/// later, and the draft never draws one.
+pub fn pasted_words(raw: &str) -> String {
+    raw.replace("\r\n", "\n")
+        .chars()
+        .map(|c| if c == '\r' { '\n' } else { c })
+        .filter(|c| matches!(c, '\n' | '\t') || !c.is_control())
+        .collect()
+}
+
+/// Pure. A count as a person reads it: `20,000`, not `20000`.
+fn grouped(n: usize) -> String {
+    let digits = n.to_string();
+    let mut out = String::new();
+    for (i, d) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(d);
+    }
+    out
+}
 
 /// What the layer can show of a brief's notes, from the file as a browser
 /// opened fresh would show them.
@@ -906,6 +980,44 @@ impl NotesLayer {
         true
     }
 
+    /// A paste, while a note is being written. Words go in at the caret, over
+    /// any selection, as typing would put them, line breaks and all. A paste
+    /// that would take the note past [`MAX_NOTE_CHARS`] is cut there and the
+    /// bar says how much went in: a quietly shortened paste reads as a whole
+    /// one. A picture is not taken yet, and the bar says that too, rather than
+    /// the key doing nothing anybody can see. Answers whether the note box
+    /// took the paste, which it does whenever a draft is open to type into.
+    pub fn paste(&mut self, pasted: Pasted) -> bool {
+        if !self.has_caret() {
+            return false;
+        }
+        let Some(b) = self.note_box.as_mut() else {
+            return false;
+        };
+        match pasted {
+            Pasted::Words(raw) => {
+                let words = pasted_words(&raw);
+                let offered = words.chars().count();
+                let took = b.draft.insert_capped(&words, MAX_NOTE_CHARS);
+                if took < offered {
+                    self.said = Some(Said::Refused(format!(
+                        "pasted {} of {} characters · a note holds {}",
+                        grouped(took),
+                        grouped(offered),
+                        grouped(MAX_NOTE_CHARS)
+                    )));
+                }
+            }
+            Pasted::Picture => {
+                self.said = Some(Said::Refused(
+                    "a picture cannot go into a note yet · words paste, pictures come next".into(),
+                ));
+            }
+            Pasted::Nothing => {}
+        }
+        true
+    }
+
     /// Add the draft as a note on the open anchor, stamped with the time as
     /// notes.js stamps it. Nothing is added for a draft of only whitespace.
     pub fn add(&mut self, now: SystemTime) -> bool {
@@ -1162,6 +1274,11 @@ impl NotesLayer {
             "sent": self.sent.as_ref().map(|s| s.text().to_string()),
             "map": self.map(anchors),
             "open": self.note_box.as_ref().map(|b| b.nid.clone()),
+            // The words being written in the open note box, which is where a
+            // paste lands; null with no box open. The control socket reads the
+            // whole report, and `document_notes` takes only its named fields,
+            // so an unfinished note never reaches an agent through this.
+            "draft_text": self.note_box.as_ref().map(|b| b.draft.text()),
             // The draft's drawn width and height in logical pixels, as the
             // last paint laid it out; null when no draft was drawn.
             "draft": self.zones.borrow().iter().find(|(_, z)| *z == Zone::Draft).map(|(b, _)| {
@@ -1909,6 +2026,145 @@ mod tests {
         l.key(&ks("space", false, Some(" ")), now);
         l.key(&ks("enter", true, None), now);
         assert_eq!(l.unsaved(), 1);
+    }
+
+    /// A paste goes in at the caret with its line breaks, every kind of line
+    /// break a newline and every other control character gone, then waits in
+    /// the draft like typed words until Ctrl+Enter adds it. Over a selection
+    /// it replaces the selection. With no box open it is not the layer's.
+    #[test]
+    fn a_paste_goes_in_at_the_caret_with_its_line_breaks() {
+        let mut l = layer("{}", "{}", ConcurSupport::Supported);
+        let now = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_790_278_680);
+        assert!(
+            !l.paste(Pasted::Words("x".into())),
+            "no box open: not the layer's"
+        );
+        l.open("a".into(), "a title".into());
+        for c in ["o", "k"] {
+            l.key(&ks(c, false, Some(c)), now);
+        }
+        l.key(&ks("left", false, None), now);
+        assert!(l.paste(Pasted::Words(
+            "first\r\nsecond\rthird\u{1b}[201~\ttab".into()
+        )));
+        assert_eq!(
+            l.note_box().unwrap().draft.text(),
+            "ofirst\nsecond\nthird[201~\ttabk",
+            "in at the caret, between the o and the k"
+        );
+        assert_eq!(l.unsaved(), 0, "a paste adds no note by itself");
+        assert_eq!(l.said, None, "a whole paste says nothing");
+        l.key(&ks("a", true, Some("a")), now);
+        assert!(l.paste(Pasted::Words("over it".into())));
+        assert_eq!(
+            l.note_box().unwrap().draft.text(),
+            "over it",
+            "ctrl+a then a paste replaces the lot"
+        );
+        l.key(&ks("enter", true, None), now);
+        assert_eq!(
+            l.pending,
+            [NoteEdit::Add {
+                nid: "a".into(),
+                title: "a title".into(),
+                text: "over it".into(),
+                ts: "2026-09-24 19:38".into()
+            }]
+        );
+    }
+
+    /// A paste that would take a note past its limit is cut at the limit, and
+    /// the bar says how much of it went in, in numbers a person reads; into a
+    /// full draft nothing more goes, and the bar says that too.
+    #[test]
+    fn a_paste_past_the_limit_is_cut_and_the_bar_says_how_much_went_in() {
+        let mut l = layer("{}", "{}", ConcurSupport::Supported);
+        l.open("a".into(), "a title".into());
+        assert!(l.paste(Pasted::Words("x".repeat(31_402))));
+        let len = |l: &NotesLayer| l.note_box().unwrap().draft.text().chars().count();
+        assert_eq!(len(&l), MAX_NOTE_CHARS);
+        assert_eq!(
+            l.said.as_ref().map(Said::text),
+            Some("pasted 20,000 of 31,402 characters · a note holds 20,000")
+        );
+        assert!(l.paste(Pasted::Words("more".into())));
+        assert_eq!(len(&l), MAX_NOTE_CHARS);
+        assert_eq!(
+            l.said.as_ref().map(Said::text),
+            Some("pasted 0 of 4 characters · a note holds 20,000")
+        );
+    }
+
+    /// A picture on the clipboard is not pasted yet: the key is taken, the
+    /// draft is untouched, and the bar says why nothing happened. An empty
+    /// clipboard is taken and does nothing, as in any text box.
+    #[test]
+    fn a_picture_is_not_pasted_yet_and_the_bar_says_so() {
+        let mut l = layer("{}", "{}", ConcurSupport::Supported);
+        l.open("a".into(), "a title".into());
+        assert!(l.paste(Pasted::Picture));
+        assert_eq!(l.note_box().unwrap().draft.text(), "");
+        assert!(l
+            .said
+            .as_ref()
+            .is_some_and(|s| s.text().starts_with("a picture cannot go into a note yet")));
+        l.said = None;
+        assert!(l.paste(Pasted::Nothing));
+        assert_eq!(l.note_box().unwrap().draft.text(), "");
+        assert_eq!(l.said, None);
+    }
+
+    /// What is on the clipboard, sorted: text is words; copied files are their
+    /// paths, one word each, quoted where a path holds a space, never run
+    /// together the way gpui's own `text()` joins them; a picture alone is a
+    /// picture; words win over a picture beside them; nothing is nothing.
+    #[test]
+    fn a_clipboard_is_sorted_into_words_a_picture_or_nothing() {
+        use gpui::{ExternalPaths, Image, ImageFormat};
+        assert_eq!(Pasted::from_clipboard(None), Pasted::Nothing);
+        let text = ClipboardItem::new_string("hello".into());
+        assert_eq!(
+            Pasted::from_clipboard(Some(&text)),
+            Pasted::Words("hello".into())
+        );
+        let picture = Image::from_bytes(ImageFormat::Png, vec![0x89, b'P', b'N', b'G']);
+        assert_eq!(
+            Pasted::from_clipboard(Some(&ClipboardItem::new_image(&picture))),
+            Pasted::Picture
+        );
+        let files = ClipboardItem {
+            entries: vec![ClipboardEntry::ExternalPaths(ExternalPaths(
+                vec!["/tmp/a.txt".into(), "/tmp/Screen shot.png".into()].into(),
+            ))],
+        };
+        assert_eq!(
+            Pasted::from_clipboard(Some(&files)),
+            Pasted::Words("/tmp/a.txt '/tmp/Screen shot.png'".into())
+        );
+        let both = ClipboardItem {
+            entries: vec![
+                ClipboardEntry::Image(picture),
+                ClipboardEntry::String(gpui::ClipboardString::new("words".into())),
+            ],
+        };
+        assert_eq!(
+            Pasted::from_clipboard(Some(&both)),
+            Pasted::Words("words".into())
+        );
+        assert_eq!(
+            Pasted::from_clipboard(Some(&ClipboardItem { entries: vec![] })),
+            Pasted::Nothing
+        );
+    }
+
+    #[test]
+    fn a_count_is_grouped_by_thousands() {
+        assert_eq!(grouped(0), "0");
+        assert_eq!(grouped(999), "999");
+        assert_eq!(grouped(1_000), "1,000");
+        assert_eq!(grouped(20_000), "20,000");
+        assert_eq!(grouped(1_234_567), "1,234,567");
     }
 
     /// Unsaved edits are deltas: deleting a note added here takes the add

@@ -780,6 +780,16 @@ impl DocumentView {
     }
 
     pub fn key(&mut self, ks: &Keystroke, cx: &mut Context<Self>) -> bool {
+        // A paste while a note is being written is the note's, by any of the
+        // three chords: ctrl+v, ctrl+shift+v, and shift+insert, which is what
+        // Omarchy's clipboard manager types. Read here, because the view can
+        // reach the clipboard and the notes layer never does.
+        let m = &ks.modifiers;
+        if self.backend.has_caret() && crate::workbench::is_paste_chord(&ks.key, m.control, m.shift)
+        {
+            let pasted = notes_ui::Pasted::from_clipboard(cx.read_from_clipboard().as_ref());
+            return self.backend.paste(pasted, cx);
+        }
         self.backend.key(ks, self.seat == DocSeat::Float, cx)
     }
 

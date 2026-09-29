@@ -6161,6 +6161,9 @@ impl TerminalView {
                 .as_ref()
                 .is_some_and(|f| f.view.read(cx).has_caret()),
             float_sends: self.float.as_ref().is_some_and(|f| f.view.read(cx).sends()),
+            doc_caret: self
+                .doc_on_face()
+                .is_some_and(|d| d.view.read(cx).has_caret()),
         }
     }
 

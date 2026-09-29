@@ -1465,6 +1465,16 @@ impl PageDoc {
         self.notes.as_ref().is_some_and(NotesLayer::has_caret)
     }
 
+    /// A paste into the note being written: see [`NotesLayer::paste`]. The
+    /// words wait in the draft like typed ones, so nothing is saved here.
+    pub fn paste(&mut self, pasted: notes_ui::Pasted, cx: &mut Context<DocumentView>) -> bool {
+        let took = self.notes.as_mut().is_some_and(|l| l.paste(pasted));
+        if took {
+            cx.notify();
+        }
+        took
+    }
+
     /// Whether the notes bar draws ↪: the brief takes notes and the pane has
     /// said who it sits beside.
     pub fn sends(&self) -> bool {
@@ -2244,6 +2254,10 @@ impl Backend for PageDoc {
 
     fn has_caret(&self) -> bool {
         PageDoc::has_caret(self)
+    }
+
+    fn paste(&mut self, pasted: notes_ui::Pasted, cx: &mut Context<DocumentView>) -> bool {
+        PageDoc::paste(self, pasted, cx)
     }
 
     fn sends(&self) -> bool {

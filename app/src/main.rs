@@ -2077,6 +2077,22 @@ impl EditBuffer {
         self.anchor = self.cursor;
     }
 
+    /// [`Self::insert`] for a paste: the selection goes, then as much of `s`
+    /// as leaves the text at most `max` characters long, with the caret after
+    /// it. Answers how many characters went in. Spliced in one move rather
+    /// than a character at a time, because a paste can be twenty thousand
+    /// characters landing in front of twenty thousand more.
+    pub(crate) fn insert_capped(&mut self, s: &str, max: usize) -> usize {
+        self.delete_sel();
+        let room = max.saturating_sub(self.chars.len());
+        let incoming: Vec<char> = s.chars().take(room).collect();
+        let n = incoming.len();
+        self.chars.splice(self.cursor..self.cursor, incoming);
+        self.cursor += n;
+        self.anchor = self.cursor;
+        n
+    }
+
     /// Apply one keystroke. Enter/Escape are handled by the caller before this is
     /// reached. `max` caps the inserted length.
     pub(crate) fn apply(
