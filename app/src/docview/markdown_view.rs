@@ -439,6 +439,16 @@ impl Backend for MarkdownDoc {
         self.notes.as_ref().is_some_and(NotesLayer::has_caret)
     }
 
+    /// A paste into the note being written. The words wait in the draft like
+    /// typed ones: a Markdown note is kept when it is added, not before.
+    fn paste(&mut self, pasted: notes_ui::Pasted, cx: &mut Context<DocumentView>) -> bool {
+        let took = self.notes.as_mut().is_some_and(|l| l.paste(pasted));
+        if took {
+            cx.notify();
+        }
+        took
+    }
+
     fn sends(&self) -> bool {
         self.notes.is_some() && self.beside.is_some()
     }

@@ -161,6 +161,13 @@ pub trait Backend {
         false
     }
 
+    /// A paste while [`Self::has_caret`] says a note is being written: what
+    /// the clipboard held, read by the view, which owns the clipboard.
+    /// Answers whether it was taken.
+    fn paste(&mut self, _pasted: super::notes_ui::Pasted, _cx: &mut Context<DocumentView>) -> bool {
+        false
+    }
+
     /// Whether the notes bar draws ↪ — the document takes notes and sits
     /// beside an agent — so its keyboard chord is this document's to take.
     fn sends(&self) -> bool {

@@ -201,6 +201,18 @@ pub struct Up {
     pub float_sends: bool,
     /// The pane is showing its DOCUMENT face.
     pub document: bool,
+    /// The Document face's document has a note being written in it: the
+    /// face already takes every key the chords leave, and this says whether
+    /// the paste chord is one of them ([`note_caret`]).
+    pub doc_caret: bool,
+}
+
+/// A note is being written in a document this pane shows, on either seat: the
+/// floating square or the Document face. Read only where it matters to the
+/// seat that is actually up, so a caret left in a square the face hides
+/// claims nothing.
+fn note_caret(up: &Up) -> bool {
+    (up.float && up.float_caret) || (up.document && up.doc_caret)
 }
 
 /// ↪ send to agent, from the keyboard: ctrl+shift+enter over a floating
@@ -330,6 +342,15 @@ pub fn window_chord(key: &str, alt: bool, control: bool) -> bool {
 /// `TerminalView::pane_chord_key` hands the key to the terminal when there is
 /// nothing to cut, which is what makes bare `ctrl+x` still readline's prefix key
 /// (`C-x C-e` opens your editor).
+///
+/// `ctrl+shift+v` is conditional on a note being written. The pane's paste
+/// writes the clipboard into the terminal, and a note box is drawn OVER that
+/// terminal: claimed here, the chord pasted into the shell or agent under the
+/// square while the person was writing a note, which is the one thing a note
+/// being written promised not to let happen
+/// (`a_note_being_written_in_a_float_takes_every_key_but_the_chords`). The
+/// pane's other chords still work over a note: they close, find and open
+/// panels, and none of them writes into the terminal.
 pub fn pane_chord(k: &Key, up: &Up) -> bool {
     if k.platform || k.function {
         return false;
@@ -343,6 +364,9 @@ pub fn pane_chord(k: &Key, up: &Up) -> bool {
     }
     if k.control && !k.alt {
         if k.shift {
+            if k.key == "v" && note_caret(up) {
+                return false;
+            }
             // The panels and the clipboard. Shift is what keeps raw ctrl+a / ^D /
             // ^G / ^U reaching the pseudoterminal.
             return matches!(
@@ -453,6 +477,16 @@ mod tests {
         }
     }
 
+    /// Shift+Insert: the old paste chord, and the one Omarchy's clipboard
+    /// manager types after it puts the chosen entry on the clipboard.
+    fn shift_insert() -> Key<'static> {
+        Key {
+            key: "insert",
+            shift: true,
+            ..Key::default()
+        }
+    }
+
     /// The pane is showing its workbench.
     fn on_bench() -> Up {
         Up {
@@ -495,7 +529,7 @@ mod tests {
 
     /// The ladder is total and monotone over every combination of state.
     ///
-    /// All 4,096 state combinations against a corpus of thirteen keys, and the
+    /// All 8,192 state combinations against a corpus of sixteen keys, and the
     /// answer is always the FIRST rung that claims — the whole contract stated
     /// as a property rather than as rows. A variant moved in the enum fails this
     /// without anybody having to remember to add a case for it.
@@ -515,8 +549,11 @@ mod tests {
             named("left"),
             named("enter"),
             ctrl_shift("enter"),
+            ctrl("v"),
+            ctrl_shift("v"),
+            shift_insert(),
         ];
-        for bits in 0u16..4096 {
+        for bits in 0u16..8192 {
             let up = Up {
                 paint: bits & 1 != 0,
                 ctx_menu: bits & 2 != 0,
@@ -530,6 +567,7 @@ mod tests {
                 document: bits & 512 != 0,
                 float_caret: bits & 1024 != 0,
                 float_sends: bits & 2048 != 0,
+                doc_caret: bits & 4096 != 0,
             };
             for k in &keys {
                 let want = LADDER
@@ -672,6 +710,65 @@ mod tests {
             ..Up::default()
         };
         assert_eq!(route(&ch("a"), &stray), Layer::Terminal);
+    }
+
+    /// Every paste chord goes to a note being written, on the square and on
+    /// the Document face: ctrl+v, ctrl+shift+v and shift+insert, the three that
+    /// Omarchy's Super+V and its clipboard manager arrive as. ctrl+shift+v used
+    /// to be the pane's even then, and the pane pastes into the terminal under
+    /// the square. With no note being written it is the pane's again, and a
+    /// caret in a square that is not up claims nothing.
+    #[test]
+    fn a_note_being_written_takes_every_paste_chord_on_either_seat() {
+        let pastes = [ctrl("v"), ctrl_shift("v"), shift_insert()];
+        let mut float = floating();
+        float.float_caret = true;
+        let doc = Up {
+            document: true,
+            doc_caret: true,
+            ..Up::default()
+        };
+        for k in &pastes {
+            assert_eq!(route(k, &float), Layer::Float, "{k:?} on the square");
+            assert_eq!(route(k, &doc), Layer::Document, "{k:?} on the face");
+        }
+        assert_eq!(
+            route(&ctrl_shift("v"), &floating()),
+            Layer::PaneChord,
+            "no note being written: the pane's paste"
+        );
+        assert_eq!(
+            route(
+                &ctrl_shift("v"),
+                &Up {
+                    document: true,
+                    ..Up::default()
+                }
+            ),
+            Layer::PaneChord,
+            "on the face as well"
+        );
+        for stray in [
+            Up {
+                float_caret: true,
+                ..Up::default()
+            },
+            Up {
+                doc_caret: true,
+                ..Up::default()
+            },
+        ] {
+            assert_eq!(
+                route(&ctrl_shift("v"), &stray),
+                Layer::PaneChord,
+                "{stray:?}"
+            );
+        }
+        assert_eq!(
+            route(&ctrl_shift("c"), &float),
+            Layer::PaneChord,
+            "the pane's other chords still work over a note"
+        );
     }
 
     /// A caret somewhere else on the pane keeps its own Escape: a note being
@@ -1120,6 +1217,7 @@ mod tests {
             document: true,
             float_caret: true,
             float_sends: true,
+            doc_caret: true,
         };
         assert_eq!(route(&named("f1"), &everything), Layer::Help);
     }

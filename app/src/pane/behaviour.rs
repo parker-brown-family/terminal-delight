@@ -1647,6 +1647,137 @@ fn a_note_being_written_wraps_at_the_width_of_its_box(cx: &mut TestAppContext) {
     );
 }
 
+/// The words being written in the document's open note box, as the control
+/// socket reports them.
+fn draft_text(pane: &mut Pane) -> Option<String> {
+    pane.doc_notes().expect("notes")["draft_text"]
+        .as_str()
+        .map(str::to_string)
+}
+
+/// Paste each of `pastes` with its chord, the clipboard holding its words.
+fn paste_each(pane: &mut Pane, pastes: &[(&str, &str)]) {
+    for (chord, words) in pastes {
+        pane.cx
+            .write_to_clipboard(gpui::ClipboardItem::new_string((*words).into()));
+        pane.keys(chord);
+        pane.redraw();
+    }
+}
+
+/// A paste while a note is being written lands in the note, by each of the
+/// three chords — ctrl+v, ctrl+shift+v, and shift+insert, which is what
+/// Omarchy's clipboard manager types — and never in the terminal under the
+/// square. Ctrl+Shift+V used to be the pane's own chord even then, and the
+/// pane pastes into its terminal: writing a note on a document floating over
+/// an agent, it went into the agent's prompt, hidden behind the square.
+#[gpui::test]
+fn a_paste_while_writing_a_note_lands_in_the_note_and_never_the_terminal(cx: &mut TestAppContext) {
+    use crate::docview::markdown::{NOTE_GUTTER, PAD};
+    use crate::docview::notes_ui::BUTTON_CSS;
+    let dir = Scratch::new("md-note-paste");
+    let md = dir.join("plan.md");
+    std::fs::write(&md, "A paragraph that takes a note.\n").expect("the document");
+    let md = md.to_str().expect("a UTF-8 temp path").to_string();
+    let mut pane = Pane::running(cx, &format!("printf '%s\\n' 'doc {md}' 'ready'; exec cat"));
+    pane.wait_for("ready");
+    pane.settle();
+    let at = pane.point_at(&md);
+    pane.click(at, Pane::alt());
+    pane.redraw();
+    let (x, y, w, _) = pane.float_zone(FloatHit::Body).expect("the square's body");
+    pane.hover(point(px(x + 60.), px(y + PAD + 6.)));
+    pane.redraw();
+    pane.click(
+        point(
+            px(x + w - PAD - NOTE_GUTTER / 2.0),
+            px(y + PAD + BUTTON_CSS / 2.0),
+        ),
+        Default::default(),
+    );
+    pane.redraw();
+    assert_eq!(
+        draft_text(&mut pane).as_deref(),
+        Some(""),
+        "the box is open on an empty draft"
+    );
+
+    paste_each(
+        &mut pane,
+        &[
+            ("ctrl-shift-v", "pastedalpha"),
+            ("ctrl-v", " pastedbeta"),
+            ("shift-insert", "\npastedgamma"),
+        ],
+    );
+    assert_eq!(
+        draft_text(&mut pane).as_deref(),
+        Some("pastedalpha pastedbeta\npastedgamma"),
+        "all three chords paste into the note, in order, line break kept"
+    );
+
+    pane.keys("escape escape");
+    pane.redraw();
+    assert!(pane.float_path().is_none(), "the note box, then the square");
+    pane.keys("e c h o e d enter");
+    pane.wait_for("echoed");
+    let rows = pane.rows();
+    assert!(
+        !rows.iter().any(|r| r.contains("pasted")),
+        "nothing pasted reached the terminal under the square:\n{}",
+        rows.join("\n")
+    );
+}
+
+/// The same on the Document face, where ctrl+shift+v over a note being
+/// written did nothing at all: the pane claimed the chord, then refused to
+/// paste into a shell the page hides.
+#[gpui::test]
+fn a_paste_while_writing_a_note_on_the_document_face_lands_in_the_note(cx: &mut TestAppContext) {
+    use crate::docview::markdown::{NOTE_GUTTER, PAD};
+    use crate::docview::notes_ui::BUTTON_CSS;
+    let dir = Scratch::new("face-note-paste");
+    let md = dir.join("plan.md");
+    std::fs::write(&md, "A paragraph that takes a note.\n").expect("the document");
+    let mut pane = Pane::running(cx, "echo ready; exec cat");
+    pane.wait_for("ready");
+    pane.settle();
+    pane.show_document(&md);
+    assert_eq!(pane.face(), Face::Document);
+    pane.redraw();
+    let (x, y, w, _) = pane
+        .read(|v| v.doc_rect.get())
+        .expect("the face's document was laid out");
+    pane.hover(point(px(x + 60.), px(y + PAD + 6.)));
+    pane.redraw();
+    pane.click(
+        point(
+            px(x + w - PAD - NOTE_GUTTER / 2.0),
+            px(y + PAD + BUTTON_CSS / 2.0),
+        ),
+        Default::default(),
+    );
+    pane.redraw();
+    assert_eq!(
+        draft_text(&mut pane).as_deref(),
+        Some(""),
+        "the box is open on the face"
+    );
+
+    paste_each(
+        &mut pane,
+        &[
+            ("ctrl-shift-v", "pastedalpha"),
+            ("ctrl-v", " pastedbeta"),
+            ("shift-insert", " pastedgamma"),
+        ],
+    );
+    assert_eq!(
+        draft_text(&mut pane).as_deref(),
+        Some("pastedalpha pastedbeta pastedgamma")
+    );
+}
+
 /// A program draws a picture with the Kitty graphics protocol — here two
 /// pixels, red and green, over four cells by two — and the pane builds one
 /// texture for it and lays it over the grid. Then the pane's tab is hidden,
