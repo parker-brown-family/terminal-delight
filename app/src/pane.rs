@@ -6311,9 +6311,11 @@ impl TerminalView {
 
     /// This pane, mirrored large in the FOCUS modal.
     ///
-    /// The workspace owns the modal; this is the pane asking it to close, and it
-    /// is left in place because the workspace's own capture-phase handler does
-    /// not run when no popup is open. The paging keys drive the READER's view —
+    /// The workspace owns the modal; this is the pane asking it to close. The
+    /// workspace's capture-phase Escape leaves the reader to this pane while the
+    /// pane holds the keyboard (`escape_closes_the_reader`), because only the
+    /// pane can clear its own read flag and take back what it lent; a reader
+    /// closed over its head left Escape dead here. The paging keys drive the READER's view —
     /// page through the mirrored convo, jump to its ends — rather than the pane's
     /// own scrollback, because that is the surface you are actually reading.
     /// Every other keystroke flows past to the terminal, so you keep directing

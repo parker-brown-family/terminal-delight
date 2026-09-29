@@ -13501,6 +13501,25 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Escape, seen before any pane sees it: close the FOCUS reader here,
+    /// properly, unless the pane it reads holds the keyboard. That pane closes
+    /// it itself, after offering the key to a document it lent the reader — an
+    /// open note box or a brief's own dialog goes first — by asking for
+    /// `close_focus_read`; with the keyboard anywhere else, nothing else would.
+    /// Answers whether it closed the reader.
+    fn escape_closes_the_reader(&mut self, window: &Window, cx: &mut Context<Self>) -> bool {
+        let Some(pane) = self.focus_read.as_ref().and_then(|w| w.upgrade()) else {
+            // Its pane has gone, and nothing is drawn: nothing to close.
+            self.focus_read = None;
+            return false;
+        };
+        if pane.focus_handle(cx).contains_focused(window, cx) {
+            return false;
+        }
+        self.close_focus_read(cx);
+        true
+    }
+
     /// An agent finished in `pane` (the bell edge). If Parker is looking at that
     /// exact pane — this window is active AND the pane holds keyboard focus —
     /// acknowledge on the spot: watching it finish IS the notification. In
@@ -16950,6 +16969,14 @@ impl Workspace {
     /// layer at a time: a modal stacked on the agent wall (the savings overlay,
     /// graveyard, plugins) closes first — a second esc then closes the wall.
     /// Returns whether anything was closed. NEVER touches a terminal pane.
+    ///
+    /// The FOCUS reader is not here, because closing it touches a pane: the
+    /// pane it reads has to be told, and given back any document it lent.
+    /// Dropped here, as it was from 2026-06-24, the pane went on believing it
+    /// was being read, and Escape and the page keys never reached its terminal
+    /// again — Esc could no longer interrupt an agent there. The reader closes
+    /// through `close_focus_read`, from the pane's own Escape or from
+    /// [`Workspace::escape_closes_the_reader`].
     fn close_popups(&mut self) -> bool {
         // The attention queue draws over everything and is the cheapest thing to
         // dismiss, so it goes first: Esc with the queue open should fold the
@@ -16987,7 +17014,6 @@ impl Workspace {
             || self.osd_menu.take().is_some()
             || self.tab_menu.take().is_some()
             || self.group_menu.take().is_some()
-            || self.focus_read.take().is_some()
         {
             return true;
         }
@@ -17135,6 +17161,9 @@ impl Workspace {
         }
         if ks.key.as_str() == "escape" && self.close_popups() {
             cx.notify();
+            return;
+        }
+        if ks.key.as_str() == "escape" && self.escape_closes_the_reader(window, cx) {
             return;
         }
         // The language dropdown owns the keyboard while open: esc closes, ↵ applies
@@ -31368,10 +31397,18 @@ impl Render for Workspace {
             // CAPTURE phase so it fires even while a terminal pane holds focus
             // (the terminal never sees the Esc, so it can't be sent to the shell).
             // With no popup open, Esc falls through to the focused terminal as usual.
-            .capture_key_down(cx.listener(|ws, ev: &KeyDownEvent, _w, cx| {
+            // The FOCUS reader is the exception both ways: it is closed here only
+            // when the pane it reads does not hold the keyboard, and otherwise by
+            // that pane, which has to hear the Esc (`escape_closes_the_reader`).
+            .capture_key_down(cx.listener(|ws, ev: &KeyDownEvent, window, cx| {
                 if ev.keystroke.key.as_str() == "escape" && ws.close_popups() {
                     cx.stop_propagation();
                     cx.notify();
+                    return;
+                }
+                if ev.keystroke.key.as_str() == "escape" && ws.escape_closes_the_reader(window, cx)
+                {
+                    cx.stop_propagation();
                     return;
                 }
                 // The attention queue owns the keyboard while it is open, and it
