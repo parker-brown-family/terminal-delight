@@ -2210,10 +2210,14 @@ fn a_document_face_lends_its_view_to_the_reader_and_gets_it_back(cx: &mut TestAp
     let md = dir.join("long.md");
     // Paragraphs long enough to wrap onto more lines in the pane than in the
     // reader's wider glass, so the same pixel is a different block in each.
+    // About 600 characters: each paragraph runs to several lines at either
+    // width, so the 1,200-pixel glass's fewer lines per paragraph are certain,
+    // whatever the font. Half this length wrapped alike in both, and a reader
+    // that forgot to keep its place by block still passed.
     let words = "a document long enough to page through, whose paragraphs run on \
                  long enough to wrap onto more lines in a pane than in the reader";
     let text: String = (1..=120)
-        .map(|i| format!("Paragraph {i}: {words}, and {words}.\n\n"))
+        .map(|i| format!("Paragraph {i}: {words}; {words}; {words}; and {words}.\n\n"))
         .collect();
     std::fs::write(&md, text).expect("the document");
     let mut pane = Pane::running(cx, "printf 'ready\\n'; exec cat");
@@ -2310,7 +2314,7 @@ fn a_document_face_lends_its_view_to_the_reader_and_gets_it_back(cx: &mut TestAp
     let read_to = block(&mut pane);
     assert!(read_to > on_the_pane, "a page further on, in the reader");
 
-    pane.close_reader();
+    reader.close(&mut pane);
     pane.redraw();
     assert!(pane.lent().is_none());
     assert!(
@@ -2328,7 +2332,7 @@ fn a_document_face_lends_its_view_to_the_reader_and_gets_it_back(cx: &mut TestAp
 /// sends everything to the agent beside the brief, from the reader, as the
 /// button on the pane does, saving it into the file on the way.
 ///
-/// The reader's glass is stood in for ([`super::harness::ReaderGlass`]),
+/// The reader's glass is stood in for ([`super::harness::GlassStandIn`]),
 /// because it belongs to the workspace this harness does not build; what it
 /// hands the view, a point relative to the view, is what the workspace hands.
 ///
@@ -2498,7 +2502,7 @@ fn a_brief_in_the_reader_takes_notes_and_stamps_and_sends_them(cx: &mut TestAppC
     assert_eq!(zoom(&mut pane), Some(crate::docview::ImageZoom::Scale(1.1)));
     pane.keys("escape");
     assert_eq!(closes.get(), 2, "Escape asks to close the reader again");
-    pane.close_reader();
+    reader.close(&mut pane);
     assert!(
         !pane.read(|v| v.lends(&square)),
         "closed, the square draws its brief again"

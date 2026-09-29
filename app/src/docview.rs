@@ -193,6 +193,11 @@ pub struct DocumentView {
     /// measured them. `None` until it has painted once: an unmeasured view is
     /// not a zero-sized one, and nothing that needs the size runs without it.
     frame: Rc<Cell<Option<Frame>>>,
+    /// The box measured before the last one, and how many measurements running
+    /// have gone back to it. A view drawn in two places at once is measured in
+    /// one box and then the other, every frame, re-laying itself out for each in
+    /// turn and never settling; [`TWO_PLACES`] flips in a row says so.
+    flips: Rc<Cell<(Option<Frame>, u32)>>,
     /// The view's flat top-left in window pixels as the last paint placed it.
     /// Unlike `painted_at` it survives the next render, which is when a page
     /// needs it: tiles are snapped to the device grid from where the view is.
@@ -220,6 +225,19 @@ pub struct DocumentView {
 /// A view's measured size, in logical pixels, and the scale factor it was
 /// measured under.
 type Frame = (Size<Pixels>, f32);
+
+/// How many measurements in a row may go back to the box before the last one
+/// before the view is taken to be drawn in two places at once. A person
+/// dragging an edge never lands on the same two sizes this many times running.
+const TWO_PLACES: u32 = 16;
+
+/// What is said when a view is drawn in two places at once: in a debug build
+/// it stops there, so a test fails with this instead of hanging on a frame
+/// that never settles, and a release build says it once and goes on spinning.
+const DRAWN_TWICE: &str = "a document view is being drawn in two places at once: it \
+     is measured in one box and then the other, every frame, and re-lays itself out \
+     for each in turn without end. One view, one place: a pane draws \"being read\" \
+     while the FOCUS reader holds its view";
 
 /// A view lent to the FOCUS reader, and what goes back with it.
 #[derive(Clone, Copy, Debug)]
@@ -743,6 +761,7 @@ impl DocumentView {
             seat: DocSeat::Float,
             lent: None,
             frame: Rc::new(Cell::new(None)),
+            flips: Rc::new(Cell::new((None, 0))),
             placed: Rc::new(Cell::new(None)),
             painted_at: Rc::new(Cell::new(None)),
             links: markdown::LinkSink::default(),
@@ -1204,13 +1223,24 @@ impl Render for DocumentView {
         // itself at once. A page hears of the change too: its size is the
         // width the brief is laid out at.
         let store = self.frame.clone();
+        let flips = self.flips.clone();
         let placed = self.placed.clone();
         let weak = cx.entity().downgrade();
         let measure = canvas(
             move |bounds, window, cx| {
                 placed.set(Some(bounds.origin));
                 let now = Some((bounds.size, window.scale_factor()));
-                if store.get() != now {
+                let was = store.get();
+                if was != now {
+                    let (before, runs) = flips.get();
+                    let runs = if before == now { runs + 1 } else { 0 };
+                    flips.set((was, runs));
+                    if runs == TWO_PLACES {
+                        eprintln!("terminal-delight: {DRAWN_TWICE}");
+                        if cfg!(debug_assertions) {
+                            panic!("{DRAWN_TWICE}");
+                        }
+                    }
                     store.set(now);
                     let weak = weak.clone();
                     cx.defer(move |cx| {

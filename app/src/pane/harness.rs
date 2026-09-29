@@ -635,11 +635,11 @@ pub(super) struct Asked {
 /// window's top-left, so a point in this window is a point in the view — the
 /// conversion the workspace makes from its reading area — and [`Reader`]
 /// hands the view a press, a move and a release the way the workspace does.
-pub(super) struct ReaderGlass {
+pub(super) struct GlassStandIn {
     pane: Entity<TerminalView>,
 }
 
-impl gpui::Render for ReaderGlass {
+impl gpui::Render for GlassStandIn {
     fn render(
         &mut self,
         _: &mut gpui::Window,
@@ -653,7 +653,7 @@ impl gpui::Render for ReaderGlass {
 
 /// The FOCUS reader open on a harness pane, with its glass stood in for.
 pub(super) struct Reader {
-    glass: Entity<ReaderGlass>,
+    glass: Entity<GlassStandIn>,
     cx: &'static mut VisualTestContext,
 }
 
@@ -691,18 +691,30 @@ impl Reader {
         });
         self.redraw(pane);
     }
+
+    /// Close the reader, as the workspace does once it hears Escape: the pane
+    /// is told it is no longer read, and the glass goes. Gone, it asks the pane
+    /// nothing more, as the workspace stops asking — so whatever the pane gets
+    /// back, it got from being told, and not from a glass still drawing.
+    pub(super) fn close(self, pane: &mut Pane) {
+        pane.view
+            .update(pane.cx, |v, cx| v.set_being_read(false, cx));
+        self.cx.update(|window, _| window.remove_window());
+        self.cx.run_until_parked();
+        pane.redraw();
+    }
 }
 
 impl Pane {
     /// Open the FOCUS reader on this pane, as Alt+R does: the pane is read,
-    /// and a window of `size` stands in for the reader's glass ([`ReaderGlass`]).
+    /// and a window of `size` stands in for the reader's glass ([`GlassStandIn`]).
     pub(super) fn open_reader(&mut self, size: (f32, f32)) -> Reader {
         self.view
             .update(self.cx, |v, cx| v.set_being_read(true, cx));
         let pane = self.view.clone();
         let mut app = self.cx.cx.clone();
         let window = app.open_window(gpui::size(px(size.0), px(size.1)), move |_, _| {
-            ReaderGlass { pane }
+            GlassStandIn { pane }
         });
         let glass = window
             .root(&mut app)
@@ -711,13 +723,6 @@ impl Pane {
         let mut reader = Reader { glass, cx };
         reader.redraw(self);
         reader
-    }
-
-    /// Close the FOCUS reader, as Escape does once the workspace hears it.
-    pub(super) fn close_reader(&mut self) {
-        self.view
-            .update(self.cx, |v, cx| v.set_being_read(false, cx));
-        self.redraw();
     }
 
     /// The document this pane lends the reader now.

@@ -83,7 +83,8 @@ Branch `feat/alt-r-reader` in `~/Work/td-alt-r-reader`, off main at `5ba60ed`.
 
 ## Slice 4 — the floating square, and Codex
 
-- `read_from` with a square up → `Document(Float)`.
+- ~~`read_from` with a square up → `Document(Float)`.~~ Done in slice 2: lending
+  is one mechanism for both seats.
 - Codex rollouts (`response_item` stream, `call_id` pairs) fold into the same
   `Conversation`.
 
