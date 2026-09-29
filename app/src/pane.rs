@@ -3286,6 +3286,52 @@ fn grid_row(cells: &[crate::vt::Cell], th: &Theme) -> GridRow {
     }
 }
 
+/// The most rows the FOCUS reader's foot shows: a pasted wall of input still
+/// leaves the conversation room.
+const INPUT_ROWS_MAX: usize = 12;
+
+/// Where an agent's input box is on a screen: from the status line just above
+/// its top border to the last row with anything on it. `None` when the screen
+/// draws no box.
+///
+/// A border is a row whose every mark is box drawing — Claude Code's two long
+/// rules, or a rounded box's top and bottom — at least ten of them, so a short
+/// rule inside a reply is not taken for one. The box is the lowest border and the
+/// one above it. Within two rows above the top border, the status line is kept —
+/// where Claude Code says what it is doing, behind its spinner
+/// ("✻ Writing… (4m 12s · esc to interrupt)") — and nothing else is: with the
+/// agent at rest those rows are the end of its reply, which the transcript
+/// already shows.
+fn input_box(rows: &[GridRow]) -> Option<std::ops::Range<usize>> {
+    let border = |r: &GridRow| {
+        let marks = r.line.text.chars().filter(|c| !c.is_whitespace());
+        let mut n = 0;
+        for c in marks {
+            if !matches!(c, '─' | '━' | '╭' | '╮' | '╰' | '╯' | '├' | '┤') {
+                return false;
+            }
+            n += 1;
+        }
+        n >= 10
+    };
+    let blank = |r: &GridRow| r.line.text.trim().is_empty();
+    let status = |r: &GridRow| {
+        let t = r.line.text.trim_start();
+        t.starts_with(['·', '✢', '✳', '✶', '✻', '✽']) || t.contains("esc to interrupt")
+    };
+    let bottom = rows.iter().rposition(border)?;
+    let top = rows[..bottom].iter().rposition(border).unwrap_or(bottom);
+    let start = (top.saturating_sub(2)..top)
+        .find(|&k| status(&rows[k]))
+        .unwrap_or(top);
+    let end = rows
+        .iter()
+        .rposition(|r| !blank(r))
+        .map_or(bottom + 1, |e| e + 1);
+    let end = end.max(bottom + 1).min(start + INPUT_ROWS_MAX);
+    Some(start..end)
+}
+
 /// One matched line inside a pane's grid: its absolute grid line index, the line
 /// text (built from column 0 so a char index is also its column), and the fuzzy
 /// score + matched char positions — for the snippet highlight and the jump-time
@@ -3432,6 +3478,12 @@ pub struct MirrorSnapshot {
     pub k1: f32,
     pub k2: f32,
     pub glare: f32,
+    /// An agent runs in the pane — Claude, Codex — whose conversation the
+    /// reader can read from its transcript instead of from the screen.
+    pub agent: bool,
+    /// A program has the alternate screen (vim, htop), which keeps no history:
+    /// the reader says so on its chip.
+    pub alt_screen: bool,
 }
 
 /// Which size dial a ctrl+wheel at `pos` is turning, given where this pane's
@@ -3643,6 +3695,8 @@ impl TerminalView {
             k1,
             k2,
             glare: th.screen_glare,
+            agent: agent_mode,
+            alt_screen: alt_screen_active,
         }
     }
 
@@ -3739,6 +3793,37 @@ impl TerminalView {
     pub fn reader_palette(&self, cx: &App) -> (gpui::Hsla, gpui::Hsla, gpui::Hsla) {
         let th = self.resolved_theme(cx);
         (th.bg, th.text, th.accent)
+    }
+
+    /// The pane's font and palette in the roles the FOCUS reader draws a
+    /// conversation in ([`crate::transcript::Ink`]): the pane's own, so the
+    /// agent's words read in the reader as they do in its pane.
+    pub fn reader_ink(&self, cx: &App) -> crate::transcript::Ink {
+        let th = self.resolved_theme(cx);
+        crate::transcript::Ink {
+            font: grid_font(&th, FontWeight::default()),
+            text: th.text,
+            human: th.human,
+            faint: th.faint,
+            accent: th.accent,
+            error: th.ansi[1],
+        }
+    }
+
+    /// The pane's input rows, live, for the FOCUS reader's foot: the agent's
+    /// input box from its top border down, with the status line above it where
+    /// Claude Code says what it is doing. A transcript holds a reply only once
+    /// each block of it is finished, and never what is being typed, so the foot
+    /// carries the turn in flight. Empty when the screen draws no input box.
+    pub fn input_rows(&self, cx: &App) -> Vec<DocLine> {
+        let th = self.resolved_theme(cx);
+        let rows = {
+            let term = self.session.term.lock();
+            crate::readrows::screen_rows(&term, |cells| grid_row(cells, &th))
+        };
+        input_box(&rows)
+            .map(|at| rows[at].iter().map(|r| r.line.clone()).collect())
+            .unwrap_or_default()
     }
 
     /// What this pane is doing right now — cwd + resumable agent session —
@@ -11836,6 +11921,65 @@ mod tests {
              gesture it belongs in pane.rs beside those two, and this test changes in the \
              same commit with the reasoning: {strays:?}"
         );
+    }
+
+    fn screen(rows: &[&str]) -> Vec<GridRow> {
+        rows.iter()
+            .map(|s| GridRow {
+                line: DocLine::new(s.to_string(), Vec::new()),
+                wrapped: false,
+            })
+            .collect()
+    }
+
+    const RULE: &str = "────────────────────────────────────────────────";
+
+    /// The reader's foot finds Claude Code's input box by its two long rules,
+    /// and carries the status line above it while the agent works — and only
+    /// that: at rest, the rows above the box are the end of a reply the
+    /// transcript already shows. A rule inside a reply is too short to be taken
+    /// for a border, and a screen with no box has no foot at all.
+    #[test]
+    fn the_readers_foot_is_the_agents_input_box_and_its_status() {
+        let busy = screen(&[
+            "  and the reader borrows the view.",
+            "",
+            "✻ Writing… (4m 12s · esc to interrupt)",
+            "",
+            RULE,
+            "> █",
+            RULE,
+            "  ? for shortcuts",
+            "",
+            "",
+        ]);
+        assert_eq!(
+            input_box(&busy),
+            Some(2..8),
+            "status, box and hint; no trailing blanks"
+        );
+
+        let resting = screen(&["  the last line of a reply", "", RULE, "> ", RULE, ""]);
+        assert_eq!(
+            input_box(&resting),
+            Some(2..5),
+            "the reply is not the foot's"
+        );
+
+        let rounded = screen(&[
+            "╭──────────────────────────────────────╮",
+            "│ > what now                            │",
+            "╰──────────────────────────────────────╯",
+        ]);
+        assert_eq!(
+            input_box(&rounded),
+            Some(0..3),
+            "a rounded box is a box too"
+        );
+
+        let reply_rule = screen(&["Heading", "───", "text", "$ ls"]);
+        assert_eq!(input_box(&reply_rule), None, "a short rule is not a border");
+        assert_eq!(input_box(&screen(&["$ cargo test", "ok"])), None);
     }
 
     /// FOCUS mirrors the grid, never the bench, when it reads the terminal.

@@ -148,7 +148,7 @@ fn parse_line(line: &str) -> Vec<ToolEvent> {
 /// A short, single-line gist of a tool's input — prefer the human-meaningful
 /// key (the command run, the file touched, the pattern searched), else the
 /// compact JSON. Always whitespace-collapsed and length-bounded.
-fn summarize(input: &Value) -> String {
+pub(crate) fn summarize(input: &Value) -> String {
     match input {
         Value::Object(m) => {
             for k in [

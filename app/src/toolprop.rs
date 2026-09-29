@@ -22,7 +22,7 @@
 
 use serde::Deserialize;
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 /// The generated tool table. Regenerate with `scripts/sync-tool-props.mjs`.
@@ -157,7 +157,7 @@ pub fn follows_tool() -> bool {
 /// namespaced by its server, but the vocabulary is written in bare tool names,
 /// so a row is looked up under the full name first and the bare one after —
 /// which lets a user's layer disambiguate two servers' same-named tools.
-fn bare(tool: &str) -> &str {
+pub(crate) fn bare(tool: &str) -> &str {
     tool.strip_prefix("mcp__")
         .and_then(|rest| rest.split_once("__"))
         .map(|(_, t)| t)
@@ -306,6 +306,16 @@ pub struct ToolProbe {
     /// runs whether or not the wall is open, and the Workbench's model dial
     /// is drawn when it is not.
     pub model: Option<String>,
+}
+
+impl ToolProbe {
+    /// The pane's transcript, when the sweep bound it for certain
+    /// ([`crate::paneident::certain`]); `None` for a pane it could not place,
+    /// which is never a guess at whoever in that directory typed last. The
+    /// FOCUS reader reads a conversation from here.
+    pub fn path(&self) -> Option<&Path> {
+        self.path.as_deref()
+    }
 }
 
 /// The model the last assistant record in a transcript tail answered on.
