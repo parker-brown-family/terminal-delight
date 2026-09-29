@@ -1173,23 +1173,51 @@ impl MarkdownDoc {
     /// keep, and whatever place was already waiting is left to wait.
     pub fn set_zoom(&mut self, zoom: f32) {
         let ratio = zoom / self.zoom.max(0.01);
-        let fraction = self.scroll().map(|s| s.top);
-        let keep = match self.block_at_top() {
-            Some((index, offset)) => Some(Pending::Block {
+        self.relay_out(ratio);
+        self.zoom = zoom;
+    }
+
+    /// The column is about to be laid out afresh — at a new zoom, or at the
+    /// width of a new box when the view is lent to the FOCUS reader and handed
+    /// back — so the reader's place is noted by what is at the top of the
+    /// view, not by the pixel: the block there stays there, `ratio` times as
+    /// far into it as it was. A place kept by the pixel would land a column
+    /// re-flowed at twice the width halfway down some other block. Before the
+    /// first layout there is no place to keep.
+    ///
+    /// A place already waiting is the reader's place, and it stays: the top
+    /// has not moved there yet, so the block at the top is not the one the
+    /// reader is on. Read off it, a second re-layout before the first had
+    /// settled — a reader opened and closed at once, a zoom pressed while a
+    /// link's heading was still being found — landed on some other block.
+    pub fn relay_out(&mut self, ratio: f32) {
+        self.pending = match self.pending.take() {
+            Some(Pending::Block {
+                index,
+                offset,
+                fraction,
+            }) => Some(Pending::Block {
                 index,
                 offset: offset * ratio,
                 fraction,
             }),
-            None => fraction.map(|f| Pending::Block {
-                index: usize::MAX,
-                offset: 0.0,
-                fraction: Some(f),
-            }),
+            Some(waiting) => Some(waiting),
+            None => {
+                let fraction = self.scroll().map(|s| s.top);
+                match self.block_at_top() {
+                    Some((index, offset)) => Some(Pending::Block {
+                        index,
+                        offset: offset * ratio,
+                        fraction,
+                    }),
+                    None => fraction.map(|f| Pending::Block {
+                        index: usize::MAX,
+                        offset: 0.0,
+                        fraction: Some(f),
+                    }),
+                }
+            }
         };
-        if keep.is_some() {
-            self.pending = keep;
-        }
-        self.zoom = zoom;
         // A new layout, as a new parse is: nothing the last paint measured
         // may place it.
         self.generation += 1;
@@ -1494,6 +1522,70 @@ mod tests {
         assert!(
             (md.top - 900.0).abs() < 1e-3,
             "the second block, 100 px into it: {}",
+            md.top
+        );
+    }
+
+    /// A second re-layout before the first has settled keeps the first one's
+    /// place. The top has not moved there yet, so a place read off it would be
+    /// the old pixel in the new layout: a reader opened and closed before the
+    /// page settled, or a zoom pressed while a link's heading was still being
+    /// found, landed on some other block.
+    #[test]
+    fn a_place_still_waiting_survives_a_second_re_layout() {
+        let mut md = MarkdownDoc::new();
+        // Painted in the pane: the reader 50 px into the second block.
+        md.painted.set(Some(md.generation));
+        md.column.set(Some(at_y(0.0, 1200.0)));
+        *md.tops.blocks.borrow_mut() = [0.0, 400.0, 800.0].map(|y| Some(at_y(y, 400.0))).to_vec();
+        md.top = 450.0;
+        md.relay_out(1.0);
+        // The first paint at the new width lays the column out and places
+        // nothing yet: the top is still the old pixel.
+        let wider = |md: &mut MarkdownDoc| {
+            md.painted.set(Some(md.generation));
+            md.column.set(Some(at_y(0.0, 600.0)));
+            *md.tops.blocks.borrow_mut() =
+                [0.0, 200.0, 400.0].map(|y| Some(at_y(y, 200.0))).to_vec();
+        };
+        wider(&mut md);
+        assert_eq!(md.top, 450.0);
+        // Again, before anything settled.
+        md.relay_out(1.0);
+        wider(&mut md);
+        md.settle(Some(300.0));
+        assert!(
+            (md.top - 250.0).abs() < 1e-3,
+            "still the second block, as far into it as before: {}",
+            md.top
+        );
+    }
+
+    /// A column lent to the FOCUS reader re-flows at the reader's width, and
+    /// the reader stays on the block they were on. Kept by the pixel instead,
+    /// the place would be a different block: at twice the width the blocks
+    /// are half as tall, and 450 px down is the third block, not the second.
+    #[test]
+    fn a_column_reflowed_in_a_wider_box_keeps_the_block_the_reader_was_on() {
+        let mut md = MarkdownDoc::new();
+        // Painted in the pane: three blocks 400 px tall, the reader 50 px
+        // into the second.
+        md.painted.set(Some(md.generation));
+        md.column.set(Some(at_y(0.0, 1200.0)));
+        *md.tops.blocks.borrow_mut() = [0.0, 400.0, 800.0].map(|y| Some(at_y(y, 400.0))).to_vec();
+        md.top = 450.0;
+
+        md.relay_out(1.0);
+        md.settle(Some(300.0));
+        assert_eq!(md.top, 450.0, "not placed by the pane's paint");
+        // The first paint in the reader: every block half as tall.
+        md.painted.set(Some(md.generation));
+        md.column.set(Some(at_y(0.0, 600.0)));
+        *md.tops.blocks.borrow_mut() = [0.0, 200.0, 400.0].map(|y| Some(at_y(y, 200.0))).to_vec();
+        md.settle(Some(300.0));
+        assert!(
+            (md.top - 250.0).abs() < 1e-3,
+            "the second block, as far into it as before: {}",
             md.top
         );
     }

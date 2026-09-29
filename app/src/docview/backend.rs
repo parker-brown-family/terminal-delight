@@ -194,6 +194,16 @@ pub trait Backend {
         None
     }
 
+    /// Go back to a zoom [`Backend::zoom_now`] answered earlier: the FOCUS
+    /// reader borrows a view and hands it back at the zoom it was lent at,
+    /// because a zoom turned up to read in the reader is not the pane's. The
+    /// view is measured afresh after this, so nothing here may lean on the
+    /// size it was last drawn at. Answers whether anything changed. A
+    /// document that cannot zoom has nothing to put back.
+    fn zoom_back(&mut self, _was: ImageZoom, _cx: &mut Context<DocumentView>) -> bool {
+        false
+    }
+
     // ── where the reader is ─────────────────────────────────────────────────
 
     /// Where the document is scrolled, for the saved layout to keep. `None`
@@ -231,6 +241,14 @@ pub trait Backend {
     /// out at the view's width; a picture and a Markdown column read the size
     /// afresh as they draw.
     fn measured(&mut self, _m: Measured, _cx: &mut Context<DocumentView>) {}
+
+    /// The view is about to be drawn in a different box — lent to the FOCUS
+    /// reader, or handed back — and nothing it measured in the old one holds.
+    /// A document that keeps its place by the pixel has to note the place by
+    /// what is there before the new box re-flows it. Only a Markdown column
+    /// does: a page and a PDF keep their place across any new size in
+    /// [`Backend::measured`], and a picture has no place to keep.
+    fn reseated(&mut self) {}
 
     // ── the file on disk ────────────────────────────────────────────────────
 

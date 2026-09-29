@@ -4699,6 +4699,10 @@ struct Workspace {
     focus_sel: Option<((usize, usize), (usize, usize))>,
     /// True while a left-drag is actively extending the reader selection.
     focus_sel_drag: bool,
+    /// A press in the reader went to the document the pane lent it, and so
+    /// do the moves until the button comes up: a picture being panned, a
+    /// video's track being scrubbed.
+    focus_doc_holding: bool,
     /// Global, persisted: when on, the FOCUS reader inherits the read pane's CRT
     /// look (barrel curvature + screen glare) instead of the flat default. One
     /// toggle in the modal header; applies to every reader open from then on.
@@ -5963,6 +5967,7 @@ impl Workspace {
             focus_map: Arc::new(Mutex::new(None)),
             focus_sel: None,
             focus_sel_drag: false,
+            focus_doc_holding: false,
             focus_inherit_theme: saved.focus_inherit,
             anchor_top: saved.anchor_top,
             agent_tint: saved.agent_tint,
@@ -13444,9 +13449,9 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         if let Some(prev) = self.focus_read.take().and_then(|w| w.upgrade()) {
-            prev.update(cx, |v, _| v.set_being_read(false));
+            prev.update(cx, |v, cx| v.set_being_read(false, cx));
         }
-        pane.update(cx, |v, _| v.set_being_read(true));
+        pane.update(cx, |v, cx| v.set_being_read(true, cx));
         self.focus_read = Some(pane.downgrade());
         // Each FOCUS opens at fit-to-modal; the header slider takes it from there.
         self.focus_zoom = 1.0;
@@ -13463,6 +13468,7 @@ impl Workspace {
         self.focus_layout = None;
         self.focus_sel = None;
         self.focus_sel_drag = false;
+        self.focus_doc_holding = false;
         // Defer the focus: this runs from the 👓 header button's mouse-down
         // listener, so a synchronous `window.focus` gets grabbed straight back by
         // the root container's tracked focus handle (the same race new_tab/split
@@ -13475,10 +13481,17 @@ impl Workspace {
         cx.notify();
     }
 
-    /// Close the FOCUS modal and clear the read flag on its pane (if still open).
+    /// Close the FOCUS modal and clear the read flag on its pane (if still open),
+    /// which takes back a document the pane lent it — let go first, if a press
+    /// on it was still held.
     fn close_focus_read(&mut self, cx: &mut Context<Self>) {
+        if std::mem::take(&mut self.focus_doc_holding) {
+            if let Some(view) = self.focus_lent(cx) {
+                view.update(cx, |v, cx| v.release(cx));
+            }
+        }
         if let Some(pane) = self.focus_read.take().and_then(|w| w.upgrade()) {
-            pane.update(cx, |v, _| v.set_being_read(false));
+            pane.update(cx, |v, cx| v.set_being_read(false, cx));
         }
         self.focus_sel = None;
         self.focus_sel_drag = false;
@@ -15887,6 +15900,279 @@ impl Workspace {
             return None;
         }
         Some(((f32::from(x) - f32::from(b.origin.x)) / w).clamp(0.0, 1.0))
+    }
+
+    /// The reader's glass: a panel `w` × `h` in the pane's paper, ringed in its
+    /// accent, lifted off the window by a shadow and the phosphor gauge's glow.
+    /// Whatever the reader reads, it wears the one glass.
+    fn reader_panel(w: f32, h: f32, bg: Hsla, accent: Hsla, phosphor: f32) -> gpui::Div {
+        div()
+            .w(px(w))
+            .h(px(h))
+            .flex()
+            .flex_col()
+            .rounded(px(12.))
+            .overflow_hidden()
+            .bg(bg)
+            .border_2()
+            .border_color(accent.alpha(0.7))
+            .shadow(
+                std::iter::once(BoxShadow {
+                    color: hsla(0., 0., 0., 0.7),
+                    offset: point(px(0.), px(10.)),
+                    blur_radius: px(40.),
+                    spread_radius: px(2.),
+                    inset: false,
+                })
+                .chain(theme::phosphor(
+                    phosphor,
+                    BoxShadow {
+                        color: accent.alpha(0.18),
+                        offset: point(px(0.), px(0.)),
+                        blur_radius: px(48.),
+                        spread_radius: px(2.),
+                        inset: false,
+                    },
+                ))
+                .collect(),
+            )
+    }
+
+    /// Measure the glass's exact on-screen box (physical px) as it paints and
+    /// arm the FOCUS backdrop blur: the CRT post-pass frosts everything outside
+    /// this rect while the panel itself stays razor-sharp, easing in with
+    /// `ramp`. Using the real prepaint bounds (not an analytic centre) keeps the
+    /// sharp/blur edge pixel-aligned through the CSD shadow margin.
+    ///
+    /// `tube` is `(header height, glare, k1, k2)` when "Inherit theme" bends the
+    /// reading area like the pane it reads, registered as the lone warp tube.
+    /// Only the reading area bends, never the header: the slider and the toggle
+    /// are gpui hit-boxes at their flat layout positions, so bending them with
+    /// the glass makes their clicks land off-target. Insetting the tube's top
+    /// past the header keeps the chrome flat and honest — the same rule the
+    /// per-pane tubes follow — while the body still curves.
+    fn reader_frost(ramp: f32, tube: Option<(f32, f32, f32, f32)>) -> gpui::Div {
+        div().absolute().inset_0().child(
+            gpui::canvas(
+                move |bounds, window, _cx| {
+                    let sf = window.scale_factor();
+                    let rect = [
+                        f32::from(bounds.origin.x) * sf,
+                        f32::from(bounds.origin.y) * sf,
+                        f32::from(bounds.size.width) * sf,
+                        f32::from(bounds.size.height) * sf,
+                    ];
+                    crate::warp::set_focus_blur(
+                        rect,
+                        28.0 * sf * ramp, // blur radius (eases in)
+                        16.0 * sf,        // feather across the panel edge
+                        ramp,             // frosted-glass tint (eases in)
+                        12.0 * sf,        // corner radius — matches rounded(12)
+                    );
+                    if let Some((hdr_h, glare, k1, k2)) = tube {
+                        let body_rect = [
+                            rect[0],
+                            rect[1] + hdr_h * sf,
+                            rect[2],
+                            (rect[3] - hdr_h * sf).max(1.0),
+                        ];
+                        crate::warp::register_focus_tube(body_rect, glare, k1, k2, [0.0, 1.0, 1.0]);
+                    }
+                },
+                |_, _, _, _| {},
+            )
+            .size_full(),
+        )
+    }
+
+    /// Dim + LOCK scrim over the whole window. `.occlude()` makes it swallow
+    /// every mouse event (clicks AND scroll) so nothing behind the reader can be
+    /// focused, scrolled, or typed into — you stay in the FOCUS pane. The 0.60
+    /// dim rides UNDER the frosted backdrop the CRT pass paints (the shader
+    /// blurs these dimmed pixels). A click on the dimmed area outside the glass
+    /// closes the reader; esc closes it too.
+    fn reader_scrim(ramp: f32, cx: &mut Context<Self>) -> gpui::Div {
+        div()
+            .absolute()
+            .inset_0()
+            .occlude()
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(hsla(0., 0., 0., 0.6 * ramp))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|ws, _: &MouseDownEvent, _w, cx| ws.close_focus_read(cx)),
+            )
+    }
+
+    /// The document the pane being read has lent the reader, if it has one.
+    fn focus_lent(&self, cx: &App) -> Option<Entity<docview::DocumentView>> {
+        self.focus_read.as_ref()?.upgrade()?.read(cx).lent_view()
+    }
+
+    /// `pos` relative to the reader's reading area, as a lent document takes a
+    /// point, and whether it falls inside the area. A document reads flat in
+    /// the reader, so there is no bend to undo. `None` until the area has been
+    /// laid out.
+    fn focus_doc_local(&self, pos: Point<Pixels>) -> Option<(Point<Pixels>, bool)> {
+        let b = (*self.focus_body_bounds.lock().unwrap())?;
+        Some((pos - b.origin, b.contains(&pos)))
+    }
+
+    /// The FOCUS reader over a document its pane has lent it: the terminal's
+    /// glass, holding the pane's own document view at the glass's size.
+    ///
+    /// The view stays the pane's — its notes, its ↪, its links and its place in
+    /// the saved layout — and the reader only draws it and hands it the pointer,
+    /// flat and relative to the view, as the pane would. The keys stay with the
+    /// pane, which pages the view and offers it Escape first (`reader_key`), so
+    /// a note is written here exactly as it is on the pane.
+    ///
+    /// It reads flat. "Inherit theme" bends the terminal's text like its pane;
+    /// a page bent that way would take its pointer through a warp a brief's
+    /// note buttons were never laid out under, so the toggle is not offered.
+    fn focus_document_overlay(
+        &self,
+        pane: &Entity<TerminalView>,
+        view: Entity<docview::DocumentView>,
+        ramp: f32,
+        phosphor: f32,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let (ww, wh) = self
+            .last_win
+            .map(|(_, _, w, h)| (w, h))
+            .unwrap_or((1200., 800.));
+        let ReaderGlass {
+            panel_w,
+            panel_h,
+            pad,
+            hdr_h,
+            ..
+        } = ReaderGlass::in_window(ww, wh);
+        let (bg, text, accent) = pane.read(cx).reader_palette(cx);
+        let s = lang::current().strings();
+        let (name, zoom) = {
+            let v = view.read(cx);
+            let name = v
+                .target()
+                .path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            let zoom = v.zoom_now().map(|z| match z {
+                docview::ImageZoom::Fit => s.float_fit.to_string(),
+                docview::ImageZoom::Scale(z) => format!("{:.0}%", z * 100.0),
+            });
+            (name, zoom)
+        };
+        let header = div()
+            .h(px(hdr_h))
+            .flex_none()
+            .flex()
+            .flex_row()
+            .items_center()
+            .justify_between()
+            .px_3()
+            .gap_3()
+            .text_size(px(12.))
+            .text_color(accent)
+            .child(format!("👓  FOCUS · {name}"))
+            .children(zoom.map(|z| div().text_color(text.alpha(0.6)).child(z)))
+            .child(div().text_color(text.alpha(0.6)).child("esc to close"));
+        let store = self.focus_body_bounds.clone();
+        let body = div()
+            .flex_1()
+            .min_h_0()
+            .px(px(pad))
+            .pb(px(pad))
+            .child(
+                div()
+                    .relative()
+                    .size_full()
+                    .overflow_hidden()
+                    .child(
+                        canvas(
+                            move |bounds, _window, _cx| *store.lock().unwrap() = Some(bounds),
+                            |_, _, _, _| {},
+                        )
+                        .absolute()
+                        .inset_0(),
+                    )
+                    .child(view),
+            )
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|ws, ev: &MouseDownEvent, window, cx| {
+                    cx.stop_propagation(); // the glass, not the scrim behind it
+                    let (Some(view), Some((at, true))) =
+                        (ws.focus_lent(cx), ws.focus_doc_local(ev.position))
+                    else {
+                        return;
+                    };
+                    let mods = ev.modifiers;
+                    ws.focus_doc_holding = view.update(cx, |v, cx| v.press(at, mods, window, cx));
+                }),
+            );
+        let panel = Self::reader_panel(panel_w, panel_h, bg, accent, phosphor)
+            .child(header)
+            .child(body)
+            .child(Self::reader_frost(ramp, None))
+            // clicks inside the glass must not fall through to the scrim
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|_, _: &MouseDownEvent, _w, cx| cx.stop_propagation()),
+            );
+        Self::reader_scrim(ramp, cx)
+            // The wheel over the reader is the document's, wherever the pointer
+            // is: ctrl+wheel zooms it and a plain turn scrolls it, as on its pane.
+            .on_scroll_wheel(cx.listener(|ws, ev: &ScrollWheelEvent, _w, cx| {
+                cx.stop_propagation();
+                let Some(view) = ws.focus_lent(cx) else {
+                    return;
+                };
+                if ev.modifiers.control {
+                    let notches = theme::wheel_notches(ev.delta);
+                    view.update(cx, |v, cx| v.zoom_by_wheel(notches, cx));
+                } else {
+                    let delta = ev.delta;
+                    view.update(cx, |v, cx| v.wheel(delta, cx));
+                }
+            }))
+            // Here, not on the body: the scrim occludes the window, so the moves
+            // and the release reach only it, as the terminal's selection learned
+            // (#87).
+            .on_mouse_move(cx.listener(|ws, ev: &MouseMoveEvent, _w, cx| {
+                let Some(view) = ws.focus_lent(cx) else {
+                    return;
+                };
+                let local = ws.focus_doc_local(ev.position);
+                if ws.focus_doc_holding {
+                    if ev.pressed_button == Some(MouseButton::Left) {
+                        if let Some((at, _)) = local {
+                            view.update(cx, |v, cx| v.drag(at, cx));
+                        }
+                    } else {
+                        ws.focus_doc_holding = false;
+                        view.update(cx, |v, cx| v.release(cx));
+                    }
+                }
+                let over = local.filter(|(_, inside)| *inside).map(|(at, _)| at);
+                view.update(cx, |v, cx| v.hover(over, cx));
+            }))
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|ws, _: &MouseUpEvent, _w, cx| {
+                    if std::mem::take(&mut ws.focus_doc_holding) {
+                        if let Some(view) = ws.focus_lent(cx) {
+                            view.update(cx, |v, cx| v.release(cx));
+                        }
+                    }
+                }),
+            )
+            .child(panel)
+            .into_any_element()
     }
 
     /// Map a window position to the source `(row, col)` cell under it in the FOCUS
@@ -25085,7 +25371,7 @@ impl Render for Workspace {
             if let Some(pane) = first {
                 FOCUS_DEMO_ARMED.store(true, std::sync::atomic::Ordering::Relaxed);
                 eprintln!("terminal-delight: TD_FOCUS_DEMO — auto-opening FOCUS modal");
-                pane.update(cx, |v, _| v.set_being_read(true));
+                pane.update(cx, |v, cx| v.set_being_read(true, cx));
                 self.focus_read = Some(pane.downgrade());
                 cx.notify();
             }
@@ -30552,7 +30838,16 @@ impl Render for Workspace {
         if focus_on && focus_ramp < 1.0 {
             window.request_animation_frame();
         }
-        let focus_overlay = if let Some(pane) = self.focus_read.as_ref().and_then(|w| w.upgrade()) {
+        // What the pane being read lends the reader, asked every frame: a
+        // document it shows is read as that document, and anything else is read
+        // as its terminal (`docopen::read_from`).
+        let focus_pane = self.focus_read.as_ref().and_then(|w| w.upgrade());
+        let focus_doc = focus_pane
+            .as_ref()
+            .and_then(|pane| pane.update(cx, |v, cx| v.reader_document(cx)));
+        let focus_overlay = if let (Some(pane), Some(view)) = (&focus_pane, focus_doc) {
+            Some(self.focus_document_overlay(pane, view, focus_ramp, th.grade.phosphor, cx))
+        } else if let Some(pane) = focus_pane {
             let snap = pane.update(cx, |v, cx| v.mirror_snapshot(cx));
             let (ww, wh) = self
                 .last_win
@@ -30804,171 +31099,78 @@ impl Render for Workspace {
                 // text-size slider for the pane under scrutiny (live, per-open)
                 .child(self.focus_zoom_slider(snap.accent, snap.text, cx))
                 .child(div().text_color(snap.text.alpha(0.6)).child("esc to close"));
-            let panel = div()
-                .w(px(panel_w))
-                .h(px(panel_h))
-                .flex()
-                .flex_col()
-                .rounded(px(12.))
-                .overflow_hidden()
-                .bg(snap.bg)
-                .border_2()
-                .border_color(snap.accent.alpha(0.7))
-                .shadow(
-                    std::iter::once(BoxShadow {
-                        color: hsla(0., 0., 0., 0.7),
-                        offset: point(px(0.), px(10.)),
-                        blur_radius: px(40.),
-                        spread_radius: px(2.),
-                        inset: false,
-                    })
-                    .chain(theme::phosphor(
-                        th.grade.phosphor,
-                        BoxShadow {
-                            color: snap.accent.alpha(0.18),
-                            offset: point(px(0.), px(0.)),
-                            blur_radius: px(48.),
-                            spread_radius: px(2.),
-                            inset: false,
-                        },
-                    ))
-                    .collect(),
-                )
-                .child(header)
-                .child(
-                    // The reading area: a clip box with the mirror absolutely
-                    // anchored inside it. Absolute positioning (not a flex child +
-                    // margins) pins the vertical origin deterministically:
-                    // `top = pad + v_offset - scroll_y`. `v_offset` centres a short
-                    // read (slack split top/bottom); once the read overflows it's 0
-                    // and the wheel pans `scroll_y` from the top. The fixed-width
-                    // frame is centred horizontally at `content_left`. A press here
-                    // starts a click-drag text selection (mapped back to a source
-                    // cell through the warp); the trailing probe canvas captures this
-                    // box's exact on-screen rect so the hit-test stays curve-accurate.
-                    div()
-                        .flex_1()
-                        .min_h_0()
-                        .overflow_hidden()
-                        .relative()
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(|ws, ev: &MouseDownEvent, _w, cx| {
-                                cx.stop_propagation(); // don't let the panel/scrim close
-                                match ws.focus_cell_at(ev.position) {
-                                    Some(cell) => {
-                                        ws.focus_sel = Some((cell, cell));
-                                        ws.focus_sel_drag = true;
-                                    }
-                                    None => ws.focus_sel = None,
-                                }
-                                cx.notify();
-                            }),
-                        )
-                        .child(
-                            div()
-                                .absolute()
-                                .top(px(body_top))
-                                .left(px(content_left))
-                                .flex()
-                                .flex_col()
-                                .child(body),
-                        )
-                        .child(
-                            div().absolute().inset_0().child(
-                                gpui::canvas(
-                                    {
-                                        let store = self.focus_body_bounds.clone();
-                                        move |bounds, _window, _cx| {
-                                            *store.lock().unwrap() = Some(bounds);
+            let panel =
+                Self::reader_panel(panel_w, panel_h, snap.bg, snap.accent, th.grade.phosphor)
+                    .child(header)
+                    .child(
+                        // The reading area: a clip box with the mirror absolutely
+                        // anchored inside it. Absolute positioning (not a flex child +
+                        // margins) pins the vertical origin deterministically:
+                        // `top = pad + v_offset - scroll_y`. `v_offset` centres a short
+                        // read (slack split top/bottom); once the read overflows it's 0
+                        // and the wheel pans `scroll_y` from the top. The fixed-width
+                        // frame is centred horizontally at `content_left`. A press here
+                        // starts a click-drag text selection (mapped back to a source
+                        // cell through the warp); the trailing probe canvas captures this
+                        // box's exact on-screen rect so the hit-test stays curve-accurate.
+                        div()
+                            .flex_1()
+                            .min_h_0()
+                            .overflow_hidden()
+                            .relative()
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|ws, ev: &MouseDownEvent, _w, cx| {
+                                    cx.stop_propagation(); // don't let the panel/scrim close
+                                    match ws.focus_cell_at(ev.position) {
+                                        Some(cell) => {
+                                            ws.focus_sel = Some((cell, cell));
+                                            ws.focus_sel_drag = true;
                                         }
-                                    },
-                                    |_, _, _, _| {},
-                                )
-                                .size_full(),
+                                        None => ws.focus_sel = None,
+                                    }
+                                    cx.notify();
+                                }),
+                            )
+                            .child(
+                                div()
+                                    .absolute()
+                                    .top(px(body_top))
+                                    .left(px(content_left))
+                                    .flex()
+                                    .flex_col()
+                                    .child(body),
+                            )
+                            .child(
+                                div().absolute().inset_0().child(
+                                    gpui::canvas(
+                                        {
+                                            let store = self.focus_body_bounds.clone();
+                                            move |bounds, _window, _cx| {
+                                                *store.lock().unwrap() = Some(bounds);
+                                            }
+                                        },
+                                        |_, _, _, _| {},
+                                    )
+                                    .size_full(),
+                                ),
                             ),
-                        ),
-                )
-                // Measure the panel's exact on-screen box (physical px) and arm
-                // the FOCUS backdrop blur: the CRT post-pass frosts everything
-                // outside this rect while the panel itself stays razor-sharp.
-                // Using the real prepaint bounds (not an analytic centre) keeps
-                // the sharp/blur edge pixel-aligned through the CSD shadow margin.
-                // When "Inherit theme" is on, the same rect is also registered as
-                // the lone warp tube so the reader bends + glares like its pane.
-                .child(
-                    div().absolute().inset_0().child(
-                        gpui::canvas(
-                            move |bounds, window, _cx| {
-                                let sf = window.scale_factor();
-                                let rect = [
-                                    f32::from(bounds.origin.x) * sf,
-                                    f32::from(bounds.origin.y) * sf,
-                                    f32::from(bounds.size.width) * sf,
-                                    f32::from(bounds.size.height) * sf,
-                                ];
-                                crate::warp::set_focus_blur(
-                                    rect,
-                                    28.0 * sf * focus_ramp, // blur radius (eases in)
-                                    16.0 * sf,              // feather across the panel edge
-                                    focus_ramp,             // frosted-glass tint (eases in)
-                                    12.0 * sf,              // corner radius — matches rounded(12)
-                                );
-                                if inherit {
-                                    // Warp ONLY the reading area, never the header
-                                    // chrome. The slider + "Inherit theme" toggle are
-                                    // gpui hit-boxes at their flat layout positions, so
-                                    // bending them with the glass makes their clicks
-                                    // land off-target (you have to aim well above the
-                                    // control). Insetting the tube's top past the
-                                    // header keeps the chrome flat + honest — the same
-                                    // rule the per-pane tubes follow — while the body
-                                    // still curves. crawl stays identity: the body
-                                    // already centres crawl rows for readable mirroring.
-                                    let body_rect = [
-                                        rect[0],
-                                        rect[1] + hdr_h * sf,
-                                        rect[2],
-                                        (rect[3] - hdr_h * sf).max(1.0),
-                                    ];
-                                    crate::warp::register_focus_tube(
-                                        body_rect,
-                                        glare,
-                                        k1,
-                                        k2,
-                                        [0.0, 1.0, 1.0],
-                                    );
-                                }
-                            },
-                            |_, _, _, _| {},
-                        )
-                        .size_full(),
-                    ),
-                )
-                // clicks inside the panel must not fall through to the scrim
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|_, _: &MouseDownEvent, _w, cx| cx.stop_propagation()),
-                );
-            // Dim + LOCK scrim over the whole window. `.occlude()` makes it
-            // swallow every mouse event (clicks AND scroll) so nothing behind
-            // the modal can be focused, scrolled, or typed into — you stay in
-            // the FOCUS pane. The 0.60 dim rides UNDER the frosted backdrop the
-            // CRT pass paints (the shader blurs these dimmed pixels). A click on
-            // the dimmed area outside the panel closes it; esc closes too.
-            Some(
-                div()
-                    .absolute()
-                    .inset_0()
-                    .occlude()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .bg(hsla(0., 0., 0., 0.6 * focus_ramp))
+                    )
+                    // The frost around the glass, and — with "Inherit theme" on — the
+                    // same rect registered as the lone warp tube so the reader bends
+                    // and glares like its pane. crawl stays identity: the body
+                    // already centres crawl rows for readable mirroring.
+                    .child(Self::reader_frost(
+                        focus_ramp,
+                        inherit.then_some((hdr_h, glare, k1, k2)),
+                    ))
+                    // clicks inside the panel must not fall through to the scrim
                     .on_mouse_down(
                         MouseButton::Left,
-                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| ws.close_focus_read(cx)),
-                    )
+                        cx.listener(|_, _: &MouseDownEvent, _w, cx| cx.stop_propagation()),
+                    );
+            Some(
+                Self::reader_scrim(focus_ramp, cx)
                     // The reader wraps, so it only ever overflows VERTICALLY; the
                     // wheel pans it so the off-screen rows are reachable. There is no
                     // horizontal axis to pan. At the top/bottom edge (or when the read
@@ -31031,7 +31233,8 @@ impl Render for Workspace {
                             ws.focus_drag_release(cx);
                         }),
                     )
-                    .child(panel),
+                    .child(panel)
+                    .into_any_element(),
             )
         } else {
             None
@@ -33728,9 +33931,15 @@ mod tests {
     #[test]
     fn the_reader_frames_its_text_at_the_glass_not_the_pane() {
         let code = shipped_code();
-        let overlay = code
-            .find("} = ReaderGlass::in_window(ww, wh);")
-            .expect("the FOCUS overlay's glass");
+        // The terminal's read, not a document's: the document overlay has a
+        // glass of its own and no text frame.
+        let terminal = code
+            .find("v.mirror_snapshot(cx));")
+            .expect("the FOCUS overlay reading the terminal");
+        let overlay = terminal
+            + code[terminal..]
+                .find("} = ReaderGlass::in_window(ww, wh);")
+                .expect("the FOCUS overlay's glass");
         let at = overlay
             + code[overlay..]
                 .find("let body_w =")

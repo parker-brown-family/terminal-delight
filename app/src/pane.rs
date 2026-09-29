@@ -2702,6 +2702,12 @@ pub struct TerminalView {
     /// True while this pane is the one mirrored in the FOCUS modal — a plain Esc
     /// then closes the modal instead of reaching the PTY. Set by the workspace.
     being_read: bool,
+    /// The document view this pane has lent to the FOCUS reader, by entity:
+    /// the reader draws it, and this pane draws "being read" where it would
+    /// have. Named by entity rather than by seat, so a document replaced while
+    /// it is read is never taken for the one that was lent. `None` while
+    /// nothing is lent. See [`TerminalView::reader_document`].
+    lent: Option<gpui::EntityId>,
     /// The sticky note pinned to this pane's glass, if any. See [`crate::sticky`]
     /// — in particular why Esc does NOT take it down.
     note: Option<crate::sticky::Sticky>,
@@ -3555,13 +3561,16 @@ impl TerminalView {
         (doc, next_rev)
     }
 
-    /// What the FOCUS reader shows for this pane.
+    /// What the FOCUS reader shows for this pane when it reads the terminal.
+    /// Which it reads is [`crate::docopen::read_from`]'s to say: a pane showing
+    /// a document, or with a square floating over it, lends that document to
+    /// the reader instead ([`Self::reader_document`]).
     ///
-    /// **The GRID, on both faces — deliberately.** A pane has two of them now,
-    /// and until `alt+r` started reaching the bench again (#524) nobody had to
-    /// decide which one FOCUS mirrors. The answer is the terminal, and the
-    /// reason is that it is the one a person cannot otherwise read: the bench
-    /// hides the agent's scrollback by default (`shows.mirror` is off unless
+    /// **The GRID on the workbench face — deliberately.** Until `alt+r`
+    /// started reaching the bench again (#524) nobody had to decide which of
+    /// the two faces FOCUS mirrors. The answer is the terminal, and the reason
+    /// is that it is the one a person cannot otherwise read: the bench hides
+    /// the agent's scrollback by default (`shows.mirror` is off unless
     /// `TD_BENCHMIRROR=1`), and the bench itself is already drawn at whatever
     /// size its owner set. Mirroring the bench would enlarge the thing that is
     /// legible and keep hiding the thing that is not.
@@ -3569,7 +3578,7 @@ impl TerminalView {
     /// So on the workbench face, `alt+r` is how you see what the bench is
     /// holding back. That is a feature and it is written down here because it
     /// was an accident first — pinned by
-    /// `the_focus_reader_mirrors_the_grid_on_both_faces`.
+    /// `the_focus_reader_never_mirrors_the_bench`, and by `read_from`'s table.
     pub fn mirror_snapshot(&self, cx: &App) -> MirrorSnapshot {
         let th = self.resolved_theme(cx);
         // Mirror the live pane's anchor-to-top inverted read: bottom-anchor the
@@ -3639,13 +3648,97 @@ impl TerminalView {
 
     /// Toggle whether this pane is the one currently mirrored in the FOCUS modal.
     /// When set, a plain Esc closes the modal instead of reaching the PTY. When
-    /// cleared, the history rows the reader kept are let go: up to ten thousand
-    /// styled rows are worth holding while someone reads them, and not after.
-    pub fn set_being_read(&mut self, on: bool) {
+    /// cleared, a document lent to the reader comes back to this pane, and the
+    /// history rows the reader kept are let go: up to ten thousand styled rows
+    /// are worth holding while someone reads them, and not after.
+    pub fn set_being_read(&mut self, on: bool, cx: &mut Context<Self>) {
         self.being_read = on;
         if !on {
+            self.take_back(cx);
             *self.read_history.get_mut() = None;
         }
+    }
+
+    /// The document the FOCUS reader draws for this pane this frame, lent to
+    /// it; `None` when the reader reads the terminal.
+    ///
+    /// Asked every frame the reader is up, and the only place a document is
+    /// lent: a face flipped with alt+k, a square opened or closed, or a
+    /// document replaced while the reader is up all change what it reads at
+    /// the next frame, and whatever was lent before comes back first. The
+    /// workspace keeps no handle between frames, so it holds nothing that can
+    /// go stale.
+    pub fn reader_document(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> Option<gpui::Entity<crate::docview::DocumentView>> {
+        let want = if self.being_read {
+            self.read_document()
+        } else {
+            None
+        };
+        let want_id = want.as_ref().map(|v| v.entity_id());
+        if want_id != self.lent {
+            self.take_back(cx);
+            if let Some(view) = &want {
+                view.update(cx, |v, cx| v.lend(true, cx));
+            }
+            self.lent = want_id;
+            cx.notify();
+        }
+        want
+    }
+
+    /// The document [`crate::docopen::read_from`] names for this pane now,
+    /// while the pane holds one there.
+    fn read_document(&self) -> Option<gpui::Entity<crate::docview::DocumentView>> {
+        use crate::docopen::{DocSeat, ReadFrom};
+        let face = self.bench.face();
+        let square_up = self.float.is_some() && float_shows_on(face);
+        match crate::docopen::read_from(face, square_up) {
+            ReadFrom::Document(DocSeat::Float) => self.float.as_ref().map(|f| f.view.clone()),
+            ReadFrom::Document(DocSeat::Face) => self.doc.as_ref().map(|d| d.view.clone()),
+            ReadFrom::Grid => None,
+        }
+    }
+
+    /// The document this pane has lent to the FOCUS reader, while it still
+    /// holds it.
+    pub fn lent_view(&self) -> Option<gpui::Entity<crate::docview::DocumentView>> {
+        let id = self.lent?;
+        let float = self.float.as_ref().map(|f| &f.view);
+        let face = self.doc.as_ref().map(|d| &d.view);
+        [float, face]
+            .into_iter()
+            .flatten()
+            .find(|v| v.entity_id() == id)
+            .cloned()
+    }
+
+    /// Whether `view` is lent to the reader, which draws it; this pane then
+    /// does not. A view drawn in two places measures two boxes, and a page
+    /// laid out at each in turn never settles.
+    fn lends(&self, view: &gpui::Entity<crate::docview::DocumentView>) -> bool {
+        self.lent == Some(view.entity_id())
+    }
+
+    /// Take back whatever was lent to the reader, if this pane still holds
+    /// it. A view it no longer holds was handed back where it went:
+    /// `show_document` and `float_of` hand back any view they are given.
+    fn take_back(&mut self, cx: &mut Context<Self>) {
+        let view = self.lent_view();
+        self.lent = None;
+        if let Some(view) = view {
+            view.update(cx, |v, cx| v.lend(false, cx));
+            cx.notify();
+        }
+    }
+
+    /// The pane's own paper, ink and accent, which the FOCUS reader's glass
+    /// wears whatever it reads.
+    pub fn reader_palette(&self, cx: &App) -> (gpui::Hsla, gpui::Hsla, gpui::Hsla) {
+        let th = self.resolved_theme(cx);
+        (th.bg, th.text, th.accent)
     }
 
     /// What this pane is doing right now — cwd + resumable agent session —
@@ -4444,6 +4537,7 @@ impl TerminalView {
                 .checked_sub(std::time::Duration::from_secs(1))
                 .unwrap_or_else(Instant::now),
             being_read: false,
+            lent: None,
             note,
             peeled: None,
             note_hover: None,
@@ -6121,7 +6215,7 @@ impl TerminalView {
                 cx.notify();
                 Handled::Declined
             }
-            crate::keylayer::Layer::Reader => self.reader_key(&k, cx),
+            crate::keylayer::Layer::Reader => self.reader_key(&k, ks, cx),
             crate::keylayer::Layer::Sticky => {
                 // A note holding the cursor owns the keyboard, rename-box style:
                 // every keystroke writes on the paper instead of reaching the
@@ -6193,7 +6287,11 @@ impl TerminalView {
             paint: theme::paint_mode(cx),
             ctx_menu: self.ctx_menu.is_some(),
             header_menu: self.hdr_overflow.is_some(),
-            reader: self.being_read,
+            // A note being written in the document lent to the reader takes
+            // every key, as it does on the pane — Escape puts the note box
+            // away, and a page key is the note's — so the reader claims none
+            // until the box is closed.
+            reader: self.being_read && !self.lent_view().is_some_and(|v| v.read(cx).has_caret()),
             sticky: self.sticky_composing(),
             rename: self.renaming.is_some(),
             note: self.note.is_some(),
@@ -6220,7 +6318,27 @@ impl TerminalView {
     /// own scrollback, because that is the surface you are actually reading.
     /// Every other keystroke flows past to the terminal, so you keep directing
     /// the agent while you read it big.
-    fn reader_key(&mut self, k: &crate::keylayer::Key, cx: &mut Context<Self>) -> Handled {
+    ///
+    /// A document lent to the reader is the surface being read, so it pages
+    /// itself, by its own height in the reader's glass; and Escape is offered
+    /// to it first, because a brief's own dialog closes before the reader does.
+    /// A note being written never gets here: the reader claims no key while one
+    /// is (see `layers_up`).
+    fn reader_key(
+        &mut self,
+        k: &crate::keylayer::Key,
+        ks: &Keystroke,
+        cx: &mut Context<Self>,
+    ) -> Handled {
+        if let Some(view) = self.lent_view() {
+            if let Some(paging) = crate::keylayer::paging(k) {
+                view.update(cx, |v, cx| v.page(paging, cx));
+                return Handled::Consumed;
+            }
+            if view.update(cx, |v, cx| v.key(ks, cx)) {
+                return Handled::Consumed;
+            }
+        }
         match read_nav(k) {
             Some(nav) => cx.emit(FocusReadNav(nav)),
             None => cx.emit(CloseFocusRead),
@@ -10195,7 +10313,7 @@ impl Render for TerminalView {
         // Inside the same padding the grid keeps off the bent edges, so the
         // corners of a page are not the part the barrel pass pushes out of
         // the tube.
-        let doc_el = self.doc_face_el((grid_pad_x, grid_pad_y));
+        let doc_el = self.doc_face_el((grid_pad_x, grid_pad_y), th.text);
         // The pictures programs drew, over the grid in its own cells — and only
         // over the grid: the bench and a document face show no terminal.
         let (pictures_under, pictures_over) = if on_bench || doc_el.is_some() {
@@ -11718,17 +11836,22 @@ mod tests {
         );
     }
 
-    /// FOCUS mirrors the grid whichever face the pane is showing.
+    /// FOCUS mirrors the grid, never the bench, when it reads the terminal.
     ///
     /// An undeclared case until `alt+r` could reach a bench pane at all
     /// (#524), and the kind that gets decided by accident: `mirror_snapshot`
     /// reads `styled_lines` because that is what it has always read, not
-    /// because anyone weighed it against the alternative. Weighed now — the
+    /// because anyone weighed it against the alternative. Weighed then — the
     /// bench hides the scrollback and is already sized to be read, so the grid
     /// is the thing worth enlarging — and pinned here, so flipping it becomes
     /// a decision somebody makes rather than a line somebody changes.
+    ///
+    /// This was "the grid on both faces" until the Document face arrived and
+    /// the reader learned to read a document it shows. Which source a face
+    /// reads is now `docopen::read_from`'s table, tested over every face; this
+    /// keeps the half about the bench.
     #[test]
-    fn the_focus_reader_mirrors_the_grid_on_both_faces() {
+    fn the_focus_reader_never_mirrors_the_bench() {
         let src = include_str!("pane.rs");
         let at = src
             .find("pub fn mirror_snapshot(")

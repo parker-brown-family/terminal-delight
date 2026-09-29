@@ -211,6 +211,40 @@ pub enum DocSeat {
     Face,
 }
 
+/// What the FOCUS reader reads on a pane.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ReadFrom {
+    /// The terminal: its screen and history, joined where it wrapped.
+    Grid,
+    /// One of the pane's documents, lent to the reader while it reads and
+    /// handed back when it closes. The pane keeps it — its links, its ↪, its
+    /// place in the saved layout — and only the box it is drawn in changes.
+    Document(DocSeat),
+}
+
+/// What Alt+R reads on a pane showing `face`, with a floating square drawn
+/// over it or not.
+///
+/// The reader enlarges what the person was looking at. A pane opened to show
+/// a document reads the document. A square floating over the terminal or the
+/// bench is what covers them, and Escape puts it away when the terminal is
+/// wanted (decision 4 of the reader's first gate, `docs/plans/alt-r-reader/`,
+/// approved 2026-09-29). Everything else reads the terminal, the workbench
+/// face included — Parker, the same day: *"The Workbench is already a
+/// processed thing"* — and the scrollback the bench hides by default is what
+/// a person opens the reader there to see.
+///
+/// Before this the reader read the terminal on every face, so a document pane
+/// showed the shell it was made with, hidden behind the document.
+pub fn read_from(face: crate::workbench::Face, square_up: bool) -> ReadFrom {
+    use crate::workbench::Face;
+    match (face, square_up) {
+        (Face::Document, _) => ReadFrom::Document(DocSeat::Face),
+        (Face::Terminal | Face::Workbench, true) => ReadFrom::Document(DocSeat::Float),
+        (Face::Terminal | Face::Workbench, false) => ReadFrom::Grid,
+    }
+}
+
 /// Who asked for a document to open beside the pane. It decides one thing:
 /// what happens when the tab already holds four panes. A floating square
 /// asking to become a split stays the square it is and says why; anything
@@ -1326,6 +1360,34 @@ mod tests {
             link_menu(false, false),
             vec![LinkItem::OpenWithDesktop, LinkItem::CopyLink]
         );
+    }
+
+    /// Alt+R reads what the pane shows, over every face with a square up or
+    /// not: the document a pane was opened to show, a square floating over
+    /// the terminal or the bench, and otherwise the terminal — never the bench
+    /// itself, which is already drawn to be read.
+    #[test]
+    fn the_reader_reads_what_the_pane_shows() {
+        use crate::workbench::Face;
+        for square_up in [false, true] {
+            assert_eq!(
+                read_from(Face::Document, square_up),
+                ReadFrom::Document(DocSeat::Face),
+                "a document pane reads its document, square or not"
+            );
+        }
+        for face in [Face::Terminal, Face::Workbench] {
+            assert_eq!(
+                read_from(face, true),
+                ReadFrom::Document(DocSeat::Float),
+                "{face:?} with a square over it reads the square"
+            );
+            assert_eq!(
+                read_from(face, false),
+                ReadFrom::Grid,
+                "{face:?} alone reads the terminal"
+            );
+        }
     }
 
     /// Alt+click on the path the square is already showing is the second

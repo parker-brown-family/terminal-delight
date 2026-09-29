@@ -185,6 +185,10 @@ pub struct DocumentView {
     /// The floating square, or a pane's Document face. A view is made for
     /// one and can be moved to the other; see [`Self::set_seat`].
     seat: DocSeat,
+    /// Lent to the FOCUS reader, which draws it in the reader's glass while
+    /// its pane draws "being read"; see [`Self::lend`]. `None` while it is
+    /// drawn in its own seat.
+    lent: Option<Lent>,
     /// The view's own size and the window's scale factor, as the last paint
     /// measured them. `None` until it has painted once: an unmeasured view is
     /// not a zero-sized one, and nothing that needs the size runs without it.
@@ -216,6 +220,14 @@ pub struct DocumentView {
 /// A view's measured size, in logical pixels, and the scale factor it was
 /// measured under.
 type Frame = (Size<Pixels>, f32);
+
+/// A view lent to the FOCUS reader, and what goes back with it.
+#[derive(Clone, Copy, Debug)]
+struct Lent {
+    /// The zoom it had when it was lent, put back when it is handed back.
+    /// `None` for a document with no zoom, which has nothing to put back.
+    zoom: Option<ImageZoom>,
+}
 
 /// A press on a link that leaves this document. The pane decides where it
 /// goes: a file TD can draw takes the square's place, anything else goes to
@@ -729,6 +741,7 @@ impl DocumentView {
             backend,
             theme: None,
             seat: DocSeat::Float,
+            lent: None,
             frame: Rc::new(Cell::new(None)),
             placed: Rc::new(Cell::new(None)),
             painted_at: Rc::new(Cell::new(None)),
@@ -759,6 +772,61 @@ impl DocumentView {
         self.seat = seat;
         self.frame.set(None);
         cx.notify();
+    }
+
+    /// Lend this view to the FOCUS reader, or hand it back (`false`).
+    ///
+    /// The pane still owns the view — its seat, its links, its ↪ and its
+    /// place in the saved layout all stay where they were — and only the box
+    /// it is drawn in changes. So, as a move between seats does, it forgets
+    /// what it measured in the old box, and a Markdown column notes its place
+    /// by block before the new width re-flows it. The zoom it was lent at is
+    /// put back when it returns: the reader's size is its own, and a picture
+    /// zoomed up to read in the reader is not the pane's to inherit. The
+    /// place it was read to comes back with it.
+    pub fn lend(&mut self, reading: bool, cx: &mut Context<Self>) {
+        match (self.lent.take(), reading) {
+            (None, true) => {
+                self.lent = Some(Lent {
+                    zoom: self.backend.zoom_now(),
+                });
+            }
+            (Some(lent), false) => {
+                if let Some(was) = lent.zoom {
+                    self.backend.zoom_back(was, cx);
+                }
+            }
+            (already, _) => {
+                self.lent = already;
+                return;
+            }
+        }
+        self.frame.set(None);
+        self.backend.reseated();
+        cx.notify();
+    }
+
+    /// PageUp, PageDown and the two ends, wherever the view is drawn: a page
+    /// is nine tenths of the view's own measured height, so it is the reader's
+    /// page while the view is lent and the pane's once it is back, and an end
+    /// is farther than any document is long, which every backend stops at.
+    /// Before the view has been measured there is no page to turn.
+    pub fn page(&mut self, paging: crate::keylayer::Paging, cx: &mut Context<Self>) {
+        use crate::keylayer::Paging;
+        let Some(view_h) = self.view_h() else {
+            return;
+        };
+        let pages = match paging {
+            Paging::PageUp => -1.0,
+            Paging::PageDown => 1.0,
+            Paging::Top => -1e6,
+            Paging::Bottom => 1e6,
+        };
+        let dy = -pages * view_h * 0.9;
+        self.wheel(
+            ScrollDelta::Pixels(gpui::point(gpui::px(0.), gpui::px(dy))),
+            cx,
+        );
     }
 
     pub fn target(&self) -> &DocTarget {
@@ -912,6 +980,9 @@ impl DocumentView {
         self.backend.guard_close(cx)
     }
 
+    /// A square lent to the FOCUS reader is not closed by Escape — the reader
+    /// is, and the square comes back holding every note — so it answers as the
+    /// Document face does, and never warns about notes it will not lose.
     pub fn key(&mut self, ks: &Keystroke, cx: &mut Context<Self>) -> bool {
         // A paste while a note is being written is the note's, by any of the
         // three chords: ctrl+v, ctrl+shift+v, and shift+insert, which is what
@@ -923,7 +994,31 @@ impl DocumentView {
             let pasted = notes_ui::Pasted::from_clipboard(cx.read_from_clipboard().as_ref());
             return self.backend.paste(pasted, cx);
         }
-        self.backend.key(ks, self.seat == DocSeat::Float, cx)
+        let floating = self.seat == DocSeat::Float && self.lent.is_none();
+        self.backend.key(ks, floating, cx)
+    }
+
+    /// Which part of the document the view shows, as the reading rail draws
+    /// it, for a test: `None` for a document with no scroll.
+    #[cfg(test)]
+    pub(crate) fn reading_now(&self) -> Option<progress::Reading> {
+        self.backend.reading()
+    }
+
+    /// The box the view was last drawn in, for a test asking where it was
+    /// drawn: `None` before it has been.
+    #[cfg(test)]
+    pub(crate) fn drawn_size(&self) -> Option<Size<Pixels>> {
+        self.frame.get().map(|(size, _)| size)
+    }
+
+    /// The Markdown block at the top of the view and how far into it, for a
+    /// test: `None` for any other document, and before a layout.
+    #[cfg(test)]
+    pub(crate) fn block_at_top(&mut self) -> Option<(usize, f32)> {
+        self.backend
+            .downcast_mut::<markdown::MarkdownDoc>()?
+            .block_at_top()
     }
 
     /// Which seat the view is in, and the palette it was last handed, for a

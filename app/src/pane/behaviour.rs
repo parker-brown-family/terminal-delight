@@ -2175,3 +2175,341 @@ fn the_reader_joins_a_shells_lines_where_the_terminal_wrapped_them(cx: &mut Test
         "two lines the program ended stay two lines: {lines:?}"
     );
 }
+
+/// Every [`super::CloseFocusRead`] the pane raises from now on, counted: the
+/// pane asking the workspace to close the reader, which is what Escape in the
+/// reader does once nothing in the document wants it.
+fn reader_closes(pane: &mut Pane) -> std::rc::Rc<std::cell::Cell<usize>> {
+    let count = std::rc::Rc::new(std::cell::Cell::new(0));
+    let seen = count.clone();
+    let view = pane.view.clone();
+    pane.cx.update(|_, cx| {
+        cx.subscribe(&view, move |_, _: &super::CloseFocusRead, _| {
+            seen.set(seen.get() + 1)
+        })
+        .detach();
+    });
+    count
+}
+
+/// A pane opened to show a document lends the reader that very view: the
+/// reader draws it at the reader's size, and the pane stops drawing it. It is
+/// read there as on the pane — Ctrl+wheel zooms it and PageDown turns a page
+/// the height of the reader's glass — and when the pane flips to its shell
+/// mid-read, the reader reads the shell and the document goes home, at the
+/// zoom it had before the reader zoomed it. Closing the reader gives it back
+/// for good, at the place it was read to.
+///
+/// Before this, Alt+R on a document pane showed the shell hidden behind the
+/// document. Parker, 2026-09-29: *"opening the reader for video, PDF, HTML,
+/// images, and markdown files should work, and it doesn't."*
+#[gpui::test]
+fn a_document_face_lends_its_view_to_the_reader_and_gets_it_back(cx: &mut TestAppContext) {
+    use crate::docview::ImageZoom;
+    let dir = Scratch::new("reader-doc-face");
+    let md = dir.join("long.md");
+    // Paragraphs long enough to wrap onto more lines in the pane than in the
+    // reader's wider glass, so the same pixel is a different block in each.
+    let words = "a document long enough to page through, whose paragraphs run on \
+                 long enough to wrap onto more lines in a pane than in the reader";
+    let text: String = (1..=120)
+        .map(|i| format!("Paragraph {i}: {words}, and {words}.\n\n"))
+        .collect();
+    std::fs::write(&md, text).expect("the document");
+    let mut pane = Pane::running(cx, "printf 'ready\\n'; exec cat");
+    pane.wait_for("ready");
+    pane.show_document(&md);
+    let view = pane.face_view().expect("the document is on the face");
+    assert_eq!(pane.face(), Face::Document);
+    let zoom = |pane: &mut Pane| view.read_with(pane.cx, |v, _| v.zoom_now());
+    let reading = |pane: &mut Pane| {
+        view.read_with(pane.cx, |v, _| v.reading_now())
+            .expect("the document is laid out and measured")
+    };
+    let block = |pane: &mut Pane| {
+        view.update(pane.cx, |v, _| v.block_at_top())
+            .expect("the document is laid out")
+            .0
+    };
+    let closes = reader_closes(&mut pane);
+
+    pane.keys("pagedown");
+    pane.keys("pagedown");
+    pane.redraw();
+    let on_the_pane = block(&mut pane);
+    assert!(on_the_pane > 0, "paged into the document on the pane");
+
+    let mut reader = pane.open_reader((1200.0, 900.0));
+    assert_eq!(
+        pane.lent().map(|v| v.entity_id()),
+        Some(view.entity_id()),
+        "the reader reads the face's own view, not a second copy"
+    );
+    assert!(
+        pane.read(|v| v.lends(&view)),
+        "and the face no longer draws it"
+    );
+    reader.redraw(&mut pane);
+    assert_eq!(
+        view.read_with(pane.cx, |v, _| v.drawn_size()),
+        Some(gpui::size(px(1200.), px(900.))),
+        "it is drawn at the reader's size, and the pane draws it nowhere"
+    );
+    assert_eq!(
+        block(&mut pane),
+        on_the_pane,
+        "the reader's wider glass re-flows the column, and the reader is still \
+         on the block they were on in the pane"
+    );
+
+    let before = reading(&mut pane);
+    pane.keys("pagedown");
+    reader.redraw(&mut pane);
+    let after = reading(&mut pane);
+    let page = 0.9 * (before.bottom - before.top);
+    assert!(
+        (after.top - before.top - page).abs() < 1e-3,
+        "PageDown turns nine tenths of the reader's glass: {before:?} → {after:?}"
+    );
+    assert_eq!(closes.get(), 0, "and leaves the reader open");
+
+    // Ctrl+wheel over the reader, as the workspace hands it to the view.
+    view.update(pane.cx, |v, cx| v.zoom_by_wheel(2.0, cx));
+    reader.redraw(&mut pane);
+    assert_eq!(
+        zoom(&mut pane),
+        Some(ImageZoom::Scale(1.25)),
+        "two steps in"
+    );
+
+    pane.keys("alt-k");
+    reader.redraw(&mut pane);
+    assert_eq!(
+        pane.face(),
+        Face::Terminal,
+        "alt+k flips the pane to its shell"
+    );
+    assert!(
+        pane.lent().is_none(),
+        "the reader reads the terminal now, and nothing is lent"
+    );
+    assert_eq!(
+        zoom(&mut pane),
+        Some(ImageZoom::Scale(1.0)),
+        "the document went home at the pane's own zoom, not the reader's"
+    );
+
+    pane.keys("alt-k");
+    reader.redraw(&mut pane);
+    reader.redraw(&mut pane);
+    assert_eq!(
+        pane.lent().map(|v| v.entity_id()),
+        Some(view.entity_id()),
+        "back on the document face, the reader reads it again"
+    );
+    let read_to = block(&mut pane);
+    assert!(read_to > on_the_pane, "a page further on, in the reader");
+
+    pane.close_reader();
+    pane.redraw();
+    assert!(pane.lent().is_none());
+    assert!(
+        !pane.read(|v| v.lends(&view)),
+        "closed, the face draws its document again"
+    );
+    assert_eq!(block(&mut pane), read_to, "at the place it was read to");
+}
+
+/// A brief read through Alt+R takes notes in the reader exactly as it does on
+/// its pane. With Alt held over it, a press inside an element opens that
+/// element's note box; the keys write the note, and Ctrl+Enter adds it; Escape
+/// puts the box away and leaves the reader open, and only a second Escape asks
+/// to close the reader. A press on a decision's space stamps a CONCUR, and ↪
+/// sends everything to the agent beside the brief, from the reader, as the
+/// button on the pane does, saving it into the file on the way.
+///
+/// The reader's glass is stood in for ([`super::harness::ReaderGlass`]),
+/// because it belongs to the workspace this harness does not build; what it
+/// hands the view, a point relative to the view, is what the workspace hands.
+///
+/// Parker, approving the reader's design, 2026-09-29: *"Keying in on how a doc
+/// allows comments.... Full concur"*.
+#[gpui::test]
+fn a_brief_in_the_reader_takes_notes_and_stamps_and_sends_them(cx: &mut TestAppContext) {
+    use super::harness::{FakeDecisionEngine, CONCUR_SPACE};
+    let (mut pane, _dir, brief, _png) = pane_showing_a_brief(cx, "reader-notes");
+    pane.html_engine(Ok(std::sync::Arc::new(FakeDecisionEngine)));
+    let at = pane.point_at(&brief);
+    pane.click(at, Pane::alt());
+    pane.redraw();
+    let square = pane.float_view().expect("the brief opens in a square");
+    assert_eq!(pane.doc_notes().expect("notes")["state"], "notes");
+    let closes = reader_closes(&mut pane);
+    let sent = std::rc::Rc::new(std::cell::RefCell::new(Vec::<String>::new()));
+    let log = sent.clone();
+    let view = pane.view.clone();
+    pane.cx.update(|_, cx| {
+        cx.subscribe(&view, move |_, ev: &super::SendNotesBeside, _| {
+            log.borrow_mut().push(ev.map.clone());
+        })
+        .detach();
+    });
+
+    let mut reader = pane.open_reader((1200.0, 800.0));
+    assert_eq!(
+        pane.lent().map(|v| v.entity_id()),
+        Some(square.entity_id()),
+        "a square over the terminal lends the reader its own view"
+    );
+    assert!(
+        pane.read(|v| v.lends(&square)),
+        "which the square no longer draws"
+    );
+    reader.wait(&mut pane, 300);
+    assert_eq!(
+        square.read_with(pane.cx, |v, _| v.drawn_size()),
+        Some(gpui::size(px(1200.), px(800.))),
+        "it is drawn at the reader's size, and the square draws it nowhere"
+    );
+    let laid = square
+        .update(pane.cx, |v, _| v.page_laid_out())
+        .expect("the brief is laid out in the reader");
+    assert_eq!(laid.css_width, 1200, "at the reader's width");
+
+    // The first element, at (28, 80) and 520 × 120 CSS pixels, is where the
+    // reader draws it: the page starts at the view's top-left, at 100%.
+    let inside = point(px(288.), px(140.));
+    reader.hover(&mut pane, inside);
+    pane.modifiers(Pane::alt());
+    reader.redraw(&mut pane);
+    assert!(
+        pane.doc_notes().expect("notes")["boxes"]
+            .as_u64()
+            .is_some_and(|n| n >= 1),
+        "Alt outlines what takes a note, in the reader"
+    );
+    reader.click(&mut pane, inside);
+    pane.modifiers(Default::default());
+    reader.redraw(&mut pane);
+    let (nid, _) = BRIEF_ANCHORS[0];
+    assert_eq!(
+        pane.doc_notes().expect("notes")["open"],
+        nid,
+        "a press inside it opens its note box"
+    );
+
+    let place = square.read_with(pane.cx, |v, _| v.reading_now());
+    assert!(place.is_some(), "the brief is laid out and scrolls");
+    pane.keys("pagedown");
+    reader.redraw(&mut pane);
+    assert_eq!(
+        square.read_with(pane.cx, |v, _| v.reading_now()),
+        place,
+        "while a note is being written a page key is the note's, and the page stays"
+    );
+    assert_eq!(pane.doc_notes().expect("notes")["open"], nid);
+
+    pane.keys("k e e p space t h e space t i l e s");
+    pane.keys("ctrl-enter");
+    reader.redraw(&mut pane);
+    let report = pane.doc_notes().expect("notes");
+    assert_eq!(report["unsaved"], 1, "the note is added: {report}");
+    assert!(
+        report["map"]
+            .as_str()
+            .is_some_and(|m| m.contains("keep the tiles")),
+        "as typed: {report}"
+    );
+
+    pane.keys("escape");
+    reader.redraw(&mut pane);
+    assert_eq!(
+        pane.doc_notes().expect("notes")["open"],
+        serde_json::Value::Null,
+        "Escape puts the note box away"
+    );
+    assert_eq!(closes.get(), 0, "and leaves the reader open");
+    assert!(pane.lent().is_some());
+
+    let space = point(
+        px(CONCUR_SPACE.x + CONCUR_SPACE.w / 2.0),
+        px(CONCUR_SPACE.y + CONCUR_SPACE.h / 2.0),
+    );
+    reader.click(&mut pane, space);
+    let report = pane.doc_notes().expect("notes");
+    assert_eq!(
+        report["concurs"], 1,
+        "a press on the space stamps it: {report}"
+    );
+    assert_eq!(report["unsaved"], 2);
+
+    // With nothing open, Escape asks for the reader to close. The square it
+    // borrowed from is not the thing closing, and keeps every note, so it
+    // does not stop to warn about notes it would lose. (No workspace here
+    // acts on the ask, so the reader stays open for what follows.)
+    pane.keys("escape");
+    assert_eq!(closes.get(), 1, "Escape asks to close the reader");
+    let report = pane.doc_notes().expect("notes");
+    assert_eq!(
+        report["said"],
+        serde_json::Value::Null,
+        "with no warning about unsaved notes: {report}"
+    );
+    assert_eq!(report["unsaved"], 2, "which are all still there");
+
+    // Who is beside the brief, as the workspace works it out every frame.
+    pane.view.update(pane.cx, |v, cx| {
+        v.set_notes_beside(Some("agent".into()), None, cx)
+    });
+    reader.redraw(&mut pane);
+    pane.keys("ctrl-shift-enter");
+    reader.redraw(&mut pane);
+    {
+        let sent = sent.borrow();
+        assert_eq!(sent.len(), 1, "↪ from the reader sends once: {sent:?}");
+        assert!(
+            sent[0].contains("keep the tiles"),
+            "the map carries the note: {}",
+            sent[0]
+        );
+    }
+    let file = std::fs::read_to_string(&brief).expect("the brief");
+    let island = |id: &str| {
+        file.split(&format!("id=\"{id}\""))
+            .nth(1)
+            .and_then(|rest| rest.split("</script>").next())
+            .unwrap_or_default()
+            .to_string()
+    };
+    assert!(
+        island("report-notes").contains("keep the tiles"),
+        "the send saved the note into the brief's notes island"
+    );
+    assert!(
+        island("report-concurs").contains(nid),
+        "and the stamp into its concurs island"
+    );
+    assert_eq!(pane.doc_notes().expect("notes")["unsaved"], 0);
+
+    // Ctrl+wheel over the reader zooms the brief there; closed, the square
+    // gets it back at its own zoom.
+    let zoom = |pane: &mut Pane| square.read_with(pane.cx, |v, _| v.zoom_now());
+    square.update(pane.cx, |v, cx| v.zoom_by_wheel(1.0, cx));
+    assert_eq!(zoom(&mut pane), Some(crate::docview::ImageZoom::Scale(1.1)));
+    pane.keys("escape");
+    assert_eq!(closes.get(), 2, "Escape asks to close the reader again");
+    pane.close_reader();
+    assert!(
+        !pane.read(|v| v.lends(&square)),
+        "closed, the square draws its brief again"
+    );
+    assert_eq!(
+        zoom(&mut pane),
+        Some(crate::docview::ImageZoom::Scale(1.0)),
+        "at the square's own zoom"
+    );
+    assert_eq!(
+        pane.float_path().as_deref(),
+        Some(std::path::Path::new(&brief))
+    );
+}

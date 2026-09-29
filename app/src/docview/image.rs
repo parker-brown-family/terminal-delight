@@ -537,6 +537,20 @@ impl Backend for ImageDoc {
     fn zoom_now(&self) -> Option<ImageZoom> {
         Some(ImageDoc::zoom_now(self))
     }
+
+    /// The place stays, as a Markdown column's and a page's do: the pixel at
+    /// the view's centre is still the one there. A fitted picture has no place
+    /// but its middle.
+    fn zoom_back(&mut self, was: ImageZoom, _cx: &mut Context<DocumentView>) -> bool {
+        if self.zoom == was {
+            return false;
+        }
+        self.zoom = was;
+        if was == ImageZoom::Fit {
+            self.centre = None;
+        }
+        true
+    }
 }
 
 #[cfg(test)]
