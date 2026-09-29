@@ -1,6 +1,7 @@
 # Status: Pasting text and pictures into a note
 
 **Difficulty: 6/10.** Pasting text is small: the note box ignores Ctrl+V, and the pane takes Ctrl+Shift+V before the note box sees it. Pasting a picture touches more: TD's notes store, the note box's drawing, and the map an agent is handed. The expensive call is where a pasted picture is kept. Changing it later means moving every picture already pasted. That buys **one combined plan page and one approval**, the same as notes on a Markdown document.
+**Turned out to be:** 6, about right. The expensive call was taken at the one approval, and Parker's answer to the second question (attach a picture to the element, list it, mask its path) made the build simpler than the brief's proposal: no format a browser shares had to change. All three slices landed the same day. What cost time was on the test side: a brief's Alt outline only appears once the pointer is over the page, the document view keeps a hand-written list of files its guards scan, and every MCP answer carries a trailing block naming the window that answered.
 
 - Plan (product, architecture, slices in one): **APPROVED 2026-09-29**, through notes on `reports/2026-09-29-pasting-into-notes.html` (6 notes, 2 concurs). `01-plan.md` is the plan as approved; the brief keeps the proposal it amended.
 
@@ -10,9 +11,19 @@
 3. **Build slice 1 now.** Concurred.
 
 ## Slices
-- [x] Slice 1: text pastes into a note on a brief and on a Markdown file, by Ctrl+V, Ctrl+Shift+V or Shift+Insert, and Ctrl+Shift+V never reaches the terminal while a note is being written. Merged in #894 as `4df81ee` and installed as `td-4df81ee-note-paste`: the whole suite green on the merged tree (2,054 passed), two pane tests pressing the real keys, one on each seat, and three mutations each caught. The terminal face's own trouble with Omarchy's chords is filed separately: "Omarchy's Super+C interrupts a Terminal Delight terminal pane, and Super+V and its clipboard manager do not paste into one" (#892).
-- [x] Slice 2: a pasted picture attaches to the element whose note box is open, kept as a file in TD's notes folder, listed as `[doc-image #n]` with a delete, and mapped with its full path. Pull request #895, with pane tests pasting a real PNG into a note box on a Markdown file and on a brief (whose file stays byte for byte the same), and five mutations each caught. Not photographed: opening a note box needs a pointer, and no tool here presses one in a hidden window, so the list's look in the box is held only by what the report says was drawn.
-- [x] Slice 3: `document_notes` hands an agent the pictures themselves: each after the map as an image block, at most 8 and each at most 3.75 MB, PNG, JPEG, GIF or WebP, read only if it is a regular file; any other is named by its path with why. A picture list naming a file outside its folder is now refused whole, so nothing that reads pictures is sent elsewhere on disk. Built on `feat/note-paste-agent-pictures`.
+- [x] Slice 1: text pastes into a note on a brief and on a Markdown file, by Ctrl+V, Ctrl+Shift+V or Shift+Insert, and Ctrl+Shift+V never reaches the terminal while a note is being written. Merged in #894 as `4df81ee`: the whole suite green on the merged tree (2,054 passed), two pane tests pressing the real keys, one on each seat, and three mutations each caught.
+- [x] Slice 2: a pasted picture attaches to the element whose note box is open, kept as a file in TD's notes folder, listed as `[doc-image #n]` with a delete, and mapped with its full path. Merged in #895 as `94554bf`, with pane tests pasting a real PNG into a note box on a Markdown file and on a brief (whose file stays byte for byte the same), and five mutations each caught.
+- [x] Slice 3: `document_notes` hands an agent the pictures themselves: each after the map as an image block, at most 8 and each at most 3.75 MB, PNG, JPEG, GIF or WebP, read only if it is a regular file; any other is named by its path with why. A picture list naming a file outside its folder is refused whole, so nothing that reads pictures is sent elsewhere on disk. Merged in #896 as `bffd5cd`, four mutations each caught.
+
+Installed as `td-bffd5cd-note-agent-pictures`, built from main with all three.
+
+## Not verified
+- **The picture list has not been looked at.** Opening a note box needs a pointer, and nothing here presses one in a hidden window, so its look in the box rests on the report of what was drawn. Parker is testing it live.
+- **The caps on pictures handed to an agent** (eight, 3.75 MB each) are estimates of what a model and the MCP client take, not measured against either.
+
+## Found on the way, filed
+- Omarchy's Super+C sends Ctrl+C to a Terminal Delight terminal pane, which interrupts whatever runs there, and its Super+V and clipboard manager do not paste into one: TD's window is not tagged as a terminal for Omarchy's universal clipboard, and the terminal face does not answer Shift+Insert (#892). Read from Omarchy's config and TD's key encoding, not reproduced in a window.
+- `a_connection_that_has_gone_stops_being_pushed_to` failed once more under a loaded full suite and passed on the re-run; noted on its open issue (#732).
 
 ## Context
 - Asked 2026-09-29: *"copy paste into comments for html md --- I would love to be able to paste in text and image into our comments...That sound tricky though... WHERE does the image live... dunno - let's figure it out!"*
