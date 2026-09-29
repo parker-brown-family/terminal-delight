@@ -9,6 +9,22 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ### Changed
 
+- **The FOCUS reader (Alt+R) has a size of its own.** It lays text out at the
+  pane's own letter size across the whole glass, so a narrow pane opens with as
+  many columns as the glass holds — about 175 × 46 in a 1,576 × 950 window —
+  instead of its own few columns blown up to fill it (a 48-column pane used to
+  open at 3.65×, about twelve rows at a time). The slider and Ctrl+wheel move the
+  letters from there, 0.5× to 2.5×, and Ctrl+wheel over the reader now sizes the
+  reader instead of the pane behind it.
+- **A shell's lines reach the reader as the program printed them.** Rows are
+  joined exactly where the terminal soft-wrapped them, from the terminal's own
+  flag, instead of by a width guess that refused a wrapped line whose next row
+  began with spaces and glued a half-full row to a long word after it. What a
+  program broke itself, like `ls`'s columns, stays as printed. Blank rows under
+  the last line no longer push a short screen's content out of view, and the
+  reader keeps the history it has read instead of re-reading all of it, under
+  the terminal's lock, on every frame a shell streams.
+
 - **A new install's panes wear Terminal Delight's own mark.** With no
   `dir-logos.toml` at all, the first start writes one mapping `/` to the app's
   mark, saved as `~/.config/terminal-delight/logos/terminal-delight.png`. Every

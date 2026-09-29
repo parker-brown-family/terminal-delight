@@ -33,10 +33,17 @@ was too high: collapse Gates 2–4 into one plan and say so.
 
 ## Slices (first cut, from the brief's figure 08 — Gate 4 decides)
 
-- [ ] Slice 1 — tracer bullet: the reader has its own size (175 × 46 in Parker's
+- [x] Slice 1 — tracer bullet: the reader has its own size (175 × 46 in Parker's
       1,576 × 950 window, at the pane's own letter size); a shell's rows keep their
       soft-wrap flag and join on it; the read stops holding the lock across the
-      whole history; check Alt+R on a workbench-face pane in his window on the way
+      whole history. **Done 2026-09-29** on `feat/alt-r-reader` (4e81eb1, 2be6d1b):
+      both suites green (2,046 rio, 2,000 alacritty), nine mutations each caught,
+      and `scripts/reader-check.sh` photographed the before and after in a hidden
+      1,576 × 950 window. The before is an EMPTY glass (a fresh narrow pane's
+      document ended in blank screen rows, magnified until nothing else fitted)
+      and, paged back, 48 columns at about 3×; the after is the whole pane at its
+      own letters. **The workbench case works**: Alt+K flipped the pane to its
+      bench under an open reader, and the reader kept reading the terminal.
 - [ ] Slice 2 — a Document-face pane lends its document view to the reader:
       Markdown, HTML, PDF, picture, video
 - [ ] Slice 3 — an agent pane reads its conversation from its transcript (Claude),
