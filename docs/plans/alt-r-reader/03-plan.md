@@ -16,7 +16,7 @@ Branch `feat/alt-r-reader` in `~/Work/td-alt-r-reader`, off main at `5ba60ed`.
   the glass's full width (`body_w = avail_w`). Crawl keeps its fit. Ctrl+wheel over
   the reader steps `focus_zoom` instead of the pane's text dial.
 - Pure helpers, tested: `reader_scale(crawl, fit, zoom) -> f32` and
-  `zoom_step(zoom, notches) -> f32`. Parker's window gives 175 columns at 1.0.
+  `focus_zoom_step(zoom, notches) -> f32`. Parker's window gives 175 columns at 1.0.
 - Moved to slice 3: the header naming its source. The reader's header strings
   are literals today ("FOCUS", "esc to close"); naming the source properly
   means nine translations in `lang.rs`, and it matters most beside the
