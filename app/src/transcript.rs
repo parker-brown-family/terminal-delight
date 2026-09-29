@@ -99,7 +99,10 @@ impl Tail {
             self.partial.extend_from_slice(&buf);
         }
         if let Some(end) = self.partial.iter().rposition(|&b| b == b'\n') {
-            let whole: Vec<u8> = self.partial.drain(..=end).collect();
+            // The unfinished line moves out, and the whole ones stay where they
+            // were read: a first read can be tens of megabytes.
+            let unfinished = self.partial.split_off(end + 1);
+            let whole = std::mem::replace(&mut self.partial, unfinished);
             out.lines = whole
                 .split(|&b| b == b'\n')
                 .filter(|l| !l.is_empty())

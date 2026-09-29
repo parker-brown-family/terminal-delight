@@ -13576,12 +13576,16 @@ impl Workspace {
                 let (t, c, drawing) = cx
                     .background_executor()
                     .spawn(async move {
+                        let mut restarted = false;
                         if let Ok(new) = tail.poll() {
                             if new.reset {
                                 // Another conversation: the calls opened in the
-                                // last one are not this one's.
+                                // last one are not this one's, and its count of
+                                // changes starts again, so the last drawing's key
+                                // says nothing about it.
                                 talk = transcript::Conversation::new();
                                 open.lock().unwrap_or_else(|e| e.into_inner()).0.clear();
+                                restarted = true;
                             }
                             for line in &new.lines {
                                 talk.fold(line);
@@ -13592,7 +13596,7 @@ impl Workspace {
                             (o.0.clone(), o.1)
                         };
                         let key = (talk.rev(), turned);
-                        let drawing = (Some(key) != drawn_for)
+                        let drawing = (restarted || Some(key) != drawn_for)
                             .then(|| (key, transcript::draw(&talk, &ink, you, "CLAUDE", &set)));
                         (tail, talk, drawing)
                     })
