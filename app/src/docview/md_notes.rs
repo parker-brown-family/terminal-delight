@@ -164,21 +164,38 @@ pub fn anchors(doc: &MdDoc) -> Vec<MdAnchor> {
 /// `lines` is each anchor's id, title and line, in the order of the file. A
 /// block whose line is not known is named by its id instead: a line nobody
 /// counted is not line 0.
-pub fn build_map(file: &Path, notes: &NoteMap, lines: &[(&str, &str, Option<u32>)]) -> String {
+///
+/// `pictures` are the ones pasted onto the file's blocks: each follows its
+/// block's notes, a block with only pictures is still named, the header
+/// counts them and one more line of legend says what they are, and those on a
+/// block the file no longer has go with the notes on words no longer in it.
+/// With none, the map is what it was before pictures existed, byte for byte.
+pub fn build_map(
+    file: &Path,
+    notes: &NoteMap,
+    lines: &[(&str, &str, Option<u32>)],
+    pictures: &notes::PictureLines,
+) -> String {
     let (count, els) = (notes.count(), notes.elements());
+    let pics: usize = pictures.values().map(Vec::len).sum();
+    let pictured = |nid: &str| pictures.get(nid).map_or(&[][..], Vec::as_slice);
     let mut out = vec![
         format!("NOTES — {}", file.display()),
         format!(
-            "{count} {} on {els} {}.",
+            "{count} {} on {els} {}{}.",
             if count == 1 { "note" } else { "notes" },
-            if els == 1 { "block" } else { "blocks" }
+            if els == 1 { "block" } else { "blocks" },
+            notes::pictures_counted(pics)
         ),
         "Each [L<n>] is the line in that file where the block starts.".into(),
-        String::new(),
     ];
+    if pics > 0 {
+        out.push(notes::PICTURES_LEGEND.into());
+    }
+    out.push(String::new());
     for &(nid, title, line) in lines {
         let list = notes.on(nid);
-        if list.is_empty() {
+        if list.is_empty() && pictured(nid).is_empty() {
             continue;
         }
         match line {
@@ -188,15 +205,27 @@ pub fn build_map(file: &Path, notes: &NoteMap, lines: &[(&str, &str, Option<u32>
         for n in list {
             out.push(format!("  · {}", one_line(n.text)));
         }
+        for p in pictured(nid) {
+            out.push(format!("  · {p}"));
+        }
         out.push(String::new());
     }
-    let gone: Vec<&str> = notes
+    let mut gone: Vec<&str> = notes
         .0
         .iter()
         .map(|(nid, _)| nid)
-        .filter(|nid| !lines.iter().any(|(n, _, _)| n == nid))
         .filter(|nid| !notes.on(nid).is_empty())
+        .chain(
+            pictures
+                .iter()
+                .filter(|(_, p)| !p.is_empty())
+                .map(|(nid, _)| nid.as_str()),
+        )
+        .filter(|nid| !lines.iter().any(|(n, _, _)| n == nid))
         .collect();
+    // A block with notes and pictures both is named once, where its notes are.
+    let mut seen = std::collections::HashSet::new();
+    gone.retain(|nid| seen.insert(*nid));
     if !gone.is_empty() {
         out.push("On words no longer in the file:".into());
         out.push(String::new());
@@ -206,6 +235,9 @@ pub fn build_map(file: &Path, notes: &NoteMap, lines: &[(&str, &str, Option<u32>
             out.push(format!("[{nid}] {title}"));
             for n in list {
                 out.push(format!("  · {}", one_line(n.text)));
+            }
+            for p in pictured(nid) {
+                out.push(format!("  · {p}"));
             }
             out.push(String::new());
         }
@@ -238,8 +270,9 @@ pub const FORMAT: u32 = 1;
 
 /// `$XDG_STATE_HOME/terminal-delight/notes`, the state directory resolved as
 /// the brief's backups resolve it: the variable when it is set and absolute,
-/// else `~/.local/state`.
-fn store_dir() -> PathBuf {
+/// else `~/.local/state`. What the view uses is [`super::notes_root`], which
+/// is this unless a test pointed it at a folder of its own.
+pub(crate) fn store_dir() -> PathBuf {
     std::env::var_os("XDG_STATE_HOME")
         .map(PathBuf::from)
         .filter(|p| p.is_absolute())
@@ -249,15 +282,20 @@ fn store_dir() -> PathBuf {
         .join("terminal-delight/notes")
 }
 
-/// FNV-1a over the path's bytes: stable across builds and machines, which
-/// the standard library's hasher does not promise.
-fn fnv(path: &Path) -> u64 {
-    use std::os::unix::ffi::OsStrExt;
+/// FNV-1a over some bytes: stable across builds and machines, which the
+/// standard library's hasher does not promise. A path's bytes name a
+/// document's store; a picture's bytes say it was pasted before.
+pub(crate) fn fnv_bytes(bytes: &[u8]) -> u64 {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-    for &b in path.as_os_str().as_bytes() {
+    for &b in bytes {
         h = (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3);
     }
     h
+}
+
+fn fnv(path: &Path) -> u64 {
+    use std::os::unix::ffi::OsStrExt;
+    fnv_bytes(path.as_os_str().as_bytes())
 }
 
 /// The document's own path, links followed, so two ways of naming one file
@@ -266,20 +304,21 @@ pub fn canonical(doc: &Path) -> PathBuf {
     std::fs::canonicalize(doc).unwrap_or_else(|_| doc.to_path_buf())
 }
 
-/// Where one document's notes are kept.
-pub fn store_for(doc: &Path) -> PathBuf {
-    store_in(&store_dir(), doc)
-}
-
-fn store_in(dir: &Path, doc: &Path) -> PathBuf {
+/// What TD calls one document in its state folder: its name first, for a
+/// person listing the folder, then the hash that makes it one per path. The
+/// notes file is this with `.json`, and the pictures folder is this.
+pub(crate) fn stem(doc: &Path) -> String {
     let doc = canonical(doc);
     let name = doc
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
-    // The name first, for a person listing the directory; the hash is what
-    // makes it one file per path.
-    dir.join(format!("{}-{:016x}.json", slug(&name), fnv(&doc)))
+    format!("{}-{:016x}", slug(&name), fnv(&doc))
+}
+
+/// Where one document's notes are kept, under `dir`, TD's notes root.
+pub(crate) fn store_in(dir: &Path, doc: &Path) -> PathBuf {
+    dir.join(format!("{}.json", stem(doc)))
 }
 
 /// The notes kept for a document. No file yet is no notes, which is an
@@ -487,10 +526,29 @@ mod tests {
             false,
         )
         .unwrap();
-        let out = build_map(Path::new("/r/plan.md"), &map, &lines);
+        let none = notes::PictureLines::new();
+        let out = build_map(Path::new("/r/plan.md"), &map, &lines, &none);
         assert_eq!(
             out,
             "NOTES — /r/plan.md\n2 notes on 2 blocks.\nEach [L<n>] is the line in that file where the block starts.\n\n[L7] ## Slice 2 — the agent side\n  · before slice 1 please\n\nOn words no longer in the file:\n\n[p-gone] A sentence since cut\n  · why was this cut?\n"
+        );
+
+        // With pictures: each after its block's notes, a block with only a
+        // picture still named, one on a block since cut kept with the notes
+        // on words no longer there, the header counting them and a line of
+        // legend saying what they are. The map above had none, and is the
+        // map this file always made.
+        let pictures: notes::PictureLines = [
+            ("h-slice-2-the-agent", "[doc-image #1] /s/doc-image-1.png"),
+            ("li-one", "[doc-image #2] /s/doc-image-2.png"),
+            ("p-cut", "[doc-image #3] /s/doc-image-3.png"),
+        ]
+        .into_iter()
+        .map(|(nid, line)| (nid.to_string(), vec![line.to_string()]))
+        .collect();
+        assert_eq!(
+            build_map(Path::new("/r/plan.md"), &map, &lines, &pictures),
+            "NOTES — /r/plan.md\n2 notes on 2 blocks · 3 pictures.\nEach [L<n>] is the line in that file where the block starts.\nEach [doc-image #n] is a picture pasted onto that element — open its path to see it.\n\n[L7] ## Slice 2 — the agent side\n  · before slice 1 please\n  · [doc-image #1] /s/doc-image-1.png\n\n[L9] • one\n  · [doc-image #2] /s/doc-image-2.png\n\nOn words no longer in the file:\n\n[p-gone] A sentence since cut\n  · why was this cut?\n\n[p-cut] p-cut\n  · [doc-image #3] /s/doc-image-3.png\n"
         );
     }
 

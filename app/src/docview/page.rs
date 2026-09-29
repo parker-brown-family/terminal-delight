@@ -61,7 +61,7 @@ use super::engine::{
     PageEngine, PageId, PageLayout, PageRequest, RectCss, Unavailable, TILE_DEV,
 };
 use super::notes::{self, NotesRead};
-use super::notes_ui::{self, LayerPress, Mark, MarkHit, NotesLayer, Said};
+use super::notes_ui::{self, LayerPress, Mark, MarkHit, NotesLayer, Pasting, Said};
 use super::progress::Reading;
 use super::snapshot::EXTRACT_VERSION;
 use super::{resolve_link, DocumentView, FileStamp, FollowLink, LinkTarget};
@@ -853,7 +853,13 @@ impl PageDoc {
         if let Some(old) = self.notes.take() {
             layer.carry_from(old);
         }
+        // The pictures pasted onto this brief are TD's, read once and carried
+        // from layer to layer after that.
+        let unread = !layer.pictures_known();
         self.notes = Some(layer);
+        if unread {
+            super::read_pictures::<PageDoc>(self.path.clone(), cx, |p| p.notes.as_mut());
+        }
         self.land(&layout);
         let previous_live = self.live.take();
         if let (Some((old_page, _)), Ok(engine)) = (previous_live, &self.engine) {
@@ -1465,10 +1471,21 @@ impl PageDoc {
         self.notes.as_ref().is_some_and(NotesLayer::has_caret)
     }
 
-    /// A paste into the note being written: see [`NotesLayer::paste`]. The
-    /// words wait in the draft like typed ones, so nothing is saved here.
+    /// A paste into the note being written: see [`NotesLayer::paste`]. Words
+    /// wait in the draft like typed ones, so nothing is saved here; a picture
+    /// is kept at once, in TD's folder, never in the brief.
     pub fn paste(&mut self, pasted: notes_ui::Pasted, cx: &mut Context<DocumentView>) -> bool {
-        let took = self.notes.as_mut().is_some_and(|l| l.paste(pasted));
+        let Some(layer) = self.notes.as_mut() else {
+            return false;
+        };
+        let took = match layer.paste(pasted, SystemTime::now()) {
+            Pasting::Pass => false,
+            Pasting::Took => true,
+            Pasting::Attach(a) => {
+                super::attach_picture::<PageDoc>(a, cx, |p| p.notes.as_mut());
+                true
+            }
+        };
         if took {
             cx.notify();
         }
@@ -1601,6 +1618,11 @@ impl PageDoc {
                         map: sending.map,
                         unsaved: sending.unsaved,
                     });
+                }
+                LayerPress::Unattach(u) => {
+                    super::unattach_picture::<PageDoc>(u, cx, |p| p.notes.as_mut());
+                    cx.notify();
+                    return Pressed::Took;
                 }
                 LayerPress::Pass => {}
             }

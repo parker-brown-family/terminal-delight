@@ -10,8 +10,8 @@
 3. **Build slice 1 now.** Concurred.
 
 ## Slices
-- [x] Slice 1: text pastes into a note on a brief and on a Markdown file, by Ctrl+V, Ctrl+Shift+V or Shift+Insert, and Ctrl+Shift+V never reaches the terminal while a note is being written. Built on `feat/note-paste`: gates green (fmt, clippy `-D warnings`, the whole suite, 2,041 passed), two pane tests pressing the real keys, one on each seat. The terminal face's own trouble with Omarchy's chords is filed separately: "Omarchy's Super+C interrupts a Terminal Delight terminal pane, and Super+V and its clipboard manager do not paste into one" (#892).
-- [ ] Slice 2: a pasted picture attaches to the element whose note box is open, kept as a file in TD's notes folder, listed as `[doc-image #n]`, and mapped with its full path
+- [x] Slice 1: text pastes into a note on a brief and on a Markdown file, by Ctrl+V, Ctrl+Shift+V or Shift+Insert, and Ctrl+Shift+V never reaches the terminal while a note is being written. Merged in #894 as `4df81ee` and installed as `td-4df81ee-note-paste`: the whole suite green on the merged tree (2,054 passed), two pane tests pressing the real keys, one on each seat, and three mutations each caught. The terminal face's own trouble with Omarchy's chords is filed separately: "Omarchy's Super+C interrupts a Terminal Delight terminal pane, and Super+V and its clipboard manager do not paste into one" (#892).
+- [x] Slice 2: a pasted picture attaches to the element whose note box is open, kept as a file in TD's notes folder, listed as `[doc-image #n]` with a delete, and mapped with its full path. Built on `feat/note-paste-pictures`, with pane tests pasting a real PNG into a note box on a Markdown file and on a brief (whose file stays byte for byte the same). Not photographed: opening a note box needs a pointer, and no tool here presses one in a hidden window, so the list's look in the box is held only by what the report says was drawn.
 - [ ] Slice 3: `document_notes` hands an agent the pictures themselves, not only their paths
 
 ## Context
