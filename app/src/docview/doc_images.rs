@@ -134,10 +134,35 @@ pub fn read(folder: &Path, doc: &Path) -> Result<DocImages, String> {
             images.format
         ));
     }
+    // A picture's file is a name inside this folder, the name `attach` gave
+    // it. A list naming anything else is not one TD wrote, and what reads
+    // pictures from it (the note box, the map, the agent's `document_notes`)
+    // must not be sent anywhere else on disk.
+    if let Some(bad) = images
+        .on
+        .values()
+        .flatten()
+        .find(|img| !plain_name(&img.file))
+    {
+        return Err(format!(
+            "the pictures kept for it at {} name a file outside their folder: {:?}",
+            list.display(),
+            bad.file
+        ));
+    }
     for img in images.on.values_mut().flatten() {
         img.here = path_of(folder, img).is_file();
     }
     Ok(images)
+}
+
+/// A file name and nothing more: no folder, no `..`, not hidden.
+fn plain_name(file: &str) -> bool {
+    !file.is_empty()
+        && !file.starts_with('.')
+        && !file.contains('/')
+        && !file.contains('\\')
+        && !file.contains('\0')
 }
 
 /// What a paste onto an element came to.
@@ -401,5 +426,28 @@ mod tests {
             );
         }
         assert!(!folder.exists(), "nothing was written for any of them");
+    }
+
+    /// A list naming a file anywhere but in its own folder was not written by
+    /// TD, and is refused whole: nothing that reads pictures from it (the
+    /// note box, the map, the agent's `document_notes`) is sent elsewhere.
+    #[test]
+    fn a_list_naming_a_file_outside_its_folder_is_refused() {
+        let root = tmp("outside");
+        let doc = root.join("plan.md");
+        let folder = folder(&root, &doc);
+        std::fs::create_dir_all(&folder).unwrap();
+        for bad in ["../../secret.png", "/etc/x.png", ".hidden.png", "a/b.png"] {
+            let list = format!(
+                r#"{{"format":1,"file":"x","next":2,"on":{{"p":[{{"n":1,"file":{bad:?},"ts":"t","hash":"h"}}]}}}}"#
+            );
+            std::fs::write(folder.join(LIST), list).unwrap();
+            assert!(
+                read(&folder, &doc)
+                    .unwrap_err()
+                    .contains("outside their folder"),
+                "{bad}"
+            );
+        }
     }
 }

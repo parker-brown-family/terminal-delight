@@ -1264,6 +1264,9 @@ fn tool_defs() -> Value {
                  A brief's map names element ids; a Markdown file's names the \
                  line each block starts on, as [L42]. Notes added and not yet \
                  saved into the file are included, and the answer counts them. \
+                 A picture the person pasted onto an element is listed under it \
+                 as [doc-image #n] with its path, and follows the map as an \
+                 image, so you see it as they did. \
                  Takes no arguments: it answers for the pane you call it \
                  from and never reaches a document in another tab. Read-only; it \
                  writes nothing, anywhere.",
@@ -2193,7 +2196,124 @@ fn document_notes(args: &Value, snap: &Snapshot) -> Value {
             format!("{head}\nno notes to read: {why}")
         }
     };
-    tool_ok(text, structured)
+    // The pictures pasted onto the document's elements, handed over as
+    // pictures: the map names each by its path, and an agent asking for the
+    // notes should see them without having to go and open every one.
+    let files = report
+        .and_then(|r| r["picture_files"].as_array())
+        .map(Vec::as_slice)
+        .unwrap_or(&[]);
+    let (images, said) = picture_blocks(files);
+    structured["pictures_attached"] = json!(said.attached);
+    let text = match said.lines.is_empty() {
+        true => text,
+        false => format!("{text}\n{}", said.lines.join("\n")),
+    };
+    let mut out = tool_ok(text, structured);
+    if let Some(content) = out["content"].as_array_mut() {
+        content.extend(images);
+    }
+    out
+}
+
+/// At most this many pictures ride one `document_notes` answer; any after
+/// them are named by their path.
+const MAX_PICTURES: usize = 8;
+
+/// The largest picture file handed over whole: its base64 is about the most
+/// a model takes as one image. A larger one is named by its path.
+const MAX_PICTURE_BYTES: u64 = 3_750_000;
+
+/// What [`picture_blocks`] says in words: which pictures follow as images,
+/// and a line for every one that does not, with why.
+#[derive(Debug, Default)]
+struct PicturesSaid {
+    attached: Vec<String>,
+    lines: Vec<String>,
+}
+
+/// The pictures in a notes report's `picture_files`, as image content an
+/// agent sees, in the report's order. Each is read only if its file is a
+/// regular file (a pipe would hang the reader), no larger than
+/// [`MAX_PICTURE_BYTES`], in a format a model takes, and among the first
+/// [`MAX_PICTURES`]; every other is named in words with its path and why.
+fn picture_blocks(files: &[Value]) -> (Vec<Value>, PicturesSaid) {
+    use base64::Engine;
+    let mut blocks = Vec::new();
+    let mut said = PicturesSaid::default();
+    for f in files {
+        let (Some(label), Some(path)) = (f["label"].as_str(), f["path"].as_str()) else {
+            continue;
+        };
+        if f["here"] == false {
+            said.lines
+                .push(format!("{label} is not on this machine: {path}"));
+            continue;
+        }
+        let Some(mime) = picture_mime(path) else {
+            said.lines.push(format!(
+                "{label} is a kind of picture a model cannot be handed; open {path}"
+            ));
+            continue;
+        };
+        if blocks.len() == MAX_PICTURES {
+            said.lines.push(format!(
+                "{label} was not attached, after the first {MAX_PICTURES}; open {path}"
+            ));
+            continue;
+        }
+        let read = std::fs::metadata(path).and_then(|m| {
+            if !m.is_file() {
+                return Err(std::io::Error::other("it is not a regular file"));
+            }
+            if m.len() > MAX_PICTURE_BYTES {
+                return Err(std::io::Error::other(format!(
+                    "it is {:.1} MB, past the {:.2} MB one picture can be",
+                    m.len() as f64 / 1e6,
+                    MAX_PICTURE_BYTES as f64 / 1e6
+                )));
+            }
+            std::fs::read(path)
+        });
+        match read {
+            Ok(bytes) => {
+                blocks.push(json!({
+                    "type": "image",
+                    "data": base64::engine::general_purpose::STANDARD.encode(&bytes),
+                    "mimeType": mime,
+                }));
+                said.attached.push(label.to_string());
+            }
+            Err(e) => said
+                .lines
+                .push(format!("{label} was not attached ({e}); open {path}")),
+        }
+    }
+    if !said.attached.is_empty() {
+        said.lines.insert(
+            0,
+            format!(
+                "The pictures follow as images, in this order: {}.",
+                said.attached.join(", ")
+            ),
+        );
+    }
+    (blocks, said)
+}
+
+/// The kinds of picture a model takes, by the file's extension.
+fn picture_mime(path: &str) -> Option<&'static str> {
+    let ext = std::path::Path::new(path)
+        .extension()?
+        .to_str()?
+        .to_ascii_lowercase();
+    Some(match ext.as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        _ => return None,
+    })
 }
 
 /// `open_document` — an agent opens what it made beside itself.
@@ -3290,6 +3410,77 @@ mod tests {
             "{}",
             text_of(&out)
         );
+        assert!(
+            !out["content"]
+                .as_array()
+                .expect("content")
+                .iter()
+                .any(|c| c["type"] == "image"),
+            "no pictures, no images"
+        );
+    }
+
+    /// The pictures pasted onto the document's elements follow the map as
+    /// images, in the report's order. One not on this machine, one of a kind a
+    /// model cannot take, and one that is not a regular file are named by
+    /// their paths with why, and nothing is read for them.
+    #[test]
+    fn document_notes_hands_over_the_pictures_as_images() {
+        use base64::Engine;
+        let dir = std::env::temp_dir().join(format!(
+            "td-mcp-pictures-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let png = dir.join("doc-image-1.png");
+        std::fs::write(&png, b"\x89PNG a picture").unwrap();
+        let svg = dir.join("doc-image-2.svg");
+        std::fs::write(&svg, b"<svg/>").unwrap();
+        let gone = dir.join("doc-image-3.png");
+        let folder = dir.join("doc-image-4.png");
+        std::fs::create_dir_all(&folder).unwrap();
+        let file = |label: &str, path: &std::path::Path, here: bool| json!({ "nid": "a", "label": label, "path": path.display().to_string(), "here": here });
+        let mut d = doc(0, 100, DocPlace::Float, None, "/r/brief.html");
+        if let Ok(r) = d.notes.as_mut() {
+            r["picture_files"] = json!([
+                file("[doc-image #1]", &png, true),
+                file("[doc-image #2]", &svg, true),
+                file("[doc-image #3]", &gone, false),
+                file("[doc-image #4]", &folder, true),
+            ]);
+        }
+        let out = notes_of(&window_with(vec![d]));
+        assert_ne!(out["isError"], true, "{}", text_of(&out));
+        let images: Vec<&Value> = out["content"]
+            .as_array()
+            .expect("content")
+            .iter()
+            .filter(|c| c["type"] == "image")
+            .collect();
+        assert_eq!(images.len(), 1, "{out}");
+        assert_eq!(images[0]["mimeType"], "image/png");
+        assert_eq!(
+            images[0]["data"],
+            base64::engine::general_purpose::STANDARD.encode(b"\x89PNG a picture")
+        );
+        let text = text_of(&out);
+        for said in [
+            "The pictures follow as images, in this order: [doc-image #1].",
+            "[doc-image #2] is a kind of picture a model cannot be handed",
+            "[doc-image #3] is not on this machine",
+            "[doc-image #4] was not attached (it is not a regular file)",
+        ] {
+            assert!(text.contains(said), "{said:?} in:\n{text}");
+        }
+        assert_eq!(
+            out["structuredContent"]["pictures_attached"],
+            json!(["[doc-image #1]"])
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// With no square, the split the caller opened is answered — ahead of a
