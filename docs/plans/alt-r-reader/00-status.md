@@ -44,11 +44,32 @@ was too high: collapse Gates 2–4 into one plan and say so.
       and, paged back, 48 columns at about 3×; the after is the whole pane at its
       own letters. **The workbench case works**: Alt+K flipped the pane to its
       bench under an open reader, and the reader kept reading the terminal.
-- [ ] Slice 2 — a Document-face pane lends its document view to the reader:
-      Markdown, HTML, PDF, picture, video
+- [x] Slice 2 — a document pane lends its own view to the reader: Markdown, HTML,
+      PDF, picture, video. **Done 2026-09-29** on `feat/alt-r-reader-docs`,
+      stacked on slice 1 (merged as #893, installed as `td-b030a78-reader-own-size`).
+      Photographed in the rig for all five kinds (`evidence/slice2-*`): before, a
+      Markdown pane and a brief pane both read "FOCUS · shell"; after, each reads
+      its document at the reader's size, a small picture stays at its own pixels,
+      a video waits paused with its bar, and after Escape the pane has its document
+      back. The acceptance Parker keyed Gate 2 on is a behaviour test: a note
+      typed, a CONCUR stamped and ↪ sent from inside the reader, saved into the
+      brief's islands and read back (`a_brief_in_the_reader_takes_notes_and_stamps_and_sends_them`).
+      **Three departures from the plan**, each for a reason found while building:
+      the pane records the lent view by *entity*, not by seat, so a document
+      replaced mid-read is never taken for the one lent; **the floating square
+      came up from slice 4**, because lending is one mechanism for both seats, and a
+      square over the bench reads the square too (decision 4 was written for the
+      terminal face — flagged to Parker); and the lent document reads flat, with no
+      "Inherit theme". **Two older bugs found and fixed on the way**, each proved
+      before its fix: Escape closing the reader never told the pane, so Escape and
+      the page keys died in that pane — Esc could not interrupt an agent there —
+      since 2026-06-24 (`evidence/slice2-escape-reaches-the-pane.webp`: `x` on the
+      installed build, `^[x` in a never-read control pane and on this branch); and
+      a second Markdown re-layout before the first settled landed on another block
+      (a unit test failed first).
 - [ ] Slice 3 — an agent pane reads its conversation from its transcript (Claude),
       the labelled SCREEN fallback when the binding is not certain, the input strip
-- [ ] Slice 4 — Codex transcripts; the floating square, if decision 4 holds
+- [ ] Slice 4 — Codex transcripts (the floating square moved into slice 2)
 
 ## The five attempts before this one
 
@@ -109,12 +130,13 @@ building (`cargo test --features core-alacritty`).
   stubbed): 5 rows at 48 cols → 5 lines, widest 47, in a 150-col layout; shell
   soft-wrap → one 128-col line. Same cause as the copy-chip fix of 2026-09-28.
 - **From the code:** the workbench face already mirrors the terminal on purpose
-  (`mirror_snapshot` doc comment; test `the_focus_reader_mirrors_the_grid_on_both_faces`).
-  Parker suspects it fails in practice — verify first in slice 1.
-- **From the code:** a Document-face pane keeps the shell it was made with
-  underneath, and Alt+R (a Window-layer chord on every face) mirrors that hidden
-  grid. `DocumentView::set_seat` already moves one view between the square and the
-  face without reopening; a `DocSeat::Reader` is the natural third seat.
+  (`mirror_snapshot` doc comment; the test, renamed in slice 2, is
+  `the_focus_reader_never_mirrors_the_bench`, beside `docopen::read_from`'s table).
+  Verified in slice 1: it works.
+- **From the code, changed in slice 2:** a Document-face pane kept the shell it was
+  made with underneath, and Alt+R mirrored that hidden grid. It now lends the
+  reader its document — not as a third `DocSeat`, which already names which of a
+  pane's two documents something came from (see `02-architecture.md`).
 - **Binding rule:** use `paneident::certain` only; an unbound pane gets the SCREEN,
   labelled, never a directory-wide guess (the 2026-09-18 incident in paneident.rs).
 - Code was read at origin/main `5ba60ed`; the primary checkout sat at detached
