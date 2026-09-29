@@ -37,17 +37,19 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
   the terminal.
 - **Alt+R on an agent's pane reads its conversation.** When the pane's Claude
   Code session is bound for certain, the reader shows the conversation from its
-  transcript instead of the screen Claude Code drew for a narrow pane: your
-  prompts and its replies whole, at the reader's width, with headings, lists,
-  code and tables drawn from their Markdown; one line per tool call —
-  `⚙ Read  app/src/doc.rs  →  40 lines` — whose output opens and closes with a
-  click; the thinking left out; and a divider where the conversation was
-  compacted. It follows the transcript as the agent writes it, a finished block
-  at a time. The agent's own status line and input box stay live at the
-  reader's foot, and typing still reaches it. The header names what is being
-  read: TRANSCRIPT, SCREEN when the transcript could not be bound for certain
-  (the reader then reads the screen, never a guess at whose conversation it is),
-  SCROLLBACK for a shell, and ALTERNATE SCREEN for a full-screen program.
+  transcript instead of the screen Claude Code drew for a narrow pane: what you
+  typed (a slash command as you typed it, and never a background task's
+  notification) and its replies whole, at the reader's width, with headings,
+  lists, code and tables drawn from their Markdown; one row per tool call —
+  `⚙ Read  app/src/doc.rs  →  40 lines` — which a click opens to the whole
+  command and what it printed; the thinking left out; and a divider where the
+  conversation was compacted. It follows the transcript as the agent writes it,
+  a finished block at a time. The agent's own status line and input box stay
+  live at the reader's foot, and typing still reaches it. The header names what
+  is being read: TRANSCRIPT, SCREEN when the transcript could not be bound for
+  certain (the reader then reads the screen, never a guess at whose
+  conversation it is), SCROLLBACK for a shell, and ALTERNATE SCREEN for a
+  full-screen program. A Codex pane still reads its screen.
 
 - **A new install's panes wear Terminal Delight's own mark.** With no
   `dir-logos.toml` at all, the first start writes one mapping `/` to the app's
