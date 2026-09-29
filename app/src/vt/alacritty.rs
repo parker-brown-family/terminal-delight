@@ -195,6 +195,11 @@ impl Backend for Core {
         self.term.grid().history_size()
     }
 
+    /// alacritty keeps no count of the rows it drops off the top of history.
+    fn lines_evicted(&self) -> Option<u64> {
+        None
+    }
+
     fn display_offset(&self) -> usize {
         self.term.grid().display_offset()
     }

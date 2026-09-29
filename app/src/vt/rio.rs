@@ -389,6 +389,10 @@ impl Backend for Core {
         self.term.history_size()
     }
 
+    fn lines_evicted(&self) -> Option<u64> {
+        Some(self.term.lines_evicted())
+    }
+
     fn display_offset(&self) -> usize {
         self.term.display_offset()
     }

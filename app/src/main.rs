@@ -70,6 +70,7 @@ mod paneident;
 mod picturewire;
 mod plugins;
 mod ptyscan;
+mod readrows;
 mod recover;
 mod screenread;
 mod session;
