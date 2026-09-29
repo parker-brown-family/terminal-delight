@@ -1389,6 +1389,29 @@ impl NotesLayer {
         self.in_store() && !self.pending.is_empty() && !self.saving && self.can_edit().is_ok()
     }
 
+    /// Every picture kept for the document, in element order then number
+    /// order: its label, the element it is on, its file's full path and
+    /// whether that file was here when last looked for. `null` while the list
+    /// is unread or unreadable, which is not a document with none.
+    fn picture_files(&self) -> serde_json::Value {
+        let Pictures::Kept { folder, list } = &self.pictures else {
+            return serde_json::Value::Null;
+        };
+        list.on
+            .iter()
+            .flat_map(|(nid, imgs)| {
+                imgs.iter().map(move |img| {
+                    serde_json::json!({
+                        "nid": nid,
+                        "label": img.label(),
+                        "path": doc_images::path_of(folder, img).display().to_string(),
+                        "here": img.here,
+                    })
+                })
+            })
+            .collect()
+    }
+
     /// The save landed. The file now holds `notes` and `concurs`, the first
     /// `made` edits are in it, and the page is being read back.
     pub fn saved(&mut self, made: usize, notes: NoteMap, concurs: Option<ConcurMap>, file: &str) {
@@ -1543,6 +1566,9 @@ impl NotesLayer {
             "pictures_open": self.note_box.as_ref().map(|b| {
                 self.pictures_on(&b.nid).iter().map(DocImage::label).collect::<Vec<_>>()
             }),
+            // Every picture with its file, for `document_notes`, which hands
+            // an agent the pictures themselves: never shown to a person.
+            "picture_files": self.picture_files(),
             // The draft's drawn width and height in logical pixels, as the
             // last paint laid it out; null when no draft was drawn.
             "draft": self.zones.borrow().iter().find(|(_, z)| *z == Zone::Draft).map(|(b, _)| {
@@ -2547,6 +2573,16 @@ mod tests {
         );
         let map = l.map(&anchors).expect("a map");
         let file = folder.join("doc-image-1.png");
+        assert_eq!(
+            report["picture_files"],
+            serde_json::json!([{
+                "nid": "b",
+                "label": "[doc-image #1]",
+                "path": file.display().to_string(),
+                "here": true,
+            }]),
+            "what document_notes reads the pictures from"
+        );
         assert!(map.contains("0 notes on 0 elements · 1 picture."), "{map}");
         assert!(map.contains(notes::PICTURES_LEGEND), "{map}");
         assert!(
