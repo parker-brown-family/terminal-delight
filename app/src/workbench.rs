@@ -2649,6 +2649,23 @@ pub fn ext_of_image_mime(mime: &str) -> Option<&'static str> {
     })
 }
 
+/// The file extension to save a picture gpui read off the clipboard under,
+/// for the same reason as [`ext_of_image_mime`]. One table for the bench's
+/// paste and a note's.
+pub fn ext_of_image_format(format: gpui::ImageFormat) -> &'static str {
+    match format {
+        gpui::ImageFormat::Png => "png",
+        gpui::ImageFormat::Jpeg => "jpg",
+        gpui::ImageFormat::Webp => "webp",
+        gpui::ImageFormat::Gif => "gif",
+        gpui::ImageFormat::Svg => "svg",
+        gpui::ImageFormat::Bmp => "bmp",
+        gpui::ImageFormat::Tiff => "tiff",
+        gpui::ImageFormat::Ico => "ico",
+        gpui::ImageFormat::Pnm => "pnm",
+    }
+}
+
 /// The text a set of dropped — or pasted — file paths becomes.
 ///
 /// A path is typed rather than the file being read, on the same terms as the

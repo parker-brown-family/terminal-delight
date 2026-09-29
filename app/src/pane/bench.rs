@@ -3158,17 +3158,7 @@ impl TerminalView {
     /// agent asked to look at it can still find it tomorrow, and it is swept
     /// with everything else when the session goes.
     pub(super) fn save_pasted_image(&self, image: &gpui::Image) -> Option<String> {
-        let ext = match image.format {
-            gpui::ImageFormat::Png => "png",
-            gpui::ImageFormat::Jpeg => "jpg",
-            gpui::ImageFormat::Webp => "webp",
-            gpui::ImageFormat::Gif => "gif",
-            gpui::ImageFormat::Svg => "svg",
-            gpui::ImageFormat::Bmp => "bmp",
-            gpui::ImageFormat::Tiff => "tiff",
-            gpui::ImageFormat::Ico => "ico",
-            gpui::ImageFormat::Pnm => "pnm",
-        };
+        let ext = crate::workbench::ext_of_image_format(image.format);
         self.write_paste(&image.bytes, ext)
     }
 

@@ -87,6 +87,7 @@
 pub mod backend;
 pub mod cache;
 pub mod cdp;
+pub mod doc_images;
 pub mod engine;
 pub mod image;
 pub mod markdown;
@@ -403,6 +404,138 @@ impl Global for PdfAnswer {}
 #[cfg(test)]
 pub(crate) fn set_pdf_tools(cx: &mut App, answer: Result<poppler::Tools, poppler::Missing>) {
     cx.set_global(PdfAnswer(answer));
+}
+
+/// Where TD keeps what it writes about documents: the notes on a Markdown
+/// file, and the pictures pasted onto any document's elements.
+/// `$XDG_STATE_HOME/terminal-delight/notes` ([`md_notes::store_dir`]), unless
+/// a test pointed it at a folder of its own. Read on the main thread and
+/// handed to the work that runs off it.
+pub fn notes_root(cx: &App) -> PathBuf {
+    #[cfg(test)]
+    if let Some(NotesRoot(dir)) = cx.try_global::<NotesRoot>() {
+        return dir.clone();
+    }
+    let _ = cx;
+    md_notes::store_dir()
+}
+
+/// What [`notes_root`] answers in a test instead of the state folder, a gpui
+/// global for the reason [`VideoAnswer`] is one: a test that writes a
+/// picture must not write it into the notes of the person running it.
+#[cfg(test)]
+struct NotesRoot(PathBuf);
+#[cfg(test)]
+impl Global for NotesRoot {}
+
+/// Keep every note and picture under `dir` from now on, for a test.
+#[cfg(test)]
+pub(crate) fn set_notes_root(cx: &mut App, dir: PathBuf) {
+    cx.set_global(NotesRoot(dir));
+}
+
+/// Finds a backend's notes layer again when work it started comes back: the
+/// backend may have laid itself out afresh, with a new layer, meanwhile.
+pub(crate) type LayerOf<B> = fn(&mut B) -> Option<&mut notes_ui::NotesLayer>;
+
+/// Read the list of pictures kept for `doc` off the main thread, and hand it
+/// to the layer: until it lands, the layer claims nothing about them.
+pub(crate) fn read_pictures<B: Backend + 'static>(
+    doc: PathBuf,
+    cx: &mut Context<DocumentView>,
+    layer: LayerOf<B>,
+) {
+    let root = notes_root(cx);
+    cx.spawn(async move |this, cx| {
+        let (folder, read) = cx
+            .background_spawn(async move {
+                let folder = doc_images::folder(&root, &doc);
+                let read = doc_images::read(&folder, &doc);
+                (folder, read)
+            })
+            .await;
+        this.update(cx, |view, cx| {
+            if let Some(l) = view.backend.downcast_mut::<B>().and_then(layer) {
+                l.pictures_read(folder, read);
+            }
+            cx.notify();
+        })
+        .ok();
+    })
+    .detach();
+}
+
+/// Keep a picture pasted into a note box: its bytes, or each picture file
+/// copied, written into the document's pictures folder off the main thread,
+/// then the layer told which number each has, or why it was not kept.
+pub(crate) fn attach_picture<B: Backend + 'static>(
+    attaching: notes_ui::Attaching,
+    cx: &mut Context<DocumentView>,
+    layer: LayerOf<B>,
+) {
+    cx.spawn(async move |this, cx| {
+        let kept = cx
+            .background_spawn(async move { keep_picture(&attaching) })
+            .await;
+        this.update(cx, |view, cx| {
+            if let Some(l) = view.backend.downcast_mut::<B>().and_then(layer) {
+                l.attached(kept);
+            }
+            cx.notify();
+        })
+        .ok();
+    })
+    .detach();
+}
+
+/// The writing half of [`attach_picture`], on whatever thread runs it.
+fn keep_picture(
+    a: &notes_ui::Attaching,
+) -> Result<(doc_images::DocImages, Vec<doc_images::Attached>), String> {
+    match &a.picture {
+        notes_ui::PastedPicture::Bytes { bytes, ext } => {
+            doc_images::attach(&a.folder, &a.doc, &a.nid, bytes, ext, &a.ts)
+                .map(|(list, one)| (list, vec![one]))
+        }
+        notes_ui::PastedPicture::Files(paths) => {
+            let mut kept = None;
+            let mut each = Vec::new();
+            for path in paths {
+                let bytes = std::fs::read(path)
+                    .map_err(|e| format!("{} could not be read: {e}", path.display()))?;
+                let ext = notes_ui::picture_ext(path)
+                    .ok_or_else(|| format!("{} is not a picture", path.display()))?;
+                let (list, one) =
+                    doc_images::attach(&a.folder, &a.doc, &a.nid, &bytes, &ext, &a.ts)?;
+                each.push(one);
+                kept = Some(list);
+            }
+            kept.map(|list| (list, each))
+                .ok_or_else(|| "no picture was on the clipboard".to_string())
+        }
+    }
+}
+
+/// Carry out a picture's delete, pressed in the note box, off the main
+/// thread, and hand the layer the list as it is afterwards.
+pub(crate) fn unattach_picture<B: Backend + 'static>(
+    u: notes_ui::Unattaching,
+    cx: &mut Context<DocumentView>,
+    layer: LayerOf<B>,
+) {
+    cx.spawn(async move |this, cx| {
+        let kept = cx
+            .background_spawn(async move { doc_images::remove(&u.folder, &u.doc, &u.nid, u.n) })
+            .await;
+        this.update(cx, |view, cx| {
+            if let Some(l) = view.backend.downcast_mut::<B>().and_then(layer) {
+                l.unattached(kept);
+            }
+            cx.notify();
+        })
+        .ok();
+    })
+    .detach();
 }
 
 /// TD is quitting: close the browser now and remove its profile, rather
@@ -1115,6 +1248,10 @@ mod tests {
                 strip(include_str!("docview/md_notes.rs")),
             ),
             (
+                "docview/doc_images.rs",
+                strip(include_str!("docview/doc_images.rs")),
+            ),
+            (
                 "docview/notes_ui.rs",
                 strip(include_str!("docview/notes_ui.rs")),
             ),
@@ -1298,6 +1435,36 @@ mod tests {
         assert!(
             write.contains("create_new(true)") && write.contains("fs::rename("),
             "the store's write makes a new file and renames it into place"
+        );
+    }
+
+    /// A pasted picture goes into TD's folder and nowhere else. The views
+    /// that show a document write nothing (see `only_the_commit_writes_a_
+    /// brief`), and `doc_images.rs` writes only through its `put`, a new file
+    /// renamed into place, plus the folder it makes and the file a delete
+    /// removes. That the document itself is untouched is checked on a real
+    /// file by `a_picture_pasted_into_a_note_is_attached_to_its_block`.
+    #[test]
+    fn only_the_picture_stores_put_writes_a_picture() {
+        let src = source_of("docview/doc_images.rs");
+        let (before, rest) = src.split_once("fn put(").expect("the store's put");
+        let (put, after) = rest.split_once("\n}\n").expect("its end");
+        for w in [
+            "fs::write",
+            "File::create",
+            "OpenOptions",
+            "fs::rename",
+            "fs::copy",
+            "set_permissions",
+        ] {
+            assert!(
+                !before.contains(w) && !after.contains(w),
+                "doc_images.rs holds {w} outside its put"
+            );
+        }
+        assert!(
+            put.contains("create_new(true)") && put.contains("fs::rename("),
+            "put makes a new file and renames it into place"
         );
     }
 

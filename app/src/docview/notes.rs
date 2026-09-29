@@ -777,24 +777,52 @@ pub fn build_map(
     concurs: &ConcurMap,
     anchors: &[(&str, &str)],
 ) -> String {
+    build_map_with(file_label, notes, concurs, anchors, &PictureLines::new())
+}
+
+/// The pictures pasted onto a document's elements, as a map lists them: for
+/// each anchor id, one line per picture, its label and its full path (see
+/// `doc_images`). Empty for a document with none.
+pub type PictureLines = std::collections::BTreeMap<String, Vec<String>>;
+
+/// [`build_map`] with the pictures pasted onto the brief's elements, which
+/// only Terminal Delight keeps: each follows its element's notes on a line of
+/// its own, an element with only pictures still gets its line, the header
+/// counts them, and one more line of legend says what they are. With no
+/// pictures it is `build_map`, byte for byte, which the fixtures hold; and
+/// the mirror a save writes into the brief never passes any, so the file
+/// `notes.js` shares is the same with or without them.
+pub fn build_map_with(
+    file_label: &str,
+    notes: &NoteMap,
+    concurs: &ConcurMap,
+    anchors: &[(&str, &str)],
+    pictures: &PictureLines,
+) -> String {
     let (count, els, cc) = (notes.count(), notes.elements(), concurs.count());
+    let pics: usize = pictures.values().map(Vec::len).sum();
     let mut out = vec![
         format!("NOTES — {file_label}"),
         format!(
-            "{count} notes on {els} elements{}.",
+            "{count} notes on {els} elements{}{}.",
             match cc {
                 0 => String::new(),
                 1 => " · 1 concur".into(),
                 n => format!(" · {n} concurs"),
-            }
+            },
+            pictures_counted(pics)
         ),
         "Each [anchor] is an element id in that file — search it to find the passage.".into(),
-        String::new(),
     ];
+    if pics > 0 {
+        out.push(PICTURES_LEGEND.into());
+    }
+    out.push(String::new());
     for &(nid, title) in anchors {
         let list = notes.on(nid);
         let agreed = concurs.has(nid);
-        if list.is_empty() && !agreed {
+        let pictured = pictures.get(nid).map_or(&[][..], Vec::as_slice);
+        if list.is_empty() && !agreed && pictured.is_empty() {
             continue;
         }
         out.push(format!(
@@ -804,9 +832,26 @@ pub fn build_map(
         for n in list {
             out.push(format!("  · {}", one_line(n.text)));
         }
+        for line in pictured {
+            out.push(format!("  · {line}"));
+        }
         out.push(String::new());
     }
     out.join("\n")
+}
+
+/// The legend line a map gains once any element has a picture.
+pub const PICTURES_LEGEND: &str =
+    "Each [doc-image #n] is a picture pasted onto that element — open its path to see it.";
+
+/// ` · 1 picture`, ` · 3 pictures`, or nothing for none, as the header
+/// counts concurs.
+pub fn pictures_counted(n: usize) -> String {
+    match n {
+        0 => String::new(),
+        1 => " · 1 picture".into(),
+        n => format!(" · {n} pictures"),
+    }
 }
 
 /// `text.replace(/\n+/g, ' ')`: each run of line feeds one space. A carriage

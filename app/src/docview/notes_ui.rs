@@ -53,10 +53,11 @@ use gpui::{
     ClipboardItem, FontWeight, Hsla, Keystroke, Pixels, Point, SharedString, Transformation,
 };
 
+use super::doc_images::{self, Attached, DocImage, DocImages};
 use super::engine::{Anchor, ConcurSupport, RectCss};
 use super::notes::{
-    apply, build_map, stamp_pose, utc_minute, ConcurMap, NoteEdit, NoteMap, NotesRead, Refusal,
-    FORMAT,
+    apply, build_map_with, stamp_pose, utc_minute, ConcurMap, NoteEdit, NoteMap, NotesRead,
+    PictureLines, Refusal, FORMAT,
 };
 use super::page::{place, PageToView};
 use crate::theme::Theme;
@@ -86,9 +87,31 @@ pub enum Pasted {
     /// Words: the clipboard's text, and any copied files as their paths.
     Words(String),
     /// A picture, and nothing on the clipboard that reads as words.
-    Picture,
+    Picture(PastedPicture),
     /// An empty clipboard, or one holding nothing a note takes.
     Nothing,
+}
+
+/// A picture on the clipboard, which a paste attaches to the element whose
+/// note box is open.
+#[derive(Clone, Debug, PartialEq)]
+pub enum PastedPicture {
+    /// A picture's bytes, and the extension its format is kept under.
+    Bytes { bytes: Vec<u8>, ext: &'static str },
+    /// Picture files copied in a file manager, each kept as a copy.
+    Files(Vec<std::path::PathBuf>),
+}
+
+/// The extensions a copied file is taken as a picture by. Anything else
+/// pastes as its path.
+const PICTURE_EXTS: [&str; 9] = [
+    "png", "jpg", "jpeg", "webp", "gif", "bmp", "tif", "tiff", "svg",
+];
+
+/// A copied file's extension, when it names a picture, lower-cased.
+pub fn picture_ext(path: &Path) -> Option<String> {
+    let ext = path.extension()?.to_str()?.to_ascii_lowercase();
+    PICTURE_EXTS.contains(&ext.as_str()).then_some(ext)
 }
 
 impl Pasted {
@@ -96,32 +119,41 @@ impl Pasted {
     /// gpui's own read puts it; copied files as their paths, one word each and
     /// quoted where a path holds a space, as the bench pastes them
     /// ([`crate::workbench::paths_as_words`]) — gpui's own `text()` runs two
-    /// paths together with nothing between them; a picture alone is a picture.
+    /// paths together with nothing between them — unless every one of them is
+    /// a picture, when they are pictures; a picture alone is a picture.
     pub fn from_clipboard(item: Option<&ClipboardItem>) -> Pasted {
         let Some(item) = item else {
             return Pasted::Nothing;
         };
         let mut words: Vec<String> = Vec::new();
-        let mut picture = false;
+        let mut picture = None;
         for entry in item.entries() {
             match entry {
                 ClipboardEntry::String(s) => words.push(s.text().to_string()),
                 ClipboardEntry::ExternalPaths(paths) => {
-                    let w = crate::workbench::paths_as_words(paths.paths());
+                    let paths = paths.paths();
+                    if !paths.is_empty() && paths.iter().all(|p| picture_ext(p).is_some()) {
+                        picture.get_or_insert(PastedPicture::Files(paths.to_vec()));
+                        continue;
+                    }
+                    let w = crate::workbench::paths_as_words(paths);
                     if !w.is_empty() {
                         words.push(w);
                     }
                 }
-                ClipboardEntry::Image(_) => picture = true,
+                ClipboardEntry::Image(image) => {
+                    picture.get_or_insert(PastedPicture::Bytes {
+                        bytes: image.bytes.clone(),
+                        ext: crate::workbench::ext_of_image_format(image.format),
+                    });
+                }
             }
         }
         let words = words.join(" ");
-        if !words.is_empty() {
-            Pasted::Words(words)
-        } else if picture {
-            Pasted::Picture
-        } else {
-            Pasted::Nothing
+        match picture {
+            _ if !words.is_empty() => Pasted::Words(words),
+            Some(p) => Pasted::Picture(p),
+            None => Pasted::Nothing,
         }
     }
 }
@@ -206,6 +238,8 @@ pub enum Zone {
     AddNote,
     /// The delete on the note box's `n`th note.
     Delete(usize),
+    /// The delete on the note box's `n`th picture.
+    DeletePicture(usize),
 }
 
 /// Something the layer draws for one anchor, in the view's own flat
@@ -282,12 +316,63 @@ pub enum Keeping {
     Store(std::path::PathBuf),
 }
 
+/// The pictures pasted onto a document's elements, as the layer knows them
+/// (see `doc_images.rs`). Kept by TD for a brief and a Markdown file alike,
+/// and kept at once: there is nothing to save.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Pictures {
+    /// Not read yet. Nothing is claimed about them, and a picture pasted now
+    /// is refused in words rather than numbered against a list nobody read.
+    Unread,
+    /// The list, as read from or written to `folder`.
+    Kept {
+        folder: std::path::PathBuf,
+        list: DocImages,
+    },
+    /// The list cannot be read. Said in the box; nothing is written over it.
+    Unreadable(String),
+}
+
+/// A picture pasted into a note box, for the view to keep: its bytes or files
+/// go to `folder`, onto the element `nid`, off the main thread.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Attaching {
+    pub folder: std::path::PathBuf,
+    pub doc: std::path::PathBuf,
+    pub nid: String,
+    pub picture: PastedPicture,
+    pub ts: String,
+}
+
+/// A picture's delete, pressed in the note box, for the view to carry out.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Unattaching {
+    pub folder: std::path::PathBuf,
+    pub doc: std::path::PathBuf,
+    pub nid: String,
+    pub n: u32,
+}
+
+/// What a paste into a note box did.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Pasting {
+    /// Not the layer's: no note is being written.
+    Pass,
+    /// Taken, with nothing more for the view to do.
+    Took,
+    /// A picture, for the view to keep.
+    Attach(Attaching),
+}
+
 /// A document's notes, as TD shows them over it: a brief's over its page,
 /// a Markdown file's over its column.
 pub struct NotesLayer {
     /// The page's `NOTES_FILE`, what the map's header names.
     label: String,
     keeping: Keeping,
+    /// The document the notes are on: whose pictures TD keeps.
+    doc: std::path::PathBuf,
+    pictures: Pictures,
     /// What the file held when it was last read.
     base: Shown,
     concur: ConcurSupport,
@@ -335,6 +420,9 @@ pub enum LayerPress {
     /// only the workspace can reach, and the view saves as it goes when
     /// [`Sending::saves`] says so.
     Send(Sending),
+    /// A picture's delete in the note box: the view takes it off the list
+    /// and deletes its file, off the main thread.
+    Unattach(Unattaching),
 }
 
 /// What a press on ↪ does: the map it pastes, and whether it saves.
@@ -402,6 +490,8 @@ impl NotesLayer {
         let mut layer = NotesLayer {
             label,
             keeping: Keeping::File,
+            doc: path.to_path_buf(),
+            pictures: Pictures::Unread,
             base,
             concur,
             pending: Vec::new(),
@@ -445,6 +535,8 @@ impl NotesLayer {
         let mut layer = NotesLayer {
             label,
             keeping: Keeping::Store(doc.to_path_buf()),
+            doc: doc.to_path_buf(),
+            pictures: Pictures::Unread,
             base,
             concur: ConcurSupport::NotSupported,
             pending: Vec::new(),
@@ -558,7 +650,124 @@ impl NotesLayer {
         self.sent = old.sent;
         self.saving = old.saving;
         self.note_box = old.note_box;
+        // The pictures are TD's, not the page's: a new render of the same
+        // brief has the same ones.
+        self.pictures = old.pictures;
         self.refresh();
+    }
+
+    // ── pictures ─────────────────────────────────────────────────────────────
+
+    /// The document's list of pictures, read from `folder`, or why it cannot
+    /// be. From now on a picture pasted here is numbered against it.
+    pub fn pictures_read(&mut self, folder: std::path::PathBuf, read: Result<DocImages, String>) {
+        self.pictures = match read {
+            Ok(list) => Pictures::Kept { folder, list },
+            Err(why) => Pictures::Unreadable(why),
+        };
+    }
+
+    /// Whether the document's list of pictures has been read, or found
+    /// unreadable: until then there is nothing to say about them.
+    pub fn pictures_known(&self) -> bool {
+        !matches!(self.pictures, Pictures::Unread)
+    }
+
+    /// The pictures on one anchor, oldest first; none until the list is read.
+    fn pictures_on(&self, nid: &str) -> &[DocImage] {
+        match &self.pictures {
+            Pictures::Kept { list, .. } => list.on(nid),
+            _ => &[],
+        }
+    }
+
+    /// The open box's `i`th picture's delete, for the view to carry out.
+    fn unattaching(&self, i: usize) -> Option<Unattaching> {
+        let nid = self.note_box.as_ref()?.nid.clone();
+        let Pictures::Kept { folder, list } = &self.pictures else {
+            return None;
+        };
+        let n = list.on(&nid).get(i)?.n;
+        Some(Unattaching {
+            folder: folder.clone(),
+            doc: self.doc.clone(),
+            nid,
+            n,
+        })
+    }
+
+    /// What a picture paste came to, once the view has kept it: the list as
+    /// it is now, and which number the picture has, or why it was not kept.
+    pub fn attached(&mut self, kept: Result<(DocImages, Vec<Attached>), String>) {
+        match kept {
+            Ok((list, attached)) => {
+                if let Pictures::Kept { list: have, .. } = &mut self.pictures {
+                    *have = list;
+                }
+                let named = |already: bool| -> Vec<String> {
+                    attached
+                        .iter()
+                        .filter_map(|a| match *a {
+                            Attached::New(n) if !already => Some(format!("[doc-image #{n}]")),
+                            Attached::Already(n) if already => Some(format!("[doc-image #{n}]")),
+                            _ => None,
+                        })
+                        .collect()
+                };
+                let mut said = Vec::new();
+                let (new, old) = (named(false), named(true));
+                if !new.is_empty() {
+                    said.push(format!("attached as {}", new.join(", ")));
+                }
+                if !old.is_empty() {
+                    said.push(format!("already attached as {}", old.join(", ")));
+                }
+                self.said = (!said.is_empty()).then(|| Said::Done(said.join(" · ")));
+            }
+            Err(why) => self.said = Some(Said::Refused(why)),
+        }
+    }
+
+    /// A picture's delete, once the view has carried it out: the list as it
+    /// is now, or why the picture is still there.
+    pub fn unattached(&mut self, kept: Result<DocImages, String>) {
+        match kept {
+            Ok(list) => {
+                if let Pictures::Kept { list: have, .. } = &mut self.pictures {
+                    *have = list;
+                }
+                self.said = None;
+            }
+            Err(why) => self.said = Some(Said::Refused(why)),
+        }
+    }
+
+    /// Each anchor's pictures as the map lists them: the label and the full
+    /// path, and a picture whose file is not on this disk says so rather than
+    /// sending an agent to open nothing.
+    fn picture_lines(&self) -> PictureLines {
+        let Pictures::Kept { folder, list } = &self.pictures else {
+            return PictureLines::new();
+        };
+        list.on
+            .iter()
+            .filter(|(_, imgs)| !imgs.is_empty())
+            .map(|(nid, imgs)| {
+                let lines = imgs
+                    .iter()
+                    .map(|img| {
+                        let path = doc_images::path_of(folder, img);
+                        let gone = if img.here {
+                            ""
+                        } else {
+                            " (not on this machine)"
+                        };
+                        format!("{} {}{gone}", img.label(), path.display())
+                    })
+                    .collect();
+                (nid.clone(), lines)
+            })
+            .collect()
     }
 
     /// The file changed on disk and its layout did not: another writer
@@ -708,31 +917,43 @@ impl NotesLayer {
     /// page shows no notes; empty of blocks when it has none yet.
     pub fn map(&self, anchors: &[Anchor]) -> Option<String> {
         let notes = self.notes()?;
+        let pictures = self.picture_lines();
         if let Keeping::Store(doc) = &self.keeping {
             let lines: Vec<(&str, &str, Option<u32>)> = anchors
                 .iter()
                 .map(|a| (a.nid.as_str(), a.title.as_str(), a.line))
                 .collect();
-            return Some(super::md_notes::build_map(doc, notes, &lines));
+            return Some(super::md_notes::build_map(doc, notes, &lines, &pictures));
         }
         let empty = ConcurMap::default();
         let pairs: Vec<(&str, &str)> = anchors
             .iter()
             .map(|a| (a.nid.as_str(), a.title.as_str()))
             .collect();
-        Some(build_map(
+        Some(build_map_with(
             &self.label,
             notes,
             self.concurs().unwrap_or(&empty),
             &pairs,
+            &pictures,
         ))
     }
 
+    /// How many pictures are pasted onto this document's elements, or
+    /// `None` while that is not known: unread is not none.
+    pub fn picture_count(&self) -> Option<usize> {
+        match &self.pictures {
+            Pictures::Kept { list, .. } => Some(list.count()),
+            _ => None,
+        }
+    }
+
     /// Whether there is anything to copy: the brief disables its own copy
-    /// map until a note or a concur exists.
+    /// map until a note or a concur exists, and a picture is something too.
     fn mappable(&self, anchors: &[Anchor]) -> bool {
         let (notes, concurs) = self.counts(anchors);
-        self.notes().is_some() && notes + concurs.unwrap_or(0) > 0
+        let pictures = self.picture_count().unwrap_or(0);
+        self.notes().is_some() && notes + concurs.unwrap_or(0) + pictures > 0
     }
 
     /// The bar's ↪, when it is drawn: its words, and whether it can be
@@ -817,7 +1038,9 @@ impl NotesLayer {
         }
         for a in anchors {
             let Some(rect) = a.rect else { continue };
-            let count = self.count_on(&a.nid);
+            // A picture is something on the element as much as a note is: an
+            // element holding only a screenshot shows it holds something.
+            let count = self.count_on(&a.nid) + self.pictures_on(&a.nid).len();
             if count > 0 {
                 if let Some(at) = place(rect_css(rect.x, rect.y, RULE_CSS, rect.h), map) {
                     out.push(Mark::Rule { at });
@@ -984,16 +1207,19 @@ impl NotesLayer {
     /// any selection, as typing would put them, line breaks and all. A paste
     /// that would take the note past [`MAX_NOTE_CHARS`] is cut there and the
     /// bar says how much went in: a quietly shortened paste reads as a whole
-    /// one. A picture is not taken yet, and the bar says that too, rather than
-    /// the key doing nothing anybody can see. Answers whether the note box
-    /// took the paste, which it does whenever a draft is open to type into.
-    pub fn paste(&mut self, pasted: Pasted) -> bool {
+    /// one. A picture is attached to the element the box is open on, not
+    /// written into the note: it goes back to the view to keep, since keeping
+    /// it writes a file. Until the document's list of pictures has been read,
+    /// or when it cannot be, a picture is refused in words rather than
+    /// numbered against a list nobody read.
+    pub fn paste(&mut self, pasted: Pasted, now: SystemTime) -> Pasting {
         if !self.has_caret() {
-            return false;
+            return Pasting::Pass;
         }
         let Some(b) = self.note_box.as_mut() else {
-            return false;
+            return Pasting::Pass;
         };
+        let nid = b.nid.clone();
         match pasted {
             Pasted::Words(raw) => {
                 let words = pasted_words(&raw);
@@ -1007,15 +1233,36 @@ impl NotesLayer {
                         grouped(MAX_NOTE_CHARS)
                     )));
                 }
+                Pasting::Took
             }
-            Pasted::Picture => {
-                self.said = Some(Said::Refused(
-                    "a picture cannot go into a note yet · words paste, pictures come next".into(),
-                ));
-            }
-            Pasted::Nothing => {}
+            Pasted::Picture(picture) => match &self.pictures {
+                Pictures::Kept { folder, .. } => {
+                    let attaching = Attaching {
+                        folder: folder.clone(),
+                        doc: self.doc.clone(),
+                        nid,
+                        picture,
+                        ts: utc_minute(now),
+                    };
+                    self.said = Some(Said::Working("attaching the picture…".into()));
+                    Pasting::Attach(attaching)
+                }
+                Pictures::Unread => {
+                    self.said = Some(Said::Refused(
+                        "this document's pictures are still being read · paste again in a moment"
+                            .into(),
+                    ));
+                    Pasting::Took
+                }
+                Pictures::Unreadable(why) => {
+                    self.said = Some(Said::Refused(format!(
+                        "no picture can be attached here: {why}"
+                    )));
+                    Pasting::Took
+                }
+            },
+            Pasted::Nothing => Pasting::Took,
         }
-        true
     }
 
     /// Add the draft as a note on the open anchor, stamped with the time as
@@ -1207,6 +1454,11 @@ impl NotesLayer {
                     self.add(now);
                 }
                 Some(Zone::Delete(i)) if self.can_delete() => self.delete_shown(i),
+                Some(Zone::DeletePicture(i)) if self.can_delete() => {
+                    if let Some(u) = self.unattaching(i) {
+                        return LayerPress::Unattach(u);
+                    }
+                }
                 _ if !under(Zone::Box) => self.note_box = None,
                 _ => {}
             }
@@ -1279,6 +1531,18 @@ impl NotesLayer {
             // whole report, and `document_notes` takes only its named fields,
             // so an unfinished note never reaches an agent through this.
             "draft_text": self.note_box.as_ref().map(|b| b.draft.text()),
+            // The pictures pasted onto this document's elements: how many,
+            // null until the list is read (unread is not none), and the
+            // labels the open box lists, which is all the box ever shows.
+            "pictures": self.picture_count(),
+            "pictures_state": match &self.pictures {
+                Pictures::Unread => "unread",
+                Pictures::Kept { .. } => "kept",
+                Pictures::Unreadable(_) => "unreadable",
+            },
+            "pictures_open": self.note_box.as_ref().map(|b| {
+                self.pictures_on(&b.nid).iter().map(DocImage::label).collect::<Vec<_>>()
+            }),
             // The draft's drawn width and height in logical pixels, as the
             // last paint laid it out; null when no draft was drawn.
             "draft": self.zones.borrow().iter().find(|(_, z)| *z == Zone::Draft).map(|(b, _)| {
@@ -1544,9 +1808,76 @@ impl NotesLayer {
         col
     }
 
+    /// The pictures on the open box's element, under its notes: one row each,
+    /// its label, when it was pasted, and its delete. Never the picture, and
+    /// never where it is kept: *"a one-way pass of a screenshot"*, with the
+    /// path masked. A picture whose file is gone says so in its row; a list
+    /// that cannot be read says why. `None` when there is nothing to list.
+    fn draw_pictures(&self, nid: &str, deletable: bool, th: &Theme) -> Option<gpui::Div> {
+        let body = th.font_size;
+        let pictures = self.pictures_on(nid);
+        let unreadable = match &self.pictures {
+            Pictures::Unreadable(why) => Some(why.as_str()),
+            _ => None,
+        };
+        if pictures.is_empty() && unreadable.is_none() {
+            return None;
+        }
+        let mut col = div()
+            .flex_none()
+            .flex()
+            .flex_col()
+            .gap(px(3.))
+            .text_size(px(body * 0.85));
+        if let Some(why) = unreadable {
+            col = col.child(
+                div()
+                    .text_color(th.text.alpha(0.6))
+                    .child(format!("Pictures cannot be listed here: {why}")),
+            );
+        }
+        for (i, img) in pictures.iter().enumerate() {
+            let when = if img.here {
+                img.ts.clone()
+            } else {
+                format!("{} · not on this machine", img.ts)
+            };
+            let mut row = div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(8.))
+                .child(
+                    div()
+                        .font_family(SharedString::from(th.font_family.clone()))
+                        .child(img.label()),
+                )
+                .child(
+                    div()
+                        .text_size(px(body * 0.72))
+                        .text_color(th.faint)
+                        .child(when),
+                );
+            if deletable {
+                row = row.child(
+                    div()
+                        .ml_auto()
+                        .relative()
+                        .text_size(px(body * 0.72))
+                        .text_color(th.text.alpha(0.6))
+                        .child("delete")
+                        .child(self.record(Zone::DeletePicture(i))),
+                );
+            }
+            col = col.child(row);
+        }
+        Some(col)
+    }
+
     /// The note box, over everything, when it is open: the anchor's title,
-    /// its id, its notes oldest first (each with its delete), the draft, and
-    /// Add note, Close and the hint, as the brief's own dialog lays them out.
+    /// its id, its notes oldest first (each with its delete), its pictures,
+    /// the draft, and Add note, Close and the hint, as the brief's own dialog
+    /// lays them out.
     pub fn draw_box(&self, view: gpui::Size<Pixels>, th: &Theme) -> Option<AnyElement> {
         let b = self.note_box.as_ref()?;
         let editable = self.has_caret();
@@ -1614,12 +1945,16 @@ impl NotesLayer {
         }
         actions = actions.child(pill("Close", Zone::CloseBox, false));
         if editable {
+            let hint = match self.pictures {
+                Pictures::Kept { .. } => "ctrl+enter to add · paste a picture to attach it",
+                _ => "ctrl+enter to add",
+            };
             actions = actions.child(
                 div()
                     .ml_auto()
                     .text_size(px(body * 0.72))
                     .text_color(th.faint)
-                    .child("ctrl+enter to add"),
+                    .child(hint),
             );
         }
         // A draft that wraps grows downward, and the box stops at eight
@@ -1633,6 +1968,9 @@ impl NotesLayer {
             .px(px(12.))
             .py(px(10.))
             .child(list.min_h(px(0.)).overflow_hidden());
+        if let Some(pictures) = self.draw_pictures(&b.nid, deletable, th) {
+            content = content.child(pictures);
+        }
         if editable {
             content = content.child(
                 div()
@@ -2036,8 +2374,9 @@ mod tests {
     fn a_paste_goes_in_at_the_caret_with_its_line_breaks() {
         let mut l = layer("{}", "{}", ConcurSupport::Supported);
         let now = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_790_278_680);
-        assert!(
-            !l.paste(Pasted::Words("x".into())),
+        assert_eq!(
+            l.paste(Pasted::Words("x".into()), now),
+            Pasting::Pass,
             "no box open: not the layer's"
         );
         l.open("a".into(), "a title".into());
@@ -2045,9 +2384,13 @@ mod tests {
             l.key(&ks(c, false, Some(c)), now);
         }
         l.key(&ks("left", false, None), now);
-        assert!(l.paste(Pasted::Words(
-            "first\r\nsecond\rthird\u{1b}[201~\ttab".into()
-        )));
+        assert_eq!(
+            l.paste(
+                Pasted::Words("first\r\nsecond\rthird\u{1b}[201~\ttab".into()),
+                now
+            ),
+            Pasting::Took
+        );
         assert_eq!(
             l.note_box().unwrap().draft.text(),
             "ofirst\nsecond\nthird[201~\ttabk",
@@ -2056,7 +2399,7 @@ mod tests {
         assert_eq!(l.unsaved(), 0, "a paste adds no note by itself");
         assert_eq!(l.said, None, "a whole paste says nothing");
         l.key(&ks("a", true, Some("a")), now);
-        assert!(l.paste(Pasted::Words("over it".into())));
+        assert_eq!(l.paste(Pasted::Words("over it".into()), now), Pasting::Took);
         assert_eq!(
             l.note_box().unwrap().draft.text(),
             "over it",
@@ -2080,15 +2423,19 @@ mod tests {
     #[test]
     fn a_paste_past_the_limit_is_cut_and_the_bar_says_how_much_went_in() {
         let mut l = layer("{}", "{}", ConcurSupport::Supported);
+        let now = SystemTime::now();
         l.open("a".into(), "a title".into());
-        assert!(l.paste(Pasted::Words("x".repeat(31_402))));
+        assert_eq!(
+            l.paste(Pasted::Words("x".repeat(31_402)), now),
+            Pasting::Took
+        );
         let len = |l: &NotesLayer| l.note_box().unwrap().draft.text().chars().count();
         assert_eq!(len(&l), MAX_NOTE_CHARS);
         assert_eq!(
             l.said.as_ref().map(Said::text),
             Some("pasted 20,000 of 31,402 characters · a note holds 20,000")
         );
-        assert!(l.paste(Pasted::Words("more".into())));
+        assert_eq!(l.paste(Pasted::Words("more".into()), now), Pasting::Took);
         assert_eq!(len(&l), MAX_NOTE_CHARS);
         assert_eq!(
             l.said.as_ref().map(Said::text),
@@ -2096,23 +2443,128 @@ mod tests {
         );
     }
 
-    /// A picture on the clipboard is not pasted yet: the key is taken, the
-    /// draft is untouched, and the bar says why nothing happened. An empty
-    /// clipboard is taken and does nothing, as in any text box.
+    fn png() -> PastedPicture {
+        PastedPicture::Bytes {
+            bytes: vec![0x89, b'P', b'N', b'G'],
+            ext: "png",
+        }
+    }
+
+    /// A picture pasted into a note box goes back to the view to keep, onto
+    /// the element the box is open on, stamped with the time; the draft is
+    /// untouched, because a picture is attached, never written into a note.
+    /// Before the document's list of pictures is read, and when it cannot be,
+    /// a picture is refused in words. An empty clipboard is taken and does
+    /// nothing, as in any text box.
     #[test]
-    fn a_picture_is_not_pasted_yet_and_the_bar_says_so() {
+    fn a_picture_goes_to_the_view_to_keep_on_the_open_element() {
         let mut l = layer("{}", "{}", ConcurSupport::Supported);
+        let now = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_790_278_680);
         l.open("a".into(), "a title".into());
-        assert!(l.paste(Pasted::Picture));
-        assert_eq!(l.note_box().unwrap().draft.text(), "");
+        assert_eq!(l.paste(Pasted::Picture(png()), now), Pasting::Took);
         assert!(l
             .said
             .as_ref()
-            .is_some_and(|s| s.text().starts_with("a picture cannot go into a note yet")));
+            .is_some_and(|s| s.text().contains("still being read")));
+        assert_eq!(
+            l.report(&[])["pictures"],
+            serde_json::Value::Null,
+            "unread is not none"
+        );
+
+        l.pictures_read("/state/pictures/b".into(), Err("broken list".into()));
+        assert_eq!(l.paste(Pasted::Picture(png()), now), Pasting::Took);
+        assert!(l
+            .said
+            .as_ref()
+            .is_some_and(|s| s.text().ends_with("broken list")));
+
+        l.pictures_read(
+            "/state/pictures/b".into(),
+            Ok(DocImages::empty(Path::new("/r/b.html"))),
+        );
+        assert_eq!(
+            l.paste(Pasted::Picture(png()), now),
+            Pasting::Attach(Attaching {
+                folder: "/state/pictures/b".into(),
+                doc: "/r/b.html".into(),
+                nid: "a".into(),
+                picture: png(),
+                ts: "2026-09-24 19:38".into(),
+            })
+        );
+        assert_eq!(
+            l.note_box().unwrap().draft.text(),
+            "",
+            "nothing in the note"
+        );
         l.said = None;
-        assert!(l.paste(Pasted::Nothing));
-        assert_eq!(l.note_box().unwrap().draft.text(), "");
+        assert_eq!(l.paste(Pasted::Nothing, now), Pasting::Took);
         assert_eq!(l.said, None);
+    }
+
+    /// A picture kept is listed on its element by its label and never by its
+    /// path, counts on the element's button, and follows the element's notes
+    /// in the map with its full path. A map with no pictures is the one it
+    /// always was.
+    #[test]
+    fn a_kept_picture_is_listed_by_label_and_mapped_by_path() {
+        let root = std::env::temp_dir().join(format!(
+            "td-notes-ui-pictures-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let doc = Path::new("/r/b.html");
+        let folder = doc_images::folder(&root, doc);
+        let r = |y| Some(rect_css(0.0, y, 700.0, 100.0));
+        let anchors = vec![anchor("a", r(0.0), false), anchor("b", r(200.0), false)];
+        let mut l = layer("{}", "{}", ConcurSupport::Supported);
+        let before = l.map(&anchors).expect("a map");
+        l.pictures_read(folder.clone(), doc_images::read(&folder, doc));
+        assert_eq!(
+            l.map(&anchors).expect("a map"),
+            before,
+            "no pictures, no change"
+        );
+        assert!(l.send(&anchors).is_none(), "nothing to send yet");
+
+        let kept = doc_images::attach(&folder, doc, "b", b"shot", "png", "2026-09-29 11:02")
+            .map(|(list, one)| (list, vec![one]));
+        l.attached(kept);
+        assert_eq!(
+            l.said.as_ref().map(Said::text),
+            Some("attached as [doc-image #1]")
+        );
+        l.open("b".into(), "b title".into());
+        let report = l.report(&anchors);
+        assert_eq!(report["pictures"], 1);
+        assert_eq!(
+            report["pictures_open"],
+            serde_json::json!(["[doc-image #1]"])
+        );
+        let map = l.map(&anchors).expect("a map");
+        let file = folder.join("doc-image-1.png");
+        assert!(map.contains("0 notes on 0 elements · 1 picture."), "{map}");
+        assert!(map.contains(notes::PICTURES_LEGEND), "{map}");
+        assert!(
+            map.contains(&format!(
+                "[b] b title\n  · [doc-image #1] {}\n",
+                file.display()
+            )),
+            "an element with only a picture still gets its line: {map}"
+        );
+        let marks = l.marks(&anchors, &view(), None);
+        assert!(
+            marks
+                .iter()
+                .any(|m| matches!(m, Mark::Button { nid, count: 1, .. } if nid == "b")),
+            "the picture counts on its element's button: {marks:?}"
+        );
+        assert!(l.send(&anchors).is_some(), "a picture is something to send");
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// What is on the clipboard, sorted: text is words; copied files are their
@@ -2131,7 +2583,7 @@ mod tests {
         let picture = Image::from_bytes(ImageFormat::Png, vec![0x89, b'P', b'N', b'G']);
         assert_eq!(
             Pasted::from_clipboard(Some(&ClipboardItem::new_image(&picture))),
-            Pasted::Picture
+            Pasted::Picture(png())
         );
         let files = ClipboardItem {
             entries: vec![ClipboardEntry::ExternalPaths(ExternalPaths(
@@ -2140,7 +2592,21 @@ mod tests {
         };
         assert_eq!(
             Pasted::from_clipboard(Some(&files)),
-            Pasted::Words("/tmp/a.txt '/tmp/Screen shot.png'".into())
+            Pasted::Words("/tmp/a.txt '/tmp/Screen shot.png'".into()),
+            "not every file is a picture: their paths"
+        );
+        let shots = ClipboardItem {
+            entries: vec![ClipboardEntry::ExternalPaths(ExternalPaths(
+                vec!["/tmp/one.PNG".into(), "/tmp/Screen shot.jpeg".into()].into(),
+            ))],
+        };
+        assert_eq!(
+            Pasted::from_clipboard(Some(&shots)),
+            Pasted::Picture(PastedPicture::Files(vec![
+                "/tmp/one.PNG".into(),
+                "/tmp/Screen shot.jpeg".into()
+            ])),
+            "every file a picture: pictures"
         );
         let both = ClipboardItem {
             entries: vec![

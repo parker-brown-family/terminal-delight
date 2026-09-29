@@ -1778,6 +1778,148 @@ fn a_paste_while_writing_a_note_on_the_document_face_lands_in_the_note(cx: &mut 
     );
 }
 
+/// A picture pasted while a note is being written on a Markdown file is
+/// attached to that block: kept as a file in TD's notes folder, listed in the
+/// box as `[doc-image #1]` and never by its path, nothing written into the
+/// note, and the map giving its full path. The same picture pasted again is
+/// the one already there. Everything is kept under the test's own folder.
+#[gpui::test]
+fn a_picture_pasted_into_a_note_is_attached_to_its_block(cx: &mut TestAppContext) {
+    use crate::docview::markdown::{NOTE_GUTTER, PAD};
+    use crate::docview::notes_ui::BUTTON_CSS;
+    let dir = Scratch::new("md-note-picture");
+    let root = dir.join("state");
+    let shot = std::fs::read(dir.fixture(PICTURE, "shot.png")).expect("a picture");
+    let md = dir.join("plan.md");
+    std::fs::write(&md, "A paragraph that takes a note.\n").expect("the document");
+    let md = md.to_str().expect("a UTF-8 temp path").to_string();
+    let mut pane = Pane::running(cx, &format!("printf '%s\\n' 'doc {md}' 'ready'; exec cat"));
+    pane.notes_root(root.clone());
+    pane.wait_for("ready");
+    pane.settle();
+    let at = pane.point_at(&md);
+    pane.click(at, Pane::alt());
+    pane.redraw();
+    let (x, y, w, _) = pane.float_zone(FloatHit::Body).expect("the square's body");
+    pane.hover(point(px(x + 60.), px(y + PAD + 6.)));
+    pane.redraw();
+    pane.click(
+        point(
+            px(x + w - PAD - NOTE_GUTTER / 2.0),
+            px(y + PAD + BUTTON_CSS / 2.0),
+        ),
+        Default::default(),
+    );
+    pane.redraw();
+    let report = pane.doc_notes().expect("notes");
+    assert_eq!(report["pictures"], 0, "read, and none yet: {report}");
+
+    let picture = gpui::Image::from_bytes(gpui::ImageFormat::Png, shot.clone());
+    pane.cx
+        .write_to_clipboard(gpui::ClipboardItem::new_image(&picture));
+    pane.keys("ctrl-v");
+    pane.redraw();
+    let report = pane.doc_notes().expect("notes");
+    assert_eq!(
+        report["pictures_open"],
+        serde_json::json!(["[doc-image #1]"]),
+        "listed on the open block by its label: {report}"
+    );
+    assert_eq!(report["draft_text"], "", "nothing written into the note");
+    assert_eq!(report["said"], "attached as [doc-image #1]");
+    let file = crate::docview::doc_images::folder(&root, std::path::Path::new(&md))
+        .join("doc-image-1.png");
+    assert_eq!(std::fs::read(&file).expect("kept as a file"), shot);
+    let map = report["map"].as_str().expect("a map");
+    assert!(
+        map.contains(&format!(
+            "[L1] A paragraph that takes a note.\n  · [doc-image #1] {}\n",
+            file.display()
+        )),
+        "the map gives the block its picture's full path:\n{map}"
+    );
+    std::fs::read_to_string(&md)
+        .map(|text| {
+            assert_eq!(
+                text, "A paragraph that takes a note.\n",
+                "the file is untouched"
+            )
+        })
+        .expect("the document");
+
+    pane.keys("ctrl-v");
+    pane.redraw();
+    let report = pane.doc_notes().expect("notes");
+    assert_eq!(report["pictures"], 1, "the same picture is one picture");
+    assert_eq!(report["said"], "already attached as [doc-image #1]");
+}
+
+/// On a brief the same: the picture is attached to the element whose note
+/// box is open, listed there and mapped with its full path, and the brief's
+/// own file does not change by a byte. Its notes island is a format its own
+/// notes.js shares, and a picture has no place in it.
+#[gpui::test]
+fn a_picture_pasted_into_a_note_on_a_brief_leaves_the_brief_untouched(cx: &mut TestAppContext) {
+    let (mut pane, dir, brief, png) = pane_showing_a_brief(cx, "brief-picture");
+    let root = dir.join("state");
+    pane.notes_root(root.clone());
+    let before = std::fs::read(&brief).expect("the brief");
+    let at = pane.point_at(&brief);
+    pane.click(at, Pane::alt());
+    pane.redraw();
+    assert_eq!(
+        pane.doc_notes().expect("notes")["pictures"],
+        0,
+        "read, and none yet"
+    );
+    // Well inside the first element, which the engine lays out at 28–548
+    // across and 80–200 down, at any scale the square draws it.
+    let (x, y, _, _) = pane.float_zone(FloatHit::Body).expect("the square's body");
+    let inside = point(px(x + 60.), px(y + 90.));
+    pane.hover(inside);
+    pane.modifiers(Pane::alt());
+    pane.redraw();
+    pane.click(inside, Pane::alt());
+    pane.modifiers(Default::default());
+    pane.redraw();
+    let (nid, title) = BRIEF_ANCHORS[0];
+    assert_eq!(
+        pane.doc_notes().expect("notes")["open"],
+        nid,
+        "Alt+press opens the first element's note box"
+    );
+
+    let shot = std::fs::read(&png).expect("a picture");
+    let picture = gpui::Image::from_bytes(gpui::ImageFormat::Png, shot.clone());
+    pane.cx
+        .write_to_clipboard(gpui::ClipboardItem::new_image(&picture));
+    pane.keys("ctrl-v");
+    pane.redraw();
+    let report = pane.doc_notes().expect("notes");
+    assert_eq!(
+        report["pictures_open"],
+        serde_json::json!(["[doc-image #1]"]),
+        "{report}"
+    );
+    assert_eq!(report["unsaved"], 0, "a picture is no edit to save");
+    let file = crate::docview::doc_images::folder(&root, std::path::Path::new(&brief))
+        .join("doc-image-1.png");
+    assert_eq!(std::fs::read(&file).expect("kept as a file"), shot);
+    let map = report["map"].as_str().expect("a map");
+    assert!(
+        map.contains(&format!(
+            "[{nid}] {title}\n  · [doc-image #1] {}\n",
+            file.display()
+        )),
+        "{map}"
+    );
+    assert_eq!(
+        std::fs::read(&brief).expect("the brief"),
+        before,
+        "the brief is byte for byte what it was"
+    );
+}
+
 /// A program draws a picture with the Kitty graphics protocol — here two
 /// pixels, red and green, over four cells by two — and the pane builds one
 /// texture for it and lays it over the grid. Then the pane's tab is hidden,

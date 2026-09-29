@@ -427,6 +427,14 @@ impl Pane {
         self.cx.read_from_clipboard().and_then(|c| c.text())
     }
 
+    /// Keep every note and picture under `dir` from now on, never in the
+    /// state folder of whoever runs the tests. Before a document opens: it
+    /// reads its pictures from wherever this says then.
+    pub(super) fn notes_root(&mut self, dir: PathBuf) {
+        self.cx
+            .update(|_, cx| crate::docview::set_notes_root(cx, dir));
+    }
+
     /// Answer every "can HTML be drawn?" with `answer` from now on.
     pub(super) fn html_engine(&mut self, answer: Result<Arc<dyn PageEngine>, Unavailable>) {
         self.cx

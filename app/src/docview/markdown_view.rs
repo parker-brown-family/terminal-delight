@@ -143,9 +143,10 @@ impl MarkdownDoc {
         let edits = layer.begin_save();
         let made = edits.len();
         let known: Vec<String> = self.anchors.iter().map(|a| a.nid.clone()).collect();
+        let root = super::notes_root(cx);
         let write = cx.background_spawn(async move {
             let known: Vec<&str> = known.iter().map(String::as_str).collect();
-            md_notes::keep(&md_notes::store_for(&doc), &doc, &edits, &known)
+            md_notes::keep(&md_notes::store_in(&root, &doc), &doc, &edits, &known)
         });
         self.keeping = cx.spawn(async move |this, cx| {
             let done = write.await;
@@ -201,6 +202,9 @@ impl MarkdownDoc {
                 map: sending.map,
                 unsaved: sending.unsaved,
             }),
+            LayerPress::Unattach(u) => {
+                super::unattach_picture::<MarkdownDoc>(u, cx, |m| m.notes.as_mut());
+            }
             _ => {}
         }
         self.keep(cx);
@@ -439,10 +443,21 @@ impl Backend for MarkdownDoc {
         self.notes.as_ref().is_some_and(NotesLayer::has_caret)
     }
 
-    /// A paste into the note being written. The words wait in the draft like
-    /// typed ones: a Markdown note is kept when it is added, not before.
+    /// A paste into the note being written. Words wait in the draft like
+    /// typed ones: a Markdown note is kept when it is added, not before. A
+    /// picture is kept at once, beside the file's notes.
     fn paste(&mut self, pasted: notes_ui::Pasted, cx: &mut Context<DocumentView>) -> bool {
-        let took = self.notes.as_mut().is_some_and(|l| l.paste(pasted));
+        let Some(layer) = self.notes.as_mut() else {
+            return false;
+        };
+        let took = match layer.paste(pasted, SystemTime::now()) {
+            notes_ui::Pasting::Pass => false,
+            notes_ui::Pasting::Took => true,
+            notes_ui::Pasting::Attach(a) => {
+                super::attach_picture::<MarkdownDoc>(a, cx, |m| m.notes.as_mut());
+                true
+            }
+        };
         if took {
             cx.notify();
         }
@@ -563,6 +578,7 @@ fn embedded<E: std::fmt::Display>(
 /// keeps for it with it.
 fn read_markdown(md: &mut MarkdownDoc, path: &Path, cx: &mut Context<DocumentView>) {
     let path = path.to_path_buf();
+    let root = super::notes_root(cx);
     let read = cx.background_executor().spawn(async move {
         // Stamped BEFORE reading: a write landing in between leaves a
         // stamp older than the text, and the next tick reads again, which
@@ -571,7 +587,7 @@ fn read_markdown(md: &mut MarkdownDoc, path: &Path, cx: &mut Context<DocumentVie
         let parsed = std::fs::read(&path)
             .map(|bytes| markdown::parse(&String::from_utf8_lossy(&bytes), path.parent()))
             .map_err(|e| format!("Could not read {}: {e}", path.display()));
-        let kept = md_notes::read(&md_notes::store_for(&path));
+        let kept = md_notes::read(&md_notes::store_in(&root, &path));
         (stamp, parsed, kept)
     });
     md.reading = cx.spawn(async move |this, cx| {
@@ -596,6 +612,10 @@ fn markdown_read(
     match md.notes.as_mut() {
         Some(layer) => layer.rekept(kept),
         None => md.notes = Some(NotesLayer::for_markdown(&path, kept)),
+    }
+    // The pictures pasted onto its blocks are TD's, read once.
+    if !md.notes.as_ref().is_some_and(NotesLayer::pictures_known) {
+        super::read_pictures::<MarkdownDoc>(path.clone(), cx, |m| m.notes.as_mut());
     }
     match parsed {
         Ok(doc) => {
