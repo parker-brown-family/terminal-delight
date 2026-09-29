@@ -245,6 +245,47 @@ pub fn read_from(face: crate::workbench::Face, square_up: bool) -> ReadFrom {
     }
 }
 
+/// What the FOCUS reader says it is reading, on the chip beside its title,
+/// when it reads a pane as text.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ReadChip {
+    /// An agent's conversation, from its transcript.
+    Transcript,
+    /// An agent's screen: its transcript is not bound for certain, and the
+    /// reader never guesses whose conversation to show.
+    Screen,
+    /// A shell's history.
+    Scrollback,
+    /// A program on the alternate screen, which keeps no history: vim, htop.
+    AltScreen,
+}
+
+/// The chip for a pane read as text. An agent reads its conversation when the
+/// sweep bound its transcript for certain, and says it is reading the screen
+/// when it did not; anything else is a program on the alternate screen or a
+/// shell's scrollback. The approved design names the source on the reader's
+/// face (figure 06 of `reports/2026-09-29-alt-r-reader.html`), so a fallback
+/// never passes for the real thing.
+pub fn read_chip(agent: bool, bound: bool, alt_screen: bool) -> ReadChip {
+    match (agent, bound, alt_screen) {
+        (true, true, _) => ReadChip::Transcript,
+        (true, false, _) => ReadChip::Screen,
+        (false, _, true) => ReadChip::AltScreen,
+        (false, _, false) => ReadChip::Scrollback,
+    }
+}
+
+impl ReadChip {
+    pub fn label(self, s: &crate::lang::Strings) -> &'static str {
+        match self {
+            ReadChip::Transcript => s.reader_transcript,
+            ReadChip::Screen => s.reader_screen,
+            ReadChip::Scrollback => s.reader_scrollback,
+            ReadChip::AltScreen => s.reader_alt_screen,
+        }
+    }
+}
+
 /// Who asked for a document to open beside the pane. It decides one thing:
 /// what happens when the tab already holds four panes. A floating square
 /// asking to become a split stays the square it is and says why; anything
@@ -1360,6 +1401,25 @@ mod tests {
             link_menu(false, false),
             vec![LinkItem::OpenWithDesktop, LinkItem::CopyLink]
         );
+    }
+
+    /// The chip names the source, over every combination: an agent's
+    /// transcript only when it is bound for certain, its screen said to be a
+    /// screen otherwise, and a shell's history or the alternate screen for
+    /// anything that is not an agent.
+    #[test]
+    fn the_readers_chip_names_its_source() {
+        for alt in [false, true] {
+            assert_eq!(read_chip(true, true, alt), ReadChip::Transcript);
+            assert_eq!(read_chip(true, false, alt), ReadChip::Screen);
+        }
+        for bound in [false, true] {
+            assert_eq!(read_chip(false, bound, true), ReadChip::AltScreen);
+            assert_eq!(read_chip(false, bound, false), ReadChip::Scrollback);
+        }
+        let en = crate::lang::Lang::En.strings();
+        assert_eq!(ReadChip::Transcript.label(en), "TRANSCRIPT · live");
+        assert_eq!(ReadChip::Screen.label(en), "SCREEN · transcript not bound");
     }
 
     /// Alt+R reads what the pane shows, over every face with a square up or

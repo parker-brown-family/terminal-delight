@@ -76,6 +76,23 @@ impl Emphasis {
     fn any(&self) -> bool {
         self.bold || self.italic || self.strike || self.code || self.link
     }
+
+    // What the run is, for a surface that draws Markdown its own way — the
+    // FOCUS reader lays a transcript's replies out as text rows (`transcript`),
+    // and reads them through this parser so a reply reads as the same file
+    // would in a document pane.
+    pub(crate) fn is_bold(&self) -> bool {
+        self.bold
+    }
+    pub(crate) fn is_italic(&self) -> bool {
+        self.italic
+    }
+    pub(crate) fn is_code(&self) -> bool {
+        self.code
+    }
+    pub(crate) fn is_link(&self) -> bool {
+        self.link
+    }
 }
 
 /// A run of styled inline text: a byte range and what it is.
@@ -87,6 +104,18 @@ pub struct Inline {
     /// The byte range of each link's text and where it points, outermost
     /// first, so a linked image goes where the link goes.
     links: Vec<(Range<usize>, String)>,
+}
+
+impl Inline {
+    /// The text, for a surface that draws it its own way (see `Emphasis`).
+    pub(crate) fn text(&self) -> &str {
+        &self.text
+    }
+
+    /// What each run of the text is.
+    pub(crate) fn runs(&self) -> &Runs {
+        &self.runs
+    }
 }
 
 pub enum Block {

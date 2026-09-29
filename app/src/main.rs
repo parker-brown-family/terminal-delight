@@ -85,6 +85,7 @@ mod term;
 mod testsync;
 mod theme;
 mod toolprop;
+mod transcript;
 mod tree;
 mod usage;
 mod vitals;
@@ -4116,13 +4117,49 @@ fn filter_logo_two_field(candidates: &[LogoCandidate], name: &str, loc: &str) ->
     scored.into_iter().map(|(_, i)| i).collect()
 }
 
+/// The document the FOCUS reader lays out when it reads a pane as text: the
+/// pane's terminal, or its agent's conversation. Part of the layout memo's key,
+/// because the two count their revisions apart and one must never be served
+/// for the other.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum FocusSource {
+    Grid,
+    Transcript,
+}
+
+/// Memoised reader layout: ((whose document, its revision, fit_cols), the
+/// laid-out rows).
+type FocusLayoutMemo = Option<((FocusSource, u64, usize), Arc<Vec<doc::VisualRow>>)>;
+
+/// The conversation the FOCUS reader reads for an agent pane whose transcript
+/// the tool sweep bound for certain (`toolprop::ToolProbe::path`). Read and
+/// folded off the main thread by `_read`, and handed across already drawn:
+/// the first read of a long session is tens of megabytes of JSON.
+struct ReaderTalk {
+    path: std::path::PathBuf,
+    /// The last drawing. `None` until the first read lands; the reader shows
+    /// the screen until then.
+    drawn: Option<TalkDrawn>,
+    /// The tool calls shown open, by entry, and a count that moves whenever the
+    /// set does, which is what makes the reading task draw again.
+    open: Arc<Mutex<(std::collections::HashSet<usize>, u64)>>,
+    _read: gpui::Task<()>,
+}
+
+/// A conversation drawn for the reader: a count that moves with every drawing
+/// (the layout memo's revision), the document, and the tool call each of its
+/// lines opens.
+#[derive(Clone)]
+struct TalkDrawn {
+    rev: u64,
+    doc: Arc<doc::Document>,
+    opens: Arc<Vec<Option<usize>>>,
+}
+
 /// The FOCUS reader's wrapped layout, captured each render so the mouse handlers
 /// can map a screen click back to a source cell (for selection + copy) through the
 /// exact frame the user is looking at. All metrics are logical px, matching the
 /// captured `focus_body_bounds`.
-/// Memoised reader layout: ((document revision, fit_cols), the laid-out rows).
-type FocusLayoutMemo = Option<((u64, usize), Arc<Vec<doc::VisualRow>>)>;
-
 struct FocusMap {
     /// The full laid-out rows, shared with the render's layout cache — with the
     /// whole scrollback in the document this can be tens of thousands of rows,
@@ -4144,6 +4181,9 @@ struct FocusMap {
     /// Whether the reader is curved this frame (so the hit-test applies the warp).
     inherit: bool,
 }
+
+/// The padding above and below the rows of the FOCUS reader's foot, in logical px.
+const READER_FOOT_PAD: f32 = 6.0;
 
 /// The FOCUS reader's glass and the text area inside it, in logical px, for a
 /// window of a given size. Only the window decides it; the pane being read never
@@ -4703,6 +4743,10 @@ struct Workspace {
     /// do the moves until the button comes up: a picture being panned, a
     /// video's track being scrubbed.
     focus_doc_holding: bool,
+    /// The conversation the reader reads, while it reads an agent pane whose
+    /// transcript is bound for certain. Dropped with the reader, which stops
+    /// its reading.
+    focus_talk: Option<ReaderTalk>,
     /// Global, persisted: when on, the FOCUS reader inherits the read pane's CRT
     /// look (barrel curvature + screen glare) instead of the flat default. One
     /// toggle in the modal header; applies to every reader open from then on.
@@ -5968,6 +6012,7 @@ impl Workspace {
             focus_sel: None,
             focus_sel_drag: false,
             focus_doc_holding: false,
+            focus_talk: None,
             focus_inherit_theme: saved.focus_inherit,
             anchor_top: saved.anchor_top,
             agent_tint: saved.agent_tint,
@@ -13469,6 +13514,9 @@ impl Workspace {
         self.focus_sel = None;
         self.focus_sel_drag = false;
         self.focus_doc_holding = false;
+        // Another pane's conversation is not this one's; the render starts
+        // reading this pane's, if it has one bound.
+        self.focus_talk = None;
         // Defer the focus: this runs from the 👓 header button's mouse-down
         // listener, so a synchronous `window.focus` gets grabbed straight back by
         // the root container's tracked focus handle (the same race new_tab/split
@@ -13498,7 +13546,102 @@ impl Workspace {
         *self.focus_map.lock().unwrap() = None;
         // free the (potentially 10k-row) memoised layout with the modal
         self.focus_layout = None;
+        // and stop reading the conversation: dropping it ends its task
+        self.focus_talk = None;
         cx.notify();
+    }
+
+    /// Start reading the conversation at `path` for the FOCUS reader: each half
+    /// second, off the main thread, the transcript's new lines are folded in and
+    /// — when that changed anything, or a tool call was opened or closed — the
+    /// conversation is drawn again and handed across. Dropping the returned
+    /// [`ReaderTalk`] stops it.
+    fn read_talk(
+        path: std::path::PathBuf,
+        ink: transcript::Ink,
+        cx: &mut Context<Self>,
+    ) -> ReaderTalk {
+        let open: Arc<Mutex<(std::collections::HashSet<usize>, u64)>> = Arc::default();
+        let you = lang::current().strings().reader_you;
+        let shared = open.clone();
+        let file = path.clone();
+        let read = cx.spawn(async move |this, cx| {
+            let mine = file.clone();
+            let mut tail = transcript::Tail::new(file);
+            let mut talk = transcript::Conversation::new();
+            let mut drawn_for: Option<(u64, u64)> = None;
+            let mut drawings = 0u64;
+            loop {
+                let (open, ink) = (shared.clone(), ink.clone());
+                let (t, c, drawing) = cx
+                    .background_executor()
+                    .spawn(async move {
+                        let mut restarted = false;
+                        if let Ok(new) = tail.poll() {
+                            if new.reset {
+                                // Another conversation: the calls opened in the
+                                // last one are not this one's, and its count of
+                                // changes starts again, so the last drawing's key
+                                // says nothing about it.
+                                talk = transcript::Conversation::new();
+                                open.lock().unwrap_or_else(|e| e.into_inner()).0.clear();
+                                restarted = true;
+                            }
+                            for line in &new.lines {
+                                talk.fold(line);
+                            }
+                        }
+                        let (set, turned) = {
+                            let o = open.lock().unwrap_or_else(|e| e.into_inner());
+                            (o.0.clone(), o.1)
+                        };
+                        let key = (talk.rev(), turned);
+                        let drawing = (restarted || Some(key) != drawn_for)
+                            .then(|| (key, transcript::draw(&talk, &ink, you, "CLAUDE", &set)));
+                        (tail, talk, drawing)
+                    })
+                    .await;
+                tail = t;
+                talk = c;
+                if let Some((key, d)) = drawing {
+                    drawn_for = Some(key);
+                    drawings += 1;
+                    let drawn = TalkDrawn {
+                        rev: drawings,
+                        doc: Arc::new(d.doc),
+                        opens: Arc::new(d.opens),
+                    };
+                    // Only into the conversation this task reads: a reader that
+                    // moved on to another pane has another.
+                    let landed = this.update(cx, |ws: &mut Workspace, cx| {
+                        if let Some(talk) = ws.focus_talk.as_mut().filter(|t| t.path == mine) {
+                            talk.drawn = Some(drawn);
+                            cx.notify();
+                        }
+                    });
+                    if landed.is_err() {
+                        return;
+                    }
+                }
+                // Half a second between reads of the file, and a twentieth
+                // between looks at the open calls, so a click opens one at once.
+                let turned = shared.lock().unwrap_or_else(|e| e.into_inner()).1;
+                for _ in 0..10 {
+                    cx.background_executor()
+                        .timer(Duration::from_millis(50))
+                        .await;
+                    if shared.lock().unwrap_or_else(|e| e.into_inner()).1 != turned {
+                        break;
+                    }
+                }
+            }
+        });
+        ReaderTalk {
+            path,
+            drawn: None,
+            open,
+            _read: read,
+        }
     }
 
     /// Escape, seen before any pane sees it: close the FOCUS reader here,
@@ -13788,7 +13931,23 @@ impl Workspace {
         probes: Vec<(EntityId, toolprop::ToolProbe, bool)>,
         cx: &mut Context<Self>,
     ) {
+        // The reader binds its conversation off this sweep, so a binding that
+        // appears, moves or goes under an open reader redraws it now, rather
+        // than on whatever next happens to redraw the window.
+        let read = self
+            .focus_read
+            .as_ref()
+            .and_then(|w| w.upgrade())
+            .map(|p| p.entity_id());
+        let bound = |ws: &Self| {
+            read.and_then(|id| ws.tool_probe.get(&id))
+                .and_then(|p| p.path().map(std::path::Path::to_path_buf))
+        };
+        let was = bound(self);
         self.tool_probe = probes.iter().map(|(id, pr, _)| (*id, pr.clone())).collect();
+        if bound(self) != was {
+            cx.notify();
+        }
         let follows = toolprop::follows_tool();
         for (id, probe, working) in probes {
             let want = (follows && working)
@@ -16025,6 +16184,65 @@ impl Workspace {
             .bg(hsla(0., 0., 0., 0.6 * ramp))
     }
 
+    /// The chip beside the reader's title that names what it reads (figure 06
+    /// of `reports/2026-09-29-alt-r-reader.html`): an agent's conversation in
+    /// the accent, and anything the reader falls back on quieter, so a screen
+    /// never passes for a transcript.
+    fn reader_chip(chip: docopen::ReadChip, accent: Hsla, text: Hsla) -> gpui::Div {
+        let ink = if chip == docopen::ReadChip::Transcript {
+            accent
+        } else {
+            text.alpha(0.6)
+        };
+        div()
+            .flex_none()
+            .px(px(8.))
+            .rounded(px(9.))
+            .border_1()
+            .border_color(ink.alpha(0.55))
+            .text_size(px(10.5))
+            .text_color(ink)
+            .child(chip.label(lang::current().strings()))
+    }
+
+    /// The reader's foot: the pane's own input rows, drawn as the pane draws
+    /// them at the reader's letter size — one row each, never wrapped, cut at
+    /// the glass's edge — on a faint strip under a thin accent rule (figure 04
+    /// of `reports/2026-09-29-alt-r-reader.html`, pin 6). `left` lines its rows
+    /// up with the conversation's.
+    #[allow(clippy::too_many_arguments)]
+    fn reader_foot(
+        rows: &[doc::DocLine],
+        left: f32,
+        row_h: f32,
+        size: f32,
+        family: String,
+        text: Hsla,
+        accent: Hsla,
+    ) -> gpui::Div {
+        div()
+            .flex_none()
+            .flex()
+            .flex_col()
+            .overflow_hidden()
+            .py(px(READER_FOOT_PAD))
+            .px(px(left))
+            .bg(text.alpha(0.04))
+            .border_t_1()
+            .border_color(accent.alpha(0.35))
+            .text_size(px(size))
+            .text_color(text)
+            .font_family(family)
+            .children(rows.iter().map(move |r| {
+                let row = div().h(px(row_h)).whitespace_nowrap().overflow_hidden();
+                if r.text.is_empty() {
+                    row
+                } else {
+                    row.child(gpui::StyledText::new(r.text.clone()).with_runs(r.runs.clone()))
+                }
+            }))
+    }
+
     /// The document the pane being read has lent the reader, if it has one.
     fn focus_lent(&self, cx: &App) -> Option<Entity<docview::DocumentView>> {
         self.focus_read.as_ref()?.upgrade()?.read(cx).lent_view()
@@ -16290,10 +16508,36 @@ impl Workspace {
         }
         match self.focus_sel {
             Some((a, b)) if a != b => self.copy_focus_selection(cx),
-            _ => self.focus_sel = None,
+            // A click, not a drag: on a tool call's row it opens the call.
+            Some((a, _)) => {
+                self.focus_sel = None;
+                self.toggle_tool_at(a.0);
+            }
+            None => {}
         }
         cx.notify();
         true
+    }
+
+    /// A click on a tool call's row in the reader's conversation shows what the
+    /// call printed under it, or puts it away — the approved design's one line
+    /// per call, with its output behind a click. `doc_line` is a line of the
+    /// document the reader shows. Answers whether it was a call's row; the
+    /// reading task draws the change within a twentieth of a second.
+    fn toggle_tool_at(&mut self, doc_line: usize) -> bool {
+        let Some((talk, drawn)) = self
+            .focus_talk
+            .as_ref()
+            .and_then(|t| Some((t, t.drawn.as_ref()?)))
+        else {
+            return false;
+        };
+        let mut open = talk.open.lock().unwrap_or_else(|e| e.into_inner());
+        let turned = transcript::toggle(&mut open.0, &drawn.opens, doc_line);
+        if turned {
+            open.1 += 1;
+        }
+        turned
     }
 
     /// Set the FOCUS text-size multiplier from a 0..1 track fraction. Live only;
@@ -30877,6 +31121,33 @@ impl Render for Workspace {
             Some(self.focus_document_overlay(pane, view, focus_ramp, th.grade.phosphor, cx))
         } else if let Some(pane) = focus_pane {
             let snap = pane.update(cx, |v, cx| v.mirror_snapshot(cx));
+            // An agent pane whose transcript the sweep bound for certain reads
+            // its conversation, where the reader can fold that agent's records
+            // (Claude Code's: `PaneMode::reads_transcript`). A binding that
+            // appears, moves or goes while the reader is up starts, restarts or
+            // stops the reading; until the first read lands, and in crawl, the
+            // reader reads the screen.
+            let bound = (snap.talk && !snap.crawl)
+                .then(|| {
+                    self.tool_probe
+                        .get(&pane.entity_id())
+                        .and_then(|p| p.path().map(std::path::Path::to_path_buf))
+                })
+                .flatten();
+            match bound {
+                Some(path) if self.focus_talk.as_ref().is_some_and(|t| t.path == path) => {}
+                Some(path) => {
+                    eprintln!(
+                        "terminal-delight: the reader reads the conversation in {}",
+                        path.display()
+                    );
+                    let ink = pane.read(cx).reader_ink(cx);
+                    self.focus_talk = Some(Self::read_talk(path, ink, cx));
+                }
+                None => self.focus_talk = None,
+            }
+            let chip = docopen::read_chip(snap.agent, self.focus_talk.is_some(), snap.alt_screen);
+            let talk = self.focus_talk.as_ref().and_then(|t| t.drawn.clone());
             let (ww, wh) = self
                 .last_win
                 .map(|(_, _, w, h)| (w, h))
@@ -30911,6 +31182,21 @@ impl Render for Workspace {
             // height) must count in the same rows or a long read drifts.
             let cell_h = crate::pane::laid_out_length(snap.cell_h * ms, window.scale_factor());
             let glyph_w = (snap.cell_w * ms).max(0.5);
+            // Under a conversation, the pane's own input rows, live: a transcript
+            // holds a reply only once each block of it is finished, and never
+            // what is being typed, so the foot carries the turn in flight. The
+            // reading area gives the foot its height.
+            let foot = if talk.is_some() {
+                pane.read(cx).input_rows(cx)
+            } else {
+                Vec::new()
+            };
+            let foot_h = if foot.is_empty() {
+                0.0
+            } else {
+                foot.len() as f32 * cell_h + 2.0 * READER_FOOT_PAD
+            };
+            let avail_h = (avail_h - foot_h).max(cell_h);
             // "Inherit theme": bend + glare the panel like the pane it mirrors.
             let inherit = self.focus_inherit_theme;
             let (k1, k2, glare) = (snap.k1, snap.k2, snap.glare);
@@ -30944,14 +31230,21 @@ impl Render for Workspace {
             // rows outright. With the whole scrollback in the document this is
             // the difference between an Arc clone and re-wrapping ~10k logical
             // lines on every frame the pointer twitches.
+            //
+            // An agent's conversation is a document too, drawn from its
+            // transcript; it counts its own revisions, so the key says whose.
+            let (reader_doc, source, rev) = match &talk {
+                Some(d) => (d.doc.clone(), FocusSource::Transcript, d.rev),
+                None => (snap.doc.clone(), FocusSource::Grid, snap.doc_rev),
+            };
             let vrows: Arc<Vec<doc::VisualRow>> = if crawl {
                 Arc::new(Vec::new())
             } else {
-                let key = (snap.doc_rev, fit_cols);
+                let key = (source, rev, fit_cols);
                 match &self.focus_layout {
                     Some((k, rows)) if *k == key => rows.clone(),
                     _ => {
-                        let rows = Arc::new(doc::layout(&snap.doc, fit_cols));
+                        let rows = Arc::new(doc::layout(&reader_doc, fit_cols));
                         self.focus_layout = Some((key, rows.clone()));
                         rows
                     }
@@ -31008,7 +31301,7 @@ impl Render for Workspace {
                 doc: if crawl {
                     Arc::new(doc::Document::default())
                 } else {
-                    snap.doc.clone()
+                    reader_doc.clone()
                 },
                 line_h: cell_h,
                 glyph_w,
@@ -31115,13 +31408,15 @@ impl Render for Workspace {
                 .text_size(px(12.))
                 .text_color(snap.accent)
                 .child(
-                    // left cluster: title + the persistent inherit-theme toggle
+                    // left cluster: title, what the reader is reading, and the
+                    // persistent inherit-theme toggle
                     div()
                         .flex()
                         .flex_row()
                         .items_center()
                         .gap_3()
                         .child(format!("👓  FOCUS · {}", snap.title))
+                        .child(Self::reader_chip(chip, snap.accent, snap.text))
                         .child(self.focus_inherit_toggle(snap.accent, snap.text, cx)),
                 )
                 // text-size slider for the pane under scrutiny (live, per-open)
@@ -31184,6 +31479,17 @@ impl Render for Workspace {
                                 ),
                             ),
                     )
+                    .children((!foot.is_empty()).then(|| {
+                        Self::reader_foot(
+                            &foot,
+                            content_left,
+                            cell_h,
+                            base_size,
+                            snap.font_family.clone(),
+                            snap.text,
+                            snap.accent,
+                        )
+                    }))
                     // The frost around the glass, and — with "Inherit theme" on — the
                     // same rect registered as the lone warp tube so the reader bends
                     // and glares like its pane. crawl stays identity: the body

@@ -67,8 +67,45 @@ was too high: collapse Gates 2–4 into one plan and say so.
       installed build, `^[x` in a never-read control pane and on this branch); and
       a second Markdown re-layout before the first settled landed on another block
       (a unit test failed first).
-- [ ] Slice 3 — an agent pane reads its conversation from its transcript (Claude),
-      the labelled SCREEN fallback when the binding is not certain, the input strip
+- [x] Slice 3 — an agent pane reads its conversation from its transcript (Claude),
+      the labelled SCREEN fallback when the binding is not certain, the input strip.
+      **Done 2026-09-29** on `feat/alt-r-reader-transcript`, off main at `564fed9`
+      after slice 2 merged (#898). Photographed in the rig with a stand-in agent
+      resuming the first brief's own conversation (`evidence/slice3-*`): the
+      conversation under TRANSCRIPT · live, the agent's status line and input box
+      live at the foot; a turn appended while the reader was open, on the glass two
+      seconds later; the same agent with no transcript, read from its screen under
+      "SCREEN · transcript not bound"; and a shell under SCROLLBACK. The stand-in
+      binds by the same rung a resumed agent does — its own `--resume` — against a
+      copy under a scratch HOME, so no real conversation or credential was in reach
+      (`scripts/reader-check.sh`, `AGENT=`, `LATER=`, `UNBOUND=1`). **Departures from
+      the plan:** no `TranscriptSource` and no comrak — `transcript::draw` builds a
+      `doc::Document` through the document view's own Markdown parser, so the
+      reader's layout, selection, paging and follow-bottom are reused as they are; a
+      tool's long output is kept to 400 lines or 64 KiB with a count of the rest,
+      not followed by link to the file Claude Code spilled it to; and a path under
+      the agent's directory is shown from there, as the brief drew it. One thing
+      the plan did not foresee: the tool sweep that binds the transcript never
+      redrew the workspace, so a binding arriving under an open reader would have
+      waited for some unrelated repaint — it now redraws when the read pane's
+      binding changes.
+      **What the real transcripts changed.** The first cut was written against the
+      fixture and one transcript. The rig pointed at a real 52 MB transcript (it
+      loaded and drew within four seconds of the window opening), and a survey of
+      this machine's last 400, found four faults: 392 task notifications and 171
+      command outputs are filed as ordinary user records and would have been drawn
+      under YOU; 115 prompts queued while the agent was busy arrive as blocks and
+      were dropped; a rule skipping tag-wrapped queued prompts only ever caught
+      Parker's own pasted text — the mutation pass found it, since breaking it
+      failed nothing; and long commands wrapped a call onto several rows. Each is
+      fixed and tested with the shapes found, a slash command now reads as typed
+      (`/effort max`), and a row is cut to fit 175 columns with the whole under the
+      click. **A Codex pane keeps its screen**: the sweep binds Codex rollouts too,
+      and the reader would have read one as an empty conversation
+      (`PaneMode::reads_transcript`). **Who gets TRANSCRIPT, measured:**
+      `terminal-delight bindings` on this machine the same day bound 22 of 24 live
+      Claude agents by their own declaration; the other two would read their
+      screens, labelled.
 - [ ] Slice 4 — Codex transcripts (the floating square moved into slice 2)
 
 ## The five attempts before this one

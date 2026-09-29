@@ -80,6 +80,12 @@ Branch `feat/alt-r-reader` in `~/Work/td-alt-r-reader`, off main at `5ba60ed`.
   "transcript not bound"), SCROLLBACK, and ALTERNATE SCREEN for vim and friends.
 - **Tests:** fold fixtures cut from real transcripts; a tail that reads only new
   bytes across a partial line; a table laid out as aligned text.
+- **As built** (2026-09-29): no `TranscriptSource` and no comrak — `transcript::draw`
+  builds a `doc::Document` through the document view's own Markdown parser, and
+  the reader lays it out like any other; spilled output is kept to a page with a
+  count rather than a link; paths read from the agent's directory; the tool sweep
+  redraws an open reader when the read pane's binding changes. What and why:
+  `00-status.md`, slice 3.
 
 ## Slice 4 — the floating square, and Codex
 
