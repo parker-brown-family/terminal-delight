@@ -13562,6 +13562,7 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> ReaderTalk {
         let open: Arc<Mutex<(std::collections::HashSet<usize>, u64)>> = Arc::default();
+        let you = lang::current().strings().reader_you;
         let shared = open.clone();
         let file = path.clone();
         let read = cx.spawn(async move |this, cx| {
@@ -13592,7 +13593,7 @@ impl Workspace {
                         };
                         let key = (talk.rev(), turned);
                         let drawing = (Some(key) != drawn_for)
-                            .then(|| (key, transcript::draw(&talk, &ink, "CLAUDE", &set)));
+                            .then(|| (key, transcript::draw(&talk, &ink, you, "CLAUDE", &set)));
                         (tail, talk, drawing)
                     })
                     .await;
@@ -31117,10 +31118,12 @@ impl Render for Workspace {
         } else if let Some(pane) = focus_pane {
             let snap = pane.update(cx, |v, cx| v.mirror_snapshot(cx));
             // An agent pane whose transcript the sweep bound for certain reads
-            // its conversation. A binding that appears, moves or goes while the
-            // reader is up starts, restarts or stops the reading; until the first
-            // read lands, and in crawl, the reader reads the screen.
-            let bound = (snap.agent && !snap.crawl)
+            // its conversation, where the reader can fold that agent's records
+            // (Claude Code's: `PaneMode::reads_transcript`). A binding that
+            // appears, moves or goes while the reader is up starts, restarts or
+            // stops the reading; until the first read lands, and in crawl, the
+            // reader reads the screen.
+            let bound = (snap.talk && !snap.crawl)
                 .then(|| {
                     self.tool_probe
                         .get(&pane.entity_id())

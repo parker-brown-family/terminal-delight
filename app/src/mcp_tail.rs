@@ -149,6 +149,13 @@ fn parse_line(line: &str) -> Vec<ToolEvent> {
 /// key (the command run, the file touched, the pattern searched), else the
 /// compact JSON. Always whitespace-collapsed and length-bounded.
 pub(crate) fn summarize(input: &Value) -> String {
+    clip(&subject(input))
+}
+
+/// What a tool's input names, whole: the human-meaningful key [`summarize`]
+/// prefers, else the compact JSON — as written, newlines and all, for a reader
+/// that shows a call in full.
+pub(crate) fn subject(input: &Value) -> String {
     match input {
         Value::Object(m) => {
             for k in [
@@ -161,23 +168,22 @@ pub(crate) fn summarize(input: &Value) -> String {
                 "description",
             ] {
                 if let Some(s) = m.get(k).and_then(Value::as_str) {
-                    return clip(s);
+                    return s.to_string();
                 }
             }
             // Codex `shell` passes command as an argv array.
             if let Some(arr) = m.get("command").and_then(Value::as_array) {
-                let joined = arr
+                return arr
                     .iter()
                     .filter_map(Value::as_str)
                     .collect::<Vec<_>>()
                     .join(" ");
-                return clip(&joined);
             }
-            clip(&serde_json::to_string(input).unwrap_or_default())
+            serde_json::to_string(input).unwrap_or_default()
         }
-        Value::String(s) => clip(s),
+        Value::String(s) => s.clone(),
         Value::Null => String::new(),
-        other => clip(&other.to_string()),
+        other => other.to_string(),
     }
 }
 

@@ -135,7 +135,8 @@ pub enum Entry {
 pub struct ToolCall {
     /// The tool, with an MCP server's namespace taken off: `ctx_read`.
     pub name: String,
-    /// What it was pointed at: the command, the file, the pattern.
+    /// What it was pointed at, whole: the command as it was written, the file,
+    /// the pattern. Its row draws as much as fits on one line.
     pub target: String,
     /// What came back. `None` while the call is still running.
     pub result: Option<ToolOut>,
@@ -216,37 +217,18 @@ impl Conversation {
         if v.get("isCompactSummary").and_then(Value::as_bool) == Some(true) {
             return;
         }
-        match v.pointer("/message/content") {
-            Some(Value::String(s)) if !meta => self.prompt(s),
-            Some(Value::Array(blocks)) => {
-                let mut typed = String::new();
-                let mut pictures = 0;
-                for b in blocks {
-                    match b.get("type").and_then(Value::as_str) {
-                        Some("tool_result") => self.result(b),
-                        Some("text") if !meta => {
-                            if let Some(t) = b.get("text").and_then(Value::as_str) {
-                                if !typed.is_empty() {
-                                    typed.push('\n');
-                                }
-                                typed.push_str(t);
-                            }
-                        }
-                        Some("image") if !meta => pictures += 1,
-                        _ => {}
-                    }
-                }
-                for _ in 0..pictures {
-                    if !typed.is_empty() {
-                        typed.push('\n');
-                    }
-                    typed.push_str("[image]");
-                }
-                if !typed.trim().is_empty() {
-                    self.prompt(&typed);
+        let Some(content) = v.pointer("/message/content") else {
+            return;
+        };
+        if let Value::Array(blocks) = content {
+            for b in blocks {
+                if b.get("type").and_then(Value::as_str) == Some("tool_result") {
+                    self.result(b);
                 }
             }
-            _ => {}
+        }
+        if let Some(text) = typed(content).filter(|_| !meta) {
+            self.prompt(&text);
         }
     }
 
@@ -257,8 +239,9 @@ impl Conversation {
     }
 
     /// Something typed while the agent was busy, queued for its next turn. The
-    /// queue also carries notifications — a task finished, a message from
-    /// another agent — which arrive tag-wrapped and are nobody's typing.
+    /// queue also carries what nobody typed — a background task finishing, a
+    /// message from another agent — which Claude Code files under another mode
+    /// or marks as meta.
     fn queued(&mut self, v: &Value) {
         let Some(a) = v.get("attachment") else {
             return;
@@ -269,10 +252,8 @@ impl Conversation {
         {
             return;
         }
-        if let Some(p) = a.get("prompt").and_then(Value::as_str) {
-            if !p.trim_start().starts_with('<') {
-                self.prompt(p);
-            }
+        if let Some(text) = a.get("prompt").and_then(typed) {
+            self.prompt(&text);
         }
     }
 
@@ -324,7 +305,7 @@ impl Conversation {
     /// `app/src/doc.rs`, not the whole of it from the root.
     fn tool(&mut self, b: &Value, cwd: Option<&str>) {
         let name = b.get("name").and_then(Value::as_str).unwrap_or("?");
-        let target = crate::mcp_tail::summarize(b.get("input").unwrap_or(&Value::Null));
+        let target = crate::mcp_tail::subject(b.get("input").unwrap_or(&Value::Null));
         let target = match cwd
             .and_then(|c| target.strip_prefix(c))
             .and_then(|rest| rest.strip_prefix('/'))
@@ -360,6 +341,81 @@ impl Conversation {
     }
 }
 
+/// Prompts Claude Code writes that nobody typed, by the tag they open with: a
+/// background task's notification, and the output of a local slash command or
+/// of a `!` command.
+const NOT_TYPED: [&str; 5] = [
+    "<task-notification>",
+    "<local-command-stdout>",
+    "<local-command-stderr>",
+    "<bash-stdout>",
+    "<bash-stderr>",
+];
+
+/// What a person typed, from a prompt's content — a string, or text and image
+/// blocks joined, each picture a placeholder — or `None` when nobody typed it.
+///
+/// Claude Code files more than typing as a person's prompt. Measured over this
+/// machine's last 400 transcripts on 2026-09-29: beside 1,672 typed prompts sat
+/// 392 task notifications and 171 command outputs, which would otherwise be
+/// drawn under YOU as the person's own words. A slash command is stored as the
+/// tags around it and is shown as it was typed — `/effort max` — and a `!`
+/// command likewise. Pasted text keeps its `<pasted_content>` wrapper: it is the
+/// person's, and the wrapper says how it arrived.
+fn typed(content: &Value) -> Option<String> {
+    let mut text = String::new();
+    let mut pictures = 0;
+    match content {
+        Value::String(s) => text.push_str(s),
+        Value::Array(blocks) => {
+            for b in blocks {
+                match b.get("type").and_then(Value::as_str) {
+                    Some("text") => {
+                        if let Some(t) = b.get("text").and_then(Value::as_str) {
+                            if !text.is_empty() {
+                                text.push('\n');
+                            }
+                            text.push_str(t);
+                        }
+                    }
+                    Some("image") => pictures += 1,
+                    _ => {}
+                }
+            }
+        }
+        _ => return None,
+    }
+    let head = text.trim_start();
+    if NOT_TYPED.iter().any(|tag| head.starts_with(tag)) {
+        return None;
+    }
+    if head.starts_with("<command-message>") || head.starts_with("<command-name>") {
+        if let Some(name) = tagged(head, "command-name") {
+            let args = tagged(head, "command-args").unwrap_or_default();
+            text = format!("{name} {args}").trim_end().to_string();
+        }
+    } else if head.starts_with("<bash-input>") {
+        if let Some(command) = tagged(head, "bash-input") {
+            text = format!("! {command}");
+        }
+    }
+    for _ in 0..pictures {
+        if !text.is_empty() {
+            text.push('\n');
+        }
+        text.push_str("[image]");
+    }
+    (!text.trim().is_empty()).then_some(text)
+}
+
+/// The text inside the first `<tag>…</tag>` in `s`, trimmed.
+fn tagged<'a>(s: &'a str, tag: &str) -> Option<&'a str> {
+    let open = format!("<{tag}>");
+    let from = s.find(&open)? + open.len();
+    let to = from + s[from..].find(&format!("</{tag}>"))?;
+    Some(s[from..to].trim())
+}
+
 /// A tool result's text and how many pictures it carried: the content is a
 /// string, or a list of text and image blocks.
 fn result_text(content: Option<&Value>) -> (String, usize) {
@@ -391,10 +447,14 @@ fn result_text(content: Option<&Value>) -> (String, usize) {
 /// What a tool's row says it printed, and what opening it shows.
 fn tool_out(name: &str, text: &str, pictures: usize, error: bool) -> ToolOut {
     let lines: Vec<&str> = text.lines().collect();
+    // The first line that says something: JSON's lone opening brace does not.
+    let said = |l: &&str| l.chars().any(char::is_alphanumeric);
     let first = lines
         .iter()
         .map(|l| l.trim())
-        .find(|l| !l.is_empty())
+        .filter(|l| !l.is_empty())
+        .find(said)
+        .or_else(|| lines.iter().map(|l| l.trim()).find(|l| !l.is_empty()))
         .map(|l| l.split_whitespace().collect::<Vec<_>>().join(" "))
         .unwrap_or_default();
     let summary = if error {
@@ -525,8 +585,14 @@ pub struct Drawn {
 }
 
 /// Lay `conv` out as the reader's document. `open` holds the tool calls, by
-/// entry, whose output is shown; `agent` is the label over the agent's side.
-pub fn draw(conv: &Conversation, ink: &Ink, agent: &str, open: &HashSet<usize>) -> Drawn {
+/// entry, whose output is shown; `you` and `agent` label the two sides.
+pub fn draw(
+    conv: &Conversation,
+    ink: &Ink,
+    you: &str,
+    agent: &str,
+    open: &HashSet<usize>,
+) -> Drawn {
     let mut out = Drawn {
         doc: Document::default(),
         opens: Vec::new(),
@@ -540,7 +606,7 @@ pub fn draw(conv: &Conversation, ink: &Ink, agent: &str, open: &HashSet<usize>) 
         let theirs = matches!(entry, Entry::Reply(_) | Entry::Tool(_));
         let label = match (entry, last) {
             (Entry::Prompt(_), Some(Entry::Prompt(_))) => None,
-            (Entry::Prompt(_), _) => Some("YOU"),
+            (Entry::Prompt(_), _) => Some(you),
             (_, Some(Entry::Reply(_) | Entry::Tool(_))) if theirs => None,
             _ if theirs => Some(agent),
             _ => None,
@@ -569,6 +635,20 @@ pub fn draw(conv: &Conversation, ink: &Ink, agent: &str, open: &HashSet<usize>) 
             }
             Entry::Tool(call) => {
                 push(&mut out, tool_line(call, ink), Some(i));
+                // Opened, a call shows what its row left out of the command,
+                // then what it printed.
+                if open.contains(&i) && row_cuts(&call.target) {
+                    for l in call.target.lines() {
+                        push(
+                            &mut out,
+                            Line::new(ink)
+                                .push("      ", Role::Dim)
+                                .push(l, Role::Text)
+                                .done(),
+                            Some(i),
+                        );
+                    }
+                }
                 if let (true, Some(r)) = (open.contains(&i), call.result.as_ref()) {
                     for l in r.text.lines() {
                         push(
@@ -625,15 +705,43 @@ fn tool_line(call: &ToolCall, ink: &Ink) -> DocLine {
         .push("⚙ ", Role::Accent)
         .push(&format!("{:<6}", call.name), Role::Bold);
     if !call.target.is_empty() {
-        line = line.push(" ", Role::Text).push(&call.target, Role::Text);
+        line = line
+            .push(" ", Role::Text)
+            .push(&one_line(&call.target, TARGET_MAX), Role::Text);
     }
     if let Some(r) = &call.result {
         if !r.summary.is_empty() {
             let role = if r.error { Role::Error } else { Role::Dim };
-            line = line.push("  →  ", Role::Dim).push(&r.summary, role);
+            line = line
+                .push("  →  ", Role::Dim)
+                .push(&one_line(&r.summary, SUMMARY_MAX), role);
         }
     }
     line.done()
+}
+
+/// How much of a call's target and result its row draws. With `⚙ `, a name of
+/// up to nineteen letters and the arrow, they fit the 175 columns a reader
+/// opens with in a 1,576-pixel window, so a call stays one row; what the row
+/// leaves out is under the click.
+const TARGET_MAX: usize = 88;
+const SUMMARY_MAX: usize = 60;
+
+/// `s` on one line, its whitespace collapsed, cut to `max` characters with an
+/// ellipsis when it is longer.
+fn one_line(s: &str, max: usize) -> String {
+    let one = s.split_whitespace().collect::<Vec<_>>().join(" ");
+    if one.chars().count() > max {
+        one.chars().take(max - 1).collect::<String>() + "…"
+    } else {
+        one
+    }
+}
+
+/// Did a call's row leave part of its target out — cut short, or folded from
+/// several lines onto one?
+fn row_cuts(target: &str) -> bool {
+    target.contains('\n') || target.chars().count() > TARGET_MAX
 }
 
 /// A reply's Markdown as the reader's lines, read through the document view's
@@ -894,6 +1002,84 @@ mod tests {
         );
     }
 
+    /// Claude Code files things nobody typed as a person's prompt — a background
+    /// task's notification, a local command's output — and those stay out; a
+    /// slash command and a `!` command read as they were typed; a prompt queued
+    /// while the agent was busy is kept with its picture, and pasted text with
+    /// its wrapper; a queued notification or message from another agent is not.
+    /// Every shape here was found in this machine's transcripts (2026-09-29).
+    #[test]
+    fn only_what_a_person_typed_is_a_prompt() {
+        let c = folded(&[
+            r#"{"type":"user","message":{"role":"user","content":"<task-notification>\n<task-id>b1k09y0li</task-id>\n<status>completed</status>\n</task-notification>"}}"#,
+            r#"{"type":"user","message":{"role":"user","content":"<local-command-stdout>Set effort level to max</local-command-stdout>"}}"#,
+            r#"{"type":"user","message":{"role":"user","content":"<command-message>effort</command-message>\n<command-name>/effort</command-name>\n<command-args>max</command-args>"}}"#,
+            r#"{"type":"user","message":{"role":"user","content":"<command-name>/clear</command-name>\n<command-message>clear</command-message>\n<command-args></command-args>"}}"#,
+            r#"{"type":"user","message":{"role":"user","content":"<bash-input>git status</bash-input>"}}"#,
+            r#"{"type":"user","message":{"role":"user","content":"<bash-stdout>On branch main</bash-stdout><bash-stderr></bash-stderr>"}}"#,
+            r#"{"type":"attachment","attachment":{"type":"queued_command","commandMode":"prompt","prompt":"<pasted_content id=\"2f11\">\nnotes\n</pasted_content>"}}"#,
+            r#"{"type":"attachment","attachment":{"type":"queued_command","commandMode":"prompt","prompt":[{"type":"text","text":"and this one"},{"type":"image","source":{"type":"base64","media_type":"image/png","data":""}}]}}"#,
+            r#"{"type":"attachment","attachment":{"type":"queued_command","commandMode":"prompt","isMeta":true,"prompt":"<cross-session-message from=\"uds:/run/user/1000/cc-socks/413\">hello</cross-session-message>"}}"#,
+            NOTICE,
+        ]);
+        assert_eq!(
+            c.entries(),
+            &[
+                Entry::Prompt("/effort max".into()),
+                Entry::Prompt("/clear".into()),
+                Entry::Prompt("! git status".into()),
+                Entry::Prompt("<pasted_content id=\"2f11\">\nnotes\n</pasted_content>".into()),
+                Entry::Prompt("and this one\n[image]".into()),
+            ]
+        );
+    }
+
+    /// A call is one row, however long its command or its first line of output:
+    /// the row cuts both to fit a reader of the default width, and opening the
+    /// call shows the whole command, as written, over the whole output.
+    #[test]
+    fn a_long_call_is_one_row_and_the_rest_is_behind_the_click() {
+        let command = format!("cd /tmp && {}\necho done", "x".repeat(140));
+        let printed = format!("{{\n{}\n}}", "y".repeat(150));
+        let call = serde_json::json!({"type":"assistant","message":{"id":"m","content":[
+            {"type":"tool_use","id":"t","name":"ctx_shell","input":{"command":command}}]}})
+        .to_string();
+        let out = serde_json::json!({"type":"user","message":{"role":"user","content":[
+            {"tool_use_id":"t","type":"tool_result","content":printed}]}})
+        .to_string();
+        let c = folded(&[call.as_str(), out.as_str()]);
+        let shut = draw(&c, &ink(), "YOU", "CLAUDE", &HashSet::new());
+        let row = &shut.doc.lines.last().expect("the row").text;
+        assert!(
+            row.chars().count() <= 175,
+            "{} columns",
+            row.chars().count()
+        );
+        assert!(
+            row.contains("→  yyyy"),
+            "summed up by its first line with words in it, not the brace: {row}"
+        );
+        assert_eq!(row.matches('…').count(), 2, "both cut: {row}");
+        let opened = draw(&c, &ink(), "YOU", "CLAUDE", &[0].into());
+        let t: Vec<&str> = texts(&opened).into_iter().map(str::trim).collect();
+        assert_eq!(
+            &t[2..],
+            &[
+                format!("cd /tmp && {}", "x".repeat(140)).as_str(),
+                "echo done",
+                "{",
+                "y".repeat(150).as_str(),
+                "}",
+            ]
+        );
+        let short = folded(&[READ, READ_OUT]);
+        let opened = draw(&short, &ink(), "YOU", "CLAUDE", &[0].into());
+        assert!(
+            !texts(&opened).iter().any(|l| l.trim() == "app/src/doc.rs"),
+            "a target the row showed whole is not shown twice"
+        );
+    }
+
     /// A path inside the directory the agent was in reads from there, as the
     /// agent would say it; a path elsewhere, a sibling sharing the prefix, and a
     /// command that merely mentions the directory are left whole.
@@ -1044,7 +1230,7 @@ mod tests {
         let c = folded(&[
             PROMPT, TEXT_1, TEXT_2, READ, READ_OUT, BASH, BASH_ERR, COMPACT,
         ]);
-        let d = draw(&c, &ink(), "CLAUDE", &HashSet::new());
+        let d = draw(&c, &ink(), "YOU", "CLAUDE", &HashSet::new());
         assert_eq!(
             texts(&d),
             vec![
@@ -1073,6 +1259,8 @@ mod tests {
             vec![Some(2), Some(3)],
             "each tool row names its call"
         );
+        let de = draw(&c, &ink(), "DU", "CLAUDE", &HashSet::new());
+        assert_eq!(texts(&de)[0], "DU", "the label is the reader's language's");
     }
 
     /// A tool call opened shows what it printed under its row, and each of
@@ -1081,7 +1269,7 @@ mod tests {
     fn an_opened_call_shows_what_it_printed() {
         let c = folded(&[READ, READ_OUT]);
         let open: HashSet<usize> = [0].into();
-        let d = draw(&c, &ink(), "CLAUDE", &open);
+        let d = draw(&c, &ink(), "YOU", "CLAUDE", &open);
         assert_eq!(texts(&d)[1..].len(), 4, "{:?}", texts(&d));
         assert!(texts(&d)[2].contains("//! The reader's document model"));
         assert!(d.opens[1..].iter().all(|o| *o == Some(0)));
@@ -1093,7 +1281,7 @@ mod tests {
     fn a_click_opens_a_call_and_a_click_on_its_output_closes_it() {
         let c = folded(&[PROMPT, READ, READ_OUT]);
         let mut open = HashSet::new();
-        let shut = draw(&c, &ink(), "CLAUDE", &open);
+        let shut = draw(&c, &ink(), "YOU", "CLAUDE", &open);
         let row = shut
             .opens
             .iter()
@@ -1102,7 +1290,7 @@ mod tests {
         assert!(!toggle(&mut open, &shut.opens, 0), "the YOU label");
         assert!(open.is_empty());
         assert!(toggle(&mut open, &shut.opens, row));
-        let opened = draw(&c, &ink(), "CLAUDE", &open);
+        let opened = draw(&c, &ink(), "YOU", "CLAUDE", &open);
         assert_eq!(
             opened.doc.lines.len(),
             shut.doc.lines.len() + 3,
@@ -1170,7 +1358,7 @@ mod tests {
         for l in tail.poll().expect("read").lines {
             c.fold(&l);
         }
-        let d = draw(&c, &ink(), "CLAUDE", &HashSet::new());
+        let d = draw(&c, &ink(), "YOU", "CLAUDE", &HashSet::new());
         let t = texts(&d);
         assert_eq!(t[0], "───  the conversation was compacted here  ───");
         assert_eq!(&t[1..3], &["", "YOU"]);
@@ -1240,13 +1428,13 @@ mod tests {
         }
         std::fs::remove_file(&path).ok();
         assert!(c.rev() > before.0);
-        let d = draw(&c, &ink(), "CLAUDE", &HashSet::new());
+        let d = draw(&c, &ink(), "YOU", "CLAUDE", &HashSet::new());
         let t = texts(&d);
         assert_eq!(
             &t[before.1..],
             &[
                 "",
-                "⚙ Write  reports/2026-09-29-alt-r-reader.html  →  File created successfully at: /home/parker/Work/terminal-delight/reports/2026-09-29-alt-r-reader.html",
+                "⚙ Write  reports/2026-09-29-alt-r-reader.html  →  File created successfully at: /home/parker/Work/terminal-de…",
                 "",
                 "The brief is written and open beside you: the three findings above, each with its figure, and five decisions to concur on.",
             ],

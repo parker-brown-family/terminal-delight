@@ -134,6 +134,14 @@ impl PaneMode {
         matches!(self, PaneMode::Claude | PaneMode::Codex)
     }
 
+    /// True when the FOCUS reader can read this agent's conversation from
+    /// its transcript. Only Claude Code's records fold today; a Codex pane
+    /// is read from its screen until its rollouts do, rather than bound to
+    /// a file the reader would read as an empty conversation.
+    pub fn reads_transcript(&self) -> bool {
+        matches!(self, PaneMode::Claude)
+    }
+
     /// Is this terminal sitting at its own shell prompt, waiting to be typed
     /// into?
     ///
@@ -3478,9 +3486,12 @@ pub struct MirrorSnapshot {
     pub k1: f32,
     pub k2: f32,
     pub glare: f32,
-    /// An agent runs in the pane — Claude, Codex — whose conversation the
-    /// reader can read from its transcript instead of from the screen.
+    /// An agent runs in the pane — Claude, Codex — so the screen it draws
+    /// stands in for a conversation the reader could not read.
     pub agent: bool,
+    /// The agent's conversation is one the reader can read from its
+    /// transcript ([`PaneMode::reads_transcript`]).
+    pub talk: bool,
     /// A program has the alternate screen (vim, htop), which keeps no history:
     /// the reader says so on its chip.
     pub alt_screen: bool,
@@ -3696,6 +3707,7 @@ impl TerminalView {
             k2,
             glare: th.screen_glare,
             agent: agent_mode,
+            talk: self.mode.reads_transcript(),
             alt_screen: alt_screen_active,
         }
     }
@@ -11930,6 +11942,20 @@ mod tests {
                 wrapped: false,
             })
             .collect()
+    }
+
+    /// The reader reads a conversation only where it can fold the agent's
+    /// records, which today means Claude Code's. A Codex pane is bound by the
+    /// same sweep, and its rollout would fold to an empty conversation.
+    #[test]
+    fn only_claudes_conversation_is_read_until_codex_folds() {
+        assert!(PaneMode::Claude.reads_transcript());
+        assert!(
+            !PaneMode::Codex.reads_transcript(),
+            "its screen is the better read until its rollouts fold"
+        );
+        assert!(!PaneMode::Shell.reads_transcript());
+        assert!(!PaneMode::Unknown.reads_transcript());
     }
 
     const RULE: &str = "────────────────────────────────────────────────";
