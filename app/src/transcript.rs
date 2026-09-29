@@ -15,14 +15,16 @@
 //! - [`Tail`] reads a transcript as it grows: the bytes appended since the last
 //!   read, whole lines only, and a fresh start when the file shrank or was
 //!   replaced.
-//! - [`Conversation`] folds Claude Code's records into what a person reads: the
+//! - [`Conversation`] folds an agent's records into what a person reads: the
 //!   prompts, the replies (a message's text blocks joined), one entry per tool
 //!   call with its result attached, and a divider where the conversation was
 //!   compacted. Thinking, attachments, modes, file history, queue records and
 //!   subagents' sidechains are left out — the census approved at the reader's
-//!   second gate (`docs/plans/alt-r-reader/`).
+//!   second gate (`docs/plans/alt-r-reader/`). It reads Claude Code's
+//!   transcripts and Codex's rollouts alike: the two formats' records never
+//!   share a `type`, so one fold takes either, line by line.
 //! - [`draw`] lays a conversation out as the reader's [`Document`], in the roles
-//!   the reader's first brief drew: YOU and CLAUDE labels, prose, headings,
+//!   the reader's first brief drew: YOU and the agent's labels, prose, headings,
 //!   tables as aligned text, and one line per tool call, whose output opens on a
 //!   click.
 //!
@@ -168,6 +170,9 @@ pub struct Conversation {
     open_reply: Option<String>,
     /// Where each tool call is, by its id, for its result to find it.
     tools: HashMap<String, usize>,
+    /// The directory a Codex session works in, from its opening record: Codex
+    /// states it once, where Claude Code stamps it on every record.
+    cwd: Option<String>,
 }
 
 impl Conversation {
@@ -202,6 +207,18 @@ impl Conversation {
                 self.push(Entry::Compacted)
             }
             Some("attachment") => self.queued(&v),
+            // Codex's rollouts: every record carries its body as a payload.
+            Some("response_item") => {
+                if let Some(p) = v.get("payload") {
+                    self.codex(p);
+                }
+            }
+            Some("compacted") => self.push(Entry::Compacted),
+            Some("session_meta" | "turn_context") => {
+                if let Some(cwd) = v.pointer("/payload/cwd").and_then(Value::as_str) {
+                    self.cwd = Some(cwd.to_string());
+                }
+            }
             _ => {}
         }
     }
@@ -277,9 +294,67 @@ impl Conversation {
                         self.reply(&id, t);
                     }
                 }
-                Some("tool_use") => self.tool(b, v.get("cwd").and_then(Value::as_str)),
+                Some("tool_use") => self.call(
+                    b.get("name").and_then(Value::as_str),
+                    b.get("input").unwrap_or(&Value::Null),
+                    b.get("id").and_then(Value::as_str),
+                    v.get("cwd").and_then(Value::as_str),
+                ),
                 _ => {}
             }
+        }
+    }
+
+    /// A Codex response item: a message, a tool call, or what a call printed.
+    /// Reasoning, and the developer's instructions, are not shown.
+    fn codex(&mut self, p: &Value) {
+        let id = p.get("call_id").and_then(Value::as_str);
+        match p.get("type").and_then(Value::as_str) {
+            Some("message") => match p.get("role").and_then(Value::as_str) {
+                Some("user") => {
+                    if let Some(text) = codex_typed(p) {
+                        self.prompt(&text);
+                    }
+                }
+                Some("assistant") => {
+                    let (text, _) = result_text(p.get("content"));
+                    let message = p.get("id").and_then(Value::as_str).unwrap_or_default();
+                    self.reply(message, &text);
+                }
+                _ => {}
+            },
+            // `exec` hands over a script as its input; a function, its
+            // arguments as a JSON string.
+            Some("custom_tool_call") => {
+                let input = p.get("input").unwrap_or(&Value::Null).clone();
+                let cwd = self.cwd.clone();
+                self.call(
+                    p.get("name").and_then(Value::as_str),
+                    &input,
+                    id,
+                    cwd.as_deref(),
+                );
+            }
+            Some("function_call") => {
+                let input = p
+                    .get("arguments")
+                    .and_then(Value::as_str)
+                    .and_then(|a| serde_json::from_str::<Value>(a).ok())
+                    .unwrap_or(Value::Null);
+                let cwd = self.cwd.clone();
+                self.call(
+                    p.get("name").and_then(Value::as_str),
+                    &input,
+                    id,
+                    cwd.as_deref(),
+                );
+            }
+            Some("custom_tool_call_output" | "function_call_output") => {
+                let (text, pictures) = result_text(p.get("output"));
+                let (said, failed) = unwrapped(&text);
+                self.answer(id, said, pictures, failed);
+            }
+            _ => {}
         }
     }
 
@@ -306,9 +381,8 @@ impl Conversation {
     /// A tool call, pointed at what it names. A path inside the directory the
     /// agent was working in reads the way the agent would say it —
     /// `app/src/doc.rs`, not the whole of it from the root.
-    fn tool(&mut self, b: &Value, cwd: Option<&str>) {
-        let name = b.get("name").and_then(Value::as_str).unwrap_or("?");
-        let target = crate::mcp_tail::subject(b.get("input").unwrap_or(&Value::Null));
+    fn call(&mut self, name: Option<&str>, input: &Value, id: Option<&str>, cwd: Option<&str>) {
+        let target = crate::mcp_tail::subject(input);
         let target = match cwd
             .and_then(|c| target.strip_prefix(c))
             .and_then(|rest| rest.strip_prefix('/'))
@@ -317,30 +391,116 @@ impl Conversation {
             _ => target,
         };
         self.push(Entry::Tool(ToolCall {
-            name: crate::toolprop::bare(name).to_string(),
+            name: crate::toolprop::bare(name.unwrap_or("?")).to_string(),
             target,
             result: None,
         }));
-        if let Some(id) = b.get("id").and_then(Value::as_str) {
+        if let Some(id) = id {
             self.tools.insert(id.to_string(), self.entries.len() - 1);
         }
     }
 
-    /// A tool's result, onto the call it answers.
+    /// A Claude Code tool result, onto the call it answers.
     fn result(&mut self, b: &Value) {
-        let Some(at) = b
-            .get("tool_use_id")
-            .and_then(Value::as_str)
-            .and_then(|id| self.tools.get(id).copied())
-        else {
+        let (text, pictures) = result_text(b.get("content"));
+        let error = b.get("is_error").and_then(Value::as_bool) == Some(true);
+        self.answer(
+            b.get("tool_use_id").and_then(Value::as_str),
+            &text,
+            pictures,
+            error,
+        );
+    }
+
+    /// What call `id` printed, onto its row. A result for a call never seen —
+    /// the file was read from its middle — is dropped.
+    fn answer(&mut self, id: Option<&str>, text: &str, pictures: usize, error: bool) {
+        let Some(at) = id.and_then(|id| self.tools.get(id).copied()) else {
             return;
         };
-        let error = b.get("is_error").and_then(Value::as_bool) == Some(true);
-        let (text, pictures) = result_text(b.get("content"));
         if let Some(Entry::Tool(call)) = self.entries.get_mut(at) {
-            call.result = Some(tool_out(&call.name, &text, pictures, error));
+            call.result = Some(tool_out(&call.name, text, pictures, error));
             self.rev += 1;
         }
+    }
+}
+
+/// What a person typed, from a Codex user message. Codex files its own
+/// instructions — AGENTS.md, the environment, plugin lists — as user messages
+/// too, and marks every block with what it is; a person's are `user.*`
+/// (measured on this machine's rollouts on 2026-09-29: the marks were present and
+/// block for block on all 309 user messages). A pasted picture arrives wrapped
+/// in `<image name=…>` / `</image>` and reads as `[image]`. Without marks, a
+/// message that opens with one of Codex's own wrappers is not typing.
+fn codex_typed(p: &Value) -> Option<String> {
+    let blocks = p.get("content")?.as_array()?;
+    let marks: Option<Vec<&str>> = p
+        .pointer("/internal_chat_message_metadata_passthrough/content_item_kinds")
+        .and_then(Value::as_array)
+        .map(|k| k.iter().map(|m| m.as_str().unwrap_or_default()).collect());
+    let mut text = String::new();
+    let mut pictures = 0;
+    for (i, b) in blocks.iter().enumerate() {
+        let theirs = match marks.as_ref() {
+            Some(marks) => marks.get(i).is_some_and(|m| m.starts_with("user.")),
+            None => true,
+        };
+        if !theirs {
+            continue;
+        }
+        match b.get("type").and_then(Value::as_str) {
+            Some("input_image") => pictures += 1,
+            Some("input_text") => {
+                let t = b.get("text").and_then(Value::as_str).unwrap_or_default();
+                let head = t.trim_start();
+                if head.starts_with("<image name=") || head.trim_end() == "</image>" {
+                    continue;
+                }
+                if marks.is_none() && CODEX_OWN.iter().any(|w| head.starts_with(w)) {
+                    return None;
+                }
+                if !text.is_empty() {
+                    text.push('\n');
+                }
+                text.push_str(t);
+            }
+            _ => {}
+        }
+    }
+    for _ in 0..pictures {
+        if !text.is_empty() {
+            text.push('\n');
+        }
+        text.push_str("[image]");
+    }
+    (!text.trim().is_empty()).then_some(text)
+}
+
+/// How Codex's own user messages open — its instructions, the environment it
+/// runs in, the plugins it offers, the note that a turn was cut short — for a
+/// rollout old enough to carry no marks.
+const CODEX_OWN: [&str; 6] = [
+    "# AGENTS.md instructions",
+    "<INSTRUCTIONS>",
+    "<user_instructions>",
+    "<environment_context>",
+    "<recommended_plugins>",
+    "<turn_aborted>",
+];
+
+/// A Codex `exec` result, out of its wrapper: Codex opens what a script
+/// printed with "Script completed" or "Script failed" and the wall time, then
+/// "Output:". Answers what the script printed and whether it failed; anything
+/// else comes back whole.
+fn unwrapped(text: &str) -> (&str, bool) {
+    let first = text.lines().next().unwrap_or_default().trim();
+    let failed = first == "Script failed";
+    if !(failed || first == "Script completed") {
+        return (text, false);
+    }
+    match text.find("\nOutput:\n") {
+        Some(at) => (&text[at + "\nOutput:\n".len()..], failed),
+        None => (text, failed),
     }
 }
 
@@ -419,8 +579,9 @@ fn tagged<'a>(s: &'a str, tag: &str) -> Option<&'a str> {
     Some(s[from..to].trim())
 }
 
-/// A tool result's text and how many pictures it carried: the content is a
-/// string, or a list of text and image blocks.
+/// A result's or a message's text and how many pictures it carried: the
+/// content is a string, or a list of text and image blocks — Claude Code's
+/// `text` and `image`, Codex's `input_text`, `output_text` and `input_image`.
 fn result_text(content: Option<&Value>) -> (String, usize) {
     match content {
         Some(Value::String(s)) => (s.clone(), 0),
@@ -429,15 +590,15 @@ fn result_text(content: Option<&Value>) -> (String, usize) {
             let mut pictures = 0;
             for b in blocks {
                 match b.get("type").and_then(Value::as_str) {
-                    Some("text") => {
+                    Some("text" | "input_text" | "output_text") => {
                         if let Some(t) = b.get("text").and_then(Value::as_str) {
-                            if !text.is_empty() {
+                            if !text.is_empty() && !text.ends_with('\n') {
                                 text.push('\n');
                             }
                             text.push_str(t);
                         }
                     }
-                    Some("image") => pictures += 1,
+                    Some("image" | "input_image") => pictures += 1,
                     _ => {}
                 }
             }
@@ -587,15 +748,20 @@ pub struct Drawn {
     pub opens: Vec<Option<usize>>,
 }
 
+/// The words a drawn conversation carries, in the reader's language.
+pub struct Words<'a> {
+    /// Over what the person typed.
+    pub you: &'a str,
+    /// Over the agent's side: the pane's own label, CLAUDE or CODEX.
+    pub agent: &'a str,
+    /// In place of a conversation with nothing in it yet — a Codex session
+    /// opens its rollout before anything is typed.
+    pub empty: &'a str,
+}
+
 /// Lay `conv` out as the reader's document. `open` holds the tool calls, by
-/// entry, whose output is shown; `you` and `agent` label the two sides.
-pub fn draw(
-    conv: &Conversation,
-    ink: &Ink,
-    you: &str,
-    agent: &str,
-    open: &HashSet<usize>,
-) -> Drawn {
+/// entry, whose output is shown.
+pub fn draw(conv: &Conversation, ink: &Ink, words: &Words, open: &HashSet<usize>) -> Drawn {
     let mut out = Drawn {
         doc: Document::default(),
         opens: Vec::new(),
@@ -604,14 +770,24 @@ pub fn draw(
         out.doc.lines.push(line);
         out.opens.push(opens);
     }
+    // A bound conversation with nothing in it says so, rather than leaving a
+    // blank glass under a chip that says it is live.
+    if conv.entries().is_empty() {
+        push(
+            &mut out,
+            Line::new(ink).push(words.empty, Role::Dim).done(),
+            None,
+        );
+        return out;
+    }
     let mut last: Option<&Entry> = None;
     for (i, entry) in conv.entries().iter().enumerate() {
         let theirs = matches!(entry, Entry::Reply(_) | Entry::Tool(_));
         let label = match (entry, last) {
             (Entry::Prompt(_), Some(Entry::Prompt(_))) => None,
-            (Entry::Prompt(_), _) => Some(you),
+            (Entry::Prompt(_), _) => Some(words.you),
             (_, Some(Entry::Reply(_) | Entry::Tool(_))) if theirs => None,
-            _ if theirs => Some(agent),
+            _ if theirs => Some(words.agent),
             _ => None,
         };
         let joined = matches!((entry, last), (Entry::Tool(_), Some(Entry::Tool(_))));
@@ -1051,7 +1227,7 @@ mod tests {
             {"tool_use_id":"t","type":"tool_result","content":printed}]}})
         .to_string();
         let c = folded(&[call.as_str(), out.as_str()]);
-        let shut = draw(&c, &ink(), "YOU", "CLAUDE", &HashSet::new());
+        let shut = draw(&c, &ink(), &words("CLAUDE"), &HashSet::new());
         let row = &shut.doc.lines.last().expect("the row").text;
         assert!(
             row.chars().count() <= 175,
@@ -1063,7 +1239,7 @@ mod tests {
             "summed up by its first line with words in it, not the brace: {row}"
         );
         assert_eq!(row.matches('…').count(), 2, "both cut: {row}");
-        let opened = draw(&c, &ink(), "YOU", "CLAUDE", &[0].into());
+        let opened = draw(&c, &ink(), &words("CLAUDE"), &[0].into());
         let t: Vec<&str> = texts(&opened).into_iter().map(str::trim).collect();
         assert_eq!(
             &t[2..],
@@ -1076,7 +1252,7 @@ mod tests {
             ]
         );
         let short = folded(&[READ, READ_OUT]);
-        let opened = draw(&short, &ink(), "YOU", "CLAUDE", &[0].into());
+        let opened = draw(&short, &ink(), &words("CLAUDE"), &[0].into());
         assert!(
             !texts(&opened).iter().any(|l| l.trim() == "app/src/doc.rs"),
             "a target the row showed whole is not shown twice"
@@ -1221,6 +1397,14 @@ mod tests {
         }
     }
 
+    fn words(agent: &str) -> Words<'_> {
+        Words {
+            you: "YOU",
+            agent,
+            empty: "Nothing has been said here yet.",
+        }
+    }
+
     fn texts(d: &Drawn) -> Vec<&str> {
         d.doc.lines.iter().map(|l| l.text.as_str()).collect()
     }
@@ -1233,7 +1417,7 @@ mod tests {
         let c = folded(&[
             PROMPT, TEXT_1, TEXT_2, READ, READ_OUT, BASH, BASH_ERR, COMPACT,
         ]);
-        let d = draw(&c, &ink(), "YOU", "CLAUDE", &HashSet::new());
+        let d = draw(&c, &ink(), &words("CLAUDE"), &HashSet::new());
         assert_eq!(
             texts(&d),
             vec![
@@ -1262,7 +1446,15 @@ mod tests {
             vec![Some(2), Some(3)],
             "each tool row names its call"
         );
-        let de = draw(&c, &ink(), "DU", "CLAUDE", &HashSet::new());
+        let de = draw(
+            &c,
+            &ink(),
+            &Words {
+                you: "DU",
+                ..words("CLAUDE")
+            },
+            &HashSet::new(),
+        );
         assert_eq!(texts(&de)[0], "DU", "the label is the reader's language's");
     }
 
@@ -1272,10 +1464,22 @@ mod tests {
     fn an_opened_call_shows_what_it_printed() {
         let c = folded(&[READ, READ_OUT]);
         let open: HashSet<usize> = [0].into();
-        let d = draw(&c, &ink(), "YOU", "CLAUDE", &open);
+        let d = draw(&c, &ink(), &words("CLAUDE"), &open);
         assert_eq!(texts(&d)[1..].len(), 4, "{:?}", texts(&d));
         assert!(texts(&d)[2].contains("//! The reader's document model"));
         assert!(d.opens[1..].iter().all(|o| *o == Some(0)));
+    }
+
+    /// A conversation bound but with nothing in it yet — a Codex session opens
+    /// its rollout before anything is typed — says so, rather than leaving the
+    /// glass blank under a chip that says it is live.
+    #[test]
+    fn an_empty_conversation_says_so() {
+        let c = folded(&[r#"{"type":"session_meta","payload":{"id":"s","cwd":"/home/p"}}"#]);
+        assert!(c.entries().is_empty());
+        let d = draw(&c, &ink(), &words("CODEX"), &HashSet::new());
+        assert_eq!(texts(&d), vec!["Nothing has been said here yet."]);
+        assert_eq!(d.opens, vec![None]);
     }
 
     /// A click on a call's row opens it, and a click on any row of what it
@@ -1284,7 +1488,7 @@ mod tests {
     fn a_click_opens_a_call_and_a_click_on_its_output_closes_it() {
         let c = folded(&[PROMPT, READ, READ_OUT]);
         let mut open = HashSet::new();
-        let shut = draw(&c, &ink(), "YOU", "CLAUDE", &open);
+        let shut = draw(&c, &ink(), &words("CLAUDE"), &open);
         let row = shut
             .opens
             .iter()
@@ -1293,7 +1497,7 @@ mod tests {
         assert!(!toggle(&mut open, &shut.opens, 0), "the YOU label");
         assert!(open.is_empty());
         assert!(toggle(&mut open, &shut.opens, row));
-        let opened = draw(&c, &ink(), "YOU", "CLAUDE", &open);
+        let opened = draw(&c, &ink(), &words("CLAUDE"), &open);
         assert_eq!(
             opened.doc.lines.len(),
             shut.doc.lines.len() + 3,
@@ -1342,6 +1546,96 @@ mod tests {
         );
     }
 
+    /// A Codex rollout folds into the same conversation (`codex.jsonl`, in the
+    /// shapes surveyed on this machine's rollouts): the typed prompt and not the
+    /// instructions Codex files as user messages, the `exec` call summed up by
+    /// what its script printed rather than Codex's wrapper, a failed script in
+    /// the error colour, the reply, the compaction, and a pasted picture —
+    /// while reasoning, the developer's message and the event stream stay out.
+    #[test]
+    fn a_codex_rollout_folds_into_the_same_conversation() {
+        let c = folded(
+            &include_str!("../tests/fixtures/reader/codex.jsonl")
+                .lines()
+                .collect::<Vec<_>>(),
+        );
+        let e = c.entries();
+        assert_eq!(e.len(), 6, "{e:#?}");
+        assert_eq!(
+            e[0],
+            Entry::Prompt("Why does Alt+R read the shell behind a document pane?".into())
+        );
+        let Entry::Tool(exec) = &e[1] else {
+            panic!("{:?}", e[1])
+        };
+        assert_eq!(exec.name, "exec");
+        assert!(exec.target.starts_with("const r = await tools.shell("));
+        let out = exec.result.as_ref().expect("its output");
+        assert_eq!(
+            out.summary,
+            "5ba60ed:app/src/main.rs:15798: const FZ_MIN: f32 = 0.35;"
+        );
+        assert!(!out.error);
+        assert!(!out.text.contains("Wall time"), "{}", out.text);
+        let Entry::Tool(wait) = &e[2] else {
+            panic!("{:?}", e[2])
+        };
+        assert_eq!(wait.name, "wait");
+        assert!(
+            wait.target.contains("\"cell_id\":\"33\""),
+            "{}",
+            wait.target
+        );
+        let out = wait.result.as_ref().expect("its output");
+        assert!(out.error, "Script failed");
+        assert_eq!(out.summary, "Traceback (most recent call last):");
+        assert!(matches!(&e[3], Entry::Reply(r) if r.starts_with("## The reader reads the grid")));
+        assert_eq!(e[4], Entry::Compacted);
+        assert_eq!(e[5], Entry::Prompt("and this one\n[image]".into()));
+        let d = draw(&c, &ink(), &words("CODEX"), &HashSet::new());
+        assert_eq!(
+            texts(&d)[3],
+            "CODEX",
+            "the agent's side is labelled for its agent"
+        );
+    }
+
+    /// A rollout from before Codex marked its blocks: its own messages are known
+    /// by how they open, and what is left is typing.
+    #[test]
+    fn an_unmarked_codex_message_is_known_by_how_it_opens() {
+        let message = |text: &str| {
+            serde_json::json!({"type":"response_item","payload":{"type":"message","role":"user",
+                "content":[{"type":"input_text","text":text}]}})
+            .to_string()
+        };
+        let c = folded(&[
+            message("<environment_context>\n  <cwd>/home/p</cwd>\n</environment_context>").as_str(),
+            message("# AGENTS.md instructions\n\n<INSTRUCTIONS>\nbe kind\n</INSTRUCTIONS>")
+                .as_str(),
+            message("<turn_aborted> The user interrupted the previous turn on purpose.").as_str(),
+            message("what changed?").as_str(),
+        ]);
+        assert_eq!(c.entries(), &[Entry::Prompt("what changed?".into())]);
+    }
+
+    /// Codex names its session's directory once, at the start, where Claude
+    /// Code stamps every record; a Codex call's path reads from there all the
+    /// same.
+    #[test]
+    fn a_codex_path_reads_from_the_sessions_directory() {
+        let opening = r#"{"type":"session_meta","payload":{"id":"s","cwd":"/home/p/td"}}"#;
+        let call = serde_json::json!({"type":"response_item","payload":{"type":"function_call",
+            "name":"read_file","call_id":"c","arguments":"{\"path\":\"/home/p/td/app/src/doc.rs\"}"}})
+        .to_string();
+        let c = folded(&[opening, call.as_str()]);
+        assert!(
+            matches!(&c.entries()[0], Entry::Tool(t) if t.target == "app/src/doc.rs"),
+            "{:?}",
+            c.entries()
+        );
+    }
+
     /// The conversation the reader's first brief drew, as Claude Code records
     /// it (`app/tests/fixtures/reader/`, which `scripts/reader-check.sh` also
     /// resumes for its photographs), read through the tail and drawn: the
@@ -1361,7 +1655,7 @@ mod tests {
         for l in tail.poll().expect("read").lines {
             c.fold(&l);
         }
-        let d = draw(&c, &ink(), "YOU", "CLAUDE", &HashSet::new());
+        let d = draw(&c, &ink(), &words("CLAUDE"), &HashSet::new());
         let t = texts(&d);
         assert_eq!(t[0], "───  the conversation was compacted here  ───");
         assert_eq!(&t[1..3], &["", "YOU"]);
@@ -1431,7 +1725,7 @@ mod tests {
         }
         std::fs::remove_file(&path).ok();
         assert!(c.rev() > before.0);
-        let d = draw(&c, &ink(), "YOU", "CLAUDE", &HashSet::new());
+        let d = draw(&c, &ink(), &words("CLAUDE"), &HashSet::new());
         let t = texts(&d);
         assert_eq!(
             &t[before.1..],

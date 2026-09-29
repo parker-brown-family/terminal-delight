@@ -93,6 +93,12 @@ Branch `feat/alt-r-reader` in `~/Work/td-alt-r-reader`, off main at `5ba60ed`.
   is one mechanism for both seats.
 - Codex rollouts (`response_item` stream, `call_id` pairs) fold into the same
   `Conversation`.
+- **As built** (2026-09-29): one fold takes either format, because their record
+  types never collide. Codex's typing is told from its own instructions by the
+  per-block marks it writes. An `exec` row sums up what its script printed,
+  outside Codex's wrapper. An empty conversation says so. There is no live foot
+  for Codex, which has no recognisable input box. What and why: `00-status.md`,
+  slice 4.
 
 ## Least confident decisions
 
