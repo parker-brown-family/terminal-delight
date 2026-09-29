@@ -8,7 +8,18 @@ opened on every kind of pane, so a wrong product call stays wrong for a long
 time. That buys the four gates. If Gate 1 comes back as a bare concur, the score
 was too high: collapse Gates 2–4 into one plan and say so.
 
-**Turned out to be:** (fill in at the end)
+**Turned out to be:** 6/10. Both gates were rubber stamps, collapsed after Gate
+2 as this page predicted, and every decision on them held through four slices.
+What the score missed was where the risk actually lived: not in the design, but
+in data nobody had looked at, and in older bugs the rig kept turning up.
+- The data: Claude Code files task notifications and command output as the
+  person's own words; Codex files its instructions as user messages; a real
+  rollout can be empty.
+- The older bugs: Escape had been dead in a read pane since June, and a pane
+  counts as Claude for a path it merely mentions (#901).
+
+Every one was caught by a photograph of a real window or a survey of this
+machine's real transcripts, never by a gate.
 
 - Gate 1 — Product: **APPROVED 2026-09-29** — the brief
   `reports/2026-09-29-alt-r-reader.html` (built by
@@ -106,7 +117,27 @@ was too high: collapse Gates 2–4 into one plan and say so.
       `terminal-delight bindings` on this machine the same day bound 22 of 24 live
       Claude agents by their own declaration; the other two would read their
       screens, labelled.
-- [ ] Slice 4 — Codex transcripts (the floating square moved into slice 2)
+- [x] Slice 4 — Codex transcripts (the floating square moved into slice 2).
+      **Done 2026-09-29** on `feat/alt-r-reader-codex`, off main at `23cc9d5`
+      after slice 3 merged (#900). A Codex pane reads its rollout in the same
+      conversation: prompts, replies under CODEX, one row per tool call, the
+      compaction divider. It was designed from a survey of this machine's own
+      rollouts rather than from documentation. Codex files its instructions as
+      user messages, but marks every block, and all 309 user messages carried the
+      marks, so only `user.*` blocks are typing. 3,074 of its tool results open
+      "Script completed / Wall time / Output:", so a row sums up what the script
+      printed, and "Script failed" draws as an error. Photographed with a Codex
+      stand-in (`evidence/slice4-*`). **Found on the way:**
+      1. The newest real rollout on the machine held only its opening record, a
+         session started and never used. It bound, and the reader drew a blank
+         glass under TRANSCRIPT · live. A conversation with nothing in it now says
+         so, in nine languages.
+      2. A pane counts as Claude Code when its command line so much as contains
+         "/claude". The stand-in, run from an agent's scratch directory, read as
+         Claude and bound nothing. The rig now keeps its stand-ins under
+         `$XDG_RUNTIME_DIR`, and the rule itself is #901.
+      **Not done:** a live foot for Codex. Its screen draws no input box the
+      reader recognises, and nobody here has a specimen to build one from.
 
 ## The five attempts before this one
 
