@@ -6,6 +6,17 @@ on:
     branches: [main]
     tags: ['v*']
 
+# The Rust every job builds with, pinned, so a new stable release cannot turn
+# its new lints into a failure on lines a pull request never touched. That
+# happened on 2026-10-07: stable moved 1.98 -> 1.99 and every PR failed clippy
+# on two old lines in surface.rs (#911). 1.98.0 is what the machine the agents
+# build on has as its default, so a local `cargo clippy` is CI's clippy.
+# Moving it is a deliberate commit that fixes the new lints in the same change;
+# toolchain-drift-watch.yml runs the latest stable weekly and says what it
+# would break before anyone has to move.
+env:
+  RUST_TOOLCHAIN: "1.98.0"
+
 jobs:
   rust:
     name: Rust checks
@@ -33,8 +44,9 @@ jobs:
             pkg-config \
             poppler-utils
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
           components: clippy, rustfmt
 
       - name: Prepare patched gpui (crt-pass + focus-blur + text-crawl + tube-cap-32 + gpl-sever)
@@ -120,7 +132,9 @@ jobs:
         working-directory: app
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
       - name: Prepare patched gpui (crt-pass + focus-blur + text-crawl + tube-cap-32 + gpl-sever)
         run: ../scripts/prepare-gpui.sh
       - uses: taiki-e/install-action@cargo-audit
@@ -162,7 +176,9 @@ jobs:
             libxkbcommon-x11-dev \
             pkg-config
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
 
       - name: Prepare patched gpui (crt-pass + focus-blur + text-crawl + tube-cap-32 + gpl-sever)
         run: ./scripts/prepare-gpui.sh

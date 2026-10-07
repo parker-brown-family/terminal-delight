@@ -1,0 +1,102 @@
+# toolchain-drift-watch — weekly: would the latest stable Rust pass our clippy?
+#
+# CI builds on a pinned toolchain (RUST_TOOLCHAIN in ci.yml, #911), so a new
+# stable release can no longer fail every pull request on lines nobody
+# touched. This is the other half: once a week it runs the gates CI runs —
+# rustfmt and clippy -D warnings, on both cores — with whatever stable is
+# today, and when they fail it opens (or refreshes) ONE issue saying which
+# release and which lints. Moving the pin is then a deliberate commit that
+# fixes them. Never fails anything else: a smoke detector, not a gate, in the
+# shape of zed-pin-watch.yml.
+name: toolchain-drift-watch
+
+on:
+  schedule:
+    - cron: "41 9 * * 1" # Mondays 09:41 UTC
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  next-stable:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      ISSUE_TITLE: "toolchain drift: the latest stable Rust fails our gates"
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libasound2-dev \
+            libfontconfig1-dev \
+            libwayland-dev \
+            libx11-dev \
+            libxcb1-dev \
+            libxkbcommon-dev \
+            libxkbcommon-x11-dev \
+            pkg-config
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Prepare patched gpui (crt-pass + focus-blur + text-crawl + tube-cap-32 + gpl-sever)
+        run: ../scripts/prepare-gpui.sh
+
+      - name: Run CI's gates on the latest stable
+        id: gates
+        run: |
+          set -uo pipefail
+          pinned=$(grep -oP 'RUST_TOOLCHAIN: "\K[0-9.]+' ../.github/workflows/ci.yml)
+          stable=$(rustc --version | awk '{print $2}')
+          echo "pinned=$pinned" >>"$GITHUB_OUTPUT"
+          echo "stable=$stable" >>"$GITHUB_OUTPUT"
+          failed=0
+          cargo fmt -- --check >../fmt.log 2>&1 || failed=1
+          cargo clippy --locked -- -D warnings >../clippy.log 2>&1 || failed=1
+          cargo clippy --locked --features core-alacritty -- -D warnings >../clippy-alacritty.log 2>&1 || failed=1
+          echo "failed=$failed" >>"$GITHUB_OUTPUT"
+          # The lint names, once each, are what a person needs to read first.
+          grep -ohE '#[a-z_]+$|clippy::[a-z_]+|`-D [a-z:_-]+`' ../clippy.log ../clippy-alacritty.log | sort | uniq -c | sort -rn >../lints.txt || true
+          [ -s ../fmt.log ] && echo "rustfmt --check reported differences" >>../lints.txt
+          {
+            echo "## Latest stable vs the pin"
+            echo ""
+            echo "| Pinned in ci.yml | Latest stable | Gates |"
+            echo "|---|---|---|"
+            echo "| $pinned | $stable | $([ "$failed" = 0 ] && echo pass || echo '**fail**') |"
+            echo ""
+            if [ "$failed" != 0 ]; then
+              echo '```'
+              head -40 ../lints.txt
+              echo '```'
+            fi
+          } >>"$GITHUB_STEP_SUMMARY"
+
+      - name: Raise (or refresh) the drift issue
+        if: ${{ steps.gates.outputs.failed == '1' }}
+        run: |
+          set -euo pipefail
+          body="Rust ${{ steps.gates.outputs.stable }} (latest stable) fails the gates CI runs; CI is pinned to ${{ steps.gates.outputs.pinned }} (\`RUST_TOOLCHAIN\` in \`.github/workflows/ci.yml\`), so no pull request is failing yet.
+
+          To move the pin: install it beside the default (\`rustup toolchain install ${{ steps.gates.outputs.stable }} --profile minimal --component clippy --component rustfmt\`), run \`cargo +${{ steps.gates.outputs.stable }} clippy --locked -- -D warnings\` with and without \`--features core-alacritty\` into a target directory outside the repo, fix what it finds, and change \`RUST_TOOLCHAIN\` in the same commit.
+
+          Lints this run found (count, name):
+          \`\`\`
+          $(head -40 ../lints.txt)
+          \`\`\`
+          Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }} · policy: #911."
+          existing=$(gh issue list --state open --search "in:title \"$ISSUE_TITLE\"" --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "$body"
+          else
+            gh issue create --title "$ISSUE_TITLE" --label follow-up --body "$body"
+          fi
