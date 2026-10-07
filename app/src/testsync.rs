@@ -16,6 +16,12 @@
 //! asserts on lock ownership takes it for its duration. It is deliberately not
 //! a lock around "the filesystem" or "the environment" — naming what it
 //! actually protects is what stops it becoming a mutex everything grabs.
+//!
+//! **It cannot be complete,** because the code under test starts processes too:
+//! the engstate tests run `git` dozens of times without it, and beside them the
+//! instance tests' "released on drop" failed in 14 runs of 150 (#908). So a test
+//! that asserts a lock it just released is free also waits for the release to
+//! land, as `instance.rs`'s `soon` does, and a lock never released still fails.
 
 use std::sync::{Mutex, MutexGuard, OnceLock};
 

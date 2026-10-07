@@ -820,6 +820,33 @@ mod tests {
         crate::testsync::Scratch::new(&format!("inst-{tag}"))
     }
 
+    /// Whether `free` comes true within two seconds, for asserting that a
+    /// lock just released is free.
+    ///
+    /// Dropping the descriptor releases the lock at once in this process, and
+    /// not always in the kernel's eyes: a test on another thread that starts a
+    /// process hands the child a copy of every open descriptor, this lock's
+    /// included, until the child execs. `testsync::forks_and_locks` keeps the
+    /// pane and host tests out of that window and cannot keep out the rest. The
+    /// engstate tests run `git` and the channel tests run `bash` without it, and
+    /// the code they test starts processes of its own. Measured on 2026-10-07
+    /// (#908), 150 runs of the instance tests each: alone, `released on drop`
+    /// never failed; beside the engstate tests it failed in 14; beside the
+    /// channel tests, in 1. So a release is asserted to land within a deadline.
+    /// A lock that is never released still fails, two seconds later.
+    fn soon(mut free: impl FnMut() -> bool) -> bool {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            if free() {
+                return true;
+            }
+            if Instant::now() >= deadline {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
     /// A saved session on disk, aged so that "most recent" is decided rather
     /// than raced.
     fn saved(config: &Path, id: &str, panes: usize, ago: Duration) {
@@ -1113,9 +1140,13 @@ mod tests {
         let other = claim_in(&config, "7");
         assert!(other.owned, "ws 7 is its own session");
         // releasing the fd hands the workspace straight back — this is what makes
-        // a crashed window recoverable without any cleanup pass
+        // a crashed window recoverable without any cleanup pass. "Straight
+        // back" as the kernel counts it: until 2026-10-07 this was asserted at
+        // once, and failed in 2 of 34 full-suite runs, with a child of another
+        // test's `git` or `bash` still holding a copy of the fd (#908). See
+        // `soon`.
         drop(first);
-        assert!(claim_in(&config, "2").owned, "released on drop");
+        assert!(soon(|| claim_in(&config, "2").owned), "released on drop");
         std::fs::remove_dir_all(&config).unwrap();
     }
 
@@ -1159,9 +1190,13 @@ mod tests {
         assert!(legacy_master_live_at(&lock), "held lock reads as live");
         // the probe must not have stolen the lock from the live window
         assert!(legacy_master_live_at(&lock), "probe is non-destructive");
-        // the old window exits (fd closes, kernel releases) → adoption may run
+        // the old window exits (fd closes, kernel releases) → adoption may run.
+        // Waited for, as in `one_window_per_key_and_the_lock_dies_with_it`.
         drop(held);
-        assert!(!legacy_master_live_at(&lock), "released lock reads as gone");
+        assert!(
+            soon(|| !legacy_master_live_at(&lock)),
+            "released lock reads as gone"
+        );
         std::fs::remove_dir_all(&config).unwrap();
     }
 
