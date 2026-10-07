@@ -955,6 +955,35 @@ mod tests {
         assert_eq!(posts[0].surface.as_ref().unwrap().title, "New");
     }
 
+    /// The handover list files a `Deliverable:` line as `said` and an artifact
+    /// the agent wrote as `presented`. Both arrive here as derived, so the line
+    /// is told apart by its id: a fenced artifact is the agent's own card.
+    #[test]
+    fn a_deliverable_line_is_told_apart_from_an_artifact_the_agent_fenced() {
+        let fence = "```td\n{\"td\":\"0.4\",\"kind\":\"artifact\",\"id\":\"plan\",\
+                     \"title\":\"Plan\",\"model\":{\"href\":\"/tmp/plan.html\"}}\n```";
+        let body = format!(
+            "{}\n{}",
+            assistant(json!([{ "type": "text", "text": fence }])),
+            assistant(json!([{ "type": "text", "text": "Deliverable: Report — /tmp/r.html" }]))
+        );
+        let posts = from_jsonl(&body, NOW);
+        let line = |id: &str| {
+            let post = posts.iter().find(|p| p.id.as_str() == id);
+            is_deliverable_line(post.and_then(|p| p.surface.as_ref()).expect(id))
+        };
+        assert!(!line("plan"), "the agent's own card");
+        let printed = posts
+            .iter()
+            .find(|p| p.id.as_str().starts_with(DELIVERABLE_ID))
+            .expect("the line's post");
+        assert!(line(printed.id.as_str()), "the printed line");
+        // The same id dropped as a file is somebody's card, whatever it is called.
+        let mut dropped = printed.surface.clone().expect("a surface");
+        dropped.origin = crate::surface::Origin::FileDrop;
+        assert!(!is_deliverable_line(&dropped), "only the window derives one");
+    }
+
     #[test]
     fn a_deliverable_line_with_no_target_is_not_one() {
         let body = assistant(json!([{ "type": "text", "text": "Deliverable: a feeling" }]));
