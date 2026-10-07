@@ -505,11 +505,23 @@ fn find_href(s: &str) -> Option<usize> {
         .min()
 }
 
+/// The id every artifact read off a `Deliverable:` line carries in front of
+/// its hash.
+const DELIVERABLE_ID: &str = "deliv-";
+
+/// Whether `surface` is an artifact this module read off a `Deliverable:` line
+/// in the agent's prose: the printed line, read out of the transcript rather
+/// than off the screen. A `td` fence is derived too, but that is a card the
+/// agent wrote, and it does not carry this id.
+pub fn is_deliverable_line(surface: &Surface) -> bool {
+    surface.origin == crate::surface::Origin::Derived && surface.id.0.starts_with(DELIVERABLE_ID)
+}
+
 fn deliverable_post(label: &str, href: &str, now_ms: u64) -> Post {
     // `file://` is stripped to a path: the desktop handler takes either, and a
     // path is what the rest of this window means by a file.
     let target = href.strip_prefix("file://").unwrap_or(href).to_string();
-    let id = SurfaceId(format!("deliv-{}", short_hash(&target)));
+    let id = SurfaceId(format!("{DELIVERABLE_ID}{}", short_hash(&target)));
     let kind = Kind::Artifact(Artifact {
         mime: mime_of(&target),
         summary: Some("declared in the agent's own reply".into()),
