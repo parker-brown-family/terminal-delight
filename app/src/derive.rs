@@ -981,7 +981,10 @@ mod tests {
         // The same id dropped as a file is somebody's card, whatever it is called.
         let mut dropped = printed.surface.clone().expect("a surface");
         dropped.origin = crate::surface::Origin::FileDrop;
-        assert!(!is_deliverable_line(&dropped), "only the window derives one");
+        assert!(
+            !is_deliverable_line(&dropped),
+            "only the window derives one"
+        );
     }
 
     #[test]

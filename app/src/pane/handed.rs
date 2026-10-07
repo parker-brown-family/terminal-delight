@@ -91,9 +91,9 @@ impl TerminalView {
     /// record, and the needs-me link. Nothing else files it: derived cards are
     /// left out of the record on purpose, and the derive sweep re-reads only
     /// the newest line, so before this a window restart kept the newest of
-    /// them and forgot the rest. Measured on 2026-10-07 (#909): the derive
-    /// sweep beat the screen to two of the fourteen printed handovers that day,
-    /// and neither was anywhere in its conversation's record.
+    /// them and forgot the rest. Measured on 2026-10-07 (#909): of thirteen
+    /// printed handovers that day, the derive sweep reached one first, both
+    /// times it was printed, and it was nowhere in its conversation's record.
     pub(crate) fn handover_presented(&mut self, surface: &crate::surface::Surface) {
         if surface.id.0.starts_with("handover-") {
             return;
