@@ -371,7 +371,7 @@ pub fn pane_chord(k: &Key, up: &Up) -> bool {
             // ^G / ^U reaching the pseudoterminal.
             return matches!(
                 k.key,
-                "t" | "c" | "v" | "k" | "a" | "b" | "n" | "z" | "u" | "y" | "d" | "g" | "f"
+                "t" | "c" | "v" | "k" | "a" | "b" | "n" | "m" | "z" | "u" | "y" | "d" | "g" | "f"
             );
         }
         return matches!(

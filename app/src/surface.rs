@@ -2237,7 +2237,7 @@ fn parse_kind(name: &str, model: Option<&Value>) -> Result<Kind, KindError> {
             Kind::Artifact(Artifact {
                 href,
                 mime: text("mime"),
-                summary: summary_key.and_then(&text),
+                summary: summary_key.and_then(text),
                 notes: leftover_notes(m, &[href_key, "mime", summary_key.unwrap_or("")]),
             })
         }
@@ -2630,7 +2630,7 @@ fn parse_escalation(v: &Value) -> Option<Escalation> {
                 .get("items")
                 .or_else(|| o.get("asks"))
                 .or_else(|| o.get("questions"))
-                .map(&items_of)
+                .map(items_of)
                 .unwrap_or_default();
             // A level with neither items nor a reason is still a declaration —
             // `"level": "none"` is the whole point of the field.

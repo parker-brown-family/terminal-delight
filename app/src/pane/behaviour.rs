@@ -2517,3 +2517,173 @@ fn a_brief_in_the_reader_takes_notes_and_stamps_and_sends_them(cx: &mut TestAppC
         Some(std::path::Path::new(&brief))
     );
 }
+
+/// What an agent handed over is one chord away, on a page over the pane, and
+/// a plain click on its name there opens it into the pane in the page's place.
+/// Opening it is what clears its mark, and the same chord on the page puts it
+/// away again.
+#[gpui::test]
+fn a_handover_is_on_its_page_and_opens_into_the_pane_from_there(cx: &mut TestAppContext) {
+    let dir = Scratch::new("handover");
+    let report = dir.fixture("../README.md", "report.md");
+    let report = report.to_str().expect("UTF-8").to_string();
+    let mut pane = Pane::running(cx, "printf '%s\\n' 'ready'; exec cat");
+    pane.wait_for("ready");
+    assert!(!pane.read(|v| v.has_handovers()), "nothing handed over yet");
+
+    // The verb, as the MCP path calls it.
+    pane.view.update(pane.cx, |v, cx| {
+        v.hand_over(
+            Some("The report".into()),
+            report.clone(),
+            crate::handover::Source::Declared,
+            cx,
+        );
+    });
+    pane.redraw();
+    assert!(pane.read(|v| v.has_handovers()));
+
+    pane.keys("ctrl-shift-m");
+    let page = pane.float_path().expect("the handover page, over the pane");
+    assert!(page.ends_with(crate::handover::PAGE), "{page:?}");
+    let text = std::fs::read_to_string(&page).expect("the page");
+    assert!(text.contains("[The report]"), "{text}");
+    assert!(text.contains("**1 new**"), "{text}");
+
+    // A plain click on the name is the document's own link press.
+    let view = pane.float_view().expect("the page's view");
+    pane.follow(&view, &report);
+    assert_eq!(
+        pane.float_path().as_deref(),
+        Some(std::path::Path::new(&report)),
+        "the report takes the page's place"
+    );
+
+    // Opened now, so the page no longer marks it.
+    pane.keys("ctrl-shift-m");
+    assert_eq!(pane.float_path().as_deref(), Some(page.as_path()));
+    let text = std::fs::read_to_string(&page).expect("the page");
+    assert!(text.contains("all opened"), "{text}");
+
+    // And the chord on the page puts it away.
+    pane.keys("ctrl-shift-m");
+    assert_eq!(pane.float_path(), None, "the page is toggled off");
+}
+
+/// A `Deliverable:` line an agent printed is read off the pane's real grid,
+/// including the link Claude Code wraps at the pane's edge and carries on two
+/// spaces in. These are the rows of the HC Video pane on 2026-10-06, at that
+/// pane's own width of 100 columns, which is also this harness's.
+#[gpui::test]
+fn a_printed_handover_is_read_off_the_screen_and_becomes_the_needs_me_link(
+    cx: &mut TestAppContext,
+) {
+    let first = "  Deliverable: Club HC VIDEO spec — file:///home/parker/BROWN-FAMILY-SPORTS/hc-video/software/hc-vid";
+    let rest = "  eo-web/docs/plans/club-hc-video/2026-09-29-club-hc-video.html";
+    let mut pane = Pane::running(
+        cx,
+        &format!("printf '%s\\n' '{first}' '{rest}' 'ready'; exec cat"),
+    );
+    pane.wait_for("ready");
+    let href = "file:///home/parker/BROWN-FAMILY-SPORTS/hc-video/software/hc-video-web/docs/plans/club-hc-video/2026-09-29-club-hc-video.html";
+
+    // A shell pane is not read: only an agent hands things over.
+    pane.view.update(pane.cx, |v, cx| v.scan_handovers(cx));
+    assert!(!pane.read(|v| v.has_handovers()));
+
+    pane.view.update(pane.cx, |v, cx| {
+        v.mode = super::PaneMode::Claude;
+        v.scan_handovers(cx);
+    });
+    let newest = pane.read(|v| v.handovers.newest().cloned());
+    let newest = newest.expect("the line was read");
+    assert_eq!(newest.label, "Club HC VIDEO spec");
+    assert_eq!(newest.href, href, "the link, joined across the wrap");
+    assert_eq!(newest.source, crate::handover::Source::Said);
+    let link = pane.read(|v| v.deliverable()).expect("the needs-me link");
+    assert_eq!(link.href, href);
+
+    // Read again a second later, it is the same handover, not a second one.
+    pane.view.update(pane.cx, |v, cx| v.scan_handovers(cx));
+    assert_eq!(pane.read(|v| v.handovers.newest_first().len()), 1);
+}
+
+/// A link longer than the pane, printed as one line, is wrapped by the
+/// terminal itself and carried on at the left edge with the row flagged. An
+/// agent that does not draw fullscreen hands things over in this shape, and
+/// the link is read whole off the real grid rather than cut at the edge.
+#[gpui::test]
+fn a_link_the_terminal_itself_wrapped_is_read_whole(cx: &mut TestAppContext) {
+    let href = "file:///home/parker/Work/cinema-delight/campaigns/2026-10-05-terminal-delight-movements/sound/README.md";
+    assert!(
+        href.len() + 2 > 100,
+        "longer than the harness's 100 columns"
+    );
+    let mut pane = Pane::running(
+        cx,
+        &format!(
+            "printf '%s\\n' '  Deliverable: the four voicings —' '  {href}' 'ready'; exec cat"
+        ),
+    );
+    pane.wait_for("ready");
+    pane.view.update(pane.cx, |v, cx| {
+        v.mode = super::PaneMode::Claude;
+        v.scan_handovers(cx);
+    });
+    let newest = pane.read(|v| v.handovers.newest().cloned());
+    assert_eq!(newest.expect("read off the screen").href, href);
+}
+
+/// An agent that declares a file and then presents its own artifact for it —
+/// the order the house rules ask for at the end of a turn — leaves one card for
+/// that file on its shelf, its own, and one row in the list.
+#[gpui::test]
+fn the_agents_own_card_for_a_file_replaces_the_one_filed_for_its_declaration(
+    cx: &mut TestAppContext,
+) {
+    let mut pane = Pane::running(cx, "printf '%s\\n' 'ready'; exec cat");
+    pane.wait_for("ready");
+    let href = "/tmp/td-handover-test/plan.html";
+    pane.view.update(pane.cx, |v, cx| {
+        v.hand_over(
+            Some("Plan".into()),
+            href.into(),
+            crate::handover::Source::Declared,
+            cx,
+        );
+    });
+    let cards = |pane: &mut Pane| {
+        pane.read(|v| {
+            v.bench
+                .artifacts()
+                .map(|(id, _)| id.0.clone())
+                .collect::<Vec<_>>()
+        })
+    };
+    let filed = cards(&mut pane);
+    assert_eq!(filed.len(), 1);
+    assert!(filed[0].starts_with("handover-"), "{filed:?}");
+
+    let theirs = serde_json::json!({
+        "td": "0.4", "kind": "artifact", "id": "plan", "title": "Plan, with a summary",
+        "model": { "href": format!("file://{href}"), "summary": "four decisions" }
+    });
+    pane.view.update(pane.cx, |v, cx| {
+        v.present(crate::surface::parse_lenient(&theirs, 1, "plan"), cx);
+    });
+    assert_eq!(
+        cards(&mut pane),
+        vec!["plan".to_string()],
+        "only the agent's own card"
+    );
+    let rows = pane.read(|v| v.handovers.newest_first().len());
+    assert_eq!(rows, 1, "one file, one row");
+    let kept = pane
+        .read(|v| v.handovers.newest().cloned())
+        .expect("the row");
+    assert_eq!(
+        kept.source,
+        crate::handover::Source::Declared,
+        "the stronger word stays"
+    );
+}

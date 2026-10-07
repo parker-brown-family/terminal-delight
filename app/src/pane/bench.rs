@@ -1332,9 +1332,28 @@ impl TerminalView {
         }
         let loaded = crate::benchstore::load(&dir, &key.root);
         self.wb_writer = Some(writer);
+        let root = key.root.clone();
         self.wb_conv = Some(key);
+        // What this conversation handed over, from its whole record rather
+        // than from the 64 surfaces the bench keeps. After the key is set, so
+        // the history page is written into the conversation's own folder.
+        self.handovers_from_record(&root);
+        // The agent's own card for a file wins over the one TD filed for the
+        // same file, on a replay as it does live (`handover_presented`).
+        let carded: std::collections::HashSet<String> = loaded
+            .surfaces
+            .iter()
+            .filter(|(id, _)| !id.starts_with("handover-"))
+            .filter_map(|(_, doc)| crate::handover::from_surface(doc, 0))
+            .map(|h| h.key())
+            .collect();
         let now = crate::surfacefeed::now_ms();
         for (id, doc) in loaded.surfaces {
+            if id.starts_with("handover-")
+                && crate::handover::from_surface(&doc, 0).is_some_and(|h| carded.contains(&h.key()))
+            {
+                continue;
+            }
             // `bench.apply` rather than `present`: the two things `present`
             // adds are about a LIVE arrival — deciding whether an MCP caller
             // was this pane's own agent, and telling the channel a reply has

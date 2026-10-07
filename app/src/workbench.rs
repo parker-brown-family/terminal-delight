@@ -4227,6 +4227,16 @@ impl Bench {
         self.surfaces.iter().find(|s| &s.id == id)
     }
 
+    /// Every artifact on this bench, by id and where it points. The handover
+    /// chip asks before filing one of its own, so a file the agent already put
+    /// here is not shelved twice.
+    pub fn artifacts(&self) -> impl Iterator<Item = (&SurfaceId, &str)> {
+        self.surfaces.iter().filter_map(|s| match &s.kind {
+            Kind::Artifact(a) => Some((&s.id, a.href.as_str())),
+            _ => None,
+        })
+    }
+
     /// How many surfaces sit on each shelf, and how many of those are unseen.
     pub fn counts(&self, shelf: Shelf) -> (usize, usize) {
         // THE SAME COLLAPSE THE RAIL DOES, because this number sits directly
