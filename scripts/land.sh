@@ -44,9 +44,11 @@ SHA=$(git rev-parse --short HEAD)
 echo "== main is now $(git log --oneline -1)"
 
 echo "== the whole suite, on the merged tree"
-( cd app && CARGO_TARGET_DIR="$TGT" cargo test --locked 2>&1 | grep -E "test result:|FAILED" )
-if ( cd app && CARGO_TARGET_DIR="$TGT" cargo test --locked 2>&1 | grep -qE "^test .* FAILED|test result: FAILED" ); then
-  echo "== a test failed on the merged tree — NOT installing"
+# Run once and decide on that run: a failure is retried alone, a flake is
+# installed past and named at the end, anything else stops. See merged-suite.sh.
+# shellcheck source=lib/merged-suite.sh
+. "$WT/scripts/lib/merged-suite.sh"
+if ! CARGO_TARGET_DIR="$TGT" merged_suite "$WT/app"; then
   exit 1
 fi
 
@@ -80,3 +82,9 @@ if [ -n "${HOSTEXE:-}" ]; then
 else
   echo "== no running host found; nothing to compare the wire against"
 fi
+
+# Last, so it is the line nobody scrolls past: a test that failed on the merged
+# tree and passed alone twice. The build is installed; the flake is still real.
+for t in $FLAKED; do
+  echo "FLAKED ONCE: $t — failed in the merged-tree suite, passed alone twice. Its panic is printed above; file or update its issue."
+done
