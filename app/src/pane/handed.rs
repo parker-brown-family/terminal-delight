@@ -387,10 +387,11 @@ impl TerminalView {
     }
 }
 
-/// How many characters of a name the wide chip shows. Checked against the
-/// sixteen handovers in the 2026-10-06 Cinema Delight pane: 26 keeps "The
-/// symphony, curved glass" whole and leaves every one of them distinct.
-const CHIP_NAME_CHARS: usize = 26;
+/// How many characters of a name the wide chip shows, ellipsis included.
+/// Checked against the sixteen handovers in the 2026-10-06 Cinema Delight
+/// pane: 28 keeps "The symphony, curved glass" whole, where 26 cut it to
+/// "…glas…" (the test below caught that), and leaves every one distinct.
+const CHIP_NAME_CHARS: usize = 28;
 
 /// Cut a name to `max` characters with an ellipsis, on a character boundary.
 fn ellipsize(s: &str, max: usize) -> String {
@@ -422,11 +423,16 @@ mod tests {
 
     #[test]
     fn a_long_name_is_cut_with_an_ellipsis_and_a_short_one_is_left_alone() {
-        assert_eq!(ellipsize("The File Drop", 26), "The File Drop");
-        let cut = ellipsize("The symphony, curved glass (review cut)", 26);
-        assert_eq!(cut.chars().count(), 26);
-        assert!(cut.ends_with('\u{2026}'));
-        assert!(cut.starts_with("The symphony, curved glass"));
+        assert_eq!(ellipsize("The File Drop", CHIP_NAME_CHARS), "The File Drop");
+        let cut = ellipsize("The symphony, curved glass (review cut)", CHIP_NAME_CHARS);
+        assert!(cut.chars().count() <= CHIP_NAME_CHARS, "{cut}");
+        assert!(cut.ends_with('\u{2026}'), "{cut}");
+        assert_eq!(cut, "The symphony, curved glass\u{2026}");
+        // The longest name in that pane stays told apart from its neighbours.
+        assert_ne!(
+            ellipsize("IV: arpeggios + the melody, 3 ways each", CHIP_NAME_CHARS),
+            ellipsize("IV's climax, re-voiced 3 ways", CHIP_NAME_CHARS)
+        );
         // Not split inside a character.
         assert_eq!(ellipsize("ééééé", 3).chars().count(), 3);
     }
