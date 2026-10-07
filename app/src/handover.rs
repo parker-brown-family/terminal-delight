@@ -173,7 +173,10 @@ const MAX_ROWS: usize = 4;
 /// Every handover on a screen, as `(label, href)`, top to bottom.
 ///
 /// `rows` are the screen's rows exactly as drawn — **not** trimmed — because
-/// whether a row reaches the pane's last column is what says it was wrapped.
+/// whether a row reaches the pane's last column is what says an application
+/// wrapped it. `wraps[r]` is the terminal's own word that row `r` carries on
+/// into `r + 1`: its soft-wrap flag, which survives the pane growing wider
+/// afterwards, when the row stops reaching the edge.
 ///
 /// A row is a handover when, after its margin, it starts with `Deliverable:`
 /// and a link follows: on that row, carried across the rows a long link was
@@ -190,7 +193,7 @@ const MAX_ROWS: usize = 4;
 /// pane's edge. Here a row continues onto the next when it reaches the last
 /// column and the next row starts at the same margin; measured on the HC Video
 /// pane on 2026-10-06, a 100-character row in a 100-column pane.
-pub fn handover_rows(rows: &[String]) -> Vec<(String, String)> {
+pub fn handover_rows(rows: &[String], wraps: &[bool]) -> Vec<(String, String)> {
     let mut out = Vec::new();
     let mut i = 0;
     while i < rows.len() {
@@ -203,23 +206,12 @@ pub fn handover_rows(rows: &[String]) -> Vec<(String, String)> {
         };
         // The handover's own text: this row, and the rows a link that did not
         // fit was carried onto.
-        let mut text = rest.trim_start().to_string();
-        let mut last = i;
-        while last + 1 < rows.len() && last + 1 - i < MAX_ROWS && fills(&rows[last]) {
-            let next = &rows[last + 1];
-            if !at_margin(next, margin)
-                || !ends_in_link(&text)
-                || strip_bullet(next.trim_start()).starts_with(MARK)
-            {
-                break;
-            }
-            text.push_str(next.trim());
-            last += 1;
-        }
+        let (text, mut last, cut) = carry(rows, wraps, i, margin, rest.trim_start().to_string());
         let (label, href) = match find_link(&text) {
             Some((at, href)) => (text[..at].to_string(), Some(href)),
             None => (text.clone(), None),
         };
+        let mut cut = cut && href.is_some();
         // No link on the row: the house format's second line, the URL alone,
         // and its own wrapped continuation.
         let href = href.or_else(|| {
@@ -230,20 +222,18 @@ pub fn handover_rows(rows: &[String]) -> Vec<(String, String)> {
                 return None;
             }
             let next_margin = rows[j].chars().count() - rows[j].trim_start().chars().count();
-            let mut t = first.to_string();
-            let mut k = j;
-            while k + 1 < rows.len() && k + 1 - j < MAX_ROWS && fills(&rows[k]) {
-                if !at_margin(&rows[k + 1], next_margin)
-                    || strip_bullet(rows[k + 1].trim_start()).starts_with(MARK)
-                {
-                    break;
-                }
-                t.push_str(rows[k + 1].trim());
-                k += 1;
-            }
+            let (t, k, c) = carry(rows, wraps, j, next_margin, first.to_string());
             last = k;
+            cut = c;
             find_link(&t).map(|(_, h)| h)
         });
+        // A link that runs to the pane's edge with nowhere found to carry it
+        // was cut short, and a cut link opens nothing. It is refused rather
+        // than kept: a row that is missing says less than a row that lies.
+        if cut {
+            i = last + 1;
+            continue;
+        }
         if let Some(href) = href {
             let label = clean_label(&label);
             let label = if label.is_empty() {
@@ -256,6 +246,47 @@ pub fn handover_rows(rows: &[String]) -> Vec<(String, String)> {
         i = last + 1;
     }
     out
+}
+
+/// Carry a link that reached the pane's edge onto the rows it was wrapped
+/// onto, starting from row `start` whose text so far is `text`. Two wraps are
+/// followed: Claude Code's own, which carries on at the message's margin, and
+/// the terminal's, which carries on at column 0 — the shape when an agent that
+/// does not draw fullscreen prints a line wider than the pane.
+///
+/// Answers the text, the last row used, and whether the link still ends at an
+/// edge with nothing found to carry it: cut, which the caller refuses. A row
+/// that opens a handover of its own is never a continuation, and a link that
+/// reaches the edge just before one ended there.
+fn carry(
+    rows: &[String],
+    wraps: &[bool],
+    start: usize,
+    margin: usize,
+    mut text: String,
+) -> (String, usize, bool) {
+    let mut last = start;
+    loop {
+        let flagged = wraps.get(last).copied().unwrap_or(false);
+        if !(flagged || fills(&rows[last])) || !ends_in_link(&text) {
+            return (text, last, false);
+        }
+        let Some(next) = rows.get(last + 1) else {
+            return (text, last, true);
+        };
+        // A row that opens a handover of its own, or a blank one, carries
+        // nothing on: the link ended exactly at the edge.
+        if next.trim().is_empty() || strip_bullet(next.trim_start()).starts_with(MARK) {
+            return (text, last, false);
+        }
+        if last + 1 - start >= MAX_ROWS
+            || !(flagged || at_margin(next, margin) || at_margin(next, 0))
+        {
+            return (text, last, true);
+        }
+        text.push_str(next.trim());
+        last += 1;
+    }
 }
 
 /// A leading bullet the renderer drew in front of a message's first line.
@@ -649,11 +680,14 @@ pub fn history_markdown(
     };
     let fresh = match unopened {
         0 => "all opened".to_string(),
-        n => format!("● {n} not opened yet"),
+        n => format!("**{n} new**"),
     };
+    // The pane's name on a line of its own, so a long one wraps as a name
+    // rather than pushing the counts onto a ragged second line.
     out.push_str(&format!(
-        "**{pane}** · {count}, newest first · {fresh}\n\n\
-         Click a name to open it over this pane.\n"
+        "**{pane}**\n\n\
+         {count}, newest first · {fresh} · \
+         click a name to open it over this pane, Esc puts this page away.\n"
     ));
     let mut day: Option<Option<(i32, u32, u32)>> = None;
     for r in rows {
@@ -662,13 +696,18 @@ pub fn history_markdown(
             day = Some(this);
             out.push_str(&format!("\n## {}\n", day_heading(r.when, today, yesterday)));
         }
-        let dot = if r.opened { "" } else { "● " };
+        // One marker per row: the list's own. "New" is a word in the line
+        // under the name, where the eye that has found the name reads on.
         out.push_str(&format!(
-            "\n- {dot}**[{}]({})**\n\n  ",
+            "\n- **[{}]({})**\n\n  ",
             escape(&r.label),
             link_target(&r.href)
         ));
-        let mut meta = vec![format!("`{}`", r.kind)];
+        let mut meta = Vec::new();
+        if !r.opened {
+            meta.push("**new**".to_string());
+        }
+        meta.push(format!("`{}`", r.kind));
         meta.push(
             r.when
                 .map(Clock::hhmm)
@@ -690,8 +729,8 @@ pub fn history_markdown(
         out.push('\n');
     }
     out.push_str(
-        "\n---\n\nWritten by Terminal Delight from this agent's conversation record, \
-         and rewritten whenever something new is handed over.\n",
+        "\n---\n\nWritten by Terminal Delight from what this agent handed over, \
+         and rewritten whenever something new arrives.\n",
     );
     out
 }
@@ -901,6 +940,11 @@ mod tests {
         lines.iter().map(|s| s.to_string()).collect()
     }
 
+    /// A screen with no row flagged as the terminal's own wrap.
+    fn read(screen: &[String]) -> Vec<(String, String)> {
+        handover_rows(screen, &vec![false; screen.len()])
+    }
+
     /// Pad a row to a pane's width, the way the grid hands it over.
     fn padded(line: &str, cols: usize) -> String {
         let n = line.chars().count();
@@ -919,7 +963,7 @@ mod tests {
             ),
         ]);
         assert_eq!(
-            handover_rows(&screen),
+            read(&screen),
             vec![(
                 "The File Drop".to_string(),
                 "file:///home/parker/Work/terminal-delight/reports/2026-10-06-the-file-drop.html"
@@ -942,7 +986,7 @@ mod tests {
             ),
         ]);
         assert_eq!(
-            handover_rows(&screen),
+            read(&screen),
             vec![(
                 "Club HC VIDEO spec".to_string(),
                 "file:///home/parker/BROWN-FAMILY-SPORTS/hc-video/software/hc-video-web/docs/plans/club-hc-video/2026-09-29-club-hc-video.html"
@@ -958,7 +1002,7 @@ mod tests {
             &padded("  and something else entirely", 80),
         ]);
         assert_eq!(
-            handover_rows(&screen),
+            read(&screen),
             vec![("Report".into(), "file:///tmp/a/report.html".into())]
         );
     }
@@ -979,7 +1023,62 @@ mod tests {
             ),
             &padded("Deliverable: <short label> — <file:// or https:// URL>", 90),
         ]);
-        assert_eq!(handover_rows(&screen), vec![]);
+        assert_eq!(read(&screen), vec![]);
+    }
+
+    #[test]
+    fn the_terminals_own_wrap_carries_a_link_on_at_column_zero() {
+        // The photograph's case: printed while the pane was narrower than the line,
+        // so the terminal itself wrapped the link and carried it on at the
+        // left edge, not at the message's margin.
+        let url = "  file:///home/parker/Work/cinema-delight/campaigns/2026-10-05-terminal-delight-movements/sound/README.md";
+        let head: String = url.chars().take(100).collect();
+        let tail: String = url.chars().skip(100).collect();
+        assert!(head.ends_with("READ"), "{head}");
+        let screen = rows(&[
+            &padded("  Deliverable: the four voicings —", 100),
+            &head,
+            &padded(&tail, 100),
+        ]);
+        assert_eq!(
+            read(&screen),
+            vec![("the four voicings".into(), url.trim().to_string())]
+        );
+    }
+
+    #[test]
+    fn a_row_the_terminal_wrapped_is_carried_on_after_the_pane_grows_wider() {
+        // The photograph's second case: printed narrow, so the terminal wrapped
+        // the link and flagged the row; then the window grew, the alternate
+        // screen was not reflowed, and the row now ends in blanks. Only the
+        // flag still says it carries on.
+        let screen = rows(&[
+            &padded("  Deliverable: the four voicings —", 140),
+            &padded(
+                "  file:///home/parker/Work/cinema-delight/campaigns/2026-10-05-terminal-delight-movements/sound/READ",
+                140,
+            ),
+            &padded("ME.md", 140),
+        ]);
+        let href = "file:///home/parker/Work/cinema-delight/campaigns/2026-10-05-terminal-delight-movements/sound/README.md";
+        assert_eq!(
+            handover_rows(&screen, &[false, true, false]),
+            vec![("the four voicings".into(), href.into())]
+        );
+        // Without the flag the same rows are a link that simply ends there.
+        assert_eq!(read(&screen)[0].1, href.replace("README.md", "READ"));
+    }
+
+    #[test]
+    fn a_link_cut_at_the_edge_with_nothing_to_carry_it_is_refused_not_kept_short() {
+        // Full to the last column, and the next row is somewhere else
+        // entirely: what is on screen is a link cut short, which would open
+        // nothing. Neither a short link nor a guess is recorded.
+        let cut = "  Deliverable: A page — file:///home/parker/reports/2026-10-06-a-very-long-n";
+        let screen = rows(&[cut, &padded("      unrelated text, indented further", 77)]);
+        assert_eq!(read(&screen), vec![]);
+        // At the very bottom of the screen it is just as cut.
+        assert_eq!(read(&rows(&[cut])), vec![]);
     }
 
     #[test]
@@ -992,7 +1091,7 @@ mod tests {
             &padded("  Deliverable: /tmp/graphics-protocols.md", 100),
         ]);
         assert_eq!(
-            handover_rows(&screen),
+            read(&screen),
             vec![
                 (
                     "PR 902".into(),
@@ -1008,8 +1107,11 @@ mod tests {
 
     #[test]
     fn a_bullet_the_renderer_drew_does_not_hide_the_line() {
-        let screen = rows(&["⏺ Deliverable: The page — file:///tmp/p/page.html"]);
-        assert_eq!(handover_rows(&screen).len(), 1);
+        let screen = rows(&[&padded(
+            "⏺ Deliverable: The page — file:///tmp/p/page.html",
+            80,
+        )]);
+        assert_eq!(read(&screen).len(), 1);
     }
 
     #[test]
@@ -1020,7 +1122,7 @@ mod tests {
             &padded("  Deliverable: Two —", 60),
             &padded("  file:///tmp/a/two.md", 60),
         ]);
-        let got: Vec<String> = handover_rows(&screen).into_iter().map(|(l, _)| l).collect();
+        let got: Vec<String> = read(&screen).into_iter().map(|(l, _)| l).collect();
         assert_eq!(got, vec!["One", "Two"]);
     }
 
@@ -1031,9 +1133,9 @@ mod tests {
         let a = "  Deliverable: A — file:///tmp/a/first-one.md";
         let b = "  Deliverable: B — file:///tmp/a/second-2a.md";
         assert_eq!(a.chars().count(), b.chars().count());
-        let screen = rows(&[a, b]);
+        let screen = rows(&[a, b, &padded("", 46)]);
         assert_eq!(
-            handover_rows(&screen),
+            read(&screen),
             vec![
                 ("A".into(), "file:///tmp/a/first-one.md".into()),
                 ("B".into(), "file:///tmp/a/second-2a.md".into()),
@@ -1235,15 +1337,18 @@ mod tests {
         assert!(today < yesterday && yesterday < older, "{page}");
         assert!(
             page.contains(
-                "- ● **[The symphony, curved glass (review cut)](file:///tmp/s/glass.mp4)**"
+                "- **[The symphony, curved glass (review cut)](file:///tmp/s/glass.mp4)**"
             ),
             "{page}"
         );
-        assert!(page.contains("`mp4` · 15:31 · declared"), "{page}");
-        assert!(page.contains("`wav` · 16:09 · said"), "{page}");
+        assert!(
+            page.contains("**new** · `mp4` · 15:31 · declared"),
+            "{page}"
+        );
+        assert!(page.contains("\n  `wav` · 16:09 · said"), "{page}");
         assert!(page.contains("**file gone**"), "{page}");
         assert!(
-            page.contains("3 artifacts, newest first · ● 1 not opened yet"),
+            page.contains("3 artifacts, newest first · **1 new**"),
             "{page}"
         );
     }

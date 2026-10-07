@@ -2548,7 +2548,7 @@ fn a_handover_is_on_its_page_and_opens_into_the_pane_from_there(cx: &mut TestApp
     assert!(page.ends_with(crate::handover::PAGE), "{page:?}");
     let text = std::fs::read_to_string(&page).expect("the page");
     assert!(text.contains("[The report]"), "{text}");
-    assert!(text.contains("● 1 not opened yet"), "{text}");
+    assert!(text.contains("**1 new**"), "{text}");
 
     // A plain click on the name is the document's own link press.
     let view = pane.float_view().expect("the page's view");
@@ -2606,4 +2606,30 @@ fn a_printed_handover_is_read_off_the_screen_and_becomes_the_needs_me_link(
     // Read again a second later, it is the same handover, not a second one.
     pane.view.update(pane.cx, |v, cx| v.scan_handovers(cx));
     assert_eq!(pane.read(|v| v.handovers.newest_first().len()), 1);
+}
+
+/// A link longer than the pane, printed as one line, is wrapped by the
+/// terminal itself and carried on at the left edge with the row flagged. An
+/// agent that does not draw fullscreen hands things over in this shape, and
+/// the link is read whole off the real grid rather than cut at the edge.
+#[gpui::test]
+fn a_link_the_terminal_itself_wrapped_is_read_whole(cx: &mut TestAppContext) {
+    let href = "file:///home/parker/Work/cinema-delight/campaigns/2026-10-05-terminal-delight-movements/sound/README.md";
+    assert!(
+        href.len() + 2 > 100,
+        "longer than the harness's 100 columns"
+    );
+    let mut pane = Pane::running(
+        cx,
+        &format!(
+            "printf '%s\\n' '  Deliverable: the four voicings —' '  {href}' 'ready'; exec cat"
+        ),
+    );
+    pane.wait_for("ready");
+    pane.view.update(pane.cx, |v, cx| {
+        v.mode = super::PaneMode::Claude;
+        v.scan_handovers(cx);
+    });
+    let newest = pane.read(|v| v.handovers.newest().cloned());
+    assert_eq!(newest.expect("read off the screen").href, href);
 }

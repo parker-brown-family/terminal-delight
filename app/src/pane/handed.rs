@@ -136,11 +136,11 @@ impl TerminalView {
         if !self.mode.is_agent() {
             return;
         }
-        let rows = self.live_rows();
+        let (rows, wraps) = self.screen_rows();
         if !rows.iter().any(|r| r.contains("Deliverable:")) {
             return;
         }
-        for (label, href) in handover::handover_rows(&rows) {
+        for (label, href) in handover::handover_rows(&rows, &wraps) {
             if self.hand_over(Some(label.clone()), href.clone(), Source::Said, cx) == Recorded::New
             {
                 let declared_this = self
@@ -152,6 +152,36 @@ impl TerminalView {
                 }
             }
         }
+    }
+
+    /// The live screen as the screen rule wants it: each row as drawn, padded
+    /// to the pane's width, and beside it whether the terminal soft-wrapped
+    /// that row into the next. The flag is read off any cell in the row, not
+    /// only the last, because a row written narrow keeps its flag where it was
+    /// set when the pane later grows and the row stops reaching the edge.
+    fn screen_rows(&self) -> (Vec<String>, Vec<bool>) {
+        let term = self.session.term.lock();
+        let grid = &*term;
+        let rows = grid.screen_lines();
+        let cols = grid.columns();
+        let mut text = Vec::with_capacity(rows);
+        let mut wraps = Vec::with_capacity(rows);
+        for line in 0..rows as i32 {
+            let row = grid.row(Line(line));
+            let mut s = String::with_capacity(cols);
+            let mut wrapped = false;
+            for col in 0..cols {
+                let cell = &row[Column(col)];
+                wrapped |= cell.flags.contains(Flags::WRAPLINE);
+                if cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
+                    continue;
+                }
+                s.push(if cell.c == '\0' { ' ' } else { cell.c });
+            }
+            text.push(s);
+            wraps.push(wrapped);
+        }
+        (text, wraps)
     }
 
     /// Where this pane's history page is written: its conversation's folder,
@@ -206,12 +236,14 @@ impl TerminalView {
     }
 
     /// The name the page is headed with: the pane's own name, as its header
-    /// shows it, without the agent's activity glyph in front.
+    /// shows it, without the agent's activity glyph in front. Capped, because
+    /// a pane nobody named can be titled with a whole shell prompt and path.
     fn handover_pane_name(&self) -> String {
         let name = self.name.clone().unwrap_or_else(|| self.title.clone());
-        name.trim_start_matches(|c: char| !c.is_alphanumeric())
-            .trim()
-            .to_string()
+        ellipsize(
+            name.trim_start_matches(|c: char| !c.is_alphanumeric()),
+            PAGE_NAME_CHARS,
+        )
     }
 
     /// The chip's name, clicked: the newest handover, over this pane.
@@ -354,11 +386,14 @@ impl TerminalView {
                     }
                 }),
             );
+        // The ▾ is the door to the whole list, so it is drawn as large and as
+        // readable as the name beside it rather than as a footnote to it.
         let caret = half()
             .border_l_1()
             .border_color(edge)
-            .text_color(sk.ink.ink_dim)
-            .child("\u{25be}")
+            .text_color(ink)
+            .text_size(text * 0.8)
+            .child("\u{25bc}")
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|view, _ev: &MouseDownEvent, _w, cx| {
@@ -392,6 +427,10 @@ impl TerminalView {
 /// pane: 28 keeps "The symphony, curved glass" whole, where 26 cut it to
 /// "…glas…" (the test below caught that), and leaves every one distinct.
 const CHIP_NAME_CHARS: usize = 28;
+
+/// How much of the pane's name the history page is headed with. A Claude
+/// auto-topic fits whole; a raw shell prompt with its path does not need to.
+const PAGE_NAME_CHARS: usize = 60;
 
 /// Cut a name to `max` characters with an ellipsis, on a character boundary.
 fn ellipsize(s: &str, max: usize) -> String {
