@@ -77,6 +77,12 @@ impl TerminalView {
     /// An artifact arrived on the bench by the agent's own hand — the MCP
     /// verb, a dropped file, a replay of the record. It is a handover too, and
     /// it is already filed, so it is only kept.
+    ///
+    /// **The agent's own card wins.** An agent that declares a file and then
+    /// presents it — the order the house rules ask for at the end of a turn —
+    /// would otherwise leave two cards for one file on its shelf: the one TD
+    /// filed for the declaration and the agent's, which carries its summary.
+    /// TD's goes. The list keeps one row either way.
     pub(crate) fn handover_presented(&mut self, surface: &crate::surface::Surface) {
         if surface.id.0.starts_with("handover-") {
             return;
@@ -89,13 +95,22 @@ impl TerminalView {
         } else {
             surface.title.clone()
         };
-        let got = self.handovers.record(Handover {
+        let handed = Handover {
             label,
             href: a.href.clone(),
             at_ms: surface.arrived_ms,
             source: Source::Presented,
-        });
-        if got != Recorded::Known {
+        };
+        let ours = crate::surface::SurfaceId(handover::surface_id(&handed.key()));
+        if self.bench.get(&ours).is_some() {
+            self.bench.apply(crate::surface::Post {
+                op: crate::surface::Op::Retire,
+                id: ours,
+                pane: None,
+                surface: None,
+            });
+        }
+        if self.handovers.record(handed) != Recorded::Known {
             self.refresh_handover_page();
         }
     }

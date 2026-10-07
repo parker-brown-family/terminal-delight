@@ -2633,3 +2633,57 @@ fn a_link_the_terminal_itself_wrapped_is_read_whole(cx: &mut TestAppContext) {
     let newest = pane.read(|v| v.handovers.newest().cloned());
     assert_eq!(newest.expect("read off the screen").href, href);
 }
+
+/// An agent that declares a file and then presents its own artifact for it —
+/// the order the house rules ask for at the end of a turn — leaves one card for
+/// that file on its shelf, its own, and one row in the list.
+#[gpui::test]
+fn the_agents_own_card_for_a_file_replaces_the_one_filed_for_its_declaration(
+    cx: &mut TestAppContext,
+) {
+    let mut pane = Pane::running(cx, "printf '%s\\n' 'ready'; exec cat");
+    pane.wait_for("ready");
+    let href = "/tmp/td-handover-test/plan.html";
+    pane.view.update(pane.cx, |v, cx| {
+        v.hand_over(
+            Some("Plan".into()),
+            href.into(),
+            crate::handover::Source::Declared,
+            cx,
+        );
+    });
+    let cards = |pane: &mut Pane| {
+        pane.read(|v| {
+            v.bench
+                .artifacts()
+                .map(|(id, _)| id.0.clone())
+                .collect::<Vec<_>>()
+        })
+    };
+    let filed = cards(&mut pane);
+    assert_eq!(filed.len(), 1);
+    assert!(filed[0].starts_with("handover-"), "{filed:?}");
+
+    let theirs = serde_json::json!({
+        "td": "0.4", "kind": "artifact", "id": "plan", "title": "Plan, with a summary",
+        "model": { "href": format!("file://{href}"), "summary": "four decisions" }
+    });
+    pane.view.update(pane.cx, |v, cx| {
+        v.present(crate::surface::parse_lenient(&theirs, 1, "plan"), cx);
+    });
+    assert_eq!(
+        cards(&mut pane),
+        vec!["plan".to_string()],
+        "only the agent's own card"
+    );
+    let rows = pane.read(|v| v.handovers.newest_first().len());
+    assert_eq!(rows, 1, "one file, one row");
+    let kept = pane
+        .read(|v| v.handovers.newest().cloned())
+        .expect("the row");
+    assert_eq!(
+        kept.source,
+        crate::handover::Source::Declared,
+        "the stronger word stays"
+    );
+}
