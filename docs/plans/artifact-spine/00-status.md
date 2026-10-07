@@ -26,8 +26,10 @@ The chip and the page were photographed in a hidden window (special workspace, `
 - The page carried two markers per row (the list's bullet and a dot of its own) and a 120-character shell prompt as its heading. Both fixed.
 
 ## Proven
-- 28 unit tests in `handover`, 2 in `pane::handed`, and 3 pane tests through the harness. Ctrl+Shift+M opens the page and puts it away, and a link press opens the artifact in its place and clears its mark. The HC Video pane's real 100-column rows read across Claude's indented wrap and become the needs-me link, while a shell pane is not read. A real terminal's own wrap of a 103-character link is read whole.
-- Six guards were each broken on purpose and each failed the test aimed at it: the margin join, the next-handover guard, the opened mark, the Ctrl+Shift+M claim, the agent gate, and the `Deliverable:` prefix.
+- 28 unit tests in `handover`, 2 in `pane::handed`, and 4 pane tests through the harness. Ctrl+Shift+M opens the page and puts it away, and a link press opens the artifact in its place and clears its mark. The HC Video pane's real 100-column rows read across Claude's indented wrap and become the needs-me link, while a shell pane is not read. A real terminal's own wrap of a 103-character link is read whole. An agent that declares a file and then presents its own card for it ends with one card on its shelf and one row in the list.
+- Nine guards were each broken on purpose and each failed the test aimed at it: the margin join, the next-handover guard, the opened mark, the Ctrl+Shift+M claim, the agent gate, the `Deliverable:` prefix, the wrap flag, the cut-link refusal, and the agent's card replacing TD's.
+- Locally, as CI runs them: `cargo fmt --check`, clippy `-D warnings` with and without `core-alacritty`, and the whole suite both ways (2,128 and 2,082 unit tests plus every integration file).
+- **Found by reading the diff, not by a test:** an agent that declares a file and then presents it (the order the house rules ask for) left two cards for one file on its shelf. TD's card is now retired when the agent's own arrives, live and on a replay.
 
 ## Not done, each a fair next request
 - One list for the whole window: the same store, a second reader.
