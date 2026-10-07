@@ -48,6 +48,7 @@ mod engstate;
 mod fav;
 mod gamba;
 mod gridwire;
+mod handover;
 mod hold;
 mod host;
 mod hostctl;
@@ -7784,6 +7785,15 @@ impl Workspace {
                                                         href: href.clone(),
                                                     },
                                                 ));
+                                                // And into the pane's list of
+                                                // what it handed over, filed so
+                                                // it outlives this turn.
+                                                view.hand_over(
+                                                    Some(label.clone()),
+                                                    href.clone(),
+                                                    handover::Source::Declared,
+                                                    cx,
+                                                );
                                             }
                                         }
                                         // And a work object for the bench, on
@@ -8552,6 +8562,10 @@ impl Workspace {
                 // was not open when it was sent. See
                 // [`TerminalView::latch_asked`].
                 view.latch_asked(None);
+                // A `Deliverable:` line on the screen, on the same slow clock:
+                // Claude draws on the alternate screen, so a link the reply
+                // handed over is only ever readable while it is on screen.
+                view.scan_handovers(cx);
                 // The channel's liveness marker, which a hook reads before it
                 // holds a picker for this bench. See `bench_beacon`.
                 view.bench_beacon();
@@ -30401,6 +30415,7 @@ impl Render for Workspace {
                         row(s.k_wheel_key, s.pan_focus),
                         row(s.k_input_colour, s.input_colour),
                         row("Ctrl+Shift+N", s.rail),
+                        row("Ctrl+Shift+M", s.handed_over),
                         row(&format!("🤖 {}", s.k_mother_bar), s.mcp),
                         row("Ctrl+Shift+A", s.mcp),
                         row("Ctrl+Shift+U / Y", s.usage),

@@ -18,6 +18,9 @@ mod bench;
 /// The document half of this view — the floating square and the Document
 /// face. A child module for the same reason; see `pane/doc.rs`.
 mod doc;
+/// What this pane's agent handed over: the header chip, the history page and
+/// the screen scan. A child module for the same reason; see `pane/handed.rs`.
+mod handed;
 use crate::term;
 use crate::theme::{self, PaneTheme, Theme};
 use crate::vt::{
@@ -2654,6 +2657,12 @@ pub struct TerminalView {
     /// what it just produced is precisely the stale claim this surface exists
     /// to avoid.
     deliverable: Option<crate::attention::Deliverable>,
+    /// Everything this pane's agent handed over in this conversation, which the
+    /// header chip names and the history page lists. Rebuilt from the
+    /// conversation's record when the pane is bound to one, so it outlives a
+    /// window restart where `deliverable` deliberately does not. See
+    /// [`crate::handover`].
+    handovers: crate::handover::Ledger,
     /// The live player child for this pane's ping (hard-killed on stop/drop).
     bell_player: crate::bell::BellPlayer,
     /// Responsive header: when the pane narrows, controls tuck into a ⋯ overflow
@@ -4053,6 +4062,10 @@ impl TerminalView {
             // record is the cross-conversation write this key exists to stop.
             // Nothing on disk is touched — the record outlives the process.
             self.wb_conv = None;
+            // And what it handed over: the chip names the agent in this pane,
+            // and the next one has handed over nothing yet. The record keeps
+            // the departed conversation's list for the day it is resumed.
+            self.handovers = crate::handover::Ledger::default();
             self.wb_conv_bond = crate::vitals::Bond::Guess;
             self.wb_writer = None;
             // Anything held for a conversation that never got named belongs to
@@ -4608,6 +4621,7 @@ impl TerminalView {
             bell_line: None,
             needs_input_line: None,
             deliverable: None,
+            handovers: crate::handover::Ledger::default(),
             bell_player: crate::bell::BellPlayer::default(),
             hdr_overflow: None,
             copy_hint: None,
@@ -6560,6 +6574,10 @@ impl TerminalView {
                 "b" => cx.emit(ToggleLeftBar),
                 // N for "needs me": the attention rail's queue.
                 "n" => cx.emit(ToggleRail),
+                // M for made: what this pane's agent handed over, as a page
+                // over the pane. The pane's own, so it is acted on here rather
+                // than sent up to the workspace.
+                "m" => self.toggle_handover_page(cx),
                 // The most recently closed thing comes back.
                 "z" => cx.emit(ReopenClosed),
                 // Two keys for one panel, and the second is not redundant.
@@ -9042,6 +9060,13 @@ impl TerminalView {
                 self.wb_channel.saw_response();
             }
         }
+        // An artifact the agent presented is something it handed over, and the
+        // header chip names it. Read before the bench takes the post.
+        if let Some(s) = post.surface.as_ref() {
+            if post.op != crate::surface::Op::Retire {
+                self.handover_presented(s);
+            }
+        }
         if self.bench.apply(post).is_some() {
             cx.notify();
         }
@@ -9570,10 +9595,16 @@ impl Render for TerminalView {
         let show_theme = pane_w >= 360.; //  3rd: 🎨 theme
         let show_focus = SHOW_FOCUS_GLYPH && pane_w >= 264.; // 4th & last: 👓 FOCUS
                                                              // ⋯ shows only once something is actually tucked (👤-nav is agent-only).
+                                                             // The handover chip shrinks before anything tucks: its name above
+                                                             // 470, the word for its list down to 264, and below that it is a row
+                                                             // in the ⋯ menu like every other control here.
+        let handover_name = pane_w >= 470.;
+        let show_handover = pane_w >= 264. && self.has_handovers();
         let overflow = (SHOW_FOCUS_GLYPH && !show_focus)
             || !show_theme
             || !show_eq
-            || (SHOW_HUMAN_NAV_GLYPH && !show_human && self.mode.is_agent());
+            || (SHOW_HUMAN_NAV_GLYPH && !show_human && self.mode.is_agent())
+            || (!show_handover && self.has_handovers());
 
         // The ⋯ overflow menu lists exactly the controls hidden at this width, in
         // the same order they collapse. Mirrors the right-click menu's look.
@@ -9647,6 +9678,18 @@ impl Render for TerminalView {
                         .child(step("▲", false, cx))
                         .child(step("▼", true, cx)),
                 );
+            }
+            if !show_handover && self.has_handovers() {
+                let word = crate::lang::current().strings().artifacts_word;
+                menu = menu.child(item("▤", word).on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |v, _ev: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        v.hdr_overflow = None;
+                        v.toggle_handover_page(cx);
+                        cx.notify();
+                    }),
+                ));
             }
             if !show_eq {
                 menu = menu.child(item("📊", "Display").on_mouse_down(
@@ -10030,6 +10073,13 @@ impl Render for TerminalView {
                     // roomier spacing between the header glyphs — scales with the bar
                     .gap(hpad)
                     .child(face_toggle)
+                    // What this pane's agent handed over: the newest one's
+                    // name, and the list behind ▾. See `pane/handed.rs`.
+                    .children(
+                        show_handover
+                            .then(|| self.handover_chip(&sk, hicon, handover_name, cx))
+                            .flatten(),
+                    )
                     // Part 1: only in an agent (claude/codex) pane — jump between
                     // *your own* messages. Coloured like your input (`th.human`).
                     // FIRST control to tuck into the ⋯ overflow as the pane narrows.

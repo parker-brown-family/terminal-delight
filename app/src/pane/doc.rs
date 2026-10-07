@@ -206,7 +206,11 @@ impl TerminalView {
             return Ok(());
         }
         let rect = crate::docopen::float_home(w, h, top, bottom);
+        let opened = target.path.clone();
         self.float = Some(Self::float_doc(target, None, rect, cx));
+        // Whichever road brought it — the chip, an Alt+click on its path, the
+        // needs-me queue — a file this agent handed over has now been opened.
+        self.note_opened_path(&opened);
         cx.notify();
         Ok(())
     }
@@ -520,8 +524,13 @@ impl TerminalView {
                         let Some(rect) = self.float.as_ref().map(|f| f.rect) else {
                             return;
                         };
+                        // A link on the handover page is the plain click that
+                        // opens a handover into the pane, and opening it is
+                        // what clears its dot.
+                        let opened = target.path.clone();
                         self.float =
                             Some(Self::float_doc(target, link.fragment.clone(), rect, cx));
+                        self.note_opened_path(&opened);
                     }
                     crate::docopen::DocSeat::Face => {
                         if self.doc.is_none() {
@@ -535,7 +544,22 @@ impl TerminalView {
                 }
                 cx.notify();
             }
-            crate::docopen::LinkRoute::Desktop => open_with_system(&link.target),
+            crate::docopen::LinkRoute::Desktop => {
+                let local = link
+                    .target
+                    .starts_with('/')
+                    .then(|| std::path::Path::new(&link.target));
+                // A file that is no longer there says so, here, rather than
+                // handing the desktop a path it will fail on out of sight.
+                if local.is_some_and(|p| !p.exists()) {
+                    self.say("file gone".to_string(), None, cx);
+                    return;
+                }
+                open_with_system(&link.target);
+                if let Some(path) = local {
+                    self.note_opened_path(path);
+                }
+            }
             crate::docopen::LinkRoute::Refuse => eprintln!(
                 "terminal-delight: not following {} from a document: only files, web and mail links open",
                 link.target

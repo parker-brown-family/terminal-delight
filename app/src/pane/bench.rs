@@ -1332,7 +1332,12 @@ impl TerminalView {
         }
         let loaded = crate::benchstore::load(&dir, &key.root);
         self.wb_writer = Some(writer);
+        let root = key.root.clone();
         self.wb_conv = Some(key);
+        // What this conversation handed over, from its whole record rather
+        // than from the 64 surfaces the bench keeps. After the key is set, so
+        // the history page is written into the conversation's own folder.
+        self.handovers_from_record(&root);
         let now = crate::surfacefeed::now_ms();
         for (id, doc) in loaded.surfaces {
             // `bench.apply` rather than `present`: the two things `present`
