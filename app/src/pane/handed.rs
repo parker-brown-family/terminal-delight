@@ -83,6 +83,17 @@ impl TerminalView {
     /// would otherwise leave two cards for one file on its shelf: the one TD
     /// filed for the declaration and the agent's, which carries its summary.
     /// TD's goes. The list keeps one row either way.
+    ///
+    /// **Except a card the window derived from a `Deliverable:` line**, which
+    /// is not the agent's card at all: it is the printed line, read out of the
+    /// transcript instead of off the screen, and it gets what the screen scan
+    /// gives one ([`Self::scan_handovers`]) — the word `said`, a place in the
+    /// record, and the needs-me link. Nothing else files it: derived cards are
+    /// left out of the record on purpose, and the derive sweep re-reads only
+    /// the newest line, so before this a window restart kept the newest of
+    /// them and forgot the rest. Measured on 2026-10-07 (#909): of thirteen
+    /// printed handovers that day, the derive sweep reached one first, both
+    /// times it was printed, and it was nowhere in its conversation's record.
     pub(crate) fn handover_presented(&mut self, surface: &crate::surface::Surface) {
         if surface.id.0.starts_with("handover-") {
             return;
@@ -95,22 +106,46 @@ impl TerminalView {
         } else {
             surface.title.clone()
         };
+        let printed = crate::derive::is_deliverable_line(surface);
         let handed = Handover {
             label,
             href: a.href.clone(),
             at_ms: surface.arrived_ms,
-            source: Source::Presented,
+            source: if printed {
+                Source::Said
+            } else {
+                Source::Presented
+            },
         };
-        let ours = crate::surface::SurfaceId(handover::surface_id(&handed.key()));
+        let key = handed.key();
+        let ours = crate::surface::SurfaceId(handover::surface_id(&key));
         if self.bench.get(&ours).is_some() {
             self.bench.apply(crate::surface::Post {
                 op: crate::surface::Op::Retire,
-                id: ours,
+                id: ours.clone(),
                 pane: None,
                 surface: None,
             });
         }
-        if self.handovers.record(handed) != Recorded::Known {
+        let done = self.handovers.record(handed);
+        if printed && done == Recorded::New {
+            if let Some(kept) = self.handovers.get(&key).cloned() {
+                // Filed and not drawn: the derived card is already the bench's
+                // card for this file. A replay draws this one in its place.
+                self.bench_file_docs(&[(ours.0, handover::surface_doc(&kept))]);
+                let declared_this = self
+                    .deliverable
+                    .as_ref()
+                    .is_some_and(|d| handover::key_of(&d.href) == key);
+                if !declared_this {
+                    self.declare_deliverable(Some(crate::attention::Deliverable {
+                        label: kept.label,
+                        href: kept.href,
+                    }));
+                }
+            }
+        }
+        if done != Recorded::Known {
             self.refresh_handover_page();
         }
     }

@@ -505,11 +505,23 @@ fn find_href(s: &str) -> Option<usize> {
         .min()
 }
 
+/// The id every artifact read off a `Deliverable:` line carries in front of
+/// its hash.
+const DELIVERABLE_ID: &str = "deliv-";
+
+/// Whether `surface` is an artifact this module read off a `Deliverable:` line
+/// in the agent's prose: the printed line, read out of the transcript rather
+/// than off the screen. A `td` fence is derived too, but that is a card the
+/// agent wrote, and it does not carry this id.
+pub fn is_deliverable_line(surface: &Surface) -> bool {
+    surface.origin == crate::surface::Origin::Derived && surface.id.0.starts_with(DELIVERABLE_ID)
+}
+
 fn deliverable_post(label: &str, href: &str, now_ms: u64) -> Post {
     // `file://` is stripped to a path: the desktop handler takes either, and a
     // path is what the rest of this window means by a file.
     let target = href.strip_prefix("file://").unwrap_or(href).to_string();
-    let id = SurfaceId(format!("deliv-{}", short_hash(&target)));
+    let id = SurfaceId(format!("{DELIVERABLE_ID}{}", short_hash(&target)));
     let kind = Kind::Artifact(Artifact {
         mime: mime_of(&target),
         summary: Some("declared in the agent's own reply".into()),
@@ -941,6 +953,38 @@ mod tests {
         let posts = from_jsonl(&body, NOW);
         assert_eq!(posts.len(), 1, "five superseded reports are not five rows");
         assert_eq!(posts[0].surface.as_ref().unwrap().title, "New");
+    }
+
+    /// The handover list files a `Deliverable:` line as `said` and an artifact
+    /// the agent wrote as `presented`. Both arrive here as derived, so the line
+    /// is told apart by its id: a fenced artifact is the agent's own card.
+    #[test]
+    fn a_deliverable_line_is_told_apart_from_an_artifact_the_agent_fenced() {
+        let fence = "```td\n{\"td\":\"0.4\",\"kind\":\"artifact\",\"id\":\"plan\",\
+                     \"title\":\"Plan\",\"model\":{\"href\":\"/tmp/plan.html\"}}\n```";
+        let body = format!(
+            "{}\n{}",
+            assistant(json!([{ "type": "text", "text": fence }])),
+            assistant(json!([{ "type": "text", "text": "Deliverable: Report — /tmp/r.html" }]))
+        );
+        let posts = from_jsonl(&body, NOW);
+        let line = |id: &str| {
+            let post = posts.iter().find(|p| p.id.as_str() == id);
+            is_deliverable_line(post.and_then(|p| p.surface.as_ref()).expect(id))
+        };
+        assert!(!line("plan"), "the agent's own card");
+        let printed = posts
+            .iter()
+            .find(|p| p.id.as_str().starts_with(DELIVERABLE_ID))
+            .expect("the line's post");
+        assert!(line(printed.id.as_str()), "the printed line");
+        // The same id dropped as a file is somebody's card, whatever it is called.
+        let mut dropped = printed.surface.clone().expect("a surface");
+        dropped.origin = crate::surface::Origin::FileDrop;
+        assert!(
+            !is_deliverable_line(&dropped),
+            "only the window derives one"
+        );
     }
 
     #[test]

@@ -36,7 +36,16 @@ The chip and the page were photographed in a hidden window (special workspace, `
 - Reading transcripts for handovers made before this build.
 - A dot that relights on a rewrite. Measured against it: ten of sixteen files were rewritten after handover, mostly in batch rebuilds.
 - Bench files stranded when pane ids were renumbered at a restart, which belongs to the workbench's conversation-keyed store.
-- **Unmeasured:** how often a `Deliverable:` line never reaches the screen at all, a reply taller than the pane arriving in one piece. A once-a-second scan cannot see it.
+- Why the screen scan missed the two M2M lines below. Both sat on a 190-column, 51-row pane (read off its pty that evening; its width at 10:04 was not recorded). One wrapped and one fit on a row, and both had shorter tails than a line the scan caught from the same pane. The transcript road now carries what the screen drops, a few seconds later.
+
+## Measured, 2026-10-07 (#909)
+- **A printed line has two roads in, and the plan counted one.** Besides the screen scan, `derive.rs` re-reads each agent's transcript and turns its newest `Deliverable:` line into an artifact card, which the list takes too. The plan and #909 assumed a line the scan missed was gone.
+- Counted with `scripts/handover-misses.py --since "2026-10-07 06:28"`, the minute the window running this build started, over every Claude transcript written since, against each conversation's history page (what the chip lists) and its record (what a restart rebuilds the list from):
+  - Declared with the verb, the control: 18. All 18 on the page and in the record.
+  - Printed and not declared: 16. Thirteen can be checked, and all 13 reached the chip. One pane the window never bound has no page and no record, so its line is unknown. Two were re-prints of files handed over before the window started.
+  - So the chip missed 0 of 13. That clears #909's bar of one in fifty for this day, though thirteen handovers cannot prove a rate that low: by the rule of three the true miss rate could still be as high as 3 in 13.
+- **What the count found:** one of the 13, the M2M application packet in the job-search pane, was on the chip and in no record. It was printed at 10:04 and again at 11:07, the derive sweep reached it first both times, and derived cards are left out of the record on purpose, so a restart would have rebuilt the list without it. The page also called it `presented`, a word for a card the agent made, when the agent had only printed a line. The same pane's other two lines were read off the screen first, 3 to 4 seconds before the transcript was written.
+- Fixed in the pull request that closes #909: a `Deliverable:` line the derive sweep reads is kept as `said`, filed into the record as TD's own `handover-` card, and made the needs-me link, the same three things the screen scan does with one. A pane test rebuilds the list from what the pane filed, as a restart does; six parts of the fix were each broken on purpose and each failed it. A derive test keeps a `td` fence and a dropped card on the `presented` side, with both halves of the check broken on purpose.
 
 ## Context
 - Asked 2026-10-06, from the pane titled "Artifact spin in agents": *"so I just scrolled up a bunch for a link to a file that was an artifact --- ... I would love a secondy right spin under our agents for articfact similar to what we have in workbench for ARTIFACTS... but in the main work surface"*.

@@ -2687,3 +2687,86 @@ fn the_agents_own_card_for_a_file_replaces_the_one_filed_for_its_declaration(
         "the stronger word stays"
     );
 }
+
+/// A `Deliverable:` line the derive sweep read out of the transcript before
+/// the screen scan saw it is the same printed handover, and gets what the scan
+/// gives one: the word `said`, the needs-me link, and a record of its own.
+///
+/// The record is the part that was missing. Derived cards are never filed and
+/// the sweep re-reads only the newest line, so a restart kept the newest and
+/// forgot the rest — the M2M packet on 2026-10-07 was on its conversation's
+/// page that day and in no record (#909).
+#[gpui::test]
+fn a_deliverable_line_read_from_the_transcript_is_kept_like_one_read_off_the_screen(
+    cx: &mut TestAppContext,
+) {
+    let mut pane = Pane::running(cx, "printf '%s\\n' 'ready'; exec cat");
+    pane.wait_for("ready");
+    let href = "/tmp/td-handover-test/packet.pdf";
+    let transcript = serde_json::json!({ "type": "assistant", "message": { "content": [
+        { "type": "text", "text": format!("Done.\n\nDeliverable: Application packet — file://{href}\n") }
+    ] } })
+    .to_string();
+    let derived = || {
+        crate::derive::walk(&transcript, 1)
+            .posts
+            .into_iter()
+            .find(|p| {
+                p.surface
+                    .as_ref()
+                    .is_some_and(crate::derive::is_deliverable_line)
+            })
+            .expect("derive reads the line")
+    };
+    let post = derived();
+    pane.view.update(pane.cx, |v, cx| {
+        v.mode = super::PaneMode::Claude;
+        v.present(post, cx);
+    });
+
+    let kept = pane.read(|v| v.handovers.newest().cloned());
+    let kept = kept.expect("the row");
+    assert_eq!(kept.href, href);
+    assert_eq!(
+        kept.source,
+        crate::handover::Source::Said,
+        "printed, not presented"
+    );
+    let link = pane.read(|v| v.deliverable()).expect("the needs-me link");
+    assert_eq!(link.href, href);
+
+    // The restart: the list rebuilt from what the pane filed and nothing else,
+    // as `handovers_from_record` rebuilds it from the conversation's record.
+    // This pane has no conversation, so what it filed is held, not written.
+    let rebuilt = |pane: &mut Pane| {
+        pane.read(|v| {
+            v.wb_unfiled
+                .iter()
+                .filter_map(|rec| match rec {
+                    crate::benchstore::Rec::Said { at_ms, surface, .. } => {
+                        crate::handover::from_surface(surface, *at_ms)
+                    }
+                    _ => None,
+                })
+                .map(|h| (h.key(), h.source))
+                .collect::<Vec<_>>()
+        })
+    };
+    let said = vec![(crate::handover::key_of(href), crate::handover::Source::Said)];
+    assert_eq!(rebuilt(&mut pane), said, "filed, so a restart keeps it");
+
+    // One card on the shelf, the derived one: filed is not drawn.
+    let cards = pane.read(|v| {
+        v.bench
+            .artifacts()
+            .map(|(id, _)| id.0.clone())
+            .collect::<Vec<_>>()
+    });
+    assert_eq!(cards.len(), 1, "{cards:?}");
+    assert!(cards[0].starts_with("deliv-"), "{cards:?}");
+
+    // The next sweep re-derives the same post. Nothing is filed twice.
+    let again = derived();
+    pane.view.update(pane.cx, |v, cx| v.present(again, cx));
+    assert_eq!(rebuilt(&mut pane), said, "the same line, filed once");
+}
