@@ -820,6 +820,8 @@ mod tests {
         crate::testsync::Scratch::new(&format!("inst-{tag}"))
     }
 
+    use crate::testsync::soon;
+
     /// A saved session on disk, aged so that "most recent" is decided rather
     /// than raced.
     fn saved(config: &Path, id: &str, panes: usize, ago: Duration) {
@@ -1113,9 +1115,13 @@ mod tests {
         let other = claim_in(&config, "7");
         assert!(other.owned, "ws 7 is its own session");
         // releasing the fd hands the workspace straight back — this is what makes
-        // a crashed window recoverable without any cleanup pass
+        // a crashed window recoverable without any cleanup pass. "Straight
+        // back" as the kernel counts it: until 2026-10-07 this was asserted at
+        // once, and failed in 2 of 34 full-suite runs, with a child of another
+        // test's `git` or `bash` still holding a copy of the fd (#908). See
+        // `soon`.
         drop(first);
-        assert!(claim_in(&config, "2").owned, "released on drop");
+        assert!(soon(|| claim_in(&config, "2").owned), "released on drop");
         std::fs::remove_dir_all(&config).unwrap();
     }
 
@@ -1159,9 +1165,13 @@ mod tests {
         assert!(legacy_master_live_at(&lock), "held lock reads as live");
         // the probe must not have stolen the lock from the live window
         assert!(legacy_master_live_at(&lock), "probe is non-destructive");
-        // the old window exits (fd closes, kernel releases) → adoption may run
+        // the old window exits (fd closes, kernel releases) → adoption may run.
+        // Waited for, as in `one_window_per_key_and_the_lock_dies_with_it`.
         drop(held);
-        assert!(!legacy_master_live_at(&lock), "released lock reads as gone");
+        assert!(
+            soon(|| !legacy_master_live_at(&lock)),
+            "released lock reads as gone"
+        );
         std::fs::remove_dir_all(&config).unwrap();
     }
 

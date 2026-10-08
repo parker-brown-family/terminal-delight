@@ -3762,17 +3762,21 @@ mod owning {
         assert_eq!(host.watchers.lock().expect("watchers").len(), 1);
 
         drop(window);
-        // The first push after it went is what discovers it.
-        for _ in 0..4 {
+        // The first push after it went is what discovers it, once it has
+        // really gone. The guard above keeps out the tests that take it; a
+        // child of one that does not (the engstate tests' `git`) holds its copy
+        // of the client's end until it execs, and beside those tests this
+        // failed 2 runs in 100 and never alone (#732). So the pushes go on
+        // until the close lands, and a dead connection kept on the list still
+        // fails, two seconds later.
+        let gone = crate::testsync::soon(|| {
             host.broadcast(&Push::Mode {
                 pane,
                 mode: WireMode::Shell,
             });
-        }
-        assert!(
-            host.watchers.lock().expect("watchers").is_empty(),
-            "a dead connection is still on the list"
-        );
+            host.watchers.lock().expect("watchers").is_empty()
+        });
+        assert!(gone, "a dead connection is still on the list");
     }
 
     #[test]
