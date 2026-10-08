@@ -820,32 +820,7 @@ mod tests {
         crate::testsync::Scratch::new(&format!("inst-{tag}"))
     }
 
-    /// Whether `free` comes true within two seconds, for asserting that a
-    /// lock just released is free.
-    ///
-    /// Dropping the descriptor releases the lock at once in this process, and
-    /// not always in the kernel's eyes: a test on another thread that starts a
-    /// process hands the child a copy of every open descriptor, this lock's
-    /// included, until the child execs. `testsync::forks_and_locks` keeps the
-    /// pane and host tests out of that window and cannot keep out the rest. The
-    /// engstate tests run `git` and the channel tests run `bash` without it, and
-    /// the code they test starts processes of its own. Measured on 2026-10-07
-    /// (#908), 150 runs of the instance tests each: alone, `released on drop`
-    /// never failed; beside the engstate tests it failed in 14; beside the
-    /// channel tests, in 1. So a release is asserted to land within a deadline.
-    /// A lock that is never released still fails, two seconds later.
-    fn soon(mut free: impl FnMut() -> bool) -> bool {
-        let deadline = Instant::now() + Duration::from_secs(2);
-        loop {
-            if free() {
-                return true;
-            }
-            if Instant::now() >= deadline {
-                return false;
-            }
-            std::thread::sleep(Duration::from_millis(5));
-        }
-    }
+    use crate::testsync::soon;
 
     /// A saved session on disk, aged so that "most recent" is decided rather
     /// than raced.
