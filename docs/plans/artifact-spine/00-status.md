@@ -36,7 +36,7 @@ The chip and the page were photographed in a hidden window (special workspace, `
 - Reading transcripts for handovers made before this build.
 - A dot that relights on a rewrite. Measured against it: ten of sixteen files were rewritten after handover, mostly in batch rebuilds.
 - Bench files stranded when pane ids were renumbered at a restart, which belongs to the workbench's conversation-keyed store.
-- Why the screen scan missed the two M2M lines below. Both sat on a 190-column, 51-row pane (read off its pty that evening; its width at 10:04 was not recorded). One wrapped and one fit on a row, and both had shorter tails than a line the scan caught from the same pane. The transcript road now carries what the screen drops, a few seconds later.
+- Whether the screen scan saw the two M2M lines below at all. The record shows only that the derive sweep got there first: a scan that read the line a moment later would have found it already in the list and filed nothing, so a lost race and a miss look the same on disk. Where the scan did win, it was 3 to 4 seconds ahead of the transcript, because it reads a reply as it streams. Both lines sat on a 190-column, 51-row pane (read off its pty that evening; its width at 10:04 was not recorded); one wrapped and one fit on a row. Telling the two apart needs the scan to log what it reads.
 
 ## Measured, 2026-10-07 (#909)
 - **A printed line has two roads in, and the plan counted one.** Besides the screen scan, `derive.rs` re-reads each agent's transcript and turns its newest `Deliverable:` line into an artifact card, which the list takes too. The plan and #909 assumed a line the scan missed was gone.
