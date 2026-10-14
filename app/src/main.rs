@@ -4362,6 +4362,12 @@ struct Workspace {
     /// [`launchpref::Prefs`] — nothing about which agent starts next depends
     /// on whether a person can see the chips.
     launch_defaults_open: bool,
+    /// The detail folded under the pace line — today, the week behind it, by
+    /// model. Closed by default: pace is the number worth seeing without
+    /// asking, the rest is for when that number raises a question. Parker,
+    /// 2026-10-14: the relevant thing "is just the relationship of being on
+    /// pace, burning hot, or gone cold"; everything below it is detail.
+    usage_history_open: bool,
     /// What the last refresh said, when it had something to say.
     usage_status: Option<String>,
     /// A collector run is in flight on a pool thread.
@@ -5882,6 +5888,7 @@ impl Workspace {
             usage_refreshing: false,
             launch_defaults: launchpref::load(),
             launch_defaults_open: false,
+            usage_history_open: false,
             agent_vitals: std::collections::HashMap::new(),
             vitals_refreshing: false,
             eng: std::collections::HashMap::new(),
@@ -9284,6 +9291,90 @@ impl Workspace {
                 );
             }
             body = body.child(list);
+
+            // ---- pace: on track, banked, behind, or way over -----------------
+            // The weekly window specifically — the one that actually governs a
+            // plan — never the 5-hour session window, which resets too often
+            // for "pace" to mean anything, and never a secondary quota like
+            // Fable's. Absent silently when no weekly-shaped limit is present,
+            // or when usage::pace can't anchor it (see that function's doc).
+            let pace_limit = rec
+                .limits
+                .iter()
+                .find(|l| l.label.contains("7-day") || l.label == "Weekly");
+            if let Some(p) = pace_limit.and_then(|l| usage::pace(l, now)) {
+                let col = match p.verdict {
+                    usage::PaceVerdict::OnPace | usage::PaceVerdict::Banked => {
+                        hsla(0.38, 0.52, 0.52, 1.)
+                    }
+                    usage::PaceVerdict::Behind => hsla(0.09, 0.82, 0.60, 1.),
+                    usage::PaceVerdict::WayOver => hsla(0.01, 0.72, 0.60, 1.),
+                };
+                let delta_pts = (p.delta * 100.).abs().round() as i32;
+                let delta_word = if p.delta > 0.0 { "over pace" } else { "banked" };
+                body = body.child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_1()
+                        .pt_1()
+                        .child(
+                            div()
+                                .flex()
+                                .flex_row()
+                                .items_baseline()
+                                .gap_2()
+                                .child(
+                                    div()
+                                        .text_size(px(9.5))
+                                        .font_weight(gpui::FontWeight::EXTRA_BOLD)
+                                        .text_color(col)
+                                        .child(p.verdict.label()),
+                                )
+                                .child(
+                                    div()
+                                        .text_size(px(9.))
+                                        .text_color(th.text.alpha(0.6))
+                                        .child(if matches!(p.verdict, usage::PaceVerdict::OnPace)
+                                        {
+                                            "even with the week's clock".to_string()
+                                        } else {
+                                            format!("{delta_pts} points {delta_word}")
+                                        }),
+                                ),
+                        )
+                        // The track: actual spend filled solid, a thin tick
+                        // marking where an even spend would sit right now —
+                        // ahead of the fill is banked, behind it is over.
+                        .child(
+                            div()
+                                .relative()
+                                .w_full()
+                                .h(px(6.))
+                                .rounded_full()
+                                .bg(th.text.alpha(0.08))
+                                .overflow_hidden()
+                                .child(
+                                    div()
+                                        .h_full()
+                                        .w(gpui::relative(
+                                            pace_limit.unwrap().percent.clamp(0., 1.).max(0.02),
+                                        ))
+                                        .rounded_full()
+                                        .bg(col),
+                                )
+                                .child(
+                                    div()
+                                        .absolute()
+                                        .left(gpui::relative(p.elapsed.clamp(0., 1.)))
+                                        .top(px(-1.))
+                                        .w(px(2.))
+                                        .h(px(8.))
+                                        .bg(th.text.alpha(0.85)),
+                                ),
+                        ),
+                );
+            }
         }
 
         // ---- prepaid credit, for the subscriptions that drain instead of reset
@@ -9338,6 +9429,42 @@ impl Workspace {
             );
         }
 
+        // ---- detail: today, the week, by model — folded under the pace line --
+        // ONE LINE UNTIL IT IS ASKED FOR, same convention as LAUNCH AGENT
+        // CONFIG above: the pace line already answers "am I fine right now",
+        // and these three blocks are the "why" for when that answer surprises
+        // you. Closed by default (`usage_history_open`'s own doc explains why).
+        let history_open = self.usage_history_open;
+        body = body.child(
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_1p5()
+                .cursor_pointer()
+                .child(
+                    div()
+                        .text_size(px(8.))
+                        .text_color(th.text.alpha(0.55))
+                        .child(if history_open { "\u{25be}" } else { "\u{25b8}" }),
+                )
+                .child(
+                    div()
+                        .text_size(px(9.))
+                        .text_color(th.text.alpha(0.55))
+                        .child("today, the week, by model"),
+                )
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        ws.usage_history_open = !ws.usage_history_open;
+                        cx.notify();
+                    }),
+                ),
+        );
+        let mut detail = div().flex().flex_col().gap_2();
+
         // ---- today -----------------------------------------------------------
         let today = if rec.has_prompt_stats {
             format!(
@@ -9351,7 +9478,7 @@ impl Workspace {
             // for prompts would be a number the collector never had.
             format!("{} tokens", hud::fmt_tokens(rec.today_tokens))
         };
-        body = body.child(
+        detail = detail.child(
             div()
                 .flex()
                 .flex_row()
@@ -9404,7 +9531,7 @@ impl Workspace {
                         ),
                 );
             }
-            body = body.child(
+            detail = detail.child(
                 div()
                     .flex()
                     .flex_col()
@@ -9461,7 +9588,7 @@ impl Workspace {
                 cr = cr.saturating_add(m.cache_read);
                 cw = cw.saturating_add(m.cache_create);
             }
-            body = body.child(
+            detail = detail.child(
                 div()
                     .flex()
                     .flex_col()
@@ -9487,6 +9614,7 @@ impl Workspace {
                     ),
             );
         }
+        body = body.when(history_open, |b| b.child(detail));
 
         // ---- provenance, and the button that re-asks --------------------------
         let mut prov: Vec<String> = Vec::new();
