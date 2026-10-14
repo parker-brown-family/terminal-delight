@@ -1,0 +1,155 @@
+{
+ "identity": "td-kitty",
+ "cmd": [
+  "mpv",
+  "--really-quiet",
+  "--no-audio",
+  "--vo=kitty",
+  "av://lavfi:testsrc=duration=3:size=640x360:rate=30"
+ ],
+ "bytes_out": 22975885,
+ "secs": 6.0,
+ "placeholder_cells_U10EEEE": 0,
+ "apc_payload_bytes": 22921664,
+ "apc_a_T_count": 8,
+ "apc_keys": {
+  "m=1": 5596,
+  "a=T": 8,
+  "f=24": 8,
+  "s=*": 8,
+  "v=*": 8,
+  "C=1": 8,
+  "q=2": 8,
+  "m=0": 7,
+  "a=d": 1
+ },
+ "seq_counts": {},
+ "events": [
+  {
+   "t": 0.244,
+   "apc": "a=d",
+   "payload": 0
+  },
+  {
+   "t": 0.28,
+   "apc": "a=T,f=24,s=1200,v=675,C=1,q=2,m=1",
+   "payload": 4096
+  },
+  {
+   "t": 0.281,
+   "apc": "m=1",
+   "payload": 4096
+  },
+  {
+   "t": 0.282,
+   "apc": "m=1",
+   "payload": 4096
+  },
+  {
+   "t": 0.283,
+   "apc": "m=1",
+   "payload": 4096
+  },
+  {
+   "t": 0.284,
+   "apc": "m=1",
+   "payload": 4096
+  },
+  {
+   "t": 0.285,
+   "apc": "m=1",
+   "payload": 4096
+  },
+  {
+   "t": 0.286,
+   "apc": "m=1",
+   "payload": 4096
+  },
+  {
+   "t": 0.287,
+   "apc": "m=1",
+   "payload": 4096
+  },
+  {
+   "t": 0.288,
+   "apc": "m=1",
+   "payload": 4096
+  },
+  {
+   "t": 0.289,
+   "apc": "m=1",
+   "payload": 4096
+  },
+  {
+   "t": 0.29,
+   "apc": "m=1",
+   "payload": 4096
+  },
+  {
+   "t": 0.291,
+   "apc": "m=1",
+   "payload": 4096
+  },
+  {
+   "t": 0.292,
+   "apc": "m=1",
+   "payload": 4096
+  },
+  {
+   "t": 0.293,
+   "apc": "m=1",
+   "payload": 4096
+  },
+  {
+   "t": 0.294,
+   "apc": "m=1",
+   "payload": 4096
+  },
+  {
+   "t": 0.295,
+   "apc": "m=1",
+   "payload": 4096
+  },
+  {
+   "t": 0.296,
+   "apc": "m=1",
+   "payload": 4096
+  },
+  {
+   "t": 0.297,
+   "apc": "m=1",
+   "payload": 4096
+  },
+  {
+   "t": 0.298,
+   "apc": "m=1",
+   "payload": 4096
+  },
+  {
+   "t": 0.299,
+   "apc": "m=1",
+   "payload": 4096
+  },
+  {
+   "t": 0.3,
+   "apc": "m=1",
+   "payload": 4096
+  },
+  {
+   "t": 0.301,
+   "apc": "m=1",
+   "payload": 4096
+  },
+  {
+   "t": 0.302,
+   "apc": "m=1",
+   "payload": 4096
+  },
+  {
+   "t": 0.303,
+   "apc": "m=1",
+   "payload": 4096
+  }
+ ],
+ "text": ""
+}

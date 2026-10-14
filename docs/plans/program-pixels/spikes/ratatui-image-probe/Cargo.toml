@@ -1,0 +1,10 @@
+[package]
+name = "ratatui-image-probe"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+crossterm = "0.29.0"
+image = "0.25.10"
+ratatui = "0.30.2"
+ratatui-image = { version = "11.1.0", default-features = false, features = ["image-defaults", "crossterm"] }

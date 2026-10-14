@@ -1,0 +1,41 @@
+{
+ "identity": "td-today",
+ "cmd": [
+  "/tmp/claude-1000/-home-parker-Work-terminal-delight/2aae45b7-7163-4590-8990-5cc58ef8f92f/scratchpad/cargo/bin/viu",
+  "-w",
+  "60",
+  "test.png"
+ ],
+ "bytes_out": 46423,
+ "secs": 0.03,
+ "placeholder_cells_U10EEEE": 0,
+ "apc_payload_bytes": 4,
+ "apc_a_T_count": 0,
+ "apc_keys": {
+  "i=*": 1,
+  "s=*": 1,
+  "v=*": 1,
+  "a=q": 1,
+  "t=d": 1,
+  "f=24": 1
+ },
+ "seq_counts": {
+  "CSI c": 1
+ },
+ "events": [
+  {
+   "t": 0.002,
+   "apc": "i=31,s=1,v=1,a=q,t=d,f=24",
+   "payload": 4
+  },
+  {
+   "t": 0.003,
+   "q": "DA1"
+  },
+  {
+   "t": 0.003,
+   "reply": "\u001b[?6c"
+  }
+ ],
+ "text": "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n"
+}
