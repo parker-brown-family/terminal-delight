@@ -9279,13 +9279,7 @@ impl Workspace {
                 // than PaceVerdict's own four-way text (which a reader sees
                 // written out and can afford more nuance in); the bar is read
                 // at a glance and three colours is the whole point of it.
-                let band = if p.delta < -0.15 {
-                    hsla(0.56, 0.55, 0.58, 1.) // cool — blue
-                } else if p.delta > 0.15 {
-                    hsla(0.01, 0.72, 0.60, 1.) // hot — red
-                } else {
-                    hsla(0.38, 0.52, 0.52, 1.) // optimal — green
-                };
+                let band = pace_band(p.delta);
                 (p, margin, band)
             });
 
@@ -21435,16 +21429,11 @@ impl Workspace {
                 .iter()
                 .find(|l| l.label.contains("7-day") || l.label == "Weekly")
                 .and_then(|l| usage::pace(l, now))
-                .map(|p| {
-                    let band = if p.delta < -0.15 {
-                        hsla(0.56, 0.55, 0.58, 1.)
-                    } else if p.delta > 0.15 {
-                        hsla(0.01, 0.72, 0.60, 1.)
-                    } else {
-                        hsla(0.38, 0.52, 0.52, 1.)
-                    };
-                    brighten(band, 1.7)
-                });
+                // The band's own colour, at full strength. It used to be
+                // brightened 1.7×, which put all three bands within a few
+                // points of white (lightness 0.88–0.92), so the torch read as
+                // "vaguely red" whatever the week was doing.
+                .map(|p| pace_band(p.delta));
 
             // The long window, as one solid rail.
             let week = match lit_colour(&row.week) {
@@ -21605,6 +21594,13 @@ impl Workspace {
                     // this slot has no height to give one.
                     if let Some(col) = pace_glow {
                         let torch = (row_h * 0.6).clamp(7., 13.);
+                        // A full-strength flame can sit on a rail of its own
+                        // colour (green on green pips), so it rides on a disc of
+                        // the bar's ground, and the disc carries the glow. gpui
+                        // draws a shadow only outside its element's box, so a
+                        // glow on the bare svg could never have separated the
+                        // flame from what is under it.
+                        let disc = torch + 4.0 * s;
                         rails = rails.child(
                             div()
                                 .absolute()
@@ -21613,20 +21609,32 @@ impl Workspace {
                                 .items_center()
                                 .justify_center()
                                 .child(
-                                    gpui::svg()
-                                        .external_path(SharedString::from(
-                                            art::pace_flame_svg().to_string_lossy().into_owned(),
-                                        ))
-                                        .w(px(torch))
-                                        .h(px(torch))
-                                        .text_color(col)
+                                    div()
+                                        .w(px(disc))
+                                        .h(px(disc))
+                                        .rounded(pill)
+                                        .bg(th.bg.alpha(0.85))
+                                        .flex()
+                                        .items_center()
+                                        .justify_center()
                                         .shadow(vec![BoxShadow {
                                             color: col.alpha(0.6),
                                             offset: point(px(0.), px(0.)),
                                             blur_radius: px(torch * 0.8),
                                             spread_radius: px(1.),
                                             inset: false,
-                                        }]),
+                                        }])
+                                        .child(
+                                            gpui::svg()
+                                                .external_path(SharedString::from(
+                                                    art::pace_flame_svg()
+                                                        .to_string_lossy()
+                                                        .into_owned(),
+                                                ))
+                                                .w(px(torch))
+                                                .h(px(torch))
+                                                .text_color(col),
+                                        ),
                                 ),
                         );
                     }
@@ -25174,6 +25182,26 @@ fn pressure(frac: f32) -> Hsla {
         slot::Band::Spent => hsla(0.01, 0.72, 0.60, 1.),
         slot::Band::Warn => hsla(0.09, 0.82, 0.60, 1.),
         slot::Band::Calm => hsla(0.38, 0.52, 0.52, 1.),
+    }
+}
+
+/// The pace torch's three colours — blue running cool (banked), green on pace,
+/// red running hot — on the same ±15-point bands wherever a torch is drawn, so
+/// the usage card's TOKEN USAGE PACE line and the left bar's slot cannot
+/// disagree about which colour a week is.
+///
+/// Red and green are the pressure ramp's own Spent and Calm on purpose. Parker,
+/// 2026-10-14, on a slot torch that had been brightened to near-white: "INSTANT
+/// colour recognition from the main screen … It might be vaguely red, but
+/// should be as red or green or blue as the pips underneath!" The pips are
+/// these colours.
+fn pace_band(delta: f32) -> Hsla {
+    if delta < -0.15 {
+        hsla(0.56, 0.55, 0.58, 1.) // cool — blue
+    } else if delta > 0.15 {
+        hsla(0.01, 0.72, 0.60, 1.) // hot — red, the ramp's Spent
+    } else {
+        hsla(0.38, 0.52, 0.52, 1.) // on pace — green, the ramp's Calm
     }
 }
 
@@ -35340,6 +35368,36 @@ mod tests {
             src.contains("slot-remaining-toggle") && src.contains("ws.slot_remaining = !ws"),
             "the card carries the bar's spent/remaining toggle — the slot itself \
              is four rails in a 200px column with no room for a control"
+        );
+    }
+
+    /// The left bar's pace torch is as red, green or blue as the pips under it.
+    ///
+    /// It was brightened 1.7× to stand out, which lifted every band to within a
+    /// few points of white, and Parker read a WAY OVER week as "vaguely red"
+    /// (2026-10-14). The torch is now the band itself: red and green ARE the
+    /// pips' pressure colours, so this fails if either is washed again or the
+    /// slot starts brightening its torch.
+    #[test]
+    fn the_pace_torch_is_as_saturated_as_the_pips() {
+        assert_eq!(pace_band(0.41), pressure(0.99), "way over is the pips' red");
+        assert_eq!(pace_band(0.0), pressure(0.10), "on pace is the pips' green");
+        let blue = pace_band(-0.30);
+        assert!(blue.s >= 0.5 && blue.l <= 0.65, "banked stays a blue, not a tint of one");
+        // the bands' edges, either side
+        assert_eq!(pace_band(0.15), pressure(0.10));
+        assert_eq!(pace_band(-0.15), pressure(0.10));
+        assert_eq!(pace_band(0.16), pressure(0.99));
+        assert_ne!(pace_band(-0.16), pressure(0.10));
+        let src = shipped_src();
+        let slot = {
+            let at = src.find("fn render_bar_slot").expect("the slot");
+            let end = src[at..].find("\n    }\n").expect("end of fn");
+            &src[at..at + end]
+        };
+        assert!(
+            slot.contains(".map(|p| pace_band(p.delta))") && !slot.contains("brighten("),
+            "the slot's torch is drawn in its band colour, unbrightened"
         );
     }
 
