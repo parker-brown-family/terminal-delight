@@ -9289,9 +9289,9 @@ impl Workspace {
                 (p, margin, band)
             });
 
-            // The flame: one glyph, two sizes, always this colour and this
-            // glow — never redrawn per call site, so the full pace card and
-            // the scrubber between the ticker rows can never drift apart.
+            // The flame glyph, drawn once and parameterised by size and
+            // colour — a shared helper rather than inlined at its one call
+            // site, in case a second place ever wants the same glow.
             let flame = move |size: f32, col: gpui::Hsla| {
                 gpui::svg()
                     .external_path(SharedString::from(
@@ -9337,7 +9337,12 @@ impl Workspace {
                             .flex()
                             .items_center()
                             .justify_center()
-                            .child(flame(flame_px, col)),
+                            // Brightened, not the bar's own colour — the first
+                            // cut drew the flame in the exact fill colour it
+                            // sits on, so it read as a stray mark instead of a
+                            // flame. The glow (inside `flame`) still carries
+                            // the true band colour.
+                            .child(flame(flame_px, brighten(col, 1.7))),
                     )
             };
 
@@ -9376,20 +9381,6 @@ impl Workspace {
                         )
                         .child(meter(l.percent, col, 6.)),
                 );
-                // The scrubber: the same margin bar, small, parked between the
-                // 5-hour row and the weekly row below it — a little video-
-                // scrubber thumb with the flame riding in it, so the pace
-                // reading is in view even before the full card below it.
-                if l.label.contains("5-hour") || l.label.contains("Session") {
-                    if let Some((_, margin, band)) = pace_info {
-                        list = list.child(
-                            div()
-                                .px_6()
-                                .py_0p5()
-                                .child(margin_bar(margin, band, 5., 13.)),
-                        );
-                    }
-                }
             }
             body = body.child(list);
 
