@@ -104,6 +104,42 @@ fn codex_wrapped_file_reference_answers_alt_and_ctrl_click(cx: &mut TestAppConte
     }
 }
 
+/// Codex prints bare relative references, including before-edge line breaks.
+/// Resolve them in the child pane's cwd, not the window or test runner's cwd.
+#[gpui::test]
+fn codex_relative_html_reference_opens_the_panes_file(cx: &mut TestAppContext) {
+    let dir = Scratch::new("codex-relative-html");
+    std::fs::create_dir_all(dir.join("reports")).unwrap();
+    let relative = "reports/2026-10-14-omarchy-two-leads.html";
+    let html = dir.join(relative);
+    std::fs::write(
+        &html,
+        "<!doctype html><html><body>Research brief</body></html>",
+    )
+    .unwrap();
+    let mut pane = Pane::running(
+        cx,
+        &format!(
+            "cd '{}' && printf '%s\\n' '  Deliverable: Commentable research brief ({relative})' '  Wrapped brief (reports/' '  2026-10-14-omarchy-two-leads.html)' '  Missing (reports/missing.html)' 'ready'; exec cat",
+            dir.join("").display()
+        ),
+    );
+    pane.html_engine(Ok(std::sync::Arc::new(FakeBriefEngine)));
+    pane.wait_for("ready");
+    let first = pane.point_at(relative);
+    let head = pane.points_at_all("reports/")[1];
+    let tail = pane.points_at_all("2026-10-14-omarchy-two-leads.html)")[1];
+    for at in [first, head, tail] {
+        pane.click(at, Pane::alt());
+        assert_eq!(pane.float_path().as_deref(), Some(html.as_path()));
+        pane.keys("escape");
+    }
+    let missing = pane.point_at("reports/missing.html");
+    pane.click(missing, Pane::alt());
+    assert_eq!(pane.float_path(), None, "a missing path opens nothing");
+    assert_eq!(desktop_launches(), Vec::<String>::new());
+}
+
 /// The square's strip moves it with the hand, and its edge resizes it with the
 /// far side pinned. Neither leaves a selection in the grid behind it.
 #[gpui::test]

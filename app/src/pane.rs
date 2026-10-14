@@ -637,7 +637,7 @@ fn run_link(text: &str, byte: usize) -> Option<Link> {
 
 /// The link sitting under column `col` of a row of terminal text, if any. Pure:
 /// expands the whitespace-delimited token, trims delimiters, then classifies it
-/// as a URL (known scheme or `www.`) or a filesystem path (`/`, `~/`, `./`, `..`).
+/// as a URL (known scheme or `www.`) or a filesystem path (absolute, home-relative or containing a slash).
 fn link_at(line: &str, col: usize) -> Option<Link> {
     let chars: Vec<char> = line.chars().collect();
     if chars.is_empty() {
@@ -659,7 +659,7 @@ fn link_at(line: &str, col: usize) -> Option<Link> {
 }
 
 /// Classify one whitespace-free token as a link: trim delimiters, then a URL
-/// (known scheme or `www.`) or a filesystem path (`/`, `~/`, `./`, `..`).
+/// (known scheme or `www.`) or a filesystem path (absolute, home-relative or containing a slash).
 fn link_of_token(raw: &str) -> Option<Link> {
     let tok = trim_link_delims(raw);
     if tok.is_empty() {
@@ -681,6 +681,9 @@ fn link_of_token(raw: &str) -> Option<Link> {
         || tok.starts_with("~/")
         || tok.starts_with("./")
         || tok.starts_with("../")
+        // Codex displays repo-relative references without a leading "./".
+        // pick_link still requires an anchored path that exists on disk.
+        || (tok.contains('/') && !tok.contains(':'))
     {
         return Some(Link::Path(tok));
     }
@@ -1189,7 +1192,7 @@ fn is_copyable_command(line: &str) -> bool {
 }
 
 /// Turn a path link into an absolute path: expand a leading `~`, and join a
-/// relative `./`/`../` onto the pane's cwd. Returns None if it can't be anchored.
+/// relative path onto the pane's cwd. Returns None if it can't be anchored.
 fn resolve_path(p: &str, cwd: Option<&str>) -> Option<String> {
     let expanded = if p == "~" {
         std::env::var("HOME").ok()?
@@ -12599,6 +12602,12 @@ mod tests {
             link_at("./README.md", 2),
             Some(Link::Path("./README.md".into()))
         );
+        assert_eq!(
+            link_at("(reports/brief.html)", 10),
+            Some(Link::Path("reports/brief.html".into()))
+        );
+        // An unrecognised scheme must not become a relative filesystem path.
+        assert_eq!(link_at("javascript:reports/brief.html", 15), None);
         // plain words and whitespace are not links
         assert_eq!(link_at("just some words", 5), None);
         assert_eq!(link_at("a b", 1), None); // the space
@@ -12896,14 +12905,15 @@ mod tests {
             "the third row's half"
         );
 
-        // A row that merely ends in something the overlay colours hands nothing
-        // on: `episode/handoff` lights up for its slash, but it is not a link.
+        // A slash token with an unknown scheme is still not a path, even
+        // though the overlay colours it. Bare episode/handoff is now a path
+        // candidate, checked against the pane's cwd and disk by pick_link.
         let rows = padded_grid(
-            25,
-            &["  Session episode/handoff", "  (APES) for the record"],
+            29,
+            &["  Session tag:episode/handoff", "  (APES) for the record"],
         );
         let mut inks = agentic_inks(&rows, link, text);
-        assert_eq!(inks[0][24], link, "the fixture must end on a coloured cell");
+        assert_eq!(inks[0][28], link, "the fixture must end on a coloured cell");
         let before = inks.clone();
         carry_link_colour(&rows, &[false; 2], &mut inks);
         assert_eq!(inks, before);
