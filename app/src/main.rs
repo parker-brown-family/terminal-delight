@@ -9254,6 +9254,93 @@ impl Workspace {
         // ---- the ceilings ----------------------------------------------------
         if !rec.limits.is_empty() {
             let now = usage::now_epoch();
+
+            // The weekly window specifically — the one that actually governs a
+            // plan — never the 5-hour session window, which resets too often
+            // for "pace" to mean anything, and never a secondary quota like
+            // Fable's. Absent silently when no weekly-shaped limit is present,
+            // or when usage::pace can't anchor it (see that function's doc).
+            let pace_limit = rec
+                .limits
+                .iter()
+                .find(|l| l.label.contains("7-day") || l.label == "Weekly");
+            let pace_info = pace_limit.and_then(|l| usage::pace(l, now)).map(|p| {
+                // How much room is left to adjust: whichever constraint binds
+                // tighter, time or tokens. Far from the reset AND plenty of
+                // plan left, both slack — wide. Close to either, narrow. Not
+                // an average: being flush with tokens doesn't buy back a
+                // clock that's nearly out, and the reverse.
+                let margin = (1.0 - p.elapsed)
+                    .min(1.0 - pace_limit.unwrap().percent)
+                    .clamp(0.0, 1.0);
+                // Parker, 2026-10-14: blue running cool (banked), green
+                // running optimal (within ~15 points), red running hot.
+                // A dedicated banding for the bar/flame's colour — coarser
+                // than PaceVerdict's own four-way text (which a reader sees
+                // written out and can afford more nuance in); the bar is read
+                // at a glance and three colours is the whole point of it.
+                let band = if p.delta < -0.15 {
+                    hsla(0.56, 0.55, 0.58, 1.) // cool — blue
+                } else if p.delta > 0.15 {
+                    hsla(0.01, 0.72, 0.60, 1.) // hot — red
+                } else {
+                    hsla(0.38, 0.52, 0.52, 1.) // optimal — green
+                };
+                (p, margin, band)
+            });
+
+            // The flame: one glyph, two sizes, always this colour and this
+            // glow — never redrawn per call site, so the full pace card and
+            // the scrubber between the ticker rows can never drift apart.
+            let flame = move |size: f32, col: gpui::Hsla| {
+                gpui::svg()
+                    .external_path(SharedString::from(
+                        art::pace_flame_svg().to_string_lossy().into_owned(),
+                    ))
+                    .w(px(size))
+                    .h(px(size))
+                    .text_color(col)
+                    .shadow(vec![BoxShadow {
+                        color: col.alpha(0.55),
+                        offset: point(px(0.), px(0.)),
+                        blur_radius: px(size * 0.9),
+                        spread_radius: px(1.),
+                        inset: false,
+                    }])
+            };
+
+            // The margin bar itself: a track the width of its container, a
+            // band-coloured fill of width `margin` CENTRED in it (this is a
+            // margin either side of "now", not a left-to-right progress bar),
+            // with the flame riding in the middle of the fill.
+            let margin_bar = move |margin: f32, col: gpui::Hsla, h: f32, flame_px: f32| {
+                div()
+                    .relative()
+                    .w_full()
+                    .h(px(h))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(
+                        div()
+                            .absolute()
+                            .inset_0()
+                            .rounded_full()
+                            .bg(th.text.alpha(0.08)),
+                    )
+                    .child(
+                        div()
+                            .w(gpui::relative(margin.max(0.04)))
+                            .h(px(h))
+                            .rounded_full()
+                            .bg(col.alpha(0.85))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .child(flame(flame_px, col)),
+                    )
+            };
+
             let mut list = div().flex().flex_col().gap_1p5();
             for l in &rec.limits {
                 let col = pressure(l.percent);
@@ -9289,90 +9376,75 @@ impl Workspace {
                         )
                         .child(meter(l.percent, col, 6.)),
                 );
+                // The scrubber: the same margin bar, small, parked between the
+                // 5-hour row and the weekly row below it — a little video-
+                // scrubber thumb with the flame riding in it, so the pace
+                // reading is in view even before the full card below it.
+                if l.label.contains("5-hour") || l.label.contains("Session") {
+                    if let Some((_, margin, band)) = pace_info {
+                        list = list.child(
+                            div()
+                                .px_6()
+                                .py_0p5()
+                                .child(margin_bar(margin, band, 5., 13.)),
+                        );
+                    }
+                }
             }
             body = body.child(list);
 
-            // ---- pace: on track, banked, behind, or way over -----------------
-            // The weekly window specifically — the one that actually governs a
-            // plan — never the 5-hour session window, which resets too often
-            // for "pace" to mean anything, and never a secondary quota like
-            // Fable's. Absent silently when no weekly-shaped limit is present,
-            // or when usage::pace can't anchor it (see that function's doc).
-            let pace_limit = rec
-                .limits
-                .iter()
-                .find(|l| l.label.contains("7-day") || l.label == "Weekly");
-            if let Some(p) = pace_limit.and_then(|l| usage::pace(l, now)) {
-                let col = match p.verdict {
-                    usage::PaceVerdict::OnPace | usage::PaceVerdict::Banked => {
-                        hsla(0.38, 0.52, 0.52, 1.)
-                    }
-                    usage::PaceVerdict::Behind => hsla(0.09, 0.82, 0.60, 1.),
-                    usage::PaceVerdict::WayOver => hsla(0.01, 0.72, 0.60, 1.),
-                };
+            // ---- the pace card: what this window's pace actually is --------------
+            if let Some((p, margin, band)) = pace_info {
                 let delta_pts = (p.delta * 100.).abs().round() as i32;
                 let delta_word = if p.delta > 0.0 { "over pace" } else { "banked" };
                 body = body.child(
                     div()
                         .flex()
                         .flex_col()
-                        .gap_1()
+                        .gap_1p5()
                         .pt_1()
                         .child(
                             div()
                                 .flex()
-                                .flex_row()
-                                .items_baseline()
-                                .gap_2()
+                                .flex_col()
                                 .child(
                                     div()
-                                        .text_size(px(9.5))
+                                        .text_size(px(10.5))
                                         .font_weight(gpui::FontWeight::EXTRA_BOLD)
-                                        .text_color(col)
-                                        .child(p.verdict.label()),
+                                        .text_color(th.text.alpha(0.85))
+                                        .child("TOKEN USAGE PACE"),
                                 )
                                 .child(
                                     div()
-                                        .text_size(px(9.))
-                                        .text_color(th.text.alpha(0.6))
-                                        .child(if matches!(p.verdict, usage::PaceVerdict::OnPace)
-                                        {
-                                            "even with the week's clock".to_string()
-                                        } else {
-                                            format!("{delta_pts} points {delta_word}")
-                                        }),
+                                        .flex()
+                                        .flex_row()
+                                        .items_baseline()
+                                        .gap_2()
+                                        .child(
+                                            div()
+                                                .text_size(px(9.))
+                                                .font_weight(gpui::FontWeight::BOLD)
+                                                .text_color(band)
+                                                .child(p.verdict.label()),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_size(px(8.5))
+                                                .text_color(th.text.alpha(0.6))
+                                                .child(
+                                                    if matches!(
+                                                        p.verdict,
+                                                        usage::PaceVerdict::OnPace
+                                                    ) {
+                                                        "even with the week's clock".to_string()
+                                                    } else {
+                                                        format!("{delta_pts} points {delta_word}")
+                                                    },
+                                                ),
+                                        ),
                                 ),
                         )
-                        // The track: actual spend filled solid, a thin tick
-                        // marking where an even spend would sit right now —
-                        // ahead of the fill is banked, behind it is over.
-                        .child(
-                            div()
-                                .relative()
-                                .w_full()
-                                .h(px(6.))
-                                .rounded_full()
-                                .bg(th.text.alpha(0.08))
-                                .overflow_hidden()
-                                .child(
-                                    div()
-                                        .h_full()
-                                        .w(gpui::relative(
-                                            pace_limit.unwrap().percent.clamp(0., 1.).max(0.02),
-                                        ))
-                                        .rounded_full()
-                                        .bg(col),
-                                )
-                                .child(
-                                    div()
-                                        .absolute()
-                                        .left(gpui::relative(p.elapsed.clamp(0., 1.)))
-                                        .top(px(-1.))
-                                        .w(px(2.))
-                                        .h(px(8.))
-                                        .bg(th.text.alpha(0.85)),
-                                ),
-                        ),
+                        .child(margin_bar(margin, band, 10., 20.)),
                 );
             }
         }
