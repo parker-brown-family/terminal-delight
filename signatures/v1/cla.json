@@ -1,1 +1,12 @@
-{"signedContributors":[]}
+{
+  "signedContributors": [
+    {
+      "name": "nixfred",
+      "id": 15384894,
+      "comment_id": 6175333298,
+      "created_at": "2026-10-14T18:23:34Z",
+      "repoId": 1267453233,
+      "pullRequestNo": 935
+    }
+  ]
+}
