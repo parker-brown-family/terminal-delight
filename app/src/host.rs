@@ -1512,7 +1512,9 @@ fn classify_foreground(master: &File, shell_pid: u32) -> Option<WireMode> {
     let cmdline = std::fs::read_to_string(format!("/proc/{pgid}/cmdline"))
         .unwrap_or_default()
         .replace('\0', " ");
-    Some(classify(&comm, &cmdline))
+    let mode = classify(&comm, &cmdline);
+    let environment = std::fs::read(format!("/proc/{pgid}/environ")).ok();
+    Some(classify_local(mode, environment.as_deref()))
 }
 
 /// The naming rule, kept pure so it can be tested without a terminal. The same
@@ -1530,6 +1532,21 @@ fn classify(comm: &str, cmdline: &str) -> WireMode {
     } else {
         WireMode::Other(comm.to_string())
     }
+}
+
+fn classify_local(mode: WireMode, environment: Option<&[u8]>) -> WireMode {
+    if !matches!(mode, WireMode::Claude | WireMode::Codex | WireMode::Remote)
+        && environment.is_some_and(crate::launcher::local_agent_environment)
+    {
+        WireMode::Other(crate::launcher::LOCAL_AGENT_MODE.into())
+    } else {
+        mode
+    }
+}
+
+fn wire_is_agent(mode: &WireMode) -> bool {
+    matches!(mode, WireMode::Claude | WireMode::Codex)
+        || matches!(mode, WireMode::Other(name) if name == crate::launcher::LOCAL_AGENT_MODE)
 }
 
 /// What a pane's mode becomes, given what it was and what was just seen.
@@ -1552,8 +1569,8 @@ fn next_mode(
     let Some(detected) = detected else {
         return current.cloned();
     };
-    let was_agent = matches!(current, Some(WireMode::Claude | WireMode::Codex));
-    let still_agent = matches!(detected, WireMode::Claude | WireMode::Codex);
+    let was_agent = current.is_some_and(wire_is_agent);
+    let still_agent = wire_is_agent(&detected);
     if was_agent && !still_agent && on_alt {
         return current.cloned();
     }
@@ -3051,6 +3068,55 @@ mod owning {
             host.list_panes()[0].mode,
             Some(WireMode::Shell),
             "this pane's own program is what is in front of it"
+        );
+    }
+
+    #[test]
+    fn brief_launch_local_foreground_is_measured_in_a_real_host_pane() {
+        let host = Host::with_shell("test", Some("/bin/sh".into()));
+        let started = spawn_agent(&host, "TD_LOCAL_AGENT=1 cat");
+        assert!(
+            within(Duration::from_secs(5), || {
+                host.watch_once();
+                host.list_panes().iter().any(|p| {
+                    p.pane == started.info.pane
+                        && p.mode == Some(WireMode::Other(crate::launcher::LOCAL_AGENT_MODE.into()))
+                })
+            }),
+            "the declared foreground local program was not observed"
+        );
+        assert!(host.write_to(started.info.pane, vec![4]));
+        assert!(
+            within(Duration::from_secs(5), || {
+                host.watch_once();
+                host.list_panes()
+                    .iter()
+                    .any(|p| p.pane == started.info.pane && p.mode == Some(WireMode::Shell))
+            }),
+            "the enclosing shell inherited the local agent label after the program exited"
+        );
+    }
+
+    #[test]
+    fn brief_launch_local_declaration_is_classified_and_retires_to_shell() {
+        let local = WireMode::Other(crate::launcher::LOCAL_AGENT_MODE.into());
+        let other = WireMode::Other("python".into());
+        assert_eq!(
+            classify_local(other.clone(), Some(b"TD_LOCAL_AGENT=1\0")),
+            local
+        );
+        assert_eq!(classify_local(other.clone(), None), other);
+        assert_eq!(
+            classify_local(WireMode::Codex, Some(b"TD_LOCAL_AGENT=1\0")),
+            WireMode::Codex
+        );
+        assert_eq!(
+            next_mode(Some(&local), Some(WireMode::Shell), true),
+            Some(local.clone())
+        );
+        assert_eq!(
+            next_mode(Some(&local), Some(WireMode::Shell), false),
+            Some(WireMode::Shell)
         );
     }
 

@@ -102,6 +102,7 @@ impl PaneMode {
             PaneMode::Claude => "CLAUDE",
             PaneMode::Codex => "CODEX",
             PaneMode::Remote => "REMOTE",
+            PaneMode::Other(name) if name == crate::launcher::LOCAL_AGENT_MODE => "LOCAL",
             PaneMode::Other(name) => name,
             // What `list_panes` hands an agent asking about its own fleet. A
             // reader that sees this knows the census could not describe the
@@ -121,6 +122,9 @@ impl PaneMode {
             PaneMode::Remote => Cow::Borrowed(st.ph_remote),
             PaneMode::Claude => Cow::Borrowed("CLAUDE"),
             PaneMode::Codex => Cow::Borrowed("CODEX"),
+            PaneMode::Other(name) if name == crate::launcher::LOCAL_AGENT_MODE => {
+                Cow::Borrowed("LOCAL")
+            }
             PaneMode::Other(name) => Cow::Owned(name.clone()),
             // Untranslated for the same reason CLAUDE and CODEX are: it is a
             // placeholder rather than a word about the pane's contents, and a
@@ -130,11 +134,12 @@ impl PaneMode {
         }
     }
 
-    /// True when this pane is running a conversational agent (Claude or Codex) —
+    /// True for Claude, Codex or a program declared by the local launch adapter —
     /// the modes where "your own input" is a meaningful, navigable, colourable
     /// thing distinct from the agent's replies.
     pub fn is_agent(&self) -> bool {
         matches!(self, PaneMode::Claude | PaneMode::Codex)
+            || matches!(self, PaneMode::Other(name) if name == crate::launcher::LOCAL_AGENT_MODE)
     }
 
     /// True when the FOCUS reader can read this agent's conversation from
@@ -187,7 +192,17 @@ fn foreground_mode(master: &std::fs::File, shell_pid: u32) -> PaneMode {
     if pgid as u32 == shell_pid {
         return PaneMode::Shell;
     }
-    PaneMode::classify(&comm, &cmdline)
+    let mode = PaneMode::classify(&comm, &cmdline);
+    if !matches!(mode, PaneMode::Claude | PaneMode::Codex | PaneMode::Remote)
+        && std::fs::read(format!("/proc/{pgid}/environ"))
+            .ok()
+            .as_deref()
+            .is_some_and(crate::launcher::local_agent_environment)
+    {
+        PaneMode::Other(crate::launcher::LOCAL_AGENT_MODE.into())
+    } else {
+        mode
+    }
 }
 
 /// The consistent header icon size (≈2× the old glyphs).
@@ -13513,12 +13528,17 @@ mod tests {
     }
 
     #[test]
-    fn is_agent_is_true_only_for_claude_and_codex() {
+    fn is_agent_includes_an_explicitly_configured_local_program() {
         assert!(PaneMode::Claude.is_agent());
         assert!(PaneMode::Codex.is_agent());
         assert!(!PaneMode::Shell.is_agent());
         assert!(!PaneMode::Remote.is_agent());
         assert!(!PaneMode::Other("vim".into()).is_agent());
+        let local = PaneMode::Other(crate::launcher::LOCAL_AGENT_MODE.into());
+        assert!(local.is_agent());
+        assert!(!local.reads_transcript());
+        assert_eq!(local.label(), "LOCAL");
+        assert_eq!(local.at_a_prompt(), Some(false));
     }
 
     /// The prompt seek drives a full-screen agent by synthesising wheel notches,

@@ -2145,6 +2145,31 @@ fn notes_sent_to_an_agent_on_its_bench_land_in_the_composer(cx: &mut TestAppCont
     );
 }
 
+#[gpui::test]
+fn brief_launch_local_notes_reach_composer_and_prompt(cx: &mut TestAppContext) {
+    let mut pane = Pane::running(cx, "printf '\\033[?2004hready\\n'; exec cat");
+    pane.wait_for("ready");
+    let map = "NOTES — local-brief.html\n[fig-01] Draw the missing case.";
+    pane.view.update(pane.cx, |v, cx| {
+        v.mode = super::PaneMode::Other(crate::launcher::LOCAL_AGENT_MODE.into());
+        v.set_face(Face::Workbench, cx);
+    });
+    let landed = pane.view.update(pane.cx, |v, cx| v.send_notes(map, cx));
+    assert_eq!(
+        landed,
+        Ok(super::NotesLanded::Composer(map.chars().count()))
+    );
+    let draft = pane.read(|v| v.wb_compose.as_ref().map(|l| l.text().to_string()));
+    assert_eq!(draft.as_deref(), Some(map));
+    pane.view.update(pane.cx, |v, cx| {
+        v.wb_compose = None;
+        v.set_face(Face::Terminal, cx);
+    });
+    let landed = pane.view.update(pane.cx, |v, cx| v.send_notes(map, cx));
+    assert_eq!(landed, Ok(super::NotesLanded::Prompt(map.chars().count())));
+    pane.wait_for("missing case");
+}
+
 /// A shell's lines reach the FOCUS reader exactly as the program printed them:
 /// joined where the terminal soft-wrapped them, and nowhere else.
 ///
