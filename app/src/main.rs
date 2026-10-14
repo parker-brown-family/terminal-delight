@@ -21343,6 +21343,7 @@ impl Workspace {
         let pill = sk.radius_pill();
         let rad = sk.radius();
         let rows = self.slot_rows();
+        let now = usage::now_epoch();
         // The agent rollup that used to close this slot is in the top right of
         // the mother bar now (see `render_agent_counter`), so the slot is the
         // allowance rows and nothing else — and with none of those, nothing.
@@ -21420,8 +21421,30 @@ impl Workspace {
             .px(px(6.0 * s))
             .pb(px(5.0 * s));
 
-        for row in &rows {
+        for (rec, row) in self.usage_records.iter().zip(&rows) {
             let deg = slot::Degrade::resolve(self.left_bar_w, rail_w, row.session_ticks);
+
+            // The same pace math the usage panel's TOKEN USAGE PACE line uses
+            // — same weekly limit, same margin, same three-colour banding —
+            // just small, and overlaid on the two rails rather than its own
+            // row: nothing in this slot has 20px of height to spare. Parker,
+            // 2026-10-14: "just the torch — emitting a glow against the
+            // surface, colour coded for what the state is."
+            let pace_glow = rec
+                .limits
+                .iter()
+                .find(|l| l.label.contains("7-day") || l.label == "Weekly")
+                .and_then(|l| usage::pace(l, now))
+                .map(|p| {
+                    let band = if p.delta < -0.15 {
+                        hsla(0.56, 0.55, 0.58, 1.)
+                    } else if p.delta > 0.15 {
+                        hsla(0.01, 0.72, 0.60, 1.)
+                    } else {
+                        hsla(0.38, 0.52, 0.52, 1.)
+                    };
+                    brighten(band, 1.7)
+                });
 
             // The long window, as one solid rail.
             let week = match lit_colour(&row.week) {
@@ -21567,16 +21590,48 @@ impl Workspace {
                             None => d.child(row.initials.clone()),
                         }),
                 )
-                .child(
-                    div()
+                .child({
+                    let mut rails = div()
+                        .relative()
                         .flex_1()
                         .min_w(px(0.))
                         .flex()
                         .flex_col()
                         .gap(px(3.0 * s))
                         .child(week)
-                        .child(session),
-                );
+                        .child(session);
+                    // The torch, centred over the seam between the two rails
+                    // — a glow against the surface, not a third row, because
+                    // this slot has no height to give one.
+                    if let Some(col) = pace_glow {
+                        let torch = (row_h * 0.6).clamp(7., 13.);
+                        rails = rails.child(
+                            div()
+                                .absolute()
+                                .inset_0()
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .child(
+                                    gpui::svg()
+                                        .external_path(SharedString::from(
+                                            art::pace_flame_svg().to_string_lossy().into_owned(),
+                                        ))
+                                        .w(px(torch))
+                                        .h(px(torch))
+                                        .text_color(col)
+                                        .shadow(vec![BoxShadow {
+                                            color: col.alpha(0.6),
+                                            offset: point(px(0.), px(0.)),
+                                            blur_radius: px(torch * 0.8),
+                                            spread_radius: px(1.),
+                                            inset: false,
+                                        }]),
+                                ),
+                        );
+                    }
+                    rails
+                });
             if deg.show_pct {
                 line = line.child(
                     div()
