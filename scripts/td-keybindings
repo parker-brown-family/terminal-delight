@@ -1,0 +1,155 @@
+#!/bin/bash
+# td-keybindings — Terminal Delight's keys in Omarchy's searchable key menu,
+# beside SUPER+K (Omarchy's own keys) and SUPER+CTRL+K (Herdr's).
+#
+# Omarchy reads Herdr's sheet out of `herdr --default-config`. Terminal Delight
+# has no keymap file — none of its keys can be rebound — so its sheet is the
+# docs site's Keys page, docsite/pages/keys.html, which is traced to the code
+# and names the commit it is true of. Every row of a `keys` table in the page's
+# technical register becomes one line, led by the heading it sits under. Keys
+# described only in prose there (find's arrows, the paint overlay) are not rows
+# and do not appear; the page is where to add one.
+#
+# Usage: td-keybindings [--print|-p] [--page <keys.html>]
+# Env:   TD_KEYS_PAGE=path   the page to read. Default: this checkout's page
+#        when run from the repo, else the copy scripts/install-keys-hotkey.sh
+#        put in ${XDG_DATA_HOME:-~/.local/share}/terminal-delight/keys.html.
+
+print_only=false
+page="${TD_KEYS_PAGE:-}"
+
+while (($#)); do
+  case "$1" in
+    --print|-p)
+      print_only=true
+      ;;
+    --page)
+      shift
+      page="$1"
+      ;;
+    *)
+      page="$1"
+      ;;
+  esac
+
+  shift
+done
+
+if [[ -z $page ]]; then
+  repo_page="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../docsite/pages/keys.html"
+  installed_page="${XDG_DATA_HOME:-$HOME/.local/share}/terminal-delight/keys.html"
+
+  if [[ -f $repo_page ]]; then
+    page="$repo_page"
+  else
+    page="$installed_page"
+  fi
+fi
+
+output_keybindings() {
+  awk '
+# Inside <kbd> a key is shouted, the way Omarchy and Herdr print theirs;
+# between keys a "+" is the chord joint and gets spaced like theirs. Anything
+# else that is markup (<a>, <code>) is dropped and its text kept, so a literal
+# "+" key (<kbd>+</kbd>) survives as a key rather than a joint.
+function key_text(cell,   out, open, shut, rest) {
+  out = ""
+  rest = cell
+
+  while ((open = index(rest, "<kbd>")) > 0) {
+    out = out joints(substr(rest, 1, open - 1))
+    rest = substr(rest, open + 5)
+    shut = index(rest, "</kbd>")
+    if (shut == 0) break
+    out = out toupper(plain(substr(rest, 1, shut - 1)))
+    rest = substr(rest, shut + 6)
+  }
+
+  out = out joints(rest)
+  gsub(/[[:space:]]+/, " ", out)
+  sub(/^ /, "", out)
+  sub(/ $/, "", out)
+
+  return out
+}
+
+function joints(text) {
+  text = plain(text)
+  gsub(/\+/, " + ", text)
+
+  return text
+}
+
+# Tags out, the three entities the page could carry decoded, and no tab left
+# behind: omarchy-menu-select reads a tab as the start of an icon or subtext.
+function plain(text) {
+  gsub(/<[^>]*>/, "", text)
+  gsub(/&lt;/, "<", text)
+  gsub(/&gt;/, ">", text)
+  gsub(/&amp;/, "\\&", text)
+  gsub(/\t/, " ", text)
+
+  return text
+}
+
+/data-register="technical"/ { technical = 1; next }
+/<\/section>/ { technical = 0; next }
+!technical { next }
+
+/<h3>/ {
+  section = plain($0)
+  gsub(/^[[:space:]]+|[[:space:]]+$/, "", section)
+  next
+}
+
+/<tr><td>/ {
+  row = $0
+  sub(/^[[:space:]]*<tr><td>/, "", row)
+  sub(/<\/td><\/tr>[[:space:]]*$/, "", row)
+  split_at = index(row, "</td><td>")
+  if (split_at == 0) next
+
+  keys = key_text(substr(row, 1, split_at - 1))
+  what = plain(substr(row, split_at + 9))
+  gsub(/[[:space:]]+/, " ", what)
+  if (keys == "" || what == "") next
+
+  printf "%-32s → %s · %s\n", keys, section, what
+  rows++
+}
+
+# A page that parses to nothing has changed shape; say so rather than show an
+# empty menu that reads as "Terminal Delight has no keys".
+END { if (rows == 0) exit 1 }
+' "$page"
+}
+
+status=0
+if [[ ! -f $page ]]; then
+  records="Keys page not found at $page — run scripts/install-keys-hotkey.sh"
+  status=1
+elif ! records=$(output_keybindings); then
+  records="No keys read from $page — has the page changed shape?"
+  status=1
+fi
+
+if [[ $print_only == "true" ]]; then
+  if ((status)); then
+    echo "td-keybindings: $records" >&2
+    exit 1
+  fi
+
+  printf '%s\n' "$records"
+  exit 0
+fi
+
+# From the hotkey a failure has no terminal to land in, so the menu carries the
+# message as its one row.
+monitor_height=$(hyprctl monitors -j 2>/dev/null | jq -r '.[] | select(.focused == true) | .height' 2>/dev/null)
+
+if [[ ! $monitor_height =~ ^[0-9]+$ ]] || ((monitor_height <= 0)); then
+  monitor_height=900
+fi
+
+menu_height=$((monitor_height * 40 / 100))
+printf '%s\n' "$records" | omarchy-menu-select 'Terminal Delight keybindings' -- --width 960 --height "$menu_height" >/dev/null || true

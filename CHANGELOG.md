@@ -9,6 +9,17 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ### Changed
 
+- **SUPER+ALT+T on Omarchy shows every Terminal Delight key.** It opens
+  Omarchy's own searchable key menu, the one SUPER+K opens for Omarchy's keys
+  and SUPER+CTRL+K for Herdr's, listing 77 keys from the docs site's Keys page,
+  each led by the part of the app it belongs to. `scripts/install-keys-hotkey.sh`
+  binds it. The chord was td-send's; that hotkey is retired and the installer
+  takes the seat back, while `scripts/td-send` still runs by hand. The Keys page
+  gains the keys added since it was written: Ctrl+Shift+M for what an agent
+  handed over, Ctrl+Shift+Alt+arrows to carry a tab through the left bar,
+  Ctrl+Shift+Enter to send a floating brief's notes, the three paste keys in a
+  note, and Ctrl+wheel zooming a document.
+
 - **The FOCUS reader (Alt+R) has a size of its own.** It lays text out at the
   pane's own letter size across the whole glass, so a narrow pane opens with as
   many columns as the glass holds — about 175 × 46 in a 1,576 × 950 window —

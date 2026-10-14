@@ -8002,7 +8002,7 @@ impl Workspace {
 
     /// The landing half of `ctl adopt` — and the body resurrection shares:
     /// open a fresh tab at `cwd`, optionally running `run` in it. A tile sent
-    /// over from the desktop (td-send / SUPER+ALT+T) arrives here as cwd plus
+    /// over from the desktop (td-send) arrives here as cwd plus
     /// its derived resume/attach line; a plain shell hand-off is just a cwd.
     fn adopt_pane(
         &mut self,

@@ -66,8 +66,8 @@ expressible request that writes into a session already running. The socket itsel
 as this user can execute commands without asking a terminal emulator to do it.
 
 **And a plugin this repository ships puts that verb in front of agents.** `plugins/td-send/`
-declares `pull_workspace` and describes itself as "the ⇄ desk-consolidation verbs behind
-SUPER+ALT+T, **exposed to agents**"; it shells out to `scripts/td-send`, which sends the `adopt`
+declares `pull_workspace` and describes itself as "the ⇄ desk-consolidation verbs td-send
+runs, **exposed to agents**"; it shells out to `scripts/td-send`, which sends the `adopt`
 line. So the honest statement is not "no plugin can cause TD to type". It is that the only thing any
 caller can cause is a **new pane running a command**, because that is the only shape the socket can
 express. An agent that calls `pull_workspace` gets a tile migrated into a fresh tab. It does not get

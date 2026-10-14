@@ -45,7 +45,7 @@ use crate::{mcp, mcp_transport, theme, Workspace};
 
 /// A tile adoption: open a fresh pane at `cwd`, optionally running `run` in it
 /// (an agent resume line, a tmux attach) — how the desktop hands a terminal
-/// session over to us (td-send / SUPER+ALT+T). Rides the same queue as paint.
+/// session over to us (td-send). Rides the same queue as paint.
 #[derive(Debug, PartialEq)]
 pub(crate) struct AdoptReq {
     pub cwd: Option<String>,

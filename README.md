@@ -133,26 +133,33 @@ app picks it up in ~300ms. Four themes ship in [`app/themes/`](app/themes/):
 
 ![The four built-in themes side by side](assets/showcase-themes.png)
 
-## Omarchy / Hyprland integration — send a tile to Terminal Delight
+## Omarchy / Hyprland integration — every key on SUPER+ALT+T
 
-`scripts/install-send-hotkey.sh` installs `td-send` and binds **SUPER+ALT+T**:
-focus any terminal tile (foot, Alacritty, kitty, Ghostty, `org.omarchy.*`) and
-the session migrates into a Terminal Delight pane — idle shells re-open at
-their cwd, `claude`/`codex` agents resume by session id, tmux attaches
-re-attach. Anything else in the foreground (vim, htop…) is refused and nothing
-is closed. With no adoptable TD window running, a fresh one is seeded to
-receive the session. `td-send --dry-run` prints the plan without touching
-anything, and `--uninstall` on the installer reverts the binding.
+`scripts/install-keys-hotkey.sh` installs `td-keybindings` and binds
+**SUPER+ALT+T**: every Terminal Delight key, in Omarchy's own searchable key
+menu, beside SUPER+K for Omarchy's keys and SUPER+CTRL+K for Herdr's. The list
+is the docs site's [Keys page](docsite/pages/keys.html), copied beside the
+script so the sheet works without a checkout; run the installer again after the
+page changes. `td-keybindings --print` writes the same list to stdout, and
+`--uninstall` on the installer reverts the binding.
+
+SUPER+ALT+T used to be td-send's. That hotkey is retired, and the installer
+takes the seat back from it, but `scripts/td-send` still runs by hand: focus a
+terminal tile (foot, Alacritty, kitty, Ghostty, `org.omarchy.*`) and the
+session migrates into a Terminal Delight pane — idle shells re-open at their
+cwd, `claude`/`codex` agents resume by session id, tmux attaches re-attach.
+Anything else in the foreground (vim, htop…) is refused and nothing is closed.
+`td-send --dry-run` prints the plan without touching anything.
 
 Runtime dependencies (checked by the scripts, which fail with a message):
 
 - **Hyprland** (`hyprctl`) — window addressing and close dispatches; both the
   ≥0.56 Lua dispatcher and the legacy string form are spoken
 - **jq** — JSON plumbing in `td-send` and the hook/installer scripts
+- **Omarchy** — `td-keybindings` draws through `omarchy-menu-select`, and the
+  hotkey installer writes Omarchy's `o.bind(…)` helper into
+  `~/.config/hypr/bindings.lua`
 - `omarchy-notification-send` — optional; notifications are skipped without it
-- the hotkey installer writes Omarchy's `o.bind(…)` helper into
-  `~/.config/hypr/bindings.lua`; on plain (non-Omarchy) Hyprland, bind it
-  yourself: `bind = SUPER ALT, T, exec, td-send`
 - `plugins/td-send` (the `td-send-mcp` MCP server that exposes
   `pull_workspace` / `send_window` to agents) needs `python3`, stdlib only
 
