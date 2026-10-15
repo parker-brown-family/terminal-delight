@@ -6267,6 +6267,24 @@ impl TerminalView {
         let Some(edit) = note.edit.as_mut() else {
             return false;
         };
+        // A paste is the paper's, by the same three chords a document note
+        // takes. ctrl+shift+v used to stay the pane's, and the pane typed the
+        // clipboard into the shell under the note; ctrl+v and shift+insert
+        // reached here and then vanished, because `apply` drops ctrl chords
+        // and has no arm for insert. The paper draws one line, so the paste
+        // arrives as one: typing can never put a line break here, since Enter
+        // posts the note.
+        let m = &ks.modifiers;
+        if crate::workbench::is_paste_chord(ks.key.as_str(), m.control, m.shift) {
+            if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
+                edit.buf.insert_capped(
+                    &crate::workbench::pasted_as_one_line(&text),
+                    crate::sticky::MAX_CHARS,
+                );
+            }
+            cx.notify();
+            return true;
+        }
         match crate::sticky::press(true, ks.key.as_str()) {
             crate::sticky::Press::Pass => return false,
             crate::sticky::Press::Post => self.sticky_commit(cx),
@@ -6596,6 +6614,26 @@ impl TerminalView {
         let Some(mut buf) = self.renaming.take() else {
             return Handled::Declined;
         };
+        // A paste is the name's, by the same three chords a note takes.
+        // ctrl+shift+v used to stay the pane's, and the pane typed the
+        // clipboard into the shell under the header. ctrl+v and shift+insert
+        // reached here and vanished, because a modified key is not a character.
+        let m = &ks.modifiers;
+        if crate::workbench::is_paste_chord(k.key, m.control, m.shift) {
+            if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
+                // A name is one line, kept to the 24 characters a typed name
+                // stops at.
+                for ch in crate::workbench::pasted_as_one_line(&text).chars() {
+                    if buf.chars().count() >= 24 {
+                        break;
+                    }
+                    buf.push(ch);
+                }
+            }
+            self.renaming = Some(buf);
+            cx.notify();
+            return Handled::Consumed;
+        }
         match k.key {
             "enter" => {
                 self.renaming = Some(buf);
