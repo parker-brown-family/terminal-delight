@@ -477,7 +477,9 @@ impl Target {
             return Err(format!("unknown target \"{s}\" (want a pid or \"outer\")"));
         }
         if let Some(pid) = v.as_u64() {
-            return Ok(Target::Pane(pid as u32));
+            return u32::try_from(pid)
+                .map(Target::Pane)
+                .map_err(|_| "pid is out of range".to_string());
         }
         Err("target must be a pid (integer) or the string \"outer\"".to_string())
     }
@@ -708,9 +710,9 @@ impl Snapshot {
     /// The error says which of the two ways to name a pane were available, so a
     /// caller whose chain the host could not read is told that rather than
     /// being told to try harder.
-    fn target_pane(&self, named: Option<u32>) -> Result<u32, String> {
+    fn target_pane(&self, named: Option<u64>) -> Result<u32, String> {
         if let Some(pid) = named {
-            return Ok(pid);
+            return u32::try_from(pid).map_err(|_| "pid is out of range".to_string());
         }
         let Some(caller) = &self.caller else {
             return Err("no `pid`, and this connection did not say who is calling \
@@ -1614,7 +1616,9 @@ where
     let Some(pid) = args.get("pid").and_then(Value::as_u64) else {
         return tool_err("pane_events requires an integer `pid` (see list_panes).");
     };
-    let pid = pid as u32;
+    let Ok(pid) = u32::try_from(pid) else {
+        return tool_err("pid is out of range");
+    };
     let limit = args
         .get("limit")
         .and_then(Value::as_u64)
@@ -1827,7 +1831,7 @@ where
              TD_MCP_WRITE=1) to let an agent leave a note.",
         );
     }
-    let pid = match snap.target_pane(args.get("pid").and_then(Value::as_u64).map(|p| p as u32)) {
+    let pid = match snap.target_pane(args.get("pid").and_then(Value::as_u64)) {
         Ok(pid) => u64::from(pid),
         Err(why) => return tool_err(&why),
     };
@@ -1880,7 +1884,7 @@ where
              TD_MCP_WRITE=1) to let an agent declare a deliverable.",
         );
     }
-    let pid = match snap.target_pane(args.get("pid").and_then(Value::as_u64).map(|p| p as u32)) {
+    let pid = match snap.target_pane(args.get("pid").and_then(Value::as_u64)) {
         Ok(pid) => u64::from(pid),
         Err(why) => return tool_err(&why),
     };
@@ -1940,6 +1944,9 @@ where
     }
     let Some(pid) = args.get("pid").and_then(Value::as_u64) else {
         return tool_err("present_surface requires a `pid` (an integer, from list_panes).");
+    };
+    let Ok(pid) = u32::try_from(pid) else {
+        return tool_err("pid is out of range");
     };
     // `surface` is where the document belongs, but an agent that sent the
     // envelope at the top level meant the same thing and being pedantic about
@@ -2023,7 +2030,7 @@ where
     let pane_dir = snap
         .panes
         .iter()
-        .find(|p| p.pid == pid as u32)
+        .find(|p| p.pid == pid)
         .and_then(|p| p.pane_id)
         .zip(snap.instance.as_ref())
         .map(|(pane, inst)| crate::surfacefeed::pane_dir(&inst.session, pane));
@@ -2051,10 +2058,7 @@ where
         surface: Some(post),
         ..Default::default()
     };
-    match apply(&[(Target::Pane(pid as u32), patch)])
-        .into_iter()
-        .next()
-    {
+    match apply(&[(Target::Pane(pid), patch)]).into_iter().next() {
         Some((_, Ok(_))) => tool_ok(
             said,
             json!({ "pid": pid, "surface": id, "kind": kind, "op": op }),
@@ -3277,6 +3281,70 @@ mod tests {
         });
         let out = call_writing(&s, "leave_note", json!({ "pid": 200, "text": "look here" }));
         assert_eq!(out["structuredContent"]["pid"], 200);
+    }
+
+    #[test]
+    fn oversized_pids_never_address_another_pane() {
+        let mut s = snap_writable(vec![agent_pane(100, true)]);
+        s.config.events = true;
+        // No persistence path, even on the broken implementation.
+        s.instance = None;
+        s.caller = Some(Caller {
+            session: "test".into(),
+            pane: s.panes[0].pane_id,
+        });
+        let touched = std::cell::Cell::new(0);
+        let mut accepted = Vec::new();
+        for pid in [u64::from(u32::MAX) + 101, u64::MAX] {
+            for (name, args) in [
+                ("pane_events", json!({ "pid": pid })),
+                ("get_pane_config", json!({ "targets": [pid] })),
+                (
+                    "set_pane_config",
+                    json!({ "updates": [{ "target": pid, "config": { "brightness": 40 } }] }),
+                ),
+                ("leave_note", json!({ "pid": pid, "text": "hello" })),
+                (
+                    "declare_deliverable",
+                    json!({ "pid": pid, "href": "/tmp/report.html" }),
+                ),
+                (
+                    "present_surface",
+                    json!({ "pid": pid, "surface": { "td": "0.1", "op": "retire", "id": "old" } }),
+                ),
+            ] {
+                let line = json!({ "id": 1, "method": "tools/call",
+                    "params": { "name": name, "arguments": args } })
+                .to_string();
+                let out = resp(
+                    &handle_line_with(
+                        &line,
+                        &s,
+                        |_, _| {
+                            touched.set(touched.get() + 1);
+                            vec![]
+                        },
+                        |updates| {
+                            touched.set(touched.get() + updates.len());
+                            updates
+                                .iter()
+                                .map(|(t, _)| (t.clone(), Ok(GradeReport::default())))
+                                .collect()
+                        },
+                        no_search,
+                    )
+                    .unwrap(),
+                );
+                if out["result"]["isError"] != true {
+                    accepted.push((name, pid));
+                }
+            }
+        }
+        assert!(
+            accepted.is_empty(),
+            "oversized PIDs were accepted: {accepted:?}"
+        );
+        assert_eq!(touched.get(), 0, "an invalid PID reached a pane capability");
     }
 
     /// A caller the host could not place is told THAT, rather than being told

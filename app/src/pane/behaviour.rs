@@ -2295,6 +2295,68 @@ fn a_paste_while_writing_a_note_on_the_document_face_lands_in_the_note(cx: &mut 
     );
 }
 
+/// The words in a sticky note that still has the pen.
+fn sticky_draft(pane: &mut Pane) -> Option<String> {
+    pane.read(|v| {
+        v.note
+            .as_ref()
+            .and_then(|n| n.edit.as_ref())
+            .map(|e| e.buf.text())
+    })
+}
+
+/// A paste while a sticky note is being written lands on the paper, by each
+/// of the three chords, and never in the terminal under it.
+///
+/// The square and the Document face already do this. The sticky note is the
+/// third caret drawn over the same terminal, and it was left out of that fix:
+/// ctrl+shift+v is still the pane's paste, so the clipboard is typed into
+/// whatever is running behind the paper, and ctrl+v and shift+insert reach
+/// the note and then vanish because its editor treats them as chords. The
+/// paper draws one line, so the line break in the last paste lands as a space:
+/// kept, it would hide every word after it.
+#[gpui::test]
+fn a_sticky_note_being_written_takes_a_paste_instead_of_the_shell(cx: &mut TestAppContext) {
+    let mut pane = Pane::running(cx, "echo ready; exec cat");
+    pane.wait_for("ready");
+    pane.settle();
+    pane.keys("alt-s");
+    assert!(
+        pane.read(|v| v.sticky_composing()),
+        "alt+s gives the note the pen"
+    );
+    assert_eq!(sticky_draft(&mut pane).as_deref(), Some(""));
+
+    paste_each(
+        &mut pane,
+        &[
+            ("ctrl-shift-v", "pastedalpha"),
+            ("ctrl-v", " pastedbeta"),
+            ("shift-insert", "\npastedgamma"),
+        ],
+    );
+    let draft = sticky_draft(&mut pane);
+    pane.keys("alt-s");
+    assert!(
+        !pane.read(|v| v.sticky_composing()),
+        "alt+s again posts the note and hands the keyboard back"
+    );
+    pane.keys("e c h o e d enter");
+    pane.wait_for("echoed");
+    let rows = pane.rows();
+    assert_eq!(
+        draft.as_deref(),
+        Some("pastedalpha pastedbeta pastedgamma"),
+        "all three chords paste onto the paper, in order, the line break a space; shell saw:\n{}",
+        rows.join("\n")
+    );
+    assert!(
+        !rows.iter().any(|r| r.contains("pasted")),
+        "nothing pasted reached the shell under the note:\n{}",
+        rows.join("\n")
+    );
+}
+
 /// A picture pasted while a note is being written on a Markdown file is
 /// attached to that block: kept as a file in TD's notes folder, listed in the
 /// box as `[doc-image #1]` and never by its path, nothing written into the
@@ -3311,4 +3373,102 @@ fn a_deliverable_line_read_from_the_transcript_is_kept_like_one_read_off_the_scr
     let again = derived();
     pane.view.update(pane.cx, |v, cx| v.present(again, cx));
     assert_eq!(rebuilt(&mut pane), said, "the same line, filed once");
+}
+
+/// A paste while the pane's title is being renamed lands in the name, by each
+/// of the three chords, and never in the terminal under the header.
+///
+/// Right-click or a double-click on the title opens the box, and the box owns
+/// the keyboard until it commits. Ctrl+Shift+V was still the pane's paste, so
+/// the clipboard was typed into whatever was running behind the header. A
+/// newline in that paste is a return. Ctrl+V and Shift+Insert reached the box
+/// and vanished, because a modified key is not taken as a character. A name is
+/// one line, so the line break in the last paste lands as a space.
+#[gpui::test]
+fn a_header_being_renamed_takes_a_paste_instead_of_the_shell(cx: &mut TestAppContext) {
+    let mut pane = Pane::running(cx, "echo ready; exec cat");
+    pane.wait_for("ready");
+    pane.settle();
+    pane.view.update(pane.cx, |v, _cx| {
+        v.renaming = Some(String::new());
+    });
+    assert_eq!(pane.read(|v| v.renaming.clone()).as_deref(), Some(""));
+
+    paste_each(
+        &mut pane,
+        &[
+            ("ctrl-shift-v", "qx"),
+            ("ctrl-v", " qy"),
+            ("shift-insert", "\nqz"),
+        ],
+    );
+    let draft = pane.read(|v| v.renaming.clone());
+    pane.keys("enter");
+    assert!(
+        pane.read(|v| v.renaming.is_none()),
+        "enter commits the name and hands the keyboard back"
+    );
+    pane.keys("e c h o e d enter");
+    pane.wait_for("echoed");
+    let rows = pane.rows();
+    assert_eq!(
+        draft.as_deref(),
+        Some("qx qy qz"),
+        "all three chords paste into the name, in order, the line break a space; shell saw:\n{}",
+        rows.join("\n")
+    );
+    assert!(
+        !rows
+            .iter()
+            .any(|r| r.contains("qx") || r.contains("qy") || r.contains("qz")),
+        "nothing pasted reached the shell under the header:\n{}",
+        rows.join("\n")
+    );
+}
+
+/// The strip stops saying an agent is reading an answer once that agent has
+/// left, and the next agent in the pane does not inherit the stamp.
+///
+/// The bench stamps the moment it types. For eight seconds that stamp makes
+/// the strip say "Reading your answer", and that rung outranks a question, so
+/// a question still on screen is not shown again. The stamp names the agent
+/// that was written to. Departure already drops every other latch that names
+/// that conversation. This one was left, so a pane whose agent has gone keeps
+/// the words until the window ends, and an agent started inside the window is
+/// born reading an answer nobody gave it.
+#[gpui::test]
+fn a_departed_agent_does_not_leave_the_bar_reading_an_answer(cx: &mut TestAppContext) {
+    let mut pane = Pane::running(cx, "exec cat");
+    pane.running_as(crate::pane::PaneMode::Claude);
+    pane.view.update(pane.cx, |v, cx| {
+        let now = crate::surfacefeed::now_ms();
+        v.wb_delivered_ms = Some(now.saturating_sub(1_000));
+        assert!(v.reading_answer(now), "the bench typed a second ago");
+        assert_eq!(
+            v.bench_status(),
+            crate::workbench::AgentState::Reading,
+            "the strip says the agent is reading that answer"
+        );
+        v.set_mode(crate::pane::PaneMode::Shell, cx);
+        assert!(
+            !v.reading_answer(now),
+            "the agent that was reading has left"
+        );
+        assert_ne!(
+            v.bench_status(),
+            crate::workbench::AgentState::Reading,
+            "a shell does not keep reading an answer"
+        );
+    });
+    pane.running_as(crate::pane::PaneMode::Claude);
+    let (reading, state) = pane.read(|v| {
+        let now = crate::surfacefeed::now_ms();
+        (v.reading_answer(now), v.bench_status())
+    });
+    assert!(!reading, "the next agent does not inherit the stamp");
+    assert_ne!(
+        state,
+        crate::workbench::AgentState::Reading,
+        "the next agent is not born reading the answer the last one was given"
+    );
 }

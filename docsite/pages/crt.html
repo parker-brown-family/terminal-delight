@@ -104,7 +104,7 @@
     <tr><td><code>tracking_sweep</code></td><td>1–30 s</td><td>7</td><td>Seconds one band takes to cross.</td></tr>
     <tr><td><code>flicker</code></td><td>0–1</td><td>0</td><td>Every 9 to 17 seconds, a half-second stutter in brightness.</td></tr>
     <tr><td><code>jiggle</code></td><td>0–1</td><td>0</td><td>Every 6 to 9 seconds, the picture hops a pixel or two.</td></tr>
-    <tr><td><code>screen_glare</code></td><td>0–1</td><td>0, or 0.42 for a theme named <code>hacker</code></td><td>A glare spot and streak at the top left of the glass. Shows only on a bent pane.</td></tr>
+    <tr><td><code>screen_glare</code></td><td>0–1</td><td>0, or 0.42 for a theme named <code>hacker</code></td><td>A glare spot and streak at the top left of the glass. Shows only on a bent pane. The <code>glare</code> gauge overrides it per pane.</td></tr>
     <tr><td><code>bezel</code></td><td>0–1</td><td>0</td><td>A raised frame around the glass.</td></tr>
   </tbody>
 </table>
@@ -120,10 +120,11 @@
     <tr><td><code>brightness</code></td><td>0–1</td><td>0.38</td><td>0.5</td></tr>
     <tr><td><code>contrast</code>, <code>colour</code>, <code>text</code>, <code>background</code>, <code>gamma</code></td><td>0–1</td><td>0.5</td><td>0.5</td></tr>
     <tr><td><code>menu bar</code></td><td>0.7–1.6×</td><td>0.8×</td><td>1×</td></tr>
-    <tr><td><code>warp</code></td><td>0–1.5</td><td>1.43</td><td>0, flat</td></tr>
+    <tr><td><code>warp</code></td><td>0–1.5</td><td>1.43</td><td>unchanged</td></tr>
+    <tr><td><code>glare</code></td><td>0–1, or follow the theme</td><td>follows the theme</td><td>unchanged</td></tr>
   </tbody>
 </table>
-<p>0.5 is neutral on the colour gauges, and they read as a signed offset from it: <code>+19</code>, <code>-34</code>. Text and background are graded separately, and brightness can only dim text, never push it past white. Below the gauges, <code>roll</code>, <code>roll spd</code> and <code>roll size</code> override this pane's tracking band, and <code>↺ roll → per-theme</code> gives it back to the theme.</p>
+<p>0.5 is neutral on the colour gauges, and they read as a signed offset from it: <code>+19</code>, <code>-34</code>. Text and background are graded separately, and brightness can only dim text, never push it past white. <code>warp</code>, <code>glare</code> and the roll dials sit under <code>▸ crt</code> and show while the tube is on; <code>reset</code> leaves them alone. <code>glare</code> opens at the theme's own <code>screen_glare</code> and stays there until you move it, and it shows only where <code>warp</code> is above 0. <code>roll</code>, <code>roll spd</code> and <code>roll size</code> override this pane's tracking band, and <code>↺ roll → per-theme</code> gives it back to the theme.</p>
 <p><kbd>Ctrl</kbd> and the mouse wheel size whatever is under the pointer: the terminal's text, the workbench, or, over a header or the chrome, the menu bar. One notch is 5%.</p>
 <p>An agent can set the same gauges through the <a href="/mcp">MCP server</a>'s <code>set_pane_config</code>, each as a percentage of its range, with writes on.</p>
 

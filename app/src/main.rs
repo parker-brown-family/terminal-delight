@@ -19423,15 +19423,17 @@ impl Workspace {
                     .w(px(28.))
                     .text_size(px(9.))
                     .text_color(th.accent)
-                    // Sizes (menu bar, terminal text) and the phosphor gain read
-                    // as absolute "110%" — phosphor's 100% is the house glow;
-                    // crawl angle in degrees, crawl depth as a ratio; colour
-                    // channels read as a signed offset ("-12", "+0").
+                    // Sizes (menu bar, terminal text), the phosphor gain and the
+                    // glare read as absolute "110%" — phosphor's 100% is the
+                    // house glow, glare's 0% clear glass; crawl angle in
+                    // degrees, crawl depth as a ratio; colour channels read as a
+                    // signed offset ("-12", "+0").
                     .child(match key {
                         theme::GradeKey::Scale
                         | theme::GradeKey::TextSize
                         | theme::GradeKey::BenchSize
-                        | theme::GradeKey::Phosphor => {
+                        | theme::GradeKey::Phosphor
+                        | theme::GradeKey::Glare => {
                             format!("{}%", (v * 100.).round() as i32)
                         }
                         theme::GradeKey::CrawlAngle => format!("{}\u{00b0}", v.round() as i32),
@@ -19559,11 +19561,16 @@ impl Workspace {
     /// The active OSD scope's resolved tracking dials — the seed a roll slider
     /// starts from when this scope hasn't pinned its own tracking yet.
     fn scope_track_seed(&self, scope: &MenuScope, cx: &App) -> [f32; 3] {
-        let th = match scope {
+        theme::tracking_dials_of(&self.scope_theme(scope, cx))
+    }
+
+    /// The active OSD scope's resolved theme — where a dial the scope has left
+    /// to its theme (the roll bar, the glare) reads its authored value from.
+    fn scope_theme(&self, scope: &MenuScope, cx: &App) -> theme::Theme {
+        match scope {
             MenuScope::Pane(p) => p.read(cx).resolved_theme(cx),
             MenuScope::Outer => (*theme::resolve(cx, &theme::outer_choice(cx))).clone(),
-        };
-        theme::tracking_dials_of(&th)
+        }
     }
 
     /// Set tracking dial component `idx` on the active OSD scope (pane or outer),
@@ -27607,7 +27614,12 @@ impl Render for Workspace {
                     theme::GradeKey::Phosphor => t.g_phosphor,
                     _ => _name,
                 };
-                rows = rows.child(self.slider_row(key, name, grade.get(key), &th, cx));
+                // A main gauge always holds its own position (pinned by
+                // `main_gauges_always_hold_a_position`); only a dial left to the
+                // theme answers `None`, and those live in the CRT section.
+                if let Some(v) = grade.get(key) {
+                    rows = rows.child(self.slider_row(key, name, v, &th, cx));
+                }
             }
             // The foot of the tray: one faint disclosure row per easter egg.
             // Deliberately quieter than every label above it — somebody has to
@@ -27751,8 +27763,8 @@ impl Render for Workspace {
                 }
                 panel = panel.child(block);
             }
-            // ---- CRT: the master switch, then the tube it switches — warp and
-            // the roll bar — behind the second collapsed row. Off is a flat
+            // ---- CRT: the master switch, then the tube it switches — warp, the
+            // glass glare and the roll bar — behind the second collapsed row. Off is a flat
             // screen, and the knobs only appear while it is on, as crawl's do:
             // the dials keep their values either way, so switching on restores
             // exactly the tube they describe (see `theme::flatten_tube`).
@@ -27793,6 +27805,13 @@ impl Render for Workspace {
                     let dials = grade
                         .tracking
                         .unwrap_or_else(|| self.scope_track_seed(&scope, cx));
+                    // Glare the same way: the grade's own when it has one, else
+                    // the glass the scope's theme authored, so the knob opens
+                    // where the reflection already is.
+                    let glare = match grade.glare {
+                        Some(g) => g,
+                        None => self.scope_theme(&scope, cx).screen_glare,
+                    };
                     block = block
                         .child(self.slider_row(
                             theme::GradeKey::Warp,
@@ -27801,6 +27820,7 @@ impl Render for Workspace {
                             &th,
                             cx,
                         ))
+                        .child(self.slider_row(theme::GradeKey::Glare, t.d_glare, glare, &th, cx))
                         .child(self.track_slider(0, t.d_roll, dials, &th, cx))
                         .child(self.track_slider(1, t.d_roll_spd, dials, &th, cx))
                         .child(self.track_slider(2, t.d_roll_size, dials, &th, cx))

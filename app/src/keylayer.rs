@@ -343,14 +343,18 @@ pub fn window_chord(key: &str, alt: bool, control: bool) -> bool {
 /// nothing to cut, which is what makes bare `ctrl+x` still readline's prefix key
 /// (`C-x C-e` opens your editor).
 ///
-/// `ctrl+shift+v` is conditional on a note being written. The pane's paste
-/// writes the clipboard into the terminal, and a note box is drawn OVER that
-/// terminal: claimed here, the chord pasted into the shell or agent under the
-/// square while the person was writing a note, which is the one thing a note
-/// being written promised not to let happen
-/// (`a_note_being_written_in_a_float_takes_every_key_but_the_chords`). The
-/// pane's other chords still work over a note: they close, find and open
-/// panels, and none of them writes into the terminal.
+/// `ctrl+shift+v` is conditional on a caret being written over the terminal.
+/// The pane's paste writes the clipboard into the terminal. A note box is
+/// drawn OVER that terminal, a sticky note being written is the same caret over
+/// the same terminal, and the header rename box owns the keyboard while it is
+/// open: claimed here, the chord pasted into the shell or agent under the
+/// square, the paper or the title, which is the one thing a box with a caret
+/// promised not to let happen
+/// (`a_note_being_written_in_a_float_takes_every_key_but_the_chords`,
+/// `a_sticky_note_being_written_takes_every_paste_chord`,
+/// `a_header_being_renamed_takes_every_paste_chord`). The pane's other chords
+/// still work over any of those boxes: they close, find and open panels, and
+/// none of them writes into the terminal.
 pub fn pane_chord(k: &Key, up: &Up) -> bool {
     if k.platform || k.function {
         return false;
@@ -364,7 +368,7 @@ pub fn pane_chord(k: &Key, up: &Up) -> bool {
     }
     if k.control && !k.alt {
         if k.shift {
-            if k.key == "v" && note_caret(up) {
+            if k.key == "v" && (note_caret(up) || up.sticky || up.rename) {
                 return false;
             }
             // The panels and the clipboard. Shift is what keeps raw ctrl+a / ^D /
@@ -768,6 +772,53 @@ mod tests {
             route(&ctrl_shift("c"), &float),
             Layer::PaneChord,
             "the pane's other chords still work over a note"
+        );
+    }
+
+    /// A sticky note being written is a third caret over the terminal. The
+    /// paste chords go to it, the same as a note in the square, and the
+    /// pane's other chords still do.
+    #[test]
+    fn a_sticky_note_being_written_takes_every_paste_chord() {
+        let up = Up {
+            sticky: true,
+            ..Up::default()
+        };
+        for k in [ctrl("v"), ctrl_shift("v"), shift_insert()] {
+            assert_eq!(route(&k, &up), Layer::Sticky, "{k:?}");
+        }
+        assert_eq!(
+            route(&ctrl_shift("c"), &up),
+            Layer::PaneChord,
+            "copy stays the pane's"
+        );
+        assert_eq!(
+            route(&ctrl_shift("v"), &Up::default()),
+            Layer::PaneChord,
+            "with no note being written the paste is the pane's"
+        );
+    }
+
+    /// The header rename box is a caret over the terminal too. Paste goes to
+    /// the name, and the pane's other chords still do.
+    #[test]
+    fn a_header_being_renamed_takes_every_paste_chord() {
+        let up = Up {
+            rename: true,
+            ..Up::default()
+        };
+        for k in [ctrl("v"), ctrl_shift("v"), shift_insert()] {
+            assert_eq!(route(&k, &up), Layer::Rename, "{k:?}");
+        }
+        assert_eq!(
+            route(&ctrl_shift("c"), &up),
+            Layer::PaneChord,
+            "copy stays the pane's"
+        );
+        assert_eq!(
+            route(&ctrl_shift("v"), &Up::default()),
+            Layer::PaneChord,
+            "with the box closed the paste is the pane's"
         );
     }
 

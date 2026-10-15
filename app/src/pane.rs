@@ -4232,6 +4232,13 @@ impl TerminalView {
             // it is one of four ways an agent leaves a pane and the only one
             // that goes through the strip.
             self.wb_paused_ms = None;
+            // `wb_delivered_ms` is the eight-second window in which the strip
+            // says "Reading your answer", and that rung outranks a question.
+            // It names the agent the bench just typed to. Left set, a pane
+            // whose agent has gone keeps those words until the window ends,
+            // and the next agent started inside it is born reading, so a
+            // question it asks is not shown.
+            self.wb_delivered_ms = None;
             // And the HUD token-accounting trio, for the same reason as
             // `wb_paused_ms`: nothing else corrects them, because
             // `accrue_tokens` returns early on a non-agent pane and so never
@@ -6260,6 +6267,24 @@ impl TerminalView {
         let Some(edit) = note.edit.as_mut() else {
             return false;
         };
+        // A paste is the paper's, by the same three chords a document note
+        // takes. ctrl+shift+v used to stay the pane's, and the pane typed the
+        // clipboard into the shell under the note; ctrl+v and shift+insert
+        // reached here and then vanished, because `apply` drops ctrl chords
+        // and has no arm for insert. The paper draws one line, so the paste
+        // arrives as one: typing can never put a line break here, since Enter
+        // posts the note.
+        let m = &ks.modifiers;
+        if crate::workbench::is_paste_chord(ks.key.as_str(), m.control, m.shift) {
+            if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
+                edit.buf.insert_capped(
+                    &crate::workbench::pasted_as_one_line(&text),
+                    crate::sticky::MAX_CHARS,
+                );
+            }
+            cx.notify();
+            return true;
+        }
         match crate::sticky::press(true, ks.key.as_str()) {
             crate::sticky::Press::Pass => return false,
             crate::sticky::Press::Post => self.sticky_commit(cx),
@@ -6589,6 +6614,26 @@ impl TerminalView {
         let Some(mut buf) = self.renaming.take() else {
             return Handled::Declined;
         };
+        // A paste is the name's, by the same three chords a note takes.
+        // ctrl+shift+v used to stay the pane's, and the pane typed the
+        // clipboard into the shell under the header. ctrl+v and shift+insert
+        // reached here and vanished, because a modified key is not a character.
+        let m = &ks.modifiers;
+        if crate::workbench::is_paste_chord(k.key, m.control, m.shift) {
+            if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
+                // A name is one line, kept to the 24 characters a typed name
+                // stops at.
+                for ch in crate::workbench::pasted_as_one_line(&text).chars() {
+                    if buf.chars().count() >= 24 {
+                        break;
+                    }
+                    buf.push(ch);
+                }
+            }
+            self.renaming = Some(buf);
+            cx.notify();
+            return Handled::Consumed;
+        }
         match k.key {
             "enter" => {
                 self.renaming = Some(buf);
@@ -6918,7 +6963,11 @@ impl TerminalView {
     pub fn nudge_size(&mut self, key: theme::GradeKey, notches: f32, cx: &mut Context<Self>) {
         let outer = theme::outer_choice(cx);
         let mut grade = self.appearance.effective(&outer).grade;
-        let from = grade.get(key);
+        // A size dial always holds its own position; a dial left to the theme
+        // has no position here to step from, so the turn does nothing.
+        let Some(from) = grade.get(key) else {
+            return;
+        };
         let next = key.nudged(from, notches);
         if (next - from).abs() < f32::EPSILON {
             return;
@@ -11271,6 +11320,10 @@ mod tests {
             "wb_live_q",
             "wb_queued",
             "wb_paused_ms",
+            // The reading window. A stamp left here keeps the strip saying
+            // "Reading your answer" after the agent has gone, and the next
+            // agent in this pane is born on that rung, which hides a question.
+            "wb_delivered_ms",
             // The four the transcript store brought, added when this branch
             // met main. They were already cleared correctly by the author who
             // added them — the point is that the LIST did not know, and a list

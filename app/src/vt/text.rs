@@ -261,13 +261,15 @@ impl TextGuard {
         // A sequence or character the chunk ended inside waits for the rest,
         // unless it has grown past anything worth reading.
         let open = match self.state {
-            State::Utf8(_) | State::Escape | State::Intermediate => true,
+            State::Utf8(_) | State::Escape => true,
             State::Csi => {
                 let short = !self.oversized && bytes.len() - start <= LONGEST_SEQUENCE;
                 self.oversized = !short;
                 short
             }
-            State::Ground | State::Str => false,
+            // Intermediate escape bytes are never rewritten; like a string,
+            // they can reach the core as they arrive without being held.
+            State::Ground | State::Str | State::Intermediate => false,
         };
         if open && start >= pass {
             emit(core, &bytes[pass..start]);
@@ -474,6 +476,34 @@ mod tests {
                 stream.to_vec(),
                 "cut at {cut}"
             );
+        }
+    }
+
+    #[test]
+    fn an_unterminated_escape_does_not_keep_growing_between_reads() {
+        for chunk in [1, 13, LONGEST_SEQUENCE + 1, 4096] {
+            let mut guard = TextGuard::default();
+            let mut out = Vec::new();
+            let mut stream = vec![ESC];
+            guard.feed(&stream, &mut |bytes| out.extend_from_slice(bytes));
+            for _ in 0..128 {
+                let intermediates = vec![b' '; chunk];
+                stream.extend_from_slice(&intermediates);
+                guard.feed(&intermediates, &mut |bytes| out.extend_from_slice(bytes));
+                assert!(
+                    guard.held.len() <= LONGEST_SEQUENCE,
+                    "held {} bytes of an unfinished escape, chunk size {chunk}",
+                    guard.held.len()
+                );
+            }
+            // Finish the escape, then exercise a sequence the guard rewrites.
+            // Streaming intermediates must preserve the parser's state.
+            guard.feed(b"B\x1b[?2027htext", &mut |bytes| {
+                out.extend_from_slice(bytes)
+            });
+            stream.extend_from_slice(b"Btext");
+            assert_eq!(out, stream, "chunk size {chunk}");
+            assert!(guard.held.is_empty());
         }
     }
 

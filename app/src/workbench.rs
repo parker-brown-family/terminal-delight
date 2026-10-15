@@ -2600,6 +2600,22 @@ pub fn is_paste_chord(key: &str, ctrl: bool, shift: bool) -> bool {
     key.eq_ignore_ascii_case("insert") && shift
 }
 
+/// A paste for a box that holds one line: a pane's name, or a sticky note,
+/// whose paper draws only the first line `shape_text` gives it, so a line
+/// break would keep everything after it and show none of it. Each line break
+/// (`\r\n` counted once) and tab becomes a space, and every other control
+/// character is dropped.
+pub fn pasted_as_one_line(text: &str) -> String {
+    text.replace("\r\n", "\n")
+        .chars()
+        .filter_map(|c| match c {
+            '\n' | '\r' | '\t' => Some(' '),
+            c if c.is_control() => None,
+            c => Some(c),
+        })
+        .collect()
+}
+
 /// The image type to ask a clipboard for, out of everything it is offering.
 ///
 /// Wayland clipboards are a LIST of types, and a copied image usually arrives
@@ -9074,6 +9090,21 @@ mod tests {
         assert!(!is_paste_chord("v", false, false));
         assert!(!is_paste_chord("c", true, false));
         assert!(!is_paste_chord("insert", false, false));
+    }
+
+    #[test]
+    fn a_paste_for_a_one_line_box_keeps_every_word_on_one_line() {
+        assert_eq!(
+            pasted_as_one_line("alpha\nbeta\r\ngamma\tdelta\re"),
+            "alpha beta gamma delta e",
+            "each break or tab is one space, a Windows line end included"
+        );
+        assert_eq!(
+            pasted_as_one_line("red\u{1b}[31m bell\u{7}"),
+            "red[31m bell",
+            "other control characters are dropped, not spaced"
+        );
+        assert_eq!(pasted_as_one_line("plain words"), "plain words");
     }
 
     #[test]
