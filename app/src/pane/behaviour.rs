@@ -2078,6 +2078,40 @@ fn a_file_dropped_on_the_terminal_is_pasted_into_it(cx: &mut TestAppContext) {
     pane.wait_for("dropped.png");
 }
 
+/// A pane launched with a program — `-e` through xdg-terminal-exec — runs that
+/// program as its process and types nothing into it, and wears its launch mark.
+///
+/// The resume line is the discriminator: were it typed, `cat` would echo it
+/// back onto the screen. The arithmetic is the other one: only a shell that
+/// was handed these exact arguments prints 42, where the person's own shell
+/// would print a prompt.
+///
+/// Mutation-tested: typing the resume line regardless of a program, and
+/// dropping `options.shell = spec.program`, each fail this.
+#[gpui::test]
+fn a_launched_pane_runs_its_program_and_types_nothing(cx: &mut TestAppContext) {
+    let restore = crate::session::PaneRestore {
+        program: Some((
+            "/bin/sh".into(),
+            vec!["-c".into(), "echo launched-$((6*7)); exec cat".into()],
+        )),
+        resume: Some("echo typed-into-a-shell".into()),
+        mark: Some("LOCAL MODEL"),
+        ..Default::default()
+    };
+    let mut pane = Pane::launched(cx, restore);
+    pane.wait_for("launched-42");
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    pane.redraw();
+    let rows = pane.rows();
+    assert!(
+        !rows.iter().any(|r| r.contains("typed-into-a-shell")),
+        "a line was typed into the program:\n{}",
+        rows.join("\n")
+    );
+    assert_eq!(pane.read(|v| v.launch_mark), Some("LOCAL MODEL"));
+}
+
 /// The first reply the terminal typed back that starts with `start`, from
 /// where the line discipline echoed it onto the screen.
 fn echoed_reply(pane: &mut Pane, start: &str) -> String {

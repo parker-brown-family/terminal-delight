@@ -161,20 +161,27 @@ pub struct SpawnSpec {
     /// failing the pane.
     pub cwd: Option<std::path::PathBuf>,
     pub env: Vec<(String, String)>,
+    /// A program to run as the terminal's child instead of the user's shell,
+    /// with its arguments — what `-e` asks for on a launch through
+    /// `xdg-terminal-exec`. Run directly, never typed into a shell, so nothing
+    /// in its arguments is ever read by one.
+    pub program: Option<(String, Vec<String>)>,
 }
 
 /// Spawn the user's default shell on a PTY, emulation wired, I/O thread running.
 #[allow(dead_code)]
 pub fn spawn(size: GridSize, cell_width: u16, cell_height: u16) -> io::Result<Session> {
-    spawn_in(size, cell_width, cell_height, None)
+    spawn_in(size, cell_width, cell_height, None, None)
 }
 
-/// `spawn`, but the shell starts in `cwd` (session restore).
+/// `spawn`, but the shell starts in `cwd` (session restore) — or, given a
+/// `program`, that program runs there instead of the shell.
 pub fn spawn_in(
     size: GridSize,
     cell_width: u16,
     cell_height: u16,
     cwd: Option<std::path::PathBuf>,
+    program: Option<&(String, Vec<String>)>,
 ) -> io::Result<Session> {
     let spec = SpawnSpec {
         size,
@@ -182,6 +189,7 @@ pub fn spawn_in(
         cell_height,
         cwd,
         env: vec![],
+        program: program.cloned(),
     };
     let pty = spawn_pty(&spec)?;
     // Read before the pseudoterminal is handed to the loop, which takes
@@ -207,6 +215,7 @@ pub fn spawn_pty(spec: &SpawnSpec) -> io::Result<vt::pty::PtySource> {
     for (name, value) in &spec.env {
         options.env.insert(name.clone(), value.clone());
     }
+    options.shell = spec.program.clone();
     // A demo window runs THIS binary as every pane's program — a frozen screen of
     // lorem-ipsum styled like a real agent session — instead of the user's shell.
     // So a shared demo shows no real shell, cwd, scrollback, or secret, yet flows

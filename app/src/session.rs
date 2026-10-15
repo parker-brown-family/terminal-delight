@@ -38,6 +38,15 @@ pub struct PaneRestore {
     /// that only lives as long as the window is a note you have to write again
     /// every morning.
     pub note: Option<crate::sticky::Saved>,
+    /// A program to run as the pane's process instead of the shell — the `-e`
+    /// of a launch through `xdg-terminal-exec`. When it is set nothing is typed
+    /// into the pane: `resume` is a line for a shell, and there is no shell.
+    /// Never saved: only a quick window carries one, and a quick window never
+    /// writes a session.
+    pub program: Option<(String, Vec<String>)>,
+    /// The mark the pane wears in its header for the app-id it was launched
+    /// under (`launch_mark` in main.rs). Never saved, for the same reason.
+    pub mark: Option<&'static str>,
 }
 
 /// What capture() learned about a live pane. Field-for-field what we persist.
