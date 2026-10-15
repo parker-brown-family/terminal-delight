@@ -102,6 +102,7 @@ impl PaneMode {
             PaneMode::Claude => "CLAUDE",
             PaneMode::Codex => "CODEX",
             PaneMode::Remote => "REMOTE",
+            PaneMode::Other(name) if name == crate::launcher::LOCAL_AGENT_MODE => "LOCAL",
             PaneMode::Other(name) => name,
             // What `list_panes` hands an agent asking about its own fleet. A
             // reader that sees this knows the census could not describe the
@@ -121,6 +122,9 @@ impl PaneMode {
             PaneMode::Remote => Cow::Borrowed(st.ph_remote),
             PaneMode::Claude => Cow::Borrowed("CLAUDE"),
             PaneMode::Codex => Cow::Borrowed("CODEX"),
+            PaneMode::Other(name) if name == crate::launcher::LOCAL_AGENT_MODE => {
+                Cow::Borrowed("LOCAL")
+            }
             PaneMode::Other(name) => Cow::Owned(name.clone()),
             // Untranslated for the same reason CLAUDE and CODEX are: it is a
             // placeholder rather than a word about the pane's contents, and a
@@ -130,11 +134,12 @@ impl PaneMode {
         }
     }
 
-    /// True when this pane is running a conversational agent (Claude or Codex) —
+    /// True for Claude, Codex or a program declared by the local launch adapter —
     /// the modes where "your own input" is a meaningful, navigable, colourable
     /// thing distinct from the agent's replies.
     pub fn is_agent(&self) -> bool {
         matches!(self, PaneMode::Claude | PaneMode::Codex)
+            || matches!(self, PaneMode::Other(name) if name == crate::launcher::LOCAL_AGENT_MODE)
     }
 
     /// True when the FOCUS reader can read this agent's conversation from
@@ -187,7 +192,17 @@ fn foreground_mode(master: &std::fs::File, shell_pid: u32) -> PaneMode {
     if pgid as u32 == shell_pid {
         return PaneMode::Shell;
     }
-    PaneMode::classify(&comm, &cmdline)
+    let mode = PaneMode::classify(&comm, &cmdline);
+    if !matches!(mode, PaneMode::Claude | PaneMode::Codex | PaneMode::Remote)
+        && std::fs::read(format!("/proc/{pgid}/environ"))
+            .ok()
+            .as_deref()
+            .is_some_and(crate::launcher::local_agent_environment)
+    {
+        PaneMode::Other(crate::launcher::LOCAL_AGENT_MODE.into())
+    } else {
+        mode
+    }
 }
 
 /// The consistent header icon size (≈2× the old glyphs).
@@ -637,7 +652,7 @@ fn run_link(text: &str, byte: usize) -> Option<Link> {
 
 /// The link sitting under column `col` of a row of terminal text, if any. Pure:
 /// expands the whitespace-delimited token, trims delimiters, then classifies it
-/// as a URL (known scheme or `www.`) or a filesystem path (`/`, `~/`, `./`, `..`).
+/// as a URL (known scheme or `www.`) or a filesystem path (absolute, home-relative or containing a slash).
 fn link_at(line: &str, col: usize) -> Option<Link> {
     let chars: Vec<char> = line.chars().collect();
     if chars.is_empty() {
@@ -659,7 +674,7 @@ fn link_at(line: &str, col: usize) -> Option<Link> {
 }
 
 /// Classify one whitespace-free token as a link: trim delimiters, then a URL
-/// (known scheme or `www.`) or a filesystem path (`/`, `~/`, `./`, `..`).
+/// (known scheme or `www.`) or a filesystem path (absolute, home-relative or containing a slash).
 fn link_of_token(raw: &str) -> Option<Link> {
     let tok = trim_link_delims(raw);
     if tok.is_empty() {
@@ -681,6 +696,9 @@ fn link_of_token(raw: &str) -> Option<Link> {
         || tok.starts_with("~/")
         || tok.starts_with("./")
         || tok.starts_with("../")
+        // Codex displays repo-relative references without a leading "./".
+        // pick_link still requires an anchored path that exists on disk.
+        || (tok.contains('/') && !tok.contains(':'))
     {
         return Some(Link::Path(tok));
     }
@@ -1189,7 +1207,7 @@ fn is_copyable_command(line: &str) -> bool {
 }
 
 /// Turn a path link into an absolute path: expand a leading `~`, and join a
-/// relative `./`/`../` onto the pane's cwd. Returns None if it can't be anchored.
+/// relative path onto the pane's cwd. Returns None if it can't be anchored.
 fn resolve_path(p: &str, cwd: Option<&str>) -> Option<String> {
     let expanded = if p == "~" {
         std::env::var("HOME").ok()?
@@ -12599,6 +12617,12 @@ mod tests {
             link_at("./README.md", 2),
             Some(Link::Path("./README.md".into()))
         );
+        assert_eq!(
+            link_at("(reports/brief.html)", 10),
+            Some(Link::Path("reports/brief.html".into()))
+        );
+        // An unrecognised scheme must not become a relative filesystem path.
+        assert_eq!(link_at("javascript:reports/brief.html", 15), None);
         // plain words and whitespace are not links
         assert_eq!(link_at("just some words", 5), None);
         assert_eq!(link_at("a b", 1), None); // the space
@@ -12896,14 +12920,15 @@ mod tests {
             "the third row's half"
         );
 
-        // A row that merely ends in something the overlay colours hands nothing
-        // on: `episode/handoff` lights up for its slash, but it is not a link.
+        // A slash token with an unknown scheme is still not a path, even
+        // though the overlay colours it. Bare episode/handoff is now a path
+        // candidate, checked against the pane's cwd and disk by pick_link.
         let rows = padded_grid(
-            25,
-            &["  Session episode/handoff", "  (APES) for the record"],
+            29,
+            &["  Session tag:episode/handoff", "  (APES) for the record"],
         );
         let mut inks = agentic_inks(&rows, link, text);
-        assert_eq!(inks[0][24], link, "the fixture must end on a coloured cell");
+        assert_eq!(inks[0][28], link, "the fixture must end on a coloured cell");
         let before = inks.clone();
         carry_link_colour(&rows, &[false; 2], &mut inks);
         assert_eq!(inks, before);
@@ -13661,12 +13686,17 @@ mod tests {
     }
 
     #[test]
-    fn is_agent_is_true_only_for_claude_and_codex() {
+    fn is_agent_includes_an_explicitly_configured_local_program() {
         assert!(PaneMode::Claude.is_agent());
         assert!(PaneMode::Codex.is_agent());
         assert!(!PaneMode::Shell.is_agent());
         assert!(!PaneMode::Remote.is_agent());
         assert!(!PaneMode::Other("vim".into()).is_agent());
+        let local = PaneMode::Other(crate::launcher::LOCAL_AGENT_MODE.into());
+        assert!(local.is_agent());
+        assert!(!local.reads_transcript());
+        assert_eq!(local.label(), "LOCAL");
+        assert_eq!(local.at_a_prompt(), Some(false));
     }
 
     /// The prompt seek drives a full-screen agent by synthesising wheel notches,

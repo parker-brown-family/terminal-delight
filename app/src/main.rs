@@ -3628,6 +3628,8 @@ struct AgentLauncher {
     /// asked where the person was standing. It is what decides whether the
     /// agent starts in that pane or in a new tab — see [`launcher::landing`].
     from: Option<gpui::EntityId>,
+    error: Option<String>,
+    local_adapter: Result<launcher::LocalAdapter, String>,
 }
 
 impl AgentLauncher {
@@ -9078,8 +9080,17 @@ impl Workspace {
             )
             .when(open, |d| {
                 d.child(row("harness", harness_chips, pref.harness().is_some()))
-                    .child(row("model", model_chips, pref.model_ix(harness).is_some()))
-                    .child(row("effort", effort_chips, pref.effort(harness).is_some()))
+                    .when(harness != launcher::Harness::Local, |d| {
+                        d.child(row("model", model_chips, pref.model_ix(harness).is_some()))
+                            .child(row("effort", effort_chips, pref.effort(harness).is_some()))
+                    })
+                    .when(harness == launcher::Harness::Local, |d| {
+                        d.child(
+                            div()
+                                .text_size(px(10.))
+                                .child("The local runner uses local-agent.toml"),
+                        )
+                    })
             })
     }
 
@@ -14296,6 +14307,8 @@ impl Workspace {
                 .unwrap_or_else(|| harness.default_effort()),
             reach: launcher::Reach::Anywhere,
             from,
+            error: None,
+            local_adapter: launcher::LocalAdapter::load(),
         };
         lp.recompute();
         // Pre-select where the person already is, by path rather than by name:
@@ -14322,7 +14335,7 @@ impl Workspace {
     /// launched pane gets a host pane id, survives this window, and is
     /// deduplicated against a conversation already running.
     fn launch_agent(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(lp) = self.agent_launcher.take() else {
+        let Some(mut lp) = self.agent_launcher.take() else {
             return;
         };
         let Some(project) = lp.project().cloned() else {
@@ -14343,39 +14356,28 @@ impl Workspace {
         // compute its own drop directory from `$TD_PANE_ID`, which the host
         // puts in every pane's environment. Written before the spawn, because
         // the pane id does not exist yet — and not needed, for the same reason.
-        let briefing_path = match (recipe.takes_briefing(), surfacefeed::session_dir()) {
-            (true, Some(dir)) => {
-                // The decision-brief kit the briefing points at, laid down
-                // for this launch. A kit that cannot be written is left out
-                // of the briefing rather than named at a path with nothing
-                // there.
-                let kit = match briefkit::default_root().map(|root| briefkit::write(&root)) {
-                    Some(Ok(skill)) => Some(skill),
-                    Some(Err(err)) => {
-                        eprintln!(
-                            "terminal-delight: could not write the decision-brief kit ({err}); \
-                             briefing without it"
-                        );
-                        None
-                    }
-                    None => None,
-                };
-                let text =
-                    recipe.briefing(&format!("{}/$TD_PANE_ID", dir.display()), kit.as_deref());
-                match launcher::write_briefing(&dir, &text) {
-                    Ok(p) => Some(p),
-                    Err(err) => {
-                        eprintln!(
-                            "terminal-delight: could not write the agent briefing ({err}); \
-                             launching without it"
-                        );
-                        None
-                    }
-                }
+        let launch = (|| {
+            let dir =
+                surfacefeed::session_dir().ok_or("TD could not find its session directory")?;
+            let kit = briefkit::default_root().ok_or("TD could not find its data directory")?;
+            let briefing = recipe.prepare_briefing(&dir, &kit)?;
+            let adapter = if lp.harness == launcher::Harness::Local {
+                Some(lp.local_adapter.as_ref().map_err(|e| e.clone())?)
+            } else {
+                None
+            };
+            let line = recipe.command_line_with_adapter(Some(&briefing), adapter)?;
+            Ok::<_, String>((line, briefing))
+        })();
+        let (line, briefing_path) = match launch {
+            Ok(prepared) => prepared,
+            Err(err) => {
+                lp.error = Some(err);
+                self.agent_launcher = Some(lp);
+                cx.notify();
+                return;
             }
-            _ => None,
         };
-        let line = recipe.command_line(briefing_path.as_deref());
         // Where it goes, decided before it is written down, so the journal
         // records the landing that actually happened rather than the one the
         // button is named after.
@@ -14388,9 +14390,8 @@ impl Workspace {
         // detectable afterwards rather than silent. An integrity mark, not an
         // authentication; the field name says which algorithm.
         if let Some(dir) = surfacefeed::session_dir() {
-            let briefing_fnv = briefing_path
-                .as_deref()
-                .and_then(|p| std::fs::read_to_string(p).ok())
+            let briefing_fnv = std::fs::read_to_string(&briefing_path)
+                .ok()
                 .map(|t| launcher::fingerprint(&t));
             let _ = surfacefeed::journal_event(
                 &dir.join("launches.jsonl"),
@@ -14399,9 +14400,9 @@ impl Workspace {
                     "type": "launch",
                     "at_ms": surfacefeed::now_ms(),
                     "harness": recipe.harness.binary(),
-                    "model": recipe.model,
-                    "effort": recipe.effort.id(),
-                    "reach": recipe.reach.id(),
+                    "model": (recipe.harness != launcher::Harness::Local).then_some(recipe.model),
+                    "effort": (recipe.harness != launcher::Harness::Local).then_some(recipe.effort.id()),
+                    "reach": (recipe.harness != launcher::Harness::Local).then_some(recipe.reach.id()),
                     "cwd": project.path.to_string_lossy(),
                     "command": line,
                     "landing": match landing {
@@ -15607,7 +15608,9 @@ impl Workspace {
                             lp.selected = i;
                         }
                         ws.launch_agent(window, cx);
-                        ws.focus_active(window, cx);
+                        if ws.agent_launcher.is_none() {
+                            ws.focus_active(window, cx);
+                        }
                         cx.notify();
                     }),
                 )
@@ -15632,6 +15635,10 @@ impl Workspace {
                                     lp.harness = h;
                                     lp.model_ix = lp.model_ix.min(h.models().len() - 1);
                                     lp.effort = h.clamp_effort(lp.effort);
+                                    if h == launcher::Harness::Local {
+                                        lp.reach = launcher::Reach::Anywhere;
+                                    }
+                                    lp.error = None;
                                 }
                                 cx.notify();
                             }),
@@ -15728,7 +15735,14 @@ impl Workspace {
                 .takes_briefing()
                 .then(|| surfacefeed::session_dir().map(|d| d.join("briefing.txt")))
                 .flatten();
-            recipe.command_line(briefing.as_deref())
+            let adapter = if lp.harness == launcher::Harness::Local {
+                lp.local_adapter.as_ref().map(Some).map_err(|e| e.clone())
+            } else {
+                Ok(None)
+            };
+            adapter
+                .and_then(|a| recipe.command_line_with_adapter(briefing.as_deref(), a))
+                .unwrap_or_else(|e| e)
         };
 
         // Where ↵ will put it, read the same way the launch reads it.
@@ -15806,12 +15820,27 @@ impl Workspace {
             })
             .child(head("HARNESS"))
             .child(harness_row)
-            .child(head("MODEL"))
-            .child(model_row)
-            .child(head("EFFORT"))
-            .child(effort_row)
-            .child(head("REACH"))
-            .child(reach_row)
+            .when(lp.harness != launcher::Harness::Local, |d| {
+                d.child(head("MODEL"))
+                    .child(model_row)
+                    .child(head("EFFORT"))
+                    .child(effort_row)
+                    .child(head("REACH"))
+                    .child(reach_row)
+            })
+            .when(lp.harness == launcher::Harness::Local, |d| {
+                d.child(head(
+                    "Model, effort and permissions come from local-agent.toml",
+                ))
+            })
+            .when_some(lp.error.as_ref(), |d, error| {
+                d.child(
+                    div()
+                        .text_size(px(12.))
+                        .text_color(th.complement)
+                        .child(error.clone()),
+                )
+            })
             .child(
                 div()
                     .mt_1()
@@ -17679,7 +17708,9 @@ impl Workspace {
                 "enter" => {
                     self.agent_launcher = Some(lp);
                     self.launch_agent(window, cx);
-                    self.focus_active(window, cx);
+                    if self.agent_launcher.is_none() {
+                        self.focus_active(window, cx);
+                    }
                     cx.notify();
                     return;
                 }
@@ -17709,6 +17740,10 @@ impl Workspace {
                     // clamped to the nearest one this harness takes.
                     lp.model_ix = lp.model_ix.min(lp.harness.models().len() - 1);
                     lp.effort = lp.harness.clamp_effort(lp.effort);
+                    if lp.harness == launcher::Harness::Local {
+                        lp.reach = launcher::Reach::Anywhere;
+                    }
+                    lp.error = None;
                     self.agent_launcher = Some(lp);
                     cx.notify();
                     return;
@@ -17721,6 +17756,10 @@ impl Workspace {
                 }
                 "left" | "right" => {
                     let offered = lp.harness.efforts();
+                    if offered.is_empty() {
+                        self.agent_launcher = Some(lp);
+                        return;
+                    }
                     let at = offered.iter().position(|e| *e == lp.effort).unwrap_or(0) as i32;
                     let n = offered.len() as i32;
                     let step = if ks.key == "right" { 1 } else { n - 1 };

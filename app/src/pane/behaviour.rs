@@ -104,6 +104,42 @@ fn codex_wrapped_file_reference_answers_alt_and_ctrl_click(cx: &mut TestAppConte
     }
 }
 
+/// Codex prints bare relative references, including before-edge line breaks.
+/// Resolve them in the child pane's cwd, not the window or test runner's cwd.
+#[gpui::test]
+fn codex_relative_html_reference_opens_the_panes_file(cx: &mut TestAppContext) {
+    let dir = Scratch::new("codex-relative-html");
+    std::fs::create_dir_all(dir.join("reports")).unwrap();
+    let relative = "reports/2026-10-14-omarchy-two-leads.html";
+    let html = dir.join(relative);
+    std::fs::write(
+        &html,
+        "<!doctype html><html><body>Research brief</body></html>",
+    )
+    .unwrap();
+    let mut pane = Pane::running(
+        cx,
+        &format!(
+            "cd '{}' && printf '%s\\n' '  Deliverable: Commentable research brief ({relative})' '  Wrapped brief (reports/' '  2026-10-14-omarchy-two-leads.html)' '  Missing (reports/missing.html)' 'ready'; exec cat",
+            dir.join("").display()
+        ),
+    );
+    pane.html_engine(Ok(std::sync::Arc::new(FakeBriefEngine)));
+    pane.wait_for("ready");
+    let first = pane.point_at(relative);
+    let head = pane.points_at_all("reports/")[1];
+    let tail = pane.points_at_all("2026-10-14-omarchy-two-leads.html)")[1];
+    for at in [first, head, tail] {
+        pane.click(at, Pane::alt());
+        assert_eq!(pane.float_path().as_deref(), Some(html.as_path()));
+        pane.keys("escape");
+    }
+    let missing = pane.point_at("reports/missing.html");
+    pane.click(missing, Pane::alt());
+    assert_eq!(pane.float_path(), None, "a missing path opens nothing");
+    assert_eq!(desktop_launches(), Vec::<String>::new());
+}
+
 /// The square's strip moves it with the hand, and its edge resizes it with the
 /// far side pinned. Neither leaves a selection in the grid behind it.
 #[gpui::test]
@@ -2624,6 +2660,31 @@ fn notes_sent_to_an_agent_on_its_bench_land_in_the_composer(cx: &mut TestAppCont
         pane.read(|v| v.wb_compose.is_none()),
         "the terminal face pastes, and leaves the composer alone"
     );
+}
+
+#[gpui::test]
+fn brief_launch_local_notes_reach_composer_and_prompt(cx: &mut TestAppContext) {
+    let mut pane = Pane::running(cx, "printf '\\033[?2004hready\\n'; exec cat");
+    pane.wait_for("ready");
+    let map = "NOTES — local-brief.html\n[fig-01] Draw the missing case.";
+    pane.view.update(pane.cx, |v, cx| {
+        v.mode = super::PaneMode::Other(crate::launcher::LOCAL_AGENT_MODE.into());
+        v.set_face(Face::Workbench, cx);
+    });
+    let landed = pane.view.update(pane.cx, |v, cx| v.send_notes(map, cx));
+    assert_eq!(
+        landed,
+        Ok(super::NotesLanded::Composer(map.chars().count()))
+    );
+    let draft = pane.read(|v| v.wb_compose.as_ref().map(|l| l.text().to_string()));
+    assert_eq!(draft.as_deref(), Some(map));
+    pane.view.update(pane.cx, |v, cx| {
+        v.wb_compose = None;
+        v.set_face(Face::Terminal, cx);
+    });
+    let landed = pane.view.update(pane.cx, |v, cx| v.send_notes(map, cx));
+    assert_eq!(landed, Ok(super::NotesLanded::Prompt(map.chars().count())));
+    pane.wait_for("missing case");
 }
 
 /// A shell's lines reach the FOCUS reader exactly as the program printed them:
